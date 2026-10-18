@@ -11,6 +11,7 @@
 // stack, and every other register zero unless INITed.
 #include "core/cpu/Engine.hpp"
 #include "loader/ElfLoader.hpp"
+#include "selftest/SelfTest.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -183,6 +184,11 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "selftest") {
+        auto r = Hydrogen::runSelfTest();
+        std::printf("selftest %s: %s (%.0f MIPS)\n", r.passed ? "passed" : "FAILED", r.detail.c_str(), r.mips);
+        return r.passed ? 0 : 1;
+    }
     if (argc < 4) {
         std::fprintf(stderr, "usage: %s asm <elf> <src.S>... | c <elf> <expected.txt>\n", argv[0]);
         return 2;

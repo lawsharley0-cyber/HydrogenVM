@@ -7,6 +7,7 @@ cmake -S "$ROOT" -B "$B" -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYP
 ninja -C "$B" >/dev/null || { ninja -C "$B"; exit 1; }
 "$ROOT/tools/build_tests.sh" "$B/tests" >/dev/null || exit 1
 rc=0
+"$B/hvm_tests" selftest || rc=1
 for f in "$ROOT"/tests/asm/*.S; do
   b=$(basename "$f" .S)
   "$B/hvm_tests" asm "$B/tests/$b.elf" "$f" || rc=1

@@ -1,0 +1,40 @@
+# XcodeGen spec for the HydrogenVM iPhone app.
+#   brew install xcodegen
+#   cd app && xcodegen && open HydrogenVM.xcodeproj
+name: HydrogenVM
+options:
+  bundleIdPrefix: com.lfull
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    CLANG_CXX_LANGUAGE_STANDARD: c++20
+    CLANG_CXX_LIBRARY: libc++
+    GCC_OPTIMIZATION_LEVEL[config=Debug]: "1"   # the threaded interpreter needs tail calls even in Debug
+    SWIFT_VERSION: "6.0"
+
+targets:
+  HydrogenVM:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: HydrogenVM
+      - path: ../src
+        excludes:
+          - "**/*.md"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM
+        PRODUCT_NAME: HydrogenVM
+        TARGETED_DEVICE_FAMILY: "1"                 # iPhone only
+        SUPPORTED_PLATFORMS: "iphoneos"            # device only: the 4 GB arena needs real hardware
+        ARCHS: arm64
+        INFOPLIST_FILE: HydrogenVM/Info.plist
+        CODE_SIGN_ENTITLEMENTS: HydrogenVM/HydrogenVM.entitlements
+        SWIFT_OBJC_BRIDGING_HEADER: HydrogenVM/Bridge/HydrogenVM-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/../src
+        OTHER_CPLUSPLUSFLAGS: $(inherited) -fno-strict-aliasing
+        ENABLE_USER_SCRIPT_SANDBOXING: YES

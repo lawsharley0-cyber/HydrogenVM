@@ -18,6 +18,7 @@ add_library(hvm_core STATIC
   src/core/cpu/DecodeThumb.cpp
   src/core/cpu/DecodeVfpNeon.cpp
   src/loader/ElfLoader.cpp
+  src/selftest/SelfTest.cpp
 )
 target_include_directories(hvm_core PUBLIC src)
 target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-strict-aliasing)
