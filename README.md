@@ -5,8 +5,10 @@ modern 64-bit hosts. The goal is running legacy 32-bit iOS apps on current
 Apple devices without JIT entitlements; Android `armeabi-v7a` native code is a
 later phase.
 
-**Status:** integer CPU core complete and tested. VFP/NEON, the Mach-O loader,
-HLE frameworks and the GLES→Metal bridge are next. See
+**Status:** CPU core complete and tested — ARMv7 integer, VFPv3/v4 and NEON in
+both ARM and Thumb-2. iPhone app scaffold in `app/` (bundle ID
+`com.lfull.HydrogenVM`, iOS 26+). The Mach-O loader, HLE frameworks and the
+GLES→Metal bridge are next. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, the changes made
 to the original handoff, and the roadmap.
 
@@ -24,8 +26,20 @@ test programs, and runs them all. Expected output ends with every line showing
 `0 failed`.
 
 ```sh
-build/hvm_bench build/tests/ctests_thumb.elf 30
+build/hvm_bench build/tests/ctests_thumb.elf 30          # speed
+python3 tools/decode_fuzz.py build/hvm_decodecheck 400000 # decoder coverage vs llvm-mc
 ```
+
+### iPhone app
+
+```sh
+brew install xcodegen
+cd app && xcodegen && open HydrogenVM.xcodeproj
+```
+
+Set your team in Signing & Capabilities, then build to a device (the 4 GB
+guest address space needs real hardware and the extended virtual addressing
+entitlement).
 
 ## Using the engine
 

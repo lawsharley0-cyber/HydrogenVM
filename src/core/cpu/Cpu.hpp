@@ -45,6 +45,7 @@ enum : uint8_t {
     kSP = 13, kLR = 14, kPC = 15,
     kTmp0 = 16, kTmp1 = 17, kTmp2 = 18, kTmp3 = 19,
     kNumRegs = 20,
+    kDTmp0 = 32,   // scratch D register (Q16 = D32:D33, Q17 = D34:D35)
 };
 
 // NZCV live in bits 31..28, exactly as in the APSR.
@@ -70,8 +71,9 @@ struct alignas(64) Cpu {
     uint32_t ge    = 0;        // APSR.GE in bits 19..16
     uint32_t thumb = 0;        // current instruction set state (T bit)
 
-    // VFP / NEON register file (Phase 2). D0-D31 alias S0-S63 / Q0-Q15.
-    alignas(16) uint64_t d[32] = {};
+    // VFP / NEON register file. D0-D31 alias S0-S63 / Q0-Q15.
+    // D32-D35 (Q16-Q17) are decoder scratch registers (e.g. broadcast scalars).
+    alignas(16) uint64_t d[36] = {};
     uint32_t fpscr = 0;
 
     // User-visible thread ID registers (CP15 c13). 32-bit iOS keeps the

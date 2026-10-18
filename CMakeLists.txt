@@ -17,14 +17,19 @@ add_library(hvm_core STATIC
   src/core/cpu/DecodeArm.cpp
   src/core/cpu/DecodeThumb.cpp
   src/core/cpu/DecodeVfpNeon.cpp
+  src/core/cpu/DecodeNeon.cpp
   src/loader/ElfLoader.cpp
   src/selftest/SelfTest.cpp
 )
 target_include_directories(hvm_core PUBLIC src)
-target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-strict-aliasing)
+# -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
+target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-strict-aliasing -ffp-contract=off)
 
 add_executable(hvm_tests tests/runner/TestRunner.cpp)
 target_link_libraries(hvm_tests PRIVATE hvm_core)
+
+add_executable(hvm_decodecheck tests/runner/DecodeCheck.cpp)
+target_link_libraries(hvm_decodecheck PRIVATE hvm_core)
 
 add_executable(hvm_bench tests/runner/Bench.cpp)
 target_link_libraries(hvm_bench PRIVATE hvm_core)

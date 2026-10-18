@@ -36,5 +36,5 @@ targets:
         CODE_SIGN_ENTITLEMENTS: HydrogenVM/HydrogenVM.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: HydrogenVM/Bridge/HydrogenVM-Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/../src
-        OTHER_CPLUSPLUSFLAGS: $(inherited) -fno-strict-aliasing
+        OTHER_CPLUSPLUSFLAGS: $(inherited) -fno-strict-aliasing -ffp-contract=off
         ENABLE_USER_SCRIPT_SANDBOXING: YES

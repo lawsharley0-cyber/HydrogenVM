@@ -22,9 +22,14 @@ policy with no JIT entitlement.
 | `src/core/cpu/BlockBuilder.hpp` | Emits IR for one block; conditional execution, PC materialisation, dead-flag pass |
 | `src/core/cpu/DecodeArm.cpp` | A32 decoder |
 | `src/core/cpu/DecodeThumb.cpp` | T16 + T32 decoder (IT blocks resolved statically) |
-| `src/core/cpu/DecodeVfpNeon.cpp` | Phase 2 placeholder (reports Undefined) |
+| `src/core/cpu/FpHandlers.hpp` | VFPv3/v4 scalar floating point handlers |
+| `src/core/cpu/NeonHandlers.hpp` | Advanced SIMD (NEON) handlers |
+| `src/core/cpu/DecodeVfpNeon.cpp` | VFP decoder + Thumb→ARM translation of VFP/NEON encodings |
+| `src/core/cpu/DecodeNeon.cpp` | NEON decoder |
 | `src/core/cpu/Engine.*` | Block cache, dispatcher, HLE table, fault guard |
 | `src/loader/ElfLoader.*` | ELF32 loader (tests now; Android `.so` in Phase 3) |
+| `src/selftest/SelfTest.*` | Built-in smoke test + speed check (runs on device from the app) |
+| `app/` | iPhone app (XcodeGen project, SwiftUI shell, ObjC++ bridge) |
 | `tests/` | Asm unit tests, C differential tests, runner, benchmark |
 
 ## Changes from the original handoff, and why
@@ -70,8 +75,39 @@ CLZ/RBIT/REV*, extends (incl. add and 16-bit forms), bitfields, SSAT/USAT
 (and 16), QADD family, parallel add/subtract (S/Q/SH/U/UQ/UH), SEL, PKH,
 USAD8/USADA8, MRS/MSR (APSR), barriers, hints, SVC, BKPT/UDF.
 
-Not yet: VFP/NEON (Phase 2), privileged/system instructions (not reachable
-from iOS user code), SETEND (big-endian data; never used by iOS apps).
+Not supported: privileged/system instructions (not reachable from iOS user
+code) and SETEND (big-endian data; never used by iOS apps).
+
+## Floating point and SIMD
+
+**VFPv3/VFPv4**: all arithmetic incl. VNMLA/VNMLS/VNMUL and fused VFMA/VFMS/
+VFNMA/VFNMS, VSQRT, VABS/VNEG, VMOV (imm/reg/core), VCMP{E} + VMRS APSR_nzcv,
+conversions (f32↔f64, int↔float with RZ or FPSCR rounding, fixed point,
+half precision VCVTB/VCVTT), VLDR/VSTR/VLDM/VSTM/VPUSH/VPOP, VMRS/VMSR.
+
+**NEON**: the full ARMv7 Advanced SIMD integer and single-precision set —
+3-same, 3-different (long/wide/narrow), by-scalar, 2-reg shifts (incl.
+narrowing/rounding/saturating), 2-reg misc, modified immediates, VEXT, VTBL/
+VTBX, VDUP, VZIP/VUZP/VTRN/VSWP, VREV, estimates (VRECPE/VRSQRTE + steps),
+f16↔f32, and VLD1–4/VST1–4 in all multiple/single-lane/all-lanes forms.
+
+Accuracy decisions:
+* `fp contract(off)` everywhere: ARM VMLA rounds twice, and an arm64 host
+  compiler would otherwise fuse `a*b + c` into one FMADD.
+* NEON float is flush-to-zero with default NaN, as on ARMv7 hardware.
+* VFP honours FPSCR.FZ and FPSCR.DN on a slow path taken only when a guest
+  enables them; arithmetic rounds to nearest (FPSCR.RMode is honoured by VCVTR).
+* VRECPE/VRSQRTE follow the ARM ARM estimate tables bit-exactly
+  (e.g. `vrecpe(1.0) = 0.998046875`).
+* FPSCR exception flags aren't tracked; QC (saturation) is.
+
+## Decoder coverage fuzzing
+
+`tools/decode_fuzz.py build/hvm_decodecheck 1000000` generates random ARM and
+Thumb-2 encodings, uses `llvm-mc` to identify the valid user-mode ARMv7 ones
+(+VFPv4/NEON/idiv), and reports any the decoder rejects. Current result:
+**0 rejected out of ~544,000 valid encodings** (UNPREDICTABLE forms such as
+PC-based LDM/STM and NEON loads are filtered out, and are intentionally rejected).
 
 ## Testing
 
@@ -80,24 +116,45 @@ from iOS user code), SETEND (big-endian data; never used by iOS apps).
 * **Asm unit tests** (`tests/asm/*.S`): hand-written edge cases with expected
   registers/flags (carry/overflow, shifts ≥ 32, RRX, IT corner cases, TBB/TBH,
   interworking, exclusives, unmapped-access faults, …).
-* **C differential tests** (`tests/c/ctests.c`): 27 programs compiled for the
-  host to get expected values, then for the guest five ways (ARM -O2, ARM -Os,
-  Thumb-2 -O2, Thumb-2 -Os, Thumb-2 with hardware divide), run in HydrogenVM, and
-  compared. Each is also re-run in 97-instruction time slices to check that
-  every block exit leaves a resumable state.
+* **C differential tests**, compiled for the host to get expected values and
+  for the guest in several configurations, then run in HydrogenVM and compared.
+  Each is also re-run in 97-instruction time slices to check that every block
+  exit leaves a resumable state.
+  * `tests/c/ctests.c` (27 integer programs): ARM/Thumb-2 × -O2/-Os, plus
+    Thumb-2 with hardware divide.
+  * `tests/c/ftests.c` + `vfast.c` (29 float/SIMD programs): VFP with hard and
+    softfp ABIs (iOS uses softfp), and NEON builds at -O3/-Os where clang
+    auto-vectorises the loops (~80 distinct NEON instruction forms).
+* **VFP/NEON asm tests** (`tests/asm/vfp_neon.S`): fused vs unfused multiply-add,
+  rounding modes, fixed point, half precision, VLD2/3/4, VTBL/VTBX, permutes,
+  saturation + QC, estimates, scalar forms, and Thumb-2 encodings.
+* **Decoder fuzzing** (above).
 
 A reference CPU (e.g. Unicorn) for instruction-by-instruction fuzzing would be
 a good next addition; it wasn't installable in the environment this was built in.
 
 ## Performance
 
-`hvm_bench` on the C suite: ~300–330 million guest instructions/second on an
-x86-64 cloud VM (clang 18, so no `preserve_none`). Apple Silicon numbers still
-need measuring on device.
+`hvm_bench` on an x86-64 cloud VM (clang 18, so no `preserve_none`):
+~320 MIPS on the integer suite, ~530 on VFP code, ~470 on NEON code (each NEON
+instruction does more work). Apple Silicon numbers still need measuring — the
+app's Diagnostics tab runs the self-test and reports MIPS on device.
 
 Next optimisation candidates: superinstructions chosen from profiles (e.g.
 `CMP`+`B<c>`, `LDR`+`ADD`), per-register specialised handlers for the hottest
 ops, and a direct-mapped page table instead of the hashed block lookup.
+
+## iPhone app
+
+`app/` holds the iPhone app: bundle ID `com.lfull.HydrogenVM`, iPhone only,
+iOS 26+, arm64 devices. Generate the Xcode project with XcodeGen
+(`cd app && xcodegen`). It has a Library tab (import/delete `.ipa` files;
+launching needs roadmap steps 3–5) and a Diagnostics tab (4 GB arena check +
+CPU self-test with MIPS). It's intended for sideloading / development builds;
+the entitlements below won't pass App Store review for an emulator.
+
+The Swift/Objective-C++ code hasn't been compiled yet (no Xcode in the build
+environment); the C++ it calls is the same code the test suite builds.
 
 ## iOS-specific notes
 
@@ -112,8 +169,8 @@ ops, and a direct-mapped page table instead of the hashed block lookup.
 ## Roadmap
 
 1. ~~Integer core with lazy block decoding + tests~~ ✅
-2. **VFPv3 + NEON** — needed by nearly every game, so it comes before graphics.
-3. **Mach-O loader**: 32-bit Mach-O, fat binaries, dyld info binding imports to
+2. ~~VFPv3/v4 + NEON~~ ✅
+3. **Mach-O loader** (next): 32-bit Mach-O, fat binaries, dyld info binding imports to
    HLE stubs, ObjC metadata.
 4. **Guest ObjC runtime + HLE frameworks** (libSystem, Foundation, UIKit basics).
 5. **OpenGL ES 1.1/2.0 → Metal** state tracker.

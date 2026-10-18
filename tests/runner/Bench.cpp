@@ -22,7 +22,9 @@ int main(int argc, char** argv) {
     auto t0 = std::chrono::steady_clock::now();
     for (int it = 0; it < iters; ++it) {
         for (auto& [name, addr] : img.symbols) {
-            if (name.rfind("t_", 0) != 0 || name.find('.') != std::string::npos) continue;
+            const bool isTest = name.rfind("t_", 0) == 0 || name.rfind("f_", 0) == 0 ||
+                                name.rfind("v_", 0) == 0 || name.rfind("vf_", 0) == 0;
+            if (!isTest || name.find('.') != std::string::npos) continue;
             CPU::Cpu c;
             c.r[CPU::kSP] = top - 64; c.r[CPU::kLR] = halt;
             c.r[CPU::kPC] = addr & ~1u; c.thumb = addr & 1;
