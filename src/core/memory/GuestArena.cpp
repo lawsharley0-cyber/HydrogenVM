@@ -4,12 +4,12 @@
 #include <stdexcept>
 #include <algorithm>
 
-namespace Argon::Memory {
+namespace Hydrogen::Memory {
 
 GuestArena::GuestArena() {
     host_page_ = size_t(sysconf(_SC_PAGESIZE));
     if (host_page_ < kGuestPageSize || (host_page_ & (host_page_ - 1)))
-        throw std::runtime_error("ArgonVM: unsupported host page size");
+        throw std::runtime_error("HydrogenVM: unsupported host page size");
 
     // NOTE (iOS): reserving 4 GB of address space needs the
     // com.apple.developer.kernel.extended-virtual-addressing entitlement on most
@@ -17,7 +17,7 @@ GuestArena::GuestArena() {
     void* p = mmap(nullptr, size_t(kArenaSize), PROT_NONE,
                    MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
     if (p == MAP_FAILED)
-        throw std::runtime_error("ArgonVM: failed to reserve 4 GB guest arena "
+        throw std::runtime_error("HydrogenVM: failed to reserve 4 GB guest arena "
                                  "(on iOS, check the extended-virtual-addressing entitlement)");
     base_ = static_cast<uint8_t*>(p);
     prot_.assign(kGuestPageCount, kProtNone);
@@ -40,7 +40,7 @@ void GuestArena::commitHostPages(uint64_t first, uint64_t last) {
         size_t len = size_t((j - i + 1) * host_page_);
         void* r = mmap(want, len, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
-        if (r == MAP_FAILED) throw std::runtime_error("ArgonVM: failed to commit guest memory");
+        if (r == MAP_FAILED) throw std::runtime_error("HydrogenVM: failed to commit guest memory");
         for (uint64_t k = i; k <= j; ++k) host_committed_[k] = 1;
         i = j + 1;
     }
@@ -58,7 +58,7 @@ void GuestArena::map(uint32_t addr, uint32_t size, uint8_t prot) {
     std::lock_guard<std::mutex> lk(mu_);
     uint64_t start = addr & ~uint64_t(kGuestPageSize - 1);
     uint64_t end   = (uint64_t(addr) + size + kGuestPageSize - 1) & ~uint64_t(kGuestPageSize - 1);
-    if (end > kArenaSize) throw std::runtime_error("ArgonVM: map beyond 4 GB");
+    if (end > kArenaSize) throw std::runtime_error("HydrogenVM: map beyond 4 GB");
     commitHostPages(start / host_page_, (end - 1) / host_page_);
     for (uint64_t g = start >> kGuestPageShift; g < (end >> kGuestPageShift); ++g)
         prot_[g] = prot ? prot : kProtRead;   // committed pages are always at least visible
@@ -113,4 +113,4 @@ uint32_t GuestArena::findFree(uint32_t size, uint32_t hint) const {
     return 0;
 }
 
-} // namespace Argon::Memory
+} // namespace Hydrogen::Memory

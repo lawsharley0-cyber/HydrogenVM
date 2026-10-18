@@ -1,8 +1,8 @@
-// ArgonVM — ARM (A32) instruction decoder → IR.
+// HydrogenVM — ARM (A32) instruction decoder → IR.
 // Encoding references are to the ARMv7-A/R Architecture Reference Manual, chapter A5.
 #include "Decoder.hpp"
 
-namespace Argon::CPU {
+namespace Hydrogen::CPU {
 namespace {
 
 inline uint32_t bits(uint32_t v, int hi, int lo) { return (v >> lo) & ((2u << (hi - lo)) - 1); }
@@ -486,4 +486,4 @@ DecodeResult decodeArm(BlockBuilder& bb, uint32_t insn) {
     return r;
 }
 
-} // namespace Argon::CPU
+} // namespace Hydrogen::CPU

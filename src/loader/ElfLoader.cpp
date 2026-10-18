@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <algorithm>
 
-namespace Argon::Loader {
+namespace Hydrogen::Loader {
 namespace {
 
 struct Ehdr { uint8_t ident[16]; uint16_t type, machine; uint32_t version, entry, phoff, shoff, flags;
@@ -69,4 +69,4 @@ ElfImage loadElf(Memory::GuestArena& mem, const std::vector<uint8_t>& f, uint32_
     return img;
 }
 
-} // namespace Argon::Loader
+} // namespace Hydrogen::Loader

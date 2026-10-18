@@ -1,11 +1,11 @@
-// ArgonVM — builds one IR block and runs block-local optimisations.
+// HydrogenVM — builds one IR block and runs block-local optimisations.
 #pragma once
 #include "Handlers.hpp"
 #include <array>
 #include <utility>
 #include <vector>
 
-namespace Argon::CPU {
+namespace Hydrogen::CPU {
 
 // Flag bits for liveness analysis: N=8 Z=4 C=2 V=1.
 enum : uint8_t { kLN = 8, kLZ = 4, kLC = 2, kLV = 1, kLAll = 15 };
@@ -36,7 +36,7 @@ constexpr auto aluTable(std::index_sequence<O...>) {
 inline constexpr auto kAluTable = detail::aluTable(std::make_index_sequence<kAluOpCount>{});
 
 inline Handler memHandler(int kind, bool load, int am, bool reg) {
-#define ARGON_MEM_ROW(K) \
+#define HVM_MEM_ROW(K) \
     { { { &H_Mem<K, false, 0, false>, &H_Mem<K, false, 0, true> }, \
         { &H_Mem<K, false, 1, false>, &H_Mem<K, false, 1, true> }, \
         { &H_Mem<K, false, 2, false>, &H_Mem<K, false, 2, true> } }, \
@@ -44,9 +44,9 @@ inline Handler memHandler(int kind, bool load, int am, bool reg) {
         { &H_Mem<K, true, 1, false>,  &H_Mem<K, true, 1, true> }, \
         { &H_Mem<K, true, 2, false>,  &H_Mem<K, true, 2, true> } } }
     static constexpr Handler t[5][2][3][2] = {
-        ARGON_MEM_ROW(kMemW), ARGON_MEM_ROW(kMemB), ARGON_MEM_ROW(kMemH),
-        ARGON_MEM_ROW(kMemSB), ARGON_MEM_ROW(kMemSH) };
-#undef ARGON_MEM_ROW
+        HVM_MEM_ROW(kMemW), HVM_MEM_ROW(kMemB), HVM_MEM_ROW(kMemH),
+        HVM_MEM_ROW(kMemSB), HVM_MEM_ROW(kMemSH) };
+#undef HVM_MEM_ROW
     return t[kind][load][am][reg];
 }
 
@@ -199,4 +199,4 @@ inline void emitAlu(BlockBuilder& bb, int opc, bool s, int kind,
     bb.emit(kAluTable[opc][s][kind], rd, rn, rm, rs_or_carry, imm, 0, mm);
 }
 
-} // namespace Argon::CPU
+} // namespace Hydrogen::CPU

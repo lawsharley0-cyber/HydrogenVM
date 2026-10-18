@@ -1,4 +1,4 @@
-// ArgonVM — execution engine: block cache, dispatcher, HLE table.
+// HydrogenVM — execution engine: block cache, dispatcher, HLE table.
 #pragma once
 #include "Cpu.hpp"
 #include "../memory/GuestArena.hpp"
@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace Argon::CPU {
+namespace Hydrogen::CPU {
 
 class Engine {
 public:
@@ -66,4 +66,4 @@ private:
     Stats stats_;
 };
 
-} // namespace Argon::CPU
+} // namespace Hydrogen::CPU

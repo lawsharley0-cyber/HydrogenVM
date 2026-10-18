@@ -1,8 +1,8 @@
-// ArgonVM — decoder entry points.
+// HydrogenVM — decoder entry points.
 #pragma once
 #include "BlockBuilder.hpp"
 
-namespace Argon::CPU {
+namespace Hydrogen::CPU {
 
 enum class DecodeResult { Continue, End, EndNeedsFallthrough };
 
@@ -22,4 +22,4 @@ DecodeResult decodeThumbVfpNeon(BlockBuilder& bb, uint32_t insn32);
 // Is this a 32-bit Thumb encoding (first halfword)?
 inline bool thumbIs32(uint16_t hw1) { return (hw1 >> 11) >= 0x1D; }
 
-} // namespace Argon::CPU
+} // namespace Hydrogen::CPU

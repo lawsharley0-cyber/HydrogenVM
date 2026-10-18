@@ -1,4 +1,4 @@
-// ArgonVM — guest CPU state and the threaded-IR data structures.
+// HydrogenVM — guest CPU state and the threaded-IR data structures.
 //
 // Execution model (see docs/ARCHITECTURE.md for the reasoning):
 //
@@ -21,23 +21,23 @@
 #include <vector>
 
 #if defined(__clang__) && __has_attribute(preserve_none) && (defined(__x86_64__) || defined(__aarch64__)) && (__clang_major__ >= 19)
-#  define ARGON_HOT_ABI __attribute__((preserve_none))
+#  define HVM_HOT_ABI __attribute__((preserve_none))
 #else
-#  define ARGON_HOT_ABI
+#  define HVM_HOT_ABI
 #endif
 
 #if !defined(__clang__)
-#  error "ArgonVM's execution core requires clang ([[clang::musttail]])"
+#  error "HydrogenVM's execution core requires clang ([[clang::musttail]])"
 #endif
 
-namespace Argon::CPU {
+namespace Hydrogen::CPU {
 
 struct Cpu;
 struct Op;
 struct Block;
 class Engine;
 
-using Handler = void (ARGON_HOT_ABI*)(Cpu* c, const Op* op, uint8_t* mem);
+using Handler = void (HVM_HOT_ABI*)(Cpu* c, const Op* op, uint8_t* mem);
 
 // Register file indices. 0-15 are the architectural registers; 16+ are
 // scratch registers the decoder uses (e.g. to materialise PC-relative values).
@@ -164,4 +164,4 @@ inline constexpr uint8_t condReads(uint32_t cond) {
     }
 }
 
-} // namespace Argon::CPU
+} // namespace Hydrogen::CPU

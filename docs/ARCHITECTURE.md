@@ -1,6 +1,6 @@
-# ArgonVM architecture
+# HydrogenVM architecture
 
-ArgonVM runs 32-bit ARM (ARMv7-A, ARM and Thumb-2) guest code on 64-bit hosts
+HydrogenVM runs 32-bit ARM (ARMv7-A, ARM and Thumb-2) guest code on 64-bit hosts
 without generating any machine code at runtime, so it works under iOS's W^X
 policy with no JIT entitlement.
 
@@ -82,7 +82,7 @@ from iOS user code), SETEND (big-endian data; never used by iOS apps).
   interworking, exclusives, unmapped-access faults, …).
 * **C differential tests** (`tests/c/ctests.c`): 27 programs compiled for the
   host to get expected values, then for the guest five ways (ARM -O2, ARM -Os,
-  Thumb-2 -O2, Thumb-2 -Os, Thumb-2 with hardware divide), run in ArgonVM, and
+  Thumb-2 -O2, Thumb-2 -Os, Thumb-2 with hardware divide), run in HydrogenVM, and
   compared. Each is also re-run in 97-instruction time slices to check that
   every block exit leaves a resumable state.
 
@@ -91,7 +91,7 @@ a good next addition; it wasn't installable in the environment this was built in
 
 ## Performance
 
-`argon_bench` on the C suite: ~300–330 million guest instructions/second on an
+`hvm_bench` on the C suite: ~300–330 million guest instructions/second on an
 x86-64 cloud VM (clang 18, so no `preserve_none`). Apple Silicon numbers still
 need measuring on device.
 

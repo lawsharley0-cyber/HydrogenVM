@@ -1,4 +1,4 @@
-// ArgonVM — minimal ELF32 (ARM, little-endian) loader.
+// HydrogenVM — minimal ELF32 (ARM, little-endian) loader.
 //
 // Today this loads statically linked executables (PT_LOAD segments + symbol
 // table), which is what the test suite uses. It is also the starting point for
@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace Argon::Loader {
+namespace Hydrogen::Loader {
 
 struct ElfImage {
     uint32_t entry = 0;
@@ -23,4 +23,4 @@ struct ElfImage {
 ElfImage loadElf(Memory::GuestArena& mem, const std::vector<uint8_t>& file, uint32_t bias = 0);
 std::vector<uint8_t> readFile(const std::string& path);
 
-} // namespace Argon::Loader
+} // namespace Hydrogen::Loader

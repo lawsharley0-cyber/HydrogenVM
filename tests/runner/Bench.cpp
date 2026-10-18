@@ -1,4 +1,4 @@
-// ArgonVM micro-benchmark: runs every t_* function of a test ELF repeatedly
+// HydrogenVM micro-benchmark: runs every t_* function of a test ELF repeatedly
 // and reports guest MIPS (millions of guest instructions per host second).
 #include "core/cpu/Engine.hpp"
 #include "loader/ElfLoader.hpp"
@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <string>
 
-using namespace Argon;
+using namespace Hydrogen;
 
 int main(int argc, char** argv) {
     if (argc < 2) { std::fprintf(stderr, "usage: %s <elf> [iterations]\n", argv[0]); return 2; }

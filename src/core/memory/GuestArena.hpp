@@ -1,4 +1,4 @@
-// ArgonVM — guest address space.
+// HydrogenVM — guest address space.
 //
 // The whole 32-bit guest address space is one contiguous host reservation, so a
 // guest address converts to a host pointer with a single add (base + zext(addr)).
@@ -20,7 +20,7 @@
 #include <vector>
 #include <mutex>
 
-namespace Argon::Memory {
+namespace Hydrogen::Memory {
 
 enum GuestProt : uint8_t {
     kProtNone  = 0,
@@ -100,4 +100,4 @@ private:
     mutable std::mutex   mu_;
 };
 
-} // namespace Argon::Memory
+} // namespace Hydrogen::Memory

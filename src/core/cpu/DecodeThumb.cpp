@@ -1,4 +1,4 @@
-// ArgonVM — Thumb / Thumb-2 (T32) decoder → IR.
+// HydrogenVM — Thumb / Thumb-2 (T32) decoder → IR.
 // Encoding references are to the ARMv7-A/R ARM, chapter A6.
 //
 // IT blocks are resolved at decode time: the engine tracks ITSTATE while it
@@ -7,7 +7,7 @@
 // block do not set them inside one, which is also decided here.
 #include "Decoder.hpp"
 
-namespace Argon::CPU {
+namespace Hydrogen::CPU {
 namespace {
 
 using R = DecodeResult;
@@ -664,4 +664,4 @@ DecodeResult decodeThumb(BlockBuilder& bb, uint16_t hw1, uint16_t hw2, uint32_t 
     return r;
 }
 
-} // namespace Argon::CPU
+} // namespace Hydrogen::CPU

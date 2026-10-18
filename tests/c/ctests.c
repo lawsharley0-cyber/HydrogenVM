@@ -1,6 +1,6 @@
 // Differential tests: compiled once for the host (to produce expected values)
 // and several times for the guest (ARM, Thumb-2, Thumb-2 + hardware divide),
-// then run in ArgonVM and compared. Everything uses fixed-width types and
+// then run in HydrogenVM and compared. Everything uses fixed-width types and
 // avoids undefined behaviour so host and guest results must match exactly.
 #include <stdint.h>
 
@@ -183,7 +183,7 @@ TEST(t_bubble_i16) {
 
 TEST(t_strings) {
     char buf[64];
-    const char* src = "ArgonVM: legacy iOS on modern silicon";
+    const char* src = "HydrogenVM: legacy iOS on modern silicon";
     int n = 0;
     while (src[n]) { buf[n] = src[n]; ++n; }
     buf[n] = 0;

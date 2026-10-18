@@ -1,7 +1,7 @@
-// ArgonVM test runner.
+// HydrogenVM test runner.
 //
-//   argon_tests asm <elf> <source.S>...   run hand-written unit tests
-//   argon_tests c <elf> <expected.txt>     run compiled-C tests, compare to host results
+//   hvm_tests asm <elf> <source.S>...   run hand-written unit tests
+//   hvm_tests c <elf> <expected.txt>     run compiled-C tests, compare to host results
 //
 // Asm test format (in the .S source):
 //   @ TEST <symbol>
@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-using namespace Argon;
+using namespace Hydrogen;
 
 namespace {
 

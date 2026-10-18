@@ -1,7 +1,7 @@
-// ArgonVM — IR handlers.
+// HydrogenVM — IR handlers.
 //
 // Every handler has the same signature and ends by tail-calling the next Op
-// (ARGON_NEXT) or by returning to the dispatcher. Because every call is a
+// (HVM_NEXT) or by returning to the dispatcher. Because every call is a
 // guaranteed tail call there is no stack growth no matter how long the guest runs.
 //
 // Register values live in Cpu::r[] (L1-resident). The original handoff pinned
@@ -16,15 +16,15 @@
 #include <cstring>
 #include <climits>
 
-namespace Argon::CPU {
+namespace Hydrogen::CPU {
 
 // Implemented by the Engine.
-Block* argonEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => stop
-void   argonCallHle(Cpu* c, uint32_t index);
+Block* hvmEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => stop
+void   hvmCallHle(Cpu* c, uint32_t index);
 
-#define ARGON_H(name) inline ARGON_HOT_ABI void name(Cpu* c, const Op* op, uint8_t* m)
-#define ARGON_NEXT()  do { const Op* _n = op + 1; [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
-#define ARGON_GOTO(o) do { const Op* _n = (o); [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
+#define HVM_H(name) inline HVM_HOT_ABI void name(Cpu* c, const Op* op, uint8_t* m)
+#define HVM_NEXT()  do { const Op* _n = op + 1; [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
+#define HVM_GOTO(o) do { const Op* _n = (o); [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
 
 // ---------------------------------------------------------------- helpers ---
 
@@ -100,47 +100,47 @@ inline uint32_t shiftImmDyn(uint32_t v, uint32_t type, uint32_t n, uint32_t cin)
 
 // --------------------------------------------------------- control / misc ---
 
-ARGON_H(H_Nop) { ARGON_NEXT(); }
+HVM_H(H_Nop) { HVM_NEXT(); }
 
 // r[a] = imm
-ARGON_H(H_MovImm) { c->r[op->a] = op->imm; ARGON_NEXT(); }
+HVM_H(H_MovImm) { c->r[op->a] = op->imm; HVM_NEXT(); }
 
 // r[a] = r[b]
-ARGON_H(H_MovReg) { c->r[op->a] = c->r[op->b]; ARGON_NEXT(); }
+HVM_H(H_MovReg) { c->r[op->a] = c->r[op->b]; HVM_NEXT(); }
 
 // Conditional execution: if cond (a) fails, skip the next imm ops.
-ARGON_H(H_CondSkip) {
-    if (condPasses(op->a, c->nzcv)) ARGON_NEXT();
-    ARGON_GOTO(op + 1 + op->imm);
+HVM_H(H_CondSkip) {
+    if (condPasses(op->a, c->nzcv)) HVM_NEXT();
+    HVM_GOTO(op + 1 + op->imm);
 }
 
 inline void retire(Cpu* c, uint32_t n) { c->budget -= n; c->insn_count += n; }
 
 // CBZ/CBNZ: a = rn, b = 1 for CBNZ. Falls into the next op (the taken-branch
 // exit) when the branch is taken, otherwise skips it.
-ARGON_H(H_CbSkip) {
-    if ((c->r[op->a] != 0) == bool(op->b)) ARGON_NEXT();
-    ARGON_GOTO(op + 2);
+HVM_H(H_CbSkip) {
+    if ((c->r[op->a] != 0) == bool(op->b)) HVM_NEXT();
+    HVM_GOTO(op + 2);
 }
 
 // TBB/TBH: a = rn, c = rm, d = 1 for TBH, imm = PC value (insn + 4).
 // Writes the branch target to r15; followed by an indirect exit.
-ARGON_H(H_TableBranch) {
+HVM_H(H_TableBranch) {
     const uint32_t base = c->r[op->a], idx = c->r[op->c];
     const uint32_t off = op->d ? ld<uint16_t>(m, base + idx * 2) : ld<uint8_t>(m, base + idx);
     c->r[kPC] = op->imm + off * 2;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // Direct branch to imm (address), a = target thumb bit, b = insns retired.
-ARGON_H(H_BranchDirect) {
+HVM_H(H_BranchDirect) {
     c->r[kPC] = op->imm;
     c->thumb = op->a;
     retire(c, op->b);
     if (c->budget <= 0) { c->exit = Exit::Budget; return; }
     Block* nb = op->link;
     if (__builtin_expect(nb == nullptr, 0)) {
-        nb = argonEnterBlock(c, op->imm | op->a);
+        nb = hvmEnterBlock(c, op->imm | op->a);
         if (!nb) return;
         op->link = nb;
     }
@@ -152,7 +152,7 @@ ARGON_H(H_BranchDirect) {
 // Indirect branch to r[a]. c = 0: interworking (BX semantics, bit0 selects Thumb)
 //                          c = 1: stay in current state (BranchWritePC)
 // b = insns retired.
-ARGON_H(H_BranchIndirect) {
+HVM_H(H_BranchIndirect) {
     uint32_t t = c->r[op->a];
     if (op->c == 0) {
         c->thumb = t & 1;
@@ -163,7 +163,7 @@ ARGON_H(H_BranchIndirect) {
     c->r[kPC] = t;
     retire(c, op->b);
     if (c->budget <= 0) { c->exit = Exit::Budget; return; }
-    Block* nb = argonEnterBlock(c, t | c->thumb);
+    Block* nb = hvmEnterBlock(c, t | c->thumb);
     if (!nb) return;
     c->block_pc = t;
     const Op* first = nb->ops.data();
@@ -171,42 +171,42 @@ ARGON_H(H_BranchIndirect) {
 }
 
 // SVC #imm2: next pc in imm, thumb in a.
-ARGON_H(H_Svc) {
+HVM_H(H_Svc) {
     c->r[kPC] = op->imm; c->thumb = op->a; retire(c, op->b);
     c->exit = Exit::Svc; c->exit_info = op->imm2;
 }
 
 // Undefined / unimplemented instruction at op->pc (raw encoding in imm).
-ARGON_H(H_Undefined) {
+HVM_H(H_Undefined) {
     c->r[kPC] = op->pc; c->thumb = op->a; retire(c, op->b);
     c->exit = Exit::Undefined; c->exit_info = op->pc;
 }
 
 // BKPT / UDF used as a trap: report and stop at the instruction.
-ARGON_H(H_Breakpoint) {
+HVM_H(H_Breakpoint) {
     c->r[kPC] = op->pc; c->thumb = op->a; retire(c, op->b);
     c->exit = Exit::Breakpoint; c->exit_info = op->imm;
 }
 
 // Instruction fetch from unmapped memory.
-ARGON_H(H_FetchFault) {
+HVM_H(H_FetchFault) {
     c->r[kPC] = op->pc; c->thumb = op->a; retire(c, op->b);
     c->exit = Exit::MemFault; c->exit_info = op->pc;
 }
 
 // High-level-emulated function: call host function #imm, then continue.
-ARGON_H(H_Hle) {
-    argonCallHle(c, op->imm);
+HVM_H(H_Hle) {
+    hvmCallHle(c, op->imm);
     if (c->exit != Exit::None) return;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // MRC p15 thread ID registers. a = rd, imm: 2 = TPIDRURW, 3 = TPIDRURO
-ARGON_H(H_ReadTpid) { c->r[op->a] = op->imm == 2 ? c->tpidrurw : c->tpidruro; ARGON_NEXT(); }
+HVM_H(H_ReadTpid) { c->r[op->a] = op->imm == 2 ? c->tpidrurw : c->tpidruro; HVM_NEXT(); }
 // MCR p15 TPIDRURW (only the RW one is writable from user mode). a = rt
-ARGON_H(H_WriteTpid) { c->tpidrurw = c->r[op->a]; ARGON_NEXT(); }
+HVM_H(H_WriteTpid) { c->tpidrurw = c->r[op->a]; HVM_NEXT(); }
 
-ARGON_H(H_Fence) { __atomic_thread_fence(__ATOMIC_SEQ_CST); ARGON_NEXT(); }
+HVM_H(H_Fence) { __atomic_thread_fence(__ATOMIC_SEQ_CST); HVM_NEXT(); }
 
 // ------------------------------------------------------- data processing ---
 
@@ -244,7 +244,7 @@ inline uint32_t operand2(const Cpu* c, const Op* op, uint32_t cin, uint32_t& cou
 
 // a = rd, b = rn, c = rm, d = rs / carry mode, imm = immediate / shift amount
 template <int OPC, bool S, int K>
-ARGON_H(H_Alu) {
+HVM_H(H_Alu) {
     const uint32_t cin = (c->nzcv >> 29) & 1;
     uint32_t sc;
     const uint32_t y = operand2<K>(c, op, cin, sc);
@@ -273,26 +273,26 @@ ARGON_H(H_Alu) {
     }
     if constexpr (!aluIsTest(OPC)) c->r[op->a] = r;
     if constexpr (S) c->nzcv = flags;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // ---------------------------------------------------------------- multiply ---
 
 // a = rd, b = rn, c = rm, d = ra ; imm: 0 MUL, 1 MLA, 2 MLS
 template <int KIND, bool S>
-ARGON_H(H_Mul) {
+HVM_H(H_Mul) {
     uint32_t r = c->r[op->b] * c->r[op->c];
     if constexpr (KIND == 1) r = r + c->r[op->d];
     if constexpr (KIND == 2) r = c->r[op->d] - r;
     c->r[op->a] = r;
     if constexpr (S) c->nzcv = (c->nzcv & (kFlagC | kFlagV)) | nzOf(r);
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // Long multiplies. a = rdlo, b = rdhi, c = rn, d = rm.
 // KIND: 0 UMULL, 1 UMLAL, 2 SMULL, 3 SMLAL, 4 UMAAL
 template <int KIND, bool S>
-ARGON_H(H_MulLong) {
+HVM_H(H_MulLong) {
     uint64_t r;
     if constexpr (KIND == 0 || KIND == 1 || KIND == 4) r = uint64_t(c->r[op->c]) * c->r[op->d];
     else r = uint64_t(int64_t(int32_t(c->r[op->c])) * int64_t(int32_t(c->r[op->d])));
@@ -301,7 +301,7 @@ ARGON_H(H_MulLong) {
     c->r[op->a] = uint32_t(r);
     c->r[op->b] = uint32_t(r >> 32);
     if constexpr (S) c->nzcv = (c->nzcv & (kFlagC | kFlagV)) | (uint32_t(r >> 32) & kFlagN) | (r == 0 ? kFlagZ : 0);
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 inline int32_t half(uint32_t v, uint32_t top) { return top ? int32_t(v) >> 16 : int32_t(int16_t(v)); }
@@ -311,7 +311,7 @@ inline int32_t half(uint32_t v, uint32_t top) { return top ? int32_t(v) >> 16 : 
 // imm bits: 0 = rn top half (x), 1 = rm top half (y)
 // KIND: 0 SMULxy, 1 SMLAxy, 2 SMULWy, 3 SMLAWy, 4 SMLALxy
 template <int KIND>
-ARGON_H(H_MulHalf) {
+HVM_H(H_MulHalf) {
     const uint32_t xt = op->imm & 1, yt = (op->imm >> 1) & 1;
     if constexpr (KIND == 0 || KIND == 1) {
         int32_t p = half(c->r[op->b], xt) * half(c->r[op->c], yt);
@@ -335,14 +335,14 @@ ARGON_H(H_MulHalf) {
         c->r[op->a] = uint32_t(acc);
         c->r[op->d] = uint32_t(uint64_t(acc) >> 32);
     }
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // Dual 16-bit / most-significant-word multiplies.
 // a = rd (rdlo), b = rn, c = rm, d = ra (rdhi), imm: bit0 = X (swap rm halves) / R (round)
 // KIND: 0 SMLAD, 1 SMLSD, 2 SMLALD, 3 SMLSLD, 4 SMMLA, 5 SMMLS, 6 SMMUL, 7 SMUAD, 8 SMUSD
 template <int KIND>
-ARGON_H(H_MulDual) {
+HVM_H(H_MulDual) {
     uint32_t n = c->r[op->b], mm = c->r[op->c];
     if constexpr (KIND <= 3 || KIND >= 7) {
         if (op->imm & 1) mm = ror32(mm, 16);
@@ -371,12 +371,12 @@ ARGON_H(H_MulDual) {
         if (op->imm & 1) r += 0x80000000LL;
         c->r[op->a] = uint32_t(uint64_t(r) >> 32);
     }
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // a = rd, b = rn, c = rm.  SIGNED: SDIV else UDIV. Division by zero yields 0.
 template <bool SIGNED>
-ARGON_H(H_Div) {
+HVM_H(H_Div) {
     uint32_t n = c->r[op->b], d = c->r[op->c], r;
     if (d == 0) r = 0;
     else if constexpr (SIGNED) {
@@ -384,14 +384,14 @@ ARGON_H(H_Div) {
         else r = uint32_t(int32_t(n) / int32_t(d));
     } else r = n / d;
     c->r[op->a] = r;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // ------------------------------------------------------------ bit twiddling ---
 
 // a = rd, b = rm. KIND: 0 CLZ, 1 RBIT, 2 REV, 3 REV16, 4 REVSH
 template <int KIND>
-ARGON_H(H_BitOp) {
+HVM_H(H_BitOp) {
     uint32_t v = c->r[op->b], r;
     if constexpr (KIND == 0) r = v ? uint32_t(__builtin_clz(v)) : 32;
     else if constexpr (KIND == 1) r = __builtin_bitreverse32(v);
@@ -399,13 +399,13 @@ ARGON_H(H_BitOp) {
     else if constexpr (KIND == 3) r = ((v & 0x00FF00FFu) << 8) | ((v & 0xFF00FF00u) >> 8);
     else r = uint32_t(int32_t(int16_t(uint16_t(((v & 0xFF) << 8) | ((v >> 8) & 0xFF)))));
     c->r[op->a] = r;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // Extends. a = rd, b = rn (0xFF = none), c = rm, imm = rotation (0/8/16/24)
 // KIND: 0 SXTB, 1 SXTH, 2 UXTB, 3 UXTH, 4 SXTB16, 5 UXTB16
 template <int KIND, bool ADD>
-ARGON_H(H_Extend) {
+HVM_H(H_Extend) {
     uint32_t v = ror32(c->r[op->c], op->imm), r;
     if constexpr (KIND == 0) r = uint32_t(int32_t(int8_t(v)));
     else if constexpr (KIND == 1) r = uint32_t(int32_t(int16_t(v)));
@@ -420,24 +420,24 @@ ARGON_H(H_Extend) {
         else r = n + r;
     }
     c->r[op->a] = r;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // Bitfields. a = rd, b = rn, imm = lsb, imm2 = width
 // KIND: 0 UBFX, 1 SBFX, 2 BFI, 3 BFC
 template <int KIND>
-ARGON_H(H_Bitfield) {
+HVM_H(H_Bitfield) {
     const uint32_t lsb = op->imm, w = op->imm2;
     const uint32_t mask = w >= 32 ? 0xFFFFFFFFu : ((1u << w) - 1);
     if constexpr (KIND == 0) c->r[op->a] = (c->r[op->b] >> lsb) & mask;
     else if constexpr (KIND == 1) c->r[op->a] = uint32_t(int32_t(c->r[op->b] << (32 - lsb - w)) >> (32 - w));
     else if constexpr (KIND == 2) c->r[op->a] = (c->r[op->a] & ~(mask << lsb)) | ((c->r[op->b] & mask) << lsb);
     else c->r[op->a] &= ~(mask << lsb);
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // MOVT: a = rd, imm = imm16
-ARGON_H(H_Movt) { c->r[op->a] = (c->r[op->a] & 0xFFFF) | (op->imm << 16); ARGON_NEXT(); }
+HVM_H(H_Movt) { c->r[op->a] = (c->r[op->a] & 0xFFFF) | (op->imm << 16); HVM_NEXT(); }
 
 // ------------------------------------------------------------- saturation ---
 
@@ -457,7 +457,7 @@ inline uint32_t usat(int64_t v, uint32_t bits, uint32_t& sat) {  // bits 0..31
 // a = rd, c = rn, d = shift type (LSL/ASR), imm = shift amount, imm2 = saturate bits
 // KIND: 0 SSAT, 1 USAT, 2 SSAT16, 3 USAT16
 template <int KIND>
-ARGON_H(H_Sat) {
+HVM_H(H_Sat) {
     uint32_t sat = 0, v = c->r[op->c], r;
     if constexpr (KIND <= 1) {
         uint32_t co;
@@ -473,24 +473,24 @@ ARGON_H(H_Sat) {
     }
     if (sat) c->q = 1;
     c->r[op->a] = r;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // QADD/QSUB/QDADD/QDSUB. a = rd, b = rn, c = rm. KIND: 0 QADD, 1 QSUB, 2 QDADD, 3 QDSUB
 template <int KIND>
-ARGON_H(H_QArith) {
+HVM_H(H_QArith) {
     uint32_t sat = 0;
     int64_t n = int32_t(c->r[op->b]), x = int32_t(c->r[op->c]);
     if constexpr (KIND >= 2) n = ssat(2 * n, 32, sat);
     int64_t r = (KIND == 0 || KIND == 2) ? x + n : x - n;
     c->r[op->a] = uint32_t(ssat(r, 32, sat));
     if (sat) c->q = 1;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // Parallel add/subtract. a = rd, b = rn, c = rm,
 // d = prefix (0 S, 1 Q, 2 SH, 3 U, 4 UQ, 5 UH), imm = op (0 ADD16, 1 ASX, 2 SAX, 3 SUB16, 4 ADD8, 7 SUB8)
-ARGON_H(H_Parallel) {
+HVM_H(H_Parallel) {
     const uint32_t n = c->r[op->b], mm = c->r[op->c], pre = op->d, o = op->imm;
     const bool sgn = pre <= 2;
     uint32_t res = 0, ge = 0;
@@ -538,22 +538,22 @@ ARGON_H(H_Parallel) {
     }
     c->r[op->a] = res;
     if (pre == 0 || pre == 3) c->ge = ge << 16;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // SEL: a = rd, b = rn, c = rm
-ARGON_H(H_Sel) {
+HVM_H(H_Sel) {
     uint32_t r = 0;
     for (int i = 0; i < 4; ++i) {
         uint32_t msk = 0xFFu << (i * 8);
         r |= ((c->ge >> (16 + i)) & 1 ? c->r[op->b] : c->r[op->c]) & msk;
     }
     c->r[op->a] = r;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // PKHBT / PKHTB: a = rd, b = rn, c = rm, imm = shift, d = 0 BT (LSL) / 1 TB (ASR)
-ARGON_H(H_Pkh) {
+HVM_H(H_Pkh) {
     uint32_t co, mm = c->r[op->c], n = c->r[op->b];
     if (op->d == 0) {
         uint32_t s = shiftImm<kLSL>(mm, op->imm, 0, co);
@@ -562,11 +562,11 @@ ARGON_H(H_Pkh) {
         uint32_t s = shiftImm<kASR>(mm, op->imm ? op->imm : 32, 0, co);
         c->r[op->a] = (n & 0xFFFF0000u) | (s & 0xFFFF);
     }
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // USAD8 / USADA8: a = rd, b = rn, c = rm, d = ra (0xFF = none)
-ARGON_H(H_Usad8) {
+HVM_H(H_Usad8) {
     uint32_t n = c->r[op->b], mm = c->r[op->c], s = 0;
     for (int i = 0; i < 4; ++i) {
         int x = int((n >> (i * 8)) & 0xFF) - int((mm >> (i * 8)) & 0xFF);
@@ -574,20 +574,20 @@ ARGON_H(H_Usad8) {
     }
     if (op->d != 0xFF) s += c->r[op->d];
     c->r[op->a] = s;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // ---------------------------------------------------------- status register ---
 
 // MRS rd, APSR
-ARGON_H(H_Mrs) { c->r[op->a] = c->nzcv | (c->q << 27) | c->ge | 0x10; ARGON_NEXT(); }
+HVM_H(H_Mrs) { c->r[op->a] = c->nzcv | (c->q << 27) | c->ge | 0x10; HVM_NEXT(); }
 
 // MSR APSR_<mask>, rn|imm. a = rn (0xFF => use imm), d: bit0 nzcvq, bit1 g
-ARGON_H(H_Msr) {
+HVM_H(H_Msr) {
     uint32_t v = op->a == 0xFF ? op->imm : c->r[op->a];
     if (op->d & 1) { c->nzcv = v & kFlagMaskNZCV; c->q = (v >> 27) & 1; }
     if (op->d & 2) c->ge = v & 0x000F0000u;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // ------------------------------------------------------------ loads/stores ---
@@ -612,7 +612,7 @@ template <int K> inline void memStore(uint8_t* m, uint32_t a, uint32_t v) {
 // a = rt, b = rn, c = rm, d = (shift type) | 0x80 if register offset is subtracted
 // imm = signed immediate offset (REG = false) or shift amount (REG = true)
 template <int K, bool LOAD, int AM, bool REG>
-ARGON_H(H_Mem) {
+HVM_H(H_Mem) {
     const uint32_t base = c->r[op->b];
     uint32_t off;
     if constexpr (REG) {
@@ -631,12 +631,12 @@ ARGON_H(H_Mem) {
         memStore<K>(m, addr, c->r[op->a]);
         if constexpr (AM != kAmOffset) c->r[op->b] = ea;
     }
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // LDRD/STRD. a = rt, imm2 = rt2, b = rn, c = rm, d as H_Mem, imm offset/shift
 template <bool LOAD, int AM, bool REG>
-ARGON_H(H_MemDual) {
+HVM_H(H_MemDual) {
     const uint32_t base = c->r[op->b];
     uint32_t off = REG ? c->r[op->c] : op->imm;
     if (REG && (op->d & 0x80)) off = 0u - off;
@@ -650,12 +650,12 @@ ARGON_H(H_MemDual) {
         st<uint32_t>(m, addr, c->r[op->a]); st<uint32_t>(m, addr + 4, c->r[op->imm2]);
         if constexpr (AM != kAmOffset) c->r[op->b] = ea;
     }
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // LDM/STM. b = rn, imm = register list, d: bit0 increment, bit1 before, bit2 writeback
 template <bool LOAD>
-ARGON_H(H_Multi) {
+HVM_H(H_Multi) {
     const uint32_t list = op->imm, n = uint32_t(__builtin_popcount(list));
     const uint32_t base = c->r[op->b];
     const bool inc = op->d & 1, before = op->d & 2, wb = op->d & 4;
@@ -674,14 +674,14 @@ ARGON_H(H_Multi) {
         }
         if (wb) c->r[op->b] = newbase;
     }
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // ---------------------------------------------------------------- atomics ---
 
 // LDREX{B,H,,D}: a = rt, imm2 = rt2 (D only), b = rn, imm = offset. SZ in bytes.
 template <int SZ>
-ARGON_H(H_Ldrex) {
+HVM_H(H_Ldrex) {
     const uint32_t addr = c->r[op->b] + op->imm;
     uint64_t v;
     if constexpr (SZ == 1) v = __atomic_load_n(reinterpret_cast<uint8_t*>(m + uint64_t(addr)), __ATOMIC_ACQUIRE);
@@ -691,12 +691,12 @@ ARGON_H(H_Ldrex) {
     c->excl_addr = addr; c->excl_value = v; c->excl_size = SZ;
     if constexpr (SZ == 8) { c->r[op->a] = uint32_t(v); c->r[op->imm2] = uint32_t(v >> 32); }
     else c->r[op->a] = uint32_t(v);
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
 // STREX{B,H,,D}: a = rd (status), c = rt, imm2 = rt2 (D only), b = rn, imm = offset.
 template <int SZ>
-ARGON_H(H_Strex) {
+HVM_H(H_Strex) {
     const uint32_t addr = c->r[op->b] + op->imm;
     uint32_t status = 1;
     if (c->excl_size == SZ && c->excl_addr == addr) {
@@ -709,19 +709,19 @@ ARGON_H(H_Strex) {
     }
     c->excl_size = 0;
     c->r[op->a] = status;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
-ARGON_H(H_Clrex) { c->excl_size = 0; ARGON_NEXT(); }
+HVM_H(H_Clrex) { c->excl_size = 0; HVM_NEXT(); }
 
 // SWP / SWPB: a = rt, c = rt2 (value), b = rn
 template <bool BYTE>
-ARGON_H(H_Swp) {
+HVM_H(H_Swp) {
     const uint32_t addr = c->r[op->b];
     if constexpr (BYTE) c->r[op->a] = __atomic_exchange_n(reinterpret_cast<uint8_t*>(m + uint64_t(addr)), uint8_t(c->r[op->c]), __ATOMIC_SEQ_CST);
     else c->r[op->a] = __atomic_exchange_n(reinterpret_cast<uint32_t*>(m + uint64_t(addr)), c->r[op->c], __ATOMIC_SEQ_CST);
     c->excl_size = 0;
-    ARGON_NEXT();
+    HVM_NEXT();
 }
 
-} // namespace Argon::CPU
+} // namespace Hydrogen::CPU

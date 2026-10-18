@@ -4,12 +4,12 @@
 #include <csignal>
 #include <cstring>
 
-namespace Argon::CPU {
+namespace Hydrogen::CPU {
 
 // -------------------------------------------------------------- IR hooks ---
 
-Block* argonEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
-void   argonCallHle(Cpu* c, uint32_t index)  { c->engine->callHle(c, index); }
+Block* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
+void   hvmCallHle(Cpu* c, uint32_t index)  { c->engine->callHle(c, index); }
 
 // ----------------------------------------------------------- fault guard ---
 //
@@ -69,7 +69,7 @@ Engine::~Engine() = default;
 uint32_t Engine::registerHle(std::string name, HleFn fn) {
     std::lock_guard<std::mutex> lk(mu_);
     const uint32_t idx = uint32_t(hle_.size());
-    if (idx >= Memory::GuestArena::kHleSize / 4) throw std::runtime_error("ArgonVM: HLE table full");
+    if (idx >= Memory::GuestArena::kHleSize / 4) throw std::runtime_error("HydrogenVM: HLE table full");
     hle_.push_back({std::move(name), std::move(fn)});
     return Memory::GuestArena::kHleBase + idx * 4;
 }
@@ -248,4 +248,4 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     return cpu.exit;
 }
 
-} // namespace Argon::CPU
+} // namespace Hydrogen::CPU
