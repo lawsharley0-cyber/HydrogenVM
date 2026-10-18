@@ -1,0 +1,167 @@
+// ArgonVM — guest CPU state and the threaded-IR data structures.
+//
+// Execution model (see docs/ARCHITECTURE.md for the reasoning):
+//
+//  * Guest code is decoded lazily, one basic block at a time, the first time
+//    execution reaches it ("decode on first run"). Nothing is decoded ahead of
+//    time, so literal pools / jump tables / ARM-vs-Thumb ambiguity are never a
+//    problem: we only decode what the guest actually jumps to, in the mode it
+//    jumps in.
+//  * A block is a flat array of Ops. Each Op holds a pointer to a small C++
+//    handler that does its work and then tail-calls (op+1)->fn with
+//    [[clang::musttail]]. The handlers are ordinary, signed, ahead-of-time
+//    compiled code; the Ops are plain data. No executable memory is ever
+//    created, so this runs under iOS W^X without JIT entitlements.
+//  * Blocks end with an exit Op that either chains straight into the next block
+//    (cached pointer = "block linking") or returns to the dispatcher when the
+//    time-slice budget runs out, so the guest can always be interrupted.
+#pragma once
+#include <cstdint>
+#include <cstddef>
+#include <vector>
+
+#if defined(__clang__) && __has_attribute(preserve_none) && (defined(__x86_64__) || defined(__aarch64__)) && (__clang_major__ >= 19)
+#  define ARGON_HOT_ABI __attribute__((preserve_none))
+#else
+#  define ARGON_HOT_ABI
+#endif
+
+#if !defined(__clang__)
+#  error "ArgonVM's execution core requires clang ([[clang::musttail]])"
+#endif
+
+namespace Argon::CPU {
+
+struct Cpu;
+struct Op;
+struct Block;
+class Engine;
+
+using Handler = void (ARGON_HOT_ABI*)(Cpu* c, const Op* op, uint8_t* mem);
+
+// Register file indices. 0-15 are the architectural registers; 16+ are
+// scratch registers the decoder uses (e.g. to materialise PC-relative values).
+enum : uint8_t {
+    kSP = 13, kLR = 14, kPC = 15,
+    kTmp0 = 16, kTmp1 = 17, kTmp2 = 18, kTmp3 = 19,
+    kNumRegs = 20,
+};
+
+// NZCV live in bits 31..28, exactly as in the APSR.
+enum : uint32_t {
+    kFlagN = 1u << 31, kFlagZ = 1u << 30, kFlagC = 1u << 29, kFlagV = 1u << 28,
+    kFlagMaskNZCV = 0xF0000000u,
+};
+
+enum class Exit : uint32_t {
+    None = 0,
+    Budget,        // time slice used up; resume at r[15]
+    Halt,          // a host (HLE) function asked to stop
+    Svc,           // SVC #info executed; r[15] = next instruction
+    Undefined,     // undecodable / unimplemented instruction at info
+    Breakpoint,    // BKPT / UDF trap at info
+    MemFault,      // host fault on guest address `info`
+};
+
+struct alignas(64) Cpu {
+    uint32_t r[kNumRegs] = {};
+    uint32_t nzcv  = 0;        // N Z C V in bits 31..28
+    uint32_t q     = 0;        // sticky saturation flag (APSR.Q), 0/1
+    uint32_t ge    = 0;        // APSR.GE in bits 19..16
+    uint32_t thumb = 0;        // current instruction set state (T bit)
+
+    // VFP / NEON register file (Phase 2). D0-D31 alias S0-S63 / Q0-Q15.
+    alignas(16) uint64_t d[32] = {};
+    uint32_t fpscr = 0;
+
+    // User-visible thread ID registers (CP15 c13). 32-bit iOS keeps the
+    // thread's TSD pointer in TPIDRURO and reads it with MRC p15,0,Rt,c13,c0,3.
+    uint32_t tpidrurw = 0;
+    uint32_t tpidruro = 0;
+
+    // Exclusive monitor (LDREX/STREX). Implemented as compare-and-swap against
+    // the value observed by LDREX, which stays correct when guest threads run
+    // on real host threads.
+    uint32_t excl_addr  = 0;
+    uint64_t excl_value = 0;
+    uint8_t  excl_size  = 0;   // 0 = monitor open/clear
+
+    // Dispatcher bookkeeping.
+    int64_t  budget     = 0;   // guest instructions left in this time slice
+    Exit     exit       = Exit::None;
+    uint32_t exit_info  = 0;
+    uint32_t block_pc   = 0;   // start of the block currently executing (fault reports)
+    uint64_t insn_count = 0;   // retired guest instructions (approximate, per block)
+    Engine*  engine     = nullptr;
+    void*    user       = nullptr;  // owner (guest thread object, test harness, ...)
+
+    uint32_t pc() const { return r[kPC]; }
+    uint32_t cpsr() const { return nzcv | (q << 27) | ge | (thumb << 5) | 0x10 /*USR*/; }
+    void setApsrFlags(uint32_t v) { nzcv = v & kFlagMaskNZCV; q = (v >> 27) & 1; ge = v & 0x000F0000u; }
+};
+
+// One IR instruction. 32 bytes, two per cache line.
+struct alignas(32) Op {
+    Handler  fn;
+    uint8_t  a, b, c, d;      // operand fields (usually rd, rn, rm, rs/flags)
+    uint32_t imm;
+    uint32_t imm2;
+    uint32_t pc;              // guest address of the source instruction
+    mutable Block* link;      // exit ops: cached successor block
+};
+static_assert(sizeof(Op) == 32, "Op should stay 32 bytes");
+
+struct Block {
+    uint32_t key = 0;          // guest start address | thumb bit
+    uint32_t end = 0;          // guest address one past the last decoded instruction
+    uint32_t guest_insns = 0;
+    bool     valid = true;
+    std::vector<Op> ops;
+};
+
+// Condition-code evaluation: kCondPass[cond] has bit `nzcv>>28` set if `cond` passes.
+struct CondTable {
+    uint16_t pass[16];
+    constexpr CondTable() : pass{} {
+        for (int c = 0; c < 16; ++c) {
+            uint16_t m = 0;
+            for (int f = 0; f < 16; ++f) {
+                bool N = f & 8, Z = f & 4, C = f & 2, V = f & 1, r = false;
+                switch (c >> 1) {
+                    case 0: r = Z; break;
+                    case 1: r = C; break;
+                    case 2: r = N; break;
+                    case 3: r = V; break;
+                    case 4: r = C && !Z; break;
+                    case 5: r = N == V; break;
+                    case 6: r = !Z && (N == V); break;
+                    case 7: r = true; break;
+                }
+                if ((c & 1) && c != 15) r = !r;
+                if (r) m |= uint16_t(1u << f);
+            }
+            pass[c] = m;
+        }
+    }
+};
+inline constexpr CondTable kCond{};
+
+inline bool condPasses(uint32_t cond, uint32_t nzcv) {
+    return (kCond.pass[cond] >> (nzcv >> 28)) & 1;
+}
+
+// Which flags a condition reads (for dead-flag elimination).
+inline constexpr uint8_t condReads(uint32_t cond) {
+    switch (cond >> 1) {
+        case 0: return 0x4;           // Z
+        case 1: return 0x2;           // C
+        case 2: return 0x8;           // N
+        case 3: return 0x1;           // V
+        case 4: return 0x6;           // C Z
+        case 5: return 0x9;           // N V
+        case 6: return 0xD;           // N Z V
+        default: return 0;
+    }
+}
+
+} // namespace Argon::CPU
