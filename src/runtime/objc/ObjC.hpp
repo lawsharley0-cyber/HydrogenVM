@@ -235,6 +235,15 @@ struct ThreadState {
 };
 ThreadState& threadState(Process& p);
 
+// Blocks runtime (Blocks.cpp): _Block_copy / _Block_release, and calling a block.
+uint32_t blockCopy(Ctx& x, uint32_t block);
+void blockRelease(Ctx& x, uint32_t block);
+inline uint64_t callBlock(Ctx& x, uint32_t block, std::initializer_list<uint32_t> args = {}) {
+    std::vector<uint32_t> a{block};
+    a.insert(a.end(), args.begin(), args.end());
+    return x.proc.callGuest(x.cpu, x.mem.read<uint32_t>(block + 12), a);
+}
+
 void registerNSObject(Runtime& r);
 void registerBlocks(Process& p, Runtime& r);
 void registerObjCApi(Process& p, Runtime& r);

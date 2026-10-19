@@ -45,6 +45,7 @@ bool latchingDecr(uint32_t* where) {
     }
 }
 
+} // namespace
 uint32_t blockCopy(Ctx& x, uint32_t b) {
     if (!b) return 0;
     uint32_t& flags = flagsRef(x, b, 4);
@@ -78,6 +79,7 @@ void blockRelease(Ctx& x, uint32_t b) {
     }
     x.proc.heap().free(b);
 }
+namespace {
 
 uint32_t byrefCopy(Ctx& x, uint32_t src) {
     const uint32_t fwd = x.mem.read<uint32_t>(src + 4);

@@ -510,6 +510,9 @@ int Process::run() {
             log(LogLevel::Error, crashReport_);
         }
     }
+    for (auto& h : exitHooks_) {
+        try { h(); } catch (const std::exception& e) { logf(LogLevel::Warning, "exit hook failed: %s", e.what()); }
+    }
     requestStop();
     return crashed_ ? -1 : exitCode_;
 }
