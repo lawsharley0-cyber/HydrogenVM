@@ -1,20 +1,20 @@
-# HydrogenVM report — 08f6a9d
+# HydrogenVM report — 7b52fe7
 
-2026-10-19T17:12:30+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-19T19:25:29+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **7 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 231.6s |
+| build | 1 | 0 | 0 | 185.0s |
 | cpu | 15 | 0 | 0 | 0.3s |
 | ios | 0 | 6 | 0 | 0.0s |
-| bench | 4 | 1 | 0 | 0.5s |
+| bench | 4 | 1 | 0 | 0.4s |
 
 ## Speed
 
 
-Raw interpreter speed (CPU test programs): ctests_thumb 426 MIPS, ctests_arm 468 MIPS, ftests_vfp_thumb_softfp 432 MIPS, ftests_neon_thumb 377 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 566 MIPS, ctests_arm 603 MIPS, ftests_vfp_thumb_softfp 488 MIPS, ftests_neon_thumb 417 MIPS
 
 ## Problems (13)
 
@@ -25,17 +25,17 @@ Raw interpreter speed (CPU test programs): ctests_thumb 426 MIPS, ctests_arm 468
   ```
   build failed:
   Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in <module>
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
       main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 188, in main
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
       build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 134, in build_app
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
       syms = undefined_symbols(objs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 66, in undefined_symbols
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
       out = run([NM, "-u", "--just-symbol-name"] + objs)
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 39, in run
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
       p = subprocess.run(cmd, capture_output=True, text=True, **kw)
           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     File "/usr/lib/python3.12/subprocess.py", line 548, in run
@@ -52,17 +52,17 @@ Raw interpreter speed (CPU test programs): ctests_thumb 426 MIPS, ctests_arm 468
   ```
   build failed:
   Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in <module>
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
       main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 188, in main
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
       build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 134, in build_app
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
       syms = undefined_symbols(objs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 66, in undefined_symbols
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
       out = run([NM, "-u", "--just-symbol-name"] + objs)
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 39, in run
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
       p = subprocess.run(cmd, capture_output=True, text=True, **kw)
           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     File "/usr/lib/python3.12/subprocess.py", line 548, in run
@@ -79,17 +79,17 @@ Raw interpreter speed (CPU test programs): ctests_thumb 426 MIPS, ctests_arm 468
   ```
   build failed:
   Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in <module>
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
       main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 188, in main
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
       build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 134, in build_app
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
       syms = undefined_symbols(objs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 66, in undefined_symbols
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
       out = run([NM, "-u", "--just-symbol-name"] + objs)
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 39, in run
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
       p = subprocess.run(cmd, capture_output=True, text=True, **kw)
           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     File "/usr/lib/python3.12/subprocess.py", line 548, in run
@@ -106,17 +106,17 @@ Raw interpreter speed (CPU test programs): ctests_thumb 426 MIPS, ctests_arm 468
   ```
   build failed:
   Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in <module>
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
       main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 188, in main
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
       build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 134, in build_app
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
       syms = undefined_symbols(objs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 66, in undefined_symbols
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
       out = run([NM, "-u", "--just-symbol-name"] + objs)
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 39, in run
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
       p = subprocess.run(cmd, capture_output=True, text=True, **kw)
           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     File "/usr/lib/python3.12/subprocess.py", line 548, in run
@@ -133,17 +133,17 @@ Raw interpreter speed (CPU test programs): ctests_thumb 426 MIPS, ctests_arm 468
   ```
   build failed:
   Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in <module>
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
       main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 188, in main
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
       build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 134, in build_app
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
       syms = undefined_symbols(objs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 66, in undefined_symbols
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
       out = run([NM, "-u", "--just-symbol-name"] + objs)
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 39, in run
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
       p = subprocess.run(cmd, capture_output=True, text=True, **kw)
           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     File "/usr/lib/python3.12/subprocess.py", line 548, in run
@@ -160,17 +160,17 @@ Raw interpreter speed (CPU test programs): ctests_thumb 426 MIPS, ctests_arm 468
   ```
   build failed:
   Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in <module>
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
       main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 188, in main
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
       build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 134, in build_app
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
       syms = undefined_symbols(objs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 66, in undefined_symbols
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
       out = run([NM, "-u", "--just-symbol-name"] + objs)
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 39, in run
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
       p = subprocess.run(cmd, capture_output=True, text=True, **kw)
           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     File "/usr/lib/python3.12/subprocess.py", line 548, in run
@@ -187,17 +187,17 @@ Raw interpreter speed (CPU test programs): ctests_thumb 426 MIPS, ctests_arm 468
   ```
   build failed:
   Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in <module>
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
       main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 188, in main
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
       build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 134, in build_app
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
       syms = undefined_symbols(objs)
              ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 66, in undefined_symbols
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
       out = run([NM, "-u", "--just-symbol-name"] + objs)
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 39, in run
+    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
       p = subprocess.run(cmd, capture_output=True, text=True, **kw)
           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     File "/usr/lib/python3.12/subprocess.py", line 548, in run
