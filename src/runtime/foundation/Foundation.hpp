@@ -155,6 +155,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r);
 void registerDispatch(Process& p, ObjC::Runtime& r);
 void registerMisc(Process& p, ObjC::Runtime& r);
 void registerCoreFoundation(Process& p, ObjC::Runtime& r);
+void registerArchiving(Process& p, ObjC::Runtime& r);
 
 // Convenience: autorelease an owned object from host code.
 inline id autoreleased(Ctx& x, id obj) { return rt(x).autorelease(x.cpu, obj); }

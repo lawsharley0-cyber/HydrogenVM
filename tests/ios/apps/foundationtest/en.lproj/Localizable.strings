@@ -1,0 +1,3 @@
+/* Test strings */
+"GREETING" = "Hello from en.lproj";
+"FAREWELL" = "Bye";

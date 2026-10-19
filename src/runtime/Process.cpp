@@ -10,6 +10,8 @@ namespace fs = std::filesystem;
 
 namespace Hydrogen::Runtime {
 
+void flushGuestStdio(Process& p);   // libc/Stdio.cpp
+
 namespace {
 thread_local GuestThread* t_thread = nullptr;
 
@@ -505,6 +507,7 @@ int Process::run() {
         // exit() called directly from host code
     } catch (const std::exception& e) {
         if (!exiting_) {
+            try { flushGuestStdio(*this); } catch (...) {}
             crashed_ = true;
             crashReport_ = std::string("HydrogenVM error: ") + e.what();
             log(LogLevel::Error, crashReport_);
@@ -518,6 +521,7 @@ int Process::run() {
 }
 
 void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
+    try { flushGuestStdio(*this); } catch (...) {}   // what the app printed before dying is the most useful clue
     std::lock_guard<std::mutex> lk(exitMu_);
     if (crashed_ || exiting_) return;
     crashed_ = true;

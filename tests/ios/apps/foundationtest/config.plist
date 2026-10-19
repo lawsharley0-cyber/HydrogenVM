@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>level</key>
+	<integer>7</integer>
+	<key>name</key>
+	<string>forest</string>
+	<key>enemies</key>
+	<array>
+		<string>slime</string>
+		<string>bat</string>
+	</array>
+</dict>
+</plist>

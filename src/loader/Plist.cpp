@@ -302,7 +302,17 @@ struct Xml {
             if (sc) return dct;
             for (;;) {
                 skipMisc();
-                if (t.compare(p, 2, "</") == 0) { closeTag(tag); return dct; }
+                if (t.compare(p, 2, "</") == 0) {
+                    closeTag(tag);
+                    // <dict><key>CF$UID</key><integer>n</integer></dict> is how XML spells a UID.
+                    if (dct->dict.size() == 1 && dct->dict[0].first == "CF$UID" && dct->dict[0].second->type == Value::Type::Integer) {
+                        auto u = std::make_shared<Value>();
+                        u->type = Value::Type::Uid;
+                        u->i = dct->dict[0].second->i;
+                        return u;
+                    }
+                    return dct;
+                }
                 bool ksc;
                 if (openTag(ksc) != "key") fail("expected <key>");
                 std::string k = ksc ? "" : text("key");
@@ -455,8 +465,12 @@ void writeXml(std::string& out, const Value& v, int indent) {
     switch (v.type) {
         case Value::Type::Null: out += pad + "<string></string>\n"; break;
         case Value::Type::Bool: out += pad + (v.b ? "<true/>\n" : "<false/>\n"); break;
-        case Value::Type::Integer: case Value::Type::Uid:
+        case Value::Type::Integer:
             std::snprintf(buf, sizeof buf, "%lld", (long long)v.i); out += pad + "<integer>" + buf + "</integer>\n"; break;
+        case Value::Type::Uid:
+            std::snprintf(buf, sizeof buf, "%lld", (long long)v.i);
+            out += pad + "<dict>\n" + pad + "\t<key>CF$UID</key>\n" + pad + "\t<integer>" + buf + "</integer>\n" + pad + "</dict>\n";
+            break;
         case Value::Type::Real: std::snprintf(buf, sizeof buf, "%.17g", v.r); out += pad + "<real>" + buf + "</real>\n"; break;
         case Value::Type::Date: {
             const long long secs = (long long)std::floor(v.r) + 978307200LL;
