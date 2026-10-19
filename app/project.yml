@@ -32,6 +32,9 @@ targets:
       - sdk: CoreMotion.framework
       - sdk: AVFoundation.framework
     settings:
+      configs:
+        Release:
+          GCC_OPTIMIZATION_LEVEL: "3"               # the interpreter is the hot path; sideload builds use Release
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM
         PRODUCT_NAME: HydrogenVM

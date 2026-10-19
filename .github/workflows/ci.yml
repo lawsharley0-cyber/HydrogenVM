@@ -29,7 +29,8 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang lld cmake ninja-build zlib1g-dev uuid-dev python3
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev uuid-dev python3
+          command -v llvm-nm && llvm-nm --version | head -1
       - name: Cache ld64 (cctools-port)
         id: cctools
         uses: actions/cache@v4
@@ -83,14 +84,22 @@ jobs:
       - name: Generate Xcode project
         working-directory: app
         run: xcodegen
-      - name: Build for device (unsigned)
+      - name: Build for device (unsigned, Release)
         working-directory: app
         run: |
           rc=0
-          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Debug \
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
             -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
           grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
           exit $rc
+      - name: Package unsigned IPA for sideloading
+        working-directory: app
+        run: |
+          APP="xbuild/Release-iphoneos/HydrogenVM.app"
+          test -d "$APP"
+          rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry "$PWD/../HydrogenVM-unsigned.ipa" Payload)
+          unzip -l HydrogenVM-unsigned.ipa | tail -1
       - name: Build for simulator
         working-directory: app
         run: |
@@ -121,5 +130,6 @@ jobs:
             report/
             app/device-build.log
             app/sim-build.log
+            app/HydrogenVM-unsigned.ipa
             sim-out/
           if-no-files-found: warn
