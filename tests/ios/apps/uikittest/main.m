@@ -2,6 +2,8 @@
 // drawing, images, nibs (both formats), controls, gestures, touch delivery
 // (driven by `hvm run --tap`), display links and animation callbacks.
 #import <UIKit/UIKit.h>
+#import <OpenGLES/EAGL.h>
+#include <OpenGLES/ES2/gl.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -254,6 +256,66 @@ static unsigned pixelAt(CGImageRef img, int x, int y) {
     child.center = CGPointMake(40, 40);
     [UIView commitAnimations];
     CHECK(near(child.center.x, 40), "beginAnimations/commitAnimations apply");
+
+    // UIScrollView, UITableView, UINavigationController, UITabBarController, UITextField, UISwitch, UISlider, UISegmentedControl
+    UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, 100, 100)];
+    sv.contentSize = CGSizeMake(300, 500);
+    [sv setContentOffset:CGPointMake(20, 40) animated:NO];
+    CHECK(near(sv.contentOffset.x, 20) && near(sv.contentOffset.y, 40) && near(sv.bounds.origin.y, 40), "UIScrollView contentOffset updates bounds.origin");
+
+    UITableView *tv = [[UITableView alloc] initWithFrame:CGRectMake(0, 0, 320, 200) style:0];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:0 reuseIdentifier:@"Cell"];
+    cell.textLabel.text = @"Row 0";
+    CHECK([cell.reuseIdentifier isEqualToString:@"Cell"] && [cell.textLabel.text isEqualToString:@"Row 0"], "UITableViewCell textLabel & reuseIdentifier");
+    (void)tv;
+
+    UIViewController *rootVC = [[UIViewController alloc] initWithNibName:nil bundle:nil];
+    rootVC.title = @"Home";
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:rootVC];
+    UIViewController *detailVC = [[UIViewController alloc] initWithNibName:nil bundle:nil];
+    detailVC.title = @"Detail";
+    [nav pushViewController:detailVC animated:NO];
+    CHECK(nav.topViewController == detailVC && nav.viewControllers.count == 2 && [detailVC.navigationController isEqual:nav], "UINavigationController push & hierarchy");
+    [nav popViewControllerAnimated:NO];
+    CHECK(nav.topViewController == rootVC && nav.viewControllers.count == 1, "UINavigationController pop");
+
+    UITabBarController *tbc = [[UITabBarController alloc] init];
+    tbc.viewControllers = @[rootVC, detailVC];
+    tbc.selectedIndex = 1;
+    CHECK(tbc.selectedViewController == detailVC && tbc.tabBar.items.count == 2, "UITabBarController selection");
+
+    UITextField *tf = [[UITextField alloc] initWithFrame:CGRectMake(0, 0, 120, 30)];
+    tf.placeholder = @"Enter name";
+    tf.text = @"Hydrogen";
+    CHECK([tf becomeFirstResponder] && tf.isEditing && [tf.text isEqualToString:@"Hydrogen"], "UITextField editing & first responder");
+    [tf resignFirstResponder];
+
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectZero];
+    [sw setOn:YES animated:NO];
+    UISlider *sl = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 100, 23)];
+    sl.minimumValue = 0; sl.maximumValue = 10; sl.value = 7.5f;
+    UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"One", @"Two"]];
+    seg.selectedSegmentIndex = 1;
+    CHECK(sw.isOn && near(sl.value, 7.5f) && seg.numberOfSegments == 2 && [[seg titleForSegmentAtIndex:1] isEqualToString:@"Two"], "UISwitch, UISlider, UISegmentedControl");
+
+    // OpenGL ES 2.0 + CAEAGLLayer + EAGLContext
+    CAEAGLLayer *glLayer = [CAEAGLLayer layer];
+    glLayer.frame = CGRectMake(0, 0, 64, 64);
+    EAGLContext *glCtx = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+    CHECK(glCtx != nil && [EAGLContext setCurrentContext:glCtx] && [EAGLContext currentContext] == glCtx, "EAGLContext creation & setCurrentContext");
+    GLuint fbo = 0, rbo = 0;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glGenRenderbuffers(1, &rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+    CHECK([glCtx renderbufferStorage:GL_RENDERBUFFER fromDrawable:glLayer], "EAGLContext renderbufferStorage:fromDrawable:");
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbo);
+    CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "glCheckFramebufferStatus complete");
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    uint8_t glPx[4] = {0, 0, 0, 0};
+    glReadPixels(10, 10, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, glPx);
+    CHECK(glPx[0] == 255 && glPx[1] == 0 && glPx[2] == 0 && glPx[3] == 255 && [glCtx presentRenderbuffer:GL_RENDERBUFFER], "OpenGL ES clear, glReadPixels & presentRenderbuffer");
 
     // display link
     self.link = [CADisplayLink displayLinkWithTarget:self selector:@selector(frame:)];

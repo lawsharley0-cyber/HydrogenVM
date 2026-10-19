@@ -457,7 +457,24 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         loadNib(x, mainNib, 0, u.app, 0);
     }
     const std::string storyboard = info ? info->getString("UIMainStoryboardFile~iphone", info->getString("UIMainStoryboardFile")) : "";
-    if (!storyboard.empty()) x.proc.reportMissing("UIMainStoryboardFile (storyboards: " + storyboard + ")");
+    if (!storyboard.empty()) {
+        const Class sbCls = r.getClass("UIStoryboard");
+        const id sb = sbCls ? id(r.send(x.cpu, sbCls, "storyboardWithName:bundle:", {makeString(x, storyboard), 0})) : 0;
+        const id initVC = sb ? id(r.send(x.cpu, sb, "instantiateInitialViewController")) : 0;
+        if (initVC) {
+            id win = u.keyWindow;
+            if (!win && !u.windows.empty()) win = u.windows.front();
+            if (!win) {
+                win = id(sendRect(x, id(r.send(x.cpu, u.window, r.selAlloc)), r.sel("initWithFrame:"), {0, 0, u.screenW, u.screenH}));
+                if (u.appDelegate && r.respondsTo(u.appDelegate, r.sel("setWindow:")))
+                    r.send(x.cpu, u.appDelegate, "setWindow:", {win});
+            }
+            r.send(x.cpu, win, "setRootViewController:", {initVC});
+            r.send(x.cpu, win, "makeKeyAndVisible");
+        } else {
+            x.proc.reportMissing("UIMainStoryboardFile (storyboards: " + storyboard + ")");
+        }
+    }
 
     const id del = u.appDelegate;
     if (!del) x.proc.log(LogLevel::Warning, "UIApplicationMain: no application delegate");

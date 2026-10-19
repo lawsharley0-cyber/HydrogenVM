@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(HydrogenVM CXX)
 
-if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  message(FATAL_ERROR "HydrogenVM requires clang (uses [[clang::musttail]]). Configure with -DCMAKE_CXX_COMPILER=clang++")
+if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  message(FATAL_ERROR "HydrogenVM requires Clang or GCC.")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -32,7 +32,7 @@ find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB Threads::Threads)
 # -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
-target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-strict-aliasing -ffp-contract=off)
+target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off)
 
 add_executable(hvm_tests tests/runner/TestRunner.cpp)
 target_link_libraries(hvm_tests PRIVATE hvm_core)

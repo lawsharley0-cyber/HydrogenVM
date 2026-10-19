@@ -1,6 +1,7 @@
 #import "HVMEngine.h"
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
+#import <AVFoundation/AVFoundation.h>
 #include "core/memory/GuestArena.hpp"
 #include "loader/AppBundle.hpp"
 #include "runtime/Process.hpp"
@@ -244,6 +245,10 @@ struct SessionCore {
     std::mutex logMu;
     std::vector<std::pair<std::string, RT::LogLevel>> logs;
     bool logFlushScheduled = false;
+    AVAudioEngine *audioEngine = nil;
+    AVAudioPlayerNode *playerNode = nil;
+    AVAudioFormat *audioFormat = nil;
+    std::mutex audioMu;
 };
 }
 
@@ -328,6 +333,30 @@ struct SessionCore {
                 }
                 if (img) CGImageRelease(img);
             });
+        };
+        cfg.audioOutput = [core](const int16_t *stereoPcm, size_t frames, int sampleRate) {
+            if (!stereoPcm || frames == 0 || core->stopRequested) return;
+            std::lock_guard<std::mutex> lk(core->audioMu);
+            const double sr = sampleRate > 0 ? double(sampleRate) : 44100.0;
+            if (!core->audioEngine || !core->audioFormat || std::abs(core->audioFormat.sampleRate - sr) > 1.0) {
+                if (core->audioEngine) [core->audioEngine stop];
+                core->audioEngine = [[AVAudioEngine alloc] init];
+                core->playerNode = [[AVAudioPlayerNode alloc] init];
+                core->audioFormat = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:sr channels:2];
+                [core->audioEngine attachNode:core->playerNode];
+                [core->audioEngine connect:core->playerNode to:core->audioEngine.mainMixerNode format:core->audioFormat];
+                [core->audioEngine startAndReturnError:nil];
+                [core->playerNode play];
+            }
+            AVAudioPCMBuffer *buf = [[AVAudioPCMBuffer alloc] initWithPCMFormat:core->audioFormat frameCapacity:(AVAudioFrameCount)frames];
+            buf.frameLength = (AVAudioFrameCount)frames;
+            float *left = buf.floatChannelData[0];
+            float *right = buf.floatChannelData[1];
+            for (size_t i = 0; i < frames; ++i) {
+                left[i] = float(stereoPcm[i * 2 + 0]) / 32768.0f;
+                right[i] = float(stereoPcm[i * 2 + 1]) / 32768.0f;
+            }
+            [core->playerNode scheduleBuffer:buf completionHandler:nil];
         };
 
         int code = -1;

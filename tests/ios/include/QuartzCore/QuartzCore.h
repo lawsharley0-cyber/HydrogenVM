@@ -44,3 +44,7 @@ CFTimeInterval CACurrentMediaTime(void);
 + (instancetype)animationWithKeyPath:(NSString *)path;
 @property(strong) id fromValue, toValue;
 @end
+
+@interface CAEAGLLayer : CALayer
+@property(copy) NSDictionary *drawableProperties;
+@end

@@ -41,6 +41,8 @@ struct ProcessConfig {
     // Called on the emulated main thread with each new frame (premultiplied
     // RGBA, screenWidth*scale x screenHeight*scale, portrait). Optional.
     std::function<void(const uint8_t* rgba, int width, int height)> present;
+    // Called with interleaved 16-bit signed stereo PCM frames at `sampleRate` Hz. Optional.
+    std::function<void(const int16_t* stereoPcm, size_t frames, int sampleRate)> audioOutput;
 };
 
 // Input from the host (screen points, portrait orientation of the emulated device).

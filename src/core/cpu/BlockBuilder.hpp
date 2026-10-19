@@ -61,6 +61,70 @@ inline Handler memDualHandler(bool load, int am, bool reg) {
     return t[load][am][reg];
 }
 
+// ------------------------------------------------------- pair superinstructions ---
+//
+// Two consecutive simple ops run by one handler: one dispatch instead of two.
+// The second op stays in place with its own handler, so a CondSkip that jumps
+// straight to it still works; the pair handler only runs when the first op does.
+
+template <Body B1, Body B2>
+HVM_H(H_Pair) {
+    B1(c, op, m);
+    B2(c, op + 1, m);
+    const Op* _n = op + 2;
+    [[clang::musttail]] return _n->fn(c, _n, m);
+}
+
+struct HotOp { Handler h; Body b; };
+// The most frequent simple ops in compiled ARM/Thumb code (tools/pairprof.py).
+inline constexpr HotOp kHotOps[] = {
+    {&H_MovReg, &B_MovReg},
+    {&H_MovImm, &B_MovImm},
+    {&H_Alu<kADD, false, kOp2Imm>, &B_Alu<kADD, false, kOp2Imm>},
+    {&H_Alu<kADD, false, kOp2ShImmLSL>, &B_Alu<kADD, false, kOp2ShImmLSL>},
+    {&H_Alu<kSUB, false, kOp2Imm>, &B_Alu<kSUB, false, kOp2Imm>},
+    {&H_Alu<kSUB, false, kOp2ShImmLSL>, &B_Alu<kSUB, false, kOp2ShImmLSL>},
+    {&H_Alu<kADD, true, kOp2Imm>, &B_Alu<kADD, true, kOp2Imm>},
+    {&H_Alu<kSUB, true, kOp2Imm>, &B_Alu<kSUB, true, kOp2Imm>},
+    {&H_Alu<kMOV, false, kOp2Imm>, &B_Alu<kMOV, false, kOp2Imm>},
+    {&H_Alu<kMOV, false, kOp2ShImmLSL>, &B_Alu<kMOV, false, kOp2ShImmLSL>},
+    {&H_Alu<kMOV, false, kOp2ShImmLSR>, &B_Alu<kMOV, false, kOp2ShImmLSR>},
+    {&H_Alu<kMOV, true, kOp2Imm>, &B_Alu<kMOV, true, kOp2Imm>},
+    {&H_Alu<kMOV, true, kOp2ShImmLSL>, &B_Alu<kMOV, true, kOp2ShImmLSL>},
+    {&H_Alu<kCMP, true, kOp2Imm>, &B_Alu<kCMP, true, kOp2Imm>},
+    {&H_Alu<kCMP, true, kOp2ShImmLSL>, &B_Alu<kCMP, true, kOp2ShImmLSL>},
+    {&H_Alu<kAND, false, kOp2Imm>, &B_Alu<kAND, false, kOp2Imm>},
+    {&H_Alu<kORR, false, kOp2ShImmLSL>, &B_Alu<kORR, false, kOp2ShImmLSL>},
+    {&H_Alu<kEOR, false, kOp2ShImmLSL>, &B_Alu<kEOR, false, kOp2ShImmLSL>},
+    {&H_Mem<kMemW, true, kAmOffset, false>, &B_Mem<kMemW, true, kAmOffset, false>},
+    {&H_Mem<kMemW, false, kAmOffset, false>, &B_Mem<kMemW, false, kAmOffset, false>},
+    {&H_Mem<kMemB, true, kAmOffset, false>, &B_Mem<kMemB, true, kAmOffset, false>},
+    {&H_Mem<kMemB, false, kAmOffset, false>, &B_Mem<kMemB, false, kAmOffset, false>},
+    {&H_Mem<kMemH, true, kAmOffset, false>, &B_Mem<kMemH, true, kAmOffset, false>},
+    {&H_Mem<kMemW, true, kAmOffset, true>, &B_Mem<kMemW, true, kAmOffset, true>},
+    {&H_Bitfield<0>, &B_Bitfield<0>},
+    {&H_Extend<2, false>, &B_Extend<2, false>},
+    {&H_Extend<3, false>, &B_Extend<3, false>},
+};
+inline constexpr size_t kNumHot = sizeof(kHotOps) / sizeof(kHotOps[0]);
+
+namespace detail {
+template <size_t I, size_t... J>
+constexpr std::array<Handler, kNumHot> pairRow(std::index_sequence<J...>) {
+    return {&H_Pair<kHotOps[I].b, kHotOps[J].b>...};
+}
+template <size_t... I>
+constexpr std::array<std::array<Handler, kNumHot>, kNumHot> pairTable(std::index_sequence<I...>) {
+    return {pairRow<I>(std::make_index_sequence<kNumHot>{})...};
+}
+} // namespace detail
+inline constexpr auto kPairTable = detail::pairTable(std::make_index_sequence<kNumHot>{});
+
+inline int hotIndex(Handler h) {
+    for (size_t i = 0; i < kNumHot; ++i) if (kHotOps[i].h == h) return int(i);
+    return -1;
+}
+
 // ------------------------------------------------------------------ builder ---
 
 class BlockBuilder {
@@ -146,9 +210,26 @@ public:
         blk_.guest_insns = insns_;
         eliminateDeadFlags();
         fuseBranches();
+#ifndef HVM_NO_FUSEOPS
+        fuseOps();
+#endif
+#ifndef HVM_NO_PAIRS
+        fusePairs();
+#endif
     }
 
 private:
+    void fusePairs() {
+        auto& ops = blk_.ops;
+        for (size_t i = 0; i + 1 < ops.size();) {
+            const int a = hotIndex(ops[i].fn);
+            const int b = a >= 0 ? hotIndex(ops[i + 1].fn) : -1;
+            if (b < 0) { ++i; continue; }
+            ops[i].fn = kPairTable[size_t(a)][size_t(b)];
+            i += 2;
+        }
+    }
+
     // Branch fusion (after flag liveness, which still needs the unfused ops):
     //   CondSkip(cond, 1); BranchDirect        -> BranchCond
     //   CbSkip; BranchDirect                   -> BranchCbz
@@ -212,10 +293,193 @@ private:
                     meta_.erase(meta_.begin() + long(i), meta_.begin() + long(i) + 2);
                     continue;
                 }
+                // SUBS / ADDS (imm or unshifted reg) + BranchCond -> SubBranchC / AddBranchC
+                if (i > 0 && !meta_[i - 1].guarded && ops[i].a < 14) {
+                    const Op& alu = ops[i - 1];
+                    const bool subImm = alu.fn == kAluTable[kSUB][1][kOp2Imm];
+                    const bool subReg = alu.fn == kAluTable[kSUB][1][kOp2ShImmLSL] && alu.imm == 0;
+                    const bool addImm = alu.fn == kAluTable[kADD][1][kOp2Imm];
+                    const bool addReg = alu.fn == kAluTable[kADD][1][kOp2ShImmLSL] && alu.imm == 0;
+                    if (subImm || subReg || addImm || addReg) {
+                        static constexpr Handler subByCond[2][14] = {
+#define HVM_SC(R) { &H_SubBranchC<0, R>, &H_SubBranchC<1, R>, &H_SubBranchC<2, R>, &H_SubBranchC<3, R>, \
+                    &H_SubBranchC<4, R>, &H_SubBranchC<5, R>, &H_SubBranchC<6, R>, &H_SubBranchC<7, R>, \
+                    &H_SubBranchC<8, R>, &H_SubBranchC<9, R>, &H_SubBranchC<10, R>, &H_SubBranchC<11, R>, \
+                    &H_SubBranchC<12, R>, &H_SubBranchC<13, R> }
+                            HVM_SC(false), HVM_SC(true)
+#undef HVM_SC
+                        };
+                        static constexpr Handler addByCond[2][14] = {
+#define HVM_AC(R) { &H_AddBranchC<0, R>, &H_AddBranchC<1, R>, &H_AddBranchC<2, R>, &H_AddBranchC<3, R>, \
+                    &H_AddBranchC<4, R>, &H_AddBranchC<5, R>, &H_AddBranchC<6, R>, &H_AddBranchC<7, R>, \
+                    &H_AddBranchC<8, R>, &H_AddBranchC<9, R>, &H_AddBranchC<10, R>, &H_AddBranchC<11, R>, \
+                    &H_AddBranchC<12, R>, &H_AddBranchC<13, R> }
+                            HVM_AC(false), HVM_AC(true)
+#undef HVM_AC
+                        };
+                        const bool isReg = subReg || addReg;
+                        Op f = br;
+                        f.fn = (subImm || subReg) ? subByCond[isReg][ops[i].a] : addByCond[isReg][ops[i].a];
+                        f.c = alu.b;                       // rn
+                        f.d = alu.a;                       // rd
+                        f.imm2 = isReg ? alu.c : alu.imm;  // rm or immediate
+                        ops[i - 1] = f;
+                        ops.erase(ops.begin() + long(i), ops.begin() + long(i) + 2);
+                        meta_.erase(meta_.begin() + long(i), meta_.begin() + long(i) + 2);
+                        continue;
+                    }
+                }
             }
             ops[i] = br;
             ops.erase(ops.begin() + long(i) + 1);
             meta_.erase(meta_.begin() + long(i) + 1);
+        }
+    }
+
+    // Intra-block superinstruction fusion on unguarded ops (never crosses a CondSkip/CbSkip span).
+    void fuseOps() {
+        auto& ops = blk_.ops;
+        const Handler ldrWImm = memHandler(kMemW, true, kAmOffset, false);
+        const Handler strWImm = memHandler(kMemW, false, kAmOffset, false);
+        const Handler movRegAlu = kAluTable[kMOV][0][kOp2ShImmLSL];
+        const Handler addRegAlu = kAluTable[kADD][0][kOp2ShImmLSL];
+        const Handler addImmAlu = kAluTable[kADD][0][kOp2Imm];
+        const Handler subImmAlu = kAluTable[kSUB][0][kOp2Imm];
+
+        for (size_t i = 0; i + 1 < ops.size(); ++i) {
+            if (meta_[i].guarded || meta_[i + 1].guarded) continue;
+            Op& a = ops[i];
+            const Op& b = ops[i + 1];
+
+            // 1. MOVW rd, #lo16 + MOVT rd, #hi16 -> H_MovImm rd, #(lo16 | (hi16 << 16))
+            if (a.fn == &H_MovImm && b.fn == &H_Movt && a.a == b.a) {
+                a.imm = (a.imm & 0xFFFFu) | (b.imm << 16);
+                ops.erase(ops.begin() + long(i) + 1);
+                meta_.erase(meta_.begin() + long(i) + 1);
+                --i;
+                continue;
+            }
+
+            // 2. BL / BLX: H_MovImm(kLR, ret) + BranchDirect / BranchDirectX / BranchIndirect
+            if (a.fn == &H_MovImm && a.a == kLR) {
+                if (b.fn == &H_BranchDirect || b.fn == &H_BranchDirectX || b.fn == &H_BranchIndirect) {
+                    const uint32_t lrVal = a.imm;
+                    Op f = b;
+                    f.fn = (b.fn == &H_BranchDirect) ? &H_CallDirect
+                         : (b.fn == &H_BranchDirectX) ? &H_CallDirectX : &H_CallIndirect;
+                    f.imm2 = lrVal;
+                    ops[i] = f;
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+            }
+
+            // 3. Epilogue POP/LDM {..., pc}: H_Multi<true> (with PC in list) + H_BranchIndirect(kPC)
+            if (a.fn == &H_Multi<true> && (a.imm & (1u << kPC)) && b.fn == &H_BranchIndirect && b.a == kPC) {
+                a.fn = &H_MultiPopPc;
+                a.a = b.b;   // insns retired
+                a.c = b.c;   // interwork mode
+                ops.erase(ops.begin() + long(i) + 1);
+                meta_.erase(meta_.begin() + long(i) + 1);
+                continue;
+            }
+
+            // 4. Consecutive 32-bit offset loads, or LDR + ADD/SUB:
+            if (a.fn == ldrWImm) {
+                if (b.fn == ldrWImm && a.a != b.b && a.a != b.a) {
+                    a.fn = &H_Ldr2Imm;
+                    a.c = b.a;      // rt2
+                    a.d = b.b;      // rn2
+                    a.imm2 = b.imm; // off2
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+                if (b.fn == addRegAlu && b.imm == 0) {
+                    a.fn = &H_LdrAddReg;
+                    a.c = b.a;      // rd
+                    a.d = b.b;      // rx
+                    a.imm2 = b.c;   // rm
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+                if (b.fn == addImmAlu || b.fn == subImmAlu) {
+                    a.fn = &H_LdrAddImm;
+                    a.c = b.a;      // rd
+                    a.d = b.b;      // rx
+                    a.imm2 = b.fn == subImmAlu ? (0u - b.imm) : b.imm;
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+            }
+
+            // 5. Consecutive 32-bit offset stores, or STR + ADD/SUB:
+            if (a.fn == strWImm) {
+                if (b.fn == strWImm) {
+                    a.fn = &H_Str2Imm;
+                    a.c = b.a;      // rt2
+                    a.d = b.b;      // rn2
+                    a.imm2 = b.imm; // off2
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+                if (b.fn == addImmAlu || b.fn == subImmAlu) {
+                    a.fn = &H_StrAddImm;
+                    a.c = b.a;      // rd
+                    a.d = b.b;      // rx
+                    a.imm2 = b.fn == subImmAlu ? (0u - b.imm) : b.imm;
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+            }
+
+            // 6. Plain MOV rd1, rm1 + plain ADD rd2, rn2, rm2 (or plain MOV rd2, rm2)
+            const bool aIsMov = (a.fn == &H_MovReg) || (a.fn == movRegAlu && a.imm == 0);
+            if (aIsMov) {
+                const uint8_t rm1 = (a.fn == &H_MovReg) ? a.b : a.c;
+                const bool bIsMov = (b.fn == &H_MovReg) || (b.fn == movRegAlu && b.imm == 0);
+                if (bIsMov) {
+                    const uint8_t rm2 = (b.fn == &H_MovReg) ? b.b : b.c;
+                    a.fn = &H_Mov2Reg;
+                    a.b = rm1;
+                    a.c = b.a;
+                    a.d = rm2;
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+                if (b.fn == addRegAlu && b.imm == 0) {
+                    a.fn = &H_MovAddReg;
+                    a.b = rm1;
+                    a.c = b.a;   // rd2
+                    a.d = b.b;   // rn2
+                    a.imm = b.c; // rm2
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+            }
+
+            // 7. Consecutive ADD/SUB immediate (no flags):
+            const bool aAdd = a.fn == addImmAlu || a.fn == subImmAlu;
+            const bool bAdd = b.fn == addImmAlu || b.fn == subImmAlu;
+            if (aAdd && bAdd) {
+                const uint32_t imm1 = a.fn == subImmAlu ? (0u - a.imm) : a.imm;
+                const uint32_t imm2 = b.fn == subImmAlu ? (0u - b.imm) : b.imm;
+                a.fn = &H_Add2Imm;
+                a.c = b.a;
+                a.d = b.b;
+                a.imm = imm1;
+                a.imm2 = imm2;
+                ops.erase(ops.begin() + long(i) + 1);
+                meta_.erase(meta_.begin() + long(i) + 1);
+                continue;
+            }
         }
     }
 

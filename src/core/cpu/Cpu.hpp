@@ -37,8 +37,10 @@
 #  define HVM_HOT_ABI
 #endif
 
-#if !defined(__clang__)
-#  error "HydrogenVM's execution core requires clang ([[clang::musttail]])"
+#if defined(__clang__)
+#  define HVM_MUSTTAIL [[clang::musttail]]
+#else
+#  define HVM_MUSTTAIL
 #endif
 
 namespace Hydrogen::CPU {
@@ -80,8 +82,8 @@ enum class Exit : uint32_t {
 // Per-thread direct-mapped cache in front of the engine's block map. `first`
 // is the block's first op, so indirect branches can jump without touching the Block.
 struct FastEntry { uint32_t key; Block* block; const Op* first; };
-inline constexpr size_t kFastSize = 1u << 12;
-inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 13)) & (kFastSize - 1); }
+inline constexpr size_t kFastSize = 1u << 14;
+inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (kFastSize - 1); }
 
 struct alignas(64) Cpu {
     uint32_t r[kNumRegs] = {};

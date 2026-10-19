@@ -30,6 +30,7 @@ targets:
       - sdk: CoreText.framework
       - sdk: ImageIO.framework
       - sdk: CoreMotion.framework
+      - sdk: AVFoundation.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM

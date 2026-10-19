@@ -34,7 +34,7 @@ policy with no JIT entitlement.
 | `src/runtime/objc/` | Guest Objective-C runtime: class metadata from the binary, message dispatch with caches, categories, ARC, weak refs, blocks, runtime API, host-defined classes |
 | `src/runtime/foundation/` | Foundation + CoreFoundation + GCD reimplemented as host classes |
 | `src/runtime/graphics/` | Software 2D: AA path rasteriser, strokes, clips, blend modes, PNG (incl. CgBI), text backend interface |
-| `src/runtime/uikit/` | CoreGraphics, QuartzCore (layer tree compositor), UIKit views/controls/gestures, nib loading, platform stubs |
+| `src/runtime/uikit/` | CoreGraphics, QuartzCore (layer tree compositor), UIKit views/controls/scroll/table/nav/tab/text/gestures, nib & storyboard loading, OpenGL ES 1.1/2.0 (`OpenGLES.cpp`), audio & platform frameworks (`PlatformStubs.cpp`) |
 | `src/selftest/SelfTest.*` | Built-in smoke test + speed check (runs on device from the app) |
 | `app/` | iPhone app (XcodeGen project, SwiftUI shell, ObjC++ bridge) |
 | `tests/` | Asm unit tests, C differential tests, runner, benchmark |
@@ -227,9 +227,9 @@ environment); the C++ it calls is the same code the test suite builds.
 2. ~~VFPv3/v4 + NEON~~ ✅
 3. ~~Mach-O loader, `.ipa` import~~ ✅
 4. ~~Guest ObjC runtime, libSystem, Foundation, CoreGraphics, QuartzCore, UIKit core~~ ✅
-5. ~~iPhone app: library, run screen, touch, accelerometer~~ ✅ (needs on-device testing)
-6. **OpenGL ES 1.1/2.0 → Metal** state tracker (next), EAGLContext/CAEAGLLayer.
-7. Audio (AudioToolbox, OpenAL, AVAudioPlayer) via AVAudioEngine.
-8. More UIKit: UIScrollView, UITableView, navigation/tab bar controllers, UITextField + keyboard, storyboards.
-9. Android `.apk` (Phase 3): separate effort — native `armeabi-v7a` libs reuse
-   this core, but Dalvik/ART + the Android framework are a project of their own.
+5. ~~iPhone app: library, run screen, touch, accelerometer, AVAudioEngine output~~ ✅ (needs on-device testing)
+6. ~~OpenGL ES 1.1/2.0 state tracker & rasterizer, EAGLContext/CAEAGLLayer~~ ✅
+7. ~~Audio (AudioToolbox, OpenAL, AVAudioPlayer) + AVAudioEngine host bridge~~ ✅
+8. ~~Expanded UIKit: UIScrollView, UITableView, UINavigationController, UITabBarController, UITextField, UISwitch, UISlider, UISegmentedControl, UIStoryboard~~ ✅
+9. ~~CPU superinstructions (SUBS/ADDS+branch, BL/BLX, POP {pc}, MOVW+MOVT, paired LDR/STR, LDR+ADD, STR+ADD, MOV+ADD)~~ ✅
+10. Hardware-accelerated Metal backend for OpenGL ES & Android `.apk` (Phase 3).

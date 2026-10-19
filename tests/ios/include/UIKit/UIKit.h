@@ -257,3 +257,150 @@ void UIRectFill(CGRect r);
 @interface NSBundle (UINibLoading)
 - (NSArray *)loadNibNamed:(NSString *)name owner:(id)owner options:(NSDictionary *)options;
 @end
+
+@interface NSIndexPath (UIKitAdditions)
++ (NSIndexPath *)indexPathForRow:(NSInteger)row inSection:(NSInteger)section;
+@property(readonly) NSInteger section;
+@property(readonly) NSInteger row;
+@end
+
+@interface UIScrollView : UIView
+@property CGPoint contentOffset;
+@property CGSize contentSize;
+@property UIEdgeInsets contentInset;
+@property(weak) id delegate;
+@property(getter=isScrollEnabled) BOOL scrollEnabled;
+@property(getter=isPagingEnabled) BOOL pagingEnabled;
+@property BOOL bounces;
+- (void)setContentOffset:(CGPoint)contentOffset animated:(BOOL)animated;
+- (void)scrollRectToVisible:(CGRect)rect animated:(BOOL)animated;
+@end
+
+@interface UITableViewCell : UIView
+- (instancetype)initWithStyle:(NSInteger)style reuseIdentifier:(NSString *)reuseIdentifier;
+@property(readonly) UIView *contentView;
+@property(readonly) UILabel *textLabel;
+@property(readonly) UILabel *detailTextLabel;
+@property(readonly) UIImageView *imageView;
+@property(readonly, copy) NSString *reuseIdentifier;
+@property(getter=isSelected) BOOL selected;
+@end
+
+@interface UITableView : UIScrollView
+- (instancetype)initWithFrame:(CGRect)frame style:(NSInteger)style;
+@property(weak) id dataSource;
+@property CGFloat rowHeight;
+@property(strong) UIView *tableHeaderView;
+@property(strong) UIView *tableFooterView;
+- (void)reloadData;
+- (UITableViewCell *)dequeueReusableCellWithIdentifier:(NSString *)identifier;
+- (NSInteger)numberOfSections;
+- (NSInteger)numberOfRowsInSection:(NSInteger)section;
+- (UITableViewCell *)cellForRowAtIndexPath:(NSIndexPath *)indexPath;
+- (NSArray *)visibleCells;
+- (void)selectRowAtIndexPath:(NSIndexPath *)indexPath animated:(BOOL)animated scrollPosition:(NSInteger)scrollPosition;
+- (NSIndexPath *)indexPathForSelectedRow;
+@end
+
+@interface UIBarItem : NSObject
+@property(copy) NSString *title;
+@property(strong) UIImage *image;
+@property NSInteger tag;
+@property(getter=isEnabled) BOOL enabled;
+@end
+
+@interface UIBarButtonItem : UIBarItem
+- (instancetype)initWithTitle:(NSString *)title style:(NSInteger)style target:(id)target action:(SEL)action;
+- (instancetype)initWithBarButtonSystemItem:(NSInteger)systemItem target:(id)target action:(SEL)action;
+@property(weak) id target;
+@property SEL action;
+@end
+
+@interface UITabBarItem : UIBarItem
+- (instancetype)initWithTitle:(NSString *)title image:(UIImage *)image tag:(NSInteger)tag;
+@property(copy) NSString *badgeValue;
+@end
+
+@interface UINavigationItem : NSObject
+- (instancetype)initWithTitle:(NSString *)title;
+@property(copy) NSString *title;
+@property(strong) UIBarButtonItem *leftBarButtonItem;
+@property(strong) UIBarButtonItem *rightBarButtonItem;
+@property(strong) UIBarButtonItem *backBarButtonItem;
+@end
+
+@interface UINavigationBar : UIView
+@property(copy) NSArray *items;
+@property(readonly) UINavigationItem *topItem;
+@property(readonly) UINavigationItem *backItem;
+@end
+
+@interface UINavigationController : UIViewController
+- (instancetype)initWithRootViewController:(UIViewController *)rootViewController;
+- (void)pushViewController:(UIViewController *)viewController animated:(BOOL)animated;
+- (UIViewController *)popViewControllerAnimated:(BOOL)animated;
+- (NSArray *)popToRootViewControllerAnimated:(BOOL)animated;
+@property(readonly) UIViewController *topViewController;
+@property(readonly) UIViewController *visibleViewController;
+@property(copy) NSArray *viewControllers;
+@property(readonly) UINavigationBar *navigationBar;
+@property(getter=isNavigationBarHidden) BOOL navigationBarHidden;
+@property(weak) id delegate;
+@end
+
+@interface UITabBar : UIView
+@property(copy) NSArray *items;
+@property(assign) UITabBarItem *selectedItem;
+@end
+
+@interface UITabBarController : UIViewController
+@property(copy) NSArray *viewControllers;
+@property(assign) UIViewController *selectedViewController;
+@property NSUInteger selectedIndex;
+@property(readonly) UITabBar *tabBar;
+@property(weak) id delegate;
+@end
+
+@interface UIViewController (UINavTabAdditions)
+@property(readonly) UINavigationItem *navigationItem;
+@property(readonly) UINavigationController *navigationController;
+@property(strong) UITabBarItem *tabBarItem;
+@property(readonly) UITabBarController *tabBarController;
+@end
+
+@interface UITextField : UIControl
+@property(copy) NSString *text;
+@property(copy) NSString *placeholder;
+@property(strong) UIFont *font;
+@property(strong) UIColor *textColor;
+@property NSInteger textAlignment;
+@property NSInteger borderStyle;
+@property(weak) id delegate;
+@property(readonly, getter=isEditing) BOOL editing;
+@property(getter=isSecureTextEntry) BOOL secureTextEntry;
+@end
+
+@interface UISwitch : UIControl
+@property(getter=isOn) BOOL on;
+- (void)setOn:(BOOL)on animated:(BOOL)animated;
+@end
+
+@interface UISlider : UIControl
+@property float value;
+@property float minimumValue;
+@property float maximumValue;
+- (void)setValue:(float)value animated:(BOOL)animated;
+@end
+
+@interface UISegmentedControl : UIControl
+- (instancetype)initWithItems:(NSArray *)items;
+@property(readonly) NSUInteger numberOfSegments;
+@property NSInteger selectedSegmentIndex;
+- (NSString *)titleForSegmentAtIndex:(NSUInteger)segment;
+@end
+
+@interface UIStoryboard : NSObject
++ (UIStoryboard *)storyboardWithName:(NSString *)name bundle:(NSBundle *)storyboardBundleOrNil;
+- (id)instantiateInitialViewController;
+- (id)instantiateViewControllerWithIdentifier:(NSString *)identifier;
+@end
