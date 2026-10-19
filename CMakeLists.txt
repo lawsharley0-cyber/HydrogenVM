@@ -21,8 +21,14 @@ add_library(hvm_core STATIC
   src/loader/ElfLoader.cpp
   src/selftest/SelfTest.cpp
   src/loader/MachO.cpp
+  src/loader/Zip.cpp
+  src/loader/Plist.cpp
+  src/loader/AppBundle.cpp
 )
 target_include_directories(hvm_core PUBLIC src)
+find_package(ZLIB REQUIRED)
+find_package(Threads REQUIRED)
+target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB Threads::Threads)
 # -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
 target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-strict-aliasing -ffp-contract=off)
 
@@ -34,6 +40,9 @@ target_link_libraries(hvm_decodecheck PRIVATE hvm_core)
 
 add_executable(hvm_machodump tests/runner/MachODump.cpp)
 target_link_libraries(hvm_machodump PRIVATE hvm_core)
+
+add_executable(hvm tests/runner/HvmCli.cpp tests/runner/HvmRun.cpp)
+target_link_libraries(hvm PRIVATE hvm_core)
 
 add_executable(hvm_bench tests/runner/Bench.cpp)
 target_link_libraries(hvm_bench PRIVATE hvm_core)
