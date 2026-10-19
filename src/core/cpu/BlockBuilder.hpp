@@ -126,7 +126,8 @@ public:
     // --- exits
     void exitDirect(uint32_t target, uint32_t thumb) {
         OpMeta mm; mm.reads = kLAll;
-        emit(&H_BranchDirect, thumb & 1, insns_, 0, 0, target & (thumb ? ~1u : ~3u), 0, mm);
+        emit(bool(thumb & 1) == thumb_ ? &H_BranchDirect : &H_BranchDirectX, thumb & 1, insns_, 0, 0,
+             target & (thumb ? ~1u : ~3u), 0, mm);
     }
     // interwork: BX-style (bit0 selects state); otherwise stay in current state.
     void exitIndirect(uint8_t reg, bool interwork) {
@@ -191,6 +192,18 @@ private:
                     const Op& cmp = ops[i - 1];
                     Op f = br;
                     f.fn = fused;
+                    if (fused == &H_CmpBranch<kCmpCMP, false> || fused == &H_CmpBranch<kCmpCMP, true>) {
+                        // CMP: a handler specialised on the condition.
+                        static constexpr Handler byCond[2][14] = {
+#define HVM_CC(R) { &H_CmpBranchC<0, R>, &H_CmpBranchC<1, R>, &H_CmpBranchC<2, R>, &H_CmpBranchC<3, R>, \
+                    &H_CmpBranchC<4, R>, &H_CmpBranchC<5, R>, &H_CmpBranchC<6, R>, &H_CmpBranchC<7, R>, \
+                    &H_CmpBranchC<8, R>, &H_CmpBranchC<9, R>, &H_CmpBranchC<10, R>, &H_CmpBranchC<11, R>, \
+                    &H_CmpBranchC<12, R>, &H_CmpBranchC<13, R> }
+                            HVM_CC(false), HVM_CC(true)
+#undef HVM_CC
+                        };
+                        if (ops[i].a < 14) f.fn = byCond[reg][ops[i].a];
+                    }
                     f.c = cmp.b;                       // rn
                     f.d = ops[i].a;                    // cond
                     f.imm2 = reg ? cmp.c : cmp.imm;    // rm or immediate

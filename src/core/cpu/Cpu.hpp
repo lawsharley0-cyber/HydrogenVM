@@ -21,7 +21,17 @@
 #include <memory>
 #include <vector>
 
-#if defined(__clang__) && __has_attribute(preserve_none) && (defined(__x86_64__) || defined(__aarch64__)) && (__clang_major__ >= 19)
+// preserve_none (no callee-saved registers) removes the push/pop that every
+// handler otherwise pays. It needs LLVM 19 for AArch64; Apple clang numbers
+// its releases differently (Apple clang 17 = LLVM 19).
+#if defined(__apple_build_version__)
+#  define HVM_LLVM_HAS_PRESERVE_NONE (__clang_major__ >= 17)
+#elif defined(__clang__)
+#  define HVM_LLVM_HAS_PRESERVE_NONE (__clang_major__ >= 19)
+#else
+#  define HVM_LLVM_HAS_PRESERVE_NONE 0
+#endif
+#if defined(__clang__) && __has_attribute(preserve_none) && (defined(__x86_64__) || defined(__aarch64__)) && HVM_LLVM_HAS_PRESERVE_NONE && !defined(HVM_NO_PRESERVE_NONE)
 #  define HVM_HOT_ABI __attribute__((preserve_none))
 #else
 #  define HVM_HOT_ABI

@@ -9,3 +9,4 @@ app/HydrogenVM.xcodeproj/
 xcuserdata/
 app/xbuild/
 /third_party/
+/build-*/

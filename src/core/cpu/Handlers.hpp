@@ -23,7 +23,13 @@ Block* hvmEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => st
 void   hvmCallHle(Cpu* c, uint32_t index);
 
 #define HVM_H(name) inline HVM_HOT_ABI void name(Cpu* c, const Op* op, uint8_t* m)
+#ifdef HVM_PROFILE_PAIRS
+// Analysis build: count which handler follows which (tools/pairprof.py).
+void hvmProfilePair(Handler a, Handler b);
+#define HVM_NEXT()  do { const Op* _n = op + 1; hvmProfilePair(op->fn, _n->fn); [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
+#else
 #define HVM_NEXT()  do { const Op* _n = op + 1; [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
+#endif
 #define HVM_GOTO(o) do { const Op* _n = (o); [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
 
 // ---------------------------------------------------------------- helpers ---
@@ -134,16 +140,21 @@ HVM_H(H_TableBranch) {
     HVM_NEXT();
 }
 
-// Take a direct exit: target address in op->imm, thumb bit in op->a, block
-// instruction count in op->b; op->link caches the successor's first op.
+// Take a direct exit: target address in op->imm, block instruction count in
+// op->b; op->link caches the successor's first op. r15 and the T bit are only
+// architecturally needed when leaving the dispatcher (anything that reads r15
+// inside a block materialises it), so they're written on the slow path only;
+// state-changing branches (BLX imm) use H_BranchDirectX, which writes T.
 #define HVM_TAKE_DIRECT()                                                         \
     do {                                                                          \
-        c->r[kPC] = op->imm;                                                      \
-        c->thumb = op->a;                                                         \
         c->budget -= op->b;                                                       \
-        if (c->budget <= 0) { c->exit = Exit::Budget; return; }                   \
+        if (__builtin_expect(c->budget <= 0, 0)) {                                \
+            c->r[kPC] = op->imm; c->thumb = op->a;                                \
+            c->exit = Exit::Budget; return;                                       \
+        }                                                                         \
         const Op* _f = __atomic_load_n(&op->link, __ATOMIC_ACQUIRE);              \
         if (__builtin_expect(_f == nullptr, 0)) {                                 \
+            c->r[kPC] = op->imm; c->thumb = op->a;                                \
             Block* _nb = hvmEnterBlock(c, op->imm | op->a);                       \
             if (!_nb) return;                                                     \
             _f = _nb->ops.data();                                                 \
@@ -155,6 +166,8 @@ HVM_H(H_TableBranch) {
 
 // Direct branch to imm (address), a = target thumb bit, b = insns retired.
 HVM_H(H_BranchDirect) { HVM_TAKE_DIRECT(); }
+// Same, switching instruction set (BLX <imm>).
+HVM_H(H_BranchDirectX) { c->thumb = op->a; HVM_TAKE_DIRECT(); }
 
 // Conditional direct branch (CondSkip + BranchDirect fused): c = condition.
 // Not taken: falls into the next op, the block's fall-through exit.
@@ -169,17 +182,63 @@ HVM_H(H_BranchCbz) {
     HVM_TAKE_DIRECT();
 }
 
+// NZCV of x - y (CMP) with cheap native compares.
+inline uint32_t subFlags(uint32_t x, uint32_t y) {
+    const uint32_t r = x - y;
+    int32_t ignored;
+    return (r & kFlagN) | (uint32_t(r == 0) << 30) | (uint32_t(x >= y) << 29) |
+           (uint32_t(__builtin_sub_overflow(int32_t(x), int32_t(y), &ignored)) << 28);
+}
+inline uint32_t addFlags(uint32_t x, uint32_t y) {
+    uint32_t r;
+    const bool carry = __builtin_add_overflow(x, y, &r);
+    int32_t ignored;
+    return (r & kFlagN) | (uint32_t(r == 0) << 30) | (uint32_t(carry) << 29) |
+           (uint32_t(__builtin_add_overflow(int32_t(x), int32_t(y), &ignored)) << 28);
+}
+
+// CMP x, y then B<COND>, evaluated straight from the operands.
+template <int COND> inline bool cmpCond(uint32_t x, uint32_t y) {
+    const int32_t sx = int32_t(x), sy = int32_t(y);
+    int32_t d;
+    switch (COND) {
+        case 0: return x == y;                  // EQ
+        case 1: return x != y;                  // NE
+        case 2: return x >= y;                  // CS
+        case 3: return x < y;                   // CC
+        case 4: return int32_t(x - y) < 0;      // MI
+        case 5: return int32_t(x - y) >= 0;     // PL
+        case 6: return __builtin_sub_overflow(sx, sy, &d);    // VS
+        case 7: return !__builtin_sub_overflow(sx, sy, &d);   // VC
+        case 8: return x > y;                   // HI
+        case 9: return x <= y;                  // LS
+        case 10: return sx >= sy;               // GE
+        case 11: return sx < sy;                // LT
+        case 12: return sx > sy;                // GT
+        case 13: return sx <= sy;               // LE
+        default: return true;
+    }
+}
+
 // Compare + conditional branch fused (CMP/CMN/TST then B<cond>, the shape of
 // almost every loop). c = rn, d = cond, imm2 = immediate (REG: rm).
 // The compare's flags are still written (they may be live in either successor).
 enum CmpKind : uint8_t { kCmpCMP = 0, kCmpCMN = 1, kCmpTST = 2 };
+template <int COND, bool REG>
+HVM_H(H_CmpBranchC) {
+    const uint32_t x = c->r[op->c];
+    const uint32_t y = REG ? c->r[op->imm2] : op->imm2;
+    c->nzcv = subFlags(x, y);
+    if (!cmpCond<COND>(x, y)) HVM_NEXT();
+    HVM_TAKE_DIRECT();
+}
 template <int K, bool REG>
 HVM_H(H_CmpBranch) {
     const uint32_t x = c->r[op->c];
     const uint32_t y = REG ? c->r[op->imm2] : op->imm2;
     uint32_t f;
-    if constexpr (K == kCmpCMP) f = addWithCarry(x, ~y, 1).flags;
-    else if constexpr (K == kCmpCMN) f = addWithCarry(x, y, 0).flags;
+    if constexpr (K == kCmpCMP) f = subFlags(x, y);
+    else if constexpr (K == kCmpCMN) f = addFlags(x, y);
     else f = nzOf(x & y) | (c->nzcv & (kFlagC | kFlagV));
     c->nzcv = f;
     if (!condPasses(op->d, f)) HVM_NEXT();
@@ -240,6 +299,7 @@ HVM_H(H_FetchFault) {
 // return); a host function can redirect it (Engine::hleJump) to tail-jump
 // somewhere else, which is how objc_msgSend and longjmp work.
 HVM_H(H_Hle) {
+    c->r[kPC] = op->pc;
     c->r[kTmp3] = c->r[kLR];
     hvmCallHle(c, op->imm);
     if (c->exit != Exit::None) return;

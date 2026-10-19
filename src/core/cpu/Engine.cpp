@@ -11,6 +11,32 @@ namespace Hydrogen::CPU {
 Block* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
 void   hvmCallHle(Cpu* c, uint32_t index)  { c->engine->callHle(c, index); }
 
+#ifdef HVM_PROFILE_PAIRS
+}  // namespace Hydrogen::CPU
+#include <cstdio>
+#include <unordered_map>
+namespace Hydrogen::CPU {
+namespace {
+struct PairProfile {
+    std::unordered_map<uint64_t, uint64_t> n;   // key: (a low 32 bits of fn ptr offsets)
+    std::unordered_map<uintptr_t, uintptr_t> ids;
+    ~PairProfile() {
+        FILE* f = std::fopen(getenv("HVM_PAIRPROF") ? getenv("HVM_PAIRPROF") : "pairprof.txt", "w");
+        if (!f) return;
+        for (auto& [k, v] : n) std::fprintf(f, "%llx %llx %llu\n", (unsigned long long)(k >> 32), (unsigned long long)(k & 0xFFFFFFFF), (unsigned long long)v);
+        std::fclose(f);
+    }
+};
+PairProfile g_pairs;
+uintptr_t g_base = reinterpret_cast<uintptr_t>(&hvmEnterBlock);
+}
+void hvmProfilePair(Handler a, Handler b) {
+    const uint64_t ka = uint32_t(reinterpret_cast<uintptr_t>(a) - g_base + 0x80000000u);
+    const uint64_t kb = uint32_t(reinterpret_cast<uintptr_t>(b) - g_base + 0x80000000u);
+    ++g_pairs.n[(ka << 32) | kb];
+}
+#endif
+
 // ----------------------------------------------------------- fault guard ---
 //
 // Guest loads/stores are plain host memory accesses into the arena. An access
@@ -192,8 +218,9 @@ void Engine::decodeArmBlock(Block& b, uint32_t pc) {
         const DecodeResult r = decodeArm(bb, insn);
         pc += 4;
         if (r == DecodeResult::End) { bb.finish(pc, false); return; }
-        if (r == DecodeResult::EndNeedsFallthrough || bb.insns() >= BlockBuilder::kMaxInsns ||
-            (pc & (Memory::GuestArena::kGuestPageSize - 1)) == 0) {
+        // A conditional exit (B<c>, BX<c> LR, LDM<c> {..pc}, …) is a side exit:
+        // when it isn't taken execution simply continues in this block.
+        if (bb.insns() >= BlockBuilder::kMaxInsns || (pc & (Memory::GuestArena::kGuestPageSize - 1)) == 0) {
             // Ending blocks at guest page boundaries keeps invalidation simple.
             bb.finish(pc, true);
             return;
@@ -240,7 +267,11 @@ void Engine::decodeThumbBlock(Block& b, uint32_t pc) {
         }
         pc += len;
         if (r == DecodeResult::End && (itstate & 0xF) == 0) { bb.finish(pc, false); return; }
-        if (r != DecodeResult::Continue) {
+        // Conditional exits (B<c>, CBZ/CBNZ, or the last instruction of an IT
+        // block such as BXEQ LR / POPNE {pc}) are side exits: the not-taken
+        // path keeps decoding into this block.
+        const bool sideExit = r == DecodeResult::EndNeedsFallthrough && (itstate & 0xF) == 0;
+        if (r != DecodeResult::Continue && !sideExit) {
             // A branch / PC write inside an IT block must be its last
             // instruction; anything else is UNPREDICTABLE. Either way, stop here.
             bb.finish(pc, r == DecodeResult::EndNeedsFallthrough || (itstate & 0xF) != 0);
