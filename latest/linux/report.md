@@ -1,214 +1,43 @@
-# HydrogenVM report — 7b52fe7
+# HydrogenVM report — 0f021b6
 
-2026-10-19T19:25:29+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-19T19:32:47+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 6.17.0-1022-azure)
 
-**7 test(s) failed.**
+**All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 185.0s |
-| cpu | 15 | 0 | 0 | 0.3s |
-| ios | 0 | 6 | 0 | 0.0s |
-| bench | 4 | 1 | 0 | 0.4s |
+| build | 1 | 0 | 0 | 225.7s |
+| cpu | 15 | 0 | 0 | 0.4s |
+| ios | 6 | 0 | 0 | 1.9s |
+| bench | 5 | 0 | 0 | 24.0s |
 
 ## Speed
 
+CoreMark **1749.9** iterations/s (587.6 guest MIPS)
 
-Raw interpreter speed (CPU test programs): ctests_thumb 566 MIPS, ctests_arm 603 MIPS, ftests_vfp_thumb_softfp 488 MIPS, ftests_neon_thumb 417 MIPS
+| Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
+|---|---|---:|---:|---:|
+| iPhone 3GS | Cortex-A8 | 1440 | **121.5%** | 729 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **91.1%** | 729 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **72.9%** | 583 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.5%** | 500 MHz |
 
-## Problems (13)
+Raw interpreter speed (CPU test programs): ctests_thumb 442 MIPS, ctests_arm 469 MIPS, ftests_vfp_thumb_softfp 374 MIPS, ftests_neon_thumb 326 MIPS
 
-### Failures (7)
+| App | Wall | Frames | Avg frame | Max frame | Slow frames |
+|---|---:|---:|---:|---:|---:|
+| CTest | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 0.78s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.02s | 61 | 0.54 ms | 10.35 ms | 0 |
 
-- **ios / CTest**
+## Problems (7)
 
-  ```
-  build failed:
-  Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
-      main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
-      build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
-      syms = undefined_symbols(objs)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
-      out = run([NM, "-u", "--just-symbol-name"] + objs)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
-      p = subprocess.run(cmd, capture_output=True, text=True, **kw)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 548, in run
-      with Popen(*popenargs, **kwargs) as process:
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
-      self._execute_child(args, executable, preexec_fn, close_fds,
-    File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
-      raise child_exception_type(errno_num, err_msg, err_filename)
-  FileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'
-  ```
-- **ios / CTestLegacy**
+### Below speed goal (1)
 
-  ```
-  build failed:
-  Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
-      main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
-      build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
-      syms = undefined_symbols(objs)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
-      out = run([NM, "-u", "--just-symbol-name"] + objs)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
-      p = subprocess.run(cmd, capture_output=True, text=True, **kw)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 548, in run
-      with Popen(*popenargs, **kwargs) as process:
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
-      self._execute_child(args, executable, preexec_fn, close_fds,
-    File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
-      raise child_exception_type(errno_num, err_msg, err_filename)
-  FileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'
-  ```
-- **ios / BinPlist**
-
-  ```
-  build failed:
-  Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
-      main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
-      build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
-      syms = undefined_symbols(objs)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
-      out = run([NM, "-u", "--just-symbol-name"] + objs)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
-      p = subprocess.run(cmd, capture_output=True, text=True, **kw)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 548, in run
-      with Popen(*popenargs, **kwargs) as process:
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
-      self._execute_child(args, executable, preexec_fn, close_fds,
-    File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
-      raise child_exception_type(errno_num, err_msg, err_filename)
-  FileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'
-  ```
-- **ios / ObjCTest**
-
-  ```
-  build failed:
-  Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
-      main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
-      build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
-      syms = undefined_symbols(objs)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
-      out = run([NM, "-u", "--just-symbol-name"] + objs)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
-      p = subprocess.run(cmd, capture_output=True, text=True, **kw)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 548, in run
-      with Popen(*popenargs, **kwargs) as process:
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
-      self._execute_child(args, executable, preexec_fn, close_fds,
-    File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
-      raise child_exception_type(errno_num, err_msg, err_filename)
-  FileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'
-  ```
-- **ios / FoundationTest**
-
-  ```
-  build failed:
-  Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
-      main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
-      build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
-      syms = undefined_symbols(objs)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
-      out = run([NM, "-u", "--just-symbol-name"] + objs)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
-      p = subprocess.run(cmd, capture_output=True, text=True, **kw)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 548, in run
-      with Popen(*popenargs, **kwargs) as process:
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
-      self._execute_child(args, executable, preexec_fn, close_fds,
-    File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
-      raise child_exception_type(errno_num, err_msg, err_filename)
-  FileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'
-  ```
-- **ios / UIKitTest**
-
-  ```
-  build failed:
-  Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
-      main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
-      build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
-      syms = undefined_symbols(objs)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
-      out = run([NM, "-u", "--just-symbol-name"] + objs)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
-      p = subprocess.run(cmd, capture_output=True, text=True, **kw)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 548, in run
-      with Popen(*popenargs, **kwargs) as process:
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
-      self._execute_child(args, executable, preexec_fn, close_fds,
-    File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
-      raise child_exception_type(errno_num, err_msg, err_filename)
-  FileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'
-  ```
-- **bench / coremark**
-
-  ```
-  build failed:
-  Traceback (most recent call last):
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 194, in <module>
-      main()
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 191, in main
-      build_app(a)
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 137, in build_app
-      syms = undefined_symbols(objs)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 69, in undefined_symbols
-      out = run([NM, "-u", "--just-symbol-name"] + objs)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py", line 42, in run
-      p = subprocess.run(cmd, capture_output=True, text=True, **kw)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 548, in run
-      with Popen(*popenargs, **kwargs) as process:
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
-      self._execute_child(args, executable, preexec_fn, close_fds,
-    File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
-      raise child_exception_type(errno_num, err_msg, err_filename)
-  FileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'
-  ```
+- **bench / coremark**: 38.5% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (6)
 
