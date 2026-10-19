@@ -1,0 +1,9 @@
+{
+  "_comment": "Single-core CoreMark of the original 32-bit iPhones, estimated as clock x CoreMark/MHz. The per-MHz figures are approximate (published ranges: Cortex-A8 ~2.0-2.6, Cortex-A9 ~2.8-3.3, Apple Swift ~3.3-3.8, varying with compiler). Replace with measured device numbers when available. 'goal' marks the target that defines 100% speed.",
+  "targets": [
+    {"device": "iPhone 3GS", "cpu": "Cortex-A8", "mhz": 600, "coremarkPerMHz": 2.4},
+    {"device": "iPhone 4", "cpu": "Apple A4 (Cortex-A8)", "mhz": 800, "coremarkPerMHz": 2.4},
+    {"device": "iPhone 4S", "cpu": "Apple A5 (Cortex-A9)", "mhz": 800, "coremarkPerMHz": 3.0},
+    {"device": "iPhone 5", "cpu": "Apple A6 (Swift)", "mhz": 1300, "coremarkPerMHz": 3.5, "goal": true}
+  ]
+}

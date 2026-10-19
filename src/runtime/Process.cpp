@@ -86,6 +86,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)) {
     registerLibcStdio(*this);
     registerLibcStdlib(*this);
     registerLibcMath(*this);
+    registerCompilerRt(*this);
     registerLibcTime(*this);
     registerLibcPthread(*this);
     registerLibcSystem(*this);
@@ -593,6 +594,15 @@ void Process::reportMissing(const std::string& what) {
         if (!missing_.insert(what).second) return;
     }
     log(LogLevel::Warning, "Missing: " + what);
+}
+
+uint64_t Process::guestInstructions() {
+    std::lock_guard<std::mutex> lk(threadsMu_);
+    uint64_t n = 0;
+    bool sawMain = false;
+    for (auto& [k, t] : threads_) { n += t->cpu.insn_count; sawMain |= t.get() == mainThread_; }
+    if (mainThread_ && !sawMain) n += mainThread_->cpu.insn_count;
+    return n;
 }
 
 std::vector<std::string> Process::missingSymbols() const {

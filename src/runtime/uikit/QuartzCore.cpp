@@ -725,6 +725,21 @@ void displayPass(Ctx& x, id layer, IMP baseDrawRect) {
 
 void runFrame(Ctx& x, double now) {
     auto& u = ui(x);
+    using Clock = std::chrono::steady_clock;
+    const auto t0 = Clock::now();
+    auto& perf = x.proc.perf();
+    struct FrameTimer {
+        Runtime::Process::Perf& p;
+        Clock::time_point t0;
+        ~FrameTimer() {
+            const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
+            p.frames++;
+            p.frameNs += ns;
+            if (ns > 16'700'000) p.slowFrames++;
+            uint64_t m = p.maxFrameNs.load();
+            while (ns > m && !p.maxFrameNs.compare_exchange_weak(m, ns)) {}
+        }
+    } timer{perf, t0};
     deliverPendingInput(x);
     // display links
     if (!u.links.empty()) {
@@ -747,7 +762,10 @@ void runFrame(Ctx& x, double now) {
     bool external = false;
     (void)now;
     if (u.needsComposite || external) {
+        const auto c0 = Clock::now();
         compositeFrame(x);
+        perf.compositeNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - c0).count());
+        perf.framesPresented++;
         if (x.proc.config().present) x.proc.config().present(u.framebuffer.rgba.data(), u.framebuffer.width, u.framebuffer.height);
     }
 }

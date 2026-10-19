@@ -89,6 +89,19 @@ public:
     void requestStop();
     bool stopping() const { return engine_->stopRequested(); }
 
+    // ---- performance counters (read any time; reported by `hvm --report`)
+    struct Perf {
+        std::atomic<uint64_t> frames{0};          // frame hooks run (60 Hz main run loop)
+        std::atomic<uint64_t> framesPresented{0}; // frames that changed and were composited
+        std::atomic<uint64_t> frameNs{0};         // host time inside frame hooks (input, links, layout, display, composite)
+        std::atomic<uint64_t> compositeNs{0};     // of which compositing
+        std::atomic<uint64_t> maxFrameNs{0};
+        std::atomic<uint64_t> slowFrames{0};      // frame hooks over 16.7 ms
+    };
+    Perf& perf() { return perf_; }
+    // Guest instructions retired by every thread so far (approximate while running).
+    uint64_t guestInstructions();
+
     // ---- results
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
@@ -251,12 +264,14 @@ private:
     std::function<void(float, float, float)> accelHandler_;
 
     // diagnostics
+    Perf perf_;
     mutable std::mutex missingMu_;
     std::set<std::string> missing_;
 };
 
 // Module registration (each lives in its own .cpp).
 void registerLibcString(Process& p);
+void registerCompilerRt(Process& p);
 void registerLibcStdio(Process& p);
 void registerLibcStdlib(Process& p);
 void registerLibcMath(Process& p);

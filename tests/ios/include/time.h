@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 typedef long time_t;
 typedef unsigned long clock_t;
 struct timeval { long tv_sec; int tv_usec; };
@@ -13,3 +14,7 @@ struct tm *gmtime(const time_t *);
 time_t mktime(struct tm *);
 size_t strftime(char *, size_t, const char *, const struct tm *);
 #define CLOCKS_PER_SEC 1000000
+typedef int clockid_t;
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 6
+int clock_gettime(clockid_t, struct timespec *);
