@@ -109,7 +109,7 @@ ok UINavigationController push & hierarchy
 
 ok UINavigationController pop
 
-ok UITabBarController selection
+ok UITabBarController selection
 
 ok UITextField editing & first responder
 
@@ -143,4 +143,4 @@ ALL CHECKS PASSED
 
 App exited with code 0
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 8688
+com.lfull.HydrogenVM: 23965
