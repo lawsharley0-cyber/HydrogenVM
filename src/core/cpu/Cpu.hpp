@@ -18,6 +18,7 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #if defined(__clang__) && __has_attribute(preserve_none) && (defined(__x86_64__) || defined(__aarch64__)) && (__clang_major__ >= 19)
@@ -62,7 +63,12 @@ enum class Exit : uint32_t {
     Undefined,     // undecodable / unimplemented instruction at info
     Breakpoint,    // BKPT / UDF trap at info
     MemFault,      // host fault on guest address `info`
+    Return,        // a host→guest call (Engine::callGuest) returned
+    HostError,     // a host (HLE) function failed; Engine::lastHostError() has details
 };
+
+// Per-thread direct-mapped cache in front of the engine's block map.
+struct FastEntry { uint32_t key; Block* block; };
 
 struct alignas(64) Cpu {
     uint32_t r[kNumRegs] = {};
@@ -96,6 +102,11 @@ struct alignas(64) Cpu {
     uint64_t insn_count = 0;   // retired guest instructions (approximate, per block)
     Engine*  engine     = nullptr;
     void*    user       = nullptr;  // owner (guest thread object, test harness, ...)
+
+    // Block lookup cache, private to the host thread running this Cpu, so guest
+    // threads can run on real host threads without locking on every branch.
+    std::unique_ptr<FastEntry[]> fast;
+    uint64_t fast_gen = ~0ull;
 
     uint32_t pc() const { return r[kPC]; }
     uint32_t cpsr() const { return nzcv | (q << 27) | ge | (thumb << 5) | 0x10 /*USR*/; }

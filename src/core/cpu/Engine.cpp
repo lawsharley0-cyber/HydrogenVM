@@ -61,24 +61,54 @@ void installFaultHandler() {
 
 // ---------------------------------------------------------------- engine ---
 
-Engine::Engine(Memory::GuestArena& mem) : mem_(mem), fast_(kFastSize, FastEntry{0xFFFFFFFFu, nullptr}) {
+Engine::Engine(Memory::GuestArena& mem) : mem_(mem), hle_(kMaxHle) {
     installFaultHandler();
+    returnStub_ = registerHle("__hvm_return_to_host", [](Cpu& c) { c.exit = Exit::Return; });
 }
 Engine::~Engine() = default;
 
 uint32_t Engine::registerHle(std::string name, HleFn fn) {
     std::lock_guard<std::mutex> lk(mu_);
-    const uint32_t idx = uint32_t(hle_.size());
-    if (idx >= Memory::GuestArena::kHleSize / 4) throw std::runtime_error("HydrogenVM: HLE table full");
-    hle_.push_back({std::move(name), std::move(fn)});
+    const uint32_t idx = hleCount_.load(std::memory_order_relaxed);
+    if (idx >= kMaxHle) throw std::runtime_error("HydrogenVM: HLE table full");
+    hle_[idx] = {std::move(name), std::move(fn)};
+    hleCount_.store(idx + 1, std::memory_order_release);
     return Memory::GuestArena::kHleBase + idx * 4;
 }
 
-static inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (16384 - 1); }
+namespace {
+thread_local std::string t_hostError;
+}
+const std::string& Engine::lastHostError() { return t_hostError; }
+void Engine::setLastHostError(std::string s) { t_hostError = std::move(s); }
+
+void Engine::callHle(Cpu* c, uint32_t index) {
+    try {
+        hle_[index].fn(*c);
+    } catch (const GuestFault& f) {
+        // A nested host→guest call failed: propagate the original exit.
+        c->exit = f.exit;
+        c->exit_info = f.info;
+        c->r[kPC] = f.pc;
+        c->thumb = f.thumb;
+        if (f.exit == Exit::HostError) t_hostError = f.what();
+    } catch (const std::exception& e) {
+        c->exit = Exit::HostError;
+        c->exit_info = index;
+        t_hostError = hle_[index].name + ": " + e.what();
+    }
+}
+
+static inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 13)) & (4096 - 1); }
 
 Block* Engine::enterBlock(Cpu* c, uint32_t key) {
-    (void)c;
-    FastEntry& fe = fast_[fastIndex(key)];
+    const uint64_t g = gen_.load(std::memory_order_acquire);
+    if (__builtin_expect(c->fast_gen != g, 0)) {
+        if (!c->fast) c->fast.reset(new FastEntry[kFastSize]);
+        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {0xFFFFFFFFu, nullptr};
+        c->fast_gen = g;
+    }
+    FastEntry& fe = c->fast[fastIndex(key)];
     if (fe.key == key) return fe.block;
     Block* b = lookupOrDecode(key);
     fe.key = key; fe.block = b;
@@ -103,7 +133,7 @@ Block* Engine::lookupOrDecode(uint32_t key) {
 void Engine::flushCache() {
     std::lock_guard<std::mutex> lk(mu_);
     blocks_.clear();
-    std::fill(fast_.begin(), fast_.end(), FastEntry{0xFFFFFFFFu, nullptr});
+    gen_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void Engine::invalidateRange(uint32_t addr, uint32_t size) {
@@ -130,7 +160,7 @@ std::unique_ptr<Block> Engine::decodeBlock(uint32_t key) {
         BlockBuilder bb(*b, pc, false);
         bb.beginInsn(pc);
         bb.emit(&H_Hle, 0, 0, 0, 0, (pc - Memory::GuestArena::kHleBase) / 4);
-        bb.exitIndirect(kLR, true);
+        bb.exitIndirect(kTmp3, true);
         bb.finish(pc + 4, false);
         return b;
     }
@@ -246,6 +276,53 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     }
     t_scope = prev;
     return cpu.exit;
+}
+
+Exit Engine::runToExit(Cpu& cpu) {
+    for (;;) {
+        if (stopRequested()) { cpu.exit = Exit::Halt; return Exit::Halt; }
+        const Exit e = run(cpu, kSlice);
+        if (e != Exit::Budget) return e;
+    }
+}
+
+uint64_t Engine::callGuest(Cpu& c, uint32_t fn, std::initializer_list<uint32_t> args) {
+    return callGuest(c, fn, args.begin(), args.size());
+}
+
+uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nargs) {
+    // Save everything the interrupted context can observe.
+    uint32_t saved[kNumRegs];
+    std::memcpy(saved, c.r, sizeof saved);
+    const uint32_t nzcv = c.nzcv, q = c.q, ge = c.ge, thumb = c.thumb, blockPc = c.block_pc;
+    const int64_t budget = c.budget;
+    const Exit exitSaved = c.exit;
+    const uint32_t infoSaved = c.exit_info;
+
+    uint32_t sp = c.r[kSP] & ~7u;
+    if (nargs > 4) {
+        sp = (sp - uint32_t(nargs - 4) * 4) & ~7u;
+        for (size_t i = 4; i < nargs; ++i) mem_.write<uint32_t>(sp + uint32_t(i - 4) * 4, args[i]);
+    }
+    for (size_t i = 0; i < 4; ++i) c.r[i] = i < nargs ? args[i] : 0;
+    c.r[kSP] = sp;
+    c.r[kLR] = returnStub_;
+    c.r[kPC] = fn & ~1u;
+    c.thumb = fn & 1;
+
+    const Exit e = runToExit(c);
+    const uint64_t result = (uint64_t(c.r[1]) << 32) | c.r[0];
+    if (e != Exit::Return) {
+        const uint32_t info = c.exit_info, pc = c.r[kPC], th = c.thumb;
+        std::memcpy(c.r, saved, sizeof saved);
+        c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
+        c.exit = exitSaved; c.exit_info = infoSaved;
+        throw GuestFault(e, info, pc, th, e == Exit::HostError ? t_hostError : "guest call did not return");
+    }
+    std::memcpy(c.r, saved, sizeof saved);
+    c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
+    c.exit = exitSaved; c.exit_info = infoSaved;
+    return result;
 }
 
 } // namespace Hydrogen::CPU

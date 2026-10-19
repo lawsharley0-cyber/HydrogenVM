@@ -138,11 +138,11 @@ HVM_H(H_BranchDirect) {
     c->thumb = op->a;
     retire(c, op->b);
     if (c->budget <= 0) { c->exit = Exit::Budget; return; }
-    Block* nb = op->link;
+    Block* nb = __atomic_load_n(&op->link, __ATOMIC_ACQUIRE);
     if (__builtin_expect(nb == nullptr, 0)) {
         nb = hvmEnterBlock(c, op->imm | op->a);
         if (!nb) return;
-        op->link = nb;
+        __atomic_store_n(&op->link, nb, __ATOMIC_RELEASE);
     }
     c->block_pc = op->imm;
     const Op* first = nb->ops.data();
@@ -195,7 +195,11 @@ HVM_H(H_FetchFault) {
 }
 
 // High-level-emulated function: call host function #imm, then continue.
+// The block's exit branches to r[kTmp3], which defaults to LR (a normal
+// return); a host function can redirect it (Engine::hleJump) to tail-jump
+// somewhere else, which is how objc_msgSend and longjmp work.
 HVM_H(H_Hle) {
+    c->r[kTmp3] = c->r[kLR];
     hvmCallHle(c, op->imm);
     if (c->exit != Exit::None) return;
     HVM_NEXT();
