@@ -1,5 +1,6 @@
 #include "Process.hpp"
 #include "libc/Unwind.hpp"
+#include "audio/Audio.hpp"
 #include "loader/ElfLoader.hpp"
 #include <cstdarg>
 #include <cstdio>
@@ -65,7 +66,7 @@ void spawnHostThread(std::function<void()> fn) {
 
 // ----------------------------------------------------------- lifecycle ---
 
-Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)) {
+Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_shared<Audio::Mixer>()) {
     mem_ = std::make_unique<Memory::GuestArena>();
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
@@ -114,7 +115,7 @@ Process::~Process() {
     if (t_thread && &t_thread->proc == this) t_thread = nullptr;
 }
 
-void Process::requestStop() { engine_->requestStop(); }
+void Process::requestStop() { engine_->requestStop(); mixer_->stopAll(); }
 
 void Process::load() {
     const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";

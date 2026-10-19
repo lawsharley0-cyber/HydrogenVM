@@ -2,6 +2,7 @@
 // OpenAL) and platform framework stubs (GameKit, StoreKit, MessageUI,
 // SystemConfiguration).
 #include "UIKit.hpp"
+#include "runtime/audio/Audio.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -19,259 +20,18 @@ namespace {
 
 void noteOnce(Ctx& x, const char* what) { x.proc.reportMissing(what); }
 
-// ====================================================== PCM / WAV Decoder ===
+// Decoding lives in runtime/audio (WAV, CAF, AIFF, MP3); playback in the mixer.
+using Audio::DecodedAudio;
+inline DecodedAudio decodeAudioBytes(const uint8_t* data, size_t n) { return Audio::decode(data, n); }
 
-struct DecodedAudio {
-    int sampleRate = 44100;
-    int channels = 2;
-    double duration = 0.0;
-    std::vector<int16_t> stereoPcm;   // interleaved L, R
-};
-
-uint32_t readLE32(const uint8_t* p) { uint32_t v; std::memcpy(&v, p, 4); return v; }
-uint16_t readLE16(const uint8_t* p) { uint16_t v; std::memcpy(&v, p, 2); return v; }
-uint32_t readBE32(const uint8_t* p) { return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3]; }
-uint16_t readBE16(const uint8_t* p) { return uint16_t((p[0] << 8) | p[1]); }
-uint64_t readBE64(const uint8_t* p) { return (uint64_t(readBE32(p)) << 32) | readBE32(p + 4); }
-
-// Linear PCM in any common layout -> interleaved stereo int16.
-void pcmToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels, int bits, bool isFloat, bool bigEndian) {
-    const int bps = bits / 8;
-    if (channels < 1 || bps < 1) return;
-    const size_t frameBytes = size_t(channels) * size_t(bps);
-    const size_t frames = bytes / frameBytes;
-    auto sample = [&](const uint8_t* s) -> float {
-        uint32_t v = 0;
-        for (int i = 0; i < bps; ++i) v |= uint32_t(s[bigEndian ? i : bps - 1 - i]) << (8 * (bps - 1 - i));
-        if (isFloat) {
-            if (bps == 4) { float f; std::memcpy(&f, &v, 4); return f; }
-            if (bps == 8) {
-                uint64_t w = 0;
-                for (int i = 0; i < 8; ++i) w |= uint64_t(s[bigEndian ? i : 7 - i]) << (8 * (7 - i));
-                double d; std::memcpy(&d, &w, 8); return float(d);
-            }
-            return 0;
-        }
-        if (bps == 1) return (float(v) - 128.0f) / 128.0f;   // 8-bit PCM is unsigned
-        const int shift = 32 - bits;
-        return float(int32_t(v << shift)) / 2147483648.0f;
-    };
-    out.channels = channels;
-    out.stereoPcm.resize(frames * 2);
-    for (size_t f = 0; f < frames; ++f) {
-        const uint8_t* fp = p + f * frameBytes;
-        const float l = sample(fp), r = channels >= 2 ? sample(fp + bps) : l;
-        out.stereoPcm[f * 2] = int16_t(std::clamp(l * 32767.0f, -32768.0f, 32767.0f));
-        out.stereoPcm[f * 2 + 1] = int16_t(std::clamp(r * 32767.0f, -32768.0f, 32767.0f));
-    }
-    out.duration = out.sampleRate ? double(frames) / double(out.sampleRate) : 0;
-}
-
-// Apple IMA4: packets of 34 bytes per channel (2-byte header + 64 4-bit samples).
-void ima4ToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels) {
-    static const int16_t kSteps[89] = {7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
-        73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724,
-        796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871,
-        5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086,
-        29794, 32767};
-    static const int kIndex[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
-    if (channels < 1) return;
-    const size_t packetBytes = size_t(34) * size_t(channels);
-    const size_t packets = bytes / packetBytes;
-    std::vector<int16_t> ch[2];
-    for (int c = 0; c < std::min(channels, 2); ++c) ch[c].reserve(packets * 64);
-    for (size_t k = 0; k < packets; ++k) {
-        for (int c = 0; c < std::min(channels, 2); ++c) {
-            const uint8_t* b = p + k * packetBytes + size_t(c) * 34;
-            const uint16_t hdr = readBE16(b);
-            int pred = int16_t(hdr & 0xFF80);
-            int idx = std::clamp(int(hdr & 0x7F), 0, 88);
-            for (int i = 0; i < 64; ++i) {
-                const int nib = (b[2 + i / 2] >> ((i & 1) * 4)) & 0xF;
-                const int step = kSteps[idx];
-                int diff = step >> 3;
-                if (nib & 1) diff += step >> 2;
-                if (nib & 2) diff += step >> 1;
-                if (nib & 4) diff += step;
-                pred = std::clamp(nib & 8 ? pred - diff : pred + diff, -32768, 32767);
-                idx = std::clamp(idx + kIndex[nib], 0, 88);
-                ch[c].push_back(int16_t(pred));
-            }
-        }
-    }
-    const size_t frames = ch[0].size();
-    out.channels = channels;
-    out.stereoPcm.resize(frames * 2);
-    for (size_t f = 0; f < frames; ++f) {
-        out.stereoPcm[f * 2] = ch[0][f];
-        out.stereoPcm[f * 2 + 1] = channels >= 2 ? ch[1][f] : ch[0][f];
-    }
-    out.duration = out.sampleRate ? double(frames) / double(out.sampleRate) : 0;
-}
-
-bool decodeCaf(DecodedAudio& out, const uint8_t* data, size_t n) {
-    if (n < 8 || std::memcmp(data, "caff", 4) != 0) return false;
-    size_t pos = 8;
-    double sr = 44100;
-    uint32_t fmt = 0, flags = 0, channels = 1, bits = 16;
-    const uint8_t* audio = nullptr;
-    size_t audioBytes = 0;
-    while (pos + 12 <= n) {
-        const uint8_t* h = data + pos;
-        int64_t size = int64_t(readBE64(h + 4));
-        pos += 12;
-        if (size < 0 || pos + size_t(size) > n) size = int64_t(n - pos);   // -1: data runs to EOF
-        if (std::memcmp(h, "desc", 4) == 0 && size >= 32) {
-            uint64_t bitsRate = readBE64(data + pos);
-            std::memcpy(&sr, &bitsRate, 8);
-            fmt = readBE32(data + pos + 8);
-            flags = readBE32(data + pos + 12);
-            channels = std::max<uint32_t>(1, readBE32(data + pos + 24));
-            bits = readBE32(data + pos + 28);
-        } else if (std::memcmp(h, "data", 4) == 0 && size >= 4) {
-            audio = data + pos + 4;   // skip the edit count
-            audioBytes = size_t(size) - 4;
-        }
-        pos += size_t(size);
-    }
-    if (!audio) return false;
-    out.sampleRate = int(std::max(8000.0, std::min(sr, 192000.0)));
-    if (fmt == 0x6C70636D /* lpcm */) pcmToStereo(out, audio, audioBytes, int(channels), int(bits), flags & 1, !(flags & 2));
-    else if (fmt == 0x696D6134 /* ima4 */) ima4ToStereo(out, audio, audioBytes, int(channels));
-    else return false;
-    return !out.stereoPcm.empty();
-}
-
-// IEEE 754 80-bit extended (AIFF sample rate).
-double readExtended(const uint8_t* p) {
-    const int exp = ((p[0] & 0x7F) << 8) | p[1];
-    const uint64_t mant = readBE64(p + 2);
-    if (!exp && !mant) return 0;
-    const double v = std::ldexp(double(mant), exp - 16383 - 63);
-    return (p[0] & 0x80) ? -v : v;
-}
-
-bool decodeAiff(DecodedAudio& out, const uint8_t* data, size_t n) {
-    if (n < 12 || std::memcmp(data, "FORM", 4) != 0) return false;
-    const bool aifc = std::memcmp(data + 8, "AIFC", 4) == 0;
-    if (!aifc && std::memcmp(data + 8, "AIFF", 4) != 0) return false;
-    size_t pos = 12;
-    int channels = 1, bits = 16;
-    double sr = 44100;
-    uint32_t comp = 0x4E4F4E45;   // 'NONE'
-    const uint8_t* audio = nullptr;
-    size_t audioBytes = 0;
-    while (pos + 8 <= n) {
-        const uint8_t* h = data + pos;
-        const size_t size = readBE32(h + 4);
-        pos += 8;
-        if (pos + size > n) break;
-        if (std::memcmp(h, "COMM", 4) == 0 && size >= 18) {
-            channels = std::max(1, int(readBE16(data + pos)));
-            bits = readBE16(data + pos + 6);
-            sr = readExtended(data + pos + 8);
-            if (aifc && size >= 22) comp = readBE32(data + pos + 18);
-        } else if (std::memcmp(h, "SSND", 4) == 0 && size >= 8) {
-            const uint32_t off = readBE32(data + pos);
-            audio = data + pos + 8 + off;
-            audioBytes = size - 8 - std::min<size_t>(off, size - 8);
-        }
-        pos += (size + 1) & ~size_t(1);
-    }
-    if (!audio) return false;
-    out.sampleRate = int(std::max(8000.0, std::min(sr, 192000.0)));
-    if (comp == 0x4E4F4E45 /* NONE */ || comp == 0x74776F73 /* twos */) pcmToStereo(out, audio, audioBytes, channels, bits, false, true);
-    else if (comp == 0x736F7774 /* sowt */) pcmToStereo(out, audio, audioBytes, channels, bits, false, false);
-    else if (comp == 0x666C3332 /* fl32 */) pcmToStereo(out, audio, audioBytes, channels, 32, true, true);
-    else if (comp == 0x696D6134 /* ima4 */) ima4ToStereo(out, audio, audioBytes, channels);
-    else return false;
-    return !out.stereoPcm.empty();
-}
-
-DecodedAudio decodeAudioBytes(const uint8_t* data, size_t n) {
-    DecodedAudio out;
-    if (!data || n < 12) return out;
-    if (decodeCaf(out, data, n) || decodeAiff(out, data, n)) return out;
-    out = DecodedAudio{};
-
-    // RIFF / WAVE parser
-    if (std::memcmp(data, "RIFF", 4) == 0 && std::memcmp(data + 8, "WAVE", 4) == 0) {
-        size_t pos = 12;
-        uint16_t audioFmt = 1, numCh = 1, bitsPerSample = 16;
-        uint32_t sr = 44100;
-        const uint8_t* pcmPtr = nullptr;
-        size_t pcmBytes = 0;
-
-        while (pos + 8 <= n) {
-            const uint8_t* hdr = data + pos;
-            const uint32_t chunkSize = readLE32(hdr + 4);
-            pos += 8;
-            if (pos + chunkSize > n) break;
-            if (std::memcmp(hdr, "fmt ", 4) == 0 && chunkSize >= 16) {
-                audioFmt = readLE16(data + pos);
-                numCh = std::max<uint16_t>(1, readLE16(data + pos + 2));
-                sr = std::max<uint32_t>(8000, readLE32(data + pos + 4));
-                bitsPerSample = readLE16(data + pos + 14);
-            } else if (std::memcmp(hdr, "data", 4) == 0) {
-                pcmPtr = data + pos;
-                pcmBytes = chunkSize;
-            }
-            pos += (chunkSize + 1) & ~size_t(1);
-        }
-        out.sampleRate = int(sr);
-        out.channels = int(numCh);
-        if (pcmPtr && pcmBytes > 0 && (audioFmt == 3 || audioFmt == 0xFFFE || (audioFmt == 1 && bitsPerSample > 16))) {
-            // float, WAVE_FORMAT_EXTENSIBLE (PCM inside), 24/32-bit integer
-            pcmToStereo(out, pcmPtr, pcmBytes, int(numCh), int(bitsPerSample), audioFmt == 3, false);
-            return out;
-        }
-        if (pcmPtr && pcmBytes > 0 && audioFmt == 1 && (bitsPerSample == 8 || bitsPerSample == 16)) {
-            const size_t bytesPerFrame = size_t(numCh) * (bitsPerSample / 8);
-            const size_t frames = bytesPerFrame ? (pcmBytes / bytesPerFrame) : 0;
-            out.duration = double(frames) / double(sr);
-            out.stereoPcm.resize(frames * 2);
-            for (size_t f = 0; f < frames; ++f) {
-                const uint8_t* fp = pcmPtr + f * bytesPerFrame;
-                int16_t l = 0, r = 0;
-                if (bitsPerSample == 16) {
-                    std::memcpy(&l, fp, 2);
-                    r = (numCh >= 2) ? (std::memcpy(&r, fp + 2, 2), r) : l;
-                } else {
-                    l = int16_t((int(fp[0]) - 128) * 256);
-                    r = (numCh >= 2) ? int16_t((int(fp[1]) - 128) * 256) : l;
-                }
-                out.stereoPcm[f * 2 + 0] = l;
-                out.stereoPcm[f * 2 + 1] = r;
-            }
-            return out;
-        }
-    }
-
-    // Fallback for compressed/other containers: estimate duration (~128 kbps)
-    out.duration = std::max(0.05, double(n) / 16000.0);
-    return out;
-}
-
-void emitPcmToHost(Process& proc, const std::vector<int16_t>& stereoPcm, int sampleRate, float volume, float pan) {
-    if (!proc.config().audioOutput || stereoPcm.empty()) return;
-    const float lGain = std::clamp(volume * (pan <= 0 ? 1.0f : (1.0f - pan)), 0.0f, 1.0f);
-    const float rGain = std::clamp(volume * (pan >= 0 ? 1.0f : (1.0f + pan)), 0.0f, 1.0f);
-    if (std::abs(lGain - 1.0f) < 1e-3f && std::abs(rGain - 1.0f) < 1e-3f) {
-        proc.config().audioOutput(stereoPcm.data(), stereoPcm.size() / 2, sampleRate);
-        return;
-    }
-    std::vector<int16_t> scaled(stereoPcm.size());
-    for (size_t i = 0; i + 1 < stereoPcm.size(); i += 2) {
-        scaled[i + 0] = int16_t(std::clamp(float(stereoPcm[i + 0]) * lGain, -32768.0f, 32767.0f));
-        scaled[i + 1] = int16_t(std::clamp(float(stereoPcm[i + 1]) * rGain, -32768.0f, 32767.0f));
-    }
-    proc.config().audioOutput(scaled.data(), scaled.size() / 2, sampleRate);
-}
+Audio::Mixer& MX(Process& p) { return p.mixer(); }
+Audio::Pcm sharePcm(const std::vector<int16_t>& v) { return v.empty() ? nullptr : std::make_shared<const std::vector<int16_t>>(v); }
 
 // ============================================================= AudioToolbox ===
 
 struct SystemSoundEntry {
     DecodedAudio audio;
+    Audio::Pcm pcm;
     uint32_t completionProc = 0;
     uint32_t clientData = 0;
 };
@@ -289,7 +49,9 @@ struct AudioQueueInstance {
     int channels = 2;
     int bitsPerChannel = 16;
     float volume = 1.0f;
-    bool running = false;
+    bool running = false, isFloat = false, nonInterleaved = false;
+    uint32_t voice = 0;   // mixer stream; buffers go back to the app as they finish
+    std::shared_ptr<Foundation::RunLoop::Timer> pump;
     std::vector<AudioQueueBufferInfo> buffers;
 };
 
@@ -347,6 +109,7 @@ int32_t ss_create(Ctx& x, uint32_t urlRef, GuestPtr outId) {
         if (in) {
             std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
             entry.audio = decodeAudioBytes(bytes.data(), bytes.size());
+            entry.pcm = sharePcm(entry.audio.stereoPcm);
         }
     }
     st.sounds[sid] = std::move(entry);
@@ -356,13 +119,13 @@ int32_t ss_create(Ctx& x, uint32_t urlRef, GuestPtr outId) {
 void ss_play(Ctx& x, uint32_t sid) {
     auto& st = ATS(x);
     auto it = st.sounds.find(sid);
-    if (it != st.sounds.end()) {
-        emitPcmToHost(x.proc, it->second.audio.stereoPcm, it->second.audio.sampleRate, 1.0f, 0.0f);
-        if (it->second.completionProc) {
-            const uint32_t fn = it->second.completionProc, ud = it->second.clientData;
-            Process* p = &x.proc;
-            Foundation::mainRunLoop(x.proc).post([p, fn, sid, ud](CPU::Cpu& c) { p->callGuest(c, fn, {sid, ud}); });
-        }
+    if (it == st.sounds.end()) return;
+    MX(x.proc).play(it->second.pcm, it->second.audio.sampleRate, {}, 0, true);
+    if (it->second.completionProc) {
+        const uint32_t fn = it->second.completionProc, ud = it->second.clientData;
+        Process* p = &x.proc;
+        const double after = std::max(0.01, it->second.audio.duration);
+        Foundation::mainRunLoop(x.proc).addTimer(after, after, false, [p, fn, sid, ud](CPU::Cpu& c) { p->callGuest(c, fn, {sid, ud}); });
     }
 }
 int32_t ss_dispose(Ctx& x, uint32_t sid) { ATS(x).sounds.erase(sid); return 0; }
@@ -392,7 +155,12 @@ int32_t aq_newOutput(Ctx& x, GuestPtr format, uint32_t callbackProc, uint32_t us
         if (sr >= 4000 && sr <= 192000) q.sampleRate = int(sr);
         if (ch >= 1 && ch <= 8) q.channels = int(ch);
         if (bits == 8 || bits == 16 || bits == 32) q.bitsPerChannel = int(bits);
+        const uint32_t flags = x.mem.read<uint32_t>(format + 12);
+        q.isFloat = flags & 1;
+        q.nonInterleaved = flags & 0x20;
     }
+    q.voice = MX(x.proc).createStream({q.volume, 0, 1, false});
+    MX(x.proc).setPaused(q.voice, true);   // until AudioQueueStart
     st.queues[qid] = std::move(q);
     if (outAQ) x.mem.write<uint32_t>(outAQ, qid);
     return 0;
@@ -427,6 +195,17 @@ int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
     }
     return 0;
 }
+// Hands finished buffers back to the app's callback (on the main run loop).
+void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
+    auto& st = p.service<AudioToolboxState>();
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end()) return;
+    const uint32_t cb = it->second.callback, ud = it->second.userData;
+    for (uint64_t buf : MX(p).takeProcessed(it->second.voice)) {
+        if (!cb || !st.queues.count(qid)) break;
+        p.callGuest(c, cb, {ud, qid, uint32_t(buf)});
+    }
+}
 int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr) {
     auto& st = ATS(x);
     auto it = st.queues.find(qid);
@@ -434,43 +213,58 @@ int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr)
     AudioQueueInstance& q = it->second;
     const uint32_t dataPtr = x.mem.read<uint32_t>(buf + 4);
     const uint32_t byteSize = x.mem.read<uint32_t>(buf + 8);
-    if (dataPtr && byteSize > 0 && q.bitsPerChannel == 16) {
-        const size_t samples = byteSize / 2;
-        const int16_t* src = reinterpret_cast<const int16_t*>(x.mem.host(dataPtr));
-        std::vector<int16_t> stereo;
-        if (q.channels >= 2) {
-            stereo.assign(src, src + (samples & ~size_t(1)));
-        } else {
-            stereo.resize(samples * 2);
-            for (size_t i = 0; i < samples; ++i) stereo[i * 2] = stereo[i * 2 + 1] = src[i];
-        }
-        emitPcmToHost(x.proc, stereo, q.sampleRate, q.volume, 0.0f);
+    std::vector<int16_t> stereo;
+    if (dataPtr && byteSize > 0) {
+        const int bps = std::max(1, q.bitsPerChannel / 8), ch = std::max(1, q.channels);
+        const size_t frames = byteSize / size_t(bps * (q.nonInterleaved ? 1 : ch));
+        stereo.resize(frames * 2);
+        auto sample = [&](size_t frame, int c) -> int16_t {
+            const size_t idx = q.nonInterleaved ? frame : frame * size_t(ch) + size_t(std::min(c, ch - 1));
+            const uint32_t a = dataPtr + uint32_t(idx * size_t(bps));
+            if (q.isFloat && bps == 4) return int16_t(std::clamp(x.mem.read<float>(a) * 32767.0f, -32768.0f, 32767.0f));
+            if (bps == 4) return int16_t(x.mem.read<int32_t>(a) >> 16);
+            if (bps == 2) return x.mem.read<int16_t>(a);
+            return int16_t((int(x.mem.read<uint8_t>(a)) - 128) * 256);
+        };
+        for (size_t f = 0; f < frames; ++f) { stereo[f * 2] = sample(f, 0); stereo[f * 2 + 1] = sample(f, 1); }
     }
-    if (q.callback) {
-        const uint32_t cb = q.callback, ud = q.userData;
+    MX(x.proc).enqueue(q.voice, sharePcm(stereo), q.sampleRate, buf);
+    if (!q.pump) {
         Process* p = &x.proc;
-        Foundation::mainRunLoop(x.proc).post([p, cb, ud, qid, buf](CPU::Cpu& c) {
-            if (p->service<AudioToolboxState>().queues.count(qid))
-                p->callGuest(c, cb, {ud, qid, buf});
-        });
+        q.pump = Foundation::mainRunLoop(x.proc).addTimer(0.01, 0.01, true, [p, qid](CPU::Cpu& c) { aqPump(*p, c, qid); });
     }
     return 0;
 }
-int32_t aq_start(Ctx& x, uint32_t qid, GuestPtr) { if (ATS(x).queues.count(qid)) ATS(x).queues[qid].running = true; return 0; }
-int32_t aq_pause(Ctx& x, uint32_t qid) { if (ATS(x).queues.count(qid)) ATS(x).queues[qid].running = false; return 0; }
-int32_t aq_stop(Ctx& x, uint32_t qid, bool) { if (ATS(x).queues.count(qid)) ATS(x).queues[qid].running = false; return 0; }
+int32_t aq_start(Ctx& x, uint32_t qid, GuestPtr) { if (ATS(x).queues.count(qid)) { auto& q = ATS(x).queues[qid]; q.running = true; MX(x.proc).setPaused(q.voice, false); } return 0; }
+int32_t aq_pause(Ctx& x, uint32_t qid) { if (ATS(x).queues.count(qid)) { auto& q = ATS(x).queues[qid]; q.running = false; MX(x.proc).setPaused(q.voice, true); } return 0; }
+int32_t aq_stop(Ctx& x, uint32_t qid, bool) {
+    if (!ATS(x).queues.count(qid)) return 0;
+    auto& q = ATS(x).queues[qid];
+    q.running = false;
+    MX(x.proc).stop(q.voice);
+    MX(x.proc).takeProcessed(q.voice);   // stopped buffers are not called back
+    MX(x.proc).setPaused(q.voice, true);
+    return 0;
+}
 int32_t aq_flush(Ctx&, uint32_t) { return 0; }
-int32_t aq_reset(Ctx&, uint32_t) { return 0; }
+int32_t aq_reset(Ctx& x, uint32_t qid) { if (ATS(x).queues.count(qid)) MX(x.proc).stop(ATS(x).queues[qid].voice); return 0; }
 int32_t aq_dispose(Ctx& x, uint32_t qid, bool) {
     auto& st = ATS(x);
     if (st.queues.count(qid)) {
-        for (const auto& b : st.queues[qid].buffers) if (b.guestAddr) x.proc.heap().free(b.guestAddr);
+        auto& q = st.queues[qid];
+        if (q.pump) q.pump->valid = false;
+        MX(x.proc).release(q.voice);
+        for (const auto& b : q.buffers) if (b.guestAddr) x.proc.heap().free(b.guestAddr);
         st.queues.erase(qid);
     }
     return 0;
 }
 int32_t aq_setParam(Ctx& x, uint32_t qid, uint32_t param, float val) {
-    if (ATS(x).queues.count(qid) && param == 1 /* kAudioQueueParam_Volume */) ATS(x).queues[qid].volume = val;
+    if (ATS(x).queues.count(qid) && param == 1 /* kAudioQueueParam_Volume */) {
+        auto& q = ATS(x).queues[qid];
+        q.volume = val;
+        MX(x.proc).setParams(q.voice, {val, 0, 1, false});
+    }
     return 0;
 }
 int32_t aq_getParam(Ctx& x, uint32_t qid, uint32_t, GuestPtr outVal) {
@@ -772,12 +566,18 @@ struct PlayerData : ObjC::HostObject {
     double time = 0.0, duration = 0.0;
     uint32_t channels = 2;
     DecodedAudio decoded;
+    Audio::Pcm pcm;
+    uint32_t voice = 0;      // mixer voice while playing or paused
+    bool paused = false;
     std::shared_ptr<Foundation::RunLoop::Timer> timer;
 };
+Audio::VoiceParams playerParams(const PlayerData& d) { return {d.volume, d.pan, d.rate, d.loops < 0}; }
 PlayerData& PD(Ctx& x, id p) { return rt(x).host<PlayerData>(p); }
 
-void loadPlayerDecoded(PlayerData& d, const uint8_t* bytes, size_t len) {
+void loadPlayerDecoded(Ctx& x, PlayerData& d, const uint8_t* bytes, size_t len) {
     d.decoded = decodeAudioBytes(bytes, len);
+    if (d.decoded.stereoPcm.empty() && len) x.proc.reportMissing("AVAudioPlayer: audio format not supported (plays silence)");
+    d.pcm = sharePcm(d.decoded.stereoPcm);
     d.duration = d.decoded.duration;
     d.channels = uint32_t(std::max(1, d.decoded.channels));
 }
@@ -791,7 +591,7 @@ id ap_initURL(Ctx& x, id self, SEL, id url, GuestPtr errOut) {
         std::ifstream in(path, std::ios::binary);
         if (in) {
             std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
-            loadPlayerDecoded(d, bytes.data(), bytes.size());
+            loadPlayerDecoded(x, d, bytes.data(), bytes.size());
         }
     }
     return self;
@@ -802,62 +602,74 @@ id ap_initData(Ctx& x, id self, SEL, id data, GuestPtr errOut) {
     d.data = data ? rt(x).retain(x.cpu, data) : 0;
     if (data) {
         const auto bytes = Foundation::dataBytes(x, data);
-        loadPlayerDecoded(d, bytes.data(), bytes.size());
+        loadPlayerDecoded(x, d, bytes.data(), bytes.size());
     }
     return self;
 }
 bool ap_play(Ctx& x, id self, SEL) {
     PlayerData& d = PD(x, self);
+    if (!d.pcm) return false;
+    Audio::Mixer& mx = MX(x.proc);
+    if (d.voice && d.paused) {
+        mx.setPaused(d.voice, false);
+    } else {
+        if (d.voice) mx.release(d.voice);
+        d.loopsRemaining = d.loops;
+        d.voice = mx.play(d.pcm, d.decoded.sampleRate, playerParams(d), d.time);
+    }
     d.playing = true;
-    d.loopsRemaining = d.loops;
-    emitPcmToHost(x.proc, d.decoded.stereoPcm, d.decoded.sampleRate, d.volume, d.pan);
+    d.paused = false;
     if (d.timer) d.timer->valid = false;
-    const double step = 0.05;
     Process* p = &x.proc;
-    d.timer = Foundation::mainRunLoop(x.proc).addTimer(step, step, true, [p, self, step](CPU::Cpu& c) {
+    // Finite loop counts and the delegate callback are driven from here.
+    d.timer = Foundation::mainRunLoop(x.proc).addTimer(0.05, 0.05, true, [p, self](CPU::Cpu& c) {
         Ctx cx{*p, c, p->mem()};
         PlayerData* pd = rt(cx).hostIf<PlayerData>(self);
-        if (!pd || !pd->playing) return;
-        pd->time += step * std::max(0.25f, pd->rate);
-        if (pd->duration <= 0 || pd->time >= pd->duration) {
-            if (pd->loops < 0 || pd->loopsRemaining > 0) {
-                if (pd->loopsRemaining > 0) --pd->loopsRemaining;
-                pd->time = 0;
-                emitPcmToHost(*p, pd->decoded.stereoPcm, pd->decoded.sampleRate, pd->volume, pd->pan);
-            } else {
-                pd->playing = false;
-                pd->time = 0;
-                if (pd->timer) pd->timer->valid = false;
-                if (pd->delegate && rt(cx).respondsTo(pd->delegate, rt(cx).sel("audioPlayerDidFinishPlaying:successfully:")))
-                    rt(cx).send(c, pd->delegate, "audioPlayerDidFinishPlaying:successfully:", {self, 1});
-            }
+        if (!pd || !pd->playing || pd->paused) return;
+        Audio::Mixer& m = MX(*p);
+        if (m.playing(pd->voice)) { pd->time = m.positionSeconds(pd->voice); return; }
+        m.release(pd->voice);
+        pd->voice = 0;
+        pd->time = 0;
+        if (pd->loopsRemaining > 0) {
+            --pd->loopsRemaining;
+            pd->voice = m.play(pd->pcm, pd->decoded.sampleRate, playerParams(*pd), 0);
+            return;
         }
+        pd->playing = false;
+        if (pd->timer) pd->timer->valid = false;
+        if (pd->delegate && rt(cx).respondsTo(pd->delegate, rt(cx).sel("audioPlayerDidFinishPlaying:successfully:")))
+            rt(cx).send(c, pd->delegate, "audioPlayerDidFinishPlaying:successfully:", {self, 1});
     });
     return true;
 }
 bool ap_playAt(Ctx& x, id self, SEL s, double) { return ap_play(x, self, s); }
 void ap_pause(Ctx& x, id self, SEL) {
     PlayerData& d = PD(x, self);
+    if (!d.playing) return;
+    if (d.voice) { MX(x.proc).setPaused(d.voice, true); d.time = MX(x.proc).positionSeconds(d.voice); }
     d.playing = false;
-    if (d.timer) d.timer->valid = false;
+    d.paused = true;
 }
 void ap_stop(Ctx& x, id self, SEL) {
     PlayerData& d = PD(x, self);
+    if (d.voice) { d.time = MX(x.proc).positionSeconds(d.voice); MX(x.proc).release(d.voice); d.voice = 0; }
     d.playing = false;
+    d.paused = false;
     if (d.timer) d.timer->valid = false;
 }
 bool ap_prepare(Ctx&, id, SEL) { return true; }
 bool ap_isPlaying(Ctx& x, id self, SEL) { return PD(x, self).playing; }
 float ap_volume(Ctx& x, id self, SEL) { return PD(x, self).volume; }
-void ap_setVolume(Ctx& x, id self, SEL, float v) { PD(x, self).volume = std::clamp(v, 0.0f, 1.0f); }
+void ap_setVolume(Ctx& x, id self, SEL, float v) { PlayerData& d = PD(x, self); d.volume = std::clamp(v, 0.0f, 1.0f); if (d.voice) MX(x.proc).setParams(d.voice, playerParams(d)); }
 float ap_pan(Ctx& x, id self, SEL) { return PD(x, self).pan; }
-void ap_setPan(Ctx& x, id self, SEL, float v) { PD(x, self).pan = std::clamp(v, -1.0f, 1.0f); }
+void ap_setPan(Ctx& x, id self, SEL, float v) { PlayerData& d = PD(x, self); d.pan = std::clamp(v, -1.0f, 1.0f); if (d.voice) MX(x.proc).setParams(d.voice, playerParams(d)); }
 float ap_rate(Ctx& x, id self, SEL) { return PD(x, self).rate; }
-void ap_setRate(Ctx& x, id self, SEL, float v) { PD(x, self).rate = std::clamp(v, 0.25f, 4.0f); }
+void ap_setRate(Ctx& x, id self, SEL, float v) { PlayerData& d = PD(x, self); d.rate = std::clamp(v, 0.25f, 4.0f); if (d.voice) MX(x.proc).setParams(d.voice, playerParams(d)); }
 int32_t ap_loops(Ctx& x, id self, SEL) { return PD(x, self).loops; }
-void ap_setLoops(Ctx& x, id self, SEL, int32_t n) { PD(x, self).loops = n; }
-double ap_time(Ctx& x, id self, SEL) { return PD(x, self).time; }
-void ap_setTime(Ctx& x, id self, SEL, double t) { PD(x, self).time = std::max(0.0, t); }
+void ap_setLoops(Ctx& x, id self, SEL, int32_t n) { PlayerData& d = PD(x, self); d.loops = n; d.loopsRemaining = n; if (d.voice) MX(x.proc).setParams(d.voice, playerParams(d)); }
+double ap_time(Ctx& x, id self, SEL) { const PlayerData& d = PD(x, self); return d.voice ? MX(x.proc).positionSeconds(d.voice) : d.time; }
+void ap_setTime(Ctx& x, id self, SEL, double t) { PlayerData& d = PD(x, self); d.time = std::max(0.0, t); if (d.voice) MX(x.proc).seekSeconds(d.voice, d.time); }
 double ap_duration(Ctx& x, id self, SEL) { return PD(x, self).duration; }
 id ap_delegate(Ctx& x, id self, SEL) { return PD(x, self).delegate; }
 void ap_setDelegate(Ctx& x, id self, SEL, id d) { PD(x, self).delegate = d; }
@@ -872,6 +684,7 @@ uint32_t ap_channels(Ctx& x, id self, SEL) { return PD(x, self).channels; }
 void ap_dealloc(Ctx& x, id self, SEL) {
     if (PlayerData* d = rt(x).hostIf<PlayerData>(self)) {
         if (d->timer) d->timer->valid = false;
+        if (d->voice) MX(x.proc).release(d->voice);
         for (id* o : {&d->url, &d->data}) { if (*o) rt(x).release(x.cpu, *o); *o = 0; }
     }
     rt(x).disposeInstance(x.cpu, self);
@@ -913,6 +726,7 @@ struct ALBuffer {
     int freq = 44100;
     int byteSize = 0;
     std::vector<int16_t> stereoPcm;
+    Audio::Pcm pcm;   // shared with the mixer voices playing it
 };
 
 struct ALSource {
@@ -923,6 +737,8 @@ struct ALSource {
     float pos[3] = {0, 0, 0}, vel[3] = {0, 0, 0};
     bool looping = false, relative = false;
     std::vector<uint32_t> queuedBuffers;
+    uint32_t voice = 0;      // mixer voice while playing or paused
+    bool streaming = false;  // voice plays the buffer queue
 };
 
 struct OpenALState {
@@ -967,7 +783,7 @@ void al_deleteBuffers(Ctx& x, int32_t n, GuestPtr ids) {
     for (int32_t i = 0; i < n; ++i) st.buffers.erase(x.mem.read<uint32_t>(ids + uint32_t(i * 4)));
 }
 bool al_isBuffer(Ctx& x, uint32_t id) { return id != 0 && OAL(x).buffers.count(id) > 0; }
-void al_bufferData(Ctx& x, uint32_t bid, uint32_t format, GuestPtr data, int32_t size, int32_t freq) {
+void al_bufferDataImpl(Ctx& x, uint32_t bid, uint32_t format, GuestPtr data, int32_t size, int32_t freq) {
     auto& st = OAL(x);
     if (!st.buffers.count(bid) || size < 0) return;
     ALBuffer& b = st.buffers[bid];
@@ -1004,6 +820,11 @@ void al_bufferData(Ctx& x, uint32_t bid, uint32_t format, GuestPtr data, int32_t
         }
     }
 }
+void al_bufferData(Ctx& x, uint32_t bid, uint32_t format, GuestPtr data, int32_t size, int32_t freq) {
+    al_bufferDataImpl(x, bid, format, data, size, freq);
+    auto& st = OAL(x);
+    if (st.buffers.count(bid)) st.buffers[bid].pcm = sharePcm(st.buffers[bid].stereoPcm);
+}
 void al_getBufferi(Ctx& x, uint32_t bid, uint32_t param, GuestPtr val) {
     if (!val || !OAL(x).buffers.count(bid)) return;
     const ALBuffer& b = OAL(x).buffers[bid];
@@ -1013,6 +834,24 @@ void al_getBufferi(Ctx& x, uint32_t bid, uint32_t param, GuestPtr val) {
     else if (param == AL_BITS) v = (b.format == AL_FORMAT_MONO8 || b.format == AL_FORMAT_STEREO8) ? 8 : 16;
     else if (param == AL_CHANNELS) v = (b.format == AL_FORMAT_STEREO8 || b.format == AL_FORMAT_STEREO16) ? 2 : 1;
     x.mem.write<int32_t>(val, v);
+}
+
+// Stereo position from the source's direction (the listener is at the origin).
+Audio::VoiceParams alParams(const ALSource& s) {
+    const float len = std::sqrt(s.pos[0] * s.pos[0] + s.pos[1] * s.pos[1] + s.pos[2] * s.pos[2]);
+    return {std::max(0.0f, s.gain), len > 1e-6f ? std::clamp(s.pos[0] / len, -1.0f, 1.0f) * 0.8f : 0.0f, s.pitch, s.looping};
+}
+void alUpdate(Ctx& x, const ALSource& s) { if (s.voice) MX(x.proc).setParams(s.voice, alParams(s)); }
+// A playing source stops when its voice runs out of audio.
+void alRefresh(Ctx& x, ALSource& s) {
+    if (s.state == AL_PLAYING && (!s.voice || !MX(x.proc).playing(s.voice))) s.state = AL_STOPPED;
+}
+void alRelease(Ctx& x, ALSource& s) { if (s.voice) MX(x.proc).release(s.voice); s.voice = 0; s.streaming = false; }
+size_t alProcessed(Ctx& x, ALSource& s) {
+    alRefresh(x, s);
+    if (s.state == AL_STOPPED) return s.queuedBuffers.size();
+    if (s.state == AL_INITIAL || !s.streaming) return 0;
+    return std::min(s.queuedBuffers.size(), MX(x.proc).processedCount(s.voice));
 }
 
 void al_genSources(Ctx& x, int32_t n, GuestPtr ids) {
@@ -1027,7 +866,11 @@ void al_genSources(Ctx& x, int32_t n, GuestPtr ids) {
 void al_deleteSources(Ctx& x, int32_t n, GuestPtr ids) {
     auto& st = OAL(x);
     if (!ids || n <= 0) return;
-    for (int32_t i = 0; i < n; ++i) st.sources.erase(x.mem.read<uint32_t>(ids + uint32_t(i * 4)));
+    for (int32_t i = 0; i < n; ++i) {
+        const uint32_t sid = x.mem.read<uint32_t>(ids + uint32_t(i * 4));
+        if (st.sources.count(sid)) alRelease(x, st.sources[sid]);
+        st.sources.erase(sid);
+    }
 }
 bool al_isSource(Ctx& x, uint32_t id) { return id != 0 && OAL(x).sources.count(id) > 0; }
 void al_sourcef(Ctx& x, uint32_t sid, uint32_t param, float val) {
@@ -1035,12 +878,14 @@ void al_sourcef(Ctx& x, uint32_t sid, uint32_t param, float val) {
     ALSource& s = OAL(x).sources[sid];
     if (param == AL_PITCH) s.pitch = val;
     else if (param == AL_GAIN) s.gain = val;
+    alUpdate(x, s);
 }
 void al_source3f(Ctx& x, uint32_t sid, uint32_t param, float v1, float v2, float v3) {
     if (!OAL(x).sources.count(sid)) return;
     ALSource& s = OAL(x).sources[sid];
     if (param == AL_POSITION) { s.pos[0] = v1; s.pos[1] = v2; s.pos[2] = v3; }
     else if (param == AL_VELOCITY) { s.vel[0] = v1; s.vel[1] = v2; s.vel[2] = v3; }
+    alUpdate(x, s);
 }
 void al_sourcefv(Ctx& x, uint32_t sid, uint32_t param, GuestPtr vals) {
     if (vals) al_source3f(x, sid, param, x.mem.read<float>(vals), x.mem.read<float>(vals + 4), x.mem.read<float>(vals + 8));
@@ -1048,58 +893,91 @@ void al_sourcefv(Ctx& x, uint32_t sid, uint32_t param, GuestPtr vals) {
 void al_sourcei(Ctx& x, uint32_t sid, uint32_t param, int32_t val) {
     if (!OAL(x).sources.count(sid)) return;
     ALSource& s = OAL(x).sources[sid];
-    if (param == AL_BUFFER) s.buffer = uint32_t(val);
+    if (param == AL_BUFFER) { s.buffer = uint32_t(val); s.queuedBuffers.clear(); }
     else if (param == AL_LOOPING) s.looping = val != 0;
     else if (param == AL_SOURCE_RELATIVE) s.relative = val != 0;
+    alUpdate(x, s);
 }
 void al_getSourcef(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     if (!val || !OAL(x).sources.count(sid)) return;
     const ALSource& s = OAL(x).sources[sid];
-    x.mem.write<float>(val, param == AL_PITCH ? s.pitch : param == AL_GAIN ? s.gain : 0.0f);
+    float v = param == AL_PITCH ? s.pitch : param == AL_GAIN ? s.gain : 0.0f;
+    if (param == 0x1024 /* AL_SEC_OFFSET */ && s.voice) v = float(MX(x.proc).positionSeconds(s.voice));
+    x.mem.write<float>(val, v);
 }
 void al_getSourcei(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     if (!val || !OAL(x).sources.count(sid)) return;
-    const ALSource& s = OAL(x).sources[sid];
+    ALSource& s = OAL(x).sources[sid];
+    alRefresh(x, s);
     int32_t v = 0;
     if (param == AL_SOURCE_STATE) v = int32_t(s.state);
     else if (param == AL_BUFFER) v = int32_t(s.buffer);
     else if (param == AL_LOOPING) v = s.looping ? 1 : 0;
-    else if (param == AL_BUFFERS_QUEUED || param == AL_BUFFERS_PROCESSED) v = int32_t(s.queuedBuffers.size());
+    else if (param == AL_SOURCE_RELATIVE) v = s.relative ? 1 : 0;
+    else if (param == AL_BUFFERS_QUEUED) v = int32_t(s.queuedBuffers.size());
+    else if (param == AL_BUFFERS_PROCESSED) v = int32_t(alProcessed(x, s));
+    else if (param == 0x1025 /* AL_SAMPLE_OFFSET */ && s.voice && OAL(x).buffers.count(s.buffer))
+        v = int32_t(MX(x.proc).positionSeconds(s.voice) * OAL(x).buffers[s.buffer].freq);
     x.mem.write<int32_t>(val, v);
 }
 void al_sourcePlay(Ctx& x, uint32_t sid) {
     auto& st = OAL(x);
     if (!st.sources.count(sid)) return;
     ALSource& s = st.sources[sid];
-    s.state = AL_PLAYING;
-    if (s.buffer && st.buffers.count(s.buffer)) {
-        const ALBuffer& b = st.buffers[s.buffer];
-        emitPcmToHost(x.proc, b.stereoPcm, b.freq, s.gain * st.listenerGain, std::clamp(s.pos[0], -1.0f, 1.0f));
+    Audio::Mixer& mx = MX(x.proc);
+    if (s.state == AL_PAUSED && s.voice) { mx.setPaused(s.voice, false); s.state = AL_PLAYING; return; }
+    alRelease(x, s);   // playing again restarts from the beginning
+    if (!s.queuedBuffers.empty()) {
+        s.voice = mx.createStream(alParams(s));
+        s.streaming = true;
+        for (uint32_t bid : s.queuedBuffers)
+            if (st.buffers.count(bid)) mx.enqueue(s.voice, st.buffers[bid].pcm, st.buffers[bid].freq, bid);
+    } else if (s.buffer && st.buffers.count(s.buffer)) {
+        s.voice = mx.play(st.buffers[s.buffer].pcm, st.buffers[s.buffer].freq, alParams(s));
     }
+    s.state = AL_PLAYING;
 }
-void al_sourcePause(Ctx& x, uint32_t sid) { if (OAL(x).sources.count(sid)) OAL(x).sources[sid].state = AL_PAUSED; }
-void al_sourceStop(Ctx& x, uint32_t sid) { if (OAL(x).sources.count(sid)) OAL(x).sources[sid].state = AL_STOPPED; }
-void al_sourceRewind(Ctx& x, uint32_t sid) { if (OAL(x).sources.count(sid)) OAL(x).sources[sid].state = AL_INITIAL; }
+void al_sourcePause(Ctx& x, uint32_t sid) {
+    if (!OAL(x).sources.count(sid)) return;
+    ALSource& s = OAL(x).sources[sid];
+    alRefresh(x, s);
+    if (s.state != AL_PLAYING) return;
+    if (s.voice) MX(x.proc).setPaused(s.voice, true);
+    s.state = AL_PAUSED;
+}
+void al_sourceStop(Ctx& x, uint32_t sid) {
+    if (!OAL(x).sources.count(sid)) return;
+    ALSource& s = OAL(x).sources[sid];
+    if (s.voice) MX(x.proc).stop(s.voice);
+    if (s.state != AL_INITIAL) s.state = AL_STOPPED;
+}
+void al_sourceRewind(Ctx& x, uint32_t sid) { if (OAL(x).sources.count(sid)) { ALSource& s = OAL(x).sources[sid]; alRelease(x, s); s.state = AL_INITIAL; } }
 void al_sourceQueueBuffers(Ctx& x, uint32_t sid, int32_t n, GuestPtr bids) {
     auto& st = OAL(x);
     if (!st.sources.count(sid) || !bids || n <= 0) return;
     ALSource& s = st.sources[sid];
+    alRefresh(x, s);
+    s.buffer = 0;
     for (int32_t i = 0; i < n; ++i) {
         const uint32_t bid = x.mem.read<uint32_t>(bids + uint32_t(i * 4));
         s.queuedBuffers.push_back(bid);
-        if (st.buffers.count(bid)) emitPcmToHost(x.proc, st.buffers[bid].stereoPcm, st.buffers[bid].freq, s.gain * st.listenerGain, 0.0f);
+        if (s.streaming && s.voice && (s.state == AL_PLAYING || s.state == AL_PAUSED) && st.buffers.count(bid))
+            MX(x.proc).enqueue(s.voice, st.buffers[bid].pcm, st.buffers[bid].freq, bid);
     }
 }
 void al_sourceUnqueueBuffers(Ctx& x, uint32_t sid, int32_t n, GuestPtr bids) {
     auto& st = OAL(x);
     if (!st.sources.count(sid) || !bids || n <= 0) return;
     ALSource& s = st.sources[sid];
-    for (int32_t i = 0; i < n && !s.queuedBuffers.empty(); ++i) {
+    const size_t avail = alProcessed(x, s);
+    if (size_t(n) > avail) { st.lastError = 0xA004; /* AL_INVALID_VALUE */ return; }
+    for (int32_t i = 0; i < n; ++i) {
         x.mem.write<uint32_t>(bids + uint32_t(i * 4), s.queuedBuffers.front());
         s.queuedBuffers.erase(s.queuedBuffers.begin());
     }
+    if (s.voice && s.streaming && s.state != AL_STOPPED) MX(x.proc).takeProcessed(s.voice, size_t(n));
 }
-void al_listenerf(Ctx& x, uint32_t param, float val) { if (param == AL_GAIN) OAL(x).listenerGain = val; }
+void al_listenerf(Ctx& x, uint32_t param, float val) { if (param == AL_GAIN) { OAL(x).listenerGain = val; MX(x.proc).setMasterGain(val); } }
 void al_listener3f(Ctx&, uint32_t, float, float, float) {}
 void al_listenerfv(Ctx&, uint32_t, GuestPtr) {}
 void al_getListenerf(Ctx& x, uint32_t param, GuestPtr val) { if (val) x.mem.write<float>(val, param == AL_GAIN ? OAL(x).listenerGain : 0.0f); }

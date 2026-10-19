@@ -312,25 +312,40 @@ struct Texture2D {
     uint32_t wrapT = GL_REPEAT;
     int cropRect[4] = {0, 0, 0, 0}; // GL_TEXTURE_CROP_RECT_OES: u, v, w, h
 
+    // Texel index along one axis, wrapped as OpenGL does (in texel space).
+    static int wrapTexel(int i, int n, uint32_t mode) {
+        if (mode == GL_CLAMP_TO_EDGE) return std::clamp(i, 0, n - 1);
+        if (mode == GL_MIRRORED_REPEAT) {
+            const int period = 2 * n;
+            int m = i % period;
+            if (m < 0) m += period;
+            return m < n ? m : period - 1 - m;
+        }
+        int m = i % n;
+        return m < 0 ? m + n : m;
+    }
+    const uint8_t* texel(int x, int y) const { return &rgba[(size_t(y) * size_t(width) + size_t(x)) * 4]; }
+
+    // GL_NEAREST picks texel floor(u * width); GL_LINEAR blends the four texels
+    // around u * width - 0.5. (No mipmaps: minification uses the same filter.)
     Vec4 sample(float u, float v) const {
         if (width <= 0 || height <= 0 || rgba.empty()) return {1, 1, 1, 1};
-        auto wrapCoord = [](float c, uint32_t mode) -> float {
-            if (mode == GL_CLAMP_TO_EDGE) return std::clamp(c, 0.0f, 1.0f);
-            if (mode == GL_MIRRORED_REPEAT) {
-                float fl = std::floor(c);
-                float frac = c - fl;
-                if (int(fl) & 1) frac = 1.0f - frac;
-                return std::clamp(frac, 0.0f, 1.0f);
-            }
-            float frac = c - std::floor(c);
-            return std::clamp(frac, 0.0f, 1.0f);
-        };
-        const float su = wrapCoord(u, wrapS);
-        const float sv = wrapCoord(v, wrapT);
-        const int x = std::clamp(int(su * float(width - 1) + 0.5f), 0, width - 1);
-        const int y = std::clamp(int(sv * float(height - 1) + 0.5f), 0, height - 1);
-        const uint8_t* p = &rgba[(size_t(y) * size_t(width) + size_t(x)) * 4];
-        return {p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f, p[3] / 255.0f};
+        if (!std::isfinite(u) || !std::isfinite(v)) u = v = 0;
+        const float tx = u * float(width), ty = v * float(height);
+        if (magFilter == GL_NEAREST) {
+            const uint8_t* p = texel(wrapTexel(int(std::floor(tx)), width, wrapS), wrapTexel(int(std::floor(ty)), height, wrapT));
+            return {p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f, p[3] / 255.0f};
+        }
+        const float fx = tx - 0.5f, fy = ty - 0.5f;
+        const float x0f = std::floor(fx), y0f = std::floor(fy);
+        const float ax = fx - x0f, ay = fy - y0f;
+        const int x0 = wrapTexel(int(x0f), width, wrapS), x1 = wrapTexel(int(x0f) + 1, width, wrapS);
+        const int y0 = wrapTexel(int(y0f), height, wrapT), y1 = wrapTexel(int(y0f) + 1, height, wrapT);
+        const uint8_t *a = texel(x0, y0), *b = texel(x1, y0), *c = texel(x0, y1), *d = texel(x1, y1);
+        const float w00 = (1 - ax) * (1 - ay), w10 = ax * (1 - ay), w01 = (1 - ax) * ay, w11 = ax * ay;
+        constexpr float k = 1.0f / 255.0f;
+        return {(a[0] * w00 + b[0] * w10 + c[0] * w01 + d[0] * w11) * k, (a[1] * w00 + b[1] * w10 + c[1] * w01 + d[1] * w11) * k,
+                (a[2] * w00 + b[2] * w10 + c[2] * w01 + d[2] * w11) * k, (a[3] * w00 + b[3] * w10 + c[3] * w01 + d[3] * w11) * k};
     }
 };
 
@@ -533,8 +548,9 @@ RenderTarget activeTarget(Ctx& x, ContextData& c, SharegroupData& sg) {
                     rtOut.rgba = rb.rgba.data();
                     rtOut.width = rb.width;
                     rtOut.height = rb.height;
-                    if (rb.depth.size() == size_t(rb.width) * size_t(rb.height))
-                        rtOut.depth = rb.depth.data();
+                    // No depth here: a framebuffer without a depth attachment has no depth
+                    // buffer, so depth testing is skipped (as in GL). Using the colour
+                    // renderbuffer's private depth made coplanar 2D sprites z-fight.
                 }
             } else if (fb.colorAttachmentType == GL_TEXTURE_2D && fb.colorAttachmentId != 0) {
                 auto txit = sg.textures.find(fb.colorAttachmentId);
@@ -724,6 +740,18 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
     img->height = rb.height;
     img->rgba.resize(size_t(rb.width) * size_t(rb.height) * 4);
     // Flip vertically (OpenGL bottom-left -> UIKit top-left) and premultiply alpha for compositor.
+    // An opaque layer (what GL games use) ignores the renderbuffer's alpha, as Core Animation does:
+    // blending leaves alpha < 1 in places, which must not let the views behind show through.
+    const bool opaqueLayer = layerData(x, rb.drawableLayer).opaque;
+    // Debugging aid: HVM_DUMP_RB=<file> keeps overwriting <file> with the latest presented renderbuffer (raw RGBA, GL row order).
+    if (const char* f = std::getenv("HVM_DUMP_RB")) {
+        if (std::FILE* fp = std::fopen(f, "wb")) {
+            const int32_t wh[2] = {rb.width, rb.height};
+            std::fwrite(wh, 4, 2, fp);
+            std::fwrite(rb.rgba.data(), 1, rb.rgba.size(), fp);
+            std::fclose(fp);
+        }
+    }
     for (int y = 0; y < rb.height; ++y) {
         const uint8_t* srcRow = &rb.rgba[size_t(rb.height - 1 - y) * size_t(rb.width) * 4];
         uint8_t* dstRow = &img->rgba[size_t(y) * size_t(rb.width) * 4];
@@ -731,7 +759,7 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
             const uint8_t r = srcRow[px * 4 + 0];
             const uint8_t g = srcRow[px * 4 + 1];
             const uint8_t b = srcRow[px * 4 + 2];
-            const uint8_t a = srcRow[px * 4 + 3];
+            const uint8_t a = opaqueLayer ? 255 : srcRow[px * 4 + 3];
             if (a == 255) {
                 dstRow[px * 4 + 0] = r;
                 dstRow[px * 4 + 1] = g;
@@ -1357,6 +1385,13 @@ void gl_texImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalforma
     tx.height = height;
     tx.format = format;
     unpackPixelsToRGBA(x, width, height, format, type, c->unpackAlignment, pixels, tx.rgba);
+    // Debugging aid: HVM_DUMP_TEX=<dir> writes every uploaded texture as raw RGBA.
+    if (const char* dir = std::getenv("HVM_DUMP_TEX")) {
+        static int n = 0;
+        char name[512];
+        std::snprintf(name, sizeof name, "%s/tex%03d_%dx%d_f%x_t%x.rgba", dir, n++, width, height, format, type);
+        if (std::FILE* f = std::fopen(name, "wb")) { std::fwrite(tx.rgba.data(), 1, tx.rgba.size(), f); std::fclose(f); }
+    }
 }
 
 void gl_texSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xoffset, int32_t yoffset, int32_t width, int32_t height,
@@ -2129,6 +2164,16 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
 
     const float invArea = 1.0f / area;
     const Texture2D* tex = boundTextureForDraw(c, sg);
+    // Debugging aid: HVM_TRACE_TRI=<w>x<h> prints triangles drawn with a texture of that size.
+    if (static const char* tr = std::getenv("HVM_TRACE_TRI"); tr && tex) {
+        static int printed = 0;
+        int tw = 0, th = 0;
+        if (std::sscanf(tr, "%dx%d", &tw, &th) == 2 && tex->width == tw && tex->height == th && printed < 60) {
+            ++printed;
+            std::fprintf(stderr, "tri (%.3f,%.3f uv %.5f,%.5f) (%.3f,%.3f uv %.5f,%.5f) (%.3f,%.3f uv %.5f,%.5f) filt %x\n",
+                         v0.screenX, v0.screenY, v0.u, v0.v, v1.screenX, v1.screenY, v1.u, v1.v, v2.screenX, v2.screenY, v2.u, v2.v, tex->magFilter);
+        }
+    }
 
     for (int py = minY; py <= maxY; ++py) {
         const float fy = float(py) + 0.5f;
@@ -2193,6 +2238,13 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
     std::vector<ShadedVertex> verts;
     verts.reserve(indices.size());
     for (int idx : indices) verts.push_back(shadeVertex(x, *c, *sg, idx));
+    // Debugging aid: HVM_TRACE_DRAW=1 prints each draw call (mode, vertex count, texture, blend).
+    if (static const bool trace = std::getenv("HVM_TRACE_DRAW") != nullptr; trace) {
+        const Texture2D* t = boundTextureForDraw(*c, *sg);
+        std::fprintf(stderr, "draw mode %u n %zu tex %dx%d blend %d %x/%x first (%.2f,%.2f uv %.4f,%.4f) col %.2f,%.2f,%.2f,%.2f\n",
+                     mode, verts.size(), t ? t->width : 0, t ? t->height : 0, c->blend, c->blendSrcRGB, c->blendDstRGB,
+                     verts[0].screenX, verts[0].screenY, verts[0].u, verts[0].v, verts[0].color.x, verts[0].color.y, verts[0].color.z, verts[0].color.w);
+    }
 
     switch (mode) {
         case GL_TRIANGLES:

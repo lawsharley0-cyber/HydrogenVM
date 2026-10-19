@@ -6,11 +6,13 @@
 #include "core/memory/GuestArena.hpp"
 #include "loader/AppBundle.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/audio/Audio.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "selftest/SelfTest.hpp"
 #include <pthread.h>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -246,9 +248,7 @@ struct SessionCore {
     std::mutex logMu;
     std::vector<std::pair<std::string, RT::LogLevel>> logs;
     bool logFlushScheduled = false;
-    AVAudioEngine *audioEngine = nil;
-    AVAudioPlayerNode *playerNode = nil;
-    AVAudioFormat *audioFormat = nil;
+    AVAudioEngine *audioEngine = nil;   // pulls from the guest's mixer
     std::mutex audioMu;
     // Per-run log file in Documents/Logs (visible in the Files app). Written and
     // flushed line by line on the engine thread, so it survives a hard crash.
@@ -293,6 +293,49 @@ FILE *openRunLog(const std::string &bundlePath) {
         fflush(f);
     }
     return f;
+}
+}
+
+namespace {
+// Game audio: one AVAudioEngine whose source node renders the guest's mixer on
+// the audio thread. The playback category keeps it audible with the ring/silent
+// switch on (as a media app), mixing with other audio.
+void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrogen::Runtime::Audio::Mixer> mixer) {
+    std::lock_guard<std::mutex> lk(core->audioMu);
+    if (core->audioEngine) return;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
+    [session setActive:YES error:nil];
+    std::weak_ptr<Hydrogen::Runtime::Audio::Mixer> weak = mixer;
+    AVAudioFormat *fmt = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:Hydrogen::Runtime::Audio::Mixer::kRate channels:2];
+    AVAudioSourceNode *src = [[AVAudioSourceNode alloc] initWithFormat:fmt renderBlock:^OSStatus(BOOL *isSilence, const AudioTimeStamp *, AVAudioFrameCount frames, AudioBufferList *abl) {
+        float *l = static_cast<float *>(abl->mBuffers[0].mData);
+        float *r = abl->mNumberBuffers > 1 ? static_cast<float *>(abl->mBuffers[1].mData) : nullptr;
+        auto m = weak.lock();
+        if (!m || !l) {
+            for (UInt32 b = 0; b < abl->mNumberBuffers; ++b) std::memset(abl->mBuffers[b].mData, 0, abl->mBuffers[b].mDataByteSize);
+            *isSilence = YES;
+            return noErr;
+        }
+        if (r) m->render(l, r, frames);
+        else {
+            std::vector<float> right(frames);
+            m->render(l, right.data(), frames);
+            for (AVAudioFrameCount i = 0; i < frames; ++i) l[i] = 0.5f * (l[i] + right[i]);
+        }
+        return noErr;
+    }];
+    AVAudioEngine *engine = [[AVAudioEngine alloc] init];
+    [engine attachNode:src];
+    [engine connect:src to:engine.mainMixerNode format:fmt];
+    NSError *err = nil;
+    if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to start: %@", err);
+    core->audioEngine = engine;
+}
+void stopAudio(const std::shared_ptr<SessionCore> &core) {
+    std::lock_guard<std::mutex> lk(core->audioMu);
+    [core->audioEngine stop];
+    core->audioEngine = nil;
 }
 }
 
@@ -381,31 +424,6 @@ FILE *openRunLog(const std::string &bundlePath) {
                 if (img) CGImageRelease(img);
             });
         };
-        cfg.audioOutput = [core](const int16_t *stereoPcm, size_t frames, int sampleRate) {
-            if (!stereoPcm || frames == 0 || core->stopRequested) return;
-            std::lock_guard<std::mutex> lk(core->audioMu);
-            const double sr = sampleRate > 0 ? double(sampleRate) : 44100.0;
-            if (!core->audioEngine || !core->audioFormat || std::abs(core->audioFormat.sampleRate - sr) > 1.0) {
-                if (core->audioEngine) [core->audioEngine stop];
-                core->audioEngine = [[AVAudioEngine alloc] init];
-                core->playerNode = [[AVAudioPlayerNode alloc] init];
-                core->audioFormat = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:sr channels:2];
-                [core->audioEngine attachNode:core->playerNode];
-                [core->audioEngine connect:core->playerNode to:core->audioEngine.mainMixerNode format:core->audioFormat];
-                [core->audioEngine startAndReturnError:nil];
-                [core->playerNode play];
-            }
-            AVAudioPCMBuffer *buf = [[AVAudioPCMBuffer alloc] initWithPCMFormat:core->audioFormat frameCapacity:(AVAudioFrameCount)frames];
-            buf.frameLength = (AVAudioFrameCount)frames;
-            float *left = buf.floatChannelData[0];
-            float *right = buf.floatChannelData[1];
-            for (size_t i = 0; i < frames; ++i) {
-                left[i] = float(stereoPcm[i * 2 + 0]) / 32768.0f;
-                right[i] = float(stereoPcm[i * 2 + 1]) / 32768.0f;
-            }
-            [core->playerNode scheduleBuffer:buf completionHandler:nil];
-        };
-
         int code = -1;
         std::string crash;
         try {
@@ -414,6 +432,7 @@ FILE *openRunLog(const std::string &bundlePath) {
                 std::lock_guard<std::mutex> lk(core->mu);
                 core->proc = proc;
             }
+            startAudio(core, proc->mixerPtr());
             if (!core->stopRequested) {
                 proc->load();
                 core->ready = true;
@@ -430,6 +449,7 @@ FILE *openRunLog(const std::string &bundlePath) {
             std::lock_guard<std::mutex> lk(core->mu);
             core->proc.reset();
         }
+        stopAudio(core);
         const bool userStopped = core->stopRequested;
         {
             std::lock_guard<std::mutex> lk(core->logMu);

@@ -184,6 +184,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 #include "runtime/Process.hpp"
+#include "runtime/audio/Audio.hpp"
 #include "runtime/uikit/UIKit.hpp"
 #include "runtime/foundation/Foundation.hpp"
 #include <cmath>
@@ -235,16 +236,21 @@ int runFullSubsystemTests() {
     }
 
     // 2. Full Process + Objective-C + UIKit + OpenGL ES + Audio verification
-    size_t audioFramesReceived = 0;
-    int lastSampleRate = 0;
     ProcessConfig cfg;
     cfg.bundlePath = "/tmp/hvm_test_bundle.app";
     cfg.homePath = "/tmp/hvm_test_home";
-    cfg.audioOutput = [&](const int16_t*, size_t frames, int sr) {
-        audioFramesReceived += frames;
-        lastSampleRate = sr;
-    };
     Process proc(cfg);
+    // Renders the mixer (as the platform's audio thread does) and returns how many
+    // frames of sound came out: the index after the last non-silent frame.
+    auto renderedFrames = [&](size_t maxFrames) {
+        std::vector<float> l(512), rr(512);
+        size_t last = 0;
+        for (size_t done = 0; done < maxFrames; done += 512) {
+            proc.mixer().render(l.data(), rr.data(), 512);
+            for (size_t i = 0; i < 512; ++i) if (l[i] != 0 || rr[i] != 0) last = done + i + 1;
+        }
+        return last;
+    };
     CPU::Cpu& cpu = proc.mainThread().cpu;
     Ctx cx{proc, cpu, proc.mem()};
     auto& r = ObjC::rt(proc);
@@ -445,10 +451,10 @@ int runFullSubsystemTests() {
         const ObjC::id player = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, apCls, r.selAlloc)), "initWithData:error:", {nsData, 0}));
         uint64_t durBits = r.send(cpu, player, "duration");
         double dur = 0; std::memcpy(&dur, &durBits, 8);
-        audioFramesReceived = 0;
         const bool playOk = (r.send(cpu, player, "play") & 0xFF) != 0;
-        check(playOk && std::abs(dur - 0.1) < 0.005 && audioFramesReceived == 4410 && lastSampleRate == 44100,
-              "AVAudioPlayer WAV decoding, duration calculation, and PCM output delivery");
+        const size_t apFrames = renderedFrames(8192);
+        check(playOk && std::abs(dur - 0.1) < 0.005 && apFrames >= 4405 && apFrames <= 4410,
+              "AVAudioPlayer WAV decoding, duration calculation, and mixer output");
         r.send(cpu, player, "stop");
 
         // OpenAL test
@@ -468,12 +474,26 @@ int runFullSubsystemTests() {
         callAL("_alGenSources", {1, alIds + 4});
         const uint32_t alSrc = proc.mem().read<uint32_t>(alIds + 4);
         callAL("_alSourcei", {alSrc, 0x1009 /* AL_BUFFER */, alBuf});
-        audioFramesReceived = 0;
         callAL("_alSourcePlay", {alSrc});
         callAL("_alGetSourcei", {alSrc, 0x1010 /* AL_SOURCE_STATE */, alIds + 8});
         const int32_t srcState = proc.mem().read<int32_t>(alIds + 8);
-        check(dev != 0 && actx != 0 && srcState == 0x1012 /* AL_PLAYING */ && audioFramesReceived == 1000,
-              "OpenAL context, buffer upload, source playback, and PCM output delivery");
+        const size_t alFrames = renderedFrames(4096);
+        callAL("_alGetSourcei", {alSrc, 0x1010 /* AL_SOURCE_STATE */, alIds + 8});
+        const int32_t endState = proc.mem().read<int32_t>(alIds + 8);
+        check(dev != 0 && actx != 0 && srcState == 0x1012 /* AL_PLAYING */ && alFrames >= 995 && alFrames <= 1000,
+              "OpenAL context, buffer upload, source playback, and mixer output");
+        check(endState == 0x1014 /* AL_STOPPED */, "OpenAL source returns to AL_STOPPED when its buffer finishes");
+        // Two sources at once (different rates) both sound: the mixer overlaps them.
+        callAL("_alSourcePlay", {alSrc});
+        callAL("_alGenSources", {1, alIds + 12});
+        const uint32_t alSrc2 = proc.mem().read<uint32_t>(alIds + 12);
+        callAL("_alGenBuffers", {1, alIds + 16});
+        const uint32_t alBuf2 = proc.mem().read<uint32_t>(alIds + 16);
+        callAL("_alBufferData", {alBuf2, 0x1103, pcmGuest, 1000 * 4, 22050});
+        callAL("_alSourcei", {alSrc2, 0x1009, alBuf2});
+        callAL("_alSourcePlay", {alSrc2});
+        const size_t bothFrames = renderedFrames(8192);
+        check(bothFrames >= 1990 && bothFrames <= 2000, "two OpenAL sources mix; a 22.05 kHz buffer plays at the right speed");
 
         // AudioQueue test with guest ARMv7 callback
         const uint32_t aqOut = proc.heap().allocZeroed(32);
@@ -493,14 +513,16 @@ int runFullSubsystemTests() {
         const uint32_t qdata = proc.mem().read<uint32_t>(qbuf + 4);
         proc.mem().copyIn(qdata, &wav[44], 400);
         proc.mem().write<uint32_t>(qbuf + 8, 400);
-        audioFramesReceived = 0;
         callAT("_AudioQueueStart", {qid, 0});
         callAT("_AudioQueueEnqueueBuffer", {qid, qbuf, 0, 0});
         Foundation::mainRunLoop(proc).runOnce(cpu, 0.0);
+        const uint32_t cbEarly = proc.mem().read<uint32_t>(userFlagAddr);   // not played yet: no callback
+        const size_t aqFrames = renderedFrames(1024);
+        for (int i = 0; i < 20 && !proc.mem().read<uint32_t>(userFlagAddr); ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
         const uint32_t cbRan = proc.mem().read<uint32_t>(userFlagAddr);
         callAT("_AudioQueueDispose", {qid, 1});
-        check(qid != 0 && qbuf != 0 && audioFramesReceived == 100 && cbRan == 1,
-              "AudioQueueNewOutput, buffer enqueue, PCM streaming, and guest callback execution");
+        check(qid != 0 && qbuf != 0 && aqFrames >= 95 && aqFrames <= 100 && cbEarly == 0 && cbRan == 1,
+              "AudioQueue buffer playback through the mixer; the callback fires after the buffer has played");
 
         // OpenGL ES 1.1 Fixed-Function + 2D Texture + glDrawElements test
         const ObjC::Class ctxCls = r.getClass("EAGLContext");

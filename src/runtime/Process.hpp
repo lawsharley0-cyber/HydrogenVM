@@ -41,14 +41,14 @@ struct ProcessConfig {
     // Called on the emulated main thread with each new frame (premultiplied
     // RGBA, screenWidth*scale x screenHeight*scale, portrait). Optional.
     std::function<void(const uint8_t* rgba, int width, int height)> present;
-    // Called with interleaved 16-bit signed stereo PCM frames at `sampleRate` Hz. Optional.
-    std::function<void(const int16_t* stereoPcm, size_t frames, int sampleRate)> audioOutput;
+    // Audio: the platform pulls mixed sound from Process::mixer() (see audio/Audio.hpp).
 };
 
 // Input from the host (screen points, portrait orientation of the emulated device).
 enum class TouchPhase { Began = 0, Moved = 1, Ended = 3, Cancelled = 4 };
 
 class Process;
+namespace Audio { class Mixer; }
 
 struct GuestThread {
     explicit GuestThread(Process& p) : proc(p) {}
@@ -100,6 +100,10 @@ public:
     int run();
     // From any thread: stop all guest threads soon.
     void requestStop();
+    // Everything the app plays is mixed here; the platform renders it on its
+    // audio thread through mixerPtr() (safe to keep after the Process ends).
+    Audio::Mixer& mixer() { return *mixer_; }
+    std::shared_ptr<Audio::Mixer> mixerPtr() const { return mixer_; }
     bool stopping() const { return engine_->stopRequested(); }
 
     // ---- performance counters (read any time; reported by `hvm --report`)
@@ -276,6 +280,7 @@ private:
     int exitCode_ = 0;
     bool crashed_ = false;
     std::function<bool(Ctx&, const std::exception&)> hostErrorHook_;
+    std::shared_ptr<Audio::Mixer> mixer_;
     std::string crashReport_;
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
