@@ -124,6 +124,8 @@ public:
     // Calls `fn` on every registration of a module; used by service objects
     // that need the process fully constructed.
     void onLoaded(std::function<void()> fn) { loadedHooks_.push_back(std::move(fn)); }
+    // Called on the main thread before the image's initializers run (ObjC +load).
+    void onBeforeInitializers(std::function<void(CPU::Cpu&)> fn) { preInitHooks_.push_back(std::move(fn)); }
 
     // ---- calling guest code
     uint64_t callGuest(CPU::Cpu& cpu, uint32_t fn, std::initializer_list<uint32_t> args) {
@@ -198,6 +200,7 @@ private:
     std::unordered_map<std::type_index, std::shared_ptr<void>> services_;
     std::mutex servicesMu_;
     std::vector<std::function<void()>> loadedHooks_;
+    std::vector<std::function<void(CPU::Cpu&)>> preInitHooks_;
 
     // threads
     std::unique_ptr<GuestThread> mainThreadOwner_;

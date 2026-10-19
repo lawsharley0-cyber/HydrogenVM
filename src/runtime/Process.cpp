@@ -470,6 +470,7 @@ int Process::run() {
     CPU::Engine::lastFault() = {};
     try {
         // dyld order: libSystem/libobjc setup (+load), then the image's initializers.
+        for (auto& h : preInitHooks_) h(c);
         const uint32_t pvars = allocStatic(20);
         mem_->write<uint32_t>(pvars, image_.headerAddr);
         for (const uint32_t fn : image_.initializers)

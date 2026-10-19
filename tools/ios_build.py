@@ -53,7 +53,8 @@ def compile_sources(srcs, objdir, min_ios, extra_cflags):
                  "-fno-stack-check", "-Wno-objc-root-class", "-Wno-incompatible-library-redeclaration",
                  "-Wno-builtin-requires-header", "-mfloat-abi=softfp", "-mfpu=neon", "-c", s, "-o", o]
         if s.endswith(".m") or s.endswith(".mm"):
-            flags.insert(1, "-fobjc-arc" if "-fno-objc-arc" not in extra_cflags else "-fno-objc-arc")
+            mrc = "-fno-objc-arc" in extra_cflags or s.endswith("_mrc.m")
+            flags.insert(1, "-fno-objc-arc" if mrc else "-fobjc-arc")
         if s.endswith(".mm") or s.endswith(".cpp"):
             flags.insert(1, "-std=c++11")
         flags += [f for f in extra_cflags if f != "-fno-objc-arc"]
