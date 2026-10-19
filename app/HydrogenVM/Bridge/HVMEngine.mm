@@ -247,6 +247,11 @@ struct SessionCore {
 };
 }
 
+@interface HVMSession ()
+@property (nonatomic, readwrite) CGSize screenSize;
+@property (nonatomic, readwrite, getter=isRunning) BOOL running;
+@end
+
 @implementation HVMSession {
     NSString *_bundlePath;
     NSString *_homePath;
@@ -318,7 +323,7 @@ struct SessionCore {
                 core->framePending = false;
                 HVMSession *s = weakSelf;
                 if (s) {
-                    s->_screenSize = CGSizeMake(core->width, core->height);
+                    s.screenSize = CGSizeMake(core->width, core->height);
                     if (s.onFrame && img) s.onFrame(img);
                 }
                 if (img) CGImageRelease(img);
@@ -354,7 +359,7 @@ struct SessionCore {
             flushLogs();
             HVMSession *s = weakSelf;
             if (!s) return;
-            s->_running = NO;
+            s.running = NO;
             if (s.onExit) s.onExit(code, (crash.empty() || userStopped) ? nil : str(crash));
         });
     });
