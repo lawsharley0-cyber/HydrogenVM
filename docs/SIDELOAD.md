@@ -60,7 +60,6 @@ own Apple ID, the same way other developer builds are installed.
 ## Known limits
 
 - iPhone only, arm64 only, iOS 26+.
-- No app icon yet (the app uses the default icon).
 - Speed is below the original iPhone 5 target. See `docs/PERFORMANCE.md`.
 - The interpreter does not JIT, so it's slower than native and uses more
   battery.

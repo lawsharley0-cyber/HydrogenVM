@@ -38,6 +38,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM
         PRODUCT_NAME: HydrogenVM
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"                 # iPhone only
         SUPPORTED_PLATFORMS: "iphoneos"            # device only: the 4 GB arena needs real hardware
         ARCHS: arm64
