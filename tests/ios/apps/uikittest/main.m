@@ -323,6 +323,13 @@ static unsigned pixelAt(CGImageRef img, int x, int y) {
 }
 
 - (void)finish {
+    // The scripted taps are timed from the first frame, which can come late
+    // (simulator, slow CI machines): wait up to 5 s more for both of them.
+    static int waits = 0;
+    if ((touchesEnded < 1 || tapGestures < 1) && waits++ < 50) {
+        [self performSelector:@selector(finish) withObject:nil afterDelay:0.1];
+        return;
+    }
     CHECK(drawCount >= 1, "drawRect: was called by the compositor");
     CHECK(linkFires >= 10, "CADisplayLink fires at frame rate");
     CHECK(animDone == 1 && animStop == 1, "animation completions fire");
