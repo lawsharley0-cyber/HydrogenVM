@@ -1,0 +1,8 @@
+/home/claude/HydrogenVM/build-prof/CMakeFiles/hvm_core.dir
+/home/claude/HydrogenVM/build-prof/CMakeFiles/hvm_tests.dir
+/home/claude/HydrogenVM/build-prof/CMakeFiles/hvm_decodecheck.dir
+/home/claude/HydrogenVM/build-prof/CMakeFiles/hvm_machodump.dir
+/home/claude/HydrogenVM/build-prof/CMakeFiles/hvm.dir
+/home/claude/HydrogenVM/build-prof/CMakeFiles/hvm_bench.dir
+/home/claude/HydrogenVM/build-prof/CMakeFiles/edit_cache.dir
+/home/claude/HydrogenVM/build-prof/CMakeFiles/rebuild_cache.dir

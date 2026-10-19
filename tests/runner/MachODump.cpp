@@ -4,6 +4,7 @@
 #include "loader/ElfLoader.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 using namespace Hydrogen;
 

@@ -9,6 +9,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <cstdlib>
+#include <utility>
 
 namespace Hydrogen::Plist {
 

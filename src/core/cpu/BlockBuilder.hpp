@@ -144,9 +144,68 @@ public:
         blk_.end = endAddr;
         blk_.guest_insns = insns_;
         eliminateDeadFlags();
+        fuseBranches();
     }
 
 private:
+    // Branch fusion (after flag liveness, which still needs the unfused ops):
+    //   CondSkip(cond, 1); BranchDirect        -> BranchCond
+    //   CbSkip; BranchDirect                   -> BranchCbz
+    //   CMP/CMN/TST (imm or plain reg); BranchCond -> CmpBranch
+    // These only ever appear at the end of a block (a conditional branch ends
+    // it), so no CondSkip span crosses the ops being removed.
+    static Handler cmpBranchFor(Handler alu, const Op& o, bool& reg) {
+        struct Pat { int opc; int kind; Handler fused; bool reg; };
+        static const Pat pats[] = {
+            {kCMP, kOp2Imm, &H_CmpBranch<kCmpCMP, false>, false}, {kCMP, kOp2ShImmLSL, &H_CmpBranch<kCmpCMP, true>, true},
+            {kCMN, kOp2Imm, &H_CmpBranch<kCmpCMN, false>, false}, {kCMN, kOp2ShImmLSL, &H_CmpBranch<kCmpCMN, true>, true},
+            {kTST, kOp2Imm, &H_CmpBranch<kCmpTST, false>, false}, {kTST, kOp2ShImmLSL, &H_CmpBranch<kCmpTST, true>, true},
+        };
+        for (const Pat& p : pats) {
+            if (alu != kAluTable[p.opc][1][p.kind]) continue;
+            if (p.kind == kOp2Imm && p.opc == kTST && o.d != 0) return nullptr;   // TST imm that sets carry
+            if (p.kind == kOp2ShImmLSL && o.imm != 0) return nullptr;            // shifted register
+            reg = p.reg;
+            return p.fused;
+        }
+        return nullptr;
+    }
+
+    void fuseBranches() {
+        auto& ops = blk_.ops;
+        for (size_t i = 0; i + 1 < ops.size(); ++i) {
+            const bool condBr = ops[i].fn == &H_CondSkip && ops[i].imm == 1 && ops[i + 1].fn == &H_BranchDirect;
+            const bool cbz = ops[i].fn == &H_CbSkip && ops[i + 1].fn == &H_BranchDirect;
+            if (!condBr && !cbz) continue;
+            Op br = ops[i + 1];
+            if (cbz) {
+                br.fn = &H_BranchCbz;
+                br.c = ops[i].a;
+                br.d = ops[i].b;
+            } else {
+                br.fn = &H_BranchCond;
+                br.c = ops[i].a;
+                bool reg = false;
+                Handler fused = (i > 0 && !meta_[i - 1].guarded) ? cmpBranchFor(ops[i - 1].fn, ops[i - 1], reg) : nullptr;
+                if (fused) {
+                    const Op& cmp = ops[i - 1];
+                    Op f = br;
+                    f.fn = fused;
+                    f.c = cmp.b;                       // rn
+                    f.d = ops[i].a;                    // cond
+                    f.imm2 = reg ? cmp.c : cmp.imm;    // rm or immediate
+                    ops[i - 1] = f;
+                    ops.erase(ops.begin() + long(i), ops.begin() + long(i) + 2);
+                    meta_.erase(meta_.begin() + long(i), meta_.begin() + long(i) + 2);
+                    continue;
+                }
+            }
+            ops[i] = br;
+            ops.erase(ops.begin() + long(i) + 1);
+            meta_.erase(meta_.begin() + long(i) + 1);
+        }
+    }
+
     // Backward liveness over the four condition flags. Flags are assumed live
     // at every exit, so this is always safe; it removes the flag computation
     // from the (very common) S-suffixed ops whose flags are overwritten before

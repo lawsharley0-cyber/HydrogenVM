@@ -114,7 +114,9 @@ HVM_H(H_CondSkip) {
     HVM_GOTO(op + 1 + op->imm);
 }
 
-inline void retire(Cpu* c, uint32_t n) { c->budget -= n; c->insn_count += n; }
+// Block exits charge the block's instructions to the time-slice budget.
+// (Cpu::insn_count is derived from the budget when Engine::run returns.)
+inline void retire(Cpu* c, uint32_t n) { c->budget -= n; }
 
 // CBZ/CBNZ: a = rn, b = 1 for CBNZ. Falls into the next op (the taken-branch
 // exit) when the branch is taken, otherwise skips it.
@@ -132,41 +134,80 @@ HVM_H(H_TableBranch) {
     HVM_NEXT();
 }
 
+// Take a direct exit: target address in op->imm, thumb bit in op->a, block
+// instruction count in op->b; op->link caches the successor's first op.
+#define HVM_TAKE_DIRECT()                                                         \
+    do {                                                                          \
+        c->r[kPC] = op->imm;                                                      \
+        c->thumb = op->a;                                                         \
+        c->budget -= op->b;                                                       \
+        if (c->budget <= 0) { c->exit = Exit::Budget; return; }                   \
+        const Op* _f = __atomic_load_n(&op->link, __ATOMIC_ACQUIRE);              \
+        if (__builtin_expect(_f == nullptr, 0)) {                                 \
+            Block* _nb = hvmEnterBlock(c, op->imm | op->a);                       \
+            if (!_nb) return;                                                     \
+            _f = _nb->ops.data();                                                 \
+            __atomic_store_n(&op->link, _f, __ATOMIC_RELEASE);                    \
+        }                                                                         \
+        c->block_pc = op->imm;                                                    \
+        [[clang::musttail]] return _f->fn(c, _f, m);                              \
+    } while (0)
+
 // Direct branch to imm (address), a = target thumb bit, b = insns retired.
-HVM_H(H_BranchDirect) {
-    c->r[kPC] = op->imm;
-    c->thumb = op->a;
-    retire(c, op->b);
-    if (c->budget <= 0) { c->exit = Exit::Budget; return; }
-    Block* nb = __atomic_load_n(&op->link, __ATOMIC_ACQUIRE);
-    if (__builtin_expect(nb == nullptr, 0)) {
-        nb = hvmEnterBlock(c, op->imm | op->a);
-        if (!nb) return;
-        __atomic_store_n(&op->link, nb, __ATOMIC_RELEASE);
-    }
-    c->block_pc = op->imm;
-    const Op* first = nb->ops.data();
-    [[clang::musttail]] return first->fn(c, first, m);
+HVM_H(H_BranchDirect) { HVM_TAKE_DIRECT(); }
+
+// Conditional direct branch (CondSkip + BranchDirect fused): c = condition.
+// Not taken: falls into the next op, the block's fall-through exit.
+HVM_H(H_BranchCond) {
+    if (!condPasses(op->c, c->nzcv)) HVM_NEXT();
+    HVM_TAKE_DIRECT();
+}
+
+// CBZ / CBNZ fused with its exit: c = rn, d = 1 for CBNZ.
+HVM_H(H_BranchCbz) {
+    if ((c->r[op->c] != 0) != bool(op->d)) HVM_NEXT();
+    HVM_TAKE_DIRECT();
+}
+
+// Compare + conditional branch fused (CMP/CMN/TST then B<cond>, the shape of
+// almost every loop). c = rn, d = cond, imm2 = immediate (REG: rm).
+// The compare's flags are still written (they may be live in either successor).
+enum CmpKind : uint8_t { kCmpCMP = 0, kCmpCMN = 1, kCmpTST = 2 };
+template <int K, bool REG>
+HVM_H(H_CmpBranch) {
+    const uint32_t x = c->r[op->c];
+    const uint32_t y = REG ? c->r[op->imm2] : op->imm2;
+    uint32_t f;
+    if constexpr (K == kCmpCMP) f = addWithCarry(x, ~y, 1).flags;
+    else if constexpr (K == kCmpCMN) f = addWithCarry(x, y, 0).flags;
+    else f = nzOf(x & y) | (c->nzcv & (kFlagC | kFlagV));
+    c->nzcv = f;
+    if (!condPasses(op->d, f)) HVM_NEXT();
+    HVM_TAKE_DIRECT();
 }
 
 // Indirect branch to r[a]. c = 0: interworking (BX semantics, bit0 selects Thumb)
 //                          c = 1: stay in current state (BranchWritePC)
-// b = insns retired.
+// b = insns retired. The per-thread block cache is probed inline (returns and
+// computed jumps nearly always hit); misses go through the engine.
 HVM_H(H_BranchIndirect) {
     uint32_t t = c->r[op->a];
-    if (op->c == 0) {
-        c->thumb = t & 1;
-        t &= c->thumb ? ~1u : ~3u;
-    } else {
-        t &= c->thumb ? ~1u : ~3u;
-    }
+    if (op->c == 0) c->thumb = t & 1;
+    t &= c->thumb ? ~1u : ~3u;
     c->r[kPC] = t;
-    retire(c, op->b);
+    c->budget -= op->b;
     if (c->budget <= 0) { c->exit = Exit::Budget; return; }
-    Block* nb = hvmEnterBlock(c, t | c->thumb);
-    if (!nb) return;
+    const uint32_t key = t | c->thumb;
+    const FastEntry& fe = c->fast[fastIndex(key)];
+    const Op* first;
+    if (__builtin_expect(fe.key == key, 1)) {
+        first = fe.first;
+    } else {
+        Block* nb = hvmEnterBlock(c, key);
+        if (!nb) return;
+        first = nb->ops.data();
+    }
     c->block_pc = t;
-    const Op* first = nb->ops.data();
     [[clang::musttail]] return first->fn(c, first, m);
 }
 

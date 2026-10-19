@@ -67,8 +67,11 @@ enum class Exit : uint32_t {
     HostError,     // a host (HLE) function failed; Engine::lastHostError() has details
 };
 
-// Per-thread direct-mapped cache in front of the engine's block map.
-struct FastEntry { uint32_t key; Block* block; };
+// Per-thread direct-mapped cache in front of the engine's block map. `first`
+// is the block's first op, so indirect branches can jump without touching the Block.
+struct FastEntry { uint32_t key; Block* block; const Op* first; };
+inline constexpr size_t kFastSize = 1u << 12;
+inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 13)) & (kFastSize - 1); }
 
 struct alignas(64) Cpu {
     uint32_t r[kNumRegs] = {};
@@ -99,7 +102,7 @@ struct alignas(64) Cpu {
     Exit     exit       = Exit::None;
     uint32_t exit_info  = 0;
     uint32_t block_pc   = 0;   // start of the block currently executing (fault reports)
-    uint64_t insn_count = 0;   // retired guest instructions (approximate, per block)
+    uint64_t insn_count = 0;   // retired guest instructions (approximate, per block; updated when run() returns)
     Engine*  engine     = nullptr;
     void*    user       = nullptr;  // owner (guest thread object, test harness, ...)
 
@@ -120,7 +123,7 @@ struct alignas(32) Op {
     uint32_t imm;
     uint32_t imm2;
     uint32_t pc;              // guest address of the source instruction
-    mutable Block* link;      // exit ops: cached successor block
+    mutable const Op* link;   // exit ops: first op of the cached successor block
 };
 static_assert(sizeof(Op) == 32, "Op should stay 32 bytes");
 

@@ -110,19 +110,18 @@ void Engine::callHle(Cpu* c, uint32_t index) {
     }
 }
 
-static inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 13)) & (4096 - 1); }
 
 Block* Engine::enterBlock(Cpu* c, uint32_t key) {
     const uint64_t g = gen_.load(std::memory_order_acquire);
     if (__builtin_expect(c->fast_gen != g, 0)) {
         if (!c->fast) c->fast.reset(new FastEntry[kFastSize]);
-        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {0xFFFFFFFFu, nullptr};
+        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {0xFFFFFFFFu, nullptr, nullptr};
         c->fast_gen = g;
     }
     FastEntry& fe = c->fast[fastIndex(key)];
     if (fe.key == key) return fe.block;
     Block* b = lookupOrDecode(key);
-    fe.key = key; fe.block = b;
+    fe.key = key; fe.block = b; fe.first = b ? b->ops.data() : nullptr;
     return b;
 }
 
@@ -261,6 +260,7 @@ void Engine::decodeThumbBlock(Block& b, uint32_t pc) {
 Exit Engine::run(Cpu& cpu, int64_t budget) {
     cpu.engine = this;
     cpu.budget = budget;
+    const int64_t startBudget = budget;
     cpu.exit = Exit::None;
     cpu.exit_info = 0;
 
@@ -274,6 +274,7 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         cpu.exit = Exit::MemFault;
         cpu.exit_info = scope.addr;
         cpu.r[kPC] = cpu.block_pc;   // precise PC within the block isn't tracked
+        cpu.insn_count += uint64_t(startBudget - cpu.budget);
         return cpu.exit;
     }
     uint8_t* const base = mem_.base();
@@ -286,6 +287,8 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         first->fn(&cpu, first, base);
     }
     t_scope = prev;
+    // Handlers only decrement the budget; the retired count falls out of it.
+    cpu.insn_count += uint64_t(startBudget - cpu.budget);
     return cpu.exit;
 }
 

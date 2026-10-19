@@ -17,6 +17,11 @@
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <utility>
 
 namespace Hydrogen::Runtime {
 

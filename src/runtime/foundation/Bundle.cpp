@@ -4,6 +4,7 @@
 // Guest code sees real host paths (the app bundle and its sandbox home live
 // in the HydrogenVM container), exactly as an iOS app sees its own sandbox.
 #include "Foundation.hpp"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sys/stat.h>
@@ -143,7 +144,7 @@ std::string resolveRelative(const std::string& base, const std::string& rel) {
     // remove dot segments
     std::vector<std::string> segs;
     size_t i = 0;
-    const bool trailing = !path.empty() && (path.back() == '/' || path.size() >= 2 && path.substr(path.size() - 2) == "/." || path.size() >= 3 && path.substr(path.size() - 3) == "/..");
+    const bool trailing = !path.empty() && (path.back() == '/' || (path.size() >= 2 && path.substr(path.size() - 2) == "/.") || (path.size() >= 3 && path.substr(path.size() - 3) == "/.."));
     while (i <= path.size()) {
         const size_t j = path.find('/', i);
         const std::string seg = path.substr(i, j == std::string::npos ? std::string::npos : j - i);

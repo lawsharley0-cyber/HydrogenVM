@@ -14,6 +14,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <cstdio>
+#include <utility>
 
 namespace Hydrogen::Loader {
 

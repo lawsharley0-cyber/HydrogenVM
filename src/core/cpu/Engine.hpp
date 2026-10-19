@@ -116,7 +116,6 @@ private:
     void decodeArmBlock(Block& b, uint32_t pc);
     void decodeThumbBlock(Block& b, uint32_t pc);
 
-    static constexpr size_t kFastSize = 1u << 12;
     static constexpr size_t kMaxHle = Memory::GuestArena::kHleSize / 4;
 
     Memory::GuestArena& mem_;

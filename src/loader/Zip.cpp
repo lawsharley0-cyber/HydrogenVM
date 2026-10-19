@@ -3,6 +3,8 @@
 #include <cstring>
 #include <filesystem>
 #include <zlib.h>
+#include <algorithm>
+#include <utility>
 
 namespace fs = std::filesystem;
 

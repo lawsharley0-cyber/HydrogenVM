@@ -14,6 +14,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace Hydrogen::Runtime::ObjC {
 
@@ -145,7 +146,11 @@ public:
     void setHost(id obj, std::unique_ptr<HostObject> h) {
         std::lock_guard<std::mutex> lk(hostMu_);
         auto& v = hostData_[obj];
-        for (auto& p : v) if (p && typeid(*p) == typeid(*h)) { p = std::move(h); return; }
+        const HostObject& hn = *h;
+        for (auto& p : v) {
+            const HostObject* po = p.get();
+            if (po && typeid(*po) == typeid(hn)) { p = std::move(h); return; }
+        }
         v.push_back(std::move(h));
     }
 

@@ -21,6 +21,11 @@
 #include <cstring>
 #include <tuple>
 #include <type_traits>
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <utility>
 
 namespace Hydrogen::Runtime {
 
