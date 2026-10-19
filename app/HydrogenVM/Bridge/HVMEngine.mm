@@ -2,6 +2,7 @@
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
 #import <AVFoundation/AVFoundation.h>
+#import <UIKit/UIKit.h>
 #include "core/memory/GuestArena.hpp"
 #include "loader/AppBundle.hpp"
 #include "runtime/Process.hpp"
@@ -249,7 +250,50 @@ struct SessionCore {
     AVAudioPlayerNode *playerNode = nil;
     AVAudioFormat *audioFormat = nil;
     std::mutex audioMu;
+    // Per-run log file in Documents/Logs (visible in the Files app). Written and
+    // flushed line by line on the engine thread, so it survives a hard crash.
+    FILE *logFile = nullptr;
+    ~SessionCore() { if (logFile) fclose(logFile); }
+    void logToFile(const char *tag, const std::string &msg) {
+        if (!logFile) return;
+        fputs(tag, logFile);
+        fputs(msg.c_str(), logFile);
+        if (msg.empty() || msg.back() != '\n') fputc('\n', logFile);
+        fflush(logFile);
+    }
 };
+
+// Opens Documents/Logs/<app>-<date>.log and keeps the 30 newest logs.
+FILE *openRunLog(const std::string &bundlePath) {
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    if (!docs) return nullptr;
+    NSString *dir = [docs stringByAppendingPathComponent:@"Logs"];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSArray<NSString *> *old = [[fm contentsOfDirectoryAtPath:dir error:nil] sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableArray<NSString *> *logs = [NSMutableArray array];
+    for (NSString *f in old) if ([f hasSuffix:@".log"]) [logs addObject:f];
+    while (logs.count >= 30) {
+        // Names start with the date stamp, so the first one is the oldest.
+        [fm removeItemAtPath:[dir stringByAppendingPathComponent:logs.firstObject] error:nil];
+        [logs removeObjectAtIndex:0];
+    }
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    df.dateFormat = @"yyyyMMdd-HHmmss";
+    NSString *app = [[str(bundlePath) lastPathComponent] stringByDeletingPathExtension];
+    NSString *name = [NSString stringWithFormat:@"%@-%@.log", [df stringFromDate:NSDate.date], app];
+    FILE *f = fopen([dir stringByAppendingPathComponent:name].fileSystemRepresentation, "w");
+    if (f) {
+        NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+        UIDevice *dev = UIDevice.currentDevice;
+        fprintf(f, "HydrogenVM %s (%s) on %s %s\nguest: %s\n\n",
+                [info[@"CFBundleShortVersionString"] UTF8String] ?: "?", [info[@"CFBundleVersion"] UTF8String] ?: "?",
+                dev.systemName.UTF8String, dev.systemVersion.UTF8String, bundlePath.c_str());
+        fflush(f);
+    }
+    return f;
+}
 }
 
 @interface HVMSession ()
@@ -297,6 +341,8 @@ struct SessionCore {
         for (auto &[line, lvl] : batch) s.onLog(str(line), HVMLogLevel(int(lvl)));
     };
 
+    core->logFile = openRunLog(bundle);
+
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
@@ -307,6 +353,7 @@ struct SessionCore {
         cfg.screenScale = 2;
         cfg.log = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
             std::lock_guard<std::mutex> lk(core->logMu);
+            core->logToFile("", msg);
             if (core->logs.size() < 5000) core->logs.emplace_back(msg, lvl);
             if (!core->logFlushScheduled) {
                 core->logFlushScheduled = true;
@@ -384,6 +431,11 @@ struct SessionCore {
             core->proc.reset();
         }
         const bool userStopped = core->stopRequested;
+        {
+            std::lock_guard<std::mutex> lk(core->logMu);
+            core->logToFile("\n[exit] ", "status " + std::to_string(code) + (userStopped ? " (stopped by user)" : ""));
+            if (!crash.empty()) core->logToFile("[crash]\n", crash);
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             flushLogs();
             HVMSession *s = weakSelf;

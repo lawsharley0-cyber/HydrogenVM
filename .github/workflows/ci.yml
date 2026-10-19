@@ -104,14 +104,14 @@ jobs:
         working-directory: app
         run: |
           rc=0
-          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Debug \
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
             -sdk iphonesimulator SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
             SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >sim-build.log 2>&1 || rc=$?
           grep -E "error:|BUILD (SUCCEEDED|FAILED)" sim-build.log | head -200
           exit $rc
       - name: Run UIKit test app inside HydrogenVM (simulator)
         run: |
-          tools/sim_test.sh app/xbuild/Debug-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
+          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
             "ALL CHECKS PASSED" "70,350@0.3;230,350@0.5" sim-out
       - name: Publish report to ci-reports branch
         if: always()
