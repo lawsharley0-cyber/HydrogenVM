@@ -41,25 +41,32 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
     std::vector<std::shared_ptr<Timer>> due;
     std::vector<std::function<void(CPU::Cpu&, double)>> hooks;
     double nextDeadline;
+    bool frameDue = false;
     {
         std::unique_lock<std::mutex> lk(mu);
-        const double t = now();
+        double t = now();
         nextDeadline = t + maxWait;
         timers.erase(std::remove_if(timers.begin(), timers.end(), [](auto& tm) { return !tm->valid; }), timers.end());
         for (auto& tm : timers) {
             if (tm->fireAt <= t) due.push_back(tm);
             else nextDeadline = std::min(nextDeadline, tm->fireAt);
         }
-        if (!frameHooks.empty()) nextDeadline = std::min(nextDeadline, t + 1.0 / 60.0);
-        if (queue.empty() && due.empty() && frameHooks.empty() && nextDeadline > t) {
+        if (!frameHooks.empty()) nextDeadline = std::min(nextDeadline, nextFrameAt);
+        if (queue.empty() && due.empty() && nextDeadline > t) {
             cv.wait_for(lk, std::chrono::duration<double>(std::min(nextDeadline - t, 0.05)));
             if (queue.empty()) {
-                const double t2 = now();
-                for (auto& tm : timers) if (tm->valid && tm->fireAt <= t2 && std::find(due.begin(), due.end(), tm) == due.end()) due.push_back(tm);
+                t = now();
+                for (auto& tm : timers) if (tm->valid && tm->fireAt <= t && std::find(due.begin(), due.end(), tm) == due.end()) due.push_back(tm);
             }
         }
         work.swap(queue);
-        hooks = frameHooks;
+        t = now();
+        if (!frameHooks.empty() && t >= nextFrameAt) {
+            frameDue = true;
+            hooks = frameHooks;
+            // 60 Hz cadence; if we fell behind, don't try to catch up with a burst of frames.
+            nextFrameAt = std::max(nextFrameAt + 1.0 / 60.0, t + 0.004);
+        }
     }
     bool ran = !work.empty();
     for (auto& fn : work) fn(c);
@@ -75,12 +82,9 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
         ran = true;
         tm->fire(c);
     }
-    const double t = now();
-    for (auto& h : hooks) h(c, t);
-    if (!hooks.empty() && !ran) {
-        // Pace frame hooks (display links) to ~60 Hz when nothing else is going on.
-        std::unique_lock<std::mutex> lk(mu);
-        if (queue.empty()) cv.wait_for(lk, std::chrono::milliseconds(2));
+    if (frameDue) {
+        const double t = now();
+        for (auto& h : hooks) h(c, t);
     }
     return ran;
 }

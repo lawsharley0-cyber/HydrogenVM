@@ -33,7 +33,13 @@ struct ProcessConfig {
     std::string deviceModel = "iPhone5,2";
     uint32_t screenWidth = 320, screenHeight = 568;   // points
     float screenScale = 2.0f;
+    // Called on the emulated main thread with each new frame (premultiplied
+    // RGBA, screenWidth*scale x screenHeight*scale, portrait). Optional.
+    std::function<void(const uint8_t* rgba, int width, int height)> present;
 };
+
+// Input from the host (screen points, portrait orientation of the emulated device).
+enum class TouchPhase { Began = 0, Moved = 1, Ended = 3, Cancelled = 4 };
 
 class Process;
 
@@ -169,6 +175,14 @@ public:
     std::string describeAddress(uint32_t addr) const;
     std::string backtrace(const CPU::Cpu& c, int maxFrames = 24) const;
 
+    // ---- host input (any thread); UIKit installs the handler
+    void injectTouch(TouchPhase phase, float x, float y, uint32_t fingerId) { if (touchHandler_) touchHandler_(phase, x, y, fingerId); }
+    void setAcceleration(float x, float y, float z) { if (accelHandler_) accelHandler_(x, y, z); }
+    void setTouchHandler(std::function<void(TouchPhase, float, float, uint32_t)> h) { touchHandler_ = std::move(h); }
+    void setAccelerationHandler(std::function<void(float, float, float)> h) { accelHandler_ = std::move(h); }
+    // Screen actually used by the app (UIKit picks 3.5" vs 4" from the bundle).
+    void setScreenSize(uint32_t w, uint32_t h) { cfg_.screenWidth = w; cfg_.screenHeight = h; }
+
     // Guest process environment.
     uint32_t argc() const { return argc_; }
     uint32_t argvAddr() const { return argv_; }
@@ -232,6 +246,9 @@ private:
     int exitCode_ = 0;
     bool crashed_ = false;
     std::string crashReport_;
+
+    std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
+    std::function<void(float, float, float)> accelHandler_;
 
     // diagnostics
     mutable std::mutex missingMu_;

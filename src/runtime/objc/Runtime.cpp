@@ -390,13 +390,13 @@ void Runtime::disposeInstance(CPU::Cpu& c, id obj) {
         extraRefs_.erase(obj);
         deallocating_.erase(obj);
     }
-    std::unique_ptr<HostObject> hostData;
+    std::vector<std::unique_ptr<HostObject>> hostData;
     {
         std::lock_guard<std::mutex> lk(hostMu_);
         auto it = hostData_.find(obj);
         if (it != hostData_.end()) { hostData = std::move(it->second); hostData_.erase(it); }
     }
-    hostData.reset();
+    hostData.clear();   // destructors may free guest memory: run them outside the lock
     {
         std::lock_guard<std::mutex> lk(syncMu_);
         syncLocks_.erase(obj);

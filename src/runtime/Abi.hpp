@@ -87,6 +87,15 @@ template <typename T> T readArg(ArgReader& a) {
     else if constexpr (std::is_same_v<T, VarArgs>) return VarArgs{a};
     else if constexpr (std::is_enum_v<T>) return T(a.word());
     else if constexpr (IsWords<T>::value) { T v; for (auto& x : v.w) x = a.word(); return v; }
+    else if constexpr (requires { T::kGuestStruct; }) {
+        // By-value struct (CGPoint, CGRect, CGAffineTransform, ...): consecutive words.
+        static_assert(sizeof(T) % 4 == 0, "guest structs are word-sized");
+        uint32_t w[sizeof(T) / 4];
+        for (auto& x : w) x = a.word();
+        T v;
+        std::memcpy(&v, w, sizeof v);
+        return v;
+    }
     else return a.get<T>();
 }
 

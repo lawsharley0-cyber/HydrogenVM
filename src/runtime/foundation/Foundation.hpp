@@ -106,6 +106,8 @@ struct RunLoop {
     std::deque<std::function<void(CPU::Cpu&)>> queue;   // performSelectorOnMainThread, dispatch main queue
     std::vector<std::function<void(CPU::Cpu&, double now)>> frameHooks;   // CADisplayLink, input pumping
     bool stopFlag = false;
+    double nextFrameAt = 0;     // next frame-hook deadline (60 Hz)
+    void addFrameHook(std::function<void(CPU::Cpu&, double)> h) { std::lock_guard<std::mutex> lk(mu); frameHooks.push_back(std::move(h)); }
 
     std::shared_ptr<Timer> addTimer(double delay, double interval, bool repeats, std::function<void(CPU::Cpu&)> fire, id timerObj = 0);
     void post(std::function<void(CPU::Cpu&)> fn);    // any thread

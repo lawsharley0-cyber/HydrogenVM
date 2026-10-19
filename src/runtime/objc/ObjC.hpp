@@ -10,6 +10,7 @@
 #pragma once
 #include "runtime/Process.hpp"
 #include <memory>
+#include <typeinfo>
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -123,18 +124,30 @@ public:
     // ---- objects
     id createInstance(Class cls, uint32_t extraBytes = 0);
     void disposeInstance(CPU::Cpu& c, id obj);       // .cxx_destruct, weak refs, side tables, free
+    // Host-side state attached to an object. An object can carry several
+    // pieces (e.g. a UILabel has view, layer-independent label and control
+    // state), one per C++ type.
     template <typename T> T& host(id obj) {
         std::lock_guard<std::mutex> lk(hostMu_);
-        auto& p = hostData_[obj];
-        if (!p) p = std::make_unique<T>();
-        return static_cast<T&>(*p);
+        auto& v = hostData_[obj];
+        for (auto& p : v) if (T* t = dynamic_cast<T*>(p.get())) return *t;
+        v.push_back(std::make_unique<T>());
+        return static_cast<T&>(*v.back());
     }
     template <typename T> T* hostIf(id obj) {
         std::lock_guard<std::mutex> lk(hostMu_);
         auto it = hostData_.find(obj);
-        return it == hostData_.end() ? nullptr : dynamic_cast<T*>(it->second.get());
+        if (it == hostData_.end()) return nullptr;
+        for (auto& p : it->second) if (T* t = dynamic_cast<T*>(p.get())) return t;
+        return nullptr;
     }
-    void setHost(id obj, std::unique_ptr<HostObject> h) { std::lock_guard<std::mutex> lk(hostMu_); hostData_[obj] = std::move(h); }
+    // Attach `h`, replacing any existing piece of the same dynamic type.
+    void setHost(id obj, std::unique_ptr<HostObject> h) {
+        std::lock_guard<std::mutex> lk(hostMu_);
+        auto& v = hostData_[obj];
+        for (auto& p : v) if (p && typeid(*p) == typeid(*h)) { p = std::move(h); return; }
+        v.push_back(std::move(h));
+    }
 
     // ---- memory management
     id retain(CPU::Cpu& c, id obj);                  // honours overridden -retain
@@ -212,7 +225,7 @@ private:
     std::unordered_map<uint32_t, id> weakSlots_;
 
     std::mutex hostMu_;
-    std::unordered_map<id, std::unique_ptr<HostObject>> hostData_;
+    std::unordered_map<id, std::vector<std::unique_ptr<HostObject>>> hostData_;
 
     std::mutex assocMu_;
     std::unordered_map<id, std::unordered_map<uint32_t, std::pair<id, uint32_t>>> assoc_;
