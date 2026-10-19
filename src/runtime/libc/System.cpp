@@ -289,7 +289,11 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
     x.mem.write<uint32_t>(out + 16, 501);
     x.mem.write<uint32_t>(out + 20, 501);
     auto ts = [&](uint32_t off, const timespec& t) { x.mem.write<int32_t>(out + off, int32_t(t.tv_sec)); x.mem.write<int32_t>(out + off + 4, int32_t(t.tv_nsec)); };
+#ifdef __APPLE__
+    ts(28, st.st_atimespec); ts(36, st.st_mtimespec); ts(44, st.st_ctimespec); ts(52, st.st_birthtimespec);
+#else
     ts(28, st.st_atim); ts(36, st.st_mtim); ts(44, st.st_ctim); ts(52, st.st_mtim);
+#endif
     x.mem.write<int64_t>(out + 60, int64_t(st.st_size));
     x.mem.write<int64_t>(out + 68, int64_t(st.st_blocks));
     x.mem.write<int32_t>(out + 76, int32_t(st.st_blksize));

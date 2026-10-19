@@ -2,3 +2,8 @@ build/
 *.o
 *.elf
 .DS_Store
+/Documents/
+/Library/
+/tmp/
+app/HydrogenVM.xcodeproj/
+xcuserdata/

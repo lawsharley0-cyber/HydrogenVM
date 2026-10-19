@@ -28,6 +28,13 @@ policy with no JIT entitlement.
 | `src/core/cpu/DecodeNeon.cpp` | NEON decoder |
 | `src/core/cpu/Engine.*` | Block cache, dispatcher, HLE table, fault guard |
 | `src/loader/ElfLoader.*` | ELF32 loader (tests now; Android `.so` in Phase 3) |
+| `src/loader/MachO.*`, `AppBundle.*`, `Zip.*`, `Plist.*` | 32-bit Mach-O (fat, dyld info / classic binds, rebases), `.ipa` import, XML + binary plists |
+| `src/runtime/Process.*`, `Abi.hpp`, `Heap.*` | One emulated process: memory layout, import binding to HLE, guest threads, armv7 softfp ABI marshalling (incl. sret structs), guest heap |
+| `src/runtime/libc/` | libSystem: string, stdio, stdlib, math, time, pthreads, files, sysctl, C++ runtime helpers |
+| `src/runtime/objc/` | Guest Objective-C runtime: class metadata from the binary, message dispatch with caches, categories, ARC, weak refs, blocks, runtime API, host-defined classes |
+| `src/runtime/foundation/` | Foundation + CoreFoundation + GCD reimplemented as host classes |
+| `src/runtime/graphics/` | Software 2D: AA path rasteriser, strokes, clips, blend modes, PNG (incl. CgBI), text backend interface |
+| `src/runtime/uikit/` | CoreGraphics, QuartzCore (layer tree compositor), UIKit views/controls/gestures, nib loading, platform stubs |
 | `src/selftest/SelfTest.*` | Built-in smoke test + speed check (runs on device from the app) |
 | `app/` | iPhone app (XcodeGen project, SwiftUI shell, ObjC++ bridge) |
 | `tests/` | Asm unit tests, C differential tests, runner, benchmark |
@@ -45,7 +52,7 @@ policy with no JIT entitlement.
 | `Op_LDR_Imm` raw pointer cast | Undefined behaviour on unaligned loads (which ARMv7 allows). | All guest memory access uses `memcpy`/atomics. |
 | `MapRegion` re-`mmap` with `MAP_FIXED` | iOS uses 16 KB host pages but 32-bit iOS binaries use 4 KB pages. Mapping a second segment that shares a host page wiped the first. | Commits are tracked per host page and never re-mapped; guest permissions are tracked in software at 4 KB granularity. |
 | HLE via UDF trap table at `0xFFFF0000` | Needs trap instructions written into guest memory. | **HLE by address**: imports are bound to addresses in `0xFFFF0000–0xFFFFFFFF`; when execution reaches one, the engine builds a block that calls the host function and returns to LR. Nothing is decoded there. |
-| "Zero-copy" bridging of 32-bit ObjC calls to 64-bit UIKit | 32-bit and 64-bit ABIs differ (pointer size, `NSInteger`, `CGFloat`, struct layout), so guest objects can't be handed to host frameworks as-is. | Planned: a guest-side Objective-C runtime with reimplemented framework classes, in the style of touchHLE. Graphics calls (GLES) still bridge to Metal on the host. |
+| "Zero-copy" bridging of 32-bit ObjC calls to 64-bit UIKit | 32-bit and 64-bit ABIs differ (pointer size, `NSInteger`, `CGFloat`, struct layout), so guest objects can't be handed to host frameworks as-is. | A guest-side Objective-C runtime whose framework classes (Foundation, UIKit, …) are implemented in C++ against guest memory, in the style of touchHLE. The UI is composited in software into a framebuffer the app displays. GLES will bridge to Metal. |
 | Faults | Not handled. | `SIGSEGV`/`SIGBUS` inside the arena unwind to `Engine::run` (`siglongjmp`; safe because every handler is a tail call) and report `Exit::MemFault` with the guest address. |
 
 ## Execution core
@@ -129,6 +136,14 @@ PC-based LDM/STM and NEON loads are filtered out, and are intentionally rejected
   rounding modes, fixed point, half precision, VLD2/3/4, VTBL/VTBX, permutes,
   saturation + QC, estimates, scalar forms, and Thumb-2 encodings.
 * **Decoder fuzzing** (above).
+* **iOS app tests** (`tools/ios_tests.sh`): real 32-bit iOS executables built
+  with clang + ld64 against stub headers (`tests/ios/include`) and run through
+  the whole stack with `build/hvm`: C/libSystem (`ctest`, also as an iOS 3
+  non-PIE build and with a binary Info.plist), the ObjC runtime (`objctest`),
+  Foundation (`foundationtest`, 126 checks) and UIKit (`uikittest`, 55 checks:
+  views, CG drawing, text, images, nibs in both compiled formats, controls,
+  gestures, alerts, scripted taps). `hvm --screenshot out.png --run-for 2
+  --tap X,Y@T` captures the framebuffer for visual checks.
 
 A reference CPU (e.g. Unicorn) for instruction-by-instruction fuzzing would be
 a good next addition; it wasn't installable in the environment this was built in.
@@ -147,14 +162,54 @@ ops, and a direct-mapped page table instead of the hashed block lookup.
 ## iPhone app
 
 `app/` holds the iPhone app: bundle ID `com.lfull.HydrogenVM`, iPhone only,
-iOS 26+, arm64 devices. Generate the Xcode project with XcodeGen
-(`cd app && xcodegen`). It has a Library tab (import/delete `.ipa` files;
-launching needs roadmap steps 3–5) and a Diagnostics tab (4 GB arena check +
-CPU self-test with MIPS). It's intended for sideloading / development builds;
-the entitlements below won't pass App Store review for an emulator.
+iOS 26+, arm64 devices, for sideloading / development builds (the entitlements
+won't pass App Store review for an emulator). Generate the Xcode project with
+XcodeGen (`cd app && xcodegen`).
+
+* **Library** — import `.ipa` files (the + button, *Open in…*, or drop them in
+  HydrogenVM's folder in the Files app and pull to refresh). Each app is
+  extracted to `Documents/Apps/<bundle id>/<Name>.app`; its sandbox
+  (`Documents/`, `Library/`, `tmp/`) sits beside it. Rows show the icon
+  (CgBI icons decoded by the engine), version, minimum iOS, and why an app
+  can't run (encrypted, 64-bit only, …). Long-press for *Reset App Data* /
+  *Delete*. The gear menu toggles "continue past missing functions".
+* **Run screen** — starts an `HVMSession`: the guest runs on a 16 MB-stack
+  thread; each composited frame (640×960 or 640×1136 RGBA) is handed to the UI
+  as a `CGImage` (frames are dropped if the UI is behind), shown aspect-fit with
+  touches mapped back to guest points (multi-touch), accelerometer from
+  CoreMotion, a live colour-coded log, FPS, Stop, and a crash alert with a
+  copyable report + log.
+* **Diagnostics** — 4 GB arena check + CPU self-test with MIPS.
+
+`Bridge/HVMEngine.mm` also installs a CoreText text backend (real fonts in
+place of the built-in bitmap font) and an ImageIO decoder for JPEG/GIF/TIFF.
 
 The Swift/Objective-C++ code hasn't been compiled yet (no Xcode in the build
 environment); the C++ it calls is the same code the test suite builds.
+
+### Testing on device
+
+1. `cd app && xcodegen`, open the project, pick your team under Signing &
+   Capabilities (the two memory entitlements need a paid or free developer
+   account that allows them; *extended virtual addressing* is required).
+2. Build to an iPhone. Check **Diagnostics** first: the arena check must pass
+   and the self-test reports MIPS.
+3. Import a decrypted 32-bit `.ipa` and tap it. If it crashes, *Copy Report*
+   puts the crash report and the full log on the clipboard.
+4. Launch from the home screen rather than under the Xcode debugger, or tell
+   lldb to pass bad-access signals through
+   (`process handle SIGSEGV SIGBUS -n false -p true -s false`): guest accesses
+   to unmapped memory are caught with signal handlers, which the debugger
+   otherwise stops on.
+
+### Current limitations
+
+* App Store `.ipa` files are FairPlay-encrypted and must be decrypted first.
+* OpenGL ES isn't implemented yet (most games): they will start but not draw.
+* Audio is silent (AudioToolbox/AVFoundation are stubs).
+* Storyboards aren't supported (nibs are); neither are UITableView,
+  UIScrollView, UINavigationController, UITextField and other larger UIKit
+  classes yet — missing classes are logged by name.
 
 ## iOS-specific notes
 
@@ -170,9 +225,11 @@ environment); the C++ it calls is the same code the test suite builds.
 
 1. ~~Integer core with lazy block decoding + tests~~ ✅
 2. ~~VFPv3/v4 + NEON~~ ✅
-3. **Mach-O loader** (next): 32-bit Mach-O, fat binaries, dyld info binding imports to
-   HLE stubs, ObjC metadata.
-4. **Guest ObjC runtime + HLE frameworks** (libSystem, Foundation, UIKit basics).
-5. **OpenGL ES 1.1/2.0 → Metal** state tracker.
-6. Android `.apk` (Phase 3): separate effort — native `armeabi-v7a` libs reuse
+3. ~~Mach-O loader, `.ipa` import~~ ✅
+4. ~~Guest ObjC runtime, libSystem, Foundation, CoreGraphics, QuartzCore, UIKit core~~ ✅
+5. ~~iPhone app: library, run screen, touch, accelerometer~~ ✅ (needs on-device testing)
+6. **OpenGL ES 1.1/2.0 → Metal** state tracker (next), EAGLContext/CAEAGLLayer.
+7. Audio (AudioToolbox, OpenAL, AVAudioPlayer) via AVAudioEngine.
+8. More UIKit: UIScrollView, UITableView, navigation/tab bar controllers, UITextField + keyboard, storyboards.
+9. Android `.apk` (Phase 3): separate effort — native `armeabi-v7a` libs reuse
    this core, but Dalvik/ART + the Android framework are a project of their own.

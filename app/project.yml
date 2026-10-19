@@ -25,6 +25,11 @@ targets:
       - path: ../src
         excludes:
           - "**/*.md"
+    dependencies:
+      - sdk: libz.tbd
+      - sdk: CoreText.framework
+      - sdk: ImageIO.framework
+      - sdk: CoreMotion.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM

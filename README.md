@@ -5,12 +5,14 @@ modern 64-bit hosts. The goal is running legacy 32-bit iOS apps on current
 Apple devices without JIT entitlements; Android `armeabi-v7a` native code is a
 later phase.
 
-**Status:** CPU core complete and tested — ARMv7 integer, VFPv3/v4 and NEON in
-both ARM and Thumb-2. iPhone app scaffold in `app/` (bundle ID
-`com.lfull.HydrogenVM`, iOS 26+). The Mach-O loader, HLE frameworks and the
-GLES→Metal bridge are next. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, the changes made
-to the original handoff, and the roadmap.
+**Status:** CPU core complete (ARMv7 integer, VFPv3/v4, NEON; ARM + Thumb-2).
+Mach-O loader, guest Objective-C runtime, libSystem, Foundation/CoreFoundation/GCD,
+CoreGraphics, a QuartzCore compositor and core UIKit are implemented and pass
+end-to-end tests with real 32-bit iOS executables. The iPhone app (`app/`,
+bundle ID `com.lfull.HydrogenVM`, iOS 26+) imports `.ipa` files and runs them
+with a live screen, touch and logs. OpenGL ES → Metal and audio are next. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design, limitations and
+roadmap.
 
 ## Build & test
 
@@ -24,6 +26,11 @@ tools/run_tests.sh
 This builds the library, the test runner and benchmark, compiles the guest
 test programs, and runs them all. Expected output ends with every line showing
 `0 failed`.
+
+```sh
+tools/ios_tests.sh          # 32-bit iOS test apps through the full runtime (needs ld64)
+build/hvm path/to/Foo.app --run-for 3 --screenshot shot.png --tap 160,240@1
+```
 
 ```sh
 build/hvm_bench build/tests/ctests_thumb.elf 30          # speed
