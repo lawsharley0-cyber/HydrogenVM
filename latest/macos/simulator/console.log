@@ -124,21 +124,23 @@ ok glCheckFramebufferStatus complete
 ok OpenGL ES clear, glReadPixels & presentRenderbuffer
 
 [autotap] 70.0,350.0
+[autotap] 230.0,350.0
 ok drawRect: was called by the compositor
 
 ok CADisplayLink fires at frame rate
 
 ok animation completions fire
 
-FAIL touch delivery to a plain view (hvm --tap) (line 329)
+ok touch delivery to a plain view (hvm --tap)
 
 ok touch location in view coordinates
 
 ok UITapGestureRecognizer
 
-66 checks, 1 failures
+66 checks, 0 failures
 
-App exited with code 1
-[hvm-exit] status=1
-[autotap] 230.0,350.0
-com.lfull.HydrogenVM: 28982
+ALL CHECKS PASSED
+
+App exited with code 0
+[hvm-exit] status=0
+com.lfull.HydrogenVM: 15038
