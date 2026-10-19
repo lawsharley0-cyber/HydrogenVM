@@ -32,6 +32,36 @@ final class RunModel {
 
     init(app: InstalledApp) { self.app = app }
 
+    /// CI hook: HVM_AUTORUN=<bundle id> launches that app at startup (see LibraryView);
+    /// in that mode the guest log is mirrored to stdout and HVM_AUTOTAP="x,y@t;x,y@t"
+    /// taps the screen t seconds after the first frame.
+    static let automation = ProcessInfo.processInfo.environment["HVM_AUTORUN"] != nil
+    @ObservationIgnored private var tapsScheduled = false
+
+    /// Unbuffered write to stdout (captured by `simctl launch --console-pty`).
+    nonisolated static func console(_ line: String) {
+        FileHandle.standardOutput.write(Data((line + "\n").utf8))
+    }
+
+    private func scheduleAutoTaps() {
+        guard Self.automation, !tapsScheduled,
+              let spec = ProcessInfo.processInfo.environment["HVM_AUTOTAP"], !spec.isEmpty else { return }
+        tapsScheduled = true
+        for item in spec.split(separator: ";") {
+            let parts = item.split(separator: "@")
+            let xy = parts.first?.split(separator: ",").compactMap { Double($0) } ?? []
+            guard xy.count == 2, parts.count == 2, let t = Double(parts[1]) else { continue }
+            let p = CGPoint(x: xy[0], y: xy[1])
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(t))
+                Self.console("[autotap] \(p.x),\(p.y)")
+                self?.touch(.began, at: p, finger: 0)
+                try? await Task.sleep(for: .milliseconds(50))
+                self?.touch(.ended, at: p, finger: 0)
+            }
+        }
+    }
+
     func start(keepGoing: Bool) {
         guard session == nil else { return }
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
@@ -42,6 +72,7 @@ final class RunModel {
                 guard let self else { return }
                 self.frame = image
                 self.frameCount += 1
+                self.scheduleAutoTaps()
                 if let size = self.session?.screenSize, size != self.screenSize { self.screenSize = size }
             }
         }
@@ -53,6 +84,9 @@ final class RunModel {
                 guard let self else { return }
                 self.running = false
                 self.stopSensors()
+                if Self.automation {
+                    Self.console("[hvm-exit] status=\(code)\(crash.map { " crash:\n" + $0 } ?? "")")
+                }
                 if self.userStopped { self.finished = true }
                 else if let crash { self.crashReport = crash }
                 else { self.exitMessage = "The app exited (status \(code))." }
@@ -90,6 +124,7 @@ final class RunModel {
     }
 
     private func append(_ line: String, _ level: HVMLogLevel) {
+        if Self.automation { Self.console(line) }
         var parts = line.split(separator: "\n", omittingEmptySubsequences: false)
         if parts.count > 1, parts.last?.isEmpty == true { parts.removeLast() }
         for part in parts {

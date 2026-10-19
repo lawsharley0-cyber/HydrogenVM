@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Engine + CPU tests, and the 32-bit iOS test apps (built with Apple's ld64 for Linux).
+  linux:
+    name: Linux — engine and iOS test apps
+    runs-on: ubuntu-24.04
+    env:
+      HVM_LD64: /home/runner/cctools/bin/arm-apple-darwin11-ld
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq clang lld cmake ninja-build zlib1g-dev uuid-dev python3
+      - name: Cache ld64 (cctools-port)
+        id: cctools
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/cctools
+          key: cctools-${{ runner.os }}-${{ hashFiles('tools/build_cctools.sh') }}
+      - name: Build ld64
+        if: steps.cctools.outputs.cache-hit != 'true'
+        run: tools/build_cctools.sh /home/runner/cctools
+      - name: CPU tests
+        run: tools/run_tests.sh
+      - name: iOS app tests
+        run: tools/ios_tests.sh
+      - name: Upload test apps and screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-apps
+          path: |
+            build/ios/*.app
+            build/ios/UIKitTest.png
+          if-no-files-found: warn
+
+  # Same engine built with Apple's toolchain, running the Linux-built test apps.
+  macos-engine:
+    name: macOS — engine tests
+    runs-on: macos-26
+    needs: linux
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: brew install cmake ninja llvm lld
+      - name: CPU tests
+        run: |
+          export CC_GUEST="$(brew --prefix llvm)/bin/clang"
+          export PATH="$(brew --prefix lld)/bin:$PATH"
+          tools/run_tests.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-test-apps
+          path: build/ios
+      - name: iOS app tests (prebuilt apps)
+        run: HVM_PREBUILT=1 tools/ios_tests.sh
+
+  # Compile the iPhone app with Xcode, then run it in the iOS Simulator.
+  ios-app:
+    name: iPhone app — build and simulator run
+    runs-on: macos-26
+    needs: linux
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode version
+        run: xcodebuild -version && xcrun simctl list runtimes
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        working-directory: app
+        run: xcodegen
+      - name: Build for device (unsigned)
+        working-directory: app
+        run: |
+          rc=0
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Debug \
+            -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
+          exit $rc
+      - name: Build for simulator
+        working-directory: app
+        run: |
+          rc=0
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Debug \
+            -sdk iphonesimulator SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
+            SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >sim-build.log 2>&1 || rc=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" sim-build.log | head -200
+          exit $rc
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-test-apps
+          path: guest
+      - name: Run UIKit test app inside HydrogenVM (simulator)
+        run: |
+          tools/sim_test.sh app/xbuild/Debug-iphonesimulator/HydrogenVM.app guest/UIKitTest.app \
+            "ALL CHECKS PASSED" "70,350@0.3;230,350@0.5" sim-out
+      - name: Upload build logs, screenshot and console
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone-app-results
+          path: |
+            app/device-build.log
+            app/sim-build.log
+            sim-out/
+          if-no-files-found: warn

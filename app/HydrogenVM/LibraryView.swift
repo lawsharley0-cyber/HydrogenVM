@@ -173,6 +173,17 @@ struct LibraryView: View {
             .alert("Import failed", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
                 Button("OK") { store.lastError = nil }
             } message: { Text(store.lastError ?? "") }
+            .task {
+                // CI hook (see RunModel.automation): launch an installed app by bundle id.
+                if let id = ProcessInfo.processInfo.environment["HVM_AUTORUN"], running == nil {
+                    store.refresh()
+                    if let app = store.apps.first(where: { $0.info.bundleIdentifier == id }) {
+                        running = app
+                    } else {
+                        RunModel.console("[hvm-exit] autorun: no installed app with bundle id \(id)")
+                    }
+                }
+            }
             .fullScreenCover(item: $running) { app in
                 RunView(app: app, keepGoing: keepGoing)
             }

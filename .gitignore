@@ -7,3 +7,4 @@ build/
 /tmp/
 app/HydrogenVM.xcodeproj/
 xcuserdata/
+app/xbuild/
