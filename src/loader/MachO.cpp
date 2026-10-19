@@ -318,10 +318,10 @@ void legacyBinds(Ctx& cx) {
         }
     }
     // External relocations: r_address is relative to the first segment's
-    // address, or the first writable one with MH_SPLIT_SEGS.
+    // address (as dyld does, that includes __PAGEZERO, so it's normally 0 for
+    // executables), or to the first writable segment with MH_SPLIT_SEGS.
     uint32_t relocBase = 0;
     for (const Segment& s : cx.img.segments) {
-        if (s.name == "__PAGEZERO") continue;
         if ((cx.img.flags & MH_SPLIT_SEGS) && !(s.initprot & 2)) continue;
         relocBase = s.vmaddr;
         break;

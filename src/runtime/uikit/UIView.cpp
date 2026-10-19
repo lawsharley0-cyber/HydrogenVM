@@ -57,6 +57,12 @@ void ensureLayer(Ctx& x, id self) {
     LayerData& l = layerData(x, d.layer);
     l.delegate = self;
     l.contentsScale = ui(x).scale;
+    // Views backed by a CAEAGLLayer start at scale 1.0, as on iOS: a GL app
+    // opts into Retina by setting contentScaleFactor before creating its
+    // renderbuffer; otherwise it draws at 320x480 and is scaled up.
+    const Class eagl = rt(x).getClass("CAEAGLLayer");
+    for (Class c = lc; eagl && c; c = rt(x).superclass(c))
+        if (c == eagl) { l.contentsScale = 1; break; }
     l.needsDisplay = true;
 }
 
@@ -881,8 +887,8 @@ G::Rect getRect(Ctx& x, id self, const char* sel) {
     if (!self) return {};
     auto& r = rt(x);
     const SEL s = r.sel(sel);
-    const IMP imp = r.lookupForSend(r.classOf(self), s);
-    if (!imp) r.unrecognized(self, s);
+    IMP imp = r.lookupForSend(r.classOf(self), s);
+    if (!imp) imp = r.unrecognized(self, s);
     const uint32_t tmp = x.proc.heap().allocZeroed(16);
     x.proc.callGuest(x.cpu, imp, {tmp, self, s});
     const CGRect out = CG::readStruct<CGRect>(x, tmp);
@@ -892,8 +898,8 @@ G::Rect getRect(Ctx& x, id self, const char* sel) {
 G::Size getSize(Ctx& x, id self, SEL s, std::initializer_list<uint32_t> args) {
     if (!self) return {};
     auto& r = rt(x);
-    const IMP imp = r.lookupForSend(r.classOf(self), s);
-    if (!imp) r.unrecognized(self, s);
+    IMP imp = r.lookupForSend(r.classOf(self), s);
+    if (!imp) imp = r.unrecognized(self, s);
     const uint32_t tmp = x.proc.heap().allocZeroed(16);
     std::vector<uint32_t> a{tmp, self, s};
     a.insert(a.end(), args.begin(), args.end());

@@ -1,4 +1,5 @@
 #include "Process.hpp"
+#include "libc/Unwind.hpp"
 #include "loader/ElfLoader.hpp"
 #include <cstdarg>
 #include <cstdio>
@@ -92,6 +93,8 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)) {
     registerLibcSystem(*this);
     registerCxxRuntime(*this);
     registerObjCRuntime(*this);
+    registerUnwinder(*this);
+    registerLibStdcxx(*this);
     registerFoundation(*this);
     registerUIKit(*this);
 }
@@ -144,7 +147,15 @@ uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) 
     return engine_->registerHle(debugName, [this, fn = std::move(fn), debugName](CPU::Cpu& c) {
         if (cfg_.traceCalls) log(LogLevel::Debug, "→ " + debugName + " (from " + describeAddress(c.r[CPU::kLR]) + ")");
         Ctx x{*this, c, *mem_};
-        fn(x);
+        try {
+            fn(x);
+        } catch (const GuestThrow& g) {
+            landGuestException(x, g.ue);   // e.g. -[NSException raise] inside an app's @try
+        } catch (const ProcessExit&) {
+            throw;
+        } catch (const std::runtime_error& e) {
+            if (!hostErrorHook_ || !hostErrorHook_(x, e)) throw;
+        }
     });
 }
 
@@ -198,9 +209,11 @@ uint32_t Process::makeMissingStub(const std::string& name) {
 
 uint32_t Process::resolveImport(const Loader::BindRecord& b) {
     if (auto a = lookupSymbol(b.symbol)) return *a;
+    // A weak import that nothing provides is 0, as dyld does: apps weak-link
+    // frameworks newer than their minimum OS and test for nil before use.
+    if (b.weakImport) return 0;
     for (auto& r : missingResolvers_)
         if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
-    if (b.weakImport) return 0;
     return makeMissingStub(b.symbol);
 }
 
@@ -212,14 +225,26 @@ void Process::bindImports() {
         unresolvedBefore = symbols_.size();
     }
     std::vector<std::string> missingFns;
-    for (const auto& b : image_.binds) {
+    // Class and metaclass pointers inside the app's own class structures
+    // (superclass, isa) always need a class, even when the import is weak:
+    // dyld would refuse to load an app whose superclass is missing, and a nil
+    // superclass would silently turn the subclass into a root class.
+    const Loader::Section* objcData = image_.findSection("__DATA", "__objc_data");
+    auto inObjcData = [&](uint32_t a) { return objcData && a >= objcData->addr && a < objcData->addr + objcData->size; };
+    for (const auto& b0 : image_.binds) {
+        Loader::BindRecord strong;
+        const bool needsClass = b0.weakImport && inObjcData(b0.address) &&
+            (b0.symbol.rfind("_OBJC_CLASS_$_", 0) == 0 || b0.symbol.rfind("_OBJC_METACLASS_$_", 0) == 0);
+        if (needsClass) { strong = b0; strong.weakImport = false; }
+        const Loader::BindRecord& b = needsClass ? strong : b0;
+        const std::string key = needsClass ? b.symbol + "#class" : b.symbol;
         uint32_t target;
-        auto it = cache.find(b.symbol);
+        auto it = cache.find(key);
         if (it != cache.end()) target = it->second;
         else {
             const bool known = lookupSymbol(b.symbol).has_value();
             target = resolveImport(b);
-            cache.emplace(b.symbol, target);
+            cache.emplace(key, target);
             if (!known && target && engine_->isHleAddress(target) &&
                 engine_->hleName(engine_->hleIndex(target)) == b.symbol && !looksLikeData(b.symbol))
                 missingFns.push_back(demangle(b.symbol));

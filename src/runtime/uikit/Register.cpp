@@ -19,6 +19,7 @@ void registerUIKit(Process& p) {
     UIKit::registerNib(p, r);
     UIKit::registerUIWidgets(p, r);
     UIKit::registerOpenGLES(p, r);
+    UIKit::registerGameKit(p, r);
     UIKit::registerPlatformStubs(p, r);
 }
 

@@ -10,6 +10,7 @@
 #pragma once
 #include "runtime/Process.hpp"
 #include <memory>
+#include <mutex>
 #include <typeinfo>
 #include <shared_mutex>
 #include <unordered_map>
@@ -119,7 +120,12 @@ public:
     }
     uint64_t sendSuper(CPU::Cpu& c, id self, Class startClass, SEL s, std::initializer_list<uint32_t> args = {});
     void invalidateCaches();
-    [[noreturn]] void unrecognized(id self, SEL s);
+    // A message nobody implements. For placeholder (missing) framework classes,
+    // and for any framework class when the app runs with "keep going", this
+    // logs once and returns an IMP that behaves like messaging nil; otherwise
+    // it stops the app (unrecognizedFatal).
+    IMP unrecognized(id self, SEL s);
+    [[noreturn]] void unrecognizedFatal(id self, SEL s);
     void addMethod(Class cls, SEL s, IMP imp, const std::string& types, bool replace = true);
 
     // ---- objects
@@ -212,6 +218,8 @@ private:
 
     Process& proc_;
     mutable std::shared_mutex classMu_;
+    std::once_flag nilImpOnce_;
+    IMP nilImp_ = 0;
     std::unordered_map<Class, std::unique_ptr<ClassInfo>> classes_;
     std::unordered_map<std::string, Class> classByName_;
     std::unordered_map<std::string, SEL> selByName_;

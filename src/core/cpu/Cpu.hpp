@@ -123,6 +123,11 @@ struct alignas(64) Cpu {
     std::unique_ptr<FastEntry[]> fast;
     uint64_t fast_gen = ~0ull;
 
+    // Guest SP at the innermost host->guest call (Engine::callGuest). Guest
+    // frames at or above it belong to code that host frames are waiting on,
+    // so an exception unwinder must not land there.
+    uint32_t call_boundary_sp = 0xFFFFFFFFu;
+
     uint32_t pc() const { return r[kPC]; }
     uint32_t cpsr() const { return nzcv | (q << 27) | ge | (thumb << 5) | 0x10 /*USR*/; }
     void setApsrFlags(uint32_t v) { nzcv = v & kFlagMaskNZCV; q = (v >> 27) & 1; ge = v & 0x000F0000u; }

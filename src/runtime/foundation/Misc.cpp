@@ -3,6 +3,7 @@
 // NSIndexPath / NSIndexSet, NSUUID, NSLocale / NSTimeZone basics and the
 // NSString/NSClass/NSSelector conversion functions.
 #include "Foundation.hpp"
+#include "runtime/libc/Unwind.hpp"
 #include "runtime/libc/Format.hpp"
 #include <chrono>
 #include <random>
@@ -261,8 +262,27 @@ id excc_with(Ctx& x, id self, SEL, id name, id reason, id userInfo) {
     return autoreleased(x, exc_init(x, e, 0, name, reason, userInfo));
 }
 [[noreturn]] void throwException(Ctx& x, id e) {
+    if (const uint32_t ue = prepareGuestObjCException(x, e)) throw GuestThrow{ue};   // the app's @catch takes it
     if (M(x).uncaughtHandler) x.proc.callGuest(x.cpu, M(x).uncaughtHandler, {e});
     throw ObjC::ObjCError("Terminating app due to uncaught exception " + exceptionText(x, e));
+}
+// Cocoa raises NSExceptions for these; HydrogenVM's host code reports them as
+// errors. If the app would catch the exception, raise the real thing instead.
+bool hostErrorToNSException(Ctx& x, const std::exception& err) {
+    const std::string msg = err.what();
+    const bool cocoa = msg.rfind("*** ", 0) == 0 || msg.find("unrecognized selector sent to") != std::string::npos ||
+                       msg.find("was mutated while being enumerated") != std::string::npos;
+    if (!cocoa) return false;
+    const char* name = msg.find("beyond bounds") != std::string::npos || msg.find("out of bounds") != std::string::npos ||
+                       msg.find("range") != std::string::npos ? "NSRangeException"
+                     : msg.find("mutated") != std::string::npos ? "NSGenericException" : "NSInvalidArgumentException";
+    const Class cls = rt(x).getClass("NSException");
+    if (!cls) return false;
+    const id e = excc_with(x, cls, 0, constString(x.proc, name), makeString(x, msg), 0);
+    const uint32_t ue = prepareGuestObjCException(x, e);
+    if (!ue) return false;
+    landGuestException(x, ue);
+    return true;
 }
 void excc_raiseFormat(Ctx& x, id self, SEL, id name, id f, VarArgs va) {
     const id reason = makeString(x, fmt(x, f, va.args));
@@ -904,7 +924,14 @@ bool tz_isDST(Ctx&, id, SEL) { const time_t t = time(nullptr); std::tm lt; local
 // ---------------------------------------------- conversion functions ---
 
 id f_stringFromClass(Ctx& x, Class c) { return c ? makeString(x, rt(x).className(c)) : 0; }
-Class f_classFromString(Ctx& x, id s) { return s ? rt(x).getClass(utf8(x, s)) : 0; }
+// Placeholder classes (made up for missing framework classes) don't exist as
+// far as the app can tell: apps probe for optional frameworks this way.
+Class f_classFromString(Ctx& x, id s) {
+    if (!s) return 0;
+    const Class c = rt(x).getClass(utf8(x, s));
+    const ObjC::ClassInfo* ci = c ? rt(x).info(c) : nullptr;
+    return ci && ci->stub ? 0 : c;
+}
 id f_stringFromSelector(Ctx& x, SEL s) { return s ? makeString(x, rt(x).selName(s)) : 0; }
 SEL f_selectorFromString(Ctx& x, id s) { return s ? rt(x).sel(utf8(x, s)) : 0; }
 id f_stringFromProtocol(Ctx& x, uint32_t p) { return p ? makeString(x, rt(x).protocolName(p)) : 0; }
@@ -985,6 +1012,7 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
        .m<&o_observationInfo>("observationInfo", "^v@:");
 
     ObjC::ClassBuilder exc = r.defineClass("NSException", "NSObject");
+    p.setHostErrorHook(hostErrorToNSException);
     m.nsException = exc.cls();
     exc.cm<&excc_with>("exceptionWithName:reason:userInfo:").cm<&excc_raiseFormat>("raise:format:", "v@:@@")
        .cm<&excc_raiseFormatArgs>("raise:format:arguments:", "v@:@@^v");

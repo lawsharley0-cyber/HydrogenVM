@@ -50,6 +50,7 @@ int hvmRunMain(int argc, char** argv) {
     Runtime::ProcessConfig cfg;
     bool quiet = false;
     double runFor = 0;
+    bool timedStop = false;   // --run-for elapsed while the app was still running: not a failure
     std::string screenshot, reportPath;
     struct Gesture { float x1, y1, x2, y2; double at; bool drag; };
     std::vector<Gesture> gestures;
@@ -182,7 +183,7 @@ int hvmRunMain(int argc, char** argv) {
             } else std::this_thread::sleep_for(milliseconds(60));
             proc.injectTouch(Runtime::TouchPhase::Ended, g.x2, g.y2, 1);
         }
-        if (runFor > 0) { waitUntil(runFor); if (!done) proc.requestStop(); }
+        if (runFor > 0) { waitUntil(runFor); if (!done) { timedStop = true; proc.requestStop(); } }
     });
     const int r = proc.run();
     done = true;
@@ -195,7 +196,8 @@ int hvmRunMain(int argc, char** argv) {
             if (!quiet) std::fprintf(stderr, "[hvm] screenshot: %s (%dx%d)\n", screenshot.c_str(), lastFrame.width, lastFrame.height);
         } else std::fprintf(stderr, "[hvm] no frame was presented; no screenshot\n");
     }
-    const int status = proc.crashed() ? 70 : r;
+    const int status = timedStop ? 0 : proc.crashed() ? 70 : r;
+    if (timedStop && !quiet) std::fprintf(stderr, "[hvm] still running after %.0f s (stopped by --run-for)\n", runFor);
     writeReport(status);
     return status;
 }

@@ -149,6 +149,8 @@ bool characterSetContains(Ctx& x, id set, char16_t c);
 // ---- class registration
 void registerStrings(Process& p, ObjC::Runtime& r);
 void registerNumbers(Process& p, ObjC::Runtime& r);
+void registerFormatters(Process& p, ObjC::Runtime& r);
+void registerSecurity(Process& p, ObjC::Runtime& r);
 void registerCollections(Process& p, ObjC::Runtime& r);
 void registerData(Process& p, ObjC::Runtime& r);
 void registerBundle(Process& p, ObjC::Runtime& r);

@@ -343,8 +343,11 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     const int64_t budget = c.budget;
     const Exit exitSaved = c.exit;
     const uint32_t infoSaved = c.exit_info;
+    const uint32_t boundarySaved = c.call_boundary_sp;
+    struct RestoreBoundary { Cpu& c; uint32_t v; ~RestoreBoundary() { c.call_boundary_sp = v; } } restoreBoundary{c, boundarySaved};
 
     uint32_t sp = c.r[kSP] & ~7u;
+    c.call_boundary_sp = sp;
     if (nargs > 4) {
         sp = (sp - uint32_t(nargs - 4) * 4) & ~7u;
         for (size_t i = 4; i < nargs; ++i) mem_.write<uint32_t>(sp + uint32_t(i - 4) * 4, args[i]);

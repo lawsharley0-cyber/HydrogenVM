@@ -20,6 +20,8 @@ void registerFoundation(Process& p) {
     registerDispatch(p, r);
     registerCoreFoundation(p, r);
     registerArchiving(p, r);
+    registerFormatters(p, r);
+    registerSecurity(p, r);
 }
 
 } // namespace Hydrogen::Runtime

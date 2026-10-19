@@ -30,10 +30,169 @@ struct DecodedAudio {
 
 uint32_t readLE32(const uint8_t* p) { uint32_t v; std::memcpy(&v, p, 4); return v; }
 uint16_t readLE16(const uint8_t* p) { uint16_t v; std::memcpy(&v, p, 2); return v; }
+uint32_t readBE32(const uint8_t* p) { return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3]; }
+uint16_t readBE16(const uint8_t* p) { return uint16_t((p[0] << 8) | p[1]); }
+uint64_t readBE64(const uint8_t* p) { return (uint64_t(readBE32(p)) << 32) | readBE32(p + 4); }
+
+// Linear PCM in any common layout -> interleaved stereo int16.
+void pcmToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels, int bits, bool isFloat, bool bigEndian) {
+    const int bps = bits / 8;
+    if (channels < 1 || bps < 1) return;
+    const size_t frameBytes = size_t(channels) * size_t(bps);
+    const size_t frames = bytes / frameBytes;
+    auto sample = [&](const uint8_t* s) -> float {
+        uint32_t v = 0;
+        for (int i = 0; i < bps; ++i) v |= uint32_t(s[bigEndian ? i : bps - 1 - i]) << (8 * (bps - 1 - i));
+        if (isFloat) {
+            if (bps == 4) { float f; std::memcpy(&f, &v, 4); return f; }
+            if (bps == 8) {
+                uint64_t w = 0;
+                for (int i = 0; i < 8; ++i) w |= uint64_t(s[bigEndian ? i : 7 - i]) << (8 * (7 - i));
+                double d; std::memcpy(&d, &w, 8); return float(d);
+            }
+            return 0;
+        }
+        if (bps == 1) return (float(v) - 128.0f) / 128.0f;   // 8-bit PCM is unsigned
+        const int shift = 32 - bits;
+        return float(int32_t(v << shift)) / 2147483648.0f;
+    };
+    out.channels = channels;
+    out.stereoPcm.resize(frames * 2);
+    for (size_t f = 0; f < frames; ++f) {
+        const uint8_t* fp = p + f * frameBytes;
+        const float l = sample(fp), r = channels >= 2 ? sample(fp + bps) : l;
+        out.stereoPcm[f * 2] = int16_t(std::clamp(l * 32767.0f, -32768.0f, 32767.0f));
+        out.stereoPcm[f * 2 + 1] = int16_t(std::clamp(r * 32767.0f, -32768.0f, 32767.0f));
+    }
+    out.duration = out.sampleRate ? double(frames) / double(out.sampleRate) : 0;
+}
+
+// Apple IMA4: packets of 34 bytes per channel (2-byte header + 64 4-bit samples).
+void ima4ToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels) {
+    static const int16_t kSteps[89] = {7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
+        73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724,
+        796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871,
+        5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086,
+        29794, 32767};
+    static const int kIndex[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
+    if (channels < 1) return;
+    const size_t packetBytes = size_t(34) * size_t(channels);
+    const size_t packets = bytes / packetBytes;
+    std::vector<int16_t> ch[2];
+    for (int c = 0; c < std::min(channels, 2); ++c) ch[c].reserve(packets * 64);
+    for (size_t k = 0; k < packets; ++k) {
+        for (int c = 0; c < std::min(channels, 2); ++c) {
+            const uint8_t* b = p + k * packetBytes + size_t(c) * 34;
+            const uint16_t hdr = readBE16(b);
+            int pred = int16_t(hdr & 0xFF80);
+            int idx = std::clamp(int(hdr & 0x7F), 0, 88);
+            for (int i = 0; i < 64; ++i) {
+                const int nib = (b[2 + i / 2] >> ((i & 1) * 4)) & 0xF;
+                const int step = kSteps[idx];
+                int diff = step >> 3;
+                if (nib & 1) diff += step >> 2;
+                if (nib & 2) diff += step >> 1;
+                if (nib & 4) diff += step;
+                pred = std::clamp(nib & 8 ? pred - diff : pred + diff, -32768, 32767);
+                idx = std::clamp(idx + kIndex[nib], 0, 88);
+                ch[c].push_back(int16_t(pred));
+            }
+        }
+    }
+    const size_t frames = ch[0].size();
+    out.channels = channels;
+    out.stereoPcm.resize(frames * 2);
+    for (size_t f = 0; f < frames; ++f) {
+        out.stereoPcm[f * 2] = ch[0][f];
+        out.stereoPcm[f * 2 + 1] = channels >= 2 ? ch[1][f] : ch[0][f];
+    }
+    out.duration = out.sampleRate ? double(frames) / double(out.sampleRate) : 0;
+}
+
+bool decodeCaf(DecodedAudio& out, const uint8_t* data, size_t n) {
+    if (n < 8 || std::memcmp(data, "caff", 4) != 0) return false;
+    size_t pos = 8;
+    double sr = 44100;
+    uint32_t fmt = 0, flags = 0, channels = 1, bits = 16;
+    const uint8_t* audio = nullptr;
+    size_t audioBytes = 0;
+    while (pos + 12 <= n) {
+        const uint8_t* h = data + pos;
+        int64_t size = int64_t(readBE64(h + 4));
+        pos += 12;
+        if (size < 0 || pos + size_t(size) > n) size = int64_t(n - pos);   // -1: data runs to EOF
+        if (std::memcmp(h, "desc", 4) == 0 && size >= 32) {
+            uint64_t bitsRate = readBE64(data + pos);
+            std::memcpy(&sr, &bitsRate, 8);
+            fmt = readBE32(data + pos + 8);
+            flags = readBE32(data + pos + 12);
+            channels = std::max<uint32_t>(1, readBE32(data + pos + 24));
+            bits = readBE32(data + pos + 28);
+        } else if (std::memcmp(h, "data", 4) == 0 && size >= 4) {
+            audio = data + pos + 4;   // skip the edit count
+            audioBytes = size_t(size) - 4;
+        }
+        pos += size_t(size);
+    }
+    if (!audio) return false;
+    out.sampleRate = int(std::max(8000.0, std::min(sr, 192000.0)));
+    if (fmt == 0x6C70636D /* lpcm */) pcmToStereo(out, audio, audioBytes, int(channels), int(bits), flags & 1, !(flags & 2));
+    else if (fmt == 0x696D6134 /* ima4 */) ima4ToStereo(out, audio, audioBytes, int(channels));
+    else return false;
+    return !out.stereoPcm.empty();
+}
+
+// IEEE 754 80-bit extended (AIFF sample rate).
+double readExtended(const uint8_t* p) {
+    const int exp = ((p[0] & 0x7F) << 8) | p[1];
+    const uint64_t mant = readBE64(p + 2);
+    if (!exp && !mant) return 0;
+    const double v = std::ldexp(double(mant), exp - 16383 - 63);
+    return (p[0] & 0x80) ? -v : v;
+}
+
+bool decodeAiff(DecodedAudio& out, const uint8_t* data, size_t n) {
+    if (n < 12 || std::memcmp(data, "FORM", 4) != 0) return false;
+    const bool aifc = std::memcmp(data + 8, "AIFC", 4) == 0;
+    if (!aifc && std::memcmp(data + 8, "AIFF", 4) != 0) return false;
+    size_t pos = 12;
+    int channels = 1, bits = 16;
+    double sr = 44100;
+    uint32_t comp = 0x4E4F4E45;   // 'NONE'
+    const uint8_t* audio = nullptr;
+    size_t audioBytes = 0;
+    while (pos + 8 <= n) {
+        const uint8_t* h = data + pos;
+        const size_t size = readBE32(h + 4);
+        pos += 8;
+        if (pos + size > n) break;
+        if (std::memcmp(h, "COMM", 4) == 0 && size >= 18) {
+            channels = std::max(1, int(readBE16(data + pos)));
+            bits = readBE16(data + pos + 6);
+            sr = readExtended(data + pos + 8);
+            if (aifc && size >= 22) comp = readBE32(data + pos + 18);
+        } else if (std::memcmp(h, "SSND", 4) == 0 && size >= 8) {
+            const uint32_t off = readBE32(data + pos);
+            audio = data + pos + 8 + off;
+            audioBytes = size - 8 - std::min<size_t>(off, size - 8);
+        }
+        pos += (size + 1) & ~size_t(1);
+    }
+    if (!audio) return false;
+    out.sampleRate = int(std::max(8000.0, std::min(sr, 192000.0)));
+    if (comp == 0x4E4F4E45 /* NONE */ || comp == 0x74776F73 /* twos */) pcmToStereo(out, audio, audioBytes, channels, bits, false, true);
+    else if (comp == 0x736F7774 /* sowt */) pcmToStereo(out, audio, audioBytes, channels, bits, false, false);
+    else if (comp == 0x666C3332 /* fl32 */) pcmToStereo(out, audio, audioBytes, channels, 32, true, true);
+    else if (comp == 0x696D6134 /* ima4 */) ima4ToStereo(out, audio, audioBytes, channels);
+    else return false;
+    return !out.stereoPcm.empty();
+}
 
 DecodedAudio decodeAudioBytes(const uint8_t* data, size_t n) {
     DecodedAudio out;
     if (!data || n < 12) return out;
+    if (decodeCaf(out, data, n) || decodeAiff(out, data, n)) return out;
+    out = DecodedAudio{};
 
     // RIFF / WAVE parser
     if (std::memcmp(data, "RIFF", 4) == 0 && std::memcmp(data + 8, "WAVE", 4) == 0) {
@@ -61,6 +220,11 @@ DecodedAudio decodeAudioBytes(const uint8_t* data, size_t n) {
         }
         out.sampleRate = int(sr);
         out.channels = int(numCh);
+        if (pcmPtr && pcmBytes > 0 && (audioFmt == 3 || audioFmt == 0xFFFE || (audioFmt == 1 && bitsPerSample > 16))) {
+            // float, WAVE_FORMAT_EXTENSIBLE (PCM inside), 24/32-bit integer
+            pcmToStereo(out, pcmPtr, pcmBytes, int(numCh), int(bitsPerSample), audioFmt == 3, false);
+            return out;
+        }
         if (pcmPtr && pcmBytes > 0 && audioFmt == 1 && (bitsPerSample == 8 || bitsPerSample == 16)) {
             const size_t bytesPerFrame = size_t(numCh) * (bitsPerSample / 8);
             const size_t frames = bytesPerFrame ? (pcmBytes / bytesPerFrame) : 0;
@@ -374,6 +538,191 @@ int32_t af_readBytes(Ctx& x, uint32_t fid, bool, int64_t inStartingByte, GuestPt
     return 0;
 }
 int32_t af_close(Ctx& x, uint32_t fid) { ATS(x).files.erase(fid); return 0; }
+
+// ------------------------------------------------------------- ExtAudioFile ---
+// Reads decoded audio in the app's "client" format: linear PCM of any common
+// layout (int16, float32, 8.24 fixed, 8-bit; interleaved or not; mono/stereo),
+// resampled linearly when the client rate differs.
+
+struct Asbd {
+    double sampleRate = 44100;
+    uint32_t formatID = 0x6C70636D, flags = 0x0C, bytesPerPacket = 4, framesPerPacket = 1, bytesPerFrame = 4, channels = 2, bits = 16;
+};
+Asbd readAsbd(Ctx& x, GuestPtr p) {
+    Asbd a;
+    a.sampleRate = x.mem.read<double>(p);
+    a.formatID = x.mem.read<uint32_t>(p + 8);
+    a.flags = x.mem.read<uint32_t>(p + 12);
+    a.bytesPerPacket = x.mem.read<uint32_t>(p + 16);
+    a.framesPerPacket = x.mem.read<uint32_t>(p + 20);
+    a.bytesPerFrame = x.mem.read<uint32_t>(p + 24);
+    a.channels = x.mem.read<uint32_t>(p + 28);
+    a.bits = x.mem.read<uint32_t>(p + 32);
+    return a;
+}
+void writeAsbd(Ctx& x, GuestPtr p, const Asbd& a) {
+    x.mem.write<double>(p, a.sampleRate);
+    x.mem.write<uint32_t>(p + 8, a.formatID);
+    x.mem.write<uint32_t>(p + 12, a.flags);
+    x.mem.write<uint32_t>(p + 16, a.bytesPerPacket);
+    x.mem.write<uint32_t>(p + 20, a.framesPerPacket);
+    x.mem.write<uint32_t>(p + 24, a.bytesPerFrame);
+    x.mem.write<uint32_t>(p + 28, a.channels);
+    x.mem.write<uint32_t>(p + 32, a.bits);
+    x.mem.write<uint32_t>(p + 36, 0);
+}
+
+struct ExtFile {
+    DecodedAudio audio;
+    Asbd file, client;
+    double pos = 0;   // in source frames
+};
+struct ExtAudioState { explicit ExtAudioState(Process&) {} uint32_t next = 0x45580001; std::unordered_map<uint32_t, ExtFile> files; };
+ExtAudioState& EAS(Ctx& x) { return x.proc.service<ExtAudioState>(); }
+
+Asbd fileFormatOf(const DecodedAudio& d) {
+    Asbd a;
+    a.sampleRate = d.sampleRate;
+    a.channels = uint32_t(std::clamp(d.channels, 1, 2));
+    a.bits = 16;
+    a.flags = 0x0C;   // signed integer, packed
+    a.bytesPerFrame = a.bytesPerPacket = 2 * a.channels;
+    return a;
+}
+
+uint32_t newExtFile(Ctx& x, DecodedAudio audio) {
+    ExtFile f;
+    f.audio = std::move(audio);
+    f.file = f.client = fileFormatOf(f.audio);
+    auto& st = EAS(x);
+    const uint32_t id = st.next++;
+    st.files[id] = std::move(f);
+    return id;
+}
+
+int32_t eaf_openURL(Ctx& x, uint32_t url, GuestPtr out) {
+    if (!url || !out) return -50;
+    const std::string path = Foundation::urlFilePath(x, url);
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return -43;   // fnfErr
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+    DecodedAudio d = decodeAudioBytes(bytes.data(), bytes.size());
+    if (d.stereoPcm.empty()) {
+        x.proc.reportMissing("ExtAudioFile: audio format of " + path.substr(path.find_last_of('/') + 1) + " (needs a decoder; plays silence)");
+        d.stereoPcm.assign(size_t(std::max(1.0, d.duration * d.sampleRate)) * 2, 0);
+    }
+    x.mem.write<uint32_t>(out, newExtFile(x, std::move(d)));
+    return 0;
+}
+int32_t eaf_wrap(Ctx& x, uint32_t afid, bool, GuestPtr out) {
+    auto& st = ATS(x);
+    if (!st.files.count(afid) || !out) return -50;
+    x.mem.write<uint32_t>(out, newExtFile(x, st.files[afid].decoded));
+    return 0;
+}
+int32_t eaf_dispose(Ctx& x, uint32_t id) { EAS(x).files.erase(id); return 0; }
+
+constexpr uint32_t kEafFileFormat = 0x66666D74 /* ffmt */, kEafClientFormat = 0x63666D74 /* cfmt */,
+                   kEafLengthFrames = 0x2366726D /* #frm */, kEafAudioFile = 0x6166696C /* afil */;
+
+int32_t eaf_getPropertyInfo(Ctx& x, uint32_t, uint32_t prop, GuestPtr outSize, GuestPtr outWritable) {
+    if (outSize) x.mem.write<uint32_t>(outSize, prop == kEafLengthFrames ? 8 : prop == kEafAudioFile ? 4 : 40);
+    if (outWritable) x.mem.write<uint8_t>(outWritable, prop == kEafClientFormat ? 1 : 0);
+    return 0;
+}
+int32_t eaf_getProperty(Ctx& x, uint32_t id, uint32_t prop, GuestPtr ioSize, GuestPtr out) {
+    auto it = EAS(x).files.find(id);
+    if (it == EAS(x).files.end() || !out) return -50;
+    const ExtFile& f = it->second;
+    if (prop == kEafFileFormat || prop == kEafClientFormat) {
+        writeAsbd(x, out, prop == kEafFileFormat ? f.file : f.client);
+        if (ioSize) x.mem.write<uint32_t>(ioSize, 40);
+    } else if (prop == kEafLengthFrames) {
+        x.mem.write<uint64_t>(out, uint64_t(f.audio.stereoPcm.size() / 2));
+        if (ioSize) x.mem.write<uint32_t>(ioSize, 8);
+    } else if (prop == kEafAudioFile) {
+        x.mem.write<uint32_t>(out, 0);
+        if (ioSize) x.mem.write<uint32_t>(ioSize, 4);
+    } else {
+        return 0x77686174;   // 'what': kAudioFileUnsupportedPropertyError-ish
+    }
+    return 0;
+}
+int32_t eaf_setProperty(Ctx& x, uint32_t id, uint32_t prop, uint32_t, GuestPtr data) {
+    auto it = EAS(x).files.find(id);
+    if (it == EAS(x).files.end() || !data) return -50;
+    if (prop == kEafClientFormat) {
+        Asbd c = readAsbd(x, data);
+        if (c.formatID != 0x6C70636D) return 0x666D743F;   // 'fmt?'
+        c.channels = std::clamp<uint32_t>(c.channels, 1, 8);
+        if (!c.bits) c.bits = 16;
+        if (c.sampleRate <= 0) c.sampleRate = it->second.file.sampleRate;
+        it->second.client = c;
+    }
+    return 0;
+}
+
+int32_t eaf_read(Ctx& x, uint32_t id, GuestPtr ioFrames, GuestPtr abl) {
+    auto it = EAS(x).files.find(id);
+    if (it == EAS(x).files.end() || !ioFrames || !abl) return -50;
+    ExtFile& f = it->second;
+    const Asbd& c = f.client;
+    const bool isFloat = c.flags & 1, nonInterleaved = c.flags & 0x20;
+    const uint32_t bps = std::max<uint32_t>(1, c.bits / 8);
+    const uint32_t fracBits = (c.flags >> 7) & 0x3F;     // kLinearPCMFormatFlagsSampleFraction (8.24 fixed)
+    const uint32_t nbuf = x.mem.read<uint32_t>(abl);
+    const uint32_t chPerBuf = nonInterleaved ? 1 : c.channels;
+    // Frames that fit in the smallest buffer.
+    uint32_t want = x.mem.read<uint32_t>(ioFrames);
+    for (uint32_t b = 0; b < nbuf; ++b) {
+        const uint32_t cap = x.mem.read<uint32_t>(abl + 4 + b * 12 + 4);
+        want = std::min(want, cap / std::max<uint32_t>(1, bps * chPerBuf));
+    }
+    const size_t srcFrames = f.audio.stereoPcm.size() / 2;
+    const double step = double(f.audio.sampleRate) / std::max(1.0, c.sampleRate);
+    uint32_t done = 0;
+    auto put = [&](uint32_t b, uint32_t index, float v) {
+        const uint32_t base = x.mem.read<uint32_t>(abl + 4 + b * 12 + 8);
+        const uint32_t a = base + index * bps;
+        if (isFloat && bps == 4) x.mem.write<float>(a, v);
+        else if (bps == 4) x.mem.write<int32_t>(a, int32_t(std::clamp(double(v), -1.0, 0.9999999) * double(fracBits ? (1u << fracBits) : 2147483648.0)));
+        else if (bps == 2) x.mem.write<int16_t>(a, int16_t(std::clamp(v * 32767.0f, -32768.0f, 32767.0f)));
+        else if (bps == 1) x.mem.write<uint8_t>(a, uint8_t(std::clamp(v * 127.0f + 128.0f, 0.0f, 255.0f)));
+    };
+    for (; done < want; ++done) {
+        const double sp = f.pos + double(done) * step;
+        const size_t i0 = size_t(sp);
+        if (i0 >= srcFrames) break;
+        const size_t i1 = std::min(i0 + 1, srcFrames - 1);
+        const float t = float(sp - double(i0));
+        float lr[2];
+        for (int ch = 0; ch < 2; ++ch)
+            lr[ch] = (float(f.audio.stereoPcm[i0 * 2 + ch]) * (1 - t) + float(f.audio.stereoPcm[i1 * 2 + ch]) * t) / 32768.0f;
+        for (uint32_t ch = 0; ch < c.channels; ++ch) {
+            const float v = c.channels == 1 ? (lr[0] + lr[1]) * 0.5f : lr[std::min<uint32_t>(ch, 1)];
+            if (nonInterleaved) { if (ch < nbuf) put(ch, done, v); }
+            else put(0, done * c.channels + ch, v);
+        }
+    }
+    f.pos += double(done) * step;
+    for (uint32_t b = 0; b < nbuf; ++b) x.mem.write<uint32_t>(abl + 4 + b * 12 + 4, done * bps * chPerBuf);
+    x.mem.write<uint32_t>(ioFrames, done);
+    return 0;
+}
+// ExtAudioFileSeek(ref, SInt64 frame): frame in r2:r3 (client-rate frames).
+void eaf_seek(Ctx& x) {
+    auto it = EAS(x).files.find(x.cpu.r[0]);
+    if (it == EAS(x).files.end()) { x.cpu.r[0] = uint32_t(-50); return; }
+    const int64_t frame = int64_t((uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2]);
+    it->second.pos = double(std::max<int64_t>(0, frame)) * double(it->second.audio.sampleRate) / std::max(1.0, it->second.client.sampleRate);
+    x.cpu.r[0] = 0;
+}
+int32_t eaf_tell(Ctx& x, uint32_t id, GuestPtr out) {
+    auto it = EAS(x).files.find(id);
+    if (it == EAS(x).files.end() || !out) return -50;
+    x.mem.write<uint64_t>(out, uint64_t(it->second.pos * std::max(1.0, it->second.client.sampleRate) / double(it->second.audio.sampleRate)));
+    return 0;
+}
 
 uint32_t ac_findNext(Ctx&, uint32_t, GuestPtr) { return 1; }
 int32_t ac_instanceNew(Ctx& x, uint32_t, GuestPtr outUnit) {
@@ -753,42 +1102,27 @@ void al_sourceUnqueueBuffers(Ctx& x, uint32_t sid, int32_t n, GuestPtr bids) {
 void al_listenerf(Ctx& x, uint32_t param, float val) { if (param == AL_GAIN) OAL(x).listenerGain = val; }
 void al_listener3f(Ctx&, uint32_t, float, float, float) {}
 void al_listenerfv(Ctx&, uint32_t, GuestPtr) {}
+void al_getListenerf(Ctx& x, uint32_t param, GuestPtr val) { if (val) x.mem.write<float>(val, param == AL_GAIN ? OAL(x).listenerGain : 0.0f); }
+void al_getListenerfv(Ctx& x, uint32_t param, GuestPtr val) {
+    if (!val) return;
+    const uint32_t n = param == 0x100F /* AL_ORIENTATION */ ? 6 : 3;
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<float>(val + i * 4, param == 0x100F && (i == 2 || i == 4) ? (i == 2 ? -1.0f : 1.0f) : 0.0f);
+}
+void al_getSourcefv(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
+    if (!val || !OAL(x).sources.count(sid)) return;
+    const ALSource& s = OAL(x).sources[sid];
+    const float* v = param == 0x1004 /* AL_POSITION */ ? s.pos : param == 0x1006 /* AL_VELOCITY */ ? s.vel : nullptr;
+    for (int i = 0; i < 3; ++i) x.mem.write<float>(val + uint32_t(i) * 4, v ? v[i] : (i == 0 && param == AL_GAIN ? s.gain : i == 0 && param == AL_PITCH ? s.pitch : 0.0f));
+}
+// alcGetProcAddress / alGetProcAddress: extensions are looked up as exported functions
+// (alBufferDataStatic is plain alBufferData here: the data is copied).
+uint32_t al_getProcAddress(Ctx& x, GuestPtr name) {
+    const std::string n = x.proc.readCString(name);
+    if (auto a = x.proc.lookupSymbol("_" + n)) return *a;
+    return 0;
+}
+uint32_t alc_getProcAddress(Ctx& x, uint32_t, GuestPtr name) { return al_getProcAddress(x, name); }
 void al_noop1(Ctx&, uint32_t) {}
-
-// ---------------------------------------------------------------- GameKit ---
-id gk_local(Ctx& x, id self, SEL) {
-    static id shared = 0;
-    if (!shared) { shared = rt(x).createInstance(self); rt(x).makeImmortal(shared); }
-    return shared;
-}
-bool gk_no(Ctx&, id, SEL) { return false; }
-void gk_authenticate(Ctx& x, id, SEL, uint32_t handler) {
-    noteOnce(x, "Game Center (not available: sign-in fails)");
-    if (!handler) return;
-    const uint32_t b = ObjC::blockCopy(x, handler);
-    Process* p = &x.proc;
-    Foundation::mainRunLoop(x.proc).post([p, b](CPU::Cpu& c) {
-        Ctx cx{*p, c, p->mem()};
-        const id err = id(rt(cx).send(c, rt(cx).getClass("NSError"), "errorWithDomain:code:userInfo:",
-                                      {makeString(cx, "GKErrorDomain"), 15, 0}));
-        ObjC::callBlock(cx, b, {err});
-        ObjC::blockRelease(cx, b);
-    });
-}
-void gk_setHandler(Ctx& x, id self, SEL s, uint32_t handler) {
-    if (!handler) return;
-    noteOnce(x, "Game Center (not available: sign-in fails)");
-    const uint32_t b = ObjC::blockCopy(x, handler);
-    Process* p = &x.proc;
-    Foundation::mainRunLoop(x.proc).post([p, b](CPU::Cpu& c) {
-        Ctx cx{*p, c, p->mem()};
-        const id err = id(rt(cx).send(c, rt(cx).getClass("NSError"), "errorWithDomain:code:userInfo:", {makeString(cx, "GKErrorDomain"), 2, 0}));
-        ObjC::callBlock(cx, b, {0, err});
-        ObjC::blockRelease(cx, b);
-    });
-    (void)self; (void)s;
-}
-id gk_nil(Ctx&, id, SEL) { return 0; }
 
 // --------------------------------------------------------------- StoreKit ---
 bool sk_canPay(Ctx& x, id, SEL) { noteOnce(x, "StoreKit (in-app purchases are disabled)"); return false; }
@@ -849,6 +1183,15 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&af_getProperty>("_AudioFileGetProperty");
     p.def<&af_readBytes>("_AudioFileReadBytes");
     p.def<&af_close>("_AudioFileClose");
+    p.def<&eaf_openURL>("_ExtAudioFileOpenURL");
+    p.def<&eaf_wrap>("_ExtAudioFileWrapAudioFileID");
+    p.def<&eaf_dispose>("_ExtAudioFileDispose");
+    p.def<&eaf_getPropertyInfo>("_ExtAudioFileGetPropertyInfo");
+    p.def<&eaf_getProperty>("_ExtAudioFileGetProperty");
+    p.def<&eaf_setProperty>("_ExtAudioFileSetProperty");
+    p.def<&eaf_read>("_ExtAudioFileRead");
+    p.defineFunction("_ExtAudioFileSeek", [](Ctx& x) { eaf_seek(x); });
+    p.def<&eaf_tell>("_ExtAudioFileTell");
     p.def<&ac_findNext>("_AudioComponentFindNext");
     p.def<&ac_instanceNew>("_AudioComponentInstanceNew");
     p.def<&ac_dispose>("_AudioComponentInstanceDispose");
@@ -898,6 +1241,13 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&al_listenerf>("_alListenerf");
     p.def<&al_listener3f>("_alListener3f");
     p.def<&al_listenerfv>("_alListenerfv");
+    p.def<&al_getListenerf>("_alGetListenerf");
+    p.def<&al_getListenerfv>("_alGetListenerfv");
+    p.def<&al_getSourcefv>("_alGetSourcefv");
+    p.def<&al_getProcAddress>("_alGetProcAddress");
+    p.def<&alc_getProcAddress>("_alcGetProcAddress");
+    p.def<&al_bufferData>("_alBufferDataStatic");
+    p.def<&al_bufferData>("_alBufferDataStaticProc");
     p.def<&al_noop1>("_alDistanceModel");
     p.def<&al_noop1>("_alDopplerFactor");
     p.def<&al_noop1>("_alSpeedOfSound");
@@ -932,12 +1282,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
       .m<&ap_updateMeters>("updateMeters", "v@:").m<&ap_power>("averagePowerForChannel:", "f@:I").m<&ap_power>("peakPowerForChannel:", "f@:I")
       .m<&ap_channels>("numberOfChannels", "I@:").m<&ap_dealloc>("dealloc", "v@:");
 
-    // GameKit
-    ObjC::ClassBuilder gk = r.defineClass("GKLocalPlayer", "NSObject");
-    gk.cm<&gk_local>("localPlayer");
-    gk.m<&gk_no>("isAuthenticated", "c@:").m<&gk_authenticate>("authenticateWithCompletionHandler:", "v@:@?")
-      .m<&gk_setHandler>("setAuthenticateHandler:", "v@:@?").m<&gk_nil>("playerID").m<&gk_nil>("alias").m<&gk_nil>("displayName")
-      .m<&gk_no>("isUnderage", "c@:");
+    // GameKit: see GameKit.cpp
 
     // StoreKit
     ObjC::ClassBuilder skq = r.defineClass("SKPaymentQueue", "NSObject");

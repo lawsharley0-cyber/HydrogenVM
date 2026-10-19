@@ -49,7 +49,7 @@ id o_copy(Ctx& x, id self, SEL) { return id(rt(x).send(x.cpu, self, "copyWithZon
 id o_mutableCopy(Ctx& x, id self, SEL) { return id(rt(x).send(x.cpu, self, "mutableCopyWithZone:", {0})); }
 IMP o_methodForSelector(Ctx& x, id self, SEL, SEL s) { return rt(x).lookup(rt(x).classOf(self), s); }
 IMP o_instanceMethodForSelector(Ctx& x, id self, SEL, SEL s) { return rt(x).lookup(self, s); }
-void o_doesNotRecognize(Ctx& x, id self, SEL, SEL s) { rt(x).unrecognized(self, s); }
+void o_doesNotRecognize(Ctx& x, id self, SEL, SEL s) { rt(x).unrecognizedFatal(self, s); }
 bool o_isDeallocating(Ctx& x, id self, SEL) { return rt(x).retainCount(self) == 0; }
 
 // -performSelector:withObject:withObject: — re-dispatch with the arguments
@@ -59,8 +59,8 @@ void o_performSelector(Ctx& x) {
     const id self = x.cpu.r[0];
     const SEL s = x.cpu.r[2];
     if (!s) throw ObjCError("-[NSObject performSelector:]: null selector");
-    const IMP imp = r.lookupForSend(r.classOf(self), s);
-    if (!imp) r.unrecognized(self, s);
+    IMP imp = r.lookupForSend(r.classOf(self), s);
+    if (!imp) imp = r.unrecognized(self, s);
     x.cpu.r[1] = s;
     x.cpu.r[2] = x.cpu.r[3];
     x.cpu.r[3] = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);   // 2nd object (only for withObject:withObject:)

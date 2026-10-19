@@ -66,6 +66,12 @@ struct GuestThread {
     uint32_t retval = 0;
     std::mutex m;
     std::condition_variable cv;
+    // SJLJ exception unwinding (libc/Unwind.cpp): registered function contexts
+    // (top of the list, and whether each registrant was Thumb code) and the
+    // stack of exceptions currently being handled by catch blocks.
+    uint32_t sjljTop = 0;
+    std::unordered_map<uint32_t, bool> sjljThumb;
+    std::vector<uint32_t> caughtExceptions;
     void* objcState = nullptr;    // per-thread ObjC runtime data (autorelease pools)
     void (*objcStateFree)(void*) = nullptr;
     ~GuestThread() { if (objcState && objcStateFree) objcStateFree(objcState); }
@@ -154,6 +160,10 @@ public:
     void onBeforeInitializers(std::function<void(CPU::Cpu&)> fn) { preInitHooks_.push_back(std::move(fn)); }
     // Host-side cleanup when run() finishes (flush preferences, ...).
     void onExit(std::function<void()> fn) { exitHooks_.push_back(std::move(fn)); }
+    // Consulted when a host function throws: returns true if it turned the
+    // error into a guest exception that the app catches (Foundation installs
+    // one that raises NSExceptions for Cocoa-style errors).
+    void setHostErrorHook(std::function<bool(Ctx&, const std::exception&)> fn) { hostErrorHook_ = std::move(fn); }
 
     // ---- calling guest code
     uint64_t callGuest(CPU::Cpu& cpu, uint32_t fn, std::initializer_list<uint32_t> args) {
@@ -265,6 +275,7 @@ private:
     std::atomic<bool> exiting_{false};
     int exitCode_ = 0;
     bool crashed_ = false;
+    std::function<bool(Ctx&, const std::exception&)> hostErrorHook_;
     std::string crashReport_;
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
@@ -286,6 +297,8 @@ void registerLibcTime(Process& p);
 void registerLibcPthread(Process& p);
 void registerLibcSystem(Process& p);
 void registerCxxRuntime(Process& p);
+void registerUnwinder(Process& p);
+void registerLibStdcxx(Process& p);
 void registerObjCRuntime(Process& p);
 void registerFoundation(Process& p);
 void registerUIKit(Process& p);

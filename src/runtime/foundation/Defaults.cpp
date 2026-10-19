@@ -310,7 +310,9 @@ void registerDefaults(Process& p, ObjC::Runtime& r) {
       .m<&ud_persistentDomain>("persistentDomainForName:").m<&ud_setPersistentDomain>("setPersistentDomain:forName:", "v@:@@")
       .m<&ud_removePersistentDomain>("removePersistentDomainForName:", "v@:@")
       .m<&ud_objectIsForced>("objectIsForcedForKey:", "c@:@").m<&ud_addSuite>("addSuiteNamed:", "v@:@")
-      .m<&ud_addSuite>("removeSuiteNamed:", "v@:@");
+      .m<&ud_addSuite>("removeSuiteNamed:", "v@:@")
+      // KVC on NSUserDefaults goes straight to the defaults (as Foundation's override does).
+      .m<&ud_object>("valueForKey:").m<&ud_setObject>("setValue:forKey:", "v@:@@");
     for (const char* n : {"NSUserDefaultsDidChangeNotification", "NSGlobalDomain", "NSArgumentDomain", "NSRegistrationDomain"}) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         p.mem().write<uint32_t>(cell, constString(p, n));

@@ -21,6 +21,7 @@ step "build CTest";           $BUILD --name CTest "$APPS/ctest/main.c" >/dev/nul
 step "build CTestLegacy";     $BUILD --name CTestLegacy --min-ios 3.0 --no-pie "$APPS/ctest/main.c" >/dev/null && echo ok || fail=1
 step "build BinPlist";        $BUILD --name BinPlist --binary-plist "$APPS/ctest/main.c" >/dev/null && echo ok || fail=1
 step "build ObjCTest";        $BUILD --name ObjCTest "$APPS/objctest/main.m" >/dev/null && echo ok || fail=1
+step "build ExceptionTest";   $BUILD --name ExceptionTest "$APPS/exceptiontest/main.mm" >/dev/null && echo ok || fail=1
 step "build FoundationTest";  (cd "$APPS/foundationtest" && $BUILD --name FoundationTest --resource config.plist --resource en.lproj main.m >/dev/null) && echo ok || fail=1
 RES="$OUT/_work/uikit-res"
 python3 "$APPS/uikittest/make_resources.py" "$RES"
@@ -43,5 +44,6 @@ run CTestLegacy 3 "atexit handler ran"
 run BinPlist 3 "atexit handler ran"
 run ObjCTest 0 "ALL CHECKS PASSED"
 run FoundationTest 0 "ALL CHECKS PASSED"
+run ExceptionTest 0 "ALL CHECKS PASSED"
 run UIKitTest 0 "ALL CHECKS PASSED" --tap 70,350@0.3 --tap 230,350@0.5 --screenshot "$OUT/UIKitTest.png"
 exit $fail
