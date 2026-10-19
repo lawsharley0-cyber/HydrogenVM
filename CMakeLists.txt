@@ -11,6 +11,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+file(GLOB_RECURSE HVM_RUNTIME_SOURCES CONFIGURE_DEPENDS src/runtime/*.cpp)
 add_library(hvm_core STATIC
   src/core/memory/GuestArena.cpp
   src/core/cpu/Engine.cpp
@@ -19,11 +20,12 @@ add_library(hvm_core STATIC
   src/core/cpu/DecodeVfpNeon.cpp
   src/core/cpu/DecodeNeon.cpp
   src/loader/ElfLoader.cpp
-  src/selftest/SelfTest.cpp
   src/loader/MachO.cpp
   src/loader/Zip.cpp
   src/loader/Plist.cpp
   src/loader/AppBundle.cpp
+  src/selftest/SelfTest.cpp
+  ${HVM_RUNTIME_SOURCES}
 )
 target_include_directories(hvm_core PUBLIC src)
 find_package(ZLIB REQUIRED)

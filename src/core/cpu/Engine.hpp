@@ -33,6 +33,16 @@ struct GuestFault : std::runtime_error {
         : std::runtime_error(what), exit(e), info(i), pc(p), thumb(t) {}
 };
 
+// Registers of the innermost guest frame that failed, captured before
+// callGuest unwinds (so crash reports show where the guest really died).
+struct FaultSnapshot {
+    bool valid = false;
+    uint32_t r[16] = {};
+    uint32_t thumb = 0, cpsr = 0;
+    Exit exit = Exit::None;
+    uint32_t info = 0;
+};
+
 class Engine {
 public:
     using HleFn = std::function<void(Cpu&)>;
@@ -88,6 +98,10 @@ public:
     // Called from IR handlers.
     Block* enterBlock(Cpu* c, uint32_t key);
     void   callHle(Cpu* c, uint32_t index);
+
+    // Per host thread; Process clears it before running and reads it after a failure.
+    static FaultSnapshot& lastFault();
+    static void captureFault(const Cpu& c, Exit e);
 
     // Details for the most recent Exit::HostError (per host thread).
     static const std::string& lastHostError();

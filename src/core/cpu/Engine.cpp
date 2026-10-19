@@ -78,6 +78,17 @@ uint32_t Engine::registerHle(std::string name, HleFn fn) {
 
 namespace {
 thread_local std::string t_hostError;
+thread_local FaultSnapshot t_fault;
+}
+FaultSnapshot& Engine::lastFault() { return t_fault; }
+void Engine::captureFault(const Cpu& c, Exit e) {
+    if (t_fault.valid) return;
+    t_fault.valid = true;
+    std::memcpy(t_fault.r, c.r, sizeof t_fault.r);
+    t_fault.thumb = c.thumb;
+    t_fault.cpsr = c.cpsr();
+    t_fault.exit = e;
+    t_fault.info = c.exit_info;
 }
 const std::string& Engine::lastHostError() { return t_hostError; }
 void Engine::setLastHostError(std::string s) { t_hostError = std::move(s); }
@@ -313,6 +324,7 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     const Exit e = runToExit(c);
     const uint64_t result = (uint64_t(c.r[1]) << 32) | c.r[0];
     if (e != Exit::Return) {
+        captureFault(c, e);
         const uint32_t info = c.exit_info, pc = c.r[kPC], th = c.thumb;
         std::memcpy(c.r, saved, sizeof saved);
         c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
