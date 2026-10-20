@@ -389,6 +389,32 @@ int32_t f_vsscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VaList ap) { StringSource sr
 int32_t f_fscanf(Ctx& x, GuestPtr fp, GuestPtr fmt, VarArgs va) { FileSource src(x, fp); return scanGuest(x, src, x.proc.readCString(fmt), va.args); }
 int32_t f_scanf(Ctx&, GuestPtr, VarArgs) { return -1; }
 
+std::string readWString(Ctx& x, GuestPtr ws, size_t maxChars = 65536) {
+    std::string out;
+    if (!ws) return out;
+    for (size_t i = 0; i < maxChars; ++i) {
+        const uint32_t wc = x.mem.read<uint32_t>(ws + uint32_t(i) * 4);
+        if (!wc) break;
+        out.push_back(wc < 0x80 ? char(wc) : '?');
+    }
+    return out;
+}
+int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t size, const std::string& s) {
+    if (!size) return -1;
+    if (buf) {
+        const size_t n = std::min<size_t>(s.size(), size - 1);
+        for (size_t i = 0; i < n; ++i) x.mem.write<uint32_t>(buf + uint32_t(i) * 4, uint8_t(s[i]));
+        x.mem.write<uint32_t>(buf + uint32_t(n) * 4, 0);
+    }
+    return s.size() < size ? int32_t(s.size()) : -1;
+}
+int32_t f_wprintf(Ctx& x, GuestPtr fmt, VarArgs va) { return outString(x, S(x).sF + kFileSize, formatGuest(x.proc, readWString(x, fmt), va.args)); }
+int32_t f_fwprintf(Ctx& x, GuestPtr fp, GuestPtr fmt, VarArgs va) { return outString(x, fp, formatGuest(x.proc, readWString(x, fmt), va.args)); }
+int32_t f_swprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VarArgs va) { return storeWideFormatted(x, buf, n, formatGuest(x.proc, readWString(x, fmt), va.args)); }
+int32_t f_vswprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeWideFormatted(x, buf, n, formatGuest(x.proc, readWString(x, fmt), a)); }
+int32_t f_swscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VarArgs va) { StringSource src(readWString(x, s)); return scanGuest(x, src, readWString(x, fmt), va.args); }
+int32_t f_vswscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VaList ap) { StringSource src(readWString(x, s)); ArgReader a(x.mem, ap.ptr); return scanGuest(x, src, readWString(x, fmt), a); }
+
 } // namespace
 
 void flushGuestStdio(Process& p) {
@@ -458,6 +484,12 @@ void registerLibcStdio(Process& p) {
     p.def<&f_vsscanf>("_vsscanf");
     p.def<&f_fscanf>("_fscanf");
     p.def<&f_scanf>("_scanf");
+    p.def<&f_wprintf>("_wprintf");
+    p.def<&f_fwprintf>("_fwprintf");
+    p.def<&f_swprintf>("_swprintf");
+    p.def<&f_vswprintf>("_vswprintf");
+    p.def<&f_swscanf>("_swscanf");
+    p.def<&f_vswscanf>("_vswscanf");
 }
 
 } // namespace Hydrogen::Runtime

@@ -1298,11 +1298,41 @@ GuestPtr gl_mapBufferOES(Ctx& x, uint32_t target, uint32_t) {
     const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
     if (!bid || !sg->buffers.count(bid)) return 0;
     BufferObject& bo = sg->buffers[bid];
-    if (!bo.mappedGuestAddr && !bo.data.empty()) {
+    if (bo.data.empty()) bo.data.assign(4096, 0);
+    if (!bo.mappedGuestAddr) {
         bo.mappedGuestAddr = x.proc.heap().alloc(uint32_t(bo.data.size()));
         x.mem.copyIn(bo.mappedGuestAddr, bo.data.data(), bo.data.size());
     }
     return bo.mappedGuestAddr;
+}
+GuestPtr gl_mapBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t length, uint32_t) {
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg || offset < 0 || length < 0) return 0;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    if (!bid || !sg->buffers.count(bid)) return 0;
+    BufferObject& bo = sg->buffers[bid];
+    const size_t needed = size_t(offset) + size_t(length > 0 ? length : 4);
+    if (bo.data.size() < needed) bo.data.resize(needed, 0);
+    if (bo.mappedGuestAddr && x.proc.heap().blockSize(bo.mappedGuestAddr) < bo.data.size()) {
+        x.proc.heap().free(bo.mappedGuestAddr);
+        bo.mappedGuestAddr = 0;
+    }
+    if (!bo.mappedGuestAddr) {
+        bo.mappedGuestAddr = x.proc.heap().alloc(uint32_t(bo.data.size()));
+        x.mem.copyIn(bo.mappedGuestAddr, bo.data.data(), bo.data.size());
+    }
+    return bo.mappedGuestAddr + uint32_t(offset);
+}
+void gl_flushMappedBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t length) {
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg || offset < 0 || length <= 0) return;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    if (!bid || !sg->buffers.count(bid)) return;
+    BufferObject& bo = sg->buffers[bid];
+    if (bo.mappedGuestAddr && size_t(offset) + size_t(length) <= bo.data.size())
+        x.mem.copyOut(bo.data.data() + offset, bo.mappedGuestAddr + uint32_t(offset), size_t(length));
 }
 bool gl_unmapBufferOES(Ctx& x, uint32_t target) {
     ContextData* c = currentCtx(x);
@@ -1493,6 +1523,35 @@ void gl_compressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t in
         return;
     if (!pvrtc) x.proc.reportMissing("glCompressedTexImage2D format 0x" + [&] { char b[16]; std::snprintf(b, sizeof b, "%x", internalformat); return std::string(b); }());
     tx.rgba.assign(size_t(width) * size_t(height) * 4, 255);
+}
+
+void gl_compressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xoffset, int32_t yoffset,
+                                int32_t width, int32_t height, uint32_t format, int32_t imageSize, GuestPtr data) {
+    (void)target;
+    if (level != 0 || width <= 0 || height <= 0 || !data || imageSize <= 0) return;
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg) return;
+    const uint32_t tid = c->boundTextures[c->activeTexture & 7];
+    if (!tid || !sg->textures.count(tid)) return;
+    Texture2D& tx = sg->textures[tid];
+    if (tx.rgba.size() < size_t(tx.width) * size_t(tx.height) * 4 && tx.width > 0 && tx.height > 0)
+        tx.rgba.assign(size_t(tx.width) * size_t(tx.height) * 4, 0);
+    const bool pvrtc = format >= 0x8C00 && format <= 0x8C03;
+    std::vector<uint8_t> sub;
+    if (pvrtc && Graphics::decodePvrtc(x.mem.host(data), size_t(imageSize), width, height,
+                                       format == 0x8C01 || format == 0x8C03, format >= 0x8C02, sub)) {
+        for (int y = 0; y < height; ++y) {
+            const int dy = yoffset + y;
+            if (dy < 0 || dy >= tx.height) continue;
+            for (int px = 0; px < width; ++px) {
+                const int dx = xoffset + px;
+                if (dx < 0 || dx >= tx.width) continue;
+                std::memcpy(&tx.rgba[(size_t(dy) * size_t(tx.width) + size_t(dx)) * 4],
+                            &sub[(size_t(y) * size_t(width) + size_t(px)) * 4], 4);
+            }
+        }
+    }
 }
 
 void gl_texParameteri(Ctx& x, uint32_t target, uint32_t pname, int32_t param) {
@@ -2553,7 +2612,13 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_bufferSubData>("_glBufferSubData");
     p.def<&gl_getBufferParameteriv>("_glGetBufferParameteriv");
     p.def<&gl_mapBufferOES>("_glMapBufferOES");
+    p.def<&gl_mapBufferOES>("_glMapBuffer");
+    p.def<&gl_mapBufferRange>("_glMapBufferRange");
+    p.def<&gl_mapBufferRange>("_glMapBufferRangeEXT");
+    p.def<&gl_flushMappedBufferRange>("_glFlushMappedBufferRange");
+    p.def<&gl_flushMappedBufferRange>("_glFlushMappedBufferRangeEXT");
     p.def<&gl_unmapBufferOES>("_glUnmapBufferOES");
+    p.def<&gl_unmapBufferOES>("_glUnmapBuffer");
     p.def<&gl_genVertexArraysOES>("_glGenVertexArraysOES");
     p.def<&gl_bindVertexArrayOES>("_glBindVertexArrayOES");
     p.def<&gl_deleteVertexArraysOES>("_glDeleteVertexArraysOES");
@@ -2569,6 +2634,7 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_texImage2D>("_glTexImage2D");
     p.def<&gl_texSubImage2D>("_glTexSubImage2D");
     p.def<&gl_compressedTexImage2D>("_glCompressedTexImage2D");
+    p.def<&gl_compressedTexSubImage2D>("_glCompressedTexSubImage2D");
     p.def<&gl_texParameteri>("_glTexParameteri");
     p.def<&gl_texParameterf>("_glTexParameterf");
     p.def<&gl_texParameterx>("_glTexParameterx");

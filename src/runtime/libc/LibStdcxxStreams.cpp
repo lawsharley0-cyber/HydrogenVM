@@ -32,7 +32,17 @@
 namespace Hydrogen::Runtime {
 uint32_t guestStringData(Ctx& x, const std::string& s);
 std::string guestStringValue(Ctx& x, GuestPtr self);
+void guestStringSet(Ctx& x, GuestPtr self, const std::string& s);
+uint32_t guestWStringData(Ctx& x, const std::u32string& s);
+std::u32string guestWStringValue(Ctx& x, GuestPtr self);
 bool hvmFstreamWrite(Ctx& x, uint32_t os, const char* data, uint32_t n);
+bool hvmIsFilebuf(Ctx& x, uint32_t sb);
+int32_t hvmFilebufPeek(Ctx& x, uint32_t sb);
+int32_t hvmFilebufGet(Ctx& x, uint32_t sb);
+int32_t hvmFilebufUnget(Ctx& x, uint32_t sb, int32_t c);
+int32_t hvmFilebufRead(Ctx& x, uint32_t sb, uint32_t buf, int32_t n);
+int32_t hvmFilebufWrite(Ctx& x, uint32_t sb, const char* data, uint32_t n);
+int64_t hvmFilebufSeek(Ctx& x, uint32_t sb, int64_t off, uint32_t dir);
 
 namespace {
 
@@ -50,16 +60,16 @@ constexpr int32_t kEofChar = -1;
 enum Slot : uint32_t { sD1, sD0, sImbue, sSetbuf, sSeekoff, sSeekpos, sSync, sShowmanyc, sXsgetn, sUnderflow, sUflow,
                        sPbackfail, sXsputn, sOverflow, kSlots };
 
-struct Buf { std::string s; uint32_t g = 0, p = 0, mode = mIn | mOut; };
+struct Buf { std::string s; std::u32string ws; uint32_t g = 0, p = 0, mode = mIn | mOut; };
 
 struct State {
     explicit State(Process&) {}
     std::mutex mu;
     std::unordered_map<uint32_t, Buf> bufs;    // our stringbufs, by address
-    uint32_t sbVptr = 0, baseSbVptr = 0;       // our stringbuf / std::basic_streambuf vtables (+8)
+    uint32_t sbVptr = 0, baseSbVptr = 0, libcxxSbVptr = 0;       // our stringbuf / std::basic_streambuf vtables (+8)
     uint32_t locImpl = 0, ctype = 0, facet = 0;
-    uint32_t vtOss = 0, vtIss = 0, vtSs = 0, vtSsOut = 0;          // stream primary vptrs
-    uint32_t vtIos44 = 0, vtIos48 = 0, vtIos52 = 0;                // basic_ios vptrs per offset
+    uint32_t vtIs = 0, vtOss = 0, vtIss = 0, vtSs = 0, vtSsOut = 0; // stream primary vptrs
+    uint32_t vtIos8 = 0, vtIos44 = 0, vtIos48 = 0, vtIos52 = 0;    // basic_ios vptrs per offset
 };
 State& St(Ctx& x) { return x.proc.service<State>(); }
 
@@ -92,8 +102,13 @@ uint32_t sbWrite(Ctx& x, uint32_t sb, const char* data, uint32_t n) {
             if (b.p > b.s.size()) b.p = uint32_t(b.s.size());
             b.s.replace(b.p, std::min<size_t>(n, b.s.size() - b.p), data, n);
             b.p += n;
+            for (uint32_t i = 0; i < n; ++i) b.ws.push_back(char32_t(uint8_t(data[i])));
             return n;
         });
+    }
+    if (hvmIsFilebuf(x, sb)) {
+        const int32_t r = hvmFilebufWrite(x, sb, data, n);
+        return r < 0 ? 0 : uint32_t(r);
     }
     const uint32_t tmp = x.proc.heap().alloc(n);
     if (!tmp) return 0;
@@ -236,6 +251,26 @@ uint32_t b_rdbufSet(Ctx& x, GuestPtr ios, GuestPtr sb) {
     wr(x, ios + kState, sb ? 0 : kBad);
     return old;
 }
+uint32_t b_fill(Ctx& x, GuestPtr ios) { return uint8_t(fillOf(x, ios)); }
+uint32_t b_widen(Ctx&, GuestPtr, uint32_t c) { return c & 0xFF; }
+uint32_t useFacetCtype(Ctx& x, GuestPtr) { return St(x).ctype; }
+uint32_t is_ctorSb(Ctx& x, GuestPtr self, GuestPtr sb) {
+    State& s = St(x);
+    wr(x, self, s.vtIs);
+    wr(x, self + 4, 0);
+    const uint32_t ios = self + 8;
+    wr(x, ios, s.vtIos8);
+    initIosBase(x, ios);
+    iosInit(x, ios, sb);
+    return self;
+}
+uint32_t is_ctorSb2(Ctx& x, GuestPtr self, GuestPtr vtt, GuestPtr sb) {
+    wr(x, self, vtt ? rd(x, vtt) : St(x).vtIs);
+    wr(x, self + 4, 0);
+    const uint32_t ios = iosOf(x, self);
+    iosInit(x, ios, sb);
+    return self;
+}
 void locCtor(Ctx& x, GuestPtr loc) { wr(x, loc, St(x).locImpl); }
 void locCopy(Ctx& x, GuestPtr loc, GuestPtr) { wr(x, loc, St(x).locImpl); }
 uint32_t locAssign(Ctx& x, GuestPtr loc, GuestPtr) { wr(x, loc, St(x).locImpl); return loc; }
@@ -247,6 +282,23 @@ uint32_t o_insert(Ctx& x, GuestPtr os, GuestPtr s, int32_t n) {
     std::string v(size_t(std::max(n, 0)), '\0');
     if (n > 0) std::memcpy(v.data(), x.mem.host(s), size_t(n));
     return emit(x, os, std::move(v));
+}
+uint32_t wo_insert(Ctx& x, GuestPtr os, GuestPtr ws, int32_t n) {
+    if (n <= 0 || !ws) return os;
+    const uint32_t ios = iosOf(x, os);
+    const uint32_t sb = rd(x, ios + kBuf);
+    if (ours(x, sb)) {
+        withBuf(x, sb, [&](Buf& b) {
+            for (int32_t i = 0; i < n; ++i) {
+                const uint32_t wc = x.mem.read<uint32_t>(ws + uint32_t(i * 4));
+                b.ws.push_back(char32_t(wc));
+                b.s.push_back(char(wc & 0xFF));
+            }
+            b.p = uint32_t(b.s.size());
+            return 0;
+        });
+    }
+    return os;
 }
 uint32_t o_cstr(Ctx& x, GuestPtr os, GuestPtr s) {
     if (!s) { const uint32_t ios = iosOf(x, os); wr(x, ios + kState, rd(x, ios + kState) | kBad); return os; }
@@ -296,6 +348,7 @@ void initStringbuf(Ctx& x, uint32_t sb, uint32_t mode, const std::string& init) 
     Buf& b = St(x).bufs[sb];
     b = Buf{};
     b.s = init;
+    for (unsigned char ch : init) b.ws.push_back(char32_t(ch));
     b.mode = mode;
     b.p = (mode & (mAte | mApp)) ? uint32_t(init.size()) : 0;
 }
@@ -305,6 +358,12 @@ void sb_str(Ctx& x) {   // string stringbuf::str() const — sret in r0, this in
     const uint32_t ret = x.cpu.r[0], sb = x.cpu.r[1];
     const std::string v = ours(x, sb) ? withBuf(x, sb, [](Buf& b) { return b.s; }) : std::string();
     wr(x, ret, guestStringData(x, v));
+    x.cpu.r[0] = ret;
+}
+void wsb_str(Ctx& x) {  // wstring wstringbuf::str() const — sret in r0, this in r1
+    const uint32_t ret = x.cpu.r[0], sb = x.cpu.r[1];
+    const std::u32string v = ours(x, sb) ? withBuf(x, sb, [](Buf& b) { return b.ws; }) : std::u32string();
+    wr(x, ret, guestWStringData(x, v));
     x.cpu.r[0] = ret;
 }
 void sb_setStr(Ctx& x, GuestPtr sb, GuestPtr str) {
@@ -470,7 +529,297 @@ void thunkD0(Ctx& x, GuestPtr self) { ssAny_dtorDelete(x, self + uint32_t(int32_
 // ostream's / istream's own destructors: nothing to free (the streambuf belongs to someone else).
 void os_dtorDelete(Ctx& x, GuestPtr self) { x.proc.heap().free(topOf(x, self)); }
 
-// ---- generic istream::read / ostream::write (called by LibStdcxx.cpp for non-file streams)
+// ---- libc++ (std::__1::) stream & string helpers
+[[noreturn]] void libcxx_throw_length_error(Ctx&, GuestPtr) { throw std::runtime_error("std::__1::length_error"); }
+[[noreturn]] void libcxx_throw_out_of_range(Ctx&, GuestPtr) { throw std::runtime_error("std::__1::out_of_range"); }
+GuestPtr libcxx_str_dtor(Ctx& x, GuestPtr self) {
+    if (self && (x.mem.read<uint32_t>(self) & 1u) != 0) {
+        const uint32_t ptr = x.mem.read<uint32_t>(self + 8);
+        if (ptr && x.proc.heap().blockSize(ptr)) x.proc.heap().free(ptr);
+    }
+    return self;
+}
+GuestPtr libcxx_sb_ctor(Ctx& x, GuestPtr sb) {
+    for (uint32_t i = 0; i < 32; i += 4) wr(x, sb + i, 0);
+    wr(x, sb, St(x).libcxxSbVptr);
+    wr(x, sb + 4, St(x).locImpl);
+    return sb;
+}
+GuestPtr libcxx_sb_dtor(Ctx&, GuestPtr sb) { return sb; }
+void libcxx_ios_init(Ctx& x, GuestPtr ios, GuestPtr sb) {
+    const uint32_t vptr = rd(x, ios);
+    for (uint32_t i = 4; i < 60; i += 4) wr(x, ios + i, 0);
+    wr(x, ios, vptr);
+    wr(x, ios + 4, fSkipws | fDec);
+    wr(x, ios + 8, 6);
+    wr(x, ios + 12, 0);
+    wr(x, ios + 16, sb ? 0 : kBad);
+    wr(x, ios + 24, sb);
+    wr(x, ios + 28, St(x).locImpl);
+}
+int32_t libcxx_uflow(Ctx& x, GuestPtr sb) {
+    if (vcall(x, sb, sUnderflow, {}) == kEofChar) return kEofChar;
+    const uint32_t g = rd(x, sb + 12);
+    if (!g || g >= rd(x, sb + 16)) return kEofChar;
+    wr(x, sb + 12, g + 1);
+    return x.mem.read<uint8_t>(g);
+}
+int32_t libcxx_xsgetn(Ctx& x, GuestPtr sb, GuestPtr s, int32_t n) {
+    int32_t done = 0;
+    while (done < n) {
+        const uint32_t g = rd(x, sb + 12), e = rd(x, sb + 16);
+        if (g < e) {
+            const uint32_t k = std::min<uint32_t>(e - g, uint32_t(n - done));
+            std::memmove(x.mem.host(s + uint32_t(done)), x.mem.host(g), k);
+            wr(x, sb + 12, g + k);
+            done += int32_t(k);
+            continue;
+        }
+        const int32_t c = vcall(x, sb, sUflow, {});
+        if (c == kEofChar) break;
+        x.mem.write<uint8_t>(s + uint32_t(done++), uint8_t(c));
+    }
+    return done;
+}
+int32_t libcxx_xsputn(Ctx& x, GuestPtr sb, GuestPtr s, int32_t n) {
+    int32_t done = 0;
+    while (done < n) {
+        const uint32_t p = rd(x, sb + 24), e = rd(x, sb + 28);
+        if (p < e) {
+            const uint32_t k = std::min<uint32_t>(e - p, uint32_t(n - done));
+            std::memmove(x.mem.host(p), x.mem.host(s + uint32_t(done)), k);
+            wr(x, sb + 24, p + k);
+            done += int32_t(k);
+            continue;
+        }
+        if (vcall(x, sb, sOverflow, {x.mem.read<uint8_t>(s + uint32_t(done))}) == kEofChar) break;
+        ++done;
+    }
+    return done;
+}
+
+// ---- generic istream::read / ostream::write / getline / operator>>
+int32_t sbPeekc(Ctx& x, uint32_t sb) {
+    if (!sb) return kEofChar;
+    if (ours(x, sb)) return sb_underflow(x, sb);
+    if (hvmIsFilebuf(x, sb)) return hvmFilebufPeek(x, sb);
+    const uint32_t g = rd(x, sb + 8), e = rd(x, sb + 12);
+    if (g && g < e) return x.mem.read<uint8_t>(g);
+    return vcall(x, sb, sUnderflow, {});
+}
+int32_t sbGetc(Ctx& x, uint32_t sb) {
+    if (!sb) return kEofChar;
+    if (ours(x, sb)) return sb_uflow(x, sb);
+    if (hvmIsFilebuf(x, sb)) return hvmFilebufGet(x, sb);
+    const uint32_t g = rd(x, sb + 8), e = rd(x, sb + 12);
+    if (g && g < e) { wr(x, sb + 8, g + 1); return x.mem.read<uint8_t>(g); }
+    return vcall(x, sb, sUflow, {});
+}
+int32_t sbUngetc(Ctx& x, uint32_t sb, int32_t c) {
+    if (!sb) return kEofChar;
+    if (ours(x, sb)) return sb_pbackfail(x, sb, c);
+    if (hvmIsFilebuf(x, sb)) return hvmFilebufUnget(x, sb, c);
+    const uint32_t b = rd(x, sb + 4), g = rd(x, sb + 8);
+    if (b && g > b) { wr(x, sb + 8, g - 1); return x.mem.read<uint8_t>(g - 1); }
+    return vcall(x, sb, sPbackfail, {uint32_t(c)});
+}
+
+uint32_t std_getlineDelim(Ctx& x, GuestPtr is, GuestPtr str, uint32_t delimArg) {
+    const char delim = char(delimArg & 0xFF);
+    guestStringSet(x, str, "");
+    const uint32_t ios = iosOf(x, is);
+    if (rd(x, ios + kState)) { wr(x, ios + kState, rd(x, ios + kState) | kFail); return is; }
+    const uint32_t sb = rd(x, ios + kBuf);
+    if (!sb) { wr(x, ios + kState, rd(x, ios + kState) | kFail | kBad); return is; }
+    std::string out;
+    size_t extracted = 0;
+    for (;;) {
+        const int32_t c = sbGetc(x, sb);
+        if (c == kEofChar) {
+            wr(x, ios + kState, rd(x, ios + kState) | kEof | (extracted == 0 ? kFail : 0));
+            break;
+        }
+        ++extracted;
+        if (char(c) == delim) break;
+        out.push_back(char(c));
+    }
+    if (!out.empty()) guestStringSet(x, str, out);
+    return is;
+}
+uint32_t std_getline(Ctx& x, GuestPtr is, GuestPtr str) { return std_getlineDelim(x, is, str, '\n'); }
+
+uint32_t is_getlineDelim(Ctx& x, GuestPtr is, GuestPtr buf, int32_t n, uint32_t delimArg) {
+    const char delim = char(delimArg & 0xFF);
+    const uint32_t ios = iosOf(x, is);
+    wr(x, is + 4, 0);
+    if (rd(x, ios + kState) || n <= 0) {
+        if (n > 0 && buf) x.mem.write<uint8_t>(buf, 0);
+        wr(x, ios + kState, rd(x, ios + kState) | kFail);
+        return is;
+    }
+    const uint32_t sb = rd(x, ios + kBuf);
+    if (!sb) {
+        if (buf) x.mem.write<uint8_t>(buf, 0);
+        wr(x, ios + kState, rd(x, ios + kState) | kFail | kBad);
+        return is;
+    }
+    int32_t extracted = 0, written = 0;
+    for (;;) {
+        const int32_t c = sbGetc(x, sb);
+        if (c == kEofChar) {
+            wr(x, ios + kState, rd(x, ios + kState) | kEof | (extracted == 0 ? kFail : 0));
+            break;
+        }
+        if (char(c) == delim) {
+            ++extracted;
+            break;
+        }
+        if (written + 1 >= n) {
+            sbUngetc(x, sb, c);
+            wr(x, ios + kState, rd(x, ios + kState) | kFail);
+            break;
+        }
+        if (buf) x.mem.write<uint8_t>(buf + uint32_t(written), uint8_t(c));
+        ++written;
+        ++extracted;
+    }
+    if (buf) x.mem.write<uint8_t>(buf + uint32_t(written), 0);
+    wr(x, is + 4, uint32_t(extracted));
+    return is;
+}
+uint32_t is_getline(Ctx& x, GuestPtr is, GuestPtr buf, int32_t n) { return is_getlineDelim(x, is, buf, n, '\n'); }
+
+std::string extractToken(Ctx& x, uint32_t is, bool& eofReached) {
+    eofReached = false;
+    const uint32_t ios = iosOf(x, is);
+    if (rd(x, ios + kState)) { wr(x, ios + kState, rd(x, ios + kState) | kFail); return {}; }
+    const uint32_t sb = rd(x, ios + kBuf);
+    if (!sb) { wr(x, ios + kState, rd(x, ios + kState) | kFail | kBad); return {}; }
+    const bool skipws = (rd(x, ios + kFlags) & fSkipws) != 0;
+    if (skipws) {
+        for (;;) {
+            const int32_t c = sbPeekc(x, sb);
+            if (c == kEofChar) { eofReached = true; wr(x, ios + kState, rd(x, ios + kState) | kEof | kFail); return {}; }
+            if (!std::isspace(uint8_t(c))) break;
+            sbGetc(x, sb);
+        }
+    }
+    std::string tok;
+    for (;;) {
+        const int32_t c = sbPeekc(x, sb);
+        if (c == kEofChar) { eofReached = true; break; }
+        if (std::isspace(uint8_t(c))) break;
+        tok.push_back(char(sbGetc(x, sb)));
+    }
+    if (tok.empty()) wr(x, ios + kState, rd(x, ios + kState) | (eofReached ? (kEof | kFail) : kFail));
+    else if (eofReached) wr(x, ios + kState, rd(x, ios + kState) | kEof);
+    return tok;
+}
+
+template <typename T>
+uint32_t is_extractInt(Ctx& x, GuestPtr is, GuestPtr out) {
+    bool eof = false;
+    const std::string tok = extractToken(x, is, eof);
+    if (tok.empty()) return is;
+    const uint32_t ios = iosOf(x, is);
+    const uint32_t baseFlag = rd(x, ios + kFlags) & (fDec | fOct | fHex);
+    const int base = baseFlag == fHex ? 16 : baseFlag == fOct ? 8 : baseFlag == fDec ? 10 : 0;
+    char* end = nullptr;
+    if constexpr (std::is_signed_v<T>) {
+        const long long v = std::strtoll(tok.c_str(), &end, base);
+        if (end == tok.c_str()) { wr(x, ios + kState, rd(x, ios + kState) | kFail); return is; }
+        if (out) x.mem.write<T>(out, T(v));
+    } else {
+        const unsigned long long v = std::strtoull(tok.c_str(), &end, base);
+        if (end == tok.c_str()) { wr(x, ios + kState, rd(x, ios + kState) | kFail); return is; }
+        if (out) x.mem.write<T>(out, T(v));
+    }
+    return is;
+}
+template <typename T>
+uint32_t is_extractFloat(Ctx& x, GuestPtr is, GuestPtr out) {
+    bool eof = false;
+    const std::string tok = extractToken(x, is, eof);
+    if (tok.empty()) return is;
+    const uint32_t ios = iosOf(x, is);
+    char* end = nullptr;
+    const double v = std::strtod(tok.c_str(), &end);
+    if (end == tok.c_str()) { wr(x, ios + kState, rd(x, ios + kState) | kFail); return is; }
+    if (out) x.mem.write<T>(out, T(v));
+    return is;
+}
+uint32_t is_extractBool(Ctx& x, GuestPtr is, GuestPtr out) {
+    bool eof = false;
+    const std::string tok = extractToken(x, is, eof);
+    if (tok.empty()) return is;
+    const uint32_t ios = iosOf(x, is);
+    bool val = false;
+    if (tok == "1" || tok == "true") val = true;
+    else if (tok == "0" || tok == "false") val = false;
+    else { wr(x, ios + kState, rd(x, ios + kState) | kFail); return is; }
+    if (out) x.mem.write<uint8_t>(out, val ? 1 : 0);
+    return is;
+}
+uint32_t is_extractStr(Ctx& x, GuestPtr is, GuestPtr str) {
+    bool eof = false;
+    const std::string tok = extractToken(x, is, eof);
+    if (!tok.empty()) guestStringSet(x, str, tok);
+    return is;
+}
+uint32_t is_extractChar(Ctx& x, GuestPtr is, GuestPtr out) {
+    const uint32_t ios = iosOf(x, is);
+    if (rd(x, ios + kState)) { wr(x, ios + kState, rd(x, ios + kState) | kFail); return is; }
+    const uint32_t sb = rd(x, ios + kBuf);
+    const bool skipws = (rd(x, ios + kFlags) & fSkipws) != 0;
+    int32_t c = kEofChar;
+    for (;;) {
+        c = sbGetc(x, sb);
+        if (c == kEofChar || !skipws || !std::isspace(uint8_t(c))) break;
+    }
+    if (c == kEofChar) { wr(x, ios + kState, rd(x, ios + kState) | kEof | kFail); return is; }
+    if (out) x.mem.write<uint8_t>(out, uint8_t(c));
+    return is;
+}
+int32_t is_get(Ctx& x, GuestPtr is) {
+    const uint32_t ios = iosOf(x, is);
+    wr(x, is + 4, 0);
+    if (rd(x, ios + kState)) { wr(x, ios + kState, rd(x, ios + kState) | kFail); return kEofChar; }
+    const int32_t c = sbGetc(x, rd(x, ios + kBuf));
+    if (c == kEofChar) { wr(x, ios + kState, rd(x, ios + kState) | kEof | kFail); return kEofChar; }
+    wr(x, is + 4, 1);
+    return c;
+}
+uint32_t is_getChar(Ctx& x, GuestPtr is, GuestPtr out) {
+    const int32_t c = is_get(x, is);
+    if (c != kEofChar && out) x.mem.write<uint8_t>(out, uint8_t(c));
+    return is;
+}
+int32_t is_peek(Ctx& x, GuestPtr is) {
+    const uint32_t ios = iosOf(x, is);
+    wr(x, is + 4, 0);
+    if (rd(x, ios + kState)) return kEofChar;
+    const int32_t c = sbPeekc(x, rd(x, ios + kBuf));
+    if (c == kEofChar) wr(x, ios + kState, rd(x, ios + kState) | kEof);
+    return c;
+}
+uint32_t is_ignore(Ctx& x, GuestPtr is, int32_t n, int32_t delim) {
+    const uint32_t ios = iosOf(x, is);
+    wr(x, is + 4, 0);
+    if (rd(x, ios + kState) || n <= 0) return is;
+    const uint32_t sb = rd(x, ios + kBuf);
+    int32_t count = 0;
+    while (count < n) {
+        const int32_t c = sbGetc(x, sb);
+        if (c == kEofChar) { wr(x, ios + kState, rd(x, ios + kState) | kEof); break; }
+        ++count;
+        if (c == delim) break;
+    }
+    wr(x, is + 4, uint32_t(count));
+    return is;
+}
+uint32_t is_ignore1(Ctx& x, GuestPtr is) { return is_ignore(x, is, 1, kEofChar); }
+uint32_t is_ignoreN(Ctx& x, GuestPtr is, int32_t n) { return is_ignore(x, is, n, kEofChar); }
+
 } // namespace
 
 uint32_t hvmOstreamWrite(Ctx& x, uint32_t os, uint32_t buf, int32_t n) {
@@ -486,11 +835,33 @@ uint32_t hvmIstreamRead(Ctx& x, uint32_t is, uint32_t buf, int32_t n) {
     if (rd(x, ios + kState)) { wr(x, ios + kState, rd(x, ios + kState) | kFail); return is; }
     const uint32_t sb = rd(x, ios + kBuf);
     int32_t got = 0;
-    if (sb && n > 0) got = ours(x, sb) ? sb_xsgetn(x, sb, buf, n) : vcall(x, sb, sXsgetn, {buf, uint32_t(n)});
+    if (sb && n > 0) {
+        if (ours(x, sb)) got = sb_xsgetn(x, sb, buf, n);
+        else if (hvmIsFilebuf(x, sb)) got = hvmFilebufRead(x, sb, buf, n);
+        else got = vcall(x, sb, sXsgetn, {buf, uint32_t(n)});
+    }
     if (got < 0) got = 0;
     wr(x, is + 4, uint32_t(got));
     if (got < n) wr(x, ios + kState, rd(x, ios + kState) | kEof | kFail);
     return is;
+}
+void hvmStreamSeek(Ctx& x, uint32_t stream, int64_t off, uint32_t dir, uint32_t which) {
+    const uint32_t ios = iosOf(x, stream);
+    if (rd(x, ios + kState) & (kFail | kBad)) return;
+    if (which & mIn) wr(x, ios + kState, rd(x, ios + kState) & ~kEof);
+    const uint32_t sb = rd(x, ios + kBuf);
+    int64_t pos = -1;
+    if (ours(x, sb)) pos = seekBuf(x, sb, off, dir, which);
+    else if (hvmIsFilebuf(x, sb)) pos = hvmFilebufSeek(x, sb, off, dir);
+    if (pos < 0) wr(x, ios + kState, rd(x, ios + kState) | kFail);
+}
+int64_t hvmStreamTell(Ctx& x, uint32_t stream, uint32_t which) {
+    const uint32_t ios = iosOf(x, stream);
+    if (rd(x, ios + kState) & (kFail | kBad)) return -1;
+    const uint32_t sb = rd(x, ios + kBuf);
+    if (ours(x, sb)) return seekBuf(x, sb, 0, 1, which);
+    if (hvmIsFilebuf(x, sb)) return hvmFilebufSeek(x, sb, 0, 1);
+    return -1;
 }
 
 void registerLibStdcxxStreams(Process& p) {
@@ -564,6 +935,7 @@ void registerLibStdcxxStreams(Process& p) {
     };
     const uint32_t anyD1 = fn("stringstream dtor", [](Ctx& x) { ssAny_dtor(x, x.cpu.r[0]); });
     const uint32_t anyD0 = fn("stringstream deleting dtor", [](Ctx& x) { ssAny_dtorDelete(x, x.cpu.r[0]); });
+    s.vtIs = streamVtable("hvm_vt_istream", 8, 0, anyD1, anyD0);
     s.vtOss = streamVtable("hvm_vt_ostringstream", 44, 0, anyD1, anyD0);
     s.vtIss = streamVtable("hvm_vt_istringstream", 48, 0, anyD1, anyD0);
     s.vtSs = streamVtable("hvm_vt_stringstream", 52, 0, anyD1, anyD0);
@@ -578,9 +950,26 @@ void registerLibStdcxxStreams(Process& p) {
         p.mem().write<uint32_t>(a + 20, tD0);
         return a + 16;
     };
+    s.vtIos8 = iosVt(8);
     s.vtIos44 = iosVt(44);
     s.vtIos48 = iosVt(48);
     s.vtIos52 = iosVt(52);
+    {
+        const uint32_t biosVt = p.defineDataBlock("__ZTVSt9basic_iosIcSt11char_traitsIcEE", 24);
+        p.mem().write<uint32_t>(biosVt + 16, bD1);
+        p.mem().write<uint32_t>(biosVt + 20, bD0);
+    }
+    // Standard global streams: cout, cerr, clog, cin
+    {
+        CPU::Cpu dummyCpu{};
+        Ctx initCtx{p, dummyCpu, p.mem()};
+        for (const char* sym : {"__ZSt4cout", "__ZSt4cerr", "__ZSt4clog"}) {
+            const uint32_t stAddr = p.defineDataBlock(sym, 180);
+            ssConstruct(initCtx, stAddr, SS::Out, mOut, {}, 0);
+        }
+        const uint32_t cinAddr = p.defineDataBlock("__ZSt3cin", 184);
+        ssConstruct(initCtx, cinAddr, SS::In, mIn, {}, 0);
+    }
     // VTTs (for app classes derived from a string stream): primary, base primary, base's ios, our ios.
     auto vtt = [&](const std::string& name, std::initializer_list<uint32_t> e) {
         const uint32_t a = p.defineDataBlock(name, uint32_t(e.size()) * 4);
@@ -626,6 +1015,22 @@ void registerLibStdcxxStreams(Process& p) {
     p.defineFunction(std::string("__ZThn8_N") + SS_ + "D1Ev", [](Ctx& x) { ssAny_dtor(x, x.cpu.r[0] - 8); });
     p.defineFunction(std::string("__ZThn8_N") + SS_ + "D0Ev", [](Ctx& x) { ssAny_dtorDelete(x, x.cpu.r[0] - 8); });
 
+    // Wide stringstream (std::wstringstream)
+    const char* WSS = "St18basic_stringstreamIwSt11char_traitsIwESaIwEE";
+    const char* WOSS = "St19basic_ostringstreamIwSt11char_traitsIwESaIwEE";
+    const char* WISS = "St19basic_istringstreamIwSt11char_traitsIwESaIwEE";
+    const char* WSB = "St15basic_stringbufIwSt11char_traitsIwESaIwEE";
+    p.defineFunction(std::string("__ZNK") + WSB + "3strEv", wsb_str);
+    p.def<&ss_ctor<SS::InOut>>(std::string("__ZN") + WSS + "C1ESt13_Ios_Openmode");
+    p.def<&ss_ctor2<SS::InOut>>(std::string("__ZN") + WSS + "C2ESt13_Ios_Openmode");
+    p.def<&ss_dtor<SS::InOut>>(std::string("__ZN") + WSS + "D1Ev");
+    p.def<&ss_dtor<SS::InOut>>(std::string("__ZN") + WSS + "D2Ev");
+    p.def<&ss_dtorDelete<SS::InOut>>(std::string("__ZN") + WSS + "D0Ev");
+    p.def<&ss_ctor<SS::Out>>(std::string("__ZN") + WOSS + "C1ESt13_Ios_Openmode");
+    p.def<&ss_dtor<SS::Out>>(std::string("__ZN") + WOSS + "D1Ev");
+    p.def<&ss_ctor<SS::In>>(std::string("__ZN") + WISS + "C1ESt13_Ios_Openmode");
+    p.def<&ss_dtor<SS::In>>(std::string("__ZN") + WISS + "D1Ev");
+
     // ios_base, basic_ios, locale
     p.def<&b_iosCtor>("__ZNSt8ios_baseC2Ev");
     p.def<&b_iosCtor>("__ZNSt8ios_baseC1Ev");
@@ -635,6 +1040,43 @@ void registerLibStdcxxStreams(Process& p) {
     p.def<&b_setstate>("__ZNSt9basic_iosIcSt11char_traitsIcEE8setstateESt12_Ios_Iostate");
     p.def<&b_copyfmt>("__ZNSt9basic_iosIcSt11char_traitsIcEE7copyfmtERKS2_");
     p.def<&b_rdbufSet>("__ZNSt9basic_iosIcSt11char_traitsIcEE5rdbufEPSt15basic_streambufIcS1_E");
+    p.def<&b_fill>("__ZNKSt9basic_iosIcSt11char_traitsIcEE4fillEv");
+    p.def<&b_widen>("__ZNKSt9basic_iosIcSt11char_traitsIcEE5widenEc");
+    p.def<&useFacetCtype>("__ZSt9use_facetISt5ctypeIcEERKT_RKSt6locale");
+    p.def<&is_ctorSb>("__ZNSiC1EPSt15basic_streambufIcSt11char_traitsIcEE");
+    p.def<&is_ctorSb2>("__ZNSiC2EPSt15basic_streambufIcSt11char_traitsIcEE");
+    p.def<&std_getlineDelim>("__ZSt7getlineIcSt11char_traitsIcESaIcEERSt13basic_istreamIT_T0_ES7_RSbIS4_S5_T1_ES4_");
+    p.def<&std_getline>("__ZSt7getlineIcSt11char_traitsIcESaIcEERSt13basic_istreamIT_T0_ES7_RSbIS4_S5_T1_E");
+    p.def<&is_getlineDelim>("__ZNSi7getlineEPcic");
+    p.def<&is_getline>("__ZNSi7getlineEPci");
+    p.def<&is_extractInt<int32_t>>("__ZNSirsERi");
+    p.def<&is_extractInt<int16_t>>("__ZNSirsERs");
+    p.def<&is_extractInt<uint16_t>>("__ZNSirsERt");
+    p.def<&is_extractInt<uint32_t>>("__ZNSirsERj");
+    p.def<&is_extractInt<int32_t>>("__ZNSirsERl");
+    p.def<&is_extractInt<uint32_t>>("__ZNSirsERm");
+    p.def<&is_extractInt<int64_t>>("__ZNSirsERx");
+    p.def<&is_extractInt<uint64_t>>("__ZNSirsERy");
+    p.def<&is_extractFloat<float>>("__ZNSirsERf");
+    p.def<&is_extractFloat<double>>("__ZNSirsERd");
+    p.def<&is_extractBool>("__ZNSirsERb");
+    p.def<&is_extractInt<uint16_t>>("__ZNSi10_M_extractItEERSiRT_");
+    p.def<&is_extractInt<uint32_t>>("__ZNSi10_M_extractIjEERSiRT_");
+    p.def<&is_extractInt<int32_t>>("__ZNSi10_M_extractIlEERSiRT_");
+    p.def<&is_extractInt<uint32_t>>("__ZNSi10_M_extractImEERSiRT_");
+    p.def<&is_extractInt<int64_t>>("__ZNSi10_M_extractIxEERSiRT_");
+    p.def<&is_extractInt<uint64_t>>("__ZNSi10_M_extractIyEERSiRT_");
+    p.def<&is_extractFloat<float>>("__ZNSi10_M_extractIfEERSiRT_");
+    p.def<&is_extractFloat<double>>("__ZNSi10_M_extractIdEERSiRT_");
+    p.def<&is_extractBool>("__ZNSi10_M_extractIbEERSiRT_");
+    p.def<&is_extractStr>("__ZStrsIcSt11char_traitsIcESaIcEERSt13basic_istreamIT_T0_ES7_RSbIS4_S5_T1_E");
+    p.def<&is_extractChar>("__ZStrsIcSt11char_traitsIcEERSt13basic_istreamIT_T0_ES6_RS3_");
+    p.def<&is_get>("__ZNSi3getEv");
+    p.def<&is_getChar>("__ZNSi3getERc");
+    p.def<&is_peek>("__ZNSi4peekEv");
+    p.def<&is_ignore>("__ZNSi6ignoreEii");
+    p.def<&is_ignoreN>("__ZNSi6ignoreEi");
+    p.def<&is_ignore1>("__ZNSi6ignoreEv");
     for (const char* v : {"D0Ev", "D1Ev", "D2Ev"}) p.def<&nop1>(std::string("__ZNSt9basic_iosIcSt11char_traitsIcEE") + v);
     p.def<&locCtor>("__ZNSt6localeC1Ev");
     p.def<&locCtor>("__ZNSt6localeC2Ev");
@@ -646,10 +1088,12 @@ void registerLibStdcxxStreams(Process& p) {
 
     // ostream: formatted output
     p.def<&o_insert>("__ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_PKS3_i");
+    p.def<&wo_insert>("__ZSt16__ostream_insertIwSt11char_traitsIwEERSt13basic_ostreamIT_T0_ES6_PKS3_i");
     p.def<&o_cstr>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_PKc");
     p.def<&o_char>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_c");
     p.def<&o_string>("__ZStlsIcSt11char_traitsIcESaIcEERSt13basic_ostreamIT_T0_ES7_RKSbIS4_S5_T1_E");
     p.def<&o_int>("__ZNSolsEi");
+    p.def<&o_int>("__ZNSt13basic_ostreamIwSt11char_traitsIwEElsEi");
     p.def<&o_short>("__ZNSolsEs");
     p.def<&o_long>("__ZNSo9_M_insertIlEERSoT_");
     p.def<&o_ulong>("__ZNSo9_M_insertImEERSoT_");
@@ -675,6 +1119,46 @@ void registerLibStdcxxStreams(Process& p) {
             os_dtorDelete(x, self + uint32_t(int32_t(rd(x, rd(x, self) - 12))));
         });
     }
+
+    // libc++ (std::__1::) stream & string support
+    p.def<&libcxx_throw_length_error>("__ZNKSt3__120__vector_base_commonILb1EE20__throw_length_errorEv");
+    p.def<&libcxx_throw_length_error>("__ZNKSt3__121__basic_string_commonILb1EE20__throw_length_errorEv");
+    p.def<&libcxx_throw_out_of_range>("__ZNKSt3__121__basic_string_commonILb1EE20__throw_out_of_rangeEv");
+    p.def<&libcxx_str_dtor>("__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED1Ev");
+    p.def<&libcxx_str_dtor>("__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED2Ev");
+    p.def<&libcxx_sb_ctor>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC1Ev");
+    p.def<&libcxx_sb_ctor>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev");
+    const uint32_t lcD1 = p.def<&libcxx_sb_dtor>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEED1Ev");
+    p.def<&libcxx_sb_dtor>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEED2Ev");
+    const uint32_t lcD0 = p.def<&os_dtorDelete>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEED0Ev");
+    const uint32_t lcImbue = p.def<&bs_imbue>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE5imbueERKNS_6localeE");
+    const uint32_t lcSetbuf = p.def<&bs_setbuf>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6setbufEPci");
+    const uint32_t lcSeekoff = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekoffExNS_8ios_base7seekdirEj", bs_badpos);
+    const uint32_t lcSeekpos = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", bs_badpos);
+    const uint32_t lcSync = p.def<&bs_zero>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE4syncEv");
+    const uint32_t lcShow = p.def<&bs_zero>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9showmanycEv");
+    const uint32_t lcXsgetn = p.def<&libcxx_xsgetn>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6xsgetnEPci");
+    const uint32_t lcUnder = p.def<&bs_eof>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9underflowEv");
+    const uint32_t lcUflow = p.def<&libcxx_uflow>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE5uflowEv");
+    const uint32_t lcPback = p.def<&bs_eof2>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9pbackfailEi");
+    const uint32_t lcXsputn = p.def<&libcxx_xsputn>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6xsputnEPKci");
+    const uint32_t lcOver = p.def<&bs_eof2>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE8overflowEi");
+    s.libcxxSbVptr = sbVtable("__ZTVNSt3__115basic_streambufIcNS_11char_traitsIcEEEE",
+        {lcD1, lcD0, lcImbue, lcSetbuf, lcSeekoff, lcSeekpos, lcSync, lcShow, lcXsgetn, lcUnder, lcUflow, lcPback, lcXsputn, lcOver});
+    p.def<&libcxx_ios_init>("__ZNSt3__18ios_base4initEPv");
+    p.def<&libcxx_sb_dtor>("__ZNSt3__19basic_iosIcNS_11char_traitsIcEEED1Ev");
+    p.def<&libcxx_sb_dtor>("__ZNSt3__19basic_iosIcNS_11char_traitsIcEEED2Ev");
+    p.def<&os_dtorDelete>("__ZNSt3__19basic_iosIcNS_11char_traitsIcEEED0Ev");
+    p.def<&libcxx_sb_dtor>("__ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEED1Ev");
+    p.def<&libcxx_sb_dtor>("__ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEED2Ev");
+    p.def<&os_dtorDelete>("__ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEED0Ev");
+    p.def<&libcxx_sb_dtor>("__ZTv0_n12_NSt3__113basic_ostreamIcNS_11char_traitsIcEEED1Ev");
+    p.defineFunction("__ZTv0_n12_NSt3__113basic_ostreamIcNS_11char_traitsIcEEED0Ev", [](Ctx& x) {
+        const uint32_t self = x.cpu.r[0];
+        os_dtorDelete(x, self + uint32_t(int32_t(rd(x, rd(x, self) - 12))));
+    });
+    p.defineDataBlock("__ZTINSt3__113basic_ostreamIcNS_11char_traitsIcEEEE", 12);
+    p.defineDataBlock("__ZTINSt3__115basic_streambufIcNS_11char_traitsIcEEEE", 12);
 }
 
 } // namespace Hydrogen::Runtime

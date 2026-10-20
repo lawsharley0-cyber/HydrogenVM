@@ -188,9 +188,25 @@ uint32_t d_dlopen(Ctx& x, GuestPtr path, int32_t) {
 uint32_t d_dlsym(Ctx& x, uint32_t, GuestPtr name) {
     const std::string n = "_" + x.proc.readCString(name);
     if (auto a = x.proc.lookupSymbol(n)) return *a;
+    for (const auto& [addr, sym] : x.proc.image().symbolsByAddr)
+        if (sym == n) return addr;
     x.proc.logf(LogLevel::Warning, "dlsym: %s not found", n.c_str() + 1);
     return 0;
 }
+uint32_t d_local_arch_info(Ctx& x) {
+    static const char slotKey = 0;
+    uint32_t& a = x.proc.processSlot(&slotKey);
+    if (!a) {
+        a = x.proc.allocStatic(20);
+        x.mem.write<uint32_t>(a + 0, x.proc.internCString("armv7"));
+        x.mem.write<uint32_t>(a + 4, 12);   // CPU_TYPE_ARM
+        x.mem.write<uint32_t>(a + 8, 9);    // CPU_SUBTYPE_ARM_V7
+        x.mem.write<uint32_t>(a + 12, 1);   // NX_LittleEndian
+        x.mem.write<uint32_t>(a + 16, x.proc.internCString("arm v7"));
+    }
+    return a;
+}
+uint32_t d_arch_from_cputype(Ctx& x, uint32_t, uint32_t) { return d_local_arch_info(x); }
 int32_t d_dlclose(Ctx&, uint32_t) { return 0; }
 uint32_t d_dlerror(Ctx&) { return 0; }
 int32_t d_dladdr(Ctx& x, GuestPtr addr, GuestPtr info) {
@@ -388,16 +404,22 @@ int32_t f_closedir(Ctx& x, GuestPtr h) {
 // ------------------------------------------------------------------ mmap ---
 
 uint32_t m_mmap(Ctx& x, GuestPtr, uint32_t len, int32_t, uint32_t flags, int32_t fd, int64_t off) {
-    const uint32_t a = x.proc.heap().allocAligned((len + 4095) & ~4095u, 4096);
+    const uint32_t align = len >= 65536u ? 65536u : 4096u;
+    const uint32_t sz = (len + 4095u) & ~4095u;
+    const uint32_t a = x.proc.heap().allocAligned(sz ? sz : 4096u, align);
     if (!a) { setErrno(x, ENOMEM); return 0xFFFFFFFFu; }
-    std::memset(x.mem.host(a), 0, (len + 4095) & ~4095u);
+    std::memset(x.mem.host(a), 0, sz ? sz : 4096u);
     if (!(flags & 0x1000) && fd >= 0) {   // file mapping: read the contents (private copy)
         const ssize_t r = ::pread(fd, x.mem.host(a), len, off_t(off));
         if (r < 0) { x.proc.heap().free(a); return failD<uint32_t>(x, 0xFFFFFFFFu); }
     }
     return a;
 }
-int32_t m_munmap(Ctx& x, GuestPtr a, uint32_t) { if (x.proc.heap().blockSize(a)) x.proc.heap().free(a); return 0; }
+int32_t m_munmap(Ctx& x, GuestPtr a, uint32_t len) {
+    const uint32_t bsz = x.proc.heap().blockSize(a);
+    if (bsz && len >= bsz) x.proc.heap().free(a);
+    return 0;
+}
 int32_t m_ok3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
 int32_t m_ok2(Ctx&, GuestPtr, uint32_t) { return 0; }
 
@@ -413,6 +435,10 @@ int32_t g_kill(Ctx& x, int32_t pid, int32_t sig) { if (sig == 0) return 0; if (p
 int32_t g_sigset(Ctx& x, GuestPtr set) { if (set) x.mem.write<uint32_t>(set, 0); return 0; }
 int32_t g_sigsetop(Ctx&, GuestPtr, int32_t) { return 0; }
 int32_t g_sigprocmask(Ctx&, int32_t, GuestPtr, GuestPtr) { return 0; }
+int32_t g_sigaltstack(Ctx& x, GuestPtr, GuestPtr oss) {
+    if (oss) { x.mem.write<uint32_t>(oss, 0); x.mem.write<uint32_t>(oss + 4, 0); x.mem.write<uint32_t>(oss + 8, 2); }
+    return 0;
+}
 
 // ---------------------------------------------------------------- setjmp ---
 // jmp_buf: r4-r11, sp, lr, d8-d15 (16 words), fpscr = 27 words.
@@ -440,20 +466,38 @@ int32_t j_sigsetjmp(Ctx& x, GuestPtr buf, int32_t) { return j_setjmp(x, buf); }
 
 uint32_t k_task_self(Ctx&) { return 0x103; }
 int32_t k_task_info(Ctx& x, uint32_t, uint32_t flavor, GuestPtr out, GuestPtr count) {
-    const uint32_t n = x.mem.read<uint32_t>(count);
-    std::memset(x.mem.host(out), 0, n * 4);
-    if (flavor == 5 /*TASK_BASIC_INFO*/ && n >= 5) {
+    const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
+    const uint32_t maxWords = std::min<uint32_t>(n, 10u);
+    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+    if (out && flavor == 5 /*TASK_BASIC_INFO*/ && maxWords >= 5) {
         const auto st = x.proc.heap().stats();
         x.mem.write<uint32_t>(out + 4, uint32_t(st.committed + (16u << 20)));   // resident_size
         x.mem.write<uint32_t>(out + 8, uint32_t(st.committed + (64u << 20)));   // virtual_size
     }
+    if (count) x.mem.write<uint32_t>(count, maxWords);
     return 0;
 }
-int32_t k_host_page_size(Ctx& x, uint32_t, GuestPtr out) { x.mem.write<uint32_t>(out, 4096); return 0; }
+int32_t k_host_page_size(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint32_t>(out, 4096); return 0; }
 int32_t k_host_statistics(Ctx& x, uint32_t, uint32_t, GuestPtr out, GuestPtr count) {
-    const uint32_t n = x.mem.read<uint32_t>(count);
-    std::memset(x.mem.host(out), 0, n * 4);
-    if (n >= 2) { x.mem.write<uint32_t>(out, 65536); x.mem.write<uint32_t>(out + 4, 32768); }   // free / active pages
+    const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
+    const uint32_t maxWords = std::min<uint32_t>(n, 15u);
+    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+    if (out && maxWords >= 2) { x.mem.write<uint32_t>(out, 65536); x.mem.write<uint32_t>(out + 4, 32768); }   // free / active pages
+    if (count) x.mem.write<uint32_t>(count, maxWords);
+    return 0;
+}
+int32_t k_host_info(Ctx& x, uint32_t, uint32_t flavor, GuestPtr out, GuestPtr count) {
+    const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
+    const uint32_t maxWords = std::min<uint32_t>(n, 12u);
+    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+    if (out && flavor == 1 /*HOST_BASIC_INFO*/ && maxWords >= 5) {
+        x.mem.write<uint32_t>(out + 0, 2);           // max_cpus
+        x.mem.write<uint32_t>(out + 4, 2);           // avail_cpus
+        x.mem.write<uint32_t>(out + 8, 512u << 20);  // memory_size
+        x.mem.write<uint32_t>(out + 12, 12);         // cpu_type (CPU_TYPE_ARM)
+        x.mem.write<uint32_t>(out + 16, 9);          // cpu_subtype (CPU_SUBTYPE_ARM_V7)
+    }
+    if (count) x.mem.write<uint32_t>(count, maxWords);
     return 0;
 }
 int32_t k_vm_allocate(Ctx& x, uint32_t, GuestPtr out, uint32_t size, int32_t) {
@@ -464,7 +508,33 @@ int32_t k_vm_allocate(Ctx& x, uint32_t, GuestPtr out, uint32_t size, int32_t) {
     return 0;
 }
 int32_t k_vm_deallocate(Ctx& x, uint32_t, GuestPtr a, uint32_t) { if (x.proc.heap().blockSize(a)) x.proc.heap().free(a); return 0; }
+int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint32_t) {
+    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const int32_t flags = x.mem.read<int32_t>(sp + 0);
+    const GuestPtr srcAddr = x.mem.read<uint32_t>(sp + 8);
+    const GuestPtr curProtPtr = x.mem.read<uint32_t>(sp + 16);
+    const GuestPtr maxProtPtr = x.mem.read<uint32_t>(sp + 20);
+    const uint32_t alignedSize = (size + 4095u) & ~4095u;
+    uint32_t dst = targetAddrPtr ? x.mem.read<uint32_t>(targetAddrPtr) : 0;
+    if ((flags & 1 /* VM_FLAGS_ANYWHERE */) != 0 || !dst || !x.mem.isMapped(dst)) {
+        dst = x.proc.heap().allocAligned(alignedSize ? alignedSize : 4096u, 4096u);
+        if (!dst) return 3;   // KERN_NO_SPACE
+    }
+    if (alignedSize) {
+        x.mem.protect(dst, alignedSize, Memory::kProtRead | Memory::kProtWrite | Memory::kProtExec);
+        if (srcAddr && size) std::memcpy(x.mem.host(dst), x.mem.host(srcAddr), size);
+    }
+    if (targetAddrPtr) x.mem.write<uint32_t>(targetAddrPtr, dst);
+    if (curProtPtr) x.mem.write<uint32_t>(curProtPtr, 7);
+    if (maxProtPtr) x.mem.write<uint32_t>(maxProtPtr, 7);
+    return 0;
+}
 int32_t k_zero3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t k_mach_wait_until(Ctx&, uint64_t) {
+    std::this_thread::yield();
+    return 0;
+}
 
 } // namespace
 
@@ -514,6 +584,8 @@ void registerLibcSystem(Process& p) {
     p.def<&d_dlclose>("_dlclose");
     p.def<&d_dlerror>("_dlerror");
     p.def<&d_dladdr>("_dladdr");
+    p.def<&d_local_arch_info>("_NXGetLocalArchInfo");
+    p.def<&d_arch_from_cputype>("_NXGetArchInfoFromCpuType");
     p.def<&f_open>("_open");
     p.def<&f_close>("_close");
     p.def<&f_read>("_read");
@@ -555,6 +627,7 @@ void registerLibcSystem(Process& p) {
     p.def<&g_sigsetop>("_sigaddset");
     p.def<&g_sigsetop>("_sigdelset");
     p.def<&g_sigprocmask>("_sigprocmask");
+    p.def<&g_sigaltstack>("_sigaltstack");
     p.def<&j_setjmp>("_setjmp");
     p.def<&j_setjmp>("__setjmp");
     p.def<&j_sigsetjmp>("_sigsetjmp");
@@ -567,9 +640,14 @@ void registerLibcSystem(Process& p) {
     p.def<&k_task_info>("_task_info");
     p.def<&k_host_page_size>("_host_page_size");
     p.def<&k_host_statistics>("_host_statistics");
+    p.def<&k_host_info>("_host_info");
     p.def<&k_vm_allocate>("_vm_allocate");
     p.def<&k_vm_deallocate>("_vm_deallocate");
+    p.def<&k_vm_remap>("_vm_remap");
     p.def<&k_zero3>("_mach_port_deallocate");
+    p.def<&k_zero4>("_thread_policy_set");
+    p.def<&k_zero4>("_thread_policy_get");
+    p.def<&k_mach_wait_until>("_mach_wait_until");
     p.defineData("_vm_page_size", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4096); return c; }());
 }
 

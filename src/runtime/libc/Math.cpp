@@ -49,6 +49,25 @@ void sincos_f(Ctx& x, float a, GuestPtr s, GuestPtr c) {
     const float sv = std::sin(a), cv = std::cos(a);
     uint32_t b; std::memcpy(&b, &sv, 4); x.mem.write<uint32_t>(s, b); std::memcpy(&b, &cv, 4); x.mem.write<uint32_t>(c, b);
 }
+// 32-bit iOS APCS: struct __sincosf_ret { float __sinval, __cosval; } is 8 bytes, returned in r0:r1.
+uint64_t sincosf_stret(Ctx&, float a) {
+    const float sv = std::sin(a), cv = std::cos(a);
+    uint32_t sb, cb;
+    std::memcpy(&sb, &sv, 4);
+    std::memcpy(&cb, &cv, 4);
+    return uint64_t(sb) | (uint64_t(cb) << 32);
+}
+// struct __sincos_ret { double __sinval, __cosval; } is 16 bytes, returned via sret pointer in r0.
+void sincos_stret(Ctx& x, GuestPtr out, double a) {
+    const double sv = std::sin(a), cv = std::cos(a);
+    uint64_t sb, cb;
+    std::memcpy(&sb, &sv, 8);
+    std::memcpy(&cb, &cv, 8);
+    x.mem.write<uint64_t>(out, sb);
+    x.mem.write<uint64_t>(out + 8, cb);
+}
+double exp10_d(Ctx&, double a) { return std::pow(10.0, a); }
+float exp10_f(Ctx&, float a) { return std::pow(10.0f, a); }
 int32_t isnan_d(Ctx&, double a) { return std::isnan(a); }
 int32_t isinf_d(Ctx&, double a) { return std::isinf(a) ? (a > 0 ? 1 : -1) : 0; }
 int32_t isnan_f(Ctx&, float a) { return std::isnan(a); }
@@ -88,6 +107,10 @@ void registerLibcMath(Process& p) {
     p.def<&modf_f>("_modff");
     p.def<&sincos_d>("___sincos");
     p.def<&sincos_f>("___sincosf");
+    p.def<&sincos_stret>("___sincos_stret");
+    p.def<&sincosf_stret>("___sincosf_stret");
+    p.def<&exp10_d>("___exp10");
+    p.def<&exp10_f>("___exp10f");
     p.def<&isnan_d>("___isnand");
     p.def<&isinf_d>("___isinfd");
     p.def<&isnan_f>("___isnanf");

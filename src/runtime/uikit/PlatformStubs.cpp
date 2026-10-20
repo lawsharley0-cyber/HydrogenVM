@@ -626,6 +626,40 @@ int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t, uint32_t, Gu
     return 0;
 }
 int32_t au_getProp(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, GuestPtr, GuestPtr) { return 0; }
+int32_t au_setParam(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, float, uint32_t) { return 0; }
+int32_t au_getParam(Ctx& x, uint32_t, uint32_t, uint32_t, uint32_t, GuestPtr out) { if (out) x.mem.write<float>(out, 1.0f); return 0; }
+int32_t au_render(Ctx& x, uint32_t, GuestPtr, GuestPtr, uint32_t, uint32_t nFrames, GuestPtr ioData) {
+    if (ioData) {
+        const uint32_t nbuf = x.mem.read<uint32_t>(ioData);
+        for (uint32_t b = 0; b < nbuf; ++b) {
+            const uint32_t sz = x.mem.read<uint32_t>(ioData + 4 + b * 12 + 4);
+            const uint32_t ptr = x.mem.read<uint32_t>(ioData + 4 + b * 12 + 8);
+            if (ptr && sz) std::memset(x.mem.host(ptr), 0, std::min<uint32_t>(sz, nFrames * 8));
+        }
+    }
+    return 0;
+}
+int32_t aug_new(Ctx& x, GuestPtr outGraph) { if (outGraph) x.mem.write<uint32_t>(outGraph, ATS(x).nextUnitId++); return 0; }
+int32_t aug_ok1(Ctx&, uint32_t) { return 0; }
+int32_t aug_ok2(Ctx&, uint32_t, uint32_t) { return 0; }
+int32_t aug_ok3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t aug_ok4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t aug_ok5(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t aug_addNode(Ctx& x, uint32_t, GuestPtr, GuestPtr outNode) {
+    const uint32_t uid = ATS(x).nextUnitId++;
+    ATS(x).units[uid].id = uid;
+    if (outNode) x.mem.write<int32_t>(outNode, int32_t(uid));
+    return 0;
+}
+int32_t aug_nodeInfo(Ctx& x, uint32_t, int32_t node, GuestPtr outDesc, GuestPtr outUnit) {
+    const uint32_t uid = node > 0 ? uint32_t(node) : ATS(x).nextUnitId++;
+    ATS(x).units[uid].id = uid;
+    if (outDesc) std::memset(x.mem.host(outDesc), 0, 20);
+    if (outUnit) x.mem.write<uint32_t>(outUnit, uid);
+    return 0;
+}
+int32_t aug_isRunning(Ctx& x, uint32_t, GuestPtr outRunning) { if (outRunning) x.mem.write<uint8_t>(outRunning, 1); return 0; }
+int32_t aug_update(Ctx& x, uint32_t, GuestPtr outUpdated) { if (outUpdated) x.mem.write<uint8_t>(outUpdated, 1); return 0; }
 
 // =========================================================== AVAudioSession ===
 
@@ -852,6 +886,10 @@ uint32_t alc_getDevice(Ctx& x, uint32_t) { return OAL(x).currentDevice; }
 uint32_t alc_getError(Ctx& x, uint32_t) { const uint32_t e = OAL(x).lastAlcError; OAL(x).lastAlcError = 0; return e; }
 bool alc_isExt(Ctx&, uint32_t, GuestPtr) { return false; }
 GuestPtr alc_getString(Ctx& x, uint32_t, uint32_t) { return x.proc.internCString("HydrogenVM OpenAL"); }
+void alc_macMixerRate(Ctx&, double) {}
+double alc_macGetMixerRate(Ctx&) { return 44100.0; }
+void alc_macIntSetter(Ctx&, int32_t) {}
+int32_t alc_macIntGetter(Ctx&) { return 2; }
 
 uint32_t al_getError(Ctx& x) { const uint32_t e = OAL(x).lastError; OAL(x).lastError = 0; return e; }
 GuestPtr al_getString(Ctx& x, uint32_t) { return x.proc.internCString("HydrogenVM OpenAL 1.1"); }
@@ -1149,11 +1187,13 @@ id skresp_invalid(Ctx& x, id self, SEL) {
 bool mf_no(Ctx&, id, SEL) { return false; }
 
 // ---------------------------------------------------- SystemConfiguration ---
-uint32_t scr_create(Ctx& x, uint32_t, GuestPtr) { noteOnce(x, "SCNetworkReachability (network reported offline)"); return x.proc.heap().allocZeroed(16); }
+uint32_t scr_create(Ctx& x, uint32_t, GuestPtr) { noteOnce(x, "SCNetworkReachability (network reported offline)"); return rt(x).createInstance(rt(x).nsObject); }
 uint32_t scr_createWithAddress(Ctx& x, uint32_t a, GuestPtr p) { return scr_create(x, a, p); }
+uint32_t scr_createPair(Ctx& x, uint32_t a, GuestPtr p, GuestPtr) { return scr_create(x, a, p); }
 bool scr_getFlags(Ctx& x, uint32_t, GuestPtr flags) { if (flags) x.mem.write<uint32_t>(flags, 0); return true; }
 bool scr_setCallback(Ctx&, uint32_t, uint32_t, uint32_t) { return true; }
 bool scr_schedule(Ctx&, uint32_t, uint32_t, uint32_t) { return true; }
+bool scr_setQueue(Ctx&, uint32_t, uint32_t) { return true; }
 
 } // namespace
 
@@ -1219,6 +1259,28 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&au_stop>("_AudioOutputUnitStop");
     p.def<&au_setProp>("_AudioUnitSetProperty");
     p.def<&au_getProp>("_AudioUnitGetProperty");
+    p.def<&au_setParam>("_AudioUnitSetParameter");
+    p.def<&au_getParam>("_AudioUnitGetParameter");
+    p.def<&au_render>("_AudioUnitRender");
+    p.def<&aug_new>("_NewAUGraph");
+    p.def<&aug_ok1>("_DisposeAUGraph");
+    p.def<&aug_addNode>("_AUGraphAddNode");
+    p.def<&aug_ok2>("_AUGraphRemoveNode");
+    p.def<&aug_nodeInfo>("_AUGraphNodeInfo");
+    p.def<&aug_ok1>("_AUGraphOpen");
+    p.def<&aug_ok1>("_AUGraphClose");
+    p.def<&aug_ok1>("_AUGraphInitialize");
+    p.def<&aug_ok1>("_AUGraphUninitialize");
+    p.def<&aug_ok1>("_AUGraphStart");
+    p.def<&aug_ok1>("_AUGraphStop");
+    p.def<&aug_isRunning>("_AUGraphIsRunning");
+    p.def<&aug_isRunning>("_AUGraphIsOpen");
+    p.def<&aug_isRunning>("_AUGraphIsInitialized");
+    p.def<&aug_update>("_AUGraphUpdate");
+    p.def<&aug_ok4>("_AUGraphSetNodeInputCallback");
+    p.def<&aug_ok5>("_AUGraphConnectNodeInput");
+    p.def<&aug_ok3>("_AUGraphDisconnectNodeInput");
+    p.def<&aug_ok1>("_AUGraphClearConnections");
 
     // OpenAL
     p.def<&alc_openDevice>("_alcOpenDevice");
@@ -1233,6 +1295,14 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&alc_getError>("_alcGetError");
     p.def<&alc_isExt>("_alcIsExtensionPresent");
     p.def<&alc_getString>("_alcGetString");
+    p.def<&alc_macMixerRate>("_alcMacOSXMixerOutputRate");
+    p.def<&alc_macGetMixerRate>("_alcMacOSXGetMixerOutputRate");
+    p.def<&alc_macIntSetter>("_alcMacOSXRenderingQuality");
+    p.def<&alc_macIntGetter>("_alcMacOSXGetRenderingQuality");
+    p.def<&alc_macIntSetter>("_alcMacOSXMixerMaxiumumBusses");
+    p.def<&alc_macIntGetter>("_alcMacOSXGetMixerMaxiumumBusses");
+    p.def<&alc_macIntSetter>("_alMacOSXRenderChannelCount");
+    p.def<&alc_macIntGetter>("_alMacOSXGetRenderChannelCount");
 
     p.def<&al_getError>("_alGetError");
     p.def<&al_getString>("_alGetString");
@@ -1326,10 +1396,263 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     // SystemConfiguration
     p.def<&scr_create>("_SCNetworkReachabilityCreateWithName");
     p.def<&scr_createWithAddress>("_SCNetworkReachabilityCreateWithAddress");
+    p.def<&scr_createPair>("_SCNetworkReachabilityCreateWithAddressPair");
     p.def<&scr_getFlags>("_SCNetworkReachabilityGetFlags");
     p.def<&scr_setCallback>("_SCNetworkReachabilitySetCallback");
     p.def<&scr_schedule>("_SCNetworkReachabilityScheduleWithRunLoop");
     p.def<&scr_schedule>("_SCNetworkReachabilityUnscheduleFromRunLoop");
+    p.def<&scr_setQueue>("_SCNetworkReachabilitySetDispatchQueue");
+
+    // CoreMedia CMTime & AVFoundation Video Player (AVAsset, AVURLAsset, AVPlayerItem, AVPlayer, AVPlayerLayer)
+    auto writeCMTime = [](Ctx& x, GuestPtr out, int64_t val, int32_t scale, uint32_t flags = 1) {
+        if (!out) return;
+        x.mem.write<int64_t>(out + 0, val);
+        x.mem.write<int32_t>(out + 8, scale);
+        x.mem.write<uint32_t>(out + 12, flags);
+        x.mem.write<int64_t>(out + 16, 0);
+    };
+    p.defineFunction("_CMTimeGetSeconds", [](Ctx& x) {
+        const int64_t val = int64_t(uint64_t(x.cpu.r[0]) | (uint64_t(x.cpu.r[1]) << 32));
+        const int32_t scale = int32_t(x.cpu.r[2]);
+        const uint32_t flags = x.cpu.r[3];
+        const double sec = (scale > 0 && (flags & 1)) ? (double(val) / double(scale)) : 0.0;
+        uint64_t bits;
+        std::memcpy(&bits, &sec, 8);
+        x.cpu.r[0] = uint32_t(bits);
+        x.cpu.r[1] = uint32_t(bits >> 32);
+    });
+    p.defineFunction("_CMTimeMake", [writeCMTime](Ctx& x) {
+        const GuestPtr sret = x.cpu.r[0];
+        const int64_t val = int64_t(uint64_t(x.cpu.r[1]) | (uint64_t(x.cpu.r[2]) << 32));
+        const int32_t scale = int32_t(x.cpu.r[3]);
+        writeCMTime(x, sret, val, scale > 0 ? scale : 1, 1);
+    });
+    p.defineFunction("_CMTimeMakeWithSeconds", [writeCMTime](Ctx& x) {
+        const GuestPtr sret = x.cpu.r[0];
+        const uint64_t bits = uint64_t(x.cpu.r[1]) | (uint64_t(x.cpu.r[2]) << 32);
+        double sec;
+        std::memcpy(&sec, &bits, 8);
+        const int32_t scale = std::max<int32_t>(1, int32_t(x.cpu.r[3]));
+        writeCMTime(x, sret, int64_t(sec * double(scale)), scale, 1);
+    });
+    p.defineFunction("_CMTimeCompare", [](Ctx& x) { x.cpu.r[0] = 0; });
+    auto defCMTimeConst = [&](const char* name, int64_t val, int32_t scale, uint32_t flags) {
+        const uint32_t addr = p.defineDataBlock(name, 24);
+        p.mem().write<int64_t>(addr + 0, val);
+        p.mem().write<int32_t>(addr + 8, scale);
+        p.mem().write<uint32_t>(addr + 12, flags);
+        p.mem().write<int64_t>(addr + 16, 0);
+    };
+    defCMTimeConst("_kCMTimeZero", 0, 1, 1);
+    defCMTimeConst("_kCMTimeInvalid", 0, 0, 0);
+    defCMTimeConst("_kCMTimePositiveInfinity", 0, 0, 5);
+    defCMTimeConst("_kCMTimeNegativeInfinity", 0, 0, 9);
+    defCMTimeConst("_kCMTimeIndefinite", 0, 0, 17);
+
+    struct AVAssetData : ObjC::HostObject { id url = 0; };
+    ObjC::ClassBuilder avAsset = r.defineClass("AVAsset", "NSObject");
+    avAsset.classMethod("assetWithURL:", [](Ctx& x) {
+        const id inst = rt(x).createInstance(rt(x).getClass("AVURLAsset"));
+        rt(x).host<AVAssetData>(inst).url = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        x.cpu.r[0] = autoreleased(x, inst);
+    }, "@@:@");
+    avAsset.method("duration", [writeCMTime](Ctx& x) { writeCMTime(x, x.cpu.r[0], 0, 600, 1); }, "{?=qiIq}@:");
+    avAsset.method("tracks", [](Ctx& x) { x.cpu.r[0] = Foundation::makeArray(x, {}); }, "@@:");
+    avAsset.method("tracksWithMediaType:", [](Ctx& x) { x.cpu.r[0] = Foundation::makeArray(x, {}); }, "@@:@");
+    avAsset.method("isPlayable", [](Ctx& x) { x.cpu.r[0] = 1; }, "c@:");
+    avAsset.method("statusOfValueForKey:error:", [](Ctx& x) {
+        const GuestPtr errOut = x.cpu.r[3];
+        if (errOut) x.mem.write<uint32_t>(errOut, 0);
+        x.cpu.r[0] = 2; // AVKeyValueStatusLoaded
+    }, "i@:@^@");
+    avAsset.method("loadValuesAsynchronouslyForKeys:completionHandler:", [](Ctx& x) {
+        const uint32_t handler = x.cpu.r[3];
+        if (!handler) return;
+        const uint32_t block = ObjC::blockCopy(x, handler);
+        Process* proc = &x.proc;
+        Foundation::mainRunLoop(x.proc).post([proc, block](CPU::Cpu& c) {
+            Ctx cx{*proc, c, proc->mem()};
+            ObjC::callBlock(cx, block, {});
+            ObjC::blockRelease(cx, block);
+        });
+    }, "v@:@@?");
+    avAsset.method("cancelLoading", [](Ctx&) {}, "v@:");
+
+    ObjC::ClassBuilder avUrlAsset = r.defineClass("AVURLAsset", "AVAsset");
+    avUrlAsset.classMethod("URLAssetWithURL:options:", [](Ctx& x) {
+        const id inst = rt(x).createInstance(x.cpu.r[0]);
+        rt(x).host<AVAssetData>(inst).url = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        x.cpu.r[0] = autoreleased(x, inst);
+    }, "@@:@@");
+    avUrlAsset.method("initWithURL:options:", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        rt(x).host<AVAssetData>(self).url = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        x.cpu.r[0] = self;
+    }, "@@:@@");
+    avUrlAsset.method("URL", [](Ctx& x) {
+        auto* d = rt(x).hostIf<AVAssetData>(x.cpu.r[0]);
+        x.cpu.r[0] = d ? d->url : 0;
+    }, "@@:");
+
+    struct AVPlayerItemData : ObjC::HostObject { id asset = 0; };
+    ObjC::ClassBuilder avItem = r.defineClass("AVPlayerItem", "NSObject");
+    avItem.classMethod("playerItemWithAsset:", [](Ctx& x) {
+        const id inst = rt(x).createInstance(x.cpu.r[0]);
+        rt(x).host<AVPlayerItemData>(inst).asset = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        x.cpu.r[0] = autoreleased(x, inst);
+    }, "@@:@");
+    avItem.classMethod("playerItemWithURL:", [](Ctx& x) {
+        const id asset = id(rt(x).send(x.cpu, rt(x).getClass("AVURLAsset"), "URLAssetWithURL:options:", {x.cpu.r[2], 0}));
+        const id inst = rt(x).createInstance(x.cpu.r[0]);
+        rt(x).host<AVPlayerItemData>(inst).asset = asset ? rt(x).retain(x.cpu, asset) : 0;
+        x.cpu.r[0] = autoreleased(x, inst);
+    }, "@@:@");
+    avItem.method("initWithAsset:", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        rt(x).host<AVPlayerItemData>(self).asset = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        x.cpu.r[0] = self;
+    }, "@@:@");
+    avItem.method("initWithURL:", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        const id asset = id(rt(x).send(x.cpu, rt(x).getClass("AVURLAsset"), "URLAssetWithURL:options:", {x.cpu.r[2], 0}));
+        rt(x).host<AVPlayerItemData>(self).asset = asset ? rt(x).retain(x.cpu, asset) : 0;
+        x.cpu.r[0] = self;
+    }, "@@:@");
+    avItem.method("asset", [](Ctx& x) {
+        auto* d = rt(x).hostIf<AVPlayerItemData>(x.cpu.r[0]);
+        x.cpu.r[0] = d ? d->asset : 0;
+    }, "@@:");
+    avItem.method("status", [](Ctx& x) { x.cpu.r[0] = 1; /* AVPlayerItemStatusReadyToPlay */ }, "i@:");
+    avItem.method("error", [](Ctx& x) { x.cpu.r[0] = 0; }, "@@:");
+    avItem.method("duration", [writeCMTime](Ctx& x) { writeCMTime(x, x.cpu.r[0], 0, 600, 1); }, "{?=qiIq}@:");
+    avItem.method("currentTime", [writeCMTime](Ctx& x) { writeCMTime(x, x.cpu.r[0], 0, 600, 1); }, "{?=qiIq}@:");
+    avItem.method("tracks", [](Ctx& x) { x.cpu.r[0] = Foundation::makeArray(x, {}); }, "@@:");
+    avItem.method("presentationSize", [](Ctx& x) {
+        const GuestPtr sret = x.cpu.r[0];
+        x.mem.write<float>(sret + 0, 0.0f);
+        x.mem.write<float>(sret + 4, 0.0f);
+    }, "{CGSize=ff}@:");
+    avItem.method("seekToTime:", [](Ctx&) {}, "v@:{?=qiIq}");
+    avItem.method("seekToTime:completionHandler:", [](Ctx& x) {
+        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const uint32_t handler = x.mem.read<uint32_t>(sp + 16);
+        if (handler) ObjC::callBlock(x, handler, {1});
+    }, "v@:{?=qiIq}@?");
+
+    struct AVPlayerData : ObjC::HostObject {
+        id currentItem = 0;
+        float rate = 0.0f, volume = 1.0f;
+        int32_t actionAtItemEnd = 0;
+        bool muted = false;
+    };
+    auto notifyFinish = [](Ctx& x, id self) {
+        auto* d = rt(x).hostIf<AVPlayerData>(self);
+        if (!d || !d->currentItem) return;
+        const id item = rt(x).retain(x.cpu, d->currentItem);
+        Process* proc = &x.proc;
+        Foundation::mainRunLoop(x.proc).addTimer(0.05, 0, false, [proc, item](CPU::Cpu& c) {
+            Ctx cx{*proc, c, proc->mem()};
+            Foundation::postNotification(cx, "AVPlayerItemDidPlayToEndTimeNotification", item);
+            rt(cx).release(c, item);
+        });
+    };
+    ObjC::ClassBuilder avPlayer = r.defineClass("AVPlayer", "NSObject");
+    avPlayer.classMethod("playerWithPlayerItem:", [](Ctx& x) {
+        const id inst = rt(x).createInstance(x.cpu.r[0]);
+        rt(x).host<AVPlayerData>(inst).currentItem = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        x.cpu.r[0] = autoreleased(x, inst);
+    }, "@@:@");
+    avPlayer.classMethod("playerWithURL:", [](Ctx& x) {
+        const id item = id(rt(x).send(x.cpu, rt(x).getClass("AVPlayerItem"), "playerItemWithURL:", {x.cpu.r[2]}));
+        const id inst = rt(x).createInstance(x.cpu.r[0]);
+        rt(x).host<AVPlayerData>(inst).currentItem = item ? rt(x).retain(x.cpu, item) : 0;
+        x.cpu.r[0] = autoreleased(x, inst);
+    }, "@@:@");
+    avPlayer.method("initWithPlayerItem:", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        rt(x).host<AVPlayerData>(self).currentItem = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        x.cpu.r[0] = self;
+    }, "@@:@");
+    avPlayer.method("initWithURL:", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        const id item = id(rt(x).send(x.cpu, rt(x).getClass("AVPlayerItem"), "playerItemWithURL:", {x.cpu.r[2]}));
+        rt(x).host<AVPlayerData>(self).currentItem = item ? rt(x).retain(x.cpu, item) : 0;
+        x.cpu.r[0] = self;
+    }, "@@:@");
+    avPlayer.method("currentItem", [](Ctx& x) {
+        auto* d = rt(x).hostIf<AVPlayerData>(x.cpu.r[0]);
+        x.cpu.r[0] = d ? d->currentItem : 0;
+    }, "@@:");
+    avPlayer.method("replaceCurrentItemWithPlayerItem:", [](Ctx& x) {
+        auto& d = rt(x).host<AVPlayerData>(x.cpu.r[0]);
+        const id next = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        if (d.currentItem) rt(x).release(x.cpu, d.currentItem);
+        d.currentItem = next;
+    }, "v@:@");
+    avPlayer.method("play", [notifyFinish](Ctx& x) {
+        const id self = x.cpu.r[0];
+        rt(x).host<AVPlayerData>(self).rate = 1.0f;
+        notifyFinish(x, self);
+    }, "v@:");
+    avPlayer.method("pause", [](Ctx& x) { rt(x).host<AVPlayerData>(x.cpu.r[0]).rate = 0.0f; }, "v@:");
+    avPlayer.method("rate", [](Ctx& x) {
+        float v = rt(x).host<AVPlayerData>(x.cpu.r[0]).rate;
+        uint32_t bits; std::memcpy(&bits, &v, 4);
+        x.cpu.r[0] = bits;
+    }, "f@:");
+    avPlayer.method("setRate:", [notifyFinish](Ctx& x) {
+        const id self = x.cpu.r[0];
+        float v; std::memcpy(&v, &x.cpu.r[2], 4);
+        rt(x).host<AVPlayerData>(self).rate = v;
+        if (v > 0.0f) notifyFinish(x, self);
+    }, "v@:f");
+    avPlayer.method("status", [](Ctx& x) { x.cpu.r[0] = 1; /* AVPlayerStatusReadyToPlay */ }, "i@:");
+    avPlayer.method("error", [](Ctx& x) { x.cpu.r[0] = 0; }, "@@:");
+    avPlayer.method("actionAtItemEnd", [](Ctx& x) { x.cpu.r[0] = uint32_t(rt(x).host<AVPlayerData>(x.cpu.r[0]).actionAtItemEnd); }, "i@:");
+    avPlayer.method("setActionAtItemEnd:", [](Ctx& x) { rt(x).host<AVPlayerData>(x.cpu.r[0]).actionAtItemEnd = int32_t(x.cpu.r[2]); }, "v@:i");
+    avPlayer.method("isMuted", [](Ctx& x) { x.cpu.r[0] = rt(x).host<AVPlayerData>(x.cpu.r[0]).muted ? 1 : 0; }, "c@:");
+    avPlayer.method("setMuted:", [](Ctx& x) { rt(x).host<AVPlayerData>(x.cpu.r[0]).muted = (x.cpu.r[2] & 0xFF) != 0; }, "v@:c");
+    avPlayer.method("volume", [](Ctx& x) {
+        float v = rt(x).host<AVPlayerData>(x.cpu.r[0]).volume;
+        uint32_t bits; std::memcpy(&bits, &v, 4);
+        x.cpu.r[0] = bits;
+    }, "f@:");
+    avPlayer.method("setVolume:", [](Ctx& x) {
+        float v; std::memcpy(&v, &x.cpu.r[2], 4);
+        rt(x).host<AVPlayerData>(x.cpu.r[0]).volume = v;
+    }, "v@:f");
+    avPlayer.method("allowsExternalPlayback", [](Ctx& x) { x.cpu.r[0] = 0; }, "c@:");
+    avPlayer.method("setAllowsExternalPlayback:", [](Ctx&) {}, "v@:c");
+    avPlayer.method("allowsAirPlayVideo", [](Ctx& x) { x.cpu.r[0] = 0; }, "c@:");
+    avPlayer.method("setAllowsAirPlayVideo:", [](Ctx&) {}, "v@:c");
+    avPlayer.method("currentTime", [writeCMTime](Ctx& x) { writeCMTime(x, x.cpu.r[0], 0, 600, 1); }, "{?=qiIq}@:");
+    avPlayer.method("seekToTime:", [](Ctx&) {}, "v@:{?=qiIq}");
+    avPlayer.method("seekToTime:toleranceBefore:toleranceAfter:", [](Ctx&) {}, "v@:{?=qiIq}{?=qiIq}{?=qiIq}");
+    avPlayer.method("addPeriodicTimeObserverForInterval:queue:usingBlock:", [](Ctx& x) { x.cpu.r[0] = rt(x).createInstance(rt(x).nsObject); }, "@@:{?=qiIq}@@?");
+    avPlayer.method("removeTimeObserver:", [](Ctx&) {}, "v@:@");
+
+    ObjC::ClassBuilder avLayer = r.defineClass("AVPlayerLayer", "CALayer");
+    avLayer.classMethod("playerLayerWithPlayer:", [](Ctx& x) {
+        const id inst = id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, x.cpu.r[0], rt(x).selAlloc)), rt(x).selInit));
+        if (x.cpu.r[2]) rt(x).setAssociated(x.cpu, inst, 0xA701, x.cpu.r[2], 1);
+        x.cpu.r[0] = autoreleased(x, inst);
+    }, "@@:@");
+    avLayer.method("player", [](Ctx& x) { x.cpu.r[0] = rt(x).getAssociated(x.cpu.r[0], 0xA701); }, "@@:");
+    avLayer.method("setPlayer:", [](Ctx& x) { rt(x).setAssociated(x.cpu, x.cpu.r[0], 0xA701, x.cpu.r[2], 1); }, "v@:@");
+    avLayer.method("videoGravity", [](Ctx& x) {
+        const id g = rt(x).getAssociated(x.cpu.r[0], 0xA702);
+        x.cpu.r[0] = g ? g : Foundation::constString(x.proc, "AVLayerVideoGravityResizeAspect");
+    }, "@@:");
+    avLayer.method("setVideoGravity:", [](Ctx& x) { rt(x).setAssociated(x.cpu, x.cpu.r[0], 0xA702, x.cpu.r[2], 3); }, "v@:@");
+    avLayer.method("isReadyForDisplay", [](Ctx& x) { x.cpu.r[0] = 1; }, "c@:");
+
+    for (const char* n : {"AVPlayerItemDidPlayToEndTimeNotification", "AVPlayerItemFailedToPlayToEndTimeNotification",
+                          "AVPlayerItemTimeJumpedNotification", "AVPlayerItemPlaybackStalledNotification",
+                          "AVLayerVideoGravityResizeAspect", "AVLayerVideoGravityResizeAspectFill", "AVLayerVideoGravityResize",
+                          "AVMediaTypeVideo", "AVMediaTypeAudio", "AVMediaTypeText", "AVURLAssetPreferPreciseDurationAndTimingKey"}) {
+        const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
+        p.mem().write<uint32_t>(cell, Foundation::constString(p, n));
+    }
 }
 
 } // namespace Hydrogen::Runtime::UIKit

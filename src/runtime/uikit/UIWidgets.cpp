@@ -1484,7 +1484,13 @@ void sw_drawRect(Ctx& x, id self, SEL, CGRect) {
     CG::fillRect(x, ctx, {on ? (b.w - r - 2) : 2.0f, 2.0f, r, r}, {1, 1, 1, 1});
 }
 
-struct SliderData : ObjC::HostObject { float val = 0, minVal = 0, maxVal = 1; bool continuous = true; };
+struct SliderData : ObjC::HostObject {
+    float val = 0, minVal = 0, maxVal = 1;
+    bool continuous = true;
+    id minTrackImg = 0, maxTrackImg = 0, thumbImg = 0;
+    id minValImg = 0, maxValImg = 0;
+    id minTrackTint = 0, maxTrackTint = 0, thumbTint = 0;
+};
 SliderData& SLD(Ctx& x, id s) { return rt(x).host<SliderData>(s); }
 id sl_initWithFrame(Ctx& x, id self, SEL s, CGRect f) {
     if (f.size.height <= 0) f.size.height = 23;
@@ -1505,6 +1511,25 @@ float sl_max(Ctx& x, id self, SEL) { return SLD(x, self).maxVal; }
 void sl_setMax(Ctx& x, id self, SEL, float v) { SLD(x, self).maxVal = v; }
 bool sl_cont(Ctx& x, id self, SEL) { return SLD(x, self).continuous; }
 void sl_setCont(Ctx& x, id self, SEL, bool b) { SLD(x, self).continuous = b; }
+void sl_setMinTrackImg(Ctx& x, id self, SEL, id img, uint32_t) { setRetained(x, SLD(x, self).minTrackImg, img); }
+void sl_setMaxTrackImg(Ctx& x, id self, SEL, id img, uint32_t) { setRetained(x, SLD(x, self).maxTrackImg, img); }
+void sl_setThumbImg(Ctx& x, id self, SEL, id img, uint32_t) { setRetained(x, SLD(x, self).thumbImg, img); }
+id sl_minTrackImg(Ctx& x, id self, SEL, uint32_t) { return SLD(x, self).minTrackImg; }
+id sl_maxTrackImg(Ctx& x, id self, SEL, uint32_t) { return SLD(x, self).maxTrackImg; }
+id sl_thumbImg(Ctx& x, id self, SEL, uint32_t) { return SLD(x, self).thumbImg; }
+id sl_curMinTrackImg(Ctx& x, id self, SEL) { return SLD(x, self).minTrackImg; }
+id sl_curMaxTrackImg(Ctx& x, id self, SEL) { return SLD(x, self).maxTrackImg; }
+id sl_curThumbImg(Ctx& x, id self, SEL) { return SLD(x, self).thumbImg; }
+id sl_minValImg(Ctx& x, id self, SEL) { return SLD(x, self).minValImg; }
+void sl_setMinValImg(Ctx& x, id self, SEL, id img) { setRetained(x, SLD(x, self).minValImg, img); }
+id sl_maxValImg(Ctx& x, id self, SEL) { return SLD(x, self).maxValImg; }
+void sl_setMaxValImg(Ctx& x, id self, SEL, id img) { setRetained(x, SLD(x, self).maxValImg, img); }
+id sl_minTrackTint(Ctx& x, id self, SEL) { return SLD(x, self).minTrackTint; }
+void sl_setMinTrackTint(Ctx& x, id self, SEL, id c) { setRetained(x, SLD(x, self).minTrackTint, c); }
+id sl_maxTrackTint(Ctx& x, id self, SEL) { return SLD(x, self).maxTrackTint; }
+void sl_setMaxTrackTint(Ctx& x, id self, SEL, id c) { setRetained(x, SLD(x, self).maxTrackTint, c); }
+id sl_thumbTint(Ctx& x, id self, SEL) { return SLD(x, self).thumbTint; }
+void sl_setThumbTint(Ctx& x, id self, SEL, id c) { setRetained(x, SLD(x, self).thumbTint, c); }
 void sl_drawRect(Ctx& x, id self, SEL, CGRect) {
     const id ctx = CG::currentContext(x);
     if (!ctx) return;
@@ -2029,6 +2054,20 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
       .m<&sl_min>("minimumValue", "f@:").m<&sl_setMin>("setMinimumValue:", "v@:f")
       .m<&sl_max>("maximumValue", "f@:").m<&sl_setMax>("setMaximumValue:", "v@:f")
       .m<&sl_cont>("isContinuous", "c@:").m<&sl_setCont>("setContinuous:", "v@:c")
+      .m<&sl_setMinTrackImg>("setMinimumTrackImage:forState:", "v@:@I")
+      .m<&sl_setMaxTrackImg>("setMaximumTrackImage:forState:", "v@:@I")
+      .m<&sl_setThumbImg>("setThumbImage:forState:", "v@:@I")
+      .m<&sl_minTrackImg>("minimumTrackImageForState:", "@@:I")
+      .m<&sl_maxTrackImg>("maximumTrackImageForState:", "@@:I")
+      .m<&sl_thumbImg>("thumbImageForState:", "@@:I")
+      .m<&sl_curMinTrackImg>("currentMinimumTrackImage")
+      .m<&sl_curMaxTrackImg>("currentMaximumTrackImage")
+      .m<&sl_curThumbImg>("currentThumbImage")
+      .m<&sl_minValImg>("minimumValueImage").m<&sl_setMinValImg>("setMinimumValueImage:", "v@:@")
+      .m<&sl_maxValImg>("maximumValueImage").m<&sl_setMaxValImg>("setMaximumValueImage:", "v@:@")
+      .m<&sl_minTrackTint>("minimumTrackTintColor").m<&sl_setMinTrackTint>("setMinimumTrackTintColor:", "v@:@")
+      .m<&sl_maxTrackTint>("maximumTrackTintColor").m<&sl_setMaxTrackTint>("setMaximumTrackTintColor:", "v@:@")
+      .m<&sl_thumbTint>("thumbTintColor").m<&sl_setThumbTint>("setThumbTintColor:", "v@:@")
       .m<&sl_drawRect>("drawRect:", "v@:" + R);
 
     ObjC::ClassBuilder seg = r.defineClass("UISegmentedControl", "UIControl");
@@ -2063,6 +2102,134 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
          .m<&seg_source>("sourceViewController")
          .m<&seg_dest>("destinationViewController")
          .m<&seg_perform>("perform", "v@:");
+
+    // UIPasteboard
+    struct PasteboardData : ObjC::HostObject {
+        id name = 0;
+        id itemsDict = 0;
+        int32_t changeCount = 1;
+        bool persistent = true;
+    };
+    auto getPbData = [](Ctx& x, id self) -> PasteboardData& {
+        auto& d = rt(x).host<PasteboardData>(self);
+        if (!d.itemsDict) d.itemsDict = Foundation::makeDict(x, {}, true, true);
+        return d;
+    };
+    ObjC::ClassBuilder pb = r.defineClass("UIPasteboard", "NSObject");
+    pb.classMethod("pasteboardWithName:create:", [getPbData](Ctx& x) {
+        const id cls = x.cpu.r[0];
+        const id nameObj = x.cpu.r[2];
+        const std::string name = nameObj ? utf8(x, nameObj) : "com.apple.UIKit.pboard.general";
+        static const char mapKey = 0;
+        uint32_t& dictSlot = x.proc.processSlot(&mapKey);
+        if (!dictSlot) dictSlot = Foundation::makeDict(x, {}, true, true);
+        const id k = makeString(x, name);
+        id inst = Foundation::dictGet(x, dictSlot, k);
+        if (!inst) {
+            inst = rt(x).createInstance(cls);
+            rt(x).makeImmortal(inst);
+            auto& d = getPbData(x, inst);
+            d.name = Foundation::makeString(x, name, true);
+            rt(x).send(x.cpu, dictSlot, "setObject:forKey:", {inst, k});
+        }
+        x.cpu.r[0] = inst;
+    }, "@@:@c");
+    pb.classMethod("generalPasteboard", [](Ctx& x) {
+        const id cls = x.cpu.r[0];
+        x.cpu.r[0] = id(rt(x).send(x.cpu, cls, "pasteboardWithName:create:", {makeString(x, "com.apple.UIKit.pboard.general"), 1}));
+    }, "@@:");
+    pb.classMethod("pasteboardWithUniqueName", [](Ctx& x) {
+        const id cls = x.cpu.r[0];
+        static int seq = 1;
+        x.cpu.r[0] = id(rt(x).send(x.cpu, cls, "pasteboardWithName:create:", {makeString(x, "com.apple.UIKit.pboard.unique." + std::to_string(seq++)), 1}));
+    }, "@@:");
+    pb.classMethod("removePasteboardWithName:", [](Ctx&) {}, "v@:@");
+    pb.method("name", [getPbData](Ctx& x) { x.cpu.r[0] = getPbData(x, x.cpu.r[0]).name; }, "@@:");
+    pb.method("isPersistent", [getPbData](Ctx& x) { x.cpu.r[0] = getPbData(x, x.cpu.r[0]).persistent ? 1 : 0; }, "c@:");
+    pb.method("setPersistent:", [getPbData](Ctx& x) { getPbData(x, x.cpu.r[0]).persistent = (x.cpu.r[2] & 0xFF) != 0; }, "v@:c");
+    pb.method("changeCount", [getPbData](Ctx& x) { x.cpu.r[0] = uint32_t(getPbData(x, x.cpu.r[0]).changeCount); }, "i@:");
+    pb.method("string", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        x.cpu.r[0] = Foundation::dictGet(x, d.itemsDict, "public.utf8-plain-text");
+    }, "@@:");
+    pb.method("setString:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        d.changeCount++;
+        const id val = x.cpu.r[2];
+        if (val) rt(x).send(x.cpu, d.itemsDict, "setObject:forKey:", {val, makeString(x, "public.utf8-plain-text")});
+        else rt(x).send(x.cpu, d.itemsDict, "removeObjectForKey:", {makeString(x, "public.utf8-plain-text")});
+    }, "v@:@");
+    pb.method("strings", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        const id s = Foundation::dictGet(x, d.itemsDict, "public.utf8-plain-text");
+        x.cpu.r[0] = s ? Foundation::makeArray(x, {s}) : Foundation::makeArray(x, {});
+    }, "@@:");
+    pb.method("setStrings:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        d.changeCount++;
+        const auto items = Foundation::arrayItems(x, x.cpu.r[2]);
+        if (!items.empty()) rt(x).send(x.cpu, d.itemsDict, "setObject:forKey:", {items[0], makeString(x, "public.utf8-plain-text")});
+    }, "v@:@");
+    pb.method("URL", [getPbData](Ctx& x) { x.cpu.r[0] = Foundation::dictGet(x, getPbData(x, x.cpu.r[0]).itemsDict, "public.url"); }, "@@:");
+    pb.method("setURL:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        d.changeCount++;
+        if (x.cpu.r[2]) rt(x).send(x.cpu, d.itemsDict, "setObject:forKey:", {x.cpu.r[2], makeString(x, "public.url")});
+    }, "v@:@");
+    pb.method("image", [getPbData](Ctx& x) { x.cpu.r[0] = Foundation::dictGet(x, getPbData(x, x.cpu.r[0]).itemsDict, "public.image"); }, "@@:");
+    pb.method("setImage:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        d.changeCount++;
+        if (x.cpu.r[2]) rt(x).send(x.cpu, d.itemsDict, "setObject:forKey:", {x.cpu.r[2], makeString(x, "public.image")});
+    }, "v@:@");
+    pb.method("items", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        x.cpu.r[0] = Foundation::makeArray(x, {d.itemsDict});
+    }, "@@:");
+    pb.method("setItems:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        d.changeCount++;
+        const auto arr = Foundation::arrayItems(x, x.cpu.r[2]);
+        if (!arr.empty() && Foundation::isDict(x, arr[0])) {
+            for (auto& [k, v] : Foundation::dictEntries(x, arr[0]))
+                rt(x).send(x.cpu, d.itemsDict, "setObject:forKey:", {v, k});
+        }
+    }, "v@:@");
+    pb.method("valueForPasteboardType:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        x.cpu.r[0] = x.cpu.r[2] ? Foundation::dictGet(x, d.itemsDict, x.cpu.r[2]) : 0;
+    }, "@@:@");
+    pb.method("dataForPasteboardType:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        const id v = x.cpu.r[2] ? Foundation::dictGet(x, d.itemsDict, x.cpu.r[2]) : 0;
+        if (!v) { x.cpu.r[0] = 0; return; }
+        if (Foundation::isData(x, v)) { x.cpu.r[0] = v; return; }
+        if (Foundation::isString(x, v)) {
+            const std::string s = utf8(x, v);
+            x.cpu.r[0] = Foundation::makeData(x, s.data(), uint32_t(s.size()));
+            return;
+        }
+        x.cpu.r[0] = 0;
+    }, "@@:@");
+    pb.method("setValue:forPasteboardType:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        d.changeCount++;
+        if (x.cpu.r[2] && x.cpu.r[3]) rt(x).send(x.cpu, d.itemsDict, "setObject:forKey:", {x.cpu.r[2], x.cpu.r[3]});
+    }, "v@:@@");
+    pb.method("setData:forPasteboardType:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        d.changeCount++;
+        if (x.cpu.r[2] && x.cpu.r[3]) rt(x).send(x.cpu, d.itemsDict, "setObject:forKey:", {x.cpu.r[2], x.cpu.r[3]});
+    }, "v@:@@");
+    pb.method("pasteboardTypes", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        x.cpu.r[0] = id(rt(x).send(x.cpu, d.itemsDict, "allKeys"));
+    }, "@@:");
+    pb.method("containsPasteboardTypes:", [](Ctx& x) { x.cpu.r[0] = 0; }, "c@:@");
+    for (const char* n : {"UIPasteboardNameGeneral", "UIPasteboardNameFind", "UIPasteboardChangedNotification", "UIPasteboardRemovedNotification"}) {
+        const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
+        p.mem().write<uint32_t>(cell, Foundation::constString(p, n));
+    }
 }
 
 } // namespace Hydrogen::Runtime::UIKit

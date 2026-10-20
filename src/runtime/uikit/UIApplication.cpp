@@ -555,6 +555,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
     Foundation::postNotification(x, "UIApplicationDidFinishLaunchingNotification", u.app);
     if (del && r.respondsTo(del, r.sel("applicationDidBecomeActive:"))) r.send(x.cpu, del, "applicationDidBecomeActive:", {u.app});
     Foundation::postNotification(x, "UIApplicationDidBecomeActiveNotification", u.app);
+    layoutPass(x);
     r.poolPop(x.cpu, pool);
 
     if (u.windows.empty()) x.proc.log(LogLevel::Warning, "The app finished launching without creating a window");
@@ -618,6 +619,9 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_sendEvent>("sendEvent:", "v@:@").m<&app_sendAction>("sendAction:to:from:forEvent:", "c@::@@@")
        .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
+    p.mem().write<uint32_t>(p.defineDataBlock("_UIBackgroundTaskInvalid", 4), 0);
+    p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalMinimum", 8), 0.0);
+    p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalNever", 8), 1e9);
     for (const char* n : {"UIApplicationDidFinishLaunchingNotification", "UIApplicationDidBecomeActiveNotification",
                           "UIApplicationWillResignActiveNotification", "UIApplicationDidEnterBackgroundNotification",
                           "UIApplicationWillEnterForegroundNotification", "UIApplicationWillTerminateNotification",

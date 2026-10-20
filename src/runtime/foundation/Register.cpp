@@ -65,12 +65,21 @@ void registerFoundation(Process& p) {
             p.mem().write<uint32_t>(cell + 12, name == "kCMTimeZero" ? 1 : name == "kCMTimeInvalid" ? 0 : 5);
             return cell;
         }
+        auto starts = [&](const char* pf) { return name.compare(0, std::strlen(pf), pf) == 0; };
         auto ends = [&](const char* e) { const size_t n = std::strlen(e); return name.size() > n && name.compare(name.size() - n, n, e) == 0; };
         std::string value;
         if (auto it = known.find(name); it != known.end()) value = it->second;
         else if (ends("Notification") || ends("Key") || ends("Domain") || ends("AttributeName") || ends("Exception") ||
-                 (name[0] == 'k' && (name.find("Property") != std::string::npos || name.find("SSL") != std::string::npos ||
-                                     name.find("ServiceType") != std::string::npos)))
+                 ends("Preset") || ends("RunLoopMode") ||
+                 starts("AVCaptureSessionPreset") || starts("AVMediaType") || starts("AVLayerVideoGravity") ||
+                 starts("AVAudioSession") || starts("AVAssetExportPreset") || starts("AVFileType") ||
+                 starts("UIActivityType") || starts("UITransitionContext") || starts("UIFontTextStyle") ||
+                 starts("ADBannerContentSizeIdentifier") || starts("SLServiceType") ||
+                 starts("ACAccountTypeIdentifier") || starts("SKStoreProductParameter") ||
+                 (name[0] == 'k' && std::isupper(uint8_t(name[1])) &&
+                  (name.find("Property") != std::string::npos || name.find("SSL") != std::string::npos ||
+                   name.find("ServiceType") != std::string::npos || name.find("Attr") != std::string::npos ||
+                   name.find("Key") != std::string::npos || name.find("Type") != std::string::npos)))
             value = name;
         else return 0;
         const uint32_t cell = p.allocStatic(4);

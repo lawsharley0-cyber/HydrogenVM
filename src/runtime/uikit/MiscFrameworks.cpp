@@ -229,6 +229,12 @@ id mpvc_initWithURL(Ctx& x, id self, SEL, id url) {
     return me;
 }
 id mpvc_player(Ctx& x, id self, SEL) { return rt(x).host<MovieVCData>(self).player; }
+void vc_presentMovie(Ctx& x, id, SEL, id movieVC) {
+    if (!movieVC) return;
+    const id player = id(rt(x).send(x.cpu, movieVC, "moviePlayer"));
+    if (player) rt(x).send(x.cpu, player, "play");
+}
+void vc_dismissMovie(Ctx&, id, SEL) {}
 
 // ---- MPMusicPlayerController: the iPod app isn't playing (so games play their own music).
 id mus_shared(Ctx& x, id cls, SEL) {
@@ -269,7 +275,10 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
         p.mem().write<uint32_t>(cell, Foundation::constString(p, n + 1));
     }
 
-    r.builder(r.getClass("UIViewController")).cm<&vc_attemptRotation>("attemptRotationToDeviceOrientation", "v@:");
+    r.builder(r.getClass("UIViewController"))
+        .cm<&vc_attemptRotation>("attemptRotationToDeviceOrientation", "v@:")
+        .m<&vc_presentMovie>("presentMoviePlayerViewControllerAnimated:", "v@:@")
+        .m<&vc_dismissMovie>("dismissMoviePlayerViewControllerAnimated", "v@:");
 
     ObjC::ClassBuilder ip = r.defineClass("UIImagePickerController", "UINavigationController");
     ip.cm<&ip_sourceAvailable>("isSourceTypeAvailable:", "c@:i").cm<&ip_mediaTypes>("availableMediaTypesForSourceType:", "@@:i")

@@ -167,6 +167,46 @@ bool isPointerType(Ctx& x, uint32_t ti) {
     return vt == eh(x).vtPointer + 8 || vt == eh(x).vtPbase + 8;
 }
 
+uint32_t findSubobject(Ctx& x, uint32_t obj, uint32_t t, uint32_t dst, int depth = 0) {
+    if (!obj || !t || !dst || depth > 32) return 0;
+    if (t == dst || typeName(x, t) == typeName(x, dst)) return obj;
+    Eh& e = eh(x);
+    const uint32_t vt = x.mem.read<uint32_t>(t);
+    if (vt == e.vtSi + 8) return findSubobject(x, obj, x.mem.read<uint32_t>(t + 8), dst, depth + 1);
+    if (vt == e.vtVmi + 8) {
+        const uint32_t n = x.mem.read<uint32_t>(t + 12);
+        for (uint32_t i = 0; i < n && i < 64; ++i) {
+            const uint32_t base = x.mem.read<uint32_t>(t + 16 + i * 8);
+            const int32_t flags = int32_t(x.mem.read<uint32_t>(t + 20 + i * 8));
+            uint32_t baseObj = 0;
+            if (flags & 1) {
+                const uint32_t vptr = x.mem.read<uint32_t>(obj);
+                if (vptr) baseObj = uint32_t(int32_t(obj) + x.mem.read<int32_t>(uint32_t(int32_t(vptr) + (flags >> 8))));
+            } else {
+                baseObj = uint32_t(int32_t(obj) + (flags >> 8));
+            }
+            if (uint32_t r = findSubobject(x, baseObj, base, dst, depth + 1)) return r;
+        }
+    }
+    return 0;
+}
+
+uint32_t x_dynamic_cast(Ctx& x, GuestPtr sub, GuestPtr src, GuestPtr dst, int32_t src2dst) {
+    if (!sub || !dst) return 0;
+    if (src == dst) return sub;
+    const uint32_t vptr = x.mem.read<uint32_t>(sub);
+    if (!vptr) return 0;
+    const int32_t offsetToTop = x.mem.read<int32_t>(vptr - 8);
+    const uint32_t wholeType = x.mem.read<uint32_t>(vptr - 4);
+    const uint32_t whole = uint32_t(int32_t(sub) + offsetToTop);
+    if (uint32_t r = findSubobject(x, whole, wholeType, dst)) return r;
+    if (src && src2dst >= 0) {
+        int32_t off = 0;
+        if (classMatch(x, src, dst, off)) return sub + uint32_t(src2dst);
+    }
+    return 0;
+}
+
 // Does catch clause type `c` (0 = catch-all) take the exception? Sets `adjusted`.
 bool catches(Ctx& x, const Exception& ex, uint32_t c, uint32_t& adjusted) {
     if (!c) { adjusted = ex.kind == Kind::Cxx ? ex.object : ex.object; return true; }
@@ -512,6 +552,7 @@ void registerUnwinder(Process& p) {
     p.def<&x_get_exception_ptr>("___cxa_get_exception_ptr");
     p.def<&x_current_type>("___cxa_current_exception_type");
     p.def<&x_uncaught>("__ZSt18uncaught_exceptionv");
+    p.def<&x_dynamic_cast>("___dynamic_cast");
 
     p.def<&o_throw>("_objc_exception_throw");
     p.def<&o_rethrow>("_objc_exception_rethrow");

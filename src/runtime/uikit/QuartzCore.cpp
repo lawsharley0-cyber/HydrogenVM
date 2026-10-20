@@ -741,6 +741,7 @@ void runFrame(Ctx& x, double now) {
         }
     } timer{perf, t0};
     deliverPendingInput(x);
+    layoutPass(x);
     // display links
     if (!u.links.empty()) {
         const size_t n = u.links.size();
@@ -912,6 +913,7 @@ void registerQuartzCore(Process& p, ObjC::Runtime& r) {
     p.def<&t3_getAffine>("_CATransform3DGetAffineTransform");
     p.def<&t3_isAffine>("_CATransform3DIsAffine");
     p.def<&ca_mediaTime>("_CACurrentMediaTime");
+    p.defineFunction("_CAShow", [](Ctx&) {});
     {
         const uint32_t idt = p.defineDataBlock("_CATransform3DIdentity", 64);
         const CATransform3D i = identity3D();

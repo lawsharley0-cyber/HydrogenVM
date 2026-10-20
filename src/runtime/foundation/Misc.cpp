@@ -1191,6 +1191,7 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
       .cm<&tzc_withName>("timeZoneWithName:").cm<&tzc_withName>("timeZoneWithAbbreviation:");
     tz.m<&tz_secondsFromGMT>("secondsFromGMT", "i@:").m<&tz_secondsFromGMTForDate>("secondsFromGMTForDate:", "i@:@")
       .m<&tz_name>("name").m<&tz_abbreviation>("abbreviation").m<&tz_isDST>("isDaylightSavingTime", "c@:")
+      .m<&tz_name>("localizedName:locale:", "@@:i@")
       .m<&retainedCopy>("copyWithZone:");
 
     p.def<&f_stringFromClass>("_NSStringFromClass");

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <regex>
 
 namespace Hydrogen::Runtime::Foundation {
 bool characterSetContains(Ctx& x, id set, char16_t c);
@@ -417,6 +418,457 @@ void xml_dealloc(Ctx& x, id self, SEL) {
     R(x).disposeInstance(x.cpu, self);
 }
 
+// ------------------------------------------------------------------ libxml2 ---
+// Guest-visible xmlNode / xmlDoc / xmlAttr / xmlNs / xmlXPath structs (32-bit ABI)
+// xmlNode (60 bytes): +4 type, +8 name, +12 children, +16 last, +20 parent, +24 next,
+//                     +28 prev, +32 doc, +36 ns, +40 content, +44 properties, +48 nsDef
+// xmlNs   (24 bytes): +0 next, +4 type(18), +8 href, +12 prefix, +16 _private, +20 context
+// xmlXPathContext (16 bytes): +0 doc, +4 node
+// xmlXPathObject  (16 bytes): +0 type(1=NODESET), +4 nodesetval
+// xmlNodeSet      (12 bytes): +0 nodeNr, +4 nodeMax, +8 nodeTab
+
+GuestPtr lx_strdupStr(Ctx& x, const std::string& s) {
+    const uint32_t a = x.proc.heap().alloc(uint32_t(s.size() + 1));
+    if (!a) return 0;
+    if (!s.empty()) std::memcpy(x.mem.host(a), s.data(), s.size());
+    x.mem.write<uint8_t>(a + uint32_t(s.size()), 0);
+    return a;
+}
+void lx_free(Ctx& x, GuestPtr p) {
+    if (p && x.proc.heap().blockSize(p)) x.proc.heap().free(p);
+}
+void lx_initParser(Ctx&) {}
+GuestPtr lx_newNodeRaw(Ctx& x, uint32_t type, const std::string& name, const std::string& content = {}) {
+    const uint32_t n = x.proc.heap().allocZeroed(64);
+    x.mem.write<uint32_t>(n + 4, type);
+    if (!name.empty()) x.mem.write<uint32_t>(n + 8, lx_strdupStr(x, name));
+    if (!content.empty()) x.mem.write<uint32_t>(n + 40, lx_strdupStr(x, content));
+    return n;
+}
+GuestPtr lx_addChild(Ctx& x, GuestPtr parent, GuestPtr cur) {
+    if (!parent || !cur) return cur;
+    const uint32_t type = x.mem.read<uint32_t>(cur + 4);
+    const uint32_t doc = x.mem.read<uint32_t>(parent + 4) == 9 ? parent : x.mem.read<uint32_t>(parent + 32);
+    x.mem.write<uint32_t>(cur + 20, parent);
+    if (doc) x.mem.write<uint32_t>(cur + 32, doc);
+    if (type == 2 /* XML_ATTRIBUTE_NODE */) {
+        uint32_t p = x.mem.read<uint32_t>(parent + 44);
+        if (!p) x.mem.write<uint32_t>(parent + 44, cur);
+        else {
+            while (x.mem.read<uint32_t>(p + 24)) p = x.mem.read<uint32_t>(p + 24);
+            x.mem.write<uint32_t>(p + 24, cur);
+            x.mem.write<uint32_t>(cur + 28, p);
+        }
+        return cur;
+    }
+    const uint32_t last = x.mem.read<uint32_t>(parent + 16);
+    if (!last) {
+        x.mem.write<uint32_t>(parent + 12, cur);
+        x.mem.write<uint32_t>(parent + 16, cur);
+    } else {
+        x.mem.write<uint32_t>(last + 24, cur);
+        x.mem.write<uint32_t>(cur + 28, last);
+        x.mem.write<uint32_t>(parent + 16, cur);
+    }
+    return cur;
+}
+GuestPtr lx_newDoc(Ctx& x, GuestPtr) {
+    const uint32_t doc = lx_newNodeRaw(x, 9 /* XML_DOCUMENT_NODE */, "document");
+    x.mem.write<uint32_t>(doc + 32, doc);
+    return doc;
+}
+GuestPtr lx_newNode(Ctx& x, GuestPtr ns, GuestPtr name) {
+    const uint32_t n = lx_newNodeRaw(x, 1 /* XML_ELEMENT_NODE */, name ? x.proc.readCString(name) : "");
+    x.mem.write<uint32_t>(n + 36, ns);
+    return n;
+}
+GuestPtr lx_newText(Ctx& x, GuestPtr content) {
+    return lx_newNodeRaw(x, 3 /* XML_TEXT_NODE */, "text", content ? x.proc.readCString(content) : "");
+}
+GuestPtr lx_newProp(Ctx& x, GuestPtr node, GuestPtr name, GuestPtr value) {
+    const uint32_t attr = lx_newNodeRaw(x, 2 /* XML_ATTRIBUTE_NODE */, name ? x.proc.readCString(name) : "");
+    const uint32_t txt = lx_newText(x, value);
+    lx_addChild(x, attr, txt);
+    if (node) lx_addChild(x, node, attr);
+    return attr;
+}
+GuestPtr lx_newNs(Ctx& x, GuestPtr node, GuestPtr href, GuestPtr prefix) {
+    const uint32_t ns = x.proc.heap().allocZeroed(24);
+    x.mem.write<uint32_t>(ns + 4, 18 /* XML_NAMESPACE_DECL */);
+    if (href) x.mem.write<uint32_t>(ns + 8, lx_strdupStr(x, x.proc.readCString(href)));
+    if (prefix) x.mem.write<uint32_t>(ns + 12, lx_strdupStr(x, x.proc.readCString(prefix)));
+    if (node) {
+        uint32_t cur = x.mem.read<uint32_t>(node + 48);
+        if (!cur) x.mem.write<uint32_t>(node + 48, ns);
+        else {
+            while (x.mem.read<uint32_t>(cur)) cur = x.mem.read<uint32_t>(cur);
+            x.mem.write<uint32_t>(cur, ns);
+        }
+    }
+    return ns;
+}
+GuestPtr lx_newNsProp(Ctx& x, GuestPtr node, GuestPtr ns, GuestPtr name, GuestPtr value) {
+    const uint32_t attr = lx_newProp(x, node, name, value);
+    if (attr) x.mem.write<uint32_t>(attr + 36, ns);
+    return attr;
+}
+GuestPtr lx_docGetRoot(Ctx& x, GuestPtr doc) {
+    if (!doc) return 0;
+    for (uint32_t c = x.mem.read<uint32_t>(doc + 12); c; c = x.mem.read<uint32_t>(c + 24))
+        if (x.mem.read<uint32_t>(c + 4) == 1) return c;
+    return x.mem.read<uint32_t>(doc + 12);
+}
+GuestPtr lx_docSetRoot(Ctx& x, GuestPtr doc, GuestPtr root) {
+    if (!doc) return 0;
+    const uint32_t old = lx_docGetRoot(x, doc);
+    x.mem.write<uint32_t>(doc + 12, 0);
+    x.mem.write<uint32_t>(doc + 16, 0);
+    if (root) lx_addChild(x, doc, root);
+    return old;
+}
+void lx_unlinkNode(Ctx& x, GuestPtr cur) {
+    if (!cur) return;
+    const uint32_t parent = x.mem.read<uint32_t>(cur + 20);
+    const uint32_t next = x.mem.read<uint32_t>(cur + 24);
+    const uint32_t prev = x.mem.read<uint32_t>(cur + 28);
+    if (prev) x.mem.write<uint32_t>(prev + 24, next);
+    if (next) x.mem.write<uint32_t>(next + 28, prev);
+    if (parent) {
+        if (x.mem.read<uint32_t>(parent + 12) == cur) x.mem.write<uint32_t>(parent + 12, next);
+        if (x.mem.read<uint32_t>(parent + 16) == cur) x.mem.write<uint32_t>(parent + 16, prev);
+        if (x.mem.read<uint32_t>(parent + 44) == cur) x.mem.write<uint32_t>(parent + 44, next);
+    }
+    x.mem.write<uint32_t>(cur + 20, 0);
+    x.mem.write<uint32_t>(cur + 24, 0);
+    x.mem.write<uint32_t>(cur + 28, 0);
+}
+GuestPtr lx_copyNode(Ctx& x, GuestPtr node, int32_t extended) {
+    if (!node) return 0;
+    const uint32_t type = x.mem.read<uint32_t>(node + 4);
+    const uint32_t nm = x.mem.read<uint32_t>(node + 8);
+    const uint32_t ct = x.mem.read<uint32_t>(node + 40);
+    const uint32_t copy = lx_newNodeRaw(x, type, nm ? x.proc.readCString(nm) : "", ct ? x.proc.readCString(ct) : "");
+    x.mem.write<uint32_t>(copy + 36, x.mem.read<uint32_t>(node + 36));
+    if (extended) {
+        for (uint32_t a = x.mem.read<uint32_t>(node + 44); a; a = x.mem.read<uint32_t>(a + 24))
+            lx_addChild(x, copy, lx_copyNode(x, a, 1));
+        for (uint32_t c = x.mem.read<uint32_t>(node + 12); c; c = x.mem.read<uint32_t>(c + 24))
+            lx_addChild(x, copy, lx_copyNode(x, c, 1));
+    }
+    return copy;
+}
+void lx_setTreeDoc(Ctx& x, GuestPtr tree, GuestPtr doc) {
+    if (!tree) return;
+    x.mem.write<uint32_t>(tree + 32, doc);
+    for (uint32_t c = x.mem.read<uint32_t>(tree + 12); c; c = x.mem.read<uint32_t>(c + 24))
+        lx_setTreeDoc(x, c, doc);
+}
+void lx_setNs(Ctx& x, GuestPtr node, GuestPtr ns) { if (node) x.mem.write<uint32_t>(node + 36, ns); }
+GuestPtr lx_searchNs(Ctx& x, GuestPtr, GuestPtr node, GuestPtr prefix) {
+    const std::string want = prefix ? x.proc.readCString(prefix) : "";
+    for (uint32_t n = node; n; n = x.mem.read<uint32_t>(n + 20)) {
+        for (uint32_t ns = x.mem.read<uint32_t>(n + 48); ns; ns = x.mem.read<uint32_t>(ns)) {
+            const uint32_t pf = x.mem.read<uint32_t>(ns + 12);
+            const std::string have = pf ? x.proc.readCString(pf) : "";
+            if (have == want) return ns;
+        }
+    }
+    return 0;
+}
+GuestPtr lx_searchNsByHref(Ctx& x, GuestPtr, GuestPtr node, GuestPtr href) {
+    if (!href) return 0;
+    const std::string want = x.proc.readCString(href);
+    for (uint32_t n = node; n; n = x.mem.read<uint32_t>(n + 20)) {
+        for (uint32_t ns = x.mem.read<uint32_t>(n + 48); ns; ns = x.mem.read<uint32_t>(ns)) {
+            const uint32_t hr = x.mem.read<uint32_t>(ns + 8);
+            if (hr && x.proc.readCString(hr) == want) return ns;
+        }
+    }
+    return 0;
+}
+GuestPtr lx_hasProp(Ctx& x, GuestPtr node, GuestPtr name) {
+    if (!node || !name) return 0;
+    const std::string want = x.proc.readCString(name);
+    for (uint32_t a = x.mem.read<uint32_t>(node + 44); a; a = x.mem.read<uint32_t>(a + 24)) {
+        const uint32_t nm = x.mem.read<uint32_t>(a + 8);
+        if (nm && x.proc.readCString(nm) == want) return a;
+    }
+    return 0;
+}
+GuestPtr lx_hasNsProp(Ctx& x, GuestPtr node, GuestPtr name, GuestPtr) { return lx_hasProp(x, node, name); }
+std::string lx_collectText(Ctx& x, GuestPtr node) {
+    if (!node) return {};
+    const uint32_t type = x.mem.read<uint32_t>(node + 4);
+    if (type == 3 /* XML_TEXT_NODE */) {
+        const uint32_t ct = x.mem.read<uint32_t>(node + 40);
+        return ct ? x.proc.readCString(ct) : "";
+    }
+    std::string out;
+    for (uint32_t c = x.mem.read<uint32_t>(node + 12); c; c = x.mem.read<uint32_t>(c + 24))
+        out += lx_collectText(x, c);
+    return out;
+}
+GuestPtr lx_nodeGetContent(Ctx& x, GuestPtr node) { return lx_strdupStr(x, lx_collectText(x, node)); }
+void lx_nodeSetContent(Ctx& x, GuestPtr node, GuestPtr content) {
+    if (!node) return;
+    const std::string s = content ? x.proc.readCString(content) : "";
+    if (x.mem.read<uint32_t>(node + 4) == 3) {
+        x.mem.write<uint32_t>(node + 40, lx_strdupStr(x, s));
+        return;
+    }
+    x.mem.write<uint32_t>(node + 12, 0);
+    x.mem.write<uint32_t>(node + 16, 0);
+    lx_addChild(x, node, lx_newNodeRaw(x, 3, "text", s));
+}
+void lx_nodeSetName(Ctx& x, GuestPtr node, GuestPtr name) {
+    if (node && name) x.mem.write<uint32_t>(node + 8, lx_strdupStr(x, x.proc.readCString(name)));
+}
+std::string lx_dumpNodeXml(Ctx& x, GuestPtr node) {
+    if (!node) return {};
+    const uint32_t type = x.mem.read<uint32_t>(node + 4);
+    if (type == 9) return lx_dumpNodeXml(x, lx_docGetRoot(x, node));
+    if (type == 3) {
+        const uint32_t ct = x.mem.read<uint32_t>(node + 40);
+        return ct ? x.proc.readCString(ct) : "";
+    }
+    if (type == 2) {
+        const uint32_t nm = x.mem.read<uint32_t>(node + 8);
+        return (nm ? x.proc.readCString(nm) : "") + "=\"" + lx_collectText(x, node) + "\"";
+    }
+    const uint32_t nm = x.mem.read<uint32_t>(node + 8);
+    const std::string tag = nm ? x.proc.readCString(nm) : "node";
+    std::string out = "<" + tag;
+    for (uint32_t a = x.mem.read<uint32_t>(node + 44); a; a = x.mem.read<uint32_t>(a + 24))
+        out += " " + lx_dumpNodeXml(x, a);
+    uint32_t c = x.mem.read<uint32_t>(node + 12);
+    if (!c) return out + "/>";
+    out += ">";
+    for (; c; c = x.mem.read<uint32_t>(c + 24)) out += lx_dumpNodeXml(x, c);
+    return out + "</" + tag + ">";
+}
+GuestPtr lx_bufferCreate(Ctx& x) { return x.proc.heap().allocZeroed(16); }
+void lx_bufferFree(Ctx& x, GuestPtr buf) {
+    if (!buf) return;
+    const uint32_t ptr = x.mem.read<uint32_t>(buf);
+    if (ptr && x.proc.heap().blockSize(ptr)) x.proc.heap().free(ptr);
+    if (x.proc.heap().blockSize(buf)) x.proc.heap().free(buf);
+}
+GuestPtr lx_bufferContent(Ctx& x, GuestPtr buf) { return buf ? x.mem.read<uint32_t>(buf) : 0; }
+int32_t lx_bufferLength(Ctx& x, GuestPtr buf) { return buf ? int32_t(x.mem.read<uint32_t>(buf + 4)) : 0; }
+int32_t lx_nodeDump(Ctx& x, GuestPtr buf, GuestPtr, GuestPtr cur, int32_t, int32_t) {
+    if (!buf || !cur) return 0;
+    const std::string s = lx_dumpNodeXml(x, cur);
+    x.mem.write<uint32_t>(buf, lx_strdupStr(x, s));
+    x.mem.write<uint32_t>(buf + 4, uint32_t(s.size()));
+    return int32_t(s.size());
+}
+void lx_docDumpMemory(Ctx& x, GuestPtr cur, GuestPtr memOut, GuestPtr sizeOut) {
+    const std::string s = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + lx_dumpNodeXml(x, cur);
+    if (memOut) x.mem.write<uint32_t>(memOut, lx_strdupStr(x, s));
+    if (sizeOut) x.mem.write<int32_t>(sizeOut, int32_t(s.size()));
+}
+GuestPtr lx_readMemory(Ctx& x, GuestPtr buffer, int32_t size, GuestPtr, GuestPtr, int32_t) {
+    if (!buffer || size <= 0) return 0;
+    std::string s(reinterpret_cast<const char*>(x.mem.host(buffer)), size_t(size));
+    if (s.size() >= 3 && uint8_t(s[0]) == 0xEF && uint8_t(s[1]) == 0xBB && uint8_t(s[2]) == 0xBF) s.erase(0, 3);
+    const uint32_t doc = lx_newDoc(x, 0);
+    std::vector<uint32_t> stack{doc};
+    size_t i = 0;
+    auto addText = [&](const std::string& raw) {
+        if (stack.size() <= 1 || raw.empty()) return;
+        bool allSpace = true;
+        for (char c : raw) if (!std::isspace(uint8_t(c))) { allSpace = false; break; }
+        if (allSpace && x.mem.read<uint32_t>(stack.back() + 12) != 0) return;
+        const std::string dec = decodeEntities(raw);
+        uint32_t last = x.mem.read<uint32_t>(stack.back() + 16);
+        if (last && x.mem.read<uint32_t>(last + 4) == 3) {
+            const uint32_t oldCt = x.mem.read<uint32_t>(last + 40);
+            const std::string combined = (oldCt ? x.proc.readCString(oldCt) : "") + dec;
+            x.mem.write<uint32_t>(last + 40, lx_strdupStr(x, combined));
+        } else {
+            lx_addChild(x, stack.back(), lx_newNodeRaw(x, 3, "text", dec));
+        }
+    };
+    while (i < s.size()) {
+        const size_t lt = s.find('<', i);
+        if (lt == std::string::npos) { addText(s.substr(i)); break; }
+        if (lt > i) addText(s.substr(i, lt - i));
+        if (s.compare(lt, 4, "<!--") == 0) {
+            const size_t e = s.find("-->", lt + 4);
+            if (e == std::string::npos) break;
+            i = e + 3;
+        } else if (s.compare(lt, 9, "<![CDATA[") == 0) {
+            const size_t e = s.find("]]>", lt + 9);
+            if (e == std::string::npos) break;
+            if (stack.size() > 1) lx_addChild(x, stack.back(), lx_newNodeRaw(x, 3, "text", s.substr(lt + 9, e - lt - 9)));
+            i = e + 3;
+        } else if (s.compare(lt, 2, "<?") == 0) {
+            const size_t e = s.find("?>", lt + 2);
+            if (e == std::string::npos) break;
+            i = e + 2;
+        } else if (s.compare(lt, 2, "<!") == 0) {
+            int depth = 0;
+            size_t k = lt + 2;
+            for (; k < s.size(); ++k) {
+                if (s[k] == '[') ++depth;
+                else if (s[k] == ']') --depth;
+                else if (s[k] == '>' && depth <= 0) break;
+            }
+            i = k + 1;
+        } else if (s.compare(lt, 2, "</") == 0) {
+            const size_t e = s.find('>', lt + 2);
+            if (e == std::string::npos) break;
+            if (stack.size() > 1) stack.pop_back();
+            i = e + 1;
+        } else {
+            size_t k = lt + 1;
+            while (k < s.size() && !std::isspace(uint8_t(s[k])) && s[k] != '>' && s[k] != '/') ++k;
+            std::string rawTag = s.substr(lt + 1, k - lt - 1);
+            const size_t colon = rawTag.find(':');
+            const std::string localTag = colon == std::string::npos ? rawTag : rawTag.substr(colon + 1);
+            const uint32_t elem = lx_newNodeRaw(x, 1, localTag);
+            lx_addChild(x, stack.back(), elem);
+            bool selfClose = false;
+            for (;;) {
+                while (k < s.size() && std::isspace(uint8_t(s[k]))) ++k;
+                if (k >= s.size()) break;
+                if (s[k] == '>') { ++k; break; }
+                if (s[k] == '/' && k + 1 < s.size() && s[k + 1] == '>') { selfClose = true; k += 2; break; }
+                const size_t a = k;
+                while (k < s.size() && s[k] != '=' && !std::isspace(uint8_t(s[k])) && s[k] != '>' && s[k] != '/') ++k;
+                std::string an = s.substr(a, k - a);
+                while (k < s.size() && std::isspace(uint8_t(s[k]))) ++k;
+                std::string av;
+                if (k < s.size() && s[k] == '=') {
+                    ++k;
+                    while (k < s.size() && std::isspace(uint8_t(s[k]))) ++k;
+                    if (k < s.size() && (s[k] == '"' || s[k] == '\'')) {
+                        const char q = s[k];
+                        const size_t e = s.find(q, k + 1);
+                        if (e == std::string::npos) break;
+                        av = decodeEntities(s.substr(k + 1, e - k - 1));
+                        k = e + 1;
+                    }
+                }
+                if (an == "xmlns" || an.compare(0, 6, "xmlns:") == 0) {
+                    const std::string pf = an.size() > 6 ? an.substr(6) : "";
+                    lx_newNs(x, elem, lx_strdupStr(x, av), pf.empty() ? 0 : lx_strdupStr(x, pf));
+                } else if (!an.empty()) {
+                    const size_t ac = an.find(':');
+                    const std::string lan = ac == std::string::npos ? an : an.substr(ac + 1);
+                    const uint32_t attr = lx_newNodeRaw(x, 2, lan);
+                    lx_addChild(x, attr, lx_newNodeRaw(x, 3, "text", av));
+                    lx_addChild(x, elem, attr);
+                }
+            }
+            if (!selfClose) stack.push_back(elem);
+            i = k;
+        }
+    }
+    return doc;
+}
+int32_t lx_strEqual(Ctx& x, GuestPtr a, GuestPtr b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    return x.proc.readCString(a) == x.proc.readCString(b) ? 1 : 0;
+}
+int32_t lx_strcmp(Ctx& x, GuestPtr a, GuestPtr b) {
+    if (a == b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    const int r = x.proc.readCString(a).compare(x.proc.readCString(b));
+    return r < 0 ? -1 : r > 0 ? 1 : 0;
+}
+GuestPtr lx_strdup(Ctx& x, GuestPtr cur) { return cur ? lx_strdupStr(x, x.proc.readCString(cur)) : 0; }
+int32_t lx_strlen(Ctx& x, GuestPtr str) { return str ? int32_t(x.proc.readCString(str).size()) : 0; }
+GuestPtr lx_strsub(Ctx& x, GuestPtr str, int32_t start, int32_t len) {
+    if (!str || start < 0 || len < 0) return 0;
+    const std::string s = x.proc.readCString(str);
+    if (size_t(start) >= s.size()) return lx_strdupStr(x, "");
+    return lx_strdupStr(x, s.substr(size_t(start), size_t(len)));
+}
+GuestPtr lx_xpathNewCtx(Ctx& x, GuestPtr doc) {
+    const uint32_t ctx = x.proc.heap().allocZeroed(16);
+    x.mem.write<uint32_t>(ctx, doc);
+    x.mem.write<uint32_t>(ctx + 4, doc);
+    return ctx;
+}
+int32_t lx_xpathRegNs(Ctx&, GuestPtr, GuestPtr, GuestPtr) { return 0; }
+void lx_matchTagRec(Ctx& x, uint32_t node, const std::string& want, std::vector<uint32_t>& out, bool recursive) {
+    for (uint32_t c = x.mem.read<uint32_t>(node + 12); c; c = x.mem.read<uint32_t>(c + 24)) {
+        if (x.mem.read<uint32_t>(c + 4) != 1) continue;
+        const uint32_t nm = x.mem.read<uint32_t>(c + 8);
+        const std::string have = nm ? x.proc.readCString(nm) : "";
+        if (want == "*" || have == want) out.push_back(c);
+        if (recursive) lx_matchTagRec(x, c, want, out, true);
+    }
+}
+GuestPtr lx_xpathEval(Ctx& x, GuestPtr exprPtr, GuestPtr ctx) {
+    if (!exprPtr || !ctx) return 0;
+    std::string expr = x.proc.readCString(exprPtr);
+    const uint32_t doc = x.mem.read<uint32_t>(ctx);
+    uint32_t startNode = x.mem.read<uint32_t>(ctx + 4);
+    if (!startNode) startNode = doc;
+    std::vector<uint32_t> current;
+    bool nextRecursive = false;
+    if (expr.compare(0, 2, "//") == 0) {
+        current.push_back(doc ? doc : startNode);
+        nextRecursive = true;
+        expr.erase(0, 2);
+    } else if (expr.compare(0, 2, "./") == 0) {
+        current.push_back(startNode);
+        expr.erase(0, 2);
+    } else if (!expr.empty() && expr[0] == '/') {
+        current.push_back(doc ? doc : startNode);
+        expr.erase(0, 1);
+    } else {
+        current.push_back(startNode);
+    }
+    size_t pos = 0;
+    while (pos <= expr.size()) {
+        size_t slash = expr.find('/', pos);
+        if (slash == std::string::npos) slash = expr.size();
+        std::string step = expr.substr(pos, slash - pos);
+        if (!step.empty() && step != ".") {
+            const size_t colon = step.find(':');
+            if (colon != std::string::npos) step = step.substr(colon + 1);
+            const size_t bracket = step.find('[');
+            if (bracket != std::string::npos) step = step.substr(0, bracket);
+            std::vector<uint32_t> next;
+            if (!step.empty() && step[0] == '@') {
+                const std::string attrName = step.substr(1);
+                for (uint32_t n : current)
+                    for (uint32_t a = x.mem.read<uint32_t>(n + 44); a; a = x.mem.read<uint32_t>(a + 24)) {
+                        const uint32_t nm = x.mem.read<uint32_t>(a + 8);
+                        if (attrName == "*" || (nm && x.proc.readCString(nm) == attrName)) next.push_back(a);
+                    }
+            } else if (step == "..") {
+                for (uint32_t n : current) if (uint32_t p = x.mem.read<uint32_t>(n + 20)) next.push_back(p);
+            } else {
+                for (uint32_t n : current) lx_matchTagRec(x, n, step, next, nextRecursive);
+            }
+            current = std::move(next);
+            nextRecursive = false;
+        }
+        if (slash + 1 < expr.size() && expr[slash + 1] == '/') {
+            nextRecursive = true;
+            pos = slash + 2;
+        } else {
+            pos = slash + 1;
+        }
+    }
+    const uint32_t nodeSet = x.proc.heap().allocZeroed(12);
+    const uint32_t tab = x.proc.heap().allocZeroed(uint32_t(current.size() * 4 + 4));
+    for (size_t i = 0; i < current.size(); ++i) x.mem.write<uint32_t>(tab + uint32_t(i * 4), current[i]);
+    x.mem.write<int32_t>(nodeSet + 0, int32_t(current.size()));
+    x.mem.write<int32_t>(nodeSet + 4, int32_t(current.size()));
+    x.mem.write<uint32_t>(nodeSet + 8, tab);
+    const uint32_t obj = x.proc.heap().allocZeroed(16);
+    x.mem.write<uint32_t>(obj + 0, 1 /* XPATH_NODESET */);
+    x.mem.write<uint32_t>(obj + 4, nodeSet);
+    return obj;
+}
+
 // -------------------------------------------- NSURLResponse / NSHTTPURLResponse ---
 struct Response : ObjC::HostObject { id url = 0, mime = 0, encoding = 0, headers = 0; int64_t length = -1; int32_t status = 0; };
 Response& RS(Ctx& x, id self) { return R(x).host<Response>(self); }
@@ -733,6 +1185,215 @@ void registerFoundationExtras(Process& p, ObjC::Runtime& r) {
                           "_NSDecimalNumberDivideByZeroException"})
         p.mem().write<uint32_t>(p.defineDataBlock(n, 4), constString(p, n + 1));
     (void)dec_self;
+
+    // NSRegularExpression & NSTextCheckingResult
+    struct TextMatchData : ObjC::HostObject {
+        id regex = 0;
+        std::vector<Range> ranges;
+    };
+    struct RegexData : ObjC::HostObject {
+        id pattern = 0;
+        uint32_t options = 0;
+        std::regex re;
+        uint32_t groups = 0;
+    };
+    ObjC::ClassBuilder tcr = r.defineClass("NSTextCheckingResult", "NSObject");
+    tcr.method("range", [](Ctx& x) {
+        const GuestPtr sret = x.cpu.r[0];
+        const id self = x.cpu.r[1];
+        auto* d = R(x).hostIf<TextMatchData>(self);
+        writeRange(x, sret, (d && !d->ranges.empty()) ? d->ranges[0] : Range{kNotFound, 0});
+    }, "{_NSRange=II}@:");
+    tcr.method("rangeAtIndex:", [](Ctx& x) {
+        const GuestPtr sret = x.cpu.r[0];
+        const id self = x.cpu.r[1];
+        const uint32_t idx = x.cpu.r[3];
+        auto* d = R(x).hostIf<TextMatchData>(self);
+        writeRange(x, sret, (d && idx < d->ranges.size()) ? d->ranges[idx] : Range{kNotFound, 0});
+    }, "{_NSRange=II}@:I");
+    tcr.method("numberOfRanges", [](Ctx& x) {
+        auto* d = R(x).hostIf<TextMatchData>(x.cpu.r[0]);
+        x.cpu.r[0] = d ? uint32_t(d->ranges.size()) : 0;
+    }, "I@:");
+    tcr.method("resultType", [](Ctx& x) { x.cpu.r[0] = 1024; x.cpu.r[1] = 0; }, "Q@:");
+    tcr.method("regularExpression", [](Ctx& x) {
+        auto* d = R(x).hostIf<TextMatchData>(x.cpu.r[0]);
+        x.cpu.r[0] = d ? d->regex : 0;
+    }, "@@:");
+
+    ObjC::ClassBuilder rx = r.defineClass("NSRegularExpression", "NSObject");
+    const Class tcrCls = tcr.cls();
+    auto initRegex = [](Ctx& x, id self, id pat, uint32_t opts, GuestPtr errOut) -> id {
+        if (errOut) x.mem.write<uint32_t>(errOut, 0);
+        if (!pat) { R(x).release(x.cpu, self); return 0; }
+        auto& d = R(x).host<RegexData>(self);
+        d.pattern = id(R(x).send(x.cpu, pat, "copy"));
+        d.options = opts;
+        std::regex_constants::syntax_option_type flags = std::regex::ECMAScript;
+        if (opts & 1 /* NSRegularExpressionCaseInsensitive */) flags |= std::regex::icase;
+        try {
+            d.re = std::regex(utf8(x, pat), flags);
+            d.groups = uint32_t(d.re.mark_count());
+        } catch (...) {
+            d.groups = 0;
+        }
+        return self;
+    };
+    auto collectMatches = [tcrCls](Ctx& x, id self, id strObj, uint32_t loc, uint32_t len) -> std::vector<id> {
+        std::vector<id> out;
+        auto* d = R(x).hostIf<RegexData>(self);
+        if (!d || !strObj) return out;
+        const std::string s = utf8(x, strObj);
+        const size_t start = std::min<size_t>(loc, s.size());
+        const size_t end = std::min<size_t>(start + len, s.size());
+        try {
+            auto begin = std::sregex_iterator(s.begin() + long(start), s.begin() + long(end), d->re);
+            auto finish = std::sregex_iterator();
+            for (auto it = begin; it != finish; ++it) {
+                const std::smatch& m = *it;
+                const id res = R(x).createInstance(tcrCls);
+                auto& md = R(x).host<TextMatchData>(res);
+                md.regex = self;
+                for (size_t i = 0; i < m.size(); ++i) {
+                    if (m[i].matched) md.ranges.push_back({uint32_t(start + size_t(m.position(i))), uint32_t(m.length(i))});
+                    else md.ranges.push_back({kNotFound, 0});
+                }
+                out.push_back(autoreleased(x, res));
+            }
+        } catch (...) {}
+        return out;
+    };
+    rx.classMethod("regularExpressionWithPattern:options:error:", [initRegex](Ctx& x) {
+        const id cls = x.cpu.r[0];
+        const id inst = R(x).createInstance(cls);
+        const GuestPtr errOut = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
+        const id r = initRegex(x, inst, x.cpu.r[2], x.cpu.r[3], errOut);
+        x.cpu.r[0] = r ? autoreleased(x, r) : 0;
+    }, "@@:@I^@");
+    rx.classMethod("escapedPatternForString:", [](Ctx& x) { x.cpu.r[0] = x.cpu.r[2]; }, "@@:@");
+    rx.classMethod("escapedTemplateForString:", [](Ctx& x) { x.cpu.r[0] = x.cpu.r[2]; }, "@@:@");
+    rx.method("initWithPattern:options:error:", [initRegex](Ctx& x) {
+        const GuestPtr errOut = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
+        x.cpu.r[0] = initRegex(x, x.cpu.r[0], x.cpu.r[2], x.cpu.r[3], errOut);
+    }, "@@:@I^@");
+    rx.method("pattern", [](Ctx& x) {
+        auto* d = R(x).hostIf<RegexData>(x.cpu.r[0]);
+        x.cpu.r[0] = d ? d->pattern : makeString(x, "");
+    }, "@@:");
+    rx.method("options", [](Ctx& x) {
+        auto* d = R(x).hostIf<RegexData>(x.cpu.r[0]);
+        x.cpu.r[0] = d ? d->options : 0;
+    }, "I@:");
+    rx.method("numberOfCaptureGroups", [](Ctx& x) {
+        auto* d = R(x).hostIf<RegexData>(x.cpu.r[0]);
+        x.cpu.r[0] = d ? d->groups : 0;
+    }, "I@:");
+    rx.method("matchesInString:options:range:", [collectMatches](Ctx& x) {
+        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const auto m = collectMatches(x, x.cpu.r[0], x.cpu.r[2], x.mem.read<uint32_t>(sp), x.mem.read<uint32_t>(sp + 4));
+        x.cpu.r[0] = makeArray(x, m);
+    }, "@@:@I{_NSRange=II}");
+    rx.method("numberOfMatchesInString:options:range:", [collectMatches](Ctx& x) {
+        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const auto m = collectMatches(x, x.cpu.r[0], x.cpu.r[2], x.mem.read<uint32_t>(sp), x.mem.read<uint32_t>(sp + 4));
+        x.cpu.r[0] = uint32_t(m.size());
+    }, "I@:@I{_NSRange=II}");
+    rx.method("firstMatchInString:options:range:", [collectMatches](Ctx& x) {
+        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const auto m = collectMatches(x, x.cpu.r[0], x.cpu.r[2], x.mem.read<uint32_t>(sp), x.mem.read<uint32_t>(sp + 4));
+        x.cpu.r[0] = m.empty() ? 0 : m.front();
+    }, "@@:@I{_NSRange=II}");
+    rx.method("rangeOfFirstMatchInString:options:range:", [collectMatches](Ctx& x) {
+        const GuestPtr sret = x.cpu.r[0];
+        const id self = x.cpu.r[1];
+        const id strObj = x.cpu.r[3];
+        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const auto m = collectMatches(x, self, strObj, x.mem.read<uint32_t>(sp + 4), x.mem.read<uint32_t>(sp + 8));
+        if (m.empty()) writeRange(x, sret, {kNotFound, 0});
+        else {
+            auto* md = R(x).hostIf<TextMatchData>(m.front());
+            writeRange(x, sret, (md && !md->ranges.empty()) ? md->ranges[0] : Range{kNotFound, 0});
+        }
+    }, "{_NSRange=II}@:@I{_NSRange=II}");
+    rx.method("stringByReplacingMatchesInString:options:range:withTemplate:", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        const id strObj = x.cpu.r[2];
+        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const uint32_t loc = x.mem.read<uint32_t>(sp);
+        const uint32_t len = x.mem.read<uint32_t>(sp + 4);
+        const id templObj = x.mem.read<uint32_t>(sp + 8);
+        auto* d = R(x).hostIf<RegexData>(self);
+        if (!d || !strObj) { x.cpu.r[0] = strObj; return; }
+        const std::string s = utf8(x, strObj);
+        const std::string t = templObj ? utf8(x, templObj) : "";
+        const size_t start = std::min<size_t>(loc, s.size());
+        const size_t end = std::min<size_t>(start + len, s.size());
+        try {
+            const std::string mid = std::regex_replace(s.substr(start, end - start), d->re, t);
+            x.cpu.r[0] = makeString(x, s.substr(0, start) + mid + s.substr(end));
+        } catch (...) {
+            x.cpu.r[0] = strObj;
+        }
+    }, "@@:@I{_NSRange=II}@");
+    rx.method("replaceMatchesInString:options:range:withTemplate:", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        const id mstr = x.cpu.r[2];
+        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const uint32_t loc = x.mem.read<uint32_t>(sp);
+        const uint32_t len = x.mem.read<uint32_t>(sp + 4);
+        const id templObj = x.mem.read<uint32_t>(sp + 8);
+        const id rep = id(R(x).send(x.cpu, self, "stringByReplacingMatchesInString:options:range:withTemplate:", {mstr, x.cpu.r[3], loc, len, templObj}));
+        if (rep && mstr) R(x).send(x.cpu, mstr, "setString:", {rep});
+        x.cpu.r[0] = 1;
+    }, "I@:@I{_NSRange=II}@");
+
+    // libxml2 C API
+    p.def<&lx_initParser>("_xmlInitParser");
+    p.def<&lx_initParser>("_xmlCleanupParser");
+    const uint32_t xmlFreeFn = p.def<&lx_free>("_xmlFree");
+    p.mem().write<uint32_t>(p.defineDataBlock("_xmlFree", 4), xmlFreeFn);
+    p.def<&lx_free>("_xmlFreeDoc");
+    p.def<&lx_free>("_xmlFreeNode");
+    p.def<&lx_free>("_xmlFreeNs");
+    p.def<&lx_free>("_xmlFreeNsList");
+    p.def<&lx_newDoc>("_xmlNewDoc");
+    p.def<&lx_newNode>("_xmlNewNode");
+    p.def<&lx_newText>("_xmlNewText");
+    p.def<&lx_newProp>("_xmlNewProp");
+    p.def<&lx_newNs>("_xmlNewNs");
+    p.def<&lx_newNsProp>("_xmlNewNsProp");
+    p.def<&lx_addChild>("_xmlAddChild");
+    p.def<&lx_docGetRoot>("_xmlDocGetRootElement");
+    p.def<&lx_docSetRoot>("_xmlDocSetRootElement");
+    p.def<&lx_unlinkNode>("_xmlUnlinkNode");
+    p.def<&lx_copyNode>("_xmlCopyNode");
+    p.def<&lx_setTreeDoc>("_xmlSetTreeDoc");
+    p.def<&lx_setNs>("_xmlSetNs");
+    p.def<&lx_searchNs>("_xmlSearchNs");
+    p.def<&lx_searchNsByHref>("_xmlSearchNsByHref");
+    p.def<&lx_hasProp>("_xmlHasProp");
+    p.def<&lx_hasNsProp>("_xmlHasNsProp");
+    p.def<&lx_nodeGetContent>("_xmlNodeGetContent");
+    p.def<&lx_nodeSetContent>("_xmlNodeSetContent");
+    p.def<&lx_nodeSetName>("_xmlNodeSetName");
+    p.def<&lx_bufferCreate>("_xmlBufferCreate");
+    p.def<&lx_bufferFree>("_xmlBufferFree");
+    p.def<&lx_bufferContent>("_xmlBufferContent");
+    p.def<&lx_bufferLength>("_xmlBufferLength");
+    p.def<&lx_nodeDump>("_xmlNodeDump");
+    p.def<&lx_docDumpMemory>("_xmlDocDumpMemory");
+    p.def<&lx_readMemory>("_xmlReadMemory");
+    p.def<&lx_strEqual>("_xmlStrEqual");
+    p.def<&lx_strcmp>("_xmlStrcmp");
+    p.def<&lx_strdup>("_xmlStrdup");
+    p.def<&lx_strlen>("_xmlStrlen");
+    p.def<&lx_strsub>("_xmlStrsub");
+    p.def<&lx_xpathNewCtx>("_xmlXPathNewContext");
+    p.def<&lx_free>("_xmlXPathFreeContext");
+    p.def<&lx_xpathRegNs>("_xmlXPathRegisterNs");
+    p.def<&lx_xpathEval>("_xmlXPathEval");
+    p.def<&lx_xpathEval>("_xmlXPathEvalExpression");
+    p.def<&lx_free>("_xmlXPathFreeObject");
 }
 
 } // namespace Hydrogen::Runtime::Foundation

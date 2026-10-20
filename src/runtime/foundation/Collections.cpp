@@ -125,6 +125,11 @@ id ai_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
         return self;
     } catch (...) { releaseObj(x, self); return 0; }
 }
+id ai_initWithContentsOfURL(Ctx& x, id self, SEL s, id url) {
+    const std::string path = urlFilePath(x, url);
+    if (path.empty()) { releaseObj(x, self); return 0; }
+    return ai_initWithContentsOfFile(x, self, s, makeString(x, path));
+}
 template <typename F, typename... A> id aconstruct(Ctx& x, id cls, F init, A... a) {
     id o = a_allocWithZone(x, cls, 0, 0);
     o = init(x, o, 0, a...);
@@ -145,6 +150,7 @@ id ac_arrayWithObjects(Ctx& x, id self, SEL, id first, VarArgs va) {
 }
 id ac_arrayWithArray(Ctx& x, id self, SEL, id o) { return aconstruct(x, self, ai_initWithArray, o); }
 id ac_arrayWithContentsOfFile(Ctx& x, id self, SEL, id path) { return aconstruct(x, self, ai_initWithContentsOfFile, path); }
+id ac_arrayWithContentsOfURL(Ctx& x, id self, SEL, id url) { return aconstruct(x, self, ai_initWithContentsOfURL, url); }
 
 uint32_t a_count(Ctx& x, id self, SEL) { ArrayData* d = ad(x, self); return d ? uint32_t(d->items.size()) : 0; }
 id a_objectAtIndex(Ctx& x, id self, SEL, uint32_t i) {
@@ -511,6 +517,11 @@ id di_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
         return self;
     } catch (...) { releaseObj(x, self); return 0; }
 }
+id di_initWithContentsOfURL(Ctx& x, id self, SEL s, id url) {
+    const std::string path = urlFilePath(x, url);
+    if (path.empty()) { releaseObj(x, self); return 0; }
+    return di_initWithContentsOfFile(x, self, s, makeString(x, path));
+}
 template <typename F, typename... A> id dconstruct(Ctx& x, id cls, F init, A... a) {
     id o = d_allocWithZone(x, cls, 0, 0);
     o = init(x, o, 0, a...);
@@ -534,6 +545,7 @@ id dc_dictionaryWithObjectsAndKeys(Ctx& x, id self, SEL, id first, VarArgs va) {
 id dc_dictionaryWithObjectsForKeys(Ctx& x, id self, SEL, id o, id k) { return dconstruct(x, self, di_initWithObjectsForKeys, o, k); }
 id dc_dictionaryWithDictionary(Ctx& x, id self, SEL, id o) { return dconstruct(x, self, di_initWithDictionary, o); }
 id dc_dictionaryWithContentsOfFile(Ctx& x, id self, SEL, id path) { return dconstruct(x, self, di_initWithContentsOfFile, path); }
+id dc_dictionaryWithContentsOfURL(Ctx& x, id self, SEL, id url) { return dconstruct(x, self, di_initWithContentsOfURL, url); }
 
 uint32_t d_count(Ctx& x, id self, SEL) { DictData* d = dd(x, self); return d ? uint32_t(d->entries.size()) : 0; }
 id d_objectForKey(Ctx& x, id self, SEL, id key) {
@@ -899,10 +911,10 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
     na.cm<&a_alloc>("alloc").cm<&a_allocWithZone>("allocWithZone:")
       .cm<&ac_array>("array").cm<&ac_arrayWithObject>("arrayWithObject:").cm<&ac_arrayWithObjects>("arrayWithObjects:")
       .cm<&ac_arrayWithObjectsCount>("arrayWithObjects:count:").cm<&ac_arrayWithArray>("arrayWithArray:")
-      .cm<&ac_arrayWithContentsOfFile>("arrayWithContentsOfFile:");
+      .cm<&ac_arrayWithContentsOfFile>("arrayWithContentsOfFile:").cm<&ac_arrayWithContentsOfURL>("arrayWithContentsOfURL:");
     na.m<&ai_init>("init").m<&ai_initWithObjects>("initWithObjects:").m<&ai_initWithObjectsCount>("initWithObjects:count:")
       .m<&ai_initWithArray>("initWithArray:").m<&ai_initWithArrayCopy>("initWithArray:copyItems:")
-      .m<&ai_initWithContentsOfFile>("initWithContentsOfFile:")
+      .m<&ai_initWithContentsOfFile>("initWithContentsOfFile:").m<&ai_initWithContentsOfURL>("initWithContentsOfURL:")
       .m<&a_count>("count", "I@:").m<&a_objectAtIndex>("objectAtIndex:").m<&a_objectAtIndex>("objectAtIndexedSubscript:")
       .m<&a_firstObject>("firstObject").m<&a_lastObject>("lastObject")
       .m<&a_indexOfObject>("indexOfObject:", "I@:@").m<&a_indexOfObjectIdenticalTo>("indexOfObjectIdenticalTo:", "I@:@")
@@ -943,11 +955,12 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .cm<&dc_dictionaryWithObjectsForKeysCount>("dictionaryWithObjects:forKeys:count:")
       .cm<&dc_dictionaryWithObjectsAndKeys>("dictionaryWithObjectsAndKeys:")
       .cm<&dc_dictionaryWithObjectsForKeys>("dictionaryWithObjects:forKeys:")
-      .cm<&dc_dictionaryWithDictionary>("dictionaryWithDictionary:").cm<&dc_dictionaryWithContentsOfFile>("dictionaryWithContentsOfFile:");
+      .cm<&dc_dictionaryWithDictionary>("dictionaryWithDictionary:").cm<&dc_dictionaryWithContentsOfFile>("dictionaryWithContentsOfFile:")
+      .cm<&dc_dictionaryWithContentsOfURL>("dictionaryWithContentsOfURL:");
     nd.m<&di_init>("init").m<&di_initWithObjectsForKeysCount>("initWithObjects:forKeys:count:")
       .m<&di_initWithObjectsAndKeys>("initWithObjectsAndKeys:").m<&di_initWithObjectsForKeys>("initWithObjects:forKeys:")
       .m<&di_initWithDictionary>("initWithDictionary:").m<&di_initWithDictionaryCopy>("initWithDictionary:copyItems:")
-      .m<&di_initWithContentsOfFile>("initWithContentsOfFile:")
+      .m<&di_initWithContentsOfFile>("initWithContentsOfFile:").m<&di_initWithContentsOfURL>("initWithContentsOfURL:")
       .m<&d_count>("count", "I@:").m<&d_objectForKey>("objectForKey:").m<&d_objectForKey>("objectForKeyedSubscript:")
       .m<&d_valueForKey>("valueForKey:").m<&d_allKeys>("allKeys").m<&d_allValues>("allValues")
       .m<&d_allKeysForObject>("allKeysForObject:").m<&d_keyEnumerator>("keyEnumerator").m<&d_objectEnumerator>("objectEnumerator")

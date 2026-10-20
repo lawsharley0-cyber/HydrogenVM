@@ -135,8 +135,10 @@ void deliver(Ctx& x, id s, uint32_t event) {
     h->loop->post([p, s, event](CPU::Cpu& c) {
         Ctx cx{*p, c, p->mem()};
         Stream* hh = st(cx, s);
-        if (hh && hh->callback && (hh->flags & event)) p->callGuest(c, hh->callback, {s, event, hh->info});
-        if (hh && hh->delegate && R(cx).respondsTo(hh->delegate, R(cx).sel("stream:handleEvent:")))
+        if (!hh || !hh->loop || hh->status == kClosed) { R(cx).release(c, s); return; }
+        if (hh->callback && (hh->flags & event)) p->callGuest(c, hh->callback, {s, event, hh->info});
+        hh = st(cx, s);
+        if (hh && hh->loop && hh->status != kClosed && hh->delegate && R(cx).respondsTo(hh->delegate, R(cx).sel("stream:handleEvent:")))
             R(cx).send(c, hh->delegate, "stream:handleEvent:", {s, event});
         R(cx).release(c, s);
     });

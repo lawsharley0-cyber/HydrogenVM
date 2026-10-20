@@ -22,16 +22,17 @@ constexpr uint32_t kHdr = 12;
 constexpr uint32_t kNpos = 0xFFFFFFFFu;
 constexpr uint32_t kMaxSize = 0x3FFFFFFCu;   // ((npos - sizeof(_Rep)) / 1 - 1) / 4
 
-struct Strings { explicit Strings(Process&) {} uint32_t emptyRep = 0; };
+struct Strings { explicit Strings(Process&) {} uint32_t emptyRep = 0; uint32_t emptyWRep = 0; };
 uint32_t emptyData(Ctx& x) { return x.proc.service<Strings>().emptyRep + kHdr; }
+uint32_t emptyWData(Ctx& x) { return x.proc.service<Strings>().emptyWRep + kHdr; }
 
 [[noreturn]] void outOfRange(const char* where) { throw std::runtime_error(std::string("std::out_of_range: ") + where); }
 [[noreturn]] void lengthError(const char* where) { throw std::runtime_error(std::string("std::length_error: ") + where); }
 
-uint32_t len(Ctx& x, uint32_t data) { return x.mem.read<uint32_t>(data - kHdr); }
+uint32_t len(Ctx& x, uint32_t data) { return data ? x.mem.read<uint32_t>(data - kHdr) : 0; }
 std::string bytes(Ctx& x, uint32_t p, uint32_t n) {
     std::string s(n, '\0');
-    if (n) std::memcpy(s.data(), x.mem.host(p), n);
+    if (n && p) std::memcpy(s.data(), x.mem.host(p), n);
     return s;
 }
 std::string value(Ctx& x, GuestPtr self) { const uint32_t d = x.mem.read<uint32_t>(self); return bytes(x, d, len(x, d)); }
@@ -64,7 +65,7 @@ void dispose(Ctx& x, uint32_t data) {
 }
 // A reference to `data` for a new owner: shares it, or copies a leaked buffer.
 uint32_t grab(Ctx& x, uint32_t data) {
-    if (data == emptyData(x)) return data;
+    if (!data || data == emptyData(x)) return emptyData(x);
     const int32_t rc = int32_t(x.mem.read<uint32_t>(data - kHdr + 8));
     if (rc < 0) return make(x, bytes(x, data, len(x, data)));
     x.mem.write<uint32_t>(data - kHdr + 8, uint32_t(rc + 1));
@@ -81,8 +82,7 @@ void checkPos(uint32_t pos, uint32_t size, const char* where) { if (pos > size) 
 
 // ---- constructors / destructor
 void c_cstr(Ctx& x, GuestPtr self, GuestPtr s, GuestPtr) {
-    if (!s) throw std::runtime_error("std::logic_error: basic_string::_S_construct NULL not valid");
-    x.mem.write<uint32_t>(self, make(x, x.proc.readCString(s)));
+    x.mem.write<uint32_t>(self, make(x, s ? x.proc.readCString(s) : ""));
 }
 void c_buf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n, GuestPtr) { x.mem.write<uint32_t>(self, make(x, bytes(x, s, n))); }
 void c_copy(Ctx& x, GuestPtr self, GuestPtr other) { x.mem.write<uint32_t>(self, grab(x, x.mem.read<uint32_t>(other))); }
@@ -258,6 +258,40 @@ uint32_t q_rfindChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
 }
 int32_t q_compareC(Ctx& x, GuestPtr self, GuestPtr s) { const int r = value(x, self).compare(x.proc.readCString(s)); return r < 0 ? -1 : r > 0; }
 int32_t q_compareStr(Ctx& x, GuestPtr self, GuestPtr other) { const int r = value(x, self).compare(value(x, other)); return r < 0 ? -1 : r > 0; }
+int32_t q_compareSubStr(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr other) {
+    const std::string v = value(x, self);
+    checkPos(pos, uint32_t(v.size()), "basic_string::compare");
+    const int r = v.compare(pos, clip(uint32_t(v.size()), pos, n), value(x, other));
+    return r < 0 ? -1 : r > 0;
+}
+int32_t q_compareSubC(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr s) {
+    const std::string v = value(x, self);
+    checkPos(pos, uint32_t(v.size()), "basic_string::compare");
+    const int r = v.compare(pos, clip(uint32_t(v.size()), pos, n), x.proc.readCString(s));
+    return r < 0 ? -1 : r > 0;
+}
+uint32_t m_assignSub(Ctx& x, GuestPtr self, GuestPtr other, uint32_t pos, uint32_t n) {
+    const std::string o = value(x, other);
+    checkPos(pos, uint32_t(o.size()), "basic_string::assign");
+    set(x, self, o.substr(pos, clip(uint32_t(o.size()), pos, n)));
+    return self;
+}
+uint32_t q_findFirstOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = value(x, self).find_first_of(bytes(x, s, n), pos);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
+uint32_t q_findLastOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = value(x, self).find_last_of(bytes(x, s, n), pos == kNpos ? std::string::npos : pos);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
+uint32_t q_findFirstNotOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = value(x, self).find_first_not_of(bytes(x, s, n), pos);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
+uint32_t q_findLastNotOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = value(x, self).find_last_not_of(bytes(x, s, n), pos == kNpos ? std::string::npos : pos);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
 // std::string substr(pos, n) const — returned through r0; this in r1.
 void q_substr(Ctx& x) {
     const uint32_t ret = x.cpu.r[0], self = x.cpu.r[1], pos = x.cpu.r[2], n = x.cpu.r[3];
@@ -274,6 +308,199 @@ uint32_t r_create(Ctx& x, uint32_t cap, uint32_t oldCap, GuestPtr) {
     return newRep(x, cap);
 }
 void r_destroy(Ctx& x, GuestPtr rep, GuestPtr) { if (rep && rep + kHdr != emptyData(x)) x.proc.heap().free(rep); }
+
+// --------------------------------------------------------------- std::wstring
+// std::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t>>
+// On 32-bit Darwin ARM, sizeof(wchar_t) == 4. _Rep header is 12 bytes
+// {length_in_wchars, capacity_in_wchars, refcount} followed by (capacity + 1) * 4 bytes.
+constexpr uint32_t kWMaxSize = 0x0FFFFFFCu;
+
+std::u32string wchars(Ctx& x, uint32_t p, uint32_t n) {
+    std::u32string s(n, U'\0');
+    for (uint32_t i = 0; i < n; ++i) s[i] = char32_t(x.mem.read<uint32_t>(p + i * 4));
+    return s;
+}
+std::u32string readWCString(Ctx& x, uint32_t p) {
+    std::u32string s;
+    if (!p) return s;
+    for (uint32_t i = 0; i < (1u << 20); ++i) {
+        const uint32_t c = x.mem.read<uint32_t>(p + i * 4);
+        if (!c) break;
+        s.push_back(char32_t(c));
+    }
+    return s;
+}
+std::u32string wvalue(Ctx& x, GuestPtr self) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    return (!d || d == emptyWData(x)) ? std::u32string{} : wchars(x, d, len(x, d));
+}
+uint32_t newWRep(Ctx& x, uint32_t capacity) {
+    if (capacity > kWMaxSize) lengthError("basic_string<wchar_t>::_S_create");
+    const uint32_t rep = x.proc.heap().alloc(kHdr + (capacity + 1) * 4);
+    if (!rep) throw std::runtime_error("std::wstring: out of guest memory");
+    x.mem.write<uint32_t>(rep, 0);
+    x.mem.write<uint32_t>(rep + 4, capacity);
+    x.mem.write<uint32_t>(rep + 8, 0);
+    x.mem.write<uint32_t>(rep + kHdr, 0);
+    return rep;
+}
+uint32_t wmake(Ctx& x, const std::u32string& s, uint32_t minCap = 0) {
+    if (s.empty() && !minCap) return emptyWData(x);
+    const uint32_t rep = newWRep(x, std::max<uint32_t>(uint32_t(s.size()), minCap));
+    x.mem.write<uint32_t>(rep, uint32_t(s.size()));
+    for (size_t i = 0; i < s.size(); ++i) x.mem.write<uint32_t>(rep + kHdr + uint32_t(i * 4), uint32_t(s[i]));
+    x.mem.write<uint32_t>(rep + kHdr + uint32_t(s.size() * 4), 0);
+    return rep + kHdr;
+}
+void wdispose(Ctx& x, uint32_t data) {
+    if (!data || data == emptyWData(x)) return;
+    const uint32_t rep = data - kHdr;
+    const int32_t rc = int32_t(x.mem.read<uint32_t>(rep + 8));
+    x.mem.write<uint32_t>(rep + 8, uint32_t(rc - 1));
+    if (rc <= 0) x.proc.heap().free(rep);
+}
+uint32_t wgrab(Ctx& x, uint32_t data) {
+    if (!data || data == emptyWData(x)) return emptyWData(x);
+    const int32_t rc = int32_t(x.mem.read<uint32_t>(data - kHdr + 8));
+    if (rc < 0) return wmake(x, wchars(x, data, len(x, data)));
+    x.mem.write<uint32_t>(data - kHdr + 8, uint32_t(rc + 1));
+    return data;
+}
+void wset(Ctx& x, GuestPtr self, const std::u32string& s, uint32_t minCap = 0) {
+    const uint32_t old = x.mem.read<uint32_t>(self);
+    x.mem.write<uint32_t>(self, wmake(x, s, minCap));
+    wdispose(x, old);
+}
+
+void wc_default(Ctx& x, GuestPtr self) { x.mem.write<uint32_t>(self, emptyWData(x)); }
+void wc_fill(Ctx& x, GuestPtr self, uint32_t n, uint32_t c, GuestPtr) { x.mem.write<uint32_t>(self, wmake(x, std::u32string(n, char32_t(c)))); }
+void wc_cstr(Ctx& x, GuestPtr self, GuestPtr s, GuestPtr) { x.mem.write<uint32_t>(self, wmake(x, readWCString(x, s))); }
+void wc_buf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n, GuestPtr) { x.mem.write<uint32_t>(self, wmake(x, wchars(x, s, n))); }
+void wc_copy(Ctx& x, GuestPtr self, GuestPtr other) { x.mem.write<uint32_t>(self, wgrab(x, x.mem.read<uint32_t>(other))); }
+void wc_sub(Ctx& x, GuestPtr self, GuestPtr other, uint32_t pos, uint32_t n) {
+    const std::u32string v = wvalue(x, other);
+    checkPos(pos, uint32_t(v.size()), "basic_string<wchar_t>::basic_string");
+    x.mem.write<uint32_t>(self, wmake(x, v.substr(pos, clip(uint32_t(v.size()), pos, n))));
+}
+void wd_str(Ctx& x, GuestPtr self) { wdispose(x, x.mem.read<uint32_t>(self)); }
+
+uint32_t wm_assignBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { wset(x, self, wchars(x, s, n)); return self; }
+uint32_t wm_assignC(Ctx& x, GuestPtr self, GuestPtr s) { wset(x, self, readWCString(x, s)); return self; }
+uint32_t wm_assignStr(Ctx& x, GuestPtr self, GuestPtr other) {
+    const uint32_t mine = x.mem.read<uint32_t>(self), theirs = x.mem.read<uint32_t>(other);
+    if (mine != theirs) { x.mem.write<uint32_t>(self, wgrab(x, theirs)); wdispose(x, mine); }
+    return self;
+}
+uint32_t wm_appendBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { std::u32string v = wvalue(x, self); v += wchars(x, s, n); wset(x, self, v); return self; }
+uint32_t wm_appendC(Ctx& x, GuestPtr self, GuestPtr s) { std::u32string v = wvalue(x, self); v += readWCString(x, s); wset(x, self, v); return self; }
+uint32_t wm_appendStr(Ctx& x, GuestPtr self, GuestPtr other) { std::u32string v = wvalue(x, self); v += wvalue(x, other); wset(x, self, v); return self; }
+uint32_t wm_appendChars(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { std::u32string v = wvalue(x, self); v.append(n, char32_t(c)); wset(x, self, v); return self; }
+void wm_pushBack(Ctx& x, GuestPtr self, uint32_t c) {
+    std::u32string v = wvalue(x, self);
+    v.push_back(char32_t(c));
+    wset(x, self, v);
+}
+uint32_t wm_insertBuf(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s, uint32_t n) {
+    std::u32string v = wvalue(x, self);
+    checkPos(pos, uint32_t(v.size()), "basic_string<wchar_t>::insert");
+    v.insert(pos, wchars(x, s, n));
+    wset(x, self, v);
+    return self;
+}
+uint32_t wm_insertSub(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr other, uint32_t pos2, uint32_t n) {
+    std::u32string v = wvalue(x, self);
+    const std::u32string o = wvalue(x, other);
+    checkPos(pos, uint32_t(v.size()), "basic_string<wchar_t>::insert");
+    checkPos(pos2, uint32_t(o.size()), "basic_string<wchar_t>::insert");
+    v.insert(pos, o.substr(pos2, clip(uint32_t(o.size()), pos2, n)));
+    wset(x, self, v);
+    return self;
+}
+uint32_t wm_erase(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n) {
+    std::u32string v = wvalue(x, self);
+    checkPos(pos, uint32_t(v.size()), "basic_string<wchar_t>::erase");
+    v.erase(pos, clip(uint32_t(v.size()), pos, n));
+    wset(x, self, v);
+    return self;
+}
+uint32_t wm_replace(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, GuestPtr s, uint32_t n2) {
+    std::u32string v = wvalue(x, self);
+    checkPos(pos, uint32_t(v.size()), "basic_string<wchar_t>::replace");
+    v.replace(pos, clip(uint32_t(v.size()), pos, n1), wchars(x, s, n2));
+    wset(x, self, v);
+    return self;
+}
+void wm_mutate(Ctx& x, GuestPtr self, uint32_t pos, uint32_t len1, uint32_t len2) {
+    std::u32string v = wvalue(x, self);
+    pos = std::min<uint32_t>(pos, uint32_t(v.size()));
+    v.replace(pos, clip(uint32_t(v.size()), pos, len1), std::u32string(len2, U'\0'));
+    wset(x, self, v);
+}
+void wm_resize(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { std::u32string v = wvalue(x, self); v.resize(n, char32_t(c)); wset(x, self, v); }
+void wm_reserve(Ctx& x, GuestPtr self, uint32_t n) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    const uint32_t cap = d == emptyWData(x) ? 0 : x.mem.read<uint32_t>(d - kHdr + 4);
+    const int32_t rc = d == emptyWData(x) ? 0 : int32_t(x.mem.read<uint32_t>(d - kHdr + 8));
+    if (n <= cap && rc <= 0) return;
+    const std::u32string v = wvalue(x, self);
+    wset(x, self, v, std::max<uint32_t>(n, uint32_t(v.size())));
+}
+void wm_leakHard(Ctx& x, GuestPtr self) {
+    uint32_t d = x.mem.read<uint32_t>(self);
+    if (d == emptyWData(x)) return;
+    if (int32_t(x.mem.read<uint32_t>(d - kHdr + 8)) > 0) { wset(x, self, wvalue(x, self)); d = x.mem.read<uint32_t>(self); }
+    if (d != emptyWData(x)) x.mem.write<uint32_t>(d - kHdr + 8, uint32_t(-1));
+}
+uint32_t wq_beginConst(Ctx& x, GuestPtr self) { return x.mem.read<uint32_t>(self); }
+uint32_t wq_endConst(Ctx& x, GuestPtr self) { const uint32_t d = x.mem.read<uint32_t>(self); return d + len(x, d) * 4; }
+uint32_t wq_begin(Ctx& x, GuestPtr self) { wm_leakHard(x, self); return x.mem.read<uint32_t>(self); }
+uint32_t wq_end(Ctx& x, GuestPtr self) { wm_leakHard(x, self); const uint32_t d = x.mem.read<uint32_t>(self); return d + len(x, d) * 4; }
+uint32_t wq_findBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = wvalue(x, self).find(wchars(x, s, n), pos);
+    return r == std::u32string::npos ? kNpos : uint32_t(r);
+}
+uint32_t wq_rfindBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = wvalue(x, self).rfind(wchars(x, s, n), pos == kNpos ? std::u32string::npos : pos);
+    return r == std::u32string::npos ? kNpos : uint32_t(r);
+}
+uint32_t wq_findChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
+    const size_t r = wvalue(x, self).find(char32_t(c), pos);
+    return r == std::u32string::npos ? kNpos : uint32_t(r);
+}
+uint32_t wq_rfindChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
+    const size_t r = wvalue(x, self).rfind(char32_t(c), pos == kNpos ? std::u32string::npos : pos);
+    return r == std::u32string::npos ? kNpos : uint32_t(r);
+}
+uint32_t wq_findFirstOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = wvalue(x, self).find_first_of(wchars(x, s, n), pos);
+    return r == std::u32string::npos ? kNpos : uint32_t(r);
+}
+uint32_t wq_findLastOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = wvalue(x, self).find_last_of(wchars(x, s, n), pos == kNpos ? std::u32string::npos : pos);
+    return r == std::u32string::npos ? kNpos : uint32_t(r);
+}
+uint32_t wq_findFirstNotOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = wvalue(x, self).find_first_not_of(wchars(x, s, n), pos);
+    return r == std::u32string::npos ? kNpos : uint32_t(r);
+}
+uint32_t wq_findLastNotOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
+    const size_t r = wvalue(x, self).find_last_not_of(wchars(x, s, n), pos == kNpos ? std::u32string::npos : pos);
+    return r == std::u32string::npos ? kNpos : uint32_t(r);
+}
+int32_t wq_compareC(Ctx& x, GuestPtr self, GuestPtr s) { const int r = wvalue(x, self).compare(readWCString(x, s)); return r < 0 ? -1 : r > 0; }
+int32_t wq_compareStr(Ctx& x, GuestPtr self, GuestPtr other) { const int r = wvalue(x, self).compare(wvalue(x, other)); return r < 0 ? -1 : r > 0; }
+void wq_substr(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], self = x.cpu.r[1], pos = x.cpu.r[2], n = x.cpu.r[3];
+    const std::u32string v = wvalue(x, self);
+    checkPos(pos, uint32_t(v.size()), "basic_string<wchar_t>::substr");
+    x.mem.write<uint32_t>(ret, wmake(x, v.substr(pos, clip(uint32_t(v.size()), pos, n))));
+    x.cpu.r[0] = ret;
+}
+uint32_t wr_create(Ctx& x, uint32_t cap, uint32_t oldCap, GuestPtr) {
+    if (cap > oldCap && cap < 2 * oldCap) cap = 2 * oldCap;
+    return newWRep(x, cap);
+}
+void wr_destroy(Ctx& x, GuestPtr rep, GuestPtr) { if (rep && rep + kHdr != emptyWData(x)) x.proc.heap().free(rep); }
 
 // ---------------------------------------------------------------- std::list
 // _List_node_base { next; prev; }
@@ -522,15 +749,21 @@ uint32_t t_rebalanceForErase(Ctx& x, GuestPtr z, GuestPtr header) {
 
 } // namespace
 
-// Shared with the stream code: build / read a guest std::string.
+// Shared with the stream code: build / read a guest std::string or std::wstring.
 uint32_t guestStringData(Ctx& x, const std::string& s) { return make(x, s); }
 std::string guestStringValue(Ctx& x, GuestPtr self) { return value(x, self); }
 void guestStringDispose(Ctx& x, GuestPtr self) { dispose(x, x.mem.read<uint32_t>(self)); }
+void guestStringSet(Ctx& x, GuestPtr self, const std::string& s) { set(x, self, s); }
+uint32_t guestWStringData(Ctx& x, const std::u32string& s) { return wmake(x, s); }
+std::u32string guestWStringValue(Ctx& x, GuestPtr self) { return wvalue(x, self); }
 
 void registerLibStdcxxContainers(Process& p) {
     p.service<Strings>().emptyRep = p.defineDataBlock("__ZNSs4_Rep20_S_empty_rep_storageE", 16);
     p.mem().write<uint32_t>(p.defineDataBlock("__ZNSs4_Rep11_S_max_sizeE", 4), kMaxSize);
     p.defineDataBlock("__ZNSs4_Rep11_S_terminalE", 4);
+    p.service<Strings>().emptyWRep = p.defineDataBlock("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep20_S_empty_rep_storageE", 32);
+    p.mem().write<uint32_t>(p.defineDataBlock("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep11_S_max_sizeE", 4), kWMaxSize);
+    p.defineDataBlock("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep11_S_terminalE", 4);
     p.def<&c_default>("__ZNSsC1Ev");            p.def<&c_default>("__ZNSsC2Ev");
     p.def<&c_fill>("__ZNSsC1EmcRKSaIcE");       p.def<&c_fill>("__ZNSsC2EmcRKSaIcE");
     p.def<&c_cstr>("__ZNSsC1EPKcRKSaIcE");      p.def<&c_cstr>("__ZNSsC2EPKcRKSaIcE");
@@ -540,6 +773,7 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&d_str>("__ZNSsD1Ev");                p.def<&d_str>("__ZNSsD2Ev");
     p.def<&m_assignBuf>("__ZNSs6assignEPKcm");
     p.def<&m_assignStr>("__ZNSs6assignERKSs");
+    p.def<&m_assignSub>("__ZNSs6assignERKSsmm");
     p.def<&m_appendBuf>("__ZNSs6appendEPKcm");
     p.def<&m_appendStr>("__ZNSs6appendERKSs");
     p.def<&m_appendChars>("__ZNSs6appendEmc");
@@ -584,11 +818,74 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&q_findChar>("__ZNKSs4findEcm");
     p.def<&q_rfindBuf>("__ZNKSs5rfindEPKcmm");
     p.def<&q_rfindChar>("__ZNKSs5rfindEcm");
+    p.def<&q_findFirstOfBuf>("__ZNKSs13find_first_ofEPKcmm");
+    p.def<&q_findLastOfBuf>("__ZNKSs12find_last_ofEPKcmm");
+    p.def<&q_findFirstNotOfBuf>("__ZNKSs17find_first_not_ofEPKcmm");
+    p.def<&q_findLastNotOfBuf>("__ZNKSs16find_last_not_ofEPKcmm");
     p.def<&q_compareC>("__ZNKSs7compareEPKc");
     p.def<&q_compareStr>("__ZNKSs7compareERKSs");
+    p.def<&q_compareSubStr>("__ZNKSs7compareEmmRKSs");
+    p.def<&q_compareSubC>("__ZNKSs7compareEmmPKc");
     p.defineFunction("__ZNKSs6substrEmm", [](Ctx& x) { q_substr(x); });
     p.def<&r_create>("__ZNSs4_Rep9_S_createEmmRKSaIcE");
     p.def<&r_destroy>("__ZNSs4_Rep10_M_destroyERKSaIcE");
+
+    // std::wstring
+    p.def<&wc_default>("__ZNSbIwSt11char_traitsIwESaIwEEC1Ev");
+    p.def<&wc_default>("__ZNSbIwSt11char_traitsIwESaIwEEC2Ev");
+    p.def<&wc_fill>("__ZNSbIwSt11char_traitsIwESaIwEEC1EmwRKS1_");
+    p.def<&wc_fill>("__ZNSbIwSt11char_traitsIwESaIwEEC2EmwRKS1_");
+    p.def<&wc_cstr>("__ZNSbIwSt11char_traitsIwESaIwEEC1EPKwRKS1_");
+    p.def<&wc_cstr>("__ZNSbIwSt11char_traitsIwESaIwEEC2EPKwRKS1_");
+    p.def<&wc_buf>("__ZNSbIwSt11char_traitsIwESaIwEEC1EPKwmRKS1_");
+    p.def<&wc_buf>("__ZNSbIwSt11char_traitsIwESaIwEEC2EPKwmRKS1_");
+    p.def<&wc_copy>("__ZNSbIwSt11char_traitsIwESaIwEEC1ERKS2_");
+    p.def<&wc_copy>("__ZNSbIwSt11char_traitsIwESaIwEEC2ERKS2_");
+    p.def<&wc_sub>("__ZNSbIwSt11char_traitsIwESaIwEEC1ERKS2_mm");
+    p.def<&wc_sub>("__ZNSbIwSt11char_traitsIwESaIwEEC2ERKS2_mm");
+    p.def<&wd_str>("__ZNSbIwSt11char_traitsIwESaIwEED1Ev");
+    p.def<&wd_str>("__ZNSbIwSt11char_traitsIwESaIwEED2Ev");
+    p.def<&wm_assignBuf>("__ZNSbIwSt11char_traitsIwESaIwEE6assignEPKwm");
+    p.def<&wm_assignC>("__ZNSbIwSt11char_traitsIwESaIwEE6assignEPKw");
+    p.def<&wm_assignStr>("__ZNSbIwSt11char_traitsIwESaIwEE6assignERKS2_");
+    p.def<&wm_assignC>("__ZNSbIwSt11char_traitsIwESaIwEEaSEPKw");
+    p.def<&wm_assignStr>("__ZNSbIwSt11char_traitsIwESaIwEEaSERKS2_");
+    p.def<&wm_appendBuf>("__ZNSbIwSt11char_traitsIwESaIwEE6appendEPKwm");
+    p.def<&wm_appendC>("__ZNSbIwSt11char_traitsIwESaIwEE6appendEPKw");
+    p.def<&wm_appendStr>("__ZNSbIwSt11char_traitsIwESaIwEE6appendERKS2_");
+    p.def<&wm_appendChars>("__ZNSbIwSt11char_traitsIwESaIwEE6appendEmw");
+    p.def<&wm_pushBack>("__ZNSbIwSt11char_traitsIwESaIwEE9push_backEw");
+    p.def<&wm_insertBuf>("__ZNSbIwSt11char_traitsIwESaIwEE6insertEmPKwm");
+    p.def<&wm_insertSub>("__ZNSbIwSt11char_traitsIwESaIwEE6insertEmRKS2_mm");
+    p.def<&wm_erase>("__ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm");
+    p.def<&wm_replace>("__ZNSbIwSt11char_traitsIwESaIwEE7replaceEmmPKwm");
+    p.def<&wm_replace>("__ZNSbIwSt11char_traitsIwESaIwEE15_M_replace_safeEmmPKwm");
+    p.def<&wm_mutate>("__ZNSbIwSt11char_traitsIwESaIwEE9_M_mutateEmmm");
+    p.def<&wm_resize>("__ZNSbIwSt11char_traitsIwESaIwEE6resizeEmw");
+    p.def<&wm_reserve>("__ZNSbIwSt11char_traitsIwESaIwEE7reserveEm");
+    p.def<&wm_leakHard>("__ZNSbIwSt11char_traitsIwESaIwEE12_M_leak_hardEv");
+    p.def<&q_size>("__ZNKSbIwSt11char_traitsIwESaIwEE4sizeEv");
+    p.def<&q_size>("__ZNKSbIwSt11char_traitsIwESaIwEE6lengthEv");
+    p.def<&q_empty>("__ZNKSbIwSt11char_traitsIwESaIwEE5emptyEv");
+    p.def<&q_cstr>("__ZNKSbIwSt11char_traitsIwESaIwEE5c_strEv");
+    p.def<&q_cstr>("__ZNKSbIwSt11char_traitsIwESaIwEE4dataEv");
+    p.def<&wq_beginConst>("__ZNKSbIwSt11char_traitsIwESaIwEE5beginEv");
+    p.def<&wq_endConst>("__ZNKSbIwSt11char_traitsIwESaIwEE3endEv");
+    p.def<&wq_begin>("__ZNSbIwSt11char_traitsIwESaIwEE5beginEv");
+    p.def<&wq_end>("__ZNSbIwSt11char_traitsIwESaIwEE3endEv");
+    p.def<&wq_findBuf>("__ZNKSbIwSt11char_traitsIwESaIwEE4findEPKwmm");
+    p.def<&wq_rfindBuf>("__ZNKSbIwSt11char_traitsIwESaIwEE5rfindEPKwmm");
+    p.def<&wq_findChar>("__ZNKSbIwSt11char_traitsIwESaIwEE4findEwm");
+    p.def<&wq_rfindChar>("__ZNKSbIwSt11char_traitsIwESaIwEE5rfindEwm");
+    p.def<&wq_findFirstOfBuf>("__ZNKSbIwSt11char_traitsIwESaIwEE13find_first_ofEPKwmm");
+    p.def<&wq_findLastOfBuf>("__ZNKSbIwSt11char_traitsIwESaIwEE12find_last_ofEPKwmm");
+    p.def<&wq_findFirstNotOfBuf>("__ZNKSbIwSt11char_traitsIwESaIwEE17find_first_not_ofEPKwmm");
+    p.def<&wq_findLastNotOfBuf>("__ZNKSbIwSt11char_traitsIwESaIwEE16find_last_not_ofEPKwmm");
+    p.def<&wq_compareC>("__ZNKSbIwSt11char_traitsIwESaIwEE7compareEPKw");
+    p.def<&wq_compareStr>("__ZNKSbIwSt11char_traitsIwESaIwEE7compareERKS2_");
+    p.defineFunction("__ZNKSbIwSt11char_traitsIwESaIwEE6substrEmm", [](Ctx& x) { wq_substr(x); });
+    p.def<&wr_create>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep9_S_createEmmRKS1_");
+    p.def<&wr_destroy>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep10_M_destroyERKS1_");
 
     p.def<&l_hook>("__ZNSt15_List_node_base4hookEPS_");
     p.def<&l_unhook>("__ZNSt15_List_node_base6unhookEv");
@@ -601,6 +898,56 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&t_decrement>("__ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base");
     p.def<&t_insertRebalance>("__ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_");
     p.def<&t_rebalanceForErase>("__ZSt28_Rb_tree_rebalance_for_erasePSt18_Rb_tree_node_baseRS_");
+
+    // std::exception, std::runtime_error, std::logic_error
+    const uint32_t vtExc = p.defineDataBlock("__ZTVSt9exception", 32);
+    const uint32_t vtRt  = p.defineDataBlock("__ZTVSt13runtime_error", 32);
+    const uint32_t vtLg  = p.defineDataBlock("__ZTVSt11logic_error", 32);
+    const uint32_t fnExcD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9exceptionD1Ev");
+    p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9exceptionD2Ev");
+    const uint32_t fnExcD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt9exceptionD0Ev");
+    const uint32_t fnExcWhat = p.def<+[](Ctx& x, uint32_t) -> uint32_t { return x.proc.internCString("std::exception"); }>("__ZNKSt9exception4whatEv");
+
+    auto strExcCtor = [](uint32_t vptr) {
+        return [vptr](Ctx& x, uint32_t self, uint32_t str) -> uint32_t {
+            x.mem.write<uint32_t>(self, vptr);
+            x.mem.write<uint32_t>(self + 4, str ? grab(x, x.mem.read<uint32_t>(str)) : make(x, ""));
+            return self;
+        };
+    };
+    const uint32_t fnRtD1 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { dispose(x, x.mem.read<uint32_t>(self + 4)); return self; }>("__ZNSt13runtime_errorD1Ev");
+    p.def<+[](Ctx& x, uint32_t self) -> uint32_t { dispose(x, x.mem.read<uint32_t>(self + 4)); return self; }>("__ZNSt13runtime_errorD2Ev");
+    const uint32_t fnRtD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { dispose(x, x.mem.read<uint32_t>(self + 4)); x.proc.heap().free(self); return self; }>("__ZNSt13runtime_errorD0Ev");
+    const uint32_t fnRtWhat = p.def<+[](Ctx& x, uint32_t self) -> uint32_t {
+        const uint32_t s = x.mem.read<uint32_t>(self + 4);
+        return s ? s : x.proc.internCString("std::runtime_error");
+    }>("__ZNKSt13runtime_error4whatEv");
+
+    const uint32_t fnLgD1 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { dispose(x, x.mem.read<uint32_t>(self + 4)); return self; }>("__ZNSt11logic_errorD1Ev");
+    p.def<+[](Ctx& x, uint32_t self) -> uint32_t { dispose(x, x.mem.read<uint32_t>(self + 4)); return self; }>("__ZNSt11logic_errorD2Ev");
+    const uint32_t fnLgD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { dispose(x, x.mem.read<uint32_t>(self + 4)); x.proc.heap().free(self); return self; }>("__ZNSt11logic_errorD0Ev");
+    const uint32_t fnLgWhat = p.def<+[](Ctx& x, uint32_t self) -> uint32_t {
+        const uint32_t s = x.mem.read<uint32_t>(self + 4);
+        return s ? s : x.proc.internCString("std::logic_error");
+    }>("__ZNKSt11logic_error4whatEv");
+
+    for (const char* s : {"__ZNSt13runtime_errorC1ERKSs", "__ZNSt13runtime_errorC2ERKSs"}) {
+        const uint32_t vp = vtRt + 8;
+        p.defineFunction(s, [strExcCtor, vp](Ctx& x) { x.cpu.r[0] = strExcCtor(vp)(x, x.cpu.r[0], x.cpu.r[1]); });
+    }
+    for (const char* s : {"__ZNSt11logic_errorC1ERKSs", "__ZNSt11logic_errorC2ERKSs"}) {
+        const uint32_t vp = vtLg + 8;
+        p.defineFunction(s, [strExcCtor, vp](Ctx& x) { x.cpu.r[0] = strExcCtor(vp)(x, x.cpu.r[0], x.cpu.r[1]); });
+    }
+    p.mem().write<uint32_t>(vtExc + 8, fnExcD1);
+    p.mem().write<uint32_t>(vtExc + 12, fnExcD0);
+    p.mem().write<uint32_t>(vtExc + 16, fnExcWhat);
+    p.mem().write<uint32_t>(vtRt + 8, fnRtD1);
+    p.mem().write<uint32_t>(vtRt + 12, fnRtD0);
+    p.mem().write<uint32_t>(vtRt + 16, fnRtWhat);
+    p.mem().write<uint32_t>(vtLg + 8, fnLgD1);
+    p.mem().write<uint32_t>(vtLg + 12, fnLgD0);
+    p.mem().write<uint32_t>(vtLg + 16, fnLgWhat);
 }
 
 } // namespace Hydrogen::Runtime

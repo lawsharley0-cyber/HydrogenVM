@@ -45,13 +45,15 @@ enum TypeID : uint32_t {
 
 uint32_t cf_retain(Ctx& x, id o) {
     if (!o) { x.proc.log(LogLevel::Warning, "CFRetain(NULL) — this crashes on iOS"); return 0; }
+    if (!x.mem.read<uint32_t>(o)) return o;
     return R(x).retain(x.cpu, o);
 }
 void cf_release(Ctx& x, id o) {
     if (!o) { x.proc.log(LogLevel::Warning, "CFRelease(NULL) — this crashes on iOS"); return; }
+    if (!x.mem.read<uint32_t>(o)) return;
     R(x).release(x.cpu, o);
 }
-uint32_t cf_autorelease(Ctx& x, id o) { return o ? R(x).autorelease(x.cpu, o) : 0; }
+uint32_t cf_autorelease(Ctx& x, id o) { return (o && x.mem.read<uint32_t>(o)) ? R(x).autorelease(x.cpu, o) : o; }
 uint32_t cf_makeCollectable(Ctx&, id o) { return o; }
 int32_t cf_retainCount(Ctx& x, id o) { return int32_t(send(x, o, "retainCount")); }
 bool cf_equal(Ctx& x, id a, id b) { return objectsEqual(x, a, b); }
@@ -175,11 +177,8 @@ bool s_getCString(Ctx& x, id s, GuestPtr buf, int32_t size, uint32_t enc) {
     x.mem.write<uint8_t>(buf + uint32_t(b.size()), 0);
     return true;
 }
-uint32_t s_getCStringPtr(Ctx& x, id s, uint32_t enc) {
-    // Only guaranteed for ASCII-compatible content in an 8-bit encoding.
-    const uint32_t ns = toNS(enc);
-    if (ns != kNSUTF8 && ns != kNSASCII && ns != kNSMacOSRoman && ns != kNSISOLatin1 && ns != kNSWindowsCP1252) return 0;
-    for (char16_t c : stringValue(x, s)) if (c >= 0x80) return 0;
+uint32_t s_getCStringPtr(Ctx& x, id s, uint32_t) {
+    if (!s) return 0;
     return uint32_t(send(x, s, "UTF8String"));
 }
 uint32_t s_getCharactersPtr(Ctx&, id) { return 0; }
@@ -205,7 +204,7 @@ int32_t s_maxSize(Ctx&, int32_t len, uint32_t enc) {
     return ns == kNSUTF8 ? len * 3 : ns == kNSUnicode || ns == kNSUTF16BE || ns == kNSUTF16LE ? len * 2 : ns == kNSUTF32 ? len * 4 : len;
 }
 uint32_t s_systemEncoding(Ctx&) { return 0; }
-uint32_t s_fastestEncoding(Ctx&, id) { return 0x0100; }
+uint32_t s_fastestEncoding(Ctx&, id) { return 0x08000100; }
 uint32_t s_smallestEncoding(Ctx&, id) { return 0x08000100; }
 uint32_t s_cfToNS(Ctx&, uint32_t e) { return toNS(e); }
 uint32_t s_nsToCF(Ctx&, uint32_t e) { return toCF(e); }
@@ -495,9 +494,44 @@ int32_t a_bsearch(Ctx& x, id a, uint32_t loc, uint32_t len, uint32_t v, uint32_t
     }
     return int32_t(lo);
 }
-// raw array ObjC methods (so code that treats it as an NSArray still works for basics)
+// raw array ObjC methods (so code that treats it as an NSArray/NSMutableArray/NSMutableSet still works for basics)
 uint32_t ra_count(Ctx& x, id self, SEL) { return uint32_t(a_count(x, self)); }
 uint32_t ra_objectAt(Ctx& x, id self, SEL, uint32_t i) { return a_get(x, self, int32_t(i)); }
+void ra_addObject(Ctx& x, id self, SEL, uint32_t v) { a_append(x, self, v); }
+void ra_insertObject(Ctx& x, id self, SEL, uint32_t v, uint32_t i) { a_insert(x, self, int32_t(i), v); }
+void ra_replaceAt(Ctx& x, id self, SEL, uint32_t i, uint32_t v) { a_set(x, self, int32_t(i), v); }
+void ra_removeAt(Ctx& x, id self, SEL, uint32_t i) { a_remove(x, self, int32_t(i)); }
+void ra_removeObject(Ctx& x, id self, SEL, uint32_t v) {
+    if (RawArray* r = rawA(x, self))
+        r->items.erase(std::remove(r->items.begin(), r->items.end(), v), r->items.end());
+}
+void ra_removeAll(Ctx& x, id self, SEL) { a_removeAll(x, self); }
+bool ra_contains(Ctx& x, id self, SEL, uint32_t v) { return a_contains(x, self, 0, uint32_t(a_count(x, self)), v); }
+uint32_t ra_member(Ctx& x, id self, SEL, uint32_t v) { return ra_contains(x, self, 0, v) ? v : 0; }
+void ra_makePerf(Ctx& x, id self, SEL, SEL s) {
+    RawArray* r = rawA(x, self);
+    if (!r || !s) return;
+    const auto copy = r->items;
+    for (id o : copy) if (o) R(x).send(x.cpu, o, s);
+}
+void ra_makePerfObj(Ctx& x, id self, SEL, SEL s, id arg) {
+    RawArray* r = rawA(x, self);
+    if (!r || !s) return;
+    const auto copy = r->items;
+    for (id o : copy) if (o) R(x).send(x.cpu, o, s, {arg});
+}
+uint32_t ra_fastEnum(Ctx& x, id self, SEL, GuestPtr state, GuestPtr buf, uint32_t len) {
+    RawArray* r = rawA(x, self);
+    if (!r || !state) return 0;
+    const uint32_t pos = x.mem.read<uint32_t>(state);
+    if (pos >= r->items.size()) return 0;
+    const uint32_t n = std::min<uint32_t>(len, uint32_t(r->items.size()) - pos);
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint32_t>(buf + i * 4, r->items[pos + i]);
+    x.mem.write<uint32_t>(state, pos + n);
+    x.mem.write<uint32_t>(state + 4, buf);
+    x.mem.write<uint32_t>(state + 8, state);
+    return n;
+}
 void ra_dealloc(Ctx& x, id self, SEL) { R(x).disposeInstance(x.cpu, self); }
 
 // -------------------------------------------------------- CFDictionary ---
@@ -654,25 +688,63 @@ void rd_dealloc(Ctx& x, id self, SEL) {
 // --------------------------------------------------------------- CFSet ---
 
 uint32_t set_create(Ctx& x, uint32_t, GuestPtr values, int32_t n, GuestPtr cb) {
-    if (!objectCallbacks(x, cb)) x.proc.reportMissing("CFSet with non-object callbacks");
     std::vector<id> v;
     for (int32_t i = 0; i < n; ++i) v.push_back(x.mem.read<uint32_t>(values + uint32_t(i) * 4));
+    if (!objectCallbacks(x, cb)) return newRawArray(x, std::move(v));
     return makeSet(x, v, true, false);
 }
 uint32_t set_createMutable(Ctx& x, uint32_t, int32_t, GuestPtr cb) {
-    if (!objectCallbacks(x, cb)) x.proc.reportMissing("CFSet with non-object callbacks");
+    if (!objectCallbacks(x, cb)) return newRawArray(x, {});
     return makeSet(x, {}, true, true);
 }
-uint32_t set_createCopy(Ctx& x, uint32_t, id s) { return uint32_t(send(x, s, "copy")); }
-uint32_t set_createMutableCopy(Ctx& x, uint32_t, int32_t, id s) { return uint32_t(send(x, s, "mutableCopy")); }
-int32_t set_count(Ctx& x, id s) { return s ? int32_t(send(x, s, "count")) : 0; }
-bool set_contains(Ctx& x, id s, uint32_t v) { return (uint32_t(send(x, s, "containsObject:", {v})) & 0xFF) != 0; }
-uint32_t set_getValue(Ctx& x, id s, uint32_t v) { return uint32_t(send(x, s, "member:", {v})); }
-void set_add(Ctx& x, id s, uint32_t v) { send(x, s, "addObject:", {v}); }
-void set_remove(Ctx& x, id s, uint32_t v) { send(x, s, "removeObject:", {v}); }
-void set_removeAll(Ctx& x, id s) { send(x, s, "removeAllObjects"); }
-void set_getValues(Ctx& x, id s, GuestPtr out) { uint32_t i = 0; for (id o : setItems(x, s)) x.mem.write<uint32_t>(out + 4 * i++, o); }
-void set_apply(Ctx& x, id s, uint32_t fn, uint32_t ctx) { for (id o : setItems(x, s)) x.proc.callGuest(x.cpu, fn, {o, ctx}); }
+uint32_t set_createCopy(Ctx& x, uint32_t, id s) {
+    if (RawArray* r = rawA(x, s)) return newRawArray(x, r->items);
+    return uint32_t(send(x, s, "copy"));
+}
+uint32_t set_createMutableCopy(Ctx& x, uint32_t, int32_t, id s) {
+    if (RawArray* r = rawA(x, s)) return newRawArray(x, r->items);
+    return uint32_t(send(x, s, "mutableCopy"));
+}
+int32_t set_count(Ctx& x, id s) {
+    if (!s) return 0;
+    if (RawArray* r = rawA(x, s)) return int32_t(r->items.size());
+    return int32_t(send(x, s, "count"));
+}
+bool set_contains(Ctx& x, id s, uint32_t v) {
+    if (RawArray* r = rawA(x, s)) return std::find(r->items.begin(), r->items.end(), v) != r->items.end();
+    return (uint32_t(send(x, s, "containsObject:", {v})) & 0xFF) != 0;
+}
+uint32_t set_getValue(Ctx& x, id s, uint32_t v) {
+    if (RawArray* r = rawA(x, s)) return std::find(r->items.begin(), r->items.end(), v) != r->items.end() ? v : 0;
+    return uint32_t(send(x, s, "member:", {v}));
+}
+void set_add(Ctx& x, id s, uint32_t v) {
+    if (RawArray* r = rawA(x, s)) {
+        if (std::find(r->items.begin(), r->items.end(), v) == r->items.end()) r->items.push_back(v);
+        return;
+    }
+    send(x, s, "addObject:", {v});
+}
+void set_remove(Ctx& x, id s, uint32_t v) {
+    if (RawArray* r = rawA(x, s)) {
+        r->items.erase(std::remove(r->items.begin(), r->items.end(), v), r->items.end());
+        return;
+    }
+    send(x, s, "removeObject:", {v});
+}
+void set_removeAll(Ctx& x, id s) {
+    if (RawArray* r = rawA(x, s)) { r->items.clear(); return; }
+    send(x, s, "removeAllObjects");
+}
+void set_getValues(Ctx& x, id s, GuestPtr out) {
+    uint32_t i = 0;
+    if (RawArray* r = rawA(x, s)) { for (uint32_t o : r->items) x.mem.write<uint32_t>(out + 4 * i++, o); return; }
+    for (id o : setItems(x, s)) x.mem.write<uint32_t>(out + 4 * i++, o);
+}
+void set_apply(Ctx& x, id s, uint32_t fn, uint32_t ctx) {
+    if (RawArray* r = rawA(x, s)) { for (uint32_t o : std::vector<uint32_t>(r->items)) x.proc.callGuest(x.cpu, fn, {o, ctx}); return; }
+    for (id o : setItems(x, s)) x.proc.callGuest(x.cpu, fn, {o, ctx});
+}
 
 // -------------------------------------------------------------- CFData ---
 
@@ -768,6 +840,24 @@ uint32_t uuid_createString(Ctx& x, uint32_t, id u) { return R(x).retain(x.cpu, i
 uint32_t uuid_createFromString(Ctx& x, uint32_t, id s) {
     const id u = id(send(x, id(send(x, R(x).getClass("NSUUID"), "alloc")), "initWithUUIDString:", {s}));
     return u;
+}
+uint32_t uuid_createFromUUIDBytes(Ctx& x, uint32_t, Words<4> b) {
+    const GuestPtr tmp = x.proc.heap().alloc(16);
+    for (int i = 0; i < 4; ++i) x.mem.write<uint32_t>(tmp + uint32_t(i * 4), b.w[i]);
+    const id u = id(send(x, id(send(x, R(x).getClass("NSUUID"), "alloc")), "initWithUUIDBytes:", {tmp}));
+    x.proc.heap().free(tmp);
+    return u;
+}
+void uuid_createWithBytes(Ctx& x) {
+    const GuestPtr tmp = x.proc.heap().alloc(16);
+    x.mem.write<uint8_t>(tmp + 0, uint8_t(x.cpu.r[1]));
+    x.mem.write<uint8_t>(tmp + 1, uint8_t(x.cpu.r[2]));
+    x.mem.write<uint8_t>(tmp + 2, uint8_t(x.cpu.r[3]));
+    const uint32_t sp = x.cpu.r[CPU::kSP];
+    for (uint32_t i = 0; i < 13; ++i) x.mem.write<uint8_t>(tmp + 3 + i, uint8_t(x.mem.read<uint32_t>(sp + i * 4)));
+    const id u = id(send(x, id(send(x, R(x).getClass("NSUUID"), "alloc")), "initWithUUIDBytes:", {tmp}));
+    x.proc.heap().free(tmp);
+    x.cpu.r[0] = u;
 }
 void uuid_getBytes(Ctx& x, GuestPtr ret, id u) { send(x, u, "getUUIDBytes:", {ret}); }
 
@@ -969,7 +1059,15 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     // CFArray
     ObjC::ClassBuilder ra = r.defineClass("__HVMCFRawArray", "NSObject");
     c.rawArray = ra.cls();
-    ra.m<&ra_count>("count", "I@:").m<&ra_objectAt>("objectAtIndex:", "@@:I").m<&ra_dealloc>("dealloc", "v@:");
+    ra.m<&ra_count>("count", "I@:").m<&ra_objectAt>("objectAtIndex:", "@@:I")
+      .m<&ra_addObject>("addObject:", "v@:@").m<&ra_insertObject>("insertObject:atIndex:", "v@:@I")
+      .m<&ra_replaceAt>("replaceObjectAtIndex:withObject:", "v@:I@").m<&ra_removeAt>("removeObjectAtIndex:", "v@:I")
+      .m<&ra_removeObject>("removeObject:", "v@:@").m<&ra_removeAll>("removeAllObjects", "v@:")
+      .m<&ra_contains>("containsObject:", "c@:@").m<&ra_member>("member:", "@@:@")
+      .m<&ra_makePerf>("makeObjectsPerformSelector:", "v@::")
+      .m<&ra_makePerfObj>("makeObjectsPerformSelector:withObject:", "v@::@")
+      .m<&ra_fastEnum>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
+      .m<&ra_dealloc>("dealloc", "v@:");
     p.def<&a_create>("_CFArrayCreate");
     p.def<&a_createMutable>("_CFArrayCreateMutable");
     p.def<&a_createCopy>("_CFArrayCreateCopy");
@@ -1079,6 +1177,8 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&uuid_create>("_CFUUIDCreate");
     p.def<&uuid_createString>("_CFUUIDCreateString");
     p.def<&uuid_createFromString>("_CFUUIDCreateFromString");
+    p.def<&uuid_createFromUUIDBytes>("_CFUUIDCreateFromUUIDBytes");
+    p.defineFunction("_CFUUIDCreateWithBytes", uuid_createWithBytes);
     p.def<&uuid_getBytes>("_CFUUIDGetUUIDBytes");
 
     // CFPropertyList

@@ -303,6 +303,13 @@ int32_t sched_prio(Ctx&, int32_t) { return 31; }
 int32_t sched_yield_(Ctx&) { std::this_thread::yield(); return 0; }
 uint32_t t_mach_thread_self(Ctx& x) { return x.proc.currentThread().id + 0x1000; }
 uint32_t t_pthread_mach_thread_np(Ctx& x, uint32_t th) { GuestThread* t = x.proc.findThread(th); return t ? t->id + 0x1000 : 0; }
+int32_t t_pthread_threadid_np(Ctx& x, uint32_t th, GuestPtr outId) {
+    if (!outId) return EINVAL;
+    GuestThread* t = th ? x.proc.findThread(th) : &x.proc.currentThread();
+    const uint64_t id = t ? uint64_t(t->id) : uint64_t(x.proc.currentThread().id);
+    x.mem.write<uint64_t>(outId, id);
+    return 0;
+}
 
 // Mach thread control (garbage collectors stop the world with these).
 constexpr int32_t kKernSuccess = 0, kKernInvalidArgument = 4;
@@ -505,6 +512,7 @@ void registerLibcPthread(Process& p) {
     p.def<&mt_info>("_thread_info");
     p.def<&mt_taskThreads>("_task_threads");
     p.def<&t_pthread_mach_thread_np>("_pthread_mach_thread_np");
+    p.def<&t_pthread_threadid_np>("_pthread_threadid_np");
     p.def<&t_exit>("_pthread_exit");
     p.def<&oa_add32>("_OSAtomicAdd32");
     p.def<&oa_add32>("_OSAtomicAdd32Barrier");

@@ -177,9 +177,15 @@ void scheduleFailure(Ctx& x, id connection) {
     runLoopForObject(x, 0).post([p, connection](CPU::Cpu& cc) {
         Ctx cx{*p, cc, p->mem()};
         Connection* c = conn(cx, connection);
-        if (c && c->delegate && c->started && R(cx).respondsTo(c->delegate, R(cx).sel("connection:didFailWithError:"))) {
-            const id err = notConnectedError(cx, req(cx, c->request) ? req(cx, c->request)->url : 0);
-            R(cx).send(cc, c->delegate, "connection:didFailWithError:", {connection, err});
+        if (c && c->delegate && c->started) {
+            const id del = retainObj(cx, c->delegate);
+            const id url = req(cx, c->request) ? req(cx, c->request)->url : 0;
+            if (R(cx).respondsTo(del, R(cx).sel("connection:didFailWithError:"))) {
+                const id err = notConnectedError(cx, url);
+                R(cx).send(cc, del, "connection:didFailWithError:", {connection, err});
+            }
+            if (Connection* c2 = conn(cx, connection)) setField(cx, c2->delegate, 0);
+            R(cx).release(cc, del);
         }
         R(cx).release(cc, connection);
     });
@@ -187,7 +193,7 @@ void scheduleFailure(Ctx& x, id connection) {
 id conn_init(Ctx& x, id self, SEL, id request, id delegate, bool start) {
     auto h = std::make_unique<Connection>();
     h->request = retainObj(x, request);
-    h->delegate = delegate;
+    h->delegate = retainObj(x, delegate);
     h->started = start;
     R(x).setHost(self, std::move(h));
     if (start) scheduleFailure(x, self);
@@ -199,10 +205,14 @@ id connc_with(Ctx& x, id cls, SEL s, id request, id delegate) {
     return autoreleased(x, conn_init(x, o, s, request, delegate, true));
 }
 void conn_start(Ctx& x, id self, SEL) { if (Connection* c = conn(x, self)) { if (!c->started) { c->started = true; scheduleFailure(x, self); } } }
-void conn_cancel(Ctx& x, id self, SEL) { if (Connection* c = conn(x, self)) c->started = false; }
+void conn_cancel(Ctx& x, id self, SEL) { if (Connection* c = conn(x, self)) { c->started = false; setField(x, c->delegate, 0); } }
 void conn_schedule(Ctx&, id, SEL, id, id) {}
+void conn_setDelegateQueue(Ctx&, id, SEL, id) {}
 void conn_dealloc(Ctx& x, id self, SEL) {
-    if (Connection* c = conn(x, self)) if (c->request) R(x).release(x.cpu, c->request);
+    if (Connection* c = conn(x, self)) {
+        if (c->request) R(x).release(x.cpu, c->request);
+        if (c->delegate) R(x).release(x.cpu, c->delegate);
+    }
     R(x).disposeInstance(x.cpu, self);
 }
 // + sendSynchronousRequest:returningResponse:error: → nil, offline error.
@@ -277,6 +287,7 @@ void registerURLLoading(Process& p, ObjC::Runtime& r) {
       .m<&conn_initDefault>("initWithRequest:delegate:").m<&conn_init>("initWithRequest:delegate:startImmediately:", "@@:@@c")
       .m<&conn_start>("start", "v@:").m<&conn_cancel>("cancel", "v@:")
       .m<&conn_schedule>("scheduleInRunLoop:forMode:", "v@:@@").m<&conn_schedule>("unscheduleFromRunLoop:forMode:", "v@:@@")
+      .m<&conn_setDelegateQueue>("setDelegateQueue:", "v@:@")
       .m<&conn_dealloc>("dealloc", "v@:");
 
     ObjC::ClassBuilder ca = r.defineClass("NSURLCache", "NSObject");

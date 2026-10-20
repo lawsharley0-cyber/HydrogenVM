@@ -389,11 +389,13 @@ R coprocessor(BlockBuilder& bb, uint32_t insn) {
         return R::End;
     }
     const uint32_t cp = bits(insn, 11, 8);
-    if (cp == 15 && bits(insn, 27, 24) == 0xE && bit(insn, 4) &&
-        bits(insn, 23, 21) == 0 && bits(insn, 19, 16) == 13 && bits(insn, 3, 0) == 0) {
-        const uint32_t opc2 = bits(insn, 7, 5), rt = bits(insn, 15, 12);
-        if (bit(insn, 20) && (opc2 == 2 || opc2 == 3)) { bb.emit(&H_ReadTpid, rt, 0, 0, 0, opc2); return R::Continue; }
-        if (!bit(insn, 20) && opc2 == 2) { bb.emit(&H_WriteTpid, rt); return R::Continue; }
+    if (cp == 15 && bits(insn, 27, 24) == 0xE && bit(insn, 4)) {
+        if (bits(insn, 23, 21) == 0 && bits(insn, 19, 16) == 13 && bits(insn, 3, 0) == 0) {
+            const uint32_t opc2 = bits(insn, 7, 5), rt = bits(insn, 15, 12);
+            if (bit(insn, 20) && (opc2 == 2 || opc2 == 3)) { bb.emit(&H_ReadTpid, rt, 0, 0, 0, opc2); return R::Continue; }
+            if (!bit(insn, 20) && opc2 == 2) { bb.emit(&H_WriteTpid, rt); return R::Continue; }
+        }
+        if (!bit(insn, 20) && bits(insn, 19, 16) == 7) { bb.emit(&H_Fence); return R::Continue; }   // CP15 c7 barrier / cache op
     }
     // cp10/cp11 = VFP/Advanced SIMD (Phase 2).
     if (cp == 10 || cp == 11) return decodeArmVfp(bb, insn);

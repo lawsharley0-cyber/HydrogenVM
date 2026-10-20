@@ -52,10 +52,19 @@ bool looksLikeData(const std::string& s) {
     if (looksLikeFunction(s)) return false;
     auto starts = [&](const char* p) { return s.compare(0, std::strlen(p), p) == 0; };
     auto ends = [&](const char* p) { const size_t n = std::strlen(p); return s.size() >= n && s.compare(s.size() - n, n, p) == 0; };
-    if (starts("__ZTV") || starts("__ZTI") || starts("__ZTS") || starts("__NSConcrete") || starts("_OBJC_")) return true;
+    if (starts("__ZTV") || starts("__ZTI") || starts("__ZTS") || starts("__ZTT") ||
+        starts("__ZSt4cout") || starts("__ZSt4cerr") || starts("__ZSt4clog") || starts("__ZSt3cin") ||
+        starts("__NSConcrete") || starts("_OBJC_")) return true;
+    if (ends("_S_empty_rep_storageE") || ends("_S_max_sizeE") || ends("_S_terminalE")) return true;
     if (s.size() > 2 && s[0] == '_' && s[1] == 'k' && std::isupper(uint8_t(s[2]))) return true;
-    if (ends("Notification") || ends("Key") || ends("Mode") || ends("Domain") || ends("Name") || ends("Exception") ||
-        ends("AttributeName") || ends("Identity") || ends("Callbacks") || ends("CallBacks"))
+    if (s.size() > 2 && s[0] == '_' && std::isupper(uint8_t(s[1])) &&
+        (ends("Notification") || ends("Key") || ends("Mode") || ends("Domain") || ends("Name") || ends("Exception") ||
+         ends("AttributeName") || ends("Identity") || ends("Callbacks") || ends("CallBacks") || ends("Preset") ||
+         starts("_AVCaptureSessionPreset") || starts("_AVMediaType") || starts("_AVLayerVideoGravity") ||
+         starts("_AVAudioSession") || starts("_AVAssetExportPreset") || starts("_AVFileType") ||
+         starts("_UIActivityType") || starts("_UITransitionContext") || starts("_UIFontTextStyle") ||
+         starts("_ADBannerContentSizeIdentifier") || starts("_SLServiceType") ||
+         starts("_ACAccountTypeIdentifier") || starts("_SKStoreProductParameter")))
         return true;
     return false;
 }
