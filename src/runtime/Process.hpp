@@ -304,6 +304,7 @@ void registerLibcSystem(Process& p);
 void registerCxxRuntime(Process& p);
 void registerUnwinder(Process& p);
 void registerLibStdcxx(Process& p);
+void registerLibcPosix(Process& p);
 void registerObjCRuntime(Process& p);
 void registerFoundation(Process& p);
 void registerUIKit(Process& p);

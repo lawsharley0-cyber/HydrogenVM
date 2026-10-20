@@ -5,6 +5,7 @@
 // programs, uniforms, vertex attributes, VBOs, FBOs, textures) state tracker
 // and software rasterizer wired into CAEAGLLayer via LayerData::externalContents.
 #include "UIKit.hpp"
+#include "runtime/graphics/Pvrtc.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1420,8 +1421,8 @@ void gl_texSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xoffset, i
 
 void gl_compressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t internalformat, int32_t width, int32_t height,
                              int32_t border, int32_t imageSize, GuestPtr data) {
-    (void)target; (void)internalformat; (void)border; (void)imageSize; (void)data;
-    if (level != 0 || width <= 0 || height <= 0) return;
+    (void)target; (void)border;
+    if (level != 0 || width <= 0 || height <= 0) return;   // no mipmaps: level 0 only
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg) return;
@@ -1430,6 +1431,14 @@ void gl_compressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t in
     Texture2D& tx = sg->textures[tid];
     tx.width = width;
     tx.height = height;
+    tx.format = GL_RGBA;
+    // GL_IMG_texture_compression_pvrtc: RGB/RGBA x 4/2 bpp.
+    const bool pvrtc = internalformat >= 0x8C00 && internalformat <= 0x8C03;
+    if (pvrtc && data && imageSize > 0 &&
+        Graphics::decodePvrtc(x.mem.host(data), size_t(imageSize), width, height,
+                              internalformat == 0x8C01 || internalformat == 0x8C03, internalformat >= 0x8C02, tx.rgba))
+        return;
+    if (!pvrtc) x.proc.reportMissing("glCompressedTexImage2D format 0x" + [&] { char b[16]; std::snprintf(b, sizeof b, "%x", internalformat); return std::string(b); }());
     tx.rgba.assign(size_t(width) * size_t(height) * 4, 255);
 }
 

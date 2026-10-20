@@ -242,6 +242,7 @@ void tellgImpl(Ctx& x) {
 
 void noop(Ctx&) {}
 void noop1(Ctx&, GuestPtr) {}
+void noop2(Ctx&, GuestPtr, GuestPtr) {}
 
 } // namespace
 
@@ -253,6 +254,11 @@ void registerLibStdcxx(Process& p) {
     p.def<&s_dtor>("__ZNSsD2Ev");
     p.def<&s_assign>("__ZNSs6assignEPKcm");
     p.def<&s_assign>("__ZNSs6assignEPKcj");
+    // std::allocator<T> has no state: construction and destruction do nothing.
+    for (const char* t : {"c", "w"})
+        for (const char* v : {"C1Ev", "C2Ev", "D1Ev", "D2Ev"}) p.def<&noop1>(std::string("__ZNSaI") + t + "E" + v);
+    for (const char* t : {"c", "w"})
+        for (const char* v : {"C1ERKS_", "C2ERKS_"}) p.def<&noop2>(std::string("__ZNSaI") + t + "E" + v);
     // std::list
     p.def<&l_hook>("__ZNSt15_List_node_base4hookEPS_");
     p.def<&l_unhook>("__ZNSt15_List_node_base6unhookEv");
