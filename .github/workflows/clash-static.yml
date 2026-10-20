@@ -41,9 +41,12 @@ jobs:
                   if vm <= address and address + size <= vm + count:
                       return data[off + address - vm:off + address - vm + size]
               raise ValueError("Address outside file-backed segments")
-          start, end = 0x0016d250, 0x0016d300
+          start, end = 0x0016d280, 0x0016d300
           md = Cs(CS_ARCH_ARM, CS_MODE_THUMB | CS_MODE_LITTLE_ENDIAN)
+          md.skipdata = True
+          print("RAW", read_at(start, end-start).hex())
           lines = [f"0x{i.address:08x}: {i.mnemonic:8s} {i.op_str}" for i in md.disasm(read_at(start, end-start), start)]
+          assert lines, "No instructions decoded"
           text = "\n".join(lines) + "\n"
           print(text)
           Path("clash-report/startup-disassembly.txt").write_text(text)
