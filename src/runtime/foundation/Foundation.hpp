@@ -119,6 +119,7 @@ struct RunLoop {
     void stop() { std::lock_guard<std::mutex> lk(mu); stopFlag = true; cv.notify_all(); }
 };
 RunLoop& mainRunLoop(Process& p);
+RunLoop& runLoopForObject(Ctx& x, id loop);   // an NSRunLoop / CFRunLoop object (current loop if 0)
 double now();          // seconds since 2001-01-01 (NSDate reference)
 double dateInterval(Ctx& x, id date);                    // NSDate -> reference-date seconds
 id makeDate(Ctx& x, double t, bool owned = false);       // reference-date seconds -> NSDate
@@ -151,6 +152,9 @@ void registerStrings(Process& p, ObjC::Runtime& r);
 void registerNumbers(Process& p, ObjC::Runtime& r);
 void registerFormatters(Process& p, ObjC::Runtime& r);
 void registerSecurity(Process& p, ObjC::Runtime& r);
+void registerNetwork(Process& p, ObjC::Runtime& r);
+void registerCalendar(Process& p, ObjC::Runtime& r);
+void registerInvocation(Process& p, ObjC::Runtime& r);
 void registerCollections(Process& p, ObjC::Runtime& r);
 void registerData(Process& p, ObjC::Runtime& r);
 void registerBundle(Process& p, ObjC::Runtime& r);

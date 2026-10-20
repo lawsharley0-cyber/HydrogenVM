@@ -454,7 +454,15 @@ void registerFormatters(Process& p, ObjC::Runtime& r) {
         ret(x, arg(x, 0) ? makeString(x, formatDate(d, dateInterval(x, arg(x, 0)))) : 0);
     }, "@@:@ii");
     dfb.classMethod("dateFormatFromTemplate:options:locale:", [](Ctx& x) { ret(x, arg(x, 0)); }, "@@:@I@");
-    (void)p;
+    // NSCalendar identifiers (NSString constants).
+    for (const auto& [sym, value] : std::initializer_list<std::pair<const char*, const char*>>{
+             {"_NSGregorianCalendar", "gregorian"}, {"_NSBuddhistCalendar", "buddhist"}, {"_NSChineseCalendar", "chinese"},
+             {"_NSHebrewCalendar", "hebrew"}, {"_NSISO8601Calendar", "iso8601"}, {"_NSIndianCalendar", "indian"},
+             {"_NSIslamicCalendar", "islamic"}, {"_NSIslamicCivilCalendar", "islamic-civil"}, {"_NSJapaneseCalendar", "japanese"},
+             {"_NSPersianCalendar", "persian"}, {"_NSRepublicOfChinaCalendar", "roc"}, {"_NSCalendarIdentifierGregorian", "gregorian"}}) {
+        const uint32_t cell = p.defineDataBlock(sym, 4);
+        p.mem().write<uint32_t>(cell, constString(p, value));
+    }
 }
 
 } // namespace Hydrogen::Runtime::Foundation

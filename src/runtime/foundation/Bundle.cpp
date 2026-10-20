@@ -792,6 +792,19 @@ bool fm_contentsEqual(Ctx& x, id self, SEL s, id a, id b) {
     const id da = fm_contentsAtPath(x, self, s, a), db = fm_contentsAtPath(x, self, s, b);
     return da && db && dataBytes(x, da) == dataBytes(x, db);
 }
+// NSDictionary (NSFileAttributes) accessors.
+constexpr const char* kObjKeys[] = {"NSFileModificationDate", "NSFileCreationDate", "NSFileType", "NSFileOwnerAccountName", "NSFileGroupOwnerAccountName"};
+constexpr const char* kNumKeys[] = {"NSFilePosixPermissions", "NSFileSystemNumber", "NSFileSystemFileNumber", "NSFileOwnerAccountID", "NSFileGroupOwnerAccountID"};
+constexpr const char* kBoolKeys[] = {"NSFileExtensionHidden", "NSFileImmutable", "NSFileAppendOnly"};
+uint64_t fa_size(Ctx& x, id self, SEL) { const id n = dictGet(x, self, "NSFileSize"); return n ? uint64_t(numberInt(x, n)) : 0; }
+template <int I> id fa_obj(Ctx& x, id self, SEL) { return dictGet(x, self, kObjKeys[I]); }
+template <int I> uint32_t fa_num(Ctx& x, id self, SEL) {
+    const id n = dictGet(x, self, kNumKeys[I]);
+    if (I >= 3) return n;   // the account IDs are returned as NSNumber objects
+    return n ? uint32_t(numberInt(x, n)) : 0;
+}
+template <int I> bool fa_bool(Ctx& x, id self, SEL) { const id n = dictGet(x, self, kBoolKeys[I]); return n && numberInt(x, n); }
+
 id attributes(Ctx& x, const std::string& p, bool follow, GuestPtr err) {
     struct stat st;
     if ((follow ? ::stat(p.c_str(), &st) : ::lstat(p.c_str(), &st)) != 0) { ErrorOut::posix(x, err, errno, p); return 0; }
@@ -1174,6 +1187,15 @@ void registerBundle(Process& p, ObjC::Runtime& r) {
       .m<&fh_write>("writeData:", "v@:@").m<&fh_seekToEnd>("seekToEndOfFile", "Q@:").m<&fh_seekTo>("seekToFileOffset:", "v@:Q")
       .m<&fh_offset>("offsetInFile", "Q@:").m<&fh_truncate>("truncateFileAtOffset:", "v@:Q").m<&fh_sync>("synchronizeFile", "v@:")
       .m<&fh_close>("closeFile", "v@:").m<&fh_fd>("fileDescriptor", "i@:").m<&obj_dealloc>("dealloc", "v@:");
+
+    // NSDictionary (NSFileAttributes)
+    r.builder(r.getClass("NSDictionary"))
+        .m<&fa_size>("fileSize", "Q@:").m<&fa_obj<0>>("fileModificationDate").m<&fa_obj<1>>("fileCreationDate")
+        .m<&fa_obj<2>>("fileType").m<&fa_obj<3>>("fileOwnerAccountName").m<&fa_obj<4>>("fileGroupOwnerAccountName")
+        .m<&fa_num<0>>("filePosixPermissions", "I@:").m<&fa_num<1>>("fileSystemNumber", "I@:")
+        .m<&fa_num<2>>("fileSystemFileNumber", "I@:").m<&fa_num<3>>("fileOwnerAccountID")
+        .m<&fa_num<4>>("fileGroupOwnerAccountID").m<&fa_bool<0>>("fileExtensionHidden", "c@:")
+        .m<&fa_bool<1>>("fileIsImmutable", "c@:").m<&fa_bool<2>>("fileIsAppendOnly", "c@:");
 
     for (const char* n : {"NSFileSize", "NSFileType", "NSFileModificationDate", "NSFileCreationDate", "NSFilePosixPermissions",
                           "NSFileReferenceCount", "NSFileSystemNumber", "NSFileSystemFileNumber", "NSFileOwnerAccountName",

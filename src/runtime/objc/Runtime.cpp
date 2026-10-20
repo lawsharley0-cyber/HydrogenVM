@@ -287,7 +287,21 @@ IMP Runtime::lookupForSend(Class cls, SEL s) {
 
 bool Runtime::respondsTo(id obj, SEL s) { return obj && lookup(classOf(obj), s) != 0; }
 
+std::string Runtime::methodTypes(Class cls, SEL s) {
+    for (Class c = cls; c; c = superclass(c)) {
+        const ClassInfo* k = info(c);
+        if (!k) break;
+        if (k->methods.count(s)) {
+            auto t = k->types.find(s);
+            return t == k->types.end() ? std::string() : t->second;
+        }
+    }
+    return {};
+}
+
 IMP Runtime::unrecognized(id self, SEL s) {
+    if (forwardHook && s != selForwardingTarget)
+        if (const IMP f = forwardHook(self, s)) return f;
     const Class cls = classOf(self);
     bool stub = false, framework = false;
     for (Class c = cls; c; c = superclass(c)) {

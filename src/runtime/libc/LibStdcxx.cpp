@@ -21,57 +21,11 @@
 #include <unordered_map>
 
 namespace Hydrogen::Runtime {
+void registerLibStdcxxContainers(Process& p);
+void registerLibStdcxxStreams(Process& p);
+uint32_t hvmOstreamWrite(Ctx& x, uint32_t os, uint32_t buf, int32_t n);
+uint32_t hvmIstreamRead(Ctx& x, uint32_t is, uint32_t buf, int32_t n);
 namespace {
-
-// ------------------------------------------------------------ std::string ---
-
-constexpr uint32_t kRepHeader = 12;   // length, capacity, refcount
-
-struct StringState { explicit StringState(Process&) {} uint32_t emptyRep = 0; };
-
-void disposeRep(Ctx& x, uint32_t data) {
-    if (!data) return;
-    const uint32_t rep = data - kRepHeader;
-    if (rep == x.proc.service<StringState>().emptyRep) return;
-    const int32_t rc = int32_t(x.mem.read<uint32_t>(rep + 8));
-    x.mem.write<uint32_t>(rep + 8, uint32_t(rc - 1));
-    if (rc <= 0) x.proc.heap().free(rep);
-}
-
-// std::string::~string() (D1/D2)
-void s_dtor(Ctx& x, GuestPtr self) { disposeRep(x, x.mem.read<uint32_t>(self)); }
-
-// std::string& std::string::assign(const char* s, size_type n)
-uint32_t s_assign(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) {
-    std::string bytes(n, '\0');
-    for (uint32_t i = 0; i < n; ++i) bytes[i] = char(x.mem.read<uint8_t>(s + i));   // s may point into *this
-    const uint32_t rep = x.proc.heap().alloc(kRepHeader + n + 1);
-    if (!rep) throw std::runtime_error("std::string::assign: out of guest memory");
-    x.mem.write<uint32_t>(rep, n);
-    x.mem.write<uint32_t>(rep + 4, n);
-    x.mem.write<uint32_t>(rep + 8, 0);
-    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint8_t>(rep + kRepHeader + i, uint8_t(bytes[i]));
-    x.mem.write<uint8_t>(rep + kRepHeader + n, 0);
-    disposeRep(x, x.mem.read<uint32_t>(self));
-    x.mem.write<uint32_t>(self, rep + kRepHeader);
-    return self;
-}
-
-// ------------------------------------------------------------- std::list ---
-// _List_node_base { _List_node_base* next; _List_node_base* prev; }
-
-void l_hook(Ctx& x, GuestPtr self, GuestPtr pos) {
-    const uint32_t prev = x.mem.read<uint32_t>(pos + 4);
-    x.mem.write<uint32_t>(self, pos);
-    x.mem.write<uint32_t>(self + 4, prev);
-    x.mem.write<uint32_t>(prev, self);
-    x.mem.write<uint32_t>(pos + 4, self);
-}
-void l_unhook(Ctx& x, GuestPtr self) {
-    const uint32_t next = x.mem.read<uint32_t>(self), prev = x.mem.read<uint32_t>(self + 4);
-    x.mem.write<uint32_t>(prev, next);
-    x.mem.write<uint32_t>(next + 4, prev);
-}
 
 // --------------------------------------------------------------- streams ---
 
@@ -109,6 +63,9 @@ uint32_t objectFor(Ctx& x, uint32_t p, int part /*0 stream, 1 ostream, 2 filebuf
             if (has(p - filebufOffset(k), [k](Kind kk) { return kk == k; })) return p - filebufOffset(k);
     }
     throw std::runtime_error("libstdc++: stream call on an object HydrogenVM didn't construct");
+}
+bool isFileStream(Ctx& x, uint32_t p, int part) {
+    try { objectFor(x, p, part); return true; } catch (const std::runtime_error&) { return false; }
 }
 
 uint32_t state(Ctx& x, uint32_t obj) { return x.mem.read<uint32_t>(obj + kVbase + kStateOff); }
@@ -192,6 +149,7 @@ bool fb_isOpen(Ctx& x, GuestPtr filebuf) { return fileOf(x, objectFor(x, filebuf
 
 // istream& istream::read(char* s, streamsize n)
 uint32_t is_read(Ctx& x, GuestPtr self, GuestPtr buf, int32_t n) {
+    if (!isFileStream(x, self, 0)) return hvmIstreamRead(x, self, buf, n);
     const uint32_t obj = objectFor(x, self, 0);
     x.mem.write<uint32_t>(self + 4, 0);   // gcount
     if (state(x, obj) != kGoodbit) { addState(x, obj, kFailbit); return self; }
@@ -205,6 +163,7 @@ uint32_t is_read(Ctx& x, GuestPtr self, GuestPtr buf, int32_t n) {
 
 // ostream& ostream::write(const char* s, streamsize n)
 uint32_t os_write(Ctx& x, GuestPtr self, GuestPtr buf, int32_t n) {
+    if (!isFileStream(x, self, 1)) return hvmOstreamWrite(x, self, buf, n);
     const uint32_t obj = objectFor(x, self, 1);
     if (state(x, obj) != kGoodbit) return self;
     std::FILE* f = fileOf(x, obj);
@@ -214,18 +173,19 @@ uint32_t os_write(Ctx& x, GuestPtr self, GuestPtr buf, int32_t n) {
 
 int whence(uint32_t dir) { return dir == 0 ? SEEK_SET : dir == 1 ? SEEK_CUR : SEEK_END; }
 
-// istream& istream::seekg(off_type, ios_base::seekdir) and ostream::seekp:
-// this in r0, the 64-bit offset in r2:r3, the direction on the stack.
-void seekImpl(Ctx& x, int part) {
-    const uint32_t self = x.cpu.r[0];
-    const int64_t off = int64_t((uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2]);
-    const uint32_t dir = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
+// istream& istream::seekg(off_type, ios_base::seekdir) and ostream::seekp.
+// 32-bit iOS passes arguments APCS-style (64-bit values aren't moved to an even
+// register): this in r0, the offset in r1:r2, the direction in r3.
+void seekAt(Ctx& x, int part, uint32_t self, int64_t off, uint32_t dir) {
     const uint32_t obj = objectFor(x, self, part);
     std::FILE* f = fileOf(x, obj);
     if (!(state(x, obj) & (kFailbit | kBadbit))) {
         if (!f || std::fseek(f, long(off), whence(dir)) != 0) addState(x, obj, kFailbit);
     }
     x.cpu.r[0] = self;
+}
+void seekImpl(Ctx& x, int part) {
+    seekAt(x, part, x.cpu.r[0], int64_t((uint64_t(x.cpu.r[2]) << 32) | x.cpu.r[1]), x.cpu.r[3]);
 }
 
 // streampos istream::tellg(): fpos { long long off; mbstate_t state[128] } returned through r0; this in r1.
@@ -240,28 +200,34 @@ void tellgImpl(Ctx& x) {
     x.cpu.r[0] = ret;
 }
 
+// istream& seekg(pos_type): the 136-byte fpos is passed by value.
+void seekgPos(Ctx& x) {   // the fpos starts in r1: its offset is r1:r2
+    seekAt(x, 0, x.cpu.r[0], int64_t((uint64_t(x.cpu.r[2]) << 32) | x.cpu.r[1]), 0);
+}
+
 void noop(Ctx&) {}
 void noop1(Ctx&, GuestPtr) {}
 void noop2(Ctx&, GuestPtr, GuestPtr) {}
 
 } // namespace
 
+// For the stream code: formatted output to one of our file streams. False if `os` isn't one.
+bool hvmFstreamWrite(Ctx& x, uint32_t os, const char* data, uint32_t n) {
+    if (!isFileStream(x, os, 1)) return false;
+    const uint32_t obj = objectFor(x, os, 1);
+    if (state(x, obj) != kGoodbit) return true;
+    std::FILE* f = fileOf(x, obj);
+    if (!f || (n && std::fwrite(data, 1, n, f) != n)) addState(x, obj, kBadbit);
+    return true;
+}
+
 void registerLibStdcxx(Process& p) {
-    // std::string
-    const uint32_t empty = p.defineDataBlock("__ZNSs4_Rep20_S_empty_rep_storageE", 16);
-    p.service<StringState>().emptyRep = empty;
-    p.def<&s_dtor>("__ZNSsD1Ev");
-    p.def<&s_dtor>("__ZNSsD2Ev");
-    p.def<&s_assign>("__ZNSs6assignEPKcm");
-    p.def<&s_assign>("__ZNSs6assignEPKcj");
+    registerLibStdcxxContainers(p);   // std::string, std::map/set trees, std::list
     // std::allocator<T> has no state: construction and destruction do nothing.
     for (const char* t : {"c", "w"})
         for (const char* v : {"C1Ev", "C2Ev", "D1Ev", "D2Ev"}) p.def<&noop1>(std::string("__ZNSaI") + t + "E" + v);
     for (const char* t : {"c", "w"})
         for (const char* v : {"C1ERKS_", "C2ERKS_"}) p.def<&noop2>(std::string("__ZNSaI") + t + "E" + v);
-    // std::list
-    p.def<&l_hook>("__ZNSt15_List_node_base4hookEPS_");
-    p.def<&l_unhook>("__ZNSt15_List_node_base6unhookEv");
     // iostreams
     p.def<&noop1>("__ZNSt8ios_base4InitC1Ev");
     p.def<&noop1>("__ZNSt8ios_base4InitD1Ev");
@@ -310,6 +276,8 @@ void registerLibStdcxx(Process& p) {
     p.defineFunction("__ZNSi5seekgExSt12_Ios_Seekdir", [](Ctx& x) { seekImpl(x, 0); });
     p.defineFunction("__ZNSo5seekpExSt12_Ios_Seekdir", [](Ctx& x) { seekImpl(x, 1); });
     p.defineFunction("__ZNSi5tellgEv", [](Ctx& x) { tellgImpl(x); });
+    p.defineFunction("__ZNSi5seekgESt4fposI11__mbstate_tE", [](Ctx& x) { seekgPos(x); });
+    registerLibStdcxxStreams(p);
     (void)noop;
 }
 

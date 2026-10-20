@@ -652,6 +652,11 @@ void sc_appFrame(Ctx& x, GuestPtr ret, id, SEL) { CG::writeStruct(x, ret, CG::fr
 float sc_scale(Ctx& x, id, SEL) { return ui(x).scale; }
 float sc_brightness(Ctx&, id, SEL) { return 0.8f; }
 void sc_setBrightness(Ctx&, id, SEL, float) {}
+void sc_setMode(Ctx&, id, SEL, id) {}
+// UIAccessibility informal protocol (an NSObject category in UIKit): nothing reads it here.
+void ax_set(Ctx&, id, SEL, id) {}
+id ax_nil(Ctx&, id, SEL) { return 0; }
+void ax_noop(Ctx&, id, SEL) {}
 struct ModeData : ObjC::HostObject {};
 id sc_currentMode(Ctx& x, id, SEL) { return autoreleased(x, rt(x).createInstance(rt(x).getClass("UIScreenMode"))); }
 id sc_modes(Ctx& x, id s, SEL c) { return Foundation::makeArray(x, {sc_currentMode(x, s, c)}); }
@@ -929,6 +934,20 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
         .m<&r_remoteControl>("remoteControlReceivedWithEvent:", "v@:@").m<&r_nil>("inputView").m<&r_nil>("inputAccessoryView")
         .m<&r_nil>("undoManager");
 
+    {
+        ObjC::ClassBuilder ax = r.builder(r.getClass("NSObject"));
+        for (const char* k : {"IsAccessibilityElement", "AccessibilityLabel", "AccessibilityHint", "AccessibilityValue",
+                              "AccessibilityTraits", "AccessibilityIdentifier", "AccessibilityElementsHidden",
+                              "AccessibilityViewIsModal", "AccessibilityLanguage", "ShouldGroupAccessibilityChildren",
+                              "AccessibilityElements", "AccessibilityCustomActions"}) {
+            std::string g = k;
+            g[0] = char(std::tolower(g[0]));
+            if (g.rfind("is", 0) == 0) g = "isAccessibilityElement";
+            ax.m<&ax_set>("set" + std::string(k) + ":", "v@:@").m<&ax_nil>(g);
+        }
+        // UINibLoadingAdditions (NSObject category): -awakeFromNib does nothing by default.
+        ax.m<&ax_noop>("awakeFromNib", "v@:").m<&ax_noop>("prepareForInterfaceBuilder", "v@:");
+    }
     ObjC::ClassBuilder view = r.defineClass("UIView", "UIResponder");
     u.view = view.cls();
     view.cm<&vc_layerClass>("layerClass", "#@:")
@@ -1008,7 +1027,7 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
     scr.m<&sc_bounds>("bounds", R + "@:").m<&sc_nativeBounds>("nativeBounds", R + "@:").m<&sc_appFrame>("applicationFrame", R + "@:")
        .m<&sc_scale>("scale", "f@:").m<&sc_scale>("nativeScale", "f@:").m<&sc_brightness>("brightness", "f@:")
        .m<&sc_setBrightness>("setBrightness:", "v@:f").m<&sc_currentMode>("currentMode").m<&sc_currentMode>("preferredMode")
-       .m<&sc_modes>("availableModes").m<&sc_nil>("mirroredScreen");
+       .m<&sc_modes>("availableModes").m<&sc_setMode>("setCurrentMode:").m<&sc_setMode>("setOverscanCompensation:").m<&sc_nil>("mirroredScreen");
     ObjC::ClassBuilder mode = r.defineClass("UIScreenMode", "NSObject");
     mode.m<&sm_size>("size", S + "@:").m<&sm_aspect>("pixelAspectRatio", "f@:");
     u.mainScreen = r.createInstance(u.screen);

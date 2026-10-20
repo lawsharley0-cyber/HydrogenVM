@@ -1,5 +1,6 @@
 #include "Engine.hpp"
 #include "Decoder.hpp"
+#include <chrono>
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
@@ -120,6 +121,8 @@ const std::string& Engine::lastHostError() { return t_hostError; }
 void Engine::setLastHostError(std::string s) { t_hostError = std::move(s); }
 
 void Engine::callHle(Cpu* c, uint32_t index) {
+    c->in_guest.store(false, std::memory_order_release);
+    struct Reenter { Engine* e; Cpu* c; ~Reenter() { e->enterGuest(*c); } } reenter{this, c};
     try {
         hle_[index].fn(*c);
     } catch (const GuestFault& f) {
@@ -306,9 +309,11 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         cpu.exit_info = scope.addr;
         cpu.r[kPC] = cpu.block_pc;   // precise PC within the block isn't tracked
         cpu.insn_count += uint64_t(startBudget - cpu.budget);
+        cpu.in_guest.store(false, std::memory_order_release);
         return cpu.exit;
     }
     uint8_t* const base = mem_.base();
+    enterGuest(cpu);
     while (cpu.exit == Exit::None) {
         const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
         Block* b = enterBlock(&cpu, key);
@@ -318,12 +323,65 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         first->fn(&cpu, first, base);
     }
     t_scope = prev;
+    cpu.in_guest.store(false, std::memory_order_release);
     // Handlers only decrement the budget; the retired count falls out of it.
     cpu.insn_count += uint64_t(startBudget - cpu.budget);
     return cpu.exit;
 }
 
+void Engine::park(Cpu& c) {
+    c.in_guest.store(false, std::memory_order_seq_cst);
+    std::unique_lock<std::mutex> lk(suspendMu_);
+    suspendCv_.notify_all();
+    suspendCv_.wait(lk, [&] { return c.suspend_count.load() == 0 || stopRequested(); });
+    lk.unlock();
+    c.in_guest.store(true, std::memory_order_seq_cst);
+}
+
+void Engine::suspend(Cpu& t) {
+    t.suspend_count.fetch_add(1, std::memory_order_seq_cst);
+    // Wait until it is out of guest code. Shrinking its budget makes a running
+    // thread reach the end of its time slice (a safepoint) promptly.
+    std::unique_lock<std::mutex> lk(suspendMu_);
+    while (t.in_guest.load(std::memory_order_seq_cst) && !stopRequested()) {
+        t.budget = 0;
+        suspendCv_.wait_for(lk, std::chrono::microseconds(200));
+    }
+}
+
+void Engine::resume(Cpu& t) {
+    {
+        std::lock_guard<std::mutex> lk(suspendMu_);
+        uint32_t n = t.suspend_count.load();
+        while (n && !t.suspend_count.compare_exchange_weak(n, n - 1)) {}
+    }
+    suspendCv_.notify_all();
+}
+
+// Debugging: HVM_TRACE_BLOCKS=lo-hi (hex) logs every block entered in that range
+// with r0-r3 (single-steps blocks, so it is slow).
+static bool traceRange(uint32_t& lo, uint32_t& hi) {
+    static const char* e = std::getenv("HVM_TRACE_BLOCKS");
+    static uint32_t l = 0, h = 0;
+    static bool parsed = false;
+    if (e && !parsed) { std::sscanf(e, "%x-%x", &l, &h); parsed = true; }
+    lo = l; hi = h;
+    return e != nullptr;
+}
+
 Exit Engine::runToExit(Cpu& cpu) {
+    uint32_t lo, hi;
+    if (traceRange(lo, hi)) {
+        for (;;) {
+            if (stopRequested()) { cpu.exit = Exit::Halt; return Exit::Halt; }
+            const uint32_t pc = cpu.r[kPC];
+            if (pc >= lo && pc < hi)
+                std::fprintf(stderr, "[blk] %08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x\n", pc | (cpu.thumb & 1),
+                             cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3], cpu.r[4], cpu.r[5], cpu.r[6]);
+            const Exit e = run(cpu, 1);
+            if (e != Exit::Budget) return e;
+        }
+    }
     for (;;) {
         if (stopRequested()) { cpu.exit = Exit::Halt; return Exit::Halt; }
         const Exit e = run(cpu, kSlice);

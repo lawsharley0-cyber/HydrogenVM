@@ -185,6 +185,11 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 
 #include "runtime/Process.hpp"
 #include "runtime/audio/Audio.hpp"
+#include <functional>
+#include <map>
+#include <random>
+#include <vector>
+namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std::string& s); }
 #include "runtime/uikit/UIKit.hpp"
 #include "runtime/foundation/Foundation.hpp"
 #include <cmath>
@@ -427,6 +432,86 @@ int runFullSubsystemTests() {
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
     }
 
+    // 2f2. libstdc++ containers (GCC 4.2 ABI): red-black tree, COW std::string
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = proc.lookupSymbol(sym);
+            return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
+        };
+        auto& m = proc.mem();
+        // Tree: header + nodes {color, parent, left, right, key}.
+        const uint32_t header = proc.heap().allocZeroed(16);
+        m.write<uint32_t>(header + 8, header);   // leftmost
+        m.write<uint32_t>(header + 12, header);  // rightmost
+        std::map<uint32_t, uint32_t> model;      // key -> node
+        std::mt19937 rng(1234);
+        bool treeOk = true;
+        auto key = [&](uint32_t n) { return m.read<uint32_t>(n + 16); };
+        auto verify = [&]() {
+            // In-order walk via _Rb_tree_increment matches the model; RB invariants hold.
+            std::vector<uint32_t> walk;
+            for (uint32_t n = m.read<uint32_t>(header + 8); n != header && walk.size() <= model.size(); n = call("__ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base", {n}))
+                walk.push_back(key(n));
+            std::vector<uint32_t> want;
+            for (auto& [k, n] : model) want.push_back(k);
+            if (walk != want) return false;
+            const uint32_t root = m.read<uint32_t>(header + 4);
+            if (root && m.read<uint32_t>(root) != 1) return false;   // black root
+            std::function<int(uint32_t)> blackHeight = [&](uint32_t n) -> int {
+                if (!n) return 1;
+                const uint32_t l = m.read<uint32_t>(n + 8), r = m.read<uint32_t>(n + 12);
+                if (m.read<uint32_t>(n) == 0 && ((l && m.read<uint32_t>(l) == 0) || (r && m.read<uint32_t>(r) == 0))) return -1;   // red-red
+                if ((l && m.read<uint32_t>(l + 4) != n) || (r && m.read<uint32_t>(r + 4) != n)) return -1;   // parent links
+                const int a = blackHeight(l), b = blackHeight(r);
+                if (a < 0 || b < 0 || a != b) return -1;
+                return a + (m.read<uint32_t>(n) == 1 ? 1 : 0);
+            };
+            if (blackHeight(root) < 0) return false;
+            if (!model.empty() && (m.read<uint32_t>(header + 8) != model.begin()->second || m.read<uint32_t>(header + 12) != model.rbegin()->second)) return false;
+            return true;
+        };
+        for (int step = 0; step < 600 && treeOk; ++step) {
+            const uint32_t k = rng() % 200;
+            if (!model.count(k) && (step < 300 || rng() % 2)) {
+                // std::map-style insert position: descend from the root.
+                uint32_t parent = header, cur = m.read<uint32_t>(header + 4);
+                bool left = true;
+                while (cur) { parent = cur; left = k < key(cur); cur = m.read<uint32_t>(cur + (left ? 8 : 12)); }
+                const uint32_t node = proc.heap().allocZeroed(20);
+                m.write<uint32_t>(node + 16, k);
+                call("__ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_", {uint32_t(left || parent == header), node, parent, header});
+                model[k] = node;
+            } else if (model.count(k)) {
+                const uint32_t node = model[k];
+                const uint32_t victim = call("__ZSt28_Rb_tree_rebalance_for_erasePSt18_Rb_tree_node_baseRS_", {node, header});
+                treeOk = victim == node;
+                model.erase(k);
+            }
+            if (step % 25 == 0 || step == 599) treeOk = treeOk && verify();
+        }
+        const uint32_t last = model.empty() ? header : model.rbegin()->second;
+        const uint32_t dec = call("__ZSt18_Rb_tree_decrementPSt18_Rb_tree_node_base", {header});
+        check(treeOk && dec == last, "std::map red-black tree: 600 random inserts/erases keep order and RB invariants");
+
+        // COW std::string
+        auto cstr = [&](const char* s) { return proc.allocCString(s); };
+        auto str = [&](uint32_t obj) { const uint32_t d = m.read<uint32_t>(obj); return std::string(reinterpret_cast<const char*>(m.host(d)), m.read<uint32_t>(d - 12)); };
+        const uint32_t a = proc.heap().allocZeroed(4), b = proc.heap().allocZeroed(4), c = proc.heap().allocZeroed(4), sub = proc.heap().allocZeroed(4);
+        call("__ZNSsC1EPKcRKSaIcE", {a, cstr("hello"), 0});
+        call("__ZNSsC1ERKSs", {b, a});
+        const bool shared = m.read<uint32_t>(a) == m.read<uint32_t>(b) && m.read<uint32_t>(m.read<uint32_t>(a) - 4) == 1;
+        call("__ZNSs6appendEPKcm", {b, cstr(" world"), 6});
+        call("__ZNSs6insertEmPKcm", {b, 0, cstr(">> "), 3});
+        const uint32_t pos = call("__ZNKSs4findEPKcmm", {b, cstr("world"), 0, 5});
+        call("__ZNKSs6substrEmm", {sub, b, pos, 0xFFFFFFFFu});
+        call("__ZNSsC1EPKcRKSaIcE", {c, cstr("abc"), 0});
+        const int32_t cmp = int32_t(call("__ZNKSs7compareERKSs", {c, a}));
+        call("__ZNSs4swapERSs", {a, c});
+        const bool ok = shared && str(a) == "abc" && str(c) == "hello" && str(b) == ">> hello world" && pos == 9 && str(sub) == "world" && cmp < 0;
+        for (uint32_t s : {a, b, c, sub}) call("__ZNSsD1Ev", {s});
+        check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap");
+    }
+
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)
@@ -571,6 +656,103 @@ int runFullSubsystemTests() {
         const uint8_t g1 = proc.mem().read<uint8_t>(texIds + 9);
         const uint8_t b1 = proc.mem().read<uint8_t>(texIds + 10);
         check(r1 == 255 && g1 == 0 && b1 == 0, "OpenGL ES 1.1 fixed-function ortho + 2D texture + glDrawElements");
+
+        // CommonCrypto digests against the standard "abc" vectors.
+        auto hex = [](const std::vector<uint8_t>& v) { std::string h; char b[3]; for (uint8_t c : v) { std::snprintf(b, 3, "%02x", c); h += b; } return h; };
+        check(hex(Runtime::hvmDigest(0, "abc")) == "900150983cd24fb0d6963f7d28e17f72" &&
+              hex(Runtime::hvmDigest(1, "abc")) == "a9993e364706816aba3e25717850c26c9cd0d89d" &&
+              hex(Runtime::hvmDigest(2, "abc")) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" &&
+              hex(Runtime::hvmDigest(1, std::string(1000, 'a'))).size() == 40,
+              "CC_MD5 / CC_SHA1 / CC_SHA256 match the reference digests");
+
+        // zlib: compress + uncompress through the guest entry points.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            std::string text;
+            for (int i = 0; i < 200; ++i) text += "HydrogenVM zlib round trip " + std::to_string(i) + "\n";
+            const uint32_t src = proc.heap().alloc(uint32_t(text.size())), packed = proc.heap().alloc(8192), out = proc.heap().alloc(uint32_t(text.size()) + 16);
+            const uint32_t lenp = proc.heap().alloc(8);
+            proc.mem().copyIn(src, text.data(), text.size());
+            proc.mem().write<uint32_t>(lenp, 8192);
+            const uint32_t rc1 = call("_compress", {packed, lenp, src, uint32_t(text.size())});
+            const uint32_t packedLen = proc.mem().read<uint32_t>(lenp);
+            proc.mem().write<uint32_t>(lenp + 4, uint32_t(text.size()) + 16);
+            const uint32_t rc2 = call("_uncompress", {out, lenp + 4, packed, packedLen});
+            const uint32_t outLen = proc.mem().read<uint32_t>(lenp + 4);
+            const bool same = outLen == text.size() && std::memcmp(proc.mem().host(out), text.data(), text.size()) == 0;
+            // Streaming inflate of the same data in 100-byte output chunks.
+            const uint32_t zs = proc.heap().allocZeroed(56);
+            const uint32_t ver = proc.allocCString("1.2.5");
+            const uint32_t rc3 = call("_inflateInit_", {zs, ver, 56});
+            proc.mem().write<uint32_t>(zs + 0, packed);
+            proc.mem().write<uint32_t>(zs + 4, packedLen);
+            std::string got;
+            const uint32_t chunk = proc.heap().alloc(100);
+            int32_t zr = 0;
+            for (int i = 0; i < 1000; ++i) {
+                proc.mem().write<uint32_t>(zs + 12, chunk);
+                proc.mem().write<uint32_t>(zs + 16, 100);
+                zr = int32_t(call("_inflate", {zs, 0}));
+                const uint32_t produced = 100 - proc.mem().read<uint32_t>(zs + 16);
+                got.append(reinterpret_cast<const char*>(proc.mem().host(chunk)), produced);
+                if (zr != 0) break;
+            }
+            call("_inflateEnd", {zs});
+            check(rc1 == 0 && rc2 == 0 && same && packedLen < text.size() / 4 && rc3 == 0 && zr == 1 && got == text,
+                  "zlib compress/uncompress and streaming inflate on guest buffers");
+        }
+
+        // std::ostringstream: formatted output through our stringbuf, read back with str().
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t oss = proc.heap().allocZeroed(180);
+            call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEEC1ESt13_Ios_Openmode", {oss, 16});
+            const uint32_t hello = proc.allocCString("score=");
+            call("__ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_PKS3_i", {oss, hello, 6});
+            call("__ZNSolsEi", {oss, uint32_t(-42)});
+            // Hex with showbase via the stream's flags (ios_base at +44).
+            const uint32_t ios = oss + uint32_t(int32_t(proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(oss) - 12)));
+            proc.mem().write<uint32_t>(ios + 12, (proc.mem().read<uint32_t>(ios + 12) & ~(2u | 8u | 64u)) | 8u | 512u);
+            call("__ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_PKS3_i", {oss, proc.allocCString(" "), 1});
+            call("__ZNSo9_M_insertImEERSoT_", {oss, 255});
+            proc.mem().write<uint32_t>(ios + 12, (proc.mem().read<uint32_t>(ios + 12) & ~(8u | 512u)) | 2u);
+            proc.mem().write<uint32_t>(ios + 8, 6);   // width 6, right-aligned
+            call("__ZNSo9_M_insertImEERSoT_", {oss, 7});
+            const uint32_t strRet = proc.heap().allocZeroed(4);
+            call("__ZNKSt15basic_stringbufIcSt11char_traitsIcESaIcEE3strEv", {strRet, oss + 4});
+            const uint32_t data = proc.mem().read<uint32_t>(strRet);
+            const std::string v = proc.readCString(data);
+            call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEED1Ev", {oss});
+            check(v == "score=-42 0xff     7", "std::ostringstream formatting (int, hex+showbase, width) and str()");
+        }
+
+        // NSCalendar / NSDateComponents: compose, break down, add, difference.
+        {
+            const ObjC::id calendar = ObjC::id(r.send(cpu, r.getClass("NSCalendar"), "currentCalendar"));
+            auto comps = [&](int y, int mo, int d, int h, int mi, int sec) {
+                const ObjC::id c = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSDateComponents"), r.selAlloc)), "init"));
+                r.send(cpu, c, "setYear:", {uint32_t(y)}); r.send(cpu, c, "setMonth:", {uint32_t(mo)}); r.send(cpu, c, "setDay:", {uint32_t(d)});
+                r.send(cpu, c, "setHour:", {uint32_t(h)}); r.send(cpu, c, "setMinute:", {uint32_t(mi)}); r.send(cpu, c, "setSecond:", {uint32_t(sec)});
+                return c;
+            };
+            const ObjC::id leapDay = ObjC::id(r.send(cpu, calendar, "dateFromComponents:", {comps(2024, 2, 29, 13, 45, 10)}));
+            const uint32_t units = 4 | 8 | 16 | 32 | 64 | 128 | 512;
+            const ObjC::id back = ObjC::id(r.send(cpu, calendar, "components:fromDate:", {units, leapDay}));
+            auto get = [&](ObjC::id c, const char* sel) { return int32_t(r.send(cpu, c, sel)); };
+            const bool roundTrip = get(back, "year") == 2024 && get(back, "month") == 2 && get(back, "day") == 29 &&
+                                   get(back, "hour") == 13 && get(back, "minute") == 45 && get(back, "second") == 10 && get(back, "weekday") == 5;
+            const ObjC::id oneYear = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSDateComponents"), r.selAlloc)), "init"));
+            r.send(cpu, oneYear, "setYear:", {1});
+            const ObjC::id next = ObjC::id(r.send(cpu, calendar, "dateByAddingComponents:toDate:options:", {oneYear, leapDay, 0}));
+            const ObjC::id nextC = ObjC::id(r.send(cpu, calendar, "components:fromDate:", {units, next}));
+            const ObjC::id jan1 = ObjC::id(r.send(cpu, calendar, "dateFromComponents:", {comps(2024, 1, 1, 0, 0, 0)}));
+            const ObjC::id mar1 = ObjC::id(r.send(cpu, calendar, "dateFromComponents:", {comps(2024, 3, 1, 0, 0, 0)}));
+            const ObjC::id diff = ObjC::id(r.send(cpu, calendar, "components:fromDate:toDate:options:", {16u, jan1, mar1, 0}));
+            const ObjC::id diffYM = ObjC::id(r.send(cpu, calendar, "components:fromDate:toDate:options:", {4u | 8u | 16u, jan1, leapDay, 0}));
+            check(roundTrip && get(nextC, "year") == 2025 && get(nextC, "month") == 2 && get(nextC, "day") == 28 &&
+                  get(diff, "day") == 60 && get(diffYM, "year") == 0 && get(diffYM, "month") == 1 && get(diffYM, "day") == 28,
+                  "NSCalendar compose / components / dateByAdding (leap day) / difference");
+        }
     }
 
     r.poolPop(cpu, outerPool);

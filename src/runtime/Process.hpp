@@ -180,6 +180,7 @@ public:
     // ---- threads
     GuestThread& currentThread();
     GuestThread* findThread(uint32_t self);
+    GuestThread* findThreadById(uint32_t id);
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
     bool joinThread(uint32_t self, uint32_t* retval);
@@ -290,6 +291,7 @@ private:
     Perf perf_;
     mutable std::mutex missingMu_;
     std::set<std::string> missing_;
+    std::set<std::string> calledImports_;   // symbols the app reaches through lazy (call) stubs
 };
 
 // Module registration (each lives in its own .cpp).
@@ -305,6 +307,10 @@ void registerCxxRuntime(Process& p);
 void registerUnwinder(Process& p);
 void registerLibStdcxx(Process& p);
 void registerLibcPosix(Process& p);
+void registerZlib(Process& p);
+void registerLibcNet(Process& p);
+void registerCommonCrypto(Process& p);
+void registerSqlite(Process& p);
 void registerObjCRuntime(Process& p);
 void registerFoundation(Process& p);
 void registerUIKit(Process& p);

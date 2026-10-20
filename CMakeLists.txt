@@ -30,7 +30,8 @@ add_library(hvm_core STATIC
 target_include_directories(hvm_core PUBLIC src)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
-target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB Threads::Threads)
+find_package(SQLite3 REQUIRED)
+target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB SQLite::SQLite3 Threads::Threads)
 # -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
 target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off)
 

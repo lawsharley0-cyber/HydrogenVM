@@ -976,6 +976,26 @@ void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
         case GL_ACTIVE_TEXTURE: wr(c ? int32_t(GL_TEXTURE0 + c->activeTexture) : int32_t(GL_TEXTURE0)); break;
         case GL_UNPACK_ALIGNMENT: wr(c ? c->unpackAlignment : 4); break;
         case GL_PACK_ALIGNMENT: wr(c ? c->packAlignment : 4); break;
+        case 0x86A2: wr(4); break;                                         // GL_NUM_COMPRESSED_TEXTURE_FORMATS
+        case 0x86A3: for (int i = 0; i < 4; ++i) wr(0x8C00 + i, i); break; // GL_COMPRESSED_TEXTURE_FORMATS (PVRTC)
+        case 0x8DF9: wr(0); break;                                         // GL_NUM_SHADER_BINARY_FORMATS
+        case 0x0D31: wr(8); break;                                         // GL_MAX_LIGHTS
+        case 0x0D32: wr(6); break;                                         // GL_MAX_CLIP_PLANES
+        case 0x0D36: wr(16); break;                                        // GL_MAX_MODELVIEW_STACK_DEPTH
+        case 0x0D38: case 0x0D39: wr(2); break;                            // projection / texture stack depth
+        case 0x851C: wr(4096); break;                                      // GL_MAX_CUBE_MAP_TEXTURE_SIZE
+        case 0x8D57: wr(4); break;                                         // GL_MAX_SAMPLES_APPLE
+        case 0x8B9A: wr(0x1401); break;                                    // IMPLEMENTATION_COLOR_READ_TYPE
+        case 0x8B9B: wr(0x1908); break;                                    // IMPLEMENTATION_COLOR_READ_FORMAT
+        case 0x846D: case 0x846E: case 0x0B12: wr(1, 0); wr(64, 1); break;  // point size / line width ranges
+        case 0x0BA0: wr(c ? int32_t(c->matrixMode) : 0x1700); break;       // GL_MATRIX_MODE
+        case 0x8069: wr(c ? int32_t(c->boundTextures[c->activeTexture]) : 0); break;   // GL_TEXTURE_BINDING_2D
+        case 0x84E1: wr(c ? int32_t(GL_TEXTURE0 + c->clientActiveTexture) : int32_t(GL_TEXTURE0)); break;   // CLIENT_ACTIVE_TEXTURE
+        case 0x0BE2: wr(c && c->blend ? 1 : 0); break;                     // GL_BLEND
+        case 0x0BE1: case 0x80CB: wr(c ? int32_t(c->blendSrcRGB) : 1); break;   // BLEND_SRC / SRC_RGB
+        case 0x0BE0: case 0x80C8: wr(c ? int32_t(c->blendDstRGB) : 0); break;   // BLEND_DST / DST_RGB
+        case 0x80C9: wr(c ? int32_t(c->blendSrcAlpha) : 1); break;
+        case 0x80CA: wr(c ? int32_t(c->blendDstAlpha) : 0); break;
         default: wr(0); break;
     }
 }

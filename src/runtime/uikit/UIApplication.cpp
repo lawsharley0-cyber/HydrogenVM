@@ -454,7 +454,10 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
     std::string mainNib = info ? info->getString("NSMainNibFile~iphone", info->getString("NSMainNibFile")) : "";
     if (!mainNib.empty()) {
         x.proc.logf(LogLevel::Info, "Loading main nib %s", mainNib.c_str());
-        loadNib(x, mainNib, 0, u.app, 0);
+        // UIKit keeps the main nib's top-level objects (the app delegate, the window) alive for the
+        // app's lifetime; they're usually assign-outlets, so nothing else retains them.
+        if (const id top = loadNib(x, mainNib, 0, u.app, 0))
+            for (id o : Foundation::arrayItems(x, top)) r.retain(x.cpu, o);
     }
     const std::string storyboard = info ? info->getString("UIMainStoryboardFile~iphone", info->getString("UIMainStoryboardFile")) : "";
     if (!storyboard.empty()) {

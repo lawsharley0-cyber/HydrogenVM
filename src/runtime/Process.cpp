@@ -33,7 +33,23 @@ std::string demangle(const std::string& sym) {
     return s;
 }
 
+// CoreFoundation-style function names: a verb (Create, Copy, Get, ...) followed by
+// another word or the end ("CFHostCreateWithName", "SecTrustCopyPublicKey").
+bool looksLikeFunction(const std::string& s) {
+    if (s.size() < 3 || s[0] != '_' || s[1] == 'k' || !std::isupper(uint8_t(s[1]))) return false;
+    for (const char* v : {"Create", "Copy", "Get", "Set", "Open", "Close", "Release", "Retain", "Read", "Write", "Dispose", "Invalidate"}) {
+        const size_t n = std::strlen(v);
+        for (size_t at = s.find(v, 2); at != std::string::npos; at = s.find(v, at + 1)) {
+            const size_t after = at + n;
+            if (std::islower(uint8_t(s[at - 1])) || std::isupper(uint8_t(s[at - 1])))
+                if (after == s.size() || std::isupper(uint8_t(s[after]))) return true;
+        }
+    }
+    return false;
+}
+
 bool looksLikeData(const std::string& s) {
+    if (looksLikeFunction(s)) return false;
     auto starts = [&](const char* p) { return s.compare(0, std::strlen(p), p) == 0; };
     auto ends = [&](const char* p) { const size_t n = std::strlen(p); return s.size() >= n && s.compare(s.size() - n, n, p) == 0; };
     if (starts("__ZTV") || starts("__ZTI") || starts("__ZTS") || starts("__NSConcrete") || starts("_OBJC_")) return true;
@@ -97,6 +113,10 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     registerUnwinder(*this);
     registerLibStdcxx(*this);
     registerLibcPosix(*this);
+    registerZlib(*this);
+    registerLibcNet(*this);
+    registerCommonCrypto(*this);
+    registerSqlite(*this);
     registerFoundation(*this);
     registerUIKit(*this);
 }
@@ -195,7 +215,11 @@ void Process::addMissingSymbolResolver(std::function<uint32_t(const std::string&
 }
 
 uint32_t Process::makeMissingStub(const std::string& name) {
-    if (looksLikeData(name)) {
+    // Data, by name, or because the app only takes its address (never calls it
+    // through a lazy stub) and it has a Cocoa-style constant name (NSFooKey,
+    // UIBackgroundTaskInvalid, NSGregorianCalendar, ...).
+    const bool cocoaName = name.size() > 2 && name[0] == '_' && std::isupper(uint8_t(name[1]));
+    if (looksLikeData(name) || name.compare(0, 5, "__ZTT") == 0 || (cocoaName && !calledImports_.count(name) && !looksLikeFunction(name))) {
         const uint32_t a = defineDataBlock(name, 64);
         log(LogLevel::Warning, "Missing data symbol " + demangle(name) + " (using zeros)");
         return a;
@@ -213,7 +237,16 @@ uint32_t Process::resolveImport(const Loader::BindRecord& b) {
     if (auto a = lookupSymbol(b.symbol)) return *a;
     // A weak import that nothing provides is 0, as dyld does: apps weak-link
     // frameworks newer than their minimum OS and test for nil before use.
-    if (b.weakImport) return 0;
+    // Calls through a lazy stub still get a stub that reports the missing
+    // function (tests for availability use the address, not the stub).
+    // Framework constants (strings, numbers) are still provided: they exist on every real device,
+    // and apps that weak-link a framework use them without checking.
+    if (b.weakImport && !b.lazy) {
+        if (b.symbol.compare(0, 6, "_OBJC_") == 0) return 0;
+        for (auto& r : missingResolvers_)
+            if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
+        return 0;
+    }
     for (auto& r : missingResolvers_)
         if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
     return makeMissingStub(b.symbol);
@@ -227,6 +260,7 @@ void Process::bindImports() {
         unresolvedBefore = symbols_.size();
     }
     std::vector<std::string> missingFns;
+    for (const auto& b : image_.binds) if (b.lazy) calledImports_.insert(b.symbol);
     // Class and metaclass pointers inside the app's own class structures
     // (superclass, isa) always need a class, even when the import is weak:
     // dyld would refuse to load an app whose superclass is missing, and a nil
@@ -239,7 +273,7 @@ void Process::bindImports() {
             (b0.symbol.rfind("_OBJC_CLASS_$_", 0) == 0 || b0.symbol.rfind("_OBJC_METACLASS_$_", 0) == 0);
         if (needsClass) { strong = b0; strong.weakImport = false; }
         const Loader::BindRecord& b = needsClass ? strong : b0;
-        const std::string key = needsClass ? b.symbol + "#class" : b.symbol;
+        const std::string key = needsClass ? b.symbol + "#class" : (b.weakImport && !b.lazy) ? b.symbol + "#weak" : b.symbol;
         uint32_t target;
         auto it = cache.find(key);
         if (it != cache.end()) target = it->second;
@@ -408,6 +442,13 @@ GuestThread* Process::findThread(uint32_t self) {
     if (mainThread_->self == self) return mainThread_;
     std::lock_guard<std::mutex> lk(threadsMu_);
     for (auto& [k, t] : threads_) if (t->self == self) return t.get();
+    return nullptr;
+}
+
+GuestThread* Process::findThreadById(uint32_t id) {
+    if (mainThread_->id == id) return mainThread_;
+    std::lock_guard<std::mutex> lk(threadsMu_);
+    for (auto& [k, t] : threads_) if (t->id == id && !t->finished) return t.get();
     return nullptr;
 }
 

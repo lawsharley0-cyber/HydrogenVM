@@ -773,6 +773,8 @@ std::string encodeBytes(const std::u16string& s, uint32_t enc, bool lossy, bool*
     }
 }
 
+uint32_t c_defaultCStringEncoding(Ctx&, id, SEL) { return 4; }   // NSUTF8StringEncoding
+
 void registerStrings(Process& p, ObjC::Runtime& r) {
     auto& st = S(p);
     ObjC::ClassBuilder ns = r.defineClass("NSString", "NSObject");
@@ -787,6 +789,7 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
     ns.cm<&ns_alloc>("alloc").cm<&ns_allocWithZone>("allocWithZone:")
       .cm<&c_string>("string").cm<&c_stringWithString>("stringWithString:").cm<&c_stringWithUTF8String>("stringWithUTF8String:")
       .cm<&c_stringWithCString>("stringWithCString:encoding:").cm<&c_stringWithCStringDefault>("stringWithCString:")
+      .cm<&c_defaultCStringEncoding>("defaultCStringEncoding", "I@:")
       .cm<&c_stringWithFormat>("stringWithFormat:").cm<&c_stringWithFormat>("localizedStringWithFormat:")
       .cm<&c_stringWithCharacters>("stringWithCharacters:length:")
       .cm<&c_stringWithContentsOfFile>("stringWithContentsOfFile:encoding:error:")

@@ -147,6 +147,10 @@ uint32_t p_nl_langinfo(Ctx& x, int32_t item) {
     return item == 0 /* CODESET */ ? l.utf8 : l.empty;
 }
 
+// pthread cancellation: never cancelled; report the previous state as "enabled/deferred" (0).
+int32_t p_setcancel(Ctx& x, int32_t, GuestPtr old) { if (old) x.mem.write<uint32_t>(old, 0); return 0; }
+void p_testcancel(Ctx&) {}
+
 int32_t p_zero(Ctx&) { return 0; }
 int32_t p_zero2(Ctx&, int32_t, int32_t) { return 0; }
 int32_t p_zero3(Ctx&, int32_t, int32_t, int32_t) { return 0; }
@@ -156,6 +160,9 @@ void p_void2(Ctx&, GuestPtr, uint32_t) {}
 
 void registerLibcPosix(Process& p) {
     p.def<&p_readlink>("_readlink");
+    p.def<&p_setcancel>("_pthread_setcancelstate");
+    p.def<&p_setcancel>("_pthread_setcanceltype");
+    p.def<&p_testcancel>("_pthread_testcancel");
     p.def<&p_getdtablesize>("_getdtablesize");
     p.def<&p_gethostname>("_gethostname");
     p.def<&p_stacksize>("_pthread_get_stacksize_np");

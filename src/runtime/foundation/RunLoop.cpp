@@ -437,22 +437,26 @@ void o_performOnMain(Ctx& x, id self, SEL, SEL sel, id arg, bool wait) {
 }
 void o_performOnMainModes(Ctx& x, id self, SEL s, SEL sel, id arg, bool wait, id) { o_performOnMain(x, self, s, sel, arg, wait); }
 
+void bindThreadObject(Ctx& x, id threadObj, GuestThread* t);
 // background performs run on a new guest thread through a host trampoline
 void perform_trampoline(Ctx& x, GuestPtr req) {
     const id target = x.mem.read<uint32_t>(req), arg = x.mem.read<uint32_t>(req + 8);
     const SEL sel = x.mem.read<uint32_t>(req + 4);
+    const id threadObj = x.mem.read<uint32_t>(req + 12);
     x.proc.heap().free(req);
+    if (threadObj) bindThreadObject(x, threadObj, &x.proc.currentThread());
     const uint32_t pool = rt(x).poolPush();
     rt(x).send(x.cpu, target, sel, {arg});
     rt(x).poolPop(x.cpu, pool);
     rt(x).release(x.cpu, arg);
     rt(x).release(x.cpu, target);
 }
-void startBackground(Ctx& x, id target, SEL sel, id arg) {
-    const uint32_t req = x.proc.heap().alloc(12);
+void startBackground(Ctx& x, id target, SEL sel, id arg, id threadObj = 0) {
+    const uint32_t req = x.proc.heap().alloc(16);
     x.mem.write<uint32_t>(req, rt(x).retain(x.cpu, target));
     x.mem.write<uint32_t>(req + 4, sel);
     x.mem.write<uint32_t>(req + 8, rt(x).retain(x.cpu, arg));
+    x.mem.write<uint32_t>(req + 12, threadObj);
     x.proc.startThread(*x.proc.lookupSymbol("__hvm_perform_trampoline"), req, 512u << 10, true);
 }
 void o_performInBackground(Ctx& x, id self, SEL, SEL sel, id arg) { startBackground(x, self, sel, arg); }
@@ -481,6 +485,50 @@ id threadObject(Ctx& x, GuestThread* t) {
     l.threadObjects[t] = o;
     return o;
 }
+// An NSThread the app created and started: [NSThread currentThread] on that thread returns it.
+void bindThreadObject(Ctx& x, id threadObj, GuestThread* t) {
+    ThreadData* d = rt(x).hostIf<ThreadData>(threadObj);
+    if (!d) return;
+    auto& l = L(x);
+    std::lock_guard<std::mutex> lk(l.mu);
+    d->t = t;
+    l.threadObjects[t] = threadObj;
+}
+RunLoop& loopForThread(Ctx& x, GuestThread* t) {
+    if (t == &x.proc.mainThread()) return *L(x).main;
+    std::lock_guard<std::mutex> lk(L(x).mu);
+    auto& p = L(x).perThread[t];
+    if (!p) p = std::make_unique<RunLoop>(x.proc);
+    return *p;
+}
+// performSelector:onThread:withObject:waitUntilDone:[modes:]
+void o_performOnThread(Ctx& x, id self, SEL, SEL sel, id thread, id arg, bool wait) {
+    ThreadData* d = thread ? rt(x).hostIf<ThreadData>(thread) : nullptr;
+    for (int i = 0; d && !d->t && i < 100 && !x.proc.stopping(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    GuestThread* t = d && d->t ? d->t : &x.proc.mainThread();
+    if (t == &x.proc.currentThread() && wait) { rt(x).send(x.cpu, self, sel, {arg}); return; }
+    rt(x).retain(x.cpu, self);
+    rt(x).retain(x.cpu, arg);
+    Process* p = &x.proc;
+    auto done = std::make_shared<std::promise<void>>();
+    auto fut = done->get_future();
+    loopForThread(x, t).post([p, self, sel, arg, done](CPU::Cpu& c) {
+        Ctx cx{*p, c, p->mem()};
+        try { rt(cx).send(c, self, sel, {arg}); } catch (...) { done->set_value(); throw; }
+        rt(cx).release(c, arg);
+        rt(cx).release(c, self);
+        done->set_value();
+    });
+    if (wait && t != &x.proc.currentThread()) {
+        while (fut.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
+            if (x.proc.stopping()) throw ProcessExit(0, "stopping");
+    }
+}
+void o_performOnThreadModes(Ctx& x, id self, SEL s, SEL sel, id thread, id arg, bool wait, id) { o_performOnThread(x, self, s, sel, thread, arg, wait); }
+// NSPort / NSMachPort: AFNetworking-style "keep this run loop alive" ports. Nothing arrives on them.
+id port_new(Ctx& x, id cls, SEL) { return autoreleased(x, id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, cls, rt(x).selAlloc)), "init"))); }
+void rl_portNoop(Ctx&, id, SEL, id, id) {}
+
 id th_current(Ctx& x, id, SEL) { return threadObject(x, &x.proc.currentThread()); }
 id th_main(Ctx& x, id, SEL) { return threadObject(x, &x.proc.mainThread()); }
 bool th_isMainClass(Ctx& x, id, SEL) { return &x.proc.currentThread() == &x.proc.mainThread(); }
@@ -505,8 +553,8 @@ id th_initWithTarget(Ctx& x, id self, SEL, id target, SEL sel, id arg) {
 }
 void th_start(Ctx& x, id self, SEL) {
     ThreadData* d = rt(x).hostIf<ThreadData>(self);
-    if (d && d->target) startBackground(x, d->target, d->sel, d->arg);
-    else if (d) startBackground(x, self, rt(x).sel("main"), 0);
+    if (d && d->target) startBackground(x, d->target, d->sel, d->arg, self);
+    else if (d) startBackground(x, self, rt(x).sel("main"), 0, self);
 }
 void th_noop(Ctx&, id, SEL) {}
 id th_name(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d && d->name ? d->name : makeString(x, ""); }
@@ -571,10 +619,17 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
        .m<&o_performAfterDelayModes>("performSelector:withObject:afterDelay:inModes:")
        .m<&o_performOnMain>("performSelectorOnMainThread:withObject:waitUntilDone:")
        .m<&o_performOnMainModes>("performSelectorOnMainThread:withObject:waitUntilDone:modes:")
+       .m<&o_performOnThread>("performSelector:onThread:withObject:waitUntilDone:")
+       .m<&o_performOnThreadModes>("performSelector:onThread:withObject:waitUntilDone:modes:")
        .m<&o_performInBackground>("performSelectorInBackground:withObject:")
        .cm<&oc_cancelAll>("cancelPreviousPerformRequestsWithTarget:")
        .cm<&oc_cancelSel>("cancelPreviousPerformRequestsWithTarget:selector:object:");
     p.def<&perform_trampoline>("__hvm_perform_trampoline");
+
+    ObjC::ClassBuilder port = r.defineClass("NSPort", "NSObject");
+    port.cm<&port_new>("port");
+    r.defineClass("NSMachPort", "NSPort");
+    r.builder(l.nsRunLoop).m<&rl_portNoop>("addPort:forMode:", "v@:@@").m<&rl_portNoop>("removePort:forMode:", "v@:@@");
 
     ObjC::ClassBuilder th = r.defineClass("NSThread", "NSObject");
     l.nsThread = th.cls();
@@ -605,5 +660,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
         p.mem().write<uint32_t>(cell, constString(p, n + 1));
     }
 }
+
+RunLoop& runLoopForObject(Ctx& x, id loop) { return loopOf(x, loop); }
 
 } // namespace Hydrogen::Runtime::Foundation

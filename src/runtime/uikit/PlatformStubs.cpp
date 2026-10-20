@@ -503,11 +503,11 @@ int32_t eaf_read(Ctx& x, uint32_t id, GuestPtr ioFrames, GuestPtr abl) {
     x.mem.write<uint32_t>(ioFrames, done);
     return 0;
 }
-// ExtAudioFileSeek(ref, SInt64 frame): frame in r2:r3 (client-rate frames).
+// ExtAudioFileSeek(ref, SInt64 frame): frame in r1:r2 (iOS passes 64-bit arguments without register pairing).
 void eaf_seek(Ctx& x) {
     auto it = EAS(x).files.find(x.cpu.r[0]);
     if (it == EAS(x).files.end()) { x.cpu.r[0] = uint32_t(-50); return; }
-    const int64_t frame = int64_t((uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2]);
+    const int64_t frame = int64_t((uint64_t(x.cpu.r[2]) << 32) | x.cpu.r[1]);
     it->second.pos = double(std::max<int64_t>(0, frame)) * double(it->second.audio.sampleRate) / std::max(1.0, it->second.client.sampleRate);
     x.cpu.r[0] = 0;
 }

@@ -9,6 +9,7 @@
 // registers untouched.
 #pragma once
 #include "runtime/Process.hpp"
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <typeinfo>
@@ -220,6 +221,13 @@ private:
     mutable std::shared_mutex classMu_;
     std::once_flag nilImpOnce_;
     IMP nilImp_ = 0;
+public:
+    // Message forwarding (-forwardInvocation:), installed by Foundation: returns an IMP that
+    // forwards the message, or 0 when the receiver doesn't forward it.
+    std::function<IMP(id, SEL)> forwardHook;
+    // The type encoding of `sel` as implemented by `cls` (or a superclass); empty if unknown.
+    std::string methodTypes(Class cls, SEL sel);
+private:
     std::unordered_map<Class, std::unique_ptr<ClassInfo>> classes_;
     std::unordered_map<std::string, Class> classByName_;
     std::unordered_map<std::string, SEL> selByName_;

@@ -27,6 +27,7 @@ targets:
           - "**/*.md"
     dependencies:
       - sdk: libz.tbd
+      - sdk: libsqlite3.tbd
       - sdk: CoreText.framework
       - sdk: ImageIO.framework
       - sdk: CoreMotion.framework

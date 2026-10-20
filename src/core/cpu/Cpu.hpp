@@ -16,6 +16,7 @@
 //    (cached pointer = "block linking") or returns to the dispatcher when the
 //    time-slice budget runs out, so the guest can always be interrupted.
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <memory>
@@ -127,6 +128,14 @@ struct alignas(64) Cpu {
     // frames at or above it belong to code that host frames are waiting on,
     // so an exception unwinder must not land there.
     uint32_t call_boundary_sp = 0xFFFFFFFFu;
+
+    // thread_suspend() support. `suspend_count` > 0 asks the thread to park at
+    // its next safepoint (entering guest code: each time slice, and on return
+    // from every host function). `in_guest` is false while the thread runs
+    // host code or is parked, i.e. whenever its registers in r[] are a
+    // complete, stable picture of its guest state.
+    std::atomic<uint32_t> suspend_count{0};
+    std::atomic<bool> in_guest{false};
 
     uint32_t pc() const { return r[kPC]; }
     uint32_t cpsr() const { return nzcv | (q << 27) | ge | (thumb << 5) | 0x10 /*USR*/; }
