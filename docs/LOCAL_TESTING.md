@@ -82,13 +82,14 @@ commands `touch PHASE X Y`, `background`, `foreground`, or `stop`. Phases are
 
 ## Verification and current game limit
 
-The local runtime suite passes **57 checks**. The viewer smoke test receives live
+The local runtime suite passes **62 checks**. The viewer smoke test receives live
 frames, delivers down/up through the file bridge, and shuts down with exit 0 and
 `crashed=false`. A pre-existing file in the sandbox's Documents directory was
 preserved across launch; this tests host sandbox retention, not game progression.
 
-Clash still displays its connection-error dialog over mostly blank game graphics.
-The desktop viewer makes it possible to inspect/test that behavior locally; it
-does not fix the game's scene shaders or initialize native offline play. NPC
-battles and save/reload of offline game progress remain unverified. See
-`CLASH_ROYALE_RESTORATION.md` for the active blockers.
+Clash now renders its loading artwork, logo, training-camp hint and 50% bar,
+then shows a connection-error panel. The shared GLES2 interpreter executes a
+bounded straight-line shader subset; all 18 captured shader sources compile.
+This does not initialize native offline play. NPC battles and offline avatar/home
+persistence remain unverified. See `CLASH_ROYALE_RESTORATION.md` for the current
+runtime commit, evidence and next blocker.

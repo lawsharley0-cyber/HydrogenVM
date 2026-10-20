@@ -2,20 +2,103 @@
 
 Date: 2026-10-20. Work branch: `gemini-merge`.
 
+## Current status: visible loading scene (2026-10-20)
+
+Runtime commit: `ff2d4fd20523fa7994d4152e53ca23f65fbd1dcc`.
+
+The shared GLES2 renderer now executes a bounded straight-line GLSL subset
+instead of guessing transforms/colors from attribute and uniform names. The
+unchanged pinned Clash client renders its loading artwork, logo, training-camp
+hint, **50% loading bar**, and connection-error panel. **It is still not playable**:
+there is no verified menu, tutorial/NPC battle, offline profile or progression.
+The previous report of a UIKit dialog over black output was incomplete; the
+new frame establishes that the game scene and its styled error panel render.
+
+Implemented in `src/runtime/graphics/Shader.{hpp,cpp}` and `OpenGLES.cpp`:
+
+- Scalar/vector arithmetic, vector/scalar constructors, column-major
+  matrix-vector/vector-matrix multiplication, swizzles and overlapping swizzle
+  assignments, local constants, compound assignment, `dot`, and `texture2D`.
+- Attribute/uniform bindings by declared identifier and assigned GL location,
+  multiple varyings, literal-indexed varying arrays, actual sampler texture
+  units, and perspective-correct varying interpolation for triangles and lines.
+- Per-stage compilation, uniform/varying link validation, zero-initialized
+  uniforms on link, real compile/link status and bounded info logs. Unknown
+  attribute/uniform names return -1. Unsupported syntax fails explicitly.
+- Source/register/nesting bounds and checked literal array/swizzle accesses.
+  No guest assertion, memory check, or game asset was bypassed or modified.
+
+This is **not full GLSL ES 1.00 support**. Supported preprocessing is limited to
+GL_ES conditionals and `#version 100`; precision qualifiers use host float.
+Only floating-point scalar/vector/matrix values and sampler2D uniforms are
+implemented. Integer-looking numeric literals currently enter the float subset;
+there is no general int/bool type system. Control flow, functions beyond main,
+structs, dynamic indexing, uniform arrays, general macros, most builtins,
+discard, derivatives, mipmap LOD and homogeneous near-plane clipping remain
+unsupported. Such shaders may now report failure where the old renderer
+incorrectly claimed success and guessed a picture. GLES1 retains its existing
+fixed-function path. No device/IPA release validation is implied by Linux tests.
+
+Local evidence:
+
+- Clang Release build: **62 runtime checks passed, 0 failed**, including five
+  new shader/parser/pixel/diagnostic checks. The pixel check verifies two color
+  varyings, a nonzero sampler unit and a nonuniform clip-W interpolation result.
+- **18/18** original captured Clash shader sources compile, including all nine
+  vertex/fragment pairs and the blur varying arrays. The corpus also passes an
+  ASan/UBSan compiler run. `hvm_tests shaders <dump-directory>` reproduces source
+  acceptance; it does not establish that every shader pair has been drawn.
+- `tools/clash_royale_probe.py --ipa /var/tmp/clash-client.ipa` re-verifies the
+  pinned SHA256 and unencrypted ARMv7 metadata. The IPA is unchanged.
+- The workflow's 15-second strict/exploratory/relaunch scan covers Clash and the
+  three pinned older apps. All reach the time limit. Angry Birds and Art of Glow
+  have varied frames; Tiny Tower remains black. Clash's scanner `runs` result
+  means timed execution, not successful offline gameplay.
+- A separate 30-second graceful Clash run presents 348 frames and exits without
+  reported errors. Its screenshot shows the 50% connection error. Reached API
+  misses remain the loading WAV decoder and reachability reported offline.
+
+Two 25-second launches of the installed bundle with a scheduled retry tap
+also close gracefully and return to the same error; the retry delegate and
+in-game actions remain unverified. The client still attempts ports 9339, 1863,
+3724, 30000 and 843 despite the bundled `OfflineMode=true`. Neither `offline_avatar.json` nor
+`offline_home.json` appears. `titan.checkpoint` is not an offline avatar/home
+save. Next investigate how the settings table's flag is consumed and what
+initial state is required for native offline entry; then verify an actual NPC
+battle and save/relaunch before extending arenas or designing a backend. A
+static byte-string scan finds no ASCII `OfflineMode` in this executable; CSV
+access can be indexed, so this does not establish that the field is unused.
+
+Reproduction on this workstation (separate diagnostic sandbox):
+
+```sh
+cmake --build /var/tmp/hvm-clash-build --target hvm hvm_tests hvm_machodump --parallel 4
+/var/tmp/hvm-clash-build/hvm_tests fulltest
+HVM_DUMP_SHADERS=/var/tmp/clash-shaders /var/tmp/hvm-clash-build/hvm run /var/tmp/clash-client.ipa --home /var/tmp/clash-new-diagnostic-home --run-for 30 --graceful --screenshot /var/tmp/clash.png --report /var/tmp/clash.json
+/var/tmp/hvm-clash-build/hvm_tests shaders /var/tmp/clash-shaders
+```
+
+`hvm run <IPA>` replaces that app's container on import. For subsequent persistent
+launches, run the installed `.app` directly or use `tools/desktop.py`, which
+imports once. Use a new diagnostic home instead of overwriting desktop saves.
+The investigation workflow now captures and compile-checks the shader corpus.
+GitHub Actions remains subject to the previously observed account billing block;
+local results are the validation evidence until a new remote job actually runs.
+
 ## Local workstation tester
 
 `tools/local_test.sh` and `tools/desktop.py` now provide a WSLg desktop window,
 live frames, mouse touch/drag, background/foreground, screenshots, graceful
 shutdown and persistent sandbox reuse. Windows launchers are in the task's
 `outputs/` folder. See [`LOCAL_TESTING.md`](LOCAL_TESTING.md) for controls and paths.
-The current local suite passes **57 checks**. Shutdown now distinguishes an
+The current local suite passes **62 checks**. Shutdown now distinguishes an
 intentional Halt/ProcessExit from actual guest/HLE faults; the latter are still
 reported. End-to-end viewer testing receives live frames, delivers touch down/up,
 and exits cleanly. A Documents marker survives relaunch. This verifies host
 sandbox retention, not offline avatar/home progression. The visible game limit
-remains the connection-error dialog described below.
+remains the 50% loading connection error described above.
 
-## Current status: Mach and custom-font startup support (2026-10-20)
+## Earlier milestone: Mach and custom-font startup support (2026-10-20)
 
 Runtime commit: `095832c2c4362010d2da927412361b2b81b97ea2`.
 The branch was fetched before editing and matched the supplied `b9c4701` head.
@@ -64,7 +147,7 @@ Implemented in the shared runtime:
   for diagnosis. The investigation workflow now triggers for all shared runtime
   and runner changes, rather than only the old directory fix.
 
-### Current evidence and blockers
+### Earlier evidence and blockers
 
 Local strict/exploratory/relaunch probes cover the pinned client plus the same
 three older IPAs at fixture commit `ceba289b57cbda0e229e778966f195bcc1437fa0`.
@@ -74,7 +157,7 @@ runtime miss is the unsupported audio format of `scroll_loading_01.wav`;
 SCNetworkReachability continues to report offline by design. Static unreached
 imports remain and must not be confused with reached failures.
 
-The native game scene is still not rendered correctly. Captured vertex shaders
+At that earlier milestone, the native game scene was not rendered correctly. Captured vertex shaders
 use `uniform vec4 myPMVMatrix` and
 `gl_Position = myPMVMatrix * a_position + vec4(-1, 1, 0, 0)`. The current GLES2
 heuristic only applies a selected `mat4`; it does not execute this component-wise
@@ -313,8 +396,8 @@ On the tested branch:
   `ENETDOWN`; other socket operations are unavailable.
 - Foundation stream/URL-loading and reachability implementations also report
   offline behavior.
-- The handoff documents a partial/fake GLES2 shader implementation. Starting
-  the app does not establish correct rendering of this GLES2 title.
+- The current GLES2 interpreter supports only the documented straight-line
+  subset. Loading artwork now renders; other scenes still need direct tests.
 
 Changing the game's server address alone therefore cannot provide a working
 local backend in the current runtime.
@@ -337,8 +420,9 @@ No external server code was copied into HydrogenVM.
 1. Directory lookup, fixed-offset timezone, synthetic Mach references and the
    reached custom-font startup path are fixed. See the current section for the
    deliberately unsupported Mach and CoreText operations.
-2. Reach a correctly rendered loading/menu screen and inventory the next real
-   blockers. Keep strict and exploratory results separate.
+2. Loading artwork now renders. Trace the settings-table flag and the native
+   offline initialization gate behind the 50% connection failure. Keep strict
+   and exploratory results separate; the menu is not verified.
 3. Locate this client's NPC/tutorial battle entry points, message dispatch,
    snapshot format, random seed/tick control and result handling. Confirm what
    the client simulates rather than inferring it from filenames.

@@ -4,30 +4,37 @@
 
 For the current user-requested Clash Royale work, read
 [`CLASH_ROYALE_RESTORATION.md`](CLASH_ROYALE_RESTORATION.md) first.
-Local desktop testing is now available through `tools/local_test.sh` and
-`tools/desktop.py`; see [`LOCAL_TESTING.md`](LOCAL_TESTING.md). The workstation's
-task output folder includes Windows double-click launchers. The current local
-suite has **57 passing checks**, including intentional shutdown versus actual
-HLE errors. The viewer preserves the sandbox by running an installed `.app`
-instead of re-importing its IPA on every launch. Its mouse/frame bridge works;
-this does not resolve the connection error or prove native offline persistence.
+Local desktop testing is available through `tools/local_test.sh` and
+`tools/desktop.py`; see [`LOCAL_TESTING.md`](LOCAL_TESTING.md). The task output
+folder includes Windows launchers. The viewer preserves the sandbox by running
+an installed `.app` instead of re-importing its IPA on every launch.
 
-Runtime commit `095832c`: **55 local runtime checks passed**. Mach send-reference
-accounting, checked VM reads, allocator/no-copy ownership and the reached
-custom-TrueType/CoreText path now pass strict startup. The four-app local
-strict/exploratory/relaunch investigation continues through its time limits;
-older-game behavior remains consistent, including Tiny Tower's black frame.
-Clash shows a UIKit **Connection error / Try again** dialog over mostly black
-game output. Its scene shaders require actual GLES2 semantics (including a
-component-wise vec4 position transform); shader dumping is now available via
-`HVM_DUMP_SHADERS`. Despite bundled `OfflineMode=true`, connection attempts still
-occur and neither offline save file has appeared. No menu or NPC match works.
-Investigate actual offline-state entry before choosing a replacement server.
-GitHub runs 39508176438 and 39508176627 never started test steps because of the
-account billing/spending-limit block; validation for this revision is local.
-See the restoration document for API limitations, exact evidence, commands and
-next steps. These goals take precedence over the older roadmap below. Work
-remains on `gemini-merge`; no game binary or assets were changed.
+**Latest rendering milestone (`ff2d4fd`):** Clash now displays the original loading artwork,
+logo, training-camp hint, 50% bar and connection-error panel. The generic GLES2
+path executes a bounded straight-line GLSL subset, including vec4 transforms,
+multiple color varyings, channel arithmetic, texture units, column-major matrix
+transforms, fixed varying arrays and perspective-correct interpolation. It has
+real compile/link failures and info logs; there is no fallback based on names.
+All **62 local runtime checks pass**, including five new shader/pixel/diagnostic
+checks. All **18 captured Clash shader sources compile**. The four-app local
+strict/exploratory/relaunch scan still reaches its limits, with varied Angry
+Birds/Art of Glow frames and Tiny Tower's known black frame. No iOS device build
+was tested in this continuation. See the restoration document for subset limits.
+
+**Clash is not playable.** It still attempts server connections despite bundled
+`OfflineMode=true`; no offline_avatar/home save files appear. Next trace the
+settings flag and native offline-state initialization, then establish one NPC
+battle and save/relaunch. `titan.checkpoint` and a timed scanner `runs` result
+are not evidence of offline progression. Prior blank-scene/“UIKit dialog” notes
+below describe the earlier renderer; the native styled panel is now visible.
+
+The earlier Mach/allocator/TrueType fixes remain intact. GitHub Actions jobs
+previously failed before starting because of account billing/spending limits;
+validation is local until remote steps actually execute. The investigation
+workflow now dumps and compile-checks reached shaders; run
+`hvm_tests shaders <dump-directory>` locally. Work remains on `gemini-merge`;
+no game binary or assets were changed. These goals take precedence over the
+older roadmap below.
 
 
 JIT-less emulator that runs **32-bit iOS apps (.ipa, armv6/armv7) on modern iPhones**.
@@ -41,7 +48,7 @@ verify the fix across all apps.
 
 ```sh
 cmake -S . -B build -G Ninja && ninja -C build hvm hvm_tests   # host build (Linux/macOS); needs zlib, sqlite3
-build/hvm_tests fulltest          # 28 runtime checks, all must pass
+build/hvm_tests fulltest          # 62 runtime checks, all must pass
 build/hvm run <App.app> --home <dir> --run-for 30 [--keep-going] [--screenshot f.png] [--report r.json]
       [--graceful] [--lifecycle bg@8,fg@13] [--launches 2] [--trace] [--tap x,y@t] [--drag ...]
 tools/compat.py scan <ipas|apps|dirs> --out compat --seconds 30 [--relaunch] [--only a,b]   # see docs/COMPAT.md
@@ -240,7 +247,7 @@ AddressBook, …).
      * Early depth test with late write when the shader may `discard`.
      * Mipmaps and derivatives could come later via 2×2 quads.
    * **Do this first:** add a shader-source dump (env `HVM_DUMP_SHADERS=<dir>` in
-     `gl_shaderSource`; that edit was not applied). Collect Subway Surfers' shaders as a
+     `gl_shaderSource`; available now). Collect Subway Surfers' shaders as a
      corpus and make the compiler accept all of them before integrating. Then judge it with
      the frame check and screenshots in `compat.py`.
 2. **Minecraft Story Mode** (Telltale) is too large for the user to upload (ask for a zip of
