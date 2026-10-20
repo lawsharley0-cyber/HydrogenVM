@@ -32,6 +32,11 @@ jobs:
           clues = [m.group().decode("ascii") for m in re.finditer(rb"[ -~]{5,}", data)]
           offline = list(dict.fromkeys(w for w in clues if "offline" in w.lower() and len(w) < 300))
           print("OFFLINE CLUES", json.dumps(offline[:120]))
+          for file in sorted(p.parent.rglob("*.json")):
+              value = json.loads(file.read_text())
+              summary = {key: ({"type": "list", "count": len(v)} if isinstance(v, list) else {"type": "object", "keys": list(v)[:20]} if isinstance(v, dict) else v) for key, v in value.items()} if isinstance(value, dict) else {"type": type(value).__name__}
+              print("JSON ASSET", str(file.relative_to(p.parent)), json.dumps(summary))
+
           assert data[:4] == b"\xce\xfa\xed\xfe", "Expected the pinned thin ARM Mach-O"
           ncmds = struct.unpack_from("<I", data, 16)[0]
           offset = 28
