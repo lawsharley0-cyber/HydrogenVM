@@ -231,7 +231,10 @@ uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) 
         } catch (const GuestThrow& g) {
             landGuestException(x, g.ue);   // e.g. -[NSException raise] inside an app's @try
         } catch (const ProcessExit&) {
-            throw;
+            // This is intentional process control, not an HLE exception.
+            // Let nested guest calls propagate Halt instead of manufacturing
+            // HostError("stopping") in Engine::callHle.
+            c.exit = CPU::Exit::Halt;
         } catch (const std::runtime_error& e) {
             if (!hostErrorHook_ || !hostErrorHook_(x, e)) throw;
         }
@@ -661,13 +664,13 @@ int Process::run() {
             c.r[CPU::kPC] = image_.entry & ~1u;
             c.thumb = image_.entry & 1;
             const CPU::Exit e = engine_->runToExit(c);
-            if (!exiting_) {
+            if (!exiting_ && !(e == CPU::Exit::Halt && stopping())) {
                 CPU::Engine::captureFault(c, e);
                 finishCrash(c, e);
             }
         }
     } catch (const CPU::GuestFault& f) {
-        if (!exiting_) finishCrash(c, f.exit);
+        if (!exiting_ && !(f.exit == CPU::Exit::Halt && stopping())) finishCrash(c, f.exit);
     } catch (const ProcessExit&) {
         // exit() called directly from host code
     } catch (const std::exception& e) {

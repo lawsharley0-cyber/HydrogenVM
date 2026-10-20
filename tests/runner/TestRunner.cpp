@@ -1036,6 +1036,23 @@ int runFullSubsystemTests() {
         }
     }
 
+    // Host-requested shutdown must not become an HLE error. An unrelated
+    // exception still remains a failure even if stop was requested concurrently.
+    for (bool intentional : {true, false}) {
+        Process stoppingProc(cfg);
+        auto& stoppingCpu = stoppingProc.mainThread().cpu;
+        const uint32_t fn = stoppingProc.defineFunction("test_stop", [intentional](Ctx& x) {
+            x.proc.requestStop();
+            if (intentional) throw ProcessExit(0, "stopping");
+            throw std::runtime_error("test failure during shutdown");
+        });
+        CPU::Exit exit = CPU::Exit::None;
+        try { stoppingProc.callGuest(stoppingCpu, fn, {}); }
+        catch (const CPU::GuestFault& fault) { exit = fault.exit; }
+        check(exit == (intentional ? CPU::Exit::Halt : CPU::Exit::HostError), intentional ?
+              "intentional ProcessExit propagates Halt through HLE calls" :
+              "unexpected errors during shutdown remain HostError failures");
+    }
     r.poolPop(cpu, outerPool);
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;

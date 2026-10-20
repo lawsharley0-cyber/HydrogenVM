@@ -15,6 +15,8 @@
 #include <thread>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <bit>
 
 using namespace Hydrogen;
 namespace fs = std::filesystem;
@@ -55,7 +57,7 @@ int hvmRunMain(int argc, char** argv) {
     int launches = 1;         // run the app this many times in one host process (like reopening it in the iOS app)
     struct LifeEvent { bool background; double at; };
     std::vector<LifeEvent> lifeEvents;
-    std::string screenshot, reportPath;
+    std::string screenshot, reportPath, frameFile, inputFile;
     struct Gesture { float x1, y1, x2, y2; double at; bool drag; };
     std::vector<Gesture> gestures;
     for (int i = 2; i < argc; ++i) {
@@ -73,6 +75,8 @@ int hvmRunMain(int argc, char** argv) {
             continue;
         }
         if (!std::strcmp(argv[i], "--report") && i + 1 < argc) { reportPath = argv[++i]; continue; }
+        if (!std::strcmp(argv[i], "--frame-file") && i + 1 < argc) { frameFile = argv[++i]; continue; }
+        if (!std::strcmp(argv[i], "--input-file") && i + 1 < argc) { inputFile = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--home") && i + 1 < argc) home = argv[++i];
         else if (!std::strcmp(argv[i], "--keep-going")) cfg.stopOnMissingFunction = false;
         else if (!std::strcmp(argv[i], "--graceful")) graceful = true;
@@ -92,6 +96,10 @@ int hvmRunMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--trace")) cfg.traceCalls = true;
         else if (!std::strcmp(argv[i], "--quiet")) quiet = true;
         else if (!std::strcmp(argv[i], "--")) { for (++i; i < argc; ++i) cfg.extraArgs.push_back(argv[i]); }
+    }
+    if (!inputFile.empty() && (launches != 1 || !fs::is_regular_file(inputFile))) {
+        std::fprintf(stderr, "--input-file requires an existing regular file and a single launch\n");
+        return 2;
     }
     if (target.size() > 4 && target.compare(target.size() - 4, 4, ".ipa") == 0) {
         const std::string root = home.empty() ? (fs::temp_directory_path() / "hvm-apps").string() : home;
@@ -125,11 +133,26 @@ int hvmRunMain(int argc, char** argv) {
     // Keep the last presented frame for --screenshot.
     std::mutex frameMu;
     Graphics::Image lastFrame;
-    if (!screenshot.empty()) {
+    auto lastPublished = std::chrono::steady_clock::time_point{};
+    if (!screenshot.empty() || !frameFile.empty()) {
         cfg.present = [&](const uint8_t* rgba, int w, int h) {
             std::lock_guard<std::mutex> lk(frameMu);
             lastFrame.width = w; lastFrame.height = h;
             lastFrame.rgba.assign(rgba, rgba + size_t(w) * size_t(h) * 4);
+            const auto now = std::chrono::steady_clock::now();
+            if (!frameFile.empty() && now - lastPublished >= std::chrono::milliseconds(100)) {
+                // Atomic, capped-at-10-Hz preview. HVF1 + LE width/height/scale + RGBA.
+                // The preview is optional and does not change guest frame timing.
+                lastPublished = now;
+                const std::string temporary = frameFile + ".tmp";
+                std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+                const uint32_t header[] = {0x31465648, uint32_t(w), uint32_t(h), std::bit_cast<uint32_t>(cfg.screenScale)};
+                out.write(reinterpret_cast<const char*>(header), sizeof header);
+                out.write(reinterpret_cast<const char*>(rgba), size_t(w)*size_t(h)*4);
+                out.close();
+                if (!out) throw std::runtime_error("Cannot write live frame: " + temporary);
+                fs::rename(temporary, frameFile);
+            }
         };
     }
     // One launch = one Process (as the iOS app does each time a game is opened).
@@ -189,8 +212,34 @@ int hvmRunMain(int argc, char** argv) {
         std::thread driver([&] {
             using namespace std::chrono;
             const auto start = steady_clock::now();
+            std::ifstream input;
+            if (!inputFile.empty()) input.open(inputFile);
+            std::string pendingInput;
+            auto pumpInput = [&] {
+                if (!input.is_open()) return;
+                input.clear();
+                char ch;
+                while (input.get(ch)) {
+                    if (ch != '\n') {
+                        if (pendingInput.size() < 256) pendingInput += ch;
+                        continue;
+                    }
+                    const std::string command = std::move(pendingInput); pendingInput.clear();
+                    int phase; float px, py;
+                    if (std::sscanf(command.c_str(), "touch %d %f %f", &phase, &px, &py) == 3 &&
+                        (phase == 0 || phase == 1 || phase == 3 || phase == 4) && std::isfinite(px) && std::isfinite(py)) {
+                        proc.injectTouch(Runtime::TouchPhase(phase), px, py, 1);
+                        if (!quiet) std::fprintf(stderr, "[hvm] desktop touch %d %.1f %.1f\n", phase, px, py);
+                    } else if (command == "background") proc.enterBackground();
+                    else if (command == "foreground") proc.enterForeground();
+                    else if (command == "stop") proc.requestGracefulStop();
+                    else std::fprintf(stderr, "[hvm:warn] Invalid desktop input command\n");
+                }
+            };
             auto waitUntil = [&](double t) {
-                while (!done && duration<double>(steady_clock::now() - start).count() < t) std::this_thread::sleep_for(milliseconds(5));
+                while (!done && duration<double>(steady_clock::now() - start).count() < t) {
+                    pumpInput(); std::this_thread::sleep_for(milliseconds(5));
+                }
             };
             std::vector<Gesture> gs = gestures;
             std::sort(gs.begin(), gs.end(), [](const Gesture& a, const Gesture& b) { return a.at < b.at; });
@@ -219,6 +268,7 @@ int hvmRunMain(int argc, char** argv) {
                     if (graceful) proc.requestGracefulStop(); else proc.requestStop();
                 }
             }
+            while (!inputFile.empty() && !done) { pumpInput(); std::this_thread::sleep_for(milliseconds(5)); }
         });
         const int r = proc.run();
         done = true;

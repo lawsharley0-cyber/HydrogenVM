@@ -4,6 +4,14 @@
 
 For the current user-requested Clash Royale work, read
 [`CLASH_ROYALE_RESTORATION.md`](CLASH_ROYALE_RESTORATION.md) first.
+Local desktop testing is now available through `tools/local_test.sh` and
+`tools/desktop.py`; see [`LOCAL_TESTING.md`](LOCAL_TESTING.md). The workstation's
+task output folder includes Windows double-click launchers. The current local
+suite has **57 passing checks**, including intentional shutdown versus actual
+HLE errors. The viewer preserves the sandbox by running an installed `.app`
+instead of re-importing its IPA on every launch. Its mouse/frame bridge works;
+this does not resolve the connection error or prove native offline persistence.
+
 Runtime commit `095832c`: **55 local runtime checks passed**. Mach send-reference
 accounting, checked VM reads, allocator/no-copy ownership and the reached
 custom-TrueType/CoreText path now pass strict startup. The four-app local

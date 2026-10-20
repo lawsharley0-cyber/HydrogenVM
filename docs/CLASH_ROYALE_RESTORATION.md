@@ -2,6 +2,19 @@
 
 Date: 2026-10-20. Work branch: `gemini-merge`.
 
+## Local workstation tester
+
+`tools/local_test.sh` and `tools/desktop.py` now provide a WSLg desktop window,
+live frames, mouse touch/drag, background/foreground, screenshots, graceful
+shutdown and persistent sandbox reuse. Windows launchers are in the task's
+`outputs/` folder. See [`LOCAL_TESTING.md`](LOCAL_TESTING.md) for controls and paths.
+The current local suite passes **57 checks**. Shutdown now distinguishes an
+intentional Halt/ProcessExit from actual guest/HLE faults; the latter are still
+reported. End-to-end viewer testing receives live frames, delivers touch down/up,
+and exits cleanly. A Documents marker survives relaunch. This verifies host
+sandbox retention, not offline avatar/home progression. The visible game limit
+remains the connection-error dialog described below.
+
 ## Current status: Mach and custom-font startup support (2026-10-20)
 
 Runtime commit: `095832c2c4362010d2da927412361b2b81b97ea2`.
