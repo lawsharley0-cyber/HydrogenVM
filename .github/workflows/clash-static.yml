@@ -23,9 +23,15 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import struct
+          import csv, io, re, json
           from capstone import Cs, CS_ARCH_ARM, CS_MODE_THUMB, CS_MODE_LITTLE_ENDIAN
           p = Path("clash-report/unpacked/Payload/Clash Royale.app/Clash Royale")
           data = p.read_bytes()
+          settings = p.parent / "res/settings.csv"
+          print("SETTINGS", json.dumps(list(csv.reader(io.StringIO(settings.read_text())))))
+          clues = [m.group().decode("ascii") for m in re.finditer(rb"[ -~]{5,}", data)]
+          offline = list(dict.fromkeys(w for w in clues if "offline" in w.lower() and len(w) < 300))
+          print("OFFLINE CLUES", json.dumps(offline[:120]))
           assert data[:4] == b"\xce\xfa\xed\xfe", "Expected the pinned thin ARM Mach-O"
           ncmds = struct.unpack_from("<I", data, 16)[0]
           offset = 28
