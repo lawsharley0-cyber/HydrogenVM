@@ -104,13 +104,23 @@ uint32_t m_appendBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { std::strin
 uint32_t m_appendStr(Ctx& x, GuestPtr self, GuestPtr other) { std::string v = value(x, self); v += value(x, other); set(x, self, v); return self; }
 uint32_t m_appendChars(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { std::string v = value(x, self); v.append(n, char(c)); set(x, self, v); return self; }
 void m_pushBack(Ctx& x, GuestPtr self, uint32_t c) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    const bool empty = d == emptyData(x);
+    const uint32_t n = len(x, d);
+    const uint32_t cap = empty ? 0 : x.mem.read<uint32_t>(d - kHdr + 4);
+    const int32_t ref = empty ? 0 : int32_t(x.mem.read<uint32_t>(d - kHdr + 8));
+    if (!empty && ref <= 0 && n + 1 <= cap) {
+        // Unshared with room: append in place (and the string becomes sharable again).
+        x.mem.write<uint8_t>(d + n, uint8_t(c));
+        x.mem.write<uint8_t>(d + n + 1, 0);
+        x.mem.write<uint32_t>(d - kHdr, n + 1);
+        x.mem.write<uint32_t>(d - kHdr + 8, 0);
+        return;
+    }
     std::string v = value(x, self);
     v.push_back(char(c));
     // Grow geometrically so repeated push_back stays linear.
-    const uint32_t d = x.mem.read<uint32_t>(self);
-    const uint32_t cap = d == emptyData(x) ? 0 : x.mem.read<uint32_t>(d - kHdr + 4);
-    if (getenv("HVM_DBG_STR")) x.proc.logf(LogLevel::Warning, "push_back self=%08x d=%08x len=%u cap=%u ref=%d empty=%08x", self, d, x.mem.read<uint32_t>(d - kHdr), cap, int32_t(x.mem.read<uint32_t>(d - kHdr + 8)), emptyData(x));
-    set(x, self, v, std::max<uint32_t>(uint32_t(v.size()), cap * 2));
+    set(x, self, v, std::max<uint32_t>(uint32_t(v.size()), std::min<uint32_t>(cap * 2, kMaxSize)));
 }
 uint32_t m_insertBuf(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s, uint32_t n) {
     std::string v = value(x, self);
