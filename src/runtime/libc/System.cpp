@@ -2,6 +2,7 @@
 // sysctl/uname, file descriptors and directories, mmap, signals, setjmp,
 // a little of Mach.
 #include "runtime/Process.hpp"
+#include "MachPorts.hpp"
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -464,7 +465,44 @@ int32_t j_sigsetjmp(Ctx& x, GuestPtr buf, int32_t) { return j_setjmp(x, buf); }
 
 // ----------------------------------------------------------------- mach ---
 
-uint32_t k_task_self(Ctx&) { return 0x103; }
+uint32_t k_task_self(Ctx&) { return kTaskPort; }
+uint32_t k_host_self(Ctx& x) { return acquireMachSendRight(x.proc, kHostPort); }
+int32_t k_port_mod_refs(Ctx& x, uint32_t task, uint32_t name, uint32_t right, int32_t delta) {
+    return modifyMachSendRefs(x.proc, task, name, right, delta);
+}
+int32_t k_port_deallocate(Ctx& x, uint32_t task, uint32_t name) {
+    return modifyMachSendRefs(x.proc, task, name, 0, -1);
+}
+int32_t k_port_get_refs(Ctx& x, uint32_t task, uint32_t name, uint32_t right, GuestPtr out) {
+    const int32_t rc = modifyMachSendRefs(x.proc, task, name, right, 0);
+    if (!rc) x.mem.write<uint32_t>(out, machSendRefs(x.proc, name));
+    return rc;
+}
+bool vm_range(Ctx& x, uint32_t addr, uint32_t size, uint8_t access) {
+    if (!size) return true;
+    const uint64_t end = uint64_t(addr) + size;
+    if (end > Memory::GuestArena::kArenaSize) return false;
+    for (uint64_t page = uint64_t(addr) & ~4095ull; page < end; page += 4096)
+        if ((x.mem.protAt(uint32_t(page)) & access) != access) return false;
+    return true;
+}
+int32_t k_vm_read_overwrite(Ctx& x, uint32_t task, uint32_t src, uint32_t size, uint32_t dst, GuestPtr outSize) {
+    if (task != kTaskPort || !hasMachSendRight(x.proc, task)) return 16;
+    if (!vm_range(x, outSize, 4, Memory::kProtWrite)) return 1;
+    x.mem.write<uint32_t>(outSize, 0);
+    if (!vm_range(x, src, size, Memory::kProtRead) || !vm_range(x, dst, size, Memory::kProtWrite)) return 1;
+    std::memmove(x.mem.host(dst), x.mem.host(src), size);
+    x.mem.write<uint32_t>(outSize, size);
+    return 0;
+}
+int32_t k_make_memory_entry(Ctx& x, uint32_t task, GuestPtr size, uint64_t offset, uint32_t permission, GuestPtr handle, uint32_t parent) {
+    if (task != kTaskPort || !hasMachSendRight(x.proc, task)) return 16;
+    if (!vm_range(x, size, 8, Memory::kProtRead) || !vm_range(x, handle, 4, Memory::kProtWrite)) return 1;
+    x.mem.write<uint32_t>(handle, 0);
+    // There is no Mach memory-object/IPC backend. Callers can recover from a
+    // capability failure; do not fabricate a port or a successful mapping.
+    return 46; // KERN_NOT_SUPPORTED
+}
 int32_t k_task_info(Ctx& x, uint32_t, uint32_t flavor, GuestPtr out, GuestPtr count) {
     const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
     const uint32_t maxWords = std::min<uint32_t>(n, 10u);
@@ -529,7 +567,6 @@ int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint
     if (maxProtPtr) x.mem.write<uint32_t>(maxProtPtr, 7);
     return 0;
 }
-int32_t k_zero3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t k_mach_wait_until(Ctx&, uint64_t) {
     std::this_thread::yield();
@@ -636,7 +673,7 @@ void registerLibcSystem(Process& p) {
     p.def<&j_longjmp>("_siglongjmp");
     p.def<&k_task_self>("_mach_task_self");
     p.defineData("_mach_task_self_", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 0x103); return c; }());
-    p.def<&k_task_self>("_mach_host_self");
+    p.def<&k_host_self>("_mach_host_self");
     p.def<&k_task_info>("_task_info");
     p.def<&k_host_page_size>("_host_page_size");
     p.def<&k_host_statistics>("_host_statistics");
@@ -644,11 +681,17 @@ void registerLibcSystem(Process& p) {
     p.def<&k_vm_allocate>("_vm_allocate");
     p.def<&k_vm_deallocate>("_vm_deallocate");
     p.def<&k_vm_remap>("_vm_remap");
-    p.def<&k_zero3>("_mach_port_deallocate");
+    p.def<&k_port_deallocate>("_mach_port_deallocate");
+    p.def<&k_port_mod_refs>("_mach_port_mod_refs");
+    p.def<&k_port_get_refs>("_mach_port_get_refs");
+    p.def<&k_vm_read_overwrite>("_vm_read_overwrite");
+    p.def<&k_make_memory_entry>("_mach_make_memory_entry_64");
     p.def<&k_zero4>("_thread_policy_set");
     p.def<&k_zero4>("_thread_policy_get");
     p.def<&k_mach_wait_until>("_mach_wait_until");
     p.defineData("_vm_page_size", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4096); return c; }());
+    p.defineData("_vm_page_mask", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4095); return c; }());
+    p.defineData("_vm_page_shift", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 12); return c; }());
 }
 
 } // namespace Hydrogen::Runtime

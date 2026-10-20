@@ -72,6 +72,7 @@ std::vector<id> setItems(Ctx& x, id set);
 
 // ---- data
 id makeData(Ctx& x, const void* bytes, uint32_t n, bool owned = false, bool isMutable = false);
+id makeDataNoCopy(Ctx& x, uint32_t bytes, uint32_t n, std::function<void(Ctx&)> onRelease);
 std::vector<uint8_t> dataBytes(Ctx& x, id data);
 bool isData(Ctx& x, id obj);
 

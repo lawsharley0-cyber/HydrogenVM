@@ -6,8 +6,9 @@ on:
     paths:
       - '.github/workflows/clash-royale.yml'
       - 'tools/clash_royale_probe.py'
-      - 'src/runtime/foundation/Bundle.cpp'
-      - 'tests/runner/TestRunner.cpp'
+      - 'src/**'
+      - 'tests/runner/**'
+      - 'CMakeLists.txt'
   workflow_dispatch:
 
 permissions:

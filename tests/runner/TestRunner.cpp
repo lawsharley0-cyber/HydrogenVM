@@ -192,6 +192,10 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std::string& s); }
 #include "runtime/uikit/UIKit.hpp"
 #include "runtime/foundation/Foundation.hpp"
+#include "runtime/uikit/CoreGraphics.hpp"
+#include "runtime/graphics/TrueType.hpp"
+#include "TestFont.hpp"
+#include <bit>
 #include <cmath>
 #include <cstring>
 
@@ -264,6 +268,151 @@ int runFullSubsystemTests() {
     proc.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
     cpu.r[CPU::kSP] = 0xBF000000u - 256;
     const uint32_t outerPool = r.poolPush();
+
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const uint32_t out = proc.heap().allocZeroed(32);
+        auto refs = [&](uint32_t port) { return uint32_t(call("_mach_port_get_refs", {0x103, port, 0, out})) == 0 ? proc.mem().read<uint32_t>(out) : 0; };
+        check(call("_mach_port_mod_refs", {0x103, 0x103, 0, 1}) == 0 && refs(0x103) == 2 &&
+              call("_mach_port_deallocate", {0x103, 0x103}) == 0 && refs(0x103) == 1,
+              "Mach task send references increment and deallocate symmetrically");
+        check(call("_mach_port_mod_refs", {42, 0x103, 0, 1}) == 16 &&
+              call("_mach_port_mod_refs", {0x103, 42, 0, 1}) == 15 &&
+              call("_mach_port_mod_refs", {0x103, 0x103, 1, 1}) == 17 &&
+              call("_mach_port_mod_refs", {0x103, 0x103, 9, 1}) == 18 &&
+              call("_mach_port_mod_refs", {0x103, 0x103, 0, uint32_t(-2)}) == 18 &&
+              call("_mach_port_mod_refs", {0x103, 0x103, 0, 65535}) == 19 && refs(0x103) == 1,
+              "Mach rejects invalid tasks/names/rights and reference underflow/overflow without mutation");
+        const uint32_t th = uint32_t(call("_mach_thread_self", {}));
+        call("_mach_thread_self", {});
+        const bool twice = refs(th) == 2;
+        call("_mach_port_deallocate", {0x103, th});
+        call("_mach_port_deallocate", {0x103, th});
+        check(twice && refs(th) == 0 && call("_mach_port_deallocate", {0x103, th}) == 15 &&
+              call("_mach_thread_self", {}) == th && refs(th) == 1,
+              "Mach thread self acquires references and recreates an exhausted send right");
+        call("_task_threads", {0x103, out, out + 4});
+        const uint32_t list = proc.mem().read<uint32_t>(out), count = proc.mem().read<uint32_t>(out + 4);
+        bool found = false;
+        for (uint32_t i = 0; i < count; ++i) {
+            const uint32_t port = proc.mem().read<uint32_t>(list + i*4);
+            if (port == th) found = refs(th) == 2;
+            call("_mach_port_deallocate", {0x103, port});
+        }
+        check(found && refs(th) == 1, "task_threads exports owned send rights for the same synthetic threads");
+        const uint32_t src = proc.heap().alloc(32), dst = proc.heap().alloc(32);
+        proc.mem().write<uint32_t>(src, 0x12345678);
+        check(call("_vm_read_overwrite", {0x103, src, 4, dst, out}) == 0 &&
+              proc.mem().read<uint32_t>(dst) == 0x12345678 && proc.mem().read<uint32_t>(out) == 4 &&
+              call("_vm_read_overwrite", {0x103, 0xFFFFFFFE, 8, dst, out}) == 1 &&
+              proc.mem().read<uint32_t>(out) == 0 && call("_vm_read_overwrite", {0x103, 0, 4, dst, out}) == 1,
+              "vm_read_overwrite copies guest memory and rejects unmapped/wrapping ranges");
+        proc.mem().write<uint64_t>(out, 4096);
+        proc.mem().write<uint32_t>(out+8, 0xDEADBEEF);
+        check(call("_mach_make_memory_entry_64", {0x103,out,src,0,1,out+8,0}) == 46 &&
+              proc.mem().read<uint32_t>(out+8) == 0,
+              "Mach memory entries report unsupported capability without exporting a fabricated handle");
+    }
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const uint32_t token = r.poolPush();
+        const uint32_t set = call("_CFCharacterSetCreateMutable", {0});
+        call("_CFCharacterSetAddCharactersInRange", {set,0x590,0x70});
+        const uint32_t copy = call("_CFCharacterSetCreateCopy", {0,set});
+        r.poolPop(cpu,token);
+        check(call("_CFCharacterSetIsCharacterMember", {set,0x5D0}) && call("_CFCharacterSetIsCharacterMember", {copy,0x5D0}) &&
+              !call("_CFCharacterSetIsCharacterMember", {copy,'A'}),
+              "CF mutable character sets and copies own their lifetime across autorelease pool drains");
+        call("_CFRelease", {copy}); call("_CFRelease", {set});
+    }
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const uint32_t context = proc.heap().allocZeroed(36), info = proc.heap().allocZeroed(16);
+        int retains = 0, releases = 0, frees = 0;
+        const uint32_t retain = proc.defineFunction("test_allocator_retain", [&](Ctx& x) { ++retains; x.cpu.r[0] += 4; });
+        const uint32_t release = proc.defineFunction("test_allocator_release", [&](Ctx& x) { if (x.cpu.r[0] == info + 4) ++releases; });
+        const uint32_t allocate = proc.defineFunction("test_allocator_alloc", [&](Ctx& x) { x.cpu.r[0] = x.cpu.r[2] == info + 4 ? x.proc.heap().alloc(x.cpu.r[0]) : 0; });
+        const uint32_t deallocate = proc.defineFunction("test_allocator_free", [&](Ctx& x) { if (x.cpu.r[1] == info + 4) ++frees; x.proc.heap().free(x.cpu.r[0]); });
+        for (auto [off, value] : std::initializer_list<std::pair<uint32_t,uint32_t>>{{4,info},{8,retain},{12,release},{20,allocate},{28,deallocate}})
+            proc.mem().write<uint32_t>(context + off, value);
+        const uint32_t a = call("_CFAllocatorCreate", {0, context});
+        const uint32_t got = proc.heap().allocZeroed(36);
+        call("_CFAllocatorGetContext", {a, got});
+        const uint32_t block = call("_CFAllocatorAllocate", {a, 64, 0});
+        check(a && block && retains == 1 && proc.mem().read<uint32_t>(got + 4) == info + 4 &&
+              call("_CFGetTypeID", {a}) == call("_CFAllocatorGetTypeID", {}),
+              "CFAllocatorCreate copies the context, retains info and invokes guest allocation callbacks");
+        call("_CFAllocatorDeallocate", {a, block});
+        const uint32_t borrowed = call("_CFAllocatorAllocate", {a, 16, 0});
+        const uint32_t noCopy = call("_CFDataCreateWithBytesNoCopy", {0, borrowed, 16, a});
+        call("_CFRelease", {a});
+        check(frees == 1 && releases == 0 && call("_CFDataGetBytePtr", {noCopy}) == borrowed,
+              "CFData no-copy preserves the original pointer and retains its custom deallocator");
+        call("_CFRelease", {noCopy});
+        check(frees == 2 && releases == 1, "CFData destruction deallocates borrowed bytes and releases allocator context exactly once");
+        const uint32_t nullAllocator = proc.mem().read<uint32_t>(*proc.lookupSymbol("_kCFAllocatorNull"));
+        check(call("_CFAllocatorAllocate", {nullAllocator, 32, 0}) == 0 && call("_CFAllocatorAllocate", {0, 32, 0}) != 0,
+              "CFAllocatorNull refuses allocation while the system default allocates");
+    }
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const auto face = Graphics::TrueTypeFont::load(std::vector<uint8_t>(std::begin(kTestFont), std::end(kTestFont)));
+        check(face && face->glyph('A') == 2 && face->glyph('Z') == 0 && face->ascent(20) == 16 &&
+              face->descent(20) == 4 && face->advance(2, 20) == 12,
+              "TrueType cmap and metrics use the original font's units per em");
+        check(!Graphics::TrueTypeFont::load({0,1,0,0}) && !Graphics::TrueTypeFont::load(std::vector<uint8_t>(100,0)),
+              "TrueType loading rejects truncated and invalid font headers");
+        const auto data = Foundation::makeData(cx, kTestFont, sizeof kTestFont, true);
+        const uint32_t provider = uint32_t(call("_CGDataProviderCreateWithCFData", {data}));
+        const uint32_t cg = uint32_t(call("_CGFontCreateWithDataProvider", {provider}));
+        const uint32_t ct = uint32_t(call("_CTFontCreateWithGraphicsFont", {cg, std::bit_cast<uint32_t>(20.0f), 0, 0}));
+        call("_CGDataProviderRelease", {provider}); call("_CFRelease", {data}); call("_CGFontRelease", {cg});
+        const uint32_t desc = uint32_t(call("_CTFontCopyFontDescriptor", {ct}));
+        const uint32_t copy = uint32_t(call("_CTFontCreateWithFontDescriptor", {desc, 0, 0}));
+        const auto family = uint32_t(call("_CTFontCopyFamilyName", {copy}));
+        check(ct && copy && Foundation::utf8(cx, family) == "HVM Test",
+              "CGFont/CTFont own custom font bytes across provider release and descriptor copies");
+        const uint32_t chars = proc.heap().allocZeroed(8), glyphs = chars + 4;
+        proc.mem().write<uint16_t>(chars, 'A'); proc.mem().write<uint16_t>(chars + 2, 'Z');
+        const bool all = call("_CTFontGetGlyphsForCharacters", {ct, chars, glyphs, 2});
+        const uint32_t rect = proc.heap().allocZeroed(16);
+        call("_CTFontGetBoundingRectsForGlyphs", {rect, ct, 1, glyphs, 0, 1});
+        const auto bounds = CG::readStruct<CG::CGRect>(cx, rect);
+        check(!all && proc.mem().read<uint16_t>(glyphs) == 2 && proc.mem().read<uint16_t>(glyphs + 2) == 0 &&
+              std::fabs(bounds.origin.x - 2) < 0.01f && std::fabs(bounds.size.width - 8) < 0.01f && std::fabs(bounds.size.height - 14) < 0.01f,
+              "CoreText glyph mapping and struct-return bounding boxes preserve missing glyphs and geometry");
+        const uint32_t bitmap = uint32_t(call("_CGBitmapContextCreate", {0,32,32,8,32,0,7}));
+        const uint32_t pos = proc.heap().allocZeroed(8);
+        call("_CGContextTranslateCTM", {bitmap, 0, std::bit_cast<uint32_t>(24.0f)});
+        call("_CGContextSetAllowsFontSubpixelPositioning", {bitmap, 0});
+        call("_CGContextSetShouldSubpixelQuantizeFonts", {bitmap, 0});
+        call("_CTFontDrawGlyphs", {ct, glyphs, pos, 1, bitmap});
+        const uint32_t pixels = uint32_t(call("_CGBitmapContextGetData", {bitmap}));
+        int lit = 0;
+        for (int i = 0; i < 1024; ++i) lit += proc.mem().read<uint8_t>(pixels + i) != 0;
+        check(lit > 20 && lit < 150, "CTFontDrawGlyphs rasterizes the custom outline into guest A8 pixels");
+        const uint32_t key = Foundation::makeString(cx, "kCTFontAttributeName", true);
+        const uint32_t attrs = Foundation::makeDict(cx, {{key,ct}}, true);
+        const uint32_t string = Foundation::makeString(cx, "AA AA", true);
+        const uint32_t attributed = uint32_t(call("_CFAttributedStringCreate", {0,string,attrs}));
+        const uint32_t setter = uint32_t(call("_CTTypesetterCreateWithAttributedString", {attributed}));
+        const uint64_t width = std::bit_cast<uint64_t>(40.0);
+        const uint32_t lineBreak = uint32_t(call("_CTTypesetterSuggestLineBreak", {setter,0,uint32_t(width),uint32_t(width >> 32)}));
+        const uint32_t line = uint32_t(call("_CTTypesetterCreateLine", {setter,0,3}));
+        const uint32_t runs = uint32_t(call("_CTLineGetGlyphRuns", {line}));
+        const auto items = Foundation::arrayItems(cx, runs);
+        call("_CFRelease", {attributed}); call("_CFRelease", {setter}); call("_CFRelease", {attrs}); call("_CFRelease", {string}); call("_CFRelease", {key});
+        const uint32_t copies = proc.heap().allocZeroed(32);
+        if (!items.empty()) call("_CTRunGetGlyphs", {items[0],0,0,copies});
+        const auto metrics = proc.callGuest(cpu, *proc.lookupSymbol("_CTLineGetTypographicBounds"), {line,0,0,0});
+        check(lineBreak == 3 && items.size() == 1 && call("_CTLineGetGlyphRuns", {line}) == runs &&
+              call("_CFGetRetainCount", {line}) == 1 && call("_CTRunGetGlyphCount", {items[0]}) == 3 &&
+              proc.mem().read<uint16_t>(copies) == 2 && std::bit_cast<double>(metrics) == 36,
+              "CoreText line breaking and owned glyph runs preserve custom metrics after source release");
+        call("_CFRelease", {line});
+        call("_CGContextRelease", {bitmap}); call("_CFRelease", {family}); call("_CFRelease", {copy});
+        call("_CFRelease", {desc}); call("_CFRelease", {ct});
+    }
 
     // Directory search must distinguish user and local domains. Clash Royale
     // uses NSCachesDirectory (13) with NSLocalDomainMask (2) during startup.

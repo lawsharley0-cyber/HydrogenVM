@@ -6,6 +6,7 @@
 // initialised ones (PTHREAD_MUTEX_INITIALIZER) just work. All waits poll the
 // process stop flag so quitting an app never hangs on a guest lock.
 #include "runtime/Process.hpp"
+#include "MachPorts.hpp"
 #include <cerrno>
 #include <chrono>
 #include <thread>
@@ -301,8 +302,15 @@ int32_t t_getschedparam(Ctx& x, uint32_t, GuestPtr policy, GuestPtr param) {
 int32_t t_setschedparam(Ctx&, uint32_t, int32_t, GuestPtr) { return 0; }
 int32_t sched_prio(Ctx&, int32_t) { return 31; }
 int32_t sched_yield_(Ctx&) { std::this_thread::yield(); return 0; }
-uint32_t t_mach_thread_self(Ctx& x) { return x.proc.currentThread().id + 0x1000; }
-uint32_t t_pthread_mach_thread_np(Ctx& x, uint32_t th) { GuestThread* t = x.proc.findThread(th); return t ? t->id + 0x1000 : 0; }
+uint32_t t_mach_thread_self(Ctx& x) { return acquireMachSendRight(x.proc, x.proc.currentThread().id + 0x1000); }
+uint32_t t_pthread_mach_thread_np(Ctx& x, uint32_t th) {
+    GuestThread* t = x.proc.findThread(th);
+    if (!t) return 0;
+    const uint32_t port = t->id + 0x1000;
+    // This API borrows the pthread's port rather than adding a user reference.
+    if (!hasMachSendRight(x.proc, port)) acquireMachSendRight(x.proc, port);
+    return port;
+}
 int32_t t_pthread_threadid_np(Ctx& x, uint32_t th, GuestPtr outId) {
     if (!outId) return EINVAL;
     GuestThread* t = th ? x.proc.findThread(th) : &x.proc.currentThread();
@@ -313,7 +321,7 @@ int32_t t_pthread_threadid_np(Ctx& x, uint32_t th, GuestPtr outId) {
 
 // Mach thread control (garbage collectors stop the world with these).
 constexpr int32_t kKernSuccess = 0, kKernInvalidArgument = 4;
-GuestThread* byPort(Ctx& x, uint32_t port) { return port >= 0x1000 ? x.proc.findThreadById(port - 0x1000) : nullptr; }
+GuestThread* byPort(Ctx& x, uint32_t port) { return port >= 0x1000 && hasMachSendRight(x.proc, port) ? x.proc.findThreadById(port - 0x1000) : nullptr; }
 int32_t mt_suspend(Ctx& x, uint32_t port) {
     GuestThread* t = byPort(x, port);
     if (!t) return kKernInvalidArgument;
@@ -371,10 +379,11 @@ int32_t mt_setState(Ctx& x, uint32_t port, int32_t flavor, GuestPtr st, uint32_t
 }
 // thread_info(thread, THREAD_BASIC_INFO=3, info, count*): mostly "running, not suspended".
 // task_threads(task, &list, &count): a kernel-allocated array of thread ports.
-int32_t mt_taskThreads(Ctx& x, uint32_t, GuestPtr listOut, GuestPtr countOut) {
+int32_t mt_taskThreads(Ctx& x, uint32_t task, GuestPtr listOut, GuestPtr countOut) {
+    if (task != kTaskPort || !hasMachSendRight(x.proc, task)) return kKernInvalidArgument;
     const std::vector<uint32_t> ids = x.proc.liveThreadIds();
     const uint32_t arr = x.proc.heap().alloc(uint32_t(ids.size()) * 4 + 4);
-    for (uint32_t i = 0; i < ids.size(); ++i) x.mem.write<uint32_t>(arr + i * 4, ids[i] + 0x1000);
+    for (uint32_t i = 0; i < ids.size(); ++i) x.mem.write<uint32_t>(arr + i * 4, acquireMachSendRight(x.proc, ids[i] + 0x1000));
     x.mem.write<uint32_t>(listOut, arr);
     x.mem.write<uint32_t>(countOut, uint32_t(ids.size()));
     return kKernSuccess;

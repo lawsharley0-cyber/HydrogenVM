@@ -497,7 +497,7 @@ id csc_withRange(Ctx& x, id self, SEL, uint32_t loc, uint32_t len) {
     if (len) csd(x, s)->range(loc, loc + len - 1);
     return autoreleased(x, s);
 }
-id csc_new(Ctx& x, id self, SEL) { return autoreleased(x, newCharSet(x, self == M(x).mutableCharSet)); }
+id csc_new(Ctx& x, id self, SEL) { return newCharSet(x, self == M(x).mutableCharSet); }
 id cs_allocWithZone(Ctx& x, id self, SEL, uint32_t) {
     if (self == M(x).charSet || self == M(x).mutableCharSet) return newCharSet(x, self == M(x).mutableCharSet);
     return rt(x).createInstance(self);

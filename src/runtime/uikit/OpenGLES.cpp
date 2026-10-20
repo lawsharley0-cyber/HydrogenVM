@@ -10,6 +10,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -1772,6 +1774,15 @@ void gl_shaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings, G
             }
         }
         src += x.proc.readCString(sptr);
+    }
+    if (const char* dir = std::getenv("HVM_DUMP_SHADERS")) {
+        std::error_code error;
+        std::filesystem::create_directories(dir, error);
+        const auto path = std::filesystem::path(dir) / ("shader-" + std::to_string(shader) +
+            (sg->shaders[shader].type == GL_VERTEX_SHADER ? ".vert" : ".frag"));
+        std::ofstream out(path, std::ios::binary);
+        out << src;
+        if (!out) x.proc.logf(LogLevel::Warning, "Cannot dump shader %u", shader);
     }
     sg->shaders[shader].source = std::move(src);
 }

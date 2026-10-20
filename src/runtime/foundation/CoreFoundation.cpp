@@ -18,6 +18,7 @@ namespace {
 using U16 = std::u16string;
 
 struct RawArray : ObjC::HostObject { std::vector<uint32_t> items; bool retains = false; };
+struct Allocator : ObjC::HostObject { std::array<uint32_t, 9> context{}; bool null = false; };
 struct RawDict : ObjC::HostObject {
     std::vector<std::pair<uint32_t, uint32_t>> entries;
     bool keyObjects = false, valueObjects = false, keyEqual = false;
@@ -25,7 +26,8 @@ struct RawDict : ObjC::HostObject {
 
 struct CF {
     explicit CF(Process&) {}
-    Class rawArray = 0, rawDict = 0;
+    Class rawArray = 0, rawDict = 0, allocator = 0;
+    id systemAllocator = 0, nullAllocator = 0;
     uint32_t arrayCallbacks = 0, dictKeyCallbacks = 0, dictValueCallbacks = 0, copyStringKeyCallbacks = 0, setCallbacks = 0,
              copyStringSetCallbacks = 0;
     uint32_t cfRetainFn = 0, cfReleaseFn = 0, cfEqualFn = 0, cfHashFn = 0, cfCopyDescFn = 0;
@@ -83,6 +85,7 @@ uint32_t typeOf(Ctx& x, id o) {
     if (is("NSTimeZone")) return kTypeTimeZone;
     if (is("NSLocale")) return kTypeLocale;
     if (is("NSCharacterSet")) return kTypeCharSet;
+    if (r.hostIf<Allocator>(o)) return kTypeAllocator;
     return kTypeOther;
 }
 uint32_t cf_getTypeID(Ctx& x, id o) { return typeOf(x, o); }
@@ -749,7 +752,13 @@ void set_apply(Ctx& x, id s, uint32_t fn, uint32_t ctx) {
 // -------------------------------------------------------------- CFData ---
 
 uint32_t dt_create(Ctx& x, uint32_t, GuestPtr p, int32_t n) { return makeData(x, n > 0 ? x.mem.host(p) : nullptr, uint32_t(std::max(n, 0)), true); }
-uint32_t dt_createNoCopy(Ctx& x, uint32_t, GuestPtr p, int32_t n, uint32_t) { return dt_create(x, 0, p, n); }
+uint32_t al_getDefault(Ctx& x);
+void al_deallocate(Ctx& x, uint32_t a, uint32_t p);
+uint32_t dt_createNoCopy(Ctx& x, uint32_t, GuestPtr p, int32_t n, uint32_t deallocator) {
+    if (n < 0 || (!p && n)) return 0;
+    const uint32_t a = R(x).retain(x.cpu, deallocator ? deallocator : al_getDefault(x));
+    return makeDataNoCopy(x, p, uint32_t(n), [a,p](Ctx& y) { al_deallocate(y, a, p); R(y).release(y.cpu, a); });
+}
 uint32_t dt_createMutable(Ctx& x, uint32_t, int32_t) { return makeData(x, nullptr, 0, true, true); }
 uint32_t dt_createCopy(Ctx& x, uint32_t, id d) { const auto b = dataBytes(x, d); return makeData(x, b.data(), uint32_t(b.size()), true); }
 uint32_t dt_createMutableCopy(Ctx& x, uint32_t, int32_t, id d) { const auto b = dataBytes(x, d); return makeData(x, b.data(), uint32_t(b.size()), true, true); }
@@ -902,12 +911,72 @@ bool pl_isValid(Ctx& x, id obj, uint32_t) { return objectToPlist(x, obj) != null
 
 // ----------------------------------------------------------- CFAllocator ---
 
-uint32_t al_allocate(Ctx& x, uint32_t, int32_t size, uint32_t) { return size > 0 ? x.proc.heap().alloc(uint32_t(size)) : 0; }
-uint32_t al_reallocate(Ctx& x, uint32_t, uint32_t p, int32_t size, uint32_t) { return x.proc.heap().realloc(p, uint32_t(std::max(size, 0))); }
-void al_deallocate(Ctx& x, uint32_t, uint32_t p) { x.proc.heap().free(p); }
-uint32_t al_getDefault(Ctx&) { return 0; }
-void al_setDefault(Ctx&, uint32_t) {}
-int32_t al_preferredSize(Ctx&, uint32_t, int32_t size, uint32_t) { return (size + 15) & ~15; }
+const char allocatorDefaultKey = 0;
+uint32_t al_getDefault(Ctx& x) {
+    const uint32_t a = x.proc.threadSlot(&allocatorDefaultKey);
+    return a ? a : cf(x).systemAllocator;
+}
+Allocator* allocator(Ctx& x, uint32_t a) { return R(x).hostIf<Allocator>(a ? a : al_getDefault(x)); }
+uint32_t al_allocate(Ctx& x, uint32_t a, int32_t size, uint32_t hint) {
+    auto* d = allocator(x, a);
+    if (!d || d->null || size <= 0) return 0;
+    const auto c = d->context;
+    return c[5] ? uint32_t(x.proc.callGuest(x.cpu, c[5], {uint32_t(size), hint, c[1]})) :
+           d == allocator(x, cf(x).systemAllocator) ? x.proc.heap().alloc(uint32_t(size)) : 0;
+}
+void al_deallocate(Ctx& x, uint32_t a, uint32_t p) {
+    auto* d = allocator(x, a);
+    if (!p || !d || d->null) return;
+    const auto c = d->context;
+    if (c[7]) x.proc.callGuest(x.cpu, c[7], {p, c[1]});
+    else if (d == allocator(x, cf(x).systemAllocator)) x.proc.heap().free(p);
+}
+uint32_t al_reallocate(Ctx& x, uint32_t a, uint32_t p, int32_t size, uint32_t hint) {
+    if (!p) return al_allocate(x, a, size, hint);
+    if (size <= 0) { al_deallocate(x, a, p); return 0; }
+    auto* d = allocator(x, a);
+    if (!d || d->null) return 0;
+    const auto c = d->context;
+    if (c[6]) return uint32_t(x.proc.callGuest(x.cpu, c[6], {p, uint32_t(size), hint, c[1]}));
+    return d == allocator(x, cf(x).systemAllocator) ? x.proc.heap().realloc(p, uint32_t(size)) : 0;
+}
+void al_setDefault(Ctx& x, uint32_t a) {
+    if (!a || !allocator(x, a)) return;
+    // CF keeps defaults alive permanently (including previous defaults).
+    R(x).retain(x.cpu, a);
+    x.proc.threadSlot(&allocatorDefaultKey) = a;
+}
+int32_t al_preferredSize(Ctx& x, uint32_t a, int32_t size, uint32_t hint) {
+    auto* d = allocator(x, a);
+    if (!d || size < 0) return 0;
+    const auto c = d->context;
+    return c[8] ? std::max(size, int32_t(x.proc.callGuest(x.cpu, c[8], {uint32_t(size), hint, c[1]}))) : size;
+}
+void al_getContext(Ctx& x, uint32_t a, GuestPtr out) {
+    if (auto* d = allocator(x, a)) x.mem.copyIn(out, d->context.data(), 36);
+}
+uint32_t al_create(Ctx& x, uint32_t parent, GuestPtr ctx) {
+    if (!ctx || x.mem.read<uint32_t>(ctx) != 0) return 0;
+    // The ObjC/CF bridge owns object storage; unsupported storage allocators
+    // must not silently turn into the system allocator.
+    if (parent && parent != cf(x).systemAllocator) {
+        x.proc.reportMissing("CFAllocatorCreate with custom object-storage allocator");
+        return 0;
+    }
+    auto d = std::make_unique<Allocator>();
+    std::memcpy(d->context.data(), x.mem.host(ctx), 36);
+    if (d->context[2]) d->context[1] = uint32_t(x.proc.callGuest(x.cpu, d->context[2], {d->context[1]}));
+    const id o = R(x).createInstance(cf(x).allocator);
+    R(x).setHost(o, std::move(d));
+    return o;
+}
+void al_destroy(Ctx& x, id self, SEL) {
+    if (auto* d = R(x).hostIf<Allocator>(self)) {
+        const auto c = d->context;
+        if (c[3]) x.proc.callGuest(x.cpu, c[3], {c[1]});
+    }
+    R(x).disposeInstance(x.cpu, self);
+}
 
 // --------------------------------------------------------- CFCharacterSet ---
 
@@ -928,6 +997,11 @@ uint32_t cs_createWithRange(Ctx& x, uint32_t, uint32_t loc, uint32_t len) {
     return R(x).retain(x.cpu, id(send(x, R(x).getClass("NSCharacterSet"), "characterSetWithRange:", {loc, len})));
 }
 uint32_t cs_createInverted(Ctx& x, uint32_t, id s) { return R(x).retain(x.cpu, id(send(x, s, "invertedSet"))); }
+uint32_t cs_createMutable(Ctx& x, uint32_t) { return uint32_t(send(x, R(x).getClass("NSMutableCharacterSet"), "new")); }
+uint32_t cs_createCopy(Ctx& x, uint32_t, id set) { return uint32_t(send(x, set, "copy")); }
+void cs_addRange(Ctx& x, id set, uint32_t loc, uint32_t len) {
+    send(x, set, "addCharactersInRange:", {loc,len});
+}
 
 } // namespace
 
@@ -982,9 +1056,20 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     c.dictValueCallbacks = callbacks("_kCFTypeDictionaryValueCallBacks", false, false);
     c.setCallbacks = callbacks("_kCFTypeSetCallBacks", true, false);
     c.copyStringSetCallbacks = callbacks("_kCFCopyStringSetCallBacks", true, true);
+    c.allocator = r.defineClass("__HVMCFAllocator", "NSObject").m<&al_destroy>("dealloc", "v@:").cls();
+    c.systemAllocator = r.createInstance(c.allocator);
+    r.setHost(c.systemAllocator, std::make_unique<Allocator>());
+    r.makeImmortal(c.systemAllocator);
+    c.nullAllocator = r.createInstance(c.allocator);
+    auto nullAllocator = std::make_unique<Allocator>(); nullAllocator->null = true;
+    r.setHost(c.nullAllocator, std::move(nullAllocator)); r.makeImmortal(c.nullAllocator);
     for (const char* n : {"_kCFAllocatorDefault", "_kCFAllocatorSystemDefault", "_kCFAllocatorMalloc", "_kCFAllocatorMallocZone",
-                          "_kCFAllocatorNull", "_kCFAllocatorUseContext"})
-        p.defineDataBlock(n, 4);   // all NULL → default allocator
+                          "_kCFAllocatorNull", "_kCFAllocatorUseContext"}) {
+        const uint32_t slot = p.defineDataBlock(n, 4);
+        p.mem().write<uint32_t>(slot, std::string(n) == "_kCFAllocatorDefault" ? 0 :
+            std::string(n) == "_kCFAllocatorUseContext" ? 0xFFFFFFFFu :
+            std::string(n) == "_kCFAllocatorNull" ? c.nullAllocator : c.systemAllocator);
+    }
 
     // CFString
     p.def<&s_createWithCString>("_CFStringCreateWithCString");
@@ -1190,12 +1275,17 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&pl_isValid>("_CFPropertyListIsValid");
 
     // CFAllocator
+    p.def<&al_create>("_CFAllocatorCreate");
+    p.def<&al_getContext>("_CFAllocatorGetContext");
     p.def<&al_allocate>("_CFAllocatorAllocate");
     p.def<&al_reallocate>("_CFAllocatorReallocate");
     p.def<&al_deallocate>("_CFAllocatorDeallocate");
     p.def<&al_getDefault>("_CFAllocatorGetDefault");
     p.def<&al_setDefault>("_CFAllocatorSetDefault");
     p.def<&al_preferredSize>("_CFAllocatorGetPreferredSizeForSize");
+    p.def<&cs_createMutable>("_CFCharacterSetCreateMutable");
+    p.def<&cs_createCopy>("_CFCharacterSetCreateCopy");
+    p.def<&cs_addRange>("_CFCharacterSetAddCharactersInRange");
 
     // CFCharacterSet
     p.def<&cs_predefined>("_CFCharacterSetGetPredefined");

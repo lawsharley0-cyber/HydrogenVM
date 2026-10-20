@@ -10,6 +10,7 @@ struct DataData : ObjC::HostObject {
     Process* proc = nullptr;
     uint32_t ptr = 0, len = 0, cap = 0;
     bool owns = true, isMutable = false;
+    std::function<void(Ctx&)> onRelease;
     ~DataData() override { if (owns && ptr && proc) proc->heap().free(ptr); }
 };
 
@@ -196,7 +197,13 @@ void m_resetBytes(Ctx& x, id self, SEL, uint32_t loc, uint32_t len) {
     std::memset(x.mem.host(d.ptr + loc), 0, len);
 }
 void m_setData(Ctx& x, id self, SEL, id o) { const auto b = bytesOf(x, o); assign(x, self, b.data(), uint32_t(b.size())); }
-void data_dealloc(Ctx& x, id self, SEL) { rt(x).disposeInstance(x.cpu, self); }
+void data_dealloc(Ctx& x, id self, SEL) {
+    if (auto* d = dd(x, self)) {
+        auto release = std::move(d->onRelease);
+        if (release) release(x);
+    }
+    rt(x).disposeInstance(x.cpu, self);
+}
 
 } // namespace
 
@@ -204,6 +211,13 @@ id makeData(Ctx& x, const void* bytes, uint32_t n, bool owned, bool isMutable) {
     const id d = newData(x, isMutable);
     assign(x, d, static_cast<const uint8_t*>(bytes), n);
     return owned ? d : autoreleased(x, d);
+}
+id makeDataNoCopy(Ctx& x, uint32_t bytes, uint32_t n, std::function<void(Ctx&)> onRelease) {
+    const id data = newData(x, false);
+    auto* d = dd(x, data);
+    d->ptr = bytes; d->len = d->cap = n; d->owns = false;
+    d->onRelease = std::move(onRelease);
+    return data;
 }
 std::vector<uint8_t> dataBytes(Ctx& x, id data) { return bytesOf(x, data); }
 bool isData(Ctx& x, id obj) { return obj && rt(x).isKindOf(obj, D(x).nsData); }
