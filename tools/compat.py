@@ -67,7 +67,9 @@ def macho_info(path):
         if cmd == 0x21:   # LC_ENCRYPTION_INFO
             encrypted = struct.unpack("<I", d[p + 16:p + 20])[0] != 0
         p += cmdsize
-    return {"archs": archs, "encrypted": encrypted, "error": None}
+    gl = "GLES2 (shaders)" if b"_glCreateShader" in d else "GLES1 (fixed-function)" if b"_glMatrixMode" in d or b"_glVertexPointer" in d else "none"
+    engine = "Unity" if b"UnityAppController" in d or b"mono_" in d or b"UnityGetGLViewController" in d else ""
+    return {"archs": archs, "encrypted": encrypted, "error": None, "gl": gl, "engine": engine}
 
 # ------------------------------------------------------------------- apps ---
 
@@ -253,6 +255,32 @@ def framework_of(name):
         return "app / third-party SDK class"
     return "libc / POSIX" if re.match(r"^[a-z_]", base) else "other"
 
+def frame_check(path):
+    """Flags last frames that look like a rendering failure: blank, or one colour covering most of the screen."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        im = Image.open(path).convert("RGB")
+    except Exception as e:
+        return {"error": str(e)}
+    small = im.resize((80, 120))
+    px = list(small.getdata())
+    quant = {}
+    for r, g, b in px:
+        k = (r >> 4, g >> 4, b >> 4)
+        quant[k] = quant.get(k, 0) + 1
+    top, n = max(quant.items(), key=lambda kv: kv[1])
+    share = n / len(px)
+    colors = sum(1 for v in quant.values() if v > len(px) * 0.002)
+    out = {"dominantShare": round(share, 3), "colors": colors, "dominant": "#%02x%02x%02x" % tuple(c * 17 for c in top)}
+    if share > 0.97:
+        out["suspicious"] = "last frame is a single colour (%s) — nothing drawn, or drawn off-screen" % out["dominant"]
+    elif share > 0.80:
+        out["suspicious"] = "last frame is %d%% one colour (%s) — background or layers missing?" % (round(share * 100), out["dominant"])
+    return out
+
 def scan_app(entry, args):
     name, app = entry[0], entry[1]
     res = {"name": name, "app": app, "scannedAt": datetime.datetime.now().isoformat(timespec="seconds")}
@@ -264,6 +292,8 @@ def scan_app(entry, args):
     mi = macho_info(exe)
     res["archs"] = mi["archs"]
     res["encrypted"] = mi["encrypted"]
+    res["gl"] = mi.get("gl", "")
+    res["engine"] = mi.get("engine", "")
     if mi["error"]:
         res.update(status="unsupported", blocker={"kind": "load", "name": mi["error"], "detail": mi["error"]}, issues=[])
         return res
@@ -301,10 +331,13 @@ def scan_app(entry, args):
     for n in kg.get("unimplementedImports", []) or strict.get("unimplementedImports", []):
         add("function", n, False)
     kgBlocker = blocker_of(kg)
+    visual = frame_check(shot) if os.path.exists(shot) else None
+    if visual and visual.get("suspicious"):
+        add("render", visual["suspicious"], True)
     res.update(status=status, blocker=blocker, keepGoingBlocker=kgBlocker, issues=issues,
                perf={"framesPresented": frames, "fps": round(frames / max(1.0, perf.get("wallSeconds", 1)), 1),
                      "guestMIPS": round(perf.get("guestMIPS", 0), 1), "avgFrameMs": round(perf.get("avgFrameMs", 0), 1)},
-               screenshot=os.path.relpath(shot, args.out) if os.path.exists(shot) else None)
+               screenshot=os.path.relpath(shot, args.out) if os.path.exists(shot) else None, visual=visual)
     return res
 
 # ----------------------------------------------------------------- report ---
@@ -356,16 +389,24 @@ def write_report(out, results, previous):
         L.append("")
     L.append("## Apps")
     L.append("")
-    L.append("| App | Version | Status | Frames (fps) | First blocker | Runtime misses |")
-    L.append("|---|---|---|---|---|---|")
+    L.append("| App | Version | Graphics | Status | Frames (fps) | First blocker | Runtime misses |")
+    L.append("|---|---|---|---|---|---|---|")
     for a in apps:
         b = a.get("blocker")
         bt = ("`%s`" % b["name"].replace("|", "\\|")) if b else "—"
-        n_rt = sum(1 for i in a.get("issues", []) if i["runtime"])
+        n_rt = sum(1 for i in a.get("issues", []) if i["runtime"] and i["kind"] not in ("note",))
         perf = a.get("perf", {})
         fr = "%d (%s)" % (perf.get("framesPresented", 0), perf.get("fps", 0)) if perf else "—"
-        L.append("| %s | %s | %s | %s | %s | %d |" % (a.get("displayName", a["name"]), a.get("version", ""), STATUS_LABEL.get(a["status"], a["status"]), fr, bt, n_rt))
+        gfx = (a.get("gl", "") + (" · " + a["engine"] if a.get("engine") else "")).strip(" ·")
+        L.append("| %s | %s | %s | %s | %s | %s | %d |" % (a.get("displayName", a["name"]), a.get("version", ""), gfx, STATUS_LABEL.get(a["status"], a["status"]), fr, bt, n_rt))
     L.append("")
+    renders = [(a, i) for a in apps for i in a.get("issues", []) if i["kind"] == "render"]
+    if renders:
+        L.append("## Rendering looks wrong (last-frame check)")
+        L.append("")
+        for a, i in renders:
+            L.append("- **%s** (%s): %s — see `%s`" % (a.get("displayName", a["name"]), a.get("gl", "?"), i["name"], a.get("screenshot") or "no screenshot"))
+        L.append("")
     L.append("## Fix next: blockers (each fix unblocks every app listed)")
     L.append("")
     if blockers:

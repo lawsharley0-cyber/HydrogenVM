@@ -227,6 +227,7 @@ public:
     std::function<IMP(id, SEL)> forwardHook;
     // The type encoding of `sel` as implemented by `cls` (or a superclass); empty if unknown.
     std::string methodTypes(Class cls, SEL sel);
+    std::vector<Class> classList() const;   // every real (non-placeholder) class, no metaclasses
 private:
     std::unordered_map<Class, std::unique_ptr<ClassInfo>> classes_;
     std::unordered_map<std::string, Class> classByName_;

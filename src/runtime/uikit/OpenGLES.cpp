@@ -423,7 +423,8 @@ struct ContextData : ObjC::HostObject {
     // Bindings
     uint32_t arrayBuffer = 0;
     uint32_t elementArrayBuffer = 0;
-    uint32_t framebuffer = 0;
+    uint32_t framebuffer = 0;        // draw framebuffer (GL_FRAMEBUFFER / GL_DRAW_FRAMEBUFFER_APPLE)
+    uint32_t readFramebuffer = 0;    // GL_READ_FRAMEBUFFER_APPLE (multisample resolve source)
     uint32_t renderbuffer = 0;
     uint32_t activeTexture = 0;           // 0..7
     uint32_t clientActiveTexture = 0;     // 0..7
@@ -969,6 +970,7 @@ void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
         case GL_VIEWPORT: if (c) for (int i = 0; i < 4; ++i) wr(c->viewport[i], i); break;
         case GL_SCISSOR_BOX: if (c) for (int i = 0; i < 4; ++i) wr(c->scissor[i], i); break;
         case GL_FRAMEBUFFER_BINDING: wr(c ? int32_t(c->framebuffer) : 0); break;
+        case 0x8CAA: wr(c ? int32_t(c->readFramebuffer) : 0); break;   // GL_READ_FRAMEBUFFER_BINDING_APPLE
         case GL_RENDERBUFFER_BINDING: wr(c ? int32_t(c->renderbuffer) : 0); break;
         case GL_ARRAY_BUFFER_BINDING: wr(c ? int32_t(c->arrayBuffer) : 0); break;
         case GL_ELEMENT_ARRAY_BUFFER_BINDING: wr(c ? int32_t(c->elementArrayBuffer) : 0); break;
@@ -1101,6 +1103,9 @@ void gl_renderbufferStorage(Ctx& x, uint32_t target, uint32_t internalformat, in
     rb.rgba.assign(size_t(width) * size_t(height) * 4, 0);
     rb.depth.assign(size_t(width) * size_t(height), 1.0f);
 }
+void gl_renderbufferStorageMultisample(Ctx& x, uint32_t target, int32_t, uint32_t internalformat, int32_t width, int32_t height) {
+    gl_renderbufferStorage(x, target, internalformat, width, height);
+}
 void gl_getRenderbufferParameteriv(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
     (void)target;
     ContextData* c = currentCtx(x);
@@ -1143,12 +1148,40 @@ void gl_deleteFramebuffers(Ctx& x, int32_t n, GuestPtr ids) {
     }
 }
 void gl_bindFramebuffer(Ctx& x, uint32_t target, uint32_t fb) {
-    (void)target;
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg) return;
-    c->framebuffer = fb;
+    if (target == 0x8CA8 /* GL_READ_FRAMEBUFFER_APPLE */) c->readFramebuffer = fb;
+    else {
+        c->framebuffer = fb;
+        if (target != 0x8CA9 /* GL_DRAW_FRAMEBUFFER_APPLE */) c->readFramebuffer = fb;
+    }
     if (fb != 0) sg->framebuffers[fb].id = fb;
+}
+// APPLE_framebuffer_multisample: multisample buffers are ordinary buffers here (no MSAA),
+// and resolving copies the read framebuffer's colour into the draw framebuffer.
+void gl_renderbufferStorageMultisample(Ctx& x, uint32_t target, int32_t, uint32_t internalformat, int32_t width, int32_t height);
+void gl_resolveMultisample(Ctx& x) {
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg || c->readFramebuffer == c->framebuffer) return;
+    const uint32_t draw = c->framebuffer;
+    c->framebuffer = c->readFramebuffer;
+    const RenderTarget src = activeTarget(x, *c, *sg);
+    c->framebuffer = draw;
+    const RenderTarget dst = activeTarget(x, *c, *sg);
+    if (!src.rgba || !dst.rgba || src.rgba == dst.rgba || src.width <= 0 || dst.width <= 0) return;
+    if (src.width == dst.width && src.height == dst.height) {
+        std::memcpy(dst.rgba, src.rgba, size_t(dst.width) * size_t(dst.height) * 4);
+        return;
+    }
+    for (int y = 0; y < dst.height; ++y) {
+        const int sy = int(int64_t(y) * src.height / dst.height);
+        for (int xx = 0; xx < dst.width; ++xx) {
+            const int sx = int(int64_t(xx) * src.width / dst.width);
+            std::memcpy(dst.rgba + (size_t(y) * dst.width + xx) * 4, src.rgba + (size_t(sy) * src.width + sx) * 4, 4);
+        }
+    }
 }
 bool gl_isFramebuffer(Ctx& x, uint32_t fb) {
     ContextData* c = currentCtx(x);
@@ -2485,6 +2518,10 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_isRenderbuffer>("_glIsRenderbuffer");
     p.def<&gl_isRenderbuffer>("_glIsRenderbufferOES");
     p.def<&gl_renderbufferStorage>("_glRenderbufferStorage");
+    p.def<&gl_renderbufferStorageMultisample>("_glRenderbufferStorageMultisampleAPPLE");
+    p.def<&gl_renderbufferStorageMultisample>("_glRenderbufferStorageMultisampleEXT");
+    p.def<&gl_renderbufferStorageMultisample>("_glRenderbufferStorageMultisample");
+    p.def<&gl_resolveMultisample>("_glResolveMultisampleFramebufferAPPLE");
     p.def<&gl_renderbufferStorage>("_glRenderbufferStorageOES");
     p.def<&gl_getRenderbufferParameteriv>("_glGetRenderbufferParameteriv");
     p.def<&gl_getRenderbufferParameteriv>("_glGetRenderbufferParameterivOES");
@@ -2506,7 +2543,6 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_getFramebufferAttachmentParameteriv>("_glGetFramebufferAttachmentParameteriv");
     p.def<&gl_getFramebufferAttachmentParameteriv>("_glGetFramebufferAttachmentParameterivOES");
     p.def<&gl_noop3>("_glDiscardFramebufferEXT");
-    p.def<&gl_noop>("_glResolveMultisampleFramebufferAPPLE");
 
     // Buffers & VAOs
     p.def<&gl_genBuffers>("_glGenBuffers");

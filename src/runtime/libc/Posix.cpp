@@ -3,6 +3,7 @@
 // queries, and harmless no-ops.
 #include "core/cpu/Engine.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/libc/Format.hpp"
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -152,6 +153,27 @@ int32_t p_setcancel(Ctx& x, int32_t, GuestPtr old) { if (old) x.mem.write<uint32
 void p_testcancel(Ctx&) {}
 
 int32_t p_zero(Ctx&) { return 0; }
+// Apple System Log: messages go to the app log (levels 0-3 as errors, 4 warnings, the rest info).
+uint32_t asl_handle(Ctx& x) { static uint32_t h = 0; if (!h) h = x.proc.allocStatic(16); return h; }
+uint32_t asl_open(Ctx& x, GuestPtr, GuestPtr, uint32_t) { return asl_handle(x); }
+uint32_t asl_new(Ctx& x, uint32_t) { return x.proc.heap().allocZeroed(16); }
+void asl_free(Ctx& x, uint32_t m) { if (m && m != asl_handle(x) && x.proc.heap().blockSize(m)) x.proc.heap().free(m); }
+void asl_close(Ctx&, uint32_t) {}
+int32_t asl_zero2(Ctx&, uint32_t, uint32_t) { return 0; }
+int32_t asl_zero3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
+void aslLog(Ctx& x, int32_t level, const std::string& msg) {
+    x.proc.log(level <= 3 ? LogLevel::Error : level == 4 ? LogLevel::Warning : LogLevel::Info, "asl: " + msg);
+}
+int32_t asl_log(Ctx& x, uint32_t, uint32_t, int32_t level, GuestPtr fmt, VarArgs va) {
+    if (fmt) aslLog(x, level, formatGuest(x.proc, x.proc.readCString(fmt), va.args));
+    return 0;
+}
+int32_t asl_vlog(Ctx& x, uint32_t, uint32_t, int32_t level, GuestPtr fmt, GuestPtr vaList) {
+    ArgReader a(x.mem, vaList);
+    if (fmt) aslLog(x, level, formatGuest(x.proc, x.proc.readCString(fmt), a));
+    return 0;
+}
+int32_t asl_send(Ctx&, uint32_t, uint32_t) { return 0; }
 // Extended attributes: the backing filesystem may not support them, and apps use
 // them only for flags like "exclude from iCloud backup". Accept and ignore.
 int32_t x_setxattr(Ctx&, GuestPtr, GuestPtr, GuestPtr, uint32_t, uint32_t, int32_t) { return 0; }
@@ -168,6 +190,18 @@ void p_void2(Ctx&, GuestPtr, uint32_t) {}
 
 void registerLibcPosix(Process& p) {
     p.def<&p_readlink>("_readlink");
+    p.def<&asl_open>("_asl_open");
+    p.def<&asl_new>("_asl_new");
+    p.def<&asl_free>("_asl_free");
+    p.def<&asl_close>("_asl_close");
+    p.def<&asl_log>("_asl_log");
+    p.def<&asl_vlog>("_asl_vlog");
+    p.def<&asl_send>("_asl_send");
+    p.def<&asl_zero3>("_asl_set");
+    p.def<&asl_zero2>("_asl_set_filter");
+    p.def<&asl_zero3>("_asl_add_log_file");
+    p.def<&asl_zero3>("_asl_add_output_file");
+    p.def<&asl_zero2>("_asl_remove_log_file");
     p.def<&x_setxattr>("_setxattr");
     p.def<&x_getxattr>("_getxattr");
     p.def<&x_removexattr>("_removexattr");

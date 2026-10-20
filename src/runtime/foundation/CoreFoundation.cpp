@@ -6,6 +6,7 @@
 // CF collections created with NULL callbacks hold raw pointers, not objects;
 // those get small host-side "raw" collections that never retain.
 #include "Foundation.hpp"
+#include <cctype>
 #include "runtime/libc/Format.hpp"
 #include <cmath>
 #include <ctime>
@@ -208,6 +209,20 @@ uint32_t s_fastestEncoding(Ctx&, id) { return 0x0100; }
 uint32_t s_smallestEncoding(Ctx&, id) { return 0x08000100; }
 uint32_t s_cfToNS(Ctx&, uint32_t e) { return toNS(e); }
 uint32_t s_nsToCF(Ctx&, uint32_t e) { return toCF(e); }
+// CFStringConvertIANACharSetNameToEncoding: kCFStringEncodingInvalidId (0xFFFFFFFF) when unknown.
+uint32_t s_ianaToEncoding(Ctx& x, id name) {
+    if (!name) return 0xFFFFFFFFu;
+    std::string n = utf8(x, name);
+    for (char& c : n) c = char(std::tolower(uint8_t(c)));
+    static const std::pair<const char*, uint32_t> map[] = {
+        {"utf-8", 0x08000100}, {"utf8", 0x08000100}, {"us-ascii", 0x0600}, {"ascii", 0x0600}, {"iso-8859-1", 0x0201},
+        {"latin1", 0x0201}, {"iso-latin-1", 0x0201}, {"utf-16", 0x0100}, {"utf-16be", 0x10000100}, {"utf-16le", 0x14000100},
+        {"utf-32", 0x0c000100}, {"windows-1252", 0x0500}, {"cp1252", 0x0500}, {"macintosh", 0}, {"x-mac-roman", 0},
+        {"shift_jis", 0x0A01}, {"sjis", 0x0A01}, {"euc-jp", 0x0920}, {"iso-2022-jp", 0x0820}, {"iso-8859-2", 0x0202},
+        {"windows-1250", 0x0501}, {"windows-1251", 0x0502}, {"gb2312", 0x0930}, {"big5", 0x0A03}, {"euc-kr", 0x0940}};
+    for (auto& [k, v] : map) if (n == k) return v;
+    return 0xFFFFFFFFu;
+}
 uint32_t s_encodingToIANA(Ctx& x, uint32_t e) { return constString(x.proc, toNS(e) == kNSUTF8 ? "utf-8" : toNS(e) == kNSASCII ? "us-ascii" : "iso-8859-1"); }
 bool s_isEncodingAvailable(Ctx&, uint32_t) { return true; }
 
@@ -908,6 +923,7 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&s_cfToNS>("_CFStringConvertEncodingToNSStringEncoding");
     p.def<&s_nsToCF>("_CFStringConvertNSStringEncodingToEncoding");
     p.def<&s_encodingToIANA>("_CFStringConvertEncodingToIANACharSetName");
+    p.def<&s_ianaToEncoding>("_CFStringConvertIANACharSetNameToEncoding");
     p.def<&s_isEncodingAvailable>("_CFStringIsEncodingAvailable");
     p.def<&s_append>("_CFStringAppend");
     p.def<&s_appendCString>("_CFStringAppendCString");

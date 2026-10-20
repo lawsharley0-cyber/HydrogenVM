@@ -120,6 +120,13 @@ Class Runtime::getClass(const std::string& name) const {
     return it == classByName_.end() ? 0 : it->second;
 }
 
+std::vector<Class> Runtime::classList() const {
+    std::shared_lock<std::shared_mutex> lk(classMu_);
+    std::vector<Class> out;
+    for (auto& [c, ci] : classes_) if (!ci->isMeta && !ci->stub) out.push_back(c);
+    return out;
+}
+
 bool Runtime::isSubclass(Class sub, Class cls) const {
     for (Class c = sub; c; c = superclass(c)) if (c == cls) return true;
     return false;

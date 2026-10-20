@@ -192,6 +192,53 @@ template <typename H> std::vector<uint8_t> hmac(const uint8_t* key, size_t keyLe
     finish(s, out.data());
     return out;
 }
+// Incremental HMAC. CCHmacContext is 384 bytes; we keep {alg, inner hash state, outer hash state} in it.
+template <typename H> struct HmacCtx { uint32_t alg; uint32_t pad; H inner, outer; };
+static_assert(sizeof(HmacCtx<Sha256>) <= 384, "CCHmacContext is 384 bytes");
+template <typename H> void hmacInit(Ctx& x, GuestPtr c, uint32_t alg, const uint8_t* key, size_t keyLen) {
+    std::vector<uint8_t> k(key, key + keyLen);
+    if (k.size() > 64) k = digest<H>(k.data(), k.size());
+    k.resize(64, 0);
+    uint8_t ipad[64], opad[64];
+    for (int i = 0; i < 64; ++i) { ipad[i] = k[i] ^ 0x36; opad[i] = k[i] ^ 0x5c; }
+    HmacCtx<H> h{};
+    h.alg = alg;
+    h.inner.init(); update(h.inner, ipad, 64);
+    h.outer.init(); update(h.outer, opad, 64);
+    std::memcpy(x.mem.host(c), &h, sizeof h);
+}
+template <typename H> void hmacUpdate(Ctx& x, GuestPtr c, const uint8_t* p, size_t n) {
+    HmacCtx<H> h;
+    std::memcpy(&h, x.mem.host(c), sizeof h);
+    if (n) update(h.inner, p, n);
+    std::memcpy(x.mem.host(c), &h, sizeof h);
+}
+template <typename H> void hmacFinal(Ctx& x, GuestPtr c, GuestPtr out) {
+    HmacCtx<H> h;
+    std::memcpy(&h, x.mem.host(c), sizeof h);
+    uint8_t inner[32], mac[32];
+    finish(h.inner, inner);
+    update(h.outer, inner, H::kWords * 4);
+    finish(h.outer, mac);
+    x.mem.copyIn(out, mac, H::kWords * 4);
+}
+void cc_hmacInit(Ctx& x, GuestPtr c, uint32_t alg, GuestPtr key, uint32_t keyLen) {
+    const uint8_t* k = keyLen ? x.mem.host(key) : nullptr;
+    if (alg == 0) hmacInit<Sha1>(x, c, alg, k, keyLen);
+    else if (alg == 1) hmacInit<Md5>(x, c, alg, k, keyLen);
+    else if (alg == 2) hmacInit<Sha256>(x, c, alg, k, keyLen);
+    else throw std::runtime_error("CCHmacInit: algorithm " + std::to_string(alg) + " isn't supported");
+}
+void cc_hmacUpdate(Ctx& x, GuestPtr c, GuestPtr data, uint32_t n) {
+    const uint32_t alg = x.mem.read<uint32_t>(c);
+    const uint8_t* d = n ? x.mem.host(data) : nullptr;
+    if (alg == 0) hmacUpdate<Sha1>(x, c, d, n); else if (alg == 1) hmacUpdate<Md5>(x, c, d, n); else hmacUpdate<Sha256>(x, c, d, n);
+}
+void cc_hmacFinal(Ctx& x, GuestPtr c, GuestPtr out) {
+    const uint32_t alg = x.mem.read<uint32_t>(c);
+    if (alg == 0) hmacFinal<Sha1>(x, c, out); else if (alg == 1) hmacFinal<Md5>(x, c, out); else hmacFinal<Sha256>(x, c, out);
+}
+
 // CCHmac(alg, key, keyLength, data, dataLength, macOut): kCCHmacAlgSHA1 0, MD5 1, SHA256 2.
 void cc_hmac(Ctx& x) {
     const uint32_t alg = x.cpu.r[0], key = x.cpu.r[1], keyLen = x.cpu.r[2], data = x.cpu.r[3];
@@ -230,9 +277,16 @@ void registerCommonCrypto(Process& p) {
     p.def<&cc_final<Sha256>>("_CC_SHA256_Final");
     p.def<&cc_oneShot<Sha256>>("_CC_SHA256");
     p.defineFunction("_CCHmac", cc_hmac);
+    p.def<&cc_hmacInit>("_CCHmacInit");
+    p.def<&cc_hmacUpdate>("_CCHmacUpdate");
+    p.def<&cc_hmacFinal>("_CCHmacFinal");
     p.defineFunction("_CCCrypt", cc_crypt);
 }
 
+// For tests: HMAC-SHA256 of `data` with `key` (RFC 4231 test case 2 is key "Jefe").
+std::vector<uint8_t> hvmHmacSha256(const std::string& key, const std::string& data) {
+    return hmac<Sha256>(reinterpret_cast<const uint8_t*>(key.data()), key.size(), reinterpret_cast<const uint8_t*>(data.data()), data.size());
+}
 // For tests.
 std::vector<uint8_t> hvmDigest(int alg, const std::string& s) {
     const auto* p = reinterpret_cast<const uint8_t*>(s.data());

@@ -664,6 +664,19 @@ int runFullSubsystemTests() {
               hex(Runtime::hvmDigest(2, "abc")) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" &&
               hex(Runtime::hvmDigest(1, std::string(1000, 'a'))).size() == 40,
               "CC_MD5 / CC_SHA1 / CC_SHA256 match the reference digests");
+        // Incremental CCHmacInit/Update/Final (guest entry points) vs RFC 4231 test case 2.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const std::string key = "Jefe", data = "what do ya want for nothing?";
+            const uint32_t ctx = proc.heap().allocZeroed(384), k = proc.allocCString(key), d = proc.allocCString(data), mac = proc.heap().allocZeroed(32);
+            call("_CCHmacInit", {ctx, 2, k, uint32_t(key.size())});
+            call("_CCHmacUpdate", {ctx, d, 10});
+            call("_CCHmacUpdate", {ctx, d + 10, uint32_t(data.size() - 10)});
+            call("_CCHmacFinal", {ctx, mac});
+            std::vector<uint8_t> got(proc.mem().host(mac), proc.mem().host(mac) + 32);
+            check(hex(got) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+                  "CCHmacInit/Update/Final (SHA-256) matches RFC 4231");
+        }
 
         // zlib: compress + uncompress through the guest entry points.
         {
@@ -752,6 +765,62 @@ int runFullSubsystemTests() {
             check(roundTrip && get(nextC, "year") == 2025 && get(nextC, "month") == 2 && get(nextC, "day") == 28 &&
                   get(diff, "day") == 60 && get(diffYM, "year") == 0 && get(diffYM, "month") == 1 && get(diffYM, "day") == 28,
                   "NSCalendar compose / components / dateByAdding (leap day) / difference");
+        }
+
+        // NSScanner: numbers, strings, hex, up-to scans, skipping whitespace.
+        {
+            Ctx x{proc, cpu, proc.mem()};
+            const ObjC::id str = Foundation::makeString(x, "  42 abc 3.5 0x1F rest of it");
+            const ObjC::id sc = ObjC::id(r.send(cpu, r.getClass("NSScanner"), "scannerWithString:", {str}));
+            const uint32_t out = proc.heap().allocZeroed(16);
+            const bool a = uint32_t(r.send(cpu, sc, "scanInt:", {out})) & 0xFF;
+            const int32_t i = int32_t(proc.mem().read<uint32_t>(out));
+            const bool b = uint32_t(r.send(cpu, sc, "scanString:intoString:", {Foundation::makeString(x, "ABC"), 0})) & 0xFF;   // case-insensitive
+            const bool c = uint32_t(r.send(cpu, sc, "scanDouble:", {out})) & 0xFF;
+            const double d = proc.mem().read<double>(out);
+            const bool e = uint32_t(r.send(cpu, sc, "scanHexInt:", {out})) & 0xFF;
+            const uint32_t h = proc.mem().read<uint32_t>(out);
+            const bool f = uint32_t(r.send(cpu, sc, "scanUpToString:intoString:", {Foundation::makeString(x, "zzz"), out})) & 0xFF;
+            const std::string rest = Foundation::utf8(x, proc.mem().read<uint32_t>(out));
+            const bool end = uint32_t(r.send(cpu, sc, "isAtEnd")) & 0xFF;
+            check(a && i == 42 && b && c && d == 3.5 && e && h == 31 && f && rest == "rest of it" && end,
+                  "NSScanner int / case-insensitive string / double / hex / scanUpToString");
+        }
+
+        // NSXMLParser: elements, attributes, entities, CDATA, self-closing tags, errors.
+        {
+            Ctx x{proc, cpu, proc.mem()};
+            std::vector<std::string> events;
+            ObjC::ClassBuilder del = r.defineClass("HVMTestXMLDelegate", "NSObject");
+            del.method("parser:didStartElement:namespaceURI:qualifiedName:attributes:", [&](Ctx& cx) {
+                // (self, _cmd, parser, elementName, namespaceURI, qName, attributes): the last three on the stack
+                const uint32_t attrs = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP] + 8);
+                std::string e = "<" + Foundation::utf8(cx, cx.cpu.r[3]);
+                for (auto& [k, v] : Foundation::dictEntries(cx, attrs)) e += " " + Foundation::utf8(cx, k) + "=" + Foundation::utf8(cx, v);
+                events.push_back(e + ">");
+            }, "v@:@@@@@");
+            del.method("parser:didEndElement:namespaceURI:qualifiedName:", [&](Ctx& cx) { events.push_back("</" + Foundation::utf8(cx, cx.cpu.r[3]) + ">"); }, "v@:@@@@");
+            del.method("parser:foundCharacters:", [&](Ctx& cx) {
+                const std::string t = Foundation::utf8(cx, cx.cpu.r[3]);
+                if (t.find_first_not_of(" \n\t") != std::string::npos) events.push_back("'" + t + "'");
+            }, "v@:@@");
+            del.method("parser:parseErrorOccurred:", [&](Ctx&) { events.push_back("ERROR"); }, "v@:@@");
+            const ObjC::id delegate = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, del.cls(), r.selAlloc)), "init"));
+            auto parse = [&](const std::string& xml) {
+                events.clear();
+                const ObjC::id data = Foundation::makeData(x, xml.data(), uint32_t(xml.size()));
+                const ObjC::id parser = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSXMLParser"), r.selAlloc)), "initWithData:", {data}));
+                r.send(cpu, parser, "setDelegate:", {delegate});
+                const bool ok = uint32_t(r.send(cpu, parser, "parse")) & 0xFF;
+                std::string joined;
+                for (auto& e : events) joined += e;
+                return std::make_pair(ok, joined);
+            };
+            const auto good = parse("<?xml version=\"1.0\"?><!-- c --><cfg v=\"2\"><item name='a &amp; b'>x &lt; y</item><empty/><![CDATA[<raw>]]></cfg>");
+            const auto bad = parse("<a><b></a>");
+            if (good.second != "<cfg v=2><item name=a & b>'x < y'</item><empty></empty>'<raw>'</cfg>") std::printf("    xml events: %s / %s\n", good.second.c_str(), bad.second.c_str());
+            check(good.first && good.second == "<cfg v=2><item name=a & b>'x < y'</item><empty></empty>'<raw>'</cfg>" && !bad.first && bad.second.find("ERROR") != std::string::npos,
+                  "NSXMLParser elements / attributes / entities / CDATA / self-closing / mismatched-tag error");
         }
     }
 

@@ -406,6 +406,21 @@ void as_remove(Ctx& x, id o) {
     (void)r;
     (void)o;
 }
+// int objc_getClassList(Class* buffer, int count): fills up to `count`, returns the total.
+int32_t c_getClassList(Ctx& x, GuestPtr buf, int32_t count) {
+    const std::vector<Class> all = rt(x).classList();
+    if (buf) for (int32_t i = 0; i < count && size_t(i) < all.size(); ++i) x.mem.write<uint32_t>(buf + uint32_t(i) * 4, all[size_t(i)]);
+    return int32_t(all.size());
+}
+// Class* objc_copyClassList(unsigned* outCount): malloc'ed, NULL-terminated.
+uint32_t c_copyClassList(Ctx& x, GuestPtr outCount) {
+    const std::vector<Class> all = rt(x).classList();
+    const uint32_t arr = x.proc.heap().alloc(uint32_t(all.size() + 1) * 4);
+    for (size_t i = 0; i < all.size(); ++i) x.mem.write<uint32_t>(arr + uint32_t(i) * 4, all[i]);
+    x.mem.write<uint32_t>(arr + uint32_t(all.size()) * 4, 0);
+    if (outCount) x.mem.write<uint32_t>(outCount, uint32_t(all.size()));
+    return arr;
+}
 void msgForward(Ctx& x) { rt(x).unrecognized(x.cpu.r[0], x.cpu.r[1]); x.cpu.r[0] = x.cpu.r[1] = 0; }
 int32_t z_zero(Ctx&) { return 0; }
 void z_void1(Ctx&, uint32_t) {}
@@ -420,6 +435,8 @@ void registerObjCApi(Process& p, Runtime& r) {
     p.defineFunction("_objc_msgSendSuper2", &msgSendSuper2);
     p.defineFunction("_objc_msgSendSuper_stret", &msgSendSuperStret);
     p.defineFunction("_objc_msgSendSuper2_stret", &msgSendSuper2Stret);
+    p.def<&c_getClassList>("_objc_getClassList");
+    p.def<&c_copyClassList>("_objc_copyClassList");
     p.defineFunction("__objc_msgForward", &msgForward);
     p.defineFunction("__objc_msgForward_stret", &msgForward);
     p.def<&a_retain>("_objc_retain");
