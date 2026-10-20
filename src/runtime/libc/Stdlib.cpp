@@ -48,6 +48,23 @@ uint32_t m_zone_realloc(Ctx& x, uint32_t, uint32_t p, uint32_t n) { return x.pro
 void     m_zone_free(Ctx& x, uint32_t, uint32_t p) { x.proc.heap().free(p); }
 uint32_t m_zone_memalign(Ctx& x, uint32_t, uint32_t align, uint32_t n) { return x.proc.heap().allocAligned(n, align); }
 uint32_t m_zone_from_ptr(Ctx& x, uint32_t p) { return x.proc.heap().blockSize(p) ? m_default_zone(x) : 0; }
+// Custom zones all map onto the single guest heap.
+uint32_t m_create_zone(Ctx& x, uint32_t, uint32_t) { return m_default_zone(x); }
+void m_destroy_zone(Ctx&, uint32_t) {}
+void m_set_zone_name(Ctx&, uint32_t, GuestPtr) {}
+uint32_t m_zone_name(Ctx& x, uint32_t) { static uint32_t s = 0; if (!s) s = x.proc.allocCString("DefaultMallocZone"); return s; }
+uint32_t m_zone_valloc(Ctx& x, uint32_t, uint32_t n) { return x.proc.heap().allocAligned(n, 4096); }
+void m_zone_pressure_relief(Ctx&, uint32_t, uint32_t) {}
+void m_zone_statistics(Ctx& x, uint32_t, GuestPtr stats) { if (stats) for (uint32_t i = 0; i < 20; i += 4) x.mem.write<uint32_t>(stats + i, 0); }
+void m_zone_log(Ctx&, uint32_t, uint32_t) {}
+uint32_t m_zone_batch_malloc(Ctx& x, uint32_t, uint32_t n, GuestPtr results, uint32_t count) {
+    uint32_t i = 0;
+    for (; i < count; ++i) { const uint32_t a = x.proc.heap().alloc(n); if (!a) break; x.mem.write<uint32_t>(results + i * 4, a); }
+    return i;
+}
+void m_zone_batch_free(Ctx& x, uint32_t, GuestPtr ptrs, uint32_t count) {
+    for (uint32_t i = 0; i < count; ++i) { const uint32_t p = x.mem.read<uint32_t>(ptrs + i * 4); if (p) x.proc.heap().free(p); }
+}
 
 // ----------------------------------------------------------- conversions ---
 
@@ -283,6 +300,17 @@ void registerLibcStdlib(Process& p) {
     p.def<&m_zone_free>("_malloc_zone_free");
     p.def<&m_zone_memalign>("_malloc_zone_memalign");
     p.def<&m_zone_from_ptr>("_malloc_zone_from_ptr");
+    p.def<&m_create_zone>("_malloc_create_zone");
+    p.def<&m_destroy_zone>("_malloc_destroy_zone");
+    p.def<&m_set_zone_name>("_malloc_set_zone_name");
+    p.def<&m_zone_name>("_malloc_get_zone_name");
+    p.def<&m_zone_valloc>("_malloc_zone_valloc");
+    p.def<&m_zone_pressure_relief>("_malloc_zone_pressure_relief");
+    p.def<&m_zone_statistics>("_malloc_zone_statistics");
+    p.def<&m_zone_log>("_malloc_zone_log");
+    p.def<&m_zone_batch_malloc>("_malloc_zone_batch_malloc");
+    p.def<&m_zone_batch_free>("_malloc_zone_batch_free");
+    p.def<&m_default_zone>("_malloc_default_purgeable_zone");
     p.def<&c_atoi>("_atoi");
     p.def<&c_atoi>("_atol");
     p.def<&c_atoll>("_atoll");

@@ -193,6 +193,52 @@ void m_leakHard(Ctx& x, GuestPtr self) {
     if (d != emptyData(x)) x.mem.write<uint32_t>(d - kHdr + 8, uint32_t(-1));
 }
 
+// ---- constructors / assignment / accessors added for libstdc++-heavy apps
+void c_default(Ctx& x, GuestPtr self) { x.mem.write<uint32_t>(self, emptyData(x)); }
+void c_fill(Ctx& x, GuestPtr self, uint32_t n, uint32_t c, GuestPtr) { x.mem.write<uint32_t>(self, make(x, std::string(n, char(c)))); }
+uint32_t m_assignC(Ctx& x, GuestPtr self, GuestPtr s) { set(x, self, x.proc.readCString(s)); return self; }
+uint32_t m_assignChar(Ctx& x, GuestPtr self, uint32_t c) { set(x, self, std::string(1, char(c))); return self; }
+uint32_t m_appendC(Ctx& x, GuestPtr self, GuestPtr s) { std::string v = value(x, self); v += x.proc.readCString(s); set(x, self, v); return self; }
+uint32_t m_plusC(Ctx& x, GuestPtr self, GuestPtr s) { return m_appendC(x, self, s); }
+uint32_t m_plusStr(Ctx& x, GuestPtr self, GuestPtr o) { std::string v = value(x, self); v += value(x, o); set(x, self, v); return self; }
+uint32_t m_plusChar(Ctx& x, GuestPtr self, uint32_t c) { std::string v = value(x, self); v.push_back(char(c)); set(x, self, v); return self; }
+uint32_t m_replaceStr(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr o) {
+    std::string v = value(x, self);
+    const uint32_t size = uint32_t(v.size());
+    if (pos > size) outOfRange("basic_string::replace");
+    v.replace(pos, clip(size, pos, n), value(x, o));
+    set(x, self, v);
+    return self;
+}
+uint32_t q_size(Ctx& x, GuestPtr self) { return len(x, x.mem.read<uint32_t>(self)); }
+uint32_t q_empty(Ctx& x, GuestPtr self) { return len(x, x.mem.read<uint32_t>(self)) == 0; }
+uint32_t q_cstr(Ctx& x, GuestPtr self) { return x.mem.read<uint32_t>(self); }   // data pointer (NUL-terminated)
+// begin()/end(): iterators are char*. const versions return the shared buffer; the mutable
+// versions leak the string first (the caller may write through the iterator).
+uint32_t q_beginConst(Ctx& x, GuestPtr self) { return x.mem.read<uint32_t>(self); }
+uint32_t q_endConst(Ctx& x, GuestPtr self) { const uint32_t d = x.mem.read<uint32_t>(self); return d + len(x, d); }
+uint32_t q_begin(Ctx& x, GuestPtr self) { m_leakHard(x, self); return x.mem.read<uint32_t>(self); }
+uint32_t q_end(Ctx& x, GuestPtr self) { m_leakHard(x, self); const uint32_t d = x.mem.read<uint32_t>(self); return d + len(x, d); }
+uint32_t q_at(Ctx& x, GuestPtr self, uint32_t i) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    if (i >= len(x, d)) outOfRange("basic_string::at");
+    return d + i;
+}
+uint32_t q_atConst(Ctx& x, GuestPtr self, uint32_t i) { return x.mem.read<uint32_t>(self) + i; }   // operator[] has no bounds check
+uint32_t q_findCStr(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos) {
+    const size_t r = value(x, self).find(x.proc.readCString(s), pos);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
+uint32_t q_findStr(Ctx& x, GuestPtr self, GuestPtr o, uint32_t pos) {
+    const size_t r = value(x, self).find(value(x, o), pos);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
+uint32_t q_rfindCStr(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos) {
+    const size_t r = value(x, self).rfind(x.proc.readCString(s), pos == kNpos ? std::string::npos : pos);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
+uint32_t q_findStrDefault(Ctx& x, GuestPtr self, GuestPtr o) { return q_findStr(x, self, o, 0); }
+
 // ---- queries
 uint32_t q_findBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
     const size_t r = value(x, self).find(bytes(x, s, n), pos);
@@ -485,6 +531,8 @@ void registerLibStdcxxContainers(Process& p) {
     p.service<Strings>().emptyRep = p.defineDataBlock("__ZNSs4_Rep20_S_empty_rep_storageE", 16);
     p.mem().write<uint32_t>(p.defineDataBlock("__ZNSs4_Rep11_S_max_sizeE", 4), kMaxSize);
     p.defineDataBlock("__ZNSs4_Rep11_S_terminalE", 4);
+    p.def<&c_default>("__ZNSsC1Ev");            p.def<&c_default>("__ZNSsC2Ev");
+    p.def<&c_fill>("__ZNSsC1EmcRKSaIcE");       p.def<&c_fill>("__ZNSsC2EmcRKSaIcE");
     p.def<&c_cstr>("__ZNSsC1EPKcRKSaIcE");      p.def<&c_cstr>("__ZNSsC2EPKcRKSaIcE");
     p.def<&c_buf>("__ZNSsC1EPKcmRKSaIcE");      p.def<&c_buf>("__ZNSsC2EPKcmRKSaIcE");
     p.def<&c_copy>("__ZNSsC1ERKSs");            p.def<&c_copy>("__ZNSsC2ERKSs");
@@ -505,6 +553,31 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&m_mutate>("__ZNSs9_M_mutateEmmm");
     p.def<&m_resize>("__ZNSs6resizeEmc");
     p.def<&m_reserve>("__ZNSs7reserveEm");
+    p.def<&m_assignC>("__ZNSsaSEPKc");
+    p.def<&m_assignStr>("__ZNSsaSERKSs");
+    p.def<&m_assignChar>("__ZNSsaSEc");
+    p.def<&m_appendC>("__ZNSs6appendEPKc");
+    p.def<&m_plusC>("__ZNSspLEPKc");
+    p.def<&m_plusStr>("__ZNSspLERKSs");
+    p.def<&m_plusChar>("__ZNSspLEc");
+    p.def<&m_replaceStr>("__ZNSs7replaceEmmRKSs");
+    p.def<&q_size>("__ZNKSs4sizeEv");
+    p.def<&q_size>("__ZNKSs6lengthEv");
+    p.def<&q_empty>("__ZNKSs5emptyEv");
+    p.def<&q_cstr>("__ZNKSs5c_strEv");
+    p.def<&q_cstr>("__ZNKSs4dataEv");
+    p.def<&q_beginConst>("__ZNKSs5beginEv");
+    p.def<&q_endConst>("__ZNKSs3endEv");
+    p.def<&q_begin>("__ZNSs5beginEv");
+    p.def<&q_end>("__ZNSs3endEv");
+    p.def<&q_atConst>("__ZNKSsixEm");
+    p.def<&q_at>("__ZNSsixEm");
+    p.def<&q_atConst>("__ZNKSs2atEm");
+    p.def<&q_at>("__ZNSs2atEm");
+    p.def<&q_findCStr>("__ZNKSs4findEPKcm");
+    p.def<&q_findStr>("__ZNKSs4findERKSsm");
+    p.def<&q_findStrDefault>("__ZNKSs4findERKSs");
+    p.def<&q_rfindCStr>("__ZNKSs5rfindEPKcm");
     p.def<&m_swap>("__ZNSs4swapERSs");
     p.def<&m_leakHard>("__ZNSs12_M_leak_hardEv");
     p.def<&q_findBuf>("__ZNKSs4findEPKcmm");

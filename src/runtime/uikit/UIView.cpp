@@ -659,6 +659,10 @@ id ax_nil(Ctx&, id, SEL) { return 0; }
 void ax_noop(Ctx&, id, SEL) {}
 struct ModeData : ObjC::HostObject {};
 id sc_currentMode(Ctx& x, id, SEL) { return autoreleased(x, rt(x).createInstance(rt(x).getClass("UIScreenMode"))); }
+// -[UIScreen displayLinkWithTarget:selector:] forwards to CADisplayLink.
+id sc_displayLink(Ctx& x, id, SEL, id target, SEL sel) {
+    return id(rt(x).send(x.cpu, ui(x).displayLink, "displayLinkWithTarget:selector:", {target, sel}));
+}
 id sc_modes(Ctx& x, id s, SEL c) { return Foundation::makeArray(x, {sc_currentMode(x, s, c)}); }
 void sm_size(Ctx& x, GuestPtr ret, id, SEL) { auto& u = ui(x); CG::writeStruct(x, ret, CGSize{u.screenW * u.scale, u.screenH * u.scale}); }
 float sm_aspect(Ctx&, id, SEL) { return 1; }
@@ -1027,7 +1031,8 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
     scr.m<&sc_bounds>("bounds", R + "@:").m<&sc_nativeBounds>("nativeBounds", R + "@:").m<&sc_appFrame>("applicationFrame", R + "@:")
        .m<&sc_scale>("scale", "f@:").m<&sc_scale>("nativeScale", "f@:").m<&sc_brightness>("brightness", "f@:")
        .m<&sc_setBrightness>("setBrightness:", "v@:f").m<&sc_currentMode>("currentMode").m<&sc_currentMode>("preferredMode")
-       .m<&sc_modes>("availableModes").m<&sc_setMode>("setCurrentMode:").m<&sc_setMode>("setOverscanCompensation:").m<&sc_nil>("mirroredScreen");
+       .m<&sc_modes>("availableModes").m<&sc_setMode>("setCurrentMode:").m<&sc_setMode>("setOverscanCompensation:").m<&sc_nil>("mirroredScreen")
+       .m<&sc_displayLink>("displayLinkWithTarget:selector:", "@@:@:");
     ObjC::ClassBuilder mode = r.defineClass("UIScreenMode", "NSObject");
     mode.m<&sm_size>("size", S + "@:").m<&sm_aspect>("pixelAspectRatio", "f@:");
     u.mainScreen = r.createInstance(u.screen);

@@ -1388,6 +1388,14 @@ void tf_setDelegate(Ctx& x, id self, SEL, id d) { TFD(x, self).delegate = d; }
 bool tf_editing(Ctx& x, id self, SEL) { return TFD(x, self).editing; }
 bool tf_secure(Ctx& x, id self, SEL) { return TFD(x, self).secure; }
 void tf_setSecure(Ctx& x, id self, SEL, bool b) { TFD(x, self).secure = b; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+// UITextInputTraits and assorted text-view/field setters that only affect the on-screen
+// keyboard (which HydrogenVM doesn't show) or input accessory views: accepted, no effect.
+void tf_ignoreObj(Ctx&, id, SEL, id) {}
+void tf_ignoreInt(Ctx&, id, SEL, int32_t) {}
+void tf_ignoreBool(Ctx&, id, SEL, bool) {}
+id tf_nilObj(Ctx&, id, SEL) { return 0; }
+int32_t tf_zeroInt(Ctx&, id, SEL) { return 0; }
+bool tf_trueBool(Ctx&, id, SEL) { return true; }
 bool tf_canBecome(Ctx& x, id self, SEL) {
     const id del = TFD(x, self).delegate;
     if (del && rt(x).respondsTo(del, rt(x).sel("textFieldShouldBeginEditing:")))
@@ -1966,6 +1974,17 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
       .m<&tf_canBecome>("canBecomeFirstResponder", "c@:")
       .m<&tf_become>("becomeFirstResponder", "c@:")
       .m<&tf_resign>("resignFirstResponder", "c@:")
+      .m<&tf_ignoreInt>("setKeyboardType:", "v@:i").m<&tf_zeroInt>("keyboardType", "i@:")
+      .m<&tf_ignoreInt>("setReturnKeyType:", "v@:i").m<&tf_zeroInt>("returnKeyType", "i@:")
+      .m<&tf_ignoreInt>("setKeyboardAppearance:", "v@:i")
+      .m<&tf_ignoreInt>("setAutocorrectionType:", "v@:i").m<&tf_ignoreInt>("setAutocapitalizationType:", "v@:i")
+      .m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i").m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c")
+      .m<&tf_ignoreInt>("setClearButtonMode:", "v@:i").m<&tf_ignoreBool>("setClearsOnBeginEditing:", "v@:c")
+      .m<&tf_ignoreInt>("setContentVerticalAlignment:", "v@:i").m<&tf_ignoreInt>("setContentHorizontalAlignment:", "v@:i")
+      .m<&tf_ignoreObj>("setInputView:", "v@:@").m<&tf_ignoreObj>("setInputAccessoryView:", "v@:@")
+      .m<&tf_nilObj>("inputView").m<&tf_nilObj>("inputAccessoryView")
+      .m<&tf_ignoreObj>("setTypingAttributes:", "v@:@").m<&tf_ignoreBool>("setAdjustsFontSizeToFitWidth:", "v@:c")
+      .m<&tf_ignoreObj>("setKeyboardLanguage:", "v@:@")
       .m<&tf_drawRect>("drawRect:", "v@:" + R);
 
     ObjC::ClassBuilder tvText = r.defineClass("UITextView", "UIScrollView");
@@ -1978,6 +1997,17 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
           .m<&tf_canBecome>("canBecomeFirstResponder", "c@:")
           .m<&tf_become>("becomeFirstResponder", "c@:")
           .m<&tf_resign>("resignFirstResponder", "c@:")
+          .m<&tf_ignoreInt>("setKeyboardType:", "v@:i").m<&tf_zeroInt>("keyboardType", "i@:")
+          .m<&tf_ignoreInt>("setReturnKeyType:", "v@:i").m<&tf_zeroInt>("returnKeyType", "i@:")
+          .m<&tf_ignoreInt>("setKeyboardAppearance:", "v@:i").m<&tf_ignoreInt>("setAutocorrectionType:", "v@:i")
+          .m<&tf_ignoreInt>("setAutocapitalizationType:", "v@:i").m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i")
+          .m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c").m<&tf_ignoreBool>("setSecureTextEntry:", "v@:c")
+          .m<&tf_ignoreObj>("setInputView:", "v@:@").m<&tf_ignoreObj>("setInputAccessoryView:", "v@:@")
+          .m<&tf_nilObj>("inputView").m<&tf_nilObj>("inputAccessoryView")
+          .m<&tf_ignoreBool>("setEditable:", "v@:c").m<&tf_trueBool>("isEditable", "c@:")
+          .m<&tf_ignoreBool>("setSelectable:", "v@:c").m<&tf_trueBool>("isSelectable", "c@:")
+          .m<&tf_ignoreInt>("setDataDetectorTypes:", "v@:i").m<&tf_ignoreObj>("setLinkTextAttributes:", "v@:@")
+          .m<&tf_ignoreBool>("setAllowsEditingTextAttributes:", "v@:c")
           .m<&tf_drawRect>("drawRect:", "v@:" + R);
 
     for (const char* n : {"UITextFieldTextDidBeginEditingNotification", "UITextFieldTextDidChangeNotification",

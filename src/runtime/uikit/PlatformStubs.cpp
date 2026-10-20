@@ -316,6 +316,12 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() * 2));
     } else if (prop == 0x65647572 /* 'edur' estimated duration */ && cap >= 8) {
         x.mem.write<double>(outData, af.decoded.duration);
+    } else if (prop == 0x70636E74 /* 'pcnt' audio data packet count */ && cap >= 8) {
+        x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
+    } else if ((prop == 0x70737A65 /* 'psze' */ || prop == 0x706B7562 /* 'pkub' */) && cap >= 4) {
+        x.mem.write<uint32_t>(outData, 4);
+    } else if (prop == 0x66666D74 /* 'ffmt' file format */ && cap >= 4) {
+        x.mem.write<uint32_t>(outData, 0x63616666 /* 'caff' */);
     }
     return 0;
 }
@@ -332,6 +338,64 @@ int32_t af_readBytes(Ctx& x, uint32_t fid, bool, int64_t inStartingByte, GuestPt
     return 0;
 }
 int32_t af_close(Ctx& x, uint32_t fid) { ATS(x).files.erase(fid); return 0; }
+
+// AudioFileOpenWithCallbacks(clientData, read, write, getSize, setSize, typeHint, outFile):
+// pull the whole file through the app's callbacks, then decode it like AudioFileOpenURL.
+//   getSize(clientData) -> SInt64
+//   read(clientData, SInt64 position, UInt32 count, void* buffer, UInt32* actual) -> OSStatus
+// (32-bit iOS passes the SInt64 position in r1:r2, no register pairing.)
+void af_openWithCallbacks(Ctx& x) {
+    const uint32_t client = x.cpu.r[0], readFn = x.cpu.r[1], getSizeFn = x.cpu.r[3];
+    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t outFile = x.mem.read<uint32_t>(sp + 8);
+    if (!readFn || !getSizeFn || !outFile) { x.cpu.r[0] = uint32_t(-50); return; }
+    const int64_t size = int64_t(x.proc.callGuest(x.cpu, getSizeFn, {client}));
+    if (size <= 0 || size > (256ll << 20)) { x.cpu.r[0] = uint32_t(1954115647); return; }   // 'typ?'
+    const uint32_t chunk = 64u << 10;
+    const uint32_t buf = x.proc.heap().alloc(chunk), actual = x.proc.heap().allocZeroed(4);
+    std::vector<uint8_t> bytes;
+    bytes.reserve(size_t(size));
+    while (int64_t(bytes.size()) < size) {
+        const uint64_t pos = bytes.size();
+        const uint32_t want = uint32_t(std::min<int64_t>(chunk, size - int64_t(pos)));
+        x.mem.write<uint32_t>(actual, 0);
+        const int32_t rc = int32_t(uint32_t(x.proc.callGuest(x.cpu, readFn, {client, uint32_t(pos), uint32_t(pos >> 32), want, buf, actual})));
+        const uint32_t got = x.mem.read<uint32_t>(actual);
+        if (got) { const uint8_t* p = x.mem.host(buf); bytes.insert(bytes.end(), p, p + got); }
+        if (rc != 0 || got == 0) break;
+    }
+    x.proc.heap().free(buf);
+    x.proc.heap().free(actual);
+    auto& st = ATS(x);
+    AudioFileInstance af;
+    af.id = st.nextFileId++;
+    af.rawBytes = std::move(bytes);
+    af.decoded = decodeAudioBytes(af.rawBytes.data(), af.rawBytes.size());
+    if (af.decoded.stereoPcm.empty()) { x.cpu.r[0] = uint32_t(1954115647); return; }
+    x.mem.write<uint32_t>(outFile, af.id);
+    st.files[af.id] = std::move(af);
+    x.cpu.r[0] = 0;
+}
+// AudioFileReadPacketData / AudioFileReadPackets(fid, useCache, ioNumBytes*, packetDescs, SInt64 startPacket,
+// ioNumPackets*, outBuffer). Our files present 16-bit stereo LPCM: one packet = one 4-byte frame.
+void af_readPackets(Ctx& x, bool numBytesIsInOut) {
+    const uint32_t fid = x.cpu.r[0], ioNumBytes = x.cpu.r[2];
+    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const int64_t start = int64_t((uint64_t(x.mem.read<uint32_t>(sp + 4)) << 32) | x.mem.read<uint32_t>(sp));
+    const uint32_t ioNumPackets = x.mem.read<uint32_t>(sp + 8), out = x.mem.read<uint32_t>(sp + 12);
+    auto& st = ATS(x);
+    if (!st.files.count(fid) || !ioNumPackets || !out) { x.cpu.r[0] = uint32_t(-50); return; }
+    const auto& pcm = st.files[fid].decoded.stereoPcm;
+    const uint64_t frames = pcm.size() / 2;
+    uint64_t want = x.mem.read<uint32_t>(ioNumPackets);
+    if (numBytesIsInOut && ioNumBytes) want = std::min<uint64_t>(want, x.mem.read<uint32_t>(ioNumBytes) / 4);
+    const uint64_t first = uint64_t(std::max<int64_t>(0, start));
+    const uint64_t n = first >= frames ? 0 : std::min<uint64_t>(want, frames - first);
+    if (n) x.mem.copyIn(out, reinterpret_cast<const uint8_t*>(pcm.data() + first * 2), size_t(n * 4));
+    x.mem.write<uint32_t>(ioNumPackets, uint32_t(n));
+    if (ioNumBytes) x.mem.write<uint32_t>(ioNumBytes, uint32_t(n * 4));
+    x.cpu.r[0] = 0;
+}
 
 // ------------------------------------------------------------- ExtAudioFile ---
 // Reads decoded audio in the app's "client" format: linear PCM of any common
@@ -1104,6 +1168,9 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&af_getPropertyInfo>("_AudioFileGetPropertyInfo");
     p.def<&af_getProperty>("_AudioFileGetProperty");
     p.def<&af_readBytes>("_AudioFileReadBytes");
+    p.defineFunction("_AudioFileOpenWithCallbacks", af_openWithCallbacks);
+    p.defineFunction("_AudioFileReadPacketData", [](Ctx& x) { af_readPackets(x, true); });
+    p.defineFunction("_AudioFileReadPackets", [](Ctx& x) { af_readPackets(x, false); });
     p.def<&af_close>("_AudioFileClose");
     p.def<&eaf_openURL>("_ExtAudioFileOpenURL");
     p.def<&eaf_wrap>("_ExtAudioFileWrapAudioFileID");

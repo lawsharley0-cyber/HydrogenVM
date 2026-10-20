@@ -152,6 +152,14 @@ int32_t p_setcancel(Ctx& x, int32_t, GuestPtr old) { if (old) x.mem.write<uint32
 void p_testcancel(Ctx&) {}
 
 int32_t p_zero(Ctx&) { return 0; }
+// Extended attributes: the backing filesystem may not support them, and apps use
+// them only for flags like "exclude from iCloud backup". Accept and ignore.
+int32_t x_setxattr(Ctx&, GuestPtr, GuestPtr, GuestPtr, uint32_t, uint32_t, int32_t) { return 0; }
+int32_t x_getxattr(Ctx&, GuestPtr, GuestPtr, GuestPtr, uint32_t, uint32_t, int32_t) { return -1; }  // ENOATTR via -1
+int32_t x_removexattr(Ctx&, GuestPtr, GuestPtr, int32_t) { return 0; }
+int32_t x_listxattr(Ctx&, GuestPtr, GuestPtr, uint32_t, int32_t) { return 0; }
+int32_t x_fsetxattr(Ctx&, int32_t, GuestPtr, GuestPtr, uint32_t, uint32_t, int32_t) { return 0; }
+int32_t x_fgetxattr(Ctx&, int32_t, GuestPtr, GuestPtr, uint32_t, uint32_t, int32_t) { return -1; }
 int32_t p_zero2(Ctx&, int32_t, int32_t) { return 0; }
 int32_t p_zero3(Ctx&, int32_t, int32_t, int32_t) { return 0; }
 void p_void2(Ctx&, GuestPtr, uint32_t) {}
@@ -160,6 +168,12 @@ void p_void2(Ctx&, GuestPtr, uint32_t) {}
 
 void registerLibcPosix(Process& p) {
     p.def<&p_readlink>("_readlink");
+    p.def<&x_setxattr>("_setxattr");
+    p.def<&x_getxattr>("_getxattr");
+    p.def<&x_removexattr>("_removexattr");
+    p.def<&x_listxattr>("_listxattr");
+    p.def<&x_fsetxattr>("_fsetxattr");
+    p.def<&x_fgetxattr>("_fgetxattr");
     p.def<&p_setcancel>("_pthread_setcancelstate");
     p.def<&p_setcancel>("_pthread_setcanceltype");
     p.def<&p_testcancel>("_pthread_testcancel");

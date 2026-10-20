@@ -123,6 +123,8 @@ public:
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
     std::vector<std::string> missingSymbols() const;
+    // Imports bound to "missing" stubs at load (functions), in file order — the static gap list.
+    const std::vector<std::string>& unimplementedImports() const { return unimplementedImports_; }
     int exitCode() const { return exitCode_; }
 
     // ---- subsystems
@@ -181,6 +183,7 @@ public:
     GuestThread& currentThread();
     GuestThread* findThread(uint32_t self);
     GuestThread* findThreadById(uint32_t id);
+    std::vector<uint32_t> liveThreadIds();   // ids of the main thread and all running threads
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
     bool joinThread(uint32_t self, uint32_t* retval);
@@ -258,6 +261,7 @@ private:
     std::unique_ptr<GuestThread> mainThreadOwner_;
     GuestThread* mainThread_ = nullptr;
     std::unordered_map<uint32_t, std::unique_ptr<GuestThread>> threads_;
+    std::vector<std::string> unimplementedImports_;
     std::mutex threadsMu_;
     uint32_t nextThreadId_ = 1;
     uint32_t stackTop_ = 0xBF000000u;

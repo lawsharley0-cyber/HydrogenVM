@@ -298,7 +298,30 @@ void Process::bindImports() {
                 break;
         }
     }
+    // Weak binds (coalesced template instantiations, inline functions, operator
+    // new/delete). The app may define these itself (a rebase already put its own
+    // definition in the slot); we only override when HydrogenVM or another image
+    // actually exports the symbol, and we never replace a real value with a
+    // missing-function stub — the app's own weak definition stays.
+    for (const auto& b : image_.weakBinds) {
+        const auto found = lookupSymbol(b.symbol);
+        if (!found) continue;
+        const uint32_t target = *found;
+        switch (b.kind) {
+            case Loader::BindKind::Pointer:
+            case Loader::BindKind::TextAbsolute32:
+                mem_->write<uint32_t>(b.address, target + uint32_t(b.addend));
+                break;
+            case Loader::BindKind::ExternalReloc:
+                mem_->write<uint32_t>(b.address, mem_->read<uint32_t>(b.address) + target);
+                break;
+            case Loader::BindKind::TextPcrel32:
+                mem_->write<uint32_t>(b.address, target + uint32_t(b.addend) - (b.address + 4));
+                break;
+        }
+    }
     (void)unresolvedBefore;
+    unimplementedImports_ = missingFns;
     if (!missingFns.empty()) {
         std::string list;
         for (size_t i = 0; i < missingFns.size(); ++i) list += (i ? ", " : "") + missingFns[i];
@@ -445,6 +468,12 @@ GuestThread* Process::findThread(uint32_t self) {
     return nullptr;
 }
 
+std::vector<uint32_t> Process::liveThreadIds() {
+    std::vector<uint32_t> out{mainThread_->id};
+    std::lock_guard<std::mutex> lk(threadsMu_);
+    for (auto& [k, t] : threads_) if (!t->finished) out.push_back(t->id);
+    return out;
+}
 GuestThread* Process::findThreadById(uint32_t id) {
     if (mainThread_->id == id) return mainThread_;
     std::lock_guard<std::mutex> lk(threadsMu_);

@@ -253,9 +253,9 @@ void runBind(Ctx& cx, const uint8_t* p, size_t n, bool lazy, bool weak) {
     uint32_t seg = 0;
     uint64_t off = 0;
     auto emit = [&] {
-        if (weak) { ++cx.img.weakBindCount; return; }
         BindRecord r = cur;
         r.address = cx.segAddr(seg, off);
+        if (weak) { r.weakImport = true; ++cx.img.weakBindCount; cx.img.weakBinds.push_back(std::move(r)); return; }
         cx.img.binds.push_back(std::move(r));
     };
     while (!s.done()) {

@@ -134,10 +134,12 @@ int hvmRunMain(int argc, char** argv) {
         f << "{\n";
         f << "  \"bundle\": \"" << jsonEscape(cfg.bundlePath) << "\",\n";
         f << "  \"exitStatus\": " << status << ",\n";
+        f << "  \"stillRunning\": " << (timedStop ? "true" : "false") << ",\n";   // reached --run-for without failing
         f << "  \"crashed\": " << (proc.crashed() ? "true" : "false") << ",\n";
         f << "  \"crashReport\": \"" << jsonEscape(proc.crashReport()) << "\",\n";
         f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
         f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
+        f << "  \"unimplementedImports\": " << jsonList(proc.unimplementedImports()) << ",\n";
         f << "  \"warnings\": " << pairs(warnings) << ",\n";
         f << "  \"errors\": " << pairs(errors) << ",\n";
         f << "  \"perf\": {\n";

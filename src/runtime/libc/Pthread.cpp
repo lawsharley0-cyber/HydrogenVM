@@ -363,6 +363,15 @@ int32_t mt_setState(Ctx& x, uint32_t port, int32_t flavor, GuestPtr st, uint32_t
     return kKernSuccess;
 }
 // thread_info(thread, THREAD_BASIC_INFO=3, info, count*): mostly "running, not suspended".
+// task_threads(task, &list, &count): a kernel-allocated array of thread ports.
+int32_t mt_taskThreads(Ctx& x, uint32_t, GuestPtr listOut, GuestPtr countOut) {
+    const std::vector<uint32_t> ids = x.proc.liveThreadIds();
+    const uint32_t arr = x.proc.heap().alloc(uint32_t(ids.size()) * 4 + 4);
+    for (uint32_t i = 0; i < ids.size(); ++i) x.mem.write<uint32_t>(arr + i * 4, ids[i] + 0x1000);
+    x.mem.write<uint32_t>(listOut, arr);
+    x.mem.write<uint32_t>(countOut, uint32_t(ids.size()));
+    return kKernSuccess;
+}
 int32_t mt_info(Ctx& x, uint32_t port, int32_t flavor, GuestPtr info, GuestPtr countPtr) {
     GuestThread* t = byPort(x, port);
     if (!t) return kKernInvalidArgument;
@@ -494,6 +503,7 @@ void registerLibcPthread(Process& p) {
     p.def<&mt_getState>("_thread_get_state");
     p.def<&mt_setState>("_thread_set_state");
     p.def<&mt_info>("_thread_info");
+    p.def<&mt_taskThreads>("_task_threads");
     p.def<&t_pthread_mach_thread_np>("_pthread_mach_thread_np");
     p.def<&t_exit>("_pthread_exit");
     p.def<&oa_add32>("_OSAtomicAdd32");
