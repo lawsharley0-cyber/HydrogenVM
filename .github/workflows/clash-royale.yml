@@ -65,11 +65,13 @@ jobs:
       - name: Trace Clash Royale startup
         run: |
           set +e
-          timeout 40s build-clash/hvm run clash-report/client.ipa --home clash-trace-home --run-for 10 --trace --report clash-report/startup-trace.json > clash-report/startup-trace.txt 2>&1
+          HVM_DUMP_SHADERS=clash-report/shaders timeout 40s build-clash/hvm run clash-report/client.ipa --home clash-trace-home --run-for 10 --trace --report clash-report/startup-trace.json > clash-report/startup-trace.txt 2>&1
           result=$?
           set -e
           echo "Trace process exit: $result"
           tail -180 clash-report/startup-trace.txt
+      - name: Validate captured shader corpus
+        run: build-clash/hvm_tests shaders clash-report/shaders
       - name: Strict and exploratory compatibility runs
         run: |
           python3 tools/compat.py scan clash-report/client.ipa regression-fixtures/AngryBirds_v1.0_os30.ipa regression-fixtures/Tiny_Tower_v1.0_os30.ipa regression-fixtures/Art_Of_Glow_v1.1.2_os313.ipa --hvm build-clash/hvm --out clash-compat --seconds 15 --jobs 1 --relaunch

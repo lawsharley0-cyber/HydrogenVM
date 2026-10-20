@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
 #include <map>
 #include <sstream>
 #include <string>
@@ -194,6 +195,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include "runtime/foundation/Foundation.hpp"
 #include "runtime/uikit/CoreGraphics.hpp"
 #include "runtime/graphics/TrueType.hpp"
+#include "runtime/graphics/Shader.hpp"
 #include "TestFont.hpp"
 #include <bit>
 #include <cmath>
@@ -210,6 +212,79 @@ int runFullSubsystemTests() {
         if (ok) { std::printf("  ok   %s\n", what); ++pass; }
         else { std::printf("  FAIL %s\n", what); ++fail; }
     };
+
+    // Straight-line GLSL semantics: independent names, actual values, honest rejection.
+    {
+        Shader::Program vertex, fragment;
+        bool compiled = vertex.compile(R"(
+            #ifdef GL_ES
+            precision highp float;
+            #else
+            #define highp
+            #endif
+            attribute vec4 coordinates;
+            attribute vec4 tint;
+            uniform vec4 scale;
+            uniform mat4 matrix;
+            varying vec4 result[2];
+            void main() {
+                const vec4 offset = vec4(-1.0, 1.0, 0.0, 0.0);
+                gl_Position = matrix * (scale * coordinates + offset);
+                result[0] = tint;
+                result[0].xy = result[0].yx;
+                result[1].xy = coordinates.xy + vec2(0.25);
+                result[1].zw = tint.ba;
+            }
+        )", true);
+        Shader::Values values;
+        vertex.initialize(values);
+        auto put = [&](const char* name, std::initializer_list<float> input) {
+            if (auto* v = vertex.find(name)) std::copy(input.begin(), input.end(), &values[v->slot]);
+        };
+        put("coordinates", {2, 3, 0, 1}); put("tint", {0.2f, 0.4f, 0.6f, 0.8f}); put("scale", {0.5f, -0.5f, 1, 1});
+        put("matrix", {1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0.25f, 0, 0, 1});
+        vertex.execute(values);
+        auto* varying = vertex.find("result");
+        check(compiled && varying && values[vertex.output] == 0.25f && values[vertex.output + 1] == -1 &&
+              values[varying->slot] == 0.4f && values[varying->slot + 1] == 0.2f &&
+              values[varying->slot + 4] == 2.25f && values[varying->slot + 7] == 0.8f,
+              "GLSL executes component transforms, column-major matrices, varying arrays and overlapping swizzles");
+        compiled = fragment.compile(R"(
+            uniform sampler2D image;
+            varying vec2 coordinate;
+            void main() {
+                vec4 color = texture2D(image, coordinate);
+                gl_FragColor.rgb = vec3(dot(color.rgb, vec3(0.25, 0.5, 0.25)));
+                gl_FragColor.a = color.r;
+                gl_FragColor += vec4(0.1, 0.0, 0.0, 0.0);
+            }
+        )", false);
+        fragment.initialize(values);
+        auto* sampler = fragment.find("image"); auto* coordinate = fragment.find("coordinate");
+        if (sampler) values[sampler->slot] = 3;
+        if (coordinate) { values[coordinate->slot] = 0.25f; values[coordinate->slot + 1] = 0.5f; }
+        bool sampled = false;
+        fragment.execute(values, [](void* context, int unit, float u, float v, float* out) {
+            *static_cast<bool*>(context) = unit == 3 && u == 0.25f && v == 0.5f;
+            out[0] = 0.2f; out[1] = 0.4f; out[2] = 0.6f; out[3] = 0.8f;
+        }, &sampled);
+        check(compiled && sampled && std::abs(values[fragment.output] - 0.5f) < 1e-6f &&
+              std::abs(values[fragment.output + 1] - 0.4f) < 1e-6f && values[fragment.output + 3] == 0.2f,
+              "GLSL texture sampling honors sampler, channels, dot products and compound assignments");
+        bool rejected = true;
+        for (const char* bad : {
+            "void main() { for (;;) {} gl_FragColor = vec4(1.0); }",
+            "uniform vec4 x; void main() { x = vec4(0.0); gl_FragColor = x; }",
+            "void main() { gl_FragColor.xx = vec2(1.0); }",
+            "void main() { gl_FragColor = vec3(1.0); }",
+            "varying vec4 x[2]; void main() { gl_FragColor = x[2]; }",
+            "void main() { gl_FragColor = vec4(1.0).xgba; }",
+            "#define FAKE 1\nvoid main() { gl_FragColor = vec4(1.0); }"
+        }) rejected &= !fragment.compile(bad, false) && !fragment.error.empty();
+        std::string deep = "void main() { gl_FragColor = vec4(" + std::string(100, '(') + "1.0" + std::string(100, ')') + "); }";
+        rejected &= !fragment.compile(deep, false);
+        check(rejected, "GLSL rejects unsupported control flow, invalid writes/types/indexing/macros and excessive nesting");
+    }
 
     // 1. CPU Superinstructions & Time-Sliced Execution (3-insn budget)
     {
@@ -638,6 +713,57 @@ int runFullSubsystemTests() {
         const uint8_t bPx = proc.mem().read<uint8_t>(idsAddr + 26);
         const uint8_t aPx = proc.mem().read<uint8_t>(idsAddr + 27);
         check(rPx == 0 && gPx == 255 && bPx == 0 && aPx == 255, "OpenGL ES 2.0 shader + VBO + glDrawArrays rasterizes triangle");
+
+        // End-to-end programmable pipeline: arbitrary names, two varyings,
+        // perspective interpolation and a nonzero sampler texture unit.
+        auto shader = [&](uint32_t stage, const char* source) {
+            uint32_t id = uint32_t(callGL("_glCreateShader", {stage}));
+            proc.mem().write<uint32_t>(idsAddr + 8, proc.allocCString(source));
+            callGL("_glShaderSource", {id, 1, idsAddr + 8, 0}); callGL("_glCompileShader", {id});
+            return id;
+        };
+        uint32_t vertex = shader(0x8B31, "attribute vec4 location; attribute float weight; uniform vec4 scale; varying vec4 first; varying vec4 second; varying vec2 uv; void main() { gl_Position = location * scale; first = vec4(weight); second = vec4(0.0,0.0,0.25,1.0); uv = vec2(0.5); }");
+        uint32_t fragment = shader(0x8B30, "uniform sampler2D image; varying vec4 first; varying vec4 second; varying vec2 uv; void main() { vec4 tx = texture2D(image,uv); gl_FragColor = vec4(tx.r * first.x,tx.g,second.b,1.0); }");
+        uint32_t pipeline = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {pipeline, vertex}); callGL("_glAttachShader", {pipeline, fragment});
+        callGL("_glBindAttribLocation", {pipeline, 0, proc.allocCString("location")});
+        callGL("_glBindAttribLocation", {pipeline, 1, proc.allocCString("weight")});
+        callGL("_glLinkProgram", {pipeline}); callGL("_glUseProgram", {pipeline});
+        int32_t scale = int32_t(callGL("_glGetUniformLocation", {pipeline, proc.allocCString("scale")}));
+        callGL("_glUniform4f", {uint32_t(scale), UIKit::fbits(1), UIKit::fbits(1), UIKit::fbits(1), UIKit::fbits(1)});
+        int32_t image = int32_t(callGL("_glGetUniformLocation", {pipeline, proc.allocCString("image")}));
+        callGL("_glUniform1i", {uint32_t(image), 3});
+        callGL("_glActiveTexture", {0x84C3}); callGL("_glGenTextures", {1, idsAddr + 32});
+        callGL("_glBindTexture", {0x0DE1, proc.mem().read<uint32_t>(idsAddr + 32)});
+        const uint32_t texel = proc.heap().alloc(4); const uint8_t rgba[] = {128,64,192,255};
+        proc.mem().copyIn(texel, rgba, 4);
+        callGL("_glTexImage2D", {0x0DE1,0,0x1908,1,1,0,0x1908,0x1401,texel});
+        const float vertices[] = {-1,-1,0,1,0, 2,-2,0,2,1, 0,4,0,4,0};
+        const uint32_t data = proc.heap().alloc(sizeof vertices); proc.mem().copyIn(data, vertices, sizeof vertices);
+        callGL("_glBufferData", {0x8892, sizeof vertices, data, 0x88E4});
+        callGL("_glVertexAttribPointer", {0,4,0x1406,0,20,0});
+        callGL("_glEnableVertexAttribArray", {1}); callGL("_glVertexAttribPointer", {1,1,0x1406,0,20,16});
+        callGL("_glClear", {0x4000}); callGL("_glDrawArrays", {4,0,3});
+        callGL("_glReadPixels", {32,16,1,1,0x1908,0x1401,idsAddr + 24});
+        // Pixel-center barycentrics are (93,97,66)/256. Divide each by clip W.
+        const float perspective = (97.0f / 512) / (93.0f / 256 + 97.0f / 512 + 66.0f / 1024);
+        int expectedRed = int(128 * perspective + 0.5f);
+        check(std::abs(int(proc.mem().read<uint8_t>(idsAddr + 24)) - expectedRed) <= 1 &&
+              proc.mem().read<uint8_t>(idsAddr + 25) == 64 && proc.mem().read<uint8_t>(idsAddr + 26) == 64 &&
+              proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 rasterizes perspective-correct varyings, multiple colors and texture unit 3");
+        auto bad = shader(0x8B30, "void main() { gl_FragColor = missing(); }");
+        callGL("_glGetShaderiv", {bad,0x8B81,idsAddr + 36});
+        callGL("_glGetShaderInfoLog", {bad,16,idsAddr + 40,idsAddr + 44});
+        bool diagnostics = proc.mem().read<uint32_t>(idsAddr + 36) == 0 &&
+            proc.mem().read<uint32_t>(idsAddr + 40) == 15 && proc.mem().read<uint8_t>(idsAddr + 59) == 0;
+        uint32_t badProgram = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {badProgram,vertex}); callGL("_glAttachShader", {badProgram,bad});
+        callGL("_glLinkProgram", {badProgram}); callGL("_glGetProgramiv", {badProgram,0x8B82,idsAddr + 36});
+        diagnostics &= proc.mem().read<uint32_t>(idsAddr + 36) == 0 &&
+            int32_t(callGL("_glGetUniformLocation", {pipeline,proc.allocCString("absent")})) == -1 &&
+            int32_t(callGL("_glGetAttribLocation", {pipeline,proc.allocCString("absent")})) == -1;
+        check(diagnostics, "GLES2 exposes compile/link errors, bounded info logs and unknown locations");
 
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
@@ -1069,8 +1195,28 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "fulltest") {
         return runFullSubsystemTests();
     }
+    if (argc == 3 && std::string(argv[1]) == "shaders") {
+        try {
+            int count = 0, failed = 0;
+            for (auto& file : std::filesystem::directory_iterator(argv[2])) {
+                auto ext = file.path().extension().string();
+                if (!file.is_regular_file() || (ext != ".vert" && ext != ".frag")) continue;
+                std::ifstream input(file.path());
+                if (!input) throw std::runtime_error("cannot read " + file.path().string());
+                std::string source((std::istreambuf_iterator<char>(input)), {});
+                Hydrogen::Runtime::Shader::Program program;
+                bool ok = program.compile(source, ext == ".vert");
+                std::printf("%s %s: %s\n", ok ? "ok" : "FAIL", file.path().filename().string().c_str(), program.error.c_str());
+                ++count; failed += !ok;
+            }
+            std::printf("shader corpus: %d passed, %d failed\n", count - failed, failed);
+            return count && !failed ? 0 : 1;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "shader corpus error: %s\n", e.what()); return 1;
+        }
+    }
     if (argc < 4) {
-        std::fprintf(stderr, "usage: %s asm <elf> <src.S>... | c <elf> <expected.txt>\n", argv[0]);
+        std::fprintf(stderr, "usage: %s fulltest | shaders <directory> | asm <elf> <src.S>... | c <elf> <expected.txt>\n", argv[0]);
         return 2;
     }
     try {

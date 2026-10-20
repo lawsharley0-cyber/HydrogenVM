@@ -6,6 +6,7 @@
 // and software rasterizer wired into CAEAGLLayer via LayerData::externalContents.
 #include "UIKit.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
+#include "runtime/graphics/Shader.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -15,7 +16,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <regex>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -356,8 +356,9 @@ struct ShaderObject {
     uint32_t id = 0;
     uint32_t type = GL_VERTEX_SHADER;
     std::string source;
-    bool compiled = true;
+    bool compiled = false;
     std::string infoLog;
+    Shader::Program executable;
 };
 
 struct ShaderVar {
@@ -369,12 +370,13 @@ struct ShaderVar {
 
 struct UniformValue {
     uint32_t type = GL_FLOAT_VEC4;
-    float f[16] = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    float f[16] = {};
     int i[4] = {0, 0, 0, 0};
-    bool isSet = false;
 };
 
 struct ProgramObject {
+    struct Binding { int slot, location, width; bool sampler; };
+    struct Varying { int vertexSlot, fragmentSlot, width, offset; };
     uint32_t id = 0;
     std::vector<uint32_t> shaders;
     bool linked = false;
@@ -383,18 +385,10 @@ struct ProgramObject {
     std::vector<ShaderVar> attribs;
     std::vector<ShaderVar> uniforms;
     std::unordered_map<int, UniformValue> uniformValues;
-
-    // Auto-detected roles for shader execution:
-    int posAttrib = 0;
-    int colorAttrib = -1;
-    int texCoordAttrib = -1;
-    int mvpUniform = -1;
-    int fragColorUniform = -1;
-    int samplerUniform = -1;
-    bool usesTexture = false;
-    bool usesVertexColor = false;
-    Vec4 constFragColor{1, 1, 1, 1};
-    bool hasConstFragColor = false;
+    Shader::Program vertex, fragment;
+    std::vector<Binding> vertexInputs, vertexUniforms, fragmentUniforms;
+    std::vector<Varying> varyings;
+    int varyingWidth = 0;
 };
 
 struct SharegroupData : ObjC::HostObject {
@@ -1749,7 +1743,7 @@ uint32_t gl_createShader(Ctx& x, uint32_t type) {
     SharegroupData* sg = currentSg(x, c);
     if (!sg) return 0;
     const uint32_t id = sg->nextShader++;
-    sg->shaders[id] = {id, type, "", true, ""};
+    sg->shaders[id] = {id, type, "", false, "", {}};
     return id;
 }
 void gl_deleteShader(Ctx& x, uint32_t shader) {
@@ -1787,8 +1781,20 @@ void gl_shaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings, G
     sg->shaders[shader].source = std::move(src);
 }
 void gl_compileShader(Ctx& x, uint32_t shader) {
-    if (auto* sg = currentSg(x, currentCtx(x)); sg && sg->shaders.count(shader))
-        sg->shaders[shader].compiled = true;
+    if (auto* sg = currentSg(x, currentCtx(x)); sg && sg->shaders.count(shader)) {
+        auto& sh = sg->shaders[shader];
+        sh.compiled = sh.executable.compile(sh.source, sh.type == GL_VERTEX_SHADER);
+        sh.infoLog = sh.executable.error;
+        if (!sh.compiled) x.proc.logf(LogLevel::Warning, "GLSL shader %u: %s", shader, sh.infoLog.c_str());
+    }
+}
+void writeGlInfoLog(Ctx& x, const std::string& log, int32_t maxLen, GuestPtr length, GuestPtr infoLog) {
+    const auto n = maxLen > 0 && infoLog ? std::min(log.size(), size_t(maxLen - 1)) : 0;
+    if (length) x.mem.write<int32_t>(length, int32_t(n));
+    if (infoLog && maxLen > 0) {
+        x.mem.copyIn(infoLog, log.data(), n);
+        x.mem.write<uint8_t>(infoLog + uint32_t(n), 0);
+    }
 }
 void gl_getShaderiv(Ctx& x, uint32_t shader, uint32_t pname, GuestPtr params) {
     auto* sg = currentSg(x, currentCtx(x));
@@ -1796,13 +1802,13 @@ void gl_getShaderiv(Ctx& x, uint32_t shader, uint32_t pname, GuestPtr params) {
     const ShaderObject& sh = sg->shaders[shader];
     int32_t v = 0;
     if (pname == GL_COMPILE_STATUS) v = sh.compiled ? 1 : 0;
-    else if (pname == GL_INFO_LOG_LENGTH) v = int32_t(sh.infoLog.size());
+    else if (pname == GL_INFO_LOG_LENGTH) v = sh.infoLog.empty() ? 0 : int32_t(sh.infoLog.size() + 1);
     else if (pname == GL_SHADER_SOURCE_LENGTH) v = int32_t(sh.source.size() + 1);
     x.mem.write<int32_t>(params, v);
 }
-void gl_getShaderInfoLog(Ctx& x, uint32_t, int32_t maxLen, GuestPtr length, GuestPtr infoLog) {
-    if (length) x.mem.write<int32_t>(length, 0);
-    if (infoLog && maxLen > 0) x.mem.write<uint8_t>(infoLog, 0);
+void gl_getShaderInfoLog(Ctx& x, uint32_t shader, int32_t maxLen, GuestPtr length, GuestPtr infoLog) {
+    auto* sg = currentSg(x, currentCtx(x));
+    if (sg && sg->shaders.count(shader)) writeGlInfoLog(x, sg->shaders.at(shader).infoLog, maxLen, length, infoLog);
 }
 void gl_getShaderPrecisionFormat(Ctx& x, uint32_t, uint32_t, GuestPtr range, GuestPtr precision) {
     if (range) { x.mem.write<int32_t>(range, 127); x.mem.write<int32_t>(range + 4, 127); }
@@ -1845,106 +1851,87 @@ void gl_bindAttribLocation(Ctx& x, uint32_t prog, uint32_t index, GuestPtr name)
     sg->programs[prog].boundAttribLocations[x.proc.readCString(name)] = int(index);
 }
 
-uint32_t parseGlslType(const std::string& t) {
-    if (t == "float") return GL_FLOAT;
-    if (t == "vec2") return GL_FLOAT_VEC2;
-    if (t == "vec3") return GL_FLOAT_VEC3;
-    if (t == "vec4") return GL_FLOAT_VEC4;
-    if (t == "mat2") return GL_FLOAT_MAT2;
-    if (t == "mat3") return GL_FLOAT_MAT3;
-    if (t == "mat4") return GL_FLOAT_MAT4;
-    if (t == "int") return GL_INT;
-    if (t == "ivec2") return GL_INT_VEC2;
-    if (t == "ivec3") return GL_INT_VEC3;
-    if (t == "ivec4") return GL_INT_VEC4;
-    if (t == "bool") return GL_BOOL;
-    if (t == "sampler2D") return GL_SAMPLER_2D;
-    return GL_FLOAT_VEC4;
+uint32_t shaderGlType(Shader::Type t) {
+    if (t.sampler) return GL_SAMPLER_2D;
+    if (t.matrix) return t.matrix == 2 ? GL_FLOAT_MAT2 : t.matrix == 3 ? GL_FLOAT_MAT3 : GL_FLOAT_MAT4;
+    return t.width == 1 ? GL_FLOAT : t.width == 2 ? GL_FLOAT_VEC2 : t.width == 3 ? GL_FLOAT_VEC3 : GL_FLOAT_VEC4;
 }
-
-std::string lowerStr(std::string s) {
-    for (char& c : s) c = char(std::tolower(uint8_t(c)));
-    return s;
-}
-
 void gl_linkProgram(Ctx& x, uint32_t prog) {
     auto* sg = currentSg(x, currentCtx(x));
     if (!sg || !sg->programs.count(prog)) return;
     ProgramObject& p = sg->programs[prog];
-    p.linked = true;
-    p.attribs.clear();
-    p.uniforms.clear();
-    p.posAttrib = 0; p.colorAttrib = -1; p.texCoordAttrib = -1;
-    p.mvpUniform = -1; p.fragColorUniform = -1; p.samplerUniform = -1;
-    p.usesTexture = false; p.usesVertexColor = false; p.hasConstFragColor = false;
-
-    std::string combinedSrc, fragSrc;
-    for (uint32_t sid : p.shaders) {
-        if (sg->shaders.count(sid)) {
-            combinedSrc += "\n" + sg->shaders[sid].source;
-            if (sg->shaders[sid].type == GL_FRAGMENT_SHADER) fragSrc += "\n" + sg->shaders[sid].source;
+    p.linked = false; p.infoLog.clear();
+    p.attribs.clear(); p.uniforms.clear(); p.uniformValues.clear();
+    p.vertexInputs.clear(); p.vertexUniforms.clear(); p.fragmentUniforms.clear(); p.varyings.clear(); p.varyingWidth = 0;
+    bool vertex = false, fragment = false;
+    auto fail = [&](const std::string& message) { p.infoLog = message; x.proc.logf(LogLevel::Warning, "GLSL program %u: %s", prog, message.c_str()); };
+    for (auto sid : p.shaders) {
+        auto it = sg->shaders.find(sid);
+        if (it == sg->shaders.end() || !it->second.compiled) { fail("attached shader not compiled"); return; }
+        auto& sh = it->second;
+        if (sh.type == GL_VERTEX_SHADER && !vertex) { p.vertex = sh.executable; vertex = true; }
+        else if (sh.type == GL_FRAGMENT_SHADER && !fragment) { p.fragment = sh.executable; fragment = true; }
+        else { fail("exactly one shader per stage supported"); return; }
+    }
+    if (!vertex || !fragment) { fail("both shader stages required"); return; }
+    uint32_t used = 0;
+    for (auto& v : p.vertex.variables) {
+        if (v.storage != Shader::Storage::Attribute) continue;
+        auto bound = p.boundAttribLocations.find(v.name);
+        if (bound != p.boundAttribLocations.end()) {
+            if (used & (1u << bound->second)) { fail("aliased attribute locations unsupported"); return; }
+            used |= 1u << bound->second;
         }
     }
-
-    // Parse attribute and uniform declarations: e.g. `attribute highp vec4 a_position;`
-    std::regex declRx(R"(\b(attribute|uniform)\s+(?:(?:lowp|mediump|highp)\s+)?([A-Za-z0-9_]+)\s+([A-Za-z0-9_]+)(?:\s*\[\s*(\d+)\s*\])?\s*;)");
-    std::sregex_iterator it(combinedSrc.begin(), combinedSrc.end(), declRx), end;
-    uint32_t usedMask = 0;
-    for (auto& [nm, loc] : p.boundAttribLocations) if (loc >= 0 && loc < 16) usedMask |= (1u << loc);
-
-    for (; it != end; ++it) {
-        const std::string qual = (*it)[1].str();
-        const std::string typeStr = (*it)[2].str();
-        const std::string name = (*it)[3].str();
-        const int arrSize = (*it)[4].matched ? std::max(1, std::atoi((*it)[4].str().c_str())) : 1;
-        const uint32_t glType = parseGlslType(typeStr);
-
-        if (qual == "attribute") {
-            bool exists = false;
-            for (auto& a : p.attribs) if (a.name == name) { exists = true; break; }
-            if (exists) continue;
-            int loc = -1;
-            auto bit = p.boundAttribLocations.find(name);
-            if (bit != p.boundAttribLocations.end()) loc = bit->second;
-            else {
-                for (int k = 0; k < 16; ++k) if (!(usedMask & (1u << k))) { loc = k; usedMask |= (1u << k); break; }
+    for (auto& v : p.vertex.variables) {
+        if (v.storage != Shader::Storage::Attribute) continue;
+        auto bound = p.boundAttribLocations.find(v.name);
+        int loc = bound != p.boundAttribLocations.end() ? bound->second : 0;
+        if (bound == p.boundAttribLocations.end()) {
+            while (loc < 16 && (used & (1u << loc))) ++loc;
+            if (loc == 16) { fail("too many attributes"); return; }
+            used |= 1u << loc;
+        }
+        p.attribs.push_back({v.name, shaderGlType(v.type), 1, loc});
+        p.vertexInputs.push_back({v.slot, loc, v.type.width, false});
+    }
+    for (auto* stage : {&p.vertex, &p.fragment}) {
+        auto& bindings = stage == &p.vertex ? p.vertexUniforms : p.fragmentUniforms;
+        for (auto& v : stage->variables) {
+            if (v.storage != Shader::Storage::Uniform) continue;
+            auto it = std::find_if(p.uniforms.begin(), p.uniforms.end(), [&](auto& u) { return u.name == v.name; });
+            int loc;
+            if (it == p.uniforms.end()) {
+                loc = int(p.uniforms.size());
+                p.uniforms.push_back({v.name, shaderGlType(v.type), 1, loc});
+                p.uniformValues[loc].type = shaderGlType(v.type);
+            } else {
+                if (it->type != shaderGlType(v.type)) { fail("uniform type mismatch: " + v.name); return; }
+                loc = it->location;
             }
-            if (loc < 0) loc = 0;
-            p.attribs.push_back({name, glType, arrSize, loc});
-            const std::string ln = lowerStr(name);
-            if (ln.find("pos") != std::string::npos || ln == "vertex" || ln == "a_vertex") p.posAttrib = loc;
-            else if (ln.find("color") != std::string::npos || ln.find("col") != std::string::npos) { p.colorAttrib = loc; p.usesVertexColor = true; }
-            else if (ln.find("tex") != std::string::npos || ln.find("uv") != std::string::npos || ln.find("coord") != std::string::npos) p.texCoordAttrib = loc;
-        } else {
-            bool exists = false;
-            for (auto& u : p.uniforms) if (u.name == name) { exists = true; break; }
-            if (exists) continue;
-            const int loc = int(p.uniforms.size());
-            p.uniforms.push_back({name, glType, arrSize, loc});
-            p.uniformValues[loc].type = glType;
-            const std::string ln = lowerStr(name);
-            if (glType == GL_FLOAT_MAT4 && p.mvpUniform < 0) p.mvpUniform = loc;
-            else if (glType == GL_SAMPLER_2D && p.samplerUniform < 0) { p.samplerUniform = loc; p.usesTexture = true; }
-            else if ((glType == GL_FLOAT_VEC4 || glType == GL_FLOAT_VEC3) && p.fragColorUniform < 0) p.fragColorUniform = loc;
+            bindings.push_back({v.slot, loc, v.type.width, v.type.sampler});
         }
     }
-
-    if (fragSrc.find("texture2D") != std::string::npos) p.usesTexture = true;
-    // Detect constant gl_FragColor = vec4(r, g, b, a) in fragment shader:
-    std::regex vec4Rx(R"(gl_FragColor\s*=\s*vec4\s*\(\s*([0-9.+-eE]+)\s*,\s*([0-9.+-eE]+)\s*,\s*([0-9.+-eE]+)\s*,\s*([0-9.+-eE]+)\s*\))");
-    std::smatch m;
-    if (std::regex_search(fragSrc, m, vec4Rx)) {
-        p.constFragColor = {
-            std::strtof(m[1].str().c_str(), nullptr),
-            std::strtof(m[2].str().c_str(), nullptr),
-            std::strtof(m[3].str().c_str(), nullptr),
-            std::strtof(m[4].str().c_str(), nullptr)
-        };
-        p.hasConstFragColor = true;
+    for (auto& f : p.fragment.variables) {
+        if (f.storage != Shader::Storage::Varying) continue;
+        auto* v = p.vertex.find(f.name);
+        if (!v || v->storage != Shader::Storage::Varying || v->type != f.type || v->count != f.count) { fail("varying mismatch: " + f.name); return; }
+        int width = f.type.width * f.count;
+        if (p.varyingWidth + width > 32) { fail("varying limit exceeded (32 floats)"); return; }
+        p.varyings.push_back({v->slot, f.slot, width, p.varyingWidth});
+        p.varyingWidth += width;
     }
+    p.linked = true;
 }
 
-void gl_useProgram(Ctx& x, uint32_t prog) { if (auto* c = currentCtx(x)) c->currentProgram = prog; }
+void gl_useProgram(Ctx& x, uint32_t prog) {
+    auto* c = currentCtx(x);
+    auto* sg = currentSg(x, c);
+    if (!c || !sg) return;
+    auto it = sg->programs.find(prog);
+    if (prog && (it == sg->programs.end() || !it->second.linked)) { c->lastError = GL_INVALID_OPERATION; return; }
+    c->currentProgram = prog;
+}
 void gl_validateProgram(Ctx&, uint32_t) {}
 void gl_getProgramiv(Ctx& x, uint32_t prog, uint32_t pname, GuestPtr params) {
     auto* sg = currentSg(x, currentCtx(x));
@@ -1952,7 +1939,7 @@ void gl_getProgramiv(Ctx& x, uint32_t prog, uint32_t pname, GuestPtr params) {
     const ProgramObject& p = sg->programs[prog];
     int32_t v = 0;
     if (pname == GL_LINK_STATUS || pname == GL_VALIDATE_STATUS) v = p.linked ? 1 : 0;
-    else if (pname == GL_INFO_LOG_LENGTH) v = int32_t(p.infoLog.size());
+    else if (pname == GL_INFO_LOG_LENGTH) v = p.infoLog.empty() ? 0 : int32_t(p.infoLog.size() + 1);
     else if (pname == GL_ATTACHED_SHADERS) v = int32_t(p.shaders.size());
     else if (pname == GL_ACTIVE_ATTRIBUTES) v = int32_t(p.attribs.size());
     else if (pname == GL_ACTIVE_ATTRIBUTE_MAX_LENGTH) v = 64;
@@ -1960,9 +1947,9 @@ void gl_getProgramiv(Ctx& x, uint32_t prog, uint32_t pname, GuestPtr params) {
     else if (pname == GL_ACTIVE_UNIFORM_MAX_LENGTH) v = 64;
     x.mem.write<int32_t>(params, v);
 }
-void gl_getProgramInfoLog(Ctx& x, uint32_t, int32_t maxLen, GuestPtr length, GuestPtr infoLog) {
-    if (length) x.mem.write<int32_t>(length, 0);
-    if (infoLog && maxLen > 0) x.mem.write<uint8_t>(infoLog, 0);
+void gl_getProgramInfoLog(Ctx& x, uint32_t prog, int32_t maxLen, GuestPtr length, GuestPtr infoLog) {
+    auto* sg = currentSg(x, currentCtx(x));
+    if (sg && sg->programs.count(prog)) writeGlInfoLog(x, sg->programs.at(prog).infoLog, maxLen, length, infoLog);
 }
 
 int32_t gl_getAttribLocation(Ctx& x, uint32_t prog, GuestPtr name) {
@@ -1971,12 +1958,7 @@ int32_t gl_getAttribLocation(Ctx& x, uint32_t prog, GuestPtr name) {
     ProgramObject& p = sg->programs[prog];
     const std::string nm = x.proc.readCString(name);
     for (const auto& a : p.attribs) if (a.name == nm) return a.location;
-    auto bit = p.boundAttribLocations.find(nm);
-    if (bit != p.boundAttribLocations.end()) return bit->second;
-    // Dynamically allocate if queried cleanly
-    const int loc = int(p.attribs.size()) < 16 ? int(p.attribs.size()) : 0;
-    p.attribs.push_back({nm, GL_FLOAT_VEC4, 1, loc});
-    return loc;
+    return -1;
 }
 
 int32_t gl_getUniformLocation(Ctx& x, uint32_t prog, GuestPtr name) {
@@ -1986,9 +1968,7 @@ int32_t gl_getUniformLocation(Ctx& x, uint32_t prog, GuestPtr name) {
     std::string nm = x.proc.readCString(name);
     if (auto br = nm.find('['); br != std::string::npos) nm.erase(br);
     for (const auto& u : p.uniforms) if (u.name == nm) return u.location;
-    const int loc = int(p.uniforms.size());
-    p.uniforms.push_back({nm, GL_FLOAT_VEC4, 1, loc});
-    return loc;
+    return -1;
 }
 
 void writeActiveVar(Ctx& x, const ShaderVar& v, int32_t bufSize, GuestPtr length, GuestPtr size, GuestPtr type, GuestPtr name) {
@@ -2028,14 +2008,13 @@ void gl_vertexAttrib4fv(Ctx& x, uint32_t idx, GuestPtr v) {
         c->genericAttrib[idx] = {x.mem.read<float>(v), x.mem.read<float>(v + 4), x.mem.read<float>(v + 8), x.mem.read<float>(v + 12)};
 }
 
-UniformValue* progUniform(Ctx& x, int32_t loc, ProgramObject** outProg = nullptr) {
+UniformValue* progUniform(Ctx& x, int32_t loc) {
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || !c->currentProgram || loc < 0 || !sg->programs.count(c->currentProgram)) return nullptr;
     ProgramObject& p = sg->programs[c->currentProgram];
-    if (outProg) *outProg = &p;
+    if (!p.linked || !p.uniformValues.count(loc)) { c->lastError = GL_INVALID_OPERATION; return nullptr; }
     UniformValue& u = p.uniformValues[loc];
-    u.isSet = true;
     return &u;
 }
 
@@ -2051,17 +2030,13 @@ void gl_uniform1iv(Ctx& x, int32_t loc, int32_t count, GuestPtr v) {
 void gl_uniform1f(Ctx& x, int32_t loc, float v0) { if (auto* u = progUniform(x, loc)) u->f[0] = v0; }
 void gl_uniform2f(Ctx& x, int32_t loc, float v0, float v1) { if (auto* u = progUniform(x, loc)) { u->f[0] = v0; u->f[1] = v1; } }
 void gl_uniform3f(Ctx& x, int32_t loc, float v0, float v1, float v2) {
-    ProgramObject* p = nullptr;
-    if (auto* u = progUniform(x, loc, &p)) {
-        u->f[0] = v0; u->f[1] = v1; u->f[2] = v2; u->f[3] = 1.0f;
-        if (p && p->fragColorUniform < 0) p->fragColorUniform = loc;
+    if (auto* u = progUniform(x, loc)) {
+        u->f[0] = v0; u->f[1] = v1; u->f[2] = v2;
     }
 }
 void gl_uniform4f(Ctx& x, int32_t loc, float v0, float v1, float v2, float v3) {
-    ProgramObject* p = nullptr;
-    if (auto* u = progUniform(x, loc, &p)) {
+    if (auto* u = progUniform(x, loc)) {
         u->f[0] = v0; u->f[1] = v1; u->f[2] = v2; u->f[3] = v3;
-        if (p && p->fragColorUniform < 0) p->fragColorUniform = loc;
     }
 }
 void gl_uniform1fv(Ctx& x, int32_t loc, int32_t c, GuestPtr v) { if (c > 0 && v) gl_uniform1f(x, loc, x.mem.read<float>(v)); }
@@ -2072,15 +2047,13 @@ void gl_uniform4fv(Ctx& x, int32_t loc, int32_t c, GuestPtr v) {
 }
 void gl_uniformMatrix4fv(Ctx& x, int32_t loc, int32_t count, uint32_t transpose, GuestPtr value) {
     if (count <= 0 || !value) return;
-    ProgramObject* p = nullptr;
-    if (auto* u = progUniform(x, loc, &p)) {
+    if (auto* u = progUniform(x, loc)) {
         x.mem.copyOut(u->f, value, 64);
         if (transpose & 0xFF) {
             for (int r = 0; r < 4; ++r)
                 for (int c = r + 1; c < 4; ++c)
                     std::swap(u->f[c * 4 + r], u->f[r * 4 + c]);
         }
-        if (p && p->mvpUniform < 0) p->mvpUniform = loc;
     }
 }
 void gl_uniformMatrix3fv(Ctx& x, int32_t loc, int32_t count, uint32_t, GuestPtr value) {
@@ -2100,6 +2073,7 @@ struct ShadedVertex {
     float screenX = 0, screenY = 0, screenZ = 0;
     Vec4 color{1, 1, 1, 1};
     float u = 0, v = 0;
+    std::array<float, 32> varyings{};
 };
 
 int typeBytes(uint32_t type) {
@@ -2144,6 +2118,42 @@ Vec4 fetchAttribute(Ctx& x, SharegroupData& sg, const ArrayPointer& ap, int vert
     return out;
 }
 
+void loadShaderUniforms(const ProgramObject& p, const std::vector<ProgramObject::Binding>& bindings, Shader::Values& values) {
+    for (auto& b : bindings) {
+        auto it = p.uniformValues.find(b.location);
+        if (it == p.uniformValues.end()) continue;
+        if (b.sampler) values[b.slot] = float(it->second.i[0]);
+        else std::copy_n(it->second.f, b.width, &values[b.slot]);
+    }
+}
+void sampleShaderTexture(void* opaque, int unit, float u, float v, float* rgba) {
+    auto& state = *static_cast<std::pair<ContextData*, SharegroupData*>*>(opaque);
+    Vec4 color{0, 0, 0, 1};
+    if (unit >= 0 && unit < 8 && std::isfinite(u) && std::isfinite(v)) {
+        auto it = state.second->textures.find(state.first->boundTextures[unit]);
+        if (it != state.second->textures.end()) color = it->second.sample(u, v);
+    }
+    for (int i = 0; i < 4; ++i) rgba[i] = color[i];
+}
+Vec4 executeFragment(ContextData& c, SharegroupData& sg, const ShadedVertex& a, const ShadedVertex& b, const ShadedVertex& d,
+                     float w0, float w1, float w2) {
+    const auto& p = sg.programs.at(c.currentProgram);
+    Shader::Values values;
+    p.fragment.initialize(values);
+    loadShaderUniforms(p, p.fragmentUniforms, values);
+    float denominator = w0 * a.invW + w1 * b.invW + w2 * d.invW;
+    if (std::abs(denominator) < 1e-12f) return {0, 0, 0, 0};
+    w0 = w0 * a.invW / denominator; w1 = w1 * b.invW / denominator; w2 = w2 * d.invW / denominator;
+    for (auto& varying : p.varyings) for (int i = 0; i < varying.width; ++i) {
+        int offset = varying.offset + i;
+        values[varying.fragmentSlot + i] = w0 * a.varyings[offset] + w1 * b.varyings[offset] + w2 * d.varyings[offset];
+    }
+    std::pair<ContextData*, SharegroupData*> state{&c, &sg};
+    p.fragment.execute(values, sampleShaderTexture, &state);
+    const auto* f = &values[p.fragment.output];
+    return {f[0], f[1], f[2], f[3]};
+}
+
 ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx) {
     ShadedVertex sv;
     if (c.api == 1 || c.currentProgram == 0) {
@@ -2156,31 +2166,20 @@ ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx) {
         const Mat4 mvp = c.projectionStack.back() * c.modelviewStack.back();
         sv.clip = mvp.apply(pos);
     } else {
-        const ProgramObject& p = sg.programs[c.currentProgram];
-        const int posLoc = (p.posAttrib >= 0 && p.posAttrib < 16) ? p.posAttrib : 0;
-        const Vec4 pos = fetchAttribute(x, sg, c.attribPtr[posLoc], idx, c.genericAttrib[posLoc]);
-        if (p.mvpUniform >= 0 && p.uniformValues.count(p.mvpUniform) && p.uniformValues.at(p.mvpUniform).isSet) {
-            Mat4 mvp;
-            std::memcpy(mvp.m, p.uniformValues.at(p.mvpUniform).f, 64);
-            sv.clip = mvp.apply(pos);
-        } else {
-            sv.clip = pos;
+        const ProgramObject& p = sg.programs.at(c.currentProgram);
+        Shader::Values values;
+        p.vertex.initialize(values);
+        loadShaderUniforms(p, p.vertexUniforms, values);
+        for (auto& binding : p.vertexInputs) {
+            const auto attr = fetchAttribute(x, sg, c.attribPtr[binding.location], idx, c.genericAttrib[binding.location]);
+            for (int i = 0; i < binding.width; ++i) values[binding.slot + i] = attr[i];
         }
-        if (p.colorAttrib >= 0 && p.colorAttrib < 16) {
-            sv.color = fetchAttribute(x, sg, c.attribPtr[p.colorAttrib], idx, c.genericAttrib[p.colorAttrib]);
-        } else if (p.fragColorUniform >= 0 && p.uniformValues.count(p.fragColorUniform) && p.uniformValues.at(p.fragColorUniform).isSet) {
-            const float* f = p.uniformValues.at(p.fragColorUniform).f;
-            sv.color = {f[0], f[1], f[2], f[3]};
-        } else if (p.hasConstFragColor) {
-            sv.color = p.constFragColor;
-        } else {
-            sv.color = {1, 1, 1, 1};
-        }
-        if (p.texCoordAttrib >= 0 && p.texCoordAttrib < 16) {
-            const Vec4 tc = fetchAttribute(x, sg, c.attribPtr[p.texCoordAttrib], idx, c.genericAttrib[p.texCoordAttrib]);
-            sv.u = tc.x;
-            sv.v = tc.y;
-        }
+        std::pair<ContextData*, SharegroupData*> state{&c, &sg};
+        p.vertex.execute(values, sampleShaderTexture, &state);
+        const float* f = &values[p.vertex.output];
+        sv.clip = {f[0], f[1], f[2], f[3]};
+        for (auto& varying : p.varyings)
+            std::copy_n(&values[varying.vertexSlot], varying.width, &sv.varyings[varying.offset]);
     }
     const float w = (std::abs(sv.clip.w) > 1e-6f) ? sv.clip.w : 1.0f;
     sv.invW = 1.0f / w;
@@ -2259,17 +2258,13 @@ const Texture2D* boundTextureForDraw(ContextData& c, SharegroupData& sg) {
         const uint32_t tid = c.boundTextures[0];
         return (tid && sg.textures.count(tid)) ? &sg.textures.at(tid) : nullptr;
     }
-    const ProgramObject& p = sg.programs[c.currentProgram];
-    if (!p.usesTexture && p.texCoordAttrib < 0) return nullptr;
-    int unit = 0;
-    if (p.samplerUniform >= 0 && p.uniformValues.count(p.samplerUniform))
-        unit = p.uniformValues.at(p.samplerUniform).i[0] & 7;
-    const uint32_t tid = c.boundTextures[unit];
-    return (tid && sg.textures.count(tid)) ? &sg.textures.at(tid) : nullptr;
+    return nullptr; // GLES2 samples each declared sampler through the interpreter.
 }
 
 void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
                        const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2) {
+    for (auto* v : {&v0, &v1, &v2})
+        if (!std::isfinite(v->screenX) || !std::isfinite(v->screenY) || !std::isfinite(v->screenZ)) return;
     const float area = (v1.screenX - v0.screenX) * (v2.screenY - v0.screenY) -
                        (v1.screenY - v0.screenY) * (v2.screenX - v0.screenX);
     if (std::abs(area) < 1e-4f) return;
@@ -2288,10 +2283,12 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
         clipY1 = std::clamp(c.scissor[1] + c.scissor[3], 0, rt.height);
     }
 
-    const int minX = std::max(clipX0, int(std::floor(std::min({v0.screenX, v1.screenX, v2.screenX}))));
-    const int maxX = std::min(clipX1 - 1, int(std::ceil(std::max({v0.screenX, v1.screenX, v2.screenX}))));
-    const int minY = std::max(clipY0, int(std::floor(std::min({v0.screenY, v1.screenY, v2.screenY}))));
-    const int maxY = std::min(clipY1 - 1, int(std::ceil(std::max({v0.screenY, v1.screenY, v2.screenY}))));
+    // Clamp in floating point before conversion: valid shaders can produce
+    // coordinates outside the range of a host int.
+    const int minX = int(std::clamp(std::floor(std::min({v0.screenX, v1.screenX, v2.screenX})), float(clipX0), float(clipX1)));
+    const int maxX = int(std::clamp(std::ceil(std::max({v0.screenX, v1.screenX, v2.screenX})), float(clipX0 - 1), float(clipX1 - 1)));
+    const int minY = int(std::clamp(std::floor(std::min({v0.screenY, v1.screenY, v2.screenY})), float(clipY0), float(clipY1)));
+    const int maxY = int(std::clamp(std::ceil(std::max({v0.screenY, v1.screenY, v2.screenY})), float(clipY0 - 1), float(clipY1 - 1)));
     if (minX > maxX || minY > maxY) return;
 
     const float invArea = 1.0f / area;
@@ -2317,6 +2314,10 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
             if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
 
             const float z = w0 * v0.screenZ + w1 * v1.screenZ + w2 * v2.screenZ;
+            if (c.api != 1 && c.currentProgram != 0) {
+                writeFragment(c, rt, px, py, z, executeFragment(c, sg, v0, v1, v2, w0, w1, w2));
+                continue;
+            }
             Vec4 col{
                 w0 * v0.color.x + w1 * v1.color.x + w2 * v2.color.x,
                 w0 * v0.color.y + w1 * v1.color.y + w2 * v2.color.y,
@@ -2346,6 +2347,10 @@ void rasterizeLine(ContextData& c, SharegroupData& sg, RenderTarget& rt,
         const int py = int(v0.screenY + dy * t);
         if (px < 0 || px >= rt.width || py < 0 || py >= rt.height) continue;
         const float z = v0.screenZ + (v1.screenZ - v0.screenZ) * t;
+        if (c.api != 1 && c.currentProgram != 0) {
+            writeFragment(c, rt, px, py, z, executeFragment(c, sg, v0, v1, v1, 1 - t, t, 0));
+            continue;
+        }
         Vec4 col{
             v0.color.x + (v1.color.x - v0.color.x) * t,
             v0.color.y + (v1.color.y - v0.color.y) * t,
@@ -2364,6 +2369,10 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || indices.empty()) return;
+    if (c->api != 1 && c->currentProgram != 0) {
+        auto it = sg->programs.find(c->currentProgram);
+        if (it == sg->programs.end() || !it->second.linked) { c->lastError = GL_INVALID_OPERATION; return; }
+    }
     RenderTarget rt = activeTarget(x, *c, *sg);
     if (!rt.rgba || rt.width <= 0 || rt.height <= 0) return;
 
@@ -2413,7 +2422,7 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
                     for (int dx = -r; dx <= r; ++dx) {
                         const int px = cx + dx, py = cy + dy;
                         if (px >= 0 && px < rt.width && py >= 0 && py < rt.height)
-                            writeFragment(*c, rt, px, py, v.screenZ, v.color);
+                            writeFragment(*c, rt, px, py, v.screenZ, c->api != 1 && c->currentProgram != 0 ? executeFragment(*c, *sg, v, v, v, 1, 0, 0) : v.color);
                     }
                 }
             }
