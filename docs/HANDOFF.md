@@ -48,10 +48,15 @@ tools/compat.py scan <ipas|apps|dirs> --out compat --seconds 30 [--relaunch] [--
 ```
 
 * **CI** is in `.github/workflows/ci.yml`. The Linux job runs on every push. The macOS job
-  (Release device app, **unsigned IPA artifact `macos-results` → `HydrogenVM-unsigned.ipa`**,
+  (Release device app, **unsigned IPA artifact `HydrogenVM-device-ipa` → `HydrogenVM-unsigned.ipa`**,
   simulator run) runs only when the commit message contains **`[mac]`** or on
   workflow_dispatch. A new push cancels the in-progress run. Reports go to the `ci-reports`
   branch. Artifact downloads 403 from the Claude sandbox, so the user downloads them himself.
+  The device artifact now requires successful package checks and the simulator
+  test; `macos-results` holds diagnostics even on failure. See
+  [`DEVELOPMENT_AND_RELEASE.md`](DEVELOPMENT_AND_RELEASE.md). This updated Apple
+  build path has not been executed from the Windows workstation; Actions remains
+  subject to the account billing block.
 * The iOS app is in `app/` (XcodeGen `project.yml`, Swift 6, iOS 26 target). Swift can only be
   compiled by the macOS CI job; there is no local Swift toolchain on Linux.
 * Commit trailers the user's tooling expects: `Co-Authored-By: …` and `Claude-Session: …`.

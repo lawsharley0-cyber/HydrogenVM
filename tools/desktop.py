@@ -2,6 +2,7 @@
 """Local desktop viewer for hvm; no server, guest network, or asset patches."""
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -53,7 +54,7 @@ def prepare_bundle(hvm, ipa, root, digest, log):
                 raise ValueError('Sandbox exists without its app bundle. Use a different --home; existing files were preserved.')
             subprocess.run([str(hvm), 'import', str(ipa), str(root)], stdout=log, stderr=subprocess.STDOUT, check=True)
         stamp.write_text(digest + '\n')
-        return bundle, container
+        return bundle, container, info.get('CFBundleDisplayName') or info.get('CFBundleName') or app_name[:-4]
 
 
 def read_frame(path):
@@ -97,6 +98,7 @@ def main():
     parser.add_argument('--home', required=True, type=Path)
     parser.add_argument('--out', required=True, type=Path)
     parser.add_argument('--pinned-clash', action='store_true')
+    parser.add_argument('--versioned-home', action='store_true', help='Keep each IPA hash in its own persistent sandbox')
     parser.add_argument('--seconds', type=float, default=0, help='Automatically stop after this many seconds')
     parser.add_argument('--exit-on-stop', action='store_true')
     parser.add_argument('--tap', help='Schedule one touch through the live input bridge: X,Y@seconds')
@@ -105,6 +107,8 @@ def main():
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     if args.pinned_clash and digest != PINNED_CLASH_SHA256:
         parser.error('Pinned Clash client checksum does not match')
+    if args.versioned_home:
+        args.home = args.home / digest
     args.home.mkdir(parents=True, exist_ok=True)
     session = args.out / (time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:6])
     session.mkdir(parents=True)
@@ -116,7 +120,7 @@ def main():
     desktop = pygame.display.get_desktop_sizes()[0]
     height = max(400, min(852, int(desktop[1] * 0.8)))
     window = pygame.display.set_mode((round(height * 320 / 568), height), pygame.RESIZABLE)
-    pygame.display.set_caption('HydrogenVM — starting Clash Royale')
+    pygame.display.set_caption('HydrogenVM — starting app')
     font = pygame.font.Font(None, 24)
     clock = pygame.time.Clock()
     surface, scale = None, 2.0
@@ -137,7 +141,18 @@ def main():
         controls.touch()
         frame = ipc / 'frame.rgba'
         with (session / 'runtime.log').open('w') as log, controls.open('a', buffering=1) as control:
-            bundle, container = prepare_bundle(args.hvm.resolve(), args.ipa.resolve(), args.home.resolve(), digest, log)
+            bundle, container, display_name = prepare_bundle(args.hvm.resolve(), args.ipa.resolve(), args.home.resolve(), digest, log)
+            repository = Path(__file__).resolve().parent.parent
+            commit = subprocess.run(['git', '-C', str(repository), 'rev-parse', 'HEAD'], capture_output=True, text=True)
+            dirty = subprocess.run(['git', '-C', str(repository), 'status', '--porcelain'], capture_output=True, text=True)
+            with args.hvm.open('rb') as binary:
+                engine_digest = hashlib.file_digest(binary, 'sha256').hexdigest()
+            (session / 'session.json').write_text(json.dumps({
+                'app': display_name, 'ipaSha256': digest, 'engineSha256': engine_digest,
+                'sourceCommit': commit.stdout.strip() if commit.returncode == 0 else None,
+                'sourceTreeDirty': bool(dirty.stdout.strip()) if dirty.returncode == 0 else None,
+                'sandbox': str(container), 'hostOnly': True,
+            }, indent=2) + '\n')
             command = [str(args.hvm.resolve()), 'run', str(bundle), '--home', str(container),
                        '--frame-file', str(frame), '--input-file', str(controls),
                        '--screenshot', str(session / 'final.png'), '--report', str(session / 'report.json')]
@@ -225,13 +240,14 @@ def main():
                             process.terminate()
                             failed = True
                     else:
-                        pygame.display.set_caption('HydrogenVM — Clash Royale | S screenshot | B/F background/foreground | Esc save/stop')
+                        pygame.display.set_caption(f'HydrogenVM — {display_name} | S screenshot | B/F background/foreground | Esc save/stop')
                     window.fill((18, 20, 28))
                     if surface:
                         rect = viewport(window.get_size(), surface.get_size())
                         window.blit(pygame.transform.scale(surface, rect.size), rect)
                     else:
-                        text = font.render('Waiting for the first frame…', True, (220, 225, 235))
+                        message = 'Stopped — see runtime.log' if code is not None else 'Waiting for the first frame…'
+                        text = font.render(message, True, (220, 225, 235))
                         window.blit(text, (12, 24))
                     pygame.display.flip()
                     clock.tick(30)

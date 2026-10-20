@@ -7,6 +7,8 @@ resetting, or modifying the branch. GitHub Actions is not needed.
 On this workstation, the task's `outputs/` folder contains Windows launchers:
 
 - **Play Clash Royale.cmd**: build and open a live desktop window.
+- **Open Any IPA.cmd**: choose another IPA, build and open its desktop window.
+- **Test an App Folder.cmd**: select a folder and scan its IPAs/`.app` bundles.
 - **Run Runtime Checks.cmd**: build and run the focused runtime suite.
 - **Run Regression Probes.cmd**: run Clash and the three older-game probes.
 - **Capture Startup Trace.cmd**: capture 30 seconds of trace, shaders, report and
@@ -35,6 +37,10 @@ bundle; later launches run the installed `.app` directly. **The raw CLI IPA
 importer replaces an app container**, so the viewer deliberately does not import
 over an existing sandbox. A different IPA hash requires a different home. The
 launcher also prevents two desktop/trace sessions from using the same state root.
+Generic IPA launches use a separate sandbox under `/var/tmp/hvm-local/apps/`
+for each client hash. They also record app/engine hashes, commit, dirty-tree state
+and sandbox path in `session.json`. See `DEVELOPMENT_AND_RELEASE.md` for the
+shared-runtime development loop, app support limits and iPhone packaging gates.
 
 Workstation paths (Linux/WSL):
 
@@ -55,6 +61,8 @@ does not delete the app sandbox.
 
 ```sh
 bash tools/local_test.sh play /path/to/pinned-client.ipa /path/to/results
+bash tools/local_test.sh app /path/to/another-client.ipa /path/to/results
+bash tools/local_test.sh scan /path/to/app-collection /path/to/results
 bash tools/local_test.sh check /path/to/pinned-client.ipa /path/to/results
 bash tools/local_test.sh regress /path/to/pinned-client.ipa /path/to/results
 bash tools/local_test.sh trace /path/to/pinned-client.ipa /path/to/results
