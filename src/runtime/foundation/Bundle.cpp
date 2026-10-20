@@ -617,7 +617,6 @@ enum : uint32_t {
     kNSItemReplacementDirectory = 99, kNSAllApplicationsDirectory = 100, kNSAllLibrariesDirectory = 101,
 };
 std::vector<std::string> searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool expand) {
-    if (!(mask & 1)) return {};   // only NSUserDomainMask exists in the sandbox
     std::string rel;
     switch (dir) {
         case kNSDocumentDirectory: rel = "Documents"; break;
@@ -641,11 +640,29 @@ std::vector<std::string> searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool e
         case kNSItemReplacementDirectory: rel = "tmp"; break;
         default: return {};
     }
-    return {(expand ? x.proc.homePath() : std::string("~")) + "/" + rel};
+    std::vector<std::string> paths;
+    if (mask & 1) paths.push_back((expand ? x.proc.homePath() : std::string("~")) + "/" + rel);
+    // There is no shared guest filesystem yet. Local-domain locations have a
+    // separate per-process home-backed root, rather than exposing host /Library.
+    // Personal folders (Documents, Desktop, etc.) do not have a local domain.
+    const bool localDirectory =
+        dir == kNSLibraryDirectory || dir == kNSAllLibrariesDirectory ||
+        dir == kNSCachesDirectory || dir == kNSApplicationSupportDirectory ||
+        dir == kNSApplicationDirectory || dir == kNSAllApplicationsDirectory ||
+        dir == kNSDemoApplicationDirectory || dir == kNSAdminApplicationDirectory ||
+        dir == kNSDeveloperApplicationDirectory || dir == kNSDeveloperDirectory ||
+        dir == kNSDocumentationDirectory || dir == kNSInputMethodsDirectory ||
+        dir == kNSPreferencePanesDirectory;
+    if ((mask & 2) && localDirectory)
+        paths.push_back(x.proc.homePath() + "/LocalDomain/" + rel);
+    return paths;
 }
 id f_searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool expand) {
     std::vector<id> out;
     for (auto& s : searchPaths(x, dir, mask, expand)) out.push_back(makeString(x, s));
+    if (x.proc.config().traceCalls)
+        x.proc.logf(LogLevel::Debug, "NSSearchPathForDirectoriesInDomains(dir=%u, mask=0x%x, expand=%u) -> %zu paths",
+                    dir, mask, unsigned(expand), out.size());
     return makeArray(x, out);
 }
 id f_homeDirectory(Ctx& x) { return makeString(x, x.proc.homePath()); }

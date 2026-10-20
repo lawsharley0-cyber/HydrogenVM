@@ -265,6 +265,42 @@ int runFullSubsystemTests() {
     cpu.r[CPU::kSP] = 0xBF000000u - 256;
     const uint32_t outerPool = r.poolPush();
 
+    // Directory search must distinguish user and local domains. Clash Royale
+    // uses NSCachesDirectory (13) with NSLocalDomainMask (2) during startup.
+    {
+        auto paths = [&](uint32_t directory, uint32_t domains, uint32_t expand) {
+            const auto symbol = proc.lookupSymbol("_NSSearchPathForDirectoriesInDomains");
+            if (!symbol) return std::vector<ObjC::id>{};
+            const auto array = ObjC::id(proc.callGuest(cpu, *symbol, {directory, domains, expand}));
+            return Foundation::arrayItems(cx, array);
+        };
+        const auto user = paths(13, 1, 1);
+        const auto local = paths(13, 2, 1);
+        const auto all = paths(13, 0xFFFF, 1);
+        const std::string userPath = cfg.homePath + "/Library/Caches";
+        const std::string localPath = cfg.homePath + "/LocalDomain/Library/Caches";
+        check(user.size() == 1 && Foundation::utf8(cx, user[0]) == userPath,
+              "user-domain cache search keeps the app's existing cache path");
+        check(local.size() == 1 && Foundation::utf8(cx, local[0]) == localPath,
+              "local-domain cache search returns a separate guest-backed directory");
+        check(all.size() == 2 && Foundation::utf8(cx, all[0]) == userPath &&
+              Foundation::utf8(cx, all[1]) == localPath,
+              "all-domain cache search returns user then local without duplicates");
+        const auto unexpanded = paths(13, 2, 0);
+        const auto tilde = paths(13, 1, 0);
+        check(unexpanded.size() == 1 && Foundation::utf8(cx, unexpanded[0]) == localPath &&
+              tilde.size() == 1 && Foundation::utf8(cx, tilde[0]) == "~/Library/Caches",
+              "tilde expansion affects user paths but not absolute local-domain paths");
+        check(paths(13, 0, 1).empty() && paths(13, 4, 1).empty() &&
+              paths(9, 2, 1).empty() && paths(0xFFFF, 2, 1).empty(),
+              "invalid, unmounted network, and personal local-domain searches stay empty");
+        const ObjC::id fm = ObjC::id(r.send(cpu, r.getClass("NSFileManager"), "defaultManager"));
+        const auto urls = Foundation::arrayItems(cx, ObjC::id(r.send(cpu, fm, "URLsForDirectory:inDomains:", {13, 2})));
+        check(urls.size() == 1 &&
+              Foundation::utf8(cx, ObjC::id(r.send(cpu, urls[0], "path"))) == localPath,
+              "NSFileManager URL directory search agrees with the C path API");
+    }
+
     // 2a. UIScrollView
     {
         const ObjC::Class svCls = r.getClass("UIScrollView");
