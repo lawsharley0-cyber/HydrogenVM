@@ -1,5 +1,18 @@
 # HydrogenVM — handoff (2026-10-20)
 
+## Active Clash Royale continuation (updated after runtime fixes)
+
+For the current user-requested Clash Royale work, read
+[`CLASH_ROYALE_RESTORATION.md`](CLASH_ROYALE_RESTORATION.md) first.
+Tested commit `239a0ab`: **38 runtime checks passed**; directory-domain and
+fixed-offset NSTimeZone blockers are resolved. Next strict blocker:
+`mach_port_mod_refs` in the bundled crash reporter; exploratory mode next
+reaches allocator/CoreText font loading gaps. The pinned IPA already has
+`OfflineMode=true`; native offline initialization has not yet been validated.
+No NPC match works yet. These current goals take precedence for the Clash
+task over the older general roadmap below. Work remains on `gemini-merge`.
+
+
 JIT-less emulator that runs **32-bit iOS apps (.ipa, armv6/armv7) on modern iPhones**.
 Sideload-only iPhone app, bundle id `com.lfull.HydrogenVM`.
 Repo `github.com/lawsharley0-cyber/HydrogenVM`, **all work on branch `gemini-merge`**.

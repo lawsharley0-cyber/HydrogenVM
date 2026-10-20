@@ -2,8 +2,101 @@
 
 Date: 2026-10-20. Work branch: `gemini-merge`.
 
-This is a tested compatibility baseline and restoration design, not a playable
-offline mod. No client bytes or runtime behavior were changed.
+## Current status after implemented fixes
+
+Tested engine commit: `239a0ab818b2ddb3a7f146dbbef2cae98e7aba5c` on
+`gemini-merge`. [Completed run](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39484502121)
+and [diagnostics artifact](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39484502121/artifacts/12292748070).
+
+**38 runtime checks passed, 0 failed. Clash Royale is not playable yet.**
+The two original startup blockers are fixed in the shared runtime:
+
+1. **Directory domains.** The pinned binary's instructions establish
+   `NSSearchPathForDirectoriesInDomains(9, 0xFFFF, true)`, followed by
+   `NSSearchPathForDirectoriesInDomains(13, 2, true)`. The latter means
+   Caches in the local domain. Previously, every domain mask without the user
+   bit returned an empty array.
+   `Bundle.cpp` now supplies supported local-domain locations under
+   `<app home>/LocalDomain/`, with user locations first for combined masks.
+   There is no shared guest filesystem mounted; these paths deliberately use
+   a separate per-app root rather than host `/Library`. Searches do not create
+   directories. Six checks cover cache paths, ordering, tilde expansion,
+   invalid/unmounted domains and NSFileManager URL parity.
+2. **Fixed-offset time zones.** `Misc.cpp` implements
+   `+[NSTimeZone timeZoneForSecondsFromGMT:]`, stable GMT names and offsets,
+   date-independent offset queries and no DST for fixed zones. Explicit
+   GMT/UTC names no longer resolve to the host's local zone. Four additional
+   checks cover zero/positive/negative offsets, names, date independence and
+   named UTC. This does not expand NSDateFormatter's existing support for
+   arbitrary nonzero timezone formatting.
+
+Clash Royale now reaches `GameMain::init` and its bundled HockeyApp/PLCrashReporter
+startup. The **next strict blocker** is:
+`mach_port_mod_refs` at return address `0x00149863` in
+`+[BITPLCrashReporter initialize] + 0x62`. Recorded arguments:
+task `0x103`, port `0x103`, right `0` (send), delta `1`.
+
+The exploratory run advances to `DataLoaderFont::load` and an original
+Debugger assertion. Reached gaps include `CFAllocatorCreate`,
+`CGContextSetAllowsFontSubpixelPositioning`,
+`CGContextSetShouldSubpixelQuantizeFonts`,
+`CGFontCreateWithDataProvider`, and `CTFontCreateWithGraphicsFont`.
+It also encounters crash-reporting helpers `backtrace_symbols_fd` and
+`vm_read_overwrite`. These exploratory results do not establish the next
+strict call order after the Mach API is fixed.
+
+All three older-game probes still run without new runtime misses.
+Angry Birds and Art of Glow produce varied frames; Tiny Tower's final frame
+is still black, as in the initial baseline. These are short Linux probes,
+not device or full-gameplay validation.
+
+### Native offline mode discovered
+
+Static inspection of the exact pinned IPA establishes:
+
+- `res/settings.csv`: ServerURL `localhost`, port `9339`,
+  **OfflineMode `true`**, placeholder asset/security URLs `http://asdf`.
+- Binary references `../offline_avatar.json`, `../offline_home.json`,
+  `GameMode::saveOffline(String const&)` and an offline selected-deck variable.
+- The only bundled JSON assets are `res/fingerprint.json` (version
+  `2.1306.1`) and `res/level/starting_home.json`.
+- The starting-home template has decks, collection, selected-deck and chest
+  state. The offline avatar/home save files are **not bundled**.
+
+See [static diagnosis](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39483383480)
+and `.github/workflows/clash-static.yml` for the reproducible inspection.
+
+This describes the archived package, not verified pristine retail settings.
+No one in this investigation changed its settings or patched its executable.
+The flag and symbols are promising, but do not prove native offline mode can
+initialize a profile, launch NPC battles, or save/reload successfully.
+
+### Immediate continuation goals
+
+1. Resolve the observed Mach send-right reference operation consistently with
+   HydrogenVM's existing synthetic task/thread ports. Inspect
+   `src/runtime/libc/System.cpp` and `Pthread.cpp`; do not register blanket
+   successful no-ops for unimplemented IPC or disable array/assert checks.
+   Alternatively, a deliberately opt-in, hash-verified restoration profile
+   could disable optional crash reporting; that would be a game-specific
+   change and must be tested and documented as such.
+2. Re-run strict mode, then implement the actual allocator/font prerequisites
+   as reached. `CGFontCreateWithDataProvider` currently reports a missing
+   function and uses a system-font fallback, while CoreText support is largely
+   absent. Replacing missing calls with zero is not a working font renderer.
+3. Reach a rendered loading/menu screen, then test whether this client's
+   **already-enabled native offline mode** creates the missing saves from its
+   bundled starting template. Prefer this verified path over assuming that a
+   replacement network backend is necessary.
+4. Validate one NPC match and save/relaunch, then expand arenas. If the native
+   offline path is insufficient, investigate the specific missing protocol or
+   state handling before choosing an in-process backend.
+
+The previous baseline and research follow for context.
+
+
+The initial investigation below preceded the runtime fixes described above;
+at that baseline, no client bytes or runtime behavior had been changed.
 
 ## Reproduce and review
 
@@ -32,7 +125,7 @@ calls both its version and build **2.1306.1**.
 - [Source release](https://github.com/astralsc/clashroyale_archive/releases/tag/Clients).
 - The probe verifies the checksum before inspecting/running the app.
 
-## Results
+## Initial baseline results (before fixes)
 
 The host engine built successfully. `build-clash/hvm_tests fulltest`:
 **28 passed, 0 failed**.
@@ -49,7 +142,7 @@ performance results. The frame counts are the scanner's reported counters.
 The Tiny Tower black frame is unresolved; this investigation made no runtime
 change, so it is not evidence of a newly introduced regression.
 
-## First Clash Royale blocker
+## Initial directory blocker (now resolved)
 
 The traced sequence near the end of
 `-[AppController application:didFinishLaunchingWithOptions:]` is:
@@ -68,11 +161,9 @@ The relevant emulator implementation is `searchPaths` in
 `src/runtime/foundation/Bundle.cpp`. It returns an empty vector for unsupported
 directory enum values or masks without `NSUserDomainMask`.
 
-**Still needed:** capture the directory enum, domain mask and expansion flag
-at the second call, then verify the appropriate iOS directory behavior.
-The existing trace identifies the API and caller but does not print those
-argument values. Do not guess the requested folder, suppress NSArray bounds
-checks, or fabricate a successful server login to conceal this crash.
+**Resolved:** static disassembly identified the second call as `(13, 2, true)`.
+The shared directory-domain implementation and its tests are described in the
+current-status section above. NSArray bounds checks remain intact.
 
 ## Restoration material in the original client
 
@@ -119,14 +210,15 @@ No external server code was copied into HydrogenVM.
 
 ## Implementation sequence
 
-1. Fix the verified directory lookup compatibility gap after recording its
-   actual arguments; add a focused runtime check and rerun this baseline.
+1. Directory lookup and fixed-offset timezone prerequisites are now fixed.
+   Continue with the observed crash-reporting Mach API and then font loading.
 2. Reach a correctly rendered loading/menu screen and inventory the next real
    blockers. Keep strict and exploratory results separate.
 3. Locate this client's NPC/tutorial battle entry points, message dispatch,
    snapshot format, random seed/tick control and result handling. Confirm what
    the client simulates rather than inferring it from filenames.
-4. Add an opt-in per-process local transport/backend. Integrate descriptor
+4. If native offline mode is insufficient, add an opt-in per-process local
+   transport/backend. Integrate descriptor
    lifetime, read/write, close, readiness and Darwin errors consistently with
    the shared runtime. Route restoration traffic locally.
 5. Restore a single complete NPC match with original combat logic where
