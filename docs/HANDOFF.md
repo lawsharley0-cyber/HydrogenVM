@@ -4,13 +4,22 @@
 
 For the current user-requested Clash Royale work, read
 [`CLASH_ROYALE_RESTORATION.md`](CLASH_ROYALE_RESTORATION.md) first.
-Tested commit `239a0ab`: **38 runtime checks passed**; directory-domain and
-fixed-offset NSTimeZone blockers are resolved. Next strict blocker:
-`mach_port_mod_refs` in the bundled crash reporter; exploratory mode next
-reaches allocator/CoreText font loading gaps. The pinned IPA already has
-`OfflineMode=true`; native offline initialization has not yet been validated.
-No NPC match works yet. These current goals take precedence for the Clash
-task over the older general roadmap below. Work remains on `gemini-merge`.
+Runtime commit `095832c`: **55 local runtime checks passed**. Mach send-reference
+accounting, checked VM reads, allocator/no-copy ownership and the reached
+custom-TrueType/CoreText path now pass strict startup. The four-app local
+strict/exploratory/relaunch investigation continues through its time limits;
+older-game behavior remains consistent, including Tiny Tower's black frame.
+Clash shows a UIKit **Connection error / Try again** dialog over mostly black
+game output. Its scene shaders require actual GLES2 semantics (including a
+component-wise vec4 position transform); shader dumping is now available via
+`HVM_DUMP_SHADERS`. Despite bundled `OfflineMode=true`, connection attempts still
+occur and neither offline save file has appeared. No menu or NPC match works.
+Investigate actual offline-state entry before choosing a replacement server.
+GitHub runs 39508176438 and 39508176627 never started test steps because of the
+account billing/spending-limit block; validation for this revision is local.
+See the restoration document for API limitations, exact evidence, commands and
+next steps. These goals take precedence over the older roadmap below. Work
+remains on `gemini-merge`; no game binary or assets were changed.
 
 
 JIT-less emulator that runs **32-bit iOS apps (.ipa, armv6/armv7) on modern iPhones**.

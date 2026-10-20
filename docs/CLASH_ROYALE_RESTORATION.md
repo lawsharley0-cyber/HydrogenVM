@@ -2,7 +2,113 @@
 
 Date: 2026-10-20. Work branch: `gemini-merge`.
 
-## Current status after implemented fixes
+## Current status: Mach and custom-font startup support (2026-10-20)
+
+Runtime commit: `095832c2c4362010d2da927412361b2b81b97ea2`.
+The branch was fetched before editing and matched the supplied `b9c4701` head.
+Local WSL/Linux Release build with Clang: **55 runtime checks passed, 0 failed**.
+The checksum-pinned client is unchanged, including its bundled offline flag.
+
+**Clash is not playable.** Strict startup now passes the original crash-reporter
+and `DataLoaderFont::load` blockers, loads the logic tables and UI assets, and
+continues until the probe time limit. The longer capture shows a visible UIKit
+**Connection error / Try again** dialog over mostly black game output. This is
+not a loading/menu screen or a working NPC match. The scanner's `runs` category
+only means the timed launch continued; its frame-variation check can be satisfied
+by this error dialog.
+
+Implemented in the shared runtime:
+
+- Per-process, synchronized synthetic Mach send-reference accounting for the
+  task, a distinct host port, `mach_thread_self`, and `task_threads` exports.
+  `mach_port_mod_refs`, `mach_port_get_refs`, and deallocation validate task,
+  name, right, underflow and overflow. No receive rights/IPC were fabricated.
+- `vm_read_overwrite` copies only mapped guest ranges with suitable access,
+  rejects wrapping addresses, and reports the copied byte count. Guest page
+  size/mask/shift data agree on 4 KiB pages. The next crash-reporter operation,
+  `mach_make_memory_entry_64`, explicitly returns `KERN_NOT_SUPPORTED` and a null
+  handle because there is no memory-object backend. The client recovers from
+  that capability failure; this is not successful Mach memory-object support.
+- CF allocator context copying, guest retain/release/allocation callbacks,
+  thread defaults, and distinct null/system allocators. No-copy CFData retains
+  the bytes' allocator and invokes its deallocator on destruction. Custom
+  object-storage allocators, including `kCFAllocatorUseContext`, remain an
+  explicitly reported unsupported case.
+- Custom standalone TrueType fonts preserve provider bytes and supply their own
+  cmap, names, metrics, traits, glyph bounds and outlines through CGFont/CTFont.
+  The existing rasterizer draws custom outlines into guest bitmap contexts.
+  Pinned, unmodified `stb_truetype` supplies decoding; the wrapper validates table,
+  cmap and glyph ranges and rejects recursive/unsupported composites. This is
+  not a claim of a fully hardened font parser or CFF/TTC support.
+- A limited, uniform-attribute, horizontal CoreText typesetter/line/run path,
+  including line breaking, owned run lifetimes and glyph extraction. Complex
+  scripts, surrogate shaping, arbitrary multi-run text, frame layout and several
+  other CoreText APIs remain unsupported. Font subpixel settings are tracked.
+- CF mutable character-set creation/copy/range bridges. Fixed the existing
+  `NSCharacterSet +new` ownership error (it incorrectly autoreleased its result),
+  which otherwise caused a double release after the formatter's pool drain.
+- `HVM_DUMP_SHADERS=<existing-or-new-directory>` writes original shader sources
+  for diagnosis. The investigation workflow now triggers for all shared runtime
+  and runner changes, rather than only the old directory fix.
+
+### Current evidence and blockers
+
+Local strict/exploratory/relaunch probes cover the pinned client plus the same
+three older IPAs at fixture commit `ceba289b57cbda0e229e778966f195bcc1437fa0`.
+Angry Birds and Art of Glow still produce varied output without new runtime API
+failures; Tiny Tower's black frame remains its known baseline. Clash's reached
+runtime miss is the unsupported audio format of `scroll_loading_01.wav`;
+SCNetworkReachability continues to report offline by design. Static unreached
+imports remain and must not be confused with reached failures.
+
+The native game scene is still not rendered correctly. Captured vertex shaders
+use `uniform vec4 myPMVMatrix` and
+`gl_Position = myPMVMatrix * a_position + vec4(-1, 1, 0, 0)`. The current GLES2
+heuristic only applies a selected `mat4`; it does not execute this component-wise
+transform. Fragment shaders also use two color varyings, channel masks and
+additive color expressions that the heuristic does not implement. Fix this with
+shared shader semantics, not game-specific attribute-name guesses. The dump
+contains nine vertex/fragment pairs, including a blur shader with varying arrays.
+
+The client actively attempts ports 9339, 1863, 3724, 30000 and 843, then shows its
+connection error despite `OfflineMode=true`. No `offline_avatar.json` or
+`offline_home.json` was created in the tested fresh or reused homes. This
+establishes that this launch has not initialized native offline play; it does
+not establish why the flag is insufficient or that a replacement server is
+required. A scripted `--tap 160,337@18` reached UIKit touch handling and was
+followed by another error dialog. The delegate retry callback and in-game input
+have not been independently verified.
+
+GitHub [investigation run 39508176438](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39508176438)
+and CI run 39508176627 did **not start any test steps**. Their check annotation
+says account payments failed or the spending limit must be increased. Those
+failed badges are infrastructure failures, not remote test results. All results
+above are local; no green Actions result is claimed for this revision.
+
+### Reproduce this revision locally
+
+Use the commands in `.github/workflows/clash-royale.yml`: prepare and hash-check
+the client with `tools/clash_royale_probe.py`, build `hvm`, `hvm_tests` and
+`hvm_machodump`, run `hvm_tests fulltest`, then `tools/compat.py scan` with the
+four IPAs, `--seconds 15 --jobs 1 --relaunch`. The local environment had
+`llvm-objdump-18`; a PATH shim named `llvm-objdump` allowed the unchanged probe
+to run. Builds and IPA/sandbox copies used Linux storage for consistent I/O.
+
+For the longer diagnostic/input capture:
+
+```sh
+HVM_DUMP_SHADERS=clash-shaders build-clash/hvm run clash-report/client.ipa \
+  --home clash-home --run-for 30 --tap 160,337@18 \
+  --screenshot clash-error.png --report clash-run.json
+```
+
+Next: implement/validate the required GLES2 shader semantics; trace where the
+client actually consumes the settings offline flag and enters its offline
+state; verify profile creation, one NPC battle and save/relaunch before arena
+expansion. Keep the executable/assets unchanged until specific evidence calls
+for an explicit, hash-verified restoration profile.
+
+## Previous verified state: directory and timezone fixes
 
 Tested engine commit: `239a0ab818b2ddb3a7f146dbbef2cae98e7aba5c` on
 `gemini-merge`. [Completed run](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39484502121)
@@ -72,6 +178,11 @@ The flag and symbols are promising, but do not prove native offline mode can
 initialize a profile, launch NPC battles, or save/reload successfully.
 
 ### Immediate continuation goals
+
+**Historical list from the previous handoff.** The Mach and font startup work
+below is now implemented to the extent described in the current section. The
+current blockers are rendering and offline-state entry, not the original
+`mach_port_mod_refs` miss or `DataLoaderFont::load` assertion.
 
 1. Resolve the observed Mach send-right reference operation consistently with
    HydrogenVM's existing synthetic task/thread ports. Inspect
@@ -210,8 +321,9 @@ No external server code was copied into HydrogenVM.
 
 ## Implementation sequence
 
-1. Directory lookup and fixed-offset timezone prerequisites are now fixed.
-   Continue with the observed crash-reporting Mach API and then font loading.
+1. Directory lookup, fixed-offset timezone, synthetic Mach references and the
+   reached custom-font startup path are fixed. See the current section for the
+   deliberately unsupported Mach and CoreText operations.
 2. Reach a correctly rendered loading/menu screen and inventory the next real
    blockers. Keep strict and exploratory results separate.
 3. Locate this client's NPC/tutorial battle entry points, message dispatch,
