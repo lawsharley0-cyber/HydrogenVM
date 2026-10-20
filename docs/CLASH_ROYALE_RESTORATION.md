@@ -84,6 +84,10 @@ imports once. Use a new diagnostic home instead of overwriting desktop saves.
 The investigation workflow now captures and compile-checks the shader corpus.
 GitHub Actions remains subject to the previously observed account billing block;
 local results are the validation evidence until a new remote job actually runs.
+After pushing, [investigation run 39516992151](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39516992151)
+and [CI run 39516992084](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39516992084)
+both failed with zero executed steps: GitHub reports failed recent payments or
+an insufficient spending limit. These are not failed emulator test results.
 
 ## Local workstation tester
 
