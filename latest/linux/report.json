@@ -1,25 +1,25 @@
 {
   "host": {
-    "os": "Linux 6.17.0-1022-azure",
+    "os": "Linux 7.0.0-1017-azure",
     "arch": "x86_64",
-    "cpu": "AMD EPYC 9V74 80-Core Processor",
-    "commit": "fd96801",
-    "date": "2026-10-20T06:27:33+00:00"
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "commit": "ceba289",
+    "date": "2026-10-20T15:27:12+00:00"
   },
-  "seconds": 322.3,
-  "ok": true,
+  "seconds": 229.2,
+  "ok": false,
   "suites": {
     "build": {
       "passed": 1,
       "failed": 0,
       "skipped": 0,
-      "seconds": 286.8885703086853,
+      "seconds": 220.31450748443604,
       "tests": [
         {
           "name": "engine",
           "result": "pass",
-          "seconds": 286.889,
-          "warnings": 10
+          "seconds": 220.315,
+          "warnings": 6
         }
       ]
     },
@@ -27,7 +27,7 @@
       "passed": 15,
       "failed": 0,
       "skipped": 0,
-      "seconds": 0.3737976551055908,
+      "seconds": 0.31043434143066406,
       "tests": [
         {
           "name": "selftest",
@@ -37,21 +37,21 @@
         {
           "name": "asm/arm_alu",
           "result": "pass",
-          "seconds": 0.007,
+          "seconds": 0.006,
           "checks": 40,
           "failedChecks": 0
         },
         {
           "name": "asm/arm_mem",
           "result": "pass",
-          "seconds": 0.007,
+          "seconds": 0.006,
           "checks": 17,
           "failedChecks": 0
         },
         {
           "name": "asm/thumb",
           "result": "pass",
-          "seconds": 0.009,
+          "seconds": 0.006,
           "checks": 30,
           "failedChecks": 0
         },
@@ -65,271 +65,157 @@
         {
           "name": "c/ctests_arm",
           "result": "pass",
-          "seconds": 0.043,
+          "seconds": 0.034,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_arm_os",
           "result": "pass",
-          "seconds": 0.042,
+          "seconds": 0.032,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb",
           "result": "pass",
-          "seconds": 0.042,
+          "seconds": 0.034,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_os",
           "result": "pass",
-          "seconds": 0.041,
+          "seconds": 0.032,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_idiv",
           "result": "pass",
-          "seconds": 0.042,
+          "seconds": 0.033,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_arm_hard",
           "result": "pass",
-          "seconds": 0.02,
+          "seconds": 0.017,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.022,
+          "seconds": 0.017,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.021,
+          "seconds": 0.02,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_arm",
           "result": "pass",
-          "seconds": 0.021,
+          "seconds": 0.018,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb_os",
           "result": "pass",
-          "seconds": 0.02,
+          "seconds": 0.017,
           "checks": 29,
           "failedChecks": 0
         }
       ]
     },
     "ios": {
-      "passed": 6,
-      "failed": 0,
+      "passed": 0,
+      "failed": 6,
       "skipped": 0,
-      "seconds": 1.998049020767212,
+      "seconds": 0.0,
       "tests": [
         {
           "name": "CTest",
-          "result": "pass",
-          "seconds": 0.021,
-          "perf": {
-            "wallSeconds": 0.0154625,
-            "guestInstructions": 148862,
-            "guestMIPS": 9.62732,
-            "blocksDecoded": 189,
-            "frames": 0,
-            "framesPresented": 0,
-            "avgFrameMs": 0,
-            "avgCompositeMs": 0,
-            "maxFrameMs": 0,
-            "slowFrames": 0
-          }
+          "result": "fail",
+          "seconds": 0.0
         },
         {
           "name": "CTestLegacy",
-          "result": "pass",
-          "seconds": 0.024,
-          "perf": {
-            "wallSeconds": 0.0187433,
-            "guestInstructions": 132093,
-            "guestMIPS": 7.0475,
-            "blocksDecoded": 193,
-            "frames": 0,
-            "framesPresented": 0,
-            "avgFrameMs": 0,
-            "avgCompositeMs": 0,
-            "maxFrameMs": 0,
-            "slowFrames": 0
-          }
+          "result": "fail",
+          "seconds": 0.0
         },
         {
           "name": "BinPlist",
-          "result": "pass",
-          "seconds": 0.022,
-          "perf": {
-            "wallSeconds": 0.0168586,
-            "guestInstructions": 148862,
-            "guestMIPS": 8.83005,
-            "blocksDecoded": 189,
-            "frames": 0,
-            "framesPresented": 0,
-            "avgFrameMs": 0,
-            "avgCompositeMs": 0,
-            "maxFrameMs": 0,
-            "slowFrames": 0
-          }
+          "result": "fail",
+          "seconds": 0.0
         },
         {
           "name": "ObjCTest",
-          "result": "pass",
-          "seconds": 0.019,
-          "perf": {
-            "wallSeconds": 0.0131386,
-            "guestInstructions": 3603,
-            "guestMIPS": 0.274229,
-            "blocksDecoded": 479,
-            "frames": 0,
-            "framesPresented": 0,
-            "avgFrameMs": 0,
-            "avgCompositeMs": 0,
-            "maxFrameMs": 0,
-            "slowFrames": 0
-          }
+          "result": "fail",
+          "seconds": 0.0
         },
         {
           "name": "FoundationTest",
-          "result": "pass",
-          "seconds": 0.883,
-          "perf": {
-            "wallSeconds": 0.784696,
-            "guestInstructions": 22323,
-            "guestMIPS": 0.028448,
-            "blocksDecoded": 1663,
-            "frames": 0,
-            "framesPresented": 0,
-            "avgFrameMs": 0,
-            "avgCompositeMs": 0,
-            "maxFrameMs": 0,
-            "slowFrames": 0
-          }
+          "result": "fail",
+          "seconds": 0.0
         },
         {
           "name": "UIKitTest",
-          "result": "pass",
-          "seconds": 1.028,
-          "perf": {
-            "wallSeconds": 1.02145,
-            "guestInstructions": 11984,
-            "guestMIPS": 0.0117324,
-            "blocksDecoded": 1229,
-            "frames": 61,
-            "framesPresented": 6,
-            "avgFrameMs": 0.581168,
-            "avgCompositeMs": 5.21136,
-            "maxFrameMs": 11.0157,
-            "slowFrames": 0
-          }
+          "result": "fail",
+          "seconds": 0.0
         }
       ]
     },
     "bench": {
-      "passed": 5,
-      "failed": 0,
+      "passed": 4,
+      "failed": 1,
       "skipped": 0,
-      "seconds": 23.975974559783936,
+      "seconds": 0.46769213676452637,
       "tests": [
         {
           "name": "mips/ctests_thumb",
           "result": "pass",
-          "seconds": 0.179,
-          "mips": 437.9
+          "seconds": 0.177,
+          "mips": 442.4
         },
         {
           "name": "mips/ctests_arm",
           "result": "pass",
-          "seconds": 0.179,
-          "mips": 457.8
+          "seconds": 0.177,
+          "mips": 461.8
         },
         {
           "name": "mips/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.064,
-          "mips": 367.6
+          "seconds": 0.055,
+          "mips": 431.4
         },
         {
           "name": "mips/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.067,
-          "mips": 324.5
+          "seconds": 0.058,
+          "mips": 379.3
         },
         {
           "name": "coremark",
-          "result": "pass",
-          "seconds": 23.486,
-          "score": 1765.0
+          "result": "fail",
+          "seconds": 0.0
         }
       ]
     }
   },
   "speed": {
     "interpreterMIPS": {
-      "ctests_thumb": 437.9,
-      "ctests_arm": 457.8,
-      "ftests_vfp_thumb_softfp": 367.6,
-      "ftests_neon_thumb": 324.5
-    },
-    "coremark": {
-      "score": 1765.0,
-      "guestMIPS": 587.3,
-      "quick": false,
-      "vsDevices": [
-        {
-          "device": "iPhone 3GS",
-          "cpu": "Cortex-A8",
-          "reference": 1440,
-          "percent": 122.6,
-          "effectiveMHz": 735,
-          "goal": false
-        },
-        {
-          "device": "iPhone 4",
-          "cpu": "Apple A4 (Cortex-A8)",
-          "reference": 1920,
-          "percent": 91.9,
-          "effectiveMHz": 735,
-          "goal": false
-        },
-        {
-          "device": "iPhone 4S",
-          "cpu": "Apple A5 (Cortex-A9)",
-          "reference": 2400,
-          "percent": 73.5,
-          "effectiveMHz": 588,
-          "goal": false
-        },
-        {
-          "device": "iPhone 5",
-          "cpu": "Apple A6 (Swift)",
-          "reference": 4550,
-          "percent": 38.8,
-          "effectiveMHz": 504,
-          "goal": true
-        }
-      ],
-      "goalDevice": "iPhone 5",
-      "goalPercent": 38.8
+      "ctests_thumb": 442.4,
+      "ctests_arm": 461.8,
+      "ftests_vfp_thumb_softfp": 431.4,
+      "ftests_neon_thumb": 379.3
     }
   },
   "problems": [
@@ -337,31 +223,7 @@
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
-      "message": "src/runtime/foundation/Extras.cpp:19:4: warning: unused function 'retainObj' [-Wunused-function]"
-    },
-    {
-      "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
       "message": "src/runtime/foundation/NSNumber.cpp:142:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]"
-    },
-    {
-      "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
-      "message": "src/runtime/libc/LibStdcxx.cpp:36:40: warning: unused variable 'kBinary' [-Wunused-const-variable]"
-    },
-    {
-      "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
-      "message": "src/runtime/libc/LibStdcxxStreams.cpp:41:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]"
-    },
-    {
-      "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
-      "message": "src/runtime/libc/LibStdcxxStreams.cpp:47:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]"
     },
     {
       "suite": "build",
@@ -394,10 +256,46 @@
       "message": "src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]"
     },
     {
+      "suite": "ios",
+      "test": "CTest",
+      "severity": "fail",
+      "message": "build failed:\nTraceback (most recent call last):\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 191, in <module>\n    main()\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 188, in main\n    build_app(a)\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 134, in build_app\n    syms = undefined_symbols(objs)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 66, in undefined_symbols\n    out = run([NM, \"-u\", \"--just-symbol-name\"] + objs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 39, in run\n    p = subprocess.run(cmd, capture_output=True, text=True, **kw)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 548, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 1026, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n  File \"/usr/lib/python3.12/subprocess.py\", line 1955, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'"
+    },
+    {
+      "suite": "ios",
+      "test": "CTestLegacy",
+      "severity": "fail",
+      "message": "build failed:\nTraceback (most recent call last):\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 191, in <module>\n    main()\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 188, in main\n    build_app(a)\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 134, in build_app\n    syms = undefined_symbols(objs)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 66, in undefined_symbols\n    out = run([NM, \"-u\", \"--just-symbol-name\"] + objs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 39, in run\n    p = subprocess.run(cmd, capture_output=True, text=True, **kw)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 548, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 1026, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n  File \"/usr/lib/python3.12/subprocess.py\", line 1955, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'"
+    },
+    {
+      "suite": "ios",
+      "test": "BinPlist",
+      "severity": "fail",
+      "message": "build failed:\nTraceback (most recent call last):\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 191, in <module>\n    main()\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 188, in main\n    build_app(a)\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 134, in build_app\n    syms = undefined_symbols(objs)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 66, in undefined_symbols\n    out = run([NM, \"-u\", \"--just-symbol-name\"] + objs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 39, in run\n    p = subprocess.run(cmd, capture_output=True, text=True, **kw)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 548, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 1026, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n  File \"/usr/lib/python3.12/subprocess.py\", line 1955, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'"
+    },
+    {
+      "suite": "ios",
+      "test": "ObjCTest",
+      "severity": "fail",
+      "message": "build failed:\nTraceback (most recent call last):\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 191, in <module>\n    main()\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 188, in main\n    build_app(a)\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 134, in build_app\n    syms = undefined_symbols(objs)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 66, in undefined_symbols\n    out = run([NM, \"-u\", \"--just-symbol-name\"] + objs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 39, in run\n    p = subprocess.run(cmd, capture_output=True, text=True, **kw)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 548, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 1026, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n  File \"/usr/lib/python3.12/subprocess.py\", line 1955, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'"
+    },
+    {
+      "suite": "ios",
+      "test": "FoundationTest",
+      "severity": "fail",
+      "message": "build failed:\nTraceback (most recent call last):\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 191, in <module>\n    main()\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 188, in main\n    build_app(a)\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 134, in build_app\n    syms = undefined_symbols(objs)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 66, in undefined_symbols\n    out = run([NM, \"-u\", \"--just-symbol-name\"] + objs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 39, in run\n    p = subprocess.run(cmd, capture_output=True, text=True, **kw)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 548, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 1026, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n  File \"/usr/lib/python3.12/subprocess.py\", line 1955, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'"
+    },
+    {
+      "suite": "ios",
+      "test": "UIKitTest",
+      "severity": "fail",
+      "message": "build failed:\nTraceback (most recent call last):\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 191, in <module>\n    main()\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 188, in main\n    build_app(a)\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 134, in build_app\n    syms = undefined_symbols(objs)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 66, in undefined_symbols\n    out = run([NM, \"-u\", \"--just-symbol-name\"] + objs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 39, in run\n    p = subprocess.run(cmd, capture_output=True, text=True, **kw)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 548, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 1026, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n  File \"/usr/lib/python3.12/subprocess.py\", line 1955, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'"
+    },
+    {
       "suite": "bench",
       "test": "coremark",
-      "severity": "perf",
-      "message": "38.8% of iPhone 5 single-core speed (goal: 100%)"
+      "severity": "fail",
+      "message": "build failed:\nTraceback (most recent call last):\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 191, in <module>\n    main()\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 188, in main\n    build_app(a)\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 134, in build_app\n    syms = undefined_symbols(objs)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 66, in undefined_symbols\n    out = run([NM, \"-u\", \"--just-symbol-name\"] + objs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/HydrogenVM/HydrogenVM/tools/ios_build.py\", line 39, in run\n    p = subprocess.run(cmd, capture_output=True, text=True, **kw)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 548, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 1026, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n  File \"/usr/lib/python3.12/subprocess.py\", line 1955, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: 'llvm-nm'"
     }
   ]
 }
