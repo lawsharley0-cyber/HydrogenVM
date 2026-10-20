@@ -1013,6 +1013,50 @@ void sk_ignoreObj(Ctx&, id, SEL, id) {}
 void sk_noop(Ctx&, id, SEL) {}
 id sk_empty(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
 
+// SKProductsRequest: no App Store, so every product id is "invalid" and the
+// delegate gets an empty response (not an error — IAP code expects a response).
+struct ProductsRequest : ObjC::HostObject { id delegate = 0, ids = 0; };
+id skpr_initWithIds(Ctx& x, id self, SEL, id ids) {
+    auto h = std::make_unique<ProductsRequest>();
+    h->ids = ids ? rt(x).retain(x.cpu, ids) : 0;
+    rt(x).setHost(self, std::move(h));
+    return self;
+}
+id skpr_delegate(Ctx& x, id self, SEL) { auto* h = rt(x).hostIf<ProductsRequest>(self); return h ? h->delegate : 0; }
+void skpr_setDelegate(Ctx& x, id self, SEL, id d) { if (auto* h = rt(x).hostIf<ProductsRequest>(self)) h->delegate = d; }
+void skpr_start(Ctx& x, id self, SEL) {
+    auto* h = rt(x).hostIf<ProductsRequest>(self);
+    if (!h || !h->delegate) return;
+    rt(x).retain(x.cpu, self);
+    Process* p = &x.proc;
+    Foundation::mainRunLoop(x.proc).post([p, self](CPU::Cpu& c) {
+        Ctx cx{*p, c, p->mem()};
+        auto* h = rt(cx).hostIf<ProductsRequest>(self);
+        if (h && h->delegate && rt(cx).respondsTo(h->delegate, rt(cx).sel("productsRequest:didReceiveResponse:"))) {
+            const id response = rt(cx).createInstance(rt(cx).getClass("SKProductsResponse"));
+            rt(cx).makeImmortal(response);
+            // stash the requested ids on the response for -invalidProductIdentifiers
+            if (h->ids) rt(cx).setAssociated(c, response, 1, h->ids, 1);
+            rt(cx).send(c, h->delegate, "productsRequest:didReceiveResponse:", {self, response});
+        }
+        if (h && h->delegate && rt(cx).respondsTo(h->delegate, rt(cx).sel("requestDidFinish:")))
+            rt(cx).send(c, h->delegate, "requestDidFinish:", {self});
+        rt(cx).release(c, self);
+    });
+}
+void skpr_cancel(Ctx&, id, SEL) {}
+void skpr_dealloc(Ctx& x, id self, SEL) {
+    if (auto* h = rt(x).hostIf<ProductsRequest>(self)) if (h->ids) rt(x).release(x.cpu, h->ids);
+    rt(x).disposeInstance(x.cpu, self);
+}
+id skresp_products(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
+id skresp_invalid(Ctx& x, id self, SEL) {
+    const id ids = rt(x).getAssociated(self, 1);
+    if (!ids) return Foundation::makeArray(x, {});
+    if (rt(x).respondsTo(ids, rt(x).sel("allObjects"))) return id(rt(x).send(x.cpu, ids, "allObjects"));   // NSSet -> array
+    return ids;
+}
+
 // ------------------------------------------------------------- MessageUI ---
 bool mf_no(Ctx&, id, SEL) { return false; }
 
@@ -1168,6 +1212,14 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     skq.m<&sk_ignoreObj>("addTransactionObserver:", "v@:@").m<&sk_ignoreObj>("removeTransactionObserver:", "v@:@")
        .m<&sk_ignoreObj>("addPayment:", "v@:@").m<&sk_ignoreObj>("finishTransaction:", "v@:@")
        .m<&sk_noop>("restoreCompletedTransactions", "v@:").m<&sk_empty>("transactions");
+    ObjC::ClassBuilder skpr = r.defineClass("SKProductsRequest", "NSObject");
+    skpr.m<&skpr_initWithIds>("initWithProductIdentifiers:").m<&skpr_delegate>("delegate").m<&skpr_setDelegate>("setDelegate:", "v@:@")
+        .m<&skpr_start>("start", "v@:").m<&skpr_cancel>("cancel", "v@:").m<&skpr_dealloc>("dealloc", "v@:");
+    ObjC::ClassBuilder skresp = r.defineClass("SKProductsResponse", "NSObject");
+    skresp.m<&skresp_products>("products").m<&skresp_invalid>("invalidProductIdentifiers");
+    r.defineClass("SKProduct", "NSObject");
+    r.defineClass("SKPayment", "NSObject");
+    r.defineClass("SKMutablePayment", "SKPayment");
 
     // MessageUI
     for (const char* n : {"MFMailComposeViewController", "MFMessageComposeViewController"}) {

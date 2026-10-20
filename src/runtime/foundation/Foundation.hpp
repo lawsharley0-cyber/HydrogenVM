@@ -155,6 +155,7 @@ void registerSecurity(Process& p, ObjC::Runtime& r);
 void registerNetwork(Process& p, ObjC::Runtime& r);
 void registerCalendar(Process& p, ObjC::Runtime& r);
 void registerInvocation(Process& p, ObjC::Runtime& r);
+void registerURLLoading(Process& p, ObjC::Runtime& r);
 void registerCollections(Process& p, ObjC::Runtime& r);
 void registerData(Process& p, ObjC::Runtime& r);
 void registerBundle(Process& p, ObjC::Runtime& r);

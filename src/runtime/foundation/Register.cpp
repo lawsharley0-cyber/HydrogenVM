@@ -28,6 +28,7 @@ void registerFoundation(Process& p) {
     registerNetwork(p, r);
     registerCalendar(p, r);
     registerInvocation(p, r);
+    registerURLLoading(p, r);
 
     // String constants from frameworks we don't otherwise model: a constant NSString
     // instead of nil, so apps can still use them as dictionary keys and notification names.
