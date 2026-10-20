@@ -900,26 +900,55 @@ id loc_initWithIdentifier(Ctx&, id self, SEL, id) { return self; }
 id locc_withIdentifier(Ctx& x, id, SEL, id) { return loc_current(x, 0, 0); }
 id loc_displayName(Ctx& x, id, SEL, id, id value) { return value; }
 
+struct FixedTimeZone : ObjC::HostObject { int32_t seconds = 0; };
 id tz_local(Ctx& x, id, SEL) { return singleton(x, M(x).localTZ, M(x).timeZone); }
-int32_t tz_secondsFromGMT(Ctx&, id, SEL) {
+id tzc_fixed(Ctx& x, id, SEL, int32_t seconds) {
+    if (seconds < -18 * 3600 || seconds > 18 * 3600) return 0;
+    const id result = rt(x).createInstance(M(x).timeZone);
+    auto data = std::make_unique<FixedTimeZone>();
+    data->seconds = seconds;
+    rt(x).setHost(result, std::move(data));
+    return autoreleased(x, result);
+}
+int32_t tz_secondsFromGMT(Ctx& x, id self, SEL) {
+    if (auto* fixed = rt(x).hostIf<FixedTimeZone>(self)) return fixed->seconds;
     const time_t t = time(nullptr);
     std::tm lt;
     localtime_r(&t, &lt);
     return int32_t(lt.tm_gmtoff);
 }
 int32_t tz_secondsFromGMTForDate(Ctx& x, id self, SEL s, id) { return tz_secondsFromGMT(x, self, s); }
-id tz_name(Ctx& x, id, SEL) {
+id tz_name(Ctx& x, id self, SEL) {
+    if (auto* fixed = rt(x).hostIf<FixedTimeZone>(self)) {
+        if (!fixed->seconds) return makeString(x, "GMT");
+        const int32_t magnitude = fixed->seconds < 0 ? -fixed->seconds : fixed->seconds;
+        char name[32];
+        std::snprintf(name, sizeof name, "GMT%c%02d:%02d", fixed->seconds < 0 ? '-' : '+',
+                      magnitude / 3600, (magnitude / 60) % 60);
+        return makeString(x, name);
+    }
     const char* tz = std::getenv("TZ");
     return makeString(x, std::string(tz && *tz ? tz : "GMT"));
 }
-id tz_abbreviation(Ctx& x, id, SEL) {
+id tz_abbreviation(Ctx& x, id self, SEL s) {
+    if (rt(x).hostIf<FixedTimeZone>(self)) return tz_name(x, self, s);
     const time_t t = time(nullptr);
     std::tm lt;
     localtime_r(&t, &lt);
     return makeString(x, std::string(lt.tm_zone ? lt.tm_zone : "GMT"));
 }
-id tzc_withName(Ctx& x, id, SEL, id) { return tz_local(x, 0, 0); }
-bool tz_isDST(Ctx&, id, SEL) { const time_t t = time(nullptr); std::tm lt; localtime_r(&t, &lt); return lt.tm_isdst > 0; }
+id tz_abbreviationForDate(Ctx& x, id self, SEL s, id) { return tz_abbreviation(x, self, s); }
+id tzc_withName(Ctx& x, id, SEL, id name) {
+    const std::string value = utf8(x, name);
+    if (value == "GMT" || value == "UTC" || value == "Etc/UTC" || value == "Etc/GMT")
+        return tzc_fixed(x, 0, 0, 0);
+    return tz_local(x, 0, 0);
+}
+bool tz_isDST(Ctx& x, id self, SEL) {
+    if (rt(x).hostIf<FixedTimeZone>(self)) return false;
+    const time_t t = time(nullptr); std::tm lt; localtime_r(&t, &lt); return lt.tm_isdst > 0;
+}
+bool tz_isDSTForDate(Ctx& x, id self, SEL s, id) { return tz_isDST(x, self, s); }
 
 // ---------------------------------------------- conversion functions ---
 
@@ -1188,9 +1217,12 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder tz = r.defineClass("NSTimeZone", "NSObject");
     m.timeZone = tz.cls();
     tz.cm<&tz_local>("localTimeZone").cm<&tz_local>("systemTimeZone").cm<&tz_local>("defaultTimeZone")
-      .cm<&tzc_withName>("timeZoneWithName:").cm<&tzc_withName>("timeZoneWithAbbreviation:");
+      .cm<&tzc_withName>("timeZoneWithName:").cm<&tzc_withName>("timeZoneWithAbbreviation:")
+      .cm<&tzc_fixed>("timeZoneForSecondsFromGMT:", "@@:i");
     tz.m<&tz_secondsFromGMT>("secondsFromGMT", "i@:").m<&tz_secondsFromGMTForDate>("secondsFromGMTForDate:", "i@:@")
       .m<&tz_name>("name").m<&tz_abbreviation>("abbreviation").m<&tz_isDST>("isDaylightSavingTime", "c@:")
+      .m<&tz_abbreviationForDate>("abbreviationForDate:", "@@:@")
+      .m<&tz_isDSTForDate>("isDaylightSavingTimeForDate:", "c@:@")
       .m<&tz_name>("localizedName:locale:", "@@:i@")
       .m<&retainedCopy>("copyWithZone:");
 

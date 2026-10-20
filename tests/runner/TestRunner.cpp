@@ -301,6 +301,33 @@ int runFullSubsystemTests() {
               "NSFileManager URL directory search agrees with the C path API");
     }
 
+    // Fixed-offset zones are used by HockeyApp's UTC date formatter on launch.
+    {
+        const auto cls = r.getClass("NSTimeZone");
+        auto zone = [&](int32_t seconds) {
+            return ObjC::id(r.send(cpu, cls, "timeZoneForSecondsFromGMT:", {uint32_t(seconds)}));
+        };
+        const auto gmt = zone(0), east = zone(19800), west = zone(-18000);
+        check(gmt && east && west &&
+              int32_t(r.send(cpu, gmt, "secondsFromGMT")) == 0 &&
+              int32_t(r.send(cpu, east, "secondsFromGMT")) == 19800 &&
+              int32_t(r.send(cpu, west, "secondsFromGMT")) == -18000,
+              "NSTimeZone fixed-offset factory supports GMT and signed offsets");
+        check(Foundation::utf8(cx, ObjC::id(r.send(cpu, gmt, "name"))) == "GMT" &&
+              Foundation::utf8(cx, ObjC::id(r.send(cpu, east, "name"))) == "GMT+05:30" &&
+              Foundation::utf8(cx, ObjC::id(r.send(cpu, west, "abbreviation"))) == "GMT-05:00",
+              "fixed-offset time zones expose stable GMT names and abbreviations");
+        const auto winter = Foundation::makeDate(cx, 0), summer = Foundation::makeDate(cx, 180 * 86400.0);
+        check(int32_t(r.send(cpu, east, "secondsFromGMTForDate:", {winter})) == 19800 &&
+              int32_t(r.send(cpu, east, "secondsFromGMTForDate:", {summer})) == 19800 &&
+              !uint32_t(r.send(cpu, east, "isDaylightSavingTime")) &&
+              !uint32_t(r.send(cpu, west, "isDaylightSavingTimeForDate:", {summer})),
+              "fixed-offset time zones keep their offset and never enter daylight saving");
+        const auto utc = ObjC::id(r.send(cpu, cls, "timeZoneWithName:", {Foundation::makeString(cx, "UTC")}));
+        check(utc && int32_t(r.send(cpu, utc, "secondsFromGMT")) == 0,
+              "named UTC zone is independent of the host's local timezone");
+    }
+
     // 2a. UIScrollView
     {
         const ObjC::Class svCls = r.getClass("UIScrollView");
