@@ -21,6 +21,16 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch known regression fixtures
+        uses: actions/checkout@v4
+        with:
+          ref: ceba289b57cbda0e229e778966f195bcc1437fa0
+          path: regression-fixtures
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /AngryBirds_v1.0_os30.ipa
+            /Tiny_Tower_v1.0_os30.ipa
+            /Art_Of_Glow_v1.1.2_os313.ipa
       - name: Install tools
         run: |
           sudo apt-get update -q
@@ -35,9 +45,18 @@ jobs:
           cmake --build build-clash --target hvm hvm_tests hvm_machodump --parallel 2
       - name: Runtime regression checks
         run: build-clash/hvm_tests fulltest
+      - name: Trace Clash Royale startup
+        run: |
+          set +e
+          timeout 40s build-clash/hvm run clash-report/client.ipa --home clash-trace-home --run-for 10 --trace --report clash-report/startup-trace.json > clash-report/startup-trace.txt 2>&1
+          result=$?
+          set -e
+          echo "Trace process exit: $result"
+          tail -180 clash-report/startup-trace.txt
       - name: Strict and exploratory compatibility runs
         run: |
-          python3 tools/compat.py scan clash-report/client.ipa AngryBirds_v1.0_os30.ipa Tiny_Tower_v1.0_os30.ipa Art_Of_Glow_v1.1.2_os313.ipa --hvm build-clash/hvm --out clash-compat --seconds 15 --jobs 1 --relaunch
+          python3 tools/compat.py scan clash-report/client.ipa regression-fixtures/AngryBirds_v1.0_os30.ipa regression-fixtures/Tiny_Tower_v1.0_os30.ipa regression-fixtures/Art_Of_Glow_v1.1.2_os313.ipa --hvm build-clash/hvm --out clash-compat --seconds 15 --jobs 1 --relaunch
+          python3 -c 'import json; d=json.load(open("clash-compat/results.json")); assert len(d["apps"]) == 4, "Expected Clash Royale and three regression fixtures"'
           cat clash-compat/REPORT.md
           cat clash-compat/results.json
       - name: Publish investigation summary
