@@ -35,7 +35,7 @@ int32_t n_zero(Ctx&) { return 0; }
 int32_t n_getaddrinfo(Ctx& x, GuestPtr, GuestPtr, GuestPtr, GuestPtr res) { if (res) x.mem.write<uint32_t>(res, 0); return 8; }
 void n_freeaddrinfo(Ctx&, GuestPtr) {}
 uint32_t n_gaiStrerror(Ctx& x, int32_t e) {
-    static uint32_t s = 0;
+    static const char sKey = 0; uint32_t& s = x.proc.processSlot(&sKey);
     if (!s) s = x.proc.allocCString("nodename nor servname provided, or not known");
     (void)e;
     return s;
@@ -56,7 +56,7 @@ int32_t n_inetAton(Ctx& x, GuestPtr s, GuestPtr out) {
     return 1;
 }
 uint32_t n_inetNtoa(Ctx& x, uint32_t addr) {
-    static thread_local uint32_t buf = 0;
+    static const char bufKey = 0; uint32_t& buf = x.proc.threadSlot(&bufKey);
     if (!buf) buf = x.proc.heap().alloc(16);
     in_addr a{};
     a.s_addr = addr;

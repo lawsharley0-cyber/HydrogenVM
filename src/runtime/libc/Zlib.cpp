@@ -138,7 +138,7 @@ uint32_t z_compressBound(Ctx&, uint32_t n) { return uint32_t(compressBound(n)); 
 uint32_t z_crc32(Ctx& x, uint32_t crc, GuestPtr buf, uint32_t n) { return buf ? uint32_t(crc32(crc, x.mem.host(buf), n)) : uint32_t(crc32(0, Z_NULL, 0)); }
 uint32_t z_adler32(Ctx& x, uint32_t a, GuestPtr buf, uint32_t n) { return buf ? uint32_t(adler32(a, x.mem.host(buf), n)) : uint32_t(adler32(0, Z_NULL, 0)); }
 uint32_t z_version(Ctx& x) {
-    static uint32_t v = 0;
+    static const char vKey = 0; uint32_t& v = x.proc.processSlot(&vKey);
     if (!v) v = x.proc.allocCString(zlibVersion());
     return v;
 }

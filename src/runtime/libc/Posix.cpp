@@ -154,7 +154,7 @@ void p_testcancel(Ctx&) {}
 
 int32_t p_zero(Ctx&) { return 0; }
 // Apple System Log: messages go to the app log (levels 0-3 as errors, 4 warnings, the rest info).
-uint32_t asl_handle(Ctx& x) { static uint32_t h = 0; if (!h) h = x.proc.allocStatic(16); return h; }
+uint32_t asl_handle(Ctx& x) { static const char slotKey = 0; uint32_t& h = x.proc.processSlot(&slotKey); if (!h) h = x.proc.allocStatic(16); return h; }
 uint32_t asl_open(Ctx& x, GuestPtr, GuestPtr, uint32_t) { return asl_handle(x); }
 uint32_t asl_new(Ctx& x, uint32_t) { return x.proc.heap().allocZeroed(16); }
 void asl_free(Ctx& x, uint32_t m) { if (m && m != asl_handle(x) && x.proc.heap().blockSize(m)) x.proc.heap().free(m); }

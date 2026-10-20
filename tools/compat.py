@@ -133,14 +133,16 @@ def app_meta(app):
 
 # ------------------------------------------------------------------- runs ---
 
-def run_hvm(hvm, app, home, seconds, report, keep_going, shot=None):
-    cmd = [hvm, "run", app, "--home", home, "--run-for", str(seconds), "--report", report, "--quiet"]
+def run_hvm(hvm, app, home, seconds, report, keep_going, shot=None, launches=1):
+    cmd = [hvm, "run", app, "--home", home, "--run-for", str(seconds), "--report", report, "--quiet", "--graceful"]
+    if launches > 1:
+        cmd += ["--launches", str(launches)]
     if keep_going:
         cmd.append("--keep-going")
     if shot:
         cmd += ["--screenshot", shot]
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=seconds * 3 + 60)
+        p = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=(seconds * 3 + 60) * max(1, launches))
         out = p.stdout + p.stderr
     except subprocess.TimeoutExpired:
         out = "[compat] hvm hung past the time limit"
@@ -266,7 +268,8 @@ def frame_check(path):
     except Exception as e:
         return {"error": str(e)}
     small = im.resize((80, 120))
-    px = list(small.getdata())
+    raw = small.tobytes()
+    px = [tuple(raw[i:i + 3]) for i in range(0, len(raw), 3)]
     quant = {}
     for r, g, b in px:
         k = (r >> 4, g >> 4, b >> 4)
@@ -308,7 +311,8 @@ def scan_app(entry, args):
     shot = os.path.join(args.out, "shots", name + ".png")
     if os.path.exists(shot):
         os.remove(shot)
-    strict = run_hvm(args.hvm, app, os.path.join(work, "home-strict"), args.seconds, os.path.join(work, "strict.json"), False, shot)
+    strict = run_hvm(args.hvm, app, os.path.join(work, "home-strict"), args.seconds, os.path.join(work, "strict.json"), False, shot,
+                     launches=2 if args.relaunch else 1)
     kg = run_hvm(args.hvm, app, os.path.join(work, "home-kg"), args.seconds, os.path.join(work, "keepgoing.json"), True)
     blocker = blocker_of(strict)
     perf = strict.get("perf", {})
@@ -461,6 +465,7 @@ def main():
     s.add_argument("--hvm", default=os.path.join(ROOT, "build", "hvm"))
     s.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     s.add_argument("--only", help="comma-separated app names to rescan (others keep their previous results)")
+    s.add_argument("--relaunch", action="store_true", help="strict run opens each app twice in one process (catches crash-on-return)")
     r = sub.add_parser("report")
     r.add_argument("--out", default="compat")
     args = ap.parse_args()

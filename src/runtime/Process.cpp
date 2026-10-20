@@ -122,6 +122,10 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
 }
 
 Process::~Process() {
+    {
+        std::lock_guard<std::mutex> lk(liveness_->mu);
+        liveness_->alive = false;
+    }
     requestStop();
     // Wait (bounded) for guest threads to notice.
     for (int i = 0; i < 200; ++i) {
@@ -136,7 +140,51 @@ Process::~Process() {
     if (t_thread && &t_thread->proc == this) t_thread = nullptr;
 }
 
-void Process::requestStop() { engine_->requestStop(); mixer_->stopAll(); }
+void Process::requestStop() {
+    engine_->requestStop();
+    mixer_->stopAll();
+    lifeCv_.notify_all();   // a backgrounded main thread is parked in waitWhileBackgrounded()
+}
+
+void Process::requestGracefulStop(double timeout) {
+    if (stopping() || gracefulStop_.exchange(true)) return;
+    if (!lifecycleHandler_) { requestStop(); return; }
+    lifecycleHandler_(Lifecycle::Terminate);
+    // Watchdog: an app that doesn't get through its shutdown (or never runs its main loop) is stopped anyway.
+    std::thread([this, timeout, live = liveness_] {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::lock_guard<std::mutex> lk(live->mu);
+            if (!live->alive || stopping()) return;
+            if (std::chrono::steady_clock::now() >= end) {
+                log(LogLevel::Warning, "The app didn't finish saving in time; stopping it");
+                requestStop();
+                return;
+            }
+        }
+    }).detach();
+}
+void Process::enterBackground() {
+    if (stopping() || backgrounded_.load() || !lifecycleHandler_) return;
+    lifecycleHandler_(Lifecycle::Background);
+}
+void Process::enterForeground() {
+    if (stopping() || !lifecycleHandler_) return;
+    lifecycleHandler_(Lifecycle::Foreground);
+}
+void Process::setBackgrounded(bool b) {
+    {
+        std::lock_guard<std::mutex> lk(lifeMu_);
+        backgrounded_ = b;
+    }
+    mixer_->setAllPaused(b);
+    lifeCv_.notify_all();
+}
+void Process::waitWhileBackgrounded() {
+    std::unique_lock<std::mutex> lk(lifeMu_);
+    lifeCv_.wait(lk, [&] { return !backgrounded_.load() || stopping() || gracefulStop_.load(); });
+}
 
 void Process::load() {
     const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
@@ -466,6 +514,16 @@ GuestThread* Process::findThread(uint32_t self) {
     std::lock_guard<std::mutex> lk(threadsMu_);
     for (auto& [k, t] : threads_) if (t->self == self) return t.get();
     return nullptr;
+}
+
+uint32_t& Process::processSlot(const void* key) {
+    std::lock_guard<std::mutex> lk(slotMu_);
+    return slots_[key];   // node-based: the reference stays valid
+}
+uint32_t& Process::threadSlot(const void* key) {
+    const uint32_t tid = currentThread().id;
+    std::lock_guard<std::mutex> lk(slotMu_);
+    return threadSlots_[{key, tid}];
 }
 
 std::vector<uint32_t> Process::liveThreadIds() {

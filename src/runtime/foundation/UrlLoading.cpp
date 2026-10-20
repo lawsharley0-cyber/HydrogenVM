@@ -230,7 +230,7 @@ bool connc_canHandle(Ctx&, id, SEL, id) { return true; }
 
 // ---- NSURLCache (a no-op cache)
 id cachec_shared(Ctx& x, id cls, SEL) {
-    static id shared = 0;
+    static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
     if (!shared) { shared = R(x).createInstance(LS(x).cache); R(x).makeImmortal(shared); }
     return shared;
 }

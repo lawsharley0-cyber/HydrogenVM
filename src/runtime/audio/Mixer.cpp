@@ -119,9 +119,12 @@ void Mixer::stopAll() {
     voices_.clear();
 }
 
+void Mixer::setAllPaused(bool paused) { allPaused_.store(paused); }
+
 void Mixer::render(float* left, float* right, size_t frames) {
     std::memset(left, 0, frames * sizeof(float));
     std::memset(right, 0, frames * sizeof(float));
+    if (allPaused_.load(std::memory_order_relaxed)) return;   // silence; voices don't advance
     std::lock_guard<std::mutex> lk(mu_);
     constexpr float kScale = 1.0f / 32768.0f;
     for (auto it = voices_.begin(); it != voices_.end();) {

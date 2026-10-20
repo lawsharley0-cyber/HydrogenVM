@@ -361,7 +361,8 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
 }
 
 - (void)dealloc {
-    [self stop];
+    // Let a game that's still open save before it goes (the engine stops it after a few seconds at most).
+    [self stopGracefully];
 }
 
 - (void)start {
@@ -474,6 +475,35 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
         p = _core->proc;
     }
     if (p && _core->ready) p->requestStop();
+}
+
+- (void)stopGracefully {
+    _core->stopRequested = true;   // the user closed it: no crash alert for the stop itself
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p && _core->ready) p->requestGracefulStop();
+    else if (p) p->requestStop();
+}
+
+- (void)enterBackground {
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p && _core->ready) p->enterBackground();
+}
+
+- (void)enterForeground {
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p && _core->ready) p->enterForeground();
 }
 
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger {

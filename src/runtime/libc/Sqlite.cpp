@@ -264,7 +264,7 @@ int32_t q_exec(Ctx& x, uint32_t h, GuestPtr sql, uint32_t cb, uint32_t arg, Gues
 }
 void q_free(Ctx& x, GuestPtr p) { if (p && x.proc.heap().blockSize(p)) x.proc.heap().free(p); }
 uint32_t q_malloc(Ctx& x, int32_t n) { return n > 0 ? x.proc.heap().alloc(uint32_t(n)) : 0; }
-uint32_t q_libversion(Ctx& x) { static uint32_t v = 0; if (!v) v = x.proc.allocCString(sqlite3_libversion()); return v; }
+uint32_t q_libversion(Ctx& x) { static const char slotKey = 0; uint32_t& v = x.proc.processSlot(&slotKey); if (!v) v = x.proc.allocCString(sqlite3_libversion()); return v; }
 int32_t q_libversionNumber(Ctx&) { return sqlite3_libversion_number(); }
 int32_t q_threadsafe(Ctx&) { return sqlite3_threadsafe(); }
 // User-defined SQL functions aren't bridged: report success so setup code continues.

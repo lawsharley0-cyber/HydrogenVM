@@ -232,7 +232,7 @@ id mpvc_player(Ctx& x, id self, SEL) { return rt(x).host<MovieVCData>(self).play
 
 // ---- MPMusicPlayerController: the iPod app isn't playing (so games play their own music).
 id mus_shared(Ctx& x, id cls, SEL) {
-    static id shared = 0;
+    static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
     if (!shared) { shared = rt(x).createInstance(cls); rt(x).makeImmortal(shared); }
     return shared;
 }

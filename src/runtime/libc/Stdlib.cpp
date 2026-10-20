@@ -38,7 +38,7 @@ int32_t  m_posix_memalign(Ctx& x, GuestPtr out, uint32_t align, uint32_t n) {
 uint32_t m_malloc_size(Ctx& x, uint32_t p) { return x.proc.heap().blockSize(p); }
 uint32_t m_malloc_good_size(Ctx&, uint32_t n) { return (n + 15) & ~15u; }
 uint32_t m_default_zone(Ctx& x) {
-    static thread_local uint32_t zone = 0;
+    static const char zoneKey = 0; uint32_t& zone = x.proc.threadSlot(&zoneKey);
     if (!zone) zone = x.proc.allocStatic(64);
     return zone;
 }
@@ -52,7 +52,7 @@ uint32_t m_zone_from_ptr(Ctx& x, uint32_t p) { return x.proc.heap().blockSize(p)
 uint32_t m_create_zone(Ctx& x, uint32_t, uint32_t) { return m_default_zone(x); }
 void m_destroy_zone(Ctx&, uint32_t) {}
 void m_set_zone_name(Ctx&, uint32_t, GuestPtr) {}
-uint32_t m_zone_name(Ctx& x, uint32_t) { static uint32_t s = 0; if (!s) s = x.proc.allocCString("DefaultMallocZone"); return s; }
+uint32_t m_zone_name(Ctx& x, uint32_t) { static const char slotKey = 0; uint32_t& s = x.proc.processSlot(&slotKey); if (!s) s = x.proc.allocCString("DefaultMallocZone"); return s; }
 uint32_t m_zone_valloc(Ctx& x, uint32_t, uint32_t n) { return x.proc.heap().allocAligned(n, 4096); }
 void m_zone_pressure_relief(Ctx&, uint32_t, uint32_t) {}
 void m_zone_statistics(Ctx& x, uint32_t, GuestPtr stats) { if (stats) for (uint32_t i = 0; i < 20; i += 4) x.mem.write<uint32_t>(stats + i, 0); }

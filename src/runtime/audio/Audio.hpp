@@ -9,6 +9,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -61,6 +62,7 @@ public:
     double positionSeconds(uint32_t voice) const;
     void seekSeconds(uint32_t voice, double t);
     void setMasterGain(float g);
+    void setAllPaused(bool paused);   // app in the background: silence everything, keep positions
     void stopAll();
 
     // Mixes `frames` frames at kRate into separate left/right channels.
@@ -79,6 +81,7 @@ private:
     std::unordered_map<uint32_t, Voice> voices_;
     uint32_t next_ = 1;
     float master_ = 1.0f;
+    std::atomic<bool> allPaused_{false};
 };
 
 } // namespace Hydrogen::Runtime::Audio

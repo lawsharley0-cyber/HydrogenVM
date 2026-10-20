@@ -630,7 +630,7 @@ int32_t au_getProp(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, GuestPtr, Guest
 // =========================================================== AVAudioSession ===
 
 id avs_shared(Ctx& x, id self, SEL) {
-    static id shared = 0;
+    static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
     if (!shared) { shared = rt(x).createInstance(self); rt(x).makeImmortal(shared); }
     return shared;
 }
@@ -1093,7 +1093,7 @@ void al_noop1(Ctx&, uint32_t) {}
 // --------------------------------------------------------------- StoreKit ---
 bool sk_canPay(Ctx& x, id, SEL) { noteOnce(x, "StoreKit (in-app purchases are disabled)"); return false; }
 id sk_queue(Ctx& x, id self, SEL) {
-    static id shared = 0;
+    static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
     if (!shared) { shared = rt(x).createInstance(self); rt(x).makeImmortal(shared); }
     return shared;
 }

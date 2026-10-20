@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <functional>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -100,6 +101,25 @@ public:
     int run();
     // From any thread: stop all guest threads soon.
     void requestStop();
+
+    // App lifecycle, from any host thread (the iOS app calls these when the user leaves a
+    // game or HydrogenVM goes to the background). UIKit delivers the matching delegate
+    // calls and notifications on the guest's main thread, so the game can save.
+    //  * requestGracefulStop: resign active -> enter background -> will terminate, flush
+    //    NSUserDefaults and stdio, then stop. Forces requestStop() after `timeout` seconds.
+    //  * enterBackground: resign active -> enter background (game saves), then the guest is
+    //    paused: main thread parked, other guest threads suspended, audio silenced.
+    //  * enterForeground: resume, then will-enter-foreground -> did-become-active.
+    enum class Lifecycle { Background, Foreground, Terminate };
+    void setLifecycleHandler(std::function<void(Lifecycle)> h) { lifecycleHandler_ = std::move(h); }
+    void requestGracefulStop(double timeout = 5.0);
+    void enterBackground();
+    void enterForeground();
+    bool backgrounded() const { return backgrounded_.load(); }
+    bool gracefulStopRequested() const { return gracefulStop_.load(); }
+    // Used by the lifecycle handler while the app is in the background (parks the caller).
+    void waitWhileBackgrounded();
+    void setBackgrounded(bool b);
     // Everything the app plays is mixed here; the platform renders it on its
     // audio thread through mixerPtr() (safe to keep after the Process ends).
     Audio::Mixer& mixer() { return *mixer_; }
@@ -125,6 +145,12 @@ public:
     std::vector<std::string> missingSymbols() const;
     // Imports bound to "missing" stubs at load (functions), in file order — the static gap list.
     const std::vector<std::string>& unimplementedImports() const { return unimplementedImports_; }
+    // Lazily created guest objects/buffers that must not outlive this process. HLE code
+    // must never cache guest addresses in C++ statics: the iOS app runs one Process per
+    // launch, and a static would hand the next launch an address from the previous one.
+    //   static const char key = 0; uint32_t& v = x.proc.processSlot(&key); if (!v) v = ...;
+    uint32_t& processSlot(const void* key);
+    uint32_t& threadSlot(const void* key);   // per guest thread (strtok, inet_ntoa, asctime buffers)
     int exitCode() const { return exitCode_; }
 
     // ---- subsystems
@@ -262,6 +288,15 @@ private:
     GuestThread* mainThread_ = nullptr;
     std::unordered_map<uint32_t, std::unique_ptr<GuestThread>> threads_;
     std::vector<std::string> unimplementedImports_;
+    std::function<void(Lifecycle)> lifecycleHandler_;
+    struct Liveness { std::mutex mu; bool alive = true; };
+    std::shared_ptr<Liveness> liveness_ = std::make_shared<Liveness>();   // for helper threads that outlive us
+    std::atomic<bool> backgrounded_{false}, gracefulStop_{false};
+    std::mutex lifeMu_;
+    std::condition_variable lifeCv_;
+    std::mutex slotMu_;
+    std::unordered_map<const void*, uint32_t> slots_;
+    std::map<std::pair<const void*, uint32_t>, uint32_t> threadSlots_;
     std::mutex threadsMu_;
     uint32_t nextThreadId_ = 1;
     uint32_t stackTop_ = 0xBF000000u;

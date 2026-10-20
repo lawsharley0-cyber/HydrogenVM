@@ -106,7 +106,7 @@ uint32_t s_strtok_r(Ctx& x, GuestPtr s, GuestPtr delim, GuestPtr save) {
     return tok;
 }
 uint32_t s_strtok(Ctx& x, GuestPtr s, GuestPtr delim) {
-    static thread_local uint32_t save = 0;
+    static const char saveKey = 0; uint32_t& save = x.proc.threadSlot(&saveKey);
     if (!save) save = x.proc.allocStatic(4);
     return s_strtok_r(x, s, delim, save);
 }

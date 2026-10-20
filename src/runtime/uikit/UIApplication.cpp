@@ -6,6 +6,9 @@
 
 namespace fs = std::filesystem;
 
+namespace Hydrogen::Runtime { void flushGuestStdio(Process& p); }
+namespace Hydrogen::Runtime::Foundation { void flushUserDefaults(Process& p); }
+
 namespace Hydrogen::Runtime::UIKit {
 
 using Foundation::autoreleased;
@@ -429,6 +432,67 @@ void configureScreen(Ctx& x) {
                 u.initialOrientation >= 3 ? "landscape" : "portrait", u.statusBarHidden ? "hidden" : "visible");
 }
 
+// ---------------------------------------------------------------- lifecycle ---
+// Delivered on the guest's main thread when the host asks (Process::enterBackground /
+// enterForeground / requestGracefulStop): this is when games save.
+struct Lifecycle { bool active = true, background = false; };
+void deliverLifecycle(Ctx& x, const char* delegateSel, const char* note) {
+    auto& u = ui(x);
+    ObjC::Runtime& r = rt(x);
+    const uint32_t pool = r.poolPush();
+    const id del = u.appDelegate;
+    if (del && r.respondsTo(del, r.sel(delegateSel))) r.send(x.cpu, del, delegateSel, {u.app});
+    Foundation::postNotification(x, note, u.app);
+    r.poolPop(x.cpu, pool);
+}
+void persistNow(Ctx& x) {
+    Foundation::flushUserDefaults(x.proc);
+    flushGuestStdio(x.proc);
+}
+void toBackground(Ctx& x, Lifecycle& st) {
+    if (st.active) { deliverLifecycle(x, "applicationWillResignActive:", "UIApplicationWillResignActiveNotification"); st.active = false; }
+    if (!st.background) { deliverLifecycle(x, "applicationDidEnterBackground:", "UIApplicationDidEnterBackgroundNotification"); st.background = true; }
+    persistNow(x);
+}
+void installLifecycle(Process& p) {
+    auto st = std::make_shared<Lifecycle>();
+    Process* pp = &p;
+    p.setLifecycleHandler([pp, st](Process::Lifecycle what) {
+        if (what == Process::Lifecycle::Foreground) { pp->setBackgrounded(false); return; }   // wakes the parked main thread
+        Foundation::mainRunLoop(*pp).post([pp, st, what](CPU::Cpu& c) {
+            Ctx x{*pp, c, pp->mem()};
+            if (pp->stopping()) return;
+            if (what == Process::Lifecycle::Terminate) {
+                toBackground(x, *st);
+                deliverLifecycle(x, "applicationWillTerminate:", "UIApplicationWillTerminateNotification");
+                persistNow(x);
+                x.proc.log(LogLevel::Info, "The app saved and closed");
+                pp->requestStop();
+                return;
+            }
+            // Background: let the app save, then pause it until the host brings it back.
+            toBackground(x, *st);
+            pp->setBackgrounded(true);
+            const uint32_t self = pp->currentThread().id;
+            std::vector<GuestThread*> paused;
+            for (uint32_t id : pp->liveThreadIds()) {
+                if (id == self) continue;
+                if (GuestThread* t = pp->findThreadById(id)) { pp->engine().suspend(t->cpu); paused.push_back(t); }
+            }
+            x.proc.log(LogLevel::Info, "The app is paused in the background");
+            pp->waitWhileBackgrounded();
+            for (GuestThread* t : paused) pp->engine().resume(t->cpu);
+            pp->setBackgrounded(false);
+            if (pp->stopping() || pp->gracefulStopRequested()) return;   // a queued Terminate follows
+            deliverLifecycle(x, "applicationWillEnterForeground:", "UIApplicationWillEnterForegroundNotification");
+            st->background = false;
+            deliverLifecycle(x, "applicationDidBecomeActive:", "UIApplicationDidBecomeActiveNotification");
+            st->active = true;
+            x.proc.log(LogLevel::Info, "The app resumed");
+        });
+    });
+}
+
 int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id delegateName) {
     auto& u = ui(x);
     auto& r = rt(x);
@@ -504,6 +568,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         runFrame(cx, now);
         rt(cx).poolPop(c, fp);
     });
+    installLifecycle(x.proc);
     for (;;) Foundation::mainRunLoop(x.proc).runUntil(x.cpu, 1e18);
 }
 
