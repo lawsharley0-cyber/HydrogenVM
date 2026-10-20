@@ -116,6 +116,7 @@ struct LibraryView: View {
     @State private var store = LibraryStore()
     @State private var pickingFile = false
     @State private var running: InstalledApp?
+    @State private var browsing: InstalledApp?
     @State private var keepGoing = false
 
     var body: some View {
@@ -142,7 +143,11 @@ struct LibraryView: View {
                             ForEach(store.apps) { app in
                                 Button { if app.info.runnable { running = app } } label: { AppRow(app: app) }
                                     .buttonStyle(.plain)
+                                    .swipeActions(edge: .leading) {
+                                        Button("Files", systemImage: "folder") { browsing = app }.tint(.blue)
+                                    }
                                     .contextMenu {
+                                        Button("Files", systemImage: "folder") { browsing = app }
                                         Button("Reset App Data", systemImage: "arrow.counterclockwise") { store.resetData(app) }
                                         Button("Delete", systemImage: "trash", role: .destructive) { store.delete(app) }
                                     }
@@ -186,6 +191,9 @@ struct LibraryView: View {
             }
             .fullScreenCover(item: $running) { app in
                 RunView(app: app, keepGoing: keepGoing)
+            }
+            .sheet(item: $browsing) { app in
+                FileBrowserView(root: app.homeURL, title: app.title)
             }
         }
     }
