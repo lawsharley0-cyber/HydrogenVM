@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/clash-royale.yml'
       - 'tools/clash_royale_probe.py'
+      - 'tools/clash_protocol_probe.py'
+      - 'tools/test_clash_protocol_probe.py'
       - 'tools/desktop.py'
       - 'tools/local_test.sh'
       - 'src/**'
@@ -53,6 +55,7 @@ jobs:
       - name: Validate probe syntax
         run: |
           python3 -m py_compile tools/clash_royale_probe.py tools/desktop.py
+          python3 tools/test_clash_protocol_probe.py
           bash -n tools/local_test.sh
       - name: Inspect pinned client and inventory assets
         run: python3 tools/clash_royale_probe.py --out clash-report

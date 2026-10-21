@@ -16,6 +16,11 @@
 #include <cstdlib>
 #include <fstream>
 #include <filesystem>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <map>
 #include <sstream>
 #include <string>
@@ -284,6 +289,97 @@ int runFullSubsystemTests() {
         std::string deep = "void main() { gl_FragColor = vec4(" + std::string(100, '(') + "1.0" + std::string(100, ')') + "); }";
         rejected &= !fragment.compile(deep, false);
         check(rejected, "GLSL rejects unsupported control flow, invalid writes/types/indexing/macros and excessive nesting");
+    }
+
+    // Opt-in loopback TCP uses genuine BSD IO, not successful placeholder calls.
+    {
+        ProcessConfig netConfig;
+        netConfig.homePath = "/var/tmp/hvm-loopback-unit";
+        Process offline(netConfig);
+        auto call = [](Process& p, const char* symbol, std::initializer_list<uint32_t> args) {
+            if (!p.mainThread().errnoAddr) p.mainThread().errnoAddr = p.heap().allocZeroed(4);
+            if (!p.mainThread().cpu.r[CPU::kSP]) {
+                p.mem().map(0xBEF00000, 1u << 20, Memory::kProtRW);
+                p.mainThread().cpu.r[CPU::kSP] = 0xBF000000 - 256;
+            }
+            return int32_t(p.callGuest(p.mainThread().cpu, *p.lookupSymbol(symbol), args));
+        };
+        auto error = [](Process& p) { return p.mem().read<int32_t>(p.mainThread().errnoAddr); };
+        check(call(offline, "_socket", {2,1,0}) == -1 && error(offline) == 50,
+              "BSD network remains disabled by default");
+        int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in local{}; local.sin_family = AF_INET; local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+#ifdef __APPLE__
+        local.sin_len = sizeof local;
+#endif
+        bool ready = listener >= 0 && ::bind(listener, reinterpret_cast<sockaddr*>(&local), sizeof local) == 0 && ::listen(listener,1) == 0;
+        socklen_t localSize = sizeof local;
+        ready &= ::getsockname(listener, reinterpret_cast<sockaddr*>(&local), &localSize) == 0;
+        int leaked = -1;
+        {
+            netConfig.loopbackNetwork = true;
+            netConfig.loopbackAliases = {"explicit.local"};
+            Process net(netConfig); auto& mem = net.mem();
+            uint32_t block = net.heap().allocZeroed(256);
+            auto resolve = [&](const char* host) {
+                return call(net,"_getaddrinfo",{net.allocCString(host),net.allocCString(std::to_string(ntohs(local.sin_port))),0,block});
+            };
+            bool resolved = resolve("localhost") == 0;
+            uint32_t info = mem.read<uint32_t>(block), addr = info ? mem.read<uint32_t>(info + 24) : 0;
+            resolved &= addr && mem.read<uint8_t>(addr) == 16 && mem.read<uint8_t>(addr + 1) == 2 && mem.read<uint16_t>(addr + 2) == local.sin_port;
+            check(resolved && resolve("192.0.2.1") == 8 && mem.read<uint32_t>(block) == 0,
+                  "loopback resolver emits Darwin addrinfo and rejects external addresses");
+            int fd = call(net,"_socket",{2,1,0});
+            bool flags = fd >= 0 && call(net,"_fcntl",{uint32_t(fd),4,6}) == 0 && (call(net,"_fcntl",{uint32_t(fd),3}) & 4) != 0 &&
+                (::fcntl(fd,F_GETFL) & O_NONBLOCK) != 0;
+            int connected = addr ? call(net,"_connect",{uint32_t(fd),addr,16}) : -1;
+            ready &= connected == 0 || (connected == -1 && error(net) == 36);
+            pollfd acceptReady{listener,POLLIN,0};
+            ready &= ::poll(&acceptReady,1,1000) == 1;
+            int peer = ready ? ::accept(listener,nullptr,nullptr) : -1;
+            check(flags && peer >= 0, "BSD fcntl applies Darwin nonblocking flags and loopback connect reaches a real listener");
+            mem.copyIn(block + 32,"ping",4);
+            bool io = peer >= 0 && call(net,"_send",{uint32_t(fd),block + 32,4,0}) == 4;
+            pollfd peerReady{peer,POLLIN,0}; char payload[4]{};
+            io &= ::poll(&peerReady,1,1000) == 1 && ::recv(peer,payload,4,MSG_DONTWAIT) == 4 && std::memcmp(payload,"ping",4) == 0;
+            io &= ::send(peer,"pong",4,0) == 4;
+            mem.write<uint32_t>(block + 64 + uint32_t(fd / 32) * 4,1u << (fd % 32));
+            mem.write<uint32_t>(block + 200,1);
+            io &= call(net,"_select",{uint32_t(fd+1),block + 64,0,0,block + 200}) == 1 &&
+                call(net,"_recv",{uint32_t(fd),block + 40,4,0}) == 4 && std::memcmp(mem.host(block+40),"pong",4) == 0;
+            io &= call(net,"_recv",{uint32_t(fd),block + 40,4,128}) == -1 && error(net) == 35;
+            check(io, "loopback send/select/recv exchanges actual bytes and preserves EAGAIN");
+            bool checks = call(net,"_send",{uint32_t(fd),0xfffffff0,32,0}) == -1 && error(net) == 14;
+            mem.write<uint32_t>(block+16,4);
+            checks &= call(net,"_getsockopt",{uint32_t(fd),0xffff,0x1007,block+12,block+16}) == 0 && mem.read<uint32_t>(block+12) == 0;
+            mem.write<uint32_t>(addr+4,htonl(0xc0000201));
+            checks &= call(net,"_connect",{uint32_t(fd),addr,16}) == -1 && error(net) == 51;
+            check(checks, "loopback validates buffer ranges, SO_ERROR and external connect policy");
+            int duplicate = call(net,"_dup",{uint32_t(fd)});
+            bool lifetime = duplicate >= 0 && call(net,"_close",{uint32_t(fd)}) == 0 &&
+                call(net,"_dup2",{uint32_t(duplicate),uint32_t(fd)}) == fd &&
+                call(net,"_close",{uint32_t(duplicate)}) == 0 && call(net,"_send",{uint32_t(fd),block+32,4,0}) == 4;
+            check(lifetime, "ordinary dup/dup2/close preserve socket ownership and live aliases");
+            call(net,"_freeaddrinfo",{info});
+            bool alias = resolve("explicit.local") == 0;
+            call(net,"_freeaddrinfo",{mem.read<uint32_t>(block)});
+            check(alias, "only explicitly configured hostname aliases resolve to loopback");
+            call(net,"_fcntl",{uint32_t(fd),4,2});
+            std::atomic<bool> interrupted{false};
+            auto began = std::chrono::steady_clock::now();
+            std::thread blocked([&] {
+                try { interrupted = call(net,"_read",{uint32_t(fd),block+40,4}) == -1; }
+                catch (const CPU::GuestFault& fault) { interrupted = fault.exit == CPU::Exit::Halt; }
+            });
+            std::this_thread::sleep_for(std::chrono::milliseconds(20)); net.requestStop(); blocked.join();
+            check(interrupted && std::chrono::steady_clock::now() - began < std::chrono::seconds(1),
+                  "process stop interrupts blocking socket read without hanging a guest thread");
+            leaked = fd;
+            if (peer >= 0) ::close(peer);
+        }
+        check(leaked >= 0 && ::fcntl(leaked,F_GETFD) == -1 && errno == EBADF,
+              "process destruction closes retained loopback socket descriptors");
+        if (listener >= 0) ::close(listener);
     }
 
     // 1. CPU Superinstructions & Time-Sliced Execution (3-insn budget)

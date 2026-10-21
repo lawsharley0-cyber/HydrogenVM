@@ -3,6 +3,9 @@
 // a little of Mach.
 #include "runtime/Process.hpp"
 #include "MachPorts.hpp"
+#include "Network.hpp"
+#include "DarwinErrno.hpp"
+#include <sys/socket.h>
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -22,22 +25,6 @@ namespace {
 inline void setErrno(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, uint32_t(e)); }
 template <typename T> T fail(Ctx& x, T v = T(-1)) { setErrno(x, errno); return v; }
 
-// Darwin errno values differ from Linux above 34.
-int darwinErrno(int e) {
-    switch (e) {
-        case EAGAIN: return 35;
-        case EINPROGRESS: return 36;
-        case EALREADY: return 37;
-        case ENOTSUP: return 45;
-        case ELOOP: return 62;
-        case ENAMETOOLONG: return 63;
-        case ENOTEMPTY: return 66;
-        case ETIMEDOUT: return 60;
-        case ENOSYS: return 78;
-        case EOVERFLOW: return 84;
-        default: return e;
-    }
-}
 template <typename T> T failD(Ctx& x, T v = T(-1)) { setErrno(x, darwinErrno(errno)); return v; }
 
 // ------------------------------------------------------- process basics ---
@@ -250,9 +237,14 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const int fd = ::open(x.proc.readCString(path).c_str(), hostOpenFlags(flags), mode & 0777);
     return fd < 0 ? failD<int32_t>(x) : fd;
 }
-int32_t f_close(Ctx& x, int32_t fd) { if (fd <= 2) return 0; return ::close(fd) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_close(Ctx& x, int32_t fd) {
+    if (fd >= 0 && fd <= 2) return 0;
+    const int tracked = closeNetworkSocket(x.proc, fd);
+    return (tracked == -2 ? ::close(fd) : tracked) < 0 ? failD<int32_t>(x) : 0;
+}
 int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
+    if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
 }
@@ -261,6 +253,7 @@ int32_t f_write(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
         x.proc.log(fd == 1 ? LogLevel::GuestStdout : LogLevel::GuestStderr, std::string(reinterpret_cast<const char*>(x.mem.host(buf)), n));
         return int32_t(n);
     }
+    if (isNetworkSocket(x.proc, fd)) return networkWrite(x, fd, buf, n);
     const ssize_t r = ::write(fd, x.mem.host(buf), n);
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
 }
@@ -279,16 +272,30 @@ int64_t f_lseek(Ctx& x, int32_t fd, int64_t off, int32_t whence) {
 int32_t f_fcntl(Ctx& x, int32_t fd, int32_t cmd, VarArgs va) {
     const uint32_t arg = va.args.word();
     switch (cmd) {
-        case 1: case 2: return 0;                     // F_GETFD / F_SETFD
-        case 3: return 2;                             // F_GETFL: O_RDWR
-        case 4: return 0;                             // F_SETFL
+        case 1: { int r = ::fcntl(fd, F_GETFD); return r < 0 ? failD<int32_t>(x) : (r & FD_CLOEXEC ? 1 : 0); }
+        case 2: return ::fcntl(fd, F_SETFD, arg & 1 ? FD_CLOEXEC : 0) < 0 ? failD<int32_t>(x) : 0;
+        case 3: {
+            int r = ::fcntl(fd, F_GETFL);
+            return r < 0 ? failD<int32_t>(x) : (r & O_ACCMODE) | (r & O_NONBLOCK ? 4 : 0) | (r & O_APPEND ? 8 : 0);
+        }
+        case 4: {
+            if (arg & ~15u) { setErrno(x, 22); return -1; }
+            int flags = ::fcntl(fd, F_GETFL);
+            if (flags < 0) return failD<int32_t>(x);
+            flags = (flags & ~(O_NONBLOCK | O_APPEND)) | (arg & 4 ? O_NONBLOCK : 0) | (arg & 8 ? O_APPEND : 0);
+            return ::fcntl(fd, F_SETFL, flags) < 0 ? failD<int32_t>(x) : 0;
+        }
         case 48: case 51: return 0;                   // F_NOCACHE / F_FULLFSYNC
         default: (void)fd; (void)arg; setErrno(x, EINVAL); return -1;
     }
 }
 int32_t f_fsync(Ctx&, int32_t fd) { if (fd > 2) ::fsync(fd); return 0; }
 int32_t f_ftruncate(Ctx& x, int32_t fd, int64_t len) { return ::ftruncate(fd, off_t(len)) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_dup(Ctx& x, int32_t fd) { const int r = ::dup(fd); return r < 0 ? failD<int32_t>(x) : r; }
+int32_t f_dup(Ctx& x, int32_t fd) {
+    const int r = ::dup(fd);
+    if (r >= 0) duplicateNetworkSocket(x.proc, fd, r);
+    return r < 0 ? failD<int32_t>(x) : r;
+}
 
 // Darwin (64-bit inode) struct stat, 4-byte-aligned 64-bit fields: 108 bytes.
 void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {

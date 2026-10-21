@@ -94,8 +94,13 @@ int hvmRunMain(int argc, char** argv) {
             }
         }
         else if (!std::strcmp(argv[i], "--trace")) cfg.traceCalls = true;
+        else if (!std::strcmp(argv[i], "--loopback-network")) cfg.loopbackNetwork = true;
+        else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--quiet")) quiet = true;
         else if (!std::strcmp(argv[i], "--")) { for (++i; i < argc; ++i) cfg.extraArgs.push_back(argv[i]); }
+    }
+    if (!cfg.loopbackAliases.empty() && !cfg.loopbackNetwork) {
+        std::fprintf(stderr, "--loopback-alias requires --loopback-network\n"); return 2;
     }
     if (!inputFile.empty() && (launches != 1 || !fs::is_regular_file(inputFile))) {
         std::fprintf(stderr, "--input-file requires an existing regular file and a single launch\n");

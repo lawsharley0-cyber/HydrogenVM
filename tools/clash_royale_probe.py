@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 import plistlib
 import re
 import subprocess
+import struct
 import urllib.request
 import zipfile
 
@@ -17,6 +18,62 @@ from compat import macho_info
 
 URL = "https://github.com/astralsc/clashroyale_archive/releases/download/Clients/Clash%2BRoyale%2B.Supercell.%2B.v2.1306.1%2B3GS%2BUniv%2BLP%2Bos70.-HoRRcH.rc330_902.ipa"
 SHA256 = "29269ede437f39ffa62fb4234a1c323303ef417e7eb6ddc5c86f9be76e08fb3f"
+
+def offline_code_evidence(data):
+    """Inspect the pinned thin Mach-O, rather than infer behavior from symbols."""
+    if len(data) < 28 or struct.unpack_from('<I', data)[0] != 0xfeedface:
+        raise ValueError('Expected a thin 32-bit Mach-O')
+    sections, symbols = [], []
+    offset = 28
+    symtab = None
+    for _ in range(struct.unpack_from('<I', data, 16)[0]):
+        command, size = struct.unpack_from('<II', data, offset)
+        if size < 8 or offset + size > len(data):
+            raise ValueError('Invalid Mach-O load command')
+        if command == 1:
+            for i in range(struct.unpack_from('<I', data, offset + 48)[0]):
+                entry = offset + 56 + i * 68
+                if entry + 68 > offset + size:
+                    raise ValueError('Invalid section table')
+                sections.append(struct.unpack_from('<III', data, entry + 32))
+        elif command == 2:
+            symtab = struct.unpack_from('<IIII', data, offset + 8)
+        offset += size
+    if symtab is None:
+        raise ValueError('Pinned client symbol table missing')
+    base, count, strings, string_size = symtab
+    if base + count * 12 > len(data) or strings + string_size > len(data):
+        raise ValueError('Invalid symbol table')
+    target = '__ZN8GameMode11saveOfflineERK6String'
+    found = None
+    for i in range(count):
+        name, kind, section, desc, address = struct.unpack_from('<IBBHI', data, base + i * 12)
+        if kind & 0xe != 0xe or not address or name >= string_size:
+            continue
+        symbols.append(address)
+        end = data.find(b'\0', strings + name, strings + string_size)
+        if end >= 0 and data[strings + name:end].decode('ascii', errors='replace') == target:
+            found = address, bool(desc & 8)
+    if found is None:
+        raise ValueError('Pinned client saveOffline symbol missing')
+    address, thumb = found
+    following = min((v for v in symbols if v > address), default=address + 4)
+    for section_address, length, file_offset in sections:
+        if section_address <= address < section_address + length:
+            at = file_offset + address - section_address
+            prefix = data[at:at + min(8, following - address)]
+            break
+    else:
+        raise ValueError('saveOffline has no file-backed section')
+    return {
+        'saveOfflineSymbol': target, 'saveOfflineAddress': hex(address),
+        'saveOfflineThumb': thumb, 'bytesUntilNextSymbol': following - address,
+        'saveOfflineBodyHex': prefix.hex(),
+        'saveOfflineImmediateReturn': thumb and prefix[:2] == bytes.fromhex('7047'),
+        'offlineModeAsciiLiteralPresent': b'OfflineMode' in data,
+        'offlineSavePathStringsPresent': [s for s in ('../offline_avatar.json', '../offline_home.json') if s.encode() in data],
+        'limitation': 'Static evidence for this entry point; does not rule out other local-state code.'
+    }
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -83,6 +140,7 @@ def main():
         "version": info.get("CFBundleShortVersionString"),
         "build": info.get("CFBundleVersion"), "minimumOS": info.get("MinimumOSVersion"),
         "executable": exe_name, "macho": macho, "csvTables": csv_tables,
+        "offlineCodeEvidence": offline_code_evidence(data),
         "fileTypes": dict(collections.Counter(Path(m["path"]).suffix.lower() for m in inventory)),
         "matchingStringCount": len(clues),
         "limitations": ["String matches do not establish message layouts or battle authority.",

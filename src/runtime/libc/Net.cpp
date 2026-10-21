@@ -1,11 +1,17 @@
 // HydrogenVM — BSD sockets, name resolution and network interfaces.
 //
-// HydrogenVM runs apps offline (SCNetworkReachability reports no network), so
+// By default HydrogenVM runs apps offline (reachability reports no network), so
 // the socket layer behaves like a device with networking down: sockets can't
 // be created, names don't resolve, and the only interface is lo0. Address
 // conversion helpers (inet_*) are real, and select()/poll() work on the file
 // descriptors that do exist (files, pipes) and as sleeps.
+// An explicit ProcessConfig capability permits outbound IPv4 TCP on loopback.
+// No external DNS, external connects, listeners or UDP are enabled by it.
 #include "runtime/Process.hpp"
+#include "Network.hpp"
+#include "DarwinErrno.hpp"
+#include <netinet/tcp.h>
+#include <sys/socket.h>
 #include <algorithm>
 #include <arpa/inet.h>
 #include <cerrno>
@@ -26,14 +32,210 @@ constexpr int kAF_INET = 2, kAF_INET6 = 30, kAF_LINK = 18;
 
 int32_t failWith(Ctx& x, int e) { setErrno(x, e); return -1; }
 
-int32_t n_socket(Ctx& x, int32_t, int32_t, int32_t) { return failWith(x, kENETDOWN); }
-int32_t n_badf(Ctx& x) { return failWith(x, kEBADF); }
+struct AddrInfoState {
+    explicit AddrInfoState(Process&) {}
+    std::mutex mu;
+    std::map<uint32_t, std::vector<uint32_t>> allocations;
+};
+// Explicit local TCP capability; never resolves or connects to external hosts.
+struct SocketState {
+    explicit SocketState(Process& p) { p.onExit([this] { clear(); }); }
+    std::mutex mu;
+    std::set<int> fds;
+    void clear() { std::lock_guard lock(mu); for (int fd : fds) { ::shutdown(fd, SHUT_RDWR); ::close(fd); } fds.clear(); }
+    ~SocketState() { clear(); }
+};
+bool owns(Ctx& x, int fd) { return isNetworkSocket(x.proc, fd); }
+int32_t pollHost(Ctx&, std::vector<pollfd>&, int32_t);
+bool waitSocket(Ctx& x, int fd, short events) {
+    std::vector<pollfd> fds{{fd, events, 0}};
+    int r = pollHost(x, fds, -1);
+    if (r < 0) return false;
+    if (r == 0) { setErrno(x, 4); return false; } // interrupted by process stop
+    if (fds[0].revents & POLLNVAL) { setErrno(x, kEBADF); return false; }
+    return true;
+}
+int32_t hostFailure(Ctx& x) { return failWith(x, darwinErrno(errno)); }
+bool span(Ctx& x, GuestPtr ptr, uint32_t n, uint8_t prot) {
+    if (!n) return true;
+    uint64_t end = uint64_t(ptr) + n;
+    if (!ptr || end > (uint64_t(1) << 32)) return false;
+    for (uint64_t a = ptr; a < end; a = (a & ~uint64_t(4095)) + 4096)
+        if ((x.mem.protAt(uint32_t(a)) & prot) != prot) return false;
+    return true;
+}
+int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
+    if (!x.proc.config().loopbackNetwork) return failWith(x, kENETDOWN);
+    if (family != kAF_INET) return failWith(x, kEAFNOSUPPORT);
+    if (type != SOCK_STREAM || (protocol != 0 && protocol != IPPROTO_TCP)) return failWith(x, 43);
+    int fd = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0) return hostFailure(x);
+    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+#ifdef SO_NOSIGPIPE
+    int one = 1;
+    if (::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one) < 0) { int e = errno; ::close(fd); errno = e; return hostFailure(x); }
+#endif
+    auto& state = x.proc.service<SocketState>();
+    std::lock_guard lock(state.mu); state.fds.insert(fd);
+    return fd;
+}
+int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    if (len < 16 || !span(x, addr, 16, Memory::kProtRead)) return failWith(x, kEINVAL);
+    if (x.mem.read<uint8_t>(addr + 1) != kAF_INET) return failWith(x, kEAFNOSUPPORT);
+    sockaddr_in host{}; host.sin_family = AF_INET;
+#ifdef __APPLE__
+    host.sin_len = sizeof host;
+#endif
+    x.mem.copyOut(&host.sin_port, addr + 2, 2); x.mem.copyOut(&host.sin_addr, addr + 4, 4);
+    if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) return failWith(x, 51);
+    int flags = ::fcntl(fd, F_GETFL);
+    if (flags < 0) return hostFailure(x);
+    bool blocking = !(flags & O_NONBLOCK);
+    if (blocking && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return hostFailure(x);
+    int r = ::connect(fd, reinterpret_cast<sockaddr*>(&host), sizeof host), saved = errno;
+    if (blocking && r < 0 && saved == EINPROGRESS) {
+        if (!waitSocket(x, fd, POLLOUT)) { ::fcntl(fd, F_SETFL, flags); return -1; }
+        socklen_t size = sizeof saved;
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &saved, &size) < 0) saved = errno;
+        r = saved ? -1 : 0;
+    }
+    if (blocking) ::fcntl(fd, F_SETFL, flags);
+    errno = saved;
+    return r < 0 ? hostFailure(x) : 0;
+}
+int hostMsgFlags(uint32_t flags, bool receive) {
+    uint32_t allowed = receive ? (1u | 2u | 64u | 128u) : (1u | 4u | 128u | 0x80000u);
+    if (flags & ~allowed) return -1;
+    int out = flags & 1 ? MSG_OOB : 0;
+    if (receive && (flags & 2)) out |= MSG_PEEK;
+    if (receive && (flags & 64)) out |= MSG_WAITALL;
+    if (!receive && (flags & 4)) out |= MSG_DONTROUTE;
+    if (flags & 128) out |= MSG_DONTWAIT;
+#ifdef MSG_NOSIGNAL
+    if (!receive) out |= MSG_NOSIGNAL;
+#endif
+    return out;
+}
+int32_t n_send(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    int hostFlags = hostMsgFlags(flags, false);
+    if (hostFlags < 0) return failWith(x, 45);
+    if (n > INT32_MAX || !span(x, buf, n, Memory::kProtRead)) return failWith(x, 14);
+    bool nonblocking = (flags & 128) || (::fcntl(fd, F_GETFL) & O_NONBLOCK);
+    for (;;) {
+        ssize_t out = ::send(fd, x.mem.host(buf), n, hostFlags | MSG_DONTWAIT);
+        if (out >= 0) return int32_t(out);
+        if (errno != EAGAIN || nonblocking) return hostFailure(x);
+        if (!waitSocket(x, fd, POLLOUT)) return -1;
+    }
+}
+int32_t n_recv(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    int hostFlags = hostMsgFlags(flags, true);
+    if (hostFlags < 0) return failWith(x, 45);
+    if (n > INT32_MAX || !span(x, buf, n, Memory::kProtWrite)) return failWith(x, 14);
+    if ((flags & 66) == 66) return failWith(x, 45); // WAITALL + PEEK not implemented
+    bool nonblocking = (flags & 128) || (::fcntl(fd, F_GETFL) & O_NONBLOCK);
+    uint32_t received = 0;
+    for (;;) {
+        ssize_t out = ::recv(fd, x.mem.host(buf + received), n - received, hostFlags | MSG_DONTWAIT);
+        if (out >= 0) {
+            received += uint32_t(out);
+            if (!out || received == n || nonblocking || !(flags & 64)) return int32_t(received);
+        } else if (errno != EAGAIN || nonblocking) return received ? int32_t(received) : hostFailure(x);
+        if (!waitSocket(x, fd, POLLIN)) return received ? int32_t(received) : -1;
+    }
+}
+int32_t n_shutdown(Ctx& x, int32_t fd, int32_t how) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    if (how < 0 || how > 2) return failWith(x, kEINVAL);
+    return ::shutdown(fd, how) < 0 ? hostFailure(x) : 0;
+}
+int32_t n_setsockopt(Ctx& x, int32_t fd, int32_t level, int32_t opt, GuestPtr value, uint32_t len) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    if (len != 4 || !span(x, value, 4, Memory::kProtRead)) return failWith(x, kEINVAL);
+    int v = x.mem.read<int32_t>(value), hostLevel = SOL_SOCKET, hostOpt;
+    if (level == 6 && opt == 1) { hostLevel = IPPROTO_TCP; hostOpt = TCP_NODELAY; }
+    else if (level != 0xffff) return failWith(x, 42);
+    else if (opt == 4) hostOpt = SO_REUSEADDR;
+    else if (opt == 8) hostOpt = SO_KEEPALIVE;
+    else if (opt == 0x1001) hostOpt = SO_SNDBUF;
+    else if (opt == 0x1002) hostOpt = SO_RCVBUF;
+    else if (opt == 0x1022 && v == 1) {
+        // macOS sets SO_NOSIGPIPE on creation; Linux applies MSG_NOSIGNAL to
+        // every send (including write through System.cpp) for owned sockets.
+        return 0;
+    } else return failWith(x, 42);
+    return ::setsockopt(fd, hostLevel, hostOpt, &v, sizeof v) < 0 ? hostFailure(x) : 0;
+}
+int32_t n_getsockopt(Ctx& x, int32_t fd, int32_t level, int32_t opt, GuestPtr value, GuestPtr len) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    if (!span(x, len, 4, Memory::kProtRW) || x.mem.read<uint32_t>(len) < 4 || !span(x, value, 4, Memory::kProtWrite)) return failWith(x, kEINVAL);
+    int v = 0, hostOpt;
+    if (level != 0xffff) return failWith(x, 42);
+    if (opt == 0x1007) hostOpt = SO_ERROR;
+    else if (opt == 0x1008) hostOpt = SO_TYPE;
+    else if (opt == 0x1001) hostOpt = SO_SNDBUF;
+    else if (opt == 0x1002) hostOpt = SO_RCVBUF;
+    else return failWith(x, 42);
+    socklen_t size = sizeof v;
+    if (::getsockopt(fd, SOL_SOCKET, hostOpt, &v, &size) < 0) return hostFailure(x);
+    if (hostOpt == SO_ERROR) v = darwinErrno(v);
+    x.mem.write<int32_t>(value, v); x.mem.write<uint32_t>(len, 4); return 0;
+}
+// Darwin addrinfo layout differs from the host (including sockaddr length byte).
+int32_t n_getaddrinfo(Ctx& x, GuestPtr node, GuestPtr service, GuestPtr hints, GuestPtr res) {
+    if (!span(x, res, 4, Memory::kProtWrite)) return 8;
+    x.mem.write<uint32_t>(res, 0);
+    if (!x.proc.config().loopbackNetwork) return 8;
+    std::string name = node ? x.proc.readCString(node, 256) : "";
+    in_addr ip{};
+    bool alias = std::find(x.proc.config().loopbackAliases.begin(), x.proc.config().loopbackAliases.end(), name) != x.proc.config().loopbackAliases.end();
+    if (name == "localhost" || alias) ip.s_addr = htonl(INADDR_LOOPBACK);
+    else if (inet_pton(AF_INET, name.c_str(), &ip) != 1 || (ntohl(ip.s_addr) >> 24) != 127) {
+        x.proc.logf(LogLevel::Info, "Loopback resolver refused host: %s", name.c_str()); return 8;
+    }
+    uint32_t flags = 0;
+    if (hints) {
+        if (!span(x, hints, 32, Memory::kProtRead)) return 3;
+        flags = x.mem.read<uint32_t>(hints);
+        int family = x.mem.read<int32_t>(hints + 4), type = x.mem.read<int32_t>(hints + 8), protocol = x.mem.read<int32_t>(hints + 12);
+        if (family && family != kAF_INET) return 5;
+        if ((type && type != SOCK_STREAM) || (protocol && protocol != IPPROTO_TCP)) return 10;
+        if (flags & ~uint32_t(2 | 4 | 0x1000)) return 3; // CANONNAME / NUMERICHOST / NUMERICSERV
+        if ((flags & 4) && (name == "localhost" || alias)) return 8;
+    }
+    uint32_t port = 0;
+    if (service) {
+        std::string s = x.proc.readCString(service, 16);
+        if (s.empty() || s.find_first_not_of("0123456789") != std::string::npos) return 9;
+        for (char c : s) { port = port * 10 + unsigned(c - '0'); if (port > 65535) return 9; }
+    }
+    auto& heap = x.proc.heap();
+    uint32_t result = heap.allocZeroed(32), addr = heap.allocZeroed(16);
+    x.mem.write<uint32_t>(result + 4, kAF_INET); x.mem.write<uint32_t>(result + 8, SOCK_STREAM);
+    x.mem.write<uint32_t>(result + 12, IPPROTO_TCP); x.mem.write<uint32_t>(result + 16, 16); x.mem.write<uint32_t>(result + 24, addr);
+    if (flags & 2) x.mem.write<uint32_t>(result + 20, x.proc.allocCString(name));
+    x.mem.write<uint8_t>(addr, 16); x.mem.write<uint8_t>(addr + 1, kAF_INET);
+    x.mem.write<uint16_t>(addr + 2, htons(uint16_t(port))); x.mem.write<uint32_t>(addr + 4, ip.s_addr);
+    auto& state = x.proc.service<AddrInfoState>();
+    { std::lock_guard lock(state.mu); state.allocations[result] = {addr, x.mem.read<uint32_t>(result + 20), result}; }
+    x.mem.write<uint32_t>(res, result); return 0;
+}
+void n_freeaddrinfo(Ctx& x, GuestPtr addr) {
+    // Only allocations produced by this implementation are accepted below.
+    if (!addr) return;
+    auto& state = x.proc.service<AddrInfoState>();
+    std::lock_guard lock(state.mu);
+    auto it = state.allocations.find(addr);
+    if (it == state.allocations.end()) return;
+    for (uint32_t ptr : it->second) if (ptr) x.proc.heap().free(ptr);
+    state.allocations.erase(it);
+}
+int32_t n_unsupportedSocket(Ctx& x, int32_t fd) { return failWith(x, owns(x, fd) ? 45 : kEBADF); }
 int32_t n_socketpair(Ctx& x, int32_t, int32_t, int32_t, GuestPtr) { return failWith(x, kENETDOWN); }
 int32_t n_zero(Ctx&) { return 0; }
-
-// getaddrinfo: EAI_NONAME (8 on Darwin) for everything; gethostbyname: NULL.
-int32_t n_getaddrinfo(Ctx& x, GuestPtr, GuestPtr, GuestPtr, GuestPtr res) { if (res) x.mem.write<uint32_t>(res, 0); return 8; }
-void n_freeaddrinfo(Ctx&, GuestPtr) {}
 uint32_t n_gaiStrerror(Ctx& x, int32_t e) {
     static const char sKey = 0; uint32_t& s = x.proc.processSlot(&sKey);
     if (!s) s = x.proc.allocCString("nodename nor servname provided, or not known");
@@ -183,6 +385,7 @@ int32_t n_select(Ctx& x, int32_t nfds, GuestPtr rs, GuestPtr ws, GuestPtr es, Gu
     }
     const int32_t r = pollHost(x, h, timeoutMs);
     if (r < 0) return r;
+    for (auto& fd : h) if (fd.revents & POLLNVAL) return failWith(x, kEBADF);
     auto clear = [&](GuestPtr set) { if (set) for (int w = 0; w < (nfds + 31) / 32; ++w) x.mem.write<uint32_t>(set + uint32_t(w) * 4, 0); };
     clear(rs); clear(ws); clear(es);
     int32_t count = 0;
@@ -213,6 +416,7 @@ int32_t n_pipe(Ctx& x, GuestPtr fds) {
 int32_t n_dup2(Ctx& x, int32_t from, int32_t to) {
     if (to <= 2) return to;   // stdout/stderr feed the app log; keep them
     const int r = ::dup2(from, to);
+    if (r >= 0) duplicateNetworkSocket(x.proc, from, to);
     return r < 0 ? failWith(x, kEBADF) : r;
 }
 
@@ -222,12 +426,31 @@ uint32_t n_backtraceSymbols(Ctx& x, GuestPtr, int32_t) { return x.proc.heap().al
 
 } // namespace
 
+bool isNetworkSocket(Process& p, int fd) {
+    auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu); return s.fds.count(fd) != 0;
+}
+int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
+int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
+int closeNetworkSocket(Process& p, int fd) {
+    auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu);
+    if (!s.fds.erase(fd)) return -2;
+    return ::close(fd);
+}
+void duplicateNetworkSocket(Process& p, int from, int to) {
+    auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu);
+    bool owned = s.fds.count(from) != 0;
+    s.fds.erase(to); if (owned) s.fds.insert(to);
+}
+
 void registerLibcNet(Process& p) {
     p.def<&n_socket>("_socket");
     p.def<&n_socketpair>("_socketpair");
-    for (const char* f : {"_connect", "_bind", "_listen", "_accept", "_send", "_sendto", "_sendmsg", "_recv", "_recvfrom",
-                          "_recvmsg", "_shutdown", "_getsockopt", "_setsockopt", "_getpeername", "_getsockname", "_sendfile"})
-        p.def<&n_badf>(f);
+    p.service<SocketState>();
+    p.def<&n_connect>("_connect"); p.def<&n_send>("_send"); p.def<&n_recv>("_recv");
+    p.def<&n_shutdown>("_shutdown"); p.def<&n_getsockopt>("_getsockopt"); p.def<&n_setsockopt>("_setsockopt");
+    for (const char* f : {"_bind", "_listen", "_accept", "_sendto", "_sendmsg", "_recvfrom",
+                          "_recvmsg", "_getpeername", "_getsockname", "_sendfile"})
+        p.def<&n_unsupportedSocket>(f);
     p.def<&n_getaddrinfo>("_getaddrinfo");
     p.def<&n_freeaddrinfo>("_freeaddrinfo");
     p.def<&n_gaiStrerror>("_gai_strerror");
