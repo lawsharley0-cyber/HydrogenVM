@@ -14,8 +14,8 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 
 | ID | Item | Impact | Sev | Cx | Score | Group | Depends on | Parallel | State |
 |---|---|---:|---:|---:|---:|---|---|---|---|
-| B-001 | Make GitHub Actions execute and publish a report for `HEAD`. Jobs since `239a0ab` die in a few seconds with no steps. The notes blame billing; the API did not return the vendor string. | 5 | 5 | 1 | 25.0 | — | Owner account | Yes, except another edit of the same workflow | Needs owner |
-| B-002 | Run `fulltest`, the Python protocol tests, and a 3 second smoke of the three in-repo IPAs on `main`. | 5 | 4 | 1 | 20.0 | — | B-001 for a green check. The command itself has no code dependency | Yes, as its own workflow file | Operational as `.github/workflows/compat-harness.yml` and `tools/hvm_compat.py`. Execution Needs owner. Folding the same suites into `hvm_report.py` is Planned |
+| B-001 | Make GitHub Actions execute and publish a report for `HEAD`. The empty-step failure on `07fabbb` (run 39633887764) was real. Linux CI on `6af9976` published `runs/20261021-175201-39646696896-linux` (run 39646696896), and the compat harness passed (run 39646706013). | 5 | 5 | 1 | 25.0 | — | — | Yes, except another edit of the same workflow | Operational as of `6af9976`. macOS CI remains conditional |
+| B-002 | Run `fulltest`, the Python protocol tests, and a 3 second smoke of the three in-repo IPAs on `main`. | 5 | 4 | 1 | 20.0 | — | — | Yes, as its own workflow file | Operational. The compat job is green on `6af9976` and runs `fulltest`. Folding the same suites into `hvm_report.py` (default `--only` is still `cpu,ios,bench`) is Planned. macOS CI was not part of that green run |
 | B-003 | Reconcile `docs/ARCHITECTURE.md`, `docs/HANDOFF.md`, and `docs/DEVELOPMENT_AND_RELEASE.md` with the code. Do not delete the shader subset, the missing near clip, or the `CCCrypt` refusal. | 4 | 3 | 1 | 12.0 | — | None | Yes | Planned |
 | B-004 | One Mac compile of current `app/`. `06a7b16` changed the file browser, was marked `[mac]`, and Actions never started. | 4 | 4 | 2 | 8.0 | E | B-001 if no local Mac | Not with another `app/**` edit | Needs owner |
 
@@ -25,13 +25,13 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 |---|---|---:|---:|---:|---:|---|---|---|---|
 | B-101 | Enforce guest 4 KB permissions on loads and stores, including the 16 KB host-page case. | 5 | 5 | 3 | 8.33 | A | None, but one owner for the whole group | Not with B-102, B-201, or B-208 | Planned |
 | B-102 | Precise fault PC. Do not `siglongjmp` out of an HLE frame that has live C++ objects. | 4 | 5 | 3 | 6.67 | A | Same owner as B-101, after or inside that design | Not with B-101 | Planned |
-| B-103 | Homogeneous near-plane clip. Stop taking `abs(clip.w)` in `OpenGLES.cpp`. | 4 | 4 | 3 | 5.33 | B | None | Not with B-104, B-105, or B-111 | Planned |
+| B-103 | Homogeneous near-plane clip. `OpenGLES.cpp:2320` is only a zero-W guard. Lines 2449–2452 rasterize the bbox of already-projected vertices; there is no near-plane clip. | 4 | 4 | 3 | 5.33 | B | None | Not with B-104, B-105, or B-111 | Planned |
 | B-104 | Widen the GLSL ES 1.00 subset only against a checked-in shader corpus. No guessed sampler roles. | 5 | 4 | 3 | 6.67 | B | B-103. Dump with `HVM_DUMP_SHADERS` first | Not with other B | Planned |
 | B-105 | Raster and composite cost: SIMD triangles, threaded slices, dirty-rect present, upload-time texture conversion. Plus CPU-side ideas in `docs/PERFORMANCE.md` that are not Group A (those are B-201). | 5 | 3 | 3 | 5.0 | B | B-103 | Not with other B | Planned |
 | B-106 | Clash Royale past 65% load: 21903 sector state, then the next message the pinned client actually sends. Do not invent sector payloads. | 5 | 4 | 3 | 6.67 | C | Pinned IPA hash `29269ede…` | Not with edits to `src/runtime/libc/Net.cpp` | Planned. Fetching the third-party URL is Needs owner |
 | B-107 | Instruction oracle for encodings Clang does not emit. Put `tools/decode_fuzz.py` on a weekly job at the documented sample size. | 3 | 3 | 2 | 4.5 | Shares A if decoders change | None for a pure oracle | Beside B and C | Planned. `--fuzz N` on the harness runs it on demand |
 | B-108 | `regcomp` / `regexec` / `regerror` / `regfree` (Art of Glow). | 3 | 3 | 2 | 4.5 | — if the patch stays in `src/runtime/libc/` | None | Beside D | Planned |
-| B-109 | `CGFont*` getters Tiny Tower queries. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | Planned |
+| B-109 | `CGFontCopyTableForTag` and the `CGFontGet*` queries Tiny Tower hits. `CGFontCopyTableForTag` is not a getter. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | Planned |
 | B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Planned |
 | B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | None, but the file is `OpenGLES.cpp` | Not while B-103 is in progress | Planned |
 | B-112 | Stop adding commercial IPAs to git. Hashes plus an external store. | 3 | 4 | 1 | 12.0 | — | Owner picks the store | Yes | Harness side Operational. Removing the three committed files is Needs owner |
@@ -83,7 +83,7 @@ These are Planned. They are not separate roles. Land B-103 first.
 
 ## Scheduling notes
 
-- B-002's code is in tree so the moment B-001 clears, `main` has a harness job. That does not close B-001.
+- B-001 is operational for Linux as of `6af9976`. The compat job runs the harness. Teaching `hvm_report.py` to run `fulltest` is still open and does not reopen B-001. The `07fabbb` empty-step failure (run 39633887764) stays on the record.
 - B-111 shares `OpenGLES.cpp` with B-103. If the clipper is open, point-size waits.
 - B-109 shares Group D with any Foundation or UIKit class change. Regex and `tmpnam` do not, if they stay in libc.
 - A 4 KB-page green harness run does not close B-101.

@@ -23,6 +23,7 @@ _AUDIO = re.compile(r"^_?(al[A-Z]|alc|Audio|ExtAudio|AU[A-Z]|AV[A-Z])")
 _TEXT = re.compile(r"^_?(CG|CT|kCG|kCT)")
 _FRAMEWORK = re.compile(r"^_?(NS|CF|UI|CA|kCF)")
 _OBJC = re.compile(r"^[+-]\[")
+_SC = re.compile(r"^_?SC[A-Z]")
 
 
 def owner_for_symbol(name: str) -> tuple[str, str, str]:
@@ -35,6 +36,9 @@ def owner_for_symbol(name: str) -> tuple[str, str, str]:
         return "audio", "graphics-audio-input", ""
     if _TEXT.match(name):
         return "text", "guest-frameworks", "D"
+    if _SC.match(name):
+        # SCNetworkReachability is a deliberate offline stub in PlatformStubs.cpp.
+        return "system-configuration", "graphics-audio-input", ""
     return "libc", "guest-frameworks", ""
 
 

@@ -51,13 +51,13 @@ Harness self-tests: 30 passed, 0 failed (`python3 -m unittest discover -s tools/
 | App | Status | Frames | Frame signal | Audio | Load-time gaps |
 |---|---|---:|---|---|---|
 | angry-birds | ran, no crash | 95 | mostly-one-color (about 93% near-white, 6% other). Not a title-screen proof | mixer silent | `tmpnam` |
-| tiny-tower | ran, no crash | 69 | varied | mixer active | `CGFont*` getters, `glPointSizePointerOES` |
+| tiny-tower | ran, no crash | 69 | varied | mixer active | `CGFontCopyTableForTag`, `CGFontGet*` queries, `glPointSizePointerOES` |
 | art-of-glow | ran, no crash | 50 | varied | mixer silent | `regcomp`, `regexec`, `regerror`, `regfree`. `SCNetworkReachability` reported offline (signal). `kCFNumberNaN` and infinities zero-filled (signal) |
 | clash-royale-2-1306-1 | skipped | — | not run | not measured | IPA not in the fixture root. Skip is not a pass |
 
 A 4 KB pass is not an iPhone memory-model pass. Frame counts move between runs; the diff does not fail on that unless presented frames drop to zero. MIPS and average frame time are informational.
 
-Actions was not executed. Jobs since `239a0ab` have not been starting, so this table is the evidence.
+Linux Actions is green on `6af9976`. The compat harness passed in run [39646706013](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646706013). The Linux CI job published `runs/20261021-175201-39646696896-linux` in run [39646696896](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646696896). The empty-step failure on `07fabbb` (run 39633887764) was real; it is history, not the current gate. The macOS CI job on that push was skipped by its existing condition.
 
 ## Fixed regressions
 
@@ -86,7 +86,6 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 
 | Topic | Why it blocks |
 |---|---|
-| Actions billing or the real cause of jobs dying since `239a0ab` | The harness workflow cannot go green until jobs start. Local JSON is the substitute |
 | Fixture directory, and whether the three commercial IPAs may remain in git | Harness is ready. Removal is a history and copyright decision |
 | Clash client URL `https://github.com/astralsc/clashroyale_archive/...` and whether that client is licensed for this use | The hash is recorded. The file is not downloaded |
 | Who may merge without the independent review pass | Nothing in the repo requires a second reader |
@@ -99,7 +98,7 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 
 ## Next improvements
 
-1. Owner confirms Actions, then the compat-harness workflow is the Linux gate for real.
+1. Teach `tools/hvm_report.py` to run `fulltest` so the published `ci-reports` row matches the harness (B-002 follow-up). The compat job already runs `fulltest`. Do not treat the skipped macOS job as a pass.
 2. B-003 doc reconciliation, review/docs role, no runtime files.
 3. Staff Group B for the near clip (B-103) or Group D for `CGFont*` (B-109) or libc for `regcomp` (B-108). Do not staff two writers for one letter.
 4. After a fixture decision, start B-106 (21903) on Group C alone.

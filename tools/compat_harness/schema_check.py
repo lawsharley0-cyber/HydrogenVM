@@ -1,19 +1,20 @@
 """Structural check for harness reports.
 
-``schema/report.schema.json`` is the document a JSON Schema validator can
-load. This module enforces the same required fields with the standard
-library so CI does not need a schema package. It is a conformance check,
-not a full Draft 2020-12 implementation.
+``schema/report.schema.json`` is Draft 2020-12. This module walks that
+document — type, const, enum, pattern, required, properties, items, and
+``$ref`` — with the standard library so CI does not need a schema package.
+Every constraint the report schema states is enforced. Keywords this schema
+does not use (``if``/``then``, ``format``, ``unevaluatedProperties``) are not.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 
 from .manifest import package_dir
 
-_APP_STATUSES = frozenset({"skipped", "error", "ran", "crashed", "load-error", "timeout"})
-_CASE_STATUSES = frozenset({"pass", "fail", "skip"})
+_SKIP = frozenset({"$schema", "$id", "$defs", "$comment", "title", "description"})
 
 
 def schema_path() -> str:
@@ -29,59 +30,7 @@ def validate_report(report: object) -> list[str]:
     errors: list[str] = []
     if not isinstance(report, dict):
         return ["report must be an object"]
-    _require(report, {
-        "schemaVersion": int,
-        "kind": str,
-        "generatedAt": str,
-        "git": dict,
-        "host": dict,
-        "limits": dict,
-        "manifest": dict,
-        "suites": dict,
-        "clusters": list,
-        "summary": dict,
-    }, "report", errors)
-    if report.get("kind") not in (None, "hvm-compat-report"):
-        errors.append("report.kind must be hvm-compat-report")
-    if report.get("schemaVersion") not in (None, 1):
-        errors.append("report.schemaVersion must be 1")
-    host = report.get("host")
-    if isinstance(host, dict) and "pageSize" not in host:
-        errors.append("report.host.pageSize is required")
-    suites = report.get("suites") if isinstance(report.get("suites"), dict) else {}
-    for name in ("unit", "python", "apps"):
-        if name not in suites:
-            errors.append(f"report.suites.{name} is required")
-    for name in ("unit", "python"):
-        suite = suites.get(name)
-        if isinstance(suite, dict):
-            _validate_cases(suite.get("cases"), f"suites.{name}", errors)
-    apps = suites.get("apps") if isinstance(suites.get("apps"), dict) else {}
-    rows = apps.get("apps") if isinstance(apps, dict) else None
-    if not isinstance(rows, list):
-        errors.append("report.suites.apps.apps must be a list")
-    else:
-        for i, app in enumerate(rows):
-            _validate_app(app, i, errors)
-    clusters = report.get("clusters")
-    if isinstance(clusters, list):
-        for i, item in enumerate(clusters):
-            if not isinstance(item, dict):
-                errors.append(f"clusters[{i}] must be an object")
-                continue
-            for key in ("kind", "key", "likelyOwner", "apps"):
-                if key not in item:
-                    errors.append(f"clusters[{i}].{key} is required")
-            if "apps" in item and not isinstance(item["apps"], list):
-                errors.append(f"clusters[{i}].apps must be a list")
-    summary = report.get("summary")
-    if isinstance(summary, dict) and not isinstance(summary.get("ok"), bool):
-        errors.append("report.summary.ok must be a boolean")
-    schema = load_schema()
-    required = schema.get("required") or []
-    for key in required:
-        if key not in report:
-            errors.append(f"schema required field missing from checker input: {key}")
+    _check(report, load_schema(), "report", load_schema(), errors)
     return errors
 
 
@@ -103,43 +52,91 @@ def validate_diff(diff: object) -> list[str]:
     return errors
 
 
-def _validate_cases(cases, where: str, errors: list[str]) -> None:
-    if not isinstance(cases, list):
-        errors.append(f"{where}.cases must be a list")
+def _check(value, schema: dict, path: str, root: dict, errors: list[str]) -> None:
+    if "$ref" in schema:
+        _check(value, _resolve(root, schema["$ref"]), path, root, errors)
+        local = {k: v for k, v in schema.items() if k != "$ref" and k not in _SKIP}
+        if local:
+            _check(value, local, path, root, errors)
         return
-    for i, case in enumerate(cases):
-        if not isinstance(case, dict):
-            errors.append(f"{where}.cases[{i}] must be an object")
-            continue
-        if not isinstance(case.get("id"), str):
-            errors.append(f"{where}.cases[{i}].id must be a string")
-        if case.get("status") not in _CASE_STATUSES:
-            errors.append(f"{where}.cases[{i}].status is invalid")
+    if "type" in schema:
+        types = schema["type"]
+        if isinstance(types, str):
+            types = [types]
+        if not any(_type_ok(value, kind) for kind in types):
+            errors.append(f"{path} has the wrong type")
+            return
+    if "const" in schema and not _const_ok(value, schema["const"]):
+        errors.append(f"{path} must be {schema['const']!r}")
+        return
+    if "enum" in schema and not any(_const_ok(value, item) for item in schema["enum"]):
+        errors.append(f"{path} is not an allowed value")
+        return
+    if "pattern" in schema and isinstance(value, str) and re.search(schema["pattern"], value) is None:
+        errors.append(f"{path} does not match {schema['pattern']}")
+        return
+    if schema.get("additionalProperties") is False and isinstance(value, dict):
+        allowed = set((schema.get("properties") or {}))
+        for key in value:
+            if key not in allowed:
+                errors.append(f"{path}.{key} is not allowed")
+    if isinstance(value, dict):
+        for key in schema.get("required") or []:
+            if key not in value:
+                errors.append(f"{path}.{key} is required")
+        props = schema.get("properties") or {}
+        for key, sub in props.items():
+            if key in value:
+                _check(value[key], sub, f"{path}.{key}", root, errors)
+    if isinstance(value, list) and "items" in schema:
+        item_schema = schema["items"]
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                _check(item, item_schema, f"{path}[{index}]", root, errors)
 
 
-def _validate_app(app, index: int, errors: list[str]) -> None:
-    where = f"suites.apps.apps[{index}]"
-    if not isinstance(app, dict):
-        errors.append(f"{where} must be an object")
-        return
-    for key in ("id", "status", "sha256", "launchSuccess", "crashed", "frame", "audio", "clusters"):
-        if key not in app:
-            errors.append(f"{where}.{key} is required")
-    if app.get("status") not in _APP_STATUSES:
-        errors.append(f"{where}.status is invalid")
-    if not isinstance(app.get("launchSuccess"), bool) or not isinstance(app.get("crashed"), bool):
-        errors.append(f"{where} launchSuccess and crashed must be booleans")
-    frame = app.get("frame")
-    if isinstance(frame, dict) and not isinstance(frame.get("signal"), str):
-        errors.append(f"{where}.frame.signal must be a string")
-    audio = app.get("audio")
-    if isinstance(audio, dict) and not isinstance(audio.get("signal"), str):
-        errors.append(f"{where}.audio.signal must be a string")
+def _resolve(root: dict, ref: str) -> dict:
+    if not ref.startswith("#/"):
+        raise ValueError(f"unsupported schema ref {ref}")
+    node = root
+    for part in ref[2:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")
+        node = node[part]
+    if not isinstance(node, dict):
+        raise ValueError(f"schema ref {ref} is not an object")
+    return node
+
+
+def _type_ok(value, kind: str) -> bool:
+    if kind == "object":
+        return isinstance(value, dict)
+    if kind == "array":
+        return isinstance(value, list)
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "boolean":
+        return isinstance(value, bool)
+    if kind == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if kind == "null":
+        return value is None
+    return False
+
+
+def _const_ok(value, expected) -> bool:
+    if isinstance(expected, bool) or isinstance(value, bool):
+        return isinstance(value, bool) and isinstance(expected, bool) and value is expected
+    return value == expected
 
 
 def _require(obj: dict, types: dict, where: str, errors: list[str]) -> None:
     for key, kind in types.items():
         if key not in obj:
             errors.append(f"{where}.{key} is required")
+        elif kind is int:
+            if not isinstance(obj[key], int) or isinstance(obj[key], bool):
+                errors.append(f"{where}.{key} has the wrong type")
         elif not isinstance(obj[key], kind):
             errors.append(f"{where}.{key} has the wrong type")

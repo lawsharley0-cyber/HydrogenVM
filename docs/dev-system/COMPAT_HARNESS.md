@@ -20,7 +20,7 @@ python3 tools/hvm_compat.py run \
   --require-resolved
 ```
 
-`--require-resolved` fails if Angry Birds, Tiny Tower, or Art of Glow cannot be resolved. Clash Royale is optional: a missing file is a skip, and a skip is not a pass.
+A missing required fixture fails the run (exit 1) whether or not `--require-resolved` is passed. That flag remains accepted. Clash Royale is optional: a missing file is a skip, the apps suite is `partial` rather than `pass`, and `summary.ok` stays true when everything required was measured. A skip is not a pass.
 
 Other entry points:
 
@@ -34,7 +34,7 @@ Other entry points:
 | `validate report.json` | Required-field check aligned with `schema/report.schema.json` |
 | `run --fuzz 20000` | Also runs `tools/decode_fuzz.py`. Default is off |
 
-Exit status is 1 when a unit or Python case fails, a required fixture is missing or its hash does not match, `hvm` does not write a report, the run times out, or the baseline diff has a regression. A guest crash is recorded. It fails the process only when the baseline did not already crash.
+Exit status is 1 when a unit or Python case fails, a required fixture is missing or its hash does not match, `hvm` does not write a report, the run times out, or the baseline diff has a regression. The missing-fixture failure does not depend on `--require-resolved`. A guest crash is recorded. It fails the process only when the baseline did not already crash. An optional skip does not fail the process.
 
 ## Fixtures
 
@@ -67,11 +67,13 @@ Clash Royale's pinned hash matches `tools/clash_royale_probe.py`. The entry is o
 - launch success becoming false, including a required app that becomes a skip
 - a new crash, a new load error, a new load-time unimplemented import
 - presented frames dropping from a positive count to zero
-- frame signal moving from `varied` to `all-black` or `all-white`
+- frame signal moving from `varied` or `mostly-one-color` to `all-black` or `all-white`
+- mixer signal moving from `active` to `silent`
+- a load error that changes to a different non-empty string
 
-Attention, not a failure: a new runtime-only missing function. A 3 second run does not always reach the same call. Imports and misses whose text says the feature is disabled, offline, unavailable, or not supported are clustered as signals (`unavailable`), because several of those stubs are deliberate. Zero-filled data symbols (`kCFNumberNaN` and the infinities) are the same kind of signal. Informational: MIPS, average frame time (±25%), audio sample counts, page-size differences, signal changes that are not a blanking of a varied frame.
+Attention, not a failure: a new runtime-only missing function. A 3 second run does not always reach the same call. Imports and misses whose text says the feature is disabled, offline, unavailable, or not supported are clustered as signals (`unavailable`), because several of those stubs are deliberate. Zero-filled data symbols (`kCFNumberNaN` and the infinities) are the same kind of signal. `SCNetworkReachability` is that kind of stub and lives in `PlatformStubs.cpp`, so its cluster owner is graphics/audio/input rather than libc. Informational: MIPS, average frame time (±25%), raw audio sample counts, page-size differences, and frame-signal changes that are not a blanking of a `varied` or `mostly-one-color` frame. A baseline row that was skipped and now has a real run is `new-coverage`, not a regression, so the first Clash measurement is not compared as if the skip had been a clean launch.
 
-Frame signals sample the PNG (about 80 by 120 steps). Near-black is RGB under 16. Near-white is RGB over 240. `all-black` / `all-white` means that class is at least 97% of the samples. `mostly-one-color` means one 4-bit bin is at least 90% and is recorded as a signal, not a regression by itself. Angry Birds can be mostly dark without being a single-color failure. The audit said not to treat a 3 second Angry Birds run as a title-screen proof.
+Frame signals sample the PNG (about 80 by 120 steps). Near-black is RGB under 16. Near-white is RGB over 240. `all-black` / `all-white` means that class is at least 97% of the samples. `mostly-one-color` means one 4-bit bin is at least 90%. That signal is not a failure by itself, but a later all-white or all-black frame is a regression. Angry Birds on the committed baseline is about 93% near-white, not a dark framebuffer. The audit said not to treat a 3 second Angry Birds run as a title-screen proof.
 
 Audio: the harness passes a `socketpair` datagram as `--audio-fd` and drains it so the mixer does not stall the guest. `silent` means the mixer produced samples and they were zero. `not-measured` means the socket could not be created. This is not device audio. The smoke uses a hard `--run-for` stop. `--graceful` lets the guest resign active first and can replace the last frame with a shutdown frame, so it is not the default.
 
@@ -100,14 +102,14 @@ Verified by reading the tree and by what this Linux VM can execute. The VM is x8
 | Clash native two-launch probe and the IMA corpus | The IPA is not in the clone. The harness does not download the third-party release | Owner-approved fixture root plus `tools/clash_home_probe.py` |
 | pygame desktop viewer | `tools/desktop.py` wants a display and pygame | A machine with a window |
 | Metal, device audio, CoreMotion from real hardware | The engine's GLES path is software. The shell's device services are in the iOS app | Device |
-| A green GitHub Actions check | Runs since `239a0ab` die in seconds with an empty step list. `docs/HANDOFF.md` and `docs/DEVELOPMENT_AND_RELEASE.md` attribute that to billing. The vendor string was not readable from the API. This workflow will not start either until that is fixed | Owner account. Local JSON is the evidence in the meantime |
+| Unconditional macOS Actions | The macOS job in `ci.yml` is skipped unless `[mac]`, manual dispatch, or the Monday schedule. Linux CI and the compat harness both passed on `6af9976` (runs 39646696896 and 39646706013). Linux CI published `runs/20261021-175201-39646696896-linux`. The empty-step failure on `07fabbb` (run 39633887764) was real | A Mac, for the Apple job |
 | Decoder fuzz at the ~544,000-sample size cited in older docs | Not the default gate. The audit's own re-run used 20,000 and did not reproduce the larger figure | `run --fuzz` on a schedule (backlog B-107) |
 
 `tools/hvm_report.py` remains the publisher used by `.github/workflows/ci.yml`. It still does not run `fulltest`. The harness does. Pointing the publisher at `fulltest` is backlog, deliberately not mixed into this patch.
 
 ## Schema
 
-`tools/compat_harness/schema/report.schema.json` is Draft 2020-12 for external validators. CI uses `tools/compat_harness/schema_check.py`, which checks the same required fields with the standard library. `python3 tools/hvm_compat.py validate report.json` runs that checker.
+`tools/compat_harness/schema/report.schema.json` is Draft 2020-12. CI uses `tools/compat_harness/schema_check.py`, which walks that document for type, required, enum, const, pattern, and `$ref`. A bad sha256, a missing nested required field, or an unknown frame or audio signal fails validation. `jsonschema` is not required. `python3 tools/hvm_compat.py validate report.json` runs that checker.
 
 Screenshots and IPA bytes are not embedded. Logs are truncated, the repository prefix is stripped, and analytics keys and UUIDs in guest logs are redacted. Baseline files under `docs/dev-system/baselines/` are JSON only.
 
@@ -115,4 +117,4 @@ Screenshots and IPA bytes are not embedded. Logs are truncated, the repository p
 
 `.github/workflows/compat-harness.yml` runs on pushes to `main`, on pull requests, and on manual dispatch. Permissions are `contents: read`. It installs the toolchain, runs the harness unit tests, builds, runs the gate against the committed baseline, and uploads `report.json` and `diff.json`.
 
-Until Actions starts executing, reproduce that job locally with the commands at the top of this file. A failed local diff is a real regression. A missing Actions log is not evidence that the suite failed.
+The workflow ran green on `6af9976`: compat job [39646706013](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646706013). The empty-step failure on `07fabbb` (run 39633887764) was real; it is not the current state. Reproduce the job locally with the commands at the top of this file when you are not on Actions. A failed diff is a real regression.

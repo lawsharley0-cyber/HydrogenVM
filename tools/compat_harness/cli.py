@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--only", help="comma-separated app ids")
         p.add_argument("--hvm", default=None)
         p.add_argument("--require-resolved", action="store_true",
-                       help="fail if a required manifest app does not resolve")
+                       help="accepted for compatibility; a missing required fixture already fails the run")
         p.add_argument("--baseline", help="diff the new report against this JSON file")
         p.add_argument("--fuzz", type=int, default=0, help="decoder fuzz samples per mode; 0 skips")
 
@@ -95,12 +95,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
         if selected is not None and app["id"] not in selected:
             continue
         resolved.append(resolve_app(app, repo=root, fixture_root=args.fixture_root, allow_legacy=allow))
-    if args.require_resolved:
-        missing = [r for r in resolved if r["status"] != "resolved" and not r["optional"]]
-        if missing:
-            for item in missing:
-                print(f"unresolved {item['id']}: {item['reason']}", file=sys.stderr)
-            # Still write a report when the caller asked for a full run, but fail.
+    missing = [r for r in resolved if r["status"] != "resolved" and not r["optional"]]
+    if missing:
+        for item in missing:
+            print(f"unresolved {item['id']}: {item['reason']}", file=sys.stderr)
+        # Still write a report, then fail. Optional skips are not in this list.
     hvm = args.hvm or os.path.join(args.build_dir, "hvm")
     os.makedirs(args.out, exist_ok=True)
     if args.cmd == "unit" or (args.cmd == "run" and not args.skip_unit):
@@ -131,10 +130,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         fixture_root=args.fixture_root,
         allow_legacy=allow,
     )
-    if args.require_resolved:
-        unresolved = [a for a in apps.get("apps") or [] if a["status"] in ("skipped", "error") and not a.get("optional")]
-        if unresolved:
-            report["summary"]["ok"] = False
+    unresolved = [a for a in apps.get("apps") or [] if a["status"] in ("skipped", "error") and not a.get("optional")]
+    if unresolved:
+        report["summary"]["ok"] = False
     schema_errors = validate_report(report)
     if schema_errors:
         report["summary"]["ok"] = False

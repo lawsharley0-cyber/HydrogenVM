@@ -13,6 +13,10 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(owner_for_symbol("_tmpnam")[0], "libc")
         self.assertEqual(owner_for_symbol("CGFontGetAscent")[2], "D")
         self.assertEqual(owner_for_symbol("-[UIView layoutSubviews]"), ("framework", "guest-frameworks", "D"))
+        self.assertEqual(
+            owner_for_symbol("SCNetworkReachability"),
+            ("system-configuration", "graphics-audio-input", ""),
+        )
 
     def test_missing_import_and_blank_frame(self):
         clusters = clusters_for_app({
@@ -87,6 +91,10 @@ class ClusterTests(unittest.TestCase):
         kinds = {(c["kind"], c["key"], c["severity"]) for c in clusters}
         self.assertIn(("unavailable", "SCNetworkReachability", "signal"), kinds)
         self.assertIn(("missing_data", "kCFNumberNaN", "signal"), kinds)
+        reach = next(c for c in clusters if c["key"] == "SCNetworkReachability")
+        self.assertEqual(reach["area"], "system-configuration")
+        self.assertEqual(reach["likelyOwner"], "graphics-audio-input")
+        self.assertEqual(reach["group"], "")
 
     def test_aggregate_groups_apps(self):
         def app(ident, symbol):

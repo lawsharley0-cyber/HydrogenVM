@@ -50,7 +50,7 @@ LIMITS = {
         "Clash Royale native two-launch probe; the IPA is not in git and this harness does not download it",
         "16 KB host-page memory model (this report records the host page size and does not claim an iPhone pass)",
         "pygame desktop viewer (tools/desktop.py), which needs a display",
-        "GitHub Actions execution: runs since 239a0ab have been dying in seconds before any step (billing is the project's stated cause; the vendor string was not visible to the audit)",
+        "Unconditional macOS Actions. Linux CI and the compat harness passed on 6af9976; the empty-step failure on 07fabbb (run 39633887764) was real. The macOS job still runs only for [mac], workflow_dispatch, or the Monday schedule",
     ],
 }
 
@@ -132,10 +132,23 @@ def run_apps(manifest: dict, resolved: list[dict], *, hvm: str, out_dir: str, se
             continue
         run_seconds = float(seconds if seconds is not None else spec.get("seconds") or 3)
         apps.append(_run_one(hvm, spec, item, out_dir, run_seconds))
-    # Load errors and crashes are measurements. Timeouts and fixture/hash
-    # errors mean the harness did not measure the app.
-    failed = any(a["status"] in ("error", "timeout") for a in apps)
-    return {"status": "fail" if failed else "pass", "hvm": os.path.relpath(hvm, repo_root()) if hvm.startswith(repo_root()) else hvm, "apps": apps}
+    # Load errors and crashes are measurements. Timeouts, fixture/hash
+    # errors, and a missing required fixture mean the harness did not
+    # measure something it was asked to measure. An optional skip is partial,
+    # not a pass.
+    required_gap = any(
+        a["status"] in ("error", "timeout") or (a["status"] == "skipped" and not a.get("optional"))
+        for a in apps
+    )
+    optional_skip = any(a["status"] == "skipped" and a.get("optional") for a in apps)
+    if required_gap:
+        status = "fail"
+    elif optional_skip:
+        status = "partial"
+    else:
+        status = "pass"
+    hvm_display = os.path.relpath(hvm, repo_root()) if hvm.startswith(repo_root()) else hvm
+    return {"status": status, "hvm": hvm_display, "apps": apps}
 
 
 def build_report(*, root: str, unit: dict, python: dict, fuzz: dict, apps: dict, manifest_path: str,
@@ -152,9 +165,17 @@ def build_report(*, root: str, unit: dict, python: dict, fuzz: dict, apps: dict,
     crashed = sum(1 for a in app_rows if a.get("crashed"))
     launch_failed = sum(1 for a in app_rows if a["status"] in ("ran", "crashed", "load-error", "timeout") and not a.get("launchSuccess"))
     skipped = sum(1 for a in app_rows if a["status"] == "skipped")
-    ok = unit_failed == 0 and py_failed == 0 and resolve_errors == 0 and apps.get("status") != "fail"
-    # A crash during a smoke is data, not a harness failure. Hash errors and
-    # timeouts are harness failures because the run did not measure the app.
+    required_skipped = any(a["status"] == "skipped" and not a.get("optional") for a in app_rows)
+    ok = (
+        unit_failed == 0
+        and py_failed == 0
+        and resolve_errors == 0
+        and apps.get("status") != "fail"
+        and not required_skipped
+    )
+    # A crash during a smoke is data, not a harness failure. Hash errors,
+    # timeouts, and a missing required fixture are harness failures because
+    # the run did not measure the app. An optional skip leaves ok true.
     if any(a["status"] == "timeout" for a in app_rows):
         ok = False
     return {

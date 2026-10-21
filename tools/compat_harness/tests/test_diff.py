@@ -93,6 +93,62 @@ class DiffTests(unittest.TestCase):
         self.assertFalse(diff["ok"])
         self.assertEqual(diff["regressions"][0]["kind"], "fixture-skipped")
 
+    def test_active_audio_to_silent_is_a_regression(self):
+        before = _report([_app(audio={"measured": True, "signal": "active", "frames": 100, "nonSilentFrames": 40})])
+        after = _report([_app(audio={"measured": True, "signal": "silent", "frames": 80, "nonSilentFrames": 0})])
+        diff = diff_reports(before, after)
+        self.assertFalse(diff["ok"])
+        self.assertTrue(any(item["kind"] == "audio" for item in diff["regressions"]))
+        back = diff_reports(after, before)
+        self.assertTrue(back["ok"])
+        self.assertTrue(any(item["kind"] == "audio" for item in back["improvements"]))
+
+    def test_mostly_one_color_to_blank_is_a_regression(self):
+        before = _report([_app(frame={"signal": "mostly-one-color"})])
+        for blank in ("all-white", "all-black"):
+            with self.subTest(blank=blank):
+                diff = diff_reports(before, _report([_app(frame={"signal": blank})]))
+                self.assertFalse(diff["ok"])
+                self.assertTrue(any(item["kind"] == "render" for item in diff["regressions"]))
+        varied = diff_reports(before, _report([_app(frame={"signal": "varied"})]))
+        self.assertTrue(varied["ok"])
+        self.assertTrue(any(item["kind"] == "render-signal" for item in varied["informational"]))
+
+    def test_changed_load_error_is_a_regression(self):
+        before = _report([_app(loadError="old loader failure")])
+        after = _report([_app(loadError="different loader failure")])
+        diff = diff_reports(before, after)
+        self.assertFalse(diff["ok"])
+        self.assertTrue(any(item["kind"] == "load" and "different" in item["message"] for item in diff["regressions"]))
+        cleared = diff_reports(before, _report([_app(loadError="")]))
+        self.assertTrue(cleared["ok"])
+        self.assertTrue(any(item["kind"] == "load" for item in cleared["improvements"]))
+
+    def test_skipped_baseline_to_real_run_is_new_coverage(self):
+        before = _report([_app(
+            id="clash-royale-2-1306-1",
+            status="skipped",
+            launchSuccess=False,
+            unimplementedImports=[],
+            missingFunctions=[],
+            perf={},
+            frame={"signal": "not-run"},
+            audio={"measured": False, "signal": "not-measured"},
+            reason="fixture not present",
+        )])
+        after = _report([_app(
+            id="clash-royale-2-1306-1",
+            status="ran",
+            launchSuccess=True,
+            unimplementedImports=["SomeNewImport"],
+            frame={"signal": "varied"},
+            audio={"measured": True, "signal": "active"},
+        )])
+        diff = diff_reports(before, after)
+        self.assertTrue(diff["ok"], diff["regressions"])
+        self.assertEqual(diff["regressions"], [])
+        self.assertTrue(any(item["kind"] == "new-coverage" for item in diff["informational"]))
+
     def test_page_size_note(self):
         before = _report([_app()])
         after = _report([_app()])

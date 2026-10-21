@@ -14,7 +14,7 @@
       "legacyRepoPath": "AngryBirds_v1.0_os30.ipa",
       "optional": false,
       "seconds": 3,
-      "notes": "Subtype 6, minimum iOS 3.0. A 3 second smoke is not a title-screen proof. The 2026-10-21 audit saw an unimplemented tmpnam import and a mostly dark framebuffer."
+      "notes": "Subtype 6, minimum iOS 3.0. A 3 second smoke is not a title-screen proof. The 2026-10-21 baseline is about 93% near-white (mostly-one-color), not a dark framebuffer. The load-time gap is tmpnam."
     },
     {
       "id": "tiny-tower",

@@ -4,12 +4,13 @@ name: Compat harness
 # IPA smoke. This file is additive. It does not publish ci-reports and it
 # does not grant contents: write.
 #
-# Actions runs on this repository have been dying in a few seconds with an
-# empty step list since 239a0ab (2026-10-20). The project notes attribute
-# that to an Actions spending limit; the vendor message was not visible via
-# the API. Until that is fixed, this workflow is the definition of the gate
-# and the evidence is a local run (docs/dev-system/baselines/linux-headless.json).
-# A green check on GitHub is Needs owner, not something this file can produce.
+# Linux Actions is executing. On 6af9976 the compat job passed
+# (run 39646706013) and the Linux CI job published
+# runs/20261021-175201-39646696896-linux (run 39646696896).
+# The empty-step failure on 07fabbb (run 39633887764) was real; it is
+# historical. The macOS job in ci.yml is still skipped unless [mac],
+# workflow_dispatch, or the Monday schedule.
+# checkout and upload-artifact are pinned to the v4 commit SHAs.
 
 on:
   push:
@@ -30,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install toolchain
         run: |
           sudo apt-get update -q
@@ -55,7 +56,7 @@ jobs:
             --allow-legacy-repo
       - name: Upload JSON report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compat-report
           path: |

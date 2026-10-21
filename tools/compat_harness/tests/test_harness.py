@@ -9,6 +9,7 @@ import unittest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from compat_harness import runner  # noqa: E402
+from compat_harness.cli import main as cli_main  # noqa: E402
 from compat_harness.issues import generate  # noqa: E402
 from compat_harness.schema_check import validate_diff, validate_report  # noqa: E402
 from compat_harness.diffing import diff_reports  # noqa: E402
@@ -145,6 +146,94 @@ class HarnessFlowTests(unittest.TestCase):
     def test_schema_required_keys_are_enforced(self):
         errors = validate_report({"kind": "hvm-compat-report"})
         self.assertTrue(any("summary" in err for err in errors))
+
+    def test_schema_rejects_draft_violations_and_accepts_baseline(self):
+        baseline_path = os.path.join(ROOT, "docs", "dev-system", "baselines", "linux-headless.json")
+        with open(baseline_path, encoding="utf-8") as fh:
+            baseline = json.load(fh)
+        self.assertEqual(validate_report(baseline), [])
+        broken = json.loads(json.dumps(baseline))
+        del broken["git"]["dirty"]
+        broken["summary"]["unitFailed"] = True
+        app = broken["suites"]["apps"]["apps"][0]
+        app["sha256"] = "not-a-hash"
+        app["frame"]["signal"] = "purple"
+        app["audio"]["signal"] = "loud"
+        errors = validate_report(broken)
+        blob = "\n".join(errors)
+        self.assertIn("git.dirty", blob)
+        self.assertIn("unitFailed", blob)
+        self.assertIn("sha256", blob)
+        self.assertIn("frame.signal", blob)
+        self.assertIn("audio.signal", blob)
+
+    def test_missing_required_fixture_fails_without_require_resolved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = os.path.join(tmp, "fixtures")
+            os.makedirs(empty)
+            manifest = os.path.join(tmp, "apps.json")
+            with open(manifest, "w", encoding="utf-8") as fh:
+                json.dump({
+                    "schemaVersion": 1,
+                    "apps": [{
+                        "id": "needs-ipa",
+                        "name": "Needs IPA",
+                        "sha256": "a" * 64,
+                        "fixtureRelPath": "ipas/missing.ipa",
+                        "optional": False,
+                    }],
+                }, fh)
+            out = os.path.join(tmp, "out")
+            code = cli_main([
+                "apps",
+                "--manifest", manifest,
+                "--fixture-root", empty,
+                "--no-legacy-repo",
+                "--hvm", "/bin/true",
+                "--out", out,
+                "--build-dir", tmp,
+            ])
+            self.assertEqual(code, 1)
+            with open(os.path.join(out, "report.json"), encoding="utf-8") as fh:
+                report = json.load(fh)
+            self.assertNotIn("schemaErrors", report)
+            self.assertFalse(report["summary"]["ok"])
+            self.assertEqual(report["suites"]["apps"]["status"], "fail")
+            self.assertEqual(report["suites"]["apps"]["apps"][0]["status"], "skipped")
+
+    def test_optional_skip_is_partial_and_does_not_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = os.path.join(tmp, "fixtures")
+            os.makedirs(empty)
+            manifest = os.path.join(tmp, "apps.json")
+            with open(manifest, "w", encoding="utf-8") as fh:
+                json.dump({
+                    "schemaVersion": 1,
+                    "apps": [{
+                        "id": "clash-royale-2-1306-1",
+                        "name": "Clash Royale",
+                        "sha256": "b" * 64,
+                        "fixtureRelPath": "ipas/missing.ipa",
+                        "optional": True,
+                    }],
+                }, fh)
+            out = os.path.join(tmp, "out")
+            code = cli_main([
+                "apps",
+                "--manifest", manifest,
+                "--fixture-root", empty,
+                "--no-legacy-repo",
+                "--hvm", "/bin/true",
+                "--out", out,
+                "--build-dir", tmp,
+            ])
+            self.assertEqual(code, 0)
+            with open(os.path.join(out, "report.json"), encoding="utf-8") as fh:
+                report = json.load(fh)
+            self.assertNotIn("schemaErrors", report)
+            self.assertTrue(report["summary"]["ok"])
+            self.assertEqual(report["suites"]["apps"]["status"], "partial")
+            self.assertEqual(report["suites"]["apps"]["apps"][0]["status"], "skipped")
 
 
 if __name__ == "__main__":

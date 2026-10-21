@@ -28,9 +28,9 @@ Status words used below:
 | JSON report and a JSON Schema document | Operational | `tools/compat_harness/schema/report.schema.json` |
 | Issue markdown, dry-run unless `--write` | Operational. Filing to GitHub is not implemented | `tools/compat_harness/issues.py` |
 | Harness self-tests | Operational | `tools/compat_harness/tests/` |
-| CI workflow that runs the harness | Operational as a file. A green Actions run is Needs owner | `.github/workflows/compat-harness.yml` |
-| Published `ci-reports` row for `HEAD` | Needs owner (Actions has not been starting) | existing `tools/publish_report.sh`, unchanged |
-| `fulltest` inside `tools/hvm_report.py` | Planned. The new workflow already runs `fulltest`. Changing the publisher's `--only` list is a follow-up so the existing report job keeps its current shape until billing works | `tools/hvm_report.py` |
+| CI workflow that runs the harness | Operational. Green on `6af9976` (run 39646706013). The empty-step failure on `07fabbb` (run 39633887764) was real and is historical | `.github/workflows/compat-harness.yml` |
+| Published `ci-reports` row for `HEAD` | Linux CI on `6af9976` published `runs/20261021-175201-39646696896-linux` (run 39646696896). The macOS job did not run | existing `tools/publish_report.sh`, unchanged |
+| `fulltest` inside `tools/hvm_report.py` | Planned. The compat workflow already runs `fulltest`. `hvm_report.py --only` still defaults to `cpu,ios,bench`. Changing that list is a separate follow-up so the existing report job keeps its current shape | `tools/hvm_report.py` |
 | Doc reconciliation (`ARCHITECTURE.md`, `HANDOFF.md`, `DEVELOPMENT_AND_RELEASE.md`) | Planned (backlog B-003). This plan does not rewrite those files | — |
 | Independent review as a required merge check | Planned process, Needs owner for branch protection | checklist below |
 | Automatic assign / automatic PR merge | Planned only as a human step. No bot is wired | — |
@@ -51,8 +51,8 @@ Exit: `python3 tools/hvm_compat.py run --require-resolved` completes on Linux, w
 
 ### Phase 1 — The gate actually runs on `main`
 
-1. Owner confirms why Actions jobs die in seconds (backlog B-001).
-2. The compat-harness workflow then becomes a real check. Until then, reviewers run the same command locally.
+1. Done for Linux. Compat harness run 39646706013 and CI run 39646696896 both passed on `6af9976`. The empty-step failure on `07fabbb` (run 39633887764) was real. macOS CI remains conditional (`[mac]`, `workflow_dispatch`, or the Monday schedule).
+2. The compat-harness workflow is the Linux check. Reviewers can also run the same command locally.
 3. Reconcile the stale docs (B-003) without deleting real limitations: the GLSL subset, the missing near clip, and the deliberate `CCCrypt` refusal.
 4. Decide whether `hvm_report.py` should grow a `fulltest` suite so the published report matches the harness. Do not do that in the same patch as a Group A or Group B behavior change.
 
@@ -60,7 +60,7 @@ Exit: `python3 tools/hvm_compat.py run --require-resolved` completes on Linux, w
 
 Order inside a group is serial. Across groups it is parallel, using the matrix in `ROADMAP.md`.
 
-- Guest-visible symbols the 3 second smokes already hit: `tmpnam`, `regcomp` and the rest of that family, `CGFont*` getters, `glPointSizePointerOES` (B-108 through B-111).
+- Guest-visible symbols the 3 second smokes already hit: `tmpnam`, `regcomp` and the rest of that family, `CGFontCopyTableForTag` plus the `CGFontGet*` queries, `glPointSizePointerOES` (B-108 through B-111).
 - Near-plane clipping before any raster optimization (B-103, then B-104 and B-105).
 - Memory model and precise faults (B-101, then B-102). One owner for all of Group A.
 
@@ -89,7 +89,7 @@ python3 tools/hvm_compat.py run \
   --out build/compat-report
 ```
 
-Read `build/compat-report/diff.json`. Regressions are launch loss, new crashes, new load errors, new load-time unimplemented imports, unit or Python failures, presented frames dropping to zero, or a framebuffer that went from `varied` to `all-black` or `all-white`. MIPS and average frame time are informational.
+Read `build/compat-report/diff.json`. Regressions are launch loss, new crashes, a new or changed load error, new load-time unimplemented imports, unit or Python failures, presented frames dropping to zero, a framebuffer that went from `varied` or `mostly-one-color` to `all-black` or `all-white`, or mixer output that went from `active` to `silent`. MIPS, average frame time, and raw audio sample counts are informational. A baseline row that was skipped and now has a real run is new coverage, not a regression.
 
 ### 2. Classify — Operational
 
@@ -105,7 +105,7 @@ The fix lands in the owner's files, with a `fulltest` assertion when the behavio
 
 - Tail-call handlers and `siglongjmp` are safe only while no C++ object is live across the fault.
 - Guest 4 KB permissions are not consulted by the fast load/store path. A 4 KB Linux pass does not prove a 16 KB iPhone.
-- `OpenGLES.cpp` replaces negative clip W with its absolute value. SIMD raster waits until that is fixed.
+- `OpenGLES.cpp:2320` only substitutes a near-zero clip W (`std::abs(sv.clip.w) > 1e-6f`) with `1`. It does not replace a negative W with its absolute value. The near-clip gap is lines 2449–2452, which rasterize the axis-aligned bounding box of vertices that are already projected. There is no homogeneous near-plane clip. SIMD raster waits until that clip exists.
 - The GLSL subset rejects control flow on purpose. Do not fall back to guessed sampler roles.
 - `CCCrypt` returns unimplemented on purpose.
 - Sockets fail closed unless `loopbackNetwork` is set, and that flag is loopback IPv4 TCP only.
@@ -128,7 +128,7 @@ GitHub is not configured to require this review. Turning that on is an owner act
 
 ### 7. PR — Planned process
 
-Open a PR against `main`. Do not merge it from the agent that wrote the patch. The compat-harness workflow is the Linux check once Actions starts. The macOS job in `.github/workflows/ci.yml` remains the Apple check, and it still does not start on an ordinary push.
+Open a PR against `main`. Do not merge it from the agent that wrote the patch. The compat-harness workflow is the Linux check and passed on `6af9976`. The macOS job in `.github/workflows/ci.yml` remains the Apple check, and it still does not start on an ordinary push.
 
 ### 8. Continuous PM — Operational template, Planned cadence
 
@@ -141,7 +141,7 @@ Detail is in `docs/dev-system/COMPAT_HARNESS.md`. Short form:
 - Linux without a display can build the C++ engine, run `fulltest`, the asm and C guests, the Python fixture tests, and `hvm run` on a decrypted IPA. Frames are a software RGBA buffer. Audio levels require a datagram socket, which the harness creates; nothing is played.
 - The same machine cannot compile `app/`, sign a device build, run the simulator, or see 16 KB page faults.
 - `ld64` iOS stub apps and CoreMark are not part of this harness. They remain behind `tools/build_cctools.sh`.
-- Actions has not been executing since `239a0ab`. Local JSON is the evidence until an owner restores billing or shows a different cause.
+- Linux Actions is executing. On `6af9976` the compat harness passed (run 39646706013) and Linux CI published `runs/20261021-175201-39646696896-linux` (run 39646696896). The empty-step failure on `07fabbb` (run 39633887764) was real. The macOS job did not run on that push.
 
 ## Out of scope for the harness
 

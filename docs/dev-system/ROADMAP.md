@@ -13,14 +13,14 @@ Operational in this change, except the items marked Needs owner.
 - Baseline report checked in as JSON after a local run.
 - Workflow file `.github/workflows/compat-harness.yml`.
 
-Still Needs owner before Phase 0 is a living gate: Actions billing (or another explanation of the empty jobs), a fixture directory if the in-repo IPAs are retired, a Mac for `app/`.
+Still Needs owner: a fixture directory if the in-repo IPAs are retired, and a Mac for `app/`. Actions billing is not outstanding. The compat harness passed on `6af9976` (run 39646706013) and Linux CI published `runs/20261021-175201-39646696896-linux` (run 39646696896). The empty-step failure on `07fabbb` (run 39633887764) was real.
 
 ## Phase 1 — Gate `HEAD`
 
 Depends on Phase 0.
 
-1. Make Actions start (Needs owner).
-2. Keep the harness workflow as the Linux gate. Local command until then: `python3 tools/hvm_compat.py run --baseline docs/dev-system/baselines/linux-headless.json --require-resolved`.
+1. Done for Linux on `6af9976`. Compat harness run 39646706013 passed. Linux CI run 39646696896 published a report. The macOS job was skipped by its existing condition, not by the old empty-step failure on `07fabbb` (run 39633887764).
+2. The harness workflow is the Linux gate: `python3 tools/hvm_compat.py run --baseline docs/dev-system/baselines/linux-headless.json`. A missing required fixture fails the process. `--require-resolved` is still accepted.
 3. Reconcile stale docs with the code, keeping the shader subset, the missing near clip, and the `CCCrypt` refusal.
 4. Optionally teach `tools/hvm_report.py` to run `fulltest` so `ci-reports` matches the harness. Separate patch, test/regression role only.
 

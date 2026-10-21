@@ -2,18 +2,22 @@
 
 Hard regressions are facts that should be stable on a 4 KB Linux host:
 unit or Python failures, a launch that used to succeed, a new crash, a new
-load error, a new load-time unimplemented import, presented frames dropping
-to zero, or a framebuffer that became all black or all white after previously
-being varied.
+or changed load error, a new load-time unimplemented import, presented frames
+dropping to zero, a framebuffer that became all black or all white after
+previously being varied or mostly one color, or mixer output that went from
+active to silent.
 
-Timing, MIPS, audio sample counts, log text, and runtime-only missing
+Timing, MIPS, raw audio sample counts, log text, and runtime-only missing
 functions are reported as informational or attention. A three-second smoke
-does not execute the same guest path on every machine.
+does not execute the same guest path on every machine. A baseline row that
+was skipped is new coverage when the current run is real, not a regression.
 """
 from __future__ import annotations
 
 PERF_REL = 0.25
 _BLANK = frozenset({"all-black", "all-white"})
+_RICH = frozenset({"varied", "mostly-one-color"})
+_MEASURED = frozenset({"ran", "crashed", "load-error", "timeout"})
 
 
 def diff_reports(baseline: dict, current: dict) -> dict:
@@ -93,6 +97,16 @@ def _diff_app(ident, before, after, regressions, improvements, attention, inform
                 "message": f"{ident} fixture state {before.get('status')} -> {after.get('status')}: {after.get('reason')}",
             })
         return
+    if before.get("status") == "skipped" and after.get("status") in _MEASURED:
+        informational.append({
+            "kind": "new-coverage",
+            "id": ident,
+            "message": (
+                f"{ident} was skipped in the baseline; this run is new coverage "
+                f"({after.get('status')}), not a regression"
+            ),
+        })
+        return
     b_launch = bool(before.get("launchSuccess"))
     a_launch = bool(after.get("launchSuccess"))
     if b_launch and not a_launch:
@@ -109,9 +123,11 @@ def _diff_app(ident, before, after, regressions, improvements, attention, inform
     elif before.get("crashed") and not after.get("crashed"):
         improvements.append({"kind": "crash", "id": ident, "message": f"{ident} no longer crashes"})
 
-    if not (before.get("loadError") or "").strip() and (after.get("loadError") or "").strip():
-        regressions.append({"kind": "load", "id": ident, "message": after.get("loadError", "")[:300]})
-    elif (before.get("loadError") or "").strip() and not (after.get("loadError") or "").strip():
+    b_err = (before.get("loadError") or "").strip()
+    a_err = (after.get("loadError") or "").strip()
+    if a_err and a_err != b_err:
+        regressions.append({"kind": "load", "id": ident, "message": a_err[:300]})
+    elif b_err and not a_err:
         improvements.append({"kind": "load", "id": ident, "message": f"{ident} load error cleared"})
 
     b_imp = set(before.get("unimplementedImports") or [])
@@ -138,19 +154,44 @@ def _diff_app(ident, before, after, regressions, improvements, attention, inform
         regressions.append({"kind": "frames", "id": ident, "message": f"{ident} presented frames dropped from {b_frames} to 0"})
     b_signal = (before.get("frame") or {}).get("signal")
     a_signal = (after.get("frame") or {}).get("signal")
-    if b_signal == "varied" and a_signal in _BLANK:
+    if b_signal in _RICH and a_signal in _BLANK:
         regressions.append({
             "kind": "render",
             "id": ident,
-            "message": f"{ident} framebuffer went from varied to {a_signal}",
+            "message": f"{ident} framebuffer went from {b_signal} to {a_signal}",
         })
-    elif b_signal in _BLANK and a_signal == "varied":
-        improvements.append({"kind": "render", "id": ident, "message": f"{ident} framebuffer is now varied (was {b_signal})"})
+    elif b_signal in _BLANK and a_signal in _RICH:
+        improvements.append({
+            "kind": "render",
+            "id": ident,
+            "message": f"{ident} framebuffer is now {a_signal} (was {b_signal})",
+        })
     elif b_signal != a_signal and a_signal not in (None, "not-run"):
         informational.append({
             "kind": "render-signal",
             "id": ident,
             "message": f"{ident} frame signal {b_signal} -> {a_signal}",
+        })
+
+    b_audio = (before.get("audio") or {}).get("signal")
+    a_audio = (after.get("audio") or {}).get("signal")
+    if b_audio == "active" and a_audio == "silent":
+        regressions.append({
+            "kind": "audio",
+            "id": ident,
+            "message": f"{ident} mixer went from active to silent",
+        })
+    elif b_audio == "silent" and a_audio == "active":
+        improvements.append({
+            "kind": "audio",
+            "id": ident,
+            "message": f"{ident} mixer is now active (was silent)",
+        })
+    elif b_audio != a_audio and a_audio not in (None, "not-run", "not-measured"):
+        informational.append({
+            "kind": "audio-signal",
+            "id": ident,
+            "message": f"{ident} audio signal {b_audio} -> {a_audio}",
         })
 
     _perf_note(ident, before.get("perf") or {}, after.get("perf") or {}, informational)
