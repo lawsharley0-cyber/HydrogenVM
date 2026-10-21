@@ -1,0 +1,124 @@
+---
+# Unsigned HydrogenVM iOS builds on a free Codemagic personal account.
+# Push to main starts a build. Start new build in the UI runs any branch.
+# No signing credentials. See docs/dev-system/CODEMAGIC.md.
+workflows:
+  ios-unsigned:
+    name: HydrogenVM iOS (unsigned IPA + simulator)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: "26.6"
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+      cancel_previous_builds: true
+    scripts:
+      - name: Tools
+        script: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_ENV_HINTS=1
+          brew install xcodegen cmake ninja
+          xcodebuild -version
+          cmake --version
+          ninja --version
+          python3 --version
+      - name: Host tests
+        script: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Release
+          ninja -C build hvm_tests
+          build/hvm_tests selftest
+          build/hvm_tests fulltest
+      - name: Generate Xcode project
+        working_directory: app
+        script: |
+          set -euo pipefail
+          xcodegen
+          test -d HydrogenVM.xcodeproj
+      - name: Device build (unsigned)
+        working_directory: app
+        script: |
+          set -euo pipefail
+          rc=0
+          xcodebuild -project HydrogenVM.xcodeproj \
+            -target HydrogenVM -configuration Release \
+            -sdk iphoneos SYMROOT="$PWD/xbuild" \
+            CODE_SIGNING_ALLOWED=NO \
+            build >device-build.log 2>&1 || rc=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" \
+            device-build.log | head -200 || true
+          exit "$rc"
+      - name: Package unsigned IPA
+        working_directory: app
+        script: |
+          set -euo pipefail
+          APP="xbuild/Release-iphoneos/HydrogenVM.app"
+          test -d "$APP"
+          rm -f HydrogenVM-unsigned.ipa \
+            HydrogenVM-unsigned.manifest.json \
+            HydrogenVM-unsigned.manifest.sha256
+          rm -rf ipa && mkdir -p ipa/Payload \
+            && cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry \
+            "$PWD/../HydrogenVM-unsigned.ipa" Payload)
+          unzip -l HydrogenVM-unsigned.ipa | tail -1
+          python3 ../tools/verify_ipa.py \
+            HydrogenVM-unsigned.ipa \
+            --out HydrogenVM-unsigned.manifest.json \
+            --source-commit "$(git rev-parse HEAD)"
+      - name: Simulator build + launch smoke
+        working_directory: app
+        script: |
+          set -euo pipefail
+          rc=0
+          xcodebuild -project HydrogenVM.xcodeproj \
+            -target HydrogenVM -configuration Release \
+            -sdk iphonesimulator \
+            SUPPORTED_PLATFORMS="iphoneos iphonesimulator" \
+            ARCHS=arm64 SYMROOT="$PWD/xbuild" \
+            CODE_SIGNING_ALLOWED=NO \
+            build >sim-build.log 2>&1 || rc=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" \
+            sim-build.log | head -200 || true
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+          test -d xbuild/Release-iphonesimulator/HydrogenVM.app
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          rts = sorted(
+              (r for r in d if "iOS" in r),
+              key=lambda r: [
+                  int(x) for x in r.split("iOS-")[-1].split("-")])
+          for r in reversed(rts):
+              for dev in d[r]:
+                  if dev["name"].startswith("iPhone"):
+                      print(dev["udid"])
+                      sys.exit()
+          ')
+          if [ -z "$UDID" ]; then
+            echo "no iPhone simulator available"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "simulator: $UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" \
+            xbuild/Release-iphonesimulator/HydrogenVM.app
+          xcrun simctl launch "$UDID" com.lfull.HydrogenVM
+          sleep 10
+          xcrun simctl io "$UDID" screenshot sim.png
+    artifacts:
+      - app/HydrogenVM-unsigned.ipa
+      - app/HydrogenVM-unsigned.manifest.*
+      - app/*.log
+      - app/sim.png
