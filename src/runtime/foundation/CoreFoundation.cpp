@@ -394,10 +394,11 @@ bool b_getValue(Ctx& x, id b) { return b && numberInt(x, b) != 0; }
 
 bool objectCallbacks(Ctx& x, GuestPtr cb) { return cb && x.mem.read<uint32_t>(cb + 4) != 0; }
 RawArray* rawA(Ctx& x, id a) { return a ? R(x).hostIf<RawArray>(a) : nullptr; }
-id newRawArray(Ctx& x, std::vector<uint32_t> items) {
+id newRawArray(Ctx& x, std::vector<uint32_t> items, bool retains = false) {
     const id a = R(x).createInstance(cf(x).rawArray);
     auto h = std::make_unique<RawArray>();
     h->items = std::move(items);
+    h->retains = retains;
     R(x).setHost(a, std::move(h));
     return a;
 }
@@ -432,24 +433,55 @@ void a_getValues(Ctx& x, id a, uint32_t loc, uint32_t len, GuestPtr out) {
     for (uint32_t i = 0; i < len; ++i) x.mem.write<uint32_t>(out + i * 4, a_get(x, a, int32_t(loc + i)));
 }
 void a_append(Ctx& x, id a, uint32_t v) {
-    if (RawArray* r = rawA(x, a)) { r->items.push_back(v); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (r->retains && v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        r->items.push_back(v);
+        return;
+    }
     send(x, a, "addObject:", {v});
 }
 void a_insert(Ctx& x, id a, int32_t i, uint32_t v) {
-    if (RawArray* r = rawA(x, a)) { r->items.insert(r->items.begin() + std::min<size_t>(size_t(i), r->items.size()), v); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (r->retains && v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        r->items.insert(r->items.begin() + std::min<size_t>(size_t(i), r->items.size()), v);
+        return;
+    }
     send(x, a, "insertObject:atIndex:", {v, uint32_t(i)});
 }
 void a_set(Ctx& x, id a, int32_t i, uint32_t v) {
-    if (RawArray* r = rawA(x, a)) { if (size_t(i) < r->items.size()) r->items[size_t(i)] = v; else r->items.push_back(v); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (r->retains && v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        if (size_t(i) < r->items.size()) {
+            const uint32_t old = r->items[size_t(i)];
+            r->items[size_t(i)] = v;
+            if (r->retains && old && R(x).classOf(old)) R(x).release(x.cpu, old);
+        } else {
+            r->items.push_back(v);
+        }
+        return;
+    }
     if (i == a_count(x, a)) send(x, a, "addObject:", {v});
     else send(x, a, "replaceObjectAtIndex:withObject:", {uint32_t(i), v});
 }
 void a_remove(Ctx& x, id a, int32_t i) {
-    if (RawArray* r = rawA(x, a)) { if (size_t(i) < r->items.size()) r->items.erase(r->items.begin() + i); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (size_t(i) < r->items.size()) {
+            const uint32_t old = r->items[size_t(i)];
+            r->items.erase(r->items.begin() + i);
+            if (r->retains && old && R(x).classOf(old)) R(x).release(x.cpu, old);
+        }
+        return;
+    }
     send(x, a, "removeObjectAtIndex:", {uint32_t(i)});
 }
 void a_removeAll(Ctx& x, id a) {
-    if (RawArray* r = rawA(x, a)) { r->items.clear(); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (r->retains) {
+            for (uint32_t v : r->items) if (v && R(x).classOf(v)) R(x).release(x.cpu, v);
+        }
+        r->items.clear();
+        return;
+    }
     send(x, a, "removeAllObjects");
 }
 void a_exchange(Ctx& x, id a, int32_t i, int32_t j) {
@@ -500,15 +532,52 @@ int32_t a_bsearch(Ctx& x, id a, uint32_t loc, uint32_t len, uint32_t v, uint32_t
 // raw array ObjC methods (so code that treats it as an NSArray/NSMutableArray/NSMutableSet still works for basics)
 uint32_t ra_count(Ctx& x, id self, SEL) { return uint32_t(a_count(x, self)); }
 uint32_t ra_objectAt(Ctx& x, id self, SEL, uint32_t i) { return a_get(x, self, int32_t(i)); }
-void ra_addObject(Ctx& x, id self, SEL, uint32_t v) { a_append(x, self, v); }
-void ra_insertObject(Ctx& x, id self, SEL, uint32_t v, uint32_t i) { a_insert(x, self, int32_t(i), v); }
-void ra_replaceAt(Ctx& x, id self, SEL, uint32_t i, uint32_t v) { a_set(x, self, int32_t(i), v); }
-void ra_removeAt(Ctx& x, id self, SEL, uint32_t i) { a_remove(x, self, int32_t(i)); }
-void ra_removeObject(Ctx& x, id self, SEL, uint32_t v) {
-    if (RawArray* r = rawA(x, self))
-        r->items.erase(std::remove(r->items.begin(), r->items.end(), v), r->items.end());
+void ra_addObject(Ctx& x, id self, SEL, uint32_t v) {
+    if (RawArray* r = rawA(x, self)) {
+        if (v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        r->items.push_back(v);
+        return;
+    }
+    a_append(x, self, v);
 }
-void ra_removeAll(Ctx& x, id self, SEL) { a_removeAll(x, self); }
+void ra_insertObject(Ctx& x, id self, SEL, uint32_t v, uint32_t i) {
+    if (RawArray* r = rawA(x, self)) {
+        if (v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        r->items.insert(r->items.begin() + std::min<size_t>(size_t(i), r->items.size()), v);
+        return;
+    }
+    a_insert(x, self, int32_t(i), v);
+}
+void ra_replaceAt(Ctx& x, id self, SEL, uint32_t i, uint32_t v) { a_set(x, self, int32_t(i), v); }
+void ra_removeAt(Ctx& x, id self, SEL, uint32_t i) {
+    if (RawArray* r = rawA(x, self)) {
+        if (size_t(i) < r->items.size()) {
+            const uint32_t v = r->items[size_t(i)];
+            r->items.erase(r->items.begin() + i);
+            if (v && R(x).classOf(v)) R(x).release(x.cpu, v);
+        }
+        return;
+    }
+    a_remove(x, self, int32_t(i));
+}
+void ra_removeObject(Ctx& x, id self, SEL, uint32_t v) {
+    if (RawArray* r = rawA(x, self)) {
+        auto it = std::remove(r->items.begin(), r->items.end(), v);
+        const size_t count = std::distance(it, r->items.end());
+        r->items.erase(it, r->items.end());
+        if (v && R(x).classOf(v)) {
+            for (size_t k = 0; k < count; ++k) R(x).release(x.cpu, v);
+        }
+    }
+}
+void ra_removeAll(Ctx& x, id self, SEL) {
+    if (RawArray* r = rawA(x, self)) {
+        for (uint32_t v : r->items) if (v && R(x).classOf(v)) R(x).release(x.cpu, v);
+        r->items.clear();
+        return;
+    }
+    a_removeAll(x, self);
+}
 bool ra_contains(Ctx& x, id self, SEL, uint32_t v) { return a_contains(x, self, 0, uint32_t(a_count(x, self)), v); }
 uint32_t ra_member(Ctx& x, id self, SEL, uint32_t v) { return ra_contains(x, self, 0, v) ? v : 0; }
 void ra_makePerf(Ctx& x, id self, SEL, SEL s) {
@@ -535,7 +604,14 @@ uint32_t ra_fastEnum(Ctx& x, id self, SEL, GuestPtr state, GuestPtr buf, uint32_
     x.mem.write<uint32_t>(state + 8, state);
     return n;
 }
-void ra_dealloc(Ctx& x, id self, SEL) { R(x).disposeInstance(x.cpu, self); }
+void ra_dealloc(Ctx& x, id self, SEL) {
+    if (RawArray* r = rawA(x, self)) {
+        if (r->retains) {
+            for (uint32_t v : r->items) if (v && R(x).classOf(v)) R(x).release(x.cpu, v);
+        }
+    }
+    R(x).disposeInstance(x.cpu, self);
+}
 
 // -------------------------------------------------------- CFDictionary ---
 

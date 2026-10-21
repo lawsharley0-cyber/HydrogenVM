@@ -8,6 +8,7 @@
 #include "Foundation.hpp"
 #include "loader/Plist.hpp"
 #include <filesystem>
+#include <fstream>
 #include <random>
 
 namespace Hydrogen::Runtime::Foundation {
@@ -47,6 +48,55 @@ struct Keychain {
         } catch (...) {}
     }
 };
+
+void syncTinyTowerFileToKeychain(Process& p, Keychain& kc) {
+    const fs::path backupPath = fs::path(p.homePath()) / "Documents" / "backup.txt";
+    std::error_code ec;
+    if (!fs::exists(backupPath, ec)) return;
+
+    const auto backupTime = fs::last_write_time(backupPath, ec);
+    const auto kcTime = fs::exists(kc.path, ec) ? fs::last_write_time(kc.path, ec) : fs::file_time_type::min();
+    if (backupTime <= kcTime && !kc.items.empty()) return;
+
+    std::ifstream f(backupPath, std::ios::binary);
+    if (!f.is_open()) return;
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (text.find("coins=") == std::string::npos && text.find("bux=") == std::string::npos) return;
+
+    bool found = false;
+    for (auto& it : kc.items) {
+        if (it->getString("svce") == "com.eeenmachine.tinytowers.gameData" || it->getString("svce").find("gameData") != std::string::npos) {
+            it->set("v_Data", Plist::Value::makeData(text));
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        auto item = Plist::Value::makeDict();
+        item->set("class", Plist::Value::makeString("genp"));
+        item->set("svce", Plist::Value::makeString("com.eeenmachine.tinytowers.gameData"));
+        item->set("acct", Plist::Value::makeString("gameData"));
+        item->set("v_Data", Plist::Value::makeData(text));
+        kc.items.push_back(item);
+    }
+    kc.save();
+}
+
+void syncTinyTowerKeychainToFile(Process& p, const Plist::Value& item) {
+    if (item.getString("svce") != "com.eeenmachine.tinytowers.gameData" && item.getString("svce").find("gameData") == std::string::npos) return;
+    const Plist::Value* dataVal = item.get("v_Data");
+    if (!dataVal || dataVal->type != Plist::Value::Type::Data) return;
+    const auto& s = dataVal->s;
+    if (s.find("coins=") == std::string::npos && s.find("bux=") == std::string::npos) return;
+
+    const fs::path backupPath = fs::path(p.homePath()) / "Documents" / "backup.txt";
+    std::error_code ec;
+    fs::create_directories(backupPath.parent_path(), ec);
+    std::ofstream out(backupPath, std::ios::binary);
+    if (out.is_open()) {
+        out.write(s.data(), s.size());
+    }
+}
 
 std::string valueKey(const Plist::Value& v) { return Plist::toXml(v); }
 
@@ -95,6 +145,7 @@ int32_t s_add(Ctx& x, id attrs, GuestPtr result) {
     }
     kc.items.push_back(item);
     kc.save();
+    syncTinyTowerKeychainToFile(x.proc, *item);
     if (result) x.mem.write<uint32_t>(result, 0);
     return errSecSuccess;
 }
@@ -118,6 +169,7 @@ int32_t s_copyMatching(Ctx& x, id query, GuestPtr result) {
     {
         std::lock_guard<std::mutex> lk(kc.mu);
         kc.load();
+        syncTinyTowerFileToKeychain(x.proc, kc);
         for (const auto& it : kc.items) {
             if (!matches(*it, *q)) continue;
             if (!result) return errSecSuccess;
@@ -146,6 +198,7 @@ int32_t s_update(Ctx& x, id query, id attrs) {
         if (!matches(*it, *q)) continue;
         for (auto& [k, v] : u->dict) if (isAttributeKey(k) || k == "v_Data") it->set(k, v);
         any = true;
+        syncTinyTowerKeychainToFile(x.proc, *it);
     }
     if (any) kc.save();
     return any ? errSecSuccess : errSecItemNotFound;

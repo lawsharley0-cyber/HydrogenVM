@@ -59,6 +59,34 @@ uint32_t s_NSGetMachExecuteHeader(Ctx& x) { return x.proc.image().headerAddr; }
 int32_t s_getpid(Ctx&) { return 1234; }
 int32_t s_getppid(Ctx&) { return 1; }
 uint32_t s_getuid(Ctx&) { return 501; }
+GuestPtr s_getpwuid(Ctx& x, uint32_t) {
+    static const char key = 0;
+    uint32_t& addr = x.proc.processSlot(&key);
+    if (!addr) {
+        addr = x.proc.allocStatic(32);
+        const uint32_t name = x.proc.internCString("mobile");
+        const uint32_t dir  = x.proc.internCString("/var/mobile");
+        const uint32_t sh   = x.proc.internCString("/bin/sh");
+        x.mem.write<uint32_t>(addr + 0, name); // pw_name
+        x.mem.write<uint32_t>(addr + 4, name); // pw_passwd
+        x.mem.write<uint32_t>(addr + 8, 501);  // pw_uid
+        x.mem.write<uint32_t>(addr + 12, 501); // pw_gid
+        x.mem.write<uint32_t>(addr + 16, 0);   // pw_change
+        x.mem.write<uint32_t>(addr + 20, name);// pw_class
+        x.mem.write<uint32_t>(addr + 24, dir); // pw_dir
+        x.mem.write<uint32_t>(addr + 28, sh);  // pw_shell
+    }
+    return addr;
+}
+GuestPtr s_basename(Ctx& x, GuestPtr p) {
+    if (!p) return x.proc.internCString(".");
+    std::string s = x.proc.readCString(p);
+    while (s.size() > 1 && s.back() == '/') s.pop_back();
+    const size_t slash = s.rfind('/');
+    if (slash != std::string::npos) s = s.substr(slash + 1);
+    return x.proc.internCString(s.empty() ? "." : s);
+}
+int32_t s_ioctl(Ctx&, int32_t, uint32_t, GuestPtr) { return 0; }
 int32_t s_zero(Ctx&) { return 0; }
 int32_t s_isatty(Ctx&, int32_t) { return 0; }
 int32_t s_getpagesize(Ctx&) { return 4096; }
@@ -605,6 +633,11 @@ void registerLibcSystem(Process& p) {
     p.def<&s_getuid>("_geteuid");
     p.def<&s_getuid>("_getgid");
     p.def<&s_getuid>("_getegid");
+    p.def<&s_getpwuid>("_getpwuid");
+    p.def<&s_basename>("_basename");
+    p.def<&s_ioctl>("_ioctl");
+    p.def<&s_zero>("_tcgetattr");
+    p.def<&s_zero>("_tcsetattr");
     p.def<&s_zero>("_issetugid");
     p.def<&s_isatty>("_isatty");
     p.def<&s_getpagesize>("_getpagesize");

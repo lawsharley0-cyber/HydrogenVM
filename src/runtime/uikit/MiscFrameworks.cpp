@@ -229,12 +229,18 @@ id mpvc_initWithURL(Ctx& x, id self, SEL, id url) {
     return me;
 }
 id mpvc_player(Ctx& x, id self, SEL) { return rt(x).host<MovieVCData>(self).player; }
-void vc_presentMovie(Ctx& x, id, SEL, id movieVC) {
+void vc_presentMovie(Ctx& x, id self, SEL, id movieVC) {
     if (!movieVC) return;
+    rt(x).send(x.cpu, self, "presentViewController:animated:completion:", {movieVC, 0, 0});
     const id player = id(rt(x).send(x.cpu, movieVC, "moviePlayer"));
     if (player) rt(x).send(x.cpu, player, "play");
 }
-void vc_dismissMovie(Ctx&, id, SEL) {}
+void vc_dismissMovie(Ctx& x, id self, SEL) {
+    rt(x).send(x.cpu, self, "dismissViewControllerAnimated:completion:", {0, 0});
+    if (auto pause = x.proc.lookupSymbol("_UnityPause")) {
+        x.proc.callGuest(x.cpu, *pause, {0});
+    }
+}
 
 // ---- MPMusicPlayerController: the iPod app isn't playing (so games play their own music).
 id mus_shared(Ctx& x, id cls, SEL) {

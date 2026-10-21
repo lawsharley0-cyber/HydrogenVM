@@ -90,3 +90,9 @@ Apple Silicon numbers come from the macOS CI job (see `ci-reports`).
 * Inline the guest's own `memcpy`/`memset`/`strlen` (and other hot
   libSystem routines) when they are statically linked into the app.
 * Superblocks that follow unconditional branches within a page.
+* **Graphics & Software Rasterizer Optimizations**:
+  * Profiled across 3D Unity titles (e.g. RETRY, Goat Simulator) showing `avgFrameMs` ~65 ms and `avgCompositeMs` ~41 ms on CPU rasterization:
+    * **SIMD Triangle Rasterization**: Vectorize barycentric coordinate stepping and depth buffer comparison (`writeFragment` / `rasterizeTriangle`) using 4-wide SSE2 / AVX2 / ARM Neon.
+    * **Multi-threaded Slicing**: Divide framebuffer scanlines horizontally across worker threads in the software rasterizer during large `glDrawArrays` / `glDrawElements` calls.
+    * **Dirty-Rect Compositing**: Track modified framebuffer regions in UIKit `present` to avoid full-screen 1136x640 RGBA blits when only subregions update.
+    * **Fast-Path Texture Sampling**: Pre-convert PVRTC / GL formats to native host 32-bit RGBA on upload (`glTexImage2D`) to eliminate runtime decompression on every fragment.

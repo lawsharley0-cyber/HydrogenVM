@@ -373,6 +373,7 @@ struct DiscoveredSaveFile: Identifiable, Hashable {
     var id: URL { item.url }
 
     enum Category: String, CaseIterable {
+        case keychain = "Keychain Game Data & Credentials"
         case preferences = "NSUserDefaults & Preferences"
         case databases = "Databases (SQLite)"
         case saveFiles = "Game Save Files & Worlds"
@@ -461,6 +462,16 @@ struct SaveEditorDashboardView: View {
                 }
             } header: {
                 Text("Save State Snapshots (Documents + Library)")
+            }
+
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "info.circle.fill").foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Important: Close the game before saving edits").font(.caption.weight(.semibold))
+                        Text("If the game is still running in memory, it may overwrite save edits with RAM state upon exit.").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
             }
 
             // Discovered Save Files by Category
@@ -561,7 +572,9 @@ struct SaveEditorDashboardView: View {
                 }
 
                 let category: DiscoveredSaveFile.Category
-                if rel.contains("Library/Preferences") || fileURL.pathExtension.lowercased() == "plist" {
+                if rel.contains("Keychains") || fileURL.lastPathComponent == "hvm-keychain.plist" {
+                    category = .keychain
+                } else if rel.contains("Library/Preferences") || fileURL.pathExtension.lowercased() == "plist" {
                     category = .preferences
                 } else if kind == .sqlite {
                     category = .databases
@@ -930,6 +943,70 @@ private struct ImagePreviewView: View {
     }
 }
 
+// MARK: - Keychain & Save File Auto-Synchronization
+
+enum KeychainSaveSync {
+    static func syncFileToKeychainIfNeeded(fileURL: URL, text: String) {
+        let filename = fileURL.lastPathComponent
+        guard filename == "backup.txt" || text.contains("coins=") || text.contains("bux=") else { return }
+
+        var cur = fileURL.deletingLastPathComponent()
+        var keychainURL: URL?
+        for _ in 0..<5 {
+            let candidate = cur.appending(path: "Library/Keychains/hvm-keychain.plist")
+            if FileManager.default.fileExists(atPath: candidate.path(percentEncoded: false)) {
+                keychainURL = candidate
+                break
+            }
+            cur = cur.deletingLastPathComponent()
+        }
+        guard let kURL = keychainURL,
+              let plistData = try? Data(contentsOf: kURL),
+              var plistArray = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [[String: Any]] else {
+            return
+        }
+        guard let textData = text.data(using: .utf8) else { return }
+        var modified = false
+        for i in 0..<plistArray.count {
+            var item = plistArray[i]
+            let svce = item["svce"] as? String ?? ""
+            if svce == "com.eeenmachine.tinytowers.gameData" || svce.contains("gameData") || (item["v_Data"] as? Data).flatMap({ String(data: $0, encoding: .utf8) })?.contains("coins=") == true {
+                item["v_Data"] = textData
+                plistArray[i] = item
+                modified = true
+            }
+        }
+        if modified {
+            if let outData = try? PropertyListSerialization.data(fromPropertyList: plistArray, format: .xml, options: 0) {
+                try? outData.write(to: kURL, options: .atomic)
+            }
+        }
+    }
+
+    static func syncKeychainToFileIfNeeded(keychainURL: URL, plistRoot: PlistNode) {
+        guard keychainURL.lastPathComponent == "hvm-keychain.plist" else { return }
+        guard case .array(let items) = plistRoot.value else { return }
+        for item in items {
+            guard case .dict(let entries) = item.value else { continue }
+            var isTower = false
+            var payloadData: Data?
+            for entry in entries {
+                if entry.key == "svce", case .string(let s) = entry.value, s.contains("gameData") {
+                    isTower = true
+                }
+                if entry.key == "v_Data", case .data(let d) = entry.value {
+                    payloadData = d
+                }
+            }
+            if isTower, let data = payloadData, let s = String(data: data, encoding: .utf8), s.contains("coins=") {
+                let dataDir = keychainURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                let backupURL = dataDir.appending(path: "Documents/backup.txt")
+                try? data.write(to: backupURL, options: .atomic)
+            }
+        }
+    }
+}
+
 // MARK: - Text Editor (with transparent Zlib/Gzip support)
 
 struct TextEditorView: View {
@@ -1001,6 +1078,7 @@ struct TextEditorView: View {
             }
             let out = (compression == .none) ? raw : (SaveCompressionFormat.compress(raw, format: compression) ?? raw)
             try out.write(to: url, options: .atomic)
+            KeychainSaveSync.syncFileToKeychainIfNeeded(fileURL: url, text: text)
             dirty = false
         } catch {
             self.error = error.localizedDescription
@@ -1934,6 +2012,8 @@ final class PlistNode: Identifiable {
     }
 
     static func uidIndex(_ any: Any) -> Int? {
+        if let num = any as? NSNumber { return num.intValue }
+        if let i = any as? Int { return i }
         let desc = String(describing: any)
         // Format: "<CFKeyedArchiverUID ...>{value = 42}"
         guard let range = desc.range(of: "value = ") else { return nil }
@@ -1944,6 +2024,9 @@ final class PlistNode: Identifiable {
 
     static func fromAny(_ any: Any, key: String = "Root") -> PlistNode {
         if let dict = any as? [String: Any] {
+            if dict.count == 1, let uidVal = dict["CF$UID"] as? NSNumber {
+                return PlistNode(key: key, value: .uid(uidVal.intValue))
+            }
             let children = dict.keys.sorted().map { k in fromAny(dict[k]!, key: k) }
             return PlistNode(key: key, value: .dict(children))
         } else if let arr = any as? [Any] {
@@ -1979,7 +2062,11 @@ final class PlistNode: Identifiable {
         case .bool(let b): return NSNumber(value: b)
         case .date(let d): return d
         case .data(let d): return d
-        case .uid(let ref): return ref
+        case .uid(let ref):
+            if let idx = PlistNode.uidIndex(ref) {
+                return ["CF$UID": NSNumber(value: idx)]
+            }
+            return ref
         case .array(let a): return a.map { $0.toAny() }
         case .dict(let d):
             var out: [String: Any] = [:]
@@ -2090,6 +2177,7 @@ struct PlistEditorView: View {
             let data = try PropertyListSerialization.data(fromPropertyList: root.toAny(), format: format, options: 0)
             let out = (compression == .none) ? data : (SaveCompressionFormat.compress(data, format: compression) ?? data)
             try out.write(to: url, options: .atomic)
+            KeychainSaveSync.syncKeychainToFileIfNeeded(keychainURL: url, plistRoot: root)
             dirty = false
         } catch {
             self.error = error.localizedDescription

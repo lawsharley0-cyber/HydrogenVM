@@ -373,6 +373,10 @@ void startAccelTimer(Ctx& x, id acc) {
         const id s = rt(cx).createInstance(ACS(cx).acceleration);
         AccelSample& smp = rt(cx).host<AccelSample>(s);
         smp.x = u.accel[0]; smp.y = u.accel[1]; smp.z = u.accel[2]; smp.t = nowSeconds();
+        cx.mem.write<double>(s + 4, smp.t);
+        cx.mem.write<double>(s + 12, smp.x);
+        cx.mem.write<double>(s + 20, smp.y);
+        cx.mem.write<double>(s + 28, smp.z);
         const uint32_t pool = rt(cx).poolPush();
         rt(cx).send(c, ad.delegate, "accelerometer:didAccelerate:", {acc, s});
         rt(cx).poolPop(c, pool);
@@ -660,7 +664,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
     acc.cm<&acc_shared>("sharedAccelerometer");
     acc.m<&acc_delegate>("delegate").m<&acc_setDelegate>("setDelegate:", "v@:@").m<&acc_interval>("updateInterval", "d@:")
        .m<&acc_setInterval>("setUpdateInterval:", "v@:d");
-    ObjC::ClassBuilder sample = r.defineClass("UIAcceleration", "NSObject");
+    ObjC::ClassBuilder sample = r.defineClass("UIAcceleration", "NSObject", 36);
     as.acceleration = sample.cls();
     sample.m<&as_x>("x", "d@:").m<&as_y>("y", "d@:").m<&as_z>("z", "d@:").m<&as_t>("timestamp", "d@:");
 

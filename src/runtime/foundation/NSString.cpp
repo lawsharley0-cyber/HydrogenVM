@@ -485,11 +485,13 @@ namespace fsys = std::filesystem;
 std::string pathOf(Ctx& x, id s) { return toUtf8(sv(x, s)); }
 std::string trimSlash(std::string p) { while (p.size() > 1 && p.back() == '/') p.pop_back(); return p; }
 id s_appendingPathComponent(Ctx& x, id self, SEL, id comp) {
-    std::string a = trimSlash(pathOf(x, self)), b = pathOf(x, comp);
-    while (!b.empty() && b[0] == '/') b.erase(0, 1);
+    const std::string a = trimSlash(pathOf(x, self));
+    const std::string b = pathOf(x, comp);
     if (a.empty()) return makeString(x, b);
     if (b.empty()) return makeString(x, a);
-    return makeString(x, a == "/" ? "/" + b : a + "/" + b);
+    std::string bTrim = b;
+    while (!bTrim.empty() && bTrim[0] == '/') bTrim.erase(0, 1);
+    return makeString(x, a == "/" ? "/" + bTrim : a + "/" + bTrim);
 }
 id s_appendingPathExtension(Ctx& x, id self, SEL, id ext) { return makeString(x, trimSlash(pathOf(x, self)) + "." + pathOf(x, ext)); }
 id s_lastPathComponent(Ctx& x, id self, SEL) {

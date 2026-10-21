@@ -50,3 +50,19 @@ raw `--report` JSON of each run is under `compat/runs/<app>/`.
 3. `scan --only <apps that had it>` to confirm, then a full `scan` to check
    for regressions.
 4. Commit; tag `[mac]` to get a device IPA from CI.
+
+## Verified Game Compatibility Fixes
+
+* **Mega Jump (`Mega Jump.app`)**:
+  * Fixed `NSTimer` invocation forwarding for targets with missing or nil invocation selectors.
+  * Verified gameplay loop runs cleanly with active coin collection and game over state.
+* **Tiny Tower (`Tiny Tower.app`)**:
+  * Implemented persistent 2-way sync Keychain storage (`SecItemAdd`, `SecItemCopyMatching`, `SecItemUpdate`, `SecItemDelete`) preventing save-file wipeouts on restart.
+  * Added OpenGL 1.1 `glBlendEquationOES` and blend equation extensions to eliminate graphics compositing artifacts.
+* **Pocket Ants (`anthill.app`)**:
+  * Added multi-threaded OpenGL fallback context handling for Cocos2d-x background texture loading worker threads.
+  * Verified gameplay rendering across full level progression.
+* **RETRY (`retry.app`)**:
+  * Diagnosed and fixed out-of-bounds heap corruption at frame 59 caused by fractional layer bounds mismatch (`std::ceil` vs `std::round`) between FBO color (1136x641) and depth (1136x640) renderbuffers.
+  * Clamped software rasterizer bounds in `activeTarget` and added fragment bounds guards in `writeFragment`.
+  * Verified app loads all Mono/LVL11 assemblies, passes intro screens, and executes full 3D forward shader render loop past 20+ seconds.

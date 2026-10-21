@@ -228,9 +228,36 @@ id o_mutableArrayValueForKey(Ctx& x, id self, SEL s, id key) {
     const id v = o_valueForKey(x, self, s, key);
     return autoreleased(x, id(rt(x).send(x.cpu, v ? v : makeArray(x, {}), "mutableCopy")));
 }
-// KVO: observers are accepted but never notified (no isa-swizzling yet).
+// KVO: observers are accepted and notified with current values.
+void deliverKVO(Ctx& x, id observer, id keyPath, id target, uint32_t context) {
+    if (!observer || !keyPath || !target) return;
+    const id val = id(rt(x).send(x.cpu, target, "valueForKeyPath:", {keyPath}));
+    std::vector<std::pair<id, id>> entries;
+    entries.push_back({makeString(x, "kind"), makeNumberInt(x, 1)});
+    if (val) entries.push_back({makeString(x, "new"), val});
+    const id change = makeDict(x, entries);
+    rt(x).send(x.cpu, observer, "observeValueForKeyPath:ofObject:change:context:", {keyPath, target, change, context});
+}
+
 void o_kvoNoop2(Ctx&, id, SEL, id, id) {}
-void o_kvoAdd(Ctx& x, id, SEL, id, id key, uint32_t, uint32_t) { x.proc.reportMissing("KVO notifications (observing " + utf8(x, key) + ")"); }
+void o_kvoAdd(Ctx& x, id self, SEL, id observer, id key, uint32_t options, uint32_t context) {
+    if (!observer || !key || !self) return;
+    if (options & 4 /* NSKeyValueObservingOptionInitial */) {
+        deliverKVO(x, observer, key, self, context);
+    } else {
+        Process* proc = &x.proc;
+        rt(x).retain(x.cpu, observer);
+        rt(x).retain(x.cpu, key);
+        rt(x).retain(x.cpu, self);
+        Foundation::mainRunLoop(x.proc).addTimer(0.01, 0, false, [proc, observer, key, self, context](CPU::Cpu& c) {
+            Ctx cx{*proc, c, proc->mem()};
+            deliverKVO(cx, observer, key, self, context);
+            rt(cx).release(c, observer);
+            rt(cx).release(c, key);
+            rt(cx).release(c, self);
+        });
+    }
+}
 void o_kvoRemove3(Ctx&, id, SEL, id, id, uint32_t) {}
 void o_kvoChange(Ctx&, id, SEL, id) {}
 bool oc_automaticallyNotifies(Ctx&, id, SEL, id) { return true; }

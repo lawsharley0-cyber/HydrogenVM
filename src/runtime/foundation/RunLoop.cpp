@@ -210,7 +210,7 @@ void obj_dealloc(Ctx& x, id self, SEL) { rt(x).disposeInstance(x.cpu, self); }
 
 struct TimerData : ObjC::HostObject {
     std::shared_ptr<RunLoop::Timer> t;
-    id target = 0, userInfo = 0, block = 0;
+    id target = 0, userInfo = 0, block = 0, invocation = 0;
     SEL sel = 0;
     uint32_t callout = 0, info = 0;   // CFRunLoopTimer
     double interval = 0, fireAt = 0;
@@ -226,6 +226,8 @@ void fireTimer(Ctx& x, id timer) {
     if (d->block) {
         const uint32_t invoke = x.mem.read<uint32_t>(d->block + 12);
         x.proc.callGuest(x.cpu, invoke, {d->block, timer});
+    } else if (d->invocation) {
+        rt(x).send(x.cpu, d->invocation, "invoke");
     } else if (d->callout) {
         x.proc.callGuest(x.cpu, d->callout, {timer, d->info});
     } else if (d->target) {
@@ -234,11 +236,12 @@ void fireTimer(Ctx& x, id timer) {
     if (oneShot) {
         if (TimerData* again = td(x, timer); again && again->valid) {
             again->valid = false;
-            const id tgt = again->target, ui = again->userInfo, blk = again->block;
-            again->target = again->userInfo = again->block = 0;
+            const id tgt = again->target, ui = again->userInfo, blk = again->block, inv = again->invocation;
+            again->target = again->userInfo = again->block = again->invocation = 0;
             rt(x).release(x.cpu, tgt);
             rt(x).release(x.cpu, ui);
             if (blk) rt(x).release(x.cpu, blk);
+            if (inv) rt(x).release(x.cpu, inv);
             rt(x).release(x.cpu, timer);   // the run loop's reference
         }
     }
@@ -269,6 +272,24 @@ id newTimer(Ctx& x, double ti, id target, SEL sel, id userInfo, bool repeats, id
     rt(x).setHost(t, std::move(d));
     return t;
 }
+id newInvocationTimer(Ctx& x, double ti, id invocation, bool repeats) {
+    const id t = rt(x).createInstance(L(x).timerConcrete);
+    auto d = std::make_unique<TimerData>();
+    d->interval = std::max(ti, 0.0001);
+    d->fireAt = now() + std::max(ti, 0.0);
+    d->repeats = repeats;
+    d->invocation = rt(x).retain(x.cpu, invocation);
+    rt(x).setHost(t, std::move(d));
+    return t;
+}
+id tc_scheduledInvocation(Ctx& x, id, SEL, double ti, id invocation, bool rep) {
+    const id t = newInvocationTimer(x, ti, invocation, rep);
+    scheduleTimer(x, t, currentLoop(x));
+    return autoreleased(x, t);
+}
+id tc_timerInvocation(Ctx& x, id, SEL, double ti, id invocation, bool rep) {
+    return autoreleased(x, newInvocationTimer(x, ti, invocation, rep));
+}
 id tc_scheduled(Ctx& x, id, SEL, double ti, id target, SEL sel, id ui, bool rep) {
     const id t = newTimer(x, ti, target, sel, ui, rep, 0);
     scheduleTimer(x, t, currentLoop(x));
@@ -293,11 +314,12 @@ void t_invalidate(Ctx& x, id self, SEL) {
     d->valid = false;
     if (d->t) d->t->valid = false;
     const bool scheduled = d->t != nullptr;
-    const id tgt = d->target, ui = d->userInfo, blk = d->block;
-    d->target = d->userInfo = d->block = 0;
+    const id tgt = d->target, ui = d->userInfo, blk = d->block, inv = d->invocation;
+    d->target = d->userInfo = d->block = d->invocation = 0;
     rt(x).release(x.cpu, tgt);
     rt(x).release(x.cpu, ui);
     if (blk) rt(x).release(x.cpu, blk);
+    if (inv) rt(x).release(x.cpu, inv);
     if (scheduled) rt(x).release(x.cpu, self);
 }
 void t_fire(Ctx& x, id self, SEL) {
@@ -319,11 +341,12 @@ void t_setFireDate(Ctx& x, id self, SEL, id date) {
 void timer_dealloc(Ctx& x, id self, SEL) {
     if (TimerData* d = td(x, self)) {
         if (d->t) d->t->valid = false;
-        const id tgt = d->target, ui = d->userInfo, blk = d->block;
-        d->target = d->userInfo = d->block = 0;
+        const id tgt = d->target, ui = d->userInfo, blk = d->block, inv = d->invocation;
+        d->target = d->userInfo = d->block = d->invocation = 0;
         rt(x).release(x.cpu, tgt);
         rt(x).release(x.cpu, ui);
         if (blk) rt(x).release(x.cpu, blk);
+        if (inv) rt(x).release(x.cpu, inv);
     }
     rt(x).disposeInstance(x.cpu, self);
 }
@@ -600,6 +623,8 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     l.nsTimer = timer.cls(); l.timerConcrete = timerC.cls();
     timer.cm<&tc_scheduled>("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:")
          .cm<&tc_timer>("timerWithTimeInterval:target:selector:userInfo:repeats:")
+         .cm<&tc_scheduledInvocation>("scheduledTimerWithTimeInterval:invocation:repeats:")
+         .cm<&tc_timerInvocation>("timerWithTimeInterval:invocation:repeats:")
          .cm<&tc_scheduledBlock>("scheduledTimerWithTimeInterval:repeats:block:")
          .cm<&tc_timerBlock>("timerWithTimeInterval:repeats:block:");
     timer.m<&ti_initWithFireDate>("initWithFireDate:interval:target:selector:userInfo:repeats:")

@@ -450,7 +450,7 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
         if (dot != std::string::npos && dot > 0 && name.find('/', dot) == std::string::npos) { type = name.substr(dot + 1); name.resize(dot); }
     }
     std::error_code ec;
-    const fs::path root = subdir.empty() ? fs::path(bundle) : fs::path(bundle) / subdir;
+    const fs::path root = subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir);
     const std::string lang = localization.empty() ? (B(x).language.empty() ? chooseLanguage(bundle) : B(x).language) : localization;
     std::vector<fs::path> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
     for (const auto& d : dirs) {
@@ -896,13 +896,20 @@ id fm_nil1(Ctx&, id, SEL, id) { return 0; }
 void fm_setDelegate(Ctx&, id, SEL, id) {}
 
 // Directory enumerator (snapshot of the recursive listing).
-struct EnumData : ObjC::HostObject { std::vector<std::string> items; size_t pos = 0; std::string root; };
+struct DirEnumData : ObjC::HostObject {
+    std::vector<std::string> items;
+    size_t pos = 0;
+    std::string root;
+    bool isURL = false;
+    uint32_t mutationCell = 0;
+};
 id fm_enumerator(Ctx& x, id, SEL, id path) {
     const std::string p = P(x, path);
     std::error_code ec;
     if (!fs::is_directory(p, ec)) return 0;
-    auto h = std::make_unique<EnumData>();
+    auto h = std::make_unique<DirEnumData>();
     h->root = p;
+    h->isURL = false;
     for (auto it = fs::recursive_directory_iterator(p, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
         h->items.push_back(fs::relative(it->path(), p, ec).string());
     std::sort(h->items.begin(), h->items.end());
@@ -910,28 +917,72 @@ id fm_enumerator(Ctx& x, id, SEL, id path) {
     rt(x).setHost(e, std::move(h));
     return autoreleased(x, e);
 }
-id fm_enumeratorURL(Ctx& x, id self, SEL s, id url, id, uint32_t, uint32_t) { return fm_enumerator(x, self, s, makeString(x, filePath(x, url))); }
+id fm_enumeratorURL(Ctx& x, id self, SEL s, id url, id, uint32_t, uint32_t) {
+    const std::string p = filePath(x, url);
+    std::error_code ec;
+    if (!fs::is_directory(p, ec)) return 0;
+    auto h = std::make_unique<DirEnumData>();
+    h->root = p;
+    h->isURL = true;
+    for (auto it = fs::recursive_directory_iterator(p, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+        h->items.push_back(fs::relative(it->path(), p, ec).string());
+    std::sort(h->items.begin(), h->items.end());
+    const id e = rt(x).createInstance(B(x).dirEnum);
+    rt(x).setHost(e, std::move(h));
+    return autoreleased(x, e);
+}
 id de_next(Ctx& x, id self, SEL) {
-    EnumData* d = rt(x).hostIf<EnumData>(self);
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
     if (!d || d->pos >= d->items.size()) return 0;
-    return makeString(x, d->items[d->pos++]);
+    const std::string item = d->items[d->pos++];
+    return d->isURL ? makeFileURL(x, d->root + "/" + item) : makeString(x, item);
 }
 id de_all(Ctx& x, id self, SEL) {
-    EnumData* d = rt(x).hostIf<EnumData>(self);
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
     std::vector<id> out;
-    if (d) while (d->pos < d->items.size()) out.push_back(makeString(x, d->items[d->pos++]));
+    if (d) {
+        while (d->pos < d->items.size()) {
+            const std::string item = d->items[d->pos++];
+            out.push_back(d->isURL ? makeFileURL(x, d->root + "/" + item) : makeString(x, item));
+        }
+    }
     return makeArray(x, out);
 }
 void de_skip(Ctx& x, id self, SEL) {
-    EnumData* d = rt(x).hostIf<EnumData>(self);
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
     if (!d || d->pos == 0) return;
     const std::string prefix = d->items[d->pos - 1] + "/";
     while (d->pos < d->items.size() && d->items[d->pos].rfind(prefix, 0) == 0) ++d->pos;
 }
 id de_fileAttributes(Ctx& x, id self, SEL) {
-    EnumData* d = rt(x).hostIf<EnumData>(self);
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
     if (!d || d->pos == 0) return 0;
     return attributes(x, d->root + "/" + d->items[d->pos - 1], false, 0);
+}
+uint32_t de_countByEnumerating(Ctx& x, id self, SEL, GuestPtr state, GuestPtr buf, uint32_t len) {
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
+    if (!d || !state) return 0;
+    uint32_t pos = x.mem.read<uint32_t>(state);
+    if (pos == 0) {
+        if (!d->mutationCell) d->mutationCell = x.proc.heap().allocZeroed(4);
+        x.mem.write<uint32_t>(state + 8, d->mutationCell);
+    }
+    if (pos >= d->items.size()) return 0;
+    const uint32_t n = std::min<uint32_t>(len, uint32_t(d->items.size()) - pos);
+    for (uint32_t i = 0; i < n; ++i) {
+        id obj = d->isURL ? makeFileURL(x, d->root + "/" + d->items[pos + i])
+                          : makeString(x, d->items[pos + i]);
+        x.mem.write<uint32_t>(buf + i * 4, obj);
+    }
+    x.mem.write<uint32_t>(state + 4, buf);
+    x.mem.write<uint32_t>(state, pos + n);
+    return n;
+}
+void de_dealloc(Ctx& x, id self, SEL) {
+    if (DirEnumData* d = rt(x).hostIf<DirEnumData>(self)) {
+        if (d->mutationCell) x.proc.heap().free(d->mutationCell);
+    }
+    rt(x).disposeInstance(x.cpu, self);
 }
 void obj_dealloc(Ctx& x, id self, SEL) { rt(x).disposeInstance(x.cpu, self); }
 
@@ -1192,7 +1243,9 @@ void registerBundle(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder de = r.defineClass("NSDirectoryEnumerator", "NSEnumerator");
     b.dirEnum = de.cls();
     de.m<&de_next>("nextObject").m<&de_all>("allObjects").m<&de_skip>("skipDescendents", "v@:")
-      .m<&de_skip>("skipDescendants", "v@:").m<&de_fileAttributes>("fileAttributes").m<&obj_dealloc>("dealloc", "v@:");
+      .m<&de_skip>("skipDescendants", "v@:").m<&de_fileAttributes>("fileAttributes")
+      .m<&de_countByEnumerating>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
+      .m<&de_dealloc>("dealloc", "v@:");
 
     ObjC::ClassBuilder fh = r.defineClass("NSFileHandle", "NSObject");
     b.fileHandle = fh.cls();

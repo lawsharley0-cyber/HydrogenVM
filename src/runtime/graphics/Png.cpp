@@ -6,6 +6,18 @@
 #include <mutex>
 #include <zlib.h>
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#endif
+#define STBI_ONLY_JPEG
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#include "thirdparty/stb/stb_image.h"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
 namespace Hydrogen::Graphics {
 
 namespace {
@@ -241,7 +253,20 @@ ImagePtr decodeImage(const uint8_t* data, size_t n, std::string* error) {
         dec = g_platformDecoder;
     }
     if (dec) if (ImagePtr img = dec(data, n)) return img;
-    if (error && error->empty()) *error = n >= 3 && data[0] == 0xFF && data[1] == 0xD8 ? "JPEG needs the platform decoder" : "unknown image format";
+    if (n >= 3 && data[0] == 0xFF && data[1] == 0xD8) {
+        int w = 0, h = 0, channels = 0;
+        stbi_uc* pixels = stbi_load_from_memory(data, (int)n, &w, &h, &channels, 4);
+        if (pixels) {
+            auto img = std::make_shared<Image>();
+            img->width = w;
+            img->height = h;
+            img->rgba.assign(pixels, pixels + (size_t(w) * size_t(h) * 4));
+            img->opaque = true;
+            stbi_image_free(pixels);
+            return img;
+        }
+    }
+    if (error && error->empty()) *error = n >= 3 && data[0] == 0xFF && data[1] == 0xD8 ? "corrupt JPEG data" : "unknown image format";
     return nullptr;
 }
 

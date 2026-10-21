@@ -11,3 +11,5 @@ app/xbuild/
 build/
 compat/
 xcuserdata/
+__pycache__/
+*.png

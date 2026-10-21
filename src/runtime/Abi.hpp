@@ -107,8 +107,16 @@ template <typename T> T readArg(ArgReader& a) {
 inline void setReturn(CPU::Cpu& c, uint64_t v) { c.r[0] = uint32_t(v); c.r[1] = uint32_t(v >> 32); }
 
 template <typename R> void writeRet(CPU::Cpu& c, R v) {
-    if constexpr (std::is_same_v<R, double>) { uint64_t b; std::memcpy(&b, &v, 8); setReturn(c, b); }
-    else if constexpr (std::is_same_v<R, float>) { uint32_t b; std::memcpy(&b, &v, 4); c.r[0] = b; }
+    if constexpr (std::is_same_v<R, double>) {
+        uint64_t b; std::memcpy(&b, &v, 8);
+        setReturn(c, b);
+        std::memcpy(&c.d[0], &v, 8);
+    }
+    else if constexpr (std::is_same_v<R, float>) {
+        uint32_t b; std::memcpy(&b, &v, 4);
+        c.r[0] = b;
+        std::memcpy(&c.d[0], &v, 4);
+    }
     else if constexpr (std::is_same_v<R, bool>) c.r[0] = v ? 1 : 0;
     else if constexpr (sizeof(R) == 8) setReturn(c, uint64_t(v));
     else c.r[0] = uint32_t(v);

@@ -452,6 +452,7 @@ struct ContextData : ObjC::HostObject {
     uint32_t blendSrcRGB = GL_ONE, blendDstRGB = GL_ZERO;
     uint32_t blendSrcAlpha = GL_ONE, blendDstAlpha = GL_ZERO;
     uint32_t blendEqRGB = GL_FUNC_ADD, blendEqAlpha = GL_FUNC_ADD;
+    float blendColor[4] = {0, 0, 0, 0};
     uint32_t depthFunc = GL_LESS;
     uint32_t cullFaceMode = GL_BACK;
     uint32_t frontFace = GL_CCW;
@@ -503,6 +504,7 @@ struct GLState {
     Class eaglLayer = 0, eaglContext = 0, eaglSharegroup = 0;
     std::mutex mu;
     std::unordered_map<uint32_t, ObjC::id> currentByThread; // GuestThread::id -> EAGLContext id
+    ObjC::id lastActiveContext = 0;
 };
 
 GLState& GLS(Process& p) { return p.service<GLState>(); }
@@ -515,7 +517,13 @@ ContextData* currentCtx(Ctx& x) {
     {
         std::lock_guard<std::mutex> lk(st.mu);
         auto it = st.currentByThread.find(tid);
-        if (it != st.currentByThread.end()) cid = it->second;
+        if (it != st.currentByThread.end()) {
+            cid = it->second;
+        } else if (!st.currentByThread.empty()) {
+            cid = st.currentByThread.begin()->second;
+        } else if (st.lastActiveContext != 0) {
+            cid = st.lastActiveContext;
+        }
     }
     return cid ? rt(x).hostIf<ContextData>(cid) : nullptr;
 }
@@ -567,6 +575,8 @@ RenderTarget activeTarget(Ctx& x, ContextData& c, SharegroupData& sg) {
                     if (drb.depth.size() != size_t(drb.width) * size_t(drb.height))
                         drb.depth.assign(size_t(drb.width) * size_t(drb.height), 1.0f);
                     rtOut.depth = drb.depth.data();
+                    if (rtOut.width > 0 && drb.width > 0) rtOut.width = std::min(rtOut.width, drb.width);
+                    if (rtOut.height > 0 && drb.height > 0) rtOut.height = std::min(rtOut.height, drb.height);
                 }
             }
             if (rtOut.rgba && rtOut.width > 0 && rtOut.height > 0) return rtOut;
@@ -671,8 +681,12 @@ bool ctx_setCurrent(Ctx& x, id, SEL, id ctx) {
     auto& st = GLS(x);
     const uint32_t tid = x.proc.currentThread().id;
     std::lock_guard<std::mutex> lk(st.mu);
-    if (ctx) st.currentByThread[tid] = ctx;
-    else st.currentByThread.erase(tid);
+    if (ctx) {
+        st.currentByThread[tid] = ctx;
+        st.lastActiveContext = ctx;
+    } else {
+        st.currentByThread.erase(tid);
+    }
     return true;
 }
 
@@ -681,7 +695,9 @@ id ctx_current(Ctx& x, id, SEL) {
     const uint32_t tid = x.proc.currentThread().id;
     std::lock_guard<std::mutex> lk(st.mu);
     auto it = st.currentByThread.find(tid);
-    return it != st.currentByThread.end() ? it->second : 0;
+    if (it != st.currentByThread.end()) return it->second;
+    if (!st.currentByThread.empty()) return st.currentByThread.begin()->second;
+    return st.lastActiveContext;
 }
 
 uint32_t ctx_api(Ctx& x, id self, SEL) { return rt(x).host<ContextData>(self).api; }
@@ -705,8 +721,8 @@ bool ctx_renderbufferStorage(Ctx& x, id self, SEL, uint32_t target, id drawable)
     const float scale = ld.contentsScale > 0 ? ld.contentsScale : ui(x).scale;
     float bw = ld.bounds.w > 0 ? ld.bounds.w : ui(x).screenW;
     float bh = ld.bounds.h > 0 ? ld.bounds.h : ui(x).screenH;
-    rb.width = std::max(1, int(std::ceil(bw * scale)));
-    rb.height = std::max(1, int(std::ceil(bh * scale)));
+    rb.width = std::max(1, int(std::round(bw * scale)));
+    rb.height = std::max(1, int(std::round(bh * scale)));
     rb.internalFormat = GL_RGBA8_OES;
     rb.rgba.assign(size_t(rb.width) * size_t(rb.height) * 4, 0);
     rb.depth.assign(size_t(rb.width) * size_t(rb.height), 1.0f);
@@ -716,22 +732,83 @@ bool ctx_renderbufferStorage(Ctx& x, id self, SEL, uint32_t target, id drawable)
     return true;
 }
 
+static std::atomic<int> totalDrawCalls{0};
+
 bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
     (void)target;
     ContextData& c = rt(x).host<ContextData>(self);
     SharegroupData* sg = currentSg(x, &c);
     if (!sg) return false;
-    uint32_t rbId = c.renderbuffer;
-    if (rbId == 0 && c.framebuffer != 0) {
-        auto fit = sg->framebuffers.find(c.framebuffer);
-        if (fit != sg->framebuffers.end() && fit->second.colorAttachmentType == GL_RENDERBUFFER)
-            rbId = fit->second.colorAttachmentId;
+    Renderbuffer* pRb = nullptr;
+    if (c.renderbuffer != 0) {
+        auto it = sg->renderbuffers.find(c.renderbuffer);
+        if (it != sg->renderbuffers.end() && it->second.drawableLayer) pRb = &it->second;
     }
-    if (rbId == 0) return false;
-    auto it = sg->renderbuffers.find(rbId);
-    if (it == sg->renderbuffers.end()) return false;
-    Renderbuffer& rb = it->second;
-    if (!rb.drawableLayer || rb.width <= 0 || rb.height <= 0 || rb.rgba.empty()) return false;
+    if (!pRb && c.framebuffer != 0) {
+        auto fit = sg->framebuffers.find(c.framebuffer);
+        if (fit != sg->framebuffers.end() && fit->second.colorAttachmentType == GL_RENDERBUFFER) {
+            auto it = sg->renderbuffers.find(fit->second.colorAttachmentId);
+            if (it != sg->renderbuffers.end() && it->second.drawableLayer) pRb = &it->second;
+        }
+    }
+    if (!pRb) {
+        for (auto& [id, r] : sg->renderbuffers) {
+            if (r.drawableLayer && r.width > 0 && r.height > 0 && !r.rgba.empty()) {
+                pRb = &r;
+                break;
+            }
+        }
+    }
+    if (!pRb || !pRb->drawableLayer || pRb->width <= 0 || pRb->height <= 0 || pRb->rgba.empty()) return false;
+    Renderbuffer& rb = *pRb;
+
+    // If an offscreen framebuffer was rendered and is still active, blit into the drawable renderbuffer.
+    if (c.framebuffer != 0) {
+        const RenderTarget rtOut = activeTarget(x, c, *sg);
+        if (rtOut.rgba && rtOut.rgba != rb.rgba.data() && rtOut.width > 0 && rtOut.height > 0) {
+            if (rtOut.width == rb.width && rtOut.height == rb.height) {
+                std::memcpy(rb.rgba.data(), rtOut.rgba, size_t(rb.width) * size_t(rb.height) * 4);
+            } else {
+                for (int y = 0; y < rb.height; ++y) {
+                    const int sy = int(int64_t(y) * rtOut.height / rb.height);
+                    for (int xx = 0; xx < rb.width; ++xx) {
+                        const int sx = int(int64_t(xx) * rtOut.width / rb.width);
+                        std::memcpy(rb.rgba.data() + (size_t(y) * rb.width + xx) * 4,
+                                    rtOut.rgba + (size_t(sy) * rtOut.width + sx) * 4, 4);
+                    }
+                }
+            }
+        }
+    } else {
+        auto hasContent = [](const uint8_t* p, size_t sz) {
+            if (!p || sz < 16) return false;
+            const uint64_t* u = reinterpret_cast<const uint64_t*>(p);
+            const size_t n = sz / 8;
+            for (size_t i = 0; i < n; ++i) if (u[i] != 0) return true;
+            return false;
+        };
+        if (!hasContent(rb.rgba.data(), rb.rgba.size())) {
+            for (const auto& [fbid, fb] : sg->framebuffers) {
+                if (fb.colorAttachmentType == GL_TEXTURE_2D && fb.colorAttachmentId != 0) {
+                    auto tit = sg->textures.find(fb.colorAttachmentId);
+                    if (tit != sg->textures.end()) {
+                        const auto& lev = tit->second;
+                        if (lev.width > 0 && lev.height > 0 && hasContent(lev.rgba.data(), lev.rgba.size())) {
+                            for (int y = 0; y < rb.height; ++y) {
+                                const int sy = int(int64_t(y) * lev.height / rb.height);
+                                for (int xx = 0; xx < rb.width; ++xx) {
+                                    const int sx = int(int64_t(xx) * lev.width / rb.width);
+                                    std::memcpy(rb.rgba.data() + (size_t(y) * rb.width + xx) * 4,
+                                                lev.rgba.data() + (size_t(sy) * lev.width + sx) * 4, 4);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     auto img = std::make_shared<G::Image>();
     img->width = rb.width;
@@ -917,6 +994,14 @@ void gl_blendFuncSeparate(Ctx& x, uint32_t srcRGB, uint32_t dstRGB, uint32_t src
 void gl_blendEquation(Ctx& x, uint32_t mode) { if (auto* c = currentCtx(x)) c->blendEqRGB = c->blendEqAlpha = mode; }
 void gl_blendEquationSeparate(Ctx& x, uint32_t modeRGB, uint32_t modeA) {
     if (auto* c = currentCtx(x)) { c->blendEqRGB = modeRGB; c->blendEqAlpha = modeA; }
+}
+void gl_blendColor(Ctx& x, float r, float g, float b, float a) {
+    if (auto* c = currentCtx(x)) {
+        c->blendColor[0] = std::clamp(r, 0.0f, 1.0f);
+        c->blendColor[1] = std::clamp(g, 0.0f, 1.0f);
+        c->blendColor[2] = std::clamp(b, 0.0f, 1.0f);
+        c->blendColor[3] = std::clamp(a, 0.0f, 1.0f);
+    }
 }
 void gl_depthFunc(Ctx& x, uint32_t func) { if (auto* c = currentCtx(x)) c->depthFunc = func; }
 void gl_depthMask(Ctx& x, uint32_t flag) { if (auto* c = currentCtx(x)) c->depthMask = (flag & 0xFF) != 0; }
@@ -1154,6 +1239,57 @@ void gl_bindFramebuffer(Ctx& x, uint32_t target, uint32_t fb) {
     }
     if (fb != 0) sg->framebuffers[fb].id = fb;
 }
+void gl_blitFramebuffer(Ctx& x, int32_t srcX0, int32_t srcY0, int32_t srcX1, int32_t srcY1,
+                         int32_t dstX0, int32_t dstY0, int32_t dstX1, int32_t dstY1,
+                         uint32_t mask, uint32_t filter) {
+    (void)mask; (void)filter;
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg) return;
+    const uint32_t draw = c->framebuffer;
+    c->framebuffer = c->readFramebuffer;
+    const RenderTarget src = activeTarget(x, *c, *sg);
+    c->framebuffer = draw;
+    const RenderTarget dst = activeTarget(x, *c, *sg);
+    if (!src.rgba || !dst.rgba || src.rgba == dst.rgba || src.width <= 0 || dst.width <= 0) return;
+
+    const int sw = std::abs(srcX1 - srcX0);
+    const int sh = std::abs(srcY1 - srcY0);
+    const int dw = std::abs(dstX1 - dstX0);
+    const int dh = std::abs(dstY1 - dstY0);
+    if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+
+    const int minSx = std::min(srcX0, srcX1);
+    const int minSy = std::min(srcY0, srcY1);
+    const int minDx = std::min(dstX0, dstX1);
+    const int minDy = std::min(dstY0, dstY1);
+
+    if (sw == dw && sh == dh && minSx >= 0 && minSy >= 0 && minSx + sw <= src.width &&
+        minDx >= 0 && minDy >= 0 && minDx + dw <= dst.width) {
+        for (int y = 0; y < dh; ++y) {
+            std::memcpy(dst.rgba + (size_t(minDy + y) * dst.width + minDx) * 4,
+                        src.rgba + (size_t(minSy + y) * src.width + minSx) * 4,
+                        size_t(dw) * 4);
+        }
+        return;
+    }
+
+    for (int y = 0; y < dh; ++y) {
+        const int dy = minDy + y;
+        if (dy < 0 || dy >= dst.height) continue;
+        const int sy = minSy + int(int64_t(y) * sh / dh);
+        if (sy < 0 || sy >= src.height) continue;
+        for (int xx = 0; xx < dw; ++xx) {
+            const int dx = minDx + xx;
+            if (dx < 0 || dx >= dst.width) continue;
+            const int sx = minSx + int(int64_t(xx) * sw / dw);
+            if (sx < 0 || sx >= src.width) continue;
+            std::memcpy(dst.rgba + (size_t(dy) * dst.width + dx) * 4,
+                        src.rgba + (size_t(sy) * src.width + sx) * 4, 4);
+        }
+    }
+}
+
 // APPLE_framebuffer_multisample: multisample buffers are ordinary buffers here (no MSAA),
 // and resolving copies the read framebuffer's colour into the draw framebuffer.
 void gl_renderbufferStorageMultisample(Ctx& x, uint32_t target, int32_t, uint32_t internalformat, int32_t width, int32_t height);
@@ -2205,7 +2341,7 @@ bool depthPass(uint32_t func, float z, float ref) {
     }
 }
 
-float blendFactorVal(uint32_t factor, float srcC, float srcA, float dstC, float dstA) {
+float blendFactorVal(const ContextData& c, uint32_t factor, float srcC, float srcA, float dstC, float dstA, int ch) {
     switch (factor) {
         case GL_ZERO: return 0.0f;
         case GL_ONE: return 1.0f;
@@ -2218,11 +2354,27 @@ float blendFactorVal(uint32_t factor, float srcC, float srcA, float dstC, float 
         case GL_DST_ALPHA: return dstA;
         case GL_ONE_MINUS_DST_ALPHA: return 1.0f - dstA;
         case GL_SRC_ALPHA_SATURATE: return std::min(srcA, 1.0f - dstA);
+        case 0x8001 /* GL_CONSTANT_COLOR */: return c.blendColor[ch];
+        case 0x8002 /* GL_ONE_MINUS_CONSTANT_COLOR */: return 1.0f - c.blendColor[ch];
+        case 0x8003 /* GL_CONSTANT_ALPHA */: return c.blendColor[3];
+        case 0x8004 /* GL_ONE_MINUS_CONSTANT_ALPHA */: return 1.0f - c.blendColor[3];
         default: return 1.0f;
     }
 }
 
+inline float applyBlendEquation(uint32_t eq, float s, float sf, float d, float df) {
+    switch (eq) {
+        case 0x800A /* GL_FUNC_SUBTRACT */: return s * sf - d * df;
+        case 0x800B /* GL_FUNC_REVERSE_SUBTRACT */: return d * df - s * sf;
+        case 0x8007 /* GL_MIN_EXT */: return std::min(s, d);
+        case 0x8008 /* GL_MAX_EXT */: return std::max(s, d);
+        case 0x8006 /* GL_FUNC_ADD */:
+        default: return s * sf + d * df;
+    }
+}
+
 void writeFragment(ContextData& c, RenderTarget& rt, int px, int py, float z, Vec4 frag) {
+    if (!rt.rgba || px < 0 || px >= rt.width || py < 0 || py >= rt.height) return;
     if (c.alphaTest && !depthPass(c.alphaFunc, frag.w, c.alphaRef)) return;
     const size_t idx = size_t(py) * size_t(rt.width) + size_t(px);
     if (c.depthTest && rt.depth) {
@@ -2233,18 +2385,18 @@ void writeFragment(ContextData& c, RenderTarget& rt, int px, int py, float z, Ve
     float outR = frag.x, outG = frag.y, outB = frag.z, outA = frag.w;
     if (c.blend) {
         const float dstR = dst[0] / 255.0f, dstG = dst[1] / 255.0f, dstB = dst[2] / 255.0f, dstA = dst[3] / 255.0f;
-        const float srR = blendFactorVal(c.blendSrcRGB, outR, outA, dstR, dstA);
-        const float srG = blendFactorVal(c.blendSrcRGB, outG, outA, dstG, dstA);
-        const float srB = blendFactorVal(c.blendSrcRGB, outB, outA, dstB, dstA);
-        const float drR = blendFactorVal(c.blendDstRGB, outR, outA, dstR, dstA);
-        const float drG = blendFactorVal(c.blendDstRGB, outG, outA, dstG, dstA);
-        const float drB = blendFactorVal(c.blendDstRGB, outB, outA, dstB, dstA);
-        const float sa  = blendFactorVal(c.blendSrcAlpha, outA, outA, dstA, dstA);
-        const float da  = blendFactorVal(c.blendDstAlpha, outA, outA, dstA, dstA);
-        outR = outR * srR + dstR * drR;
-        outG = outG * srG + dstG * drG;
-        outB = outB * srB + dstB * drB;
-        outA = outA * sa + dstA * da;
+        const float srR = blendFactorVal(c, c.blendSrcRGB, outR, outA, dstR, dstA, 0);
+        const float srG = blendFactorVal(c, c.blendSrcRGB, outG, outA, dstG, dstA, 1);
+        const float srB = blendFactorVal(c, c.blendSrcRGB, outB, outA, dstB, dstA, 2);
+        const float drR = blendFactorVal(c, c.blendDstRGB, outR, outA, dstR, dstA, 0);
+        const float drG = blendFactorVal(c, c.blendDstRGB, outG, outA, dstG, dstA, 1);
+        const float drB = blendFactorVal(c, c.blendDstRGB, outB, outA, dstB, dstA, 2);
+        const float sa  = blendFactorVal(c, c.blendSrcAlpha, outA, outA, dstA, dstA, 3);
+        const float da  = blendFactorVal(c, c.blendDstAlpha, outA, outA, dstA, dstA, 3);
+        outR = applyBlendEquation(c.blendEqRGB, outR, srR, dstR, drR);
+        outG = applyBlendEquation(c.blendEqRGB, outG, srG, dstG, drG);
+        outB = applyBlendEquation(c.blendEqRGB, outB, srB, dstB, drB);
+        outA = applyBlendEquation(c.blendEqAlpha, outA, sa, dstA, da);
     }
     if (c.colorMask[0]) dst[0] = uint8_t(std::clamp(outR, 0.0f, 1.0f) * 255.0f + 0.5f);
     if (c.colorMask[1]) dst[1] = uint8_t(std::clamp(outG, 0.0f, 1.0f) * 255.0f + 0.5f);
@@ -2254,9 +2406,18 @@ void writeFragment(ContextData& c, RenderTarget& rt, int px, int py, float z, Ve
 
 const Texture2D* boundTextureForDraw(ContextData& c, SharegroupData& sg) {
     if (c.api == 1 || c.currentProgram == 0) {
-        if (!c.texture2DEnabled[0]) return nullptr;
-        const uint32_t tid = c.boundTextures[0];
-        return (tid && sg.textures.count(tid)) ? &sg.textures.at(tid) : nullptr;
+        const int act = c.activeTexture & 7;
+        if (c.texture2DEnabled[act]) {
+            const uint32_t tid = c.boundTextures[act];
+            if (tid && sg.textures.count(tid)) return &sg.textures.at(tid);
+        }
+        for (int i = 0; i < 8; ++i) {
+            if (c.texture2DEnabled[i]) {
+                const uint32_t tid = c.boundTextures[i];
+                if (tid && sg.textures.count(tid)) return &sg.textures.at(tid);
+            }
+        }
+        return nullptr;
     }
     return nullptr; // GLES2 samples each declared sampler through the interpreter.
 }
@@ -2328,8 +2489,24 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
                 const float u = w0 * v0.u + w1 * v1.u + w2 * v2.u;
                 const float v = w0 * v0.v + w1 * v1.v + w2 * v2.v;
                 const Vec4 tc = tex->sample(u, v);
-                if (c.api == 1 && c.texEnvMode[0] == GL_REPLACE) col = tc;
-                else col = {col.x * tc.x, col.y * tc.y, col.z * tc.z, col.w * tc.w};
+                const uint32_t env = (c.api == 1) ? c.texEnvMode[c.activeTexture & 7] : GL_MODULATE;
+                if (env == GL_REPLACE) {
+                    col = tc;
+                } else if (env == 0x2101 /* GL_DECAL */) {
+                    col = {col.x * (1.0f - tc.w) + tc.x * tc.w,
+                           col.y * (1.0f - tc.w) + tc.y * tc.w,
+                           col.z * (1.0f - tc.w) + tc.z * tc.w,
+                           col.w};
+                } else if (env == 0x0104 /* GL_ADD */) {
+                    col = {std::min(1.0f, col.x + tc.x), std::min(1.0f, col.y + tc.y), std::min(1.0f, col.z + tc.z), col.w * tc.w};
+                } else if (env == 0x0BE2 /* GL_BLEND */) {
+                    col = {col.x * (1.0f - tc.x) + c.currentColor.x * tc.x,
+                           col.y * (1.0f - tc.y) + c.currentColor.y * tc.y,
+                           col.z * (1.0f - tc.z) + c.currentColor.z * tc.z,
+                           col.w * tc.w};
+                } else {
+                    col = {col.x * tc.x, col.y * tc.y, col.z * tc.z, col.w * tc.w};
+                }
             }
             writeFragment(c, rt, px, py, z, col);
         }
@@ -2434,12 +2611,17 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
 
 void gl_drawArrays(Ctx& x, uint32_t mode, int32_t first, int32_t count) {
     if (count <= 0 || first < 0) return;
+    totalDrawCalls++;
     std::vector<int> indices(static_cast<size_t>(count));
     for (int32_t i = 0; i < count; ++i) indices[size_t(i)] = first + i;
     drawPrimitives(x, mode, indices);
 }
+void gl_drawArraysInstanced(Ctx& x, uint32_t mode, int32_t first, int32_t count, int32_t primcount) {
+    for (int32_t i = 0; i < primcount; ++i) gl_drawArrays(x, mode, first, count);
+}
 
 void gl_drawElements(Ctx& x, uint32_t mode, int32_t count, uint32_t type, GuestPtr indicesPtr) {
+    totalDrawCalls++;
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || count <= 0) return;
@@ -2462,6 +2644,26 @@ void gl_drawElements(Ctx& x, uint32_t mode, int32_t count, uint32_t type, GuestP
     }
     drawPrimitives(x, mode, indices);
 }
+void gl_drawElementsInstanced(Ctx& x, uint32_t mode, int32_t count, uint32_t type, GuestPtr indicesPtr, int32_t primcount) {
+    for (int32_t i = 0; i < primcount; ++i) gl_drawElements(x, mode, count, type, indicesPtr);
+}
+void gl_vertexAttribDivisor(Ctx&, uint32_t, uint32_t) {}
+void gl_texStorage2D(Ctx& x, uint32_t target, int32_t levels, uint32_t internalformat, int32_t width, int32_t height) {
+    for (int32_t l = 0; l < levels; ++l) {
+        gl_texImage2D(x, target, l, internalformat, std::max(1, width >> l), std::max(1, height >> l), 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    }
+}
+void gl_copyTextureLevels(Ctx&, uint32_t, uint32_t, int32_t, int32_t) {}
+void gl_getShaderSource(Ctx& x, uint32_t shader, int32_t bufsize, GuestPtr lengthOut, GuestPtr sourceOut) {
+    if (bufsize <= 0 || !sourceOut) return;
+    SharegroupData* sg = currentSg(x, currentCtx(x));
+    if (!sg || !sg->shaders.count(shader)) return;
+    const std::string& src = sg->shaders[shader].source;
+    const int32_t n = std::min<int32_t>(bufsize - 1, int32_t(src.size()));
+    std::memcpy(x.mem.host(sourceOut), src.data(), size_t(n));
+    x.mem.write<uint8_t>(sourceOut + uint32_t(n), 0);
+    if (lengthOut) x.mem.write<int32_t>(lengthOut, n);
+}
 
 // GL_OES_draw_texture: draws the bound texture directly into screen coordinates (x, y, z, w, h).
 void gl_drawTexfOES(Ctx& x, float sx, float sy, float sz, float sw, float sh) {
@@ -2471,12 +2673,20 @@ void gl_drawTexfOES(Ctx& x, float sx, float sy, float sz, float sw, float sh) {
     RenderTarget rt = activeTarget(x, *c, *sg);
     if (!rt.rgba) return;
     const Texture2D* tex = boundTextureForDraw(*c, *sg);
+    float u0 = 0.0f, v0_coord = 0.0f, u1 = 1.0f, v1_coord = 1.0f;
+    if (tex && tex->width > 0 && tex->height > 0) {
+        if (tex->cropRect[2] != 0 && tex->cropRect[3] != 0) {
+            u0 = float(tex->cropRect[0]) / float(tex->width);
+            u1 = float(tex->cropRect[0] + tex->cropRect[2]) / float(tex->width);
+            v0_coord = float(tex->cropRect[1]) / float(tex->height);
+            v1_coord = float(tex->cropRect[1] + tex->cropRect[3]) / float(tex->height);
+        }
+    }
     ShadedVertex v0, v1, v2, v3;
-    v0.screenX = sx;      v0.screenY = sy;      v0.screenZ = sz; v0.color = c->currentColor; v0.u = 0; v0.v = 0;
-    v1.screenX = sx + sw; v1.screenY = sy;      v1.screenZ = sz; v1.color = c->currentColor; v1.u = 1; v1.v = 0;
-    v2.screenX = sx + sw; v2.screenY = sy + sh; v2.screenZ = sz; v2.color = c->currentColor; v2.u = 1; v2.v = 1;
-    v3.screenX = sx;      v3.screenY = sy + sh; v3.screenZ = sz; v3.color = c->currentColor; v3.u = 0; v3.v = 1;
-    (void)tex;
+    v0.screenX = sx;      v0.screenY = sy;      v0.screenZ = sz; v0.color = c->currentColor; v0.u = u0; v0.v = v0_coord;
+    v1.screenX = sx + sw; v1.screenY = sy;      v1.screenZ = sz; v1.color = c->currentColor; v1.u = u1; v1.v = v0_coord;
+    v2.screenX = sx + sw; v2.screenY = sy + sh; v2.screenZ = sz; v2.color = c->currentColor; v2.u = u1; v2.v = v1_coord;
+    v3.screenX = sx;      v3.screenY = sy + sh; v3.screenZ = sz; v3.color = c->currentColor; v3.u = u0; v3.v = v1_coord;
     rasterizeTriangle(*c, *sg, rt, v0, v1, v2);
     rasterizeTriangle(*c, *sg, rt, v0, v2, v3);
 }
@@ -2550,6 +2760,8 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_clear>("_glClear");
     p.def<&gl_blendFunc>("_glBlendFunc");
     p.def<&gl_blendFuncSeparate>("_glBlendFuncSeparate");
+    p.def<&gl_blendColor>("_glBlendColor");
+    p.def<&gl_blendColor>("_glBlendColorOES");
     p.def<&gl_blendEquation>("_glBlendEquation");
     p.def<&gl_blendEquationSeparate>("_glBlendEquationSeparate");
     p.def<&gl_blendEquation>("_glBlendEquationOES");
@@ -2621,7 +2833,14 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_framebufferTexture2D>("_glFramebufferTexture2DOES");
     p.def<&gl_getFramebufferAttachmentParameteriv>("_glGetFramebufferAttachmentParameteriv");
     p.def<&gl_getFramebufferAttachmentParameteriv>("_glGetFramebufferAttachmentParameterivOES");
+    p.def<&gl_blitFramebuffer>("_glBlitFramebuffer");
+    p.def<&gl_blitFramebuffer>("_glBlitFramebufferANGLE");
+    p.def<&gl_blitFramebuffer>("_glBlitFramebufferNV");
+    p.def<&gl_blitFramebuffer>("_glBlitFramebufferEXT");
     p.def<&gl_noop3>("_glDiscardFramebufferEXT");
+    p.def<&gl_noop3>("_glInvalidateFramebuffer");
+    p.def<&gl_noop2>("_glPushGroupMarkerEXT");
+    p.def<&gl_noop>("_glPopGroupMarkerEXT");
 
     // Buffers & VAOs
     p.def<&gl_genBuffers>("_glGenBuffers");
@@ -2768,6 +2987,16 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     // Draw calls
     p.def<&gl_drawArrays>("_glDrawArrays");
     p.def<&gl_drawElements>("_glDrawElements");
+    p.def<&gl_drawArraysInstanced>("_glDrawArraysInstancedEXT");
+    p.def<&gl_drawArraysInstanced>("_glDrawArraysInstanced");
+    p.def<&gl_drawElementsInstanced>("_glDrawElementsInstancedEXT");
+    p.def<&gl_drawElementsInstanced>("_glDrawElementsInstanced");
+    p.def<&gl_vertexAttribDivisor>("_glVertexAttribDivisorEXT");
+    p.def<&gl_vertexAttribDivisor>("_glVertexAttribDivisor");
+    p.def<&gl_texStorage2D>("_glTexStorage2DEXT");
+    p.def<&gl_texStorage2D>("_glTexStorage2D");
+    p.def<&gl_copyTextureLevels>("_glCopyTextureLevelsAPPLE");
+    p.def<&gl_getShaderSource>("_glGetShaderSource");
 }
 
 } // namespace Hydrogen::Runtime::UIKit
