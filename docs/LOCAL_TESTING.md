@@ -101,7 +101,8 @@ preserved across launch; this tests host sandbox retention, not game progression
 Clash now renders its loading artwork, logo, training-camp hint and 50% bar,
 then shows a connection-error panel. The shared GLES2 interpreter executes a
 bounded straight-line shader subset; all 18 captured shader sources compile.
-This does not initialize native offline play. NPC battles and offline avatar/home
+This does not initialize native offline play. Slow startup can require longer
+than the short scanner window to reach this artwork. NPC battles and offline avatar/home
 persistence remain unverified. See `CLASH_ROYALE_RESTORATION.md` for the current
 runtime commit, evidence and next blocker.
 

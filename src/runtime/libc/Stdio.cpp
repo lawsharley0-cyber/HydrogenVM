@@ -3,6 +3,7 @@
 // stderr go to the process log, line by line.
 #include "Format.hpp"
 #include "runtime/Process.hpp"
+#include "Network.hpp"
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -133,6 +134,9 @@ uint32_t f_fopen(Ctx& x, GuestPtr path, GuestPtr mode) {
     return newFile(x, f);
 }
 uint32_t f_fdopen(Ctx& x, int32_t fd, GuestPtr mode) {
+    // Host stdio would bypass interruptible socket IO and transfer close
+    // ownership out of the socket registry. Reject it until integrated.
+    if (isNetworkSocket(x.proc, fd)) { setErrno(x, 45); return 0; }
     std::FILE* f = ::fdopen(fd, x.proc.readCString(mode).c_str());
     if (!f) { setErrno(x, errno); return 0; }
     return newFile(x, f);

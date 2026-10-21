@@ -350,11 +350,12 @@ int runFullSubsystemTests() {
             io &= call(net,"_recv",{uint32_t(fd),block + 40,4,128}) == -1 && error(net) == 35;
             check(io, "loopback send/select/recv exchanges actual bytes and preserves EAGAIN");
             bool checks = call(net,"_send",{uint32_t(fd),0xfffffff0,32,0}) == -1 && error(net) == 14;
+            checks &= call(net,"_fdopen",{uint32_t(fd),net.allocCString("r")}) == 0 && error(net) == 45;
             mem.write<uint32_t>(block+16,4);
             checks &= call(net,"_getsockopt",{uint32_t(fd),0xffff,0x1007,block+12,block+16}) == 0 && mem.read<uint32_t>(block+12) == 0;
             mem.write<uint32_t>(addr+4,htonl(0xc0000201));
             checks &= call(net,"_connect",{uint32_t(fd),addr,16}) == -1 && error(net) == 51;
-            check(checks, "loopback validates buffer ranges, SO_ERROR and external connect policy");
+            check(checks, "loopback validates buffers, unsupported stdio wrapping, SO_ERROR and external connect policy");
             int duplicate = call(net,"_dup",{uint32_t(fd)});
             bool lifetime = duplicate >= 0 && call(net,"_close",{uint32_t(fd)}) == 0 &&
                 call(net,"_dup2",{uint32_t(duplicate),uint32_t(fd)}) == fd &&

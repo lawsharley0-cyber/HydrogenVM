@@ -4,7 +4,7 @@ Date: 2026-10-20. Work branch: `gemini-merge`.
 
 ## Current status: local protocol login, not yet a home screen (2026-10-20)
 
-Runtime/protocol commit: `de7f95b`; WSL source-mirror commit: `1201143`.
+Runtime/protocol foundation: `de7f95b`; WSL source-mirror commit: `1201143`.
 The pinned IPA and its bundled assets/settings remain unchanged.
 
 **Correction to the original offline-save inference:** at virtual address
@@ -38,7 +38,7 @@ New observed protocol evidence:
   against the same local identity file. No token is written into diagnostic
   event logs. This proves login-identity retention, **not game progression**.
 - The peer provides **no OwnHomeDataMessage, NPC state or combat logic**. After
-  login the capture shows black output while waiting for home state. No menu,
+  login the capture shows black output; the peer has supplied no home state. No menu,
   troop deployment, NPC battle or offline avatar/home save is verified.
 
 Shared runtime changes support outbound IPv4 TCP only on loopback, numeric and
@@ -48,7 +48,9 @@ ownership; teardown closes retained descriptors. Blocking socket IO polls in
 short slices so process stop interrupts it. `fcntl` now applies real descriptor
 and nonblocking flags, and host socket errors map to Darwin values. Unsupported
 socket operations fail; UDP, listening sockets, external networking and Cocoa
-URL-loading remain unsupported. Reachability still reports offline.
+URL-loading remain unsupported. Socket-to-stdio wrapping is explicitly rejected
+with ENOTSUP: host FILE buffering would bypass interruptible IO and socket
+close ownership. Normal file fdopen behavior is preserved. Reachability still reports offline.
 
 Validation: **71 runtime checks pass**, including nine network/descriptor/stop
 checks; **six Python protocol tests pass**; all **18 captured shaders compile**.
@@ -60,6 +62,13 @@ Clash capture flags mostly black output during startup; a separate 45-second
 default-off run reaches the rendered 50% loading/error scene with no reported
 errors. See individual frame evidence; a scanner `runs` result is not proof of
 game compatibility. No iPhone build was tested in this continuation.
+
+A fresh event-driven pair of launches waits for the native account-confirmation
+log before requesting graceful stop. Both return exit 0, the first sends the
+fresh 197-byte login, and the second sends the retained 245-byte login. On this
+workstation confirmation took about **43 seconds** and **37 seconds**. A fixed
+25/30-second probe can therefore finish before login; use an observed milestone
+and a longer timeout instead of interpreting the cutoff as a protocol failure.
 
 ### Next implementation target
 
@@ -90,11 +99,11 @@ binary is `/var/tmp/hvm-local/build-0072df8e000f/hvm`; the helper prints the sou
 and build directory for other checkout paths. In separate terminals:
 
 ```sh
-python3 tools/clash_protocol_probe.py --out /var/tmp/clash-peer --login-ok --state /var/tmp/clash-peer/identity.json --seconds 90
+python3 tools/clash_protocol_probe.py --out /var/tmp/clash-peer --login-ok --state /var/tmp/clash-peer/identity.json --seconds 260
 ```
 
 ```sh
-/var/tmp/hvm-local/build-0072df8e000f/hvm run /var/tmp/clash-client.ipa --home /var/tmp/clash-peer-game --loopback-network --loopback-alias game.clashroyaleapp.com --run-for 25 --graceful --report /var/tmp/clash-peer/client.json
+/var/tmp/hvm-local/build-0072df8e000f/hvm run /var/tmp/clash-client.ipa --home /var/tmp/clash-peer-game --loopback-network --loopback-alias game.clashroyaleapp.com --run-for 90 --graceful --report /var/tmp/clash-peer/client.json
 ```
 
 Use a **new diagnostic home**, not the desktop save container. To test relaunch,
