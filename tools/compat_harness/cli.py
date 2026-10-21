@@ -6,7 +6,7 @@ import json
 import os
 import sys
 
-from . import diffing, issues, runner
+from . import diffing, history, issues, runner
 from .manifest import (
     ManifestError,
     default_manifest_path,
@@ -42,6 +42,10 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--skip-unit", action="store_true")
     p_run.add_argument("--skip-python", action="store_true")
     p_run.add_argument("--skip-apps", action="store_true")
+    p_run.add_argument("--record", action="store_true",
+                       help="copy the report into docs/dev-system/reports and update the index")
+    p_run.add_argument("--diff-previous", action="store_true",
+                       help="also diff against the previous indexed report; a missing previous report does not fail the run")
 
     p_unit = sub.add_parser("unit", help="existing C++ and Python suites only")
     add_common(p_unit)
@@ -49,10 +53,17 @@ def main(argv: list[str] | None = None) -> int:
     p_apps = sub.add_parser("apps", help="manifest apps only")
     add_common(p_apps)
 
-    p_diff = sub.add_parser("diff", help="compare two reports")
-    p_diff.add_argument("baseline")
-    p_diff.add_argument("current")
+    p_diff = sub.add_parser("diff", help="compare two reports, or a report with the previous indexed run")
+    p_diff.add_argument("--previous", action="store_true",
+                        help="diff the given report against the previous row in docs/dev-system/reports/index.json")
+    p_diff.add_argument("--repo", default=None, help="repository root used to find the report index")
+    p_diff.add_argument("baseline", nargs="?")
+    p_diff.add_argument("current", nargs="?")
     p_diff.add_argument("--out")
+
+    p_record = sub.add_parser("record", help="copy a report into docs/dev-system/reports and update the index")
+    p_record.add_argument("report")
+    p_record.add_argument("--repo", default=None, help="repository root; default is this checkout")
 
     p_issues = sub.add_parser("issues", help="emit issue markdown (dry-run unless --write)")
     p_issues.add_argument("report")
@@ -65,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "diff":
             return _cmd_diff(args)
+        if args.cmd == "record":
+            return _cmd_record(args)
         if args.cmd == "issues":
             return _cmd_issues(args)
         if args.cmd == "validate":
@@ -72,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_run(args)
     except ManifestError as e:
         print(f"manifest: {e}", file=sys.stderr)
+        return 2
+    except history.HistoryError as e:
+        print(f"history: {e}", file=sys.stderr)
         return 2
     except OSError as e:
         print(f"hvm_compat: {e}", file=sys.stderr)
@@ -157,6 +173,38 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"  regression {item['kind']} {item.get('id', '')}: {item['message']}")
         if not diff["ok"]:
             exit_code = 1
+    if getattr(args, "diff_previous", False) or getattr(args, "record", False):
+        indexed = history.index_run(
+            report,
+            root,
+            record=bool(getattr(args, "record", False)),
+            diff_previous=bool(getattr(args, "diff_previous", False)),
+            current_path=report_path,
+        )
+        prev_diff = indexed.get("previousDiff")
+        if getattr(args, "diff_previous", False):
+            if indexed.get("previousMissing"):
+                print("no previous indexed report")
+            elif prev_diff is not None:
+                prev_errors = validate_diff(prev_diff)
+                if prev_errors:
+                    prev_diff["ok"] = False
+                    prev_diff["schemaErrors"] = prev_errors
+                prev_path = os.path.join(args.out, "diff-previous.json")
+                _dump(prev_path, prev_diff)
+                print(prev_path)
+                print(
+                    "previous ok="
+                    f"{prev_diff['ok']} regressions={len(prev_diff['regressions'])} "
+                    f"attention={len(prev_diff['attention'])}"
+                )
+                for item in prev_diff["regressions"]:
+                    print(f"  previous regression {item['kind']} {item.get('id', '')}: {item['message']}")
+                if not prev_diff["ok"]:
+                    exit_code = 1
+        recorded = indexed.get("recorded")
+        if recorded:
+            print(os.path.join(root, "docs", "dev-system", "reports", recorded["path"]))
     if schema_errors:
         for err in schema_errors:
             print(f"schema: {err}", file=sys.stderr)
@@ -164,7 +212,23 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_diff(args: argparse.Namespace) -> int:
-    diff = diffing.diff_reports(_load(args.baseline), _load(args.current))
+    if args.previous:
+        if not args.baseline or args.current:
+            print("diff --previous expects one report path", file=sys.stderr)
+            return 2
+        current_path = args.baseline
+        repo = args.repo or repo_root()
+        baseline_path = history.previous_report_path(repo, current_path)
+        if baseline_path is None:
+            print("no previous indexed report", file=sys.stderr)
+            return 2
+    else:
+        if not args.baseline or not args.current:
+            print("diff expects BASELINE CURRENT", file=sys.stderr)
+            return 2
+        baseline_path = args.baseline
+        current_path = args.current
+    diff = diffing.diff_reports(_load(baseline_path), _load(current_path))
     errors = validate_diff(diff)
     if errors:
         diff["ok"] = False
@@ -176,6 +240,13 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(text)
     return 0 if diff["ok"] else 1
+
+
+def _cmd_record(args: argparse.Namespace) -> int:
+    repo = args.repo or repo_root()
+    entry = history.record_report(_load(args.report), repo)
+    print(os.path.join(repo, "docs", "dev-system", "reports", entry["path"]))
+    return 0
 
 
 def _cmd_issues(args: argparse.Namespace) -> int:

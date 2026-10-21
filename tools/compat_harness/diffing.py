@@ -7,10 +7,13 @@ dropping to zero, a framebuffer that became all black or all white after
 previously being varied or mostly one color, or mixer output that went from
 active to silent.
 
-Timing, MIPS, raw audio sample counts, log text, and runtime-only missing
-functions are reported as informational or attention. A three-second smoke
-does not execute the same guest path on every machine. A baseline row that
-was skipped is new coverage when the current run is real, not a regression.
+Timing, MIPS, and raw audio sample counts are informational. ``frames`` and
+``nonSilentFrames`` are noted when they move by 25% or more and the mixer
+signal stays ``active``. A drop that stays active is not a failure. Log text
+and runtime-only missing functions are attention or informational. A
+three-second smoke does not execute the same guest path on every machine. A
+baseline row that was skipped is new coverage when the current run is real,
+not a regression.
 """
 from __future__ import annotations
 
@@ -193,8 +196,37 @@ def _diff_app(ident, before, after, regressions, improvements, attention, inform
             "id": ident,
             "message": f"{ident} audio signal {b_audio} -> {a_audio}",
         })
+    _audio_count_note(ident, before.get("audio") or {}, after.get("audio") or {}, informational)
 
     _perf_note(ident, before.get("perf") or {}, after.get("perf") or {}, informational)
+
+
+def _audio_count_note(ident, before, after, informational) -> None:
+    """Note mixer sample-count movement that does not change the signal.
+
+    ``frames`` counts rendered PCM frames. ``nonSilentFrames`` counts the
+    non-zero ones. Both stay informational while the signal is ``active``.
+    Going from ``active`` to ``silent`` is a regression and is handled above.
+    """
+    if before.get("signal") != "active" or after.get("signal") != "active":
+        return
+    for key in ("frames", "nonSilentFrames"):
+        b = before.get(key)
+        a = after.get(key)
+        if isinstance(b, bool) or isinstance(a, bool):
+            continue
+        if not isinstance(b, (int, float)) or not isinstance(a, (int, float)) or b == 0:
+            continue
+        delta = (a - b) / abs(b)
+        if abs(delta) >= PERF_REL:
+            informational.append({
+                "kind": "audio-samples",
+                "id": ident,
+                "message": (
+                    f"{ident} audio {key} {b} -> {a} ({delta:+.0%}); "
+                    "signal stayed active; not a failure"
+                ),
+            })
 
 
 def _perf_note(ident, before, after, informational) -> None:
