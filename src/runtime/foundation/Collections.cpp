@@ -463,8 +463,12 @@ std::vector<std::pair<id, id>> entriesOf(Ctx& x, id dict) {
     if (!dict) return {};
     if (DictData* d = dd(x, dict)) return d->entries;
     std::vector<std::pair<id, id>> out;
-    const id keys = id(rt(x).send(x.cpu, dict, "allKeys"));
-    for (id k : itemsOf(x, keys)) out.emplace_back(k, id(rt(x).send(x.cpu, dict, "objectForKey:", {k})));
+    // keyEnumerator/objectForKey: are NSDictionary subclass primitives.
+    // Calling allKeys here recurses through the inherited allKeys implementation
+    // for custom subclasses which do not carry host DictData.
+    const id keys = id(rt(x).send(x.cpu, dict, "keyEnumerator"));
+    for (id k; (k = id(rt(x).send(x.cpu, keys, "nextObject")));)
+        out.emplace_back(k, id(rt(x).send(x.cpu, dict, "objectForKey:", {k})));
     return out;
 }
 void dictAssign(Ctx& x, id self, const std::vector<std::pair<id, id>>& entries) {
@@ -554,15 +558,23 @@ id d_objectForKey(Ctx& x, id self, SEL, id key) {
     const long i = findKey(x, *d, key, objectHash(x, key));
     return i < 0 ? 0 : d->entries[size_t(i)].second;
 }
+id d_objectForKeyedSubscript(Ctx& x, id self, SEL, id key) {
+    return id(rt(x).send(x.cpu, self, "objectForKey:", {key}));
+}
 id d_valueForKey(Ctx& x, id self, SEL s, id key) {
     const std::string k = utf8(x, key);
     if (!k.empty() && k[0] == '@') return id(rt(x).sendSuper(x.cpu, self, rt(x).nsObject, rt(x).sel("valueForKey:"), {makeString(x, k.substr(1))}));
-    return d_objectForKey(x, self, s, key);
+    return id(rt(x).send(x.cpu, self, "objectForKey:", {key}));
 }
 id d_allKeys(Ctx& x, id self, SEL) { std::vector<id> k; for (auto& e : entriesOf(x, self)) k.push_back(e.first); return makeArray(x, k); }
 id d_allValues(Ctx& x, id self, SEL) { std::vector<id> v; for (auto& e : entriesOf(x, self)) v.push_back(e.second); return makeArray(x, v); }
 id d_allKeysForObject(Ctx& x, id self, SEL, id o) { std::vector<id> k; for (auto& e : entriesOf(x, self)) if (objectsEqual(x, e.second, o)) k.push_back(e.first); return makeArray(x, k); }
-id d_keyEnumerator(Ctx& x, id self, SEL) { std::vector<id> k; for (auto& e : entriesOf(x, self)) k.push_back(e.first); return newEnumerator(x, k, self); }
+id d_keyEnumerator(Ctx& x, id self, SEL) {
+    auto* d = dd(x, self);
+    if (!d) throw ObjC::ObjCError("NSDictionary subclass must implement keyEnumerator");
+    std::vector<id> keys; for (auto& e : d->entries) keys.push_back(e.first);
+    return newEnumerator(x, keys, self);
+}
 id d_objectEnumerator(Ctx& x, id self, SEL) { std::vector<id> v; for (auto& e : entriesOf(x, self)) v.push_back(e.second); return newEnumerator(x, v, self); }
 uint32_t d_countByEnumerating(Ctx& x, id self, SEL, GuestPtr state, GuestPtr buf, uint32_t len) {
     std::vector<id> k;
@@ -608,7 +620,14 @@ id d_keysSortedByValueUsingSelector(Ctx& x, id self, SEL, SEL s) {
     return makeArray(x, keys);
 }
 void dm_setObjectForKey(Ctx& x, id self, SEL, id o, id k) { dictSet(x, dmut(x, self), k, o); }
-void dm_setValueForKey(Ctx& x, id self, SEL, id o, id k) { if (o) dictSet(x, dmut(x, self), k, o); else dictRemove(x, dmut(x, self), k); }
+void dm_setObjectForKeyedSubscript(Ctx& x, id self, SEL, id o, id k) {
+    if (!k) throw ObjC::ObjCError("*** -[NSMutableDictionary setObject:forKeyedSubscript:]: key cannot be nil");
+    // Subclasses implement the primitive keyed methods, not necessarily host
+    // DictData. Preserve their dispatch (including nil-value removal).
+    if (o) rt(x).send(x.cpu, self, "setObject:forKey:", {o, k});
+    else rt(x).send(x.cpu, self, "removeObjectForKey:", {k});
+}
+void dm_setValueForKey(Ctx& x, id self, SEL s, id o, id k) { dm_setObjectForKeyedSubscript(x, self, s, o, k); }
 void dm_removeObjectForKey(Ctx& x, id self, SEL, id k) { if (k) dictRemove(x, dmut(x, self), k); }
 void dm_removeAllObjects(Ctx& x, id self, SEL) {
     auto& d = dmut(x, self);
@@ -961,7 +980,7 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&di_initWithObjectsAndKeys>("initWithObjectsAndKeys:").m<&di_initWithObjectsForKeys>("initWithObjects:forKeys:")
       .m<&di_initWithDictionary>("initWithDictionary:").m<&di_initWithDictionaryCopy>("initWithDictionary:copyItems:")
       .m<&di_initWithContentsOfFile>("initWithContentsOfFile:").m<&di_initWithContentsOfURL>("initWithContentsOfURL:")
-      .m<&d_count>("count", "I@:").m<&d_objectForKey>("objectForKey:").m<&d_objectForKey>("objectForKeyedSubscript:")
+      .m<&d_count>("count", "I@:").m<&d_objectForKey>("objectForKey:").m<&d_objectForKeyedSubscript>("objectForKeyedSubscript:")
       .m<&d_valueForKey>("valueForKey:").m<&d_allKeys>("allKeys").m<&d_allValues>("allValues")
       .m<&d_allKeysForObject>("allKeysForObject:").m<&d_keyEnumerator>("keyEnumerator").m<&d_objectEnumerator>("objectEnumerator")
       .m<&d_countByEnumerating>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
@@ -972,7 +991,7 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&a_description>("description");
     nmd.cm<&dc_dictionaryWithCapacity>("dictionaryWithCapacity:")
        .m<&di_initWithCapacity>("initWithCapacity:")
-       .m<&dm_setObjectForKey>("setObject:forKey:", "v@:@@").m<&dm_setObjectForKey>("setObject:forKeyedSubscript:", "v@:@@")
+       .m<&dm_setObjectForKey>("setObject:forKey:", "v@:@@").m<&dm_setObjectForKeyedSubscript>("setObject:forKeyedSubscript:", "v@:@@")
        .m<&dm_setValueForKey>("setValue:forKey:", "v@:@@").m<&dm_removeObjectForKey>("removeObjectForKey:", "v@:@")
        .m<&dm_removeAllObjects>("removeAllObjects", "v@:").m<&dm_addEntries>("addEntriesFromDictionary:")
        .m<&dm_removeObjectsForKeys>("removeObjectsForKeys:").m<&dm_setDictionary>("setDictionary:");

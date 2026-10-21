@@ -1220,6 +1220,12 @@ void registerFoundationExtras(Process& p, ObjC::Runtime& r) {
         auto* d = R(x).hostIf<TextMatchData>(x.cpu.r[0]);
         x.cpu.r[0] = d ? d->regex : 0;
     }, "@@:");
+    tcr.method("dealloc", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        auto* d = R(x).hostIf<TextMatchData>(self);
+        if (d && d->regex) R(x).release(x.cpu, d->regex);
+        R(x).disposeInstance(x.cpu, self);
+    }, "v@:");
 
     ObjC::ClassBuilder rx = r.defineClass("NSRegularExpression", "NSObject");
     const Class tcrCls = tcr.cls();
@@ -1253,7 +1259,7 @@ void registerFoundationExtras(Process& p, ObjC::Runtime& r) {
                 const std::smatch& m = *it;
                 const id res = R(x).createInstance(tcrCls);
                 auto& md = R(x).host<TextMatchData>(res);
-                md.regex = self;
+                md.regex = R(x).retain(x.cpu, self);
                 for (size_t i = 0; i < m.size(); ++i) {
                     if (m[i].matched) md.ranges.push_back({uint32_t(start + size_t(m.position(i))), uint32_t(m.length(i))});
                     else md.ranges.push_back({kNotFound, 0});
@@ -1276,6 +1282,15 @@ void registerFoundationExtras(Process& p, ObjC::Runtime& r) {
         const GuestPtr errOut = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
         x.cpu.r[0] = initRegex(x, x.cpu.r[0], x.cpu.r[2], x.cpu.r[3], errOut);
     }, "@@:@I^@");
+    // NSRegularExpression is immutable: an owning copy can share the compiled
+    // expression, but must outlive the original owner's autorelease pool.
+    rx.method("copyWithZone:", [](Ctx& x) { x.cpu.r[0] = retainObj(x, x.cpu.r[0]); }, "@@:^v");
+    rx.method("dealloc", [](Ctx& x) {
+        const id self = x.cpu.r[0];
+        auto* d = R(x).hostIf<RegexData>(self);
+        if (d && d->pattern) R(x).release(x.cpu, d->pattern);
+        R(x).disposeInstance(x.cpu, self);
+    }, "v@:");
     rx.method("pattern", [](Ctx& x) {
         auto* d = R(x).hostIf<RegexData>(x.cpu.r[0]);
         x.cpu.r[0] = d ? d->pattern : makeString(x, "");

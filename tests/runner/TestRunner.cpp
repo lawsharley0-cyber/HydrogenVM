@@ -509,6 +509,69 @@ int runFullSubsystemTests() {
     const uint32_t outerPool = r.poolPush();
 
     {
+        const auto backing = Foundation::makeDict(cx, {}, true, true);
+        int reads = 0, writes = 0, removes = 0;
+        auto subclass = r.defineClass("HVMPrimitiveDictionary", "NSMutableDictionary");
+        subclass.method("objectForKey:", [&](Ctx& x) {
+            ++reads; x.cpu.r[0] = uint32_t(r.send(x.cpu, backing, "objectForKey:", {x.cpu.r[2]}));
+        }, "@@:@");
+        subclass.method("setObject:forKey:", [&](Ctx& x) {
+            ++writes; r.send(x.cpu, backing, "setObject:forKey:", {x.cpu.r[2],x.cpu.r[3]});
+        }, "v@:@@");
+        subclass.method("removeObjectForKey:", [&](Ctx& x) {
+            ++removes; r.send(x.cpu, backing, "removeObjectForKey:", {x.cpu.r[2]});
+        }, "v@:@");
+        subclass.method("keyEnumerator", [&](Ctx& x) {
+            x.cpu.r[0] = uint32_t(r.send(x.cpu, backing, "keyEnumerator"));
+        }, "@@:");
+        const auto instance = r.createInstance(subclass.cls());
+        const auto key = Foundation::makeString(cx, "key"), value = Foundation::makeString(cx, "value");
+        r.send(cpu, instance, "setObject:forKeyedSubscript:", {value,key});
+        const bool got = ObjC::id(r.send(cpu, instance, "objectForKeyedSubscript:", {key})) == value;
+        r.send(cpu, instance, "setObject:forKeyedSubscript:", {0,key});
+        const bool absent = ObjC::id(r.send(cpu, instance, "objectForKeyedSubscript:", {key})) == 0;
+        r.send(cpu, instance, "setValue:forKey:", {value,key});
+        r.send(cpu, instance, "setValue:forKey:", {0,key});
+        if (!(got && absent && reads == 2 && writes == 2 && removes == 2))
+            std::printf("dictionary primitive results: got=%d absent=%d reads=%d writes=%d removes=%d\n", got, absent, reads, writes, removes);
+        check(got && absent && reads == 2 && writes == 2 && removes == 2,
+              "Dictionary subscript/KVC access dispatches subclass primitives and nil removes entries");
+        r.send(cpu, instance, "setObject:forKey:", {value,key});
+        const auto keys = ObjC::id(r.send(cpu, instance, "allKeys"));
+        const auto values = ObjC::id(r.send(cpu, instance, "allValues"));
+        check(uint32_t(r.send(cpu, keys, "count")) == 1 &&
+              ObjC::id(r.send(cpu, keys, "objectAtIndex:", {0})) == key &&
+              ObjC::id(r.send(cpu, values, "objectAtIndex:", {0})) == value,
+              "Inherited dictionary allKeys/allValues enumerate subclass primitives without recursion");
+        bool rejected = false;
+        try { r.send(cpu, backing, "setObject:forKeyedSubscript:", {value,0}); }
+        catch (const std::exception& e) { rejected = std::string(e.what()).find("key cannot be nil") != std::string::npos; }
+        check(rejected, "Dictionary subscript assignment retains nil-key validation");
+        r.release(cpu, instance); r.release(cpu, backing);
+    }
+
+    {
+        const auto pool = r.poolPush();
+        const auto pattern = Foundation::makeString(cx, "^([a-z]+)[0-9]+$");
+        const auto regex = ObjC::id(r.send(cpu, r.getClass("NSRegularExpression"),
+            "regularExpressionWithPattern:options:error:", {pattern, 1, 0}));
+        const auto count = r.retainCount(regex);
+        const auto copy = ObjC::id(r.send(cpu, regex, "copyWithZone:", {0}));
+        const bool retained = copy == regex && r.retainCount(copy) == count + 1;
+        r.poolPop(cpu, pool);
+        const auto text = Foundation::makeString(cx, "Abc42");
+        const auto match = ObjC::id(r.send(cpu, copy, "firstMatchInString:options:range:", {text, 0, 0, 5}));
+        if (match) r.retain(cpu, match);
+        const bool copied = retained && uint32_t(r.send(cpu, copy, "options")) == 1 &&
+            uint32_t(r.send(cpu, copy, "numberOfCaptureGroups")) == 1 && match;
+        r.release(cpu, copy);
+        const auto heldRegex = match ? ObjC::id(r.send(cpu, match, "regularExpression")) : 0;
+        check(copied && heldRegex == regex && uint32_t(r.send(cpu, heldRegex, "numberOfMatchesInString:options:range:", {text,0,0,5})) == 1,
+              "Immutable regex copies retain compiled patterns across pools and match results retain their expression");
+        if (match) r.release(cpu, match);
+    }
+
+    {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
         const uint32_t out = proc.heap().allocZeroed(32);
         auto refs = [&](uint32_t port) { return uint32_t(call("_mach_port_get_refs", {0x103, port, 0, out})) == 0 ? proc.mem().read<uint32_t>(out) : 0; };
