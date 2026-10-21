@@ -189,6 +189,20 @@ class DiffTests(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("frames", notes[0]["message"])
 
+    def test_active_sample_count_rising_from_zero_is_informational(self):
+        before = _report([_app(audio={
+            "measured": True, "signal": "active", "frames": 0, "nonSilentFrames": 40,
+        })])
+        after = _report([_app(audio={
+            "measured": True, "signal": "active", "frames": 400, "nonSilentFrames": 40,
+        })])
+        diff = diff_reports(before, after)
+        self.assertTrue(diff["ok"], diff["regressions"])
+        notes = [item for item in diff["informational"] if item["kind"] == "audio-samples"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("frames", notes[0]["message"])
+        self.assertIn("0 -> 400", notes[0]["message"])
+
     def test_small_active_sample_change_is_not_noted(self):
         before = _report([_app(audio={
             "measured": True, "signal": "active", "frames": 1000, "nonSilentFrames": 400,

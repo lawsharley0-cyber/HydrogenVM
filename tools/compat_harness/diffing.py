@@ -206,7 +206,9 @@ def _audio_count_note(ident, before, after, informational) -> None:
 
     ``frames`` counts rendered PCM frames. ``nonSilentFrames`` counts the
     non-zero ones. Both stay informational while the signal is ``active``.
-    Going from ``active`` to ``silent`` is a regression and is handled above.
+    A move of 25% or more is noted. A baseline of zero is noted when the
+    current count is not zero, because there is no relative delta. Going from
+    ``active`` to ``silent`` is a regression and is handled above.
     """
     if before.get("signal") != "active" or after.get("signal") != "active":
         return
@@ -215,7 +217,16 @@ def _audio_count_note(ident, before, after, informational) -> None:
         a = after.get(key)
         if isinstance(b, bool) or isinstance(a, bool):
             continue
-        if not isinstance(b, (int, float)) or not isinstance(a, (int, float)) or b == 0:
+        if not isinstance(b, (int, float)) or not isinstance(a, (int, float)):
+            continue
+        if b == 0:
+            if a == 0:
+                continue
+            informational.append({
+                "kind": "audio-samples",
+                "id": ident,
+                "message": f"{ident} audio {key} {b} -> {a}; signal stayed active; not a failure",
+            })
             continue
         delta = (a - b) / abs(b)
         if abs(delta) >= PERF_REL:

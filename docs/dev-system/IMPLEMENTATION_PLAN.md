@@ -90,7 +90,7 @@ python3 tools/hvm_compat.py run \
   --out build/compat-report
 ```
 
-Read `build/compat-report/diff.json`. Regressions are launch loss, new crashes, a new or changed load error, new load-time unimplemented imports, unit or Python failures, presented frames dropping to zero, a framebuffer that went from `varied` or `mostly-one-color` to `all-black` or `all-white`, or mixer output that went from `active` to `silent`. MIPS, average frame time, and raw audio sample counts (`frames` and `nonSilentFrames`, ±25% while the signal stays `active`) are informational. A baseline row that was skipped and now has a real run is new coverage, not a regression. `python3 tools/hvm_compat.py diff --previous` compares the report with the previous indexed run. That check does not replace the baseline.
+Read `build/compat-report/diff.json`. Regressions are launch loss, new crashes, a new or changed load error, new load-time unimplemented imports, unit or Python failures, presented frames dropping to zero, a framebuffer that went from `varied` or `mostly-one-color` to `all-black` or `all-white`, or mixer output that went from `active` to `silent`. MIPS, average frame time, and raw audio sample counts (`frames` and `nonSilentFrames`, ±25% while the signal stays `active`; a zero baseline is noted when the count is no longer zero) are informational. A baseline row that was skipped and now has a real run is new coverage, not a regression. `python3 tools/hvm_compat.py diff --previous` compares the report with the previous indexed run. That check does not replace the baseline.
 
 ### 2. Classify — Operational
 

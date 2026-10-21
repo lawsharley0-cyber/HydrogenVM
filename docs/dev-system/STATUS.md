@@ -36,7 +36,7 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 
 Measured on Linux x86_64, Clang 18.1.3, host page size **4096**, commit `a4b0f8b` (the commit that contains this JSON is the one after that; the report's `git.commit` is the code that was executed, and `git.dirty` was false). Artifact: `docs/dev-system/baselines/linux-headless.json`. `summary.ok` is true. Schema check passed. A self-diff has no regressions.
 
-Harness self-tests: 50 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`). Counted on this branch. The baseline JSON below is still the `a4b0f8b` run.
+Harness self-tests: 56 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`). Counted on this branch. The baseline JSON below is still the `a4b0f8b` run.
 
 Indexed run from this branch, not a new baseline: `docs/dev-system/reports/linux-x86_64/20261021T185933Z-8771deca6655.json`. `git.commit` is `8771deca6655` and `git.dirty` was false. `summary.ok` is true. Diff against `baselines/linux-headless.json`: 0 regressions, 0 attention, 0 informational. Clash is still a skip. `docs/dev-system/reports/index.json` lists that one row. `latest.json` points at it.
 

@@ -168,7 +168,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         diff_path = os.path.join(args.out, "diff.json")
         _dump(diff_path, diff)
         print(diff_path)
-        print(f"diff ok={diff['ok']} regressions={len(diff['regressions'])} attention={len(diff['attention'])}")
+        print(_diff_count_line("diff ", diff))
         for item in diff["regressions"]:
             print(f"  regression {item['kind']} {item.get('id', '')}: {item['message']}")
         if not diff["ok"]:
@@ -193,11 +193,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 prev_path = os.path.join(args.out, "diff-previous.json")
                 _dump(prev_path, prev_diff)
                 print(prev_path)
-                print(
-                    "previous ok="
-                    f"{prev_diff['ok']} regressions={len(prev_diff['regressions'])} "
-                    f"attention={len(prev_diff['attention'])}"
-                )
+                print(_diff_count_line("previous ", prev_diff))
                 for item in prev_diff["regressions"]:
                     print(f"  previous regression {item['kind']} {item.get('id', '')}: {item['message']}")
                 if not prev_diff["ok"]:
@@ -277,6 +273,13 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         return 1
     print("ok")
     return 0
+
+
+def _diff_count_line(prefix: str, diff: dict) -> str:
+    return (
+        f"{prefix}ok={diff['ok']} regressions={len(diff['regressions'])} "
+        f"attention={len(diff['attention'])} informational={len(diff['informational'])}"
+    )
 
 
 def _print_summary(report: dict) -> None:

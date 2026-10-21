@@ -15,6 +15,7 @@ import os
 import re
 
 from .diffing import diff_reports
+from .schema_check import validate_report
 
 INDEX_SCHEMA_VERSION = 1
 _KIND_INDEX = "hvm-compat-report-index"
@@ -68,15 +69,23 @@ def load_index(repo: str) -> dict:
 def previous_report_path(repo: str, current_path: str) -> str | None:
     """Path of the indexed report before ``current_path``.
 
-    When ``current_path`` is not a row in the index, the last row is the
-    previous run. The first row, and an empty index, have none.
+    An index path uses the preceding row. A file that is not indexed uses the
+    last row, unless its JSON is that last row (the usual case after
+    ``record`` copied ``build/compat-report/report.json``). That copy is the
+    row itself, so the previous run is the one before it. The first row, and
+    an empty index, have none.
     """
     runs = load_index(repo).get("runs") or []
     if not runs:
         return None
     rel = _matching_rel(repo, current_path, runs)
     if rel is None:
-        return _abs_run(repo, runs[-1])
+        last = _abs_run(repo, runs[-1])
+        if _same_json(current_path, last):
+            if len(runs) == 1:
+                return None
+            return _abs_run(repo, runs[-2])
+        return last
     idx = None
     for i, row in enumerate(runs):
         if row.get("path") == rel:
@@ -109,11 +118,9 @@ def index_run(report: dict, repo: str, *, record: bool, diff_previous: bool, cur
 def _require_report(report: dict) -> None:
     if not isinstance(report, dict):
         raise HistoryError("report must be a JSON object")
-    if report.get("kind") != "hvm-compat-report":
-        raise HistoryError("report kind must be hvm-compat-report")
-    schema = report.get("schemaVersion")
-    if isinstance(schema, bool) or not isinstance(schema, int):
-        raise HistoryError("report schemaVersion must be an integer")
+    errors = validate_report(report)
+    if errors:
+        raise HistoryError("report failed schema check: " + "; ".join(errors))
 
 
 def _allocate_path(report: dict, root: str) -> tuple[str, str]:
@@ -273,6 +280,15 @@ def _ensure_inside(path: str, root: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if not _inside(path, root):
         raise HistoryError(f"refusing to write outside {os.path.realpath(root)}")
+
+
+def _same_json(left: str, right: str) -> bool:
+    if not left or not os.path.isfile(left) or not os.path.isfile(right):
+        return False
+    try:
+        return _load(left) == _load(right)
+    except (OSError, json.JSONDecodeError):
+        return False
 
 
 def _load(path: str):

@@ -51,13 +51,13 @@ python3 tools/hvm_compat.py diff \
   docs/dev-system/baselines/linux-headless.json \
   build/compat-report/report.json
 
-python3 tools/hvm_compat.py record build/compat-report/report.json
 python3 tools/hvm_compat.py diff --previous build/compat-report/report.json
+python3 tools/hvm_compat.py record build/compat-report/report.json
 ```
 
 `run` already executes selftest, fulltest, every `tests/asm/*.S` guest, the differential C guests, and those three Python modules, then the manifest smokes. Integer guests: `ctests_arm`, `ctests_arm_os`, `ctests_thumb`, `ctests_thumb_os`, `ctests_thumb_idiv`. VFP/NEON guests: `ftests_vfp_arm_hard`, `ftests_vfp_thumb_softfp`, `ftests_neon_thumb`, `ftests_neon_arm`, `ftests_neon_thumb_os`. A missing required fixture fails the run. Clash Royale is optional, and a skip is not a pass. `--require-resolved` is accepted; the missing-fixture failure does not depend on it. Decoder fuzz stays off unless `--fuzz N` is passed. Do not commit `build/`.
 
-Diff against `docs/dev-system/baselines/linux-headless.json`. Regressions fail the process. MIPS, average frame time, and raw audio sample counts (`frames` and `nonSilentFrames`, ±25% while the mixer stays `active`) are informational. `diff --previous` compares a report with the prior row in `docs/dev-system/reports/index.json`. That is a second check. It does not replace the baseline.
+Diff against `docs/dev-system/baselines/linux-headless.json`. Regressions fail the process. MIPS, average frame time, and raw audio sample counts (`frames` and `nonSilentFrames`, ±25% while the mixer stays `active`; a zero baseline is noted when the count is no longer zero) are informational. `diff --previous` compares a report with the prior row in `docs/dev-system/reports/index.json`. Run it on the build report before `record`. After `record`, pass the indexed path that command prints. Passing the build path after `record` is the same comparison: a file equal to the last indexed row is that row, so the previous run is the one before it, not a diff against itself. The first indexed row has no previous report, and `diff --previous` exits 2. That check does not replace the baseline.
 
 `ld64` iOS guests, CoreMark, the simulator, and a device run are not part of this Linux gate. See `COMPAT_HARNESS.md`.
 
@@ -73,7 +73,7 @@ Groups A–E are exclusive. Two agents must not edit the same letter at the same
 | D frameworks | `src/runtime/objc/`, `src/runtime/foundation/`, UIKit class files except `OpenGLES.cpp` | Not with another D change |
 | E Apple shell | `app/**` and `app/HydrogenVM/Bridge/HVMEngine.h` | Not with another E change. Linux cannot compile this group |
 
-What may run at the same time, when the edits do not touch the same file: different letters, using the matrix in `ROADMAP.md`. A may run beside B, C, D (not `System.cpp`), and E while `HVMEngine.h` stays frozen. B may run beside C unless the same patch also edits a dumped shader. C may run beside D if the patch does not edit `Net.cpp`. Audio under `src/runtime/audio/` may run beside B. Do not edit `PlatformStubs.cpp` from two roles at once. The harness and `docs/dev-system/` may run beside a lettered group. `regcomp` and `tmpnam` may run beside D when the patch stays in `src/runtime/libc/`. A loader fix may run beside Group C. It may not run beside a second loader fix. One editor at a time for `LibStdcxx*.cpp`, and for `tools/hvm_report.py` together with `.github/workflows/ci.yml`.
+What may run at the same time, when the edits do not touch the same file: different letters, using the matrix in `ROADMAP.md`. A may run beside B, C, D (not `System.cpp`), and E while `HVMEngine.h` stays frozen. B may run beside C unless the same patch also edits a dumped shader. C may run beside D if the patch does not edit `Net.cpp`. Audio under `src/runtime/audio/` may run beside B. Do not edit `PlatformStubs.cpp` from two roles at once. The harness and `docs/dev-system/` may run beside a lettered group. `regcomp` and `tmpnam` may run beside D when the patch stays in `src/runtime/libc/` and does not rename Foundation symbols. A loader fix may run beside Group C. It may not run beside a second loader fix. One editor at a time for `LibStdcxx*.cpp`, and for `tools/hvm_report.py` together with `.github/workflows/ci.yml`.
 
 ## Workflow
 

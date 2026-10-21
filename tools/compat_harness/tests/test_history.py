@@ -1,8 +1,10 @@
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -27,6 +29,9 @@ def _report(when: str, short: str, *, ok: bool = True, frames: int = 10) -> dict
             "dirty": False,
         },
         "host": {"system": "Linux", "machine": "x86_64", "pageSize": 4096},
+        "limits": {},
+        "manifest": {"schemaVersion": 1, "legacyRepoAllowed": True},
+        "clusters": [],
         "summary": {
             "ok": ok,
             "unitFailed": 0,
@@ -35,12 +40,21 @@ def _report(when: str, short: str, *, ok: bool = True, frames: int = 10) -> dict
             "appsSkipped": 1,
             "clusterCount": 0,
         },
-        "suites": {"apps": {"apps": [{
-            "id": "sample",
-            "status": "ran",
-            "launchSuccess": True,
-            "audio": {"signal": "active", "frames": frames, "nonSilentFrames": frames},
-        }]}},
+        "suites": {
+            "unit": {"cases": []},
+            "python": {"cases": []},
+            "apps": {"apps": [{
+                "id": "sample",
+                "sha256": "ab" * 32,
+                "status": "ran",
+                "launchSuccess": True,
+                "crashed": False,
+                "unimplementedImports": [],
+                "frame": {"signal": "varied"},
+                "audio": {"signal": "active", "frames": frames, "nonSilentFrames": frames},
+                "clusters": [],
+            }]},
+        },
     }
 
 
@@ -131,6 +145,59 @@ class HistoryTests(unittest.TestCase):
             del report["schemaVersion"]
             with self.assertRaises(HistoryError):
                 record_report(report, tmp)
+
+    def test_record_rejects_a_report_that_fails_schema_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = _report("2026-10-21T18:45:30+00:00", "aaaaaaaaaaaa")
+            del report["limits"]
+            with self.assertRaises(HistoryError) as caught:
+                record_report(report, tmp)
+            self.assertIn("limits", str(caught.exception))
+
+    def test_cli_diff_previous_on_the_first_indexed_row_exits_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "only.json")
+            with open(source, "w", encoding="utf-8") as fh:
+                json.dump(_report("2026-10-21T18:45:30+00:00", "aaaaaaaaaaaa"), fh)
+            self.assertEqual(cli_main(["record", "--repo", tmp, source]), 0)
+            with open(os.path.join(tmp, "docs", "dev-system", "reports", "latest.json"), encoding="utf-8") as fh:
+                latest = json.load(fh)
+            indexed = os.path.join(tmp, "docs", "dev-system", "reports", latest["path"])
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = cli_main(["diff", "--previous", "--repo", tmp, indexed, "--out", os.path.join(tmp, "diff.json")])
+            self.assertEqual(code, 2)
+            self.assertIn("no previous indexed report", err.getvalue())
+            # The source file is a copy of that only row. It must not diff against itself.
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = cli_main(["diff", "--previous", "--repo", tmp, source, "--out", os.path.join(tmp, "diff-source.json")])
+            self.assertEqual(code, 2)
+            self.assertIn("no previous indexed report", err.getvalue())
+
+    def test_record_then_diff_build_path_compares_with_the_prior_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first_path = os.path.join(tmp, "first.json")
+            with open(first_path, "w", encoding="utf-8") as fh:
+                json.dump(_report("2026-10-21T18:45:30+00:00", "aaaaaaaaaaaa"), fh)
+            self.assertEqual(cli_main(["record", "--repo", tmp, first_path]), 0)
+            crashed = _report("2026-10-21T19:10:00+00:00", "bbbbbbbbbbbb")
+            crashed["suites"]["apps"]["apps"][0]["launchSuccess"] = False
+            crashed["suites"]["apps"]["apps"][0]["status"] = "crashed"
+            crashed["suites"]["apps"]["apps"][0]["crashed"] = True
+            build_report = os.path.join(tmp, "build", "compat-report", "report.json")
+            os.makedirs(os.path.dirname(build_report), exist_ok=True)
+            with open(build_report, "w", encoding="utf-8") as fh:
+                json.dump(crashed, fh)
+            self.assertEqual(cli_main(["record", "--repo", tmp, build_report]), 0)
+            out = os.path.join(tmp, "diff.json")
+            # record then diff --previous on the build path must use the prior row.
+            # The build path is not an index path, and the last row is this run.
+            code = cli_main(["diff", "--previous", "--repo", tmp, build_report, "--out", out])
+            self.assertEqual(code, 1)
+            with open(out, encoding="utf-8") as fh:
+                diff = json.load(fh)
+            self.assertTrue(any(item["kind"] == "crash" for item in diff["regressions"]))
 
     def test_index_run_diffs_previous_then_records(self):
         with tempfile.TemporaryDirectory() as tmp:
