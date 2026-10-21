@@ -55,7 +55,9 @@ jobs:
       - name: Validate probe syntax
         run: |
           python3 -m py_compile tools/clash_royale_probe.py tools/desktop.py tools/desktop_audio.py tools/test_ima_wav_corpus.py
+          python3 -m py_compile tools/clash_wire.py tools/clash_home_state.py tools/clash_home_probe.py
           python3 tools/test_clash_protocol_probe.py
+          python3 tools/test_clash_home_state.py
           bash -n tools/local_test.sh
       - name: Inspect pinned client and inventory assets
         run: python3 tools/clash_royale_probe.py --out clash-report
@@ -67,6 +69,8 @@ jobs:
         run: build-clash/hvm_tests fulltest
       - name: Compare pinned IMA WAV audio with independent decoder
         run: python3 tools/test_ima_wav_corpus.py clash-report/unpacked --hvm-tests build-clash/hvm_tests --out clash-report/ima-wav-comparison.json --require-count 107
+      - name: Verify initial home and NPC request across two local launches
+        run: python3 tools/clash_home_probe.py --hvm build-clash/hvm --ipa clash-report/client.ipa --out clash-home --seconds 90 --launches 2
       - name: Trace Clash Royale startup
         run: |
           set +e
@@ -103,6 +107,10 @@ jobs:
           path: |
             clash-report/*.json
             clash-report/*.txt
+            clash-home/run-*/verification.json
+            clash-home/run-*/protocol-events.json
+            clash-home/run-*/*.log
+            clash-home/run-*/*.png
             clash-compat/REPORT.md
             clash-compat/results.json
             clash-compat/runs/**/*.json

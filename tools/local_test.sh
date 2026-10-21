@@ -10,8 +10,8 @@ source_root=$root
 state=${HVM_LOCAL_STATE:-/var/tmp/hvm-local}
 python=/var/tmp/hvm-local-python/bin/python
 mkdir -p "$out" "$state"
-case "$mode" in play|app|check|scan|regress|trace) ;; *) echo 'Mode must be play, app, check, scan, regress or trace' >&2; exit 2 ;; esac
-if [[ "$mode" == play || "$mode" == app || "$mode" == trace ]]; then
+case "$mode" in play|app|check|scan|regress|trace|home) ;; *) echo 'Mode must be play, app, check, scan, regress, trace or home' >&2; exit 2 ;; esac
+if [[ "$mode" == play || "$mode" == app || "$mode" == trace || "$mode" == home ]]; then
     exec 9>"$state/session.lock"
     flock -n 9 || { echo 'A local session is already using this sandbox. Close it first.' >&2; exit 2; }
 fi
@@ -57,6 +57,10 @@ case "$mode" in
         fi
         ;;
     check) "$build/hvm_tests" fulltest 2>&1 | tee "$out/runtime-checks.txt" ;;
+    home)
+        PYTHONDONTWRITEBYTECODE=1 python3 "$root/tools/clash_home_probe.py" --hvm "$build/hvm" --ipa "$client" \
+            --out "$state/home-probe" --results "$out/offline-home" --seconds 90 --launches 2 --capture-audio
+        ;;
     scan)
         python3 "$root/tools/compat.py" scan "$client" --hvm "$build/hvm" \
             --out "$out/library-scan-$(date +%Y%m%d-%H%M%S)" --seconds 15 --jobs 1 --relaunch

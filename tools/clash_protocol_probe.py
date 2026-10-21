@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Loopback-only diagnostic peer for the pinned Clash client; no home or battle server.
+"""Loopback-only diagnostic peer for the pinned Clash client.
 
 The default captures message metadata only. --login-ok exercises the pinned
-native LoginOk decoder with a local diagnostic identity. This is not playable
-offline mode, a real account service, or verified game-state persistence.
+native LoginOk decoder with a local diagnostic identity. --home-client also
+sends a pinned, persisted initial home/avatar fixture. No battle/progression
+engine is implemented yet; this is not playable offline mode.
 """
 import argparse
 import json
@@ -13,8 +14,8 @@ import secrets
 import socket
 import struct
 import time
+from clash_wire import MAX_PAYLOAD, Reader, vint, string
 
-MAX_PAYLOAD = 1 << 20
 # Public protocol constant also present verbatim in the unmodified pinned IPA.
 # No private account keys are used. Each direction has a distinct stream state.
 PROTOCOL_KEY = b'fhsd6f86f67rt8fw78fw789we78r9789wer6re' + b'nonce'
@@ -66,67 +67,6 @@ class Frames:
         return messages
 
 
-class Reader:
-    def __init__(self, data):
-        self.data, self.offset = data, 0
-
-    def read(self, count):
-        if count < 0 or self.offset + count > len(self.data):
-            raise ValueError('Truncated message')
-        result = self.data[self.offset:self.offset + count]
-        self.offset += count
-        return result
-
-    def integer(self):
-        return struct.unpack('>i', self.read(4))[0]
-
-    def string(self):
-        size = self.integer()
-        if size == -1:
-            return None
-        if size < 0 or size > MAX_PAYLOAD:
-            raise ValueError('Invalid string length')
-        return self.read(size).decode('utf-8')
-
-    def vint(self):
-        first = byte = self.read(1)[0]
-        value, shift = first & 63, 6
-        while byte & 128:
-            if shift >= 34:
-                raise ValueError('Overlong VInt')
-            byte = self.read(1)[0]
-            value |= (byte & 127) << shift
-            shift += 7
-        if first & 64:
-            value |= -(1 << shift)
-        if not -(1 << 31) <= value < (1 << 31):
-            raise ValueError('VInt exceeds signed 32-bit range')
-        return value
-
-
-def vint(value):
-    if not -(1 << 31) <= value < (1 << 31):
-        raise ValueError('VInt exceeds signed 32-bit range')
-    negative = value < 0
-    first = (value & 63) | (64 if negative else 0)
-    value >>= 6
-    out = bytearray()
-    done = -1 if negative else 0
-    out.append(first | (128 if value != done else 0))
-    while value != done:
-        byte = value & 127
-        value >>= 7
-        out.append(byte | (128 if value != done else 0))
-    return bytes(out)
-
-
-def string(value):
-    if value is None:
-        return struct.pack('>i', -1)
-    data = value.encode('utf-8')
-    return struct.pack('>i', len(data)) + data
-
-
 def login(data):
     reader = Reader(data)
     account = reader.integer(), reader.integer()
@@ -165,6 +105,11 @@ def load_profile(path):
 def serve(args):
     args.out.mkdir(parents=True, exist_ok=True)
     profile = load_profile(args.state) if args.login_ok else None
+    home = None
+    if getattr(args, 'home_client', None):
+        from clash_home_state import load_state, encode_home
+        home_state = load_state(args.home_client, args.game_state, profile['account'])
+        home = encode_home(home_state, profile['account'])
     events = []
     def event(kind, **details):
         item = {'event': kind, **details}
@@ -176,7 +121,7 @@ def serve(args):
         server.bind(('127.0.0.1', args.port))
         server.listen(2)
         server.settimeout(0.2)
-        event('listening', host='127.0.0.1', port=server.getsockname()[1], loginReply=args.login_ok)
+        event('listening', host='127.0.0.1', port=server.getsockname()[1], loginReply=args.login_ok, homeReply=home is not None)
         try:
             while time.monotonic() < deadline:
                 try:
@@ -212,8 +157,16 @@ def serve(args):
                                         if account != (0, 0) and (list(account) != profile['account'] or token != profile['token']):
                                             raise ValueError('Identity does not match this local diagnostic profile')
                                         send(20104, 1, login_ok(profile))
+                                        if home is not None:
+                                            send(24101, 0, home)
                                 elif message == 10108 and not payload and args.login_ok:
                                     send(20108, 0)
+                                elif message == 14104 and home is not None:
+                                    reader = Reader(payload)
+                                    npc = reader.reference()
+                                    if reader.offset != len(payload) or npc // 1000000 != 18:
+                                        raise ValueError('Invalid start-mission request')
+                                    event('npc_requested', npc=npc, supported=False)
                     except (ValueError, OSError) as error:
                         event('connection_error', reason=str(error))
                     event('disconnected', incompleteBytes=len(frames.pending))
@@ -221,7 +174,7 @@ def serve(args):
             pass
         finally:
             (args.out / 'protocol-events.json').write_text(json.dumps({
-                'scope': 'Diagnostic login peer only. No home state, battles or game progression.',
+                'scope': 'Diagnostic login and optional initial home fixture. No battle state or game progression.',
                 'events': events,
             }, indent=2) + '\n')
 
@@ -233,9 +186,17 @@ def main():
     parser.add_argument('--seconds', type=float, default=60)
     parser.add_argument('--login-ok', action='store_true')
     parser.add_argument('--state', type=Path, help='Local diagnostic identity JSON; required with --login-ok')
+    parser.add_argument('--home-client', type=Path, help='Pinned unchanged IPA: send its initial home/avatar fixture')
+    parser.add_argument('--game-state', type=Path, help='Persistent initial home/avatar JSON; required with --home-client')
     args = parser.parse_args()
     if args.login_ok and args.state is None:
         parser.error('--login-ok requires --state')
+    if args.home_client and (not args.login_ok or not args.game_state):
+        parser.error('--home-client requires --login-ok, --state and --game-state')
+    if args.game_state and not args.home_client:
+        parser.error('--game-state requires --home-client')
+    if args.game_state and args.state and args.game_state.resolve() == args.state.resolve():
+        parser.error('Identity and game state must use separate paths')
     if not 0 <= args.port <= 65535 or not 0 < args.seconds <= 3600:
         parser.error('Invalid port or duration')
     serve(args)

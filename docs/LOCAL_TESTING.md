@@ -10,6 +10,9 @@ On this workstation, the task's `outputs/` folder contains Windows launchers:
 - **Open Any IPA.cmd**: choose another IPA, build and open its desktop window.
 - **Test an App Folder.cmd**: select a folder and scan its IPAs/`.app` bundles.
 - **Run Runtime Checks.cmd**: build and run the focused runtime suite.
+- **Test Offline Home.cmd**: build and verify local home acceptance/NPC requests
+  across two launches, with mixer audio capture. This is a headless diagnostic;
+  battles are not implemented. Allow about three minutes after the build.
 - **Run Regression Probes.cmd**: run Clash and the three older-game probes.
 - **Capture Startup Trace.cmd**: capture 30 seconds of trace, shaders, report and
   final screenshot in a separate diagnostic sandbox.
@@ -90,6 +93,7 @@ bash tools/local_test.sh scan /path/to/app-collection /path/to/results
 bash tools/local_test.sh check /path/to/pinned-client.ipa /path/to/results
 bash tools/local_test.sh regress /path/to/pinned-client.ipa /path/to/results
 bash tools/local_test.sh trace /path/to/pinned-client.ipa /path/to/results
+bash tools/local_test.sh home /path/to/pinned-client.ipa /path/to/results
 ```
 
 The `play` command creates a Python virtual environment and installs pinned
@@ -106,7 +110,7 @@ commands `touch PHASE X Y`, `background`, `foreground`, or `stop`. Phases are
 
 ## Verification and current game limit
 
-The local runtime suite passes **71 checks**. The viewer smoke test receives live
+The local runtime suite passes **79 checks**. The viewer smoke test receives live
 frames, delivers down/up through the file bridge, and shuts down with exit 0 and
 `crashed=false`. A pre-existing file in the sandbox's Documents directory was
 preserved across launch; this tests host sandbox retention, not game progression.
@@ -120,5 +124,11 @@ persistence remain unverified. See `CLASH_ROYALE_RESTORATION.md` for the current
 runtime commit, evidence and next blocker.
 
 A separate **opt-in protocol diagnostic** can accept the pinned client's login
-through loopback TCP. It is not enabled by the Play launcher and supplies no home
-state or battles. See `CLASH_ROYALE_RESTORATION.md` for commands and evidence.
+through loopback TCP. It is not enabled by the Play launcher. Optional pinned home
+state now reaches 65% loading and a native first-NPC request; no sector/battle state
+is supplied yet. Run `tools/clash_home_probe.py --hvm PATH --ipa PATH --out DIR
+--seconds 90 --launches 2 --capture-audio` for home acceptance, relaunch and audio
+capture. This headless probe captures mixer PCM and does not open a speaker device.
+It preserves the installed app and stores initial home/avatar state separately
+from the private diagnostic identity. It does not verify gameplay progression.
+See `CLASH_ROYALE_RESTORATION.md` for commands, exact evidence and next blockers.

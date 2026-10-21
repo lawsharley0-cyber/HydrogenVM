@@ -2,6 +2,24 @@
 
 ## Active Clash Royale continuation (updated after runtime fixes)
 
+**Latest home-state checkpoint:** the decoder-derived 184-byte initial home/avatar
+is accepted by the unchanged pinned client. It reaches the 65% loading scene and
+requests NPC 18000000 through message 14104 (`12 00`). Two 75-second launches
+return exit 0 with home acceptance, retained login on the second launch, no errors/
+crash and non-silent audio. Shared Foundation fixes cover immutable regex copying/
+lifetime, dictionary subclass subscript/KVC primitives and an inherited allKeys
+recursion that previously exhausted the host stack. **79 runtime checks, 12 Python
+tests, 18 shader checks and 107 IMA WAV comparisons pass.**
+
+Use `tools/clash_home_probe.py` for the reproducible two-launch experiment. Its
+peer validates the pinned IPA, loads the original starter template and atomically
+stores a separate initial home-state JSON. This is not progression persistence.
+The exact next blocker is **21903 SectorStateMessage** for Npc1/FirstMatch/BasicDeck1
+(seed 2): mode markers 11/12, battle/tower/object/component/deck/avatar/tutorial
+state. Decoder addresses and limits are recorded at the top of the restoration
+document. The peer does not yet reply to mission requests. **No playable battle or
+working menu is verified.** This checkpoint supersedes login-only notes below.
+
 For the current user-requested Clash Royale work, read
 [`CLASH_ROYALE_RESTORATION.md`](CLASH_ROYALE_RESTORATION.md) first.
 Local desktop testing is available through `tools/local_test.sh` and
@@ -30,7 +48,7 @@ underruns to one in 45 seconds; speaker audibility, combat and iPhone audio stil
 need checking. The pinned executable is armv7 only, so re-signing it does not
 provide a native iOS 11+ sideload. Read the audio checkpoint in the restoration doc.
 
-The fresh local suite passes **75 runtime checks**, **six Python protocol tests**,
+The fresh local suite passes **79 runtime checks**, **12 Python protocol/home tests**,
 and **18 shader-source checks**. Windows-mounted checkouts now build through a
 checksum-synchronized ext4 source mirror (`1201143`) to improve compilation and
 avoid timestamp-related stale objects. The measured compiler-front-end change
@@ -75,7 +93,7 @@ verify the fix across all apps.
 
 ```sh
 cmake -S . -B build -G Ninja && ninja -C build hvm hvm_tests   # host build (Linux/macOS); needs zlib, sqlite3
-build/hvm_tests fulltest          # 75 runtime checks, all must pass
+build/hvm_tests fulltest          # 79 runtime checks, all must pass
 build/hvm run <App.app> --home <dir> --run-for 30 [--keep-going] [--screenshot f.png] [--report r.json]
       [--graceful] [--lifecycle bg@8,fg@13] [--launches 2] [--trace] [--tap x,y@t] [--drag ...]
 tools/compat.py scan <ipas|apps|dirs> --out compat --seconds 30 [--relaunch] [--only a,b]   # see docs/COMPAT.md

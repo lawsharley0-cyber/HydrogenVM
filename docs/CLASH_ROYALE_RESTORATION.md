@@ -2,6 +2,97 @@
 
 Date: 2026-10-20. Work branch: `gemini-merge`.
 
+## Latest: native home acceptance and first NPC request (2026-10-20)
+
+**The game is still not playable.** The local peer now sends a decoder-derived
+**24101 OwnHomeDataMessage**, and the unchanged client accepts it, logging
+`Loaded own home from server`. It loads the training location and menu assets,
+advances to the **65% loading scene**, then sends **14104 StartMissionMessage**
+with bytes `12 00`: NPC data reference **18000000**, the first tutorial mission.
+The peer intentionally reports this request as unsupported; it supplies no
+invented/opaque sector blob. No battle, deployment, menu interaction or game
+progression is verified. This supersedes the older login-only black-frame limit.
+
+`tools/clash_home_state.py` builds an explicit initial home/avatar fixture from
+the pinned IPA's own `starting_home.json`. The default body is **184 bytes**:
+home starts at offset 0, deck at 15, collection at 64 and avatar at 123. Home ID
+uses fixed BE LogicLong; avatar IDs use pairs of signed VInts. Eight deck-presence
+booleans share one byte; all byte-oriented reads reset boolean alignment. The
+six original cards, empty collection, four empty chest slots and free-chest timer
+are retained. Avatar level 1, training arena, 100 total/free gems, and 100
+Gold/FreeGold follow the native default-avatar path and bundled globals.
+Unnamed members are identified by native object offsets in the encoder and kept
+at constructor defaults. This is an initial-state fixture, not a progression engine.
+
+The peer's `--home-client IPA --game-state FILE` options validate the exact pinned
+IPA SHA256. Initial home/avatar JSON is stored atomically, separately from the
+diagnostic identity/token. Existing state must match the client and account; it
+is read without resetting it. Unsupported collection/location state is rejected.
+Saving an initial fixture and retaining login identity do not prove game-progress
+persistence; command processing, rewards and battle state are still absent.
+
+New shared runtime fixes reached after home acceptance:
+
+- `NSRegularExpression copyWithZone:` now retains its immutable compiled pattern.
+  Regex deallocation releases its copied pattern; match results retain/release
+  their owning expression. A pool-drain/lifetime test covers these relationships.
+- Dictionary subscript and value-setting methods dispatch the subclass's keyed
+  primitives, including nil-value removal and nil-key rejection. The client SDK
+  has a real `FBGraphObject` dictionary subclass; direct host DictData mutation
+  incorrectly rejected it.
+- `NSDictionary`'s inherited `allKeys`/`allValues` now enumerate subclass
+  `keyEnumerator`/`objectForKey:` primitives. The prior fallback called `allKeys`
+  recursively and exhausted the host stack. GDB identified that host crash.
+  A subclass missing the required enumerator fails explicitly instead of recursing.
+
+Validation on the native WSL build: **79 runtime checks**, **12 Python protocol/
+home-state tests**, **18 shader checks**, and **107 IMA WAV reference comparisons**
+pass. Two **75-second** launches against the formal peer both accept the home,
+request NPC 18000000 and return exit 0 with `crashed=false`, `errors=[]`. Login
+changes from fresh to retained. Both capture **169590 non-silent audio frames**,
+peak **0.830139**, with no audio transport errors/drops. These are captured mixer
+samples, not another physical speaker or iPhone-device test. Four older/default-
+network compatibility probes are also rerun for the shared Foundation changes.
+
+Reproduce (after building with `tools/local_test.sh check`):
+
+```sh
+python3 tools/clash_home_probe.py --hvm /path/to/hvm --ipa /path/to/pinned.ipa --out /var/tmp/clash-home-probe --seconds 90 --launches 2 --capture-audio
+```
+
+The probe imports once, checks existing app metadata/executable on reuse, and
+runs the installed bundle on relaunch. Keep this diagnostic output separate from
+the desktop save container. `identity.json` contains a private local token and
+must not be published. Each `run-*` directory contains public diagnostic logs,
+frames, protocol events and `verification.json`. Probe success is specifically
+home acceptance plus an NPC request, **not playable offline mode**. The workflow
+now includes these checks; remote execution remains subject to the known account
+billing blocker until jobs actually run.
+
+### Current exact blocker: an initial NPC sector snapshot
+
+The native reply type is **21903 SectorStateMessage** (`getMessageType` at
+`0x9615c` returns 0x558f). `SectorStateMessage::decode` itself is empty because
+`SectorManager::receiveSectorState` parses its ByteStream later. That manager at
+`0x5a288` reads a raw compression flag byte; compressed data uses the MySQL-style
+LE uncompressed size plus zlib. Plain flag 0 calls the same state parser directly.
+
+`LogicGameMode::decode` at **0xd7804** expects a tick and auxiliary VInt, a checked
+**11** marker, LogicTime, a fixed-width random seed, battle state and two avatars,
+then checked marker **12**, tutorial state, a trailing value and command-manager
+state. `LogicBattle::decode` at **0x14470** needs location/NPC/arena references,
+player IDs, per-side values, flags, the game-object manager, two decks, tower
+references/lists and battle timers. `LogicGameObjectManager::decode` at
+**0x55c4c** contains object types/IDs, object bodies and four passes of components.
+An empty object list would not represent a usable battle and is not supplied.
+
+Mission 18000000 corresponds to bundled `npcs.csv` **Npc1**, location **FirstMatch**,
+predefined deck **BasicDeck1**, seed **2**, level **1**. Use those original assets
+to derive a valid initial sector, including the towers, player/NPC decks and
+tutorial state, then follow heartbeat/command handling. Preserve the native marker,
+type and range checks. Next verify a visible arena, a real troop deployment, one
+complete NPC battle, and backend progression saved across fresh peer/client starts.
+
 ## Audio checkpoint (2026-10-20)
 
 The unchanged loading track `res/sfx/scroll_loading_01.wav` is Microsoft IMA
@@ -38,7 +129,7 @@ iOS 11+, which removed 32-bit app support. The current modern-phone route is the
 archive would be a separate native-restoration candidate. Offline home state,
 NPC battles and progression persistence remain unimplemented/unverified below.
 
-## Current status: local protocol login, not yet a home screen (2026-10-20)
+## Earlier checkpoint: local login without home data (2026-10-20)
 
 Runtime/protocol foundation: `de7f95b`; WSL source-mirror commit: `1201143`.
 The pinned IPA and its bundled assets/settings remain unchanged.
@@ -106,7 +197,7 @@ workstation confirmation took about **43 seconds** and **37 seconds**. A fixed
 25/30-second probe can therefore finish before login; use an observed milestone
 and a longer timeout instead of interpreting the cutoff as a protocol failure.
 
-### Next implementation target
+### Home-state target at that checkpoint (implemented above)
 
 Build the pinned client's **OwnHomeDataMessage (24101)** from its actual decoder
 and bundled `res/level/starting_home.json`, including the six-card starting deck,
