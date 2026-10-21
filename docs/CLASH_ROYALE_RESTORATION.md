@@ -2,6 +2,42 @@
 
 Date: 2026-10-20. Work branch: `gemini-merge`.
 
+## Audio checkpoint (2026-10-20)
+
+The unchanged loading track `res/sfx/scroll_loading_01.wav` is Microsoft IMA
+ADPCM WAV (format 0x11), stereo 44.1 kHz. The shared decoder now handles mono/stereo
+4-bit IMA WAV: block predictor/index headers, low-first nibbles, four-byte channel
+groups, block resets and `fact` sample-count trimming. Invalid headers, step
+indices, count overruns and truncated data fail decoding. Apple IMA4 remains a
+separate layout. No asset transcoding or game modification is involved.
+
+All **107** archived IMA WAV files match libsndfile PCM sample-for-sample after
+trimming its padded final block to each file's `fact` count. The comparison used
+the installed system libsndfile and `hvm_tests audio-decode INPUT OUTPUT.pcm`.
+`tools/test_ima_wav_corpus.py ROOT --hvm-tests PATH --out REPORT.json
+--require-count 107` automates this check; the investigation workflow now includes
+it after the runtime checks. It needs system libsndfile1, no audio device.
+Synthetic tests independently cover channel separation, nibble order, block reset,
+mono duplication, duration, invalid input and stalled desktop-consumer shutdown.
+The full local runtime suite passes **75 checks**.
+
+The desktop viewer now pulls the same mixer as the iPhone frontend and sends its
+PCM to SDL/PulseAudio. A 50-second pinned-client run produced **169590 non-silent
+frames**, peak **0.830139**, no transport drops/errors and no guest errors/crash.
+That first run exposed 288 playback underruns. Three-block startup priming reduced
+this to **one underrun in a subsequent 45-second run**, with 971 delivered blocks
+and no device errors. Occasional host scheduling/audio starvation remains a
+quality concern. Saved PCM/device acceptance does not certify speaker audibility,
+battle sounds, every API or iPhone audio; those still require gameplay/device tests.
+See `LOCAL_TESTING.md` for capture, mute, device dependency and diagnostics.
+
+Architecture clarification: `file` reports the pinned executable as **Mach-O
+armv7**, with no arm64 slice. Re-signing this IPA alone cannot make it run on
+iOS 11+, which removed 32-bit app support. The current modern-phone route is the
+64-bit HydrogenVM host executing the original guest. A compatible arm64 game
+archive would be a separate native-restoration candidate. Offline home state,
+NPC battles and progression persistence remain unimplemented/unverified below.
+
 ## Current status: local protocol login, not yet a home screen (2026-10-20)
 
 Runtime/protocol foundation: `de7f95b`; WSL source-mirror commit: `1201143`.

@@ -6,6 +6,7 @@
 #include "loader/AppBundle.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/graphics/Graphics.hpp"
+#include "AudioOutput.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -58,6 +59,7 @@ int hvmRunMain(int argc, char** argv) {
     struct LifeEvent { bool background; double at; };
     std::vector<LifeEvent> lifeEvents;
     std::string screenshot, reportPath, frameFile, inputFile;
+    int audioFd = -1;
     struct Gesture { float x1, y1, x2, y2; double at; bool drag; };
     std::vector<Gesture> gestures;
     for (int i = 2; i < argc; ++i) {
@@ -77,6 +79,14 @@ int hvmRunMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--report") && i + 1 < argc) { reportPath = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--frame-file") && i + 1 < argc) { frameFile = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--input-file") && i + 1 < argc) { inputFile = argv[++i]; continue; }
+        if (!std::strcmp(argv[i], "--audio-fd") && i + 1 < argc) {
+            char* end = nullptr;
+            const long fd = std::strtol(argv[++i], &end, 10);
+            if (!end || *end || fd < 3 || fd > INT32_MAX || !DesktopAudioOutput::valid(int(fd))) {
+                std::fprintf(stderr, "--audio-fd requires an inherited datagram socket\n"); return 2;
+            }
+            audioFd = int(fd); continue;
+        }
         if (!std::strcmp(argv[i], "--home") && i + 1 < argc) home = argv[++i];
         else if (!std::strcmp(argv[i], "--keep-going")) cfg.stopOnMissingFunction = false;
         else if (!std::strcmp(argv[i], "--graceful")) graceful = true;
@@ -165,6 +175,7 @@ int hvmRunMain(int argc, char** argv) {
         if (launches > 1 && !quiet) std::fprintf(stderr, "[hvm] ---- launch %d of %d ----\n", launch, launches);
         const auto wallStart = std::chrono::steady_clock::now();
         Runtime::Process proc(cfg);
+        DesktopAudioOutput audio;
         std::string loadError;
         auto writeReport = [&](int status) {
             if (reportPath.empty()) return;
@@ -191,6 +202,10 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"unimplementedImports\": " << jsonList(proc.unimplementedImports()) << ",\n";
             f << "  \"warnings\": " << pairs(warnings) << ",\n";
             f << "  \"errors\": " << pairs(errors) << ",\n";
+            f << "  \"audio\": {\"enabled\": " << (audioFd >= 0 ? "true" : "false")
+              << ", \"frames\": " << audio.frames << ", \"nonSilentFrames\": " << audio.nonSilentFrames
+              << ", \"peak\": " << audio.peak << ", \"droppedBlocks\": " << audio.droppedBlocks
+              << ", \"transportError\": " << audio.error << "},\n";
             f << "  \"perf\": {\n";
             f << "    \"wallSeconds\": " << wall << ",\n";
             f << "    \"guestInstructions\": " << insns << ",\n";
@@ -213,6 +228,7 @@ int hvmRunMain(int argc, char** argv) {
             return 71;
         }
         // Scripted input and the run-time limit run on a helper thread.
+        audio.start(audioFd, proc.mixerPtr());
         std::atomic<bool> done{false};
         std::thread driver([&] {
             using namespace std::chrono;
@@ -278,6 +294,8 @@ int hvmRunMain(int argc, char** argv) {
         const int r = proc.run();
         done = true;
         driver.join();
+        audio.stop();
+        if (audio.error) std::fprintf(stderr, "[hvm:warn] Desktop audio transport failed: %d\n", audio.error);
         if (!screenshot.empty()) {
             std::lock_guard<std::mutex> lk(frameMu);
             if (lastFrame.width > 0) {

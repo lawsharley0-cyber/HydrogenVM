@@ -191,6 +191,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 
 #include "runtime/Process.hpp"
 #include "runtime/audio/Audio.hpp"
+#include "AudioOutput.hpp"
 #include <functional>
 #include <map>
 #include <random>
@@ -217,6 +218,72 @@ int runFullSubsystemTests() {
         if (ok) { std::printf("  ok   %s\n", what); ++pass; }
         else { std::printf("  FAIL %s\n", what); ++fail; }
     };
+
+    {
+        auto wav = [](int channels, uint32_t fact) {
+            std::vector<uint8_t> v;
+            auto text = [&](const char* s) { v.insert(v.end(), s, s + 4); };
+            auto u16 = [&](uint16_t n) { v.push_back(n); v.push_back(n >> 8); };
+            auto u32 = [&](uint32_t n) { u16(n); u16(n >> 16); };
+            text("RIFF"); u32(52 + channels * 16); text("WAVE");
+            text("fmt "); u32(20); u16(17); u16(channels); u32(44100); u32(0);
+            u16(channels * 8); u16(4); u16(2); u16(9);
+            text("fact"); u32(4); u32(fact); text("data"); u32(channels * 16);
+            for (int block = 0; block < 2; ++block) {
+                for (int c = 0; c < channels; ++c) { u16((c ? -1 : 1) * (block ? 10000 : 1000)); u16(0); }
+                for (int c = 0; c < channels; ++c) for (int i = 0; i < 4; ++i) v.push_back(c ? 0x99 : 0x11);
+            }
+            return v;
+        };
+        auto stereo = wav(2, 17);
+        const auto a = Audio::decode(stereo.data(), stereo.size());
+        bool expected = a.sampleRate == 44100 && a.channels == 2 && a.stereoPcm.size() == 34;
+        for (int i = 0; expected && i < 17; ++i) {
+            const int value = i < 9 ? 1000 + i : 10000 + i - 9;
+            expected = a.stereoPcm[i*2] == value && a.stereoPcm[i*2+1] == -value;
+        }
+        check(expected && std::abs(a.duration - 17.0/44100) < 1e-9,
+              "IMA WAV stereo nibble order, channel groups, predictor reset and fact trimming");
+        auto mono = wav(1, 0);
+        const auto b = Audio::decode(mono.data(), mono.size());
+        bool duplicated = b.stereoPcm.size() == 36 && b.channels == 1;
+        for (size_t i = 0; duplicated && i < 18; ++i) duplicated = b.stereoPcm[i*2] == b.stereoPcm[i*2+1];
+        check(duplicated, "IMA WAV mono expands to stereo without losing the predictor sample");
+        stereo[62] = 89; // first channel's step index, outside the table
+        bool invalid = Audio::decode(stereo.data(), stereo.size()).stereoPcm.empty();
+        stereo = wav(2, 19); // fact cannot request more samples than encoded
+        invalid &= Audio::decode(stereo.data(), stereo.size()).stereoPcm.empty();
+        stereo = wav(2, 17); stereo.pop_back();
+        invalid &= Audio::decode(stereo.data(), stereo.size()).stereoPcm.empty();
+        check(invalid, "IMA WAV rejects invalid step indices, oversized fact counts and truncated data");
+    }
+    {
+        int sockets[2];
+        const bool opened = socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0;
+        bool received = false, stopped = false;
+        if (opened) {
+            int capacity = 8192;
+            setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &capacity, sizeof capacity);
+            auto mixer = std::make_shared<Audio::Mixer>();
+            auto pcm = std::make_shared<std::vector<int16_t>>(4096, 8192);
+            Audio::VoiceParams params; params.loop = true;
+            mixer->play(pcm, 44100, params);
+            DesktopAudioOutput output;
+            output.start(sockets[0], mixer);
+            pollfd pfd{sockets[1], POLLIN, 0};
+            if (poll(&pfd, 1, 1000) == 1) {
+                int16_t block[4096];
+                received = recv(sockets[1], block, sizeof block, 0) == sizeof block && block[0] > 8000 && block[1] > 8000;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(300)); // leave the consumer stalled
+            const auto began = std::chrono::steady_clock::now();
+            output.stop();
+            stopped = output.droppedBlocks > 0 && output.nonSilentFrames > 0 && output.error == 0 &&
+                      std::chrono::steady_clock::now() - began < std::chrono::milliseconds(200);
+            close(sockets[0]); close(sockets[1]);
+        }
+        check(received && stopped, "Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown");
+    }
 
     // Straight-line GLSL semantics: independent names, actual values, honest rejection.
     {
@@ -1284,6 +1351,18 @@ int runFullSubsystemTests() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string(argv[1]) == "audio-decode") {
+        std::ifstream in(argv[2], std::ios::binary);
+        if (!in) return 2;
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), {});
+        auto audio = Hydrogen::Runtime::Audio::decode(data.data(), data.size());
+        if (audio.stereoPcm.empty()) { std::fprintf(stderr, "unsupported or invalid audio\n"); return 1; }
+        std::ofstream out(argv[3], std::ios::binary);
+        out.write(reinterpret_cast<const char*>(audio.stereoPcm.data()), audio.stereoPcm.size() * sizeof(int16_t));
+        std::printf("rate=%d channels=%d frames=%zu seconds=%.9f\n", audio.sampleRate, audio.channels,
+                    audio.stereoPcm.size()/2, audio.duration);
+        return out ? 0 : 2;
+    }
     if (argc == 2 && std::string(argv[1]) == "selftest") {
         auto r = Hydrogen::runSelfTest();
         std::printf("selftest %s: %s (%.0f MIPS)\n", r.passed ? "passed" : "FAILED", r.detail.c_str(), r.mips);

@@ -25,7 +25,7 @@ struct DecodedAudio {
     std::vector<int16_t> stereoPcm;   // interleaved L, R
 };
 
-// WAV (PCM 8/16/24/32-bit, float), CAF (LPCM, IMA4), AIFF/AIFC, MP3.
+// WAV (PCM 8/16/24/32-bit, float, mono/stereo 4-bit IMA ADPCM), CAF (LPCM, IMA4), AIFF/AIFC, MP3.
 // Unknown formats give no samples and an estimated duration.
 DecodedAudio decode(const uint8_t* data, size_t n);
 

@@ -15,6 +15,7 @@ import zipfile
 
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame
+from desktop_audio import DesktopAudio
 
 PINNED_CLASH_SHA256 = '29269ede437f39ffa62fb4234a1c323303ef417e7eb6ddc5c86f9be76e08fb3f'
 
@@ -102,6 +103,8 @@ def main():
     parser.add_argument('--seconds', type=float, default=0, help='Automatically stop after this many seconds')
     parser.add_argument('--exit-on-stop', action='store_true')
     parser.add_argument('--tap', help='Schedule one touch through the live input bridge: X,Y@seconds')
+    parser.add_argument('--mute', action='store_true', help='Disable the guest mixer output')
+    parser.add_argument('--capture-audio', action='store_true', help='Save delivered audio as session/audio.wav')
     args = parser.parse_args()
     with args.ipa.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -156,7 +159,17 @@ def main():
             command = [str(args.hvm.resolve()), 'run', str(bundle), '--home', str(container),
                        '--frame-file', str(frame), '--input-file', str(controls),
                        '--screenshot', str(session / 'final.png'), '--report', str(session / 'report.json')]
-            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+            audio = DesktopAudio(args.mute, session / 'audio.wav' if args.capture_audio else None)
+            inherited = ()
+            if audio.writer:
+                inherited = (audio.writer.fileno(),)
+                command += ['--audio-fd', str(inherited[0])]
+            try:
+                process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, pass_fds=inherited)
+            except Exception:
+                audio.close(session / 'audio.json')
+                raise
+            audio.start()
             started = time.monotonic()
 
             def send(command):
@@ -262,6 +275,7 @@ def main():
                         failed = True
                 if surface:
                     pygame.image.save(surface, session / 'viewer-last.png')
+                audio.close(session / 'audio.json')
                 pygame.quit()
     print(f'Received {frame_count} live frames; engine exit {process.returncode}. Results: {session}', flush=True)
     return 1 if failed else process.returncode

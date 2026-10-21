@@ -23,7 +23,20 @@ Click and hold the left mouse button to touch/drag. Input is mapped from the
 resizable, letterboxed window to the guest's screen points. Press **S** to save
 a screenshot, **B** to background the guest, **F** to foreground it, and **Esc**
 or close the window to request graceful save/stop. Relaunch with the same launcher
-to reuse the sandbox. The viewer does not yet output guest audio.
+to reuse the sandbox. Guest audio now plays through the shared 44.1 kHz stereo
+mixer and SDL. On Ubuntu/WSLg install `libpulse0` (`sudo apt-get install libpulse0`);
+the viewer selects PulseAudio when `PULSE_SERVER` is set. Device initialization
+failures are printed and saved in `audio.json`; video can still be investigated.
+`--mute` disables audio; `--capture-audio` also saves delivered PCM as `audio.wav`.
+These are options for `tools/desktop.py`. The Windows play launchers enable sound.
+
+Audio has its own clock, independent of frame capture. An inherited local
+datagram socket carries 2048-frame PCM blocks; bounded kernel/SDL queues and
+three-block startup priming prevent unbounded lag. Slow consumers drop complete
+blocks rather than blocking the guest. Session `audio.json` records device format,
+received blocks, underruns and errors; engine `report.json.audio` records mixer
+frames, non-silent frames, peak, transport drops and errors. These measurements
+establish signal delivery, not a guarantee that every game sound is correct.
 
 Every desktop session gets its own dated output directory with `runtime.log`,
 `report.json`, `final.png`, and `viewer-last.png`. Pressing S adds screenshots.

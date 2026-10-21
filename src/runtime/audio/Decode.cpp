@@ -51,14 +51,63 @@ void pcmToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels
     out.duration = out.sampleRate ? double(frames) / double(out.sampleRate) : 0;
 }
 
+constexpr int16_t kSteps[89] = {7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
+    73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724,
+    796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871,
+    5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086,
+    29794, 32767};
+constexpr int kIndex[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
+
+// Microsoft IMA WAV is distinct from Apple IMA4: each block starts with a
+// complete predictor sample, then groups of four bytes per channel, low nibble first.
+bool imaWavToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels,
+                    size_t blockBytes, size_t samplesPerBlock, uint32_t factFrames) {
+    if (channels < 1 || channels > 2 || blockBytes < size_t(4 * channels) ||
+        (blockBytes - 4 * channels) % (4 * channels) != 0 ||
+        samplesPerBlock != 1 + (blockBytes - 4 * channels) * 2 / channels) return false;
+    std::vector<int16_t> result;
+    for (size_t off = 0; off < bytes;) {
+        const size_t count = std::min(blockBytes, bytes - off);
+        if (count < size_t(4 * channels) || (count - 4 * channels) % (4 * channels)) return false;
+        int pred[2]{}, index[2]{};
+        for (int c = 0; c < channels; ++c) {
+            pred[c] = int16_t(readLE16(p + off + c * 4));
+            index[c] = p[off + c * 4 + 2];
+            if (index[c] > 88 || p[off + c * 4 + 3] != 0) return false;
+        }
+        result.push_back(int16_t(pred[0]));
+        result.push_back(int16_t(pred[channels - 1]));
+        for (size_t group = 4 * channels; group < count; group += 4 * channels) {
+            int16_t decoded[2][8]{};
+            for (int c = 0; c < channels; ++c) {
+                for (int i = 0; i < 8; ++i) {
+                    const int nib = (p[off + group + c * 4 + i / 2] >> (4 * (i & 1))) & 15;
+                    const int step = kSteps[index[c]];
+                    const int diff = (step >> 3) + ((nib & 1) ? step >> 2 : 0) +
+                                     ((nib & 2) ? step >> 1 : 0) + ((nib & 4) ? step : 0);
+                    pred[c] = std::clamp(pred[c] + ((nib & 8) ? -diff : diff), -32768, 32767);
+                    index[c] = std::clamp(index[c] + kIndex[nib], 0, 88);
+                    decoded[c][i] = int16_t(pred[c]);
+                }
+            }
+            for (int i = 0; i < 8; ++i) {
+                result.push_back(decoded[0][i]); result.push_back(decoded[channels - 1][i]);
+            }
+        }
+        off += count;
+    }
+    if (factFrames) {
+        if (factFrames > result.size() / 2) return false;
+        result.resize(size_t(factFrames) * 2);
+    }
+    out.stereoPcm = std::move(result);
+    out.channels = channels;
+    out.duration = double(out.stereoPcm.size() / 2) / out.sampleRate;
+    return !out.stereoPcm.empty();
+}
+
 // Apple IMA4: packets of 34 bytes per channel (2-byte header + 64 4-bit samples).
 void ima4ToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels) {
-    static const int16_t kSteps[89] = {7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
-        73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724,
-        796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871,
-        5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086,
-        29794, 32767};
-    static const int kIndex[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
     if (channels < 1) return;
     const size_t packetBytes = size_t(34) * size_t(channels);
     const size_t packets = bytes / packetBytes;
@@ -183,6 +232,8 @@ DecodedAudio decodeKnown(const uint8_t* data, size_t n) {
         size_t pos = 12;
         uint16_t audioFmt = 1, numCh = 1, bitsPerSample = 16;
         uint32_t sr = 44100;
+        uint16_t blockBytes = 0, samplesPerBlock = 0;
+        uint32_t factFrames = 0;
         const uint8_t* pcmPtr = nullptr;
         size_t pcmBytes = 0;
 
@@ -196,6 +247,11 @@ DecodedAudio decodeKnown(const uint8_t* data, size_t n) {
                 numCh = std::max<uint16_t>(1, readLE16(data + pos + 2));
                 sr = std::max<uint32_t>(8000, readLE32(data + pos + 4));
                 bitsPerSample = readLE16(data + pos + 14);
+                blockBytes = readLE16(data + pos + 12);
+                if (chunkSize >= 20 && readLE16(data + pos + 16) >= 2)
+                    samplesPerBlock = readLE16(data + pos + 18);
+            } else if (std::memcmp(hdr, "fact", 4) == 0 && chunkSize >= 4) {
+                factFrames = readLE32(data + pos);
             } else if (std::memcmp(hdr, "data", 4) == 0) {
                 pcmPtr = data + pos;
                 pcmBytes = chunkSize;
@@ -204,6 +260,11 @@ DecodedAudio decodeKnown(const uint8_t* data, size_t n) {
         }
         out.sampleRate = int(sr);
         out.channels = int(numCh);
+        if (audioFmt == 0x11) {
+            if (pcmPtr && bitsPerSample == 4 && imaWavToStereo(out, pcmPtr, pcmBytes,
+                    numCh, blockBytes, samplesPerBlock, factFrames)) return out;
+            return DecodedAudio{};
+        }
         if (pcmPtr && pcmBytes > 0 && (audioFmt == 3 || audioFmt == 0xFFFE || (audioFmt == 1 && bitsPerSample > 16))) {
             // float, WAVE_FORMAT_EXTENSIBLE (PCM inside), 24/32-bit integer
             pcmToStereo(out, pcmPtr, pcmBytes, int(numCh), int(bitsPerSample), audioFmt == 3, false);

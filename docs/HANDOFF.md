@@ -21,7 +21,16 @@ OwnHomeDataMessage/LogicClientHome/LogicClientAvatar state, then NPC sector stat
 See the restoration document for exact addresses, protocol limitations and
 commands. The native game binary/assets are unchanged; networking defaults off.
 
-The fresh local suite passes **71 runtime checks**, **six Python protocol tests**,
+Audio checkpoint: shared IMA WAV decoding now covers all 107 pinned-client IMA
+assets, compared sample-for-sample against libsndfile after `fact` trimming.
+The desktop viewer streams actual mixer PCM to SDL/PulseAudio; install libpulse0
+on WSLg. It records device underruns/errors and mixer signal/drop statistics.
+Clash produces non-silent loading audio. Startup priming reduced frequent
+underruns to one in 45 seconds; speaker audibility, combat and iPhone audio still
+need checking. The pinned executable is armv7 only, so re-signing it does not
+provide a native iOS 11+ sideload. Read the audio checkpoint in the restoration doc.
+
+The fresh local suite passes **75 runtime checks**, **six Python protocol tests**,
 and **18 shader-source checks**. Windows-mounted checkouts now build through a
 checksum-synchronized ext4 source mirror (`1201143`) to improve compilation and
 avoid timestamp-related stale objects. The measured compiler-front-end change
@@ -66,7 +75,7 @@ verify the fix across all apps.
 
 ```sh
 cmake -S . -B build -G Ninja && ninja -C build hvm hvm_tests   # host build (Linux/macOS); needs zlib, sqlite3
-build/hvm_tests fulltest          # 71 runtime checks, all must pass
+build/hvm_tests fulltest          # 75 runtime checks, all must pass
 build/hvm run <App.app> --home <dir> --run-for 30 [--keep-going] [--screenshot f.png] [--report r.json]
       [--graceful] [--lifecycle bg@8,fg@13] [--launches 2] [--trace] [--tap x,y@t] [--drag ...]
 tools/compat.py scan <ipas|apps|dirs> --out compat --seconds 30 [--relaunch] [--only a,b]   # see docs/COMPAT.md
