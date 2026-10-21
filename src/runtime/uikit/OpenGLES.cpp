@@ -2520,6 +2520,8 @@ ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx, Dr
         for (auto& varying : p.varyings)
             std::copy_n(&values[varying.vertexSlot], varying.width, &sv.varyings[varying.offset]);
     }
+    // Divide by the signed w. Vertices with w<=0 or z<-w are not safe to project;
+    // drawPrimitives clips those in homogeneous space and reprojects the result.
     const float w = (std::abs(sv.clip.w) > 1e-6f) ? sv.clip.w : 1.0f;
     sv.invW = 1.0f / w;
     sv.ndcX = sv.clip.x * sv.invW;
@@ -2625,8 +2627,109 @@ const Texture2D* boundTextureForDraw(ContextData& c, SharegroupData& sg) {
     return nullptr; // GLES2 samples each declared sampler through the interpreter.
 }
 
+// Guard used by the perspective divide. Matches the historical epsilon in shadeVertex.
+constexpr float kNearWEpsilon = 1e-6f;
+
+// Inside the OpenGL near plane (z >= -w) and far enough from the w=0 singularity to divide.
+bool inFrontOfNearPlane(const ShadedVertex& v) {
+    return std::isfinite(v.clip.x) && std::isfinite(v.clip.y) && std::isfinite(v.clip.z) &&
+           std::isfinite(v.clip.w) && v.clip.w > kNearWEpsilon && (v.clip.z + v.clip.w) >= 0.0f;
+}
+
+// plane 0: near plane z+w >= 0. plane 1: w >= epsilon, so the divide stays finite.
+float nearClipDistance(const ShadedVertex& v, int plane) {
+    return plane == 0 ? (v.clip.z + v.clip.w) : (v.clip.w - kNearWEpsilon);
+}
+
+// Linear in clip space. Varyings, color and UVs must be lerped before the divide;
+// the rasterizer then applies perspective correction with the new 1/w.
+ShadedVertex interpolateInClipSpace(const ShadedVertex& a, const ShadedVertex& b, float t) {
+    ShadedVertex o;
+    auto lerp = [t](float p, float q) { return p + (q - p) * t; };
+    o.clip.x = lerp(a.clip.x, b.clip.x);
+    o.clip.y = lerp(a.clip.y, b.clip.y);
+    o.clip.z = lerp(a.clip.z, b.clip.z);
+    o.clip.w = lerp(a.clip.w, b.clip.w);
+    o.color.x = lerp(a.color.x, b.color.x);
+    o.color.y = lerp(a.color.y, b.color.y);
+    o.color.z = lerp(a.color.z, b.color.z);
+    o.color.w = lerp(a.color.w, b.color.w);
+    o.u = lerp(a.u, b.u);
+    o.v = lerp(a.v, b.v);
+    for (int i = 0; i < 32; ++i) o.varyings[i] = lerp(a.varyings[i], b.varyings[i]);
+    return o;
+}
+
+void projectShadedVertex(ShadedVertex& sv, const ContextData& c) {
+    const float invW = 1.0f / sv.clip.w;
+    sv.invW = invW;
+    sv.ndcX = sv.clip.x * invW;
+    sv.ndcY = sv.clip.y * invW;
+    sv.ndcZ = sv.clip.z * invW;
+    sv.screenX = float(c.viewport[0]) + (sv.ndcX * 0.5f + 0.5f) * float(c.viewport[2]);
+    sv.screenY = float(c.viewport[1]) + (sv.ndcY * 0.5f + 0.5f) * float(c.viewport[3]);
+    sv.screenZ = c.depthRange[0] + (sv.ndcZ * 0.5f + 0.5f) * (c.depthRange[1] - c.depthRange[0]);
+}
+
+// Sutherland-Hodgman. Output keeps the input winding. A triangle becomes at most
+// 4 vertices against one plane and 5 against both, so the buffers hold 8.
+void clipPolygonNear(const ShadedVertex* in, int nIn, ShadedVertex* out, int& nOut, int plane) {
+    nOut = 0;
+    if (nIn <= 0) return;
+    for (int i = 0; i < nIn; ++i) {
+        const ShadedVertex& cur = in[i];
+        const ShadedVertex& prev = in[(i + nIn - 1) % nIn];
+        const float dCur = nearClipDistance(cur, plane);
+        const float dPrev = nearClipDistance(prev, plane);
+        const bool curIn = dCur >= 0.0f;
+        const bool prevIn = dPrev >= 0.0f;
+        if (curIn != prevIn) {
+            const float denom = dPrev - dCur;
+            if (std::abs(denom) > 1e-20f && nOut < 8)
+                out[nOut++] = interpolateInClipSpace(prev, cur, dPrev / denom);
+        }
+        if (curIn && nOut < 8) out[nOut++] = cur;
+    }
+}
+
+bool clipSegmentNear(ShadedVertex& a, ShadedVertex& b) {
+    for (int plane = 0; plane < 2; ++plane) {
+        const float da = nearClipDistance(a, plane);
+        const float db = nearClipDistance(b, plane);
+        const bool aIn = da >= 0.0f;
+        const bool bIn = db >= 0.0f;
+        if (!aIn && !bIn) return false;
+        if (aIn && bIn) continue;
+        const float denom = da - db;
+        if (std::abs(denom) < 1e-20f) return false;
+        const ShadedVertex hit = interpolateInClipSpace(a, b, da / denom);
+        if (!aIn) a = hit;
+        else b = hit;
+    }
+    return a.clip.w > kNearWEpsilon && b.clip.w > kNearWEpsilon &&
+           std::isfinite(a.clip.w) && std::isfinite(b.clip.w);
+}
+
 void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
-                       const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2, DrawBudget* budget) {
+                       const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2,
+                       DrawBudget* budget, bool clipped = false) {
+    if (!clipped && (!inFrontOfNearPlane(v0) || !inFrontOfNearPlane(v1) || !inFrontOfNearPlane(v2))) {
+        ShadedVertex polyA[8], polyB[8];
+        polyA[0] = v0;
+        polyA[1] = v1;
+        polyA[2] = v2;
+        int nA = 3, nB = 0;
+        clipPolygonNear(polyA, nA, polyB, nB, 0);
+        clipPolygonNear(polyB, nB, polyA, nA, 1);
+        if (nA < 3) return;
+        for (int i = 0; i < nA; ++i) {
+            if (!(polyA[i].clip.w > kNearWEpsilon) || !std::isfinite(polyA[i].clip.w)) return;
+            projectShadedVertex(polyA[i], c);
+        }
+        for (int i = 1; i + 1 < nA; ++i)
+            rasterizeTriangle(c, sg, rt, polyA[0], polyA[i], polyA[i + 1], budget, true);
+        return;
+    }
     for (auto* v : {&v0, &v1, &v2})
         if (!std::isfinite(v->screenX) || !std::isfinite(v->screenY) || !std::isfinite(v->screenZ)) return;
     const float area = (v1.screenX - v0.screenX) * (v2.screenY - v0.screenY) -
@@ -2776,7 +2879,15 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
 }
 
 void rasterizeLine(ContextData& c, SharegroupData& sg, RenderTarget& rt,
-                   const ShadedVertex& v0, const ShadedVertex& v1, DrawBudget* budget) {
+                   const ShadedVertex& v0, const ShadedVertex& v1, DrawBudget* budget, bool clipped = false) {
+    if (!clipped && (!inFrontOfNearPlane(v0) || !inFrontOfNearPlane(v1))) {
+        ShadedVertex a = v0, b = v1;
+        if (!clipSegmentNear(a, b)) return;
+        projectShadedVertex(a, c);
+        projectShadedVertex(b, c);
+        rasterizeLine(c, sg, rt, a, b, budget, true);
+        return;
+    }
     const float dx = v1.screenX - v0.screenX, dy = v1.screenY - v0.screenY;
     const int steps = std::max(1, int(std::ceil(std::max(std::abs(dx), std::abs(dy)))));
     const Texture2D* tex = boundTextureForDraw(c, sg);
@@ -2872,6 +2983,7 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
         case GL_POINTS: {
             for (const auto& v : verts) {
                 if (lim && lim->exceeded) break;
+                if (!inFrontOfNearPlane(v)) continue;
                 const bool shaded = c->api != 1 && c->currentProgram != 0;
                 const float ps = shaded && v.shaderPointSize > 0.f ? v.shaderPointSize : c->pointSize;
                 const int r = std::max(0, int(ps / 2.0f));
