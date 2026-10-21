@@ -205,7 +205,6 @@ def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float) -> 
         "--report", report_path,
         "--screenshot", shot_path,
         "--quiet",
-        "--graceful",
     ]
     if audio.fd is not None:
         cmd.extend(["--audio-fd", str(audio.fd)])
@@ -215,7 +214,7 @@ def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float) -> 
         "--run-for", _seconds_arg(seconds),
         "--report", "<work>/hvm-report.json",
         "--screenshot", "<work>/frame.png",
-        "--quiet", "--graceful",
+        "--quiet",
     ]
     if audio.fd is not None:
         display_cmd.extend(["--audio-fd", "<datagram>"])
@@ -513,7 +512,9 @@ def _round_numbers(value: dict) -> dict:
     return out
 
 
-_UUID = re.compile(r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b")
+_UUID = re.compile(
+    r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f])"
+)
 _KEY = re.compile(r"(?i)((?:key|token|secret|password)\s*(?:=|:|is\s*[:=])\s*)(\S+)")
 
 

@@ -73,7 +73,7 @@ Attention, not a failure: a new runtime-only missing function. A 3 second run do
 
 Frame signals sample the PNG (about 80 by 120 steps). Near-black is RGB under 16. Near-white is RGB over 240. `all-black` / `all-white` means that class is at least 97% of the samples. `mostly-one-color` means one 4-bit bin is at least 90% and is recorded as a signal, not a regression by itself. Angry Birds can be mostly dark without being a single-color failure. The audit said not to treat a 3 second Angry Birds run as a title-screen proof.
 
-Audio: the harness passes a `socketpair` datagram as `--audio-fd` and drains it so the mixer does not stall the guest. `silent` means the mixer produced samples and they were zero. `not-measured` means the socket could not be created. This is not device audio.
+Audio: the harness passes a `socketpair` datagram as `--audio-fd` and drains it so the mixer does not stall the guest. `silent` means the mixer produced samples and they were zero. `not-measured` means the socket could not be created. This is not device audio. The smoke uses a hard `--run-for` stop. `--graceful` lets the guest resign active first and can replace the last frame with a shutdown frame, so it is not the default.
 
 ## Headless limits
 

@@ -132,6 +132,7 @@ class HarnessFlowTests(unittest.TestCase):
         text = runner._redact(
             "Application's key is: abcdef0123456789-dead\n"
             "UUID is: 0A7969C8-CAAD-45CB-8C38-0D643B269414\n"
+            "file s_0A7969C8-CAAD-45CB-8C38-0D643B269414.yml\n"
             "path /workspace/build/x\n",
             "/workspace",
         )
