@@ -69,7 +69,7 @@ Clash Royale's pinned hash matches `tools/clash_royale_probe.py`. The entry is o
 - presented frames dropping from a positive count to zero
 - frame signal moving from `varied` to `all-black` or `all-white`
 
-Attention, not a failure: a new runtime-only missing function. A 3 second run does not always reach the same call. Informational: MIPS, average frame time (±25%), audio sample counts, page-size differences, signal changes that are not a blanking of a varied frame.
+Attention, not a failure: a new runtime-only missing function. A 3 second run does not always reach the same call. Imports and misses whose text says the feature is disabled, offline, unavailable, or not supported are clustered as signals (`unavailable`), because several of those stubs are deliberate. Zero-filled data symbols (`kCFNumberNaN` and the infinities) are the same kind of signal. Informational: MIPS, average frame time (±25%), audio sample counts, page-size differences, signal changes that are not a blanking of a varied frame.
 
 Frame signals sample the PNG (about 80 by 120 steps). Near-black is RGB under 16. Near-white is RGB over 240. `all-black` / `all-white` means that class is at least 97% of the samples. `mostly-one-color` means one 4-bit bin is at least 90% and is recorded as a signal, not a regression by itself. Angry Birds can be mostly dark without being a single-color failure. The audit said not to treat a 3 second Angry Birds run as a title-screen proof.
 
@@ -109,7 +109,7 @@ Verified by reading the tree and by what this Linux VM can execute. The VM is x8
 
 `tools/compat_harness/schema/report.schema.json` is Draft 2020-12 for external validators. CI uses `tools/compat_harness/schema_check.py`, which checks the same required fields with the standard library. `python3 tools/hvm_compat.py validate report.json` runs that checker.
 
-Screenshots and IPA bytes are not embedded. Logs are truncated and the repository prefix is stripped. Baseline files under `docs/dev-system/baselines/` are JSON only.
+Screenshots and IPA bytes are not embedded. Logs are truncated, the repository prefix is stripped, and analytics keys and UUIDs in guest logs are redacted. Baseline files under `docs/dev-system/baselines/` are JSON only.
 
 ## CI
 
