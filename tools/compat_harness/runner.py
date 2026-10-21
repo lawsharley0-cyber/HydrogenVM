@@ -9,6 +9,7 @@ import datetime
 import json
 import os
 import platform
+import re
 import socket
 import subprocess
 import sys
@@ -512,10 +513,23 @@ def _round_numbers(value: dict) -> dict:
     return out
 
 
+_UUID = re.compile(r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b")
+_KEY = re.compile(r"(?i)((?:key|token|secret|password)\s*(?:=|:|is\s*[:=])\s*)(\S+)")
+
+
 def _redact(text: str, root: str) -> str:
+    """Drop host paths, guest analytics keys, and UUIDs before a report is stored."""
     if root and root in text:
         text = text.replace(root + os.sep, "").replace(root, ".")
-    return text
+    text = _KEY.sub(lambda m: m.group(1) + "<redacted>", text)
+    text = _UUID.sub("<uuid>", text)
+    cleaned = []
+    for ch in text:
+        if ch in "\n\t\r" or 32 <= ord(ch) < 127:
+            cleaned.append(ch)
+        else:
+            cleaned.append("?")
+    return "".join(cleaned)
 
 
 def _seconds_arg(seconds: float) -> str:

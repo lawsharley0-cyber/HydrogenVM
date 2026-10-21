@@ -13,6 +13,11 @@ import re
 _PC_LINE = re.compile(r"^\s*pc\s+(.+)$", re.MULTILINE)
 _HEX = re.compile(r"0x[0-9a-fA-F]+")
 _CLASS = re.compile(r"Missing class (\S+)")
+_DATA = re.compile(r"Missing data symbol (.+?) \(using zeros\)")
+_UNAVAILABLE = re.compile(
+    r" \(([^)]*(?:disabled|offline|unavailable|not supported)[^)]*)\)$",
+    re.IGNORECASE,
+)
 _GL = re.compile(r"^_?(gl|EAGL)")
 _AUDIO = re.compile(r"^_?(al[A-Z]|alc|Audio|ExtAudio|AU[A-Z]|AV[A-Z])")
 _TEXT = re.compile(r"^_?(CG|CT|kCG|kCT)")
@@ -72,46 +77,34 @@ def clusters_for_app(app: dict) -> list[dict]:
     if app.get("crashed") or (app.get("crashReport") or "").strip():
         add(_fault_cluster(app.get("crashReport") or ""))
     for name in app.get("unimplementedImports") or []:
-        area, owner, group = owner_for_symbol(name)
-        kind = "gl_feature" if area == "gl" else "missing_symbol"
-        add({
-            "kind": kind,
-            "key": name,
-            "area": area,
-            "likelyOwner": owner,
-            "group": group,
-            "severity": "failure",
-            "detail": f"unimplemented import {name}",
-        })
+        _add_symbol(add, str(name), from_import=True)
     for name in app.get("missingFunctions") or []:
-        bare = re.sub(r" \([^)]*\)$", "", str(name))
-        area, owner, group = owner_for_symbol(bare)
-        kind = "missing_method" if bare.startswith(("-[", "+[")) else (
-            "gl_feature" if area == "gl" else "missing_symbol"
-        )
-        add({
-            "kind": kind,
-            "key": bare,
-            "area": area,
-            "likelyOwner": owner,
-            "group": group,
-            "severity": "failure",
-            "detail": str(name)[:300],
-        })
+        _add_symbol(add, str(name), from_import=False)
     for warning in app.get("warnings") or []:
         message = warning.get("message", "") if isinstance(warning, dict) else str(warning)
         match = _CLASS.match(message)
-        if not match:
-            continue
-        add({
-            "kind": "missing_class",
-            "key": match.group(1),
-            "area": "framework",
-            "likelyOwner": "guest-frameworks",
-            "group": "D",
-            "severity": "signal",
-            "detail": message[:300],
-        })
+        if match:
+            add({
+                "kind": "missing_class",
+                "key": match.group(1),
+                "area": "framework",
+                "likelyOwner": "guest-frameworks",
+                "group": "D",
+                "severity": "signal",
+                "detail": message[:300],
+            })
+        data = _DATA.match(message)
+        if data:
+            area, owner, group = owner_for_symbol(data.group(1))
+            add({
+                "kind": "missing_data",
+                "key": data.group(1),
+                "area": area,
+                "likelyOwner": owner,
+                "group": group,
+                "severity": "signal",
+                "detail": message[:300],
+            })
     frame = app.get("frame") or {}
     signal = frame.get("signal")
     if signal in ("all-black", "all-white", "no-frames"):
@@ -149,6 +142,38 @@ def clusters_for_app(app: dict) -> list[dict]:
             "detail": "mixer datagram send failed; guest audio itself may still be fine",
         })
     return found
+
+
+def _add_symbol(add, name: str, *, from_import: bool) -> None:
+    note = _UNAVAILABLE.search(name)
+    bare = _UNAVAILABLE.sub("", name) if note else re.sub(r" \([^)]*\)$", "", name)
+    area, owner, group = owner_for_symbol(bare)
+    if note:
+        add({
+            "kind": "unavailable",
+            "key": bare,
+            "area": area,
+            "likelyOwner": owner,
+            "group": group,
+            "severity": "signal",
+            "detail": note.group(1)[:300],
+        })
+        return
+    if bare.startswith(("-[", "+[")):
+        kind = "missing_method"
+    elif area == "gl":
+        kind = "gl_feature"
+    else:
+        kind = "missing_symbol"
+    add({
+        "kind": kind,
+        "key": bare if not from_import else name,
+        "area": area,
+        "likelyOwner": owner,
+        "group": group,
+        "severity": "failure",
+        "detail": name[:300],
+    })
 
 
 def aggregate(apps: list[dict]) -> list[dict]:

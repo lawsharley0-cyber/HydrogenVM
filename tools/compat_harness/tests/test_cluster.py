@@ -71,6 +71,23 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(fault["likelyOwner"], "graphics-audio-input")
         self.assertEqual(fault["group"], "B")
 
+    def test_offline_and_missing_data_are_signals(self):
+        clusters = clusters_for_app({
+            "status": "ran",
+            "crashed": False,
+            "loadError": "",
+            "unimplementedImports": [],
+            "missingFunctions": ["SCNetworkReachability (network reported offline)"],
+            "warnings": [
+                {"message": "Missing data symbol kCFNumberNaN (using zeros)", "count": 1},
+            ],
+            "frame": {"signal": "varied"},
+            "audio": {},
+        })
+        kinds = {(c["kind"], c["key"], c["severity"]) for c in clusters}
+        self.assertIn(("unavailable", "SCNetworkReachability", "signal"), kinds)
+        self.assertIn(("missing_data", "kCFNumberNaN", "signal"), kinds)
+
     def test_aggregate_groups_apps(self):
         def app(ident, symbol):
             row = {

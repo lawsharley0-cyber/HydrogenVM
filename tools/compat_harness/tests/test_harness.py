@@ -128,6 +128,19 @@ class HarnessFlowTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(written[0]["path"]))
             self.assertFalse(any(doc["filed"] for doc in written))
 
+    def test_log_redaction_strips_keys_and_uuids(self):
+        text = runner._redact(
+            "Application's key is: abcdef0123456789-dead\n"
+            "UUID is: 0A7969C8-CAAD-45CB-8C38-0D643B269414\n"
+            "path /workspace/build/x\n",
+            "/workspace",
+        )
+        self.assertNotIn("abcdef0123456789", text)
+        self.assertNotIn("0A7969C8", text)
+        self.assertIn("<redacted>", text)
+        self.assertIn("<uuid>", text)
+        self.assertNotIn("/workspace", text)
+
     def test_schema_required_keys_are_enforced(self):
         errors = validate_report({"kind": "hvm-compat-report"})
         self.assertTrue(any("summary" in err for err in errors))
