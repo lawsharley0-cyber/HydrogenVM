@@ -1,4 +1,6 @@
 #include "Process.hpp"
+#include "libc/Unwind.hpp"
+#include "audio/Audio.hpp"
 #include "loader/ElfLoader.hpp"
 #include <cstdarg>
 #include <cstdio>
@@ -31,13 +33,38 @@ std::string demangle(const std::string& sym) {
     return s;
 }
 
+// CoreFoundation-style function names: a verb (Create, Copy, Get, ...) followed by
+// another word or the end ("CFHostCreateWithName", "SecTrustCopyPublicKey").
+bool looksLikeFunction(const std::string& s) {
+    if (s.size() < 3 || s[0] != '_' || s[1] == 'k' || !std::isupper(uint8_t(s[1]))) return false;
+    for (const char* v : {"Create", "Copy", "Get", "Set", "Open", "Close", "Release", "Retain", "Read", "Write", "Dispose", "Invalidate"}) {
+        const size_t n = std::strlen(v);
+        for (size_t at = s.find(v, 2); at != std::string::npos; at = s.find(v, at + 1)) {
+            const size_t after = at + n;
+            if (std::islower(uint8_t(s[at - 1])) || std::isupper(uint8_t(s[at - 1])))
+                if (after == s.size() || std::isupper(uint8_t(s[after]))) return true;
+        }
+    }
+    return false;
+}
+
 bool looksLikeData(const std::string& s) {
+    if (looksLikeFunction(s)) return false;
     auto starts = [&](const char* p) { return s.compare(0, std::strlen(p), p) == 0; };
     auto ends = [&](const char* p) { const size_t n = std::strlen(p); return s.size() >= n && s.compare(s.size() - n, n, p) == 0; };
-    if (starts("__ZTV") || starts("__ZTI") || starts("__ZTS") || starts("__NSConcrete") || starts("_OBJC_")) return true;
+    if (starts("__ZTV") || starts("__ZTI") || starts("__ZTS") || starts("__ZTT") ||
+        starts("__ZSt4cout") || starts("__ZSt4cerr") || starts("__ZSt4clog") || starts("__ZSt3cin") ||
+        starts("__NSConcrete") || starts("_OBJC_")) return true;
+    if (ends("_S_empty_rep_storageE") || ends("_S_max_sizeE") || ends("_S_terminalE")) return true;
     if (s.size() > 2 && s[0] == '_' && s[1] == 'k' && std::isupper(uint8_t(s[2]))) return true;
-    if (ends("Notification") || ends("Key") || ends("Mode") || ends("Domain") || ends("Name") || ends("Exception") ||
-        ends("AttributeName") || ends("Identity") || ends("Callbacks") || ends("CallBacks"))
+    if (s.size() > 2 && s[0] == '_' && std::isupper(uint8_t(s[1])) &&
+        (ends("Notification") || ends("Key") || ends("Mode") || ends("Domain") || ends("Name") || ends("Exception") ||
+         ends("AttributeName") || ends("Identity") || ends("Callbacks") || ends("CallBacks") || ends("Preset") ||
+         starts("_AVCaptureSessionPreset") || starts("_AVMediaType") || starts("_AVLayerVideoGravity") ||
+         starts("_AVAudioSession") || starts("_AVAssetExportPreset") || starts("_AVFileType") ||
+         starts("_UIActivityType") || starts("_UITransitionContext") || starts("_UIFontTextStyle") ||
+         starts("_ADBannerContentSizeIdentifier") || starts("_SLServiceType") ||
+         starts("_ACAccountTypeIdentifier") || starts("_SKStoreProductParameter")))
         return true;
     return false;
 }
@@ -64,7 +91,7 @@ void spawnHostThread(std::function<void()> fn) {
 
 // ----------------------------------------------------------- lifecycle ---
 
-Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)) {
+Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_shared<Audio::Mixer>()) {
     mem_ = std::make_unique<Memory::GuestArena>();
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
@@ -92,11 +119,22 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)) {
     registerLibcSystem(*this);
     registerCxxRuntime(*this);
     registerObjCRuntime(*this);
+    registerUnwinder(*this);
+    registerLibStdcxx(*this);
+    registerLibcPosix(*this);
+    registerZlib(*this);
+    registerLibcNet(*this);
+    registerCommonCrypto(*this);
+    registerSqlite(*this);
     registerFoundation(*this);
     registerUIKit(*this);
 }
 
 Process::~Process() {
+    {
+        std::lock_guard<std::mutex> lk(liveness_->mu);
+        liveness_->alive = false;
+    }
     requestStop();
     // Wait (bounded) for guest threads to notice.
     for (int i = 0; i < 200; ++i) {
@@ -111,7 +149,51 @@ Process::~Process() {
     if (t_thread && &t_thread->proc == this) t_thread = nullptr;
 }
 
-void Process::requestStop() { engine_->requestStop(); }
+void Process::requestStop() {
+    engine_->requestStop();
+    mixer_->stopAll();
+    lifeCv_.notify_all();   // a backgrounded main thread is parked in waitWhileBackgrounded()
+}
+
+void Process::requestGracefulStop(double timeout) {
+    if (stopping() || gracefulStop_.exchange(true)) return;
+    if (!lifecycleHandler_) { requestStop(); return; }
+    lifecycleHandler_(Lifecycle::Terminate);
+    // Watchdog: an app that doesn't get through its shutdown (or never runs its main loop) is stopped anyway.
+    std::thread([this, timeout, live = liveness_] {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::lock_guard<std::mutex> lk(live->mu);
+            if (!live->alive || stopping()) return;
+            if (std::chrono::steady_clock::now() >= end) {
+                log(LogLevel::Warning, "The app didn't finish saving in time; stopping it");
+                requestStop();
+                return;
+            }
+        }
+    }).detach();
+}
+void Process::enterBackground() {
+    if (stopping() || backgrounded_.load() || !lifecycleHandler_) return;
+    lifecycleHandler_(Lifecycle::Background);
+}
+void Process::enterForeground() {
+    if (stopping() || !lifecycleHandler_) return;
+    lifecycleHandler_(Lifecycle::Foreground);
+}
+void Process::setBackgrounded(bool b) {
+    {
+        std::lock_guard<std::mutex> lk(lifeMu_);
+        backgrounded_ = b;
+    }
+    mixer_->setAllPaused(b);
+    lifeCv_.notify_all();
+}
+void Process::waitWhileBackgrounded() {
+    std::unique_lock<std::mutex> lk(lifeMu_);
+    lifeCv_.wait(lk, [&] { return !backgrounded_.load() || stopping() || gracefulStop_.load(); });
+}
 
 void Process::load() {
     const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
@@ -144,7 +226,18 @@ uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) 
     return engine_->registerHle(debugName, [this, fn = std::move(fn), debugName](CPU::Cpu& c) {
         if (cfg_.traceCalls) log(LogLevel::Debug, "→ " + debugName + " (from " + describeAddress(c.r[CPU::kLR]) + ")");
         Ctx x{*this, c, *mem_};
-        fn(x);
+        try {
+            fn(x);
+        } catch (const GuestThrow& g) {
+            landGuestException(x, g.ue);   // e.g. -[NSException raise] inside an app's @try
+        } catch (const ProcessExit&) {
+            // This is intentional process control, not an HLE exception.
+            // Let nested guest calls propagate Halt instead of manufacturing
+            // HostError("stopping") in Engine::callHle.
+            c.exit = CPU::Exit::Halt;
+        } catch (const std::runtime_error& e) {
+            if (!hostErrorHook_ || !hostErrorHook_(x, e)) throw;
+        }
     });
 }
 
@@ -182,7 +275,11 @@ void Process::addMissingSymbolResolver(std::function<uint32_t(const std::string&
 }
 
 uint32_t Process::makeMissingStub(const std::string& name) {
-    if (looksLikeData(name)) {
+    // Data, by name, or because the app only takes its address (never calls it
+    // through a lazy stub) and it has a Cocoa-style constant name (NSFooKey,
+    // UIBackgroundTaskInvalid, NSGregorianCalendar, ...).
+    const bool cocoaName = name.size() > 2 && name[0] == '_' && std::isupper(uint8_t(name[1]));
+    if (looksLikeData(name) || name.compare(0, 5, "__ZTT") == 0 || (cocoaName && !calledImports_.count(name) && !looksLikeFunction(name))) {
         const uint32_t a = defineDataBlock(name, 64);
         log(LogLevel::Warning, "Missing data symbol " + demangle(name) + " (using zeros)");
         return a;
@@ -198,9 +295,20 @@ uint32_t Process::makeMissingStub(const std::string& name) {
 
 uint32_t Process::resolveImport(const Loader::BindRecord& b) {
     if (auto a = lookupSymbol(b.symbol)) return *a;
+    // A weak import that nothing provides is 0, as dyld does: apps weak-link
+    // frameworks newer than their minimum OS and test for nil before use.
+    // Calls through a lazy stub still get a stub that reports the missing
+    // function (tests for availability use the address, not the stub).
+    // Framework constants (strings, numbers) are still provided: they exist on every real device,
+    // and apps that weak-link a framework use them without checking.
+    if (b.weakImport && !b.lazy) {
+        if (b.symbol.compare(0, 6, "_OBJC_") == 0) return 0;
+        for (auto& r : missingResolvers_)
+            if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
+        return 0;
+    }
     for (auto& r : missingResolvers_)
         if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
-    if (b.weakImport) return 0;
     return makeMissingStub(b.symbol);
 }
 
@@ -212,14 +320,27 @@ void Process::bindImports() {
         unresolvedBefore = symbols_.size();
     }
     std::vector<std::string> missingFns;
-    for (const auto& b : image_.binds) {
+    for (const auto& b : image_.binds) if (b.lazy) calledImports_.insert(b.symbol);
+    // Class and metaclass pointers inside the app's own class structures
+    // (superclass, isa) always need a class, even when the import is weak:
+    // dyld would refuse to load an app whose superclass is missing, and a nil
+    // superclass would silently turn the subclass into a root class.
+    const Loader::Section* objcData = image_.findSection("__DATA", "__objc_data");
+    auto inObjcData = [&](uint32_t a) { return objcData && a >= objcData->addr && a < objcData->addr + objcData->size; };
+    for (const auto& b0 : image_.binds) {
+        Loader::BindRecord strong;
+        const bool needsClass = b0.weakImport && inObjcData(b0.address) &&
+            (b0.symbol.rfind("_OBJC_CLASS_$_", 0) == 0 || b0.symbol.rfind("_OBJC_METACLASS_$_", 0) == 0);
+        if (needsClass) { strong = b0; strong.weakImport = false; }
+        const Loader::BindRecord& b = needsClass ? strong : b0;
+        const std::string key = needsClass ? b.symbol + "#class" : (b.weakImport && !b.lazy) ? b.symbol + "#weak" : b.symbol;
         uint32_t target;
-        auto it = cache.find(b.symbol);
+        auto it = cache.find(key);
         if (it != cache.end()) target = it->second;
         else {
             const bool known = lookupSymbol(b.symbol).has_value();
             target = resolveImport(b);
-            cache.emplace(b.symbol, target);
+            cache.emplace(key, target);
             if (!known && target && engine_->isHleAddress(target) &&
                 engine_->hleName(engine_->hleIndex(target)) == b.symbol && !looksLikeData(b.symbol))
                 missingFns.push_back(demangle(b.symbol));
@@ -237,7 +358,30 @@ void Process::bindImports() {
                 break;
         }
     }
+    // Weak binds (coalesced template instantiations, inline functions, operator
+    // new/delete). The app may define these itself (a rebase already put its own
+    // definition in the slot); we only override when HydrogenVM or another image
+    // actually exports the symbol, and we never replace a real value with a
+    // missing-function stub — the app's own weak definition stays.
+    for (const auto& b : image_.weakBinds) {
+        const auto found = lookupSymbol(b.symbol);
+        if (!found) continue;
+        const uint32_t target = *found;
+        switch (b.kind) {
+            case Loader::BindKind::Pointer:
+            case Loader::BindKind::TextAbsolute32:
+                mem_->write<uint32_t>(b.address, target + uint32_t(b.addend));
+                break;
+            case Loader::BindKind::ExternalReloc:
+                mem_->write<uint32_t>(b.address, mem_->read<uint32_t>(b.address) + target);
+                break;
+            case Loader::BindKind::TextPcrel32:
+                mem_->write<uint32_t>(b.address, target + uint32_t(b.addend) - (b.address + 4));
+                break;
+        }
+    }
     (void)unresolvedBefore;
+    unimplementedImports_ = missingFns;
     if (!missingFns.empty()) {
         std::string list;
         for (size_t i = 0; i < missingFns.size(); ++i) list += (i ? ", " : "") + missingFns[i];
@@ -384,6 +528,29 @@ GuestThread* Process::findThread(uint32_t self) {
     return nullptr;
 }
 
+uint32_t& Process::processSlot(const void* key) {
+    std::lock_guard<std::mutex> lk(slotMu_);
+    return slots_[key];   // node-based: the reference stays valid
+}
+uint32_t& Process::threadSlot(const void* key) {
+    const uint32_t tid = currentThread().id;
+    std::lock_guard<std::mutex> lk(slotMu_);
+    return threadSlots_[{key, tid}];
+}
+
+std::vector<uint32_t> Process::liveThreadIds() {
+    std::vector<uint32_t> out{mainThread_->id};
+    std::lock_guard<std::mutex> lk(threadsMu_);
+    for (auto& [k, t] : threads_) if (!t->finished) out.push_back(t->id);
+    return out;
+}
+GuestThread* Process::findThreadById(uint32_t id) {
+    if (mainThread_->id == id) return mainThread_;
+    std::lock_guard<std::mutex> lk(threadsMu_);
+    for (auto& [k, t] : threads_) if (t->id == id && !t->finished) return t.get();
+    return nullptr;
+}
+
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
     auto t = std::make_unique<GuestThread>(*this);
     GuestThread* raw = t.get();
@@ -497,13 +664,13 @@ int Process::run() {
             c.r[CPU::kPC] = image_.entry & ~1u;
             c.thumb = image_.entry & 1;
             const CPU::Exit e = engine_->runToExit(c);
-            if (!exiting_) {
+            if (!exiting_ && !(e == CPU::Exit::Halt && stopping())) {
                 CPU::Engine::captureFault(c, e);
                 finishCrash(c, e);
             }
         }
     } catch (const CPU::GuestFault& f) {
-        if (!exiting_) finishCrash(c, f.exit);
+        if (!exiting_ && !(f.exit == CPU::Exit::Halt && stopping())) finishCrash(c, f.exit);
     } catch (const ProcessExit&) {
         // exit() called directly from host code
     } catch (const std::exception& e) {

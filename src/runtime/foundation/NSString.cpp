@@ -329,6 +329,7 @@ bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc
     x.mem.copyIn(buf, b.c_str(), b.size() + 1);
     return true;
 }
+bool s_canConvert(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; encodeBytes(sv(x, self), enc, false, &ok); return ok; }
 uint32_t s_lengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; const std::string b = encodeBytes(sv(x, self), enc, false, &ok); return ok ? uint32_t(b.size()) : 0; }
 uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode ? 2 : 1); }
 id s_dataUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
@@ -484,11 +485,13 @@ namespace fsys = std::filesystem;
 std::string pathOf(Ctx& x, id s) { return toUtf8(sv(x, s)); }
 std::string trimSlash(std::string p) { while (p.size() > 1 && p.back() == '/') p.pop_back(); return p; }
 id s_appendingPathComponent(Ctx& x, id self, SEL, id comp) {
-    std::string a = trimSlash(pathOf(x, self)), b = pathOf(x, comp);
-    while (!b.empty() && b[0] == '/') b.erase(0, 1);
+    const std::string a = trimSlash(pathOf(x, self));
+    const std::string b = pathOf(x, comp);
     if (a.empty()) return makeString(x, b);
     if (b.empty()) return makeString(x, a);
-    return makeString(x, a == "/" ? "/" + b : a + "/" + b);
+    std::string bTrim = b;
+    while (!bTrim.empty() && bTrim[0] == '/') bTrim.erase(0, 1);
+    return makeString(x, a == "/" ? "/" + bTrim : a + "/" + bTrim);
 }
 id s_appendingPathExtension(Ctx& x, id self, SEL, id ext) { return makeString(x, trimSlash(pathOf(x, self)) + "." + pathOf(x, ext)); }
 id s_lastPathComponent(Ctx& x, id self, SEL) {
@@ -773,6 +776,8 @@ std::string encodeBytes(const std::u16string& s, uint32_t enc, bool lossy, bool*
     }
 }
 
+uint32_t c_defaultCStringEncoding(Ctx&, id, SEL) { return 4; }   // NSUTF8StringEncoding
+
 void registerStrings(Process& p, ObjC::Runtime& r) {
     auto& st = S(p);
     ObjC::ClassBuilder ns = r.defineClass("NSString", "NSObject");
@@ -787,6 +792,7 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
     ns.cm<&ns_alloc>("alloc").cm<&ns_allocWithZone>("allocWithZone:")
       .cm<&c_string>("string").cm<&c_stringWithString>("stringWithString:").cm<&c_stringWithUTF8String>("stringWithUTF8String:")
       .cm<&c_stringWithCString>("stringWithCString:encoding:").cm<&c_stringWithCStringDefault>("stringWithCString:")
+      .cm<&c_defaultCStringEncoding>("defaultCStringEncoding", "I@:")
       .cm<&c_stringWithFormat>("stringWithFormat:").cm<&c_stringWithFormat>("localizedStringWithFormat:")
       .cm<&c_stringWithCharacters>("stringWithCharacters:length:")
       .cm<&c_stringWithContentsOfFile>("stringWithContentsOfFile:encoding:error:")
@@ -804,7 +810,7 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_getCharactersRange>("getCharacters:range:", "v@:^S{_NSRange=II}").m<&s_getCharacters>("getCharacters:")
       .m<&s_UTF8String>("UTF8String", "*@:").m<&s_UTF8String>("cString").m<&s_UTF8String>("lossyCString")
       .m<&s_cStringUsingEncoding>("cStringUsingEncoding:").m<&s_getCString>("getCString:maxLength:encoding:")
-      .m<&s_lengthOfBytes>("lengthOfBytesUsingEncoding:").m<&s_maxLengthOfBytes>("maximumLengthOfBytesUsingEncoding:")
+      .m<&s_canConvert>("canBeConvertedToEncoding:", "c@:I").m<&s_lengthOfBytes>("lengthOfBytesUsingEncoding:").m<&s_maxLengthOfBytes>("maximumLengthOfBytesUsingEncoding:")
       .m<&s_dataUsingEncoding>("dataUsingEncoding:").m<&s_dataUsingEncodingLossy>("dataUsingEncoding:allowLossyConversion:")
       .m<&s_isEqualToString>("isEqualToString:", "c@:@").m<&s_isEqual>("isEqual:", "c@:@").m<&s_hash>("hash", "I@:")
       .m<&s_compare>("compare:", "i@:@").m<&s_compareOptions>("compare:options:").m<&s_compareOptionsRange>("compare:options:range:")

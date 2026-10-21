@@ -22,7 +22,11 @@ final class RunModel {
     var exitMessage: String?
     /// Set when the session ended because the user pressed Stop.
     private(set) var finished = false
+    /// The app was asked to close and is saving.
+    private(set) var closing = false
     @ObservationIgnored private var userStopped = false
+    @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     @ObservationIgnored private var session: HVMSession?
     @ObservationIgnored private let motion = CMMotionManager()
@@ -87,6 +91,8 @@ final class RunModel {
                 if Self.automation {
                     Self.console("[hvm-exit] status=\(code)\(crash.map { " crash:\n" + $0 } ?? "")")
                 }
+                self.closing = false
+                self.endBackgroundTask()
                 if self.userStopped { self.finished = true }
                 else if let crash { self.crashReport = crash }
                 else { self.exitMessage = "The app exited (status \(code))." }
@@ -95,6 +101,7 @@ final class RunModel {
         session = s
         running = true
         s.start()
+        observeHostLifecycle()
         UIApplication.shared.isIdleTimerDisabled = true
         startSensors()
         fpsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -106,9 +113,13 @@ final class RunModel {
         }
     }
 
+    /// Close the app the way iOS would: it gets resign-active / background / terminate and
+    /// saves, then stops (onExit follows). The session force-stops a hung app after a few seconds.
     func stop() {
+        guard running, !closing else { return }
         userStopped = true
-        session?.stop()
+        closing = true
+        session?.stopGracefully()
         stopSensors()
     }
 
@@ -116,7 +127,54 @@ final class RunModel {
         stop()
         fpsTimer?.invalidate()
         fpsTimer = nil
+        for o in lifecycleObservers { NotificationCenter.default.removeObserver(o) }
+        lifecycleObservers.removeAll()
+        endBackgroundTask()
         UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    /// HydrogenVM itself going to the background: pass it on so the game saves, and keep
+    /// HydrogenVM awake long enough for that (the game is then paused, using no CPU).
+    private func observeHostLifecycle() {
+        let nc = NotificationCenter.default
+        lifecycleObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.running else { return }
+                self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Save game") { [weak self] in
+                    MainActor.assumeIsolated { self?.endBackgroundTask() }
+                }
+                self.session?.enterBackground()
+                self.stopSensors()
+                // Saving is quick; give the game a few seconds, then let iOS suspend us.
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(4))
+                    self?.endBackgroundTask()
+                }
+            }
+        })
+        lifecycleObservers.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.running, !self.closing else { return }
+                self.endBackgroundTask()
+                self.session?.enterForeground()
+                self.startSensors()
+            }
+        })
+        lifecycleObservers.append(nc.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.running else { return }
+                // HydrogenVM is being quit: save what we can in the little time iOS allows.
+                self.session?.stopGracefully()
+                let deadline = Date().addingTimeInterval(1.5)
+                while self.running && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+            }
+        })
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
     }
 
     func touch(_ phase: HVMTouchPhase, at p: CGPoint, finger: Int) {
@@ -173,7 +231,14 @@ struct RunView: View {
                             model.touch(phase, at: point, finger: finger)
                         }
                         .frame(width: fit.width, height: fit.height)
-                        if model.frame == nil && model.running {
+                        if model.closing {
+                            VStack(spacing: 12) {
+                                ProgressView().tint(.white)
+                                Text("Saving \(app.title)…").foregroundStyle(.white).font(.callout)
+                            }
+                            .padding(20)
+                            .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
+                        } else if model.frame == nil && model.running {
                             VStack(spacing: 12) {
                                 ProgressView().tint(.white)
                                 Text("Starting \(app.title)…").foregroundStyle(.white.opacity(0.8)).font(.callout)
@@ -211,9 +276,10 @@ struct RunView: View {
 
     private var toolbar: some View {
         HStack(spacing: 16) {
-            Button { model.stop(); if !model.running { dismiss() } } label: {
+            Button { if model.running { model.stop() } else { dismiss() } } label: {
                 Label(model.running ? "Stop" : "Close", systemImage: model.running ? "stop.fill" : "xmark")
             }
+            .disabled(model.closing)
             Spacer()
             Text(app.title).font(.subheadline.weight(.semibold)).lineLimit(1)
             if model.running { Text("\(model.fps) fps").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }

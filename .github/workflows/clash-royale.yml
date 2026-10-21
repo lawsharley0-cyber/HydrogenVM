@@ -1,0 +1,117 @@
+name: Clash Royale investigation
+
+on:
+  push:
+    branches: [gemini-merge]
+    paths:
+      - '.github/workflows/clash-royale.yml'
+      - 'tools/clash_royale_probe.py'
+      - 'tools/clash_protocol_probe.py'
+      - 'tools/test_clash_protocol_probe.py'
+      - 'tools/desktop.py'
+      - 'tools/local_test.sh'
+      - 'src/**'
+      - 'tests/runner/**'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clash-investigation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  investigate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch known regression fixtures
+        uses: actions/checkout@v4
+        with:
+          ref: ceba289b57cbda0e229e778966f195bcc1437fa0
+          path: regression-fixtures
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /AngryBirds_v1.0_os30.ipa
+            /Tiny_Tower_v1.0_os30.ipa
+            /Art_Of_Glow_v1.1.2_os313.ipa
+      - name: Install tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq clang llvm cmake ninja-build zlib1g-dev libsqlite3-dev libsndfile1 python3-pil ccache
+      - name: Cache C++ compilation
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: clash-ccache-${{ runner.os }}-${{ hashFiles('src/**', 'tests/runner/**', 'CMakeLists.txt') }}
+          restore-keys: clash-ccache-${{ runner.os }}-
+      - name: Validate probe syntax
+        run: |
+          python3 -m py_compile tools/clash_royale_probe.py tools/desktop.py tools/desktop_audio.py tools/test_ima_wav_corpus.py
+          python3 -m py_compile tools/clash_wire.py tools/clash_home_state.py tools/clash_home_probe.py
+          python3 tools/test_clash_protocol_probe.py
+          python3 tools/test_clash_home_state.py
+          bash -n tools/local_test.sh
+      - name: Inspect pinned client and inventory assets
+        run: python3 tools/clash_royale_probe.py --out clash-report
+      - name: Build current engine
+        run: |
+          cmake -S . -B build-clash -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-clash --target hvm hvm_tests hvm_machodump --parallel 2
+      - name: Runtime regression checks
+        run: build-clash/hvm_tests fulltest
+      - name: Compare pinned IMA WAV audio with independent decoder
+        run: python3 tools/test_ima_wav_corpus.py clash-report/unpacked --hvm-tests build-clash/hvm_tests --out clash-report/ima-wav-comparison.json --require-count 107
+      - name: Verify initial home and NPC request across two local launches
+        run: python3 tools/clash_home_probe.py --hvm build-clash/hvm --ipa clash-report/client.ipa --out clash-home --seconds 90 --launches 2
+      - name: Trace Clash Royale startup
+        run: |
+          set +e
+          HVM_DUMP_SHADERS=clash-report/shaders timeout 40s build-clash/hvm run clash-report/client.ipa --home clash-trace-home --run-for 10 --trace --report clash-report/startup-trace.json > clash-report/startup-trace.txt 2>&1
+          result=$?
+          set -e
+          echo "Trace process exit: $result"
+          tail -180 clash-report/startup-trace.txt
+      - name: Validate captured shader corpus
+        run: build-clash/hvm_tests shaders clash-report/shaders
+      - name: Strict and exploratory compatibility runs
+        run: |
+          python3 tools/compat.py scan clash-report/client.ipa regression-fixtures/AngryBirds_v1.0_os30.ipa regression-fixtures/Tiny_Tower_v1.0_os30.ipa regression-fixtures/Art_Of_Glow_v1.1.2_os313.ipa --hvm build-clash/hvm --out clash-compat --seconds 15 --jobs 1 --relaunch
+          python3 -c 'import json; d=json.load(open("clash-compat/results.json")); assert len(d["apps"]) == 4, "Expected Clash Royale and three regression fixtures"'
+          cat clash-compat/REPORT.md
+          cat clash-compat/results.json
+      - name: Publish investigation summary
+        if: always()
+        run: |
+          if test -f clash-compat/REPORT.md; then cat clash-compat/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if test -f clash-report/metadata.json; then
+            echo '### Pinned client metadata' >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat clash-report/metadata.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Save diagnostics (excludes IPA, extracted app, and game saves)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clash-royale-investigation
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            clash-report/*.json
+            clash-report/*.txt
+            clash-home/run-*/verification.json
+            clash-home/run-*/protocol-events.json
+            clash-home/run-*/*.log
+            clash-home/run-*/*.png
+            clash-compat/REPORT.md
+            clash-compat/results.json
+            clash-compat/runs/**/*.json
+            clash-compat/shots/*.png

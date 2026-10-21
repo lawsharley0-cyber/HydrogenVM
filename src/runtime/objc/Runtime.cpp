@@ -120,6 +120,13 @@ Class Runtime::getClass(const std::string& name) const {
     return it == classByName_.end() ? 0 : it->second;
 }
 
+std::vector<Class> Runtime::classList() const {
+    std::shared_lock<std::shared_mutex> lk(classMu_);
+    std::vector<Class> out;
+    for (auto& [c, ci] : classes_) if (!ci->isMeta && !ci->stub) out.push_back(c);
+    return out;
+}
+
 bool Runtime::isSubclass(Class sub, Class cls) const {
     for (Class c = sub; c; c = superclass(c)) if (c == cls) return true;
     return false;
@@ -287,7 +294,41 @@ IMP Runtime::lookupForSend(Class cls, SEL s) {
 
 bool Runtime::respondsTo(id obj, SEL s) { return obj && lookup(classOf(obj), s) != 0; }
 
-void Runtime::unrecognized(id self, SEL s) {
+std::string Runtime::methodTypes(Class cls, SEL s) {
+    for (Class c = cls; c; c = superclass(c)) {
+        const ClassInfo* k = info(c);
+        if (!k) break;
+        if (k->methods.count(s)) {
+            auto t = k->types.find(s);
+            return t == k->types.end() ? std::string() : t->second;
+        }
+    }
+    return {};
+}
+
+IMP Runtime::unrecognized(id self, SEL s) {
+    if (forwardHook && s != selForwardingTarget)
+        if (const IMP f = forwardHook(self, s)) return f;
+    const Class cls = classOf(self);
+    bool stub = false, framework = false;
+    for (Class c = cls; c; c = superclass(c)) {
+        const ClassInfo* k = info(c);
+        if (!k) break;
+        if (k->stub) { stub = true; break; }
+        if (k->host && k->name != "NSObject") { framework = true; break; }
+    }
+    if (stub || (framework && !proc_.config().stopOnMissingFunction)) {
+        const ClassInfo* ci = info(cls);
+        proc_.reportMissing(std::string(ci && ci->isMeta ? "+[" : "-[") + className(cls) + " " + selName(s) + "] (returned nil)");
+        std::call_once(nilImpOnce_, [&] {
+            nilImp_ = proc_.registerHostFunction("hvm_nil_message", [](Ctx& x) { x.cpu.r[0] = 0; x.cpu.r[1] = 0; });
+        });
+        return nilImp_;
+    }
+    unrecognizedFatal(self, s);
+}
+
+void Runtime::unrecognizedFatal(id self, SEL s) {
     const Class cls = classOf(self);
     const ClassInfo* ci = info(cls);
     const bool meta = ci && ci->isMeta;
@@ -319,7 +360,7 @@ uint64_t Runtime::send(CPU::Cpu& c, id self, SEL s, std::initializer_list<uint32
             const id target = id(proc_.callGuest(c, ft, {self, selForwardingTarget, s}));
             if (target && target != self) return send(c, target, s, args);
         }
-        unrecognized(self, s);
+        imp = unrecognized(self, s);
     }
     std::vector<uint32_t> a;
     a.reserve(args.size() + 2);
@@ -331,8 +372,8 @@ uint64_t Runtime::send(CPU::Cpu& c, id self, SEL s, std::initializer_list<uint32
 
 uint64_t Runtime::sendSuper(CPU::Cpu& c, id self, Class startClass, SEL s, std::initializer_list<uint32_t> args) {
     if (!self) return 0;
-    const IMP imp = lookup(startClass, s);
-    if (!imp) unrecognized(self, s);
+    IMP imp = lookup(startClass, s);
+    if (!imp) imp = unrecognized(self, s);
     std::vector<uint32_t> a{self, s};
     a.insert(a.end(), args.begin(), args.end());
     return proc_.callGuest(c, imp, a);

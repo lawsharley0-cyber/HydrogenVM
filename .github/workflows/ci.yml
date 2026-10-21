@@ -29,7 +29,10 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang lld cmake ninja-build zlib1g-dev uuid-dev python3
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libsqlite3-dev uuid-dev python3
+          command -v llvm-nm && llvm-nm --version | head -1
+      - name: Verify IPA packaging checks
+        run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
       - name: Cache ld64 (cctools-port)
         id: cctools
         uses: actions/cache@v4
@@ -83,27 +86,46 @@ jobs:
       - name: Generate Xcode project
         working-directory: app
         run: xcodegen
-      - name: Build for device (unsigned)
+      - name: Build for device (unsigned, Release)
         working-directory: app
         run: |
           rc=0
-          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Debug \
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
             -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
           grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
           exit $rc
+      - name: Package unsigned IPA for sideloading
+        working-directory: app
+        run: |
+          APP="xbuild/Release-iphoneos/HydrogenVM.app"
+          test -d "$APP"
+          rm -f HydrogenVM-unsigned.ipa HydrogenVM-unsigned.manifest.json HydrogenVM-unsigned.manifest.sha256
+          rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry "$PWD/../HydrogenVM-unsigned.ipa" Payload)
+          unzip -l HydrogenVM-unsigned.ipa | tail -1
+          python3 ../tools/verify_ipa.py HydrogenVM-unsigned.ipa --out HydrogenVM-unsigned.manifest.json --source-commit "$(git rev-parse HEAD)"
       - name: Build for simulator
         working-directory: app
         run: |
           rc=0
-          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Debug \
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
             -sdk iphonesimulator SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
             SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >sim-build.log 2>&1 || rc=$?
           grep -E "error:|BUILD (SUCCEEDED|FAILED)" sim-build.log | head -200
           exit $rc
       - name: Run UIKit test app inside HydrogenVM (simulator)
         run: |
-          tools/sim_test.sh app/xbuild/Debug-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
+          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
             "ALL CHECKS PASSED" "70,350@0.3;230,350@0.5" sim-out
+      - name: Upload validated unsigned device package
+        uses: actions/upload-artifact@v4
+        with:
+          name: HydrogenVM-device-ipa
+          if-no-files-found: error
+          path: |
+            app/HydrogenVM-unsigned.ipa
+            app/HydrogenVM-unsigned.manifest.json
+            app/HydrogenVM-unsigned.manifest.sha256
       - name: Publish report to ci-reports branch
         if: always()
         run: |

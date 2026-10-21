@@ -5,6 +5,7 @@
 // CG objects are Objective-C instances of private host classes so CFRetain /
 // CFRelease / CFGetTypeID work on them like on iOS.
 #include "CoreGraphics.hpp"
+#include "runtime/graphics/TrueType.hpp"
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -17,7 +18,7 @@ using ObjC::rt;
 
 struct CGState {
     explicit CGState(Process&) {}
-    Class context = 0, image = 0, colorSpace = 0, color = 0, provider = 0, path = 0, gradient = 0, font = 0;
+    Class context = 0, image = 0, colorSpace = 0, color = 0, provider = 0, path = 0, gradient = 0, font = 0, ctfont = 0, descriptor = 0, text = 0;
     id rgbSpace = 0, graySpace = 0;
 };
 CGState& S(Ctx& x) { return x.proc.service<CGState>(); }
@@ -926,7 +927,12 @@ void ctx_selectFont(Ctx& x, id c, GuestPtr name, float size, uint32_t) {
     if (ContextData* d = cx(x, c)) { d->gs().fontName = x.proc.readCString(name); d->gs().fontSize = size; }
 }
 void ctx_setFontSize(Ctx& x, id c, float size) { if (ContextData* d = cx(x, c)) d->gs().fontSize = size; }
-struct FontData : ObjC::HostObject { std::string name; };
+struct FontData : ObjC::HostObject {
+    std::string name;
+    std::shared_ptr<G::TrueTypeFont> face;
+    float size = 12;
+    G::Affine matrix;
+};
 void ctx_setFont(Ctx& x, id c, id font) { if (ContextData* d = cx(x, c)) if (FontData* f = hd<FontData>(x, font)) d->gs().fontName = f->name; }
 void ctx_setCharSpacing(Ctx& x, id c, float v) { if (ContextData* d = cx(x, c)) d->gs().charSpacing = v; }
 void ctx_setTextMode(Ctx& x, id c, int32_t m) { if (ContextData* d = cx(x, c)) d->gs().textMode = m; }
@@ -946,13 +952,251 @@ uint32_t font_createWithName(Ctx& x, id name) {
     h->name = name ? Foundation::utf8(x, name) : "Helvetica";
     return newObject(x, S(x).font, std::move(h));
 }
-uint32_t font_createWithProvider(Ctx& x, id) {
-    x.proc.reportMissing("CGFontCreateWithDataProvider (custom fonts use the system font)");
+uint32_t font_createWithProvider(Ctx& x, id provider) {
+    auto* data = hd<ProviderData>(x, provider);
+    if (!data) return 0;
+    auto face = G::TrueTypeFont::load(data->contents(x));
+    if (!face) return 0;
     auto h = std::make_unique<FontData>();
-    h->name = "Helvetica";
+    h->name = face->name();
+    h->face = std::move(face);
     return newObject(x, S(x).font, std::move(h));
 }
 uint32_t font_copyName(Ctx& x, id f) { FontData* d = hd<FontData>(x, f); return Foundation::makeString(x, d ? d->name : "Helvetica", true); }
+
+uint32_t ct_createGraphics(Ctx& x, id font, float size, GuestPtr matrix, id) {
+    auto* f = hd<FontData>(x, font);
+    if (!f || !std::isfinite(size) || size < 0) return 0;
+    auto h = std::make_unique<FontData>(*f);
+    h->size = size ? size : 12;
+    if (matrix) h->matrix = toG(readStruct<CGAffineTransform>(x, matrix));
+    return newObject(x, S(x).ctfont, std::move(h));
+}
+uint32_t ct_createName(Ctx& x, id name, float size, GuestPtr matrix) {
+    const id cg = font_createWithName(x, name);
+    const id ct = ct_createGraphics(x, cg, size, matrix, 0);
+    rt(x).release(x.cpu, cg);
+    return ct;
+}
+uint32_t ct_copyDescriptor(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f ? newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)) : 0;
+}
+uint32_t ct_createDescriptor(Ctx& x, id desc, float size, GuestPtr matrix) {
+    auto* f = hd<FontData>(x, desc);
+    return f ? ct_createGraphics(x, desc, size ? size : f->size, matrix, 0) : 0;
+}
+uint32_t ct_family(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f ? Foundation::makeString(x, f->face ? f->face->name(true) : f->name, true) : 0;
+}
+uint32_t ct_traits(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return !f ? 0 : f->face ? f->face->traits() :
+        (f->name.find("Bold") != std::string::npos ? 2u : 0u) | (f->name.find("Italic") != std::string::npos ? 1u : 0u);
+}
+float ct_underline(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    if (f && f->face) return f->face->underlineThickness(f->size);
+    x.proc.reportMissing("CTFontGetUnderlineThickness system font metrics"); return 0;
+}
+template<int Metric> float ct_metric(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    if (!f) return 0;
+    if (f->face) return Metric == 0 ? f->face->ascent(f->size) : Metric == 1 ? f->face->descent(f->size) : f->face->leading(f->size);
+    const auto m = G::textBackend().measure("M", {f->name, f->size});
+    return Metric == 0 ? m.ascent : Metric == 1 ? m.descent : m.lineHeight - m.ascent - m.descent;
+}
+bool ct_characters(Ctx& x, id font, GuestPtr chars, GuestPtr glyphs, int32_t count) {
+    auto* f = hd<FontData>(x, font);
+    if (!f || !f->face) { x.proc.reportMissing("CTFontGetGlyphsForCharacters system font mapping"); return false; }
+    bool all = true;
+    for (int32_t i = 0; i < count; ++i) {
+        const int g = f->face->glyph(x.mem.read<uint16_t>(chars + uint32_t(i)*2));
+        x.mem.write<uint16_t>(glyphs + uint32_t(i)*2, uint16_t(g)); all &= g != 0;
+    }
+    return all;
+}
+double ct_advances(Ctx& x, id font, uint32_t orientation, GuestPtr glyphs, GuestPtr advances, int32_t count) {
+    auto* f = hd<FontData>(x, font);
+    if (!f || !f->face || orientation == 2) { x.proc.reportMissing("CTFontGetAdvancesForGlyphs unsupported font/orientation"); return 0; }
+    double total = 0;
+    for (int32_t i = 0; i < count; ++i) {
+        const float a = f->face->advance(x.mem.read<uint16_t>(glyphs + uint32_t(i)*2), f->size);
+        const auto v = f->matrix.applyVector({a, 0});
+        if (advances) writeStruct(x, advances + uint32_t(i)*8, CGSize{v.x, v.y});
+        total += v.x;
+    }
+    return total;
+}
+void ct_bounds(Ctx& x, GuestPtr ret, id font, uint32_t orientation, GuestPtr glyphs, GuestPtr rects, int32_t count) {
+    auto* f = hd<FontData>(x, font);
+    G::Rect total{};
+    if (!f || !f->face || orientation == 2) x.proc.reportMissing("CTFontGetBoundingRectsForGlyphs unsupported font/orientation");
+    else for (int32_t i = 0; i < count; ++i) {
+        const auto b = f->matrix.applyRect(f->face->bounds(x.mem.read<uint16_t>(glyphs + uint32_t(i)*2), f->size));
+        if (rects) writeStruct(x, rects + uint32_t(i)*16, fromG(b));
+        total = i == 0 ? b : total.unite(b);
+    }
+    writeStruct(x, ret, fromG(total));
+}
+void ct_draw(Ctx& x, id font, GuestPtr glyphs, GuestPtr positions, uint32_t count, id ctx) {
+    auto* f = hd<FontData>(x, font);
+    auto* d = cx(x, ctx);
+    if (!f || !d) return;
+    if (!f->face) { x.proc.reportMissing("CTFontDrawGlyphs system font outlines"); return; }
+    const auto& g = d->gs();
+    for (uint32_t i = 0; i < count; ++i) {
+        auto p = readStruct<CGPoint>(x, positions + i*8);
+        if (!d->allowsFontSubpixelPositioning || !g.subpixelPositionFonts) { p.x = std::round(p.x); p.y = std::round(p.y); }
+        else if (d->allowsFontSubpixelQuantization && g.subpixelQuantizeFonts) { p.x = std::round(p.x*4)/4; p.y = std::round(p.y*4)/4; }
+        const auto transform = f->matrix.then(g.textMatrix).then(G::Affine::translate(p.x, p.y)).then(g.ctm);
+        const auto path = f->face->outline(x.mem.read<uint16_t>(glyphs + i*2), f->size).transformed(transform);
+        if (g.textMode == 0 || g.textMode == 2) G::fillPath(d->surface, path, false, g.fill, g.clip, g.blend, g.alpha);
+        else if (g.textMode != 3) x.proc.reportMissing("CTFontDrawGlyphs text drawing mode");
+    }
+}
+void ctx_allowsFontPosition(Ctx& x, id c, bool b) { if (auto* d = cx(x, c)) d->allowsFontSubpixelPositioning = b; }
+void ctx_allowsFontQuantize(Ctx& x, id c, bool b) { if (auto* d = cx(x, c)) d->allowsFontSubpixelQuantization = b; }
+void ctx_fontPosition(Ctx& x, id c, bool b) { if (auto* d = cx(x, c)) d->gs().subpixelPositionFonts = b; }
+void ctx_fontQuantize(Ctx& x, id c, bool b) { if (auto* d = cx(x, c)) d->gs().subpixelQuantizeFonts = b; }
+
+// Uniform-attribute, horizontal TrueType text. Complex-script shaping and
+// multi-run attributed strings remain explicit gaps rather than fake glyphs.
+struct TextRange { int32_t location, length; static constexpr bool kGuestStruct = true; };
+struct TextData : ObjC::HostObject {
+    std::u16string string;
+    id attributes = 0, runArray = 0;
+    int32_t start = 0;
+    std::vector<uint16_t> glyphs;
+    std::vector<G::Point> positions;
+    std::vector<float> advances;
+    float width = 0, ascent = 0, descent = 0, leading = 0;
+};
+void text_dealloc(Ctx& x, id self, SEL) {
+    if (auto* d = hd<TextData>(x, self)) {
+        const id a = d->attributes, runs = d->runArray; d->attributes = d->runArray = 0;
+        if (runs) rt(x).release(x.cpu, runs);
+        if (a) rt(x).release(x.cpu, a);
+    }
+    rt(x).disposeInstance(x.cpu, self);
+}
+id text_font(Ctx& x, const TextData& d) {
+    for (auto [key, value] : Foundation::dictEntries(x, d.attributes))
+        if (Foundation::utf8(x, key) == "kCTFontAttributeName") return value;
+    return 0;
+}
+uint32_t attributed_create(Ctx& x, uint32_t, id string, id attributes) {
+    if (!string) return 0;
+    auto h = std::make_unique<TextData>();
+    h->string = Foundation::stringValue(x, string);
+    h->attributes = attributes ? Foundation::makeDict(x, Foundation::dictEntries(x, attributes), true) : 0;
+    return newObject(x, S(x).text, std::move(h));
+}
+uint32_t text_retain(Ctx& x, id text) { return hd<TextData>(x, text) ? rt(x).retain(x.cpu, text) : 0; }
+uint32_t text_line(Ctx& x, id text, TextRange range) {
+    auto* src = hd<TextData>(x, text);
+    if (!src) return 0;
+    const int32_t length = range.length ? range.length : int32_t(src->string.size()) - range.location;
+    if (range.location < 0 || length < 0 || uint64_t(range.location) + length > src->string.size())
+        throw std::out_of_range("CoreText line range outside attributed string");
+    auto* font = hd<FontData>(x, text_font(x, *src));
+    if (!font || !font->face) { x.proc.reportMissing("CoreText layout requires a custom TrueType font"); return 0; }
+    auto h = std::make_unique<TextData>();
+    h->start = range.location;
+    h->string = src->string.substr(size_t(range.location), size_t(length));
+    h->attributes = src->attributes ? rt(x).retain(x.cpu, src->attributes) : 0;
+    h->ascent = font->face->ascent(font->size); h->descent = font->face->descent(font->size); h->leading = font->face->leading(font->size);
+    for (char16_t ch : h->string) {
+        if ((ch >= 0x590 && ch <= 0xDFF) || (ch >= 0xD800 && ch <= 0xDFFF)) {
+            x.proc.reportMissing("CoreText complex-script/surrogate shaping");
+            if (h->attributes) rt(x).release(x.cpu, h->attributes);
+            return 0;
+        }
+        const int glyph = font->face->glyph(ch);
+        const float advance = (ch == '\n' || ch == '\r') ? 0 : font->face->advance(glyph, font->size);
+        h->glyphs.push_back(uint16_t(glyph)); h->positions.push_back({h->width, 0}); h->advances.push_back(advance); h->width += advance;
+    }
+    return newObject(x, S(x).text, std::move(h));
+}
+uint32_t text_wholeLine(Ctx& x, id text) { return text_line(x, text, {0,0}); }
+int32_t text_break(Ctx& x, id text, int32_t start, double width) {
+    auto* d = hd<TextData>(x, text);
+    if (!d || start < 0 || size_t(start) >= d->string.size()) return 0;
+    auto* f = hd<FontData>(x, text_font(x, *d));
+    if (!f || !f->face) { x.proc.reportMissing("CoreText line breaking requires custom TrueType font"); return 0; }
+    double used = 0; int32_t lastSpace = -1, i = start;
+    for (; size_t(i) < d->string.size(); ++i) {
+        const auto ch = d->string[size_t(i)];
+        if (ch == '\n' || ch == '\r') return i - start + 1;
+        const float a = f->face->advance(f->face->glyph(ch), f->size);
+        if (used + a > width) break;
+        used += a;
+        if (ch == ' ' || ch == '\t') lastSpace = i;
+    }
+    if (size_t(i) == d->string.size()) return i - start;
+    return lastSpace >= start ? lastSpace - start + 1 : std::max(i - start, 1);
+}
+void text_range(Ctx& x, GuestPtr ret, id text) {
+    auto* d = hd<TextData>(x, text);
+    writeStruct(x, ret, TextRange{d ? d->start : 0, d ? int32_t(d->string.size()) : 0});
+}
+double text_bounds(Ctx& x, id text, GuestPtr ascent, GuestPtr descent, GuestPtr leading) {
+    auto* d = hd<TextData>(x, text);
+    if (ascent) x.mem.write<float>(ascent, d ? d->ascent : 0);
+    if (descent) x.mem.write<float>(descent, d ? d->descent : 0);
+    if (leading) x.mem.write<float>(leading, d ? d->leading : 0);
+    return d ? d->width : 0;
+}
+uint32_t text_runs(Ctx& x, id text) {
+    auto* d = hd<TextData>(x, text);
+    if (!d) return 0;
+    if (!d->runArray) {
+        auto h = std::make_unique<TextData>(*d);
+        if (h->attributes) rt(x).retain(x.cpu, h->attributes);
+        h->runArray = 0;
+        const id run = newObject(x, S(x).text, std::move(h));
+        d->runArray = Foundation::makeArray(x, {run}, true);
+        rt(x).release(x.cpu, run);
+    }
+    return d->runArray; // Get API: borrowed, owned by the line; no self-retain cycle.
+}
+int32_t run_count(Ctx& x, id run) { auto* d = hd<TextData>(x, run); return d ? int32_t(d->glyphs.size()) : 0; }
+uint32_t run_attrs(Ctx& x, id run) { auto* d = hd<TextData>(x, run); return d ? d->attributes : 0; }
+template<int What> void run_copy(Ctx& x, id run, TextRange range, GuestPtr out) {
+    auto* d = hd<TextData>(x, run);
+    if (!d) return;
+    const int32_t n = range.length ? range.length : int32_t(d->glyphs.size()) - range.location;
+    if (range.location < 0 || n < 0 || uint64_t(range.location) + n > d->glyphs.size()) throw std::out_of_range("CTRun range outside glyphs");
+    for (int32_t i = 0; i < n; ++i) {
+        const auto j = size_t(range.location + i);
+        if constexpr (What == 0) x.mem.write<uint16_t>(out + uint32_t(i)*2, d->glyphs[j]);
+        if constexpr (What == 1) writeStruct(x, out + uint32_t(i)*8, fromG(d->positions[j]));
+        if constexpr (What == 2) writeStruct(x, out + uint32_t(i)*8, CGSize{d->advances[j],0});
+        if constexpr (What == 3) x.mem.write<int32_t>(out + uint32_t(i)*4, d->start + int32_t(j));
+    }
+}
+uint32_t run_status(Ctx&, id) { return 0; } // These runs are horizontal, monotonic, identity matrix.
+double run_bounds(Ctx& x, id run, TextRange range, GuestPtr ascent, GuestPtr descent, GuestPtr leading) {
+    auto* d = hd<TextData>(x, run);
+    text_bounds(x, run, ascent, descent, leading);
+    if (!d) return 0;
+    const int32_t n = range.length ? range.length : int32_t(d->advances.size()) - range.location;
+    if (range.location < 0 || n < 0 || uint64_t(range.location)+n > d->advances.size()) throw std::out_of_range("CTRun bounds range");
+    double width = 0;
+    for (int32_t i=0; i<n; ++i) width += d->advances[size_t(range.location+i)];
+    return width;
+}
+void text_draw(Ctx& x, id text, id ctx) {
+    auto* d = hd<TextData>(x, text); auto* c = cx(x, ctx);
+    if (!d || !c || d->glyphs.empty()) return;
+    const uint32_t glyphs = x.proc.heap().alloc(uint32_t(d->glyphs.size())*2);
+    const uint32_t positions = x.proc.heap().alloc(uint32_t(d->positions.size())*8);
+    x.mem.copyIn(glyphs, d->glyphs.data(), d->glyphs.size()*2);
+    for (size_t i=0; i<d->positions.size(); ++i) writeStruct(x, positions+uint32_t(i)*8, CGPoint{d->positions[i].x+c->textPos.x, d->positions[i].y+c->textPos.y});
+    ct_draw(x, text_font(x,*d), glyphs, positions, uint32_t(d->glyphs.size()), ctx);
+    x.proc.heap().free(glyphs); x.proc.heap().free(positions);
+}
 
 // ---- bitmap context API
 uint32_t bm_create(Ctx& x, GuestPtr data, uint32_t w, uint32_t h, uint32_t bpc, uint32_t bpr, id space, uint32_t info) {
@@ -1106,6 +1350,9 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     s.path = cls("__HVMCGPath", nullptr);
     s.gradient = cls("__HVMCGGradient", nullptr);
     s.font = cls("__HVMCGFont", nullptr);
+    s.ctfont = cls("__HVMCTFont", nullptr);
+    s.descriptor = cls("__HVMCTFontDescriptor", nullptr);
+    s.text = cls("__HVMCTText", &text_dealloc);
 
     // geometry
     p.def<&r_minX>("_CGRectGetMinX"); p.def<&r_minY>("_CGRectGetMinY"); p.def<&r_maxX>("_CGRectGetMaxX"); p.def<&r_maxY>("_CGRectGetMaxY");
@@ -1248,7 +1495,10 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ctx_ignore1>("_CGContextSetRenderingIntent");
     p.def<&ctx_ignore1>("_CGContextSetShouldSmoothFonts");
     p.def<&ctx_ignore1>("_CGContextSetAllowsFontSmoothing");
-    p.def<&ctx_ignore1>("_CGContextSetShouldSubpixelPositionFonts");
+    p.def<&ctx_fontPosition>("_CGContextSetShouldSubpixelPositionFonts");
+    p.def<&ctx_fontQuantize>("_CGContextSetShouldSubpixelQuantizeFonts");
+    p.def<&ctx_allowsFontPosition>("_CGContextSetAllowsFontSubpixelPositioning");
+    p.def<&ctx_allowsFontQuantize>("_CGContextSetAllowsFontSubpixelQuantization");
     p.def<&ctx_setAlpha>("_CGContextSetAlpha");
     p.def<&ctx_setLineWidth>("_CGContextSetLineWidth");
     p.def<&ctx_setLineCap>("_CGContextSetLineCap");
@@ -1320,6 +1570,38 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&font_createWithProvider>("_CGFontCreateWithDataProvider");
     p.def<&font_copyName>("_CGFontCopyFullName");
     p.def<&font_copyName>("_CGFontCopyPostScriptName");
+    p.def<&ct_createGraphics>("_CTFontCreateWithGraphicsFont");
+    p.def<&ct_createName>("_CTFontCreateWithName");
+    p.def<&ct_copyDescriptor>("_CTFontCopyFontDescriptor");
+    p.def<&ct_createDescriptor>("_CTFontCreateWithFontDescriptor");
+    p.def<&ct_family>("_CTFontCopyFamilyName");
+    p.def<&ct_traits>("_CTFontGetSymbolicTraits");
+    p.def<&ct_underline>("_CTFontGetUnderlineThickness");
+    p.def<&ct_metric<0>>("_CTFontGetAscent");
+    p.def<&ct_metric<1>>("_CTFontGetDescent");
+    p.def<&ct_metric<2>>("_CTFontGetLeading");
+    p.def<&ct_characters>("_CTFontGetGlyphsForCharacters");
+    p.def<&ct_advances>("_CTFontGetAdvancesForGlyphs");
+    p.def<&ct_bounds>("_CTFontGetBoundingRectsForGlyphs");
+    p.def<&ct_draw>("_CTFontDrawGlyphs");
+    p.def<&attributed_create>("_CFAttributedStringCreate");
+    p.def<&text_retain>("_CTTypesetterCreateWithAttributedString");
+    p.def<&text_break>("_CTTypesetterSuggestLineBreak");
+    p.def<&text_line>("_CTTypesetterCreateLine");
+    p.def<&text_wholeLine>("_CTLineCreateWithAttributedString");
+    p.def<&text_bounds>("_CTLineGetTypographicBounds");
+    p.def<&text_range>("_CTLineGetStringRange");
+    p.def<&text_runs>("_CTLineGetGlyphRuns");
+    p.def<&text_draw>("_CTLineDraw");
+    p.def<&run_count>("_CTRunGetGlyphCount");
+    p.def<&run_attrs>("_CTRunGetAttributes");
+    p.def<&run_copy<0>>("_CTRunGetGlyphs");
+    p.def<&run_copy<1>>("_CTRunGetPositions");
+    p.def<&run_copy<2>>("_CTRunGetAdvances");
+    p.def<&run_copy<3>>("_CTRunGetStringIndices");
+    p.def<&run_status>("_CTRunGetStatus");
+    p.def<&text_range>("_CTRunGetStringRange");
+    p.def<&run_bounds>("_CTRunGetTypographicBounds");
     p.def<&ctx_noop>("_CGContextFlush");
     p.def<&ctx_noop>("_CGContextSynchronize");
     p.def<&ctx_noop>("_CGContextBeginTransparencyLayer");

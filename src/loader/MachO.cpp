@@ -253,9 +253,9 @@ void runBind(Ctx& cx, const uint8_t* p, size_t n, bool lazy, bool weak) {
     uint32_t seg = 0;
     uint64_t off = 0;
     auto emit = [&] {
-        if (weak) { ++cx.img.weakBindCount; return; }
         BindRecord r = cur;
         r.address = cx.segAddr(seg, off);
+        if (weak) { r.weakImport = true; ++cx.img.weakBindCount; cx.img.weakBinds.push_back(std::move(r)); return; }
         cx.img.binds.push_back(std::move(r));
     };
     while (!s.done()) {
@@ -318,10 +318,10 @@ void legacyBinds(Ctx& cx) {
         }
     }
     // External relocations: r_address is relative to the first segment's
-    // address, or the first writable one with MH_SPLIT_SEGS.
+    // address (as dyld does, that includes __PAGEZERO, so it's normally 0 for
+    // executables), or to the first writable segment with MH_SPLIT_SEGS.
     uint32_t relocBase = 0;
     for (const Segment& s : cx.img.segments) {
-        if (s.name == "__PAGEZERO") continue;
         if ((cx.img.flags & MH_SPLIT_SEGS) && !(s.initprot & 2)) continue;
         relocBase = s.vmaddr;
         break;

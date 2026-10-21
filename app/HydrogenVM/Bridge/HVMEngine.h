@@ -48,7 +48,15 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic) BOOL keepGoing;
 
 - (void)start;
+/// Stops immediately (no chance to save).
 - (void)stop;
+/// Tells the app it's being closed (resign active, enter background, will terminate) so it
+/// can save, then stops it. onExit follows; a hung app is stopped after a few seconds.
+- (void)stopGracefully;
+/// HydrogenVM went to the background: the app gets its background callbacks (and saves),
+/// then is paused. enterForeground resumes it.
+- (void)enterBackground;
+- (void)enterForeground;
 /// Touch in emulated-screen points (portrait).
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger;
 /// Accelerometer in g, device axes (portrait), like UIAcceleration.

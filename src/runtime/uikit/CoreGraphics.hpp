@@ -43,6 +43,7 @@ struct GState {
     G::Affine textMatrix;
     float charSpacing = 0;
     int textMode = 0;   // kCGTextFill
+    bool subpixelPositionFonts = true, subpixelQuantizeFonts = true;
 };
 
 struct ContextData : ObjC::HostObject {
@@ -52,6 +53,7 @@ struct ContextData : ObjC::HostObject {
     bool ownsData = false;
     uint32_t bitsPerComponent = 8, bitsPerPixel = 32, bytesPerRow = 0, bitmapInfo = 0;
     id colorSpace = 0;
+    bool allowsFontSubpixelPositioning = true, allowsFontSubpixelQuantization = true;
     std::vector<GState> stack{GState{}};
     G::Path path;                    // device space
     G::Point textPos{};              // text space

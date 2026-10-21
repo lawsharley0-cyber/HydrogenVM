@@ -1,0 +1,2 @@
+tools/local_test.sh text eol=lf
+tools/desktop.py text eol=lf

@@ -152,7 +152,11 @@ id c_description(Ctx& x, id self, SEL) {
 }
 id c_copy(Ctx& x, id self, SEL, uint32_t) { return rt(x).retain(x.cpu, self); }
 void c_dealloc(Ctx& x, id self, SEL) {
-    if (ColorObj* h = co(x, self)) { const id cg = h->cg; h->cg = 0; if (cg) rt(x).release(x.cpu, cg); }
+    if (ColorObj* h = co(x, self)) {
+        const id cg = h->cg;
+        h->cg = 0;
+        if (cg && rt(x).classOf(cg)) rt(x).release(x.cpu, cg);
+    }
     rt(x).disposeInstance(x.cpu, self);
 }
 
@@ -305,8 +309,16 @@ id imgc_named(Ctx& x, id self, SEL, id nameObj) {
 }
 id imgc_file(Ctx& x, id self, SEL, id pathObj) {
     if (!pathObj) return 0;
-    const std::string path = retinaVariant(utf8(x, pathObj), ui(x).scale);
+    const std::string rawPath = utf8(x, pathObj);
+    std::string path = retinaVariant(rawPath, ui(x).scale);
     auto img = loadFile(x, path);
+    if (!img) {
+        std::string bp = Foundation::bundleResource(x, rawPath, "");
+        if (!bp.empty()) {
+            path = retinaVariant(bp, ui(x).scale);
+            img = loadFile(x, path);
+        }
+    }
     return img ? autoreleased(x, newImageObj(x, self, img, scaleOfPath(path))) : 0;
 }
 id imgc_data(Ctx& x, id self, SEL, id data) {

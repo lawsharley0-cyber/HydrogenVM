@@ -1,0 +1,70 @@
+name: Clash Royale static diagnosis
+on:
+  push:
+    branches: [gemini-merge]
+    paths: ['.github/workflows/clash-static.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install analysis tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq llvm python3-capstone
+      - name: Verify and inspect pinned client
+        run: python3 tools/clash_royale_probe.py --out clash-report
+      - name: Decode directory lookup call arguments
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          import csv, io, re, json
+          from capstone import Cs, CS_ARCH_ARM, CS_MODE_THUMB, CS_MODE_LITTLE_ENDIAN
+          p = Path("clash-report/unpacked/Payload/Clash Royale.app/Clash Royale")
+          data = p.read_bytes()
+          settings = p.parent / "res/settings.csv"
+          print("SETTINGS", json.dumps(list(csv.reader(io.StringIO(settings.read_text())))))
+          clues = [m.group().decode("ascii") for m in re.finditer(rb"[ -~]{5,}", data)]
+          offline = list(dict.fromkeys(w for w in clues if "offline" in w.lower() and len(w) < 300))
+          print("OFFLINE CLUES", json.dumps(offline[:120]))
+          for file in sorted(p.parent.rglob("*.json")):
+              value = json.loads(file.read_text())
+              summary = {key: ({"type": "list", "count": len(v)} if isinstance(v, list) else {"type": "object", "keys": list(v)[:20]} if isinstance(v, dict) else v) for key, v in value.items()} if isinstance(value, dict) else {"type": type(value).__name__}
+              print("JSON ASSET", str(file.relative_to(p.parent)), json.dumps(summary))
+
+          assert data[:4] == b"\xce\xfa\xed\xfe", "Expected the pinned thin ARM Mach-O"
+          ncmds = struct.unpack_from("<I", data, 16)[0]
+          offset = 28
+          segments = []
+          for _ in range(ncmds):
+              cmd, size = struct.unpack_from("<II", data, offset)
+              if cmd == 1:
+                  vmaddr, vmsize, fileoff, filesize = struct.unpack_from("<IIII", data, offset + 24)
+                  segments.append((vmaddr, fileoff, filesize))
+              offset += size
+          def read_at(address, size):
+              for vm, off, count in segments:
+                  if vm <= address and address + size <= vm + count:
+                      return data[off + address - vm:off + address - vm + size]
+              raise ValueError("Address outside file-backed segments")
+          start, end = 0x0016d280, 0x0016d300
+          md = Cs(CS_ARCH_ARM, CS_MODE_THUMB | CS_MODE_LITTLE_ENDIAN)
+          md.skipdata = True
+          print("RAW", read_at(start, end-start).hex())
+          lines = [f"0x{i.address:08x}: {i.mnemonic:8s} {i.op_str}" for i in md.disasm(read_at(start, end-start), start)]
+          assert lines, "No instructions decoded"
+          text = "\n".join(lines) + "\n"
+          print(text)
+          Path("clash-report/startup-disassembly.txt").write_text(text)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clash-static-diagnosis
+          path: clash-report/*.txt
+          retention-days: 14

@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <functional>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -34,6 +35,8 @@ struct ProcessConfig {
     std::function<void(LogLevel, const std::string&)> log;   // called from any thread
     bool stopOnMissingFunction = true; // false: log and return 0
     bool traceCalls = false;           // log every HLE call (very slow, for debugging)
+    bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
+    std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1
     std::string systemVersion = "6.1"; // reported by UIDevice / sysctl
     std::string deviceModel = "iPhone5,2";
     uint32_t screenWidth = 320, screenHeight = 568;   // points
@@ -41,12 +44,14 @@ struct ProcessConfig {
     // Called on the emulated main thread with each new frame (premultiplied
     // RGBA, screenWidth*scale x screenHeight*scale, portrait). Optional.
     std::function<void(const uint8_t* rgba, int width, int height)> present;
+    // Audio: the platform pulls mixed sound from Process::mixer() (see audio/Audio.hpp).
 };
 
 // Input from the host (screen points, portrait orientation of the emulated device).
 enum class TouchPhase { Began = 0, Moved = 1, Ended = 3, Cancelled = 4 };
 
 class Process;
+namespace Audio { class Mixer; }
 
 struct GuestThread {
     explicit GuestThread(Process& p) : proc(p) {}
@@ -64,6 +69,12 @@ struct GuestThread {
     uint32_t retval = 0;
     std::mutex m;
     std::condition_variable cv;
+    // SJLJ exception unwinding (libc/Unwind.cpp): registered function contexts
+    // (top of the list, and whether each registrant was Thumb code) and the
+    // stack of exceptions currently being handled by catch blocks.
+    uint32_t sjljTop = 0;
+    std::unordered_map<uint32_t, bool> sjljThumb;
+    std::vector<uint32_t> caughtExceptions;
     void* objcState = nullptr;    // per-thread ObjC runtime data (autorelease pools)
     void (*objcStateFree)(void*) = nullptr;
     ~GuestThread() { if (objcState && objcStateFree) objcStateFree(objcState); }
@@ -92,6 +103,29 @@ public:
     int run();
     // From any thread: stop all guest threads soon.
     void requestStop();
+
+    // App lifecycle, from any host thread (the iOS app calls these when the user leaves a
+    // game or HydrogenVM goes to the background). UIKit delivers the matching delegate
+    // calls and notifications on the guest's main thread, so the game can save.
+    //  * requestGracefulStop: resign active -> enter background -> will terminate, flush
+    //    NSUserDefaults and stdio, then stop. Forces requestStop() after `timeout` seconds.
+    //  * enterBackground: resign active -> enter background (game saves), then the guest is
+    //    paused: main thread parked, other guest threads suspended, audio silenced.
+    //  * enterForeground: resume, then will-enter-foreground -> did-become-active.
+    enum class Lifecycle { Background, Foreground, Terminate };
+    void setLifecycleHandler(std::function<void(Lifecycle)> h) { lifecycleHandler_ = std::move(h); }
+    void requestGracefulStop(double timeout = 5.0);
+    void enterBackground();
+    void enterForeground();
+    bool backgrounded() const { return backgrounded_.load(); }
+    bool gracefulStopRequested() const { return gracefulStop_.load(); }
+    // Used by the lifecycle handler while the app is in the background (parks the caller).
+    void waitWhileBackgrounded();
+    void setBackgrounded(bool b);
+    // Everything the app plays is mixed here; the platform renders it on its
+    // audio thread through mixerPtr() (safe to keep after the Process ends).
+    Audio::Mixer& mixer() { return *mixer_; }
+    std::shared_ptr<Audio::Mixer> mixerPtr() const { return mixer_; }
     bool stopping() const { return engine_->stopRequested(); }
 
     // ---- performance counters (read any time; reported by `hvm --report`)
@@ -111,6 +145,14 @@ public:
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
     std::vector<std::string> missingSymbols() const;
+    // Imports bound to "missing" stubs at load (functions), in file order — the static gap list.
+    const std::vector<std::string>& unimplementedImports() const { return unimplementedImports_; }
+    // Lazily created guest objects/buffers that must not outlive this process. HLE code
+    // must never cache guest addresses in C++ statics: the iOS app runs one Process per
+    // launch, and a static would hand the next launch an address from the previous one.
+    //   static const char key = 0; uint32_t& v = x.proc.processSlot(&key); if (!v) v = ...;
+    uint32_t& processSlot(const void* key);
+    uint32_t& threadSlot(const void* key);   // per guest thread (strtok, inet_ntoa, asctime buffers)
     int exitCode() const { return exitCode_; }
 
     // ---- subsystems
@@ -152,6 +194,10 @@ public:
     void onBeforeInitializers(std::function<void(CPU::Cpu&)> fn) { preInitHooks_.push_back(std::move(fn)); }
     // Host-side cleanup when run() finishes (flush preferences, ...).
     void onExit(std::function<void()> fn) { exitHooks_.push_back(std::move(fn)); }
+    // Consulted when a host function throws: returns true if it turned the
+    // error into a guest exception that the app catches (Foundation installs
+    // one that raises NSExceptions for Cocoa-style errors).
+    void setHostErrorHook(std::function<bool(Ctx&, const std::exception&)> fn) { hostErrorHook_ = std::move(fn); }
 
     // ---- calling guest code
     uint64_t callGuest(CPU::Cpu& cpu, uint32_t fn, std::initializer_list<uint32_t> args) {
@@ -164,6 +210,8 @@ public:
     // ---- threads
     GuestThread& currentThread();
     GuestThread* findThread(uint32_t self);
+    GuestThread* findThreadById(uint32_t id);
+    std::vector<uint32_t> liveThreadIds();   // ids of the main thread and all running threads
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
     bool joinThread(uint32_t self, uint32_t* retval);
@@ -241,6 +289,16 @@ private:
     std::unique_ptr<GuestThread> mainThreadOwner_;
     GuestThread* mainThread_ = nullptr;
     std::unordered_map<uint32_t, std::unique_ptr<GuestThread>> threads_;
+    std::vector<std::string> unimplementedImports_;
+    std::function<void(Lifecycle)> lifecycleHandler_;
+    struct Liveness { std::mutex mu; bool alive = true; };
+    std::shared_ptr<Liveness> liveness_ = std::make_shared<Liveness>();   // for helper threads that outlive us
+    std::atomic<bool> backgrounded_{false}, gracefulStop_{false};
+    std::mutex lifeMu_;
+    std::condition_variable lifeCv_;
+    std::mutex slotMu_;
+    std::unordered_map<const void*, uint32_t> slots_;
+    std::map<std::pair<const void*, uint32_t>, uint32_t> threadSlots_;
     std::mutex threadsMu_;
     uint32_t nextThreadId_ = 1;
     uint32_t stackTop_ = 0xBF000000u;
@@ -263,6 +321,8 @@ private:
     std::atomic<bool> exiting_{false};
     int exitCode_ = 0;
     bool crashed_ = false;
+    std::function<bool(Ctx&, const std::exception&)> hostErrorHook_;
+    std::shared_ptr<Audio::Mixer> mixer_;
     std::string crashReport_;
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
@@ -272,6 +332,7 @@ private:
     Perf perf_;
     mutable std::mutex missingMu_;
     std::set<std::string> missing_;
+    std::set<std::string> calledImports_;   // symbols the app reaches through lazy (call) stubs
 };
 
 // Module registration (each lives in its own .cpp).
@@ -284,6 +345,13 @@ void registerLibcTime(Process& p);
 void registerLibcPthread(Process& p);
 void registerLibcSystem(Process& p);
 void registerCxxRuntime(Process& p);
+void registerUnwinder(Process& p);
+void registerLibStdcxx(Process& p);
+void registerLibcPosix(Process& p);
+void registerZlib(Process& p);
+void registerLibcNet(Process& p);
+void registerCommonCrypto(Process& p);
+void registerSqlite(Process& p);
 void registerObjCRuntime(Process& p);
 void registerFoundation(Process& p);
 void registerUIKit(Process& p);

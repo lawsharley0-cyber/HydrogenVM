@@ -2,6 +2,10 @@
 // sysctl/uname, file descriptors and directories, mmap, signals, setjmp,
 // a little of Mach.
 #include "runtime/Process.hpp"
+#include "MachPorts.hpp"
+#include "Network.hpp"
+#include "DarwinErrno.hpp"
+#include <sys/socket.h>
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -21,22 +25,6 @@ namespace {
 inline void setErrno(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, uint32_t(e)); }
 template <typename T> T fail(Ctx& x, T v = T(-1)) { setErrno(x, errno); return v; }
 
-// Darwin errno values differ from Linux above 34.
-int darwinErrno(int e) {
-    switch (e) {
-        case EAGAIN: return 35;
-        case EINPROGRESS: return 36;
-        case EALREADY: return 37;
-        case ENOTSUP: return 45;
-        case ELOOP: return 62;
-        case ENAMETOOLONG: return 63;
-        case ENOTEMPTY: return 66;
-        case ETIMEDOUT: return 60;
-        case ENOSYS: return 78;
-        case EOVERFLOW: return 84;
-        default: return e;
-    }
-}
 template <typename T> T failD(Ctx& x, T v = T(-1)) { setErrno(x, darwinErrno(errno)); return v; }
 
 // ------------------------------------------------------- process basics ---
@@ -71,6 +59,34 @@ uint32_t s_NSGetMachExecuteHeader(Ctx& x) { return x.proc.image().headerAddr; }
 int32_t s_getpid(Ctx&) { return 1234; }
 int32_t s_getppid(Ctx&) { return 1; }
 uint32_t s_getuid(Ctx&) { return 501; }
+GuestPtr s_getpwuid(Ctx& x, uint32_t) {
+    static const char key = 0;
+    uint32_t& addr = x.proc.processSlot(&key);
+    if (!addr) {
+        addr = x.proc.allocStatic(32);
+        const uint32_t name = x.proc.internCString("mobile");
+        const uint32_t dir  = x.proc.internCString("/var/mobile");
+        const uint32_t sh   = x.proc.internCString("/bin/sh");
+        x.mem.write<uint32_t>(addr + 0, name); // pw_name
+        x.mem.write<uint32_t>(addr + 4, name); // pw_passwd
+        x.mem.write<uint32_t>(addr + 8, 501);  // pw_uid
+        x.mem.write<uint32_t>(addr + 12, 501); // pw_gid
+        x.mem.write<uint32_t>(addr + 16, 0);   // pw_change
+        x.mem.write<uint32_t>(addr + 20, name);// pw_class
+        x.mem.write<uint32_t>(addr + 24, dir); // pw_dir
+        x.mem.write<uint32_t>(addr + 28, sh);  // pw_shell
+    }
+    return addr;
+}
+GuestPtr s_basename(Ctx& x, GuestPtr p) {
+    if (!p) return x.proc.internCString(".");
+    std::string s = x.proc.readCString(p);
+    while (s.size() > 1 && s.back() == '/') s.pop_back();
+    const size_t slash = s.rfind('/');
+    if (slash != std::string::npos) s = s.substr(slash + 1);
+    return x.proc.internCString(s.empty() ? "." : s);
+}
+int32_t s_ioctl(Ctx&, int32_t, uint32_t, GuestPtr) { return 0; }
 int32_t s_zero(Ctx&) { return 0; }
 int32_t s_isatty(Ctx&, int32_t) { return 0; }
 int32_t s_getpagesize(Ctx&) { return 4096; }
@@ -188,9 +204,25 @@ uint32_t d_dlopen(Ctx& x, GuestPtr path, int32_t) {
 uint32_t d_dlsym(Ctx& x, uint32_t, GuestPtr name) {
     const std::string n = "_" + x.proc.readCString(name);
     if (auto a = x.proc.lookupSymbol(n)) return *a;
+    for (const auto& [addr, sym] : x.proc.image().symbolsByAddr)
+        if (sym == n) return addr;
     x.proc.logf(LogLevel::Warning, "dlsym: %s not found", n.c_str() + 1);
     return 0;
 }
+uint32_t d_local_arch_info(Ctx& x) {
+    static const char slotKey = 0;
+    uint32_t& a = x.proc.processSlot(&slotKey);
+    if (!a) {
+        a = x.proc.allocStatic(20);
+        x.mem.write<uint32_t>(a + 0, x.proc.internCString("armv7"));
+        x.mem.write<uint32_t>(a + 4, 12);   // CPU_TYPE_ARM
+        x.mem.write<uint32_t>(a + 8, 9);    // CPU_SUBTYPE_ARM_V7
+        x.mem.write<uint32_t>(a + 12, 1);   // NX_LittleEndian
+        x.mem.write<uint32_t>(a + 16, x.proc.internCString("arm v7"));
+    }
+    return a;
+}
+uint32_t d_arch_from_cputype(Ctx& x, uint32_t, uint32_t) { return d_local_arch_info(x); }
 int32_t d_dlclose(Ctx&, uint32_t) { return 0; }
 uint32_t d_dlerror(Ctx&) { return 0; }
 int32_t d_dladdr(Ctx& x, GuestPtr addr, GuestPtr info) {
@@ -233,9 +265,14 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const int fd = ::open(x.proc.readCString(path).c_str(), hostOpenFlags(flags), mode & 0777);
     return fd < 0 ? failD<int32_t>(x) : fd;
 }
-int32_t f_close(Ctx& x, int32_t fd) { if (fd <= 2) return 0; return ::close(fd) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_close(Ctx& x, int32_t fd) {
+    if (fd >= 0 && fd <= 2) return 0;
+    const int tracked = closeNetworkSocket(x.proc, fd);
+    return (tracked == -2 ? ::close(fd) : tracked) < 0 ? failD<int32_t>(x) : 0;
+}
 int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
+    if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
 }
@@ -244,6 +281,7 @@ int32_t f_write(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
         x.proc.log(fd == 1 ? LogLevel::GuestStdout : LogLevel::GuestStderr, std::string(reinterpret_cast<const char*>(x.mem.host(buf)), n));
         return int32_t(n);
     }
+    if (isNetworkSocket(x.proc, fd)) return networkWrite(x, fd, buf, n);
     const ssize_t r = ::write(fd, x.mem.host(buf), n);
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
 }
@@ -262,16 +300,30 @@ int64_t f_lseek(Ctx& x, int32_t fd, int64_t off, int32_t whence) {
 int32_t f_fcntl(Ctx& x, int32_t fd, int32_t cmd, VarArgs va) {
     const uint32_t arg = va.args.word();
     switch (cmd) {
-        case 1: case 2: return 0;                     // F_GETFD / F_SETFD
-        case 3: return 2;                             // F_GETFL: O_RDWR
-        case 4: return 0;                             // F_SETFL
+        case 1: { int r = ::fcntl(fd, F_GETFD); return r < 0 ? failD<int32_t>(x) : (r & FD_CLOEXEC ? 1 : 0); }
+        case 2: return ::fcntl(fd, F_SETFD, arg & 1 ? FD_CLOEXEC : 0) < 0 ? failD<int32_t>(x) : 0;
+        case 3: {
+            int r = ::fcntl(fd, F_GETFL);
+            return r < 0 ? failD<int32_t>(x) : (r & O_ACCMODE) | (r & O_NONBLOCK ? 4 : 0) | (r & O_APPEND ? 8 : 0);
+        }
+        case 4: {
+            if (arg & ~15u) { setErrno(x, 22); return -1; }
+            int flags = ::fcntl(fd, F_GETFL);
+            if (flags < 0) return failD<int32_t>(x);
+            flags = (flags & ~(O_NONBLOCK | O_APPEND)) | (arg & 4 ? O_NONBLOCK : 0) | (arg & 8 ? O_APPEND : 0);
+            return ::fcntl(fd, F_SETFL, flags) < 0 ? failD<int32_t>(x) : 0;
+        }
         case 48: case 51: return 0;                   // F_NOCACHE / F_FULLFSYNC
         default: (void)fd; (void)arg; setErrno(x, EINVAL); return -1;
     }
 }
 int32_t f_fsync(Ctx&, int32_t fd) { if (fd > 2) ::fsync(fd); return 0; }
 int32_t f_ftruncate(Ctx& x, int32_t fd, int64_t len) { return ::ftruncate(fd, off_t(len)) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_dup(Ctx& x, int32_t fd) { const int r = ::dup(fd); return r < 0 ? failD<int32_t>(x) : r; }
+int32_t f_dup(Ctx& x, int32_t fd) {
+    const int r = ::dup(fd);
+    if (r >= 0) duplicateNetworkSocket(x.proc, fd, r);
+    return r < 0 ? failD<int32_t>(x) : r;
+}
 
 // Darwin (64-bit inode) struct stat, 4-byte-aligned 64-bit fields: 108 bytes.
 void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
@@ -388,16 +440,22 @@ int32_t f_closedir(Ctx& x, GuestPtr h) {
 // ------------------------------------------------------------------ mmap ---
 
 uint32_t m_mmap(Ctx& x, GuestPtr, uint32_t len, int32_t, uint32_t flags, int32_t fd, int64_t off) {
-    const uint32_t a = x.proc.heap().allocAligned((len + 4095) & ~4095u, 4096);
+    const uint32_t align = len >= 65536u ? 65536u : 4096u;
+    const uint32_t sz = (len + 4095u) & ~4095u;
+    const uint32_t a = x.proc.heap().allocAligned(sz ? sz : 4096u, align);
     if (!a) { setErrno(x, ENOMEM); return 0xFFFFFFFFu; }
-    std::memset(x.mem.host(a), 0, (len + 4095) & ~4095u);
+    std::memset(x.mem.host(a), 0, sz ? sz : 4096u);
     if (!(flags & 0x1000) && fd >= 0) {   // file mapping: read the contents (private copy)
         const ssize_t r = ::pread(fd, x.mem.host(a), len, off_t(off));
         if (r < 0) { x.proc.heap().free(a); return failD<uint32_t>(x, 0xFFFFFFFFu); }
     }
     return a;
 }
-int32_t m_munmap(Ctx& x, GuestPtr a, uint32_t) { if (x.proc.heap().blockSize(a)) x.proc.heap().free(a); return 0; }
+int32_t m_munmap(Ctx& x, GuestPtr a, uint32_t len) {
+    const uint32_t bsz = x.proc.heap().blockSize(a);
+    if (bsz && len >= bsz) x.proc.heap().free(a);
+    return 0;
+}
 int32_t m_ok3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
 int32_t m_ok2(Ctx&, GuestPtr, uint32_t) { return 0; }
 
@@ -413,6 +471,10 @@ int32_t g_kill(Ctx& x, int32_t pid, int32_t sig) { if (sig == 0) return 0; if (p
 int32_t g_sigset(Ctx& x, GuestPtr set) { if (set) x.mem.write<uint32_t>(set, 0); return 0; }
 int32_t g_sigsetop(Ctx&, GuestPtr, int32_t) { return 0; }
 int32_t g_sigprocmask(Ctx&, int32_t, GuestPtr, GuestPtr) { return 0; }
+int32_t g_sigaltstack(Ctx& x, GuestPtr, GuestPtr oss) {
+    if (oss) { x.mem.write<uint32_t>(oss, 0); x.mem.write<uint32_t>(oss + 4, 0); x.mem.write<uint32_t>(oss + 8, 2); }
+    return 0;
+}
 
 // ---------------------------------------------------------------- setjmp ---
 // jmp_buf: r4-r11, sp, lr, d8-d15 (16 words), fpscr = 27 words.
@@ -438,22 +500,77 @@ int32_t j_sigsetjmp(Ctx& x, GuestPtr buf, int32_t) { return j_setjmp(x, buf); }
 
 // ----------------------------------------------------------------- mach ---
 
-uint32_t k_task_self(Ctx&) { return 0x103; }
+uint32_t k_task_self(Ctx&) { return kTaskPort; }
+uint32_t k_host_self(Ctx& x) { return acquireMachSendRight(x.proc, kHostPort); }
+int32_t k_port_mod_refs(Ctx& x, uint32_t task, uint32_t name, uint32_t right, int32_t delta) {
+    return modifyMachSendRefs(x.proc, task, name, right, delta);
+}
+int32_t k_port_deallocate(Ctx& x, uint32_t task, uint32_t name) {
+    return modifyMachSendRefs(x.proc, task, name, 0, -1);
+}
+int32_t k_port_get_refs(Ctx& x, uint32_t task, uint32_t name, uint32_t right, GuestPtr out) {
+    const int32_t rc = modifyMachSendRefs(x.proc, task, name, right, 0);
+    if (!rc) x.mem.write<uint32_t>(out, machSendRefs(x.proc, name));
+    return rc;
+}
+bool vm_range(Ctx& x, uint32_t addr, uint32_t size, uint8_t access) {
+    if (!size) return true;
+    const uint64_t end = uint64_t(addr) + size;
+    if (end > Memory::GuestArena::kArenaSize) return false;
+    for (uint64_t page = uint64_t(addr) & ~4095ull; page < end; page += 4096)
+        if ((x.mem.protAt(uint32_t(page)) & access) != access) return false;
+    return true;
+}
+int32_t k_vm_read_overwrite(Ctx& x, uint32_t task, uint32_t src, uint32_t size, uint32_t dst, GuestPtr outSize) {
+    if (task != kTaskPort || !hasMachSendRight(x.proc, task)) return 16;
+    if (!vm_range(x, outSize, 4, Memory::kProtWrite)) return 1;
+    x.mem.write<uint32_t>(outSize, 0);
+    if (!vm_range(x, src, size, Memory::kProtRead) || !vm_range(x, dst, size, Memory::kProtWrite)) return 1;
+    std::memmove(x.mem.host(dst), x.mem.host(src), size);
+    x.mem.write<uint32_t>(outSize, size);
+    return 0;
+}
+int32_t k_make_memory_entry(Ctx& x, uint32_t task, GuestPtr size, uint64_t offset, uint32_t permission, GuestPtr handle, uint32_t parent) {
+    if (task != kTaskPort || !hasMachSendRight(x.proc, task)) return 16;
+    if (!vm_range(x, size, 8, Memory::kProtRead) || !vm_range(x, handle, 4, Memory::kProtWrite)) return 1;
+    x.mem.write<uint32_t>(handle, 0);
+    // There is no Mach memory-object/IPC backend. Callers can recover from a
+    // capability failure; do not fabricate a port or a successful mapping.
+    return 46; // KERN_NOT_SUPPORTED
+}
 int32_t k_task_info(Ctx& x, uint32_t, uint32_t flavor, GuestPtr out, GuestPtr count) {
-    const uint32_t n = x.mem.read<uint32_t>(count);
-    std::memset(x.mem.host(out), 0, n * 4);
-    if (flavor == 5 /*TASK_BASIC_INFO*/ && n >= 5) {
+    const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
+    const uint32_t maxWords = std::min<uint32_t>(n, 10u);
+    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+    if (out && flavor == 5 /*TASK_BASIC_INFO*/ && maxWords >= 5) {
         const auto st = x.proc.heap().stats();
         x.mem.write<uint32_t>(out + 4, uint32_t(st.committed + (16u << 20)));   // resident_size
         x.mem.write<uint32_t>(out + 8, uint32_t(st.committed + (64u << 20)));   // virtual_size
     }
+    if (count) x.mem.write<uint32_t>(count, maxWords);
     return 0;
 }
-int32_t k_host_page_size(Ctx& x, uint32_t, GuestPtr out) { x.mem.write<uint32_t>(out, 4096); return 0; }
+int32_t k_host_page_size(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint32_t>(out, 4096); return 0; }
 int32_t k_host_statistics(Ctx& x, uint32_t, uint32_t, GuestPtr out, GuestPtr count) {
-    const uint32_t n = x.mem.read<uint32_t>(count);
-    std::memset(x.mem.host(out), 0, n * 4);
-    if (n >= 2) { x.mem.write<uint32_t>(out, 65536); x.mem.write<uint32_t>(out + 4, 32768); }   // free / active pages
+    const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
+    const uint32_t maxWords = std::min<uint32_t>(n, 15u);
+    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+    if (out && maxWords >= 2) { x.mem.write<uint32_t>(out, 65536); x.mem.write<uint32_t>(out + 4, 32768); }   // free / active pages
+    if (count) x.mem.write<uint32_t>(count, maxWords);
+    return 0;
+}
+int32_t k_host_info(Ctx& x, uint32_t, uint32_t flavor, GuestPtr out, GuestPtr count) {
+    const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
+    const uint32_t maxWords = std::min<uint32_t>(n, 12u);
+    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+    if (out && flavor == 1 /*HOST_BASIC_INFO*/ && maxWords >= 5) {
+        x.mem.write<uint32_t>(out + 0, 2);           // max_cpus
+        x.mem.write<uint32_t>(out + 4, 2);           // avail_cpus
+        x.mem.write<uint32_t>(out + 8, 512u << 20);  // memory_size
+        x.mem.write<uint32_t>(out + 12, 12);         // cpu_type (CPU_TYPE_ARM)
+        x.mem.write<uint32_t>(out + 16, 9);          // cpu_subtype (CPU_SUBTYPE_ARM_V7)
+    }
+    if (count) x.mem.write<uint32_t>(count, maxWords);
     return 0;
 }
 int32_t k_vm_allocate(Ctx& x, uint32_t, GuestPtr out, uint32_t size, int32_t) {
@@ -464,7 +581,32 @@ int32_t k_vm_allocate(Ctx& x, uint32_t, GuestPtr out, uint32_t size, int32_t) {
     return 0;
 }
 int32_t k_vm_deallocate(Ctx& x, uint32_t, GuestPtr a, uint32_t) { if (x.proc.heap().blockSize(a)) x.proc.heap().free(a); return 0; }
-int32_t k_zero3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint32_t) {
+    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const int32_t flags = x.mem.read<int32_t>(sp + 0);
+    const GuestPtr srcAddr = x.mem.read<uint32_t>(sp + 8);
+    const GuestPtr curProtPtr = x.mem.read<uint32_t>(sp + 16);
+    const GuestPtr maxProtPtr = x.mem.read<uint32_t>(sp + 20);
+    const uint32_t alignedSize = (size + 4095u) & ~4095u;
+    uint32_t dst = targetAddrPtr ? x.mem.read<uint32_t>(targetAddrPtr) : 0;
+    if ((flags & 1 /* VM_FLAGS_ANYWHERE */) != 0 || !dst || !x.mem.isMapped(dst)) {
+        dst = x.proc.heap().allocAligned(alignedSize ? alignedSize : 4096u, 4096u);
+        if (!dst) return 3;   // KERN_NO_SPACE
+    }
+    if (alignedSize) {
+        x.mem.protect(dst, alignedSize, Memory::kProtRead | Memory::kProtWrite | Memory::kProtExec);
+        if (srcAddr && size) std::memcpy(x.mem.host(dst), x.mem.host(srcAddr), size);
+    }
+    if (targetAddrPtr) x.mem.write<uint32_t>(targetAddrPtr, dst);
+    if (curProtPtr) x.mem.write<uint32_t>(curProtPtr, 7);
+    if (maxProtPtr) x.mem.write<uint32_t>(maxProtPtr, 7);
+    return 0;
+}
+int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t k_mach_wait_until(Ctx&, uint64_t) {
+    std::this_thread::yield();
+    return 0;
+}
 
 } // namespace
 
@@ -491,6 +633,11 @@ void registerLibcSystem(Process& p) {
     p.def<&s_getuid>("_geteuid");
     p.def<&s_getuid>("_getgid");
     p.def<&s_getuid>("_getegid");
+    p.def<&s_getpwuid>("_getpwuid");
+    p.def<&s_basename>("_basename");
+    p.def<&s_ioctl>("_ioctl");
+    p.def<&s_zero>("_tcgetattr");
+    p.def<&s_zero>("_tcsetattr");
     p.def<&s_zero>("_issetugid");
     p.def<&s_isatty>("_isatty");
     p.def<&s_getpagesize>("_getpagesize");
@@ -514,6 +661,8 @@ void registerLibcSystem(Process& p) {
     p.def<&d_dlclose>("_dlclose");
     p.def<&d_dlerror>("_dlerror");
     p.def<&d_dladdr>("_dladdr");
+    p.def<&d_local_arch_info>("_NXGetLocalArchInfo");
+    p.def<&d_arch_from_cputype>("_NXGetArchInfoFromCpuType");
     p.def<&f_open>("_open");
     p.def<&f_close>("_close");
     p.def<&f_read>("_read");
@@ -555,6 +704,7 @@ void registerLibcSystem(Process& p) {
     p.def<&g_sigsetop>("_sigaddset");
     p.def<&g_sigsetop>("_sigdelset");
     p.def<&g_sigprocmask>("_sigprocmask");
+    p.def<&g_sigaltstack>("_sigaltstack");
     p.def<&j_setjmp>("_setjmp");
     p.def<&j_setjmp>("__setjmp");
     p.def<&j_sigsetjmp>("_sigsetjmp");
@@ -563,14 +713,25 @@ void registerLibcSystem(Process& p) {
     p.def<&j_longjmp>("_siglongjmp");
     p.def<&k_task_self>("_mach_task_self");
     p.defineData("_mach_task_self_", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 0x103); return c; }());
-    p.def<&k_task_self>("_mach_host_self");
+    p.def<&k_host_self>("_mach_host_self");
     p.def<&k_task_info>("_task_info");
     p.def<&k_host_page_size>("_host_page_size");
     p.def<&k_host_statistics>("_host_statistics");
+    p.def<&k_host_info>("_host_info");
     p.def<&k_vm_allocate>("_vm_allocate");
     p.def<&k_vm_deallocate>("_vm_deallocate");
-    p.def<&k_zero3>("_mach_port_deallocate");
+    p.def<&k_vm_remap>("_vm_remap");
+    p.def<&k_port_deallocate>("_mach_port_deallocate");
+    p.def<&k_port_mod_refs>("_mach_port_mod_refs");
+    p.def<&k_port_get_refs>("_mach_port_get_refs");
+    p.def<&k_vm_read_overwrite>("_vm_read_overwrite");
+    p.def<&k_make_memory_entry>("_mach_make_memory_entry_64");
+    p.def<&k_zero4>("_thread_policy_set");
+    p.def<&k_zero4>("_thread_policy_get");
+    p.def<&k_mach_wait_until>("_mach_wait_until");
     p.defineData("_vm_page_size", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4096); return c; }());
+    p.defineData("_vm_page_mask", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4095); return c; }());
+    p.defineData("_vm_page_shift", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 12); return c; }());
 }
 
 } // namespace Hydrogen::Runtime

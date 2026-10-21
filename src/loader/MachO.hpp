@@ -73,6 +73,7 @@ struct Image {
 
     std::vector<uint32_t>  initializers; // __mod_init_func pointers, in order
     std::vector<BindRecord> binds;
+    std::vector<BindRecord> weakBinds;   // coalesced symbols (weak_bind table)
     uint32_t weakBindCount = 0;
 
     // Defined symbols: exported (N_EXT) by name, and every named symbol by

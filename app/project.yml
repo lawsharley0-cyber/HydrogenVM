@@ -27,13 +27,19 @@ targets:
           - "**/*.md"
     dependencies:
       - sdk: libz.tbd
+      - sdk: libsqlite3.tbd
       - sdk: CoreText.framework
       - sdk: ImageIO.framework
       - sdk: CoreMotion.framework
+      - sdk: AVFoundation.framework
     settings:
+      configs:
+        Release:
+          GCC_OPTIMIZATION_LEVEL: "3"               # the interpreter is the hot path; sideload builds use Release
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM
         PRODUCT_NAME: HydrogenVM
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"                 # iPhone only
         SUPPORTED_PLATFORMS: "iphoneos"            # device only: the 4 GB arena needs real hardware
         ARCHS: arm64

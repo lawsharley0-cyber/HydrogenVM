@@ -9,6 +9,7 @@
 #include "Cpu.hpp"
 #include "../memory/GuestArena.hpp"
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <initializer_list>
 #include <memory>
@@ -87,6 +88,16 @@ public:
     // Time slice used by callGuest and by runToExit between stop checks.
     static constexpr int64_t kSlice = 2'000'000;
 
+    // Thread suspension (thread_suspend / thread_resume). suspend() returns once
+    // the target has stopped running guest code; it stays stopped until resume().
+    void suspend(Cpu& target);
+    void resume(Cpu& target);
+    // Marks `c` as running guest code, parking first while it is suspended.
+    void enterGuest(Cpu& c) {
+        c.in_guest.store(true, std::memory_order_seq_cst);
+        if (__builtin_expect(c.suspend_count.load(std::memory_order_seq_cst) != 0, 0)) park(c);
+    }
+
     // Run until an exit other than Budget (checking for stop requests).
     Exit runToExit(Cpu& cpu);
 
@@ -111,6 +122,9 @@ public:
     Stats stats() const { std::lock_guard<std::mutex> lk(mu_); return stats_; }
 
 private:
+    void park(Cpu& c);
+    std::mutex suspendMu_;
+    std::condition_variable suspendCv_;
     Block* lookupOrDecode(uint32_t key);
     std::unique_ptr<Block> decodeBlock(uint32_t key);
     void decodeArmBlock(Block& b, uint32_t pc);

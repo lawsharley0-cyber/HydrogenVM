@@ -450,7 +450,7 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
         if (dot != std::string::npos && dot > 0 && name.find('/', dot) == std::string::npos) { type = name.substr(dot + 1); name.resize(dot); }
     }
     std::error_code ec;
-    const fs::path root = subdir.empty() ? fs::path(bundle) : fs::path(bundle) / subdir;
+    const fs::path root = subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir);
     const std::string lang = localization.empty() ? (B(x).language.empty() ? chooseLanguage(bundle) : B(x).language) : localization;
     std::vector<fs::path> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
     for (const auto& d : dirs) {
@@ -617,7 +617,6 @@ enum : uint32_t {
     kNSItemReplacementDirectory = 99, kNSAllApplicationsDirectory = 100, kNSAllLibrariesDirectory = 101,
 };
 std::vector<std::string> searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool expand) {
-    if (!(mask & 1)) return {};   // only NSUserDomainMask exists in the sandbox
     std::string rel;
     switch (dir) {
         case kNSDocumentDirectory: rel = "Documents"; break;
@@ -641,11 +640,29 @@ std::vector<std::string> searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool e
         case kNSItemReplacementDirectory: rel = "tmp"; break;
         default: return {};
     }
-    return {(expand ? x.proc.homePath() : std::string("~")) + "/" + rel};
+    std::vector<std::string> paths;
+    if (mask & 1) paths.push_back((expand ? x.proc.homePath() : std::string("~")) + "/" + rel);
+    // There is no shared guest filesystem yet. Local-domain locations have a
+    // separate per-process home-backed root, rather than exposing host /Library.
+    // Personal folders (Documents, Desktop, etc.) do not have a local domain.
+    const bool localDirectory =
+        dir == kNSLibraryDirectory || dir == kNSAllLibrariesDirectory ||
+        dir == kNSCachesDirectory || dir == kNSApplicationSupportDirectory ||
+        dir == kNSApplicationDirectory || dir == kNSAllApplicationsDirectory ||
+        dir == kNSDemoApplicationDirectory || dir == kNSAdminApplicationDirectory ||
+        dir == kNSDeveloperApplicationDirectory || dir == kNSDeveloperDirectory ||
+        dir == kNSDocumentationDirectory || dir == kNSInputMethodsDirectory ||
+        dir == kNSPreferencePanesDirectory;
+    if ((mask & 2) && localDirectory)
+        paths.push_back(x.proc.homePath() + "/LocalDomain/" + rel);
+    return paths;
 }
 id f_searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool expand) {
     std::vector<id> out;
     for (auto& s : searchPaths(x, dir, mask, expand)) out.push_back(makeString(x, s));
+    if (x.proc.config().traceCalls)
+        x.proc.logf(LogLevel::Debug, "NSSearchPathForDirectoriesInDomains(dir=%u, mask=0x%x, expand=%u) -> %zu paths",
+                    dir, mask, unsigned(expand), out.size());
     return makeArray(x, out);
 }
 id f_homeDirectory(Ctx& x) { return makeString(x, x.proc.homePath()); }
@@ -792,6 +809,19 @@ bool fm_contentsEqual(Ctx& x, id self, SEL s, id a, id b) {
     const id da = fm_contentsAtPath(x, self, s, a), db = fm_contentsAtPath(x, self, s, b);
     return da && db && dataBytes(x, da) == dataBytes(x, db);
 }
+// NSDictionary (NSFileAttributes) accessors.
+constexpr const char* kObjKeys[] = {"NSFileModificationDate", "NSFileCreationDate", "NSFileType", "NSFileOwnerAccountName", "NSFileGroupOwnerAccountName"};
+constexpr const char* kNumKeys[] = {"NSFilePosixPermissions", "NSFileSystemNumber", "NSFileSystemFileNumber", "NSFileOwnerAccountID", "NSFileGroupOwnerAccountID"};
+constexpr const char* kBoolKeys[] = {"NSFileExtensionHidden", "NSFileImmutable", "NSFileAppendOnly"};
+uint64_t fa_size(Ctx& x, id self, SEL) { const id n = dictGet(x, self, "NSFileSize"); return n ? uint64_t(numberInt(x, n)) : 0; }
+template <int I> id fa_obj(Ctx& x, id self, SEL) { return dictGet(x, self, kObjKeys[I]); }
+template <int I> uint32_t fa_num(Ctx& x, id self, SEL) {
+    const id n = dictGet(x, self, kNumKeys[I]);
+    if (I >= 3) return n;   // the account IDs are returned as NSNumber objects
+    return n ? uint32_t(numberInt(x, n)) : 0;
+}
+template <int I> bool fa_bool(Ctx& x, id self, SEL) { const id n = dictGet(x, self, kBoolKeys[I]); return n && numberInt(x, n); }
+
 id attributes(Ctx& x, const std::string& p, bool follow, GuestPtr err) {
     struct stat st;
     if ((follow ? ::stat(p.c_str(), &st) : ::lstat(p.c_str(), &st)) != 0) { ErrorOut::posix(x, err, errno, p); return 0; }
@@ -866,13 +896,20 @@ id fm_nil1(Ctx&, id, SEL, id) { return 0; }
 void fm_setDelegate(Ctx&, id, SEL, id) {}
 
 // Directory enumerator (snapshot of the recursive listing).
-struct EnumData : ObjC::HostObject { std::vector<std::string> items; size_t pos = 0; std::string root; };
+struct DirEnumData : ObjC::HostObject {
+    std::vector<std::string> items;
+    size_t pos = 0;
+    std::string root;
+    bool isURL = false;
+    uint32_t mutationCell = 0;
+};
 id fm_enumerator(Ctx& x, id, SEL, id path) {
     const std::string p = P(x, path);
     std::error_code ec;
     if (!fs::is_directory(p, ec)) return 0;
-    auto h = std::make_unique<EnumData>();
+    auto h = std::make_unique<DirEnumData>();
     h->root = p;
+    h->isURL = false;
     for (auto it = fs::recursive_directory_iterator(p, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
         h->items.push_back(fs::relative(it->path(), p, ec).string());
     std::sort(h->items.begin(), h->items.end());
@@ -880,28 +917,72 @@ id fm_enumerator(Ctx& x, id, SEL, id path) {
     rt(x).setHost(e, std::move(h));
     return autoreleased(x, e);
 }
-id fm_enumeratorURL(Ctx& x, id self, SEL s, id url, id, uint32_t, uint32_t) { return fm_enumerator(x, self, s, makeString(x, filePath(x, url))); }
+id fm_enumeratorURL(Ctx& x, id self, SEL s, id url, id, uint32_t, uint32_t) {
+    const std::string p = filePath(x, url);
+    std::error_code ec;
+    if (!fs::is_directory(p, ec)) return 0;
+    auto h = std::make_unique<DirEnumData>();
+    h->root = p;
+    h->isURL = true;
+    for (auto it = fs::recursive_directory_iterator(p, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+        h->items.push_back(fs::relative(it->path(), p, ec).string());
+    std::sort(h->items.begin(), h->items.end());
+    const id e = rt(x).createInstance(B(x).dirEnum);
+    rt(x).setHost(e, std::move(h));
+    return autoreleased(x, e);
+}
 id de_next(Ctx& x, id self, SEL) {
-    EnumData* d = rt(x).hostIf<EnumData>(self);
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
     if (!d || d->pos >= d->items.size()) return 0;
-    return makeString(x, d->items[d->pos++]);
+    const std::string item = d->items[d->pos++];
+    return d->isURL ? makeFileURL(x, d->root + "/" + item) : makeString(x, item);
 }
 id de_all(Ctx& x, id self, SEL) {
-    EnumData* d = rt(x).hostIf<EnumData>(self);
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
     std::vector<id> out;
-    if (d) while (d->pos < d->items.size()) out.push_back(makeString(x, d->items[d->pos++]));
+    if (d) {
+        while (d->pos < d->items.size()) {
+            const std::string item = d->items[d->pos++];
+            out.push_back(d->isURL ? makeFileURL(x, d->root + "/" + item) : makeString(x, item));
+        }
+    }
     return makeArray(x, out);
 }
 void de_skip(Ctx& x, id self, SEL) {
-    EnumData* d = rt(x).hostIf<EnumData>(self);
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
     if (!d || d->pos == 0) return;
     const std::string prefix = d->items[d->pos - 1] + "/";
     while (d->pos < d->items.size() && d->items[d->pos].rfind(prefix, 0) == 0) ++d->pos;
 }
 id de_fileAttributes(Ctx& x, id self, SEL) {
-    EnumData* d = rt(x).hostIf<EnumData>(self);
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
     if (!d || d->pos == 0) return 0;
     return attributes(x, d->root + "/" + d->items[d->pos - 1], false, 0);
+}
+uint32_t de_countByEnumerating(Ctx& x, id self, SEL, GuestPtr state, GuestPtr buf, uint32_t len) {
+    DirEnumData* d = rt(x).hostIf<DirEnumData>(self);
+    if (!d || !state) return 0;
+    uint32_t pos = x.mem.read<uint32_t>(state);
+    if (pos == 0) {
+        if (!d->mutationCell) d->mutationCell = x.proc.heap().allocZeroed(4);
+        x.mem.write<uint32_t>(state + 8, d->mutationCell);
+    }
+    if (pos >= d->items.size()) return 0;
+    const uint32_t n = std::min<uint32_t>(len, uint32_t(d->items.size()) - pos);
+    for (uint32_t i = 0; i < n; ++i) {
+        id obj = d->isURL ? makeFileURL(x, d->root + "/" + d->items[pos + i])
+                          : makeString(x, d->items[pos + i]);
+        x.mem.write<uint32_t>(buf + i * 4, obj);
+    }
+    x.mem.write<uint32_t>(state + 4, buf);
+    x.mem.write<uint32_t>(state, pos + n);
+    return n;
+}
+void de_dealloc(Ctx& x, id self, SEL) {
+    if (DirEnumData* d = rt(x).hostIf<DirEnumData>(self)) {
+        if (d->mutationCell) x.proc.heap().free(d->mutationCell);
+    }
+    rt(x).disposeInstance(x.cpu, self);
 }
 void obj_dealloc(Ctx& x, id self, SEL) { rt(x).disposeInstance(x.cpu, self); }
 
@@ -1162,7 +1243,9 @@ void registerBundle(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder de = r.defineClass("NSDirectoryEnumerator", "NSEnumerator");
     b.dirEnum = de.cls();
     de.m<&de_next>("nextObject").m<&de_all>("allObjects").m<&de_skip>("skipDescendents", "v@:")
-      .m<&de_skip>("skipDescendants", "v@:").m<&de_fileAttributes>("fileAttributes").m<&obj_dealloc>("dealloc", "v@:");
+      .m<&de_skip>("skipDescendants", "v@:").m<&de_fileAttributes>("fileAttributes")
+      .m<&de_countByEnumerating>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
+      .m<&de_dealloc>("dealloc", "v@:");
 
     ObjC::ClassBuilder fh = r.defineClass("NSFileHandle", "NSObject");
     b.fileHandle = fh.cls();
@@ -1174,6 +1257,15 @@ void registerBundle(Process& p, ObjC::Runtime& r) {
       .m<&fh_write>("writeData:", "v@:@").m<&fh_seekToEnd>("seekToEndOfFile", "Q@:").m<&fh_seekTo>("seekToFileOffset:", "v@:Q")
       .m<&fh_offset>("offsetInFile", "Q@:").m<&fh_truncate>("truncateFileAtOffset:", "v@:Q").m<&fh_sync>("synchronizeFile", "v@:")
       .m<&fh_close>("closeFile", "v@:").m<&fh_fd>("fileDescriptor", "i@:").m<&obj_dealloc>("dealloc", "v@:");
+
+    // NSDictionary (NSFileAttributes)
+    r.builder(r.getClass("NSDictionary"))
+        .m<&fa_size>("fileSize", "Q@:").m<&fa_obj<0>>("fileModificationDate").m<&fa_obj<1>>("fileCreationDate")
+        .m<&fa_obj<2>>("fileType").m<&fa_obj<3>>("fileOwnerAccountName").m<&fa_obj<4>>("fileGroupOwnerAccountName")
+        .m<&fa_num<0>>("filePosixPermissions", "I@:").m<&fa_num<1>>("fileSystemNumber", "I@:")
+        .m<&fa_num<2>>("fileSystemFileNumber", "I@:").m<&fa_num<3>>("fileOwnerAccountID")
+        .m<&fa_num<4>>("fileGroupOwnerAccountID").m<&fa_bool<0>>("fileExtensionHidden", "c@:")
+        .m<&fa_bool<1>>("fileIsImmutable", "c@:").m<&fa_bool<2>>("fileIsAppendOnly", "c@:");
 
     for (const char* n : {"NSFileSize", "NSFileType", "NSFileModificationDate", "NSFileCreationDate", "NSFilePosixPermissions",
                           "NSFileReferenceCount", "NSFileSystemNumber", "NSFileSystemFileNumber", "NSFileOwnerAccountName",

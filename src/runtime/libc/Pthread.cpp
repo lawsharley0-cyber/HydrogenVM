@@ -6,6 +6,7 @@
 // initialised ones (PTHREAD_MUTEX_INITIALIZER) just work. All waits poll the
 // process stop flag so quitting an app never hangs on a guest lock.
 #include "runtime/Process.hpp"
+#include "MachPorts.hpp"
 #include <cerrno>
 #include <chrono>
 #include <thread>
@@ -301,8 +302,104 @@ int32_t t_getschedparam(Ctx& x, uint32_t, GuestPtr policy, GuestPtr param) {
 int32_t t_setschedparam(Ctx&, uint32_t, int32_t, GuestPtr) { return 0; }
 int32_t sched_prio(Ctx&, int32_t) { return 31; }
 int32_t sched_yield_(Ctx&) { std::this_thread::yield(); return 0; }
-uint32_t t_mach_thread_self(Ctx& x) { return x.proc.currentThread().id + 0x1000; }
-uint32_t t_pthread_mach_thread_np(Ctx& x, uint32_t th) { GuestThread* t = x.proc.findThread(th); return t ? t->id + 0x1000 : 0; }
+uint32_t t_mach_thread_self(Ctx& x) { return acquireMachSendRight(x.proc, x.proc.currentThread().id + 0x1000); }
+uint32_t t_pthread_mach_thread_np(Ctx& x, uint32_t th) {
+    GuestThread* t = x.proc.findThread(th);
+    if (!t) return 0;
+    const uint32_t port = t->id + 0x1000;
+    // This API borrows the pthread's port rather than adding a user reference.
+    if (!hasMachSendRight(x.proc, port)) acquireMachSendRight(x.proc, port);
+    return port;
+}
+int32_t t_pthread_threadid_np(Ctx& x, uint32_t th, GuestPtr outId) {
+    if (!outId) return EINVAL;
+    GuestThread* t = th ? x.proc.findThread(th) : &x.proc.currentThread();
+    const uint64_t id = t ? uint64_t(t->id) : uint64_t(x.proc.currentThread().id);
+    x.mem.write<uint64_t>(outId, id);
+    return 0;
+}
+
+// Mach thread control (garbage collectors stop the world with these).
+constexpr int32_t kKernSuccess = 0, kKernInvalidArgument = 4;
+GuestThread* byPort(Ctx& x, uint32_t port) { return port >= 0x1000 && hasMachSendRight(x.proc, port) ? x.proc.findThreadById(port - 0x1000) : nullptr; }
+int32_t mt_suspend(Ctx& x, uint32_t port) {
+    GuestThread* t = byPort(x, port);
+    if (!t) return kKernInvalidArgument;
+    if (t == &x.proc.currentThread()) return kKernSuccess;   // never park ourselves inside a host call
+    x.proc.engine().suspend(t->cpu);
+    return kKernSuccess;
+}
+int32_t mt_resume(Ctx& x, uint32_t port) {
+    GuestThread* t = byPort(x, port);
+    if (!t) return kKernInvalidArgument;
+    if (t != &x.proc.currentThread()) x.proc.engine().resume(t->cpu);
+    return kKernSuccess;
+}
+// thread_get_state(thread, flavor, state, count*): ARM_THREAD_STATE (1) = r0-r12, sp, lr, pc, cpsr;
+// ARM_VFP_STATE (2) = 64 words + fpscr; ARM_EXCEPTION_STATE (3) = 3 words.
+int32_t mt_getState(Ctx& x, uint32_t port, int32_t flavor, GuestPtr st, GuestPtr countPtr) {
+    GuestThread* t = byPort(x, port);
+    if (!t) return kKernInvalidArgument;
+    const CPU::Cpu& c = t->cpu;
+    const uint32_t have = x.mem.read<uint32_t>(countPtr);
+    if (flavor == 1) {
+        if (have < 17) return kKernInvalidArgument;
+        for (uint32_t i = 0; i < 16; ++i) x.mem.write<uint32_t>(st + i * 4, c.r[i]);
+        x.mem.write<uint32_t>(st + 60, c.r[CPU::kPC] | (c.thumb ? 1 : 0));
+        x.mem.write<uint32_t>(st + 64, c.cpsr());
+        x.mem.write<uint32_t>(countPtr, 17);
+        return kKernSuccess;
+    }
+    if (flavor == 2) {
+        if (have < 33) return kKernInvalidArgument;
+        const uint32_t n = std::min<uint32_t>(have, 65);
+        for (uint32_t i = 0; i + 1 < n; ++i) x.mem.write<uint32_t>(st + i * 4, uint32_t(c.d[i / 2] >> ((i & 1) * 32)));
+        x.mem.write<uint32_t>(st + (n - 1) * 4, c.fpscr);
+        x.mem.write<uint32_t>(countPtr, n);
+        return kKernSuccess;
+    }
+    if (flavor == 3) {
+        if (have < 3) return kKernInvalidArgument;
+        for (uint32_t i = 0; i < 3; ++i) x.mem.write<uint32_t>(st + i * 4, 0);
+        x.mem.write<uint32_t>(countPtr, 3);
+        return kKernSuccess;
+    }
+    return kKernInvalidArgument;
+}
+// thread_set_state for ARM_THREAD_STATE: only meaningful on a suspended thread.
+int32_t mt_setState(Ctx& x, uint32_t port, int32_t flavor, GuestPtr st, uint32_t count) {
+    GuestThread* t = byPort(x, port);
+    if (!t || flavor != 1 || count < 17) return kKernInvalidArgument;
+    for (uint32_t i = 0; i < 15; ++i) t->cpu.r[i] = x.mem.read<uint32_t>(st + i * 4);
+    const uint32_t pc = x.mem.read<uint32_t>(st + 60), cpsr = x.mem.read<uint32_t>(st + 64);
+    t->cpu.thumb = ((cpsr >> 5) & 1) | (pc & 1);
+    t->cpu.r[CPU::kPC] = pc & ~1u;
+    t->cpu.setApsrFlags(cpsr);
+    return kKernSuccess;
+}
+// thread_info(thread, THREAD_BASIC_INFO=3, info, count*): mostly "running, not suspended".
+// task_threads(task, &list, &count): a kernel-allocated array of thread ports.
+int32_t mt_taskThreads(Ctx& x, uint32_t task, GuestPtr listOut, GuestPtr countOut) {
+    if (task != kTaskPort || !hasMachSendRight(x.proc, task)) return kKernInvalidArgument;
+    const std::vector<uint32_t> ids = x.proc.liveThreadIds();
+    const uint32_t arr = x.proc.heap().alloc(uint32_t(ids.size()) * 4 + 4);
+    for (uint32_t i = 0; i < ids.size(); ++i) x.mem.write<uint32_t>(arr + i * 4, acquireMachSendRight(x.proc, ids[i] + 0x1000));
+    x.mem.write<uint32_t>(listOut, arr);
+    x.mem.write<uint32_t>(countOut, uint32_t(ids.size()));
+    return kKernSuccess;
+}
+int32_t mt_info(Ctx& x, uint32_t port, int32_t flavor, GuestPtr info, GuestPtr countPtr) {
+    GuestThread* t = byPort(x, port);
+    if (!t) return kKernInvalidArgument;
+    if (flavor != 3) return kKernInvalidArgument;
+    const uint32_t n = std::min<uint32_t>(x.mem.read<uint32_t>(countPtr), 10);
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint32_t>(info + i * 4, 0);
+    // {user_time[2], system_time[2], cpu_usage, policy, run_state, flags, suspend_count, sleep_time}
+    if (n > 6) x.mem.write<uint32_t>(info + 24, t->cpu.suspend_count.load() ? 2 : 1);   // TH_STATE_STOPPED / RUNNING
+    if (n > 8) x.mem.write<uint32_t>(info + 32, t->cpu.suspend_count.load());
+    x.mem.write<uint32_t>(countPtr, n);
+    return kKernSuccess;
+}
 
 struct ThreadExit : std::runtime_error { ThreadExit() : std::runtime_error("pthread_exit") {} };
 void t_exit(Ctx& x, GuestPtr value) {
@@ -417,7 +514,14 @@ void registerLibcPthread(Process& p) {
     p.def<&sched_yield_>("_sched_yield");
     p.def<&sched_yield_>("_pthread_yield_np");
     p.def<&t_mach_thread_self>("_mach_thread_self");
+    p.def<&mt_suspend>("_thread_suspend");
+    p.def<&mt_resume>("_thread_resume");
+    p.def<&mt_getState>("_thread_get_state");
+    p.def<&mt_setState>("_thread_set_state");
+    p.def<&mt_info>("_thread_info");
+    p.def<&mt_taskThreads>("_task_threads");
     p.def<&t_pthread_mach_thread_np>("_pthread_mach_thread_np");
+    p.def<&t_pthread_threadid_np>("_pthread_threadid_np");
     p.def<&t_exit>("_pthread_exit");
     p.def<&oa_add32>("_OSAtomicAdd32");
     p.def<&oa_add32>("_OSAtomicAdd32Barrier");

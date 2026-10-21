@@ -201,6 +201,14 @@ DecodeResult decodeThumbVfpNeon(BlockBuilder& bb, uint32_t insn) {
         return decodeNeonLoadStore(bb, (insn & 0x00FFFFFFu) | 0xF4000000u);
     if ((insn >> 28) == 0xE) {
         const uint32_t cp = bits(insn, 11, 8);
+        if (cp == 15 && bits(insn, 27, 24) == 0xE && bit(insn, 4)) {
+            if (bits(insn, 23, 21) == 0 && bits(insn, 19, 16) == 13 && bits(insn, 3, 0) == 0) {
+                const uint32_t opc2 = bits(insn, 7, 5), rt = bits(insn, 15, 12);
+                if (bit(insn, 20) && (opc2 == 2 || opc2 == 3)) { bb.emit(&H_ReadTpid, rt, 0, 0, 0, opc2); return DecodeResult::Continue; }
+                if (!bit(insn, 20) && opc2 == 2) { bb.emit(&H_WriteTpid, rt); return DecodeResult::Continue; }
+            }
+            if (!bit(insn, 20) && bits(insn, 19, 16) == 7) { bb.emit(&H_Fence); return DecodeResult::Continue; }
+        }
         if (cp == 10 || cp == 11) return decodeArmVfp(bb, insn);
     }
     return undefined(bb, insn);

@@ -3,6 +3,7 @@
 // NSIndexPath / NSIndexSet, NSUUID, NSLocale / NSTimeZone basics and the
 // NSString/NSClass/NSSelector conversion functions.
 #include "Foundation.hpp"
+#include "runtime/libc/Unwind.hpp"
 #include "runtime/libc/Format.hpp"
 #include <chrono>
 #include <random>
@@ -227,9 +228,36 @@ id o_mutableArrayValueForKey(Ctx& x, id self, SEL s, id key) {
     const id v = o_valueForKey(x, self, s, key);
     return autoreleased(x, id(rt(x).send(x.cpu, v ? v : makeArray(x, {}), "mutableCopy")));
 }
-// KVO: observers are accepted but never notified (no isa-swizzling yet).
+// KVO: observers are accepted and notified with current values.
+void deliverKVO(Ctx& x, id observer, id keyPath, id target, uint32_t context) {
+    if (!observer || !keyPath || !target) return;
+    const id val = id(rt(x).send(x.cpu, target, "valueForKeyPath:", {keyPath}));
+    std::vector<std::pair<id, id>> entries;
+    entries.push_back({makeString(x, "kind"), makeNumberInt(x, 1)});
+    if (val) entries.push_back({makeString(x, "new"), val});
+    const id change = makeDict(x, entries);
+    rt(x).send(x.cpu, observer, "observeValueForKeyPath:ofObject:change:context:", {keyPath, target, change, context});
+}
+
 void o_kvoNoop2(Ctx&, id, SEL, id, id) {}
-void o_kvoAdd(Ctx& x, id, SEL, id, id key, uint32_t, uint32_t) { x.proc.reportMissing("KVO notifications (observing " + utf8(x, key) + ")"); }
+void o_kvoAdd(Ctx& x, id self, SEL, id observer, id key, uint32_t options, uint32_t context) {
+    if (!observer || !key || !self) return;
+    if (options & 4 /* NSKeyValueObservingOptionInitial */) {
+        deliverKVO(x, observer, key, self, context);
+    } else {
+        Process* proc = &x.proc;
+        rt(x).retain(x.cpu, observer);
+        rt(x).retain(x.cpu, key);
+        rt(x).retain(x.cpu, self);
+        Foundation::mainRunLoop(x.proc).addTimer(0.01, 0, false, [proc, observer, key, self, context](CPU::Cpu& c) {
+            Ctx cx{*proc, c, proc->mem()};
+            deliverKVO(cx, observer, key, self, context);
+            rt(cx).release(c, observer);
+            rt(cx).release(c, key);
+            rt(cx).release(c, self);
+        });
+    }
+}
 void o_kvoRemove3(Ctx&, id, SEL, id, id, uint32_t) {}
 void o_kvoChange(Ctx&, id, SEL, id) {}
 bool oc_automaticallyNotifies(Ctx&, id, SEL, id) { return true; }
@@ -261,8 +289,27 @@ id excc_with(Ctx& x, id self, SEL, id name, id reason, id userInfo) {
     return autoreleased(x, exc_init(x, e, 0, name, reason, userInfo));
 }
 [[noreturn]] void throwException(Ctx& x, id e) {
+    if (const uint32_t ue = prepareGuestObjCException(x, e)) throw GuestThrow{ue};   // the app's @catch takes it
     if (M(x).uncaughtHandler) x.proc.callGuest(x.cpu, M(x).uncaughtHandler, {e});
     throw ObjC::ObjCError("Terminating app due to uncaught exception " + exceptionText(x, e));
+}
+// Cocoa raises NSExceptions for these; HydrogenVM's host code reports them as
+// errors. If the app would catch the exception, raise the real thing instead.
+bool hostErrorToNSException(Ctx& x, const std::exception& err) {
+    const std::string msg = err.what();
+    const bool cocoa = msg.rfind("*** ", 0) == 0 || msg.find("unrecognized selector sent to") != std::string::npos ||
+                       msg.find("was mutated while being enumerated") != std::string::npos;
+    if (!cocoa) return false;
+    const char* name = msg.find("beyond bounds") != std::string::npos || msg.find("out of bounds") != std::string::npos ||
+                       msg.find("range") != std::string::npos ? "NSRangeException"
+                     : msg.find("mutated") != std::string::npos ? "NSGenericException" : "NSInvalidArgumentException";
+    const Class cls = rt(x).getClass("NSException");
+    if (!cls) return false;
+    const id e = excc_with(x, cls, 0, constString(x.proc, name), makeString(x, msg), 0);
+    const uint32_t ue = prepareGuestObjCException(x, e);
+    if (!ue) return false;
+    landGuestException(x, ue);
+    return true;
 }
 void excc_raiseFormat(Ctx& x, id self, SEL, id name, id f, VarArgs va) {
     const id reason = makeString(x, fmt(x, f, va.args));
@@ -477,7 +524,7 @@ id csc_withRange(Ctx& x, id self, SEL, uint32_t loc, uint32_t len) {
     if (len) csd(x, s)->range(loc, loc + len - 1);
     return autoreleased(x, s);
 }
-id csc_new(Ctx& x, id self, SEL) { return autoreleased(x, newCharSet(x, self == M(x).mutableCharSet)); }
+id csc_new(Ctx& x, id self, SEL) { return newCharSet(x, self == M(x).mutableCharSet); }
 id cs_allocWithZone(Ctx& x, id self, SEL, uint32_t) {
     if (self == M(x).charSet || self == M(x).mutableCharSet) return newCharSet(x, self == M(x).mutableCharSet);
     return rt(x).createInstance(self);
@@ -880,31 +927,67 @@ id loc_initWithIdentifier(Ctx&, id self, SEL, id) { return self; }
 id locc_withIdentifier(Ctx& x, id, SEL, id) { return loc_current(x, 0, 0); }
 id loc_displayName(Ctx& x, id, SEL, id, id value) { return value; }
 
+struct FixedTimeZone : ObjC::HostObject { int32_t seconds = 0; };
 id tz_local(Ctx& x, id, SEL) { return singleton(x, M(x).localTZ, M(x).timeZone); }
-int32_t tz_secondsFromGMT(Ctx&, id, SEL) {
+id tzc_fixed(Ctx& x, id, SEL, int32_t seconds) {
+    if (seconds < -18 * 3600 || seconds > 18 * 3600) return 0;
+    const id result = rt(x).createInstance(M(x).timeZone);
+    auto data = std::make_unique<FixedTimeZone>();
+    data->seconds = seconds;
+    rt(x).setHost(result, std::move(data));
+    return autoreleased(x, result);
+}
+int32_t tz_secondsFromGMT(Ctx& x, id self, SEL) {
+    if (auto* fixed = rt(x).hostIf<FixedTimeZone>(self)) return fixed->seconds;
     const time_t t = time(nullptr);
     std::tm lt;
     localtime_r(&t, &lt);
     return int32_t(lt.tm_gmtoff);
 }
 int32_t tz_secondsFromGMTForDate(Ctx& x, id self, SEL s, id) { return tz_secondsFromGMT(x, self, s); }
-id tz_name(Ctx& x, id, SEL) {
+id tz_name(Ctx& x, id self, SEL) {
+    if (auto* fixed = rt(x).hostIf<FixedTimeZone>(self)) {
+        if (!fixed->seconds) return makeString(x, "GMT");
+        const int32_t magnitude = fixed->seconds < 0 ? -fixed->seconds : fixed->seconds;
+        char name[32];
+        std::snprintf(name, sizeof name, "GMT%c%02d:%02d", fixed->seconds < 0 ? '-' : '+',
+                      magnitude / 3600, (magnitude / 60) % 60);
+        return makeString(x, name);
+    }
     const char* tz = std::getenv("TZ");
     return makeString(x, std::string(tz && *tz ? tz : "GMT"));
 }
-id tz_abbreviation(Ctx& x, id, SEL) {
+id tz_abbreviation(Ctx& x, id self, SEL s) {
+    if (rt(x).hostIf<FixedTimeZone>(self)) return tz_name(x, self, s);
     const time_t t = time(nullptr);
     std::tm lt;
     localtime_r(&t, &lt);
     return makeString(x, std::string(lt.tm_zone ? lt.tm_zone : "GMT"));
 }
-id tzc_withName(Ctx& x, id, SEL, id) { return tz_local(x, 0, 0); }
-bool tz_isDST(Ctx&, id, SEL) { const time_t t = time(nullptr); std::tm lt; localtime_r(&t, &lt); return lt.tm_isdst > 0; }
+id tz_abbreviationForDate(Ctx& x, id self, SEL s, id) { return tz_abbreviation(x, self, s); }
+id tzc_withName(Ctx& x, id, SEL, id name) {
+    const std::string value = utf8(x, name);
+    if (value == "GMT" || value == "UTC" || value == "Etc/UTC" || value == "Etc/GMT")
+        return tzc_fixed(x, 0, 0, 0);
+    return tz_local(x, 0, 0);
+}
+bool tz_isDST(Ctx& x, id self, SEL) {
+    if (rt(x).hostIf<FixedTimeZone>(self)) return false;
+    const time_t t = time(nullptr); std::tm lt; localtime_r(&t, &lt); return lt.tm_isdst > 0;
+}
+bool tz_isDSTForDate(Ctx& x, id self, SEL s, id) { return tz_isDST(x, self, s); }
 
 // ---------------------------------------------- conversion functions ---
 
 id f_stringFromClass(Ctx& x, Class c) { return c ? makeString(x, rt(x).className(c)) : 0; }
-Class f_classFromString(Ctx& x, id s) { return s ? rt(x).getClass(utf8(x, s)) : 0; }
+// Placeholder classes (made up for missing framework classes) don't exist as
+// far as the app can tell: apps probe for optional frameworks this way.
+Class f_classFromString(Ctx& x, id s) {
+    if (!s) return 0;
+    const Class c = rt(x).getClass(utf8(x, s));
+    const ObjC::ClassInfo* ci = c ? rt(x).info(c) : nullptr;
+    return ci && ci->stub ? 0 : c;
+}
 id f_stringFromSelector(Ctx& x, SEL s) { return s ? makeString(x, rt(x).selName(s)) : 0; }
 SEL f_selectorFromString(Ctx& x, id s) { return s ? rt(x).sel(utf8(x, s)) : 0; }
 id f_stringFromProtocol(Ctx& x, uint32_t p) { return p ? makeString(x, rt(x).protocolName(p)) : 0; }
@@ -985,6 +1068,7 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
        .m<&o_observationInfo>("observationInfo", "^v@:");
 
     ObjC::ClassBuilder exc = r.defineClass("NSException", "NSObject");
+    p.setHostErrorHook(hostErrorToNSException);
     m.nsException = exc.cls();
     exc.cm<&excc_with>("exceptionWithName:reason:userInfo:").cm<&excc_raiseFormat>("raise:format:", "v@:@@")
        .cm<&excc_raiseFormatArgs>("raise:format:arguments:", "v@:@@^v");
@@ -1160,9 +1244,13 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder tz = r.defineClass("NSTimeZone", "NSObject");
     m.timeZone = tz.cls();
     tz.cm<&tz_local>("localTimeZone").cm<&tz_local>("systemTimeZone").cm<&tz_local>("defaultTimeZone")
-      .cm<&tzc_withName>("timeZoneWithName:").cm<&tzc_withName>("timeZoneWithAbbreviation:");
+      .cm<&tzc_withName>("timeZoneWithName:").cm<&tzc_withName>("timeZoneWithAbbreviation:")
+      .cm<&tzc_fixed>("timeZoneForSecondsFromGMT:", "@@:i");
     tz.m<&tz_secondsFromGMT>("secondsFromGMT", "i@:").m<&tz_secondsFromGMTForDate>("secondsFromGMTForDate:", "i@:@")
       .m<&tz_name>("name").m<&tz_abbreviation>("abbreviation").m<&tz_isDST>("isDaylightSavingTime", "c@:")
+      .m<&tz_abbreviationForDate>("abbreviationForDate:", "@@:@")
+      .m<&tz_isDSTForDate>("isDaylightSavingTimeForDate:", "c@:@")
+      .m<&tz_name>("localizedName:locale:", "@@:i@")
       .m<&retainedCopy>("copyWithZone:");
 
     p.def<&f_stringFromClass>("_NSStringFromClass");

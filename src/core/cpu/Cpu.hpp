@@ -16,6 +16,7 @@
 //    (cached pointer = "block linking") or returns to the dispatcher when the
 //    time-slice budget runs out, so the guest can always be interrupted.
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <memory>
@@ -37,8 +38,10 @@
 #  define HVM_HOT_ABI
 #endif
 
-#if !defined(__clang__)
-#  error "HydrogenVM's execution core requires clang ([[clang::musttail]])"
+#if defined(__clang__)
+#  define HVM_MUSTTAIL [[clang::musttail]]
+#else
+#  define HVM_MUSTTAIL
 #endif
 
 namespace Hydrogen::CPU {
@@ -80,8 +83,8 @@ enum class Exit : uint32_t {
 // Per-thread direct-mapped cache in front of the engine's block map. `first`
 // is the block's first op, so indirect branches can jump without touching the Block.
 struct FastEntry { uint32_t key; Block* block; const Op* first; };
-inline constexpr size_t kFastSize = 1u << 12;
-inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 13)) & (kFastSize - 1); }
+inline constexpr size_t kFastSize = 1u << 14;
+inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (kFastSize - 1); }
 
 struct alignas(64) Cpu {
     uint32_t r[kNumRegs] = {};
@@ -120,6 +123,19 @@ struct alignas(64) Cpu {
     // threads can run on real host threads without locking on every branch.
     std::unique_ptr<FastEntry[]> fast;
     uint64_t fast_gen = ~0ull;
+
+    // Guest SP at the innermost host->guest call (Engine::callGuest). Guest
+    // frames at or above it belong to code that host frames are waiting on,
+    // so an exception unwinder must not land there.
+    uint32_t call_boundary_sp = 0xFFFFFFFFu;
+
+    // thread_suspend() support. `suspend_count` > 0 asks the thread to park at
+    // its next safepoint (entering guest code: each time slice, and on return
+    // from every host function). `in_guest` is false while the thread runs
+    // host code or is parked, i.e. whenever its registers in r[] are a
+    // complete, stable picture of its guest state.
+    std::atomic<uint32_t> suspend_count{0};
+    std::atomic<bool> in_guest{false};
 
     uint32_t pc() const { return r[kPC]; }
     uint32_t cpsr() const { return nzcv | (q << 27) | ge | (thumb << 5) | 0x10 /*USR*/; }

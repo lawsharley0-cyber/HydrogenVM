@@ -6,6 +6,9 @@
 
 namespace fs = std::filesystem;
 
+namespace Hydrogen::Runtime { void flushGuestStdio(Process& p); }
+namespace Hydrogen::Runtime::Foundation { void flushUserDefaults(Process& p); }
+
 namespace Hydrogen::Runtime::UIKit {
 
 using Foundation::autoreleased;
@@ -370,6 +373,10 @@ void startAccelTimer(Ctx& x, id acc) {
         const id s = rt(cx).createInstance(ACS(cx).acceleration);
         AccelSample& smp = rt(cx).host<AccelSample>(s);
         smp.x = u.accel[0]; smp.y = u.accel[1]; smp.z = u.accel[2]; smp.t = nowSeconds();
+        cx.mem.write<double>(s + 4, smp.t);
+        cx.mem.write<double>(s + 12, smp.x);
+        cx.mem.write<double>(s + 20, smp.y);
+        cx.mem.write<double>(s + 28, smp.z);
         const uint32_t pool = rt(cx).poolPush();
         rt(cx).send(c, ad.delegate, "accelerometer:didAccelerate:", {acc, s});
         rt(cx).poolPop(c, pool);
@@ -429,6 +436,67 @@ void configureScreen(Ctx& x) {
                 u.initialOrientation >= 3 ? "landscape" : "portrait", u.statusBarHidden ? "hidden" : "visible");
 }
 
+// ---------------------------------------------------------------- lifecycle ---
+// Delivered on the guest's main thread when the host asks (Process::enterBackground /
+// enterForeground / requestGracefulStop): this is when games save.
+struct Lifecycle { bool active = true, background = false; };
+void deliverLifecycle(Ctx& x, const char* delegateSel, const char* note) {
+    auto& u = ui(x);
+    ObjC::Runtime& r = rt(x);
+    const uint32_t pool = r.poolPush();
+    const id del = u.appDelegate;
+    if (del && r.respondsTo(del, r.sel(delegateSel))) r.send(x.cpu, del, delegateSel, {u.app});
+    Foundation::postNotification(x, note, u.app);
+    r.poolPop(x.cpu, pool);
+}
+void persistNow(Ctx& x) {
+    Foundation::flushUserDefaults(x.proc);
+    flushGuestStdio(x.proc);
+}
+void toBackground(Ctx& x, Lifecycle& st) {
+    if (st.active) { deliverLifecycle(x, "applicationWillResignActive:", "UIApplicationWillResignActiveNotification"); st.active = false; }
+    if (!st.background) { deliverLifecycle(x, "applicationDidEnterBackground:", "UIApplicationDidEnterBackgroundNotification"); st.background = true; }
+    persistNow(x);
+}
+void installLifecycle(Process& p) {
+    auto st = std::make_shared<Lifecycle>();
+    Process* pp = &p;
+    p.setLifecycleHandler([pp, st](Process::Lifecycle what) {
+        if (what == Process::Lifecycle::Foreground) { pp->setBackgrounded(false); return; }   // wakes the parked main thread
+        Foundation::mainRunLoop(*pp).post([pp, st, what](CPU::Cpu& c) {
+            Ctx x{*pp, c, pp->mem()};
+            if (pp->stopping()) return;
+            if (what == Process::Lifecycle::Terminate) {
+                toBackground(x, *st);
+                deliverLifecycle(x, "applicationWillTerminate:", "UIApplicationWillTerminateNotification");
+                persistNow(x);
+                x.proc.log(LogLevel::Info, "The app saved and closed");
+                pp->requestStop();
+                return;
+            }
+            // Background: let the app save, then pause it until the host brings it back.
+            toBackground(x, *st);
+            pp->setBackgrounded(true);
+            const uint32_t self = pp->currentThread().id;
+            std::vector<GuestThread*> paused;
+            for (uint32_t id : pp->liveThreadIds()) {
+                if (id == self) continue;
+                if (GuestThread* t = pp->findThreadById(id)) { pp->engine().suspend(t->cpu); paused.push_back(t); }
+            }
+            x.proc.log(LogLevel::Info, "The app is paused in the background");
+            pp->waitWhileBackgrounded();
+            for (GuestThread* t : paused) pp->engine().resume(t->cpu);
+            pp->setBackgrounded(false);
+            if (pp->stopping() || pp->gracefulStopRequested()) return;   // a queued Terminate follows
+            deliverLifecycle(x, "applicationWillEnterForeground:", "UIApplicationWillEnterForegroundNotification");
+            st->background = false;
+            deliverLifecycle(x, "applicationDidBecomeActive:", "UIApplicationDidBecomeActiveNotification");
+            st->active = true;
+            x.proc.log(LogLevel::Info, "The app resumed");
+        });
+    });
+}
+
 int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id delegateName) {
     auto& u = ui(x);
     auto& r = rt(x);
@@ -454,10 +522,30 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
     std::string mainNib = info ? info->getString("NSMainNibFile~iphone", info->getString("NSMainNibFile")) : "";
     if (!mainNib.empty()) {
         x.proc.logf(LogLevel::Info, "Loading main nib %s", mainNib.c_str());
-        loadNib(x, mainNib, 0, u.app, 0);
+        // UIKit keeps the main nib's top-level objects (the app delegate, the window) alive for the
+        // app's lifetime; they're usually assign-outlets, so nothing else retains them.
+        if (const id top = loadNib(x, mainNib, 0, u.app, 0))
+            for (id o : Foundation::arrayItems(x, top)) r.retain(x.cpu, o);
     }
     const std::string storyboard = info ? info->getString("UIMainStoryboardFile~iphone", info->getString("UIMainStoryboardFile")) : "";
-    if (!storyboard.empty()) x.proc.reportMissing("UIMainStoryboardFile (storyboards: " + storyboard + ")");
+    if (!storyboard.empty()) {
+        const Class sbCls = r.getClass("UIStoryboard");
+        const id sb = sbCls ? id(r.send(x.cpu, sbCls, "storyboardWithName:bundle:", {makeString(x, storyboard), 0})) : 0;
+        const id initVC = sb ? id(r.send(x.cpu, sb, "instantiateInitialViewController")) : 0;
+        if (initVC) {
+            id win = u.keyWindow;
+            if (!win && !u.windows.empty()) win = u.windows.front();
+            if (!win) {
+                win = id(sendRect(x, id(r.send(x.cpu, u.window, r.selAlloc)), r.sel("initWithFrame:"), {0, 0, u.screenW, u.screenH}));
+                if (u.appDelegate && r.respondsTo(u.appDelegate, r.sel("setWindow:")))
+                    r.send(x.cpu, u.appDelegate, "setWindow:", {win});
+            }
+            r.send(x.cpu, win, "setRootViewController:", {initVC});
+            r.send(x.cpu, win, "makeKeyAndVisible");
+        } else {
+            x.proc.reportMissing("UIMainStoryboardFile (storyboards: " + storyboard + ")");
+        }
+    }
 
     const id del = u.appDelegate;
     if (!del) x.proc.log(LogLevel::Warning, "UIApplicationMain: no application delegate");
@@ -471,6 +559,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
     Foundation::postNotification(x, "UIApplicationDidFinishLaunchingNotification", u.app);
     if (del && r.respondsTo(del, r.sel("applicationDidBecomeActive:"))) r.send(x.cpu, del, "applicationDidBecomeActive:", {u.app});
     Foundation::postNotification(x, "UIApplicationDidBecomeActiveNotification", u.app);
+    layoutPass(x);
     r.poolPop(x.cpu, pool);
 
     if (u.windows.empty()) x.proc.log(LogLevel::Warning, "The app finished launching without creating a window");
@@ -484,6 +573,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         runFrame(cx, now);
         rt(cx).poolPop(c, fp);
     });
+    installLifecycle(x.proc);
     for (;;) Foundation::mainRunLoop(x.proc).runUntil(x.cpu, 1e18);
 }
 
@@ -533,6 +623,9 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_sendEvent>("sendEvent:", "v@:@").m<&app_sendAction>("sendAction:to:from:forEvent:", "c@::@@@")
        .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
+    p.mem().write<uint32_t>(p.defineDataBlock("_UIBackgroundTaskInvalid", 4), 0);
+    p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalMinimum", 8), 0.0);
+    p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalNever", 8), 1e9);
     for (const char* n : {"UIApplicationDidFinishLaunchingNotification", "UIApplicationDidBecomeActiveNotification",
                           "UIApplicationWillResignActiveNotification", "UIApplicationDidEnterBackgroundNotification",
                           "UIApplicationWillEnterForegroundNotification", "UIApplicationWillTerminateNotification",
@@ -571,7 +664,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
     acc.cm<&acc_shared>("sharedAccelerometer");
     acc.m<&acc_delegate>("delegate").m<&acc_setDelegate>("setDelegate:", "v@:@").m<&acc_interval>("updateInterval", "d@:")
        .m<&acc_setInterval>("setUpdateInterval:", "v@:d");
-    ObjC::ClassBuilder sample = r.defineClass("UIAcceleration", "NSObject");
+    ObjC::ClassBuilder sample = r.defineClass("UIAcceleration", "NSObject", 36);
     as.acceleration = sample.cls();
     sample.m<&as_x>("x", "d@:").m<&as_y>("y", "d@:").m<&as_z>("z", "d@:").m<&as_t>("timestamp", "d@:");
 

@@ -1,14 +1,18 @@
 #import "HVMEngine.h"
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
+#import <AVFoundation/AVFoundation.h>
+#import <UIKit/UIKit.h>
 #include "core/memory/GuestArena.hpp"
 #include "loader/AppBundle.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/audio/Audio.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "selftest/SelfTest.hpp"
 #include <pthread.h>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -244,7 +248,95 @@ struct SessionCore {
     std::mutex logMu;
     std::vector<std::pair<std::string, RT::LogLevel>> logs;
     bool logFlushScheduled = false;
+    AVAudioEngine *audioEngine = nil;   // pulls from the guest's mixer
+    std::mutex audioMu;
+    // Per-run log file in Documents/Logs (visible in the Files app). Written and
+    // flushed line by line on the engine thread, so it survives a hard crash.
+    FILE *logFile = nullptr;
+    ~SessionCore() { if (logFile) fclose(logFile); }
+    void logToFile(const char *tag, const std::string &msg) {
+        if (!logFile) return;
+        fputs(tag, logFile);
+        fputs(msg.c_str(), logFile);
+        if (msg.empty() || msg.back() != '\n') fputc('\n', logFile);
+        fflush(logFile);
+    }
 };
+
+// Opens Documents/Logs/<app>-<date>.log and keeps the 30 newest logs.
+FILE *openRunLog(const std::string &bundlePath) {
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    if (!docs) return nullptr;
+    NSString *dir = [docs stringByAppendingPathComponent:@"Logs"];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSArray<NSString *> *old = [[fm contentsOfDirectoryAtPath:dir error:nil] sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableArray<NSString *> *logs = [NSMutableArray array];
+    for (NSString *f in old) if ([f hasSuffix:@".log"]) [logs addObject:f];
+    while (logs.count >= 30) {
+        // Names start with the date stamp, so the first one is the oldest.
+        [fm removeItemAtPath:[dir stringByAppendingPathComponent:logs.firstObject] error:nil];
+        [logs removeObjectAtIndex:0];
+    }
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    df.dateFormat = @"yyyyMMdd-HHmmss";
+    NSString *app = [[str(bundlePath) lastPathComponent] stringByDeletingPathExtension];
+    NSString *name = [NSString stringWithFormat:@"%@-%@.log", [df stringFromDate:NSDate.date], app];
+    FILE *f = fopen([dir stringByAppendingPathComponent:name].fileSystemRepresentation, "w");
+    if (f) {
+        NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+        UIDevice *dev = UIDevice.currentDevice;
+        fprintf(f, "HydrogenVM %s (%s) on %s %s\nguest: %s\n\n",
+                [info[@"CFBundleShortVersionString"] UTF8String] ?: "?", [info[@"CFBundleVersion"] UTF8String] ?: "?",
+                dev.systemName.UTF8String, dev.systemVersion.UTF8String, bundlePath.c_str());
+        fflush(f);
+    }
+    return f;
+}
+}
+
+namespace {
+// Game audio: one AVAudioEngine whose source node renders the guest's mixer on
+// the audio thread. The playback category keeps it audible with the ring/silent
+// switch on (as a media app), mixing with other audio.
+void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrogen::Runtime::Audio::Mixer> mixer) {
+    std::lock_guard<std::mutex> lk(core->audioMu);
+    if (core->audioEngine) return;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
+    [session setActive:YES error:nil];
+    std::weak_ptr<Hydrogen::Runtime::Audio::Mixer> weak = mixer;
+    AVAudioFormat *fmt = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:Hydrogen::Runtime::Audio::Mixer::kRate channels:2];
+    AVAudioSourceNode *src = [[AVAudioSourceNode alloc] initWithFormat:fmt renderBlock:^OSStatus(BOOL *isSilence, const AudioTimeStamp *, AVAudioFrameCount frames, AudioBufferList *abl) {
+        float *l = static_cast<float *>(abl->mBuffers[0].mData);
+        float *r = abl->mNumberBuffers > 1 ? static_cast<float *>(abl->mBuffers[1].mData) : nullptr;
+        auto m = weak.lock();
+        if (!m || !l) {
+            for (UInt32 b = 0; b < abl->mNumberBuffers; ++b) std::memset(abl->mBuffers[b].mData, 0, abl->mBuffers[b].mDataByteSize);
+            *isSilence = YES;
+            return noErr;
+        }
+        if (r) m->render(l, r, frames);
+        else {
+            std::vector<float> right(frames);
+            m->render(l, right.data(), frames);
+            for (AVAudioFrameCount i = 0; i < frames; ++i) l[i] = 0.5f * (l[i] + right[i]);
+        }
+        return noErr;
+    }];
+    AVAudioEngine *engine = [[AVAudioEngine alloc] init];
+    [engine attachNode:src];
+    [engine connect:src to:engine.mainMixerNode format:fmt];
+    NSError *err = nil;
+    if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to start: %@", err);
+    core->audioEngine = engine;
+}
+void stopAudio(const std::shared_ptr<SessionCore> &core) {
+    std::lock_guard<std::mutex> lk(core->audioMu);
+    [core->audioEngine stop];
+    core->audioEngine = nil;
+}
 }
 
 @interface HVMSession ()
@@ -269,7 +361,8 @@ struct SessionCore {
 }
 
 - (void)dealloc {
-    [self stop];
+    // Let a game that's still open save before it goes (the engine stops it after a few seconds at most).
+    [self stopGracefully];
 }
 
 - (void)start {
@@ -292,6 +385,8 @@ struct SessionCore {
         for (auto &[line, lvl] : batch) s.onLog(str(line), HVMLogLevel(int(lvl)));
     };
 
+    core->logFile = openRunLog(bundle);
+
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
@@ -302,6 +397,7 @@ struct SessionCore {
         cfg.screenScale = 2;
         cfg.log = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
             std::lock_guard<std::mutex> lk(core->logMu);
+            core->logToFile("", msg);
             if (core->logs.size() < 5000) core->logs.emplace_back(msg, lvl);
             if (!core->logFlushScheduled) {
                 core->logFlushScheduled = true;
@@ -329,7 +425,6 @@ struct SessionCore {
                 if (img) CGImageRelease(img);
             });
         };
-
         int code = -1;
         std::string crash;
         try {
@@ -338,6 +433,7 @@ struct SessionCore {
                 std::lock_guard<std::mutex> lk(core->mu);
                 core->proc = proc;
             }
+            startAudio(core, proc->mixerPtr());
             if (!core->stopRequested) {
                 proc->load();
                 core->ready = true;
@@ -354,7 +450,13 @@ struct SessionCore {
             std::lock_guard<std::mutex> lk(core->mu);
             core->proc.reset();
         }
+        stopAudio(core);
         const bool userStopped = core->stopRequested;
+        {
+            std::lock_guard<std::mutex> lk(core->logMu);
+            core->logToFile("\n[exit] ", "status " + std::to_string(code) + (userStopped ? " (stopped by user)" : ""));
+            if (!crash.empty()) core->logToFile("[crash]\n", crash);
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             flushLogs();
             HVMSession *s = weakSelf;
@@ -373,6 +475,35 @@ struct SessionCore {
         p = _core->proc;
     }
     if (p && _core->ready) p->requestStop();
+}
+
+- (void)stopGracefully {
+    _core->stopRequested = true;   // the user closed it: no crash alert for the stop itself
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p && _core->ready) p->requestGracefulStop();
+    else if (p) p->requestStop();
+}
+
+- (void)enterBackground {
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p && _core->ready) p->enterBackground();
+}
+
+- (void)enterForeground {
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p && _core->ready) p->enterForeground();
 }
 
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger {

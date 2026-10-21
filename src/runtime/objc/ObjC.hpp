@@ -9,7 +9,9 @@
 // registers untouched.
 #pragma once
 #include "runtime/Process.hpp"
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <typeinfo>
 #include <shared_mutex>
 #include <unordered_map>
@@ -119,7 +121,12 @@ public:
     }
     uint64_t sendSuper(CPU::Cpu& c, id self, Class startClass, SEL s, std::initializer_list<uint32_t> args = {});
     void invalidateCaches();
-    [[noreturn]] void unrecognized(id self, SEL s);
+    // A message nobody implements. For placeholder (missing) framework classes,
+    // and for any framework class when the app runs with "keep going", this
+    // logs once and returns an IMP that behaves like messaging nil; otherwise
+    // it stops the app (unrecognizedFatal).
+    IMP unrecognized(id self, SEL s);
+    [[noreturn]] void unrecognizedFatal(id self, SEL s);
     void addMethod(Class cls, SEL s, IMP imp, const std::string& types, bool replace = true);
 
     // ---- objects
@@ -212,6 +219,16 @@ private:
 
     Process& proc_;
     mutable std::shared_mutex classMu_;
+    std::once_flag nilImpOnce_;
+    IMP nilImp_ = 0;
+public:
+    // Message forwarding (-forwardInvocation:), installed by Foundation: returns an IMP that
+    // forwards the message, or 0 when the receiver doesn't forward it.
+    std::function<IMP(id, SEL)> forwardHook;
+    // The type encoding of `sel` as implemented by `cls` (or a superclass); empty if unknown.
+    std::string methodTypes(Class cls, SEL sel);
+    std::vector<Class> classList() const;   // every real (non-placeholder) class, no metaclasses
+private:
     std::unordered_map<Class, std::unique_ptr<ClassInfo>> classes_;
     std::unordered_map<std::string, Class> classByName_;
     std::unordered_map<std::string, SEL> selByName_;

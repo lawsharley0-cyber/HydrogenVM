@@ -6,6 +6,7 @@
 // CF collections created with NULL callbacks hold raw pointers, not objects;
 // those get small host-side "raw" collections that never retain.
 #include "Foundation.hpp"
+#include <cctype>
 #include "runtime/libc/Format.hpp"
 #include <cmath>
 #include <ctime>
@@ -17,6 +18,7 @@ namespace {
 using U16 = std::u16string;
 
 struct RawArray : ObjC::HostObject { std::vector<uint32_t> items; bool retains = false; };
+struct Allocator : ObjC::HostObject { std::array<uint32_t, 9> context{}; bool null = false; };
 struct RawDict : ObjC::HostObject {
     std::vector<std::pair<uint32_t, uint32_t>> entries;
     bool keyObjects = false, valueObjects = false, keyEqual = false;
@@ -24,7 +26,8 @@ struct RawDict : ObjC::HostObject {
 
 struct CF {
     explicit CF(Process&) {}
-    Class rawArray = 0, rawDict = 0;
+    Class rawArray = 0, rawDict = 0, allocator = 0;
+    id systemAllocator = 0, nullAllocator = 0;
     uint32_t arrayCallbacks = 0, dictKeyCallbacks = 0, dictValueCallbacks = 0, copyStringKeyCallbacks = 0, setCallbacks = 0,
              copyStringSetCallbacks = 0;
     uint32_t cfRetainFn = 0, cfReleaseFn = 0, cfEqualFn = 0, cfHashFn = 0, cfCopyDescFn = 0;
@@ -44,13 +47,15 @@ enum TypeID : uint32_t {
 
 uint32_t cf_retain(Ctx& x, id o) {
     if (!o) { x.proc.log(LogLevel::Warning, "CFRetain(NULL) — this crashes on iOS"); return 0; }
+    if (!x.mem.read<uint32_t>(o)) return o;
     return R(x).retain(x.cpu, o);
 }
 void cf_release(Ctx& x, id o) {
     if (!o) { x.proc.log(LogLevel::Warning, "CFRelease(NULL) — this crashes on iOS"); return; }
+    if (!x.mem.read<uint32_t>(o)) return;
     R(x).release(x.cpu, o);
 }
-uint32_t cf_autorelease(Ctx& x, id o) { return o ? R(x).autorelease(x.cpu, o) : 0; }
+uint32_t cf_autorelease(Ctx& x, id o) { return (o && x.mem.read<uint32_t>(o)) ? R(x).autorelease(x.cpu, o) : o; }
 uint32_t cf_makeCollectable(Ctx&, id o) { return o; }
 int32_t cf_retainCount(Ctx& x, id o) { return int32_t(send(x, o, "retainCount")); }
 bool cf_equal(Ctx& x, id a, id b) { return objectsEqual(x, a, b); }
@@ -80,6 +85,7 @@ uint32_t typeOf(Ctx& x, id o) {
     if (is("NSTimeZone")) return kTypeTimeZone;
     if (is("NSLocale")) return kTypeLocale;
     if (is("NSCharacterSet")) return kTypeCharSet;
+    if (r.hostIf<Allocator>(o)) return kTypeAllocator;
     return kTypeOther;
 }
 uint32_t cf_getTypeID(Ctx& x, id o) { return typeOf(x, o); }
@@ -174,11 +180,8 @@ bool s_getCString(Ctx& x, id s, GuestPtr buf, int32_t size, uint32_t enc) {
     x.mem.write<uint8_t>(buf + uint32_t(b.size()), 0);
     return true;
 }
-uint32_t s_getCStringPtr(Ctx& x, id s, uint32_t enc) {
-    // Only guaranteed for ASCII-compatible content in an 8-bit encoding.
-    const uint32_t ns = toNS(enc);
-    if (ns != kNSUTF8 && ns != kNSASCII && ns != kNSMacOSRoman && ns != kNSISOLatin1 && ns != kNSWindowsCP1252) return 0;
-    for (char16_t c : stringValue(x, s)) if (c >= 0x80) return 0;
+uint32_t s_getCStringPtr(Ctx& x, id s, uint32_t) {
+    if (!s) return 0;
     return uint32_t(send(x, s, "UTF8String"));
 }
 uint32_t s_getCharactersPtr(Ctx&, id) { return 0; }
@@ -204,10 +207,24 @@ int32_t s_maxSize(Ctx&, int32_t len, uint32_t enc) {
     return ns == kNSUTF8 ? len * 3 : ns == kNSUnicode || ns == kNSUTF16BE || ns == kNSUTF16LE ? len * 2 : ns == kNSUTF32 ? len * 4 : len;
 }
 uint32_t s_systemEncoding(Ctx&) { return 0; }
-uint32_t s_fastestEncoding(Ctx&, id) { return 0x0100; }
+uint32_t s_fastestEncoding(Ctx&, id) { return 0x08000100; }
 uint32_t s_smallestEncoding(Ctx&, id) { return 0x08000100; }
 uint32_t s_cfToNS(Ctx&, uint32_t e) { return toNS(e); }
 uint32_t s_nsToCF(Ctx&, uint32_t e) { return toCF(e); }
+// CFStringConvertIANACharSetNameToEncoding: kCFStringEncodingInvalidId (0xFFFFFFFF) when unknown.
+uint32_t s_ianaToEncoding(Ctx& x, id name) {
+    if (!name) return 0xFFFFFFFFu;
+    std::string n = utf8(x, name);
+    for (char& c : n) c = char(std::tolower(uint8_t(c)));
+    static const std::pair<const char*, uint32_t> map[] = {
+        {"utf-8", 0x08000100}, {"utf8", 0x08000100}, {"us-ascii", 0x0600}, {"ascii", 0x0600}, {"iso-8859-1", 0x0201},
+        {"latin1", 0x0201}, {"iso-latin-1", 0x0201}, {"utf-16", 0x0100}, {"utf-16be", 0x10000100}, {"utf-16le", 0x14000100},
+        {"utf-32", 0x0c000100}, {"windows-1252", 0x0500}, {"cp1252", 0x0500}, {"macintosh", 0}, {"x-mac-roman", 0},
+        {"shift_jis", 0x0A01}, {"sjis", 0x0A01}, {"euc-jp", 0x0920}, {"iso-2022-jp", 0x0820}, {"iso-8859-2", 0x0202},
+        {"windows-1250", 0x0501}, {"windows-1251", 0x0502}, {"gb2312", 0x0930}, {"big5", 0x0A03}, {"euc-kr", 0x0940}};
+    for (auto& [k, v] : map) if (n == k) return v;
+    return 0xFFFFFFFFu;
+}
 uint32_t s_encodingToIANA(Ctx& x, uint32_t e) { return constString(x.proc, toNS(e) == kNSUTF8 ? "utf-8" : toNS(e) == kNSASCII ? "us-ascii" : "iso-8859-1"); }
 bool s_isEncodingAvailable(Ctx&, uint32_t) { return true; }
 
@@ -377,10 +394,11 @@ bool b_getValue(Ctx& x, id b) { return b && numberInt(x, b) != 0; }
 
 bool objectCallbacks(Ctx& x, GuestPtr cb) { return cb && x.mem.read<uint32_t>(cb + 4) != 0; }
 RawArray* rawA(Ctx& x, id a) { return a ? R(x).hostIf<RawArray>(a) : nullptr; }
-id newRawArray(Ctx& x, std::vector<uint32_t> items) {
+id newRawArray(Ctx& x, std::vector<uint32_t> items, bool retains = false) {
     const id a = R(x).createInstance(cf(x).rawArray);
     auto h = std::make_unique<RawArray>();
     h->items = std::move(items);
+    h->retains = retains;
     R(x).setHost(a, std::move(h));
     return a;
 }
@@ -415,24 +433,55 @@ void a_getValues(Ctx& x, id a, uint32_t loc, uint32_t len, GuestPtr out) {
     for (uint32_t i = 0; i < len; ++i) x.mem.write<uint32_t>(out + i * 4, a_get(x, a, int32_t(loc + i)));
 }
 void a_append(Ctx& x, id a, uint32_t v) {
-    if (RawArray* r = rawA(x, a)) { r->items.push_back(v); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (r->retains && v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        r->items.push_back(v);
+        return;
+    }
     send(x, a, "addObject:", {v});
 }
 void a_insert(Ctx& x, id a, int32_t i, uint32_t v) {
-    if (RawArray* r = rawA(x, a)) { r->items.insert(r->items.begin() + std::min<size_t>(size_t(i), r->items.size()), v); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (r->retains && v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        r->items.insert(r->items.begin() + std::min<size_t>(size_t(i), r->items.size()), v);
+        return;
+    }
     send(x, a, "insertObject:atIndex:", {v, uint32_t(i)});
 }
 void a_set(Ctx& x, id a, int32_t i, uint32_t v) {
-    if (RawArray* r = rawA(x, a)) { if (size_t(i) < r->items.size()) r->items[size_t(i)] = v; else r->items.push_back(v); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (r->retains && v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        if (size_t(i) < r->items.size()) {
+            const uint32_t old = r->items[size_t(i)];
+            r->items[size_t(i)] = v;
+            if (r->retains && old && R(x).classOf(old)) R(x).release(x.cpu, old);
+        } else {
+            r->items.push_back(v);
+        }
+        return;
+    }
     if (i == a_count(x, a)) send(x, a, "addObject:", {v});
     else send(x, a, "replaceObjectAtIndex:withObject:", {uint32_t(i), v});
 }
 void a_remove(Ctx& x, id a, int32_t i) {
-    if (RawArray* r = rawA(x, a)) { if (size_t(i) < r->items.size()) r->items.erase(r->items.begin() + i); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (size_t(i) < r->items.size()) {
+            const uint32_t old = r->items[size_t(i)];
+            r->items.erase(r->items.begin() + i);
+            if (r->retains && old && R(x).classOf(old)) R(x).release(x.cpu, old);
+        }
+        return;
+    }
     send(x, a, "removeObjectAtIndex:", {uint32_t(i)});
 }
 void a_removeAll(Ctx& x, id a) {
-    if (RawArray* r = rawA(x, a)) { r->items.clear(); return; }
+    if (RawArray* r = rawA(x, a)) {
+        if (r->retains) {
+            for (uint32_t v : r->items) if (v && R(x).classOf(v)) R(x).release(x.cpu, v);
+        }
+        r->items.clear();
+        return;
+    }
     send(x, a, "removeAllObjects");
 }
 void a_exchange(Ctx& x, id a, int32_t i, int32_t j) {
@@ -480,10 +529,89 @@ int32_t a_bsearch(Ctx& x, id a, uint32_t loc, uint32_t len, uint32_t v, uint32_t
     }
     return int32_t(lo);
 }
-// raw array ObjC methods (so code that treats it as an NSArray still works for basics)
+// raw array ObjC methods (so code that treats it as an NSArray/NSMutableArray/NSMutableSet still works for basics)
 uint32_t ra_count(Ctx& x, id self, SEL) { return uint32_t(a_count(x, self)); }
 uint32_t ra_objectAt(Ctx& x, id self, SEL, uint32_t i) { return a_get(x, self, int32_t(i)); }
-void ra_dealloc(Ctx& x, id self, SEL) { R(x).disposeInstance(x.cpu, self); }
+void ra_addObject(Ctx& x, id self, SEL, uint32_t v) {
+    if (RawArray* r = rawA(x, self)) {
+        if (v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        r->items.push_back(v);
+        return;
+    }
+    a_append(x, self, v);
+}
+void ra_insertObject(Ctx& x, id self, SEL, uint32_t v, uint32_t i) {
+    if (RawArray* r = rawA(x, self)) {
+        if (v && R(x).classOf(v)) R(x).retain(x.cpu, v);
+        r->items.insert(r->items.begin() + std::min<size_t>(size_t(i), r->items.size()), v);
+        return;
+    }
+    a_insert(x, self, int32_t(i), v);
+}
+void ra_replaceAt(Ctx& x, id self, SEL, uint32_t i, uint32_t v) { a_set(x, self, int32_t(i), v); }
+void ra_removeAt(Ctx& x, id self, SEL, uint32_t i) {
+    if (RawArray* r = rawA(x, self)) {
+        if (size_t(i) < r->items.size()) {
+            const uint32_t v = r->items[size_t(i)];
+            r->items.erase(r->items.begin() + i);
+            if (v && R(x).classOf(v)) R(x).release(x.cpu, v);
+        }
+        return;
+    }
+    a_remove(x, self, int32_t(i));
+}
+void ra_removeObject(Ctx& x, id self, SEL, uint32_t v) {
+    if (RawArray* r = rawA(x, self)) {
+        auto it = std::remove(r->items.begin(), r->items.end(), v);
+        const size_t count = std::distance(it, r->items.end());
+        r->items.erase(it, r->items.end());
+        if (v && R(x).classOf(v)) {
+            for (size_t k = 0; k < count; ++k) R(x).release(x.cpu, v);
+        }
+    }
+}
+void ra_removeAll(Ctx& x, id self, SEL) {
+    if (RawArray* r = rawA(x, self)) {
+        for (uint32_t v : r->items) if (v && R(x).classOf(v)) R(x).release(x.cpu, v);
+        r->items.clear();
+        return;
+    }
+    a_removeAll(x, self);
+}
+bool ra_contains(Ctx& x, id self, SEL, uint32_t v) { return a_contains(x, self, 0, uint32_t(a_count(x, self)), v); }
+uint32_t ra_member(Ctx& x, id self, SEL, uint32_t v) { return ra_contains(x, self, 0, v) ? v : 0; }
+void ra_makePerf(Ctx& x, id self, SEL, SEL s) {
+    RawArray* r = rawA(x, self);
+    if (!r || !s) return;
+    const auto copy = r->items;
+    for (id o : copy) if (o) R(x).send(x.cpu, o, s);
+}
+void ra_makePerfObj(Ctx& x, id self, SEL, SEL s, id arg) {
+    RawArray* r = rawA(x, self);
+    if (!r || !s) return;
+    const auto copy = r->items;
+    for (id o : copy) if (o) R(x).send(x.cpu, o, s, {arg});
+}
+uint32_t ra_fastEnum(Ctx& x, id self, SEL, GuestPtr state, GuestPtr buf, uint32_t len) {
+    RawArray* r = rawA(x, self);
+    if (!r || !state) return 0;
+    const uint32_t pos = x.mem.read<uint32_t>(state);
+    if (pos >= r->items.size()) return 0;
+    const uint32_t n = std::min<uint32_t>(len, uint32_t(r->items.size()) - pos);
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint32_t>(buf + i * 4, r->items[pos + i]);
+    x.mem.write<uint32_t>(state, pos + n);
+    x.mem.write<uint32_t>(state + 4, buf);
+    x.mem.write<uint32_t>(state + 8, state);
+    return n;
+}
+void ra_dealloc(Ctx& x, id self, SEL) {
+    if (RawArray* r = rawA(x, self)) {
+        if (r->retains) {
+            for (uint32_t v : r->items) if (v && R(x).classOf(v)) R(x).release(x.cpu, v);
+        }
+    }
+    R(x).disposeInstance(x.cpu, self);
+}
 
 // -------------------------------------------------------- CFDictionary ---
 
@@ -639,30 +767,74 @@ void rd_dealloc(Ctx& x, id self, SEL) {
 // --------------------------------------------------------------- CFSet ---
 
 uint32_t set_create(Ctx& x, uint32_t, GuestPtr values, int32_t n, GuestPtr cb) {
-    if (!objectCallbacks(x, cb)) x.proc.reportMissing("CFSet with non-object callbacks");
     std::vector<id> v;
     for (int32_t i = 0; i < n; ++i) v.push_back(x.mem.read<uint32_t>(values + uint32_t(i) * 4));
+    if (!objectCallbacks(x, cb)) return newRawArray(x, std::move(v));
     return makeSet(x, v, true, false);
 }
 uint32_t set_createMutable(Ctx& x, uint32_t, int32_t, GuestPtr cb) {
-    if (!objectCallbacks(x, cb)) x.proc.reportMissing("CFSet with non-object callbacks");
+    if (!objectCallbacks(x, cb)) return newRawArray(x, {});
     return makeSet(x, {}, true, true);
 }
-uint32_t set_createCopy(Ctx& x, uint32_t, id s) { return uint32_t(send(x, s, "copy")); }
-uint32_t set_createMutableCopy(Ctx& x, uint32_t, int32_t, id s) { return uint32_t(send(x, s, "mutableCopy")); }
-int32_t set_count(Ctx& x, id s) { return s ? int32_t(send(x, s, "count")) : 0; }
-bool set_contains(Ctx& x, id s, uint32_t v) { return (uint32_t(send(x, s, "containsObject:", {v})) & 0xFF) != 0; }
-uint32_t set_getValue(Ctx& x, id s, uint32_t v) { return uint32_t(send(x, s, "member:", {v})); }
-void set_add(Ctx& x, id s, uint32_t v) { send(x, s, "addObject:", {v}); }
-void set_remove(Ctx& x, id s, uint32_t v) { send(x, s, "removeObject:", {v}); }
-void set_removeAll(Ctx& x, id s) { send(x, s, "removeAllObjects"); }
-void set_getValues(Ctx& x, id s, GuestPtr out) { uint32_t i = 0; for (id o : setItems(x, s)) x.mem.write<uint32_t>(out + 4 * i++, o); }
-void set_apply(Ctx& x, id s, uint32_t fn, uint32_t ctx) { for (id o : setItems(x, s)) x.proc.callGuest(x.cpu, fn, {o, ctx}); }
+uint32_t set_createCopy(Ctx& x, uint32_t, id s) {
+    if (RawArray* r = rawA(x, s)) return newRawArray(x, r->items);
+    return uint32_t(send(x, s, "copy"));
+}
+uint32_t set_createMutableCopy(Ctx& x, uint32_t, int32_t, id s) {
+    if (RawArray* r = rawA(x, s)) return newRawArray(x, r->items);
+    return uint32_t(send(x, s, "mutableCopy"));
+}
+int32_t set_count(Ctx& x, id s) {
+    if (!s) return 0;
+    if (RawArray* r = rawA(x, s)) return int32_t(r->items.size());
+    return int32_t(send(x, s, "count"));
+}
+bool set_contains(Ctx& x, id s, uint32_t v) {
+    if (RawArray* r = rawA(x, s)) return std::find(r->items.begin(), r->items.end(), v) != r->items.end();
+    return (uint32_t(send(x, s, "containsObject:", {v})) & 0xFF) != 0;
+}
+uint32_t set_getValue(Ctx& x, id s, uint32_t v) {
+    if (RawArray* r = rawA(x, s)) return std::find(r->items.begin(), r->items.end(), v) != r->items.end() ? v : 0;
+    return uint32_t(send(x, s, "member:", {v}));
+}
+void set_add(Ctx& x, id s, uint32_t v) {
+    if (RawArray* r = rawA(x, s)) {
+        if (std::find(r->items.begin(), r->items.end(), v) == r->items.end()) r->items.push_back(v);
+        return;
+    }
+    send(x, s, "addObject:", {v});
+}
+void set_remove(Ctx& x, id s, uint32_t v) {
+    if (RawArray* r = rawA(x, s)) {
+        r->items.erase(std::remove(r->items.begin(), r->items.end(), v), r->items.end());
+        return;
+    }
+    send(x, s, "removeObject:", {v});
+}
+void set_removeAll(Ctx& x, id s) {
+    if (RawArray* r = rawA(x, s)) { r->items.clear(); return; }
+    send(x, s, "removeAllObjects");
+}
+void set_getValues(Ctx& x, id s, GuestPtr out) {
+    uint32_t i = 0;
+    if (RawArray* r = rawA(x, s)) { for (uint32_t o : r->items) x.mem.write<uint32_t>(out + 4 * i++, o); return; }
+    for (id o : setItems(x, s)) x.mem.write<uint32_t>(out + 4 * i++, o);
+}
+void set_apply(Ctx& x, id s, uint32_t fn, uint32_t ctx) {
+    if (RawArray* r = rawA(x, s)) { for (uint32_t o : std::vector<uint32_t>(r->items)) x.proc.callGuest(x.cpu, fn, {o, ctx}); return; }
+    for (id o : setItems(x, s)) x.proc.callGuest(x.cpu, fn, {o, ctx});
+}
 
 // -------------------------------------------------------------- CFData ---
 
 uint32_t dt_create(Ctx& x, uint32_t, GuestPtr p, int32_t n) { return makeData(x, n > 0 ? x.mem.host(p) : nullptr, uint32_t(std::max(n, 0)), true); }
-uint32_t dt_createNoCopy(Ctx& x, uint32_t, GuestPtr p, int32_t n, uint32_t) { return dt_create(x, 0, p, n); }
+uint32_t al_getDefault(Ctx& x);
+void al_deallocate(Ctx& x, uint32_t a, uint32_t p);
+uint32_t dt_createNoCopy(Ctx& x, uint32_t, GuestPtr p, int32_t n, uint32_t deallocator) {
+    if (n < 0 || (!p && n)) return 0;
+    const uint32_t a = R(x).retain(x.cpu, deallocator ? deallocator : al_getDefault(x));
+    return makeDataNoCopy(x, p, uint32_t(n), [a,p](Ctx& y) { al_deallocate(y, a, p); R(y).release(y.cpu, a); });
+}
 uint32_t dt_createMutable(Ctx& x, uint32_t, int32_t) { return makeData(x, nullptr, 0, true, true); }
 uint32_t dt_createCopy(Ctx& x, uint32_t, id d) { const auto b = dataBytes(x, d); return makeData(x, b.data(), uint32_t(b.size()), true); }
 uint32_t dt_createMutableCopy(Ctx& x, uint32_t, int32_t, id d) { const auto b = dataBytes(x, d); return makeData(x, b.data(), uint32_t(b.size()), true, true); }
@@ -754,6 +926,24 @@ uint32_t uuid_createFromString(Ctx& x, uint32_t, id s) {
     const id u = id(send(x, id(send(x, R(x).getClass("NSUUID"), "alloc")), "initWithUUIDString:", {s}));
     return u;
 }
+uint32_t uuid_createFromUUIDBytes(Ctx& x, uint32_t, Words<4> b) {
+    const GuestPtr tmp = x.proc.heap().alloc(16);
+    for (int i = 0; i < 4; ++i) x.mem.write<uint32_t>(tmp + uint32_t(i * 4), b.w[i]);
+    const id u = id(send(x, id(send(x, R(x).getClass("NSUUID"), "alloc")), "initWithUUIDBytes:", {tmp}));
+    x.proc.heap().free(tmp);
+    return u;
+}
+void uuid_createWithBytes(Ctx& x) {
+    const GuestPtr tmp = x.proc.heap().alloc(16);
+    x.mem.write<uint8_t>(tmp + 0, uint8_t(x.cpu.r[1]));
+    x.mem.write<uint8_t>(tmp + 1, uint8_t(x.cpu.r[2]));
+    x.mem.write<uint8_t>(tmp + 2, uint8_t(x.cpu.r[3]));
+    const uint32_t sp = x.cpu.r[CPU::kSP];
+    for (uint32_t i = 0; i < 13; ++i) x.mem.write<uint8_t>(tmp + 3 + i, uint8_t(x.mem.read<uint32_t>(sp + i * 4)));
+    const id u = id(send(x, id(send(x, R(x).getClass("NSUUID"), "alloc")), "initWithUUIDBytes:", {tmp}));
+    x.proc.heap().free(tmp);
+    x.cpu.r[0] = u;
+}
 void uuid_getBytes(Ctx& x, GuestPtr ret, id u) { send(x, u, "getUUIDBytes:", {ret}); }
 
 // ------------------------------------------------------- CFPropertyList ---
@@ -797,12 +987,72 @@ bool pl_isValid(Ctx& x, id obj, uint32_t) { return objectToPlist(x, obj) != null
 
 // ----------------------------------------------------------- CFAllocator ---
 
-uint32_t al_allocate(Ctx& x, uint32_t, int32_t size, uint32_t) { return size > 0 ? x.proc.heap().alloc(uint32_t(size)) : 0; }
-uint32_t al_reallocate(Ctx& x, uint32_t, uint32_t p, int32_t size, uint32_t) { return x.proc.heap().realloc(p, uint32_t(std::max(size, 0))); }
-void al_deallocate(Ctx& x, uint32_t, uint32_t p) { x.proc.heap().free(p); }
-uint32_t al_getDefault(Ctx&) { return 0; }
-void al_setDefault(Ctx&, uint32_t) {}
-int32_t al_preferredSize(Ctx&, uint32_t, int32_t size, uint32_t) { return (size + 15) & ~15; }
+const char allocatorDefaultKey = 0;
+uint32_t al_getDefault(Ctx& x) {
+    const uint32_t a = x.proc.threadSlot(&allocatorDefaultKey);
+    return a ? a : cf(x).systemAllocator;
+}
+Allocator* allocator(Ctx& x, uint32_t a) { return R(x).hostIf<Allocator>(a ? a : al_getDefault(x)); }
+uint32_t al_allocate(Ctx& x, uint32_t a, int32_t size, uint32_t hint) {
+    auto* d = allocator(x, a);
+    if (!d || d->null || size <= 0) return 0;
+    const auto c = d->context;
+    return c[5] ? uint32_t(x.proc.callGuest(x.cpu, c[5], {uint32_t(size), hint, c[1]})) :
+           d == allocator(x, cf(x).systemAllocator) ? x.proc.heap().alloc(uint32_t(size)) : 0;
+}
+void al_deallocate(Ctx& x, uint32_t a, uint32_t p) {
+    auto* d = allocator(x, a);
+    if (!p || !d || d->null) return;
+    const auto c = d->context;
+    if (c[7]) x.proc.callGuest(x.cpu, c[7], {p, c[1]});
+    else if (d == allocator(x, cf(x).systemAllocator)) x.proc.heap().free(p);
+}
+uint32_t al_reallocate(Ctx& x, uint32_t a, uint32_t p, int32_t size, uint32_t hint) {
+    if (!p) return al_allocate(x, a, size, hint);
+    if (size <= 0) { al_deallocate(x, a, p); return 0; }
+    auto* d = allocator(x, a);
+    if (!d || d->null) return 0;
+    const auto c = d->context;
+    if (c[6]) return uint32_t(x.proc.callGuest(x.cpu, c[6], {p, uint32_t(size), hint, c[1]}));
+    return d == allocator(x, cf(x).systemAllocator) ? x.proc.heap().realloc(p, uint32_t(size)) : 0;
+}
+void al_setDefault(Ctx& x, uint32_t a) {
+    if (!a || !allocator(x, a)) return;
+    // CF keeps defaults alive permanently (including previous defaults).
+    R(x).retain(x.cpu, a);
+    x.proc.threadSlot(&allocatorDefaultKey) = a;
+}
+int32_t al_preferredSize(Ctx& x, uint32_t a, int32_t size, uint32_t hint) {
+    auto* d = allocator(x, a);
+    if (!d || size < 0) return 0;
+    const auto c = d->context;
+    return c[8] ? std::max(size, int32_t(x.proc.callGuest(x.cpu, c[8], {uint32_t(size), hint, c[1]}))) : size;
+}
+void al_getContext(Ctx& x, uint32_t a, GuestPtr out) {
+    if (auto* d = allocator(x, a)) x.mem.copyIn(out, d->context.data(), 36);
+}
+uint32_t al_create(Ctx& x, uint32_t parent, GuestPtr ctx) {
+    if (!ctx || x.mem.read<uint32_t>(ctx) != 0) return 0;
+    // The ObjC/CF bridge owns object storage; unsupported storage allocators
+    // must not silently turn into the system allocator.
+    if (parent && parent != cf(x).systemAllocator) {
+        x.proc.reportMissing("CFAllocatorCreate with custom object-storage allocator");
+        return 0;
+    }
+    auto d = std::make_unique<Allocator>();
+    std::memcpy(d->context.data(), x.mem.host(ctx), 36);
+    if (d->context[2]) d->context[1] = uint32_t(x.proc.callGuest(x.cpu, d->context[2], {d->context[1]}));
+    const id o = R(x).createInstance(cf(x).allocator);
+    R(x).setHost(o, std::move(d));
+    return o;
+}
+void al_destroy(Ctx& x, id self, SEL) {
+    if (auto* d = R(x).hostIf<Allocator>(self)) {
+        const auto c = d->context;
+        if (c[3]) x.proc.callGuest(x.cpu, c[3], {c[1]});
+    }
+    R(x).disposeInstance(x.cpu, self);
+}
 
 // --------------------------------------------------------- CFCharacterSet ---
 
@@ -823,6 +1073,11 @@ uint32_t cs_createWithRange(Ctx& x, uint32_t, uint32_t loc, uint32_t len) {
     return R(x).retain(x.cpu, id(send(x, R(x).getClass("NSCharacterSet"), "characterSetWithRange:", {loc, len})));
 }
 uint32_t cs_createInverted(Ctx& x, uint32_t, id s) { return R(x).retain(x.cpu, id(send(x, s, "invertedSet"))); }
+uint32_t cs_createMutable(Ctx& x, uint32_t) { return uint32_t(send(x, R(x).getClass("NSMutableCharacterSet"), "new")); }
+uint32_t cs_createCopy(Ctx& x, uint32_t, id set) { return uint32_t(send(x, set, "copy")); }
+void cs_addRange(Ctx& x, id set, uint32_t loc, uint32_t len) {
+    send(x, set, "addCharactersInRange:", {loc,len});
+}
 
 } // namespace
 
@@ -877,9 +1132,20 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     c.dictValueCallbacks = callbacks("_kCFTypeDictionaryValueCallBacks", false, false);
     c.setCallbacks = callbacks("_kCFTypeSetCallBacks", true, false);
     c.copyStringSetCallbacks = callbacks("_kCFCopyStringSetCallBacks", true, true);
+    c.allocator = r.defineClass("__HVMCFAllocator", "NSObject").m<&al_destroy>("dealloc", "v@:").cls();
+    c.systemAllocator = r.createInstance(c.allocator);
+    r.setHost(c.systemAllocator, std::make_unique<Allocator>());
+    r.makeImmortal(c.systemAllocator);
+    c.nullAllocator = r.createInstance(c.allocator);
+    auto nullAllocator = std::make_unique<Allocator>(); nullAllocator->null = true;
+    r.setHost(c.nullAllocator, std::move(nullAllocator)); r.makeImmortal(c.nullAllocator);
     for (const char* n : {"_kCFAllocatorDefault", "_kCFAllocatorSystemDefault", "_kCFAllocatorMalloc", "_kCFAllocatorMallocZone",
-                          "_kCFAllocatorNull", "_kCFAllocatorUseContext"})
-        p.defineDataBlock(n, 4);   // all NULL → default allocator
+                          "_kCFAllocatorNull", "_kCFAllocatorUseContext"}) {
+        const uint32_t slot = p.defineDataBlock(n, 4);
+        p.mem().write<uint32_t>(slot, std::string(n) == "_kCFAllocatorDefault" ? 0 :
+            std::string(n) == "_kCFAllocatorUseContext" ? 0xFFFFFFFFu :
+            std::string(n) == "_kCFAllocatorNull" ? c.nullAllocator : c.systemAllocator);
+    }
 
     // CFString
     p.def<&s_createWithCString>("_CFStringCreateWithCString");
@@ -908,6 +1174,7 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&s_cfToNS>("_CFStringConvertEncodingToNSStringEncoding");
     p.def<&s_nsToCF>("_CFStringConvertNSStringEncodingToEncoding");
     p.def<&s_encodingToIANA>("_CFStringConvertEncodingToIANACharSetName");
+    p.def<&s_ianaToEncoding>("_CFStringConvertIANACharSetNameToEncoding");
     p.def<&s_isEncodingAvailable>("_CFStringIsEncodingAvailable");
     p.def<&s_append>("_CFStringAppend");
     p.def<&s_appendCString>("_CFStringAppendCString");
@@ -953,7 +1220,15 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     // CFArray
     ObjC::ClassBuilder ra = r.defineClass("__HVMCFRawArray", "NSObject");
     c.rawArray = ra.cls();
-    ra.m<&ra_count>("count", "I@:").m<&ra_objectAt>("objectAtIndex:", "@@:I").m<&ra_dealloc>("dealloc", "v@:");
+    ra.m<&ra_count>("count", "I@:").m<&ra_objectAt>("objectAtIndex:", "@@:I")
+      .m<&ra_addObject>("addObject:", "v@:@").m<&ra_insertObject>("insertObject:atIndex:", "v@:@I")
+      .m<&ra_replaceAt>("replaceObjectAtIndex:withObject:", "v@:I@").m<&ra_removeAt>("removeObjectAtIndex:", "v@:I")
+      .m<&ra_removeObject>("removeObject:", "v@:@").m<&ra_removeAll>("removeAllObjects", "v@:")
+      .m<&ra_contains>("containsObject:", "c@:@").m<&ra_member>("member:", "@@:@")
+      .m<&ra_makePerf>("makeObjectsPerformSelector:", "v@::")
+      .m<&ra_makePerfObj>("makeObjectsPerformSelector:withObject:", "v@::@")
+      .m<&ra_fastEnum>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
+      .m<&ra_dealloc>("dealloc", "v@:");
     p.def<&a_create>("_CFArrayCreate");
     p.def<&a_createMutable>("_CFArrayCreateMutable");
     p.def<&a_createCopy>("_CFArrayCreateCopy");
@@ -1063,6 +1338,8 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&uuid_create>("_CFUUIDCreate");
     p.def<&uuid_createString>("_CFUUIDCreateString");
     p.def<&uuid_createFromString>("_CFUUIDCreateFromString");
+    p.def<&uuid_createFromUUIDBytes>("_CFUUIDCreateFromUUIDBytes");
+    p.defineFunction("_CFUUIDCreateWithBytes", uuid_createWithBytes);
     p.def<&uuid_getBytes>("_CFUUIDGetUUIDBytes");
 
     // CFPropertyList
@@ -1074,12 +1351,17 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&pl_isValid>("_CFPropertyListIsValid");
 
     // CFAllocator
+    p.def<&al_create>("_CFAllocatorCreate");
+    p.def<&al_getContext>("_CFAllocatorGetContext");
     p.def<&al_allocate>("_CFAllocatorAllocate");
     p.def<&al_reallocate>("_CFAllocatorReallocate");
     p.def<&al_deallocate>("_CFAllocatorDeallocate");
     p.def<&al_getDefault>("_CFAllocatorGetDefault");
     p.def<&al_setDefault>("_CFAllocatorSetDefault");
     p.def<&al_preferredSize>("_CFAllocatorGetPreferredSizeForSize");
+    p.def<&cs_createMutable>("_CFCharacterSetCreateMutable");
+    p.def<&cs_createCopy>("_CFCharacterSetCreateCopy");
+    p.def<&cs_addRange>("_CFCharacterSetAddCharactersInRange");
 
     // CFCharacterSet
     p.def<&cs_predefined>("_CFCharacterSetGetPredefined");

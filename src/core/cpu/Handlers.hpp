@@ -26,16 +26,27 @@ void   hvmCallHle(Cpu* c, uint32_t index);
 #ifdef HVM_PROFILE_PAIRS
 // Analysis build: count which handler follows which (tools/pairprof.py).
 void hvmProfilePair(Handler a, Handler b);
-#define HVM_NEXT()  do { const Op* _n = op + 1; hvmProfilePair(op->fn, _n->fn); [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
+#define HVM_NEXT()  do { const Op* _n = op + 1; hvmProfilePair(op->fn, _n->fn); HVM_MUSTTAIL return _n->fn(c, _n, m); } while (0)
 #else
-#define HVM_NEXT()  do { const Op* _n = op + 1; [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
+#define HVM_NEXT()  do { const Op* _n = op + 1; HVM_MUSTTAIL return _n->fn(c, _n, m); } while (0)
 #endif
-#define HVM_GOTO(o) do { const Op* _n = (o); [[clang::musttail]] return _n->fn(c, _n, m); } while (0)
+#define HVM_GOTO(o) do { const Op* _n = (o); HVM_MUSTTAIL return _n->fn(c, _n, m); } while (0)
 
 // ---------------------------------------------------------------- helpers ---
 
 template <typename T> inline T ld(const uint8_t* m, uint32_t a) { T v; std::memcpy(&v, m + uint64_t(a), sizeof(T)); return v; }
 template <typename T> inline void st(uint8_t* m, uint32_t a, T v) { std::memcpy(m + uint64_t(a), &v, sizeof(T)); }
+
+inline uint32_t hvmBitReverse32(uint32_t v) {
+#if defined(__has_builtin) && __has_builtin(__builtin_bitreverse32)
+    return __builtin_bitreverse32(v);
+#else
+    v = ((v >> 1) & 0x55555555u) | ((v & 0x55555555u) << 1);
+    v = ((v >> 2) & 0x33333333u) | ((v & 0x33333333u) << 2);
+    v = ((v >> 4) & 0x0F0F0F0Fu) | ((v & 0x0F0F0F0Fu) << 4);
+    return __builtin_bswap32(v);
+#endif
+}
 
 inline uint32_t ror32(uint32_t v, uint32_t s) { s &= 31; return s ? (v >> s) | (v << (32 - s)) : v; }
 inline uint32_t nzOf(uint32_t r) { return (r & kFlagN) | (r == 0 ? kFlagZ : 0); }
@@ -108,11 +119,18 @@ inline uint32_t shiftImmDyn(uint32_t v, uint32_t type, uint32_t n, uint32_t cin)
 
 HVM_H(H_Nop) { HVM_NEXT(); }
 
+// "Bodies" (B_*) are the state updates of the simplest, hottest handlers,
+// split out so H_Pair can run two of them back to back (one dispatch instead
+// of two). Every H_X built on a body is just body + HVM_NEXT.
+using Body = void (*)(Cpu*, const Op*, uint8_t*);
+
 // r[a] = imm
-HVM_H(H_MovImm) { c->r[op->a] = op->imm; HVM_NEXT(); }
+inline void B_MovImm(Cpu* c, const Op* op, uint8_t*) { c->r[op->a] = op->imm; }
+HVM_H(H_MovImm) { B_MovImm(c, op, m); HVM_NEXT(); }
 
 // r[a] = r[b]
-HVM_H(H_MovReg) { c->r[op->a] = c->r[op->b]; HVM_NEXT(); }
+inline void B_MovReg(Cpu* c, const Op* op, uint8_t*) { c->r[op->a] = c->r[op->b]; }
+HVM_H(H_MovReg) { B_MovReg(c, op, m); HVM_NEXT(); }
 
 // Conditional execution: if cond (a) fails, skip the next imm ops.
 HVM_H(H_CondSkip) {
@@ -161,7 +179,7 @@ HVM_H(H_TableBranch) {
             __atomic_store_n(&op->link, _f, __ATOMIC_RELEASE);                    \
         }                                                                         \
         c->block_pc = op->imm;                                                    \
-        [[clang::musttail]] return _f->fn(c, _f, m);                              \
+        HVM_MUSTTAIL return _f->fn(c, _f, m);                              \
     } while (0)
 
 // Direct branch to imm (address), a = target thumb bit, b = insns retired.
@@ -232,6 +250,25 @@ HVM_H(H_CmpBranchC) {
     if (!cmpCond<COND>(x, y)) HVM_NEXT();
     HVM_TAKE_DIRECT();
 }
+template <int COND, bool REG>
+HVM_H(H_SubBranchC) {
+    const uint32_t x = c->r[op->c];
+    const uint32_t y = REG ? c->r[op->imm2] : op->imm2;
+    c->r[op->d] = x - y;
+    c->nzcv = subFlags(x, y);
+    if (!cmpCond<COND>(x, y)) HVM_NEXT();
+    HVM_TAKE_DIRECT();
+}
+template <int COND, bool REG>
+HVM_H(H_AddBranchC) {
+    const uint32_t x = c->r[op->c];
+    const uint32_t y = REG ? c->r[op->imm2] : op->imm2;
+    const uint32_t f = addFlags(x, y);
+    c->r[op->d] = x + y;
+    c->nzcv = f;
+    if (!condPasses(COND, f)) HVM_NEXT();
+    HVM_TAKE_DIRECT();
+}
 template <int K, bool REG>
 HVM_H(H_CmpBranch) {
     const uint32_t x = c->r[op->c];
@@ -267,7 +304,32 @@ HVM_H(H_BranchIndirect) {
         first = nb->ops.data();
     }
     c->block_pc = t;
-    [[clang::musttail]] return first->fn(c, first, m);
+    HVM_MUSTTAIL return first->fn(c, first, m);
+}
+
+// Fused MovImm(LR, imm2) + BranchDirect / BranchDirectX / BranchIndirect (BL / BLX).
+HVM_H(H_CallDirect)  { c->r[kLR] = op->imm2; HVM_TAKE_DIRECT(); }
+HVM_H(H_CallDirectX) { c->r[kLR] = op->imm2; c->thumb = op->a; HVM_TAKE_DIRECT(); }
+HVM_H(H_CallIndirect) {
+    uint32_t t = c->r[op->a];
+    c->r[kLR] = op->imm2;
+    if (op->c == 0) c->thumb = t & 1;
+    t &= c->thumb ? ~1u : ~3u;
+    c->r[kPC] = t;
+    c->budget -= op->b;
+    if (c->budget <= 0) { c->exit = Exit::Budget; return; }
+    const uint32_t key = t | c->thumb;
+    const FastEntry& fe = c->fast[fastIndex(key)];
+    const Op* first;
+    if (__builtin_expect(fe.key == key, 1)) {
+        first = fe.first;
+    } else {
+        Block* nb = hvmEnterBlock(c, key);
+        if (!nb) return;
+        first = nb->ops.data();
+    }
+    c->block_pc = t;
+    HVM_MUSTTAIL return first->fn(c, first, m);
 }
 
 // SVC #imm2: next pc in imm, thumb in a.
@@ -349,7 +411,7 @@ inline uint32_t operand2(const Cpu* c, const Op* op, uint32_t cin, uint32_t& cou
 
 // a = rd, b = rn, c = rm, d = rs / carry mode, imm = immediate / shift amount
 template <int OPC, bool S, int K>
-HVM_H(H_Alu) {
+inline void B_Alu(Cpu* c, const Op* op, uint8_t*) {
     const uint32_t cin = (c->nzcv >> 29) & 1;
     uint32_t sc;
     const uint32_t y = operand2<K>(c, op, cin, sc);
@@ -378,8 +440,9 @@ HVM_H(H_Alu) {
     }
     if constexpr (!aluIsTest(OPC)) c->r[op->a] = r;
     if constexpr (S) c->nzcv = flags;
-    HVM_NEXT();
 }
+template <int OPC, bool S, int K>
+HVM_H(H_Alu) { B_Alu<OPC, S, K>(c, op, m); HVM_NEXT(); }
 
 // ---------------------------------------------------------------- multiply ---
 
@@ -499,7 +562,7 @@ template <int KIND>
 HVM_H(H_BitOp) {
     uint32_t v = c->r[op->b], r;
     if constexpr (KIND == 0) r = v ? uint32_t(__builtin_clz(v)) : 32;
-    else if constexpr (KIND == 1) r = __builtin_bitreverse32(v);
+    else if constexpr (KIND == 1) r = hvmBitReverse32(v);
     else if constexpr (KIND == 2) r = __builtin_bswap32(v);
     else if constexpr (KIND == 3) r = ((v & 0x00FF00FFu) << 8) | ((v & 0xFF00FF00u) >> 8);
     else r = uint32_t(int32_t(int16_t(uint16_t(((v & 0xFF) << 8) | ((v >> 8) & 0xFF)))));
@@ -510,7 +573,7 @@ HVM_H(H_BitOp) {
 // Extends. a = rd, b = rn (0xFF = none), c = rm, imm = rotation (0/8/16/24)
 // KIND: 0 SXTB, 1 SXTH, 2 UXTB, 3 UXTH, 4 SXTB16, 5 UXTB16
 template <int KIND, bool ADD>
-HVM_H(H_Extend) {
+inline void B_Extend(Cpu* c, const Op* op, uint8_t*) {
     uint32_t v = ror32(c->r[op->c], op->imm), r;
     if constexpr (KIND == 0) r = uint32_t(int32_t(int8_t(v)));
     else if constexpr (KIND == 1) r = uint32_t(int32_t(int16_t(v)));
@@ -525,21 +588,23 @@ HVM_H(H_Extend) {
         else r = n + r;
     }
     c->r[op->a] = r;
-    HVM_NEXT();
 }
+template <int KIND, bool ADD>
+HVM_H(H_Extend) { B_Extend<KIND, ADD>(c, op, m); HVM_NEXT(); }
 
 // Bitfields. a = rd, b = rn, imm = lsb, imm2 = width
 // KIND: 0 UBFX, 1 SBFX, 2 BFI, 3 BFC
 template <int KIND>
-HVM_H(H_Bitfield) {
+inline void B_Bitfield(Cpu* c, const Op* op, uint8_t*) {
     const uint32_t lsb = op->imm, w = op->imm2;
     const uint32_t mask = w >= 32 ? 0xFFFFFFFFu : ((1u << w) - 1);
     if constexpr (KIND == 0) c->r[op->a] = (c->r[op->b] >> lsb) & mask;
     else if constexpr (KIND == 1) c->r[op->a] = uint32_t(int32_t(c->r[op->b] << (32 - lsb - w)) >> (32 - w));
     else if constexpr (KIND == 2) c->r[op->a] = (c->r[op->a] & ~(mask << lsb)) | ((c->r[op->b] & mask) << lsb);
     else c->r[op->a] &= ~(mask << lsb);
-    HVM_NEXT();
 }
+template <int KIND>
+HVM_H(H_Bitfield) { B_Bitfield<KIND>(c, op, m); HVM_NEXT(); }
 
 // MOVT: a = rd, imm = imm16
 HVM_H(H_Movt) { c->r[op->a] = (c->r[op->a] & 0xFFFF) | (op->imm << 16); HVM_NEXT(); }
@@ -717,7 +782,7 @@ template <int K> inline void memStore(uint8_t* m, uint32_t a, uint32_t v) {
 // a = rt, b = rn, c = rm, d = (shift type) | 0x80 if register offset is subtracted
 // imm = signed immediate offset (REG = false) or shift amount (REG = true)
 template <int K, bool LOAD, int AM, bool REG>
-HVM_H(H_Mem) {
+inline void B_Mem(Cpu* c, const Op* op, uint8_t* m) {
     const uint32_t base = c->r[op->b];
     uint32_t off;
     if constexpr (REG) {
@@ -736,8 +801,9 @@ HVM_H(H_Mem) {
         memStore<K>(m, addr, c->r[op->a]);
         if constexpr (AM != kAmOffset) c->r[op->b] = ea;
     }
-    HVM_NEXT();
 }
+template <int K, bool LOAD, int AM, bool REG>
+HVM_H(H_Mem) { B_Mem<K, LOAD, AM, REG>(c, op, m); HVM_NEXT(); }
 
 // LDRD/STRD. a = rt, imm2 = rt2, b = rn, c = rm, d as H_Mem, imm offset/shift
 template <bool LOAD, int AM, bool REG>
@@ -779,6 +845,103 @@ HVM_H(H_Multi) {
         }
         if (wb) c->r[op->b] = newbase;
     }
+    HVM_NEXT();
+}
+
+// Fused LDM/POP {..., pc} + BranchIndirect(kPC).
+// a = insns retired, b = rn, c = no-interwork flag, d = mode, imm = register list
+HVM_H(H_MultiPopPc) {
+    const uint32_t list = op->imm, n = uint32_t(__builtin_popcount(list));
+    const uint32_t base = c->r[op->b];
+    const bool inc = op->d & 1, before = op->d & 2, wb = op->d & 4;
+    uint32_t addr = inc ? (before ? base + 4 : base) : (before ? base - 4 * n : base - 4 * n + 4);
+    const uint32_t newbase = inc ? base + 4 * n : base - 4 * n;
+    for (uint32_t l = list; l; l &= l - 1) {
+        c->r[__builtin_ctz(l)] = ld<uint32_t>(m, addr);
+        addr += 4;
+    }
+    if (wb && !((list >> op->b) & 1)) c->r[op->b] = newbase;
+    uint32_t t = c->r[kPC];
+    if (op->c == 0) c->thumb = t & 1;
+    t &= c->thumb ? ~1u : ~3u;
+    c->r[kPC] = t;
+    c->budget -= op->a;
+    if (c->budget <= 0) { c->exit = Exit::Budget; return; }
+    const uint32_t key = t | c->thumb;
+    const FastEntry& fe = c->fast[fastIndex(key)];
+    const Op* first;
+    if (__builtin_expect(fe.key == key, 1)) {
+        first = fe.first;
+    } else {
+        Block* nb = hvmEnterBlock(c, key);
+        if (!nb) return;
+        first = nb->ops.data();
+    }
+    c->block_pc = t;
+    HVM_MUSTTAIL return first->fn(c, first, m);
+}
+
+// Fused pair of 32-bit offset loads: a = rt1, b = rn1, c = rt2, d = rn2, imm = off1, imm2 = off2
+HVM_H(H_Ldr2Imm) {
+    const uint32_t v1 = ld<uint32_t>(m, c->r[op->b] + op->imm);
+    const uint32_t v2 = ld<uint32_t>(m, c->r[op->d] + op->imm2);
+    c->r[op->a] = v1;
+    c->r[op->c] = v2;
+    HVM_NEXT();
+}
+
+// Fused pair of 32-bit offset stores: a = rt1, b = rn1, c = rt2, d = rn2, imm = off1, imm2 = off2
+HVM_H(H_Str2Imm) {
+    st<uint32_t>(m, c->r[op->b] + op->imm, c->r[op->a]);
+    st<uint32_t>(m, c->r[op->d] + op->imm2, c->r[op->c]);
+    HVM_NEXT();
+}
+
+// Fused MOV rd1, rm1 + MOV rd2, rm2: a = rd1, b = rm1, c = rd2, d = rm2
+HVM_H(H_Mov2Reg) {
+    const uint32_t v1 = c->r[op->b];
+    c->r[op->a] = v1;
+    c->r[op->c] = c->r[op->d];
+    HVM_NEXT();
+}
+
+// Fused MOV rd1, rm1 + ADD rd2, rn2, rm2: a = rd1, b = rm1, c = rd2, d = rn2, imm = rm2
+HVM_H(H_MovAddReg) {
+    const uint32_t v1 = c->r[op->b];
+    c->r[op->a] = v1;
+    c->r[op->c] = c->r[op->d] + c->r[op->imm];
+    HVM_NEXT();
+}
+
+// Fused ADD/SUB rd1, rn1, #imm1 + ADD/SUB rd2, rn2, #imm2:
+// a = rd1, b = rn1, c = rd2, d = rn2, imm = ±imm1, imm2 = ±imm2
+HVM_H(H_Add2Imm) {
+    c->r[op->a] = c->r[op->b] + op->imm;
+    c->r[op->c] = c->r[op->d] + op->imm2;
+    HVM_NEXT();
+}
+
+// Fused LDR rt, [rn, #imm] + ADD rd, rx, rm:
+// a = rt, b = rn, c = rd, d = rx, imm = ldr_off, imm2 = rm
+HVM_H(H_LdrAddReg) {
+    c->r[op->a] = ld<uint32_t>(m, c->r[op->b] + op->imm);
+    c->r[op->c] = c->r[op->d] + c->r[op->imm2];
+    HVM_NEXT();
+}
+
+// Fused LDR rt, [rn, #imm] + ADD/SUB rd, rx, #imm2:
+// a = rt, b = rn, c = rd, d = rx, imm = ldr_off, imm2 = ±add_imm
+HVM_H(H_LdrAddImm) {
+    c->r[op->a] = ld<uint32_t>(m, c->r[op->b] + op->imm);
+    c->r[op->c] = c->r[op->d] + op->imm2;
+    HVM_NEXT();
+}
+
+// Fused STR rt, [rn, #imm] + ADD/SUB rd, rx, #imm2:
+// a = rt, b = rn, c = rd, d = rx, imm = str_off, imm2 = ±add_imm
+HVM_H(H_StrAddImm) {
+    st<uint32_t>(m, c->r[op->b] + op->imm, c->r[op->a]);
+    c->r[op->c] = c->r[op->d] + op->imm2;
     HVM_NEXT();
 }
 

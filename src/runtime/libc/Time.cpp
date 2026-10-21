@@ -90,7 +90,7 @@ uint32_t t_gmtime_r(Ctx& x, GuestPtr tp, GuestPtr out) {
     return out;
 }
 uint32_t tmBuffer(Ctx& x) {
-    static thread_local uint32_t buf = 0;
+    static const char bufKey = 0; uint32_t& buf = x.proc.threadSlot(&bufKey);
     if (!buf) buf = x.proc.allocStatic(64);
     return buf;
 }
@@ -115,7 +115,7 @@ uint32_t t_ctime(Ctx& x, GuestPtr tp) {
     const time_t t = x.mem.read<int32_t>(tp);
     char b[64];
     ::ctime_r(&t, b);
-    static thread_local uint32_t buf = 0;
+    static const char bufKey = 0; uint32_t& buf = x.proc.threadSlot(&bufKey);
     if (!buf) buf = x.proc.allocStatic(64);
     x.mem.copyIn(buf, b, std::strlen(b) + 1);
     return buf;

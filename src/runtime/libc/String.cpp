@@ -106,7 +106,7 @@ uint32_t s_strtok_r(Ctx& x, GuestPtr s, GuestPtr delim, GuestPtr save) {
     return tok;
 }
 uint32_t s_strtok(Ctx& x, GuestPtr s, GuestPtr delim) {
-    static thread_local uint32_t save = 0;
+    static const char saveKey = 0; uint32_t& save = x.proc.threadSlot(&saveKey);
     if (!save) save = x.proc.allocStatic(4);
     return s_strtok_r(x, s, delim, save);
 }
@@ -151,6 +151,81 @@ int32_t c_toupper_l(Ctx& x, int32_t c, uint32_t) { return c_toupper(x, c); }
 int32_t c_tolower_l(Ctx& x, int32_t c, uint32_t) { return c_tolower(x, c); }
 
 uint32_t w_wcslen(Ctx& x, GuestPtr s) { uint32_t n = 0; while (x.mem.read<uint32_t>(s + n * 4)) ++n; return n; }
+uint32_t w_wcscpy(Ctx& x, GuestPtr d, GuestPtr s) {
+    const uint32_t n = w_wcslen(x, s);
+    std::memmove(H(x, d), H(x, s), (n + 1) * 4);
+    return d;
+}
+uint32_t w_wcsncpy(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
+    uint32_t len = 0;
+    while (len < n && x.mem.read<uint32_t>(s + len * 4)) ++len;
+    if (len) std::memmove(H(x, d), H(x, s), len * 4);
+    if (len < n) std::memset(H(x, d + len * 4), 0, (n - len) * 4);
+    return d;
+}
+uint32_t w_wcscat(Ctx& x, GuestPtr d, GuestPtr s) {
+    const uint32_t dl = w_wcslen(x, d), sl = w_wcslen(x, s);
+    std::memmove(H(x, d + dl * 4), H(x, s), (sl + 1) * 4);
+    return d;
+}
+uint32_t w_wcsncat(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
+    const uint32_t dl = w_wcslen(x, d);
+    uint32_t sl = 0;
+    while (sl < n && x.mem.read<uint32_t>(s + sl * 4)) ++sl;
+    if (sl) std::memmove(H(x, d + dl * 4), H(x, s), sl * 4);
+    x.mem.write<uint32_t>(d + (dl + sl) * 4, 0);
+    return d;
+}
+int32_t w_wcscmp(Ctx& x, GuestPtr a, GuestPtr b) {
+    for (uint32_t i = 0;; ++i) {
+        const int32_t ca = x.mem.read<int32_t>(a + i * 4), cb = x.mem.read<int32_t>(b + i * 4);
+        if (ca != cb || !ca) return ca < cb ? -1 : ca > cb ? 1 : 0;
+    }
+}
+int32_t w_wcsncmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) {
+    for (uint32_t i = 0; i < n; ++i) {
+        const int32_t ca = x.mem.read<int32_t>(a + i * 4), cb = x.mem.read<int32_t>(b + i * 4);
+        if (ca != cb || !ca) return ca < cb ? -1 : ca > cb ? 1 : 0;
+    }
+    return 0;
+}
+uint32_t w_wcschr(Ctx& x, GuestPtr s, int32_t c) {
+    for (uint32_t i = 0;; ++i) {
+        const int32_t ch = x.mem.read<int32_t>(s + i * 4);
+        if (ch == c) return s + i * 4;
+        if (!ch) return 0;
+    }
+}
+uint32_t w_wcsrchr(Ctx& x, GuestPtr s, int32_t c) {
+    uint32_t last = 0;
+    for (uint32_t i = 0;; ++i) {
+        const int32_t ch = x.mem.read<int32_t>(s + i * 4);
+        if (ch == c) last = s + i * 4;
+        if (!ch) return last;
+    }
+}
+uint32_t w_wcsstr(Ctx& x, GuestPtr hay, GuestPtr nd) {
+    const uint32_t nl = w_wcslen(x, nd);
+    if (!nl) return hay;
+    const uint32_t hl = w_wcslen(x, hay);
+    if (nl > hl) return 0;
+    for (uint32_t i = 0; i + nl <= hl; ++i)
+        if (w_wcsncmp(x, hay + i * 4, nd, nl) == 0) return hay + i * 4;
+    return 0;
+}
+uint32_t w_wmemcpy(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) { if (n) std::memmove(H(x, d), H(x, s), n * 4); return d; }
+uint32_t w_wmemset(Ctx& x, GuestPtr d, int32_t c, uint32_t n) { for (uint32_t i = 0; i < n; ++i) x.mem.write<int32_t>(d + i * 4, c); return d; }
+int32_t  w_wmemcmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) { return w_wcsncmp(x, a, b, n); }
+uint32_t w_wmemchr(Ctx& x, GuestPtr s, int32_t c, uint32_t n) {
+    for (uint32_t i = 0; i < n; ++i) if (x.mem.read<int32_t>(s + i * 4) == c) return s + i * 4;
+    return 0;
+}
+int32_t w_towlower(Ctx& x, int32_t c) { return c_tolower(x, c); }
+int32_t w_towupper(Ctx& x, int32_t c) { return c_toupper(x, c); }
+int32_t w_iswspace(Ctx& x, int32_t c) { return c_isspace(x, c); }
+int32_t w_iswdigit(Ctx& x, int32_t c) { return c_isdigit(x, c); }
+int32_t w_iswalpha(Ctx& x, int32_t c) { return c_isalpha(x, c); }
+int32_t w_iswalnum(Ctx& x, int32_t c) { return c_isalnum(x, c); }
 
 } // namespace
 
@@ -264,6 +339,26 @@ void registerLibcString(Process& p) {
     p.def<&c_tolower_l>("_tolower_l");
     p.def<&c_maskrune>("___maskrune");
     p.def<&w_wcslen>("_wcslen");
+    p.def<&w_wcscpy>("_wcscpy");
+    p.def<&w_wcsncpy>("_wcsncpy");
+    p.def<&w_wcscat>("_wcscat");
+    p.def<&w_wcsncat>("_wcsncat");
+    p.def<&w_wcscmp>("_wcscmp");
+    p.def<&w_wcsncmp>("_wcsncmp");
+    p.def<&w_wcschr>("_wcschr");
+    p.def<&w_wcsrchr>("_wcsrchr");
+    p.def<&w_wcsstr>("_wcsstr");
+    p.def<&w_wmemcpy>("_wmemcpy");
+    p.def<&w_wmemcpy>("_wmemmove");
+    p.def<&w_wmemset>("_wmemset");
+    p.def<&w_wmemcmp>("_wmemcmp");
+    p.def<&w_wmemchr>("_wmemchr");
+    p.def<&w_towlower>("_towlower");
+    p.def<&w_towupper>("_towupper");
+    p.def<&w_iswspace>("_iswspace");
+    p.def<&w_iswdigit>("_iswdigit");
+    p.def<&w_iswalpha>("_iswalpha");
+    p.def<&w_iswalnum>("_iswalnum");
     buildRuneLocale(p);
 }
 

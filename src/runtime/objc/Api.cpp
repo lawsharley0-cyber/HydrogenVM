@@ -46,7 +46,7 @@ IMP resolve(Ctx& x, id& self, SEL s) {
             if (imp) return imp;
         }
     }
-    r.unrecognized(self, s);
+    return r.unrecognized(self, s);
 }
 
 void msgSend(Ctx& x) {
@@ -74,8 +74,8 @@ void msgSendSuperImpl(Ctx& x, uint32_t superReg, uint32_t selReg, bool super2) {
     x.cpu.r[superReg] = self;
     if (!self) { if (!superReg) x.cpu.r[0] = x.cpu.r[1] = 0; return; }
     if (x.proc.config().traceCalls) trace(x, self, s);
-    const IMP imp = r.lookup(start, s);
-    if (!imp) r.unrecognized(self, s);
+    IMP imp = r.lookup(start, s);
+    if (!imp) imp = r.unrecognized(self, s);
     dispatch(x, imp);
 }
 void msgSendSuper(Ctx& x) { msgSendSuperImpl(x, 0, 1, false); }
@@ -138,7 +138,12 @@ void a_poolPop(Ctx& x, uint32_t token) { rt(x).poolPop(x.cpu, token); }
 
 // --------------------------------------------------------- introspection ---
 
-Class c_getClass(Ctx& x, GuestPtr name) { return name ? rt(x).getClass(x.proc.readCString(name)) : 0; }
+Class c_getClass(Ctx& x, GuestPtr name) {
+    if (!name) return 0;
+    const Class c = rt(x).getClass(x.proc.readCString(name));
+    const ClassInfo* ci = c ? rt(x).info(c) : nullptr;
+    return ci && ci->stub ? 0 : c;   // placeholders for missing classes look absent
+}
 Class c_getRequiredClass(Ctx& x, GuestPtr name) {
     const Class c = c_getClass(x, name);
     if (!c) throw ObjCError("objc_getRequiredClass: class " + x.proc.readCString(name) + " not found");
@@ -390,13 +395,6 @@ void p_copyStruct(Ctx& x, GuestPtr dst, GuestPtr src, uint32_t size, bool, bool)
 
 // ------------------------------------------------------- exceptions etc ---
 
-void e_throw(Ctx& x, id exc) {
-    Runtime& r = rt(x);
-    std::string desc = r.describeException ? r.describeException(exc) : r.objectClassName(exc);
-    throw ObjCError("Uncaught Objective-C exception: " + desc);
-}
-void e_rethrow(Ctx&) { throw ObjCError("Objective-C exception rethrown (exceptions can't be caught yet)"); }
-id e_beginCatch(Ctx&, id e) { return e; }
 void e_void(Ctx&) {}
 void e_mutation(Ctx& x, id o) { throw ObjCError("Collection " + rt(x).objectClassName(o) + " was mutated while being enumerated"); }
 int32_t s_enter(Ctx& x, id o) { if (o) rt(x).syncEnter(o); return 0; }
@@ -408,7 +406,22 @@ void as_remove(Ctx& x, id o) {
     (void)r;
     (void)o;
 }
-void msgForward(Ctx& x) { rt(x).unrecognized(x.cpu.r[0], x.cpu.r[1]); }
+// int objc_getClassList(Class* buffer, int count): fills up to `count`, returns the total.
+int32_t c_getClassList(Ctx& x, GuestPtr buf, int32_t count) {
+    const std::vector<Class> all = rt(x).classList();
+    if (buf) for (int32_t i = 0; i < count && size_t(i) < all.size(); ++i) x.mem.write<uint32_t>(buf + uint32_t(i) * 4, all[size_t(i)]);
+    return int32_t(all.size());
+}
+// Class* objc_copyClassList(unsigned* outCount): malloc'ed, NULL-terminated.
+uint32_t c_copyClassList(Ctx& x, GuestPtr outCount) {
+    const std::vector<Class> all = rt(x).classList();
+    const uint32_t arr = x.proc.heap().alloc(uint32_t(all.size() + 1) * 4);
+    for (size_t i = 0; i < all.size(); ++i) x.mem.write<uint32_t>(arr + uint32_t(i) * 4, all[i]);
+    x.mem.write<uint32_t>(arr + uint32_t(all.size()) * 4, 0);
+    if (outCount) x.mem.write<uint32_t>(outCount, uint32_t(all.size()));
+    return arr;
+}
+void msgForward(Ctx& x) { rt(x).unrecognized(x.cpu.r[0], x.cpu.r[1]); x.cpu.r[0] = x.cpu.r[1] = 0; }
 int32_t z_zero(Ctx&) { return 0; }
 void z_void1(Ctx&, uint32_t) {}
 
@@ -422,6 +435,8 @@ void registerObjCApi(Process& p, Runtime& r) {
     p.defineFunction("_objc_msgSendSuper2", &msgSendSuper2);
     p.defineFunction("_objc_msgSendSuper_stret", &msgSendSuperStret);
     p.defineFunction("_objc_msgSendSuper2_stret", &msgSendSuper2Stret);
+    p.def<&c_getClassList>("_objc_getClassList");
+    p.def<&c_copyClassList>("_objc_copyClassList");
     p.defineFunction("__objc_msgForward", &msgForward);
     p.defineFunction("__objc_msgForward_stret", &msgForward);
     p.def<&a_retain>("_objc_retain");
@@ -502,12 +517,7 @@ void registerObjCApi(Process& p, Runtime& r) {
     p.def<&prop_set_nonatomic_copy>("_objc_setProperty_nonatomic_copy");
     p.def<&p_copyStruct>("_objc_copyStruct");
     p.def<&p_copyStruct>("_objc_copyCppObjectAtomic");
-    p.def<&e_throw>("_objc_exception_throw");
-    p.def<&e_rethrow>("_objc_exception_rethrow");
-    p.def<&e_beginCatch>("_objc_begin_catch");
-    p.def<&e_void>("_objc_end_catch");
     p.def<&e_void>("_objc_terminate");
-    p.def<&e_void>("___objc_personality_v0");
     p.def<&e_mutation>("_objc_enumerationMutation");
     p.def<&z_void1>("_objc_setEnumerationMutationHandler");
     p.def<&s_enter>("_objc_sync_enter");

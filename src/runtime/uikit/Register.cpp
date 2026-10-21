@@ -17,7 +17,11 @@ void registerUIKit(Process& p) {
     UIKit::registerUIApplication(p, r);  // UIApplication, events, UIDevice, UIApplicationMain
     UIKit::registerGestures(p, r);
     UIKit::registerNib(p, r);
+    UIKit::registerUIWidgets(p, r);
+    UIKit::registerOpenGLES(p, r);
+    UIKit::registerGameKit(p, r);
     UIKit::registerPlatformStubs(p, r);
+    UIKit::registerMiscFrameworks(p, r);
 }
 
 } // namespace Hydrogen::Runtime

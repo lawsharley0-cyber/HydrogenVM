@@ -72,6 +72,7 @@ std::vector<id> setItems(Ctx& x, id set);
 
 // ---- data
 id makeData(Ctx& x, const void* bytes, uint32_t n, bool owned = false, bool isMutable = false);
+id makeDataNoCopy(Ctx& x, uint32_t bytes, uint32_t n, std::function<void(Ctx&)> onRelease);
 std::vector<uint8_t> dataBytes(Ctx& x, id data);
 bool isData(Ctx& x, id obj);
 
@@ -119,6 +120,7 @@ struct RunLoop {
     void stop() { std::lock_guard<std::mutex> lk(mu); stopFlag = true; cv.notify_all(); }
 };
 RunLoop& mainRunLoop(Process& p);
+RunLoop& runLoopForObject(Ctx& x, id loop);   // an NSRunLoop / CFRunLoop object (current loop if 0)
 double now();          // seconds since 2001-01-01 (NSDate reference)
 double dateInterval(Ctx& x, id date);                    // NSDate -> reference-date seconds
 id makeDate(Ctx& x, double t, bool owned = false);       // reference-date seconds -> NSDate
@@ -149,6 +151,13 @@ bool characterSetContains(Ctx& x, id set, char16_t c);
 // ---- class registration
 void registerStrings(Process& p, ObjC::Runtime& r);
 void registerNumbers(Process& p, ObjC::Runtime& r);
+void registerFormatters(Process& p, ObjC::Runtime& r);
+void registerSecurity(Process& p, ObjC::Runtime& r);
+void registerNetwork(Process& p, ObjC::Runtime& r);
+void registerCalendar(Process& p, ObjC::Runtime& r);
+void registerInvocation(Process& p, ObjC::Runtime& r);
+void registerURLLoading(Process& p, ObjC::Runtime& r);
+void registerFoundationExtras(Process& p, ObjC::Runtime& r);
 void registerCollections(Process& p, ObjC::Runtime& r);
 void registerData(Process& p, ObjC::Runtime& r);
 void registerBundle(Process& p, ObjC::Runtime& r);
