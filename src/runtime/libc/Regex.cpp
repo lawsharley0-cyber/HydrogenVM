@@ -18,11 +18,12 @@
 // sizeof 16, alignof 4). A lone int64 prefers 8; the struct does not.
 // The stride is still 16. Host glibc regoff_t is 32-bit and is not used.
 //
-// Unbounded repeats are a Thompson NFA: the leftmost-longest span is the
-// furthest accept in an O(states * length) simulation, then a greedy walk
-// over a reverse-reachability table fills POSIX submatches. Backreferences
-// cannot be expressed that way and use memoized backtracking only. There is
-// no fixed repeat ceiling and no step limit on the NFA path.
+// Unbounded repeats are a Pike/Thompson NFA. One pass seeds a thread at each
+// offset and keeps the leftmost-longest accept in O(states * length), then a
+// greedy walk over a reverse-reachability table fills POSIX submatches.
+// Backreferences cannot be expressed that way and use memoized backtracking
+// with a step budget that returns REG_ESPACE. There is no fixed repeat
+// ceiling and no step limit on the NFA path.
 //
 // REG_STARTEND (an eflag) is the Darwin/BSD flag, value 4. The region
 // pmatch[0] is the whole string: ^ matches at rm_so unless REG_NOTBOL, and
@@ -79,6 +80,7 @@ namespace Hydrogen::Runtime {
 namespace {
 
 constexpr int32_t REG_EXTENDED = 1, REG_ICASE = 2, REG_NOSUB = 4, REG_NEWLINE = 010;
+constexpr int32_t REG_PEND = 040; // pattern ends at preg->re_endp, not at NUL
 constexpr int32_t REG_NOTBOL = 1, REG_NOTEOL = 2, REG_STARTEND = 4;
 constexpr int32_t REG_NOMATCH = 1, REG_BADPAT = 2, REG_ECOLLATE = 3, REG_ECTYPE = 4;
 constexpr int32_t REG_EESCAPE = 5, REG_ESUBREG = 6, REG_EBRACK = 7, REG_EPAREN = 8;
@@ -618,57 +620,83 @@ struct Engine {
         default: return false;
         }
     }
-    void closure(std::vector<int>& states, size_t pos) const {
-        std::vector<char> seen(prog.inst.size(), 0);
-        std::vector<int> stack;
-        stack.reserve(states.size());
-        for (int s0 : states) if (s0 >= 0 && !seen[s0]) { seen[s0] = 1; stack.push_back(s0); }
-        states.clear();
-        states.reserve(stack.size());
-        for (int s0 : stack) states.push_back(s0);
-        for (size_t sp = 0; sp < stack.size(); ++sp) {
-            const Inst& in = prog.inst[stack[sp]];
-            auto add = [&](int nxt) {
-                if (nxt < 0 || seen[nxt]) return;
-                seen[nxt] = 1;
-                stack.push_back(nxt);
-                states.push_back(nxt);
-            };
-            switch (in.op) {
-            case Op::Split: add(in.x); add(in.y); break;
-            case Op::Jmp: case Op::Save: add(in.x); break;
-            case Op::Bol: if (isBol(pos)) add(in.x); break;
-            case Op::Eol: if (isEol(pos)) add(in.x); break;
-            default: break;
-            }
-        }
-    }
-    static bool hasMatch(const Prog& prog, const std::vector<int>& states) {
-        for (int pc : states) if (prog.inst[pc].op == Op::Match) return true;
-        return false;
-    }
-    // Furthest accept reachable from `start`, or -1. O(states * remaining length).
-    int longestEnd(size_t start) const {
+    // Leftmost-longest span. Threads from earlier offsets claim a state first,
+    // and a new thread is seeded at the current offset until any accept exists.
+    // One thread per state keeps the pass O(states * length); submatches are
+    // filled afterwards from the winning span.
+    bool search(size_t& matchStart, int& matchEnd) const {
         const int ninst = int(prog.inst.size());
-        std::vector<int> cur{prog.entry};
-        closure(cur, start);
-        int best = hasMatch(prog, cur) ? int(start) : -1;
-        std::vector<char> mark(ninst);
-        for (size_t pos = start; pos < hi; ++pos) {
-            std::fill(mark.begin(), mark.end(), 0);
-            std::vector<int> nxt;
-            for (int pc : cur) {
-                const Inst& in = prog.inst[pc];
-                if (!consumes(in, pos) || in.x < 0 || mark[in.x]) continue;
-                mark[in.x] = 1;
-                nxt.push_back(in.x);
+        if (ninst <= 0 || prog.entry < 0) return false;
+        std::vector<int> seen(ninst, 0), startOf(ninst, -1);
+        std::vector<int> cur, nxt, stack;
+        struct Seed { int pc; int start; };
+        std::vector<Seed> seeds;
+        cur.reserve(size_t(ninst));
+        nxt.reserve(size_t(ninst));
+        stack.reserve(size_t(ninst));
+        seeds.reserve(size_t(ninst));
+        int gen = 0;
+        int bestStart = -1, bestEnd = -1;
+        auto claim = [&](int pc, int start, size_t pos) {
+            stack.clear();
+            auto add = [&](int p) {
+                if (p < 0 || p >= ninst || seen[p] == gen) return;
+                seen[p] = gen;
+                startOf[p] = start;
+                nxt.push_back(p);
+                stack.push_back(p);
+            };
+            add(pc);
+            for (size_t sp = 0; sp < stack.size(); ++sp) {
+                const Inst& in = prog.inst[stack[sp]];
+                switch (in.op) {
+                case Op::Split: add(in.x); add(in.y); break;
+                case Op::Jmp: case Op::Save: add(in.x); break;
+                case Op::Bol: if (isBol(pos)) add(in.x); break;
+                case Op::Eol: if (isEol(pos)) add(in.x); break;
+                default: break;
+                }
             }
-            if (nxt.empty()) break;
+        };
+        for (size_t pos = lo; pos <= hi; ++pos) {
+            if (++gen == 0) {
+                std::fill(seen.begin(), seen.end(), 0);
+                gen = 1;
+            }
+            nxt.clear();
+            seeds.clear();
+            if (pos > lo) {
+                for (int pc : cur) {
+                    const Inst& in = prog.inst[pc];
+                    if (!consumes(in, pos - 1) || in.x < 0) continue;
+                    const int st = startOf[pc];
+                    if (bestStart >= 0 && st > bestStart) continue;
+                    seeds.push_back(Seed{in.x, st});
+                }
+                // Earliest start claims a state. A later start must not be
+                // visited first and then block the leftmost thread.
+                std::sort(seeds.begin(), seeds.end(), [](const Seed& a, const Seed& b) {
+                    return a.start < b.start;
+                });
+                for (const Seed& sd : seeds) claim(sd.pc, sd.start, pos);
+            }
+            if (bestStart < 0) claim(prog.entry, int(pos), pos);
+            for (int pc : nxt) {
+                if (prog.inst[pc].op != Op::Match) continue;
+                const int st = startOf[pc];
+                const int end = int(pos);
+                if (bestStart < 0 || st < bestStart || (st == bestStart && end > bestEnd)) {
+                    bestStart = st;
+                    bestEnd = end;
+                }
+            }
             cur.swap(nxt);
-            closure(cur, pos + 1);
-            if (hasMatch(prog, cur)) best = int(pos + 1);
+            if (cur.empty() && bestStart >= 0) break;
         }
-        return best;
+        if (bestStart < 0) return false;
+        matchStart = size_t(bestStart);
+        matchEnd = bestEnd;
+        return true;
     }
     bool okAt(size_t pos, int pc) const {
         if (pc < 0 || pos < origin || int(pos) > bend) return false;
@@ -817,6 +845,7 @@ struct RefHash {
 };
 
 // Memoized backtracking, used only when the pattern contains a backreference.
+// The NFA path has no step limit; this one does, and reports REG_ESPACE.
 struct RefEngine {
     const Prog& prog;
     const std::string& s;
@@ -824,6 +853,18 @@ struct RefEngine {
     bool notbol = false, noteol = false;
     std::unordered_map<RefKey, std::vector<Hit>, RefHash> memo;
     std::unordered_map<RefKey, char, RefHash> stacking;
+    static constexpr uint64_t kStepBudget = 2000000;
+    uint64_t steps = 0;
+    bool exhausted = false;
+
+    bool tick() {
+        if (exhausted) return false;
+        if (++steps > kStepBudget) {
+            exhausted = true;
+            return false;
+        }
+        return true;
+    }
 
     bool isBol(size_t pos) const {
         if (pos == lo) return !notbol;
@@ -834,11 +875,13 @@ struct RefEngine {
         return prog.newline && pos < hi && s[pos] == '\n';
     }
     std::vector<Hit> all(int ni, size_t pos, const Caps& caps) {
+        if (exhausted || !tick()) return {};
         if (ni < 0 || pos > hi) return {};
         RefKey key{ni, uint32_t(pos), caps.so, caps.eo};
         if (auto it = memo.find(key); it != memo.end()) return it->second;
         if (stacking[key]) return {};
         stacking[key] = 1;
+        bool stop = false;
         const Node& n = prog.nodes[ni];
         std::vector<Hit> out;
         auto add = [&](Hit h) {
@@ -908,6 +951,7 @@ struct RefEngine {
             std::unordered_map<size_t, Hit> best;
             std::unordered_map<uint64_t, char> seen;
             while (!stack.empty()) {
+                if (!tick()) { stop = true; break; }
                 Frame fr = std::move(stack.back());
                 stack.pop_back();
                 const uint64_t sk = (uint64_t(fr.count) << 32) ^ fr.p;
@@ -915,34 +959,43 @@ struct RefEngine {
                 seen[sk] = 1;
                 if (fr.count >= n.min) {
                     auto it = best.find(fr.p);
-                    if (it == best.end() || fr.count > it->second.count) best[fr.p] = Hit{fr.p, fr.c, fr.count};
+                    // Fewer iterations leave a longer last submatch. glibc's
+                    // (a*)*\1 on a run of a's is group 1 = [0, n/2), which is
+                    // one long a*, not the final a of a one-character loop.
+                    if (it == best.end() || fr.count < it->second.count) best[fr.p] = Hit{fr.p, fr.c, fr.count};
                 }
-                if (fr.count >= limit) continue;
+                if (fr.count >= limit || exhausted) continue;
                 auto parts = all(n.a, fr.p, fr.c);
+                if (exhausted) { stop = true; break; }
                 std::sort(parts.begin(), parts.end(), [](const Hit& a, const Hit& b) { return a.end < b.end; });
                 for (auto& h : parts) {
                     if (h.end <= fr.p) continue;
                     stack.push_back(Frame{h.end, fr.count + 1, std::move(h.caps)});
                 }
             }
-            for (auto& [_, h] : best) add(std::move(h));
+            if (!stop)
+                for (auto& [_, h] : best) add(std::move(h));
             break;
         }
         }
         stacking[key] = 0;
+        if (stop || exhausted) return {};
         memo.emplace(std::move(key), out);
         return out;
     }
 };
 
-bool matchProgram(const Prog& prog, const std::string& s, size_t lo, size_t hi, bool notbol, bool noteol, Caps& caps) {
+// 0 on match, REG_NOMATCH, or REG_ESPACE when the backref budget is spent.
+int matchProgram(const Prog& prog, const std::string& s, size_t lo, size_t hi, bool notbol, bool noteol, Caps& caps) {
     caps.so.assign(size_t(prog.nsub) + 1, -1);
     caps.eo.assign(size_t(prog.nsub) + 1, -1);
     if (prog.hasRef) {
         RefEngine eng{prog, s, lo, hi, notbol, noteol, {}, {}};
         for (size_t start = lo; start <= hi; ++start) {
+            if (eng.exhausted) return REG_ESPACE;
             Caps init = caps;
             auto hits = eng.all(prog.root, start, init);
+            if (eng.exhausted) return REG_ESPACE;
             bool any = false;
             size_t best = 0;
             Hit chosen;
@@ -953,23 +1006,21 @@ bool matchProgram(const Prog& prog, const std::string& s, size_t lo, size_t hi, 
             caps.eo.resize(size_t(prog.nsub) + 1, -1);
             caps.so[0] = int64_t(start);
             caps.eo[0] = int64_t(best);
-            return true;
+            return 0;
         }
-        return false;
+        return eng.exhausted ? REG_ESPACE : REG_NOMATCH;
     }
     Engine eng{prog, s, lo, hi, notbol, noteol, {}, 0, 0};
-    for (size_t start = lo; start <= hi; ++start) {
-        const int best = eng.longestEnd(start);
-        if (best < 0) continue;
-        eng.buildReach(start, best);
-        caps.so.assign(size_t(prog.nsub) + 1, -1);
-        caps.eo.assign(size_t(prog.nsub) + 1, -1);
-        eng.walk(start, best, caps);
-        caps.so[0] = int64_t(start);
-        caps.eo[0] = int64_t(best);
-        return true;
-    }
-    return false;
+    size_t start = lo;
+    int best = -1;
+    if (!eng.search(start, best)) return REG_NOMATCH;
+    eng.buildReach(start, best);
+    caps.so.assign(size_t(prog.nsub) + 1, -1);
+    caps.eo.assign(size_t(prog.nsub) + 1, -1);
+    eng.walk(start, best, caps);
+    caps.so[0] = int64_t(start);
+    caps.eo[0] = int64_t(best);
+    return 0;
 }
 
 void clearGuest(Ctx& x, GuestPtr preg) {
@@ -979,11 +1030,23 @@ void clearGuest(Ctx& x, GuestPtr preg) {
 
 int32_t r_regcomp(Ctx& x, GuestPtr preg, GuestPtr pattern, int32_t cflags) {
     if (!preg) return REG_INVARG;
+    // REG_PEND: the pattern is [pattern, re_endp), NULs included. Read the end
+    // pointer before clearGuest zeroes regex_t.
+    const bool pend = (cflags & REG_PEND) != 0;
+    const uint32_t endp = pend ? x.mem.read<uint32_t>(preg + 8) : 0;
     clearGuest(x, preg);
     if (!pattern) return REG_INVARG;
+    std::string text;
+    if (pend) {
+        if (endp < pattern) return REG_INVARG;
+        const uint32_t n = endp - pattern;
+        if (n > (1u << 20)) return REG_ESPACE;
+        text.resize(n);
+        if (n) x.mem.copyOut(text.data(), pattern, n);
+    } else text = x.proc.readCString(pattern);
     Prog prog;
     prog.nosub = (cflags & REG_NOSUB) != 0;
-    const int err = Parser(x.proc.readCString(pattern), cflags).compile(prog);
+    const int err = Parser(text, cflags).compile(prog);
     if (err) return err;
     prog.nosub = (cflags & REG_NOSUB) != 0;
     prog.hasRef = treeHasRef(prog, prog.root);
@@ -991,9 +1054,10 @@ int32_t r_regcomp(Ctx& x, GuestPtr preg, GuestPtr pattern, int32_t cflags) {
     const uint32_t nsub = uint32_t(prog.nsub);
     auto& st = x.proc.service<RegexState>();
     std::lock_guard<std::mutex> lk(st.mu);
+    if (st.live.size() >= 0xfffffffeu) return REG_ESPACE;
     uint32_t id = st.next++;
-    if (!id) id = st.next++;
-    st.live.emplace(id, std::make_shared<Prog>(std::move(prog)));
+    while (id == 0 || st.live.find(id) != st.live.end()) id = st.next++;
+    if (!st.live.emplace(id, std::make_shared<Prog>(std::move(prog))).second) return REG_ESPACE;
     x.mem.write<int32_t>(preg + 0, kMagic);
     x.mem.write<uint32_t>(preg + 4, nsub);
     x.mem.write<uint32_t>(preg + 8, 0);
@@ -1065,8 +1129,8 @@ int32_t r_regexec(Ctx& x, GuestPtr preg, GuestPtr text, uint32_t nmatch, GuestPt
         hi = s.size();
     }
     Caps caps;
-    const bool matched = matchProgram(*prog, s, lo, hi, (eflags & REG_NOTBOL) != 0, (eflags & REG_NOTEOL) != 0, caps);
-    if (!matched) return REG_NOMATCH;
+    const int matched = matchProgram(*prog, s, lo, hi, (eflags & REG_NOTBOL) != 0, (eflags & REG_NOTEOL) != 0, caps);
+    if (matched) return matched;
     if (!prog->nosub && pmatch && nmatch) {
         // Slots past re_nsub + 1 are defined to be -1, up through nmatch.
         for (uint32_t i = 0; i < nmatch; ++i) {

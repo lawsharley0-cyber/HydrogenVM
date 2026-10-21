@@ -2391,6 +2391,21 @@ int runFullSubsystemTests() {
             call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re4});
             return star && left && miss == REG_NOMATCH && plusb && nested;
         });
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#    define HVM_RE_SANITIZER 1
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+#  define HVM_RE_SANITIZER 1
+#endif
+#ifdef HVM_RE_SANITIZER
+        constexpr long long kRepeatBudgetMs = 20000;
+        constexpr long long kMissBudgetMs = 5000;
+#else
+        constexpr long long kRepeatBudgetMs = 2000;
+        constexpr long long kMissBudgetMs = 1000;
+#endif
         run("long inputs of 100k characters stay fast", [&] {
             const std::string a(100000, 'a');
             std::string ab = a;
@@ -2418,7 +2433,64 @@ int runFullSubsystemTests() {
                    s2 == std::pair<int64_t, int64_t>(0, 100001) &&
                    s3 == std::pair<int64_t, int64_t>(0, 100001) &&
                    s4 == std::pair<int64_t, int64_t>(0, 100000) &&
-                   ms < 2000;
+                   ms < kRepeatBudgetMs;
+        });
+        run("unanchored (a|aa)*c on 100k a's finishes", [&] {
+            const std::string a(100000, 'a');
+            auto [rc, re] = compile("(a|aa)*c", REG_EXTENDED);
+            clearPm();
+            const auto t0 = std::chrono::steady_clock::now();
+            const uint32_t er = exec(re, a.c_str(), 1, pm);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            std::printf("    regex (a|aa)*c 100k: %lld ms\n", static_cast<long long>(ms));
+            call("_regfree", {re});
+            return rc == 0 && er == REG_NOMATCH && ms < kMissBudgetMs;
+        });
+        run("glibc (a*)* backreference splits the run in half", [&] {
+            auto [rc, re] = compile("(a*)*\\1", REG_EXTENDED);
+            bool ok = rc == 0;
+            for (int n : {20, 40, 80}) {
+                const std::string s(size_t(n), 'a');
+                clearPm();
+                const uint32_t er = exec(re, s.c_str(), 2, pm);
+                const auto whole = offs(pm, 0);
+                const auto g = offs(pm, 1);
+                const bool row = er == 0 && whole == std::pair<int64_t, int64_t>(0, n) &&
+                                 g == std::pair<int64_t, int64_t>(0, n / 2);
+                if (!row) {
+                    std::printf("    (a*)*\\1 n=%d er=%u g0=(%lld,%lld) g1=(%lld,%lld)\n", n, er,
+                                static_cast<long long>(whole.first), static_cast<long long>(whole.second),
+                                static_cast<long long>(g.first), static_cast<long long>(g.second));
+                }
+                ok = ok && row;
+            }
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_PEND ends the pattern at re_endp", [&] {
+            constexpr uint32_t REG_PEND = 32;
+            const uint32_t raw = proc.allocCString("a+Xjunk");
+            const uint32_t preg = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(preg + 8, raw + 3);
+            const uint32_t rc = call("_regcomp", {preg, raw, REG_EXTENDED | REG_PEND});
+            clearPm();
+            const uint32_t er = exec(preg, "aaaX", 1, pm);
+            const bool clipped = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 4);
+            const uint32_t emptyRe = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(emptyRe + 8, raw);
+            const uint32_t rcEmpty = call("_regcomp", {emptyRe, raw, REG_EXTENDED | REG_PEND});
+            clearPm();
+            const uint32_t erEmpty = exec(emptyRe, "abc", 1, pm);
+            const bool blank = rcEmpty == 0 && erEmpty == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 0);
+            const uint32_t bad = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(bad + 8, raw - 1);
+            const uint32_t rcBad = call("_regcomp", {bad, raw, REG_EXTENDED | REG_PEND});
+            const uint32_t erBad = exec(bad, "a", 1, pm);
+            call("_regfree", {preg});
+            call("_regfree", {emptyRe});
+            call("_regfree", {bad});
+            return clipped && blank && rcBad == REG_INVARG && erBad == REG_INVARG;
         });
     }
 
