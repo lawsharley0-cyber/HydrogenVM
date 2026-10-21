@@ -438,8 +438,11 @@ uint32_t f_tmpnam(Ctx& x, GuestPtr s) {
     fs::create_directories(dir, ec);
     auto& st = x.proc.service<TmpnamState>();
     std::lock_guard<std::mutex> lk(st.mu);
+    // Darwin TMP_MAX (Apple Libc stdio.h, same value as FreeBSD) is 308915776.
+    // Keep drawing names until one is absent, up to that many attempts.
     std::string chosen;
-    for (int n = 0; n < 10000 && chosen.empty(); ++n) {
+    constexpr uint32_t kTmpMax = 308915776u;
+    for (uint32_t n = 0; n < kTmpMax && chosen.empty(); ++n) {
         const uint32_t seq = ++st.seq;
         char leaf[64];
         std::snprintf(leaf, sizeof leaf, "tmpnam.%u.%u", uint32_t(::getpid()), seq);

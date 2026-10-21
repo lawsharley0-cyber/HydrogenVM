@@ -12,6 +12,7 @@
 #include "core/cpu/Engine.hpp"
 #include "loader/ElfLoader.hpp"
 #include "selftest/SelfTest.hpp"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -2323,6 +2324,101 @@ int runFullSubsystemTests() {
             const std::string s2 = proc.readCString(p2);
             return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
                    !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
+        });
+        run("pmatch slots past re_nsub are -1", [&] {
+            auto [rc, re] = compile("(a)", REG_EXTENDED);
+            for (uint32_t i = 0; i < 4 * 16; i += 8) proc.mem().write<int64_t>(pm + i, 7);
+            const uint32_t er = exec(re, "a", 4, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 1 &&
+                            offs(pm, 0) == std::pair<int64_t, int64_t>(0, 1) &&
+                            offs(pm, 1) == std::pair<int64_t, int64_t>(0, 1) &&
+                            offs(pm, 2) == std::pair<int64_t, int64_t>(-1, -1) &&
+                            offs(pm, 3) == std::pair<int64_t, int64_t>(-1, -1);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_STARTEND limits the region and reports absolute offsets", [&] {
+            // Darwin: the pmatch[0] region is the string, so ^/$ are relative to
+            // it, and the reported offsets are from the guest pointer.
+            constexpr uint32_t REG_STARTEND = 4;
+            auto [rc, re] = compile("a+", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 0);
+            proc.mem().write<int64_t>(pm + 8, 2);
+            const uint32_t er = exec(re, "aaaa", 1, pm, REG_STARTEND);
+            const bool clipped = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 2);
+            auto [rc2, re2] = compile("^b+", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t er2 = exec(re2, "aaabbbccc", 1, pm, REG_STARTEND);
+            const bool anchored = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(3, 6);
+            auto [rc3, re3] = compile("b+$", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t er3 = exec(re3, "aaabbbccc", 1, pm, REG_STARTEND);
+            const bool end = rc3 == 0 && er3 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(3, 6);
+            auto [rc4, re4] = compile("^b", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t notbol = exec(re4, "aaabbbccc", 1, pm, REG_STARTEND | REG_NOTBOL);
+            for (uint32_t r : {re, re2, re3, re4}) call("_regfree", {r});
+            return clipped && anchored && end && rc4 == 0 && notbol == REG_NOMATCH;
+        });
+        run("unbounded repeats stay leftmost-longest", [&] {
+            const std::string a5000(5000, 'a');
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, a5000.c_str(), 1, pm);
+            const bool star = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 5000);
+            std::string a4097b(4097, 'a');
+            a4097b.push_back('b');
+            auto [rc2, re2] = compile("a*b", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, a4097b.c_str(), 1, pm);
+            const bool left = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 4098);
+            const uint32_t miss = exec(re2, a5000.c_str(), 1, pm);
+            std::string a5000b = a5000;
+            a5000b.push_back('b');
+            clearPm();
+            const uint32_t er3 = exec(re2, a5000b.c_str(), 1, pm);
+            const bool plusb = er3 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 5001);
+            std::string a20b(20, 'a');
+            a20b.push_back('b');
+            auto [rc4, re4] = compile("(a*)*b", REG_EXTENDED);
+            clearPm();
+            const uint32_t er4 = exec(re4, a20b.c_str(), 2, pm);
+            const bool nested = rc4 == 0 && er4 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 21) &&
+                                offs(pm, 1) == std::pair<int64_t, int64_t>(0, 20);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re4});
+            return star && left && miss == REG_NOMATCH && plusb && nested;
+        });
+        run("long inputs of 100k characters stay fast", [&] {
+            const std::string a(100000, 'a');
+            std::string ab = a;
+            ab.push_back('b');
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            auto [rc2, re2] = compile("a*b", REG_EXTENDED);
+            auto [rc3, re3] = compile("(a*)*b", REG_EXTENDED);
+            clearPm();
+            const auto t0 = std::chrono::steady_clock::now();
+            const uint32_t e1 = exec(re, a.c_str(), 1, pm);
+            const auto s1 = offs(pm, 0);
+            clearPm();
+            const uint32_t e2 = exec(re2, ab.c_str(), 1, pm);
+            const auto s2 = offs(pm, 0);
+            clearPm();
+            const uint32_t e3 = exec(re3, ab.c_str(), 2, pm);
+            const auto s3 = offs(pm, 0);
+            const auto s4 = offs(pm, 1);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            std::printf("    regex 100k: %lld ms\n", static_cast<long long>(ms));
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return rc == 0 && rc2 == 0 && rc3 == 0 && e1 == 0 && e2 == 0 && e3 == 0 &&
+                   s1 == std::pair<int64_t, int64_t>(0, 100000) &&
+                   s2 == std::pair<int64_t, int64_t>(0, 100001) &&
+                   s3 == std::pair<int64_t, int64_t>(0, 100001) &&
+                   s4 == std::pair<int64_t, int64_t>(0, 100000) &&
+                   ms < 2000;
         });
     }
 
