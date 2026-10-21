@@ -46,7 +46,9 @@ Workstation paths (Linux/WSL):
 
 | Item | Location |
 |---|---|
-| Build cache | `/var/tmp/hvm-clash-build` |
+| Automatic WSL build cache | `/var/tmp/hvm-local/build-<checkout-key>` |
+| Automatic WSL source mirror | `/var/tmp/hvm-local/source-<checkout-key>` |
+| Legacy/custom build cache | `/var/tmp/hvm-clash-build` |
 | Viewer Python + pygame 2.6.1 | `/var/tmp/hvm-local-python` |
 | Persistent app container | `/var/tmp/hvm-local/home/com.supercell.scroll` |
 | Regression IPA fixtures | `/var/tmp/hvm-fixtures` |
@@ -56,6 +58,15 @@ early experiments. They may be overridden through `HVM_LOCAL_BUILD`,
 `HVM_LOCAL_STATE` and `HVM_LOCAL_FIXTURES`. Logs/screenshots are copied directly
 into the Windows task's `outputs/local-test/` folder. Deleting that output folder
 does not delete the app sandbox.
+
+Mounted Windows checkouts use a Linux-native source mirror and build cache by
+default. The helper prints both paths and performs a fresh first build. Content
+checksums include current uncommitted edits and prevent clock differences from
+leaving stale objects. The original Git checkout and app saves are preserved.
+Rsync is required for this path. Set `HVM_LOCAL_NATIVE_SOURCE=0` to use mounted
+sources; an explicit `HVM_LOCAL_BUILD` also retains its existing source pairing.
+This improves build IO; it does not establish a gameplay FPS improvement. The
+live frame/input bridge is already in a Linux temporary directory.
 
 ## Linux entry points
 
@@ -82,7 +93,7 @@ commands `touch PHASE X Y`, `background`, `foreground`, or `stop`. Phases are
 
 ## Verification and current game limit
 
-The local runtime suite passes **62 checks**. The viewer smoke test receives live
+The local runtime suite passes **71 checks**. The viewer smoke test receives live
 frames, delivers down/up through the file bridge, and shuts down with exit 0 and
 `crashed=false`. A pre-existing file in the sandbox's Documents directory was
 preserved across launch; this tests host sandbox retention, not game progression.
@@ -93,3 +104,7 @@ bounded straight-line shader subset; all 18 captured shader sources compile.
 This does not initialize native offline play. NPC battles and offline avatar/home
 persistence remain unverified. See `CLASH_ROYALE_RESTORATION.md` for the current
 runtime commit, evidence and next blocker.
+
+A separate **opt-in protocol diagnostic** can accept the pinned client's login
+through loopback TCP. It is not enabled by the Play launcher and supplies no home
+state or battles. See `CLASH_ROYALE_RESTORATION.md` for commands and evidence.

@@ -9,6 +9,24 @@ Local desktop testing is available through `tools/local_test.sh` and
 folder includes Windows launchers. The viewer preserves the sandbox by running
 an installed `.app` instead of re-importing its IPA on every launch.
 
+**Latest offline investigation (`de7f95b`):** native saveOffline at 0x925b4
+is `bx lr; nop`, not implemented save logic. The CSV flag/filenames alone are
+insufficient evidence. The client resolves game.clashroyaleapp.com. A new explicit
+loopback TCP capability plus hostname alias captures its RC4 login, wire version
+(2,0,1306). A decoder-derived local LoginOk is accepted: the client reports
+accountId (0,1) and retains the diagnostic identity/token on relaunch. This is
+identity persistence only. The peer does not provide home state; the diagnostic
+capture remains black, with no menu or battle. Next implement pinned
+OwnHomeDataMessage/LogicClientHome/LogicClientAvatar state, then NPC sector state.
+See the restoration document for exact addresses, protocol limitations and
+commands. The native game binary/assets are unchanged; networking defaults off.
+
+The fresh local suite passes **71 runtime checks**, **six Python protocol tests**,
+and **18 shader-source checks**. Windows-mounted checkouts now build through a
+checksum-synchronized ext4 source mirror (`1201143`) to improve compilation and
+avoid timestamp-related stale objects. The measured compiler-front-end change
+is not a gameplay FPS result. The default local launchers retain offline policy.
+
 **Latest rendering milestone (`ff2d4fd`):** Clash now displays the original loading artwork,
 logo, training-camp hint, 50% bar and connection-error panel. The generic GLES2
 path executes a bounded straight-line GLSL subset, including vec4 transforms,
@@ -22,10 +40,10 @@ Birds/Art of Glow frames and Tiny Tower's known black frame. No iOS device build
 was tested in this continuation. See the restoration document for subset limits.
 
 **Clash is not playable.** It still attempts server connections despite bundled
-`OfflineMode=true`; no offline_avatar/home save files appear. Next trace the
-settings flag and native offline-state initialization, then establish one NPC
-battle and save/relaunch. `titan.checkpoint` and a timed scanner `runs` result
-are not evidence of offline progression. Prior blank-scene/“UIKit dialog” notes
+`OfflineMode=true`; no offline_avatar/home save files appear. The empty offline-
+save entry and local login findings above supersede the earlier flag
+investigation; next supply home/avatar and NPC state. `titan.checkpoint` and a
+timed scanner `runs` result are not evidence of offline progression. Prior blank-scene/“UIKit dialog” notes
 below describe the earlier renderer; the native styled panel is now visible.
 
 The earlier Mach/allocator/TrueType fixes remain intact. GitHub Actions jobs
@@ -48,7 +66,7 @@ verify the fix across all apps.
 
 ```sh
 cmake -S . -B build -G Ninja && ninja -C build hvm hvm_tests   # host build (Linux/macOS); needs zlib, sqlite3
-build/hvm_tests fulltest          # 62 runtime checks, all must pass
+build/hvm_tests fulltest          # 71 runtime checks, all must pass
 build/hvm run <App.app> --home <dir> --run-for 30 [--keep-going] [--screenshot f.png] [--report r.json]
       [--graceful] [--lifecycle bg@8,fg@13] [--launches 2] [--trace] [--tap x,y@t] [--drag ...]
 tools/compat.py scan <ipas|apps|dirs> --out compat --seconds 30 [--relaunch] [--only a,b]   # see docs/COMPAT.md
@@ -100,7 +118,7 @@ tools/compat.py scan <ipas|apps|dirs> --out compat --seconds 30 [--relaunch] [--
     NSDecimalNumber.
   * `Security.cpp`: keychain.
 * `src/runtime/uikit/`: UIKit, nibs, widgets, QuartzCore, GameKit, and audio stubs.
-  * `OpenGLES.cpp`: GLES1 fixed-function plus a **fake GLES2**; see the GLSL section below.
+  * `OpenGLES.cpp`: GLES1 fixed-function plus a bounded GLES2 interpreter; see current restoration notes.
   * `PlatformStubs.cpp`: audio (OpenAL, AudioQueue, AVAudioPlayer, ExtAudioFile, AudioFile)
     and StoreKit.
   * `MiscFrameworks.cpp`: UIWebView, CLLocationManager (denied), MPMoviePlayer (finishes

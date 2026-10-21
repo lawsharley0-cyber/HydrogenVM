@@ -2,7 +2,126 @@
 
 Date: 2026-10-20. Work branch: `gemini-merge`.
 
-## Current status: visible loading scene (2026-10-20)
+## Current status: local protocol login, not yet a home screen (2026-10-20)
+
+Runtime/protocol commit: `de7f95b`; WSL source-mirror commit: `1201143`.
+The pinned IPA and its bundled assets/settings remain unchanged.
+
+**Correction to the original offline-save inference:** at virtual address
+`0x000925b4`, `GameMode::saveOffline(String const&)` is four bytes,
+`70 47 00 bf`: Thumb `bx lr; nop`. It returns immediately. The offline filenames
+and selected-deck symbol survive in the executable, but this entry point has no
+save implementation. `tools/clash_royale_probe.py` now records this byte-level
+fact in `metadata.json.offlineCodeEvidence`, including the Thumb flag and symbol
+extent. This does not rule out every other local-state path, but the mere flag
+and strings are not evidence of working native offline play.
+
+New observed protocol evidence:
+
+- With opt-in BSD loopback transport, the client resolves
+  **`game.clashroyaleapp.com`**, despite `res/settings.csv` naming localhost.
+  The captured path therefore does not simply follow that CSV configuration.
+- An explicit hostname alias routes that name to **127.0.0.1**, where a local
+  diagnostic listener receives actual native packets. No external connection
+  or DNS lookup is needed. Default runtime networking remains disabled.
+- The client sends message **10108** keepalives and **10101**, version **3**,
+  login. Its fresh login body is **197 bytes**, with account `(0,0)`, a null token,
+  and signed-VInt wire version **`(2,0,1306)`**. RC4 state and the native login
+  encoder/decoder were checked against the pinned executable.
+- `tools/clash_protocol_probe.py --login-ok` sends a narrowly scoped **20104**
+  LoginOk and **20108** keepalive replies. The LoginOk field order comes from
+  this client's decoder at `0x000702e4`; it uses VInts. The nearby 2.1507 reference
+  uses different fixed-width fields and extra URLs, so its reply is not reused.
+- The native client logs **`accountId (0, 1)`** after that reply. On a subsequent
+  launch of the same installed bundle/container, its login body grows to
+  **245 bytes**, supplies the retained diagnostic identity/token, and is accepted
+  against the same local identity file. No token is written into diagnostic
+  event logs. This proves login-identity retention, **not game progression**.
+- The peer provides **no OwnHomeDataMessage, NPC state or combat logic**. After
+  login the capture shows black output while waiting for home state. No menu,
+  troop deployment, NPC battle or offline avatar/home save is verified.
+
+Shared runtime changes support outbound IPv4 TCP only on loopback, numeric and
+localhost `getaddrinfo` resolution, explicit hostname aliases, send/recv, SO_ERROR and selected
+real socket options. Normal read/write/close/dup/dup2 use the same tracked socket
+ownership; teardown closes retained descriptors. Blocking socket IO polls in
+short slices so process stop interrupts it. `fcntl` now applies real descriptor
+and nonblocking flags, and host socket errors map to Darwin values. Unsupported
+socket operations fail; UDP, listening sockets, external networking and Cocoa
+URL-loading remain unsupported. Reachability still reports offline.
+
+Validation: **71 runtime checks pass**, including nine network/descriptor/stop
+checks; **six Python protocol tests pass**; all **18 captured shaders compile**.
+The full fresh build and local protocol relaunch use the Linux-native source
+mirror. The four-app strict/exploratory/relaunch probes run with networking off.
+All four reach the time limit with no reported crashes. Angry Birds and Art of
+Glow have varied frames; Tiny Tower retains its black-frame baseline. The short
+Clash capture flags mostly black output during startup; a separate 45-second
+default-off run reaches the rendered 50% loading/error scene with no reported
+errors. See individual frame evidence; a scanner `runs` result is not proof of
+game compatibility. No iPhone build was tested in this continuation.
+
+### Next implementation target
+
+Build the pinned client's **OwnHomeDataMessage (24101)** from its actual decoder
+and bundled `res/level/starting_home.json`, including the six-card starting deck,
+collection, timers and chest slots, plus a matching LogicClientAvatar. Decoder
+entry points are `0x0001921c` (OwnHomeDataMessage), `0x00124f9c` (LogicClientHome)
+and `0x0009a008` (LogicClientAvatar). Retain type/range/assertion checks and log
+exact parser failures. A nearby server's opaque home blob is not a validated
+payload for this client.
+
+Then follow `GameMode::sendStartMissionMessage` at `0x00093c84`: it sets the NPC
+sector wait state, loads the location tilemap, constructs StartMissionMessage and
+sends it via MessageManager. Match the pinned NPC-sector decoder/state format
+before testing one complete original-logic battle. Store home/avatar/progression
+in the local restoration backend and test save/relaunch; the empty saveOffline
+entry point cannot supply that persistence by itself.
+
+The external reference was inspected at
+[CR-1.2.3 commit 6c3015d](https://github.com/Magich03/CR-1.2.3/tree/6c3015de6952a5f5113e7a998795f29042340394).
+Its README explicitly describes an incomplete test server. No server code or
+opaque game-state blobs were copied into HydrogenVM.
+
+### Reproduce the local login experiment
+
+Build via `tools/local_test.sh check` first. On this workstation the new native
+binary is `/var/tmp/hvm-local/build-0072df8e000f/hvm`; the helper prints the source
+and build directory for other checkout paths. In separate terminals:
+
+```sh
+python3 tools/clash_protocol_probe.py --out /var/tmp/clash-peer --login-ok --state /var/tmp/clash-peer/identity.json --seconds 90
+```
+
+```sh
+/var/tmp/hvm-local/build-0072df8e000f/hvm run /var/tmp/clash-client.ipa --home /var/tmp/clash-peer-game --loopback-network --loopback-alias game.clashroyaleapp.com --run-for 25 --graceful --report /var/tmp/clash-peer/client.json
+```
+
+Use a **new diagnostic home**, not the desktop save container. To test relaunch,
+run the installed `/var/tmp/clash-peer-game/com.supercell.scroll/Clash Royale.app`
+directly with `--home /var/tmp/clash-peer-game/com.supercell.scroll`, retaining the
+same peer `--state` file and network arguments. Re-importing an IPA replaces its
+container. `protocol-events.json` reports message types, sizes, version and fresh
+versus retained identity, without logging the token.
+
+### WSL filesystem and performance finding
+
+Following the [Microsoft WSL filesystem guidance](https://learn.microsoft.com/en-us/windows/wsl/filesystems#file-storage-and-performance-across-file-systems),
+`tools/local_test.sh` now builds mounted Windows checkouts through a dedicated
+Linux source mirror. Rsync checks **content**, preserves the editable Git tree,
+and gives changed build inputs Linux timestamps; this also avoids stale Ninja
+objects when Windows and WSL clocks differ. The first native build is fresh.
+Custom `HVM_LOCAL_BUILD` settings keep their existing source/cache pairing;
+`HVM_LOCAL_NATIVE_SOURCE=0` opts out of automatic mirroring.
+
+The three warm Net.cpp compiler-front-end samples were 3.473/3.461/3.330 seconds
+from the Windows mount and 3.045/2.950/3.038 seconds from ext4, about **12% less
+median time**. This is not a gameplay-FPS result. Binaries, installed game assets,
+sandboxes and the viewer's live-frame IPC already reside on Linux storage.
+The desktop/iPhone performance difference still needs a controlled runtime
+profile; Windows-side source access alone does not explain that difference.
+
+## Earlier milestone: visible loading scene (2026-10-20)
 
 Runtime commit: `ff2d4fd20523fa7994d4152e53ca23f65fbd1dcc`.
 
@@ -95,7 +214,7 @@ an insufficient spending limit. These are not failed emulator test results.
 live frames, mouse touch/drag, background/foreground, screenshots, graceful
 shutdown and persistent sandbox reuse. Windows launchers are in the task's
 `outputs/` folder. See [`LOCAL_TESTING.md`](LOCAL_TESTING.md) for controls and paths.
-The current local suite passes **62 checks**. Shutdown now distinguishes an
+The current local suite passes **71 checks**. Shutdown now distinguishes an
 intentional Halt/ProcessExit from actual guest/HLE faults; the latter are still
 reported. End-to-end viewer testing receives live frames, delivers touch down/up,
 and exits cleanly. A Documents marker survives relaunch. This verifies host
@@ -256,7 +375,7 @@ Angry Birds and Art of Glow produce varied frames; Tiny Tower's final frame
 is still black, as in the initial baseline. These are short Linux probes,
 not device or full-gameplay validation.
 
-### Native offline mode discovered
+### Offline flag and symbols discovered (later save-body correction above)
 
 Static inspection of the exact pinned IPA establishes:
 
@@ -296,7 +415,7 @@ current blockers are rendering and offline-state entry, not the original
    function and uses a system-font fallback, while CoreText support is largely
    absent. Replacing missing calls with zero is not a working font renderer.
 3. Reach a rendered loading/menu screen, then test whether this client's
-   **already-enabled native offline mode** creates the missing saves from its
+   **bundled offline flag** leads to creation of the missing saves from its
    bundled starting template. Prefer this verified path over assuming that a
    replacement network backend is necessary.
 4. Validate one NPC match and save/relaunch, then expand arenas. If the native
@@ -424,16 +543,14 @@ No external server code was copied into HydrogenVM.
 1. Directory lookup, fixed-offset timezone, synthetic Mach references and the
    reached custom-font startup path are fixed. See the current section for the
    deliberately unsupported Mach and CoreText operations.
-2. Loading artwork now renders. Trace the settings-table flag and the native
-   offline initialization gate behind the 50% connection failure. Keep strict
-   and exploratory results separate; the menu is not verified.
+2. Loading artwork and local login now work to the limited extent above.
+   Supply a version-correct home/avatar payload; the menu is not verified.
 3. Locate this client's NPC/tutorial battle entry points, message dispatch,
    snapshot format, random seed/tick control and result handling. Confirm what
    the client simulates rather than inferring it from filenames.
-4. If native offline mode is insufficient, add an opt-in per-process local
-   transport/backend. Integrate descriptor
-   lifetime, read/write, close, readiness and Darwin errors consistently with
-   the shared runtime. Route restoration traffic locally.
+4. Opt-in local TCP transport and diagnostic login are implemented. Extend the
+   local peer with validated home/NPC state and persistence; retain explicit
+   routing and consistent descriptor/readiness/error behavior.
 5. Restore a single complete NPC match with original combat logic where
    available; verify troop deployment, elixir, towers, win/loss and replayability.
 6. Add local profile/deck/progression saves and a save/relaunch test.
