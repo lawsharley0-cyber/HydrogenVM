@@ -34,11 +34,30 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 
 ## Current compat results
 
-Pending the verification run on this branch. The committed artifact will be `docs/dev-system/baselines/linux-headless.json` (JSON only). Fill this section from `summary` and from each app's `status`, `launchSuccess`, `crashed`, `frame.signal`, `audio.signal`, and `unimplementedImports`.
+Measured on Linux x86_64, Clang 18.1.3, host page size **4096**, commit `a4b0f8b` (the commit that contains this JSON is the one after that; the report's `git.commit` is the code that was executed, and `git.dirty` was false). Artifact: `docs/dev-system/baselines/linux-headless.json`. `summary.ok` is true. Schema check passed. A self-diff has no regressions.
 
-Host page size of that run must be copied here. A 4 KB result is not an iPhone memory-model result.
+Harness self-tests: 30 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`).
 
-Clash Royale is optional and is a skip unless `HVM_FIXTURE_ROOT` contains the pinned hash. A skip is not a pass.
+| Suite | Result |
+|---|---|
+| selftest | pass. 10.0 M instructions, result `0xA05A0848`, about 541 MIPS on this VM |
+| fulltest | pass. 79 passed, 0 failed |
+| asm | pass. arm_alu 40, arm_mem 17, thumb 30, vfp_neon 23 (110) |
+| differential C | pass. 5 integer configs × 27 and 5 VFP/NEON configs × 29 (280) |
+| Python | pass. `verify_ipa`, `clash_protocol`, `clash_home_state` |
+| decoder fuzz | not run (pass `--fuzz`) |
+| ld64 iOS guests, CoreMark, simulator, device | not run. See headless limits |
+
+| App | Status | Frames | Frame signal | Audio | Load-time gaps |
+|---|---|---:|---|---|---|
+| angry-birds | ran, no crash | 95 | mostly-one-color (about 93% near-white, 6% other). Not a title-screen proof | mixer silent | `tmpnam` |
+| tiny-tower | ran, no crash | 69 | varied | mixer active | `CGFont*` getters, `glPointSizePointerOES` |
+| art-of-glow | ran, no crash | 50 | varied | mixer silent | `regcomp`, `regexec`, `regerror`, `regfree`. `SCNetworkReachability` reported offline (signal). `kCFNumberNaN` and infinities zero-filled (signal) |
+| clash-royale-2-1306-1 | skipped | — | not run | not measured | IPA not in the fixture root. Skip is not a pass |
+
+A 4 KB pass is not an iPhone memory-model pass. Frame counts move between runs; the diff does not fail on that unless presented frames drop to zero. MIPS and average frame time are informational.
+
+Actions was not executed. Jobs since `239a0ab` have not been starting, so this table is the evidence.
 
 ## Fixed regressions
 
