@@ -38,6 +38,8 @@ Measured on Linux x86_64, Clang 18.1.3, host page size **4096**, commit `a4b0f8b
 
 Harness self-tests: 50 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`). Counted on this branch. The baseline JSON below is still the `a4b0f8b` run.
 
+Indexed run from this branch, not a new baseline: `docs/dev-system/reports/linux-x86_64/20261021T185933Z-8771deca6655.json`. `git.commit` is `8771deca6655` and `git.dirty` was false. `summary.ok` is true. Diff against `baselines/linux-headless.json`: 0 regressions, 0 attention, 0 informational. Clash is still a skip. `docs/dev-system/reports/index.json` lists that one row. `latest.json` points at it.
+
 | Suite | Result |
 |---|---|
 | selftest | pass. 10.0 M instructions, result `0xA05A0848`, about 541 MIPS on this VM |
@@ -72,7 +74,7 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 | PR | Branch | What it contains | Merged |
 |---|---|---|---|
 | This change | `cursor/infra-dev-system-1960` | Docs, harness, tests, workflow, baseline JSON | No |
-| Stacked on the row above | `cursor/compat-report-index-c782` | `AGENTS.md`, indexed JSON reports, active-mixer sample notes | No |
+| [#3](https://github.com/lawsharley0-cyber/HydrogenVM/pull/3) | `cursor/compat-report-index-c782` | `AGENTS.md`, indexed JSON reports, active-mixer sample notes. Base is the row above | No |
 
 ## Decisions
 
