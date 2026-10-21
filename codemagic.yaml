@@ -91,6 +91,12 @@ workflows:
             exit "$rc"
           fi
           test -d xbuild/Release-iphonesimulator/HydrogenVM.app
+          # Device builds stay unsigned. The simulator runtime rejects an
+          # unsigned executable. Ad-hoc signing needs no team or certificate.
+          # xattr clears Finder metadata that makes codesign refuse the bundle.
+          xattr -cr xbuild/Release-iphonesimulator/HydrogenVM.app
+          codesign --force --sign - --timestamp=none --generate-entitlement-der \
+            xbuild/Release-iphonesimulator/HydrogenVM.app
           UDID=$(xcrun simctl list devices available -j | python3 -c '
           import json, sys
           d = json.load(sys.stdin)["devices"]

@@ -80,7 +80,7 @@ the simulator picker in `tools/sim_test.sh`.
    ```
 
    `--out` also writes `HydrogenVM-unsigned.manifest.sha256`. The checker requires exactly `Payload/HydrogenVM.app`, bundle id `com.lfull.HydrogenVM`, package type `APPL`, expanded version metadata, an executable bit, and a thin arm64 device Mach-O whose `LC_BUILD_VERSION` platform is iOS. A simulator binary is rejected.
-5. **Simulator smoke.** The same target is built with `-sdk iphonesimulator`, `SUPPORTED_PLATFORMS="iphoneos iphonesimulator"`, and `ARCHS=arm64`, which is the override the macOS job uses so the device-only platform setting does not block the simulator SDK. The script picks the newest available iPhone runtime the same way `tools/sim_test.sh` does, boots it, installs `HydrogenVM.app`, launches `com.lfull.HydrogenVM`, waits 10 seconds, and writes `app/sim.png`.
+5. **Simulator smoke.** The same target is built with `-sdk iphonesimulator`, `SUPPORTED_PLATFORMS="iphoneos iphonesimulator"`, and `ARCHS=arm64`, which is the override the macOS job uses so the device-only platform setting does not block the simulator SDK. `CODE_SIGNING_ALLOWED=NO` is still passed so the build does not ask for a development team. The simulator runtime rejects an unsigned executable, so the script clears bundle metadata (`xattr -cr`) and ad-hoc signs that simulator app only (`codesign --sign -`). The device IPA is already packaged and is not re-signed. The script picks the newest available iPhone runtime the same way `tools/sim_test.sh` does, boots it, installs `HydrogenVM.app`, launches `com.lfull.HydrogenVM`, waits 10 seconds, and writes `app/sim.png`.
 
 Artifacts, from the clone root: `app/HydrogenVM-unsigned.ipa`, `app/HydrogenVM-unsigned.manifest.*`, `app/*.log`, and `app/sim.png`.
 
