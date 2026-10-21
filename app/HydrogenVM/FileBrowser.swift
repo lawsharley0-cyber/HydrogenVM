@@ -479,7 +479,7 @@ struct SaveEditorDashboardView: View {
                 ContentUnavailableView(
                     "No Save Files Found Yet",
                     systemImage: "tray",
-                    description: Text("Launch \(app.name) first so it creates its save files, preferences, or databases in Documents and Library.")
+                    description: Text("Launch \(app.title) first so it creates its save files, preferences, or databases in Documents and Library.")
                 )
             } else {
                 ForEach(DiscoveredSaveFile.Category.allCases, id: \.rawValue) { cat in
@@ -522,7 +522,7 @@ struct SaveEditorDashboardView: View {
                 }
             }
         }
-        .navigationTitle("\(app.name) — Save Editor")
+        .navigationTitle("\(app.title) — Save Editor")
         .searchable(text: $searchText, prompt: "Search saves, plists, databases…")
         .navigationDestination(for: FileItem.self) { item in
             FileEditorDestinationView(item: item)
@@ -549,17 +549,18 @@ struct SaveEditorDashboardView: View {
         let fm = FileManager.default
         let roots = ["Documents", "Library"]
         let basePath = app.dataDir.path(percentEncoded: false)
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
 
         for r in roots {
             let dirURL = app.dataDir.appending(path: r)
             guard let enumerator = fm.enumerator(
                 at: dirURL,
-                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
+                includingPropertiesForKeys: keys,
                 options: [.skipsHiddenFiles]
             ) else { continue }
 
             for case let fileURL as URL in enumerator {
-                let vals = try? fileURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+                let vals = try? fileURL.resourceValues(forKeys: Set(keys))
                 if vals?.isDirectory == true { continue }
                 let size = Int64(vals?.fileSize ?? 0)
                 let item = FileItem(url: fileURL, isDirectory: false, size: size, modified: vals?.contentModificationDate)
@@ -595,12 +596,13 @@ struct SaveEditorDashboardView: View {
 
     private func loadSnapshots() {
         let fm = FileManager.default
-        guard let urls = try? fm.contentsOfDirectory(at: backupsDir, includingPropertiesForKeys: [.creationDateKey, .isDirectoryKey]) else {
+        let keys: [URLResourceKey] = [.creationDateKey, .isDirectoryKey]
+        guard let urls = try? fm.contentsOfDirectory(at: backupsDir, includingPropertiesForKeys: keys) else {
             snapshots = []
             return
         }
         snapshots = urls.compactMap { u -> SaveSnapshot? in
-            let v = try? u.resourceValues(forKeys: [.creationDateKey, .isDirectoryKey])
+            let v = try? u.resourceValues(forKeys: Set(keys))
             guard v?.isDirectory == true else { return nil }
             return SaveSnapshot(url: u, name: u.lastPathComponent, created: v?.creationDate ?? Date())
         }.sorted { $0.created > $1.created }
@@ -983,6 +985,7 @@ enum KeychainSaveSync {
         }
     }
 
+    @MainActor
     static func syncKeychainToFileIfNeeded(keychainURL: URL, plistRoot: PlistNode) {
         guard keychainURL.lastPathComponent == "hvm-keychain.plist" else { return }
         guard case .array(let items) = plistRoot.value else { return }
@@ -1608,6 +1611,45 @@ enum SQLiteCellValue: Equatable {
     }
 }
 
+/// One editable database cell. Split out of `SQLiteEditorView.body` so the value color is a concrete `Color` instead of an overloaded `ShapeStyle` ternary.
+private struct SQLiteCellRow: View {
+    let column: SQLiteColumnInfo
+    let value: SQLiteCellValue
+    let edit: () -> Void
+
+    var body: some View {
+        Button(action: edit) {
+            HStack {
+                columnLabel
+                Spacer()
+                valueLabel
+            }
+        }
+    }
+
+    private var columnLabel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(column.name)
+                .font(.caption.monospaced().weight(.semibold))
+                .foregroundStyle(.primary)
+            if !column.type.isEmpty {
+                Text(column.type)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var valueLabel: some View {
+        let text = value.displayString
+        let color: Color = value == .null ? .secondary : .accentColor
+        return Text(text)
+            .font(.system(.subheadline, design: .monospaced))
+            .foregroundStyle(color)
+            .lineLimit(2)
+    }
+}
+
 struct SQLiteEditorView: View {
     let url: URL
     @State private var tables: [String] = []
@@ -1679,27 +1721,9 @@ struct SQLiteEditorView: View {
                         Section("Row #\(row.rowid)") {
                             ForEach(columns) { col in
                                 let val = row.cells[col.name] ?? .null
-                                Button {
+                                SQLiteCellRow(column: col, value: val) {
                                     editCellText = val.displayString == "NULL" ? "" : val.displayString
                                     editingCell = EditingCellContext(rowid: row.rowid, column: col.name, currentValue: val)
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(col.name)
-                                                .font(.caption.monospaced().weight(.semibold))
-                                                .foregroundStyle(.primary)
-                                            if !col.type.isEmpty {
-                                                Text(col.type)
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                        }
-                                        Spacer()
-                                        Text(val.displayString)
-                                            .font(.system(.subheadline, design: .monospaced))
-                                            .foregroundStyle(val == .null ? .secondary : .accentColor)
-                                            .lineLimit(2)
-                                    }
                                 }
                             }
                         }
@@ -2006,12 +2030,12 @@ final class PlistNode: Identifiable {
         self.value = value
     }
 
-    static func isKeyedArchiverUID(_ any: Any) -> Bool {
+    nonisolated static func isKeyedArchiverUID(_ any: Any) -> Bool {
         let desc = String(describing: any)
         return desc.contains("CFKeyedArchiverUID")
     }
 
-    static func uidIndex(_ any: Any) -> Int? {
+    nonisolated static func uidIndex(_ any: Any) -> Int? {
         if let num = any as? NSNumber { return num.intValue }
         if let i = any as? Int { return i }
         let desc = String(describing: any)

@@ -7,7 +7,13 @@ import UniformTypeIdentifiers
 struct InstalledApp: Identifiable, Hashable {
     let info: HVMAppInfo
     var id: String { info.bundlePath }
+    /// Directory that contains the `.app` plus the guest sandbox (`Documents/`, `Library/`, `tmp/`).
     var homeURL: URL { URL(filePath: info.bundlePath).deletingLastPathComponent() }
+    /// Guest sandbox root. Same directory as `homeURL`.
+    var dataDir: URL { homeURL }
+    /// The installed `.app` bundle.
+    var bundleDir: URL { URL(filePath: info.bundlePath) }
+    /// Name shown in the library: the display name, or the bundle name when that is empty.
     var title: String { info.displayName.isEmpty ? info.name : info.displayName }
 }
 
@@ -141,16 +147,15 @@ struct LibraryView: View {
                         }
                         Section {
                             ForEach(store.apps) { app in
-                                Button { if app.info.runnable { running = app } } label: { AppRow(app: app) }
-                                    .buttonStyle(.plain)
-                                    .swipeActions(edge: .leading) {
-                                        Button("Files", systemImage: "folder") { browsing = app }.tint(.blue)
-                                    }
-                                    .contextMenu {
-                                        Button("Files", systemImage: "folder") { browsing = app }
-                                        Button("Reset App Data", systemImage: "arrow.counterclockwise") { store.resetData(app) }
-                                        Button("Delete", systemImage: "trash", role: .destructive) { store.delete(app) }
-                                    }
+                                LibraryAppRow(app: app) {
+                                    if app.info.runnable { running = app }
+                                } browse: {
+                                    browsing = app
+                                } reset: {
+                                    store.resetData(app)
+                                } delete: {
+                                    store.delete(app)
+                                }
                             }
                             .onDelete { idx in idx.map { store.apps[$0] }.forEach(store.delete) }
                         }
@@ -193,8 +198,33 @@ struct LibraryView: View {
                 RunView(app: app, keepGoing: keepGoing)
             }
             .sheet(item: $browsing) { app in
-                FileBrowserView(root: app.homeURL, title: app.title)
+                FileBrowserView(app: app)
             }
+        }
+    }
+}
+
+/// One library row. Split out of `LibraryView.body` so Swift 6 can type-check the button, swipe action, and context menu separately.
+private struct LibraryAppRow: View {
+    let app: InstalledApp
+    let open: () -> Void
+    let browse: () -> Void
+    let reset: () -> Void
+    let delete: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            AppRow(app: app)
+        }
+        .buttonStyle(.plain)
+        .swipeActions(edge: .leading) {
+            Button("Files", systemImage: "folder", action: browse)
+                .tint(.blue)
+        }
+        .contextMenu {
+            Button("Files", systemImage: "folder", action: browse)
+            Button("Reset App Data", systemImage: "arrow.counterclockwise", action: reset)
+            Button("Delete", systemImage: "trash", role: .destructive, action: delete)
         }
     }
 }
