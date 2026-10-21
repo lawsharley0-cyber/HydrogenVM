@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -191,10 +192,14 @@ enum : uint32_t {
     GL_INT_VEC3 = 0x8B54,
     GL_INT_VEC4 = 0x8B55,
     GL_BOOL = 0x8B56,
+    GL_BOOL_VEC2 = 0x8B57,
+    GL_BOOL_VEC3 = 0x8B58,
+    GL_BOOL_VEC4 = 0x8B59,
     GL_FLOAT_MAT2 = 0x8B5A,
     GL_FLOAT_MAT3 = 0x8B5B,
     GL_FLOAT_MAT4 = 0x8B5C,
     GL_SAMPLER_2D = 0x8B5E,
+    GL_SAMPLER_CUBE = 0x8B60,
     GL_COMPILE_STATUS = 0x8B81,
     GL_LINK_STATUS = 0x8B82,
     GL_VALIDATE_STATUS = 0x8B83,
@@ -1990,8 +1995,12 @@ void gl_bindAttribLocation(Ctx& x, uint32_t prog, uint32_t index, GuestPtr name)
 }
 
 uint32_t shaderGlType(Shader::Type t) {
-    if (t.sampler) return GL_SAMPLER_2D;
+    if (t.sampler) return t.cube ? GL_SAMPLER_CUBE : GL_SAMPLER_2D;
     if (t.matrix) return t.matrix == 2 ? GL_FLOAT_MAT2 : t.matrix == 3 ? GL_FLOAT_MAT3 : GL_FLOAT_MAT4;
+    if (t.kind == Shader::Kind::Int)
+        return t.width == 1 ? GL_INT : t.width == 2 ? GL_INT_VEC2 : t.width == 3 ? GL_INT_VEC3 : GL_INT_VEC4;
+    if (t.kind == Shader::Kind::Bool)
+        return t.width == 1 ? GL_BOOL : t.width == 2 ? GL_BOOL_VEC2 : t.width == 3 ? GL_BOOL_VEC3 : GL_BOOL_VEC4;
     return t.width == 1 ? GL_FLOAT : t.width == 2 ? GL_FLOAT_VEC2 : t.width == 3 ? GL_FLOAT_VEC3 : GL_FLOAT_VEC4;
 }
 struct UniformLeaf { std::string name; Shader::Type type; int slot = 0, count = 1; bool array = false; };
@@ -2003,6 +2012,7 @@ void collectUniformLeaves(std::vector<UniformLeaf>& out, const std::string& name
             for (const auto& f : type.fields) {
                 Shader::Type ft;
                 ft.width = f.width; ft.matrix = f.matrix; ft.sampler = f.sampler; ft.fields = f.fields;
+                ft.kind = f.kind; ft.cube = f.cube;
                 collectUniformLeaves(out, prefix + "." + f.name, ft, base + f.offset, f.count, f.array);
             }
         }
@@ -2284,7 +2294,14 @@ void gl_uniformMatrix3fv(Ctx& x, int32_t loc, int32_t count, uint32_t transpose,
         for (int32_t i = 0; i < count; ++i) gl_uniformMatrix3fv(x, loc + i, 1, transpose, value + uint32_t(i * 36));
         return;
     }
-    if (auto* u = progUniform(x, loc)) x.mem.copyOut(u->f, value, 36);
+    if (auto* u = progUniform(x, loc)) {
+        x.mem.copyOut(u->f, value, 36);
+        if (transpose & 0xFF) {
+            for (int r = 0; r < 3; ++r)
+                for (int c = r + 1; c < 3; ++c)
+                    std::swap(u->f[c * 3 + r], u->f[r * 3 + c]);
+        }
+    }
 }
 void gl_uniformMatrix2fv(Ctx& x, int32_t loc, int32_t count, uint32_t transpose, GuestPtr value) {
     if (count <= 0 || !value) return;
@@ -2293,7 +2310,14 @@ void gl_uniformMatrix2fv(Ctx& x, int32_t loc, int32_t count, uint32_t transpose,
         for (int32_t i = 0; i < count; ++i) gl_uniformMatrix2fv(x, loc + i, 1, transpose, value + uint32_t(i * 16));
         return;
     }
-    if (auto* u = progUniform(x, loc)) x.mem.copyOut(u->f, value, 16);
+    if (auto* u = progUniform(x, loc)) {
+        x.mem.copyOut(u->f, value, 16);
+        if (transpose & 0xFF) {
+            for (int r = 0; r < 2; ++r)
+                for (int c = r + 1; c < 2; ++c)
+                    std::swap(u->f[c * 2 + r], u->f[r * 2 + c]);
+        }
+    }
 }
 
 // =================================================== Software Rasterizer ===
@@ -2305,6 +2329,7 @@ struct ShadedVertex {
     Vec4 color{1, 1, 1, 1};
     float u = 0, v = 0;
     std::array<float, 32> varyings{};
+    float shaderPointSize = 0;
 };
 
 int typeBytes(uint32_t type) {
@@ -2353,8 +2378,12 @@ void loadShaderUniforms(const ProgramObject& p, const std::vector<ProgramObject:
     for (auto& b : bindings) {
         auto it = p.uniformValues.find(b.location);
         if (it == p.uniformValues.end()) continue;
-        if (b.sampler) values[b.slot] = float(it->second.i[0]);
-        else std::copy_n(it->second.f, b.width, &values[b.slot]);
+        const uint32_t ty = it->second.type;
+        const bool integer = ty == GL_INT || ty == GL_INT_VEC2 || ty == GL_INT_VEC3 || ty == GL_INT_VEC4 ||
+                             ty == GL_BOOL || ty == GL_BOOL_VEC2 || ty == GL_BOOL_VEC3 || ty == GL_BOOL_VEC4;
+        if (b.sampler || integer) {
+            for (int n = 0; n < b.width && n < 4; ++n) values[b.slot + n] = float(it->second.i[n]);
+        } else std::copy_n(it->second.f, b.width, &values[b.slot]);
     }
 }
 void sampleShaderTexture(void* opaque, int unit, float u, float v, float* rgba) {
@@ -2366,23 +2395,39 @@ void sampleShaderTexture(void* opaque, int unit, float u, float v, float* rgba) 
     }
     for (int i = 0; i < 4; ++i) rgba[i] = color[i];
 }
-Vec4 executeFragment(ContextData& c, SharegroupData& sg, const ShadedVertex& a, const ShadedVertex& b, const ShadedVertex& d,
-                     float w0, float w1, float w2) {
+void fillDepthRange(const ContextData& c, const Shader::Program& prog, Shader::Values& values) {
+    if (auto* dr = prog.find("gl_DepthRange")) {
+        values[dr->slot] = c.depthRange[0];
+        values[dr->slot + 1] = c.depthRange[1];
+        values[dr->slot + 2] = c.depthRange[1] - c.depthRange[0];
+    }
+}
+std::optional<Vec4> executeFragment(ContextData& c, SharegroupData& sg, const ShadedVertex& a, const ShadedVertex& b, const ShadedVertex& d,
+                     float w0, float w1, float w2, int px, int py, float z, bool front, float pointS, float pointT) {
     const auto& p = sg.programs.at(c.currentProgram);
     Shader::Values values;
     p.fragment.initialize(values);
     loadShaderUniforms(p, p.fragmentUniforms, values);
     float denominator = w0 * a.invW + w1 * b.invW + w2 * d.invW;
-    if (std::abs(denominator) < 1e-12f) return {0, 0, 0, 0};
+    if (std::abs(denominator) < 1e-12f) return Vec4{0, 0, 0, 0};
     w0 = w0 * a.invW / denominator; w1 = w1 * b.invW / denominator; w2 = w2 * d.invW / denominator;
     for (auto& varying : p.varyings) for (int i = 0; i < varying.width; ++i) {
         int offset = varying.offset + i;
         values[varying.fragmentSlot + i] = w0 * a.varyings[offset] + w1 * b.varyings[offset] + w2 * d.varyings[offset];
     }
+    if (auto* fc = p.fragment.find("gl_FragCoord")) {
+        values[fc->slot] = float(px) + 0.5f;
+        values[fc->slot + 1] = float(py) + 0.5f;
+        values[fc->slot + 2] = z;
+        values[fc->slot + 3] = denominator;
+    }
+    if (auto* ff = p.fragment.find("gl_FrontFacing")) values[ff->slot] = front ? 1.f : 0.f;
+    if (auto* pc = p.fragment.find("gl_PointCoord")) { values[pc->slot] = pointS; values[pc->slot + 1] = pointT; }
+    fillDepthRange(c, p.fragment, values);
     std::pair<ContextData*, SharegroupData*> state{&c, &sg};
-    p.fragment.execute(values, sampleShaderTexture, &state);
+    if (!p.fragment.execute(values, sampleShaderTexture, &state)) return std::nullopt;
     const auto* f = &values[p.fragment.output];
-    return {f[0], f[1], f[2], f[3]};
+    return Vec4{f[0], f[1], f[2], f[3]};
 }
 
 ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx) {
@@ -2405,8 +2450,10 @@ ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx) {
             const auto attr = fetchAttribute(x, sg, c.attribPtr[binding.location], idx, c.genericAttrib[binding.location]);
             for (int i = 0; i < binding.width; ++i) values[binding.slot + i] = attr[i];
         }
+        fillDepthRange(c, p.vertex, values);
         std::pair<ContextData*, SharegroupData*> state{&c, &sg};
         p.vertex.execute(values, sampleShaderTexture, &state);
+        if (auto* ps = p.vertex.find("gl_PointSize")) sv.shaderPointSize = values[ps->slot];
         const float* f = &values[p.vertex.output];
         sv.clip = {f[0], f[1], f[2], f[3]};
         for (auto& varying : p.varyings)
@@ -2524,10 +2571,10 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
     const float area = (v1.screenX - v0.screenX) * (v2.screenY - v0.screenY) -
                        (v1.screenY - v0.screenY) * (v2.screenX - v0.screenX);
     if (std::abs(area) < 1e-4f) return;
+    const bool ccw = area > 0;
+    const bool isFront = (c.frontFace == GL_CCW) ? ccw : !ccw;
     if (c.cullFace) {
         if (c.cullFaceMode == GL_FRONT_AND_BACK) return;
-        const bool ccw = area > 0;
-        const bool isFront = (c.frontFace == GL_CCW) ? ccw : !ccw;
         if ((c.cullFaceMode == GL_FRONT && isFront) || (c.cullFaceMode == GL_BACK && !isFront)) return;
     }
 
@@ -2571,7 +2618,8 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
 
             const float z = w0 * v0.screenZ + w1 * v1.screenZ + w2 * v2.screenZ;
             if (c.api != 1 && c.currentProgram != 0) {
-                writeFragment(c, rt, px, py, z, executeFragment(c, sg, v0, v1, v2, w0, w1, w2));
+                if (auto frag = executeFragment(c, sg, v0, v1, v2, w0, w1, w2, px, py, z, isFront, 0, 0))
+                    writeFragment(c, rt, px, py, z, *frag);
                 continue;
             }
             Vec4 col{
@@ -2620,7 +2668,8 @@ void rasterizeLine(ContextData& c, SharegroupData& sg, RenderTarget& rt,
         if (px < 0 || px >= rt.width || py < 0 || py >= rt.height) continue;
         const float z = v0.screenZ + (v1.screenZ - v0.screenZ) * t;
         if (c.api != 1 && c.currentProgram != 0) {
-            writeFragment(c, rt, px, py, z, executeFragment(c, sg, v0, v1, v1, 1 - t, t, 0));
+            if (auto frag = executeFragment(c, sg, v0, v1, v1, 1 - t, t, 0, px, py, z, true, 0, 0))
+                writeFragment(c, rt, px, py, z, *frag);
             continue;
         }
         Vec4 col{
@@ -2687,14 +2736,21 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
                 rasterizeLine(*c, *sg, rt, verts[i], verts[(i + 1) % verts.size()]);
             break;
         case GL_POINTS: {
-            const int r = std::max(0, int(c->pointSize / 2.0f));
             for (const auto& v : verts) {
+                const bool shaded = c->api != 1 && c->currentProgram != 0;
+                const float ps = shaded && v.shaderPointSize > 0.f ? v.shaderPointSize : c->pointSize;
+                const int r = std::max(0, int(ps / 2.0f));
+                const float size = std::max(ps, 1.f);
                 const int cx = int(v.screenX), cy = int(v.screenY);
                 for (int dy = -r; dy <= r; ++dy) {
                     for (int dx = -r; dx <= r; ++dx) {
                         const int px = cx + dx, py = cy + dy;
-                        if (px >= 0 && px < rt.width && py >= 0 && py < rt.height)
-                            writeFragment(*c, rt, px, py, v.screenZ, c->api != 1 && c->currentProgram != 0 ? executeFragment(*c, *sg, v, v, v, 1, 0, 0) : v.color);
+                        if (px < 0 || px >= rt.width || py < 0 || py >= rt.height) continue;
+                        if (!shaded) { writeFragment(*c, rt, px, py, v.screenZ, v.color); continue; }
+                        const float pcx = (float(px) + 0.5f - v.screenX) / size + 0.5f;
+                        const float pcy = (float(py) + 0.5f - v.screenY) / size + 0.5f;
+                        if (auto frag = executeFragment(*c, *sg, v, v, v, 1, 0, 0, px, py, v.screenZ, true, pcx, pcy))
+                            writeFragment(*c, rt, px, py, v.screenZ, *frag);
                     }
                 }
             }

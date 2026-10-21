@@ -345,7 +345,6 @@ int runFullSubsystemTests() {
               "GLSL texture sampling honors sampler, channels, dot products and compound assignments");
         bool rejected = true;
         for (const char* bad : {
-            "void main() { for (;;) {} gl_FragColor = vec4(1.0); }",
             "uniform vec4 x; void main() { x = vec4(0.0); gl_FragColor = x; }",
             "void main() { gl_FragColor.xx = vec2(1.0); }",
             "void main() { gl_FragColor = vec3(1.0); }",
@@ -355,7 +354,7 @@ int runFullSubsystemTests() {
         }) rejected &= !fragment.compile(bad, false) && !fragment.error.empty();
         std::string deep = "void main() { gl_FragColor = vec4(" + std::string(100, '(') + "1.0" + std::string(100, ')') + "); }";
         rejected &= !fragment.compile(deep, false);
-        check(rejected, "GLSL rejects unsupported control flow, invalid writes/types/indexing, #include and excessive nesting");
+        check(rejected, "GLSL rejects invalid writes, types, indexing, #include and excessive nesting");
 
         auto near4 = [](const float* g, float r, float gch, float b, float a) {
             return std::abs(g[0] - r) < 1e-5f && std::abs(g[1] - gch) < 1e-5f &&
@@ -394,7 +393,7 @@ int runFullSubsystemTests() {
               fails("#define A 1\n#define A 2\nvoid main() { gl_FragColor = vec4(1.0); }", "macro redefinition"),
               "GLSL #undef, identical redefinition and conflicting redefinition");
         check(runStage(
-                  "#if defined GL_ES && defined(GL_ES) && !defined(NOT_THERE) && __VERSION__ == 100 && 0x10 == 16 && 010 == 8 && 1u == 1 && (3 > 1 ? 4 : 9) == 4\n"
+                  "#if defined GL_ES && defined(GL_ES) && !defined(NOT_THERE) && __VERSION__ == 100 && 0x10 == 16 && 010 == 8 && 1u == 1 && (3 > 1 && 4 == 4)\n"
                   "const float k = 0.25;\n#elif 0\nconst float k = 0.5;\n#else\nconst float k = 0.75;\n#endif\n"
                   "void main() { gl_FragColor = vec4(k); }",
                   false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f),
@@ -443,9 +442,8 @@ int runFullSubsystemTests() {
         check(runStage("#define CAT(a, b) a##b\nvoid main() { CAT(gl_Frag, Color) = vec4(0.375); }", false, [](auto&, auto&) {}, o) &&
                   near4(o, 0.375f, 0.375f, 0.375f, 0.375f),
               "GLSL ## token paste");
-        check(runStage("#define STR(x) #x\nvoid main() { gl_FragColor = vec4(STR(0.625)); }", false, [](auto&, auto&) {}, o) &&
-                  near4(o, 0.625f, 0.625f, 0.625f, 0.625f),
-              "GLSL # stringification uses the argument spelling");
+        check(fails("#define STR(x) #x\nvoid main() { gl_FragColor = vec4(STR(1)); }", "stringification"),
+              "GLSL rejects # stringification");
         check(runStage("void main() { gl_FragColor = vec4(\n#if 0\n0.0\n#else\n0.5\n#endif\n); }", false, [](auto&, auto&) {}, o) &&
                   near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
               "GLSL directives between the arguments of a call");
@@ -479,8 +477,12 @@ int runFullSubsystemTests() {
             if (compiled) { program.initialize(values); program.execute(values); }
             auto* cvar = compiled ? program.find("c") : nullptr;
             auto* dvar = compiled ? program.find("d") : nullptr;
-            check(compiled && cvar && dvar && values[cvar->slot] == 1 && values[dvar->slot] == 2 && values[program.output] == 0,
-                  "GLSL qualifiers in every order, invariant declarations and standalone invariant");
+            auto* avar = compiled ? program.find("a") : nullptr;
+            auto* pos = compiled ? program.find("gl_Position") : nullptr;
+            auto* bvar = compiled ? program.find("b") : nullptr;
+            check(compiled && cvar && dvar && avar && pos && bvar && avar->invariant && dvar->invariant && pos->invariant && !bvar->invariant &&
+                      values[cvar->slot] == 1 && values[dvar->slot] == 2 && values[program.output] == 0,
+                  "GLSL qualifiers in every order, and invariant is stored on the variable");
         }
         check(runStage(
                   "struct Inner { float z; };\nstruct Light { vec3 color; float intensity; Inner extra; };\n"
@@ -552,6 +554,257 @@ int runFullSubsystemTests() {
                 linked = mv && mf && mv->type == mf->type && values[vert.output] == 0.25f && values[mv->slot + 1] == 0.5f && values[mv->slot + 4] == 0.25f;
             }
             check(linked, "GLSL struct varyings keep a shared layout across stages");
+        }
+
+        auto shows = [](const char* src, const char* snippet, bool vertex = false) {
+            Shader::Program program;
+            const bool bad = !program.compile(src, vertex) && program.error.find(snippet) != std::string::npos;
+            if (!bad) std::printf("    expected '%s', got: %s\n", snippet, program.error.c_str());
+            return bad;
+        };
+        check(runStage("#if 0 && 1\nconst float k = 0.0;\n#else\nconst float k = 1.0;\n#endif\n"
+                       "#if 1 || 0\nvoid main() { gl_FragColor = vec4(k); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                  runStage("#if 1 || UNDEF\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", false, [](auto&, auto&) {}, o) &&
+                  runStage("#if 0 && (1/0)\n#else\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", false, [](auto&, auto&) {}, o) &&
+                  shows("#if 0 || UNDEF\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", "undefined preprocessor identifier") &&
+                  shows("#if 1 && 1/0\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", "invalid preprocessor expression") &&
+                  shows("#if UNDEF\n#endif\nvoid main() { gl_FragColor = vec4(1.0); }", "undefined preprocessor identifier"),
+              "GLSL #if parses both &&/|| operands and only skips evaluation");
+        check(runStage("#if (9223372036854775807 + 1) < 0 && (3037000500 * 3037000500) == -9223372036709301616\n"
+                       "void main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #if add and multiply wrap instead of overflowing");
+        check(runStage("#if (-8 >> 1) == -4 && (-1 >> 4) == -1\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #if >> is an arithmetic shift");
+        check(shows("#if 1 ? 2 : 3\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", "invalid preprocessor expression"),
+              "GLSL #if rejects the conditional operator");
+        {
+            const std::string okIf = "#if " + std::string(256, '(') + "1" + std::string(256, ')') +
+                                     "\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif";
+            const std::string deepIf = "#if " + std::string(257, '(') + "1" + std::string(257, ')') +
+                                       "\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif";
+            std::string deepStruct = "struct S { ";
+            for (int n = 0; n < 300; ++n) deepStruct += "struct { ";
+            deepStruct += "float x; ";
+            for (int n = 0; n < 300; ++n) deepStruct += "} a; ";
+            deepStruct += "}; void main() { S s; gl_FragColor = vec4(1.0); }";
+            std::string deepBlock = "void main() { ";
+            for (int n = 0; n < 300; ++n) deepBlock += "{";
+            deepBlock += "gl_FragColor = vec4(1.0);";
+            for (int n = 0; n < 300; ++n) deepBlock += "}";
+            deepBlock += "}";
+            std::string deepMacro;
+            for (int n = 0; n < 300; ++n) deepMacro += "#define M" + std::to_string(n) + " M" + std::to_string(n + 1) + "\n";
+            deepMacro += "#define M300 1.0\nvoid main() { gl_FragColor = vec4(M0); }";
+            std::string longMacro = "#define A6\n";
+            for (int level = 5; level >= 0; --level) {
+                longMacro += "#define A" + std::to_string(level);
+                for (int n = 0; n < 10; ++n) longMacro += " A" + std::to_string(level + 1);
+                longMacro += "\n";
+            }
+            longMacro += "void main() { A0 gl_FragColor = vec4(1.0); }";
+            std::string deepCall = "float f0() { return 1.0; }\n";
+            for (int n = 1; n <= 256; ++n)
+                deepCall += "float f" + std::to_string(n) + "() { return f" + std::to_string(n - 1) + "(); }\n";
+            deepCall += "void main() { gl_FragColor = vec4(f256()); }";
+            check(runStage(okIf, false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                      shows(deepIf.c_str(), "preprocessor expression too deep") &&
+                      shows(deepStruct.c_str(), "struct nesting too deep") &&
+                      shows(deepBlock.c_str(), "statement nesting too deep") &&
+                      shows(deepMacro.c_str(), "macro expansion too deep") &&
+                      shows(longMacro.c_str(), "macro expansion too long") &&
+                      shows(deepCall.c_str(), "function call depth exceeded"),
+                  "GLSL limits preprocessor, struct, statement, macro and call depth");
+        }
+        check(runStage("#line 10 7\n#if __LINE__ == 10 && __FILE__ == 7\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                  runStage("#define LN 12\n#define FID 4\n#line LN FID\n#if __LINE__ == 12 && __FILE__ == 4\nvoid main() { gl_FragColor = vec4(0.5); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                           false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL #line takes a line and an optional source number");
+        check(runStage("#define PICK(a, b) b\nvoid main() { gl_FragColor = vec4(PICK(vec2(1.0, 2.0), 0.25)); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f) &&
+                  shows("#define PICK(a, b) b\nvoid main() { gl_FragColor = vec4(PICK(x[1, 2], 0.25)); }", "macro argument count"),
+              "GLSL macro arguments group parentheses and split on commas in brackets");
+        check(runStage("#if defined(GL_FRAGMENT_PRECISION_HIGH)\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                  runStage("#if defined(GL_FRAGMENT_PRECISION_HIGH)\nvoid main() { gl_Position = vec4(1.0); }\n#else\nvoid main() { gl_Position = vec4(0.0); }\n#endif",
+                           true, [](auto&, auto&) {}, o) && near4(o, 0, 0, 0, 0),
+              "GLSL predefines GL_FRAGMENT_PRECISION_HIGH only in fragment shaders");
+        check(shows("#define GL_FOO 1\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#define __HIDDEN 1\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#undef GL_ES\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#undef __VERSION__\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name"),
+              "GLSL rejects #define and #undef of GL_ and __ names");
+        check(shows("void main() {\n#pragma optimize(off)\ngl_FragColor = vec4(1.0);\n}", "pragma optimize inside function") &&
+                  shows("void main() {\n#pragma debug(on)\ngl_FragColor = vec4(1.0);\n}", "pragma debug inside function") &&
+                  runStage("void main() {\n#if 0\n#pragma optimize(off)\n#endif\ngl_FragColor = vec4(1.0);\n}", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 1, 1, 1, 1),
+              "GLSL rejects optimize and debug pragmas inside functions");
+        {
+            const std::string bom = std::string("\xEF\xBB\xBF") + "#version 100\nvoid main() { gl_FragColor = vec4(1.0); }";
+            const std::string crlf = "#version 100\r\nvoid main() { gl_FragColor = vec4(1.0); }";
+            const std::string blanks = "\n\n  #version 100\nvoid main() { gl_FragColor = vec4(1.0); }";
+            const std::string commented = "// lead\n/* side */ #version 100 // tail\nvoid main() { gl_FragColor = vec4(1.0); }";
+            const std::string nbsp = std::string("#version\xC2\xA0") + "100\nvoid main() { gl_FragColor = vec4(1.0); }";
+            Shader::Program bad300, badEs;
+            bad300.compile("#version 300\nvoid main() { gl_FragColor = vec4(1.0); }", false);
+            badEs.compile("#version 100 es\nvoid main() { gl_FragColor = vec4(1.0); }", false);
+            check(runStage(bom, false, [](auto&, auto&) {}, o) && runStage(crlf, false, [](auto&, auto&) {}, o) &&
+                      runStage(blanks, false, [](auto&, auto&) {}, o) && runStage(commented, false, [](auto&, auto&) {}, o) &&
+                      runStage(nbsp, false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                      bad300.error.find("unsupported version '300'") != std::string::npos &&
+                      badEs.error.find("unsupported version '100 es'") != std::string::npos,
+                  "GLSL accepts #version 100 with a BOM, CRLF, comments and blank lines, and logs other versions");
+        }
+        check(runStage("float shade(float x) { return x + 0.25; }\nvoid main() { gl_FragColor = vec4(shade(0.5)); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f),
+              "GLSL user-defined functions");
+        check(runStage("float shade(float a, float b);\nvoid main() { gl_FragColor = vec4(shade(0.25, 0.5)); }\nfloat shade(float x, float y) { return x + y; }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f) &&
+                  shows("float shade(float a);\nfloat shade(out float a) { return a; }\nvoid main() { gl_FragColor = vec4(1.0); }", "function prototype mismatch") &&
+                  shows("float shade(float a) { return a; }\nfloat shade(float a) { return a; }\nvoid main() { gl_FragColor = vec4(1.0); }", "duplicate function definition"),
+              "GLSL prototypes, later definitions, and mismatched or duplicate declarations");
+        check(runStage("void touch(in float a) { a = 0.0; }\nvoid bump(inout float a, out float b) { a = 0.75; b = 0.75; }\n"
+                       "void main() { float x = 1.0; float y = 0.0; touch(x); bump(x, y); gl_FragColor = vec4(x, y, 0.0, 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0, 1),
+              "GLSL in parameters are copies and inout/out copy back");
+        check(shows("float self(float x) { return self(x); }\nvoid main() { gl_FragColor = vec4(self(1.0)); }", "recursion is not allowed") &&
+                  shows("float other(float x);\nfloat self(float x) { return other(x); }\nfloat other(float x) { return self(x); }\nvoid main() { gl_FragColor = vec4(self(1.0)); }",
+                        "recursion is not allowed"),
+              "GLSL rejects direct and mutual recursion");
+        check(runStage("void main() { float x = 0.25; if (x > 0.0) x = 0.75; else x = 0.0; gl_FragColor = vec4(x); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f) &&
+                  runStage("void main() { float x = 0.0; if (false) x = 1.0; gl_FragColor = vec4(x); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0, 0, 0, 0),
+              "GLSL if/else");
+        check(runStage("void main() { float s = 0.0; for (int i = 0; i < 4; i++) { if (i == 2) break; s = s + 0.25; } gl_FragColor = vec4(s); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL for and break");
+        check(runStage("void main() { float s = 0.0; int i = 0; while (i < 4) { i = i + 1; if (i == 2) continue; s = s + 0.25; } gl_FragColor = vec4(s); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f),
+              "GLSL while and continue");
+        check(runStage("void main() { float s = 0.0; int i = 0; do { i = i + 1; s = s + 0.25; } while (i < 2); gl_FragColor = vec4(s); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL do-while");
+        check(runStage("void main() { for (;;) { break; } gl_FragColor = vec4(1.0); }", false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL for(;;) compiles and break leaves it");
+        {
+            Shader::Program fragment, vertex;
+            const bool compiled = fragment.compile("void main() { gl_FragColor = vec4(1.0); discard; }", false);
+            Shader::Values values;
+            bool kept = true;
+            if (compiled) { fragment.initialize(values); kept = fragment.execute(values); }
+            check(compiled && !kept && shows("void main() { discard; gl_Position = vec4(1.0); }", "discard is not allowed in a vertex shader", true),
+                  "GLSL discard drops the fragment and is rejected in a vertex shader");
+            (void)vertex;
+        }
+        check(runStage("float side = 0.0;\nfloat mark() { side = 1.0; return 1.0; }\n"
+                       "void main() { float x = true ? 0.25 : mark(); bool y = false && mark() > 0.0; gl_FragColor = vec4(x, side, y ? 1.0 : 0.0, 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0, 0, 1),
+              "GLSL && and ?: skip the untaken arm");
+        check(runStage("float x = 0.25;\nvoid main() { float x = 0.75; { float x = 0.5; } gl_FragColor = vec4(x); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f),
+              "GLSL local declarations can shadow");
+        check(runStage("void main() { vec4 v = vec4(1, 2, 3, 4); int t = int(1.9); int n = int(-1.9); mat2 m = mat2(2.0); gl_FragColor = vec4(v.x, float(t), float(n), m[1].y); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, -1, 2) &&
+                  runStage("void main() { vec4 a = vec4(1.0, 2.0, 3.0, 4.0); vec4 b = vec4(4.0, 3.0, 2.0, 1.0); gl_FragColor = a + b * vec4(0.5) - vec4(2.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 1.5f, 2, 2.5f) &&
+                  runStage("void main() { mat2 A = mat2(1.0, 2.0, 3.0, 4.0); mat2 B = mat2(1.0, 0.0, 0.0, 1.0); gl_FragColor = vec4((A * B)[0], (A * 2.0)[1]); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 2, 6, 8) &&
+                  runStage("void main() { int a = 7 / 2; int b = -7 / 2; gl_FragColor = vec4(float(a), float(b), 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 3, -3, 0, 1),
+              "GLSL constructors, vector and matrix operators, and integer division");
+        auto nearLoose = [](const float* g, float r, float gch, float b, float a) {
+            return std::abs(g[0] - r) < 1e-4f && std::abs(g[1] - gch) < 1e-4f && std::abs(g[2] - b) < 1e-4f && std::abs(g[3] - a) < 1e-4f;
+        };
+        check(runStage("void main() { gl_FragColor = vec4(sin(0.0), cos(0.0), tan(0.0), exp(0.0)); }", false, [](auto&, auto&) {}, o) && nearLoose(o, 0, 1, 0, 1) &&
+                  runStage("void main() { gl_FragColor = vec4(asin(0.0), acos(1.0), atan(0.0), atan(1.0, 1.0)); }", false, [](auto&, auto&) {}, o) &&
+                  nearLoose(o, 0, 0, 0, 0.78539816f) &&
+                  runStage("void main() { gl_FragColor = vec4(radians(180.0) / 3.14159265, degrees(radians(180.0)) / 180.0, pow(2.0, 3.0) / 8.0, log(1.0)); }",
+                           false, [](auto&, auto&) {}, o) && nearLoose(o, 1, 1, 1, 0) &&
+                  runStage("void main() { gl_FragColor = vec4(exp2(3.0), log2(8.0), sqrt(4.0), inversesqrt(4.0)); }", false, [](auto&, auto&) {}, o) &&
+                  nearLoose(o, 8, 3, 2, 0.5f),
+              "GLSL angle, trigonometric and exponential built-ins");
+        check(runStage("void main() { gl_FragColor = vec4(abs(-1.5), sign(-2.0), sign(0.0), sign(3.0)); }", false, [](auto&, auto&) {}, o) && near4(o, 1.5f, -1, 0, 1) &&
+                  runStage("void main() { gl_FragColor = vec4(floor(1.7), floor(-1.2), ceil(1.2), ceil(-1.2)); }", false, [](auto&, auto&) {}, o) && near4(o, 1, -2, 2, -1) &&
+                  runStage("void main() { gl_FragColor = vec4(fract(1.75), mod(5.5, 2.0), min(0.25, 0.75), max(0.25, 0.75)); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0.75f, 1.5f, 0.25f, 0.75f) &&
+                  runStage("void main() { gl_FragColor = vec4(clamp(1.5, 0.0, 1.0), mix(0.0, 10.0, 0.25), step(0.5, 0.25), step(0.5, 0.5)); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 2.5f, 0, 1) &&
+                  runStage("void main() { gl_FragColor = vec4(smoothstep(0.0, 1.0, 0.5)); }", false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL common built-ins");
+        check(runStage("void main() { gl_FragColor = vec4(length(vec2(3.0, 4.0)), distance(vec2(0.0), vec2(0.0, 2.0)), dot(vec2(1.0, 2.0), vec2(3.0, 4.0)), 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 5, 2, 11, 1) &&
+                  runStage("void main() { vec3 c = cross(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)); vec2 n = normalize(vec2(0.0, 3.0)); gl_FragColor = vec4(c.z, n.y, 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 0, 1) &&
+                  runStage("void main() { vec2 f = faceforward(vec2(0.0, 1.0), vec2(0.0, -1.0), vec2(0.0, 1.0)); vec2 r = reflect(vec2(0.0, -1.0), vec2(0.0, 1.0)); gl_FragColor = vec4(f.y, r.y, 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 0, 1) &&
+                  runStage("void main() { vec2 r = refract(vec2(0.0, -1.0), vec2(0.0, 1.0), 1.0); mat2 m = matrixCompMult(mat2(1.0, 2.0, 3.0, 4.0), mat2(2.0, 0.0, 0.0, 3.0)); gl_FragColor = vec4(r.y, m[0].x, m[1].y, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, -1, 2, 12, 1),
+              "GLSL geometric built-ins and matrixCompMult");
+        check(runStage("void main() { bvec2 c = lessThan(vec2(1.0, 3.0), vec2(2.0, 2.0)); bvec2 n = not(bvec2(true, false)); gl_FragColor = vec4(float(c.x), float(c.y), float(any(c)), float(all(not(n)))); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 0, 1, 0) &&
+                  runStage("void main() { gl_FragColor = vec4(float(gl_MaxVertexAttribs == 16), float(gl_MaxVertexUniformVectors == 128), float(gl_MaxVaryingVectors == 8), float(gl_MaxDrawBuffers == 1)); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL relational built-ins and implementation constants");
+        check(runStage("void main() { gl_FragColor = vec4(gl_FragCoord.x, gl_FrontFacing ? 1.0 : 0.0, gl_PointCoord.x, gl_DepthRange.diff); }", false,
+                       [](Shader::Program& p, Shader::Values& v) {
+                           if (auto* c = p.find("gl_FragCoord")) v[c->slot] = 0.25f;
+                           if (auto* f = p.find("gl_FrontFacing")) v[f->slot] = 1;
+                           if (auto* pc = p.find("gl_PointCoord")) v[pc->slot] = 0.75f;
+                           if (auto* d = p.find("gl_DepthRange")) { v[d->slot + 1] = 0.125f; v[d->slot + 2] = 0.125f; }
+                       }, o) && near4(o, 0.25f, 1, 0.75f, 0.125f),
+              "GLSL gl_FragCoord, gl_FrontFacing, gl_PointCoord and gl_DepthRange");
+        check(runStage("void main() { gl_PointSize = 4.0; gl_Position = vec4(gl_PointSize / 4.0); }", true,
+                       [](Shader::Program& p, Shader::Values& v) {
+                           if (auto* ps = p.find("gl_PointSize")) v[ps->slot] = v[ps->slot];
+                       }, o) && near4(o, 1, 1, 1, 1),
+              "GLSL gl_PointSize");
+        check(runStage("void main() { gl_FragData[0] = vec4(0.25, 0.5, 0.75, 1.0); }", false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1) &&
+                  shows("void main() { gl_FragColor = vec4(1.0); gl_FragData[0] = vec4(0.0); }", "cannot write both"),
+              "GLSL gl_FragData aliases the fragment output");
+        check(runStage("void main() { float a[4]; a[0] = 0.1; a[1] = 0.2; a[2] = 0.3; a[3] = 0.4; float s = 0.0; for (int i = 0; i < 4; i++) s = s + a[i]; gl_FragColor = vec4(s); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL dynamic array indexing");
+        {
+            auto sampleTo = [](void* context, int unit, float u, float v, float* out) {
+                auto* hit = static_cast<float*>(context);
+                hit[0] = float(unit); hit[1] = u; hit[2] = v; hit[3] = 1;
+                out[0] = u; out[1] = v; out[2] = 0.5f; out[3] = 1;
+            };
+            float hit[4] = {};
+            Shader::Program program;
+            bool proj = program.compile("uniform sampler2D image;\nvoid main() { gl_FragColor = texture2DProj(image, vec3(0.5, 0.25, 2.0)); }", false);
+            Shader::Values values;
+            if (proj) {
+                program.initialize(values);
+                if (auto* s = program.find("image")) values[s->slot] = 2;
+                program.execute(values, sampleTo, hit);
+            }
+            bool projOk = proj && hit[0] == 2 && std::abs(hit[1] - 0.25f) < 1e-5f && std::abs(hit[2] - 0.125f) < 1e-5f &&
+                          near4(&values[program.output], 0.25f, 0.125f, 0.5f, 1);
+            Shader::Program vert;
+            bool lod = vert.compile("uniform sampler2D image;\nvoid main() { gl_Position = texture2DLod(image, vec2(0.5, 0.25), 0.0); }", true);
+            bool lodOk = false;
+            if (lod) {
+                vert.initialize(values);
+                if (auto* s = vert.find("image")) values[s->slot] = 5;
+                vert.execute(values, sampleTo, hit);
+                lodOk = hit[0] == 5 && std::abs(hit[1] - 0.5f) < 1e-5f && std::abs(hit[2] - 0.25f) < 1e-5f &&
+                        near4(&values[vert.output], 0.5f, 0.25f, 0.5f, 1);
+            }
+            Shader::Program cube;
+            bool cubeOk = cube.compile("uniform samplerCube image;\nvoid main() { gl_FragColor = textureCube(image, vec3(1.0, 0.5, -0.5)); }", false);
+            if (cubeOk) {
+                cube.initialize(values);
+                if (auto* s = cube.find("image")) values[s->slot] = 6;
+                cube.execute(values, sampleTo, hit);
+                cubeOk = hit[0] == 6 && std::abs(hit[1] - 0.75f) < 1e-5f && std::abs(hit[2] - 0.25f) < 1e-5f;
+            }
+            check(projOk && lodOk && cubeOk && shows("uniform sampler2D image;\nvoid main() { gl_FragColor = texture2DLod(image, vec2(0.0), 0.0); }", "vertex shader"),
+                  "GLSL texture2DProj, texture2DLod and textureCube");
         }
     }
 
@@ -1243,6 +1496,57 @@ int runFullSubsystemTests() {
               proc.mem().read<uint8_t>(idsAddr + 24) == 128 && proc.mem().read<uint8_t>(idsAddr + 25) == 128 &&
               proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
               "GLES2 links struct-uniform leaves and array elements to consecutive locations");
+
+        uint32_t matVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
+        uint32_t matFs = shader(0x8B30,
+            "uniform mat3 m3;\nuniform mat2 m2;\nuniform int counter;\nuniform bool flag;\nuniform samplerCube cube;\n"
+            "void main() { gl_FragColor = vec4(m3[0].z, m3[1].x, m2[1].x, float(counter)); }");
+        uint32_t matProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {matProg, matVs});
+        callGL("_glAttachShader", {matProg, matFs});
+        callGL("_glBindAttribLocation", {matProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {matProg});
+        callGL("_glGetProgramiv", {matProg, 0x8B82, idsAddr + 36});
+        const bool matLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {matProg});
+        bool sawMat3 = false, sawMat2 = false, sawInt = false, sawBool = false, sawCube = false;
+        callGL("_glGetProgramiv", {matProg, 0x8B86, idsAddr + 36});
+        const int32_t matUniforms = proc.mem().read<int32_t>(idsAddr + 36);
+        for (int32_t i = 0; i < matUniforms; ++i) {
+            callGL("_glGetActiveUniform", {matProg, uint32_t(i), 64, 0, idsAddr + 40, idsAddr + 44, activeName});
+            std::string nm;
+            for (int n = 0; n < 64; ++n) {
+                char ch = char(proc.mem().read<uint8_t>(activeName + uint32_t(n)));
+                if (!ch) break;
+                nm.push_back(ch);
+            }
+            const uint32_t ty = proc.mem().read<uint32_t>(idsAddr + 44);
+            if (nm == "m3" && ty == 0x8B5B) sawMat3 = true;
+            if (nm == "m2" && ty == 0x8B5A) sawMat2 = true;
+            if (nm == "counter" && ty == 0x1404) sawInt = true;
+            if (nm == "flag" && ty == 0x8B56) sawBool = true;
+            if (nm == "cube" && ty == 0x8B60) sawCube = true;
+        }
+        const float m3data[] = {0, 1, 0, 0, 0, 1, 1, 0, 0};
+        const float m2data[] = {0, 1, 0, 0};
+        const uint32_t m3ptr = proc.heap().alloc(sizeof m3data);
+        const uint32_t m2ptr = proc.heap().alloc(sizeof m2data);
+        proc.mem().copyIn(m3ptr, m3data, sizeof m3data);
+        proc.mem().copyIn(m2ptr, m2data, sizeof m2data);
+        const int32_t m3loc = int32_t(callGL("_glGetUniformLocation", {matProg, proc.allocCString("m3")}));
+        const int32_t m2loc = int32_t(callGL("_glGetUniformLocation", {matProg, proc.allocCString("m2")}));
+        const int32_t counterLoc = int32_t(callGL("_glGetUniformLocation", {matProg, proc.allocCString("counter")}));
+        callGL("_glUniformMatrix3fv", {uint32_t(m3loc), 1, 1, m3ptr});
+        callGL("_glUniformMatrix2fv", {uint32_t(m2loc), 1, 1, m2ptr});
+        callGL("_glUniform1i", {uint32_t(counterLoc), 1});
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(matLinked && sawMat3 && sawMat2 && sawInt && sawBool && sawCube &&
+                  proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
+                  proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 transposes mat2/mat3 when requested and reports int, bool and samplerCube types");
 
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
