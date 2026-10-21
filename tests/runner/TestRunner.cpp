@@ -190,6 +190,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 #include "runtime/Process.hpp"
+#include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "AudioOutput.hpp"
 #include <functional>
@@ -2050,6 +2051,109 @@ int runFullSubsystemTests() {
               "intentional ProcessExit propagates Halt through HLE calls" :
               "unexpected errors during shutdown remain HostError failures");
     }
+    // Frame-time distribution. These checks target FrameHistogram directly so a
+    // long run cannot grow the sample store.
+    {
+        FrameHistogram empty;
+        check(empty.count() == 0 && empty.percentile(50) == 0 && empty.percentile(95) == 0 && empty.percentile(99) == 0,
+              "frame histogram percentiles are 0 with no frames");
+
+        constexpr uint64_t one = 8'000'000;
+        FrameHistogram single;
+        single.add(one);
+        const int bucket = FrameHistogram::bucketIndex(one);
+        const uint64_t lower = FrameHistogram::bucketLower(bucket);
+        const uint64_t upper = FrameHistogram::bucketUpper(bucket);
+        check(single.count() == 1 && lower <= one && one < upper &&
+              single.percentile(50) == lower && single.percentile(95) == lower && single.percentile(99) == lower,
+              "one frame: p50, p95, and p99 share that frame's histogram bucket");
+
+        FrameHistogram outlier;
+        outlier.add(~uint64_t{0});
+        const uint64_t topLower = FrameHistogram::bucketLower(FrameHistogram::kTopIndex);
+        const uint64_t belowTop = topLower - 1;
+        check(outlier.count() == 1 &&
+              FrameHistogram::bucketIndex(~uint64_t{0}) == FrameHistogram::kTopIndex &&
+              FrameHistogram::bucketIndex(FrameHistogram::kClampNs) == FrameHistogram::kTopIndex &&
+              FrameHistogram::bucketIndex(belowTop) != FrameHistogram::kTopIndex &&
+              outlier.percentile(50) == topLower && outlier.percentile(95) == topLower && outlier.percentile(99) == topLower,
+              "frame times past the top bucket clamp into that bucket");
+
+        FrameHistogram mixed;
+        for (int i = 0; i < 100; ++i) mixed.add(one);
+        mixed.add(~uint64_t{0});
+        mixed.add(~uint64_t{0});
+        check(mixed.count() == 102 && mixed.percentile(50) == lower && mixed.percentile(95) == lower &&
+              mixed.percentile(99) == topLower,
+              "p50 and p95 stay on the common bucket when two samples sit past the top bucket");
+    }
+
+    {
+        const char* zero =
+            "    \"wallSeconds\": 0,\n"
+            "    \"guestInstructions\": 0,\n"
+            "    \"guestMIPS\": 0,\n"
+            "    \"blocksDecoded\": 0,\n"
+            "    \"frames\": 0,\n"
+            "    \"framesPresented\": 0,\n"
+            "    \"avgFrameMs\": 0,\n"
+            "    \"avgCompositeMs\": 0,\n"
+            "    \"maxFrameMs\": 0,\n"
+            "    \"slowFrames\": 0,\n"
+            "    \"p50FrameMs\": 0,\n"
+            "    \"p95FrameMs\": 0,\n"
+            "    \"p99FrameMs\": 0,\n"
+            "    \"timeToFirstFrameMs\": 0\n";
+        check(perfJson(Process::Perf{}, 0, 0, 0) == zero,
+              "perf report with no frames keeps legacy fields and adds percentiles and time-to-first-frame");
+
+        Process::Perf perf;
+        perf.recordFrame(16'700'000); // exactly 16.7 ms is not a slow frame
+        perf.recordFrame(20'000'000);
+        perf.compositeNs.store(6'000'000);
+        perf.notePresentedAt(2'500'000);
+        perf.notePresentedAt(9'000'000);
+        check(perf.frames.load() == 2 && perf.frameNs.load() == 36'700'000 &&
+              perf.maxFrameNs.load() == 20'000'000 && perf.slowFrames.load() == 1 &&
+              perf.framesPresented.load() == 2 && perf.timeToFirstFrameNs.load() == 2'500'000,
+              "frame counters keep sum, max, and the 16.7 ms slow threshold; the first present wins");
+
+        const uint64_t p50 = perf.frameTimes.percentile(50);
+        const uint64_t p95 = perf.frameTimes.percentile(95);
+        const uint64_t p99 = perf.frameTimes.percentile(99);
+        const uint64_t slowBucket = FrameHistogram::bucketLower(FrameHistogram::bucketIndex(16'700'000));
+        const uint64_t longBucket = FrameHistogram::bucketLower(FrameHistogram::bucketIndex(20'000'000));
+        check(p50 == slowBucket && p95 == longBucket && p99 == longBucket,
+              "two-frame percentiles come from the histogram, not from max or the average");
+
+        std::ostringstream avg, composite, p50Text, p95Text, p99Text;
+        avg << (36'700'000.0 / 2.0 / 1e6);
+        composite << (6'000'000.0 / 2.0 / 1e6);
+        p50Text << (double(p50) / 1e6);
+        p95Text << (double(p95) / 1e6);
+        p99Text << (double(p99) / 1e6);
+        const std::string json = perfJson(perf, 2.0, 4'000'000, 11);
+        auto has = [&](const std::string& s) { return json.find(s) != std::string::npos; };
+        const auto avgAt = json.find("\"avgFrameMs\":");
+        const auto slowAt = json.find("\"slowFrames\":");
+        const auto p50At = json.find("\"p50FrameMs\":");
+        const auto ttffAt = json.find("\"timeToFirstFrameMs\":");
+        check(has("\"wallSeconds\": 2,") && has("\"guestInstructions\": 4000000,") &&
+              has("\"guestMIPS\": 2,") && has("\"blocksDecoded\": 11,") &&
+              has("\"frames\": 2,") && has("\"framesPresented\": 2,") &&
+              has("\"avgFrameMs\": " + avg.str() + ",") &&
+              has("\"avgCompositeMs\": " + composite.str() + ",") &&
+              has("\"maxFrameMs\": 20,") && has("\"slowFrames\": 1,") &&
+              has("\"p50FrameMs\": " + p50Text.str() + ",") &&
+              has("\"p95FrameMs\": " + p95Text.str() + ",") &&
+              has("\"p99FrameMs\": " + p99Text.str() + ",") &&
+              has("\"timeToFirstFrameMs\": 2.5\n") &&
+              avgAt != std::string::npos && slowAt != std::string::npos &&
+              p50At != std::string::npos && ttffAt != std::string::npos &&
+              avgAt < slowAt && slowAt < p50At && p50At < ttffAt,
+              "perf JSON adds percentile and time-to-first-frame fields without changing legacy ones");
+    }
+
     r.poolPop(cpu, outerPool);
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;

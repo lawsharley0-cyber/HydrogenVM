@@ -2,6 +2,7 @@
 // image, host-implemented system libraries, guest threads, logging.
 #pragma once
 #include "Abi.hpp"
+#include "FrameHistogram.hpp"
 #include "Heap.hpp"
 #include "loader/MachO.hpp"
 #include "loader/Plist.hpp"
@@ -136,6 +137,37 @@ public:
         std::atomic<uint64_t> compositeNs{0};     // of which compositing
         std::atomic<uint64_t> maxFrameNs{0};
         std::atomic<uint64_t> slowFrames{0};      // frame hooks over 16.7 ms
+        // ~0 until the first presented frame. 0 ns is a real measurement.
+        std::atomic<uint64_t> timeToFirstFrameNs{~uint64_t{0}};
+        FrameHistogram frameTimes;
+        // Set when this process object starts, before load() and run().
+        std::chrono::steady_clock::time_point origin{std::chrono::steady_clock::now()};
+
+        // Same updates the frame hook used to do inline, plus one bounded histogram sample.
+        void recordFrame(uint64_t ns) noexcept {
+            frames++;
+            frameNs += ns;
+            if (ns > 16'700'000) slowFrames++;
+            uint64_t m = maxFrameNs.load();
+            while (ns > m && !maxFrameNs.compare_exchange_weak(m, ns)) {}
+            frameTimes.add(ns);
+        }
+        // Clock read only until the first presented frame is recorded.
+        void notePresented() noexcept {
+            framesPresented++;
+            if (timeToFirstFrameNs.load(std::memory_order_relaxed) != ~uint64_t{0}) return;
+            const auto delta = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - origin);
+            const uint64_t since = delta.count() > 0 ? uint64_t(delta.count()) : 0;
+            uint64_t expected = ~uint64_t{0};
+            timeToFirstFrameNs.compare_exchange_strong(expected, since);
+        }
+        // Test seam: `sinceStartNs` is nanoseconds since `origin`. The first call wins.
+        void notePresentedAt(uint64_t sinceStartNs) noexcept {
+            framesPresented++;
+            uint64_t expected = ~uint64_t{0};
+            timeToFirstFrameNs.compare_exchange_strong(expected, sinceStartNs);
+        }
     };
     Perf& perf() { return perf_; }
     // Guest instructions retired by every thread so far (approximate while running).
@@ -355,5 +387,8 @@ void registerSqlite(Process& p);
 void registerObjCRuntime(Process& p);
 void registerFoundation(Process& p);
 void registerUIKit(Process& p);
+
+// Inner lines of the --report "perf" object. Legacy keys keep their formulas.
+std::string perfJson(const Process::Perf& perf, double wallSeconds, uint64_t guestInstructions, uint64_t blocksDecoded);
 
 } // namespace Hydrogen::Runtime

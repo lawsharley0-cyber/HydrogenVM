@@ -182,7 +182,6 @@ int hvmRunMain(int argc, char** argv) {
             auto& pf = proc.perf();
             const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
             const uint64_t insns = proc.guestInstructions();
-            const uint64_t frames = pf.frames.load();
             auto pairs = [](const std::vector<std::pair<std::string, int>>& v) {
                 std::string o = "[";
                 for (size_t i = 0; i < v.size(); ++i)
@@ -207,16 +206,7 @@ int hvmRunMain(int argc, char** argv) {
               << ", \"peak\": " << audio.peak << ", \"droppedBlocks\": " << audio.droppedBlocks
               << ", \"transportError\": " << audio.error << "},\n";
             f << "  \"perf\": {\n";
-            f << "    \"wallSeconds\": " << wall << ",\n";
-            f << "    \"guestInstructions\": " << insns << ",\n";
-            f << "    \"guestMIPS\": " << (wall > 0 ? double(insns) / 1e6 / wall : 0) << ",\n";
-            f << "    \"blocksDecoded\": " << proc.engine().stats().blocks_decoded << ",\n";
-            f << "    \"frames\": " << frames << ",\n";
-            f << "    \"framesPresented\": " << pf.framesPresented.load() << ",\n";
-            f << "    \"avgFrameMs\": " << (frames ? double(pf.frameNs.load()) / 1e6 / double(frames) : 0) << ",\n";
-            f << "    \"avgCompositeMs\": " << (pf.framesPresented ? double(pf.compositeNs.load()) / 1e6 / double(pf.framesPresented.load()) : 0) << ",\n";
-            f << "    \"maxFrameMs\": " << double(pf.maxFrameNs.load()) / 1e6 << ",\n";
-            f << "    \"slowFrames\": " << pf.slowFrames.load() << "\n";
+            f << Runtime::perfJson(pf, wall, insns, proc.engine().stats().blocks_decoded);
             f << "  }\n}\n";
         };
         try {
