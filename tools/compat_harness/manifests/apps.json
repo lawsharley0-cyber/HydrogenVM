@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "fixtureRootEnv": "HVM_FIXTURE_ROOT",
+  "legacyRepoEnv": "HVM_ALLOW_LEGACY_IPAS",
+  "description": "Authorized compatibility fixtures, addressed by SHA-256. The harness never downloads these files and never writes them into git.",
+  "migration": "Angry Birds, Tiny Tower, and Art of Glow are already committed on main. Their legacyRepoPath entries are grandfathered and closed. New apps must be placed under HVM_FIXTURE_ROOT at fixtureRelPath. Removing the in-repo IPAs is an owner decision; this manifest does not delete them. Once a fixture root is set, the harness does not fall back to the in-repo copies.",
+  "apps": [
+    {
+      "id": "angry-birds",
+      "name": "Angry Birds",
+      "version": "1.0",
+      "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+      "fixtureRelPath": "ipas/AngryBirds_v1.0_os30.ipa",
+      "legacyRepoPath": "AngryBirds_v1.0_os30.ipa",
+      "optional": false,
+      "seconds": 3,
+      "notes": "Subtype 6, minimum iOS 3.0. A 3 second smoke is not a title-screen proof. The 2026-10-21 audit saw an unimplemented tmpnam import and a mostly dark framebuffer."
+    },
+    {
+      "id": "tiny-tower",
+      "name": "Tiny Tower",
+      "version": "1.0",
+      "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+      "fixtureRelPath": "ipas/Tiny_Tower_v1.0_os30.ipa",
+      "legacyRepoPath": "Tiny_Tower_v1.0_os30.ipa",
+      "optional": false,
+      "seconds": 3,
+      "notes": "Subtype 9. The audit's 3 second run reached applicationDidBecomeActive. Unimplemented imports included CGFont queries and glPointSizePointerOES."
+    },
+    {
+      "id": "art-of-glow",
+      "name": "Art of Glow",
+      "version": "1.1.2",
+      "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+      "fixtureRelPath": "ipas/Art_Of_Glow_v1.1.2_os313.ipa",
+      "legacyRepoPath": "Art_Of_Glow_v1.1.2_os313.ipa",
+      "optional": false,
+      "seconds": 3,
+      "notes": "Subtype 9. The audit saw a varied framebuffer and unimplemented regcomp, regexec, regerror, and regfree."
+    },
+    {
+      "id": "clash-royale-2-1306-1",
+      "name": "Clash Royale",
+      "version": "2.1306.1",
+      "sha256": "29269ede437f39ffa62fb4234a1c323303ef417e7eb6ddc5c86f9be76e08fb3f",
+      "fixtureRelPath": "ipas/ClashRoyale-2.1306.1.ipa",
+      "optional": true,
+      "seconds": 3,
+      "notes": "Pinned client from tools/clash_royale_probe.py. Not in git. Absence is a skip, not a pass. The harness does not download the third-party URL; using that URL is an owner decision. A 3 second smoke is not the two-launch 21903 probe. See docs/CLASH_ROYALE_RESTORATION.md."
+    }
+  ]
+}

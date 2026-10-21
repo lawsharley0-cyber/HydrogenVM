@@ -1,0 +1,64 @@
+name: Compat harness
+
+# Linux compatibility gate: existing CPU/runtime/Python suites plus a hashed
+# IPA smoke. This file is additive. It does not publish ci-reports and it
+# does not grant contents: write.
+#
+# Actions runs on this repository have been dying in a few seconds with an
+# empty step list since 239a0ab (2026-10-20). The project notes attribute
+# that to an Actions spending limit; the vendor message was not visible via
+# the API. Until that is fixed, this workflow is the definition of the gate
+# and the evidence is a local run (docs/dev-system/baselines/linux-headless.json).
+# A green check on GitHub is Needs owner, not something this file can produce.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-harness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: Linux headless harness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libsqlite3-dev uuid-dev python3 g++ libstdc++-14-dev
+          clang++ --version | head -1
+      - name: Harness self-tests
+        run: python3 -m unittest discover -s tools/compat_harness/tests -v
+      - name: Build engine and guest tests
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+          ninja -C build hvm hvm_tests hvm_decodecheck
+          tools/build_tests.sh build/tests
+      - name: Run compatibility harness
+        env:
+          HVM_ALLOW_LEGACY_IPAS: "1"
+        run: |
+          python3 tools/hvm_compat.py run \
+            --build-dir build \
+            --out build/compat-report \
+            --baseline docs/dev-system/baselines/linux-headless.json \
+            --require-resolved \
+            --allow-legacy-repo
+      - name: Upload JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-report
+          path: |
+            build/compat-report/report.json
+            build/compat-report/diff.json
+          if-no-files-found: warn
