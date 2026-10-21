@@ -5,13 +5,28 @@
 
 namespace Hydrogen::Runtime::Shader {
 
-// Deliberately bounded GLSL ES 1.00 straight-line subset. Unsupported syntax
-// fails compilation; it must never select guessed rendering by identifier name.
+// Bounded GLSL ES 1.00 straight-line subset. The preprocessor accepts the ES 1.00
+// directive set, and globals accept precision, const initializers, structs, arrays,
+// invariant, and qualifiers in any order. Unsupported syntax fails compilation;
+// it must never select guessed rendering by identifier name.
 constexpr int MaxSlots = 2048;
 struct Type {
+    struct Field {
+        std::string name;
+        int offset = 0;
+        int width = 1;
+        int count = 1;
+        int matrix = 0;
+        bool sampler = false;
+        bool array = false;
+        std::vector<Field> fields;
+        bool operator==(const Field&) const = default;
+    };
     int width = 1, matrix = 0;
     bool sampler = false;
+    std::vector<Field> fields;
     bool operator==(const Type&) const = default;
+    bool isStruct() const { return !fields.empty(); }
 };
 enum class Storage { Local, Attribute, Uniform, Varying, Output };
 struct Variable {
@@ -20,6 +35,7 @@ struct Variable {
     Storage storage = Storage::Local;
     int slot = 0, count = 1;
     bool readOnly = false;
+    bool array = false;
 };
 enum class Op { Constant, Move, Add, Subtract, Multiply, Divide, Texture };
 struct Instruction {

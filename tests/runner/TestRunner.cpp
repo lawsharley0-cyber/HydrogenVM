@@ -351,11 +351,208 @@ int runFullSubsystemTests() {
             "void main() { gl_FragColor = vec3(1.0); }",
             "varying vec4 x[2]; void main() { gl_FragColor = x[2]; }",
             "void main() { gl_FragColor = vec4(1.0).xgba; }",
-            "#define FAKE 1\nvoid main() { gl_FragColor = vec4(1.0); }"
+            "#include <missing>\nvoid main() { gl_FragColor = vec4(1.0); }"
         }) rejected &= !fragment.compile(bad, false) && !fragment.error.empty();
         std::string deep = "void main() { gl_FragColor = vec4(" + std::string(100, '(') + "1.0" + std::string(100, ')') + "); }";
         rejected &= !fragment.compile(deep, false);
-        check(rejected, "GLSL rejects unsupported control flow, invalid writes/types/indexing/macros and excessive nesting");
+        check(rejected, "GLSL rejects unsupported control flow, invalid writes/types/indexing, #include and excessive nesting");
+
+        auto near4 = [](const float* g, float r, float gch, float b, float a) {
+            return std::abs(g[0] - r) < 1e-5f && std::abs(g[1] - gch) < 1e-5f &&
+                   std::abs(g[2] - b) < 1e-5f && std::abs(g[3] - a) < 1e-5f;
+        };
+        auto runStage = [&](const std::string& src, bool vertex, auto&& load, float out[4]) {
+            Shader::Program program;
+            if (!program.compile(src, vertex)) {
+                std::printf("    compile failed: %s\n", program.error.c_str());
+                return false;
+            }
+            Shader::Values values;
+            program.initialize(values);
+            load(program, values);
+            program.execute(values);
+            for (int c = 0; c < 4; ++c) out[c] = values[program.output + c];
+            return true;
+        };
+        auto fails = [](const char* src, const char* snippet) {
+            Shader::Program program;
+            const bool bad = !program.compile(src, false) && program.error.find(snippet) != std::string::npos;
+            if (!bad) std::printf("    expected '%s', got: %s\n", snippet, program.error.c_str());
+            return bad;
+        };
+        float o[4] = {};
+        check(runStage("#define K 0.25\nvoid main() { gl_FragColor = vec4(K); }", false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f),
+              "GLSL object-like #define");
+        check(runStage("#define SECOND(a, b) b\n#define WRAP(a, b) SECOND(a, b)\nvoid main() { gl_FragColor = vec4(WRAP(1.0, SECOND(0.25, 0.75))); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f),
+              "GLSL function-like macros with nested commas");
+        check(runStage("#define ID(x) x\n#define F(x) (x)\n#define ONE() 0.125\n#define EMPTY\nvoid main() { EMPTY gl_FragColor = vec4(ID(F)(ONE())); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.125f, 0.125f, 0.125f, 0.125f),
+              "GLSL macro rescan, zero-argument macros and empty replacement");
+        check(runStage("#define K 0.25\n#undef NOT_THERE\n#undef K\n#define K 0.875\n#define K 0.875\nvoid main() { gl_FragColor = vec4(K); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.875f, 0.875f, 0.875f, 0.875f) &&
+              fails("#define A 1\n#define A 2\nvoid main() { gl_FragColor = vec4(1.0); }", "macro redefinition"),
+              "GLSL #undef, identical redefinition and conflicting redefinition");
+        check(runStage(
+                  "#if defined GL_ES && defined(GL_ES) && !defined(NOT_THERE) && __VERSION__ == 100 && 0x10 == 16 && 010 == 8 && 1u == 1 && (3 > 1 ? 4 : 9) == 4\n"
+                  "const float k = 0.25;\n#elif 0\nconst float k = 0.5;\n#else\nconst float k = 0.75;\n#endif\n"
+                  "void main() { gl_FragColor = vec4(k); }",
+                  false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f),
+              "GLSL #if/#elif/#else with defined(), __VERSION__ and integer expressions");
+        check(runStage(
+                  "#define MINE 1\n#ifdef ABSENT\n@@@\n#if 1/0\n#endif\n#elif MINE\n#ifndef ABSENT\nconst float k = 1.0;\n#else\nstill skipped\n#endif\n#else\nbogus\n#endif\n"
+                  "void main() { gl_FragColor = vec4(k); }",
+                  false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #ifdef/#ifndef skip inactive groups, including invalid text");
+        check(runStage("#version 100\nvoid main() { gl_FragColor = vec4(1.0); }", false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                  fails("#version 300\nvoid main() { gl_FragColor = vec4(1.0); }", "unsupported version") &&
+                  fails("void main() { gl_FragColor = vec4(1.0); }\n#version 100", "version directive must be first"),
+              "GLSL #version 100, and rejection of other versions");
+        {
+            Shader::Program program;
+            const bool ok = program.compile(
+                "#extension GL_OES_standard_derivatives : enable\n#extension GL_OES_standard_derivatives : warn\n"
+                "#extension GL_OES_standard_derivatives : disable\n#extension all : disable\n#extension all : warn\n"
+                "void main() { gl_FragColor = vec4(1.0); }\n", false);
+            check(ok && fails("#extension GL_OES_foo : require\nvoid main() { gl_FragColor = vec4(1.0); }\n", "unsupported extension") &&
+                      fails("#extension all : require\nvoid main() { gl_FragColor = vec4(1.0); }\n", "invalid extension") &&
+                      fails("#extension all : enable\nvoid main() { gl_FragColor = vec4(1.0); }\n", "invalid extension"),
+                  "GLSL #extension enable/warn/disable, and rejection of require");
+        }
+        check(runStage("#pragma optimize(off)\n#pragma STDGL invariant(all)\n// #error hidden by comment\n/* #error hidden by block */\nvoid main() { gl_FragColor = vec4(1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #pragma is ignored and comments hide directives");
+        check(runStage("#line 80\n#if __LINE__ == 80\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #line sets __LINE__");
+        check(runStage("#if 0\n#error hidden\n#endif\nvoid main() { gl_FragColor = vec4(1.0); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 1, 1, 1, 1) && fails("#error visible\nvoid main() { gl_FragColor = vec4(1.0); }", "visible"),
+              "GLSL #error fires only in the active branch");
+        check(runStage("#define K \\\n0.5\nvoid main() { gl_\\\nFragColor = vec4(K); }", false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL line continuations splice directives and tokens");
+        check(runStage("#\nvoid main() { gl_FragColor = vec4(1.0); }\n#\n", false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL empty directive");
+        {
+            const std::string eof = "#if 1\nvoid main() { gl_FragColor = vec4(0.25); }\n#endif";
+            const std::string tail = "void main() { gl_FragColor = vec4(1.0); }\n#define TAIL 1";
+            check(eof.back() != '\n' && tail.back() != '\n' &&
+                      runStage(eof, false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f) &&
+                      runStage(tail, false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+                  "GLSL directives at end of input with no trailing newline");
+        }
+        check(runStage("#define CAT(a, b) a##b\nvoid main() { CAT(gl_Frag, Color) = vec4(0.375); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0.375f, 0.375f, 0.375f, 0.375f),
+              "GLSL ## token paste");
+        check(runStage("#define STR(x) #x\nvoid main() { gl_FragColor = vec4(STR(0.625)); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0.625f, 0.625f, 0.625f, 0.625f),
+              "GLSL # stringification uses the argument spelling");
+        check(runStage("void main() { gl_FragColor = vec4(\n#if 0\n0.0\n#else\n0.5\n#endif\n); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL directives between the arguments of a call");
+        check(runStage(
+                  "precision highp float;\nprecision mediump int;\nprecision lowp sampler2D;\n"
+                  "mediump vec2 tmp;\nfloat bare;\nconst highp float k = 0.25;\nuniform lowp vec4 u;\nvarying mediump vec4 v;\n"
+                  "void main() { tmp = vec2(k, u.x); bare = tmp.y + v.x; gl_FragColor = vec4(bare, tmp.x, v.y, 1.0); }",
+                  false,
+                  [](Shader::Program& p, Shader::Values& v) {
+                      if (auto* u = p.find("u")) { v[u->slot] = 0.5f; }
+                      if (auto* var = p.find("v")) { v[var->slot] = 0.25f; v[var->slot + 1] = 0.125f; }
+                  }, o) && near4(o, 0.75f, 0.25f, 0.125f, 1),
+              "GLSL precision statements, precision-only globals, bare globals and const globals");
+        check(runStage("const vec4 a = vec4(0.25, 0.0, 0.0, 0.0), b = a + vec4(0.0, 0.5, 0.0, 1.0);\nvoid main() { gl_FragColor = b; }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0, 1),
+              "GLSL multiple const declarators with initializers");
+        check(runStage("uniform vec4 first, second;\nvoid main() { gl_FragColor = first + second; }", false,
+                       [](Shader::Program& p, Shader::Values& v) {
+                           if (auto* a = p.find("first")) { v[a->slot] = 0.25f; v[a->slot + 3] = 1; }
+                           if (auto* b = p.find("second")) { v[b->slot + 1] = 0.5f; }
+                       }, o) && near4(o, 0.25f, 0.5f, 0, 1),
+              "GLSL multiple declarators on one line");
+        {
+            Shader::Program program;
+            const bool compiled = program.compile(
+                "invariant varying mediump vec4 a;\nvarying highp vec4 b;\nmediump varying vec4 c;\nhighp invariant varying vec4 d;\n"
+                "invariant gl_Position;\nuniform mediump vec4 e;\nmediump uniform vec4 f;\nattribute highp vec4 g;\nhighp attribute vec4 h;\n"
+                "const mediump float i = 1.0;\nmediump const float j = 2.0;\n"
+                "void main() { a = e; b = f; c = vec4(i); d = vec4(j); gl_Position = g + h; }", true);
+            Shader::Values values;
+            if (compiled) { program.initialize(values); program.execute(values); }
+            auto* cvar = compiled ? program.find("c") : nullptr;
+            auto* dvar = compiled ? program.find("d") : nullptr;
+            check(compiled && cvar && dvar && values[cvar->slot] == 1 && values[dvar->slot] == 2 && values[program.output] == 0,
+                  "GLSL qualifiers in every order, invariant declarations and standalone invariant");
+        }
+        check(runStage(
+                  "struct Inner { float z; };\nstruct Light { vec3 color; float intensity; Inner extra; };\n"
+                  "uniform Light lights[2];\nuniform struct { float x; } anon;\n"
+                  "void main() {\n"
+                  "  Light w = lights[1];\n"
+                  "  gl_FragColor = vec4(w.color * lights[0].intensity, w.extra.z + anon.x);\n}",
+                  false,
+                  [](Shader::Program& p, Shader::Values& v) {
+                      if (auto* lights = p.find("lights")) {
+                          v[lights->slot + 3] = 2;          // lights[0].intensity
+                          v[lights->slot + 5] = 0.25f;      // lights[1].color.r
+                          v[lights->slot + 9] = 0.125f;     // lights[1].extra.z
+                      }
+                      if (auto* anon = p.find("anon")) v[anon->slot] = 0.25f;
+                  }, o) && near4(o, 0.5f, 0, 0, 0.375f),
+              "GLSL struct definitions, struct arrays, member access and anonymous struct uniforms");
+        check(runStage("struct S { float a; vec2 b; };\nvoid main() { S s = S(0.25, vec2(0.5, 0.75)); gl_FragColor = vec4(s.a, s.b, 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1),
+              "GLSL struct constructors");
+        check(runStage(
+                  "uniform vec4 pal[2];\nuniform mat4 bones[2];\nvarying float vf[3];\n"
+                  "void main() { gl_FragColor = pal[0] + pal[1] + vec4(vf[1], 0.0, 0.0, 0.0) + (bones[1] * vec4(1.0, 0.0, 0.0, 0.0)); }",
+                  false,
+                  [](Shader::Program& p, Shader::Values& v) {
+                      if (auto* pal = p.find("pal")) { v[pal->slot] = 0.25f; v[pal->slot + 5] = 0.5f; }
+                      if (auto* vf = p.find("vf")) v[vf->slot + 1] = 0.125f;
+                      if (auto* bones = p.find("bones")) v[bones->slot + 16 + 2] = 0.125f; // column 0, row 2 of element 1
+                  }, o) && near4(o, 0.375f, 0.5f, 0.125f, 0),
+              "GLSL uniform arrays, varying arrays and matrix array elements");
+        {
+            bool sampled = false;
+            Shader::Program program;
+            const bool compiled = program.compile("uniform sampler2D tex[2];\nvoid main() { gl_FragColor = texture2D(tex[1], vec2(0.5, 0.25)); }", false);
+            Shader::Values values;
+            if (compiled) {
+                program.initialize(values);
+                if (auto* tex = program.find("tex")) values[tex->slot + 1] = 4;
+                program.execute(values, [](void* context, int unit, float u, float v, float* out) {
+                    *static_cast<bool*>(context) = unit == 4 && u == 0.5f && v == 0.25f;
+                    out[0] = 0.25f; out[1] = 0.5f; out[2] = 0.75f; out[3] = 1;
+                }, &sampled);
+            }
+            check(compiled && sampled && near4(&values[program.output], 0.25f, 0.5f, 0.75f, 1),
+                  "GLSL sampler arrays");
+        }
+        check(runStage("struct S { vec4 c[2]; float n; };\nuniform S u;\nvoid main() { gl_FragColor = u.c[0] + u.c[1] + vec4(u.n); }",
+                       false,
+                       [](Shader::Program& p, Shader::Values& v) {
+                           if (auto* u = p.find("u")) {
+                               v[u->slot] = 0.25f; v[u->slot + 5] = 0.5f; v[u->slot + 8] = 0.125f;
+                           }
+                       }, o) && near4(o, 0.375f, 0.625f, 0.125f, 0.125f),
+              "GLSL arrays of struct fields");
+        {
+            Shader::Program vert, frag;
+            const bool compiled = vert.compile(
+                "struct Material { vec4 color; float intensity; };\nuniform Material u;\nvarying Material m;\n"
+                "void main() { m = u; m.intensity = m.color.r; gl_Position = vec4(m.intensity); }", true) &&
+                frag.compile("struct Material { vec4 color; float intensity; };\nvarying Material m;\nvoid main() { gl_FragColor = m.color; }", false);
+            Shader::Values values;
+            bool linked = false;
+            if (compiled) {
+                vert.initialize(values);
+                if (auto* u = vert.find("u")) { values[u->slot] = 0.25f; values[u->slot + 1] = 0.5f; values[u->slot + 4] = 9; }
+                vert.execute(values);
+                auto* mv = vert.find("m");
+                auto* mf = frag.find("m");
+                linked = mv && mf && mv->type == mf->type && values[vert.output] == 0.25f && values[mv->slot + 1] == 0.5f && values[mv->slot + 4] == 0.25f;
+            }
+            check(linked, "GLSL struct varyings keep a shared layout across stages");
+        }
     }
 
     // Opt-in loopback TCP uses genuine BSD IO, not successful placeholder calls.
@@ -991,6 +1188,61 @@ int runFullSubsystemTests() {
             int32_t(callGL("_glGetUniformLocation", {pipeline,proc.allocCString("absent")})) == -1 &&
             int32_t(callGL("_glGetAttribLocation", {pipeline,proc.allocCString("absent")})) == -1;
         check(diagnostics, "GLES2 exposes compile/link errors, bounded info logs and unknown locations");
+
+        // Struct leaves and array elements are real uniform locations. The count==1
+        // uniforms above keep the locations this draw already checked.
+        uint32_t structVs = shader(0x8B31,
+            "struct Material { vec4 color; float intensity; };\n"
+            "uniform Material u;\nuniform vec4 pal[2];\nattribute vec4 a_position;\nvarying Material m;\n"
+            "void main() { gl_Position = a_position; m = u; m.color = m.color * m.intensity + pal[0] + pal[1]; }");
+        uint32_t structFs = shader(0x8B30,
+            "struct Material { vec4 color; float intensity; };\nvarying Material m;\nvoid main() { gl_FragColor = m.color; }");
+        uint32_t structProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {structProg, structVs});
+        callGL("_glAttachShader", {structProg, structFs});
+        callGL("_glBindAttribLocation", {structProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {structProg});
+        callGL("_glGetProgramiv", {structProg, 0x8B82, idsAddr + 36});
+        const bool structLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {structProg});
+        const int32_t colorLoc = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("u.color")}));
+        const int32_t intensityLoc = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("u.intensity")}));
+        const int32_t palLoc = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("pal")}));
+        const int32_t pal0 = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("pal[0]")}));
+        const int32_t pal1 = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("pal[1]")}));
+        callGL("_glGetProgramiv", {structProg, 0x8B86, idsAddr + 36});
+        const int32_t activeUniforms = proc.mem().read<int32_t>(idsAddr + 36);
+        bool palActive = false;
+        const uint32_t activeName = proc.heap().allocZeroed(64);
+        for (int32_t i = 0; i < activeUniforms; ++i) {
+            callGL("_glGetActiveUniform", {structProg, uint32_t(i), 64, 0, idsAddr + 40, idsAddr + 44, activeName});
+            std::string nm;
+            for (int n = 0; n < 64; ++n) {
+                char ch = char(proc.mem().read<uint8_t>(activeName + uint32_t(n)));
+                if (!ch) break;
+                nm.push_back(ch);
+            }
+            if (nm == "pal[0]" && proc.mem().read<int32_t>(idsAddr + 40) == 2 && proc.mem().read<uint32_t>(idsAddr + 44) == 0x8B52)
+                palActive = true;
+        }
+        callGL("_glUniform4f", {uint32_t(colorLoc), UIKit::fbits(0.5f), UIKit::fbits(0), UIKit::fbits(0), UIKit::fbits(1)});
+        callGL("_glUniform1f", {uint32_t(intensityLoc), UIKit::fbits(1)});
+        const float palData[] = {0, 0.5f, 0, 0, 0, 0, 1, 0};
+        const uint32_t palPtr = proc.heap().alloc(sizeof palData);
+        proc.mem().copyIn(palPtr, palData, sizeof palData);
+        callGL("_glUniform4fv", {uint32_t(palLoc), 2, palPtr});
+        const float cover[] = {-1, -1, 1, -1, 0, 1};
+        const uint32_t coverPtr = proc.heap().alloc(sizeof cover);
+        proc.mem().copyIn(coverPtr, cover, sizeof cover);
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(structLinked && activeUniforms == 3 && palActive && colorLoc >= 0 && intensityLoc == colorLoc + 1 &&
+              palLoc == pal0 && pal1 == palLoc + 1 && palLoc != colorLoc &&
+              proc.mem().read<uint8_t>(idsAddr + 24) == 128 && proc.mem().read<uint8_t>(idsAddr + 25) == 128 &&
+              proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 links struct-uniform leaves and array elements to consecutive locations");
 
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
