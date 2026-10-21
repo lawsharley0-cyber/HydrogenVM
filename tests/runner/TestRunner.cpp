@@ -2033,6 +2033,299 @@ int runFullSubsystemTests() {
         }
     }
 
+    // POSIX regex (Darwin 32-bit ABI) and tmpnam inside the guest sandbox.
+    // regoff_t is __darwin_off_t (int64) even on armv7, so regmatch_t is 16 bytes.
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+        const bool have = proc.lookupSymbol("_regcomp") && proc.lookupSymbol("_regexec") &&
+                          proc.lookupSymbol("_regerror") && proc.lookupSymbol("_regfree") &&
+                          proc.lookupSymbol("_tmpnam");
+        constexpr uint32_t REG_EXTENDED = 1, REG_ICASE = 2, REG_NOSUB = 4, REG_NEWLINE = 010;
+        constexpr uint32_t REG_NOTBOL = 1;
+        constexpr uint32_t REG_NOMATCH = 1, REG_BADPAT = 2, REG_ECTYPE = 4, REG_EESCAPE = 5, REG_ESUBREG = 6;
+        constexpr uint32_t REG_EBRACK = 7, REG_EPAREN = 8, REG_EBRACE = 9, REG_BADBR = 10, REG_ERANGE = 11;
+        constexpr uint32_t REG_BADRPT = 13, REG_INVARG = 16;
+        auto i64 = [&](uint32_t a) { return proc.mem().read<int64_t>(a); };
+        auto nsub = [&](uint32_t preg) { return proc.mem().read<uint32_t>(preg + 4); };
+        auto compile = [&](const char* pat, uint32_t flags) {
+            const uint32_t preg = proc.heap().allocZeroed(32);
+            const uint32_t rc = call("_regcomp", {preg, proc.allocCString(pat), flags});
+            return std::pair{rc, preg};
+        };
+        auto exec = [&](uint32_t preg, const char* text, uint32_t nmatch, uint32_t pmatch, uint32_t eflags = 0) {
+            return call("_regexec", {preg, proc.allocCString(text), nmatch, pmatch, eflags});
+        };
+        auto offs = [&](uint32_t pm, int i) { return std::pair{i64(pm + uint32_t(i) * 16), i64(pm + uint32_t(i) * 16 + 8)}; };
+        const uint32_t pm = proc.heap().allocZeroed(8 * 16);
+        auto clearPm = [&] {
+            for (uint32_t i = 0; i < 8 * 16; i += 8) proc.mem().write<int64_t>(pm + i, -1);
+        };
+        auto run = [&](const char* name, auto&& fn) {
+            if (!have) { check(false, name); return; }
+            bool ok = false;
+            try { ok = fn(); }
+            catch (const std::exception& e) { std::printf("    %s threw: %s\n", name, e.what()); }
+            check(ok, name);
+        };
+        run("POSIX BRE dot-star, anchors, and re_nsub", [&] {
+            auto [rc, re] = compile("a.*b", 0);
+            clearPm();
+            const uint32_t er = exec(re, "zzaxxbqq", 1, pm);
+            const auto dot = offs(pm, 0);
+            const uint32_t groups = nsub(re);
+            auto [rc2, re2] = compile("^hello$", 0);
+            clearPm();
+            const uint32_t hit = exec(re2, "hello", 1, pm);
+            const auto whole = offs(pm, 0);
+            const uint32_t miss = exec(re2, "hello!", 1, pm);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return rc == 0 && er == 0 && groups == 0 && dot == std::pair<int64_t,int64_t>(2, 6) &&
+                   rc2 == 0 && hit == 0 && whole == std::pair<int64_t,int64_t>(0, 5) && miss == REG_NOMATCH;
+        });
+        run("POSIX BRE grouping reports the last iteration", [&] {
+            auto [rc, re] = compile("\\(ab\\)*", 0);
+            clearPm();
+            const uint32_t er = exec(re, "ababab", 2, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 1 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 6) &&
+                            offs(pm, 1) == std::pair<int64_t,int64_t>(4, 6);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX BRE bounded interval is greedy", [&] {
+            auto [rc, re] = compile("a\\{2,4\\}", 0);
+            clearPm();
+            const uint32_t er = exec(re, "aaaaa", 1, pm);
+            const bool ok = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 4);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX BRE backreferences", [&] {
+            auto [rc, re] = compile("\\(a\\)\\1", 0);
+            clearPm();
+            const uint32_t hit = exec(re, "aa", 2, pm);
+            const auto whole = offs(pm, 0);
+            const auto g = offs(pm, 1);
+            const uint32_t miss = exec(re, "ab", 2, pm);
+            const bool ok = rc == 0 && hit == 0 && whole == std::pair<int64_t,int64_t>(0, 2) &&
+                            g == std::pair<int64_t,int64_t>(0, 1) && miss == REG_NOMATCH;
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX ERE alternation is leftmost-longest", [&] {
+            auto [rc, re] = compile("(foo|foobar)|(a|ab)c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "foobar", 3, pm);
+            const bool one = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 6) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(0, 6) && offs(pm, 2) == std::pair<int64_t,int64_t>(-1, -1);
+            auto [rc2, re2] = compile("(a|ab)c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "abc", 2, pm);
+            const bool two = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 3) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(0, 2);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return one && two;
+        });
+        run("POSIX ERE subexpression offsets", [&] {
+            auto [rc, re] = compile("([a-z]+)-([0-9]+)", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "id-42", 3, pm);
+            auto [rc2, re2] = compile("colou?r", REG_EXTENDED);
+            const uint32_t c1 = exec(re2, "color", 1, pm);
+            const uint32_t c2 = exec(re2, "colour", 1, pm);
+            auto [rc3, re3] = compile("[[:digit:]]+", REG_EXTENDED);
+            clearPm();
+            const uint32_t er3 = exec(re3, "id-42", 1, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 2 &&
+                            offs(pm, 0) == std::pair<int64_t,int64_t>(3, 5) &&
+                            rc2 == 0 && c1 == 0 && c2 == 0 && rc3 == 0 && er3 == 0;
+            // The digit check overwrote pmatch; re-check the capture pattern.
+            clearPm();
+            exec(re, "id-42", 3, pm);
+            const bool caps = offs(pm, 0) == std::pair<int64_t,int64_t>(0, 5) &&
+                              offs(pm, 1) == std::pair<int64_t,int64_t>(0, 2) &&
+                              offs(pm, 2) == std::pair<int64_t,int64_t>(3, 5);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return ok && caps;
+        });
+        run("unmatched optional and alternate groups are -1", [&] {
+            auto [rc, re] = compile("a(b)?c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "ac", 2, pm);
+            const bool opt = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 2) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(-1, -1);
+            auto [rc2, re2] = compile("(a)|(b)", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "b", 3, pm);
+            const bool alt = rc2 == 0 && er2 == 0 && nsub(re2) == 2 &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(-1, -1) &&
+                             offs(pm, 2) == std::pair<int64_t,int64_t>(0, 1);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return opt && alt;
+        });
+        run("REG_ICASE folds literals and ranges", [&] {
+            auto [rc, re] = compile("^abc$", REG_EXTENDED | REG_ICASE);
+            clearPm();
+            const uint32_t hit = exec(re, "AbC", 1, pm);
+            const auto folded = offs(pm, 0);
+            auto [rc2, re2] = compile("^abc$", REG_EXTENDED);
+            const uint32_t miss = exec(re2, "AbC", 1, pm);
+            auto [rc3, re3] = compile("[A-C]", REG_EXTENDED | REG_ICASE);
+            clearPm();
+            const uint32_t er3 = exec(re3, "b", 1, pm);
+            const auto range = offs(pm, 0);
+            const bool ok = rc == 0 && hit == 0 && folded == std::pair<int64_t,int64_t>(0, 3) &&
+                            rc2 == 0 && miss == REG_NOMATCH && rc3 == 0 && er3 == 0 &&
+                            range == std::pair<int64_t,int64_t>(0, 1);
+            // offs was overwritten by the class match; the icase literal was checked before that.
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return ok;
+        });
+        run("REG_NOSUB keeps re_nsub and does not write pmatch", [&] {
+            auto [rc, re] = compile("(a)(b)", REG_EXTENDED | REG_NOSUB);
+            for (uint32_t i = 0; i < 4 * 16; i += 8) proc.mem().write<int64_t>(pm + i, 99);
+            const uint32_t er = exec(re, "ab", 4, pm);
+            bool untouched = true;
+            for (uint32_t i = 0; i < 4 * 16; i += 8) untouched = untouched && i64(pm + i) == 99;
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 2 && untouched;
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_NEWLINE changes dot, anchors, and negated classes", [&] {
+            auto [rc, re] = compile("a.b", REG_EXTENDED | REG_NEWLINE);
+            const uint32_t dot = exec(re, "a\nb", 1, pm);
+            auto [rc2, re2] = compile("^b", REG_EXTENDED | REG_NEWLINE);
+            clearPm();
+            const uint32_t bol = exec(re2, "a\nb", 1, pm);
+            const auto bm = offs(pm, 0);
+            auto [rc3, re3] = compile("a$", REG_EXTENDED | REG_NEWLINE);
+            clearPm();
+            const uint32_t eol = exec(re3, "a\nb", 1, pm);
+            const auto em = offs(pm, 0);
+            auto [rc4, re4] = compile("[^a]", REG_EXTENDED | REG_NEWLINE);
+            const uint32_t nl = exec(re4, "\n", 1, pm);
+            auto [rc5, re5] = compile("^a", REG_EXTENDED);
+            const uint32_t notbol = exec(re5, "a", 1, pm, REG_NOTBOL);
+            const uint32_t bol0 = exec(re5, "a", 1, pm, 0);
+            for (uint32_t r : {re, re2, re3, re4, re5}) call("_regfree", {r});
+            return rc == 0 && dot == REG_NOMATCH && rc2 == 0 && bol == 0 && bm == std::pair<int64_t,int64_t>(2, 3) &&
+                   rc3 == 0 && eol == 0 && em == std::pair<int64_t,int64_t>(0, 1) && rc4 == 0 && nl == REG_NOMATCH &&
+                   rc5 == 0 && notbol == REG_NOMATCH && bol0 == 0;
+        });
+        run("regcomp returns POSIX error codes", [&] {
+            struct Case { const char* pat; uint32_t flags; uint32_t code; };
+            const Case cases[] = {
+                {"(", REG_EXTENDED, REG_EPAREN},
+                {"[", REG_EXTENDED, REG_EBRACK},
+                {"a{", REG_EXTENDED, REG_EBRACE},
+                {"a{5,1}", REG_EXTENDED, REG_BADBR},
+                {"\\", REG_EXTENDED, REG_EESCAPE},
+                {"*", REG_EXTENDED, REG_BADRPT},
+                {"[[:bogus:]]", REG_EXTENDED, REG_ECTYPE},
+                {"[z-a]", REG_EXTENDED, REG_ERANGE},
+                {"\\1", 0, REG_ESUBREG},
+            };
+            bool ok = true;
+            for (auto& c : cases) {
+                auto [rc, re] = compile(c.pat, c.flags);
+                if (rc != c.code) { std::printf("    regcomp '%s' -> %u want %u\n", c.pat, rc, c.code); ok = false; }
+                call("_regfree", {re});
+            }
+            return ok;
+        });
+        run("regerror reports Darwin strings and the size including NUL", [&] {
+            const uint32_t buf = proc.heap().allocZeroed(128);
+            auto expect = [&](uint32_t code, const char* text) {
+                const uint32_t n = call("_regerror", {code, 0, buf, 128});
+                return n == std::strlen(text) + 1 && proc.readCString(buf) == text;
+            };
+            const uint32_t small = proc.heap().alloc(8);
+            for (int i = 0; i < 8; ++i) proc.mem().write<uint8_t>(small + i, 'X');
+            const char* nomatch = "regexec() failed to match";
+            const uint32_t ntrunc = call("_regerror", {REG_NOMATCH, 0, small, 4});
+            const uint32_t nlen = call("_regerror", {REG_BADPAT, 0, 0, 0});
+            return expect(REG_NOMATCH, nomatch) &&
+                   expect(REG_BADPAT, "invalid regular expression") &&
+                   expect(REG_ECTYPE, "invalid character class") &&
+                   expect(REG_EESCAPE, "trailing backslash (\\)") &&
+                   expect(REG_ESUBREG, "invalid backreference number") &&
+                   expect(REG_EBRACK, "brackets ([ ]) not balanced") &&
+                   expect(REG_EPAREN, "parentheses not balanced") &&
+                   expect(REG_EBRACE, "braces not balanced") &&
+                   expect(REG_BADBR, "invalid repetition count(s)") &&
+                   expect(REG_ERANGE, "invalid character range") &&
+                   expect(REG_BADRPT, "repetition-operator operand invalid") &&
+                   expect(REG_INVARG, "invalid argument to regex routine") &&
+                   ntrunc == std::strlen(nomatch) + 1 && proc.readCString(small) == "reg" &&
+                   nlen == std::strlen("invalid regular expression") + 1;
+        });
+        run("regexec REG_NOMATCH and regfree invalidates the pattern", [&] {
+            auto [rc, re] = compile("^a$", REG_EXTENDED);
+            const uint32_t miss = exec(re, "b", 1, pm);
+            const uint32_t buf = proc.heap().allocZeroed(64);
+            const uint32_t n = call("_regerror", {miss, re, buf, 64});
+            const uint32_t hit = exec(re, "a", 1, pm);
+            call("_regfree", {re});
+            const uint32_t after = exec(re, "a", 1, pm);
+            call("_regfree", {re});
+            return rc == 0 && miss == REG_NOMATCH && hit == 0 && after == REG_INVARG &&
+                   n == std::strlen("regexec() failed to match") + 1 &&
+                   proc.readCString(buf) == "regexec() failed to match";
+        });
+        run("leftmost match may be empty", [&] {
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "xaa", 1, pm);
+            const bool empty = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 0);
+            auto [rc2, re2] = compile("a+", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "xaa", 1, pm);
+            const bool plus = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(1, 3);
+            auto [rc3, re3] = compile("", REG_EXTENDED);
+            clearPm();
+            const uint32_t er3 = exec(re3, "abc", 1, pm);
+            const bool blank = rc3 == 0 && er3 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 0);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return empty && plus && blank;
+        });
+        run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
+            const std::string root = proc.homePath() + "/tmp/";
+            std::vector<std::string> names;
+            for (int i = 0; i < 6; ++i) {
+                const uint32_t buf = proc.heap().allocZeroed(1024);
+                const uint32_t p = call("_tmpnam", {buf});
+                if (p != buf) return false;
+                names.push_back(proc.readCString(buf));
+            }
+            bool ok = names.size() == 6;
+            for (size_t i = 0; i < names.size(); ++i) {
+                ok = ok && names[i].rfind(root, 0) == 0;
+                ok = ok && names[i].find("..") == std::string::npos;
+                ok = ok && !std::filesystem::exists(names[i]);
+                for (size_t j = 0; j < i; ++j) ok = ok && names[i] != names[j];
+            }
+            if (!names.empty()) {
+                std::ofstream(names[0]) << "taken";
+                const uint32_t buf = proc.heap().allocZeroed(1024);
+                const uint32_t p = call("_tmpnam", {buf});
+                const std::string again = proc.readCString(p);
+                ok = ok && p == buf && again != names[0] && again.rfind(root, 0) == 0 && !std::filesystem::exists(again);
+                std::filesystem::remove(names[0]);
+            }
+            return ok;
+        });
+        run("tmpnam(NULL) reuses one guest static buffer", [&] {
+            const std::string root = proc.homePath() + "/tmp/";
+            const uint32_t p1 = call("_tmpnam", {0});
+            const std::string s1 = proc.readCString(p1);
+            const uint32_t p2 = call("_tmpnam", {0});
+            const std::string s2 = proc.readCString(p2);
+            return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
+                   !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
+        });
+    }
+
     // Host-requested shutdown must not become an HLE error. An unrelated
     // exception still remains a failure even if stop was requested concurrently.
     for (bool intentional : {true, false}) {

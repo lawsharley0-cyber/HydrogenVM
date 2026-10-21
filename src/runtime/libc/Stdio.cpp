@@ -8,6 +8,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <mutex>
+#include <unistd.h>
 
 namespace Hydrogen::Runtime {
 namespace {
@@ -419,7 +422,47 @@ int32_t f_vswprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VaList ap) {
 int32_t f_swscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VarArgs va) { StringSource src(readWString(x, s)); return scanGuest(x, src, readWString(x, fmt), va.args); }
 int32_t f_vswscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VaList ap) { StringSource src(readWString(x, s)); ArgReader a(x.mem, ap.ptr); return scanGuest(x, src, readWString(x, fmt), a); }
 
+// char *tmpnam(char *s) — a unique path inside the guest sandbox tmp directory.
+// Darwin L_tmpnam is 1024. A null s returns one guest static buffer, overwritten
+// on the next null call, matching the C library.
+struct TmpnamState {
+    explicit TmpnamState(Process&) {}
+    std::mutex mu;
+    uint32_t seq = 0;
+    uint32_t staticBuf = 0;
+};
+uint32_t f_tmpnam(Ctx& x, GuestPtr s) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(x.proc.homePath()) / "tmp";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    auto& st = x.proc.service<TmpnamState>();
+    std::lock_guard<std::mutex> lk(st.mu);
+    std::string chosen;
+    for (int n = 0; n < 10000 && chosen.empty(); ++n) {
+        const uint32_t seq = ++st.seq;
+        char leaf[64];
+        std::snprintf(leaf, sizeof leaf, "tmpnam.%u.%u", uint32_t(::getpid()), seq);
+        const fs::path path = dir / leaf;
+        if (!fs::exists(path, ec)) chosen = path.string();
+    }
+    if (chosen.empty()) {
+        if (x.proc.currentThread().errnoAddr) x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, 17); // Darwin EEXIST
+        return 0;
+    }
+    if (chosen.size() >= 1024) chosen.resize(1023);
+    GuestPtr dest = s;
+    if (!dest) {
+        if (!st.staticBuf) st.staticBuf = x.proc.allocStatic(1024);
+        dest = st.staticBuf;
+    }
+    x.mem.copyIn(dest, chosen.c_str(), chosen.size() + 1);
+    return dest;
+}
+
 } // namespace
+
+void registerLibcRegex(Process& p);
 
 void flushGuestStdio(Process& p) {
     auto& s = p.service<Stdio>();
@@ -494,6 +537,8 @@ void registerLibcStdio(Process& p) {
     p.def<&f_vswprintf>("_vswprintf");
     p.def<&f_swscanf>("_swscanf");
     p.def<&f_vswscanf>("_vswscanf");
+    p.def<&f_tmpnam>("_tmpnam");
+    registerLibcRegex(p);
 }
 
 } // namespace Hydrogen::Runtime
