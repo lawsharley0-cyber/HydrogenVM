@@ -29,12 +29,16 @@ Other entry points:
 | `unit` | `hvm_tests` selftest, fulltest, asm guests, differential C guests, and the three Python modules |
 | `apps --only angry-birds` | One smoke |
 | `diff baseline.json current.json` | Regression JSON on stdout. Exit 1 when regressions exist |
+| `diff --previous report.json` | Diff `report.json` against the previous row in `docs/dev-system/reports/index.json`. Exit 2 when that index has no previous row. Exit 1 when the diff has a regression. This does not replace the baseline diff |
+| `record report.json` | Copy that report to `docs/dev-system/reports/<platform>/<UTC timestamp>-<short sha>.json` and update `index.json` and `latest.json`. JSON only. Does not change the committed baseline |
+| `run --record` | `run`, then `record` on the new report |
+| `run --diff-previous` | `run`, and also write `diff-previous.json` against the previous indexed report. A missing previous row is printed and does not fail the run |
 | `issues report.json` | Dry-run markdown on stdout |
 | `issues report.json --write build/issues` | Writes files. Still does not file them |
 | `validate report.json` | Required-field check aligned with `schema/report.schema.json` |
 | `run --fuzz 20000` | Also runs `tools/decode_fuzz.py`. Default is off |
 
-Exit status is 1 when a unit or Python case fails, a required fixture is missing or its hash does not match, `hvm` does not write a report, the run times out, or the baseline diff has a regression. The missing-fixture failure does not depend on `--require-resolved`. A guest crash is recorded. It fails the process only when the baseline did not already crash. An optional skip does not fail the process.
+Exit status is 1 when a unit or Python case fails, a required fixture is missing or its hash does not match, `hvm` does not write a report, the run times out, or the baseline diff or a `--diff-previous` diff has a regression. The missing-fixture failure does not depend on `--require-resolved`. A guest crash is recorded. It fails the process only when the baseline did not already crash. An optional skip does not fail the process.
 
 ## Fixtures
 
@@ -71,7 +75,7 @@ Clash Royale's pinned hash matches `tools/clash_royale_probe.py`. The entry is o
 - mixer signal moving from `active` to `silent`
 - a load error that changes to a different non-empty string
 
-Attention, not a failure: a new runtime-only missing function. A 3 second run does not always reach the same call. Imports and misses whose text says the feature is disabled, offline, unavailable, or not supported are clustered as signals (`unavailable`), because several of those stubs are deliberate. Zero-filled data symbols (`kCFNumberNaN` and the infinities) are the same kind of signal. `SCNetworkReachability` is that kind of stub and lives in `PlatformStubs.cpp`, so its cluster owner is graphics/audio/input rather than libc. Informational: MIPS, average frame time (±25%), raw audio sample counts, page-size differences, and frame-signal changes that are not a blanking of a `varied` or `mostly-one-color` frame. A baseline row that was skipped and now has a real run is `new-coverage`, not a regression, so the first Clash measurement is not compared as if the skip had been a clean launch.
+Attention, not a failure: a new runtime-only missing function. A 3 second run does not always reach the same call. Imports and misses whose text says the feature is disabled, offline, unavailable, or not supported are clustered as signals (`unavailable`), because several of those stubs are deliberate. Zero-filled data symbols (`kCFNumberNaN` and the infinities) are the same kind of signal. `SCNetworkReachability` is that kind of stub and lives in `PlatformStubs.cpp`, so its cluster owner is graphics/audio/input rather than libc. Informational: MIPS, average frame time (±25%), raw audio sample counts (`audio.frames` and `audio.nonSilentFrames`, ±25% while the mixer signal stays `active`; a smaller move is not noted; a zero baseline is noted when the count is no longer zero), page-size differences, and frame-signal changes that are not a blanking of a `varied` or `mostly-one-color` frame. A sample-count change that stays `active` is not a regression. A baseline row that was skipped and now has a real run is `new-coverage`, not a regression, so the first Clash measurement is not compared as if the skip had been a clean launch.
 
 Frame signals sample the PNG (about 80 by 120 steps). Near-black is RGB under 16. Near-white is RGB over 240. `all-black` / `all-white` means that class is at least 97% of the samples. `mostly-one-color` means one 4-bit bin is at least 90%. That signal is not a failure by itself, but a later all-white or all-black frame is a regression. Angry Birds on the committed baseline is about 93% near-white, not a dark framebuffer. The audit said not to treat a 3 second Angry Birds run as a title-screen proof.
 
@@ -106,6 +110,20 @@ Verified by reading the tree and by what this Linux VM can execute. The VM is x8
 | Decoder fuzz at the ~544,000-sample size cited in older docs | Not the default gate. The audit's own re-run used 20,000 and did not reproduce the larger figure | `run --fuzz` on a schedule (backlog B-107) |
 
 `tools/hvm_report.py` remains the publisher used by `.github/workflows/ci.yml`. It still does not run `fulltest`. The harness does. Pointing the publisher at `fulltest` is backlog, deliberately not mixed into this patch.
+
+## Indexed runs
+
+`record` writes the report JSON that `run` already produced. It does not embed screenshots or IPA bytes. Each report already carries `schemaVersion` (currently 1, `kind` `hvm-compat-report`). The copy keeps that field.
+
+Layout:
+
+- `docs/dev-system/reports/<platform>/<UTC timestamp>-<short sha>.json` — one file per recorded run. `<platform>` is `host.system` and `host.machine`, lowercased, for example `linux-x86_64`. The timestamp is UTC from `generatedAt` (`YYYYMMDDTHHMMSSZ`). The short sha is `git.short`.
+- `docs/dev-system/reports/index.json` — `schemaVersion` 1, `kind` `hvm-compat-report-index`. `runs[]` is chronological. Each row has `sha`, `date`, `schemaVersion` (the report's), `summary`, `platform`, and `path`.
+- `docs/dev-system/reports/latest.json` — `schemaVersion` 1, `kind` `hvm-compat-report-pointer`. It points at the last index row and repeats that row's sha, date, report schema version, and summary.
+
+Recording the same bytes again does not add a second row. A different report that would use the same filename gets a `-2` suffix. `diff --previous` uses the preceding index row when the file is already indexed. A file that is not indexed uses the last row, unless its JSON is that last row: `record` copies the build report, and that copy is the row itself, so the previous run is the one before it. Diff the build report before `record`, or diff the path `record` prints. The first row has no previous report and the command exits 2. The baseline file under `docs/dev-system/baselines/` stays the gate. An indexed run is history, not a new baseline, until an owner replaces the baseline on purpose. `record` refuses a report that fails `validate_report`.
+
+The compat workflow still uploads `build/compat-report/report.json`. It does not commit the index.
 
 ## Schema
 
