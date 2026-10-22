@@ -104,11 +104,35 @@ Also out of scope:
 - A signature, a provisioning profile, or an install on an iPhone. `verify_ipa.py` records `signatureVerified: false` and `deviceTested: false`. Sideloading the unsigned IPA is still the process in `docs/SIDELOAD.md`, including the free Apple ID entitlement limits for the 4 GB arena.
 - The Linux test report and the `ci-reports` branch.
 
-## This file was not run on a Mac
+## Codemagic runs
 
-`codemagic.yaml` was checked with yamllint (default rules) and against
-Codemagic's published JSON schema (`https://codemagic.io/codemagic-schema.json`).
-Nothing in this change was executed with Xcode, `xcodebuild`, `simctl`, or a
-Codemagic builder. The free M2 builder has 12 GB of RAM, so a compile that
-exhausts memory would appear only there. The first real signal is a manual
-build of the branch that introduces the file.
+Build #5 of commit `130a23f` succeeded in 6m20s on the Mac mini M2 / Xcode
+26.6 image. macOS host tests passed. The unsigned device IPA was 4.29 MB.
+The simulator launched `com.lfull.HydrogenVM`.
+
+Earlier builds of this branch failed, and each fix is in the history below
+that commit:
+
+1. Build #1 (`077bf40`) failed host tests. Darwin `AF_UNIX` `SOCK_DGRAM`
+   returns `ENOBUFS` when the peer receive buffer cannot hold an 8192-byte
+   PCM block (the default buffer is 4096, and the queued length includes a
+   16-byte unnamed sockaddr). The test sizes that buffer on Apple. The
+   transport counts `ENOBUFS` as a dropped block on Apple only, and sets
+   `SO_NOSIGPIPE` because macOS has no `MSG_NOSIGNAL`.
+2. Build #2 (`2073768`) passed host tests and failed the device build. Two
+   third-party `README.txt` files were copied to `HydrogenVM.app/README.txt`.
+   `app/project.yml` excludes `README` and `LICENSE` files from the bundle.
+3. Build #3 (`fac075c`) failed in actool: `AppIcon` had no decodable image.
+   `AppIcon-1024.png` was not a PNG (the signature had lost its carriage
+   return). It is now a generated 1024×1024 opaque RGB icon, and `*.png` is
+   marked binary so checkout keeps that signature.
+4. Build #4 (`9b73d1f`) failed to compile the Swift 6 app shell
+   (`FileBrowser.swift` and `LibraryView.swift`). Those files matched
+   `main`. The save editor called `InstalledApp` members that did not exist,
+   two `URLResourceKey` sets had no element type, plist editing crossed the
+   main actor, and two view bodies could not type-check. `main`'s Swift
+   shell did not compile before this PR. Commit `130a23f` fixes that shell.
+
+`codemagic.yaml` was also checked with yamllint (default rules) and against
+Codemagic's published JSON schema
+(`https://codemagic.io/codemagic-schema.json`).

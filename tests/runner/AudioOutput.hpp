@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <thread>
 #include <sys/socket.h>
 #include <cerrno>
@@ -31,7 +32,10 @@ public:
         // macOS has no MSG_NOSIGNAL. Without this, a closed consumer raises
         // SIGPIPE and kills the process instead of returning EPIPE.
         const int nosigpipe = 1;
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof nosigpipe);
+        if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof nosigpipe) != 0) {
+            const int err = errno;
+            std::fprintf(stderr, "[hvm:warn] desktop audio: SO_NOSIGPIPE failed (%d)\n", err);
+        }
 #endif
         worker_ = std::jthread([this, fd, mixer](std::stop_token stop) {
             using namespace std::chrono;
@@ -56,8 +60,13 @@ public:
                 const auto sent = send(fd, pcm.data(), sizeof pcm, flags);
                 // ENOBUFS is macOS backpressure (a full peer receive buffer),
                 // not a broken socket. EMSGSIZE still stops the transport:
-                // the datagram can never fit in SO_SNDBUF.
-                if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == ENOBUFS)) ++droppedBlocks;
+                // the datagram can never fit in SO_SNDBUF. Linux reports a
+                // full queue as EAGAIN, so that compare is not in Linux codegen.
+                if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR
+#ifdef __APPLE__
+                                 || errno == ENOBUFS
+#endif
+                                )) ++droppedBlocks;
                 else if (sent != sizeof pcm) { error = sent < 0 ? errno : EIO; break; }
                 next += duration_cast<steady_clock::duration>(duration<double>(2048.0 / 44100));
                 // Skip missed deadlines rather than replaying stale sound in bursts.
