@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hydrogenvm.local/compat/report.schema.json",
+  "title": "HydrogenVM compatibility report",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "generatedAt",
+    "git",
+    "host",
+    "limits",
+    "manifest",
+    "suites",
+    "clusters",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "hvm-compat-report" },
+    "generatedAt": { "type": "string" },
+    "git": {
+      "type": "object",
+      "required": ["commit", "dirty"],
+      "properties": {
+        "commit": { "type": "string" },
+        "short": { "type": "string" },
+        "branch": { "type": "string" },
+        "dirty": { "type": "boolean" }
+      }
+    },
+    "host": {
+      "type": "object",
+      "required": ["system", "machine", "pageSize"],
+      "properties": {
+        "system": { "type": "string" },
+        "release": { "type": "string" },
+        "machine": { "type": "string" },
+        "python": { "type": "string" },
+        "pageSize": { "type": ["integer", "null"] },
+        "compiler": { "type": "string" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "limits": { "type": "object" },
+    "manifest": {
+      "type": "object",
+      "required": ["schemaVersion", "legacyRepoAllowed"],
+      "properties": {
+        "path": { "type": "string" },
+        "schemaVersion": { "const": 1 },
+        "fixtureRoot": { "type": ["string", "null"] },
+        "legacyRepoAllowed": { "type": "boolean" }
+      }
+    },
+    "suites": {
+      "type": "object",
+      "required": ["unit", "python", "apps"],
+      "properties": {
+        "unit": { "$ref": "#/$defs/caseSuite" },
+        "python": { "$ref": "#/$defs/caseSuite" },
+        "fuzz": { "type": "object" },
+        "apps": {
+          "type": "object",
+          "required": ["apps"],
+          "properties": {
+            "status": { "type": "string" },
+            "hvm": { "type": "string" },
+            "apps": { "type": "array", "items": { "$ref": "#/$defs/app" } }
+          }
+        }
+      }
+    },
+    "clusters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/cluster" }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["ok", "unitFailed", "pythonFailed", "appsCrashed", "appsSkipped", "clusterCount"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "unitFailed": { "type": "integer" },
+        "pythonFailed": { "type": "integer" },
+        "fuzzStatus": { "type": ["string", "null"] },
+        "appsResolved": { "type": "integer" },
+        "appsSkipped": { "type": "integer" },
+        "appsCrashed": { "type": "integer" },
+        "appsLaunchFailed": { "type": "integer" },
+        "resolveErrors": { "type": "integer" },
+        "clusterCount": { "type": "integer" }
+      }
+    }
+  },
+  "$defs": {
+    "caseSuite": {
+      "type": "object",
+      "required": ["cases"],
+      "properties": {
+        "status": { "type": "string" },
+        "passed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "status"],
+            "properties": {
+              "id": { "type": "string" },
+              "status": { "enum": ["pass", "fail", "skip"] },
+              "exitCode": { "type": ["integer", "null"] },
+              "durationSec": { "type": "number" },
+              "summary": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "app": {
+      "type": "object",
+      "required": [
+        "id",
+        "sha256",
+        "status",
+        "launchSuccess",
+        "crashed",
+        "unimplementedImports",
+        "frame",
+        "audio",
+        "clusters"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "optional": { "type": "boolean" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "source": { "type": ["string", "null"] },
+        "displayPath": { "type": ["string", "null"] },
+        "status": { "enum": ["skipped", "error", "ran", "crashed", "load-error", "timeout"] },
+        "reason": { "type": "string" },
+        "launchSuccess": { "type": "boolean" },
+        "crashed": { "type": "boolean" },
+        "exitStatus": { "type": ["integer", "null"] },
+        "stillRunning": { "type": "boolean" },
+        "loadError": { "type": "string" },
+        "unimplementedImports": { "type": "array", "items": { "type": "string" } },
+        "missingFunctions": { "type": "array", "items": { "type": "string" } },
+        "crashReport": { "type": "string" },
+        "perf": { "type": "object" },
+        "frame": {
+          "type": "object",
+          "required": ["signal"],
+          "properties": {
+            "signal": {
+              "enum": [
+                "not-run",
+                "no-frames",
+                "no-screenshot",
+                "all-black",
+                "all-white",
+                "mostly-one-color",
+                "varied",
+                "unreadable"
+              ]
+            },
+            "width": { "type": "integer" },
+            "height": { "type": "integer" },
+            "blackFraction": { "type": "number" },
+            "whiteFraction": { "type": "number" },
+            "otherFraction": { "type": "number" },
+            "dominantShare": { "type": "number" },
+            "uniqueQuantizedColors": { "type": "integer" }
+          }
+        },
+        "audio": {
+          "type": "object",
+          "required": ["signal"],
+          "properties": {
+            "measured": { "type": "boolean" },
+            "signal": {
+              "enum": ["not-measured", "not-run", "silent", "active", "transport-error", "no-mixer-output"]
+            },
+            "frames": { "type": "integer" },
+            "nonSilentFrames": { "type": "integer" },
+            "peak": { "type": "number" },
+            "droppedBlocks": { "type": "integer" },
+            "transportError": { "type": "integer" }
+          }
+        },
+        "logExcerpt": { "type": "string" },
+        "clusters": { "type": "array", "items": { "$ref": "#/$defs/cluster" } }
+      }
+    },
+    "cluster": {
+      "type": "object",
+      "required": ["kind", "key", "likelyOwner", "apps"],
+      "properties": {
+        "kind": { "type": "string" },
+        "key": { "type": "string" },
+        "area": { "type": "string" },
+        "likelyOwner": { "type": "string" },
+        "group": { "type": "string" },
+        "severity": { "enum": ["failure", "signal"] },
+        "detail": { "type": "string" },
+        "apps": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
