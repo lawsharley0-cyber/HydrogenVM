@@ -1,6 +1,7 @@
 #include "Shader.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cmath>
 #include <cstdlib>
@@ -50,6 +51,9 @@ bool takeUtf8Space(const std::string& s, size_t& i) {
     if (c == 0xE3 && b(i + 1) == 0x80 && b(i + 2) == 0x80) { i += 3; return true; }
     if (c == 0xEF && b(i + 1) == 0xBB && b(i + 2) == 0xBF) { i += 3; return true; }
     return false;
+}
+bool reservedMacroName(const std::string& name) {
+    return name.starts_with("GL_") || name.find("__") != std::string::npos;
 }
 bool ppIdent(const std::string& s) {
     if (s.empty() || !(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_')) return false;
@@ -145,7 +149,7 @@ struct Preprocessor {
     int steps = 0;
     int sourceFile = 0;
     int braces = 0;
-    bool fragment = false;
+    bool derivatives = false;
     struct Frame { bool parent = true, on = true, any = false, hadElse = false; };
     std::vector<Frame> stack;
     std::unordered_map<std::string, Macro> macros;
@@ -295,8 +299,9 @@ struct Preprocessor {
         else if (digits.size() > 1 && digits[0] == '0') base = 8;
         if (base == 10 && (digits.find('e') != std::string::npos || digits.find('E') != std::string::npos)) fail("invalid preprocessor expression");
         char* end = nullptr;
+        errno = 0;
         long v = std::strtol(digits.c_str(), &end, base);
-        if (!end || *end || end == digits.c_str()) fail("invalid preprocessor expression");
+        if (!end || *end || end == digits.c_str() || errno == ERANGE) fail("invalid preprocessor expression");
         return v;
     }
     std::vector<PpTok> replaceDefined(const std::vector<PpTok>& in) {
@@ -490,7 +495,7 @@ struct Preprocessor {
         if (!active()) return;
         if (op == "define") {
             if (rest.empty() || !ppIdent(rest[0].text) || rest[0].text == "defined") fail("invalid macro name");
-            if (rest[0].text.starts_with("GL_") || rest[0].text.starts_with("__")) fail("reserved macro name");
+            if (reservedMacroName(rest[0].text)) fail("reserved macro name");
             Macro m;
             size_t n = 1;
             if (rest.size() > 1 && rest[1].text == "(" && !rest[1].space) {
@@ -515,7 +520,7 @@ struct Preprocessor {
         }
         if (op == "undef") {
             if (rest.size() != 1 || !ppIdent(rest[0].text)) fail("invalid #undef");
-            if (rest[0].text.starts_with("GL_") || rest[0].text.starts_with("__")) fail("reserved macro name");
+            if (reservedMacroName(rest[0].text)) fail("reserved macro name");
             macros.erase(rest[0].text); return;
         }
         if (op == "error") {
@@ -544,7 +549,10 @@ struct Preprocessor {
             const auto& name = rest[0].text; const auto& behavior = rest[2].text;
             if (behavior != "require" && behavior != "enable" && behavior != "warn" && behavior != "disable") fail("invalid extension behavior");
             if (name == "all" && (behavior == "require" || behavior == "enable")) fail("invalid extension");
-            if (behavior == "require") fail("unsupported extension " + name);
+            const bool deriv = name == "GL_OES_standard_derivatives";
+            if (behavior == "require" && !deriv) fail("unsupported extension " + name);
+            if (name == "all" && behavior == "disable") derivatives = false;
+            else if (deriv) derivatives = behavior != "disable";
             return;
         }
         fail("unsupported preprocessor directive '#" + op + "'");
@@ -561,7 +569,9 @@ struct Preprocessor {
         toks = lexPp(stripComments(spliceLines(source)));
         macros["GL_ES"] = Macro{false, {}, {{"1", false, {}}}};
         macros["__VERSION__"] = Macro{false, {}, {{"100", false, {}}}};
-        if (fragment) macros["GL_FRAGMENT_PRECISION_HIGH"] = Macro{false, {}, {{"1", false, {}}}};
+        // ES 1.00 section 4.5.4: defined as 1 when the fragment language supports
+        // highp, in both vertex and fragment shaders. This implementation does.
+        macros["GL_FRAGMENT_PRECISION_HIGH"] = Macro{false, {}, {{"1", false, {}}}};
         std::vector<PpTok> chunk;
         int chunkLine = 1;
         int paren = 0;
@@ -601,10 +611,12 @@ struct Preprocessor {
     }
 };
 
-std::vector<std::string> preprocessShader(const std::string& source, bool vertex) {
+std::vector<std::string> preprocessShader(const std::string& source, bool vertex, bool& derivatives) {
+    (void)vertex;
     Preprocessor pp;
-    pp.fragment = !vertex;
-    return pp.run(source);
+    auto tokens = pp.run(source);
+    derivatives = pp.derivatives;
+    return tokens;
 }
 
 struct Expression {
@@ -646,6 +658,9 @@ struct Compiler {
     bool hasMain = false;
     int stmtDepth = 0, structDepth = 0;
     bool wroteFragColor = false, wroteFragData = false;
+    bool derivatives = false;
+    int constDepth = 0;
+    std::unordered_map<size_t, long> constInts;
 
     static constexpr float kPi = 3.14159265358979323846f;
 
@@ -719,11 +734,77 @@ struct Compiler {
         p.variables.push_back(Variable{name, t, storage, slot, count, ro, isArray, invariant});
         return p.variables.back();
     }
+    // Integral constant expressions for array sizes: literals, parentheses,
+    // unary +/-, + - * /, and names of const ints folded earlier. Macros are
+    // already expanded. A non-constant leaves `at` unspecified; callers rewind.
+    std::optional<long> constUnary() {
+        if (++constDepth > 64) return std::nullopt;
+        struct Guard { int& d; ~Guard() { --d; } } guard{constDepth};
+        if (take("+")) return constUnary();
+        if (take("-")) {
+            auto v = constUnary();
+            if (!v) return std::nullopt;
+            return long(0ull - static_cast<unsigned long long>(*v));
+        }
+        if (take("(")) {
+            auto v = constAdd();
+            if (!v || !take(")")) return std::nullopt;
+            return v;
+        }
+        const std::string tok = peek();
+        if (!tok.empty() && std::isdigit(static_cast<unsigned char>(tok[0])) &&
+            tok.find('.') == std::string::npos && tok.find('e') == std::string::npos && tok.find('E') == std::string::npos) {
+            errno = 0;
+            char* end = nullptr;
+            long v = std::strtol(tok.c_str(), &end, 10);
+            if (!end || *end || end == tok.c_str() || errno == ERANGE) return std::nullopt;
+            ++at;
+            return v;
+        }
+        if (ppIdent(tok) && !keyword(tok)) {
+            auto id = findName(tok);
+            if (!id) return std::nullopt;
+            auto it = constInts.find(*id);
+            if (it == constInts.end()) return std::nullopt;
+            ++at;
+            return it->second;
+        }
+        return std::nullopt;
+    }
+    std::optional<long> constMul() {
+        auto v = constUnary();
+        if (!v) return std::nullopt;
+        while (peek() == "*" || peek() == "/") {
+            const bool div = peek() == "/";
+            ++at;
+            auto r = constUnary();
+            if (!r) return std::nullopt;
+            if (div) {
+                if (*r == 0 || (*v == std::numeric_limits<long>::min() && *r == -1)) return std::nullopt;
+                v = *v / *r;
+            } else v = long(static_cast<unsigned long long>(*v) * static_cast<unsigned long long>(*r));
+        }
+        return v;
+    }
+    std::optional<long> constAdd() {
+        auto v = constMul();
+        if (!v) return std::nullopt;
+        while (peek() == "+" || peek() == "-") {
+            const bool sub = peek() == "-";
+            ++at;
+            auto r = constMul();
+            if (!r) return std::nullopt;
+            const auto a = static_cast<unsigned long long>(*v);
+            const auto b = static_cast<unsigned long long>(*r);
+            v = long(sub ? a - b : a + b);
+        }
+        return v;
+    }
     int arraySize() {
-        auto n = peek(); char* end = nullptr;
-        long k = std::strtol(n.c_str(), &end, 10);
-        if (!end || *end || k < 1 || k > 32) fail("invalid array size");
-        ++at; return int(k);
+        size_t saved = at;
+        auto k = constAdd();
+        if (!k || *k < 1 || *k > 32) { at = saved; fail("invalid array size"); }
+        return int(*k);
     }
     bool containsSampler(const Type& t) const {
         if (t.sampler) return true;
@@ -1566,6 +1647,23 @@ struct Compiler {
     }
     Expression emitBuiltin(const std::string& name, std::vector<Expression>& args) {
         auto arity = [&](size_t n) { if (args.size() != n) fail("invalid arguments to " + name); };
+        if (name == "dFdx" || name == "dFdy" || name == "fwidth") {
+            if (!derivatives) fail("unknown variable/function " + name);
+            if (p.vertex) fail(name + " is not available in a vertex shader");
+            arity(1);
+            if (!floatVec(args[0])) fail("invalid arguments to " + name);
+            rvalue(args[0]);
+            p.usesDerivatives = true;
+            if (name == "fwidth") {
+                Expression dx = map1(Op::DFdx, args[0]);
+                Expression dy = map1(Op::DFdy, args[0]);
+                Expression o; o.type = args[0].type;
+                for (size_t i = 0; i < dx.slots.size(); ++i)
+                    o.slots.push_back(emit(Op::Add, emit(Op::Abs, dx.slots[i]), emit(Op::Abs, dy.slots[i])));
+                return named(o.type, o.slots, false);
+            }
+            return map1(name == "dFdx" ? Op::DFdx : Op::DFdy, args[0]);
+        }
         if (name == "radians" || name == "degrees") {
             arity(1); if (!floatVec(args[0])) fail("invalid arguments to " + name);
             return scale(args[0], name == "radians" ? kPi / 180.f : 180.f / kPi);
@@ -1745,8 +1843,9 @@ struct Compiler {
             bool isFloat = tok.find('.') != std::string::npos || tok.find('e') != std::string::npos || tok.find('E') != std::string::npos;
             char* end = nullptr;
             if (!isFloat) {
+                errno = 0;
                 long v = std::strtol(tok.c_str(), &end, 10);
-                if (!end || *end) fail("invalid numeric literal");
+                if (!end || *end || errno == ERANGE) fail("invalid numeric literal");
                 ++at; return lit(float(v), Kind::Int);
             }
             float v = std::strtof(tok.c_str(), &end);
@@ -1762,8 +1861,9 @@ struct Compiler {
         if (peek() == "(") {
             auto args = parseArgs();
             int user = findUser(name, args);
+            const bool derivCall = derivatives && (name == "dFdx" || name == "dFdy" || name == "fwidth");
             if (user >= 0) return callUser(user, std::move(args));
-            if (builtinName(name)) return emitBuiltin(name, args);
+            if (builtinName(name) || derivCall) return emitBuiltin(name, args);
             fail("unknown variable/function " + name);
         }
         auto id = findName(name);
@@ -1815,9 +1915,16 @@ struct Compiler {
             if (take("=")) {
                 if (storage != Storage::Local) fail("unsupported global initializer");
                 if (count != 1 || isArray) fail("unsupported array initializer");
+                const size_t varIndex = p.variables.size() - 1;
+                const bool foldable = q.isConst && t.kind == Kind::Int && t.width == 1 && !t.matrix && !t.isStruct() && !t.sampler;
+                size_t saved = at;
+                std::optional<long> folded = foldable ? constAdd() : std::nullopt;
+                const bool complete = folded && (peek() == "," || peek() == ";");
+                at = saved;
                 Expression dst = named(t, {}, true); dst.lvalue = true; dst.direct = true; dst.origin = slot;
                 for (int n = 0; n < t.width; ++n) dst.slots.push_back(slot + n);
                 store(dst, assignment());
+                if (complete) constInts[varIndex] = *folded;
             } else if (q.isConst) fail("const requires initializer");
         } while (take(","));
         need(";");
@@ -1873,12 +1980,121 @@ struct Compiler {
         } while (take(","));
         need(")");
     }
+    bool paramIs(const Param& param, Kind k, int w) const {
+        return !param.isArray && !param.type.matrix && !param.type.sampler && !param.type.isStruct() &&
+               param.type.kind == k && param.type.width == w;
+    }
+    bool paramMat(const Param& param, int n) const {
+        return !param.isArray && param.type.matrix == n && !param.type.isStruct();
+    }
+    bool paramSam(const Param& param, bool cube) const {
+        return !param.isArray && param.type.sampler && param.type.cube == cube;
+    }
+    // Exact parameter-type match with a built-in overload. Return type and
+    // parameter qualifiers are not part of an ES 1.00 signature. A different
+    // parameter list is a legal overload.
+    bool redefinesBuiltin(const std::string& name, const std::vector<Param>& ps) const {
+        const bool deriv = name == "dFdx" || name == "dFdy" || name == "fwidth";
+        if (deriv) { if (!derivatives) return false; }
+        else if (!builtinName(name)) return false;
+        const int n = int(ps.size());
+        auto allWidth = [&](Kind k, int w) {
+            for (int i = 0; i < n; ++i) if (!paramIs(ps[size_t(i)], k, w)) return false;
+            return n > 0;
+        };
+        auto anyGen = [&](Kind k, int count) {
+            if (n != count) return false;
+            for (int w = 1; w <= 4; ++w) if (allWidth(k, w)) return true;
+            return false;
+        };
+        auto genThenScalar = [&](Kind k, int vecs, int scalars) {
+            if (n != vecs + scalars) return false;
+            for (int w = 1; w <= 4; ++w) {
+                bool ok = true;
+                for (int i = 0; i < vecs; ++i) if (!paramIs(ps[size_t(i)], k, w)) ok = false;
+                for (int i = 0; i < scalars; ++i) if (!paramIs(ps[size_t(vecs + i)], k, 1)) ok = false;
+                if (ok) return true;
+            }
+            return false;
+        };
+        if (name == "radians" || name == "degrees" || name == "sin" || name == "cos" || name == "tan" || name == "asin" ||
+            name == "acos" || name == "exp" || name == "log" || name == "exp2" || name == "log2" || name == "sqrt" ||
+            name == "inversesqrt" || name == "floor" || name == "ceil" || name == "fract" || name == "length" ||
+            name == "normalize" || deriv)
+            return anyGen(Kind::Float, 1);
+        if (name == "abs" || name == "sign") return anyGen(Kind::Float, 1) || anyGen(Kind::Int, 1);
+        if (name == "atan") return anyGen(Kind::Float, 1) || anyGen(Kind::Float, 2);
+        if (name == "pow" || name == "distance" || name == "dot" || name == "reflect") return anyGen(Kind::Float, 2);
+        if (name == "mod") return anyGen(Kind::Float, 2) || genThenScalar(Kind::Float, 1, 1);
+        if (name == "min" || name == "max")
+            return anyGen(Kind::Float, 2) || anyGen(Kind::Int, 2) || genThenScalar(Kind::Float, 1, 1) || genThenScalar(Kind::Int, 1, 1);
+        if (name == "clamp")
+            return anyGen(Kind::Float, 3) || anyGen(Kind::Int, 3) || genThenScalar(Kind::Float, 1, 2) || genThenScalar(Kind::Int, 1, 2);
+        if (name == "mix") return anyGen(Kind::Float, 3) || genThenScalar(Kind::Float, 2, 1);
+        if (name == "step") {
+            if (anyGen(Kind::Float, 2)) return true;
+            if (n != 2) return false;
+            for (int w = 1; w <= 4; ++w)
+                if (paramIs(ps[0], Kind::Float, 1) && paramIs(ps[1], Kind::Float, w)) return true;
+            return false;
+        }
+        if (name == "smoothstep") {
+            if (anyGen(Kind::Float, 3)) return true;
+            if (n != 3) return false;
+            for (int w = 1; w <= 4; ++w)
+                if (paramIs(ps[0], Kind::Float, 1) && paramIs(ps[1], Kind::Float, 1) && paramIs(ps[2], Kind::Float, w)) return true;
+            return false;
+        }
+        if (name == "cross") return n == 2 && paramIs(ps[0], Kind::Float, 3) && paramIs(ps[1], Kind::Float, 3);
+        if (name == "faceforward") return anyGen(Kind::Float, 3);
+        if (name == "refract") {
+            if (n != 3) return false;
+            for (int w = 1; w <= 4; ++w)
+                if (paramIs(ps[0], Kind::Float, w) && paramIs(ps[1], Kind::Float, w) && paramIs(ps[2], Kind::Float, 1)) return true;
+            return false;
+        }
+        if (name == "matrixCompMult") {
+            if (n != 2) return false;
+            for (int m = 2; m <= 4; ++m) if (paramMat(ps[0], m) && paramMat(ps[1], m)) return true;
+            return false;
+        }
+        if (name == "lessThan" || name == "lessThanEqual" || name == "greaterThan" || name == "greaterThanEqual" ||
+            name == "equal" || name == "notEqual") {
+            if (n != 2) return false;
+            const bool eq = name == "equal" || name == "notEqual";
+            for (int w = 2; w <= 4; ++w) {
+                if (paramIs(ps[0], Kind::Float, w) && paramIs(ps[1], Kind::Float, w)) return true;
+                if (paramIs(ps[0], Kind::Int, w) && paramIs(ps[1], Kind::Int, w)) return true;
+                if (eq && paramIs(ps[0], Kind::Bool, w) && paramIs(ps[1], Kind::Bool, w)) return true;
+            }
+            return false;
+        }
+        if (name == "any" || name == "all" || name == "not") {
+            if (n != 1) return false;
+            for (int w = 2; w <= 4; ++w) if (paramIs(ps[0], Kind::Bool, w)) return true;
+            return false;
+        }
+        auto vec = [&](int i, int w) { return i < n && paramIs(ps[size_t(i)], Kind::Float, w); };
+        if (name == "texture2D")
+            return (n == 2 && paramSam(ps[0], false) && vec(1, 2)) || (n == 3 && paramSam(ps[0], false) && vec(1, 2) && vec(2, 1));
+        if (name == "texture2DLod") return n == 3 && paramSam(ps[0], false) && vec(1, 2) && vec(2, 1);
+        if (name == "texture2DProj")
+            return (n == 2 && paramSam(ps[0], false) && (vec(1, 3) || vec(1, 4))) ||
+                   (n == 3 && paramSam(ps[0], false) && (vec(1, 3) || vec(1, 4)) && vec(2, 1));
+        if (name == "texture2DProjLod")
+            return n == 3 && paramSam(ps[0], false) && (vec(1, 3) || vec(1, 4)) && vec(2, 1);
+        if (name == "textureCube")
+            return (n == 2 && paramSam(ps[0], true) && vec(1, 3)) || (n == 3 && paramSam(ps[0], true) && vec(1, 3) && vec(2, 1));
+        if (name == "textureCubeLod") return n == 3 && paramSam(ps[0], true) && vec(1, 3) && vec(2, 1);
+        return false;
+    }
     void parseFunction() {
         while (precision(peek())) ++at;
         Type ret = peek() == "void" ? (take("void"), tyVoid()) : type();
         std::string name = identifier();
         std::vector<Param> params;
         parseParams(params);
+        if (redefinesBuiltin(name, params)) fail("cannot redefine built-in function");
         if (name == "main") {
             if (ret.kind != Kind::Void || !params.empty()) fail("main must be void main()");
             if (hasMain) fail("duplicate main");
@@ -2045,7 +2261,7 @@ struct Compiler {
     }
     void tokenize(const std::string& source) {
         if (source.size() > 65536) fail("shader source too large");
-        tokens = preprocessShader(source, p.vertex);
+        tokens = preprocessShader(source, p.vertex, derivatives);
         if (tokens.size() > 65536) fail("shader source too large");
     }
     void run(const std::string& source) {
@@ -2103,7 +2319,9 @@ const Variable* Program::find(const std::string& name) const {
     return nullptr;
 }
 void Program::initialize(Values& v) const { std::fill_n(v.begin(), slots, 0.0f); }
-bool Program::execute(Values& v, Sample sample, void* context) const {
+
+namespace {
+void execOp(Values& v, const Instruction& i, Sample sample, void* context) {
     auto unitOf = [&](int slot) {
         float u = v[slot];
         return std::isfinite(u) && u >= 0 && u < 8 ? int(u) : -1;
@@ -2112,65 +2330,144 @@ bool Program::execute(Values& v, Sample sample, void* context) const {
         if (sample) sample(context, unitOf(unitSlot), s, t, &v[dst]);
         else std::fill_n(&v[dst], 4, 0.0f);
     };
-    int steps = 0;
-    for (size_t pc = 0; pc < code.size();) {
-        if (++steps > 1000000) return true;
-        const Instruction& i = code[pc];
-        switch (i.op) {
-            case Op::Constant: v[i.dst] = i.value; break;
-            case Op::Move: v[i.dst] = v[i.a]; break;
-            case Op::Add: v[i.dst] = v[i.a] + v[i.b]; break;
-            case Op::Subtract: v[i.dst] = v[i.a] - v[i.b]; break;
-            case Op::Multiply: v[i.dst] = v[i.a] * v[i.b]; break;
-            case Op::Divide: v[i.dst] = v[i.a] / v[i.b]; break;
-            case Op::IntDivide: {
-                float d = v[i.b];
-                v[i.dst] = d == 0.f ? 0.f : std::trunc(v[i.a] / d);
-                break;
-            }
-            case Op::Texture: sampleAt(i.dst, i.a, v[i.b], v[i.c]); break;
-            case Op::TextureCube: {
-                float x = v[i.b], y = v[i.c], z = v[i.d];
-                float ax = std::fabs(x), ay = std::fabs(y), az = std::fabs(z), sc, tc, ma;
-                if (ax >= ay && ax >= az) { ma = ax; sc = x >= 0 ? -z : z; tc = -y; }
-                else if (ay >= az) { ma = ay; sc = x; tc = y >= 0 ? z : -z; }
-                else { ma = az; sc = z >= 0 ? x : -x; tc = -y; }
-                float s = ma != 0.f ? 0.5f * (sc / ma + 1.f) : 0.5f;
-                float t = ma != 0.f ? 0.5f * (tc / ma + 1.f) : 0.5f;
-                sampleAt(i.dst, i.a, s, t);
-                break;
-            }
-            case Op::Jump: pc = size_t(i.a); continue;
-            case Op::JumpIfFalse: if (v[i.a] == 0.f) { pc = size_t(i.b); continue; } break;
-            case Op::Discard: return false;
-            case Op::Select: v[i.dst] = v[i.a] != 0.f ? v[i.b] : v[i.c]; break;
-            case Op::Abs: v[i.dst] = std::fabs(v[i.a]); break;
-            case Op::Floor: v[i.dst] = std::floor(v[i.a]); break;
-            case Op::Ceil: v[i.dst] = std::ceil(v[i.a]); break;
-            case Op::Sqrt: v[i.dst] = v[i.a] > 0.f ? std::sqrt(v[i.a]) : 0.f; break;
-            case Op::InverseSqrt: v[i.dst] = v[i.a] > 0.f ? 1.f / std::sqrt(v[i.a]) : 0.f; break;
-            case Op::Pow: v[i.dst] = std::pow(v[i.a], v[i.b]); break;
-            case Op::Exp: v[i.dst] = std::exp(v[i.a]); break;
-            case Op::Log: v[i.dst] = v[i.a] > 0.f ? std::log(v[i.a]) : 0.f; break;
-            case Op::Exp2: v[i.dst] = std::exp2(v[i.a]); break;
-            case Op::Log2: v[i.dst] = v[i.a] > 0.f ? std::log2(v[i.a]) : 0.f; break;
-            case Op::Sin: v[i.dst] = std::sin(v[i.a]); break;
-            case Op::Cos: v[i.dst] = std::cos(v[i.a]); break;
-            case Op::Tan: v[i.dst] = std::tan(v[i.a]); break;
-            case Op::Asin: v[i.dst] = std::asin(v[i.a]); break;
-            case Op::Acos: v[i.dst] = std::acos(v[i.a]); break;
-            case Op::Atan: v[i.dst] = std::atan(v[i.a]); break;
-            case Op::Atan2: v[i.dst] = std::atan2(v[i.a], v[i.b]); break;
-            case Op::Less: v[i.dst] = v[i.a] < v[i.b] ? 1.f : 0.f; break;
-            case Op::LessEqual: v[i.dst] = v[i.a] <= v[i.b] ? 1.f : 0.f; break;
-            case Op::Greater: v[i.dst] = v[i.a] > v[i.b] ? 1.f : 0.f; break;
-            case Op::GreaterEqual: v[i.dst] = v[i.a] >= v[i.b] ? 1.f : 0.f; break;
-            case Op::Equal: v[i.dst] = v[i.a] == v[i.b] ? 1.f : 0.f; break;
-            case Op::NotEqual: v[i.dst] = v[i.a] != v[i.b] ? 1.f : 0.f; break;
-            case Op::Not: v[i.dst] = v[i.a] == 0.f ? 1.f : 0.f; break;
+    switch (i.op) {
+        case Op::Constant: v[i.dst] = i.value; break;
+        case Op::Move: v[i.dst] = v[i.a]; break;
+        case Op::Add: v[i.dst] = v[i.a] + v[i.b]; break;
+        case Op::Subtract: v[i.dst] = v[i.a] - v[i.b]; break;
+        case Op::Multiply: v[i.dst] = v[i.a] * v[i.b]; break;
+        case Op::Divide: v[i.dst] = v[i.a] / v[i.b]; break;
+        case Op::IntDivide: {
+            float d = v[i.b];
+            v[i.dst] = d == 0.f ? 0.f : std::trunc(v[i.a] / d);
+            break;
         }
+        case Op::Texture: sampleAt(i.dst, i.a, v[i.b], v[i.c]); break;
+        case Op::TextureCube: {
+            float x = v[i.b], y = v[i.c], z = v[i.d];
+            float ax = std::fabs(x), ay = std::fabs(y), az = std::fabs(z), sc, tc, ma;
+            if (ax >= ay && ax >= az) { ma = ax; sc = x >= 0 ? -z : z; tc = -y; }
+            else if (ay >= az) { ma = ay; sc = x; tc = y >= 0 ? z : -z; }
+            else { ma = az; sc = z >= 0 ? x : -x; tc = -y; }
+            float s = ma != 0.f ? 0.5f * (sc / ma + 1.f) : 0.5f;
+            float t = ma != 0.f ? 0.5f * (tc / ma + 1.f) : 0.5f;
+            sampleAt(i.dst, i.a, s, t);
+            break;
+        }
+        case Op::Select: v[i.dst] = v[i.a] != 0.f ? v[i.b] : v[i.c]; break;
+        case Op::Abs: v[i.dst] = std::fabs(v[i.a]); break;
+        case Op::Floor: v[i.dst] = std::floor(v[i.a]); break;
+        case Op::Ceil: v[i.dst] = std::ceil(v[i.a]); break;
+        case Op::Sqrt: v[i.dst] = v[i.a] > 0.f ? std::sqrt(v[i.a]) : 0.f; break;
+        case Op::InverseSqrt: v[i.dst] = v[i.a] > 0.f ? 1.f / std::sqrt(v[i.a]) : 0.f; break;
+        case Op::Pow: v[i.dst] = std::pow(v[i.a], v[i.b]); break;
+        case Op::Exp: v[i.dst] = std::exp(v[i.a]); break;
+        case Op::Log: v[i.dst] = v[i.a] > 0.f ? std::log(v[i.a]) : 0.f; break;
+        case Op::Exp2: v[i.dst] = std::exp2(v[i.a]); break;
+        case Op::Log2: v[i.dst] = v[i.a] > 0.f ? std::log2(v[i.a]) : 0.f; break;
+        case Op::Sin: v[i.dst] = std::sin(v[i.a]); break;
+        case Op::Cos: v[i.dst] = std::cos(v[i.a]); break;
+        case Op::Tan: v[i.dst] = std::tan(v[i.a]); break;
+        case Op::Asin: v[i.dst] = std::asin(v[i.a]); break;
+        case Op::Acos: v[i.dst] = std::acos(v[i.a]); break;
+        case Op::Atan: v[i.dst] = std::atan(v[i.a]); break;
+        case Op::Atan2: v[i.dst] = std::atan2(v[i.a], v[i.b]); break;
+        case Op::Less: v[i.dst] = v[i.a] < v[i.b] ? 1.f : 0.f; break;
+        case Op::LessEqual: v[i.dst] = v[i.a] <= v[i.b] ? 1.f : 0.f; break;
+        case Op::Greater: v[i.dst] = v[i.a] > v[i.b] ? 1.f : 0.f; break;
+        case Op::GreaterEqual: v[i.dst] = v[i.a] >= v[i.b] ? 1.f : 0.f; break;
+        case Op::Equal: v[i.dst] = v[i.a] == v[i.b] ? 1.f : 0.f; break;
+        case Op::NotEqual: v[i.dst] = v[i.a] != v[i.b] ? 1.f : 0.f; break;
+        case Op::Not: v[i.dst] = v[i.a] == 0.f ? 1.f : 0.f; break;
+        case Op::DFdx:
+        case Op::DFdy:
+            v[i.dst] = 0.f;
+            break;
+        case Op::Jump:
+        case Op::JumpIfFalse:
+        case Op::Discard:
+            break;
+    }
+}
+} // namespace
+
+bool Program::execute(Values& v, Sample sample, void* context, int64_t* budget) const {
+    int64_t local = 1000000;
+    int64_t* left = budget ? budget : &local;
+    for (size_t pc = 0; pc < code.size();) {
+        if (*left <= 0) {
+            if (budget) *budget = -1;
+            return budget == nullptr;
+        }
+        --*left;
+        const Instruction& i = code[pc];
+        if (i.op == Op::Jump) { pc = size_t(i.a); continue; }
+        if (i.op == Op::JumpIfFalse) {
+            if (v[i.a] == 0.f) { pc = size_t(i.b); continue; }
+        } else if (i.op == Op::Discard) return false;
+        else execOp(v, i, sample, context);
         ++pc;
     }
     return true;
+}
+
+bool Program::executeQuad(std::array<Values, 4>& lanes, Sample sample, void* context, int64_t* budget,
+                          int activeMask, int& discardedMask) const {
+    size_t pc[4] = {};
+    bool live[4] = {};
+    discardedMask = 0;
+    for (int lane = 0; lane < 4; ++lane) live[lane] = (activeMask & (1 << lane)) != 0;
+    int64_t local = 1000000;
+    int64_t* left = budget ? budget : &local;
+    while (true) {
+        size_t target = ~size_t(0);
+        bool any = false;
+        for (int lane = 0; lane < 4; ++lane) {
+            if (!live[lane]) continue;
+            if (pc[lane] >= code.size()) { live[lane] = false; continue; }
+            any = true;
+            if (pc[lane] < target) target = pc[lane];
+        }
+        if (!any) return true;
+        int mask = 0, count = 0;
+        for (int lane = 0; lane < 4; ++lane) if (live[lane] && pc[lane] == target) { mask |= 1 << lane; ++count; }
+        if (*left < count) {
+            if (budget) *budget = -1;
+            return budget == nullptr;
+        }
+        *left -= count;
+        const Instruction& ins = code[target];
+        if (ins.op == Op::DFdx || ins.op == Op::DFdy) {
+            for (int lane = 0; lane < 4; ++lane) if (mask & (1 << lane)) {
+                const int hi = ins.op == Op::DFdx ? (lane | 1) : (lane | 2);
+                const int lo = ins.op == Op::DFdx ? (lane & ~1) : (lane & ~2);
+                lanes[lane][ins.dst] = lanes[hi][ins.a] - lanes[lo][ins.a];
+                ++pc[lane];
+            }
+            continue;
+        }
+        if (ins.op == Op::Discard) {
+            for (int lane = 0; lane < 4; ++lane) if (mask & (1 << lane)) {
+                live[lane] = false;
+                discardedMask |= 1 << lane;
+            }
+            continue;
+        }
+        if (ins.op == Op::Jump) {
+            for (int lane = 0; lane < 4; ++lane) if (mask & (1 << lane)) pc[lane] = size_t(ins.a);
+            continue;
+        }
+        if (ins.op == Op::JumpIfFalse) {
+            for (int lane = 0; lane < 4; ++lane) if (mask & (1 << lane)) {
+                if (lanes[lane][ins.a] == 0.f) pc[lane] = size_t(ins.b);
+                else ++pc[lane];
+            }
+            continue;
+        }
+        for (int lane = 0; lane < 4; ++lane) if (mask & (1 << lane)) {
+            execOp(lanes[lane], ins, sample, context);
+            ++pc[lane];
+        }
+    }
 }
 } // namespace Hydrogen::Runtime::Shader
