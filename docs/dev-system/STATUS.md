@@ -18,7 +18,7 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 Source: `docs/dev-system/BACKLOG.md`. Bands P0–P2. Score is `impact * severity / complexity` inside a band.
 
-Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D frameworks, E Apple shell. None of them are staffed in this snapshot.
+Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D frameworks, E Apple shell. Current open PRs reserve Group B (#11/#12), Clash tools (#13), and heap/allocator work (#15). PR #16 owns only the shared PCM decoder and its standalone tests. Read current PR file lists before editing; this table is not an ownership lock.
 
 ## Ownership
 
@@ -34,47 +34,45 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 
 ## Current compat results
 
-Measured on Linux x86_64, Clang 18.1.3, host page size **4096**, commit `a4b0f8b` (the commit that contains this JSON is the one after that; the report's `git.commit` is the code that was executed, and `git.dirty` was false). Artifact: `docs/dev-system/baselines/linux-headless.json`. `summary.ok` is true. Schema check passed. A self-diff has no regressions.
+Cloud Linux x86_64 (Ubuntu 24.04, kernel 6.18.55), Intel Xeon Platinum 8573C, Clang 18.1.3, Release `-O3 -DNDEBUG`, `-ffp-contract=off`, **4096-byte host pages**. Tested clean commit `031b16d9062ebb341ac2505a102d1817611c5e1f`, branch `codex/pcm-decoder-safety`, draft [#16](https://github.com/lawsharley0-cyber/HydrogenVM/pull/16). This runtime does not include unmerged #11/#12/#15.
 
-Harness self-tests: 56 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`). Counted on this branch. The baseline JSON below is still the `a4b0f8b` run.
-
-Indexed run from this branch, not a new baseline: `docs/dev-system/reports/linux-x86_64/20261021T185933Z-8771deca6655.json`. `git.commit` is `8771deca6655` and `git.dirty` was false. `summary.ok` is true. Diff against `baselines/linux-headless.json`: 0 regressions, 0 attention, 0 informational. Clash is still a skip. `docs/dev-system/reports/index.json` lists that one row. `latest.json` points at it.
+Indexed evidence: [20261022T043240Z-031b16d9062e.json](reports/linux-x86_64/20261022T043240Z-031b16d9062e.json). `git.dirty=false`, `summary.ok=true`; baseline and previous indexed diffs have **zero regressions and zero attention**. Timing differences from older hosts are informational. Existing tmpnam/regex binding improvements predate this patch and are not credited to #16. The committed baseline remains unchanged. The preceding indexed `8771deca6655` run and `a4b0f8b` baseline remain historical evidence.
 
 | Suite | Result |
 |---|---|
-| selftest | pass. 10.0 M instructions, result `0xA05A0848`, about 541 MIPS on this VM |
-| fulltest | pass. 79 passed, 0 failed |
-| asm | pass. arm_alu 40, arm_mem 17, thumb 30, vfp_neon 23 (110) |
-| differential C | pass. 5 integer configs × 27 and 5 VFP/NEON configs × 29 (280) |
-| Python | pass. `verify_ipa`, `clash_protocol`, `clash_home_state` |
-| decoder fuzz | not run (pass `--fuzz`) |
-| ld64 iOS guests, CoreMark, simulator, device | not run. See headless limits |
+| PCM regression | 42 pass in Release and targeted ASan/UBSan/float-cast-overflow; main fails 12 release checks and three separate sanitizer probes |
+| fulltest | 191 pass, zero failures |
+| CPU | selftest, four asm guests and ten differential C configurations pass |
+| Python | three required modules and 56 harness tests pass |
+| decoder fuzz / ld64 / CoreMark / Apple device | Not run |
 
-| App | Status | Frames | Frame signal | Audio | Load-time gaps |
-|---|---|---:|---|---|---|
-| angry-birds | ran, no crash | 95 | mostly-one-color (about 93% near-white, 6% other). Not a title-screen proof | mixer silent | `tmpnam` |
-| tiny-tower | ran, no crash | 69 | varied | mixer active | `CGFontCopyTableForTag`, `CGFontGet*` queries, `glPointSizePointerOES` |
-| art-of-glow | ran, no crash | 50 | varied | mixer silent | `regcomp`, `regexec`, `regerror`, `regfree`. `SCNetworkReachability` reported offline (signal). `kCFNumberNaN` and infinities zero-filled (signal) |
-| clash-royale-2-1306-1 | skipped | — | not run | not measured | IPA not in the fixture root. Skip is not a pass |
+| App | 3-second smoke | Presented frames | Frame signal | Mixer signal |
+|---|---|---:|---|---|
+| Angry Birds 1.0 | Ran, no crash | 73 | mostly-one-color | silent |
+| Tiny Tower 1.0 | Ran, no crash | 60 | varied | active |
+| Art of Glow 1.1.2 | Ran, no crash | 37 | varied | silent |
+| Clash Royale 2.1306.1 | Optional fixture absent: **skip** | — | not run | not measured |
 
-A 4 KB pass is not an iPhone memory-model pass. Frame counts move between runs; the diff does not fail on that unless presented frames drop to zero. MIPS, average frame time, and mixer sample counts (`frames`, `nonSilentFrames`) that move by 25% or more while the signal stays `active` are informational. A smaller sample-count move is not noted.
+GitHub on `031b16d`: [PCM sanitizer regression](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39722798751), [compatibility gate](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39722798705), and [Linux CI](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39722798790) all succeeded. macOS was skipped, not passed. The cloud container's targeted ASan run used `ASAN_OPTIONS=detect_leaks=0` because LeakSanitizer cannot enumerate `/proc` tasks here; GitHub's sanitizer job passed with its defaults. Address, undefined-behavior and float-cast-overflow instrumentation remained enabled in both.
 
-Linux Actions is green on `6af9976`. The compat harness passed in run [39646706013](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646706013). The Linux CI job published `runs/20261021-175201-39646696896-linux` in run [39646696896](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646696896). The empty-step failure on `07fabbb` (run 39633887764) was real; it is history, not the current gate. The macOS CI job on that push was skipped by its existing condition.
+A 4 KB Linux pass does not prove 16 KB iPhone permissions, precise fault behavior, signed-device operation, speaker output, or full gameplay. The original 13 owner observations remain unresolved, preserved in [#15's USER_APP_REPORTS.md at e1684a8](https://github.com/lawsharley0-cyber/HydrogenVM/blob/e1684a89bc214cd8eac2bc30c1feb060e9ecfdab/docs/dev-system/USER_APP_REPORTS.md). No missing-music report is attributed to this synthetic PCM defect without matching fixtures.
 
-## Fixed regressions
+Matching-build [startup measurements and complete targeted evidence](reports/performance/20261021-pcm-safety.json): 12 serial 10-second ABBA samples across the three fixtures. Timings move both directions; **no speed gain established**. All live frame signals stay varied, Tiny Tower mixer stays active, and no audio blocks are dropped. These are fresh-start samples, not same-sandbox relaunch or gameplay validation.
 
-None in the infrastructure change. The harness does not alter runtime behavior, so it cannot close a product bug by itself.
+## Fixed regressions awaiting independent review
 
-| ID | Was | Fix | Proven by |
+| ID | Trigger / root cause | Result | Evidence |
 |---|---|---|---|
-| — | — | — | — |
+| B-114 / #16 | Float64 PCM enters a 32-bit accumulator and shifts by 56; NaN reaches an int16 cast; unsupported widths drive unchecked shifts | Validate layouts first, decode float values at their own width, silence NaN and saturate infinities; preserve supported finite PCM outputs | `tests/audio/PcmDecodeTests.cpp`, `tools/test_pcm_decode.sh`, JSON above and matching-build evidence below |
 
 ## Pending PRs
 
-| PR | Branch | What it contains | Merged |
-|---|---|---|---|
-| This change | `cursor/infra-dev-system-1960` | Docs, harness, tests, workflow, baseline JSON | No |
-| [#3](https://github.com/lawsharley0-cyber/HydrogenVM/pull/3) | `cursor/compat-report-index-c782` | `AGENTS.md`, indexed JSON reports, active-mixer sample notes. Base is the row above | No |
+| PR | Scope / reserved files | Integration |
+|---|---|---|
+| #11 / #12 | GLSL bounds / uniform storage and register allocation, Group B and GLES tests | Open; do not duplicate |
+| #13 | Clash continuation docs/tools | Open; restoration not complete |
+| #15 | Aligned allocations, heap/stdlib and standalone allocator gate; owner app reports | Open; no changes taken over here |
+| #16 | `audio/Decode.cpp`, synthetic PCM tests and separate PCM workflow | Draft; independent review and owner merge required |
 
 ## Decisions
 
@@ -84,6 +82,7 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 | 2026-10-21 | Scope is the audit backlog, Clash past the 65% load, and performance follow-ons found while speeding apps up | Scope of this change | Does not by itself implement those items |
 | 2026-10-21 | Harness fixtures are SHA-256 plus a directory. Three existing IPAs stay grandfathered. New ids cannot use a repo path | This change | Deleting the committed IPAs is still open |
 | 2026-10-21 | Issue generator is dry-run. Nothing is auto-filed | This change | No GitHub issues exist on the repo |
+| 2026-10-21 | B-114 PCM safety fix is cloud-tested in draft #16, not integrated | Cloud author | 42 synthetic checks; Linux compatibility gate green; 4 KB and headless limits retained. No owner app report closed |
 
 ## Needs owner
 
@@ -101,8 +100,7 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 
 ## Next improvements
 
-1. Teach `tools/hvm_report.py` to run `fulltest` so the published `ci-reports` row matches the harness (B-002 follow-up). The compat job already runs `fulltest`. Do not treat the skipped macOS job as a pass.
-2. B-003 doc reconciliation, review/docs role, no runtime files.
-3. Staff Group B for the near clip (B-103) or Group D for `CGFont*` (B-109) or libc for `regcomp` (B-108). Do not staff two writers for one letter.
-4. After a fixture decision, start B-106 (21903) on Group C alone.
-5. Do not start SIMD raster or CPU fusion until B-103 and B-101 have landed.
+1. Independent review of #16 and #15; author does not merge. Preserve both standalone gates during owner integration.
+2. Recheck current ownership before selecting another reproducible shared failure. Group D `CGFont*` remains a possible synthetic/available-fixture task; exact owner app reports need matching scenarios.
+3. Graphics SIMD/compositing work still waits on Group B's clipper/correctness work. CPU fusion waits on B-101; no bypass based on a 4 KB cloud pass.
+4. Continue B-003 documentation reconciliation separately. Regex/tmpnam binding improvements already present on main are not new work for this PR.
