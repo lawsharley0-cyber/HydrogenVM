@@ -25,6 +25,7 @@ Status words used below:
 | Per-app launch, crash, frame, audio, import, and log record | Operational on Linux headless | `tools/compat_harness/runner.py` |
 | Failure clustering by likely cause and role | Operational | `tools/compat_harness/cluster.py` |
 | Baseline diff that ignores MIPS noise | Operational | `tools/compat_harness/diffing.py` |
+| Indexed report history under `docs/dev-system/reports/` | Operational | `tools/compat_harness/history.py`. Does not replace the baseline |
 | JSON report and a JSON Schema document | Operational | `tools/compat_harness/schema/report.schema.json` |
 | Issue markdown, dry-run unless `--write` | Operational. Filing to GitHub is not implemented | `tools/compat_harness/issues.py` |
 | Harness self-tests | Operational | `tools/compat_harness/tests/` |
@@ -89,7 +90,7 @@ python3 tools/hvm_compat.py run \
   --out build/compat-report
 ```
 
-Read `build/compat-report/diff.json`. Regressions are launch loss, new crashes, a new or changed load error, new load-time unimplemented imports, unit or Python failures, presented frames dropping to zero, a framebuffer that went from `varied` or `mostly-one-color` to `all-black` or `all-white`, or mixer output that went from `active` to `silent`. MIPS, average frame time, and raw audio sample counts are informational. A baseline row that was skipped and now has a real run is new coverage, not a regression.
+Read `build/compat-report/diff.json`. Regressions are launch loss, new crashes, a new or changed load error, new load-time unimplemented imports, unit or Python failures, presented frames dropping to zero, a framebuffer that went from `varied` or `mostly-one-color` to `all-black` or `all-white`, or mixer output that went from `active` to `silent`. MIPS, average frame time, and raw audio sample counts (`frames` and `nonSilentFrames`, ±25% while the signal stays `active`; a zero baseline is noted when the count is no longer zero) are informational. A baseline row that was skipped and now has a real run is new coverage, not a regression. `python3 tools/hvm_compat.py diff --previous` compares the report with the previous indexed run. That check does not replace the baseline.
 
 ### 2. Classify — Operational
 

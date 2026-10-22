@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "kind": "hvm-compat-report-pointer",
+  "path": "linux-x86_64/20261021T185933Z-8771deca6655.json",
+  "sha": "8771deca6655f7c2a2fba85fd24de33140b44a12",
+  "date": "2026-10-21T18:59:33+00:00",
+  "platform": "linux-x86_64",
+  "reportSchemaVersion": 1,
+  "summary": {
+    "ok": true,
+    "unitFailed": 0,
+    "pythonFailed": 0,
+    "fuzzStatus": "not-run",
+    "appsResolved": 3,
+    "appsSkipped": 1,
+    "appsCrashed": 0,
+    "appsLaunchFailed": 0,
+    "resolveErrors": 0,
+    "clusterCount": 18
+  }
+}

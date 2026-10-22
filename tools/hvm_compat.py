@@ -3,6 +3,8 @@
 
 Usage:
   python3 tools/hvm_compat.py run --out build/compat-report
+  python3 tools/hvm_compat.py diff --previous build/compat-report/report.json
+  python3 tools/hvm_compat.py record build/compat-report/report.json
   python3 tools/hvm_compat.py issues build/compat-report/report.json
 """
 import os
