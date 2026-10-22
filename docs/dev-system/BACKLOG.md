@@ -83,6 +83,8 @@ These are Planned. They are not separate roles. Land B-103 first.
 
 ## Scheduling notes
 
+- B-210 (P1, impact 4, severity 4, complexity 1, score 16): reject aligned-allocation size overflow and invalid alignments before touching the heap. Owned by `codex/aligned-allocation-safety` (`Heap.cpp`, libc `Stdlib.cpp`, separate heap regression executable). Reproduced on `39904cb`: `allocAligned(0xfffffff0, 4096)` returns a block with only 4080 usable bytes. This is a shared corruption risk, not yet attributed to any observed game crash. Does not change Group A mappings, locks, handlers or fault behavior.
+
 - B-001 is operational for Linux as of `6af9976`. The compat job runs the harness. Teaching `hvm_report.py` to run `fulltest` is still open and does not reopen B-001. The `07fabbb` empty-step failure (run 39633887764) stays on the record.
 - B-111 shares `OpenGLES.cpp` with B-103. If the clipper is open, point-size waits.
 - B-109 shares Group D with any Foundation or UIKit class change. Regex and `tmpnam` do not, if they stay in libc.

@@ -108,11 +108,16 @@ uint32_t Heap::allocZeroed(uint32_t size) {
 }
 
 uint32_t Heap::allocAligned(uint32_t size, uint32_t align) {
+    // Validate before rounding or adding alignment slack. Guest size_t is
+    // 32-bit: wrapping here would turn a large request into a small live block.
+    if (!align || (align & (align - 1)) || size > 0x7FFFFFF0u) return 0;
     if (align <= kAlign) return alloc(size);
+    const uint64_t rounded = (uint64_t(std::max(size, kSmallMax + 1)) + kAlign - 1) & ~uint64_t(kAlign - 1);
+    const uint64_t requested = rounded + align;
+    if (requested > UINT32_MAX) return 0;
     // Over-allocate and free the slack in front (big blocks only).
     std::lock_guard<std::mutex> lk(mu_);
-    const uint32_t rounded = (std::max(size, kSmallMax + 1) + kAlign - 1) & ~(kAlign - 1);
-    const uint32_t raw = bigAlloc(rounded + align);
+    const uint32_t raw = bigAlloc(uint32_t(requested));
     if (!raw) return 0;
     const uint32_t aligned = (raw + align - 1) & ~(align - 1);
     const uint32_t total = live_[raw];
