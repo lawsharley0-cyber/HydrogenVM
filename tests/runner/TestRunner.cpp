@@ -712,6 +712,24 @@ int runFullSubsystemTests() {
                   runStage("struct S { float x; float y; };\nS s;\nvoid main() { s.x = 0.25; s.y = 0.5; gl_FragColor = vec4(s.x, s.y, 0.0, 1.0); }",
                            false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0, 1),
               "GLSL rejects out-of-range constant sizes and struct layouts that overflow the register file");
+        // Integer literals are stored as float32. 2147483647 rounds to 2147483648,
+        // which does not fit in int. The compile must reject that index instead of
+        // casting first (undefined, and UBSan aborts).
+        check(shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[2147483647]); }", "array index must be an in-range literal") &&
+                  shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[2147483648]); }", "array index must be an in-range literal") &&
+                  shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[9223372036854775807]); }", "array index must be an in-range literal") &&
+                  shows("void main() { vec4 v = vec4(1.0); gl_FragColor = vec4(v[2147483647]); }", "array index must be an in-range literal") &&
+                  shows("void main() { ivec4 v = ivec4(1, 2, 3, 4); gl_FragColor = vec4(float(v[2147483647])); }", "array index must be an in-range literal") &&
+                  shows("void main() { mat2 m = mat2(1.0); gl_FragColor = vec4(m[2147483647]); }", "array index must be an in-range literal") &&
+                  shows("struct S { float x[4]; };\nvoid main() { S s; gl_FragColor = vec4(s.x[2147483647]); }", "array index must be an in-range literal") &&
+                  shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[4]); }", "array index must be an in-range literal") &&
+                  shows("void main() { vec4 v = vec4(1.0); gl_FragColor = vec4(v[5]); }", "array index must be an in-range literal") &&
+                  shows("void main() { mat2 m = mat2(1.0); gl_FragColor = m[2]; }", "array index must be an in-range literal") &&
+                  runStage("float a[4];\nvoid main() { a[0] = 0.25; a[3] = 0.5; gl_FragColor = vec4(a[0], a[3], 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0, 1) &&
+                  runStage("void main() { vec4 v = vec4(1.0, 2.0, 3.0, 4.0); mat2 m = mat2(1.0, 2.0, 3.0, 4.0); gl_FragColor = vec4(v[2], m[1].x, m[1].y, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 3, 3, 4, 1),
+              "GLSL rejects out-of-range constant indexes, including float32 literals that do not fit in int");
         {
             Shader::Program warned;
             const bool ok = warned.compile(
