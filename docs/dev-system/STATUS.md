@@ -36,7 +36,9 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 
 Measured on Linux x86_64, Clang 18.1.3, host page size **4096**, commit `a4b0f8b` (the commit that contains this JSON is the one after that; the report's `git.commit` is the code that was executed, and `git.dirty` was false). Artifact: `docs/dev-system/baselines/linux-headless.json`. `summary.ok` is true. Schema check passed. A self-diff has no regressions.
 
-Harness self-tests: 30 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`).
+Harness self-tests: 56 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`). Counted on this branch. The baseline JSON below is still the `a4b0f8b` run.
+
+Indexed run from this branch, not a new baseline: `docs/dev-system/reports/linux-x86_64/20261021T185933Z-8771deca6655.json`. `git.commit` is `8771deca6655` and `git.dirty` was false. `summary.ok` is true. Diff against `baselines/linux-headless.json`: 0 regressions, 0 attention, 0 informational. Clash is still a skip. `docs/dev-system/reports/index.json` lists that one row. `latest.json` points at it.
 
 | Suite | Result |
 |---|---|
@@ -55,7 +57,7 @@ Harness self-tests: 30 passed, 0 failed (`python3 -m unittest discover -s tools/
 | art-of-glow | ran, no crash | 50 | varied | mixer silent | `regcomp`, `regexec`, `regerror`, `regfree`. `SCNetworkReachability` reported offline (signal). `kCFNumberNaN` and infinities zero-filled (signal) |
 | clash-royale-2-1306-1 | skipped | — | not run | not measured | IPA not in the fixture root. Skip is not a pass |
 
-A 4 KB pass is not an iPhone memory-model pass. Frame counts move between runs; the diff does not fail on that unless presented frames drop to zero. MIPS and average frame time are informational.
+A 4 KB pass is not an iPhone memory-model pass. Frame counts move between runs; the diff does not fail on that unless presented frames drop to zero. MIPS, average frame time, and mixer sample counts (`frames`, `nonSilentFrames`) that move by 25% or more while the signal stays `active` are informational. A smaller sample-count move is not noted.
 
 Linux Actions is green on `6af9976`. The compat harness passed in run [39646706013](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646706013). The Linux CI job published `runs/20261021-175201-39646696896-linux` in run [39646696896](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646696896). The empty-step failure on `07fabbb` (run 39633887764) was real; it is history, not the current gate. The macOS CI job on that push was skipped by its existing condition.
 
@@ -72,6 +74,7 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 | PR | Branch | What it contains | Merged |
 |---|---|---|---|
 | This change | `cursor/infra-dev-system-1960` | Docs, harness, tests, workflow, baseline JSON | No |
+| [#3](https://github.com/lawsharley0-cyber/HydrogenVM/pull/3) | `cursor/compat-report-index-c782` | `AGENTS.md`, indexed JSON reports, active-mixer sample notes. Base is the row above | No |
 
 ## Decisions
 
