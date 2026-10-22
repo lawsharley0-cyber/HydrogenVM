@@ -3052,12 +3052,14 @@ void execOp(Values& v, const std::vector<float>& mem, float* spill, const Instru
             wr(i.dst, 0.f);
             break;
         case Op::Load: {
-            // Out-of-range indexes read element 0, matching the select-chain lowering.
+            // Out-of-range indexes read element 0 and never write. Compare the
+            // float before casting: 1e20, -1e20 and 2^31 are not representable as int.
             float iv = rd(i.a);
             int idx = 0;
             if (std::isfinite(iv)) {
-                idx = int(std::trunc(iv));
-                if (idx < 0 || idx >= i.c) idx = 0;
+                const float truncated = std::trunc(iv);
+                if (truncated >= 0.f && truncated < float(i.c) && truncated <= float(std::numeric_limits<int>::max()))
+                    idx = int(truncated);
             }
             const int addr = i.d < 0 ? i.d - idx * i.b : i.d + idx * i.b;
             wr(i.dst, rd(addr));

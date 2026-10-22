@@ -835,6 +835,43 @@ int runFullSubsystemTests() {
             check(compiled && ran && near4(o, 0.75f, 0.125f, 0.f, 1.f),
                   "GLSL spills local arrays that do not fit beside each other in the register file");
         }
+        {
+            const char* src =
+                "uniform vec4 pal[2];\n"
+                "void main() {\n"
+                "  vec4 huge = pal[int(1e20)];\n"
+                "  vec4 neg = pal[int(-1e20)];\n"
+                "  vec4 wide = pal[int(2147483648.0)];\n"
+                "  vec4 second = pal[1];\n"
+                "  float a[4];\n"
+                "  a[0] = 0.25; a[1] = 0.5; a[2] = 0.75; a[3] = 1.0;\n"
+                "  a[int(1e20)] = 0.125;\n"
+                "  a[int(-1e20)] = 0.125;\n"
+                "  gl_FragColor = vec4(huge.x, neg.y + wide.z, second.x, a[0] + a[1]);\n"
+                "}\n";
+            Shader::Program program;
+            const bool compiled = program.compile(src, false);
+            if (!compiled) std::printf("    out-of-range index failed: %s\n", program.error.c_str());
+            bool ran = false;
+            if (compiled) {
+                auto* pal = program.find("pal");
+                if (pal && pal->memory && int(program.uniformMem.size()) >= pal->slot + 8) {
+                    program.uniformMem[size_t(pal->slot + 0)] = 0.25f;
+                    program.uniformMem[size_t(pal->slot + 1)] = 0.5f;
+                    program.uniformMem[size_t(pal->slot + 2)] = 0.75f;
+                    program.uniformMem[size_t(pal->slot + 3)] = 1.f;
+                    program.uniformMem[size_t(pal->slot + 4)] = 0.125f;
+                }
+                Shader::Values values;
+                program.initialize(values);
+                ran = program.execute(values);
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            if (compiled && ran && !near4(o, 0.25f, 1.25f, 0.125f, 0.75f))
+                std::printf("    out-of-range index color %g %g %g %g\n", o[0], o[1], o[2], o[3]);
+            check(compiled && ran && near4(o, 0.25f, 1.25f, 0.125f, 0.75f),
+                  "GLSL out-of-range dynamic indexes read element 0 and write nothing");
+        }
         check(runStage("#extension GL_OES_standard_derivatives : require\nvoid main() { gl_FragColor = vec4(dFdx(1.0)); }",
                        false, [](auto&, auto&) {}, o) && near4(o, 0, 0, 0, 0) &&
                   shows("void main() { gl_FragColor = vec4(dFdx(1.0)); }", "unknown variable/function") &&
