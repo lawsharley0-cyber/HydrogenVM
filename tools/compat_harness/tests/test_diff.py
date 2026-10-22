@@ -157,6 +157,63 @@ class DiffTests(unittest.TestCase):
         self.assertTrue(diff["ok"])
         self.assertEqual(diff["informational"][0]["kind"], "host-page-size")
 
+    def test_active_sample_count_drop_is_informational(self):
+        cases = (
+            ("frames", 1000, 400, 400, 400, "frames"),
+            ("nonSilentFrames", 1000, 400, 1000, 100, "nonSilentFrames"),
+        )
+        for name, b_frames, b_hot, a_frames, a_hot, key in cases:
+            with self.subTest(name=name):
+                before = _report([_app(audio={
+                    "measured": True, "signal": "active", "frames": b_frames, "nonSilentFrames": b_hot,
+                })])
+                after = _report([_app(audio={
+                    "measured": True, "signal": "active", "frames": a_frames, "nonSilentFrames": a_hot,
+                })])
+                diff = diff_reports(before, after)
+                self.assertTrue(diff["ok"], diff["regressions"])
+                notes = [item for item in diff["informational"] if item["kind"] == "audio-samples"]
+                self.assertEqual(len(notes), 1)
+                self.assertIn(key, notes[0]["message"])
+
+    def test_active_sample_count_jump_is_informational(self):
+        before = _report([_app(audio={
+            "measured": True, "signal": "active", "frames": 400, "nonSilentFrames": 100,
+        })])
+        after = _report([_app(audio={
+            "measured": True, "signal": "active", "frames": 1000, "nonSilentFrames": 100,
+        })])
+        diff = diff_reports(before, after)
+        self.assertTrue(diff["ok"], diff["regressions"])
+        notes = [item for item in diff["informational"] if item["kind"] == "audio-samples"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("frames", notes[0]["message"])
+
+    def test_active_sample_count_rising_from_zero_is_informational(self):
+        before = _report([_app(audio={
+            "measured": True, "signal": "active", "frames": 0, "nonSilentFrames": 40,
+        })])
+        after = _report([_app(audio={
+            "measured": True, "signal": "active", "frames": 400, "nonSilentFrames": 40,
+        })])
+        diff = diff_reports(before, after)
+        self.assertTrue(diff["ok"], diff["regressions"])
+        notes = [item for item in diff["informational"] if item["kind"] == "audio-samples"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("frames", notes[0]["message"])
+        self.assertIn("0 -> 400", notes[0]["message"])
+
+    def test_small_active_sample_change_is_not_noted(self):
+        before = _report([_app(audio={
+            "measured": True, "signal": "active", "frames": 1000, "nonSilentFrames": 400,
+        })])
+        after = _report([_app(audio={
+            "measured": True, "signal": "active", "frames": 990, "nonSilentFrames": 390,
+        })])
+        diff = diff_reports(before, after)
+        self.assertTrue(diff["ok"])
+        self.assertFalse(any(item["kind"] == "audio-samples" for item in diff["informational"]))
+
 
 if __name__ == "__main__":
     unittest.main()

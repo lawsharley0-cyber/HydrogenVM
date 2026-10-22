@@ -1636,6 +1636,206 @@ int runFullSubsystemTests() {
         const uint32_t afterErr = uint32_t(callGL("_glGetError", {}));
         check(loopLinked && loopErr == 0x0502 && stayedBlue && drewGreen && afterErr == 0,
               "GLES2 aborts a draw that exceeds the instruction budget and discards its fragments");
+        // Homogeneous clip: triangles that cross the camera (w<=0) or the near
+        // plane (z<-w) must be clipped in clip space before the perspective divide.
+        {
+            uint32_t clipVs = shader(0x8B31, "attribute vec4 pos; attribute vec4 col; varying vec4 vcol; void main() { gl_Position = pos; vcol = col; }");
+            uint32_t clipFs = shader(0x8B30, "varying vec4 vcol; void main() { gl_FragColor = vcol; }");
+            uint32_t clipProg = uint32_t(callGL("_glCreateProgram", {}));
+            callGL("_glBindAttribLocation", {clipProg, 0, proc.allocCString("pos")});
+            callGL("_glBindAttribLocation", {clipProg, 1, proc.allocCString("col")});
+            callGL("_glAttachShader", {clipProg, clipVs});
+            callGL("_glAttachShader", {clipProg, clipFs});
+            callGL("_glLinkProgram", {clipProg});
+            callGL("_glUseProgram", {clipProg});
+            callGL("_glViewport", {0, 0, 64, 64});
+            callGL("_glDisable", {0x0B44 /* GL_CULL_FACE */});
+            callGL("_glDisable", {0x0B71 /* GL_DEPTH_TEST */});
+            callGL("_glEnableVertexAttribArray", {0});
+            callGL("_glEnableVertexAttribArray", {1});
+            const uint32_t pix = proc.heap().allocZeroed(16);
+            auto readPx = [&](int x, int y, uint8_t& pr, uint8_t& pg, uint8_t& pb, uint8_t& pa) {
+                callGL("_glReadPixels", {uint32_t(x), uint32_t(y), 1, 1, 0x1908, 0x1401, pix});
+                pr = proc.mem().read<uint8_t>(pix);
+                pg = proc.mem().read<uint8_t>(pix + 1);
+                pb = proc.mem().read<uint8_t>(pix + 2);
+                pa = proc.mem().read<uint8_t>(pix + 3);
+            };
+            auto closeTo = [](uint8_t pr, uint8_t pg, uint8_t pb, int er, int eg, int eb) {
+                return std::abs(int(pr) - er) <= 3 && std::abs(int(pg) - eg) <= 3 && std::abs(int(pb) - eb) <= 3;
+            };
+            auto clearBlue = [&]() {
+                callGL("_glClearColor", {UIKit::fbits(0), UIKit::fbits(0), UIKit::fbits(1), UIKit::fbits(1)});
+                callGL("_glClear", {0x4000});
+            };
+            auto drawClip = [&](uint32_t mode, const float* verts, int nVerts) {
+                const uint32_t nbytes = uint32_t(nVerts * 8 * sizeof(float));
+                const uint32_t mem = proc.heap().alloc(nbytes);
+                proc.mem().copyIn(mem, verts, nbytes);
+                callGL("_glBufferData", {0x8892, nbytes, mem, 0x88E4});
+                callGL("_glVertexAttribPointer", {0, 4, 0x1406, 0, 32, 0});
+                callGL("_glVertexAttribPointer", {1, 4, 0x1406, 0, 32, 16});
+                callGL("_glDrawArrays", {mode, 0, uint32_t(nVerts)});
+            };
+            uint8_t pr = 0, pg = 0, pb = 0, pa = 0, qr = 0, qg = 0, qb = 0, qa = 0;
+
+            const float insideTri[] = {
+                -0.5f, -0.5f, 0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.5f, -0.5f, 0.f, 1.f,  0.f, 1.f, 0.f, 1.f,
+                 0.0f,  0.5f, 0.f, 1.f,  0.f, 0.f, 1.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, insideTri, 3);
+            readPx(32, 40, pr, pg, pb, pa);
+            std::printf("  clip inside (32,40)=%u,%u,%u,%u\n", pr, pg, pb, pa);
+            check(closeTo(pr, pg, pb, 26, 34, 195) && pa == 255,
+                  "GLES2 triangle entirely in front of the near plane keeps its coverage and perspective-correct color");
+
+            const float crossW[] = {
+                -0.8f, -0.8f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                -0.8f,  0.8f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.2f,  0.0f, -2.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, crossW, 3);
+            readPx(7, 32, pr, pg, pb, pa);
+            readPx(4, 35, qr, qg, qb, qa);
+            std::printf("  clip w<0 (7,32)=%u,%u,%u,%u (4,35)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0 && qa == 255,
+                  "GLES2 clips a triangle crossing the camera plane (w<0) instead of mirroring it through the origin");
+
+            const float crossNear[] = {
+                -0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.0f,  0.5f, -2.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, crossNear, 3);
+            readPx(32, 36, pr, pg, pb, pa);
+            readPx(33, 23, qr, qg, qb, qa);
+            std::printf("  clip z<-w (32,36)=%u,%u,%u,%u (33,23)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0,
+                  "GLES2 clips a triangle crossing the near plane (z<-w, w>0) and keeps the visible fragment");
+
+            const float behindTri[] = {
+                 0.5f,  0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                -0.5f,  0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.0f, -0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, behindTri, 3);
+            readPx(32, 32, pr, pg, pb, pa);
+            std::printf("  clip all behind (32,32)=%u,%u,%u,%u\n", pr, pg, pb, pa);
+            check(pr == 0 && pg == 0 && pb == 255 && pa == 255,
+                  "GLES2 drops a triangle whose vertices are all behind the camera (w<0)");
+
+            const float crossLine[] = {
+                0.f, 0.f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                0.5f, 0.f, -2.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001 /* GL_LINES */, crossLine, 2);
+            readPx(20, 32, pr, pg, pb, pa);
+            readPx(36, 32, qr, qg, qb, qa);
+            std::printf("  clip line (20,32)=%u,%u,%u,%u (36,32)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0,
+                  "GLES2 clips a line crossing the camera plane to the near-plane segment");
+
+            const float pts[] = {
+                 0.5f, 0.f,  0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.f,  0.5f, -2.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.f,  0.f,   0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0000 /* GL_POINTS */, pts, 3);
+            readPx(16, 32, pr, pg, pb, pa);
+            readPx(32, 48, qr, qg, qb, qa);
+            uint8_t rr = 0, rg = 0, rb = 0, ra = 0;
+            readPx(32, 32, rr, rg, rb, ra);
+            std::printf("  clip points behind=%u,%u,%u,%u near=%u,%u,%u,%u inside=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, rr, rg, rb, ra);
+            check(pr == 0 && pb == 255 && qr == 0 && qb == 255 && rr == 255 && rg == 0 && rb == 0,
+                  "GLES2 discards points with w<0 or z<-w and still draws a point in front of the near plane");
+
+            // Different w on every vertex. Equal w makes screen-linear and
+            // perspective-correct interpolation the same color, so this lock
+            // only holds if the fragment stage divides by the clipped 1/w.
+            const float attrTri[] = {
+                -0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 2.0f, -2.0f,  0.f, 4.f,  0.f, 1.f, 0.f, 1.f,
+                 0.0f,  0.5f, -2.f, 1.f,  0.f, 0.f, 1.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, attrTri, 3);
+            readPx(38, 18, pr, pg, pb, pa);
+            readPx(50, 0, qr, qg, qb, qa);
+            std::printf("  clip attrib (38,18)=%u,%u,%u,%u (50,0)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(closeTo(pr, pg, pb, 131, 84, 40) && pa == 255 && qr == 0 && qb == 255,
+                  "GLES2 perspective-correct varyings use a different w on each vertex, including the near-plane edge");
+
+            // w=1, w=1.5, and a vertex through the w guard. The guard lerp
+            // undershoots 1e-6 in float32 (about 9.54e-7). Rejecting that
+            // output drops the visible triangle (about 2587 of 4096 pixels
+            // before the side planes). Side planes then keep NDC inside the
+            // viewport, so the unbounded projection's extra pixels stay clear.
+            const uint32_t fb = proc.heap().alloc(64 * 64 * 4);
+            auto countCovered = [&]() {
+                callGL("_glReadPixels", {0, 0, 64, 64, 0x1908, 0x1401, fb});
+                const uint8_t* p = proc.mem().host(fb);
+                int n = 0;
+                for (int i = 0; i < 64 * 64; ++i)
+                    if (p[i * 4] >= 250 && p[i * 4 + 2] <= 5) ++n;
+                return n;
+            };
+            const float guardTri[] = {
+                -0.8f,  0.2f, 0.f,  1.f,    1.f, 0.f, 0.f, 1.f,
+                 0.9f, -0.9f, 0.f,  1.5f,   1.f, 0.f, 0.f, 1.f,
+                 0.25f, 0.25f, 0.f, -1e-4f, 1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, guardTri, 3);
+            readPx(20, 41, pr, pg, pb, pa);
+            readPx(8, 13, qr, qg, qb, qa);
+            const int guardCov = countCovered();
+            std::printf("  clip guard tri (20,41)=%u,%u,%u,%u (8,13)=%u,%u,%u,%u covered=%d\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, guardCov);
+            check(pr == 255 && pg == 0 && pb == 0 && pa == 255 &&
+                  qr == 0 && qb == 255 && guardCov >= 1900 && guardCov <= 2100,
+                  "GLES2 keeps a w=1/1.5/through-guard triangle whose clip boundary undershoots 1e-6, and side planes bound it to the viewport");
+
+            // The guard hit stays inside the side planes, so its w remains
+            // ~9.54e-7 after every plane. The segment must still be drawn.
+            const float guardSeg[] = {
+                -0.6f, -0.4f, 0.f, 1.5f,  1.f, 0.f, 0.f, 1.f,
+                 1e-6f, 5e-7f, 0.f, 5e-7f, 1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001, guardSeg, 2);
+            readPx(40, 34, pr, pg, pb, pa);
+            readPx(0, 0, qr, qg, qb, qa);
+            std::printf("  clip guard seg (40,34)=%u,%u,%u,%u (0,0)=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 255 && pg == 0 && pb == 0 && qr == 0 && qb == 255,
+                  "GLES2 draws a segment whose clipped endpoint is the float32 guard boundary (~9.54e-7)");
+
+            // clip x = 1e10, w = 1. The screen delta exceeds INT_MAX. Side
+            // planes bring NDC x to 1, and the walker must not convert that
+            // unclipped delta to int.
+            const float hugeLine[] = {
+                0.f, 0.f, 0.f, 1.f,     1.f, 0.f, 0.f, 1.f,
+                1e10f, 0.f, 0.f, 1.f,   1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001, hugeLine, 2);
+            readPx(48, 32, pr, pg, pb, pa);
+            readPx(63, 32, qr, qg, qb, qa);
+            uint8_t sr = 0, sg = 0, sb = 0, sa = 0;
+            readPx(0, 32, sr, sg, sb, sa);
+            std::printf("  clip huge line (48,32)=%u,%u,%u,%u (63,32)=%u,%u,%u,%u (0,32)=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, sr, sg, sb, sa);
+            check(pr == 255 && pg == 0 && pb == 0 && qr == 255 && qg == 0 && qb == 0 && sr == 0 && sb == 255,
+                  "GLES2 clips a line whose screen delta exceeds INT_MAX to the framebuffer and still draws the visible pixels");
+        }
 
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
@@ -1866,6 +2066,77 @@ int runFullSubsystemTests() {
         const uint8_t g1 = proc.mem().read<uint8_t>(texIds + 9);
         const uint8_t b1 = proc.mem().read<uint8_t>(texIds + 10);
         check(r1 == 255 && g1 == 0 && b1 == 0, "OpenGL ES 1.1 fixed-function ortho + 2D texture + glDrawElements");
+
+        // Fixed-function path shares the raster clip. A frustum triangle with
+        // every vertex behind the camera (eye z>0 => clip w<0) must not paint.
+        callGL("_glDisable", {0x0DE1 /* GL_TEXTURE_2D */});
+        callGL("_glDisable", {0x0B44 /* GL_CULL_FACE */});
+        callGL("_glMatrixMode", {0x1701 /* GL_PROJECTION */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glFrustumf", {UIKit::fbits(-1.f), UIKit::fbits(1.f), UIKit::fbits(-1.f), UIKit::fbits(1.f), UIKit::fbits(1.f), UIKit::fbits(10.f)});
+        callGL("_glMatrixMode", {0x1700 /* GL_MODELVIEW */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glColor4f", {UIKit::fbits(1.f), UIKit::fbits(0.f), UIKit::fbits(0.f), UIKit::fbits(1.f)});
+        callGL("_glClearColor", {UIKit::fbits(0.f), UIKit::fbits(0.f), UIKit::fbits(1.f), UIKit::fbits(1.f)});
+        const float frontEye[] = {-0.5f, -0.5f, -2.f,  0.5f, -0.5f, -2.f,  0.f, 0.5f, -2.f};
+        const float behindEye[] = {-0.5f, -0.5f, 1.f,  0.5f, -0.5f, 1.f,  0.f, 0.5f, 1.f};
+        const uint32_t eyeMem = proc.heap().alloc(sizeof frontEye + sizeof behindEye);
+        proc.mem().copyIn(eyeMem, frontEye, sizeof frontEye);
+        proc.mem().copyIn(eyeMem + sizeof frontEye, behindEye, sizeof behindEye);
+        callGL("_glVertexPointer", {3, 0x1406, 0, eyeMem});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 32, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t frontR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t frontB = proc.mem().read<uint8_t>(texIds + 10);
+        callGL("_glVertexPointer", {3, 0x1406, 0, eyeMem + uint32_t(sizeof frontEye)});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 32, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t backR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t backG = proc.mem().read<uint8_t>(texIds + 9);
+        const uint8_t backB = proc.mem().read<uint8_t>(texIds + 10);
+        std::printf("  clip gles1 front (32,32)=%u,%u behind=%u,%u,%u\n",
+                    frontR, frontB, backR, backG, backB);
+        check(frontR == 255 && frontB == 0 && backR == 0 && backG == 0 && backB == 255,
+              "GLES1 frustum clips a triangle behind the camera and still draws one in front of the near plane");
+
+        // GLES1 color and UV stay screen-linear after clipping. The clip lerps
+        // them in clip space so the new edge vertex is correct, and the fill
+        // does not reweight by 1/w. Perspective-correct weighting of this same
+        // triangle is about (131,84,40); the framebuffer must match (66,169,20).
+        callGL("_glMatrixMode", {0x1701 /* GL_PROJECTION */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glMatrixMode", {0x1700 /* GL_MODELVIEW */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glEnableClientState", {0x8076 /* GL_COLOR_ARRAY */});
+        const float gles1Pos[] = {
+            -0.5f, -0.5f, 0.f, 1.f,
+             2.0f, -2.0f, 0.f, 4.f,
+             0.0f,  0.5f,-2.f, 1.f,
+        };
+        const float gles1Col[] = {
+            1.f, 0.f, 0.f, 1.f,
+            0.f, 1.f, 0.f, 1.f,
+            0.f, 0.f, 1.f, 1.f,
+        };
+        const uint32_t pMem = proc.heap().alloc(sizeof gles1Pos);
+        const uint32_t cMem = proc.heap().alloc(sizeof gles1Col);
+        proc.mem().copyIn(pMem, gles1Pos, sizeof gles1Pos);
+        proc.mem().copyIn(cMem, gles1Col, sizeof gles1Col);
+        callGL("_glVertexPointer", {4, 0x1406, 0, pMem});
+        callGL("_glColorPointer", {4, 0x1406, 0, cMem});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {38, 18, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t linR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t linG = proc.mem().read<uint8_t>(texIds + 9);
+        const uint8_t linB = proc.mem().read<uint8_t>(texIds + 10);
+        std::printf("  clip gles1 screen-linear (38,18)=%u,%u,%u\n", linR, linG, linB);
+        const bool screenLinear = std::abs(int(linR) - 66) <= 3 && std::abs(int(linG) - 169) <= 3 && std::abs(int(linB) - 20) <= 3;
+        const bool perspective = std::abs(int(linR) - 131) <= 3 && std::abs(int(linG) - 84) <= 3 && std::abs(int(linB) - 40) <= 3;
+        check(screenLinear && !perspective,
+              "GLES1 color after clipping is screen-linear (66,169,20), matching the fixed-function fill");
 
         // CommonCrypto digests against the standard "abc" vectors.
         auto hex = [](const std::vector<uint8_t>& v) { std::string h; char b[3]; for (uint8_t c : v) { std::snprintf(b, 3, "%02x", c); h += b; } return h; };

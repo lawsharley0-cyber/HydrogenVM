@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import stat
@@ -5,11 +6,12 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from compat_harness import runner  # noqa: E402
-from compat_harness.cli import main as cli_main  # noqa: E402
+from compat_harness.cli import _diff_count_line, main as cli_main  # noqa: E402
 from compat_harness.issues import generate  # noqa: E402
 from compat_harness.schema_check import validate_diff, validate_report  # noqa: E402
 from compat_harness.diffing import diff_reports  # noqa: E402
@@ -234,6 +236,46 @@ class HarnessFlowTests(unittest.TestCase):
             self.assertTrue(report["summary"]["ok"])
             self.assertEqual(report["suites"]["apps"]["status"], "partial")
             self.assertEqual(report["suites"]["apps"]["apps"][0]["status"], "skipped")
+
+    def test_run_diff_line_includes_the_informational_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = os.path.join(tmp, "apps.json")
+            with open(manifest, "w", encoding="utf-8") as fh:
+                json.dump({
+                    "schemaVersion": 1,
+                    "apps": [{
+                        "id": "optional-app",
+                        "name": "Optional",
+                        "sha256": "c" * 64,
+                        "fixtureRelPath": "missing.ipa",
+                        "optional": True,
+                    }],
+                }, fh)
+            baseline = os.path.join(tmp, "baseline.json")
+            with open(baseline, "w", encoding="utf-8") as fh:
+                json.dump({"host": {"pageSize": 16384}, "suites": {}}, fh)
+            out = os.path.join(tmp, "out")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                cli_main([
+                    "run", "--skip-unit", "--skip-python", "--skip-apps",
+                    "--manifest", manifest,
+                    "--no-legacy-repo",
+                    "--out", out,
+                    "--build-dir", tmp,
+                    "--baseline", baseline,
+                ])
+            text = buf.getvalue()
+            self.assertRegex(text, r"diff ok=\S+ regressions=\d+ attention=\d+ informational=\d+")
+
+    def test_previous_diff_line_includes_the_informational_count(self):
+        line = _diff_count_line("previous ", {
+            "ok": True,
+            "regressions": [],
+            "attention": [{}],
+            "informational": [{}, {}],
+        })
+        self.assertEqual(line, "previous ok=True regressions=0 attention=1 informational=2")
 
 
 if __name__ == "__main__":
