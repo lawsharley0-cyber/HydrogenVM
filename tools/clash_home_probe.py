@@ -71,6 +71,10 @@ def main():
             for launch in range(1,args.launches+1):
                 stem = session/f'launch-{launch}'
                 reader,writer = socket.socketpair(socket.AF_UNIX,socket.SOCK_DGRAM)
+                if sys.platform == 'darwin':
+                    # Default macOS datagram buffers cannot hold an 8192-byte block.
+                    writer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16384)
+                    reader.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, (8192 + 16) * 2)
                 reader.settimeout(.1)
                 done = threading.Event()
                 audio_errors = []

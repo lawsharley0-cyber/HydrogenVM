@@ -24,8 +24,13 @@ targets:
       - path: HydrogenVM
       - path: ../src
         excludes:
+          # Third-party docs are not runtime resources. Copy Bundle Resources
+          # flattens each file to the app root, so minimp3 and stb README.txt
+          # both produced HydrogenVM.app/README.txt. Headers stay compiled.
           - "**/*.md"
-          - "**/*.txt"   # thirdparty README.txt/LICENSE.txt would collide as bundle resources
+          - "**/README.*"
+          - "**/LICENSE.*"
+          - "**/*.txt"
     dependencies:
       - sdk: libz.tbd
       - sdk: libsqlite3.tbd

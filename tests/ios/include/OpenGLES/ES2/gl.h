@@ -117,3 +117,29 @@ void glEnableVertexAttribArray(GLuint index);
 void glVertexAttribPointer(GLuint indx, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const GLvoid *ptr);
 void glUniform4f(GLint location, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
 void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+
+/* Test Lab additions */
+#ifndef GL_TEXTURE0
+#define GL_TEXTURE0 0x84C0
+#endif
+#ifndef GL_NO_ERROR
+#define GL_NO_ERROR 0
+#endif
+#ifndef GL_INFO_LOG_LENGTH
+#define GL_INFO_LOG_LENGTH 0x8B84
+#endif
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+#ifndef GL_TEXTURE_WRAP_S
+#define GL_TEXTURE_WRAP_S 0x2802
+#define GL_TEXTURE_WRAP_T 0x2803
+#endif
+void glUniform1f(GLint location, GLfloat x);
+void glUniform1i(GLint location, GLint x);
+void glUniform4fv(GLint location, GLsizei count, const GLfloat *v);
+void glGetShaderInfoLog(GLuint shader, GLsizei bufsize, GLsizei *length, GLchar *infolog);
+void glGetProgramInfoLog(GLuint program, GLsizei bufsize, GLsizei *length, GLchar *infolog);
+GLenum glGetError(void);
+void glActiveTexture(GLenum texture);
+void glGenerateMipmap(GLenum target);

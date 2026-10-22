@@ -12,6 +12,7 @@
 #include "core/cpu/Engine.hpp"
 #include "loader/ElfLoader.hpp"
 #include "selftest/SelfTest.hpp"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -190,6 +191,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 #include "runtime/Process.hpp"
+#include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "AudioOutput.hpp"
 #include <functional>
@@ -261,9 +263,21 @@ int runFullSubsystemTests() {
         int sockets[2];
         const bool opened = socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0;
         bool received = false, stopped = false;
+        uint64_t dropped = 0, nonsilent = 0;
+        int transportError = -1, setupError = 0;
         if (opened) {
             int capacity = 8192;
             setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &capacity, sizeof capacity);
+#ifdef __APPLE__
+            // Darwin's default AF_UNIX datagram receive buffer is 4096 and the
+            // queued length includes the 16-byte unnamed sockaddr, so an
+            // 8192-byte block returns ENOBUFS before any sample is delivered.
+            // 8208 holds one block and rejects the next. Linux ignores
+            // SO_RCVBUF for this socket family; SO_SNDBUF above is the limit.
+            int receiveCapacity = 8192 + 16;
+            if (setsockopt(sockets[1], SOL_SOCKET, SO_RCVBUF, &receiveCapacity, sizeof receiveCapacity) != 0)
+                setupError = errno;
+#endif
             auto mixer = std::make_shared<Audio::Mixer>();
             auto pcm = std::make_shared<std::vector<int16_t>>(4096, 8192);
             Audio::VoiceParams params; params.loop = true;
@@ -278,10 +292,17 @@ int runFullSubsystemTests() {
             std::this_thread::sleep_for(std::chrono::milliseconds(300)); // leave the consumer stalled
             const auto began = std::chrono::steady_clock::now();
             output.stop();
-            stopped = output.droppedBlocks > 0 && output.nonSilentFrames > 0 && output.error == 0 &&
+            dropped = output.droppedBlocks;
+            nonsilent = output.nonSilentFrames;
+            transportError = output.error;
+            stopped = setupError == 0 && dropped > 0 && nonsilent > 0 && transportError == 0 &&
                       std::chrono::steady_clock::now() - began < std::chrono::milliseconds(200);
             close(sockets[0]); close(sockets[1]);
         }
+        if (!(received && stopped))
+            std::printf("    audio detail open=%d received=%d dropped=%llu nonsilent=%llu error=%d setup=%d\n",
+                        int(opened), int(received), (unsigned long long)dropped,
+                        (unsigned long long)nonsilent, transportError, setupError);
         check(received && stopped, "Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown");
     }
 
@@ -345,17 +366,500 @@ int runFullSubsystemTests() {
               "GLSL texture sampling honors sampler, channels, dot products and compound assignments");
         bool rejected = true;
         for (const char* bad : {
-            "void main() { for (;;) {} gl_FragColor = vec4(1.0); }",
             "uniform vec4 x; void main() { x = vec4(0.0); gl_FragColor = x; }",
             "void main() { gl_FragColor.xx = vec2(1.0); }",
             "void main() { gl_FragColor = vec3(1.0); }",
             "varying vec4 x[2]; void main() { gl_FragColor = x[2]; }",
             "void main() { gl_FragColor = vec4(1.0).xgba; }",
-            "#define FAKE 1\nvoid main() { gl_FragColor = vec4(1.0); }"
+            "#include <missing>\nvoid main() { gl_FragColor = vec4(1.0); }"
         }) rejected &= !fragment.compile(bad, false) && !fragment.error.empty();
         std::string deep = "void main() { gl_FragColor = vec4(" + std::string(100, '(') + "1.0" + std::string(100, ')') + "); }";
         rejected &= !fragment.compile(deep, false);
-        check(rejected, "GLSL rejects unsupported control flow, invalid writes/types/indexing/macros and excessive nesting");
+        check(rejected, "GLSL rejects invalid writes, types, indexing, #include and excessive nesting");
+
+        auto near4 = [](const float* g, float r, float gch, float b, float a) {
+            return std::abs(g[0] - r) < 1e-5f && std::abs(g[1] - gch) < 1e-5f &&
+                   std::abs(g[2] - b) < 1e-5f && std::abs(g[3] - a) < 1e-5f;
+        };
+        auto runStage = [&](const std::string& src, bool vertex, auto&& load, float out[4]) {
+            Shader::Program program;
+            if (!program.compile(src, vertex)) {
+                std::printf("    compile failed: %s\n", program.error.c_str());
+                return false;
+            }
+            Shader::Values values;
+            program.initialize(values);
+            load(program, values);
+            program.execute(values);
+            for (int c = 0; c < 4; ++c) out[c] = values[program.output + c];
+            return true;
+        };
+        auto fails = [](const char* src, const char* snippet) {
+            Shader::Program program;
+            const bool bad = !program.compile(src, false) && program.error.find(snippet) != std::string::npos;
+            if (!bad) std::printf("    expected '%s', got: %s\n", snippet, program.error.c_str());
+            return bad;
+        };
+        float o[4] = {};
+        check(runStage("#define K 0.25\nvoid main() { gl_FragColor = vec4(K); }", false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f),
+              "GLSL object-like #define");
+        check(runStage("#define SECOND(a, b) b\n#define WRAP(a, b) SECOND(a, b)\nvoid main() { gl_FragColor = vec4(WRAP(1.0, SECOND(0.25, 0.75))); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f),
+              "GLSL function-like macros with nested commas");
+        check(runStage("#define ID(x) x\n#define F(x) (x)\n#define ONE() 0.125\n#define EMPTY\nvoid main() { EMPTY gl_FragColor = vec4(ID(F)(ONE())); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.125f, 0.125f, 0.125f, 0.125f),
+              "GLSL macro rescan, zero-argument macros and empty replacement");
+        check(runStage("#define K 0.25\n#undef NOT_THERE\n#undef K\n#define K 0.875\n#define K 0.875\nvoid main() { gl_FragColor = vec4(K); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.875f, 0.875f, 0.875f, 0.875f) &&
+              fails("#define A 1\n#define A 2\nvoid main() { gl_FragColor = vec4(1.0); }", "macro redefinition"),
+              "GLSL #undef, identical redefinition and conflicting redefinition");
+        check(runStage(
+                  "#if defined GL_ES && defined(GL_ES) && !defined(NOT_THERE) && __VERSION__ == 100 && 0x10 == 16 && 010 == 8 && 1u == 1 && (3 > 1 && 4 == 4)\n"
+                  "const float k = 0.25;\n#elif 0\nconst float k = 0.5;\n#else\nconst float k = 0.75;\n#endif\n"
+                  "void main() { gl_FragColor = vec4(k); }",
+                  false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f),
+              "GLSL #if/#elif/#else with defined(), __VERSION__ and integer expressions");
+        check(runStage(
+                  "#define MINE 1\n#ifdef ABSENT\n@@@\n#if 1/0\n#endif\n#elif MINE\n#ifndef ABSENT\nconst float k = 1.0;\n#else\nstill skipped\n#endif\n#else\nbogus\n#endif\n"
+                  "void main() { gl_FragColor = vec4(k); }",
+                  false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #ifdef/#ifndef skip inactive groups, including invalid text");
+        check(runStage("#version 100\nvoid main() { gl_FragColor = vec4(1.0); }", false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                  fails("#version 300\nvoid main() { gl_FragColor = vec4(1.0); }", "unsupported version") &&
+                  fails("void main() { gl_FragColor = vec4(1.0); }\n#version 100", "version directive must be first"),
+              "GLSL #version 100, and rejection of other versions");
+        {
+            Shader::Program program;
+            const bool ok = program.compile(
+                "#extension GL_OES_standard_derivatives : enable\n#extension GL_OES_standard_derivatives : warn\n"
+                "#extension GL_OES_standard_derivatives : disable\n#extension all : disable\n#extension all : warn\n"
+                "void main() { gl_FragColor = vec4(1.0); }\n", false);
+            check(ok && fails("#extension GL_OES_foo : require\nvoid main() { gl_FragColor = vec4(1.0); }\n", "unsupported extension") &&
+                      fails("#extension all : require\nvoid main() { gl_FragColor = vec4(1.0); }\n", "invalid extension") &&
+                      fails("#extension all : enable\nvoid main() { gl_FragColor = vec4(1.0); }\n", "invalid extension"),
+                  "GLSL #extension enable/warn/disable, and rejection of require");
+        }
+        check(runStage("#pragma optimize(off)\n#pragma STDGL invariant(all)\n// #error hidden by comment\n/* #error hidden by block */\nvoid main() { gl_FragColor = vec4(1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #pragma is ignored and comments hide directives");
+        check(runStage("#line 80\n#if __LINE__ == 80\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #line sets __LINE__");
+        check(runStage("#if 0\n#error hidden\n#endif\nvoid main() { gl_FragColor = vec4(1.0); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 1, 1, 1, 1) && fails("#error visible\nvoid main() { gl_FragColor = vec4(1.0); }", "visible"),
+              "GLSL #error fires only in the active branch");
+        check(runStage("#define K \\\n0.5\nvoid main() { gl_\\\nFragColor = vec4(K); }", false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL line continuations splice directives and tokens");
+        check(runStage("#\nvoid main() { gl_FragColor = vec4(1.0); }\n#\n", false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL empty directive");
+        {
+            const std::string eof = "#if 1\nvoid main() { gl_FragColor = vec4(0.25); }\n#endif";
+            const std::string tail = "void main() { gl_FragColor = vec4(1.0); }\n#define TAIL 1";
+            check(eof.back() != '\n' && tail.back() != '\n' &&
+                      runStage(eof, false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f) &&
+                      runStage(tail, false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+                  "GLSL directives at end of input with no trailing newline");
+        }
+        check(runStage("#define CAT(a, b) a##b\nvoid main() { CAT(gl_Frag, Color) = vec4(0.375); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0.375f, 0.375f, 0.375f, 0.375f),
+              "GLSL ## token paste");
+        check(fails("#define STR(x) #x\nvoid main() { gl_FragColor = vec4(STR(1)); }", "stringification"),
+              "GLSL rejects # stringification");
+        check(runStage("void main() { gl_FragColor = vec4(\n#if 0\n0.0\n#else\n0.5\n#endif\n); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL directives between the arguments of a call");
+        check(runStage(
+                  "precision highp float;\nprecision mediump int;\nprecision lowp sampler2D;\n"
+                  "mediump vec2 tmp;\nfloat bare;\nconst highp float k = 0.25;\nuniform lowp vec4 u;\nvarying mediump vec4 v;\n"
+                  "void main() { tmp = vec2(k, u.x); bare = tmp.y + v.x; gl_FragColor = vec4(bare, tmp.x, v.y, 1.0); }",
+                  false,
+                  [](Shader::Program& p, Shader::Values& v) {
+                      if (auto* u = p.find("u")) { v[u->slot] = 0.5f; }
+                      if (auto* var = p.find("v")) { v[var->slot] = 0.25f; v[var->slot + 1] = 0.125f; }
+                  }, o) && near4(o, 0.75f, 0.25f, 0.125f, 1),
+              "GLSL precision statements, precision-only globals, bare globals and const globals");
+        check(runStage("const vec4 a = vec4(0.25, 0.0, 0.0, 0.0), b = a + vec4(0.0, 0.5, 0.0, 1.0);\nvoid main() { gl_FragColor = b; }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0, 1),
+              "GLSL multiple const declarators with initializers");
+        check(runStage("uniform vec4 first, second;\nvoid main() { gl_FragColor = first + second; }", false,
+                       [](Shader::Program& p, Shader::Values& v) {
+                           if (auto* a = p.find("first")) { v[a->slot] = 0.25f; v[a->slot + 3] = 1; }
+                           if (auto* b = p.find("second")) { v[b->slot + 1] = 0.5f; }
+                       }, o) && near4(o, 0.25f, 0.5f, 0, 1),
+              "GLSL multiple declarators on one line");
+        {
+            Shader::Program program;
+            const bool compiled = program.compile(
+                "invariant varying mediump vec4 a;\nvarying highp vec4 b;\nmediump varying vec4 c;\nhighp invariant varying vec4 d;\n"
+                "invariant gl_Position;\nuniform mediump vec4 e;\nmediump uniform vec4 f;\nattribute highp vec4 g;\nhighp attribute vec4 h;\n"
+                "const mediump float i = 1.0;\nmediump const float j = 2.0;\n"
+                "void main() { a = e; b = f; c = vec4(i); d = vec4(j); gl_Position = g + h; }", true);
+            Shader::Values values;
+            if (compiled) { program.initialize(values); program.execute(values); }
+            auto* cvar = compiled ? program.find("c") : nullptr;
+            auto* dvar = compiled ? program.find("d") : nullptr;
+            auto* avar = compiled ? program.find("a") : nullptr;
+            auto* pos = compiled ? program.find("gl_Position") : nullptr;
+            auto* bvar = compiled ? program.find("b") : nullptr;
+            check(compiled && cvar && dvar && avar && pos && bvar && avar->invariant && dvar->invariant && pos->invariant && !bvar->invariant &&
+                      values[cvar->slot] == 1 && values[dvar->slot] == 2 && values[program.output] == 0,
+                  "GLSL qualifiers in every order, and invariant is stored on the variable");
+        }
+        check(runStage(
+                  "struct Inner { float z; };\nstruct Light { vec3 color; float intensity; Inner extra; };\n"
+                  "uniform Light lights[2];\nuniform struct { float x; } anon;\n"
+                  "void main() {\n"
+                  "  Light w = lights[1];\n"
+                  "  gl_FragColor = vec4(w.color * lights[0].intensity, w.extra.z + anon.x);\n}",
+                  false,
+                  [](Shader::Program& p, Shader::Values& v) {
+                      if (auto* lights = p.find("lights")) {
+                          v[lights->slot + 3] = 2;          // lights[0].intensity
+                          v[lights->slot + 5] = 0.25f;      // lights[1].color.r
+                          v[lights->slot + 9] = 0.125f;     // lights[1].extra.z
+                      }
+                      if (auto* anon = p.find("anon")) v[anon->slot] = 0.25f;
+                  }, o) && near4(o, 0.5f, 0, 0, 0.375f),
+              "GLSL struct definitions, struct arrays, member access and anonymous struct uniforms");
+        check(runStage("struct S { float a; vec2 b; };\nvoid main() { S s = S(0.25, vec2(0.5, 0.75)); gl_FragColor = vec4(s.a, s.b, 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1),
+              "GLSL struct constructors");
+        check(runStage(
+                  "uniform vec4 pal[2];\nuniform mat4 bones[2];\nvarying float vf[3];\n"
+                  "void main() { gl_FragColor = pal[0] + pal[1] + vec4(vf[1], 0.0, 0.0, 0.0) + (bones[1] * vec4(1.0, 0.0, 0.0, 0.0)); }",
+                  false,
+                  [](Shader::Program& p, Shader::Values& v) {
+                      if (auto* pal = p.find("pal")) { v[pal->slot] = 0.25f; v[pal->slot + 5] = 0.5f; }
+                      if (auto* vf = p.find("vf")) v[vf->slot + 1] = 0.125f;
+                      if (auto* bones = p.find("bones")) v[bones->slot + 16 + 2] = 0.125f; // column 0, row 2 of element 1
+                  }, o) && near4(o, 0.375f, 0.5f, 0.125f, 0),
+              "GLSL uniform arrays, varying arrays and matrix array elements");
+        {
+            bool sampled = false;
+            Shader::Program program;
+            const bool compiled = program.compile("uniform sampler2D tex[2];\nvoid main() { gl_FragColor = texture2D(tex[1], vec2(0.5, 0.25)); }", false);
+            Shader::Values values;
+            if (compiled) {
+                program.initialize(values);
+                if (auto* tex = program.find("tex")) values[tex->slot + 1] = 4;
+                program.execute(values, [](void* context, int unit, float u, float v, float* out) {
+                    *static_cast<bool*>(context) = unit == 4 && u == 0.5f && v == 0.25f;
+                    out[0] = 0.25f; out[1] = 0.5f; out[2] = 0.75f; out[3] = 1;
+                }, &sampled);
+            }
+            check(compiled && sampled && near4(&values[program.output], 0.25f, 0.5f, 0.75f, 1),
+                  "GLSL sampler arrays");
+        }
+        check(runStage("struct S { vec4 c[2]; float n; };\nuniform S u;\nvoid main() { gl_FragColor = u.c[0] + u.c[1] + vec4(u.n); }",
+                       false,
+                       [](Shader::Program& p, Shader::Values& v) {
+                           if (auto* u = p.find("u")) {
+                               v[u->slot] = 0.25f; v[u->slot + 5] = 0.5f; v[u->slot + 8] = 0.125f;
+                           }
+                       }, o) && near4(o, 0.375f, 0.625f, 0.125f, 0.125f),
+              "GLSL arrays of struct fields");
+        {
+            Shader::Program vert, frag;
+            const bool compiled = vert.compile(
+                "struct Material { vec4 color; float intensity; };\nuniform Material u;\nvarying Material m;\n"
+                "void main() { m = u; m.intensity = m.color.r; gl_Position = vec4(m.intensity); }", true) &&
+                frag.compile("struct Material { vec4 color; float intensity; };\nvarying Material m;\nvoid main() { gl_FragColor = m.color; }", false);
+            Shader::Values values;
+            bool linked = false;
+            if (compiled) {
+                vert.initialize(values);
+                if (auto* u = vert.find("u")) { values[u->slot] = 0.25f; values[u->slot + 1] = 0.5f; values[u->slot + 4] = 9; }
+                vert.execute(values);
+                auto* mv = vert.find("m");
+                auto* mf = frag.find("m");
+                linked = mv && mf && mv->type == mf->type && values[vert.output] == 0.25f && values[mv->slot + 1] == 0.5f && values[mv->slot + 4] == 0.25f;
+            }
+            check(linked, "GLSL struct varyings keep a shared layout across stages");
+        }
+
+        auto shows = [](const char* src, const char* snippet, bool vertex = false) {
+            Shader::Program program;
+            const bool bad = !program.compile(src, vertex) && program.error.find(snippet) != std::string::npos;
+            if (!bad) std::printf("    expected '%s', got: %s\n", snippet, program.error.c_str());
+            return bad;
+        };
+        check(runStage("#if 0 && 1\nconst float k = 0.0;\n#else\nconst float k = 1.0;\n#endif\n"
+                       "#if 1 || 0\nvoid main() { gl_FragColor = vec4(k); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                  runStage("#if 1 || UNDEF\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", false, [](auto&, auto&) {}, o) &&
+                  runStage("#if 0 && (1/0)\n#else\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", false, [](auto&, auto&) {}, o) &&
+                  shows("#if 0 || UNDEF\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", "undefined preprocessor identifier") &&
+                  shows("#if 1 && 1/0\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", "invalid preprocessor expression") &&
+                  shows("#if UNDEF\n#endif\nvoid main() { gl_FragColor = vec4(1.0); }", "undefined preprocessor identifier"),
+              "GLSL #if parses both &&/|| operands and only skips evaluation");
+        check(runStage("#if (9223372036854775807 + 1) < 0 && (3037000500 * 3037000500) == -9223372036709301616\n"
+                       "void main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #if add and multiply wrap instead of overflowing");
+        check(runStage("#if (-8 >> 1) == -4 && (-1 >> 4) == -1\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL #if >> is an arithmetic shift");
+        check(shows("#if 1 ? 2 : 3\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", "invalid preprocessor expression"),
+              "GLSL #if rejects the conditional operator");
+        {
+            const std::string okIf = "#if " + std::string(256, '(') + "1" + std::string(256, ')') +
+                                     "\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif";
+            const std::string deepIf = "#if " + std::string(257, '(') + "1" + std::string(257, ')') +
+                                       "\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif";
+            std::string deepStruct = "struct S { ";
+            for (int n = 0; n < 300; ++n) deepStruct += "struct { ";
+            deepStruct += "float x; ";
+            for (int n = 0; n < 300; ++n) deepStruct += "} a; ";
+            deepStruct += "}; void main() { S s; gl_FragColor = vec4(1.0); }";
+            std::string deepBlock = "void main() { ";
+            for (int n = 0; n < 300; ++n) deepBlock += "{";
+            deepBlock += "gl_FragColor = vec4(1.0);";
+            for (int n = 0; n < 300; ++n) deepBlock += "}";
+            deepBlock += "}";
+            std::string deepMacro;
+            for (int n = 0; n < 300; ++n) deepMacro += "#define M" + std::to_string(n) + " M" + std::to_string(n + 1) + "\n";
+            deepMacro += "#define M300 1.0\nvoid main() { gl_FragColor = vec4(M0); }";
+            std::string longMacro = "#define A6\n";
+            for (int level = 5; level >= 0; --level) {
+                longMacro += "#define A" + std::to_string(level);
+                for (int n = 0; n < 10; ++n) longMacro += " A" + std::to_string(level + 1);
+                longMacro += "\n";
+            }
+            longMacro += "void main() { A0 gl_FragColor = vec4(1.0); }";
+            std::string deepCall = "float f0() { return 1.0; }\n";
+            for (int n = 1; n <= 256; ++n)
+                deepCall += "float f" + std::to_string(n) + "() { return f" + std::to_string(n - 1) + "(); }\n";
+            deepCall += "void main() { gl_FragColor = vec4(f256()); }";
+            check(runStage(okIf, false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                      shows(deepIf.c_str(), "preprocessor expression too deep") &&
+                      shows(deepStruct.c_str(), "struct nesting too deep") &&
+                      shows(deepBlock.c_str(), "statement nesting too deep") &&
+                      shows(deepMacro.c_str(), "macro expansion too deep") &&
+                      shows(longMacro.c_str(), "macro expansion too long") &&
+                      shows(deepCall.c_str(), "function call depth exceeded"),
+                  "GLSL limits preprocessor, struct, statement, macro and call depth");
+        }
+        check(runStage("#line 10 7\n#if __LINE__ == 10 && __FILE__ == 7\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                  runStage("#define LN 12\n#define FID 4\n#line LN FID\n#if __LINE__ == 12 && __FILE__ == 4\nvoid main() { gl_FragColor = vec4(0.5); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                           false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL #line takes a line and an optional source number");
+        check(runStage("#define PICK(a, b) b\nvoid main() { gl_FragColor = vec4(PICK(vec2(1.0, 2.0), 0.25)); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f) &&
+                  shows("#define PICK(a, b) b\nvoid main() { gl_FragColor = vec4(PICK(x[1, 2], 0.25)); }", "macro argument count"),
+              "GLSL macro arguments group parentheses and split on commas in brackets");
+        check(runStage("#if defined(GL_FRAGMENT_PRECISION_HIGH)\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                  runStage("#if defined(GL_FRAGMENT_PRECISION_HIGH)\nvoid main() { gl_Position = vec4(1.0); }\n#else\nvoid main() { gl_Position = vec4(0.0); }\n#endif",
+                           true, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL predefines GL_FRAGMENT_PRECISION_HIGH in both stages");
+        check(shows("#define GL_FOO 1\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#define __HIDDEN 1\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#define FOO__BAR 1\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#undef FOO__BAR\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#undef GL_ES\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#undef __VERSION__\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name"),
+              "GLSL rejects #define and #undef of GL_ names and names containing __");
+        check(shows("#if 9223372036854775808\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", "invalid preprocessor expression") &&
+                  shows("void main() { int x = 9223372036854775808; gl_FragColor = vec4(float(x)); }", "invalid numeric literal"),
+              "GLSL rejects integer literals that do not fit");
+        check(shows("float sin(float x) { return 1.0; }\nvoid main() { gl_FragColor = vec4(sin(0.0)); }", "cannot redefine built-in function") &&
+                  shows("int sin(float x) { return 1; }\nvoid main() { gl_FragColor = vec4(1.0); }", "cannot redefine built-in function") &&
+                  runStage("float sin(float a, float b) { return a + b; }\nvoid main() { gl_FragColor = vec4(sin(0.0), sin(0.25, 0.5), 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 0, 0.75f, 0, 1),
+              "GLSL rejects an exact built-in signature and keeps other overloads");
+        check(runStage("#define N 4\nconst int K = 2;\nconst int A = 2, B = A * 3;\nfloat a[N * 3];\nfloat b[(K + 1)];\nfloat c[B];\n"
+                       "void main() { a[11] = 0.25; b[2] = 0.5; c[5] = 0.75; gl_FragColor = vec4(a[11], b[2], c[5], 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1) &&
+                  shows("float a[40];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[0];\nvoid main() { gl_FragColor = vec4(1.0); }", "invalid array size") &&
+                  shows("void main() { int n = 3; float a[n]; gl_FragColor = vec4(a[0]); }", "invalid array size"),
+              "GLSL accepts constant-expression array sizes and rejects the rest");
+        check(runStage("#extension GL_OES_standard_derivatives : require\nvoid main() { gl_FragColor = vec4(dFdx(1.0)); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0, 0, 0, 0) &&
+                  shows("void main() { gl_FragColor = vec4(dFdx(1.0)); }", "unknown variable/function") &&
+                  shows("#extension GL_OES_standard_derivatives : require\nvoid main() { gl_Position = vec4(dFdx(1.0)); }",
+                        "not available in a vertex shader", true) &&
+                  shows("#extension GL_OES_standard_derivatives : disable\nvoid main() { gl_FragColor = vec4(dFdx(1.0)); }",
+                        "unknown variable/function"),
+              "GLSL enables dFdx only with GL_OES_standard_derivatives");
+        {
+            Shader::Program looping;
+            const bool compiled = looping.compile("void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); for(;;) {} }", false);
+            Shader::Values vals; looping.initialize(vals);
+            int64_t budget = 1000;
+            const bool kept = compiled && looping.execute(vals, nullptr, nullptr, &budget);
+            check(compiled && !kept && budget < 0, "GLSL execute stops when the shared instruction budget is exhausted");
+        }
+        check(shows("void main() {\n#pragma optimize(off)\ngl_FragColor = vec4(1.0);\n}", "pragma optimize inside function") &&
+                  shows("void main() {\n#pragma debug(on)\ngl_FragColor = vec4(1.0);\n}", "pragma debug inside function") &&
+                  runStage("void main() {\n#if 0\n#pragma optimize(off)\n#endif\ngl_FragColor = vec4(1.0);\n}", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 1, 1, 1, 1),
+              "GLSL rejects optimize and debug pragmas inside functions");
+        {
+            const std::string bom = std::string("\xEF\xBB\xBF") + "#version 100\nvoid main() { gl_FragColor = vec4(1.0); }";
+            const std::string crlf = "#version 100\r\nvoid main() { gl_FragColor = vec4(1.0); }";
+            const std::string blanks = "\n\n  #version 100\nvoid main() { gl_FragColor = vec4(1.0); }";
+            const std::string commented = "// lead\n/* side */ #version 100 // tail\nvoid main() { gl_FragColor = vec4(1.0); }";
+            const std::string nbsp = std::string("#version\xC2\xA0") + "100\nvoid main() { gl_FragColor = vec4(1.0); }";
+            Shader::Program bad300, badEs;
+            bad300.compile("#version 300\nvoid main() { gl_FragColor = vec4(1.0); }", false);
+            badEs.compile("#version 100 es\nvoid main() { gl_FragColor = vec4(1.0); }", false);
+            check(runStage(bom, false, [](auto&, auto&) {}, o) && runStage(crlf, false, [](auto&, auto&) {}, o) &&
+                      runStage(blanks, false, [](auto&, auto&) {}, o) && runStage(commented, false, [](auto&, auto&) {}, o) &&
+                      runStage(nbsp, false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
+                      bad300.error.find("unsupported version '300'") != std::string::npos &&
+                      badEs.error.find("unsupported version '100 es'") != std::string::npos,
+                  "GLSL accepts #version 100 with a BOM, CRLF, comments and blank lines, and logs other versions");
+        }
+        check(runStage("float shade(float x) { return x + 0.25; }\nvoid main() { gl_FragColor = vec4(shade(0.5)); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f),
+              "GLSL user-defined functions");
+        check(runStage("float shade(float a, float b);\nvoid main() { gl_FragColor = vec4(shade(0.25, 0.5)); }\nfloat shade(float x, float y) { return x + y; }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f) &&
+                  shows("float shade(float a);\nfloat shade(out float a) { return a; }\nvoid main() { gl_FragColor = vec4(1.0); }", "function prototype mismatch") &&
+                  shows("float shade(float a) { return a; }\nfloat shade(float a) { return a; }\nvoid main() { gl_FragColor = vec4(1.0); }", "duplicate function definition"),
+              "GLSL prototypes, later definitions, and mismatched or duplicate declarations");
+        check(runStage("void touch(in float a) { a = 0.0; }\nvoid bump(inout float a, out float b) { a = 0.75; b = 0.75; }\n"
+                       "void main() { float x = 1.0; float y = 0.0; touch(x); bump(x, y); gl_FragColor = vec4(x, y, 0.0, 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0, 1),
+              "GLSL in parameters are copies and inout/out copy back");
+        check(shows("float self(float x) { return self(x); }\nvoid main() { gl_FragColor = vec4(self(1.0)); }", "recursion is not allowed") &&
+                  shows("float other(float x);\nfloat self(float x) { return other(x); }\nfloat other(float x) { return self(x); }\nvoid main() { gl_FragColor = vec4(self(1.0)); }",
+                        "recursion is not allowed"),
+              "GLSL rejects direct and mutual recursion");
+        check(runStage("void main() { float x = 0.25; if (x > 0.0) x = 0.75; else x = 0.0; gl_FragColor = vec4(x); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f) &&
+                  runStage("void main() { float x = 0.0; if (false) x = 1.0; gl_FragColor = vec4(x); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0, 0, 0, 0),
+              "GLSL if/else");
+        check(runStage("void main() { float s = 0.0; for (int i = 0; i < 4; i++) { if (i == 2) break; s = s + 0.25; } gl_FragColor = vec4(s); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL for and break");
+        check(runStage("void main() { float s = 0.0; int i = 0; while (i < 4) { i = i + 1; if (i == 2) continue; s = s + 0.25; } gl_FragColor = vec4(s); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f),
+              "GLSL while and continue");
+        check(runStage("void main() { float s = 0.0; int i = 0; do { i = i + 1; s = s + 0.25; } while (i < 2); gl_FragColor = vec4(s); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL do-while");
+        check(runStage("void main() { for (;;) { break; } gl_FragColor = vec4(1.0); }", false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL for(;;) compiles and break leaves it");
+        {
+            Shader::Program fragment, vertex;
+            const bool compiled = fragment.compile("void main() { gl_FragColor = vec4(1.0); discard; }", false);
+            Shader::Values values;
+            bool kept = true;
+            if (compiled) { fragment.initialize(values); kept = fragment.execute(values); }
+            check(compiled && !kept && shows("void main() { discard; gl_Position = vec4(1.0); }", "discard is not allowed in a vertex shader", true),
+                  "GLSL discard drops the fragment and is rejected in a vertex shader");
+            (void)vertex;
+        }
+        check(runStage("float side = 0.0;\nfloat mark() { side = 1.0; return 1.0; }\n"
+                       "void main() { float x = true ? 0.25 : mark(); bool y = false && mark() > 0.0; gl_FragColor = vec4(x, side, y ? 1.0 : 0.0, 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0, 0, 1),
+              "GLSL && and ?: skip the untaken arm");
+        check(runStage("float x = 0.25;\nvoid main() { float x = 0.75; { float x = 0.5; } gl_FragColor = vec4(x); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.75f, 0.75f, 0.75f, 0.75f),
+              "GLSL local declarations can shadow");
+        check(runStage("void main() { vec4 v = vec4(1, 2, 3, 4); int t = int(1.9); int n = int(-1.9); mat2 m = mat2(2.0); gl_FragColor = vec4(v.x, float(t), float(n), m[1].y); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, -1, 2) &&
+                  runStage("void main() { vec4 a = vec4(1.0, 2.0, 3.0, 4.0); vec4 b = vec4(4.0, 3.0, 2.0, 1.0); gl_FragColor = a + b * vec4(0.5) - vec4(2.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 1.5f, 2, 2.5f) &&
+                  runStage("void main() { mat2 A = mat2(1.0, 2.0, 3.0, 4.0); mat2 B = mat2(1.0, 0.0, 0.0, 1.0); gl_FragColor = vec4((A * B)[0], (A * 2.0)[1]); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 2, 6, 8) &&
+                  runStage("void main() { int a = 7 / 2; int b = -7 / 2; gl_FragColor = vec4(float(a), float(b), 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 3, -3, 0, 1),
+              "GLSL constructors, vector and matrix operators, and integer division");
+        auto nearLoose = [](const float* g, float r, float gch, float b, float a) {
+            return std::abs(g[0] - r) < 1e-4f && std::abs(g[1] - gch) < 1e-4f && std::abs(g[2] - b) < 1e-4f && std::abs(g[3] - a) < 1e-4f;
+        };
+        check(runStage("void main() { gl_FragColor = vec4(sin(0.0), cos(0.0), tan(0.0), exp(0.0)); }", false, [](auto&, auto&) {}, o) && nearLoose(o, 0, 1, 0, 1) &&
+                  runStage("void main() { gl_FragColor = vec4(asin(0.0), acos(1.0), atan(0.0), atan(1.0, 1.0)); }", false, [](auto&, auto&) {}, o) &&
+                  nearLoose(o, 0, 0, 0, 0.78539816f) &&
+                  runStage("void main() { gl_FragColor = vec4(radians(180.0) / 3.14159265, degrees(radians(180.0)) / 180.0, pow(2.0, 3.0) / 8.0, log(1.0)); }",
+                           false, [](auto&, auto&) {}, o) && nearLoose(o, 1, 1, 1, 0) &&
+                  runStage("void main() { gl_FragColor = vec4(exp2(3.0), log2(8.0), sqrt(4.0), inversesqrt(4.0)); }", false, [](auto&, auto&) {}, o) &&
+                  nearLoose(o, 8, 3, 2, 0.5f),
+              "GLSL angle, trigonometric and exponential built-ins");
+        check(runStage("void main() { gl_FragColor = vec4(abs(-1.5), sign(-2.0), sign(0.0), sign(3.0)); }", false, [](auto&, auto&) {}, o) && near4(o, 1.5f, -1, 0, 1) &&
+                  runStage("void main() { gl_FragColor = vec4(floor(1.7), floor(-1.2), ceil(1.2), ceil(-1.2)); }", false, [](auto&, auto&) {}, o) && near4(o, 1, -2, 2, -1) &&
+                  runStage("void main() { gl_FragColor = vec4(fract(1.75), mod(5.5, 2.0), min(0.25, 0.75), max(0.25, 0.75)); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 0.75f, 1.5f, 0.25f, 0.75f) &&
+                  runStage("void main() { gl_FragColor = vec4(clamp(1.5, 0.0, 1.0), mix(0.0, 10.0, 0.25), step(0.5, 0.25), step(0.5, 0.5)); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 2.5f, 0, 1) &&
+                  runStage("void main() { gl_FragColor = vec4(smoothstep(0.0, 1.0, 0.5)); }", false, [](auto&, auto&) {}, o) && near4(o, 0.5f, 0.5f, 0.5f, 0.5f),
+              "GLSL common built-ins");
+        check(runStage("void main() { gl_FragColor = vec4(length(vec2(3.0, 4.0)), distance(vec2(0.0), vec2(0.0, 2.0)), dot(vec2(1.0, 2.0), vec2(3.0, 4.0)), 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 5, 2, 11, 1) &&
+                  runStage("void main() { vec3 c = cross(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)); vec2 n = normalize(vec2(0.0, 3.0)); gl_FragColor = vec4(c.z, n.y, 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 0, 1) &&
+                  runStage("void main() { vec2 f = faceforward(vec2(0.0, 1.0), vec2(0.0, -1.0), vec2(0.0, 1.0)); vec2 r = reflect(vec2(0.0, -1.0), vec2(0.0, 1.0)); gl_FragColor = vec4(f.y, r.y, 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 0, 1) &&
+                  runStage("void main() { vec2 r = refract(vec2(0.0, -1.0), vec2(0.0, 1.0), 1.0); mat2 m = matrixCompMult(mat2(1.0, 2.0, 3.0, 4.0), mat2(2.0, 0.0, 0.0, 3.0)); gl_FragColor = vec4(r.y, m[0].x, m[1].y, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, -1, 2, 12, 1),
+              "GLSL geometric built-ins and matrixCompMult");
+        check(runStage("void main() { bvec2 c = lessThan(vec2(1.0, 3.0), vec2(2.0, 2.0)); bvec2 n = not(bvec2(true, false)); gl_FragColor = vec4(float(c.x), float(c.y), float(any(c)), float(all(not(n)))); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 0, 1, 0) &&
+                  runStage("void main() { gl_FragColor = vec4(float(gl_MaxVertexAttribs == 16), float(gl_MaxVertexUniformVectors == 128), float(gl_MaxVaryingVectors == 8), float(gl_MaxDrawBuffers == 1)); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL relational built-ins and implementation constants");
+        check(runStage("void main() { gl_FragColor = vec4(gl_FragCoord.x, gl_FrontFacing ? 1.0 : 0.0, gl_PointCoord.x, gl_DepthRange.diff); }", false,
+                       [](Shader::Program& p, Shader::Values& v) {
+                           if (auto* c = p.find("gl_FragCoord")) v[c->slot] = 0.25f;
+                           if (auto* f = p.find("gl_FrontFacing")) v[f->slot] = 1;
+                           if (auto* pc = p.find("gl_PointCoord")) v[pc->slot] = 0.75f;
+                           if (auto* d = p.find("gl_DepthRange")) { v[d->slot + 1] = 0.125f; v[d->slot + 2] = 0.125f; }
+                       }, o) && near4(o, 0.25f, 1, 0.75f, 0.125f),
+              "GLSL gl_FragCoord, gl_FrontFacing, gl_PointCoord and gl_DepthRange");
+        check(runStage("void main() { gl_PointSize = 4.0; gl_Position = vec4(gl_PointSize / 4.0); }", true,
+                       [](Shader::Program& p, Shader::Values& v) {
+                           if (auto* ps = p.find("gl_PointSize")) v[ps->slot] = v[ps->slot];
+                       }, o) && near4(o, 1, 1, 1, 1),
+              "GLSL gl_PointSize");
+        check(runStage("void main() { gl_FragData[0] = vec4(0.25, 0.5, 0.75, 1.0); }", false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1) &&
+                  shows("void main() { gl_FragColor = vec4(1.0); gl_FragData[0] = vec4(0.0); }", "cannot write both"),
+              "GLSL gl_FragData aliases the fragment output");
+        check(runStage("void main() { float a[4]; a[0] = 0.1; a[1] = 0.2; a[2] = 0.3; a[3] = 0.4; float s = 0.0; for (int i = 0; i < 4; i++) s = s + a[i]; gl_FragColor = vec4(s); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL dynamic array indexing");
+        {
+            auto sampleTo = [](void* context, int unit, float u, float v, float* out) {
+                auto* hit = static_cast<float*>(context);
+                hit[0] = float(unit); hit[1] = u; hit[2] = v; hit[3] = 1;
+                out[0] = u; out[1] = v; out[2] = 0.5f; out[3] = 1;
+            };
+            float hit[4] = {};
+            Shader::Program program;
+            bool proj = program.compile("uniform sampler2D image;\nvoid main() { gl_FragColor = texture2DProj(image, vec3(0.5, 0.25, 2.0)); }", false);
+            Shader::Values values;
+            if (proj) {
+                program.initialize(values);
+                if (auto* s = program.find("image")) values[s->slot] = 2;
+                program.execute(values, sampleTo, hit);
+            }
+            bool projOk = proj && hit[0] == 2 && std::abs(hit[1] - 0.25f) < 1e-5f && std::abs(hit[2] - 0.125f) < 1e-5f &&
+                          near4(&values[program.output], 0.25f, 0.125f, 0.5f, 1);
+            Shader::Program vert;
+            bool lod = vert.compile("uniform sampler2D image;\nvoid main() { gl_Position = texture2DLod(image, vec2(0.5, 0.25), 0.0); }", true);
+            bool lodOk = false;
+            if (lod) {
+                vert.initialize(values);
+                if (auto* s = vert.find("image")) values[s->slot] = 5;
+                vert.execute(values, sampleTo, hit);
+                lodOk = hit[0] == 5 && std::abs(hit[1] - 0.5f) < 1e-5f && std::abs(hit[2] - 0.25f) < 1e-5f &&
+                        near4(&values[vert.output], 0.5f, 0.25f, 0.5f, 1);
+            }
+            Shader::Program cube;
+            bool cubeOk = cube.compile("uniform samplerCube image;\nvoid main() { gl_FragColor = textureCube(image, vec3(1.0, 0.5, -0.5)); }", false);
+            if (cubeOk) {
+                cube.initialize(values);
+                if (auto* s = cube.find("image")) values[s->slot] = 6;
+                cube.execute(values, sampleTo, hit);
+                cubeOk = hit[0] == 6 && std::abs(hit[1] - 0.75f) < 1e-5f && std::abs(hit[2] - 0.25f) < 1e-5f;
+            }
+            check(projOk && lodOk && cubeOk && shows("uniform sampler2D image;\nvoid main() { gl_FragColor = texture2DLod(image, vec2(0.0), 0.0); }", "vertex shader"),
+                  "GLSL texture2DProj, texture2DLod and textureCube");
+        }
     }
 
     // Opt-in loopback TCP uses genuine BSD IO, not successful placeholder calls.
@@ -992,6 +1496,367 @@ int runFullSubsystemTests() {
             int32_t(callGL("_glGetAttribLocation", {pipeline,proc.allocCString("absent")})) == -1;
         check(diagnostics, "GLES2 exposes compile/link errors, bounded info logs and unknown locations");
 
+        // Struct leaves and array elements are real uniform locations. The count==1
+        // uniforms above keep the locations this draw already checked.
+        uint32_t structVs = shader(0x8B31,
+            "struct Material { vec4 color; float intensity; };\n"
+            "uniform Material u;\nuniform vec4 pal[2];\nattribute vec4 a_position;\nvarying Material m;\n"
+            "void main() { gl_Position = a_position; m = u; m.color = m.color * m.intensity + pal[0] + pal[1]; }");
+        uint32_t structFs = shader(0x8B30,
+            "struct Material { vec4 color; float intensity; };\nvarying Material m;\nvoid main() { gl_FragColor = m.color; }");
+        uint32_t structProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {structProg, structVs});
+        callGL("_glAttachShader", {structProg, structFs});
+        callGL("_glBindAttribLocation", {structProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {structProg});
+        callGL("_glGetProgramiv", {structProg, 0x8B82, idsAddr + 36});
+        const bool structLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {structProg});
+        const int32_t colorLoc = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("u.color")}));
+        const int32_t intensityLoc = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("u.intensity")}));
+        const int32_t palLoc = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("pal")}));
+        const int32_t pal0 = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("pal[0]")}));
+        const int32_t pal1 = int32_t(callGL("_glGetUniformLocation", {structProg, proc.allocCString("pal[1]")}));
+        callGL("_glGetProgramiv", {structProg, 0x8B86, idsAddr + 36});
+        const int32_t activeUniforms = proc.mem().read<int32_t>(idsAddr + 36);
+        bool palActive = false;
+        const uint32_t activeName = proc.heap().allocZeroed(64);
+        for (int32_t i = 0; i < activeUniforms; ++i) {
+            callGL("_glGetActiveUniform", {structProg, uint32_t(i), 64, 0, idsAddr + 40, idsAddr + 44, activeName});
+            std::string nm;
+            for (int n = 0; n < 64; ++n) {
+                char ch = char(proc.mem().read<uint8_t>(activeName + uint32_t(n)));
+                if (!ch) break;
+                nm.push_back(ch);
+            }
+            if (nm == "pal[0]" && proc.mem().read<int32_t>(idsAddr + 40) == 2 && proc.mem().read<uint32_t>(idsAddr + 44) == 0x8B52)
+                palActive = true;
+        }
+        callGL("_glUniform4f", {uint32_t(colorLoc), UIKit::fbits(0.5f), UIKit::fbits(0), UIKit::fbits(0), UIKit::fbits(1)});
+        callGL("_glUniform1f", {uint32_t(intensityLoc), UIKit::fbits(1)});
+        const float palData[] = {0, 0.5f, 0, 0, 0, 0, 1, 0};
+        const uint32_t palPtr = proc.heap().alloc(sizeof palData);
+        proc.mem().copyIn(palPtr, palData, sizeof palData);
+        callGL("_glUniform4fv", {uint32_t(palLoc), 2, palPtr});
+        const float cover[] = {-1, -1, 1, -1, 0, 1};
+        const uint32_t coverPtr = proc.heap().alloc(sizeof cover);
+        proc.mem().copyIn(coverPtr, cover, sizeof cover);
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(structLinked && activeUniforms == 3 && palActive && colorLoc >= 0 && intensityLoc == colorLoc + 1 &&
+              palLoc == pal0 && pal1 == palLoc + 1 && palLoc != colorLoc &&
+              proc.mem().read<uint8_t>(idsAddr + 24) == 128 && proc.mem().read<uint8_t>(idsAddr + 25) == 128 &&
+              proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 links struct-uniform leaves and array elements to consecutive locations");
+
+        uint32_t matVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
+        uint32_t matFs = shader(0x8B30,
+            "uniform mat3 m3;\nuniform mat2 m2;\nuniform int counter;\nuniform bool flag;\nuniform samplerCube cube;\n"
+            "void main() { gl_FragColor = vec4(m3[0].z, m3[1].x, m2[1].x, float(counter)); }");
+        uint32_t matProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {matProg, matVs});
+        callGL("_glAttachShader", {matProg, matFs});
+        callGL("_glBindAttribLocation", {matProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {matProg});
+        callGL("_glGetProgramiv", {matProg, 0x8B82, idsAddr + 36});
+        const bool matLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {matProg});
+        bool sawMat3 = false, sawMat2 = false, sawInt = false, sawBool = false, sawCube = false;
+        callGL("_glGetProgramiv", {matProg, 0x8B86, idsAddr + 36});
+        const int32_t matUniforms = proc.mem().read<int32_t>(idsAddr + 36);
+        for (int32_t i = 0; i < matUniforms; ++i) {
+            callGL("_glGetActiveUniform", {matProg, uint32_t(i), 64, 0, idsAddr + 40, idsAddr + 44, activeName});
+            std::string nm;
+            for (int n = 0; n < 64; ++n) {
+                char ch = char(proc.mem().read<uint8_t>(activeName + uint32_t(n)));
+                if (!ch) break;
+                nm.push_back(ch);
+            }
+            const uint32_t ty = proc.mem().read<uint32_t>(idsAddr + 44);
+            if (nm == "m3" && ty == 0x8B5B) sawMat3 = true;
+            if (nm == "m2" && ty == 0x8B5A) sawMat2 = true;
+            if (nm == "counter" && ty == 0x1404) sawInt = true;
+            if (nm == "flag" && ty == 0x8B56) sawBool = true;
+            if (nm == "cube" && ty == 0x8B60) sawCube = true;
+        }
+        const float m3data[] = {0, 1, 0, 0, 0, 1, 1, 0, 0};
+        const float m2data[] = {0, 1, 0, 0};
+        const uint32_t m3ptr = proc.heap().alloc(sizeof m3data);
+        const uint32_t m2ptr = proc.heap().alloc(sizeof m2data);
+        proc.mem().copyIn(m3ptr, m3data, sizeof m3data);
+        proc.mem().copyIn(m2ptr, m2data, sizeof m2data);
+        const int32_t m3loc = int32_t(callGL("_glGetUniformLocation", {matProg, proc.allocCString("m3")}));
+        const int32_t m2loc = int32_t(callGL("_glGetUniformLocation", {matProg, proc.allocCString("m2")}));
+        const int32_t counterLoc = int32_t(callGL("_glGetUniformLocation", {matProg, proc.allocCString("counter")}));
+        callGL("_glUniformMatrix3fv", {uint32_t(m3loc), 1, 1, m3ptr});
+        callGL("_glUniformMatrix2fv", {uint32_t(m2loc), 1, 1, m2ptr});
+        callGL("_glUniform1i", {uint32_t(counterLoc), 1});
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(matLinked && sawMat3 && sawMat2 && sawInt && sawBool && sawCube &&
+                  proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
+                  proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 transposes mat2/mat3 when requested and reports int, bool and samplerCube types");
+
+        uint32_t derivVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
+        uint32_t derivFs = shader(0x8B30,
+            "#extension GL_OES_standard_derivatives : require\n"
+            "void main() { gl_FragColor = vec4(dFdx(gl_FragCoord.x), dFdy(gl_FragCoord.y), fwidth(gl_FragCoord.x), 1.0); }");
+        uint32_t derivProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {derivProg, derivVs});
+        callGL("_glAttachShader", {derivProg, derivFs});
+        callGL("_glBindAttribLocation", {derivProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {derivProg});
+        callGL("_glGetProgramiv", {derivProg, 0x8B82, idsAddr + 36});
+        const bool derivLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {derivProg});
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        const uint32_t extPtr = uint32_t(callGL("_glGetString", {0x1F03}));
+        std::string extStr;
+        for (uint32_t n = 0; n < 512 && extPtr; ++n) {
+            char ch = char(proc.mem().read<uint8_t>(extPtr + n));
+            if (!ch) break;
+            extStr.push_back(ch);
+        }
+        check(derivLinked && extStr.find("GL_OES_standard_derivatives") != std::string::npos &&
+                  proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
+                  proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 dFdx/dFdy/fwidth use 2x2 quads and advertise GL_OES_standard_derivatives");
+
+        uint32_t loopVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
+        uint32_t loopFs = shader(0x8B30, "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); for(;;) {} }");
+        uint32_t loopProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {loopProg, loopVs});
+        callGL("_glAttachShader", {loopProg, loopFs});
+        callGL("_glBindAttribLocation", {loopProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {loopProg});
+        callGL("_glGetProgramiv", {loopProg, 0x8B82, idsAddr + 36});
+        const bool loopLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glGetError", {});
+        callGL("_glClearColor", {UIKit::fbits(0.0f), UIKit::fbits(0.0f), UIKit::fbits(1.0f), UIKit::fbits(1.0f)});
+        callGL("_glClear", {0x00004000});
+        callGL("_glUseProgram", {loopProg});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        const uint32_t loopErr = uint32_t(callGL("_glGetError", {}));
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        const bool stayedBlue = proc.mem().read<uint8_t>(idsAddr + 24) == 0 && proc.mem().read<uint8_t>(idsAddr + 25) == 0 &&
+                                proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255;
+        callGL("_glUseProgram", {prog});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        const bool drewGreen = proc.mem().read<uint8_t>(idsAddr + 24) == 0 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
+                               proc.mem().read<uint8_t>(idsAddr + 26) == 0 && proc.mem().read<uint8_t>(idsAddr + 27) == 255;
+        const uint32_t afterErr = uint32_t(callGL("_glGetError", {}));
+        check(loopLinked && loopErr == 0x0502 && stayedBlue && drewGreen && afterErr == 0,
+              "GLES2 aborts a draw that exceeds the instruction budget and discards its fragments");
+        // Homogeneous clip: triangles that cross the camera (w<=0) or the near
+        // plane (z<-w) must be clipped in clip space before the perspective divide.
+        {
+            uint32_t clipVs = shader(0x8B31, "attribute vec4 pos; attribute vec4 col; varying vec4 vcol; void main() { gl_Position = pos; vcol = col; }");
+            uint32_t clipFs = shader(0x8B30, "varying vec4 vcol; void main() { gl_FragColor = vcol; }");
+            uint32_t clipProg = uint32_t(callGL("_glCreateProgram", {}));
+            callGL("_glBindAttribLocation", {clipProg, 0, proc.allocCString("pos")});
+            callGL("_glBindAttribLocation", {clipProg, 1, proc.allocCString("col")});
+            callGL("_glAttachShader", {clipProg, clipVs});
+            callGL("_glAttachShader", {clipProg, clipFs});
+            callGL("_glLinkProgram", {clipProg});
+            callGL("_glUseProgram", {clipProg});
+            callGL("_glViewport", {0, 0, 64, 64});
+            callGL("_glDisable", {0x0B44 /* GL_CULL_FACE */});
+            callGL("_glDisable", {0x0B71 /* GL_DEPTH_TEST */});
+            callGL("_glEnableVertexAttribArray", {0});
+            callGL("_glEnableVertexAttribArray", {1});
+            const uint32_t pix = proc.heap().allocZeroed(16);
+            auto readPx = [&](int x, int y, uint8_t& pr, uint8_t& pg, uint8_t& pb, uint8_t& pa) {
+                callGL("_glReadPixels", {uint32_t(x), uint32_t(y), 1, 1, 0x1908, 0x1401, pix});
+                pr = proc.mem().read<uint8_t>(pix);
+                pg = proc.mem().read<uint8_t>(pix + 1);
+                pb = proc.mem().read<uint8_t>(pix + 2);
+                pa = proc.mem().read<uint8_t>(pix + 3);
+            };
+            auto closeTo = [](uint8_t pr, uint8_t pg, uint8_t pb, int er, int eg, int eb) {
+                return std::abs(int(pr) - er) <= 3 && std::abs(int(pg) - eg) <= 3 && std::abs(int(pb) - eb) <= 3;
+            };
+            auto clearBlue = [&]() {
+                callGL("_glClearColor", {UIKit::fbits(0), UIKit::fbits(0), UIKit::fbits(1), UIKit::fbits(1)});
+                callGL("_glClear", {0x4000});
+            };
+            auto drawClip = [&](uint32_t mode, const float* verts, int nVerts) {
+                const uint32_t nbytes = uint32_t(nVerts * 8 * sizeof(float));
+                const uint32_t mem = proc.heap().alloc(nbytes);
+                proc.mem().copyIn(mem, verts, nbytes);
+                callGL("_glBufferData", {0x8892, nbytes, mem, 0x88E4});
+                callGL("_glVertexAttribPointer", {0, 4, 0x1406, 0, 32, 0});
+                callGL("_glVertexAttribPointer", {1, 4, 0x1406, 0, 32, 16});
+                callGL("_glDrawArrays", {mode, 0, uint32_t(nVerts)});
+            };
+            uint8_t pr = 0, pg = 0, pb = 0, pa = 0, qr = 0, qg = 0, qb = 0, qa = 0;
+
+            const float insideTri[] = {
+                -0.5f, -0.5f, 0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.5f, -0.5f, 0.f, 1.f,  0.f, 1.f, 0.f, 1.f,
+                 0.0f,  0.5f, 0.f, 1.f,  0.f, 0.f, 1.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, insideTri, 3);
+            readPx(32, 40, pr, pg, pb, pa);
+            std::printf("  clip inside (32,40)=%u,%u,%u,%u\n", pr, pg, pb, pa);
+            check(closeTo(pr, pg, pb, 26, 34, 195) && pa == 255,
+                  "GLES2 triangle entirely in front of the near plane keeps its coverage and perspective-correct color");
+
+            const float crossW[] = {
+                -0.8f, -0.8f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                -0.8f,  0.8f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.2f,  0.0f, -2.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, crossW, 3);
+            readPx(7, 32, pr, pg, pb, pa);
+            readPx(4, 35, qr, qg, qb, qa);
+            std::printf("  clip w<0 (7,32)=%u,%u,%u,%u (4,35)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0 && qa == 255,
+                  "GLES2 clips a triangle crossing the camera plane (w<0) instead of mirroring it through the origin");
+
+            const float crossNear[] = {
+                -0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.0f,  0.5f, -2.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, crossNear, 3);
+            readPx(32, 36, pr, pg, pb, pa);
+            readPx(33, 23, qr, qg, qb, qa);
+            std::printf("  clip z<-w (32,36)=%u,%u,%u,%u (33,23)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0,
+                  "GLES2 clips a triangle crossing the near plane (z<-w, w>0) and keeps the visible fragment");
+
+            const float behindTri[] = {
+                 0.5f,  0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                -0.5f,  0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.0f, -0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, behindTri, 3);
+            readPx(32, 32, pr, pg, pb, pa);
+            std::printf("  clip all behind (32,32)=%u,%u,%u,%u\n", pr, pg, pb, pa);
+            check(pr == 0 && pg == 0 && pb == 255 && pa == 255,
+                  "GLES2 drops a triangle whose vertices are all behind the camera (w<0)");
+
+            const float crossLine[] = {
+                0.f, 0.f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                0.5f, 0.f, -2.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001 /* GL_LINES */, crossLine, 2);
+            readPx(20, 32, pr, pg, pb, pa);
+            readPx(36, 32, qr, qg, qb, qa);
+            std::printf("  clip line (20,32)=%u,%u,%u,%u (36,32)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0,
+                  "GLES2 clips a line crossing the camera plane to the near-plane segment");
+
+            const float pts[] = {
+                 0.5f, 0.f,  0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.f,  0.5f, -2.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.f,  0.f,   0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0000 /* GL_POINTS */, pts, 3);
+            readPx(16, 32, pr, pg, pb, pa);
+            readPx(32, 48, qr, qg, qb, qa);
+            uint8_t rr = 0, rg = 0, rb = 0, ra = 0;
+            readPx(32, 32, rr, rg, rb, ra);
+            std::printf("  clip points behind=%u,%u,%u,%u near=%u,%u,%u,%u inside=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, rr, rg, rb, ra);
+            check(pr == 0 && pb == 255 && qr == 0 && qb == 255 && rr == 255 && rg == 0 && rb == 0,
+                  "GLES2 discards points with w<0 or z<-w and still draws a point in front of the near plane");
+
+            // Different w on every vertex. Equal w makes screen-linear and
+            // perspective-correct interpolation the same color, so this lock
+            // only holds if the fragment stage divides by the clipped 1/w.
+            const float attrTri[] = {
+                -0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 2.0f, -2.0f,  0.f, 4.f,  0.f, 1.f, 0.f, 1.f,
+                 0.0f,  0.5f, -2.f, 1.f,  0.f, 0.f, 1.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, attrTri, 3);
+            readPx(38, 18, pr, pg, pb, pa);
+            readPx(50, 0, qr, qg, qb, qa);
+            std::printf("  clip attrib (38,18)=%u,%u,%u,%u (50,0)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(closeTo(pr, pg, pb, 131, 84, 40) && pa == 255 && qr == 0 && qb == 255,
+                  "GLES2 perspective-correct varyings use a different w on each vertex, including the near-plane edge");
+
+            // w=1, w=1.5, and a vertex through the w guard. The guard lerp
+            // undershoots 1e-6 in float32 (about 9.54e-7). Rejecting that
+            // output drops the visible triangle (about 2587 of 4096 pixels
+            // before the side planes). Side planes then keep NDC inside the
+            // viewport, so the unbounded projection's extra pixels stay clear.
+            const uint32_t fb = proc.heap().alloc(64 * 64 * 4);
+            auto countCovered = [&]() {
+                callGL("_glReadPixels", {0, 0, 64, 64, 0x1908, 0x1401, fb});
+                const uint8_t* p = proc.mem().host(fb);
+                int n = 0;
+                for (int i = 0; i < 64 * 64; ++i)
+                    if (p[i * 4] >= 250 && p[i * 4 + 2] <= 5) ++n;
+                return n;
+            };
+            const float guardTri[] = {
+                -0.8f,  0.2f, 0.f,  1.f,    1.f, 0.f, 0.f, 1.f,
+                 0.9f, -0.9f, 0.f,  1.5f,   1.f, 0.f, 0.f, 1.f,
+                 0.25f, 0.25f, 0.f, -1e-4f, 1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, guardTri, 3);
+            readPx(20, 41, pr, pg, pb, pa);
+            readPx(8, 13, qr, qg, qb, qa);
+            const int guardCov = countCovered();
+            std::printf("  clip guard tri (20,41)=%u,%u,%u,%u (8,13)=%u,%u,%u,%u covered=%d\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, guardCov);
+            check(pr == 255 && pg == 0 && pb == 0 && pa == 255 &&
+                  qr == 0 && qb == 255 && guardCov >= 1900 && guardCov <= 2100,
+                  "GLES2 keeps a w=1/1.5/through-guard triangle whose clip boundary undershoots 1e-6, and side planes bound it to the viewport");
+
+            // The guard hit stays inside the side planes, so its w remains
+            // ~9.54e-7 after every plane. The segment must still be drawn.
+            const float guardSeg[] = {
+                -0.6f, -0.4f, 0.f, 1.5f,  1.f, 0.f, 0.f, 1.f,
+                 1e-6f, 5e-7f, 0.f, 5e-7f, 1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001, guardSeg, 2);
+            readPx(40, 34, pr, pg, pb, pa);
+            readPx(0, 0, qr, qg, qb, qa);
+            std::printf("  clip guard seg (40,34)=%u,%u,%u,%u (0,0)=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 255 && pg == 0 && pb == 0 && qr == 0 && qb == 255,
+                  "GLES2 draws a segment whose clipped endpoint is the float32 guard boundary (~9.54e-7)");
+
+            // clip x = 1e10, w = 1. The screen delta exceeds INT_MAX. Side
+            // planes bring NDC x to 1, and the walker must not convert that
+            // unclipped delta to int.
+            const float hugeLine[] = {
+                0.f, 0.f, 0.f, 1.f,     1.f, 0.f, 0.f, 1.f,
+                1e10f, 0.f, 0.f, 1.f,   1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001, hugeLine, 2);
+            readPx(48, 32, pr, pg, pb, pa);
+            readPx(63, 32, qr, qg, qb, qa);
+            uint8_t sr = 0, sg = 0, sb = 0, sa = 0;
+            readPx(0, 32, sr, sg, sb, sa);
+            std::printf("  clip huge line (48,32)=%u,%u,%u,%u (63,32)=%u,%u,%u,%u (0,32)=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, sr, sg, sb, sa);
+            check(pr == 255 && pg == 0 && pb == 0 && qr == 255 && qg == 0 && qb == 0 && sr == 0 && sb == 255,
+                  "GLES2 clips a line whose screen delta exceeds INT_MAX to the framebuffer and still draws the visible pixels");
+        }
+
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
@@ -1222,6 +2087,77 @@ int runFullSubsystemTests() {
         const uint8_t b1 = proc.mem().read<uint8_t>(texIds + 10);
         check(r1 == 255 && g1 == 0 && b1 == 0, "OpenGL ES 1.1 fixed-function ortho + 2D texture + glDrawElements");
 
+        // Fixed-function path shares the raster clip. A frustum triangle with
+        // every vertex behind the camera (eye z>0 => clip w<0) must not paint.
+        callGL("_glDisable", {0x0DE1 /* GL_TEXTURE_2D */});
+        callGL("_glDisable", {0x0B44 /* GL_CULL_FACE */});
+        callGL("_glMatrixMode", {0x1701 /* GL_PROJECTION */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glFrustumf", {UIKit::fbits(-1.f), UIKit::fbits(1.f), UIKit::fbits(-1.f), UIKit::fbits(1.f), UIKit::fbits(1.f), UIKit::fbits(10.f)});
+        callGL("_glMatrixMode", {0x1700 /* GL_MODELVIEW */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glColor4f", {UIKit::fbits(1.f), UIKit::fbits(0.f), UIKit::fbits(0.f), UIKit::fbits(1.f)});
+        callGL("_glClearColor", {UIKit::fbits(0.f), UIKit::fbits(0.f), UIKit::fbits(1.f), UIKit::fbits(1.f)});
+        const float frontEye[] = {-0.5f, -0.5f, -2.f,  0.5f, -0.5f, -2.f,  0.f, 0.5f, -2.f};
+        const float behindEye[] = {-0.5f, -0.5f, 1.f,  0.5f, -0.5f, 1.f,  0.f, 0.5f, 1.f};
+        const uint32_t eyeMem = proc.heap().alloc(sizeof frontEye + sizeof behindEye);
+        proc.mem().copyIn(eyeMem, frontEye, sizeof frontEye);
+        proc.mem().copyIn(eyeMem + sizeof frontEye, behindEye, sizeof behindEye);
+        callGL("_glVertexPointer", {3, 0x1406, 0, eyeMem});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 32, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t frontR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t frontB = proc.mem().read<uint8_t>(texIds + 10);
+        callGL("_glVertexPointer", {3, 0x1406, 0, eyeMem + uint32_t(sizeof frontEye)});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 32, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t backR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t backG = proc.mem().read<uint8_t>(texIds + 9);
+        const uint8_t backB = proc.mem().read<uint8_t>(texIds + 10);
+        std::printf("  clip gles1 front (32,32)=%u,%u behind=%u,%u,%u\n",
+                    frontR, frontB, backR, backG, backB);
+        check(frontR == 255 && frontB == 0 && backR == 0 && backG == 0 && backB == 255,
+              "GLES1 frustum clips a triangle behind the camera and still draws one in front of the near plane");
+
+        // GLES1 color and UV stay screen-linear after clipping. The clip lerps
+        // them in clip space so the new edge vertex is correct, and the fill
+        // does not reweight by 1/w. Perspective-correct weighting of this same
+        // triangle is about (131,84,40); the framebuffer must match (66,169,20).
+        callGL("_glMatrixMode", {0x1701 /* GL_PROJECTION */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glMatrixMode", {0x1700 /* GL_MODELVIEW */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glEnableClientState", {0x8076 /* GL_COLOR_ARRAY */});
+        const float gles1Pos[] = {
+            -0.5f, -0.5f, 0.f, 1.f,
+             2.0f, -2.0f, 0.f, 4.f,
+             0.0f,  0.5f,-2.f, 1.f,
+        };
+        const float gles1Col[] = {
+            1.f, 0.f, 0.f, 1.f,
+            0.f, 1.f, 0.f, 1.f,
+            0.f, 0.f, 1.f, 1.f,
+        };
+        const uint32_t pMem = proc.heap().alloc(sizeof gles1Pos);
+        const uint32_t cMem = proc.heap().alloc(sizeof gles1Col);
+        proc.mem().copyIn(pMem, gles1Pos, sizeof gles1Pos);
+        proc.mem().copyIn(cMem, gles1Col, sizeof gles1Col);
+        callGL("_glVertexPointer", {4, 0x1406, 0, pMem});
+        callGL("_glColorPointer", {4, 0x1406, 0, cMem});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {38, 18, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t linR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t linG = proc.mem().read<uint8_t>(texIds + 9);
+        const uint8_t linB = proc.mem().read<uint8_t>(texIds + 10);
+        std::printf("  clip gles1 screen-linear (38,18)=%u,%u,%u\n", linR, linG, linB);
+        const bool screenLinear = std::abs(int(linR) - 66) <= 3 && std::abs(int(linG) - 169) <= 3 && std::abs(int(linB) - 20) <= 3;
+        const bool perspective = std::abs(int(linR) - 131) <= 3 && std::abs(int(linG) - 84) <= 3 && std::abs(int(linB) - 40) <= 3;
+        check(screenLinear && !perspective,
+              "GLES1 color after clipping is screen-linear (66,169,20), matching the fixed-function fill");
+
         // CommonCrypto digests against the standard "abc" vectors.
         auto hex = [](const std::vector<uint8_t>& v) { std::string h; char b[3]; for (uint8_t c : v) { std::snprintf(b, 3, "%02x", c); h += b; } return h; };
         check(hex(Runtime::hvmDigest(0, "abc")) == "900150983cd24fb0d6963f7d28e17f72" &&
@@ -1389,6 +2325,466 @@ int runFullSubsystemTests() {
         }
     }
 
+    // POSIX regex (Darwin 32-bit ABI) and tmpnam inside the guest sandbox.
+    // regoff_t is __darwin_off_t (int64) even on armv7, so regmatch_t is 16 bytes.
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+        const bool have = proc.lookupSymbol("_regcomp") && proc.lookupSymbol("_regexec") &&
+                          proc.lookupSymbol("_regerror") && proc.lookupSymbol("_regfree") &&
+                          proc.lookupSymbol("_tmpnam");
+        constexpr uint32_t REG_EXTENDED = 1, REG_ICASE = 2, REG_NOSUB = 4, REG_NEWLINE = 010;
+        constexpr uint32_t REG_NOTBOL = 1;
+        constexpr uint32_t REG_NOMATCH = 1, REG_BADPAT = 2, REG_ECTYPE = 4, REG_EESCAPE = 5, REG_ESUBREG = 6;
+        constexpr uint32_t REG_EBRACK = 7, REG_EPAREN = 8, REG_EBRACE = 9, REG_BADBR = 10, REG_ERANGE = 11;
+        constexpr uint32_t REG_BADRPT = 13, REG_INVARG = 16;
+        auto i64 = [&](uint32_t a) { return proc.mem().read<int64_t>(a); };
+        auto nsub = [&](uint32_t preg) { return proc.mem().read<uint32_t>(preg + 4); };
+        auto compile = [&](const char* pat, uint32_t flags) {
+            const uint32_t preg = proc.heap().allocZeroed(32);
+            const uint32_t rc = call("_regcomp", {preg, proc.allocCString(pat), flags});
+            return std::pair{rc, preg};
+        };
+        auto exec = [&](uint32_t preg, const char* text, uint32_t nmatch, uint32_t pmatch, uint32_t eflags = 0) {
+            return call("_regexec", {preg, proc.allocCString(text), nmatch, pmatch, eflags});
+        };
+        auto offs = [&](uint32_t pm, int i) { return std::pair{i64(pm + uint32_t(i) * 16), i64(pm + uint32_t(i) * 16 + 8)}; };
+        const uint32_t pm = proc.heap().allocZeroed(8 * 16);
+        auto clearPm = [&] {
+            for (uint32_t i = 0; i < 8 * 16; i += 8) proc.mem().write<int64_t>(pm + i, -1);
+        };
+        auto run = [&](const char* name, auto&& fn) {
+            if (!have) { check(false, name); return; }
+            bool ok = false;
+            try { ok = fn(); }
+            catch (const std::exception& e) { std::printf("    %s threw: %s\n", name, e.what()); }
+            check(ok, name);
+        };
+        run("POSIX BRE dot-star, anchors, and re_nsub", [&] {
+            auto [rc, re] = compile("a.*b", 0);
+            clearPm();
+            const uint32_t er = exec(re, "zzaxxbqq", 1, pm);
+            const auto dot = offs(pm, 0);
+            const uint32_t groups = nsub(re);
+            auto [rc2, re2] = compile("^hello$", 0);
+            clearPm();
+            const uint32_t hit = exec(re2, "hello", 1, pm);
+            const auto whole = offs(pm, 0);
+            const uint32_t miss = exec(re2, "hello!", 1, pm);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return rc == 0 && er == 0 && groups == 0 && dot == std::pair<int64_t,int64_t>(2, 6) &&
+                   rc2 == 0 && hit == 0 && whole == std::pair<int64_t,int64_t>(0, 5) && miss == REG_NOMATCH;
+        });
+        run("POSIX BRE grouping reports the last iteration", [&] {
+            auto [rc, re] = compile("\\(ab\\)*", 0);
+            clearPm();
+            const uint32_t er = exec(re, "ababab", 2, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 1 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 6) &&
+                            offs(pm, 1) == std::pair<int64_t,int64_t>(4, 6);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX BRE bounded interval is greedy", [&] {
+            auto [rc, re] = compile("a\\{2,4\\}", 0);
+            clearPm();
+            const uint32_t er = exec(re, "aaaaa", 1, pm);
+            const bool ok = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 4);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX BRE backreferences", [&] {
+            auto [rc, re] = compile("\\(a\\)\\1", 0);
+            clearPm();
+            const uint32_t hit = exec(re, "aa", 2, pm);
+            const auto whole = offs(pm, 0);
+            const auto g = offs(pm, 1);
+            const uint32_t miss = exec(re, "ab", 2, pm);
+            const bool ok = rc == 0 && hit == 0 && whole == std::pair<int64_t,int64_t>(0, 2) &&
+                            g == std::pair<int64_t,int64_t>(0, 1) && miss == REG_NOMATCH;
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX ERE alternation is leftmost-longest", [&] {
+            auto [rc, re] = compile("(foo|foobar)|(a|ab)c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "foobar", 3, pm);
+            const bool one = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 6) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(0, 6) && offs(pm, 2) == std::pair<int64_t,int64_t>(-1, -1);
+            auto [rc2, re2] = compile("(a|ab)c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "abc", 2, pm);
+            const bool two = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 3) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(0, 2);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return one && two;
+        });
+        run("POSIX ERE subexpression offsets", [&] {
+            auto [rc, re] = compile("([a-z]+)-([0-9]+)", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "id-42", 3, pm);
+            auto [rc2, re2] = compile("colou?r", REG_EXTENDED);
+            const uint32_t c1 = exec(re2, "color", 1, pm);
+            const uint32_t c2 = exec(re2, "colour", 1, pm);
+            auto [rc3, re3] = compile("[[:digit:]]+", REG_EXTENDED);
+            clearPm();
+            const uint32_t er3 = exec(re3, "id-42", 1, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 2 &&
+                            offs(pm, 0) == std::pair<int64_t,int64_t>(3, 5) &&
+                            rc2 == 0 && c1 == 0 && c2 == 0 && rc3 == 0 && er3 == 0;
+            // The digit check overwrote pmatch; re-check the capture pattern.
+            clearPm();
+            exec(re, "id-42", 3, pm);
+            const bool caps = offs(pm, 0) == std::pair<int64_t,int64_t>(0, 5) &&
+                              offs(pm, 1) == std::pair<int64_t,int64_t>(0, 2) &&
+                              offs(pm, 2) == std::pair<int64_t,int64_t>(3, 5);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return ok && caps;
+        });
+        run("unmatched optional and alternate groups are -1", [&] {
+            auto [rc, re] = compile("a(b)?c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "ac", 2, pm);
+            const bool opt = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 2) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(-1, -1);
+            auto [rc2, re2] = compile("(a)|(b)", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "b", 3, pm);
+            const bool alt = rc2 == 0 && er2 == 0 && nsub(re2) == 2 &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(-1, -1) &&
+                             offs(pm, 2) == std::pair<int64_t,int64_t>(0, 1);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return opt && alt;
+        });
+        run("REG_ICASE folds literals and ranges", [&] {
+            auto [rc, re] = compile("^abc$", REG_EXTENDED | REG_ICASE);
+            clearPm();
+            const uint32_t hit = exec(re, "AbC", 1, pm);
+            const auto folded = offs(pm, 0);
+            auto [rc2, re2] = compile("^abc$", REG_EXTENDED);
+            const uint32_t miss = exec(re2, "AbC", 1, pm);
+            auto [rc3, re3] = compile("[A-C]", REG_EXTENDED | REG_ICASE);
+            clearPm();
+            const uint32_t er3 = exec(re3, "b", 1, pm);
+            const auto range = offs(pm, 0);
+            const bool ok = rc == 0 && hit == 0 && folded == std::pair<int64_t,int64_t>(0, 3) &&
+                            rc2 == 0 && miss == REG_NOMATCH && rc3 == 0 && er3 == 0 &&
+                            range == std::pair<int64_t,int64_t>(0, 1);
+            // offs was overwritten by the class match; the icase literal was checked before that.
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return ok;
+        });
+        run("REG_NOSUB keeps re_nsub and does not write pmatch", [&] {
+            auto [rc, re] = compile("(a)(b)", REG_EXTENDED | REG_NOSUB);
+            for (uint32_t i = 0; i < 4 * 16; i += 8) proc.mem().write<int64_t>(pm + i, 99);
+            const uint32_t er = exec(re, "ab", 4, pm);
+            bool untouched = true;
+            for (uint32_t i = 0; i < 4 * 16; i += 8) untouched = untouched && i64(pm + i) == 99;
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 2 && untouched;
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_NEWLINE changes dot, anchors, and negated classes", [&] {
+            auto [rc, re] = compile("a.b", REG_EXTENDED | REG_NEWLINE);
+            const uint32_t dot = exec(re, "a\nb", 1, pm);
+            auto [rc2, re2] = compile("^b", REG_EXTENDED | REG_NEWLINE);
+            clearPm();
+            const uint32_t bol = exec(re2, "a\nb", 1, pm);
+            const auto bm = offs(pm, 0);
+            auto [rc3, re3] = compile("a$", REG_EXTENDED | REG_NEWLINE);
+            clearPm();
+            const uint32_t eol = exec(re3, "a\nb", 1, pm);
+            const auto em = offs(pm, 0);
+            auto [rc4, re4] = compile("[^a]", REG_EXTENDED | REG_NEWLINE);
+            const uint32_t nl = exec(re4, "\n", 1, pm);
+            auto [rc5, re5] = compile("^a", REG_EXTENDED);
+            const uint32_t notbol = exec(re5, "a", 1, pm, REG_NOTBOL);
+            const uint32_t bol0 = exec(re5, "a", 1, pm, 0);
+            for (uint32_t r : {re, re2, re3, re4, re5}) call("_regfree", {r});
+            return rc == 0 && dot == REG_NOMATCH && rc2 == 0 && bol == 0 && bm == std::pair<int64_t,int64_t>(2, 3) &&
+                   rc3 == 0 && eol == 0 && em == std::pair<int64_t,int64_t>(0, 1) && rc4 == 0 && nl == REG_NOMATCH &&
+                   rc5 == 0 && notbol == REG_NOMATCH && bol0 == 0;
+        });
+        run("regcomp returns POSIX error codes", [&] {
+            struct Case { const char* pat; uint32_t flags; uint32_t code; };
+            const Case cases[] = {
+                {"(", REG_EXTENDED, REG_EPAREN},
+                {"[", REG_EXTENDED, REG_EBRACK},
+                {"a{", REG_EXTENDED, REG_EBRACE},
+                {"a{5,1}", REG_EXTENDED, REG_BADBR},
+                {"\\", REG_EXTENDED, REG_EESCAPE},
+                {"*", REG_EXTENDED, REG_BADRPT},
+                {"[[:bogus:]]", REG_EXTENDED, REG_ECTYPE},
+                {"[z-a]", REG_EXTENDED, REG_ERANGE},
+                {"\\1", 0, REG_ESUBREG},
+            };
+            bool ok = true;
+            for (auto& c : cases) {
+                auto [rc, re] = compile(c.pat, c.flags);
+                if (rc != c.code) { std::printf("    regcomp '%s' -> %u want %u\n", c.pat, rc, c.code); ok = false; }
+                call("_regfree", {re});
+            }
+            return ok;
+        });
+        run("regerror reports Darwin strings and the size including NUL", [&] {
+            const uint32_t buf = proc.heap().allocZeroed(128);
+            auto expect = [&](uint32_t code, const char* text) {
+                const uint32_t n = call("_regerror", {code, 0, buf, 128});
+                return n == std::strlen(text) + 1 && proc.readCString(buf) == text;
+            };
+            const uint32_t small = proc.heap().alloc(8);
+            for (int i = 0; i < 8; ++i) proc.mem().write<uint8_t>(small + i, 'X');
+            const char* nomatch = "regexec() failed to match";
+            const uint32_t ntrunc = call("_regerror", {REG_NOMATCH, 0, small, 4});
+            const uint32_t nlen = call("_regerror", {REG_BADPAT, 0, 0, 0});
+            return expect(REG_NOMATCH, nomatch) &&
+                   expect(REG_BADPAT, "invalid regular expression") &&
+                   expect(REG_ECTYPE, "invalid character class") &&
+                   expect(REG_EESCAPE, "trailing backslash (\\)") &&
+                   expect(REG_ESUBREG, "invalid backreference number") &&
+                   expect(REG_EBRACK, "brackets ([ ]) not balanced") &&
+                   expect(REG_EPAREN, "parentheses not balanced") &&
+                   expect(REG_EBRACE, "braces not balanced") &&
+                   expect(REG_BADBR, "invalid repetition count(s)") &&
+                   expect(REG_ERANGE, "invalid character range") &&
+                   expect(REG_BADRPT, "repetition-operator operand invalid") &&
+                   expect(REG_INVARG, "invalid argument to regex routine") &&
+                   ntrunc == std::strlen(nomatch) + 1 && proc.readCString(small) == "reg" &&
+                   nlen == std::strlen("invalid regular expression") + 1;
+        });
+        run("regexec REG_NOMATCH and regfree invalidates the pattern", [&] {
+            auto [rc, re] = compile("^a$", REG_EXTENDED);
+            const uint32_t miss = exec(re, "b", 1, pm);
+            const uint32_t buf = proc.heap().allocZeroed(64);
+            const uint32_t n = call("_regerror", {miss, re, buf, 64});
+            const uint32_t hit = exec(re, "a", 1, pm);
+            call("_regfree", {re});
+            const uint32_t after = exec(re, "a", 1, pm);
+            call("_regfree", {re});
+            return rc == 0 && miss == REG_NOMATCH && hit == 0 && after == REG_INVARG &&
+                   n == std::strlen("regexec() failed to match") + 1 &&
+                   proc.readCString(buf) == "regexec() failed to match";
+        });
+        run("leftmost match may be empty", [&] {
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "xaa", 1, pm);
+            const bool empty = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 0);
+            auto [rc2, re2] = compile("a+", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "xaa", 1, pm);
+            const bool plus = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(1, 3);
+            auto [rc3, re3] = compile("", REG_EXTENDED);
+            clearPm();
+            const uint32_t er3 = exec(re3, "abc", 1, pm);
+            const bool blank = rc3 == 0 && er3 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 0);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return empty && plus && blank;
+        });
+        run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
+            const std::string root = proc.homePath() + "/tmp/";
+            std::vector<std::string> names;
+            for (int i = 0; i < 6; ++i) {
+                const uint32_t buf = proc.heap().allocZeroed(1024);
+                const uint32_t p = call("_tmpnam", {buf});
+                if (p != buf) return false;
+                names.push_back(proc.readCString(buf));
+            }
+            bool ok = names.size() == 6;
+            for (size_t i = 0; i < names.size(); ++i) {
+                ok = ok && names[i].rfind(root, 0) == 0;
+                ok = ok && names[i].find("..") == std::string::npos;
+                ok = ok && !std::filesystem::exists(names[i]);
+                for (size_t j = 0; j < i; ++j) ok = ok && names[i] != names[j];
+            }
+            if (!names.empty()) {
+                std::ofstream(names[0]) << "taken";
+                const uint32_t buf = proc.heap().allocZeroed(1024);
+                const uint32_t p = call("_tmpnam", {buf});
+                const std::string again = proc.readCString(p);
+                ok = ok && p == buf && again != names[0] && again.rfind(root, 0) == 0 && !std::filesystem::exists(again);
+                std::filesystem::remove(names[0]);
+            }
+            return ok;
+        });
+        run("tmpnam(NULL) reuses one guest static buffer", [&] {
+            const std::string root = proc.homePath() + "/tmp/";
+            const uint32_t p1 = call("_tmpnam", {0});
+            const std::string s1 = proc.readCString(p1);
+            const uint32_t p2 = call("_tmpnam", {0});
+            const std::string s2 = proc.readCString(p2);
+            return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
+                   !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
+        });
+        run("pmatch slots past re_nsub are -1", [&] {
+            auto [rc, re] = compile("(a)", REG_EXTENDED);
+            for (uint32_t i = 0; i < 4 * 16; i += 8) proc.mem().write<int64_t>(pm + i, 7);
+            const uint32_t er = exec(re, "a", 4, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 1 &&
+                            offs(pm, 0) == std::pair<int64_t, int64_t>(0, 1) &&
+                            offs(pm, 1) == std::pair<int64_t, int64_t>(0, 1) &&
+                            offs(pm, 2) == std::pair<int64_t, int64_t>(-1, -1) &&
+                            offs(pm, 3) == std::pair<int64_t, int64_t>(-1, -1);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_STARTEND limits the region and reports absolute offsets", [&] {
+            // Darwin: the pmatch[0] region is the string, so ^/$ are relative to
+            // it, and the reported offsets are from the guest pointer.
+            constexpr uint32_t REG_STARTEND = 4;
+            auto [rc, re] = compile("a+", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 0);
+            proc.mem().write<int64_t>(pm + 8, 2);
+            const uint32_t er = exec(re, "aaaa", 1, pm, REG_STARTEND);
+            const bool clipped = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 2);
+            auto [rc2, re2] = compile("^b+", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t er2 = exec(re2, "aaabbbccc", 1, pm, REG_STARTEND);
+            const bool anchored = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(3, 6);
+            auto [rc3, re3] = compile("b+$", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t er3 = exec(re3, "aaabbbccc", 1, pm, REG_STARTEND);
+            const bool end = rc3 == 0 && er3 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(3, 6);
+            auto [rc4, re4] = compile("^b", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t notbol = exec(re4, "aaabbbccc", 1, pm, REG_STARTEND | REG_NOTBOL);
+            for (uint32_t r : {re, re2, re3, re4}) call("_regfree", {r});
+            return clipped && anchored && end && rc4 == 0 && notbol == REG_NOMATCH;
+        });
+        run("unbounded repeats stay leftmost-longest", [&] {
+            const std::string a5000(5000, 'a');
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, a5000.c_str(), 1, pm);
+            const bool star = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 5000);
+            std::string a4097b(4097, 'a');
+            a4097b.push_back('b');
+            auto [rc2, re2] = compile("a*b", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, a4097b.c_str(), 1, pm);
+            const bool left = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 4098);
+            const uint32_t miss = exec(re2, a5000.c_str(), 1, pm);
+            std::string a5000b = a5000;
+            a5000b.push_back('b');
+            clearPm();
+            const uint32_t er3 = exec(re2, a5000b.c_str(), 1, pm);
+            const bool plusb = er3 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 5001);
+            std::string a20b(20, 'a');
+            a20b.push_back('b');
+            auto [rc4, re4] = compile("(a*)*b", REG_EXTENDED);
+            clearPm();
+            const uint32_t er4 = exec(re4, a20b.c_str(), 2, pm);
+            const bool nested = rc4 == 0 && er4 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 21) &&
+                                offs(pm, 1) == std::pair<int64_t, int64_t>(0, 20);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re4});
+            return star && left && miss == REG_NOMATCH && plusb && nested;
+        });
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#    define HVM_RE_SANITIZER 1
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+#  define HVM_RE_SANITIZER 1
+#endif
+#ifdef HVM_RE_SANITIZER
+        constexpr long long kRepeatBudgetMs = 20000;
+        constexpr long long kMissBudgetMs = 5000;
+#else
+        constexpr long long kRepeatBudgetMs = 2000;
+        constexpr long long kMissBudgetMs = 1000;
+#endif
+        run("long inputs of 100k characters stay fast", [&] {
+            const std::string a(100000, 'a');
+            std::string ab = a;
+            ab.push_back('b');
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            auto [rc2, re2] = compile("a*b", REG_EXTENDED);
+            auto [rc3, re3] = compile("(a*)*b", REG_EXTENDED);
+            clearPm();
+            const auto t0 = std::chrono::steady_clock::now();
+            const uint32_t e1 = exec(re, a.c_str(), 1, pm);
+            const auto s1 = offs(pm, 0);
+            clearPm();
+            const uint32_t e2 = exec(re2, ab.c_str(), 1, pm);
+            const auto s2 = offs(pm, 0);
+            clearPm();
+            const uint32_t e3 = exec(re3, ab.c_str(), 2, pm);
+            const auto s3 = offs(pm, 0);
+            const auto s4 = offs(pm, 1);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            std::printf("    regex 100k: %lld ms\n", static_cast<long long>(ms));
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return rc == 0 && rc2 == 0 && rc3 == 0 && e1 == 0 && e2 == 0 && e3 == 0 &&
+                   s1 == std::pair<int64_t, int64_t>(0, 100000) &&
+                   s2 == std::pair<int64_t, int64_t>(0, 100001) &&
+                   s3 == std::pair<int64_t, int64_t>(0, 100001) &&
+                   s4 == std::pair<int64_t, int64_t>(0, 100000) &&
+                   ms < kRepeatBudgetMs;
+        });
+        run("unanchored (a|aa)*c on 100k a's finishes", [&] {
+            const std::string a(100000, 'a');
+            auto [rc, re] = compile("(a|aa)*c", REG_EXTENDED);
+            clearPm();
+            const auto t0 = std::chrono::steady_clock::now();
+            const uint32_t er = exec(re, a.c_str(), 1, pm);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            std::printf("    regex (a|aa)*c 100k: %lld ms\n", static_cast<long long>(ms));
+            call("_regfree", {re});
+            return rc == 0 && er == REG_NOMATCH && ms < kMissBudgetMs;
+        });
+        run("glibc (a*)* backreference splits the run in half", [&] {
+            auto [rc, re] = compile("(a*)*\\1", REG_EXTENDED);
+            bool ok = rc == 0;
+            for (int n : {20, 40, 80}) {
+                const std::string s(size_t(n), 'a');
+                clearPm();
+                const uint32_t er = exec(re, s.c_str(), 2, pm);
+                const auto whole = offs(pm, 0);
+                const auto g = offs(pm, 1);
+                const bool row = er == 0 && whole == std::pair<int64_t, int64_t>(0, n) &&
+                                 g == std::pair<int64_t, int64_t>(0, n / 2);
+                if (!row) {
+                    std::printf("    (a*)*\\1 n=%d er=%u g0=(%lld,%lld) g1=(%lld,%lld)\n", n, er,
+                                static_cast<long long>(whole.first), static_cast<long long>(whole.second),
+                                static_cast<long long>(g.first), static_cast<long long>(g.second));
+                }
+                ok = ok && row;
+            }
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_PEND ends the pattern at re_endp", [&] {
+            constexpr uint32_t REG_PEND = 32;
+            const uint32_t raw = proc.allocCString("a+Xjunk");
+            const uint32_t preg = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(preg + 8, raw + 3);
+            const uint32_t rc = call("_regcomp", {preg, raw, REG_EXTENDED | REG_PEND});
+            clearPm();
+            const uint32_t er = exec(preg, "aaaX", 1, pm);
+            const bool clipped = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 4);
+            const uint32_t emptyRe = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(emptyRe + 8, raw);
+            const uint32_t rcEmpty = call("_regcomp", {emptyRe, raw, REG_EXTENDED | REG_PEND});
+            clearPm();
+            const uint32_t erEmpty = exec(emptyRe, "abc", 1, pm);
+            const bool blank = rcEmpty == 0 && erEmpty == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 0);
+            const uint32_t bad = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(bad + 8, raw - 1);
+            const uint32_t rcBad = call("_regcomp", {bad, raw, REG_EXTENDED | REG_PEND});
+            const uint32_t erBad = exec(bad, "a", 1, pm);
+            call("_regfree", {preg});
+            call("_regfree", {emptyRe});
+            call("_regfree", {bad});
+            return clipped && blank && rcBad == REG_INVARG && erBad == REG_INVARG;
+        });
+    }
+
     // Host-requested shutdown must not become an HLE error. An unrelated
     // exception still remains a failure even if stop was requested concurrently.
     for (bool intentional : {true, false}) {
@@ -1406,6 +2802,109 @@ int runFullSubsystemTests() {
               "intentional ProcessExit propagates Halt through HLE calls" :
               "unexpected errors during shutdown remain HostError failures");
     }
+    // Frame-time distribution. These checks target FrameHistogram directly so a
+    // long run cannot grow the sample store.
+    {
+        FrameHistogram empty;
+        check(empty.count() == 0 && empty.percentile(50) == 0 && empty.percentile(95) == 0 && empty.percentile(99) == 0,
+              "frame histogram percentiles are 0 with no frames");
+
+        constexpr uint64_t one = 8'000'000;
+        FrameHistogram single;
+        single.add(one);
+        const int bucket = FrameHistogram::bucketIndex(one);
+        const uint64_t lower = FrameHistogram::bucketLower(bucket);
+        const uint64_t upper = FrameHistogram::bucketUpper(bucket);
+        check(single.count() == 1 && lower <= one && one < upper &&
+              single.percentile(50) == lower && single.percentile(95) == lower && single.percentile(99) == lower,
+              "one frame: p50, p95, and p99 share that frame's histogram bucket");
+
+        FrameHistogram outlier;
+        outlier.add(~uint64_t{0});
+        const uint64_t topLower = FrameHistogram::bucketLower(FrameHistogram::kTopIndex);
+        const uint64_t belowTop = topLower - 1;
+        check(outlier.count() == 1 &&
+              FrameHistogram::bucketIndex(~uint64_t{0}) == FrameHistogram::kTopIndex &&
+              FrameHistogram::bucketIndex(FrameHistogram::kClampNs) == FrameHistogram::kTopIndex &&
+              FrameHistogram::bucketIndex(belowTop) != FrameHistogram::kTopIndex &&
+              outlier.percentile(50) == topLower && outlier.percentile(95) == topLower && outlier.percentile(99) == topLower,
+              "frame times past the top bucket clamp into that bucket");
+
+        FrameHistogram mixed;
+        for (int i = 0; i < 100; ++i) mixed.add(one);
+        mixed.add(~uint64_t{0});
+        mixed.add(~uint64_t{0});
+        check(mixed.count() == 102 && mixed.percentile(50) == lower && mixed.percentile(95) == lower &&
+              mixed.percentile(99) == topLower,
+              "p50 and p95 stay on the common bucket when two samples sit past the top bucket");
+    }
+
+    {
+        const char* zero =
+            "    \"wallSeconds\": 0,\n"
+            "    \"guestInstructions\": 0,\n"
+            "    \"guestMIPS\": 0,\n"
+            "    \"blocksDecoded\": 0,\n"
+            "    \"frames\": 0,\n"
+            "    \"framesPresented\": 0,\n"
+            "    \"avgFrameMs\": 0,\n"
+            "    \"avgCompositeMs\": 0,\n"
+            "    \"maxFrameMs\": 0,\n"
+            "    \"slowFrames\": 0,\n"
+            "    \"p50FrameMs\": 0,\n"
+            "    \"p95FrameMs\": 0,\n"
+            "    \"p99FrameMs\": 0,\n"
+            "    \"timeToFirstFrameMs\": 0\n";
+        check(perfJson(Process::Perf{}, 0, 0, 0) == zero,
+              "perf report with no frames keeps legacy fields and adds percentiles and time-to-first-frame");
+
+        Process::Perf perf;
+        perf.recordFrame(16'700'000); // exactly 16.7 ms is not a slow frame
+        perf.recordFrame(20'000'000);
+        perf.compositeNs.store(6'000'000);
+        perf.notePresentedAt(2'500'000);
+        perf.notePresentedAt(9'000'000);
+        check(perf.frames.load() == 2 && perf.frameNs.load() == 36'700'000 &&
+              perf.maxFrameNs.load() == 20'000'000 && perf.slowFrames.load() == 1 &&
+              perf.framesPresented.load() == 2 && perf.timeToFirstFrameNs.load() == 2'500'000,
+              "frame counters keep sum, max, and the 16.7 ms slow threshold; the first present wins");
+
+        const uint64_t p50 = perf.frameTimes.percentile(50);
+        const uint64_t p95 = perf.frameTimes.percentile(95);
+        const uint64_t p99 = perf.frameTimes.percentile(99);
+        const uint64_t slowBucket = FrameHistogram::bucketLower(FrameHistogram::bucketIndex(16'700'000));
+        const uint64_t longBucket = FrameHistogram::bucketLower(FrameHistogram::bucketIndex(20'000'000));
+        check(p50 == slowBucket && p95 == longBucket && p99 == longBucket,
+              "two-frame percentiles come from the histogram, not from max or the average");
+
+        std::ostringstream avg, composite, p50Text, p95Text, p99Text;
+        avg << (36'700'000.0 / 2.0 / 1e6);
+        composite << (6'000'000.0 / 2.0 / 1e6);
+        p50Text << (double(p50) / 1e6);
+        p95Text << (double(p95) / 1e6);
+        p99Text << (double(p99) / 1e6);
+        const std::string json = perfJson(perf, 2.0, 4'000'000, 11);
+        auto has = [&](const std::string& s) { return json.find(s) != std::string::npos; };
+        const auto avgAt = json.find("\"avgFrameMs\":");
+        const auto slowAt = json.find("\"slowFrames\":");
+        const auto p50At = json.find("\"p50FrameMs\":");
+        const auto ttffAt = json.find("\"timeToFirstFrameMs\":");
+        check(has("\"wallSeconds\": 2,") && has("\"guestInstructions\": 4000000,") &&
+              has("\"guestMIPS\": 2,") && has("\"blocksDecoded\": 11,") &&
+              has("\"frames\": 2,") && has("\"framesPresented\": 2,") &&
+              has("\"avgFrameMs\": " + avg.str() + ",") &&
+              has("\"avgCompositeMs\": " + composite.str() + ",") &&
+              has("\"maxFrameMs\": 20,") && has("\"slowFrames\": 1,") &&
+              has("\"p50FrameMs\": " + p50Text.str() + ",") &&
+              has("\"p95FrameMs\": " + p95Text.str() + ",") &&
+              has("\"p99FrameMs\": " + p99Text.str() + ",") &&
+              has("\"timeToFirstFrameMs\": 2.5\n") &&
+              avgAt != std::string::npos && slowAt != std::string::npos &&
+              p50At != std::string::npos && ttffAt != std::string::npos &&
+              avgAt < slowAt && slowAt < p50At && p50At < ttffAt,
+              "perf JSON adds percentile and time-to-first-frame fields without changing legacy ones");
+    }
+
     r.poolPop(cpu, outerPool);
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
