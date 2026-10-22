@@ -88,3 +88,5 @@ These are Planned. They are not separate roles. Land B-103 first.
 - B-109 shares Group D with any Foundation or UIKit class change. Regex and `tmpnam` do not, if they stay in libc.
 - A 4 KB-page green harness run does not close B-101.
 - The three in-repo smokes already have unimplemented imports. The diff fails when a **new** load-time import appears. It does not fail on the imports already in the baseline. Whether a brand-new import should fail even the first time it shows up in a longer run is owner question 9 from the audit; the harness treats runtime-only misses as attention, not a hard failure, because a 3 second smoke is not a full playthrough.
+
+- B-211 (P0, Group E): rebuild file-editor persistence with conflict detection, rolling original-byte backups, explicit serialization failures, reachable Save controls and guarded dismissal. In progress on codex/file-save-overhaul; Apple validation pending.
