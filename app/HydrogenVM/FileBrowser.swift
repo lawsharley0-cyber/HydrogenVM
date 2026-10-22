@@ -1043,6 +1043,19 @@ struct SaveBarModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) { bar }
+            .toolbar {
+                // Second Save button riding directly on top of the keyboard.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Button("Save") { save() }
+                        .fontWeight(.semibold)
+                        .disabled(!dirty)
+                    Spacer()
+                    Button("Done") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                        to: nil, from: nil, for: nil)
+                    }
+                }
+            }
             .onChange(of: dirty) { old, new in
                 if old && !new { lastSaved = Date() }
             }
