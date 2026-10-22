@@ -630,13 +630,46 @@ int runFullSubsystemTests() {
         check(runStage("#if defined(GL_FRAGMENT_PRECISION_HIGH)\nvoid main() { gl_FragColor = vec4(1.0); }\n#else\nvoid main() { gl_FragColor = vec4(0.0); }\n#endif",
                        false, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1) &&
                   runStage("#if defined(GL_FRAGMENT_PRECISION_HIGH)\nvoid main() { gl_Position = vec4(1.0); }\n#else\nvoid main() { gl_Position = vec4(0.0); }\n#endif",
-                           true, [](auto&, auto&) {}, o) && near4(o, 0, 0, 0, 0),
-              "GLSL predefines GL_FRAGMENT_PRECISION_HIGH only in fragment shaders");
+                           true, [](auto&, auto&) {}, o) && near4(o, 1, 1, 1, 1),
+              "GLSL predefines GL_FRAGMENT_PRECISION_HIGH in both stages");
         check(shows("#define GL_FOO 1\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
                   shows("#define __HIDDEN 1\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#define FOO__BAR 1\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
+                  shows("#undef FOO__BAR\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
                   shows("#undef GL_ES\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name") &&
                   shows("#undef __VERSION__\nvoid main() { gl_FragColor = vec4(1.0); }", "reserved macro name"),
-              "GLSL rejects #define and #undef of GL_ and __ names");
+              "GLSL rejects #define and #undef of GL_ names and names containing __");
+        check(shows("#if 9223372036854775808\nvoid main() { gl_FragColor = vec4(1.0); }\n#endif", "invalid preprocessor expression") &&
+                  shows("void main() { int x = 9223372036854775808; gl_FragColor = vec4(float(x)); }", "invalid numeric literal"),
+              "GLSL rejects integer literals that do not fit");
+        check(shows("float sin(float x) { return 1.0; }\nvoid main() { gl_FragColor = vec4(sin(0.0)); }", "cannot redefine built-in function") &&
+                  shows("int sin(float x) { return 1; }\nvoid main() { gl_FragColor = vec4(1.0); }", "cannot redefine built-in function") &&
+                  runStage("float sin(float a, float b) { return a + b; }\nvoid main() { gl_FragColor = vec4(sin(0.0), sin(0.25, 0.5), 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 0, 0.75f, 0, 1),
+              "GLSL rejects an exact built-in signature and keeps other overloads");
+        check(runStage("#define N 4\nconst int K = 2;\nconst int A = 2, B = A * 3;\nfloat a[N * 3];\nfloat b[(K + 1)];\nfloat c[B];\n"
+                       "void main() { a[11] = 0.25; b[2] = 0.5; c[5] = 0.75; gl_FragColor = vec4(a[11], b[2], c[5], 1.0); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1) &&
+                  shows("float a[40];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[0];\nvoid main() { gl_FragColor = vec4(1.0); }", "invalid array size") &&
+                  shows("void main() { int n = 3; float a[n]; gl_FragColor = vec4(a[0]); }", "invalid array size"),
+              "GLSL accepts constant-expression array sizes and rejects the rest");
+        check(runStage("#extension GL_OES_standard_derivatives : require\nvoid main() { gl_FragColor = vec4(dFdx(1.0)); }",
+                       false, [](auto&, auto&) {}, o) && near4(o, 0, 0, 0, 0) &&
+                  shows("void main() { gl_FragColor = vec4(dFdx(1.0)); }", "unknown variable/function") &&
+                  shows("#extension GL_OES_standard_derivatives : require\nvoid main() { gl_Position = vec4(dFdx(1.0)); }",
+                        "not available in a vertex shader", true) &&
+                  shows("#extension GL_OES_standard_derivatives : disable\nvoid main() { gl_FragColor = vec4(dFdx(1.0)); }",
+                        "unknown variable/function"),
+              "GLSL enables dFdx only with GL_OES_standard_derivatives");
+        {
+            Shader::Program looping;
+            const bool compiled = looping.compile("void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); for(;;) {} }", false);
+            Shader::Values vals; looping.initialize(vals);
+            int64_t budget = 1000;
+            const bool kept = compiled && looping.execute(vals, nullptr, nullptr, &budget);
+            check(compiled && !kept && budget < 0, "GLSL execute stops when the shared instruction budget is exhausted");
+        }
         check(shows("void main() {\n#pragma optimize(off)\ngl_FragColor = vec4(1.0);\n}", "pragma optimize inside function") &&
                   shows("void main() {\n#pragma debug(on)\ngl_FragColor = vec4(1.0);\n}", "pragma debug inside function") &&
                   runStage("void main() {\n#if 0\n#pragma optimize(off)\n#endif\ngl_FragColor = vec4(1.0);\n}", false, [](auto&, auto&) {}, o) &&
@@ -1547,6 +1580,61 @@ int runFullSubsystemTests() {
                   proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
                   proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
               "GLES2 transposes mat2/mat3 when requested and reports int, bool and samplerCube types");
+
+        uint32_t derivVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
+        uint32_t derivFs = shader(0x8B30,
+            "#extension GL_OES_standard_derivatives : require\n"
+            "void main() { gl_FragColor = vec4(dFdx(gl_FragCoord.x), dFdy(gl_FragCoord.y), fwidth(gl_FragCoord.x), 1.0); }");
+        uint32_t derivProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {derivProg, derivVs});
+        callGL("_glAttachShader", {derivProg, derivFs});
+        callGL("_glBindAttribLocation", {derivProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {derivProg});
+        callGL("_glGetProgramiv", {derivProg, 0x8B82, idsAddr + 36});
+        const bool derivLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {derivProg});
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        const uint32_t extPtr = uint32_t(callGL("_glGetString", {0x1F03}));
+        std::string extStr;
+        for (uint32_t n = 0; n < 512 && extPtr; ++n) {
+            char ch = char(proc.mem().read<uint8_t>(extPtr + n));
+            if (!ch) break;
+            extStr.push_back(ch);
+        }
+        check(derivLinked && extStr.find("GL_OES_standard_derivatives") != std::string::npos &&
+                  proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
+                  proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 dFdx/dFdy/fwidth use 2x2 quads and advertise GL_OES_standard_derivatives");
+
+        uint32_t loopVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
+        uint32_t loopFs = shader(0x8B30, "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); for(;;) {} }");
+        uint32_t loopProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {loopProg, loopVs});
+        callGL("_glAttachShader", {loopProg, loopFs});
+        callGL("_glBindAttribLocation", {loopProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {loopProg});
+        callGL("_glGetProgramiv", {loopProg, 0x8B82, idsAddr + 36});
+        const bool loopLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glGetError", {});
+        callGL("_glClearColor", {UIKit::fbits(0.0f), UIKit::fbits(0.0f), UIKit::fbits(1.0f), UIKit::fbits(1.0f)});
+        callGL("_glClear", {0x00004000});
+        callGL("_glUseProgram", {loopProg});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        const uint32_t loopErr = uint32_t(callGL("_glGetError", {}));
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        const bool stayedBlue = proc.mem().read<uint8_t>(idsAddr + 24) == 0 && proc.mem().read<uint8_t>(idsAddr + 25) == 0 &&
+                                proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255;
+        callGL("_glUseProgram", {prog});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        const bool drewGreen = proc.mem().read<uint8_t>(idsAddr + 24) == 0 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
+                               proc.mem().read<uint8_t>(idsAddr + 26) == 0 && proc.mem().read<uint8_t>(idsAddr + 27) == 255;
+        const uint32_t afterErr = uint32_t(callGL("_glGetError", {}));
+        check(loopLinked && loopErr == 0x0502 && stayedBlue && drewGreen && afterErr == 0,
+              "GLES2 aborts a draw that exceeds the instruction budget and discards its fragments");
 
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
