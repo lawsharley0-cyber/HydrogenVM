@@ -1,1 +1,0 @@
-app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/app/HydrogenVM/Assets.xcassets: error: The stickers icon set, app icon set, or icon stack named "AppIcon" did not have any applicable content.
