@@ -17,6 +17,8 @@ namespace Hydrogen::Runtime::Shader {
 // supported extension. The rasterizer evaluates those ops across 2x2 pixel quads.
 // Array sizes are integral constant expressions (literals, const values,
 // constructors, and constant-foldable built-ins) whose element count fits in MaxSlots.
+// Struct layouts use the same limit. The component total is computed in 64 bits
+// and rejected when it exceeds MaxSlots, so a nested array cannot wrap.
 // Draws pass one shared instruction budget into execute(); exhausting it aborts the draw.
 constexpr int MaxSlots = 2048;
 enum class Kind { Float, Int, Bool, Void };

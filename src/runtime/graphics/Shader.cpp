@@ -713,6 +713,13 @@ struct Compiler {
         if (n < 1 || p.slots + n > MaxSlots) fail("shader register limit exceeded");
         int out = p.slots; p.slots += n; return out;
     }
+    // width * count, formed in 64 bits. A nested array of 2048 can overflow
+    // signed int; reject that before the product is narrowed or allocated.
+    int checkedSpan(int width, int count) {
+        const int64_t n = int64_t(std::max(1, width)) * int64_t(count);
+        if (count < 1 || n < 1 || n > int64_t(MaxSlots)) fail("shader register limit exceeded");
+        return int(n);
+    }
     int emit(Op op, int a = 0, int b = 0, int c = 0, float value = 0, int d = 0) {
         int dst = alloc();
         p.code.push_back({op, dst, a, b, c, value, d});
@@ -742,7 +749,7 @@ struct Compiler {
         if (scopes.back().count(name) || structs.count(name) || funcExists(name) || (name.starts_with("gl_") && !reservedOk))
             fail("duplicate/reserved variable " + name);
         if (count < 1 || count > MaxSlots) fail("array size outside supported range");
-        int slot = alloc(std::max(1, t.width) * count);
+        int slot = alloc(checkedSpan(t.width, count));
         scopes.back()[name] = p.variables.size();
         p.variables.push_back(Variable{name, t, storage, slot, count, ro, isArray, invariant});
         return p.variables.back();
@@ -822,15 +829,17 @@ struct Compiler {
     }
     std::optional<CVal> applyIndex(const CVal& v, const CVal& idx) const {
         if (!idx.scalar() || idx.kind != Kind::Int || !std::isfinite(idx.c[0])) return std::nullopt;
-        const int i = int(std::trunc(idx.c[0]));
-        if (double(i) != idx.c[0]) return std::nullopt;
+        const double truncated = std::trunc(idx.c[0]);
+        if (truncated != idx.c[0]) return std::nullopt;
+        const int limit = v.matrix ? v.matrix : v.width;
+        // Cast only after the index is known to fit. int(1e20) and int(2^31) are undefined.
+        if (limit < 1 || truncated < 0.0 || truncated >= double(limit)) return std::nullopt;
+        const int i = int(truncated);
         if (v.matrix) {
-            if (i < 0 || i >= v.matrix) return std::nullopt;
             CVal o; o.kind = Kind::Float; o.width = v.matrix;
             for (int row = 0; row < v.matrix; ++row) o.c[row] = v.c[i * v.matrix + row];
             return o;
         }
-        if (i < 0 || i >= v.width) return std::nullopt;
         CVal o; o.kind = v.kind; o.width = 1; o.c[0] = v.c[i];
         return o;
     }
@@ -1212,10 +1221,13 @@ struct Compiler {
     int arraySize() {
         const size_t saved = at;
         auto k = constTernary();
-        const bool integral = k && k->scalar() && k->kind == Kind::Int && std::isfinite(k->c[0]);
-        const long n = integral ? long(std::trunc(k->c[0])) : 0;
-        if (!integral || double(n) != k->c[0] || n < 1 || n > MaxSlots) { at = saved; fail("invalid array size"); }
-        return int(n);
+        const double raw = k ? k->c[0] : 0.0;
+        const double truncated = std::trunc(raw);
+        // Compare the double before any integer cast. 1e20 and 2^63 do not fit in a long.
+        const bool integral = k && k->scalar() && k->kind == Kind::Int && std::isfinite(raw) &&
+                              truncated == raw && truncated >= 1.0 && truncated <= double(MaxSlots);
+        if (!integral) { at = saved; fail("invalid array size"); }
+        return int(truncated);
     }
     bool containsSampler(const Type& t) const {
         if (t.sampler) return true;
@@ -1253,7 +1265,10 @@ struct Compiler {
                 field.name = fname; field.offset = offset; field.width = ft.width; field.count = count;
                 field.matrix = ft.matrix; field.sampler = ft.sampler; field.array = isArray; field.fields = ft.fields;
                 field.kind = ft.kind; field.cube = ft.cube;
-                offset += std::max(1, ft.width) * count;
+                const int span = checkedSpan(ft.width, count);
+                const int64_t next = int64_t(offset) + span;
+                if (next > int64_t(MaxSlots)) fail("shader register limit exceeded");
+                offset = int(next);
                 fields.push_back(std::move(field));
             } while (take(","));
             need(";");
