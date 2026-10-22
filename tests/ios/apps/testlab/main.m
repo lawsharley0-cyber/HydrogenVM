@@ -28,6 +28,8 @@
 //
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <Security/Security.h>
+#include <pthread.h>
 #include <time.h>
 #import <OpenGLES/EAGL.h>
 #include <OpenGLES/ES2/gl.h>
@@ -51,12 +53,18 @@ static const char *kAppBuild        = "1";
 #define CASE_C  @"TL-C"
 #define CASE_D  @"TL-D"
 #define CASE_E  @"TL-E"
+#define CASE_F  @"TL-F"
+#define CASE_G  @"TL-G"
+#define CASE_H  @"TL-H"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
 static const int kVersionC = 1;
 static const int kVersionD = 1;
 static const int kVersionE = 1;
+static const int kVersionF = 1;
+static const int kVersionG = 1;
+static const int kVersionH = 1;
 
 // ─────────────────────────── timing ──────────────────────────────────────────
 
@@ -646,6 +654,247 @@ static TLResult *runCaseE(BOOL automatedSingleRun) {
     return r;
 }
 
+// ─────────────────────────── Case F — Threading & Mutex ───────────────────────
+
+typedef struct {
+    uint32_t hashResult;
+    pthread_mutex_t *mutex;
+    int *sharedCounter;
+} WorkerContext;
+
+static void *threadWorker(void *arg) {
+    WorkerContext *ctx = (WorkerContext *)arg;
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 0; i < 65536; ++i) {
+        uint8_t b = (uint8_t)(i * 31u + 7u);
+        h ^= b;
+        h *= 16777619u;
+    }
+    ctx->hashResult = h;
+
+    for (int i = 0; i < 10000; ++i) {
+        pthread_mutex_lock(ctx->mutex);
+        *(ctx->sharedCounter) += 1;
+        pthread_mutex_unlock(ctx->mutex);
+    }
+    return NULL;
+}
+
+static TLResult *runCaseF(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_F version:kVersionF];
+    double t0 = monoMs();
+
+    writeCheckpoint(CASE_F);
+    r.checkpointWritten = YES;
+
+    pthread_mutex_t mutex;
+    pthread_mutex_init(&mutex, NULL);
+    int sharedCounter = 0;
+
+    WorkerContext ctx;
+    ctx.hashResult = 0;
+    ctx.mutex = &mutex;
+    ctx.sharedCounter = &sharedCounter;
+
+    pthread_t thread;
+    int err = pthread_create(&thread, NULL, threadWorker, &ctx);
+    if (err != 0) {
+        r.status = @"failed";
+        r.reason = [NSString stringWithFormat:@"pthread_create failed with error %d", err];
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+
+    for (int i = 0; i < 10000; ++i) {
+        pthread_mutex_lock(&mutex);
+        sharedCounter += 1;
+        pthread_mutex_unlock(&mutex);
+    }
+
+    pthread_join(thread, NULL);
+    pthread_mutex_destroy(&mutex);
+
+    const uint32_t kExpectedHash = 0x75389DC5u;
+    const int kExpectedCounter = 20000;
+
+    BOOL hashOk = (ctx.hashResult == kExpectedHash);
+    BOOL counterOk = (sharedCounter == kExpectedCounter);
+
+    r.diagnostics[@"hashResult"] = [NSString stringWithFormat:@"0x%08X", ctx.hashResult];
+    r.diagnostics[@"sharedCounter"] = @(sharedCounter);
+    r.expected = [NSString stringWithFormat:@"hash=0x%08X, counter=%d", kExpectedHash, kExpectedCounter];
+    r.actual   = [NSString stringWithFormat:@"hash=0x%08X, counter=%d", ctx.hashResult, sharedCounter];
+
+    if (hashOk && counterOk) {
+        r.status = @"passed";
+    } else {
+        r.status = @"failed";
+        r.reason = [NSString stringWithFormat:@"Threading mismatch: hashOk=%d, counterOk=%d", hashOk, counterOk];
+    }
+
+    clearCheckpoint();
+    r.durationMs = monoMs() - t0;
+    return r;
+}
+
+// ─────────────────────────── Case G — Keychain (Security.framework) ───────────
+
+static TLResult *runCaseG(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_G version:kVersionG];
+    double t0 = monoMs();
+
+    writeCheckpoint(CASE_G);
+    r.checkpointWritten = YES;
+
+    // Delete any existing item first
+    NSDictionary *delQuery = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @"com.hydrogenvm.testlab.kc",
+        (__bridge id)kSecAttrAccount: @"test_account",
+    };
+    SecItemDelete((__bridge CFDictionaryRef)delQuery);
+
+    // 1. Add item
+    NSString *secret = @"TestLabSecret_42";
+    NSData *secretData = [secret dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *addItem = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @"com.hydrogenvm.testlab.kc",
+        (__bridge id)kSecAttrAccount: @"test_account",
+        (__bridge id)kSecValueData: secretData,
+    };
+    OSStatus addStatus = SecItemAdd((__bridge CFDictionaryRef)addItem, NULL);
+    if (addStatus != errSecSuccess) {
+        r.status = @"failed";
+        r.reason = [NSString stringWithFormat:@"SecItemAdd failed with status %d", (int)addStatus];
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+
+    // 2. Duplicate add should fail with errSecDuplicateItem (-25299)
+    OSStatus dupStatus = SecItemAdd((__bridge CFDictionaryRef)addItem, NULL);
+    BOOL dupRejected = (dupStatus == errSecDuplicateItem);
+
+    // 3. Query matching data
+    NSDictionary *matchQuery = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @"com.hydrogenvm.testlab.kc",
+        (__bridge id)kSecAttrAccount: @"test_account",
+        (__bridge id)kSecReturnData: (__bridge id)kCFBooleanTrue,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+    };
+    CFTypeRef queryResult = NULL;
+    OSStatus queryStatus = SecItemCopyMatching((__bridge CFDictionaryRef)matchQuery, &queryResult);
+    BOOL queryOk = (queryStatus == errSecSuccess && queryResult != NULL);
+
+    NSString *retrievedString = nil;
+    if (queryOk) {
+        NSData *retData = (__bridge_transfer NSData *)queryResult;
+        retrievedString = [[NSString alloc] initWithData:retData encoding:NSUTF8StringEncoding];
+    }
+    BOOL dataMatched = [secret isEqualToString:retrievedString];
+
+    // 4. Delete item
+    OSStatus deleteStatus = SecItemDelete((__bridge CFDictionaryRef)delQuery);
+    BOOL deleteOk = (deleteStatus == errSecSuccess);
+
+    // 5. Delete again -> errSecItemNotFound (-25300)
+    OSStatus deleteAgainStatus = SecItemDelete((__bridge CFDictionaryRef)delQuery);
+    BOOL notFoundOk = (deleteAgainStatus == errSecItemNotFound);
+
+    r.diagnostics[@"addStatus"] = @((int)addStatus);
+    r.diagnostics[@"dupStatus"] = @((int)dupStatus);
+    r.diagnostics[@"queryStatus"] = @((int)queryStatus);
+    r.diagnostics[@"retrieved"] = retrievedString ?: @"(nil)";
+    r.diagnostics[@"deleteStatus"] = @((int)deleteStatus);
+    r.diagnostics[@"deleteAgainStatus"] = @((int)deleteAgainStatus);
+
+    r.expected = @"add=0, dup=-25299, retrieved=TestLabSecret_42, del=0, delAgain=-25300";
+    r.actual   = [NSString stringWithFormat:@"add=%d, dup=%d, retrieved=%@, del=%d, delAgain=%d",
+                  (int)addStatus, (int)dupStatus, (retrievedString ?: @"nil"), (int)deleteStatus, (int)deleteAgainStatus];
+
+    if (dupRejected && queryOk && dataMatched && deleteOk && notFoundOk) {
+        r.status = @"passed";
+    } else {
+        r.status = @"failed";
+        r.reason = [NSString stringWithFormat:@"Keychain mismatch: dup=%d query=%d match=%d del=%d notFound=%d",
+                    dupRejected, queryOk, dataMatched, deleteOk, notFoundOk];
+    }
+
+    clearCheckpoint();
+    r.durationMs = monoMs() - t0;
+    return r;
+}
+
+// ─────────────────────────── Case H — File System & Directory Sandbox ─────────
+
+static TLResult *runCaseH(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_H version:kVersionH];
+    double t0 = monoMs();
+
+    writeCheckpoint(CASE_H);
+    r.checkpointWritten = YES;
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *testDir = [documentsDir() stringByAppendingPathComponent:@"testlab_fs_dir/sub"];
+    NSString *testFile = [testDir stringByAppendingPathComponent:@"payload.bin"];
+
+    // 1. Create nested directory
+    NSError *err = nil;
+    BOOL dirCreated = [fm createDirectoryAtPath:testDir withIntermediateDirectories:YES attributes:nil error:&err];
+
+    // 2. Write 1024 bytes of known deterministic data
+    uint8_t buffer[1024];
+    for (int i = 0; i < 1024; ++i) buffer[i] = (uint8_t)((i * 37 + 11) & 0xFF);
+    NSData *data = [NSData dataWithBytes:buffer length:sizeof(buffer)];
+    BOOL fileWritten = [data writeToFile:testFile atomically:YES];
+
+    // 3. Verify directory & file existence
+    BOOL isDir = NO;
+    BOOL dirExists = [fm fileExistsAtPath:testDir isDirectory:&isDir] && isDir;
+    BOOL fileExists = [fm fileExistsAtPath:testFile isDirectory:&isDir] && !isDir;
+
+    // 4. Verify attributes (size == 1024)
+    NSDictionary *attrs = [fm attributesOfItemAtPath:testFile error:&err];
+    NSNumber *fileSize = attrs[NSFileSize];
+    BOOL sizeOk = [fileSize integerValue] == 1024;
+
+    // 5. Read back and check contents
+    NSData *readData = [NSData dataWithContentsOfFile:testFile];
+    BOOL contentOk = [readData isEqualToData:data];
+
+    // 6. Clean up
+    NSString *topTestDir = [documentsDir() stringByAppendingPathComponent:@"testlab_fs_dir"];
+    BOOL removed = [fm removeItemAtPath:topTestDir error:&err];
+    BOOL gone = ![fm fileExistsAtPath:topTestDir];
+
+    r.diagnostics[@"dirCreated"] = @(dirCreated);
+    r.diagnostics[@"fileWritten"] = @(fileWritten);
+    r.diagnostics[@"dirExists"] = @(dirExists);
+    r.diagnostics[@"fileExists"] = @(fileExists);
+    r.diagnostics[@"sizeOk"] = @(sizeOk);
+    r.diagnostics[@"contentOk"] = @(contentOk);
+    r.diagnostics[@"removed"] = @(removed);
+    r.diagnostics[@"gone"] = @(gone);
+
+    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, gone=1";
+    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, gone=%d",
+                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, gone];
+
+    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && removed && gone) {
+        r.status = @"passed";
+    } else {
+        r.status = @"failed";
+        r.reason = @"File system sandbox operation failed";
+    }
+
+    clearCheckpoint();
+    r.durationMs = monoMs() - t0;
+    return r;
+}
+
 // ─────────────────────────── run all cases ───────────────────────────────────
 
 // A unique run ID for this launch.
@@ -658,7 +907,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -677,6 +926,12 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseD()];
         } else if ([cid isEqualToString:CASE_E]) {
             [results addObject:runCaseE(automatedSingleRunMode)];
+        } else if ([cid isEqualToString:CASE_F]) {
+            [results addObject:runCaseF()];
+        } else if ([cid isEqualToString:CASE_G]) {
+            [results addObject:runCaseG()];
+        } else if ([cid isEqualToString:CASE_H]) {
+            [results addObject:runCaseH()];
         }
     }
     return results;
@@ -696,6 +951,9 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_C]) return runCaseC();
     if ([caseId isEqualToString:CASE_D]) return runCaseD();
     if ([caseId isEqualToString:CASE_E]) return runCaseE(YES);
+    if ([caseId isEqualToString:CASE_F]) return runCaseF();
+    if ([caseId isEqualToString:CASE_G]) return runCaseG();
+    if ([caseId isEqualToString:CASE_H]) return runCaseH();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -728,8 +986,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,   CASE_E     ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,     CASE_E,       CASE_F,       CASE_G,       CASE_H       ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread", @"G: Keychain", @"H: Files"   ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -738,6 +996,9 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_C version:kVersionC],
         [[TLResult alloc] initWithId:CASE_D version:kVersionD],
         [[TLResult alloc] initWithId:CASE_E version:kVersionE],
+        [[TLResult alloc] initWithId:CASE_F version:kVersionF],
+        [[TLResult alloc] initWithId:CASE_G version:kVersionG],
+        [[TLResult alloc] initWithId:CASE_H version:kVersionH],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -749,10 +1010,10 @@ static UIColor *colorForStatus(NSString *s) {
         }
     }
 
-    CGFloat y = 75;
+    CGFloat y = 65;
     for (int i = 0; i < (int)caseIds.count; ++i) {
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-        btn.frame = CGRectMake(10, y, 130, 36);
+        btn.frame = CGRectMake(10, y, 130, 32);
         [btn setTitle:caseLabels[i] forState:UIControlStateNormal];
         [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         btn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
@@ -760,7 +1021,7 @@ static UIColor *colorForStatus(NSString *s) {
         [btn addTarget:self action:@selector(runCase:) forControlEvents:UIControlEventTouchUpInside];
         [self.view addSubview:btn];
 
-        UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(150, y+8, 160, 20)];
+        UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(150, y+6, 160, 20)];
         TLResult *r  = self.results[i];
         lbl.text = [NSString stringWithFormat:@"%@ — %@", r.caseId, r.status];
         lbl.textColor = colorForStatus(r.status);
@@ -768,11 +1029,11 @@ static UIColor *colorForStatus(NSString *s) {
         [self.view addSubview:lbl];
         [self.labels addObject:lbl];
 
-        y += 46;
+        y += 38;
     }
 
     UIButton *all = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    all.frame = CGRectMake(10, y + 10, 130, 36);
+    all.frame = CGRectMake(10, y + 6, 130, 34);
     [all setTitle:@"Run All" forState:UIControlStateNormal];
     [all setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     all.backgroundColor = [UIColor colorWithRed:0.1 green:0.3 blue:0.7 alpha:1];
@@ -781,7 +1042,7 @@ static UIColor *colorForStatus(NSString *s) {
     [self.view addSubview:all];
 
     UIButton *export = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    export.frame = CGRectMake(160, y + 10, 130, 36);
+    export.frame = CGRectMake(160, y + 6, 130, 34);
     [export setTitle:@"Export JSON" forState:UIControlStateNormal];
     [export setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     export.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1];
@@ -789,7 +1050,7 @@ static UIColor *colorForStatus(NSString *s) {
     [self.view addSubview:export];
 }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

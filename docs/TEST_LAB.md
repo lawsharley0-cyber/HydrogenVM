@@ -37,6 +37,9 @@ signal, and sandboxed persistence.
 | TL-C | Graphics | GLES 2.0 offscreen FBO 64×64; vertex-colour triangle; probes at pixels (32,55), (13,18), (50,18), just inside each corner, check R≥200 / G≥200 / B≥200 respectively |
 | TL-D | Audio | Parses the bundled `tone.wav` (original 440 Hz sine); checks rate=44100 Hz, channels=1, samples≈44100, non-zero energy; speaker playback is **not** automatically verified |
 | TL-E | Persistence | Writes `0x48564D54` through `NSUserDefaults`; stops; relaunches to the same sandbox; reads and verifies. Re-importing the IPA keeps `Documents/`, `Library/` and `tmp/`, so the second launch uses the normal `hvm run <ipa>` path |
+| TL-F | Threading & Mutex | `pthread_create` spawns a background worker thread computing a 64 KB FNV-1a hash (`0x75389DC5`), while main and worker threads safely increment a shared counter under `pthread_mutex_t` to 20,000, verified via `pthread_join` |
+| TL-G | Keychain | `Security.framework` (`SecItemAdd`, `SecItemCopyMatching`, `SecItemDelete`); verifies generic password addition, duplicate key rejection (`errSecDuplicateItem`), query data matching, and removal/not-found verification (`errSecItemNotFound`) |
+| TL-H | File System & Sandbox | `NSFileManager` nested directory creation (`createDirectoryAtPath:withIntermediateDirectories:`), atomic write of 1024-byte payload, file/dir existence and size verification via `attributesOfItemAtPath:`, payload integrity check, and recursive removal |
 
 ### Checkpoint / interrupted-case protocol
 
