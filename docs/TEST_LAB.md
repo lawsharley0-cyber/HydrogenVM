@@ -33,10 +33,10 @@ signal, and sandboxed persistence.
 | ID | Name | What it checks |
 |---|---|---|
 | TL-A | Import and launch | `CFBundleExecutable`, `CFBundleIdentifier`, `CFBundleShortVersionString`, `tone.wav` resource present, `empty.dat` (zero-length) resource present |
-| TL-B | CPU correctness | 10 M iterations of xorshift32; expected result `0xA05A0848` (matches `hvm_tests selftest`); timing is diagnostic only |
-| TL-C | Graphics | GLES 2.0 offscreen FBO 64×64; vertex-colour triangle; pixel readbacks at three NDC positions check R≥200 / G≥200 / B≥200 respectively |
+| TL-B | CPU correctness | 10 M iterations of xorshift32; expected result `0x7E6798F5`, derived from a native x86-64 build of the same loop (see [Oracle rule](#oracle-rule)); timing is diagnostic only |
+| TL-C | Graphics | GLES 2.0 offscreen FBO 64×64; vertex-colour triangle; probes at pixels (32,55), (13,18), (50,18), just inside each corner, check R≥200 / G≥200 / B≥200 respectively |
 | TL-D | Audio | Parses the bundled `tone.wav` (original 440 Hz sine); checks rate=44100 Hz, channels=1, samples≈44100, non-zero energy; speaker playback is **not** automatically verified |
-| TL-E | Persistence | Writes `0x48564D54` through `NSUserDefaults`; stops; relaunches to the same sandbox; reads and verifies; second launch only reads, never re-imports the IPA |
+| TL-E | Persistence | Writes `0x48564D54` through `NSUserDefaults`; stops; relaunches to the same sandbox; reads and verifies. Re-importing the IPA keeps `Documents/`, `Library/` and `tmp/`, so the second launch uses the normal `hvm run <ipa>` path |
 
 ### Checkpoint / interrupted-case protocol
 
@@ -269,3 +269,111 @@ does not claim phone-equivalent behaviour.
    repeated runs) per the `PERFORMANCE.md` guidelines after B-101 lands.
 5. **Compat-harness integration** — add TestLab as an optional harness app
    entry once the IPA hash is stable and a fixture root is available.
+
+---
+
+## Agent guide — Test Lab is the first gate for every emulator change
+
+### What the IPA is for
+
+`TestLab.ipa` is a small, deterministic, 32-bit ARMv7 iOS app whose pass/fail
+answers are known *independently of the emulator*. It is the fastest way to tell
+whether a change to the emulator broke something basic. It is **not** a
+substitute for running real apps (see [Blind spots](#blind-spots)).
+
+| You changed… | Run | Why |
+|---|---|---|
+| Anything in `src/` | `hvm_tests fulltest` **and** `hvm_testlab.py run` | unit tests cover internals; Test Lab covers the whole import → launch → result path |
+| Zip / IPA import / sandbox (`src/loader/`) | Test Lab (TL-A, TL-E) | Test Lab found the empty-entry zip bug and the re-import data-loss bug |
+| CPU / decoder / threaded interpreter | Test Lab TL-B plus `hvm_tests selftest` | independent native oracle |
+| GLES / shader compiler / rasterizer | Test Lab TL-C plus a real shader-heavy app | TL-C only uses a passthrough shader |
+| Audio | TL-D plus a real app | TL-D checks decode only, not the mixer |
+
+### Run it yourself (no phone needed)
+
+```sh
+# one-time: ld64 (no sudo? use a prefix you own)
+tools/build_cctools.sh $HOME/cctools
+export HVM_LD64=$HOME/cctools/bin/arm-apple-darwin11-ld
+
+cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+ninja -C build hvm hvm_tests
+
+python3 tools/hvm_testlab.py run --hvm build/hvm --out build/testlab-report   # exit 0 = all pass
+python3 tools/hvm_testlab.py run --hvm build/hvm --case TL-C --out /tmp/tl_c    # one case
+python3 tools/hvm_testlab.py validate build/testlab-report/testlab_report.json
+```
+
+Run a single case by hand and read the guest's own result file — this is the
+fastest debugging loop:
+
+```sh
+build/hvm run build/ios/TestLab.ipa --home /tmp/tl --run-for 20 -- --run TL-C
+cat /tmp/tl/com.hydrogenvm.test.testlab/Documents/testlab_result.json
+```
+
+`diagnostics` in each case holds the raw values (pixel RGBA, hashes, byte counts).
+Always read those before deciding whether the emulator or the test is wrong.
+
+### On the phone
+
+Import the IPA (CI artifact `testlab-report`, or build locally), open it, tap
+**Run All**, then **Export JSON**. Compare against the Linux report: the same
+case should produce the same `actual` values.
+
+### Oracle rule
+
+A test is only as good as its expected value. Two of the original five cases
+were wrong the first time they ran (TL-B's constant, TL-C's probe pixels) — the
+emulator was right and the *test* was wrong. Therefore:
+
+1. Every expected value must be derived from something that is **not** the
+   emulator: a native build of the same C, a hand calculation, a spec vector.
+2. Write down *how* it was derived in a comment next to the constant.
+3. Never "fix" a failing case by copying the emulator's output into the
+   expectation. If emulator and oracle disagree, find out which is wrong.
+
+### Blind spots
+
+Things real apps hit that Test Lab currently does **not** exercise. A green
+Test Lab run says nothing about these:
+
+| Area | Evidence from real apps | Needed case |
+|---|---|---|
+| GLSL breadth | Goat Simulator: all 108 UE3 programs failed to compile (helper functions before `main`, nested scopes, large uniform arrays, `ivec`/`int`/`bool`, builtins such as `clamp`/`mix`/`pow`, `#extension`, 3-arg `texture2D`). TL-C uses a 1-line passthrough shader | TL-F: shader feature matrix, one program per feature, readback compared with a CPU reference |
+| Threading / run loops | Cocos2d games crashed on thread-affine GL / `NSRunLoop` use | TL-G: worker thread, `performSelectorOnMainThread`, `NSTimer`, `CADisplayLink` ordering |
+| Keychain / secure storage | Tiny Tower | TL-H: `SecItemAdd/CopyMatching/Delete` round trip across relaunch |
+| Texture formats | NPOT, mipmaps, PVRTC, premultiplied alpha | TL-I: upload each format, read back |
+| Performance regressions | Only timing diagnostics, no thresholds; no frame-rate, allocation or syscall pressure | TL-J: fixed workloads with recorded MIPS/fps and a tolerance against `docs/dev-system/baselines/` |
+| Touch / lifecycle | Taps drive every real game; background/foreground, memory warnings | TL-K: injected touches (`--tap`), `applicationDidEnterBackground` |
+| Audio path | TL-D parses WAV only; mixer/AudioQueue/OpenAL untested end-to-end | TL-L: play through the mixer, compare PCM energy |
+| Big/odd archives | Empty zip entries, data descriptors, zip64, long names | Extend TL-A fixtures |
+| Crash handling | Interrupted-case protocol never exercised by a real crash | TL-M: deliberate crash case |
+
+### Bug-class process (how a new kind of bug becomes a permanent test)
+
+1. **Reproduce** in the real app. Record the symptom: crash, blank screen,
+   wrong output or slow. Capture the log, a screenshot and a perf report.
+2. **Classify** it against the blind-spot table. If it fits an existing row,
+   extend that case; if not, add a row.
+3. **Minimise**: write the smallest guest code that shows the same failure
+   (a shader, a thread pattern, a file layout). Add it as a new `TL-X` case in
+   `tests/ios/apps/testlab/main.m` with an independent oracle.
+4. **Prove the case fails** on the unfixed emulator (`git stash` the fix, or
+   run on the base commit). A case that never failed proves nothing.
+5. **Fix the emulator.** Then run `hvm_tests fulltest`, `hvm_testlab.py run`,
+   and the real app again.
+6. **Record**: add the case to the table above, update `docs/COMPAT.md` with
+   the app, symptom, root cause and the Test Lab case that now guards it.
+7. **Performance**: if the fix or the case changes speed, add the number to
+   `docs/PERFORMANCE.md`; do not accept a slowdown without writing it down.
+
+Adding a case: add a `runCaseX`, register it in the case-id lists (menu,
+`--run`, `--runall`), add the id to `CASE_IDS` in `tools/hvm_testlab.py`, bump
+nothing in the schema unless fields change, and add the row to this file.
+
+### Lessons already learned (keep adding here)
+
+- Empty zip entries are stored by some tools and deflated by others. Both must import (TL-A).
+- Re-importing an IPA must keep `Documents/`, `Library/` and `tmp/`; it replaces only the `.app` bundle (TL-E).
+- When you see "no `TESTLAB` line in stdout", run the case by hand: the failure is usually an import or loader error on stderr.

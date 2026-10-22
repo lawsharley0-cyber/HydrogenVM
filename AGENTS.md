@@ -15,6 +15,16 @@ This file is the working agreement for a coding agent. It does not change the em
 
 A 4 KB Linux result is not a 16 KB iPhone memory-model pass. Reports record `host.pageSize`.
 
+## Test Lab is the first gate
+
+Before and after any change under `src/`, run the Test Lab (`TestLab.ipa`, a deterministic 32-bit iOS guest with independently derived expected values) in addition to `hvm_tests fulltest`:
+
+```sh
+python3 tools/hvm_testlab.py run --hvm build/hvm --out build/testlab-report   # exit 0 = pass
+```
+
+Read [docs/TEST_LAB.md](docs/TEST_LAB.md), especially "Agent guide": what each case covers, how to run one case by hand, the oracle rule (never copy emulator output into an expectation), the blind-spot table (what a green run does *not* prove: shader breadth, threading, keychain, texture formats, perf thresholds, touch/lifecycle), and the bug-class process (every new real-app bug becomes a minimal `TL-X` case that is shown to fail before the fix). A green Test Lab run is necessary, not sufficient: still run the affected real app.
+
 ## Build and test
 
 Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set.
