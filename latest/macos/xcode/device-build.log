@@ -25,9 +25,9 @@ GatherProvisioningInputs
 
 CreateBuildDescription
 
-ExecuteExternalTool /Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.5.sdk -x c -c /dev/null
-
 ExecuteExternalTool /Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -arch arm64 -isysroot /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.5.sdk -x c++ -c /dev/null
+
+ExecuteExternalTool /Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.5.sdk -x c -c /dev/null
 
 ExecuteExternalTool /Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -arch arm64 -isysroot /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.5.sdk -x c -c /dev/null
 
@@ -41,18 +41,14 @@ ExecuteExternalTool /Applications/Xcode_26.6.app/Contents/Developer/Toolchains/X
 
 ExecuteExternalTool /Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
 
-Build description signature: 42e6ae32399288989420cc024e1c731b
-Build description path: /Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/XCBuildData/42e6ae32399288989420cc024e1c731b.xcbuilddata
+Build description signature: 5ae34e63eb3b9123b051334aaae4592f
+Build description path: /Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/XCBuildData/5ae34e63eb3b9123b051334aaae4592f.xcbuilddata
 error: Multiple commands produce '/Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/Release-iphoneos/HydrogenVM.app/README.txt'
     note: Target 'HydrogenVM' (project 'HydrogenVM') has copy command from '/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/minimp3/README.txt' to '/Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/Release-iphoneos/HydrogenVM.app/README.txt'
     note: Target 'HydrogenVM' (project 'HydrogenVM') has copy command from '/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/README.txt' to '/Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/Release-iphoneos/HydrogenVM.app/README.txt'
 ClangStatCache /Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.5.sdk /var/folders/n6/hn37q6pj7sj_9dmqqc2113800000gn/C/com.apple.DeveloperTools/26.6-17F113/Xcode/SDKStatCaches.noindex/iphoneos26.5-23F81a-688ef53f1462e2c8f657fdc38a81448fee66e23052a0157c865c76b268046726.sdkstatcache
     cd /Users/runner/work/HydrogenVM/HydrogenVM/app/HydrogenVM.xcodeproj
     /Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.5.sdk -o /var/folders/n6/hn37q6pj7sj_9dmqqc2113800000gn/C/com.apple.DeveloperTools/26.6-17F113/Xcode/SDKStatCaches.noindex/iphoneos26.5-23F81a-688ef53f1462e2c8f657fdc38a81448fee66e23052a0157c865c76b268046726.sdkstatcache
-
-CreateBuildDirectory /Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild
-    cd /Users/runner/work/HydrogenVM/HydrogenVM/app/HydrogenVM.xcodeproj
-    builtin-create-build-directory /Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild
 
 warning: duplicate output file '/Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/Release-iphoneos/HydrogenVM.app/README.txt' on task: CpResource /Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/Release-iphoneos/HydrogenVM.app/README.txt /Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/README.txt (in target 'HydrogenVM' from project 'HydrogenVM')
 ** BUILD FAILED **
