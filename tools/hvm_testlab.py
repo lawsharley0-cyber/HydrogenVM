@@ -45,7 +45,7 @@ ROOT = Path(__file__).parent.parent
 TESTLAB_SRC = ROOT / "tests" / "ios" / "apps" / "testlab"
 SCHEMA_MOD  = str(ROOT / "tools" / "testlab_schema")
 
-CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H"]
+CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J"]
 # Wall-clock timeout (seconds) per case process, including hvm startup.
 DEFAULT_TIMEOUT = 30
 # TL-E phase 1 is fast; allow extra for the full two-launch cycle.
@@ -257,6 +257,57 @@ def _parse_case_output(stdout: str, case_id: str, elapsed: float,
     return result
 
 
+# ─────────────────────────── TL-J baseline ceiling ───────────────────────────
+
+def _baseline_mflops_ceiling() -> float | None:
+    """Read the linux-headless baseline and return the MFLOPS regression floor.
+
+    The floor is 50% of the selftest MIPS from the baseline (MIPS ≈ MFLOPS for
+    the integer self-test workload). Returns None when the baseline is absent or
+    the key is missing — in that case the guest's own 50 MFLOPS floor applies.
+    """
+    baseline_path = ROOT / "docs" / "dev-system" / "baselines" / "linux-headless.json"
+    try:
+        data = json.loads(baseline_path.read_text())
+        # The baseline stores MIPS under suites.unit.cases[0].diagnostics.mips
+        # or under a top-level selftest_mips key added by the harness.
+        mips = data.get("selftest_mips")
+        if mips is None:
+            # Dig into the unit suite for the selftest case
+            for case in data.get("suites", {}).get("unit", {}).get("cases", []):
+                if "selftest" in case.get("id", "").lower():
+                    mips = case.get("diagnostics", {}).get("mips")
+                    break
+        if mips and float(mips) > 0:
+            return float(mips) * 0.5  # 50% regression ceiling
+    except Exception:
+        pass
+    return None
+
+
+def _apply_tj_ceiling(case_result: dict) -> dict:
+    """For a passed TL-J result, apply the host-side MFLOPS regression ceiling."""
+    if case_result.get("status") != "passed":
+        return case_result
+    ceiling = _baseline_mflops_ceiling()
+    if ceiling is None:
+        return case_result
+    # Extract mflops from stdoutTail diagnostics (guest writes it to stdout)
+    stdout = case_result.get("diagnostics", {}).get("stdoutTail", "")
+    mflops_match = re.search(r"mflops=([\d.]+)", stdout)
+    if not mflops_match:
+        return case_result
+    mflops = float(mflops_match.group(1))
+    case_result["diagnostics"]["hostCeiling_mflops"] = ceiling
+    case_result["diagnostics"]["observed_mflops"]    = mflops
+    if mflops < ceiling:
+        case_result["status"] = "failed"
+        case_result["reason"] = (
+            f"Throughput {mflops:.1f} MFLOPS < baseline ceiling {ceiling:.1f} MFLOPS"
+        )
+    return case_result
+
+
 # ─────────────────────────── run all cases ───────────────────────────────────
 
 def run_all_cases(
@@ -283,6 +334,8 @@ def run_all_cases(
         print(f"[testlab] running {case_id} …", flush=True)
         cr = run_case(hvm, ipa_path, case_id, home, timeout, import_ipa=not imported)
         imported = True
+        if case_id == "TL-J":
+            cr = _apply_tj_ceiling(cr)
         _print_result(cr)
         results.append(cr)
 

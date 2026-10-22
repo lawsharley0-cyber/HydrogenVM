@@ -154,6 +154,56 @@ jobs:
             --timeout 60
         continue-on-error: true
 
+      - name: Run Test Lab — TL-F (threading)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-F \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-G (keychain)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-G \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-H (filesystem)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-H \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-I (texture formats / NPOT)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-I \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-J (performance throughput gate)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-J \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
       - name: Run Test Lab — all cases (integration)
         run: |
           python3 tools/hvm_testlab.py run \
