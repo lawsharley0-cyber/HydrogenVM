@@ -1,5 +1,6 @@
 #include "Process.hpp"
 #include "libc/Unwind.hpp"
+#include <sstream>
 #include "audio/Audio.hpp"
 #include "loader/ElfLoader.hpp"
 #include <cstdarg>
@@ -798,6 +799,28 @@ std::string Process::backtrace(const CPU::Cpu& c, int maxFrames) const {
         fp = next;
     }
     return out;
+}
+
+std::string perfJson(const Process::Perf& pf, double wall, uint64_t insns, uint64_t blocksDecoded) {
+    const uint64_t frames = pf.frames.load();
+    const uint64_t presented = pf.framesPresented.load();
+    const uint64_t ttff = pf.timeToFirstFrameNs.load();
+    std::ostringstream f;
+    f << "    \"wallSeconds\": " << wall << ",\n";
+    f << "    \"guestInstructions\": " << insns << ",\n";
+    f << "    \"guestMIPS\": " << (wall > 0 ? double(insns) / 1e6 / wall : 0) << ",\n";
+    f << "    \"blocksDecoded\": " << blocksDecoded << ",\n";
+    f << "    \"frames\": " << frames << ",\n";
+    f << "    \"framesPresented\": " << presented << ",\n";
+    f << "    \"avgFrameMs\": " << (frames ? double(pf.frameNs.load()) / 1e6 / double(frames) : 0) << ",\n";
+    f << "    \"avgCompositeMs\": " << (presented ? double(pf.compositeNs.load()) / 1e6 / double(presented) : 0) << ",\n";
+    f << "    \"maxFrameMs\": " << double(pf.maxFrameNs.load()) / 1e6 << ",\n";
+    f << "    \"slowFrames\": " << pf.slowFrames.load() << ",\n";
+    f << "    \"p50FrameMs\": " << double(pf.frameTimes.percentile(50)) / 1e6 << ",\n";
+    f << "    \"p95FrameMs\": " << double(pf.frameTimes.percentile(95)) / 1e6 << ",\n";
+    f << "    \"p99FrameMs\": " << double(pf.frameTimes.percentile(99)) / 1e6 << ",\n";
+    f << "    \"timeToFirstFrameMs\": " << (ttff == ~uint64_t{0} ? 0.0 : double(ttff) / 1e6) << "\n";
+    return f.str();
 }
 
 } // namespace Hydrogen::Runtime

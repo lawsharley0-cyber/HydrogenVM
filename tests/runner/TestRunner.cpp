@@ -12,6 +12,7 @@
 #include "core/cpu/Engine.hpp"
 #include "loader/ElfLoader.hpp"
 #include "selftest/SelfTest.hpp"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -190,6 +191,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 #include "runtime/Process.hpp"
+#include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "AudioOutput.hpp"
 #include <functional>
@@ -1654,6 +1656,206 @@ int runFullSubsystemTests() {
         const uint32_t afterErr = uint32_t(callGL("_glGetError", {}));
         check(loopLinked && loopErr == 0x0502 && stayedBlue && drewGreen && afterErr == 0,
               "GLES2 aborts a draw that exceeds the instruction budget and discards its fragments");
+        // Homogeneous clip: triangles that cross the camera (w<=0) or the near
+        // plane (z<-w) must be clipped in clip space before the perspective divide.
+        {
+            uint32_t clipVs = shader(0x8B31, "attribute vec4 pos; attribute vec4 col; varying vec4 vcol; void main() { gl_Position = pos; vcol = col; }");
+            uint32_t clipFs = shader(0x8B30, "varying vec4 vcol; void main() { gl_FragColor = vcol; }");
+            uint32_t clipProg = uint32_t(callGL("_glCreateProgram", {}));
+            callGL("_glBindAttribLocation", {clipProg, 0, proc.allocCString("pos")});
+            callGL("_glBindAttribLocation", {clipProg, 1, proc.allocCString("col")});
+            callGL("_glAttachShader", {clipProg, clipVs});
+            callGL("_glAttachShader", {clipProg, clipFs});
+            callGL("_glLinkProgram", {clipProg});
+            callGL("_glUseProgram", {clipProg});
+            callGL("_glViewport", {0, 0, 64, 64});
+            callGL("_glDisable", {0x0B44 /* GL_CULL_FACE */});
+            callGL("_glDisable", {0x0B71 /* GL_DEPTH_TEST */});
+            callGL("_glEnableVertexAttribArray", {0});
+            callGL("_glEnableVertexAttribArray", {1});
+            const uint32_t pix = proc.heap().allocZeroed(16);
+            auto readPx = [&](int x, int y, uint8_t& pr, uint8_t& pg, uint8_t& pb, uint8_t& pa) {
+                callGL("_glReadPixels", {uint32_t(x), uint32_t(y), 1, 1, 0x1908, 0x1401, pix});
+                pr = proc.mem().read<uint8_t>(pix);
+                pg = proc.mem().read<uint8_t>(pix + 1);
+                pb = proc.mem().read<uint8_t>(pix + 2);
+                pa = proc.mem().read<uint8_t>(pix + 3);
+            };
+            auto closeTo = [](uint8_t pr, uint8_t pg, uint8_t pb, int er, int eg, int eb) {
+                return std::abs(int(pr) - er) <= 3 && std::abs(int(pg) - eg) <= 3 && std::abs(int(pb) - eb) <= 3;
+            };
+            auto clearBlue = [&]() {
+                callGL("_glClearColor", {UIKit::fbits(0), UIKit::fbits(0), UIKit::fbits(1), UIKit::fbits(1)});
+                callGL("_glClear", {0x4000});
+            };
+            auto drawClip = [&](uint32_t mode, const float* verts, int nVerts) {
+                const uint32_t nbytes = uint32_t(nVerts * 8 * sizeof(float));
+                const uint32_t mem = proc.heap().alloc(nbytes);
+                proc.mem().copyIn(mem, verts, nbytes);
+                callGL("_glBufferData", {0x8892, nbytes, mem, 0x88E4});
+                callGL("_glVertexAttribPointer", {0, 4, 0x1406, 0, 32, 0});
+                callGL("_glVertexAttribPointer", {1, 4, 0x1406, 0, 32, 16});
+                callGL("_glDrawArrays", {mode, 0, uint32_t(nVerts)});
+            };
+            uint8_t pr = 0, pg = 0, pb = 0, pa = 0, qr = 0, qg = 0, qb = 0, qa = 0;
+
+            const float insideTri[] = {
+                -0.5f, -0.5f, 0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.5f, -0.5f, 0.f, 1.f,  0.f, 1.f, 0.f, 1.f,
+                 0.0f,  0.5f, 0.f, 1.f,  0.f, 0.f, 1.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, insideTri, 3);
+            readPx(32, 40, pr, pg, pb, pa);
+            std::printf("  clip inside (32,40)=%u,%u,%u,%u\n", pr, pg, pb, pa);
+            check(closeTo(pr, pg, pb, 26, 34, 195) && pa == 255,
+                  "GLES2 triangle entirely in front of the near plane keeps its coverage and perspective-correct color");
+
+            const float crossW[] = {
+                -0.8f, -0.8f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                -0.8f,  0.8f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.2f,  0.0f, -2.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, crossW, 3);
+            readPx(7, 32, pr, pg, pb, pa);
+            readPx(4, 35, qr, qg, qb, qa);
+            std::printf("  clip w<0 (7,32)=%u,%u,%u,%u (4,35)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0 && qa == 255,
+                  "GLES2 clips a triangle crossing the camera plane (w<0) instead of mirroring it through the origin");
+
+            const float crossNear[] = {
+                -0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.0f,  0.5f, -2.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, crossNear, 3);
+            readPx(32, 36, pr, pg, pb, pa);
+            readPx(33, 23, qr, qg, qb, qa);
+            std::printf("  clip z<-w (32,36)=%u,%u,%u,%u (33,23)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0,
+                  "GLES2 clips a triangle crossing the near plane (z<-w, w>0) and keeps the visible fragment");
+
+            const float behindTri[] = {
+                 0.5f,  0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                -0.5f,  0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.0f, -0.5f, 0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, behindTri, 3);
+            readPx(32, 32, pr, pg, pb, pa);
+            std::printf("  clip all behind (32,32)=%u,%u,%u,%u\n", pr, pg, pb, pa);
+            check(pr == 0 && pg == 0 && pb == 255 && pa == 255,
+                  "GLES2 drops a triangle whose vertices are all behind the camera (w<0)");
+
+            const float crossLine[] = {
+                0.f, 0.f,  0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                0.5f, 0.f, -2.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001 /* GL_LINES */, crossLine, 2);
+            readPx(20, 32, pr, pg, pb, pa);
+            readPx(36, 32, qr, qg, qb, qa);
+            std::printf("  clip line (20,32)=%u,%u,%u,%u (36,32)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 0 && pb == 255 && qr == 255 && qg == 0 && qb == 0,
+                  "GLES2 clips a line crossing the camera plane to the near-plane segment");
+
+            const float pts[] = {
+                 0.5f, 0.f,  0.f, -1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.f,  0.5f, -2.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+                 0.f,  0.f,   0.f,  1.f,  1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0000 /* GL_POINTS */, pts, 3);
+            readPx(16, 32, pr, pg, pb, pa);
+            readPx(32, 48, qr, qg, qb, qa);
+            uint8_t rr = 0, rg = 0, rb = 0, ra = 0;
+            readPx(32, 32, rr, rg, rb, ra);
+            std::printf("  clip points behind=%u,%u,%u,%u near=%u,%u,%u,%u inside=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, rr, rg, rb, ra);
+            check(pr == 0 && pb == 255 && qr == 0 && qb == 255 && rr == 255 && rg == 0 && rb == 0,
+                  "GLES2 discards points with w<0 or z<-w and still draws a point in front of the near plane");
+
+            // Different w on every vertex. Equal w makes screen-linear and
+            // perspective-correct interpolation the same color, so this lock
+            // only holds if the fragment stage divides by the clipped 1/w.
+            const float attrTri[] = {
+                -0.5f, -0.5f,  0.f, 1.f,  1.f, 0.f, 0.f, 1.f,
+                 2.0f, -2.0f,  0.f, 4.f,  0.f, 1.f, 0.f, 1.f,
+                 0.0f,  0.5f, -2.f, 1.f,  0.f, 0.f, 1.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, attrTri, 3);
+            readPx(38, 18, pr, pg, pb, pa);
+            readPx(50, 0, qr, qg, qb, qa);
+            std::printf("  clip attrib (38,18)=%u,%u,%u,%u (50,0)=%u,%u,%u,%u\n", pr, pg, pb, pa, qr, qg, qb, qa);
+            check(closeTo(pr, pg, pb, 131, 84, 40) && pa == 255 && qr == 0 && qb == 255,
+                  "GLES2 perspective-correct varyings use a different w on each vertex, including the near-plane edge");
+
+            // w=1, w=1.5, and a vertex through the w guard. The guard lerp
+            // undershoots 1e-6 in float32 (about 9.54e-7). Rejecting that
+            // output drops the visible triangle (about 2587 of 4096 pixels
+            // before the side planes). Side planes then keep NDC inside the
+            // viewport, so the unbounded projection's extra pixels stay clear.
+            const uint32_t fb = proc.heap().alloc(64 * 64 * 4);
+            auto countCovered = [&]() {
+                callGL("_glReadPixels", {0, 0, 64, 64, 0x1908, 0x1401, fb});
+                const uint8_t* p = proc.mem().host(fb);
+                int n = 0;
+                for (int i = 0; i < 64 * 64; ++i)
+                    if (p[i * 4] >= 250 && p[i * 4 + 2] <= 5) ++n;
+                return n;
+            };
+            const float guardTri[] = {
+                -0.8f,  0.2f, 0.f,  1.f,    1.f, 0.f, 0.f, 1.f,
+                 0.9f, -0.9f, 0.f,  1.5f,   1.f, 0.f, 0.f, 1.f,
+                 0.25f, 0.25f, 0.f, -1e-4f, 1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0004, guardTri, 3);
+            readPx(20, 41, pr, pg, pb, pa);
+            readPx(8, 13, qr, qg, qb, qa);
+            const int guardCov = countCovered();
+            std::printf("  clip guard tri (20,41)=%u,%u,%u,%u (8,13)=%u,%u,%u,%u covered=%d\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, guardCov);
+            check(pr == 255 && pg == 0 && pb == 0 && pa == 255 &&
+                  qr == 0 && qb == 255 && guardCov >= 1900 && guardCov <= 2100,
+                  "GLES2 keeps a w=1/1.5/through-guard triangle whose clip boundary undershoots 1e-6, and side planes bound it to the viewport");
+
+            // The guard hit stays inside the side planes, so its w remains
+            // ~9.54e-7 after every plane. The segment must still be drawn.
+            const float guardSeg[] = {
+                -0.6f, -0.4f, 0.f, 1.5f,  1.f, 0.f, 0.f, 1.f,
+                 1e-6f, 5e-7f, 0.f, 5e-7f, 1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001, guardSeg, 2);
+            readPx(40, 34, pr, pg, pb, pa);
+            readPx(0, 0, qr, qg, qb, qa);
+            std::printf("  clip guard seg (40,34)=%u,%u,%u,%u (0,0)=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa);
+            check(pr == 255 && pg == 0 && pb == 0 && qr == 0 && qb == 255,
+                  "GLES2 draws a segment whose clipped endpoint is the float32 guard boundary (~9.54e-7)");
+
+            // clip x = 1e10, w = 1. The screen delta exceeds INT_MAX. Side
+            // planes bring NDC x to 1, and the walker must not convert that
+            // unclipped delta to int.
+            const float hugeLine[] = {
+                0.f, 0.f, 0.f, 1.f,     1.f, 0.f, 0.f, 1.f,
+                1e10f, 0.f, 0.f, 1.f,   1.f, 0.f, 0.f, 1.f,
+            };
+            clearBlue();
+            drawClip(0x0001, hugeLine, 2);
+            readPx(48, 32, pr, pg, pb, pa);
+            readPx(63, 32, qr, qg, qb, qa);
+            uint8_t sr = 0, sg = 0, sb = 0, sa = 0;
+            readPx(0, 32, sr, sg, sb, sa);
+            std::printf("  clip huge line (48,32)=%u,%u,%u,%u (63,32)=%u,%u,%u,%u (0,32)=%u,%u,%u,%u\n",
+                        pr, pg, pb, pa, qr, qg, qb, qa, sr, sg, sb, sa);
+            check(pr == 255 && pg == 0 && pb == 0 && qr == 255 && qg == 0 && qb == 0 && sr == 0 && sb == 255,
+                  "GLES2 clips a line whose screen delta exceeds INT_MAX to the framebuffer and still draws the visible pixels");
+        }
 
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
@@ -1885,6 +2087,77 @@ int runFullSubsystemTests() {
         const uint8_t b1 = proc.mem().read<uint8_t>(texIds + 10);
         check(r1 == 255 && g1 == 0 && b1 == 0, "OpenGL ES 1.1 fixed-function ortho + 2D texture + glDrawElements");
 
+        // Fixed-function path shares the raster clip. A frustum triangle with
+        // every vertex behind the camera (eye z>0 => clip w<0) must not paint.
+        callGL("_glDisable", {0x0DE1 /* GL_TEXTURE_2D */});
+        callGL("_glDisable", {0x0B44 /* GL_CULL_FACE */});
+        callGL("_glMatrixMode", {0x1701 /* GL_PROJECTION */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glFrustumf", {UIKit::fbits(-1.f), UIKit::fbits(1.f), UIKit::fbits(-1.f), UIKit::fbits(1.f), UIKit::fbits(1.f), UIKit::fbits(10.f)});
+        callGL("_glMatrixMode", {0x1700 /* GL_MODELVIEW */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glColor4f", {UIKit::fbits(1.f), UIKit::fbits(0.f), UIKit::fbits(0.f), UIKit::fbits(1.f)});
+        callGL("_glClearColor", {UIKit::fbits(0.f), UIKit::fbits(0.f), UIKit::fbits(1.f), UIKit::fbits(1.f)});
+        const float frontEye[] = {-0.5f, -0.5f, -2.f,  0.5f, -0.5f, -2.f,  0.f, 0.5f, -2.f};
+        const float behindEye[] = {-0.5f, -0.5f, 1.f,  0.5f, -0.5f, 1.f,  0.f, 0.5f, 1.f};
+        const uint32_t eyeMem = proc.heap().alloc(sizeof frontEye + sizeof behindEye);
+        proc.mem().copyIn(eyeMem, frontEye, sizeof frontEye);
+        proc.mem().copyIn(eyeMem + sizeof frontEye, behindEye, sizeof behindEye);
+        callGL("_glVertexPointer", {3, 0x1406, 0, eyeMem});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 32, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t frontR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t frontB = proc.mem().read<uint8_t>(texIds + 10);
+        callGL("_glVertexPointer", {3, 0x1406, 0, eyeMem + uint32_t(sizeof frontEye)});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 32, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t backR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t backG = proc.mem().read<uint8_t>(texIds + 9);
+        const uint8_t backB = proc.mem().read<uint8_t>(texIds + 10);
+        std::printf("  clip gles1 front (32,32)=%u,%u behind=%u,%u,%u\n",
+                    frontR, frontB, backR, backG, backB);
+        check(frontR == 255 && frontB == 0 && backR == 0 && backG == 0 && backB == 255,
+              "GLES1 frustum clips a triangle behind the camera and still draws one in front of the near plane");
+
+        // GLES1 color and UV stay screen-linear after clipping. The clip lerps
+        // them in clip space so the new edge vertex is correct, and the fill
+        // does not reweight by 1/w. Perspective-correct weighting of this same
+        // triangle is about (131,84,40); the framebuffer must match (66,169,20).
+        callGL("_glMatrixMode", {0x1701 /* GL_PROJECTION */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glMatrixMode", {0x1700 /* GL_MODELVIEW */});
+        callGL("_glLoadIdentity", {});
+        callGL("_glEnableClientState", {0x8076 /* GL_COLOR_ARRAY */});
+        const float gles1Pos[] = {
+            -0.5f, -0.5f, 0.f, 1.f,
+             2.0f, -2.0f, 0.f, 4.f,
+             0.0f,  0.5f,-2.f, 1.f,
+        };
+        const float gles1Col[] = {
+            1.f, 0.f, 0.f, 1.f,
+            0.f, 1.f, 0.f, 1.f,
+            0.f, 0.f, 1.f, 1.f,
+        };
+        const uint32_t pMem = proc.heap().alloc(sizeof gles1Pos);
+        const uint32_t cMem = proc.heap().alloc(sizeof gles1Col);
+        proc.mem().copyIn(pMem, gles1Pos, sizeof gles1Pos);
+        proc.mem().copyIn(cMem, gles1Col, sizeof gles1Col);
+        callGL("_glVertexPointer", {4, 0x1406, 0, pMem});
+        callGL("_glColorPointer", {4, 0x1406, 0, cMem});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {38, 18, 1, 1, 0x1908, 0x1401, texIds + 8});
+        const uint8_t linR = proc.mem().read<uint8_t>(texIds + 8);
+        const uint8_t linG = proc.mem().read<uint8_t>(texIds + 9);
+        const uint8_t linB = proc.mem().read<uint8_t>(texIds + 10);
+        std::printf("  clip gles1 screen-linear (38,18)=%u,%u,%u\n", linR, linG, linB);
+        const bool screenLinear = std::abs(int(linR) - 66) <= 3 && std::abs(int(linG) - 169) <= 3 && std::abs(int(linB) - 20) <= 3;
+        const bool perspective = std::abs(int(linR) - 131) <= 3 && std::abs(int(linG) - 84) <= 3 && std::abs(int(linB) - 40) <= 3;
+        check(screenLinear && !perspective,
+              "GLES1 color after clipping is screen-linear (66,169,20), matching the fixed-function fill");
+
         // CommonCrypto digests against the standard "abc" vectors.
         auto hex = [](const std::vector<uint8_t>& v) { std::string h; char b[3]; for (uint8_t c : v) { std::snprintf(b, 3, "%02x", c); h += b; } return h; };
         check(hex(Runtime::hvmDigest(0, "abc")) == "900150983cd24fb0d6963f7d28e17f72" &&
@@ -2052,6 +2325,466 @@ int runFullSubsystemTests() {
         }
     }
 
+    // POSIX regex (Darwin 32-bit ABI) and tmpnam inside the guest sandbox.
+    // regoff_t is __darwin_off_t (int64) even on armv7, so regmatch_t is 16 bytes.
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+        const bool have = proc.lookupSymbol("_regcomp") && proc.lookupSymbol("_regexec") &&
+                          proc.lookupSymbol("_regerror") && proc.lookupSymbol("_regfree") &&
+                          proc.lookupSymbol("_tmpnam");
+        constexpr uint32_t REG_EXTENDED = 1, REG_ICASE = 2, REG_NOSUB = 4, REG_NEWLINE = 010;
+        constexpr uint32_t REG_NOTBOL = 1;
+        constexpr uint32_t REG_NOMATCH = 1, REG_BADPAT = 2, REG_ECTYPE = 4, REG_EESCAPE = 5, REG_ESUBREG = 6;
+        constexpr uint32_t REG_EBRACK = 7, REG_EPAREN = 8, REG_EBRACE = 9, REG_BADBR = 10, REG_ERANGE = 11;
+        constexpr uint32_t REG_BADRPT = 13, REG_INVARG = 16;
+        auto i64 = [&](uint32_t a) { return proc.mem().read<int64_t>(a); };
+        auto nsub = [&](uint32_t preg) { return proc.mem().read<uint32_t>(preg + 4); };
+        auto compile = [&](const char* pat, uint32_t flags) {
+            const uint32_t preg = proc.heap().allocZeroed(32);
+            const uint32_t rc = call("_regcomp", {preg, proc.allocCString(pat), flags});
+            return std::pair{rc, preg};
+        };
+        auto exec = [&](uint32_t preg, const char* text, uint32_t nmatch, uint32_t pmatch, uint32_t eflags = 0) {
+            return call("_regexec", {preg, proc.allocCString(text), nmatch, pmatch, eflags});
+        };
+        auto offs = [&](uint32_t pm, int i) { return std::pair{i64(pm + uint32_t(i) * 16), i64(pm + uint32_t(i) * 16 + 8)}; };
+        const uint32_t pm = proc.heap().allocZeroed(8 * 16);
+        auto clearPm = [&] {
+            for (uint32_t i = 0; i < 8 * 16; i += 8) proc.mem().write<int64_t>(pm + i, -1);
+        };
+        auto run = [&](const char* name, auto&& fn) {
+            if (!have) { check(false, name); return; }
+            bool ok = false;
+            try { ok = fn(); }
+            catch (const std::exception& e) { std::printf("    %s threw: %s\n", name, e.what()); }
+            check(ok, name);
+        };
+        run("POSIX BRE dot-star, anchors, and re_nsub", [&] {
+            auto [rc, re] = compile("a.*b", 0);
+            clearPm();
+            const uint32_t er = exec(re, "zzaxxbqq", 1, pm);
+            const auto dot = offs(pm, 0);
+            const uint32_t groups = nsub(re);
+            auto [rc2, re2] = compile("^hello$", 0);
+            clearPm();
+            const uint32_t hit = exec(re2, "hello", 1, pm);
+            const auto whole = offs(pm, 0);
+            const uint32_t miss = exec(re2, "hello!", 1, pm);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return rc == 0 && er == 0 && groups == 0 && dot == std::pair<int64_t,int64_t>(2, 6) &&
+                   rc2 == 0 && hit == 0 && whole == std::pair<int64_t,int64_t>(0, 5) && miss == REG_NOMATCH;
+        });
+        run("POSIX BRE grouping reports the last iteration", [&] {
+            auto [rc, re] = compile("\\(ab\\)*", 0);
+            clearPm();
+            const uint32_t er = exec(re, "ababab", 2, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 1 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 6) &&
+                            offs(pm, 1) == std::pair<int64_t,int64_t>(4, 6);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX BRE bounded interval is greedy", [&] {
+            auto [rc, re] = compile("a\\{2,4\\}", 0);
+            clearPm();
+            const uint32_t er = exec(re, "aaaaa", 1, pm);
+            const bool ok = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 4);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX BRE backreferences", [&] {
+            auto [rc, re] = compile("\\(a\\)\\1", 0);
+            clearPm();
+            const uint32_t hit = exec(re, "aa", 2, pm);
+            const auto whole = offs(pm, 0);
+            const auto g = offs(pm, 1);
+            const uint32_t miss = exec(re, "ab", 2, pm);
+            const bool ok = rc == 0 && hit == 0 && whole == std::pair<int64_t,int64_t>(0, 2) &&
+                            g == std::pair<int64_t,int64_t>(0, 1) && miss == REG_NOMATCH;
+            call("_regfree", {re});
+            return ok;
+        });
+        run("POSIX ERE alternation is leftmost-longest", [&] {
+            auto [rc, re] = compile("(foo|foobar)|(a|ab)c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "foobar", 3, pm);
+            const bool one = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 6) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(0, 6) && offs(pm, 2) == std::pair<int64_t,int64_t>(-1, -1);
+            auto [rc2, re2] = compile("(a|ab)c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "abc", 2, pm);
+            const bool two = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 3) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(0, 2);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return one && two;
+        });
+        run("POSIX ERE subexpression offsets", [&] {
+            auto [rc, re] = compile("([a-z]+)-([0-9]+)", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "id-42", 3, pm);
+            auto [rc2, re2] = compile("colou?r", REG_EXTENDED);
+            const uint32_t c1 = exec(re2, "color", 1, pm);
+            const uint32_t c2 = exec(re2, "colour", 1, pm);
+            auto [rc3, re3] = compile("[[:digit:]]+", REG_EXTENDED);
+            clearPm();
+            const uint32_t er3 = exec(re3, "id-42", 1, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 2 &&
+                            offs(pm, 0) == std::pair<int64_t,int64_t>(3, 5) &&
+                            rc2 == 0 && c1 == 0 && c2 == 0 && rc3 == 0 && er3 == 0;
+            // The digit check overwrote pmatch; re-check the capture pattern.
+            clearPm();
+            exec(re, "id-42", 3, pm);
+            const bool caps = offs(pm, 0) == std::pair<int64_t,int64_t>(0, 5) &&
+                              offs(pm, 1) == std::pair<int64_t,int64_t>(0, 2) &&
+                              offs(pm, 2) == std::pair<int64_t,int64_t>(3, 5);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return ok && caps;
+        });
+        run("unmatched optional and alternate groups are -1", [&] {
+            auto [rc, re] = compile("a(b)?c", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "ac", 2, pm);
+            const bool opt = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 2) &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(-1, -1);
+            auto [rc2, re2] = compile("(a)|(b)", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "b", 3, pm);
+            const bool alt = rc2 == 0 && er2 == 0 && nsub(re2) == 2 &&
+                             offs(pm, 1) == std::pair<int64_t,int64_t>(-1, -1) &&
+                             offs(pm, 2) == std::pair<int64_t,int64_t>(0, 1);
+            call("_regfree", {re}); call("_regfree", {re2});
+            return opt && alt;
+        });
+        run("REG_ICASE folds literals and ranges", [&] {
+            auto [rc, re] = compile("^abc$", REG_EXTENDED | REG_ICASE);
+            clearPm();
+            const uint32_t hit = exec(re, "AbC", 1, pm);
+            const auto folded = offs(pm, 0);
+            auto [rc2, re2] = compile("^abc$", REG_EXTENDED);
+            const uint32_t miss = exec(re2, "AbC", 1, pm);
+            auto [rc3, re3] = compile("[A-C]", REG_EXTENDED | REG_ICASE);
+            clearPm();
+            const uint32_t er3 = exec(re3, "b", 1, pm);
+            const auto range = offs(pm, 0);
+            const bool ok = rc == 0 && hit == 0 && folded == std::pair<int64_t,int64_t>(0, 3) &&
+                            rc2 == 0 && miss == REG_NOMATCH && rc3 == 0 && er3 == 0 &&
+                            range == std::pair<int64_t,int64_t>(0, 1);
+            // offs was overwritten by the class match; the icase literal was checked before that.
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return ok;
+        });
+        run("REG_NOSUB keeps re_nsub and does not write pmatch", [&] {
+            auto [rc, re] = compile("(a)(b)", REG_EXTENDED | REG_NOSUB);
+            for (uint32_t i = 0; i < 4 * 16; i += 8) proc.mem().write<int64_t>(pm + i, 99);
+            const uint32_t er = exec(re, "ab", 4, pm);
+            bool untouched = true;
+            for (uint32_t i = 0; i < 4 * 16; i += 8) untouched = untouched && i64(pm + i) == 99;
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 2 && untouched;
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_NEWLINE changes dot, anchors, and negated classes", [&] {
+            auto [rc, re] = compile("a.b", REG_EXTENDED | REG_NEWLINE);
+            const uint32_t dot = exec(re, "a\nb", 1, pm);
+            auto [rc2, re2] = compile("^b", REG_EXTENDED | REG_NEWLINE);
+            clearPm();
+            const uint32_t bol = exec(re2, "a\nb", 1, pm);
+            const auto bm = offs(pm, 0);
+            auto [rc3, re3] = compile("a$", REG_EXTENDED | REG_NEWLINE);
+            clearPm();
+            const uint32_t eol = exec(re3, "a\nb", 1, pm);
+            const auto em = offs(pm, 0);
+            auto [rc4, re4] = compile("[^a]", REG_EXTENDED | REG_NEWLINE);
+            const uint32_t nl = exec(re4, "\n", 1, pm);
+            auto [rc5, re5] = compile("^a", REG_EXTENDED);
+            const uint32_t notbol = exec(re5, "a", 1, pm, REG_NOTBOL);
+            const uint32_t bol0 = exec(re5, "a", 1, pm, 0);
+            for (uint32_t r : {re, re2, re3, re4, re5}) call("_regfree", {r});
+            return rc == 0 && dot == REG_NOMATCH && rc2 == 0 && bol == 0 && bm == std::pair<int64_t,int64_t>(2, 3) &&
+                   rc3 == 0 && eol == 0 && em == std::pair<int64_t,int64_t>(0, 1) && rc4 == 0 && nl == REG_NOMATCH &&
+                   rc5 == 0 && notbol == REG_NOMATCH && bol0 == 0;
+        });
+        run("regcomp returns POSIX error codes", [&] {
+            struct Case { const char* pat; uint32_t flags; uint32_t code; };
+            const Case cases[] = {
+                {"(", REG_EXTENDED, REG_EPAREN},
+                {"[", REG_EXTENDED, REG_EBRACK},
+                {"a{", REG_EXTENDED, REG_EBRACE},
+                {"a{5,1}", REG_EXTENDED, REG_BADBR},
+                {"\\", REG_EXTENDED, REG_EESCAPE},
+                {"*", REG_EXTENDED, REG_BADRPT},
+                {"[[:bogus:]]", REG_EXTENDED, REG_ECTYPE},
+                {"[z-a]", REG_EXTENDED, REG_ERANGE},
+                {"\\1", 0, REG_ESUBREG},
+            };
+            bool ok = true;
+            for (auto& c : cases) {
+                auto [rc, re] = compile(c.pat, c.flags);
+                if (rc != c.code) { std::printf("    regcomp '%s' -> %u want %u\n", c.pat, rc, c.code); ok = false; }
+                call("_regfree", {re});
+            }
+            return ok;
+        });
+        run("regerror reports Darwin strings and the size including NUL", [&] {
+            const uint32_t buf = proc.heap().allocZeroed(128);
+            auto expect = [&](uint32_t code, const char* text) {
+                const uint32_t n = call("_regerror", {code, 0, buf, 128});
+                return n == std::strlen(text) + 1 && proc.readCString(buf) == text;
+            };
+            const uint32_t small = proc.heap().alloc(8);
+            for (int i = 0; i < 8; ++i) proc.mem().write<uint8_t>(small + i, 'X');
+            const char* nomatch = "regexec() failed to match";
+            const uint32_t ntrunc = call("_regerror", {REG_NOMATCH, 0, small, 4});
+            const uint32_t nlen = call("_regerror", {REG_BADPAT, 0, 0, 0});
+            return expect(REG_NOMATCH, nomatch) &&
+                   expect(REG_BADPAT, "invalid regular expression") &&
+                   expect(REG_ECTYPE, "invalid character class") &&
+                   expect(REG_EESCAPE, "trailing backslash (\\)") &&
+                   expect(REG_ESUBREG, "invalid backreference number") &&
+                   expect(REG_EBRACK, "brackets ([ ]) not balanced") &&
+                   expect(REG_EPAREN, "parentheses not balanced") &&
+                   expect(REG_EBRACE, "braces not balanced") &&
+                   expect(REG_BADBR, "invalid repetition count(s)") &&
+                   expect(REG_ERANGE, "invalid character range") &&
+                   expect(REG_BADRPT, "repetition-operator operand invalid") &&
+                   expect(REG_INVARG, "invalid argument to regex routine") &&
+                   ntrunc == std::strlen(nomatch) + 1 && proc.readCString(small) == "reg" &&
+                   nlen == std::strlen("invalid regular expression") + 1;
+        });
+        run("regexec REG_NOMATCH and regfree invalidates the pattern", [&] {
+            auto [rc, re] = compile("^a$", REG_EXTENDED);
+            const uint32_t miss = exec(re, "b", 1, pm);
+            const uint32_t buf = proc.heap().allocZeroed(64);
+            const uint32_t n = call("_regerror", {miss, re, buf, 64});
+            const uint32_t hit = exec(re, "a", 1, pm);
+            call("_regfree", {re});
+            const uint32_t after = exec(re, "a", 1, pm);
+            call("_regfree", {re});
+            return rc == 0 && miss == REG_NOMATCH && hit == 0 && after == REG_INVARG &&
+                   n == std::strlen("regexec() failed to match") + 1 &&
+                   proc.readCString(buf) == "regexec() failed to match";
+        });
+        run("leftmost match may be empty", [&] {
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, "xaa", 1, pm);
+            const bool empty = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 0);
+            auto [rc2, re2] = compile("a+", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, "xaa", 1, pm);
+            const bool plus = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(1, 3);
+            auto [rc3, re3] = compile("", REG_EXTENDED);
+            clearPm();
+            const uint32_t er3 = exec(re3, "abc", 1, pm);
+            const bool blank = rc3 == 0 && er3 == 0 && offs(pm, 0) == std::pair<int64_t,int64_t>(0, 0);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return empty && plus && blank;
+        });
+        run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
+            const std::string root = proc.homePath() + "/tmp/";
+            std::vector<std::string> names;
+            for (int i = 0; i < 6; ++i) {
+                const uint32_t buf = proc.heap().allocZeroed(1024);
+                const uint32_t p = call("_tmpnam", {buf});
+                if (p != buf) return false;
+                names.push_back(proc.readCString(buf));
+            }
+            bool ok = names.size() == 6;
+            for (size_t i = 0; i < names.size(); ++i) {
+                ok = ok && names[i].rfind(root, 0) == 0;
+                ok = ok && names[i].find("..") == std::string::npos;
+                ok = ok && !std::filesystem::exists(names[i]);
+                for (size_t j = 0; j < i; ++j) ok = ok && names[i] != names[j];
+            }
+            if (!names.empty()) {
+                std::ofstream(names[0]) << "taken";
+                const uint32_t buf = proc.heap().allocZeroed(1024);
+                const uint32_t p = call("_tmpnam", {buf});
+                const std::string again = proc.readCString(p);
+                ok = ok && p == buf && again != names[0] && again.rfind(root, 0) == 0 && !std::filesystem::exists(again);
+                std::filesystem::remove(names[0]);
+            }
+            return ok;
+        });
+        run("tmpnam(NULL) reuses one guest static buffer", [&] {
+            const std::string root = proc.homePath() + "/tmp/";
+            const uint32_t p1 = call("_tmpnam", {0});
+            const std::string s1 = proc.readCString(p1);
+            const uint32_t p2 = call("_tmpnam", {0});
+            const std::string s2 = proc.readCString(p2);
+            return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
+                   !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
+        });
+        run("pmatch slots past re_nsub are -1", [&] {
+            auto [rc, re] = compile("(a)", REG_EXTENDED);
+            for (uint32_t i = 0; i < 4 * 16; i += 8) proc.mem().write<int64_t>(pm + i, 7);
+            const uint32_t er = exec(re, "a", 4, pm);
+            const bool ok = rc == 0 && er == 0 && nsub(re) == 1 &&
+                            offs(pm, 0) == std::pair<int64_t, int64_t>(0, 1) &&
+                            offs(pm, 1) == std::pair<int64_t, int64_t>(0, 1) &&
+                            offs(pm, 2) == std::pair<int64_t, int64_t>(-1, -1) &&
+                            offs(pm, 3) == std::pair<int64_t, int64_t>(-1, -1);
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_STARTEND limits the region and reports absolute offsets", [&] {
+            // Darwin: the pmatch[0] region is the string, so ^/$ are relative to
+            // it, and the reported offsets are from the guest pointer.
+            constexpr uint32_t REG_STARTEND = 4;
+            auto [rc, re] = compile("a+", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 0);
+            proc.mem().write<int64_t>(pm + 8, 2);
+            const uint32_t er = exec(re, "aaaa", 1, pm, REG_STARTEND);
+            const bool clipped = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 2);
+            auto [rc2, re2] = compile("^b+", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t er2 = exec(re2, "aaabbbccc", 1, pm, REG_STARTEND);
+            const bool anchored = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(3, 6);
+            auto [rc3, re3] = compile("b+$", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t er3 = exec(re3, "aaabbbccc", 1, pm, REG_STARTEND);
+            const bool end = rc3 == 0 && er3 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(3, 6);
+            auto [rc4, re4] = compile("^b", REG_EXTENDED);
+            proc.mem().write<int64_t>(pm + 0, 3);
+            proc.mem().write<int64_t>(pm + 8, 6);
+            const uint32_t notbol = exec(re4, "aaabbbccc", 1, pm, REG_STARTEND | REG_NOTBOL);
+            for (uint32_t r : {re, re2, re3, re4}) call("_regfree", {r});
+            return clipped && anchored && end && rc4 == 0 && notbol == REG_NOMATCH;
+        });
+        run("unbounded repeats stay leftmost-longest", [&] {
+            const std::string a5000(5000, 'a');
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            clearPm();
+            const uint32_t er = exec(re, a5000.c_str(), 1, pm);
+            const bool star = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 5000);
+            std::string a4097b(4097, 'a');
+            a4097b.push_back('b');
+            auto [rc2, re2] = compile("a*b", REG_EXTENDED);
+            clearPm();
+            const uint32_t er2 = exec(re2, a4097b.c_str(), 1, pm);
+            const bool left = rc2 == 0 && er2 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 4098);
+            const uint32_t miss = exec(re2, a5000.c_str(), 1, pm);
+            std::string a5000b = a5000;
+            a5000b.push_back('b');
+            clearPm();
+            const uint32_t er3 = exec(re2, a5000b.c_str(), 1, pm);
+            const bool plusb = er3 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 5001);
+            std::string a20b(20, 'a');
+            a20b.push_back('b');
+            auto [rc4, re4] = compile("(a*)*b", REG_EXTENDED);
+            clearPm();
+            const uint32_t er4 = exec(re4, a20b.c_str(), 2, pm);
+            const bool nested = rc4 == 0 && er4 == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 21) &&
+                                offs(pm, 1) == std::pair<int64_t, int64_t>(0, 20);
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re4});
+            return star && left && miss == REG_NOMATCH && plusb && nested;
+        });
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#    define HVM_RE_SANITIZER 1
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+#  define HVM_RE_SANITIZER 1
+#endif
+#ifdef HVM_RE_SANITIZER
+        constexpr long long kRepeatBudgetMs = 20000;
+        constexpr long long kMissBudgetMs = 5000;
+#else
+        constexpr long long kRepeatBudgetMs = 2000;
+        constexpr long long kMissBudgetMs = 1000;
+#endif
+        run("long inputs of 100k characters stay fast", [&] {
+            const std::string a(100000, 'a');
+            std::string ab = a;
+            ab.push_back('b');
+            auto [rc, re] = compile("a*", REG_EXTENDED);
+            auto [rc2, re2] = compile("a*b", REG_EXTENDED);
+            auto [rc3, re3] = compile("(a*)*b", REG_EXTENDED);
+            clearPm();
+            const auto t0 = std::chrono::steady_clock::now();
+            const uint32_t e1 = exec(re, a.c_str(), 1, pm);
+            const auto s1 = offs(pm, 0);
+            clearPm();
+            const uint32_t e2 = exec(re2, ab.c_str(), 1, pm);
+            const auto s2 = offs(pm, 0);
+            clearPm();
+            const uint32_t e3 = exec(re3, ab.c_str(), 2, pm);
+            const auto s3 = offs(pm, 0);
+            const auto s4 = offs(pm, 1);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            std::printf("    regex 100k: %lld ms\n", static_cast<long long>(ms));
+            call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
+            return rc == 0 && rc2 == 0 && rc3 == 0 && e1 == 0 && e2 == 0 && e3 == 0 &&
+                   s1 == std::pair<int64_t, int64_t>(0, 100000) &&
+                   s2 == std::pair<int64_t, int64_t>(0, 100001) &&
+                   s3 == std::pair<int64_t, int64_t>(0, 100001) &&
+                   s4 == std::pair<int64_t, int64_t>(0, 100000) &&
+                   ms < kRepeatBudgetMs;
+        });
+        run("unanchored (a|aa)*c on 100k a's finishes", [&] {
+            const std::string a(100000, 'a');
+            auto [rc, re] = compile("(a|aa)*c", REG_EXTENDED);
+            clearPm();
+            const auto t0 = std::chrono::steady_clock::now();
+            const uint32_t er = exec(re, a.c_str(), 1, pm);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            std::printf("    regex (a|aa)*c 100k: %lld ms\n", static_cast<long long>(ms));
+            call("_regfree", {re});
+            return rc == 0 && er == REG_NOMATCH && ms < kMissBudgetMs;
+        });
+        run("glibc (a*)* backreference splits the run in half", [&] {
+            auto [rc, re] = compile("(a*)*\\1", REG_EXTENDED);
+            bool ok = rc == 0;
+            for (int n : {20, 40, 80}) {
+                const std::string s(size_t(n), 'a');
+                clearPm();
+                const uint32_t er = exec(re, s.c_str(), 2, pm);
+                const auto whole = offs(pm, 0);
+                const auto g = offs(pm, 1);
+                const bool row = er == 0 && whole == std::pair<int64_t, int64_t>(0, n) &&
+                                 g == std::pair<int64_t, int64_t>(0, n / 2);
+                if (!row) {
+                    std::printf("    (a*)*\\1 n=%d er=%u g0=(%lld,%lld) g1=(%lld,%lld)\n", n, er,
+                                static_cast<long long>(whole.first), static_cast<long long>(whole.second),
+                                static_cast<long long>(g.first), static_cast<long long>(g.second));
+                }
+                ok = ok && row;
+            }
+            call("_regfree", {re});
+            return ok;
+        });
+        run("REG_PEND ends the pattern at re_endp", [&] {
+            constexpr uint32_t REG_PEND = 32;
+            const uint32_t raw = proc.allocCString("a+Xjunk");
+            const uint32_t preg = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(preg + 8, raw + 3);
+            const uint32_t rc = call("_regcomp", {preg, raw, REG_EXTENDED | REG_PEND});
+            clearPm();
+            const uint32_t er = exec(preg, "aaaX", 1, pm);
+            const bool clipped = rc == 0 && er == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 4);
+            const uint32_t emptyRe = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(emptyRe + 8, raw);
+            const uint32_t rcEmpty = call("_regcomp", {emptyRe, raw, REG_EXTENDED | REG_PEND});
+            clearPm();
+            const uint32_t erEmpty = exec(emptyRe, "abc", 1, pm);
+            const bool blank = rcEmpty == 0 && erEmpty == 0 && offs(pm, 0) == std::pair<int64_t, int64_t>(0, 0);
+            const uint32_t bad = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(bad + 8, raw - 1);
+            const uint32_t rcBad = call("_regcomp", {bad, raw, REG_EXTENDED | REG_PEND});
+            const uint32_t erBad = exec(bad, "a", 1, pm);
+            call("_regfree", {preg});
+            call("_regfree", {emptyRe});
+            call("_regfree", {bad});
+            return clipped && blank && rcBad == REG_INVARG && erBad == REG_INVARG;
+        });
+    }
+
     // Host-requested shutdown must not become an HLE error. An unrelated
     // exception still remains a failure even if stop was requested concurrently.
     for (bool intentional : {true, false}) {
@@ -2069,6 +2802,109 @@ int runFullSubsystemTests() {
               "intentional ProcessExit propagates Halt through HLE calls" :
               "unexpected errors during shutdown remain HostError failures");
     }
+    // Frame-time distribution. These checks target FrameHistogram directly so a
+    // long run cannot grow the sample store.
+    {
+        FrameHistogram empty;
+        check(empty.count() == 0 && empty.percentile(50) == 0 && empty.percentile(95) == 0 && empty.percentile(99) == 0,
+              "frame histogram percentiles are 0 with no frames");
+
+        constexpr uint64_t one = 8'000'000;
+        FrameHistogram single;
+        single.add(one);
+        const int bucket = FrameHistogram::bucketIndex(one);
+        const uint64_t lower = FrameHistogram::bucketLower(bucket);
+        const uint64_t upper = FrameHistogram::bucketUpper(bucket);
+        check(single.count() == 1 && lower <= one && one < upper &&
+              single.percentile(50) == lower && single.percentile(95) == lower && single.percentile(99) == lower,
+              "one frame: p50, p95, and p99 share that frame's histogram bucket");
+
+        FrameHistogram outlier;
+        outlier.add(~uint64_t{0});
+        const uint64_t topLower = FrameHistogram::bucketLower(FrameHistogram::kTopIndex);
+        const uint64_t belowTop = topLower - 1;
+        check(outlier.count() == 1 &&
+              FrameHistogram::bucketIndex(~uint64_t{0}) == FrameHistogram::kTopIndex &&
+              FrameHistogram::bucketIndex(FrameHistogram::kClampNs) == FrameHistogram::kTopIndex &&
+              FrameHistogram::bucketIndex(belowTop) != FrameHistogram::kTopIndex &&
+              outlier.percentile(50) == topLower && outlier.percentile(95) == topLower && outlier.percentile(99) == topLower,
+              "frame times past the top bucket clamp into that bucket");
+
+        FrameHistogram mixed;
+        for (int i = 0; i < 100; ++i) mixed.add(one);
+        mixed.add(~uint64_t{0});
+        mixed.add(~uint64_t{0});
+        check(mixed.count() == 102 && mixed.percentile(50) == lower && mixed.percentile(95) == lower &&
+              mixed.percentile(99) == topLower,
+              "p50 and p95 stay on the common bucket when two samples sit past the top bucket");
+    }
+
+    {
+        const char* zero =
+            "    \"wallSeconds\": 0,\n"
+            "    \"guestInstructions\": 0,\n"
+            "    \"guestMIPS\": 0,\n"
+            "    \"blocksDecoded\": 0,\n"
+            "    \"frames\": 0,\n"
+            "    \"framesPresented\": 0,\n"
+            "    \"avgFrameMs\": 0,\n"
+            "    \"avgCompositeMs\": 0,\n"
+            "    \"maxFrameMs\": 0,\n"
+            "    \"slowFrames\": 0,\n"
+            "    \"p50FrameMs\": 0,\n"
+            "    \"p95FrameMs\": 0,\n"
+            "    \"p99FrameMs\": 0,\n"
+            "    \"timeToFirstFrameMs\": 0\n";
+        check(perfJson(Process::Perf{}, 0, 0, 0) == zero,
+              "perf report with no frames keeps legacy fields and adds percentiles and time-to-first-frame");
+
+        Process::Perf perf;
+        perf.recordFrame(16'700'000); // exactly 16.7 ms is not a slow frame
+        perf.recordFrame(20'000'000);
+        perf.compositeNs.store(6'000'000);
+        perf.notePresentedAt(2'500'000);
+        perf.notePresentedAt(9'000'000);
+        check(perf.frames.load() == 2 && perf.frameNs.load() == 36'700'000 &&
+              perf.maxFrameNs.load() == 20'000'000 && perf.slowFrames.load() == 1 &&
+              perf.framesPresented.load() == 2 && perf.timeToFirstFrameNs.load() == 2'500'000,
+              "frame counters keep sum, max, and the 16.7 ms slow threshold; the first present wins");
+
+        const uint64_t p50 = perf.frameTimes.percentile(50);
+        const uint64_t p95 = perf.frameTimes.percentile(95);
+        const uint64_t p99 = perf.frameTimes.percentile(99);
+        const uint64_t slowBucket = FrameHistogram::bucketLower(FrameHistogram::bucketIndex(16'700'000));
+        const uint64_t longBucket = FrameHistogram::bucketLower(FrameHistogram::bucketIndex(20'000'000));
+        check(p50 == slowBucket && p95 == longBucket && p99 == longBucket,
+              "two-frame percentiles come from the histogram, not from max or the average");
+
+        std::ostringstream avg, composite, p50Text, p95Text, p99Text;
+        avg << (36'700'000.0 / 2.0 / 1e6);
+        composite << (6'000'000.0 / 2.0 / 1e6);
+        p50Text << (double(p50) / 1e6);
+        p95Text << (double(p95) / 1e6);
+        p99Text << (double(p99) / 1e6);
+        const std::string json = perfJson(perf, 2.0, 4'000'000, 11);
+        auto has = [&](const std::string& s) { return json.find(s) != std::string::npos; };
+        const auto avgAt = json.find("\"avgFrameMs\":");
+        const auto slowAt = json.find("\"slowFrames\":");
+        const auto p50At = json.find("\"p50FrameMs\":");
+        const auto ttffAt = json.find("\"timeToFirstFrameMs\":");
+        check(has("\"wallSeconds\": 2,") && has("\"guestInstructions\": 4000000,") &&
+              has("\"guestMIPS\": 2,") && has("\"blocksDecoded\": 11,") &&
+              has("\"frames\": 2,") && has("\"framesPresented\": 2,") &&
+              has("\"avgFrameMs\": " + avg.str() + ",") &&
+              has("\"avgCompositeMs\": " + composite.str() + ",") &&
+              has("\"maxFrameMs\": 20,") && has("\"slowFrames\": 1,") &&
+              has("\"p50FrameMs\": " + p50Text.str() + ",") &&
+              has("\"p95FrameMs\": " + p95Text.str() + ",") &&
+              has("\"p99FrameMs\": " + p99Text.str() + ",") &&
+              has("\"timeToFirstFrameMs\": 2.5\n") &&
+              avgAt != std::string::npos && slowAt != std::string::npos &&
+              p50At != std::string::npos && ttffAt != std::string::npos &&
+              avgAt < slowAt && slowAt < p50At && p50At < ttffAt,
+              "perf JSON adds percentile and time-to-first-frame fields without changing legacy ones");
+    }
+
     r.poolPop(cpu, outerPool);
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
