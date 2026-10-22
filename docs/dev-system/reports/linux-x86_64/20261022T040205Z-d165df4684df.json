@@ -1,0 +1,2846 @@
+{
+  "schemaVersion": 1,
+  "kind": "hvm-compat-report",
+  "generatedAt": "2026-10-22T04:02:05+00:00",
+  "git": {
+    "commit": "d165df4684df18b35bd1a07c6bcc9037bfab987d",
+    "short": "d165df4684df",
+    "branch": "codex/aligned-allocation-safety",
+    "dirty": false
+  },
+  "host": {
+    "system": "Linux",
+    "release": "6.18.54.1-microsoft-standard-WSL2",
+    "machine": "x86_64",
+    "python": "3.12.3",
+    "pageSize": 4096,
+    "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "notes": [
+      "Host page size is the kernel page. Guest permissions are 4 KB and are not enforced on the fast path.",
+      "A pass recorded here is not a 16 KB iOS memory-model pass."
+    ]
+  },
+  "limits": {
+    "runsOnLinuxHeadless": [
+      "cmake/ninja build of hvm, hvm_tests, hvm_decodecheck",
+      "hvm_tests selftest and fulltest",
+      "asm and differential C guests (tools/build_tests.sh, ld.lld, armv7 clang)",
+      "python tools/tests/test_verify_ipa.py and the Clash protocol/home fixture tests",
+      "hvm run of decrypted IPAs with a software framebuffer, PNG screenshot, and JSON report",
+      "mixer levels when a datagram socket is passed as --audio-fd (no sound device)"
+    ],
+    "notRunHere": [
+      "Xcode, SwiftUI app/, simulator (tools/sim_test.sh), device signing, entitlements, Metal",
+      "iOS stub-SDK guests and CoreMark, which need ld64 from tools/build_cctools.sh",
+      "Clash Royale native two-launch probe; the IPA is not in git and this harness does not download it",
+      "16 KB host-page memory model (this report records the host page size and does not claim an iPhone pass)",
+      "pygame desktop viewer (tools/desktop.py), which needs a display",
+      "Unconditional macOS Actions. Linux CI and the compat harness passed on 6af9976; the empty-step failure on 07fabbb (run 39633887764) was real. The macOS job still runs only for [mac], workflow_dispatch, or the Monday schedule"
+    ]
+  },
+  "manifest": {
+    "path": "tools/compat_harness/manifests/apps.json",
+    "schemaVersion": 1,
+    "fixtureRoot": "../fixtures",
+    "legacyRepoAllowed": true
+  },
+  "suites": {
+    "unit": {
+      "status": "pass",
+      "passed": 16,
+      "failed": 0,
+      "cases": [
+        {
+          "id": "selftest",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.027,
+          "summary": "selftest passed: exit=2 result=0xA05A0848 expected=0xA05A0848, 10.0 M insns in 0.019 s (516 MIPS)"
+        },
+        {
+          "id": "fulltest",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 1.763,
+          "summary": "max, and the 16.7 ms slow threshold; the first present wins\n  ok   two-frame percentiles come from the histogram, not from max or the average\n  ok   perf JSON adds percentile and time-to-first-frame fields without changing legacy ones\nfulltest: 191 passed, 0 failed\nLoopback resolver refused host: 192.0.2.1\n[warn] GLSL shader 5: unknown variable/function missing near token 10 (';')\n[warn] GLSL program 3: attached shader not compiled\n[warn] GLSL program 7: instruction budget exceeded; draw aborted"
+        },
+        {
+          "id": "asm:arm_alu",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.007,
+          "summary": "asm ../build-base/tests/arm_alu.elf          40 passed, 0 failed"
+        },
+        {
+          "id": "asm:arm_mem",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.006,
+          "summary": "asm ../build-base/tests/arm_mem.elf          17 passed, 0 failed"
+        },
+        {
+          "id": "asm:thumb",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.006,
+          "summary": "asm ../build-base/tests/thumb.elf            30 passed, 0 failed"
+        },
+        {
+          "id": "asm:vfp_neon",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.007,
+          "summary": "asm ../build-base/tests/vfp_neon.elf         23 passed, 0 failed"
+        },
+        {
+          "id": "c:ctests_arm",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.027,
+          "summary": "c   ../build-base/tests/ctests_arm.elf       27 passed, 0 failed (2649603 guest insns, 151 blocks)"
+        },
+        {
+          "id": "c:ctests_arm_os",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.022,
+          "summary": "c   ../build-base/tests/ctests_arm_os.elf    27 passed, 0 failed (2658062 guest insns, 151 blocks)"
+        },
+        {
+          "id": "c:ctests_thumb",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.023,
+          "summary": "c   ../build-base/tests/ctests_thumb.elf     27 passed, 0 failed (2542944 guest insns, 154 blocks)"
+        },
+        {
+          "id": "c:ctests_thumb_os",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.024,
+          "summary": "c   ../build-base/tests/ctests_thumb_os.elf  27 passed, 0 failed (2438787 guest insns, 153 blocks)"
+        },
+        {
+          "id": "c:ctests_thumb_idiv",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.031,
+          "summary": "c   ../build-base/tests/ctests_thumb_idiv.elf 27 passed, 0 failed (2437815 guest insns, 147 blocks)"
+        },
+        {
+          "id": "c:ftests_vfp_arm_hard",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.013,
+          "summary": "c   ../build-base/tests/ftests_vfp_arm_hard.elf 29 passed, 0 failed (717177 guest insns, 164 blocks)"
+        },
+        {
+          "id": "c:ftests_vfp_thumb_softfp",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.015,
+          "summary": "c   ../build-base/tests/ftests_vfp_thumb_softfp.elf 29 passed, 0 failed (725161 guest insns, 161 blocks)"
+        },
+        {
+          "id": "c:ftests_neon_thumb",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.019,
+          "summary": "c   ../build-base/tests/ftests_neon_thumb.elf 29 passed, 0 failed (671485 guest insns, 173 blocks)"
+        },
+        {
+          "id": "c:ftests_neon_arm",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.012,
+          "summary": "c   ../build-base/tests/ftests_neon_arm.elf  29 passed, 0 failed (662472 guest insns, 171 blocks)"
+        },
+        {
+          "id": "c:ftests_neon_thumb_os",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.018,
+          "summary": "c   ../build-base/tests/ftests_neon_thumb_os.elf 29 passed, 0 failed (696531 guest insns, 160 blocks)"
+        }
+      ]
+    },
+    "python": {
+      "status": "pass",
+      "passed": 3,
+      "failed": 0,
+      "cases": [
+        {
+          "id": "verify_ipa",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.094,
+          "summary": "......\n----------------------------------------------------------------------\nRan 6 tests in 0.006s\n\nOK"
+        },
+        {
+          "id": "clash_protocol",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.082,
+          "summary": "......\n----------------------------------------------------------------------\nRan 6 tests in 0.002s\n\nOK"
+        },
+        {
+          "id": "clash_home_state",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.078,
+          "summary": "......\n----------------------------------------------------------------------\nRan 6 tests in 0.010s\n\nOK"
+        }
+      ]
+    },
+    "fuzz": {
+      "status": "not-run",
+      "reason": "pass --fuzz N to sample the decoder",
+      "cases": []
+    },
+    "apps": {
+      "status": "pass",
+      "hvm": "../build-base/hvm",
+      "apps": [
+        {
+          "id": "angry-birds",
+          "name": "Angry Birds",
+          "version": "1.0",
+          "optional": false,
+          "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+          "source": "fixture-root",
+          "displayPath": "ipas/AngryBirds_v1.0_os30.ipa",
+          "status": "ran",
+          "reason": "",
+          "launchSuccess": true,
+          "crashed": false,
+          "exitStatus": 0,
+          "stillRunning": true,
+          "loadError": "",
+          "unimplementedImports": [],
+          "missingFunctions": [],
+          "warnings": [],
+          "errors": [],
+          "crashReport": "",
+          "perf": {
+            "wallSeconds": 3.618,
+            "guestInstructions": 37485454,
+            "guestMIPS": 10.36,
+            "blocksDecoded": 4776,
+            "frames": 20,
+            "framesPresented": 20,
+            "avgFrameMs": 109.885,
+            "avgCompositeMs": 108.947,
+            "maxFrameMs": 390.713,
+            "slowFrames": 20,
+            "p50FrameMs": 38.797,
+            "p95FrameMs": 281.018,
+            "p99FrameMs": 390.07,
+            "timeToFirstFrameMs": 142.331
+          },
+          "frame": {
+            "signal": "varied",
+            "width": 640,
+            "height": 960,
+            "sampled": 9600,
+            "blackFraction": 0.0,
+            "whiteFraction": 0.1026,
+            "otherFraction": 0.8974,
+            "uniqueQuantizedColors": 106,
+            "dominantShare": 0.3115,
+            "framesPresented": 20
+          },
+          "audio": {
+            "measured": true,
+            "signal": "silent",
+            "setupError": "",
+            "enabled": true,
+            "frames": 141312,
+            "nonSilentFrames": 0,
+            "peak": 0,
+            "droppedBlocks": 0,
+            "transportError": 0
+          },
+          "logExcerpt": "Created Throwable( \"Failed to open ... /hvm-perf-20261021/evidence/compat-after/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/bundleIndex.idx\" )\nCan't find bundle, using files directly...\nCreated Throwable( \"Failed to open /var/tmp/hvm-perf-20261021/evidence/compat-after/work/angry-birds/home/com.clickgamer.AngryBirds/Documents/highscores.lua\" )\n\nUnable to load highscores!\n\nCreated Throwable( \"Failed to open /var/tmp/hvm-perf-20261021/evidence/compat-after/work/angry-birds/home/com.clickgamer.AngryBirds/Documents/settings.lua\" )\nLoading image /var/tmp/hvm-perf-20261021/evidence/compat-after/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/SPLASHES.png: 481x831 B8G8R8 (as 512x1024 B8G8R8)\n",
+          "clusters": [],
+          "durationSec": 3.774,
+          "command": [
+            "hvm",
+            "run",
+            "ipas/AngryBirds_v1.0_os30.ipa",
+            "--home",
+            "<work>/home",
+            "--run-for",
+            "3",
+            "--report",
+            "<work>/hvm-report.json",
+            "--screenshot",
+            "<work>/frame.png",
+            "--quiet",
+            "--audio-fd",
+            "<datagram>"
+          ]
+        },
+        {
+          "id": "tiny-tower",
+          "name": "Tiny Tower",
+          "version": "1.0",
+          "optional": false,
+          "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+          "source": "fixture-root",
+          "displayPath": "ipas/Tiny_Tower_v1.0_os30.ipa",
+          "status": "ran",
+          "reason": "",
+          "launchSuccess": true,
+          "crashed": false,
+          "exitStatus": 0,
+          "stillRunning": true,
+          "loadError": "",
+          "unimplementedImports": [
+            "CGFontCopyTableForTag",
+            "CGFontGetAscent",
+            "CGFontGetCapHeight",
+            "CGFontGetDescent",
+            "CGFontGetGlyphAdvances",
+            "CGFontGetUnitsPerEm",
+            "CGFontGetXHeight",
+            "glPointSizePointerOES"
+          ],
+          "missingFunctions": [],
+          "warnings": [],
+          "errors": [],
+          "crashReport": "",
+          "perf": {
+            "wallSeconds": 3.104,
+            "guestInstructions": 2665178,
+            "guestMIPS": 0.859,
+            "blocksDecoded": 2875,
+            "frames": 112,
+            "framesPresented": 56,
+            "avgFrameMs": 22.615,
+            "avgCompositeMs": 29.822,
+            "maxFrameMs": 55.352,
+            "slowFrames": 56,
+            "p50FrameMs": 0.266,
+            "p95FrameMs": 50.856,
+            "p99FrameMs": 52.953,
+            "timeToFirstFrameMs": 321.968
+          },
+          "frame": {
+            "signal": "varied",
+            "width": 640,
+            "height": 960,
+            "sampled": 9600,
+            "blackFraction": 0.0128,
+            "whiteFraction": 0.0065,
+            "otherFraction": 0.9807,
+            "uniqueQuantizedColors": 449,
+            "dominantShare": 0.2029,
+            "framesPresented": 56
+          },
+          "audio": {
+            "measured": true,
+            "signal": "active",
+            "setupError": "",
+            "enabled": true,
+            "frames": 133120,
+            "nonSilentFrames": 120624,
+            "peak": 0.187828,
+            "droppedBlocks": 0,
+            "transportError": 0
+          },
+          "logExcerpt": "(localytics) Object Initialized.  Application's key is: <redacted>\n(localytics) File Path is: /var/tmp/hvm-perf-20261021/evidence/compat-after/work/tiny-tower/home/com.eeenmachine.tinytowers/Documents/localytics/\n(localytics) Succesfully opened session. UUID is: <uuid>\n(localytics) Session file is: s_<uuid>.yml\n(localytics) Close session file is: c_<uuid>.yml\n(localytics uploader) Beginning upload process\n(localytics uploader) Spawning new thread for upload\n(localytics uploader) Error Uploading.  Code: -1009,  Description: ?#\napplicationDidFinishLaunching\nglViewWidth: 320.000000\nCreated dialog layer...\nglViewWidth: 320.000000\nLOADED GAME FROM KEYCHAIN:\n(null)\nglViewWidth: 320.000000\nLoading 0 storyInfos in TowerLayer...\n_botY: 86.000000\nCreating floorGfx with id: 65535\nnum floors: 1\n_viewHeight: 112.000000\nglViewWidth: 320.000000\nLoading 0 bitInfo in TowerLayer...\nidealCountPerType: 1.000000\nBusiness count for type FOOD: 0\nBusiness count for type SERVICE: 0\nBusiness count for type RECREATION: 0\nBusiness count for type RETAIL: 0\nBusiness count for type CREATIVE: 0\napplicationDidBecomeActive\nUSER MUSIC PLAYING: NO\nmusic path:/var/tmp/hvm-perf-20261021/evidence/compat-after/work/tiny-tower/home/com.eeenmachine.tinytowers/Tiny Tower.app/song2.mp3\ncreated mplayer\nFinch Foreground\nUSER MUSIC PLAYING: NO\nmplayer.play\n",
+          "clusters": [
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontCopyTableForTag",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontCopyTableForTag",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetAscent",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetAscent",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetCapHeight",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetCapHeight",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetDescent",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetDescent",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetGlyphAdvances",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetGlyphAdvances",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetUnitsPerEm",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetUnitsPerEm",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetXHeight",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetXHeight",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "gl_feature",
+              "key": "glPointSizePointerOES",
+              "area": "gl",
+              "likelyOwner": "graphics-audio-input",
+              "group": "B",
+              "severity": "failure",
+              "detail": "glPointSizePointerOES",
+              "apps": [
+                "tiny-tower"
+              ]
+            }
+          ],
+          "durationSec": 3.235,
+          "command": [
+            "hvm",
+            "run",
+            "ipas/Tiny_Tower_v1.0_os30.ipa",
+            "--home",
+            "<work>/home",
+            "--run-for",
+            "3",
+            "--report",
+            "<work>/hvm-report.json",
+            "--screenshot",
+            "<work>/frame.png",
+            "--quiet",
+            "--audio-fd",
+            "<datagram>"
+          ]
+        },
+        {
+          "id": "art-of-glow",
+          "name": "Art of Glow",
+          "version": "1.1.2",
+          "optional": false,
+          "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+          "source": "fixture-root",
+          "displayPath": "ipas/Art_Of_Glow_v1.1.2_os313.ipa",
+          "status": "ran",
+          "reason": "",
+          "launchSuccess": true,
+          "crashed": false,
+          "exitStatus": 0,
+          "stillRunning": true,
+          "loadError": "",
+          "unimplementedImports": [],
+          "missingFunctions": [
+            "SCNetworkReachability (network reported offline)"
+          ],
+          "warnings": [
+            {
+              "message": "Missing data symbol kCFNumberNaN (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing: SCNetworkReachability (network reported offline)",
+              "count": 1
+            },
+            {
+              "message": "The app finished launching without a key window (did it call makeKeyAndVisible?)",
+              "count": 1
+            }
+          ],
+          "errors": [],
+          "crashReport": "",
+          "perf": {
+            "wallSeconds": 3.095,
+            "guestInstructions": 13691986,
+            "guestMIPS": 4.424,
+            "blocksDecoded": 2490,
+            "frames": 37,
+            "framesPresented": 37,
+            "avgFrameMs": 75.635,
+            "avgCompositeMs": 15.94,
+            "maxFrameMs": 97.543,
+            "slowFrames": 37,
+            "p50FrameMs": 74.449,
+            "p95FrameMs": 92.275,
+            "p99FrameMs": 97.518,
+            "timeToFirstFrameMs": 304.934
+          },
+          "frame": {
+            "signal": "varied",
+            "width": 640,
+            "height": 960,
+            "sampled": 9600,
+            "blackFraction": 0.1041,
+            "whiteFraction": 0.0792,
+            "otherFraction": 0.8168,
+            "uniqueQuantizedColors": 333,
+            "dominantShare": 0.2235,
+            "framesPresented": 37
+          },
+          "audio": {
+            "measured": true,
+            "signal": "silent",
+            "setupError": "",
+            "enabled": true,
+            "frames": 133120,
+            "nonSilentFrames": 0,
+            "peak": 0,
+            "droppedBlocks": 0,
+            "transportError": 0
+          },
+          "logExcerpt": "iPhoneLoadTexture('particles_tiled_hd.png')\niPhoneLoadTexture('plain_white_8x8.png')\niPhoneLoadTexture('smr_icon_cfg.png')\niPhoneLoadTexture('slider_hd.png')\niPhoneLoadTexture('gp_icon_cycle@2x.png')\niPhoneLoadTexture('gp_icon_random_each@2x.png')\niPhoneLoadTexture('gp_icon_fully_random@2x.png')\niPhoneLoadTexture('gp_icon_record.png')\niPhoneLoadTexture('gp_icon_play.png')\niPhoneLoadTexture('gp_ask_to_buy_2x.png')\niPhoneLoadTexture('RadioStarsSize27Font.png')\n",
+          "clusters": [
+            {
+              "kind": "unavailable",
+              "key": "SCNetworkReachability",
+              "area": "system-configuration",
+              "likelyOwner": "graphics-audio-input",
+              "group": "",
+              "severity": "signal",
+              "detail": "network reported offline",
+              "apps": [
+                "art-of-glow"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "kCFNumberNaN",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol kCFNumberNaN (using zeros)",
+              "apps": [
+                "art-of-glow"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "kCFNumberNegativeInfinity",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+              "apps": [
+                "art-of-glow"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "kCFNumberPositiveInfinity",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+              "apps": [
+                "art-of-glow"
+              ]
+            }
+          ],
+          "durationSec": 3.163,
+          "command": [
+            "hvm",
+            "run",
+            "ipas/Art_Of_Glow_v1.1.2_os313.ipa",
+            "--home",
+            "<work>/home",
+            "--run-for",
+            "3",
+            "--report",
+            "<work>/hvm-report.json",
+            "--screenshot",
+            "<work>/frame.png",
+            "--quiet",
+            "--audio-fd",
+            "<datagram>"
+          ]
+        },
+        {
+          "id": "clash-royale-2-1306-1",
+          "name": "Clash Royale",
+          "version": "2.1306.1",
+          "optional": true,
+          "sha256": "29269ede437f39ffa62fb4234a1c323303ef417e7eb6ddc5c86f9be76e08fb3f",
+          "source": "fixture-root",
+          "displayPath": "ipas/ClashRoyale-2.1306.1.ipa",
+          "status": "ran",
+          "reason": "",
+          "launchSuccess": true,
+          "crashed": false,
+          "exitStatus": 0,
+          "stillRunning": true,
+          "loadError": "",
+          "unimplementedImports": [
+            "CTFontDescriptorCreateCopyWithAttributes",
+            "CTFontDescriptorCreateWithAttributes",
+            "CTFrameGetLineOrigins",
+            "CTFrameGetLines",
+            "CTFramesetterCreateFrame",
+            "CTFramesetterCreateWithAttributedString",
+            "CTFramesetterSuggestFrameSizeWithConstraints",
+            "CTLineCreateTruncatedLine",
+            "CTLineGetOffsetForStringIndex",
+            "CTLineGetPenOffsetForFlush",
+            "CTLineGetStringIndexForPosition",
+            "CTParagraphStyleCreate",
+            "UIAccessibilityIsVoiceOverRunning",
+            "_NSDictionaryOfVariableBindings",
+            "asl_get",
+            "asl_key",
+            "asl_release",
+            "asl_search",
+            "asl_set_query",
+            "aslresponse_free",
+            "aslresponse_next",
+            "backtrace_symbols_fd",
+            "exception_raise",
+            "exception_raise_state",
+            "exception_raise_state_identity",
+            "getprogname",
+            "getsectdatafromheader",
+            "getsectdatafromheader_64",
+            "mach_msg",
+            "mach_port_allocate",
+            "mach_port_insert_right",
+            "mach_port_move_member",
+            "mach_port_request_notification",
+            "task_get_exception_ports",
+            "task_swap_exception_ports",
+            "thread_get_exception_ports",
+            "thread_swap_exception_ports",
+            "vm_map",
+            "protocol_conformsToProtocol",
+            "protocol_copyMethodDescriptionList",
+            "protocol_copyProtocolList",
+            "CFStringTokenizerAdvanceToNextToken",
+            "CFStringTokenizerCopyBestStringLanguage",
+            "CFStringTokenizerCreate",
+            "CFStringTokenizerGetCurrentTokenRange"
+          ],
+          "missingFunctions": [
+            "SCNetworkReachability (network reported offline)"
+          ],
+          "warnings": [
+            {
+              "message": "Missing data symbol CTRadioAccessTechnologyCDMA1x (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORev0 (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORevA (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORevB (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol CTRadioAccessTechnologyeHRPD (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing class SKStoreProductViewController (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class CAGradientLayer (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class NSMutableParagraphStyle (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UIBezierPath (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UILocalNotification (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UILocalizedIndexedCollation (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UIMenuController (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UIPopoverController (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UISearchBar (created a placeholder subclass of UIView)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UISearchDisplayController (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UITextInputStringTokenizer (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UITextPosition (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class UITextRange (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol UILocalNotificationDefaultSoundName (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing class NSAttributedString (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class NSDataDetector (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class NSLayoutConstraint (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class NSMutableAttributedString (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class NSPredicate (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class NSSortDescriptor (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing class NSURLCredential (created a placeholder subclass of NSObject)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol NDR_record (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol kCFStringTransformStripCombiningMarks (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol kCFStringTransformToLatin (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Object of class __NSObserver autoreleased with no pool in place - just leaking",
+              "count": 1
+            },
+            {
+              "message": "Missing: SCNetworkReachability (network reported offline)",
+              "count": 1
+            }
+          ],
+          "errors": [],
+          "crashReport": "",
+          "perf": {
+            "wallSeconds": 3.329,
+            "guestInstructions": 1110888786,
+            "guestMIPS": 333.706,
+            "blocksDecoded": 7164,
+            "frames": 2,
+            "framesPresented": 2,
+            "avgFrameMs": 1601.92,
+            "avgCompositeMs": 18.392,
+            "maxFrameMs": 2874.61,
+            "slowFrames": 2,
+            "p50FrameMs": 327.156,
+            "p95FrameMs": 2852.13,
+            "p99FrameMs": 2852.13,
+            "timeToFirstFrameMs": 2942.35
+          },
+          "frame": {
+            "signal": "all-black",
+            "width": 640,
+            "height": 1136,
+            "sampled": 10160,
+            "blackFraction": 1.0,
+            "whiteFraction": 0.0,
+            "otherFraction": 0.0,
+            "uniqueQuantizedColors": 1,
+            "dominantShare": 1.0,
+            "framesPresented": 2
+          },
+          "audio": {
+            "measured": true,
+            "signal": "active",
+            "setupError": "",
+            "enabled": true,
+            "frames": 143360,
+            "nonSilentFrames": 14297,
+            "peak": 0.822235,
+            "droppedBlocks": 0,
+            "transportError": 0
+          },
+          "logExcerpt": "Saved titan.checkpoint\nSaved titan.checkpoint\nSaved titan.checkpoint\nSaved titan.checkpoint\nSaved titan.checkpoint\nStart loading: fingerprint.json\nLoading JSON fingerprint.json took 29 ms\nResourceManager::init NO UPDATE\n[hud] ###### SCALE B\n\n[warning] Failed to retrieve MAC address for en0\n[hud] Connecting to port 9339\n[hud] Connecting to port 1863\n[hud] Connecting to port 3724\n[hud] Connecting to port 30000\n[hud] Connecting to port 843\nStart loading: font/sc_ccbackbeatregular.ttf\nStart loading: font/supercell-magic_0.ttf\nStart loading: csv_logic/locales.csv\nStart loading: csv_logic/globals.csv\nStart loading: csv_logic/resources.csv\nStart loading: csv_logic/damage_types.csv\nStart loading: csv_logic/character_buffs.csv\nStart loading: csv_logic/projectiles.csv\nStart loading: csv_logic/predefined_decks.csv\nStart loading: csv_logic/eggs.csv\nStart loading: csv_logic/rarities.csv\nStart loading: csv_logic/locations.csv\nStart loading: csv_logic/npcs.csv\nStart loading: csv_logic/treasure_chests.csv\nStart loading: csv_logic/area_effect_objects.csv\nStart loading: csv_logic/spells_characters.csv\nStart loading: csv_logic/spells_buildings.csv\nStart loading: csv_logic/spells_other.csv\nStart loading: csv_logic/characters.csv\nStart loading: csv_logic/buildings.csv\nStart loading: csv_logic/decos.csv\nStart loading: csv_logic/gamble_chests.csv\nStart loading: csv_logic/spawn_points.csv\nStart loading: csv_logic/tutorials_home.csv\nStart loading: csv_logic/exp_levels.csv\nStart loading: csv_logic/tutorials_npc.csv\nStart loading: csv_logic/spell_sets.csv\nStart loading: csv_logic/chest_order.csv\nStart loading: csv_logic/taunts.csv\nStart loading: csv_logic/arenas.csv\nStart loading: csv_logic/resource_packs.csv\nStart loading: csv_logic/regions.csv\nStart loading: csv_logic/alliance_roles.csv\nStart loading: csv_logic/alliance_badges.csv\nStart loading: csv_logic/achievements.csv\nStart loading: csv_client/music.csv\nStart loading: csv_client/background_decos.csv\nStart loading: csv_client/billing_packages.csv\nStart loading: csv_client/sounds.csv\nStart loading: csv_client/effects.csv\nStart loading: csv_client/particle_emitters.csv\nStart loading: csv_client/health_bars.csv\nStart loading: csv_client/client_globals.csv\nStart loading: csv_client/credits.csv\nStart loading: csv_client/news.csv\nStart loading: csv_client/hints.csv\nSaved titan.checkpoint\nStart loading: sc/loading.sc\nLoading SC sc/loading.sc - file is missing from cache. Caching to /var/tmp/hvm-perf-20261021/evidence/compat-after/work/clash-royale-2-1306-1/home/com.supercell.scroll/Library/Caches/swfcache/sc/loading.sc\nLoading SC sc/loading.sc took 10 ms\nLoading SC sc/loading_tex.sc - file is missing from cache. Caching to /var/tmp/hvm-perf-20261021/evidence/compat-after/work/clash-royale-2-1306-1/home/com.supercell.scroll/Library/Caches/swfcache/sc/loading_tex.sc\n[hud] Connecting to port 9339\n[hud] Connecting to port 1863\n[hud] Connecting to port 3724\n[hud] Connecting to port 30000\n[hud] Connecting to port 843\n[hud] Connecting to port 9339\n[hud] Connecting to port 1863\n[hud] Connecting to port 3724\n[hud] Connecting to port 30000\n[hud] Connecting to port 843\n[hud] Connecting to port 9339\n[hud] Connecting to port 1863\n[hud] Connecting to port 3724\n[hud] Connecting to port 30000\n[hud] Connecting to port 843\n[hud] Connecting to port 9339\n[hud] Connecting to port 1863\n[hud] Connecting to port 3724\n[hud] Connecting to port 30000\n[hud] Connecting to port 843\n[hud] Connecting to port 9339\n[hud] Connecting to port 1863\n[hud] Connecting to port 3724\n[hud] Connecting to port 30000\n[hud] Connecting to port 843\nLoading SC sc/loading_tex.sc took 2562 ms\nStart loading: sfx/supercell_jingle.wav\n[HockeySDK] WARNING: HockeySDKResources.bundle is missing, will send reports automatically!\nHockey enabled\nConnection failed! Error - The Internet connection appears to be offline. (null)\n",
+          "clusters": [
+            {
+              "kind": "missing_symbol",
+              "key": "CTFontDescriptorCreateCopyWithAttributes",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTFontDescriptorCreateCopyWithAttributes",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTFontDescriptorCreateWithAttributes",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTFontDescriptorCreateWithAttributes",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTFrameGetLineOrigins",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTFrameGetLineOrigins",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTFrameGetLines",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTFrameGetLines",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTFramesetterCreateFrame",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTFramesetterCreateFrame",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTFramesetterCreateWithAttributedString",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTFramesetterCreateWithAttributedString",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTFramesetterSuggestFrameSizeWithConstraints",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTFramesetterSuggestFrameSizeWithConstraints",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTLineCreateTruncatedLine",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTLineCreateTruncatedLine",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTLineGetOffsetForStringIndex",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTLineGetOffsetForStringIndex",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTLineGetPenOffsetForFlush",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTLineGetPenOffsetForFlush",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTLineGetStringIndexForPosition",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTLineGetStringIndexForPosition",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CTParagraphStyleCreate",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CTParagraphStyleCreate",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "UIAccessibilityIsVoiceOverRunning",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "UIAccessibilityIsVoiceOverRunning",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "_NSDictionaryOfVariableBindings",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "_NSDictionaryOfVariableBindings",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "asl_get",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "asl_get",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "asl_key",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "asl_key",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "asl_release",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "asl_release",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "asl_search",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "asl_search",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "asl_set_query",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "asl_set_query",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "aslresponse_free",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "aslresponse_free",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "aslresponse_next",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "aslresponse_next",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "backtrace_symbols_fd",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "backtrace_symbols_fd",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "exception_raise",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "exception_raise",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "exception_raise_state",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "exception_raise_state",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "exception_raise_state_identity",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "exception_raise_state_identity",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "getprogname",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "getprogname",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "getsectdatafromheader",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "getsectdatafromheader",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "getsectdatafromheader_64",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "getsectdatafromheader_64",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "mach_msg",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "mach_msg",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "mach_port_allocate",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "mach_port_allocate",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "mach_port_insert_right",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "mach_port_insert_right",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "mach_port_move_member",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "mach_port_move_member",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "mach_port_request_notification",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "mach_port_request_notification",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "task_get_exception_ports",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "task_get_exception_ports",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "task_swap_exception_ports",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "task_swap_exception_ports",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "thread_get_exception_ports",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "thread_get_exception_ports",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "thread_swap_exception_ports",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "thread_swap_exception_ports",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "vm_map",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "vm_map",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "protocol_conformsToProtocol",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "protocol_conformsToProtocol",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "protocol_copyMethodDescriptionList",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "protocol_copyMethodDescriptionList",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "protocol_copyProtocolList",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "failure",
+              "detail": "protocol_copyProtocolList",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CFStringTokenizerAdvanceToNextToken",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CFStringTokenizerAdvanceToNextToken",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CFStringTokenizerCopyBestStringLanguage",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CFStringTokenizerCopyBestStringLanguage",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CFStringTokenizerCreate",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CFStringTokenizerCreate",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CFStringTokenizerGetCurrentTokenRange",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CFStringTokenizerGetCurrentTokenRange",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "unavailable",
+              "key": "SCNetworkReachability",
+              "area": "system-configuration",
+              "likelyOwner": "graphics-audio-input",
+              "group": "",
+              "severity": "signal",
+              "detail": "network reported offline",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "CTRadioAccessTechnologyCDMA1x",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol CTRadioAccessTechnologyCDMA1x (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "CTRadioAccessTechnologyCDMAEVDORev0",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORev0 (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "CTRadioAccessTechnologyCDMAEVDORevA",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORevA (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "CTRadioAccessTechnologyCDMAEVDORevB",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORevB (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "CTRadioAccessTechnologyeHRPD",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol CTRadioAccessTechnologyeHRPD (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "SKStoreProductViewController",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class SKStoreProductViewController (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "CAGradientLayer",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class CAGradientLayer (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "NSMutableParagraphStyle",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class NSMutableParagraphStyle (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UIBezierPath",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UIBezierPath (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UILocalNotification",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UILocalNotification (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UILocalizedIndexedCollation",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UILocalizedIndexedCollation (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UIMenuController",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UIMenuController (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UIPopoverController",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UIPopoverController (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UISearchBar",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UISearchBar (created a placeholder subclass of UIView)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UISearchDisplayController",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UISearchDisplayController (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UITextInputStringTokenizer",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UITextInputStringTokenizer (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UITextPosition",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UITextPosition (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "UITextRange",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class UITextRange (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "UILocalNotificationDefaultSoundName",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol UILocalNotificationDefaultSoundName (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "NSAttributedString",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class NSAttributedString (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "NSDataDetector",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class NSDataDetector (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "NSLayoutConstraint",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class NSLayoutConstraint (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "NSMutableAttributedString",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class NSMutableAttributedString (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "NSPredicate",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class NSPredicate (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "NSSortDescriptor",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class NSSortDescriptor (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_class",
+              "key": "NSURLCredential",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing class NSURLCredential (created a placeholder subclass of NSObject)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "NDR_record",
+              "area": "libc",
+              "likelyOwner": "guest-frameworks",
+              "group": "",
+              "severity": "signal",
+              "detail": "Missing data symbol NDR_record (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "kCFStringTransformStripCombiningMarks",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol kCFStringTransformStripCombiningMarks (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "kCFStringTransformToLatin",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol kCFStringTransformToLatin (using zeros)",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            },
+            {
+              "kind": "render",
+              "key": "all-black",
+              "area": "framebuffer",
+              "likelyOwner": "graphics-audio-input",
+              "group": "B",
+              "severity": "signal",
+              "detail": "black=1.0 white=0.0 other=0.0 colors=1",
+              "apps": [
+                "clash-royale-2-1306-1"
+              ]
+            }
+          ],
+          "durationSec": 3.794,
+          "command": [
+            "hvm",
+            "run",
+            "ipas/ClashRoyale-2.1306.1.ipa",
+            "--home",
+            "<work>/home",
+            "--run-for",
+            "3",
+            "--report",
+            "<work>/hvm-report.json",
+            "--screenshot",
+            "<work>/frame.png",
+            "--quiet",
+            "--audio-fd",
+            "<datagram>"
+          ]
+        }
+      ]
+    }
+  },
+  "clusters": [
+    {
+      "kind": "gl_feature",
+      "key": "glPointSizePointerOES",
+      "area": "gl",
+      "likelyOwner": "graphics-audio-input",
+      "group": "B",
+      "severity": "failure",
+      "detail": "glPointSizePointerOES",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "CAGradientLayer",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class CAGradientLayer (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "NSAttributedString",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class NSAttributedString (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "NSDataDetector",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class NSDataDetector (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "NSLayoutConstraint",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class NSLayoutConstraint (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "NSMutableAttributedString",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class NSMutableAttributedString (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "NSMutableParagraphStyle",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class NSMutableParagraphStyle (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "NSPredicate",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class NSPredicate (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "NSSortDescriptor",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class NSSortDescriptor (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "NSURLCredential",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class NSURLCredential (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "SKStoreProductViewController",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class SKStoreProductViewController (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UIBezierPath",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UIBezierPath (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UILocalNotification",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UILocalNotification (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UILocalizedIndexedCollation",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UILocalizedIndexedCollation (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UIMenuController",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UIMenuController (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UIPopoverController",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UIPopoverController (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UISearchBar",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UISearchBar (created a placeholder subclass of UIView)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UISearchDisplayController",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UISearchDisplayController (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UITextInputStringTokenizer",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UITextInputStringTokenizer (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UITextPosition",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UITextPosition (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_class",
+      "key": "UITextRange",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing class UITextRange (created a placeholder subclass of NSObject)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "CTRadioAccessTechnologyCDMA1x",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol CTRadioAccessTechnologyCDMA1x (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "CTRadioAccessTechnologyCDMAEVDORev0",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORev0 (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "CTRadioAccessTechnologyCDMAEVDORevA",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORevA (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "CTRadioAccessTechnologyCDMAEVDORevB",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol CTRadioAccessTechnologyCDMAEVDORevB (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "CTRadioAccessTechnologyeHRPD",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol CTRadioAccessTechnologyeHRPD (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "NDR_record",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "signal",
+      "detail": "Missing data symbol NDR_record (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "UILocalNotificationDefaultSoundName",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol UILocalNotificationDefaultSoundName (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "kCFNumberNaN",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol kCFNumberNaN (using zeros)",
+      "apps": [
+        "art-of-glow"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "kCFNumberNegativeInfinity",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+      "apps": [
+        "art-of-glow"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "kCFNumberPositiveInfinity",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+      "apps": [
+        "art-of-glow"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "kCFStringTransformStripCombiningMarks",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol kCFStringTransformStripCombiningMarks (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "kCFStringTransformToLatin",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol kCFStringTransformToLatin (using zeros)",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CFStringTokenizerAdvanceToNextToken",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CFStringTokenizerAdvanceToNextToken",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CFStringTokenizerCopyBestStringLanguage",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CFStringTokenizerCopyBestStringLanguage",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CFStringTokenizerCreate",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CFStringTokenizerCreate",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CFStringTokenizerGetCurrentTokenRange",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CFStringTokenizerGetCurrentTokenRange",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontCopyTableForTag",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontCopyTableForTag",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetAscent",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetAscent",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetCapHeight",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetCapHeight",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetDescent",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetDescent",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetGlyphAdvances",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetGlyphAdvances",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetUnitsPerEm",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetUnitsPerEm",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetXHeight",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetXHeight",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTFontDescriptorCreateCopyWithAttributes",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTFontDescriptorCreateCopyWithAttributes",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTFontDescriptorCreateWithAttributes",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTFontDescriptorCreateWithAttributes",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTFrameGetLineOrigins",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTFrameGetLineOrigins",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTFrameGetLines",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTFrameGetLines",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTFramesetterCreateFrame",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTFramesetterCreateFrame",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTFramesetterCreateWithAttributedString",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTFramesetterCreateWithAttributedString",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTFramesetterSuggestFrameSizeWithConstraints",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTFramesetterSuggestFrameSizeWithConstraints",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTLineCreateTruncatedLine",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTLineCreateTruncatedLine",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTLineGetOffsetForStringIndex",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTLineGetOffsetForStringIndex",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTLineGetPenOffsetForFlush",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTLineGetPenOffsetForFlush",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTLineGetStringIndexForPosition",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTLineGetStringIndexForPosition",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CTParagraphStyleCreate",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CTParagraphStyleCreate",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "UIAccessibilityIsVoiceOverRunning",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "UIAccessibilityIsVoiceOverRunning",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "_NSDictionaryOfVariableBindings",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "_NSDictionaryOfVariableBindings",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "asl_get",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "asl_get",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "asl_key",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "asl_key",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "asl_release",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "asl_release",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "asl_search",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "asl_search",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "asl_set_query",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "asl_set_query",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "aslresponse_free",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "aslresponse_free",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "aslresponse_next",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "aslresponse_next",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "backtrace_symbols_fd",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "backtrace_symbols_fd",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "exception_raise",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "exception_raise",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "exception_raise_state",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "exception_raise_state",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "exception_raise_state_identity",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "exception_raise_state_identity",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "getprogname",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "getprogname",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "getsectdatafromheader",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "getsectdatafromheader",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "getsectdatafromheader_64",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "getsectdatafromheader_64",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "mach_msg",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "mach_msg",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "mach_port_allocate",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "mach_port_allocate",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "mach_port_insert_right",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "mach_port_insert_right",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "mach_port_move_member",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "mach_port_move_member",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "mach_port_request_notification",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "mach_port_request_notification",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "protocol_conformsToProtocol",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "protocol_conformsToProtocol",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "protocol_copyMethodDescriptionList",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "protocol_copyMethodDescriptionList",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "protocol_copyProtocolList",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "protocol_copyProtocolList",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "task_get_exception_ports",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "task_get_exception_ports",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "task_swap_exception_ports",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "task_swap_exception_ports",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "thread_get_exception_ports",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "thread_get_exception_ports",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "thread_swap_exception_ports",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "thread_swap_exception_ports",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "vm_map",
+      "area": "libc",
+      "likelyOwner": "guest-frameworks",
+      "group": "",
+      "severity": "failure",
+      "detail": "vm_map",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "render",
+      "key": "all-black",
+      "area": "framebuffer",
+      "likelyOwner": "graphics-audio-input",
+      "group": "B",
+      "severity": "signal",
+      "detail": "black=1.0 white=0.0 other=0.0 colors=1",
+      "apps": [
+        "clash-royale-2-1306-1"
+      ]
+    },
+    {
+      "kind": "unavailable",
+      "key": "SCNetworkReachability",
+      "area": "system-configuration",
+      "likelyOwner": "graphics-audio-input",
+      "group": "",
+      "severity": "signal",
+      "detail": "network reported offline",
+      "apps": [
+        "art-of-glow",
+        "clash-royale-2-1306-1"
+      ]
+    }
+  ],
+  "summary": {
+    "ok": true,
+    "unitFailed": 0,
+    "pythonFailed": 0,
+    "fuzzStatus": "not-run",
+    "appsResolved": 4,
+    "appsSkipped": 0,
+    "appsCrashed": 0,
+    "appsLaunchFailed": 0,
+    "resolveErrors": 0,
+    "clusterCount": 87
+  }
+}

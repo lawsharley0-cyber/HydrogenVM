@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "kind": "hvm-compat-report-pointer",
-  "path": "linux-x86_64/20261021T185933Z-8771deca6655.json",
-  "sha": "8771deca6655f7c2a2fba85fd24de33140b44a12",
-  "date": "2026-10-21T18:59:33+00:00",
+  "path": "linux-x86_64/20261022T040205Z-d165df4684df.json",
+  "sha": "d165df4684df18b35bd1a07c6bcc9037bfab987d",
+  "date": "2026-10-22T04:02:05+00:00",
   "platform": "linux-x86_64",
   "reportSchemaVersion": 1,
   "summary": {
@@ -11,11 +11,11 @@
     "unitFailed": 0,
     "pythonFailed": 0,
     "fuzzStatus": "not-run",
-    "appsResolved": 3,
-    "appsSkipped": 1,
+    "appsResolved": 4,
+    "appsSkipped": 0,
     "appsCrashed": 0,
     "appsLaunchFailed": 0,
     "resolveErrors": 0,
-    "clusterCount": 18
+    "clusterCount": 87
   }
 }

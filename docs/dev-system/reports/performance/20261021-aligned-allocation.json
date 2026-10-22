@@ -1,0 +1,1102 @@
+{
+  "schemaVersion": 1,
+  "kind": "hvm-investigation-evidence",
+  "generatedAt": "2026-10-22T04:02:05+00:00",
+  "pullRequest": "https://github.com/lawsharley0-cyber/HydrogenVM/pull/15",
+  "host": {
+    "system": "Linux",
+    "release": "6.18.54.1-microsoft-standard-WSL2",
+    "machine": "x86_64",
+    "python": "3.12.3",
+    "pageSize": 4096,
+    "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "notes": [
+      "Host page size is the kernel page. Guest permissions are 4 KB and are not enforced on the fast path.",
+      "A pass recorded here is not a 16 KB iOS memory-model pass."
+    ],
+    "cpu": "Intel Core Ultra 9 185H"
+  },
+  "buildFlags": "Release -O3 -DNDEBUG -g -fno-omit-frame-pointer",
+  "beforeCommit": "39904cb5f80d8743f135eb5c8635c97224b2a5bb",
+  "runtimeFixCommit": "60106d2",
+  "testedCommit": "d165df4684df18b35bd1a07c6bcc9037bfab987d",
+  "binarySha256": {
+    "before": "b7ebe63548d69d7d926707d7814eae0a658cd05b9505934ae10593df38127e00",
+    "after": "665499650df3b55a6ae61b7418c77aadabd6db29437c5ad3542d5ae8c66e50d6"
+  },
+  "scenario": "Fresh sandbox startup, no injected input or loopback peer; 10-second runs, serial ABBA per app; no gameplay-speed claim",
+  "fpsImprovementClaimed": false,
+  "ownerReportResolved": false,
+  "heapRegression": {
+    "before": {
+      "passed": 2,
+      "failed": 4
+    },
+    "after": {
+      "passed": 6,
+      "failed": 0
+    },
+    "targetedASanUBSan": {
+      "passed": 6,
+      "failed": 0,
+      "instrumented": [
+        "Heap.cpp",
+        "Stdlib.cpp",
+        "HeapTests.cpp"
+      ],
+      "remainingRuntimeInstrumented": false
+    }
+  },
+  "compatReport": "../linux-x86_64/20261022T040205Z-d165df4684df.json",
+  "baselineDiff": {
+    "schemaVersion": 1,
+    "kind": "hvm-compat-diff",
+    "ok": true,
+    "regressions": [],
+    "improvements": [
+      {
+        "kind": "unimplemented-import",
+        "id": "angry-birds",
+        "message": "angry-birds import now bound: tmpnam"
+      },
+      {
+        "kind": "unimplemented-import",
+        "id": "art-of-glow",
+        "message": "art-of-glow import now bound: regcomp"
+      },
+      {
+        "kind": "unimplemented-import",
+        "id": "art-of-glow",
+        "message": "art-of-glow import now bound: regerror"
+      },
+      {
+        "kind": "unimplemented-import",
+        "id": "art-of-glow",
+        "message": "art-of-glow import now bound: regexec"
+      },
+      {
+        "kind": "unimplemented-import",
+        "id": "art-of-glow",
+        "message": "art-of-glow import now bound: regfree"
+      }
+    ],
+    "attention": [],
+    "informational": [
+      {
+        "kind": "render-signal",
+        "id": "angry-birds",
+        "message": "angry-birds frame signal mostly-one-color -> varied"
+      },
+      {
+        "kind": "perf",
+        "id": "angry-birds",
+        "message": "angry-birds avgFrameMs 23.902 -> 109.885 (+360%); not a failure"
+      },
+      {
+        "kind": "perf",
+        "id": "art-of-glow",
+        "message": "art-of-glow avgFrameMs 57.133 -> 75.635 (+32%); not a failure"
+      },
+      {
+        "kind": "new-coverage",
+        "id": "clash-royale-2-1306-1",
+        "message": "clash-royale-2-1306-1 was skipped in the baseline; this run is new coverage (ran), not a regression"
+      }
+    ]
+  },
+  "previousDiff": {
+    "schemaVersion": 1,
+    "kind": "hvm-compat-diff",
+    "ok": true,
+    "regressions": [],
+    "improvements": [
+      {
+        "kind": "unimplemented-import",
+        "id": "angry-birds",
+        "message": "angry-birds import now bound: tmpnam"
+      },
+      {
+        "kind": "unimplemented-import",
+        "id": "art-of-glow",
+        "message": "art-of-glow import now bound: regcomp"
+      },
+      {
+        "kind": "unimplemented-import",
+        "id": "art-of-glow",
+        "message": "art-of-glow import now bound: regerror"
+      },
+      {
+        "kind": "unimplemented-import",
+        "id": "art-of-glow",
+        "message": "art-of-glow import now bound: regexec"
+      },
+      {
+        "kind": "unimplemented-import",
+        "id": "art-of-glow",
+        "message": "art-of-glow import now bound: regfree"
+      }
+    ],
+    "attention": [],
+    "informational": [
+      {
+        "kind": "render-signal",
+        "id": "angry-birds",
+        "message": "angry-birds frame signal mostly-one-color -> varied"
+      },
+      {
+        "kind": "perf",
+        "id": "angry-birds",
+        "message": "angry-birds avgFrameMs 19.082 -> 109.885 (+476%); not a failure"
+      },
+      {
+        "kind": "perf",
+        "id": "art-of-glow",
+        "message": "art-of-glow avgFrameMs 49.849 -> 75.635 (+52%); not a failure"
+      },
+      {
+        "kind": "new-coverage",
+        "id": "clash-royale-2-1306-1",
+        "message": "clash-royale-2-1306-1 was skipped in the baseline; this run is new coverage (ran), not a regression"
+      },
+      {
+        "kind": "perf",
+        "id": "tiny-tower",
+        "message": "tiny-tower avgFrameMs 15.117 -> 22.615 (+50%); not a failure"
+      }
+    ]
+  },
+  "harnessSelfTests": {
+    "passed": 56,
+    "failed": 0
+  },
+  "fixtures": [
+    {
+      "id": "angry-birds",
+      "version": "1.0",
+      "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf"
+    },
+    {
+      "id": "tiny-tower",
+      "version": "1.0",
+      "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578"
+    },
+    {
+      "id": "art-of-glow",
+      "version": "1.1.2",
+      "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e"
+    },
+    {
+      "id": "clash-royale-2-1306-1",
+      "version": "2.1306.1",
+      "sha256": "29269ede437f39ffa62fb4234a1c323303ef417e7eb6ddc5c86f9be76e08fb3f"
+    }
+  ],
+  "runs": [
+    {
+      "id": "angry-birds",
+      "variant": "before",
+      "iteration": 0,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.151,
+        "guestInstructions": 487402841,
+        "guestMIPS": 48.014,
+        "blocksDecoded": 7258,
+        "frames": 234,
+        "framesPresented": 234,
+        "avgFrameMs": 23.054,
+        "avgCompositeMs": 22.747,
+        "maxFrameMs": 37.217,
+        "slowFrames": 234,
+        "p50FrameMs": 22.282,
+        "p95FrameMs": 28.312,
+        "p99FrameMs": 31.982,
+        "timeToFirstFrameMs": 144.979
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.0,
+        "whiteFraction": 0.1121,
+        "otherFraction": 0.8879,
+        "uniqueQuantizedColors": 460,
+        "dominantShare": 0.1133,
+        "framesPresented": 234
+      },
+      "audio": {
+        "measured": true,
+        "signal": "silent",
+        "setupError": "",
+        "enabled": true,
+        "frames": 444416,
+        "nonSilentFrames": 0,
+        "peak": 0,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "3accb88d610a52084d4bed797ae591d2c112c6315287979bb05c37a1876879e1"
+    },
+    {
+      "id": "angry-birds",
+      "variant": "after",
+      "iteration": 1,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.098,
+        "guestInstructions": 488371982,
+        "guestMIPS": 48.361,
+        "blocksDecoded": 7257,
+        "frames": 234,
+        "framesPresented": 234,
+        "avgFrameMs": 21.926,
+        "avgCompositeMs": 21.627,
+        "maxFrameMs": 31.276,
+        "slowFrames": 234,
+        "p50FrameMs": 21.496,
+        "p95FrameMs": 25.428,
+        "p99FrameMs": 27.525,
+        "timeToFirstFrameMs": 115.621
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.0,
+        "whiteFraction": 0.1116,
+        "otherFraction": 0.8884,
+        "uniqueQuantizedColors": 454,
+        "dominantShare": 0.1128,
+        "framesPresented": 234
+      },
+      "audio": {
+        "measured": true,
+        "signal": "silent",
+        "setupError": "",
+        "enabled": true,
+        "frames": 442368,
+        "nonSilentFrames": 0,
+        "peak": 0,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "792f23721911a784eb7955e844bd3e2148c8eba0914c0d010f6041e6a8896db3"
+    },
+    {
+      "id": "angry-birds",
+      "variant": "after",
+      "iteration": 2,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.141,
+        "guestInstructions": 486408411,
+        "guestMIPS": 47.963,
+        "blocksDecoded": 7258,
+        "frames": 240,
+        "framesPresented": 240,
+        "avgFrameMs": 22.315,
+        "avgCompositeMs": 22.008,
+        "maxFrameMs": 28.301,
+        "slowFrames": 240,
+        "p50FrameMs": 22.02,
+        "p95FrameMs": 25.166,
+        "p99FrameMs": 27.263,
+        "timeToFirstFrameMs": 127.547
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.0,
+        "whiteFraction": 0.1119,
+        "otherFraction": 0.8881,
+        "uniqueQuantizedColors": 454,
+        "dominantShare": 0.1131,
+        "framesPresented": 240
+      },
+      "audio": {
+        "measured": true,
+        "signal": "silent",
+        "setupError": "",
+        "enabled": true,
+        "frames": 444416,
+        "nonSilentFrames": 0,
+        "peak": 0,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "faaafd874871cc4ae104490415c5eb60d9c7a9114cef0350b79d9d855677dc4b"
+    },
+    {
+      "id": "angry-birds",
+      "variant": "before",
+      "iteration": 3,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.16,
+        "guestInstructions": 483148038,
+        "guestMIPS": 47.555,
+        "blocksDecoded": 7255,
+        "frames": 223,
+        "framesPresented": 223,
+        "avgFrameMs": 24.255,
+        "avgCompositeMs": 23.931,
+        "maxFrameMs": 32.467,
+        "slowFrames": 223,
+        "p50FrameMs": 23.593,
+        "p95FrameMs": 28.836,
+        "p99FrameMs": 31.195,
+        "timeToFirstFrameMs": 115.798
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.0,
+        "whiteFraction": 0.1119,
+        "otherFraction": 0.8881,
+        "uniqueQuantizedColors": 461,
+        "dominantShare": 0.1131,
+        "framesPresented": 223
+      },
+      "audio": {
+        "measured": true,
+        "signal": "silent",
+        "setupError": "",
+        "enabled": true,
+        "frames": 444416,
+        "nonSilentFrames": 0,
+        "peak": 0,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "6a900e7cdd5f101ca2c22c7d3aca97f1642f7e7c516a480995cf49a2b25a9ae7"
+    },
+    {
+      "id": "tiny-tower",
+      "variant": "before",
+      "iteration": 0,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.111,
+        "guestInstructions": 4679748,
+        "guestMIPS": 0.463,
+        "blocksDecoded": 2875,
+        "frames": 420,
+        "framesPresented": 211,
+        "avgFrameMs": 19.841,
+        "avgCompositeMs": 25.751,
+        "maxFrameMs": 63.572,
+        "slowFrames": 211,
+        "p50FrameMs": 31.195,
+        "p95FrameMs": 45.089,
+        "p99FrameMs": 51.904,
+        "timeToFirstFrameMs": 321.091
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.0128,
+        "whiteFraction": 0.0065,
+        "otherFraction": 0.9807,
+        "uniqueQuantizedColors": 449,
+        "dominantShare": 0.2029,
+        "framesPresented": 211
+      },
+      "audio": {
+        "measured": true,
+        "signal": "active",
+        "setupError": "",
+        "enabled": true,
+        "frames": 442368,
+        "nonSilentFrames": 429872,
+        "peak": 0.190636,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "14df396e01752b882b964160a2d16e5d66bc021a9461ba57103a3e6aefabe361"
+    },
+    {
+      "id": "tiny-tower",
+      "variant": "after",
+      "iteration": 1,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.1,
+        "guestInstructions": 4965508,
+        "guestMIPS": 0.492,
+        "blocksDecoded": 2875,
+        "frames": 464,
+        "framesPresented": 233,
+        "avgFrameMs": 19.053,
+        "avgCompositeMs": 25.017,
+        "maxFrameMs": 53.919,
+        "slowFrames": 233,
+        "p50FrameMs": 23.593,
+        "p95FrameMs": 42.992,
+        "p99FrameMs": 47.71,
+        "timeToFirstFrameMs": 284.802
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.0128,
+        "whiteFraction": 0.0065,
+        "otherFraction": 0.9807,
+        "uniqueQuantizedColors": 449,
+        "dominantShare": 0.2029,
+        "framesPresented": 233
+      },
+      "audio": {
+        "measured": true,
+        "signal": "active",
+        "setupError": "",
+        "enabled": true,
+        "frames": 442368,
+        "nonSilentFrames": 429872,
+        "peak": 0.190636,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "14df396e01752b882b964160a2d16e5d66bc021a9461ba57103a3e6aefabe361"
+    },
+    {
+      "id": "tiny-tower",
+      "variant": "after",
+      "iteration": 2,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.098,
+        "guestInstructions": 5057360,
+        "guestMIPS": 0.501,
+        "blocksDecoded": 2875,
+        "frames": 478,
+        "framesPresented": 240,
+        "avgFrameMs": 18.428,
+        "avgCompositeMs": 24.177,
+        "maxFrameMs": 49.732,
+        "slowFrames": 240,
+        "p50FrameMs": 22.544,
+        "p95FrameMs": 41.419,
+        "p99FrameMs": 44.04,
+        "timeToFirstFrameMs": 284.152
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.0128,
+        "whiteFraction": 0.0065,
+        "otherFraction": 0.9807,
+        "uniqueQuantizedColors": 449,
+        "dominantShare": 0.2029,
+        "framesPresented": 240
+      },
+      "audio": {
+        "measured": true,
+        "signal": "active",
+        "setupError": "",
+        "enabled": true,
+        "frames": 442368,
+        "nonSilentFrames": 429872,
+        "peak": 0.190636,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "14df396e01752b882b964160a2d16e5d66bc021a9461ba57103a3e6aefabe361"
+    },
+    {
+      "id": "tiny-tower",
+      "variant": "before",
+      "iteration": 3,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.152,
+        "guestInstructions": 4654856,
+        "guestMIPS": 0.459,
+        "blocksDecoded": 2875,
+        "frames": 416,
+        "framesPresented": 209,
+        "avgFrameMs": 20.077,
+        "avgCompositeMs": 26.048,
+        "maxFrameMs": 59.343,
+        "slowFrames": 209,
+        "p50FrameMs": 24.904,
+        "p95FrameMs": 45.089,
+        "p99FrameMs": 49.807,
+        "timeToFirstFrameMs": 274.872
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.0128,
+        "whiteFraction": 0.0065,
+        "otherFraction": 0.9807,
+        "uniqueQuantizedColors": 449,
+        "dominantShare": 0.2029,
+        "framesPresented": 209
+      },
+      "audio": {
+        "measured": true,
+        "signal": "active",
+        "setupError": "",
+        "enabled": true,
+        "frames": 444416,
+        "nonSilentFrames": 431920,
+        "peak": 0.190636,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "14df396e01752b882b964160a2d16e5d66bc021a9461ba57103a3e6aefabe361"
+    },
+    {
+      "id": "art-of-glow",
+      "variant": "before",
+      "iteration": 0,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.143,
+        "guestInstructions": 14767004,
+        "guestMIPS": 1.456,
+        "blocksDecoded": 2496,
+        "frames": 151,
+        "framesPresented": 151,
+        "avgFrameMs": 65.31,
+        "avgCompositeMs": 13.781,
+        "maxFrameMs": 92.657,
+        "slowFrames": 151,
+        "p50FrameMs": 64.487,
+        "p95FrameMs": 74.449,
+        "p99FrameMs": 79.692,
+        "timeToFirstFrameMs": 272.774
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.1041,
+        "whiteFraction": 0.0792,
+        "otherFraction": 0.8168,
+        "uniqueQuantizedColors": 333,
+        "dominantShare": 0.2235,
+        "framesPresented": 151
+      },
+      "audio": {
+        "measured": true,
+        "signal": "silent",
+        "setupError": "",
+        "enabled": true,
+        "frames": 444416,
+        "nonSilentFrames": 0,
+        "peak": 0,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "ff4cb6734790d7b0a78a194c4f2e400ad5510240231f6597c5120d240d2fcd13"
+    },
+    {
+      "id": "art-of-glow",
+      "variant": "after",
+      "iteration": 1,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.115,
+        "guestInstructions": 14729299,
+        "guestMIPS": 1.456,
+        "blocksDecoded": 2496,
+        "frames": 147,
+        "framesPresented": 147,
+        "avgFrameMs": 66.852,
+        "avgCompositeMs": 13.766,
+        "maxFrameMs": 88.07,
+        "slowFrames": 147,
+        "p50FrameMs": 66.06,
+        "p95FrameMs": 78.643,
+        "p99FrameMs": 85.983,
+        "timeToFirstFrameMs": 285.639
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.1041,
+        "whiteFraction": 0.0792,
+        "otherFraction": 0.8168,
+        "uniqueQuantizedColors": 333,
+        "dominantShare": 0.2235,
+        "framesPresented": 147
+      },
+      "audio": {
+        "measured": true,
+        "signal": "silent",
+        "setupError": "",
+        "enabled": true,
+        "frames": 442368,
+        "nonSilentFrames": 0,
+        "peak": 0,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "ff4cb6734790d7b0a78a194c4f2e400ad5510240231f6597c5120d240d2fcd13"
+    },
+    {
+      "id": "art-of-glow",
+      "variant": "after",
+      "iteration": 2,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.155,
+        "guestInstructions": 14484096,
+        "guestMIPS": 1.426,
+        "blocksDecoded": 2493,
+        "frames": 121,
+        "framesPresented": 121,
+        "avgFrameMs": 77.365,
+        "avgCompositeMs": 16.873,
+        "maxFrameMs": 637.836,
+        "slowFrames": 121,
+        "p50FrameMs": 70.255,
+        "p95FrameMs": 88.08,
+        "p99FrameMs": 251.658,
+        "timeToFirstFrameMs": 288.748
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.1041,
+        "whiteFraction": 0.0792,
+        "otherFraction": 0.8168,
+        "uniqueQuantizedColors": 333,
+        "dominantShare": 0.2235,
+        "framesPresented": 121
+      },
+      "audio": {
+        "measured": true,
+        "signal": "silent",
+        "setupError": "",
+        "enabled": true,
+        "frames": 444416,
+        "nonSilentFrames": 0,
+        "peak": 0,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "ff4cb6734790d7b0a78a194c4f2e400ad5510240231f6597c5120d240d2fcd13"
+    },
+    {
+      "id": "art-of-glow",
+      "variant": "before",
+      "iteration": 3,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.163,
+        "guestInstructions": 14691561,
+        "guestMIPS": 1.446,
+        "blocksDecoded": 2496,
+        "frames": 143,
+        "framesPresented": 143,
+        "avgFrameMs": 68.899,
+        "avgCompositeMs": 14.178,
+        "maxFrameMs": 94.808,
+        "slowFrames": 143,
+        "p50FrameMs": 66.585,
+        "p95FrameMs": 84.935,
+        "p99FrameMs": 91.226,
+        "timeToFirstFrameMs": 322.464
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 960,
+        "sampled": 9600,
+        "blackFraction": 0.1041,
+        "whiteFraction": 0.0792,
+        "otherFraction": 0.8168,
+        "uniqueQuantizedColors": 333,
+        "dominantShare": 0.2235,
+        "framesPresented": 143
+      },
+      "audio": {
+        "measured": true,
+        "signal": "silent",
+        "setupError": "",
+        "enabled": true,
+        "frames": 444416,
+        "nonSilentFrames": 0,
+        "peak": 0,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "ff4cb6734790d7b0a78a194c4f2e400ad5510240231f6597c5120d240d2fcd13"
+    },
+    {
+      "id": "clash-royale-2-1306-1",
+      "variant": "before",
+      "iteration": 0,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.362,
+        "guestInstructions": 1111484093,
+        "guestMIPS": 107.267,
+        "blocksDecoded": 7165,
+        "frames": 28,
+        "framesPresented": 28,
+        "avgFrameMs": 364.867,
+        "avgCompositeMs": 17.823,
+        "maxFrameMs": 2641.24,
+        "slowFrames": 28,
+        "p50FrameMs": 276.824,
+        "p95FrameMs": 327.156,
+        "p99FrameMs": 2617.25,
+        "timeToFirstFrameMs": 2713.58
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 1136,
+        "sampled": 10160,
+        "blackFraction": 0.8231,
+        "whiteFraction": 0.048,
+        "otherFraction": 0.1288,
+        "uniqueQuantizedColors": 16,
+        "dominantShare": 0.8231,
+        "framesPresented": 28
+      },
+      "audio": {
+        "measured": true,
+        "signal": "active",
+        "setupError": "",
+        "enabled": true,
+        "frames": 452608,
+        "nonSilentFrames": 53665,
+        "peak": 0.822235,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "808de3ccacebb5d3662289ffb0a428478a161e42fe234e0d9f8b020d1d633a47"
+    },
+    {
+      "id": "clash-royale-2-1306-1",
+      "variant": "after",
+      "iteration": 1,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.25,
+        "guestInstructions": 1111364103,
+        "guestMIPS": 108.426,
+        "blocksDecoded": 7165,
+        "frames": 16,
+        "framesPresented": 16,
+        "avgFrameMs": 612.997,
+        "avgCompositeMs": 25.35,
+        "maxFrameMs": 3737.74,
+        "slowFrames": 16,
+        "p50FrameMs": 289.407,
+        "p95FrameMs": 3724.54,
+        "p99FrameMs": 3724.54,
+        "timeToFirstFrameMs": 3798.28
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 1136,
+        "sampled": 10160,
+        "blackFraction": 0.8354,
+        "whiteFraction": 0.0,
+        "otherFraction": 0.1646,
+        "uniqueQuantizedColors": 15,
+        "dominantShare": 0.8354,
+        "framesPresented": 16
+      },
+      "audio": {
+        "measured": true,
+        "signal": "active",
+        "setupError": "",
+        "enabled": true,
+        "frames": 448512,
+        "nonSilentFrames": 53665,
+        "peak": 0.822235,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "71d1b42fd364d41e84c6eb841252171fbc5215e5d09075d317edd8818aa9dad2"
+    },
+    {
+      "id": "clash-royale-2-1306-1",
+      "variant": "after",
+      "iteration": 2,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.29,
+        "guestInstructions": 1111474096,
+        "guestMIPS": 108.016,
+        "blocksDecoded": 7165,
+        "frames": 27,
+        "framesPresented": 27,
+        "avgFrameMs": 376.774,
+        "avgCompositeMs": 18.614,
+        "maxFrameMs": 2590.37,
+        "slowFrames": 27,
+        "p50FrameMs": 285.213,
+        "p95FrameMs": 352.322,
+        "p99FrameMs": 2583.69,
+        "timeToFirstFrameMs": 2641.34
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 1136,
+        "sampled": 10160,
+        "blackFraction": 0.8223,
+        "whiteFraction": 0.048,
+        "otherFraction": 0.1296,
+        "uniqueQuantizedColors": 16,
+        "dominantShare": 0.8223,
+        "framesPresented": 27
+      },
+      "audio": {
+        "measured": true,
+        "signal": "active",
+        "setupError": "",
+        "enabled": true,
+        "frames": 450560,
+        "nonSilentFrames": 53665,
+        "peak": 0.822235,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "c681008d5b00dcb5f005c30e8d029e479cf6b631e6de2cc1aaabe3d22b1b861a"
+    },
+    {
+      "id": "clash-royale-2-1306-1",
+      "variant": "before",
+      "iteration": 3,
+      "launchSuccess": true,
+      "crashed": false,
+      "loadError": "",
+      "perf": {
+        "wallSeconds": 10.21,
+        "guestInstructions": 1111464099,
+        "guestMIPS": 108.862,
+        "blocksDecoded": 7165,
+        "frames": 26,
+        "framesPresented": 26,
+        "avgFrameMs": 387.684,
+        "avgCompositeMs": 19.25,
+        "maxFrameMs": 2595.88,
+        "slowFrames": 26,
+        "p50FrameMs": 301.99,
+        "p95FrameMs": 373.293,
+        "p99FrameMs": 2583.69,
+        "timeToFirstFrameMs": 2662.97
+      },
+      "frame": {
+        "signal": "varied",
+        "width": 640,
+        "height": 1136,
+        "sampled": 10160,
+        "blackFraction": 0.8217,
+        "whiteFraction": 0.048,
+        "otherFraction": 0.1303,
+        "uniqueQuantizedColors": 16,
+        "dominantShare": 0.8217,
+        "framesPresented": 26
+      },
+      "audio": {
+        "measured": true,
+        "signal": "active",
+        "setupError": "",
+        "enabled": true,
+        "frames": 446464,
+        "nonSilentFrames": 53665,
+        "peak": 0.822235,
+        "droppedBlocks": 0,
+        "transportError": 0
+      },
+      "screenshotSha256": "066fc9464ae044255bf7dd7a9bec6300b0af82987201bb1a4d678feb9e4d7a0d"
+    }
+  ],
+  "correctedRelaunchScenario": "Installed Tiny Tower 1.0 app; explicit preserved home; three separate 20-second graceful processes per variant; no injected input; persistent marker checked each launch",
+  "discardedProbeNote": "The earlier IPA-based separate-process probe reimported/replaced the container on each run. Its same-sandbox interpretation was discarded and replaced by installed-app runs with a persistent marker.",
+  "relaunch": [
+    {
+      "variant": "before",
+      "launch": 1,
+      "returncode": 0,
+      "crashed": false,
+      "loadError": "",
+      "framesPresented": 549,
+      "containerMarkerPreserved": true,
+      "preferenceFileCountBefore": 1,
+      "preferenceFileCountAfter": 1,
+      "preferenceHashesUnchanged": false
+    },
+    {
+      "variant": "before",
+      "launch": 2,
+      "returncode": 0,
+      "crashed": false,
+      "loadError": "",
+      "framesPresented": 491,
+      "containerMarkerPreserved": true,
+      "preferenceFileCountBefore": 1,
+      "preferenceFileCountAfter": 1,
+      "preferenceHashesUnchanged": false
+    },
+    {
+      "variant": "before",
+      "launch": 3,
+      "returncode": 0,
+      "crashed": false,
+      "loadError": "",
+      "framesPresented": 523,
+      "containerMarkerPreserved": true,
+      "preferenceFileCountBefore": 1,
+      "preferenceFileCountAfter": 1,
+      "preferenceHashesUnchanged": false
+    },
+    {
+      "variant": "after",
+      "launch": 1,
+      "returncode": 0,
+      "crashed": false,
+      "loadError": "",
+      "framesPresented": 504,
+      "containerMarkerPreserved": true,
+      "preferenceFileCountBefore": 1,
+      "preferenceFileCountAfter": 1,
+      "preferenceHashesUnchanged": false
+    },
+    {
+      "variant": "after",
+      "launch": 2,
+      "returncode": 0,
+      "crashed": false,
+      "loadError": "",
+      "framesPresented": 515,
+      "containerMarkerPreserved": true,
+      "preferenceFileCountBefore": 1,
+      "preferenceFileCountAfter": 1,
+      "preferenceHashesUnchanged": false
+    },
+    {
+      "variant": "after",
+      "launch": 3,
+      "returncode": 0,
+      "crashed": false,
+      "loadError": "",
+      "framesPresented": 543,
+      "containerMarkerPreserved": true,
+      "preferenceFileCountBefore": 1,
+      "preferenceFileCountAfter": 1,
+      "preferenceHashesUnchanged": false
+    }
+  ],
+  "exploratoryProfile": {
+    "scenario": "Angry Birds 20-second startup; exploratory profile overlapped correctness work, not a speed comparison",
+    "event": "cpu-clock:u",
+    "frequency": 199,
+    "functions": [
+      [
+        "Hydrogen::Graphics::drawImage(Hydrogen::Graphics::Surface&, Hydrogen::Graphics::Image const&, Hydrogen::Graphics::Affine const&, Hydrogen::Graphics::Clip const&, float, bool, Hydrogen::Graphics::BlendMode, Hydrogen::Graphics::Color const*)",
+        25.88000000000007
+      ],
+      [
+        "Hydrogen::Runtime::UIKit::(anonymous namespace)::Texture2D::sample(float, float) const",
+        22.01000000000006
+      ],
+      [
+        "Hydrogen::Runtime::UIKit::(anonymous namespace)::writeFragment(Hydrogen::Runtime::UIKit::(anonymous namespace)::ContextData&, Hydrogen::Runtime::UIKit::(anonymous namespace)::RenderTarget&, int, int, float, Hydrogen::Runtime::UIKit::(anonymous namespace)::Vec4)",
+        12.08999999999999
+      ],
+      [
+        "Hydrogen::Runtime::UIKit::(anonymous namespace)::rasterizeTriangle(Hydrogen::Runtime::UIKit::(anonymous namespace)::ContextData&, Hydrogen::Runtime::UIKit::(anonymous namespace)::SharegroupData&, Hydrogen::Runtime::UIKit::(anonymous namespace)::RenderTarget&, Hydrogen::Runtime::UIKit::(anonymous namespace)::ShadedVertex const&, Hydrogen::Runtime::UIKit::(anonymous namespace)::ShadedVertex const&, Hydrogen::Runtime::UIKit::(anonymous namespace)::ShadedVertex const&, Hydrogen::Runtime::UIKit::(anonymous namespace)::DrawBudget*, bool)",
+        9.759999999999996
+      ],
+      [
+        "Hydrogen::Graphics::(anonymous namespace)::PixelIO::store(unsigned char*, Hydrogen::Graphics::(anonymous namespace)::Px) const::{lambda(float)#1}::operator()(float) const",
+        6.850000000000001
+      ],
+      [
+        "Hydrogen::Graphics::(anonymous namespace)::blend(Hydrogen::Graphics::(anonymous namespace)::Px, Hydrogen::Graphics::(anonymous namespace)::Px, float, Hydrogen::Graphics::BlendMode)",
+        2.759999999999999
+      ],
+      [
+        "Hydrogen::Graphics::drawImage(Hydrogen::Graphics::Surface&, Hydrogen::Graphics::Image const&, Hydrogen::Graphics::Affine const&, Hydrogen::Graphics::Clip const&, float, bool, Hydrogen::Graphics::BlendMode, Hydrogen::Graphics::Color const*)::$_1::operator()(float, float, float, float) const",
+        2.5799999999999987
+      ],
+      [
+        "??",
+        1.5599999999999998
+      ],
+      [
+        "Hydrogen::Runtime::UIKit::(anonymous namespace)::Texture2D::texel(int, int) const",
+        1.1900000000000002
+      ],
+      [
+        "Hydrogen::Graphics::clear(Hydrogen::Graphics::Surface&, Hydrogen::Graphics::Color)",
+        0.8000000000000002
+      ],
+      [
+        "Hydrogen::Runtime::UIKit::(anonymous namespace)::blendFactorVal(Hydrogen::Runtime::UIKit::(anonymous namespace)::ContextData const&, unsigned int, float, float, float, float, int)",
+        0.5400000000000001
+      ],
+      [
+        "Hydrogen::Graphics::Affine::apply(Hydrogen::Graphics::Point) const",
+        0.52
+      ]
+    ]
+  },
+  "limits": [
+    "4 KB host, not a 16 KB iPhone memory pass",
+    "Startup/idle captures, not sustained gameplay",
+    "Clash 3-second gate screenshot black; 10-second captures show logo, not battle",
+    "Audio signal is headless mixer capture, not a listening test",
+    "Exact owner-report device/build/app versions remain unconfirmed"
+  ]
+}

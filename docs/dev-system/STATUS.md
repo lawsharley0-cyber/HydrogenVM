@@ -1,6 +1,6 @@
 # Status
 
-Template for the continuous PM lap. Replace the snapshot when a harness run or a merged fix changes the picture. Keep the decision log; append to it instead of rewriting history.
+Current branch investigation snapshot. Replace measured results as new runs arrive; preserve the decision log and original user observations.
 
 Refresh:
 
@@ -20,7 +20,7 @@ Current owner observations: [USER_APP_REPORTS.md](USER_APP_REPORTS.md), UAR-001�
 
 Source: `docs/dev-system/BACKLOG.md`. Bands P0–P2. Score is `impact * severity / complexity` inside a band.
 
-Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D frameworks, E Apple shell. None of them are staffed in this snapshot.
+Groups A–E remain exclusive. Open PRs #11/#12 own Group B; #13 owns Clash tools. Draft #15 changes only Heap/Stdlib allocation behavior, its independent tests, CI and documentation. It does not claim ownership of Group A mappings, handlers or faults.
 
 ## Ownership
 
@@ -28,7 +28,7 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 |---|---|---|---|
 | Runtime / CPU and memory | `src/core/cpu/`, `src/core/memory/`, Group A lines in `System.cpp` | — | Needs owner |
 | Guest frameworks | `src/runtime/objc/`, `foundation/`, UIKit except GLES, libc symbols | — | Needs owner |
-| Graphics, audio, input | `OpenGLES.cpp`, `Shader.*`, `audio/`, gestures | — | Needs owner |
+| Graphics, audio, input | `OpenGLES.cpp`, `Shader.*`, `audio/`, gestures | PRs #11/#12 for Group B | Active Group B; other subareas unclaimed |
 | App compatibility, including Clash | `src/loader/`, `tools/clash_*.py`, `Net.cpp` while Group C is active | — | Needs owner |
 | Test / regression | `tools/compat_harness/`, harness workflow | — | Needs owner for who watches the gate |
 | Review / integration / docs | `docs/dev-system/` | — | Needs owner for required reviews |
@@ -36,47 +36,53 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 
 ## Current compat results
 
-Measured on Linux x86_64, Clang 18.1.3, host page size **4096**, commit `a4b0f8b` (the commit that contains this JSON is the one after that; the report's `git.commit` is the code that was executed, and `git.dirty` was false). Artifact: `docs/dev-system/baselines/linux-headless.json`. `summary.ok` is true. Schema check passed. A self-diff has no regressions.
+Measured October 21, 2026 (America/Chicago), Linux x86_64 WSL, Intel Core Ultra 9 185H, Clang 18.1.3, **4096-byte host pages**. Code/instructions at clean commit `d165df4684df18b35bd1a07c6bcc9037bfab987d`, on draft [PR #15](https://github.com/lawsharley0-cyber/HydrogenVM/pull/15), not merged main. Release flags: `-O3 -DNDEBUG -g -fno-omit-frame-pointer`.
 
-Harness self-tests: 56 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`). Counted on this branch. The baseline JSON below is still the `a4b0f8b` run.
-
-Indexed run from this branch, not a new baseline: `docs/dev-system/reports/linux-x86_64/20261021T185933Z-8771deca6655.json`. `git.commit` is `8771deca6655` and `git.dirty` was false. `summary.ok` is true. Diff against `baselines/linux-headless.json`: 0 regressions, 0 attention, 0 informational. Clash is still a skip. `docs/dev-system/reports/index.json` lists that one row. `latest.json` points at it.
+Indexed JSON: [20261022T040205Z-d165df4684df.json](reports/linux-x86_64/20261022T040205Z-d165df4684df.json). The filename uses UTC. `git.dirty=false`, `summary.ok=true`, four fixtures resolved, zero app crashes, zero skips. Schema validation passed. Baseline and previous-indexed diffs both have zero regressions. The committed `a4b0f8b` baseline is unchanged. The baseline diff has four informational notes, including new Clash coverage; timing across those different hosts/builds is not an A/B speed comparison. Regex/tmpnam import improvements belong to merged PR #5, not #15.
 
 | Suite | Result |
 |---|---|
-| selftest | pass. 10.0 M instructions, result `0xA05A0848`, about 541 MIPS on this VM |
-| fulltest | pass. 79 passed, 0 failed |
-| asm | pass. arm_alu 40, arm_mem 17, thumb 30, vfp_neon 23 (110) |
-| differential C | pass. 5 integer configs × 27 and 5 VFP/NEON configs × 29 (280) |
-| Python | pass. `verify_ipa`, `clash_protocol`, `clash_home_state` |
-| decoder fuzz | not run (pass `--fuzz`) |
-| ld64 iOS guests, CoreMark, simulator, device | not run. See headless limits |
+| selftest | pass, result `0xA05A0848` |
+| fulltest | 191 passed, 0 failed |
+| asm | arm_alu 40, arm_mem 17, thumb 30, vfp_neon 23; all pass |
+| differential C | all 5 integer and 5 VFP/NEON configurations pass |
+| Python | packaging, Clash protocol/home suites pass; harness self-tests 56 pass |
+| independent heap gate | 6 pass in Release and targeted ASan/UBSan; 4 negative cases fail on original main |
+| decoder fuzz, CoreMark, simulator/device | not run in this milestone |
 
-| App | Status | Frames | Frame signal | Audio | Load-time gaps |
-|---|---|---:|---|---|---|
-| angry-birds | ran, no crash | 95 | mostly-one-color (about 93% near-white, 6% other). Not a title-screen proof | mixer silent | `tmpnam` |
-| tiny-tower | ran, no crash | 69 | varied | mixer active | `CGFontCopyTableForTag`, `CGFontGet*` queries, `glPointSizePointerOES` |
-| art-of-glow | ran, no crash | 50 | varied | mixer silent | `regcomp`, `regexec`, `regerror`, `regfree`. `SCNetworkReachability` reported offline (signal). `kCFNumberNaN` and infinities zero-filled (signal) |
-| clash-royale-2-1306-1 | skipped | — | not run | not measured | IPA not in the fixture root. Skip is not a pass |
+Three-second manifest captures:
 
-A 4 KB pass is not an iPhone memory-model pass. Frame counts move between runs; the diff does not fail on that unless presented frames drop to zero. MIPS, average frame time, and mixer sample counts (`frames`, `nonSilentFrames`) that move by 25% or more while the signal stays `active` are informational. A smaller sample-count move is not noted.
+| App | Status | Frames presented | Frame | Mixer |
+|---|---|---:|---|---|
+| angry-birds | ran, no crash | 20 | varied | silent |
+| tiny-tower | ran, no crash | 56 | varied | active |
+| art-of-glow | ran, no crash | 37 | varied | silent |
+| clash-royale-2-1306-1 | ran, no crash | 2 | all-black | active |
 
-Linux Actions is green on `6af9976`. The compat harness passed in run [39646706013](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646706013). The Linux CI job published `runs/20261021-175201-39646696896-linux` in run [39646696896](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646696896). The empty-step failure on `07fabbb` (run 39633887764) was real; it is history, not the current gate. The macOS CI job on that push was skipped by its existing condition.
+Clash's three-second capture is black. The baseline skipped that fixture, so a green diff is new coverage, not proof of correct rendering. Separate ten-second captures reach the Supercell logo and have varied pixels. This does not establish gameplay, peer/tutorial execution or playability. Tiny Tower's separate ten/twenty-second captures show its tutorial; the interactive scanner's black final frame follows graceful shutdown and must not be called a gameplay-render failure.
 
-## Fixed regressions
+Serial ten-second startup ABBA runs (before main `39904cb`, after allocator fix `60106d2`; two samples each) retain varied frames and the same mixer signal on all four apps, with no recorded crashes, dropped audio blocks or transport errors. They are loading/idle scenes with no injected input. Timing varies in both directions; no FPS improvement is claimed. The exploratory Angry Birds profile points at `drawImage` (~26%), GLES texture sampling (~22%), fragment writes (~12%) and triangles (~10%). Coordinate Group B before changing those paths.
 
-None in the infrastructure change. The harness does not alter runtime behavior, so it cannot close a product bug by itself.
+Tiny Tower 1.0 also completed three separate twenty-second processes with one preserved sandbox per variant, before and after. This did not reproduce the reported intermittent first-relaunch crash and does not resolve UAR-013. All UAR observations remain open until matching scenarios/platforms/versions pass.
+
+A 4 KB pass does not establish the 16 KB iPhone memory model. Audio signal is mixer capture, not a speaker test. On tested commit `d165df4`, GitHub Actions [compat harness](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39720138763) and [Linux CI](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39720138932) both succeeded. The conditional macOS job is not a device pass. Later evidence-only commits do not change the tested runtime; independent review remains pending.
+
+## Fixed defects on this branch (awaiting review)
 
 | ID | Was | Fix | Proven by |
 |---|---|---|---|
-| — | — | — | — |
+| B-210 | `allocAligned(0xfffffff0,4096)` returned only 4080 usable bytes | Validate size/alignment before mutation and use 64-bit arithmetic; validate ARMv7 posix_memalign alignment | `hvm_heap_tests`: original main 2 pass/4 fail, fixed 6 pass; targeted sanitizers 6 pass; full compatibility gate above |
+
+This defect has not been attributed to any specific UAR crash. No owner-reported app failure is marked resolved.
 
 ## Pending PRs
 
-| PR | Branch | What it contains | Merged |
-|---|---|---|---|
-| This change | `cursor/infra-dev-system-1960` | Docs, harness, tests, workflow, baseline JSON | No |
-| [#3](https://github.com/lawsharley0-cyber/HydrogenVM/pull/3) | `cursor/compat-report-index-c782` | `AGENTS.md`, indexed JSON reports, active-mixer sample notes. Base is the row above | No |
+| PR | Area | State |
+|---|---|---|
+| [#11](https://github.com/lawsharley0-cyber/HydrogenVM/pull/11) | GLSL constant-expression bounds | Open; Group B |
+| [#12](https://github.com/lawsharley0-cyber/HydrogenVM/pull/12) | Uniform arrays/register allocation | Open, stacked on #11; Group B |
+| [#13](https://github.com/lawsharley0-cyber/HydrogenVM/pull/13) | Clash continuation plan/tools | Open; local restoration is not merged main |
+| [#15](https://github.com/lawsharley0-cyber/HydrogenVM/pull/15) | Aligned allocation safety, owner reports and evidence | Draft; independent review pending; author does not merge |
 
 ## Decisions
 
@@ -86,6 +92,8 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 | 2026-10-21 | Scope is the audit backlog, Clash past the 65% load, and performance follow-ons found while speeding apps up | Scope of this change | Does not by itself implement those items |
 | 2026-10-21 | Harness fixtures are SHA-256 plus a directory. Three existing IPAs stay grandfathered. New ids cannot use a repo path | This change | Deleting the committed IPAs is still open |
 | 2026-10-21 | Issue generator is dry-run. Nothing is auto-filed | This change | No GitHub issues exist on the repo |
+| 2026-10-21 | Preserve all 13 owner reports and prioritize broad stability/performance | Owner request; draft #15 | Short Linux smokes do not resolve matching-device/world-load/input/relaunch reports. Mega Jump is a positive performance control |
+| 2026-10-21 | Keep allocation-safety work separate from active graphics and unfinished Clash progression | Draft #15 | Measured hot graphics files remain with #11/#12; no FPS or UAR resolution claim |
 
 ## Needs owner
 
@@ -103,8 +111,8 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 
 ## Next improvements
 
-1. Teach `tools/hvm_report.py` to run `fulltest` so the published `ci-reports` row matches the harness (B-002 follow-up). The compat job already runs `fulltest`. Do not treat the skipped macOS job as a pass.
-2. B-003 doc reconciliation, review/docs role, no runtime files.
-3. Staff Group B for the near clip (B-103) or Group D for `CGFont*` (B-109) or libc for `regcomp` (B-108). Do not staff two writers for one letter.
-4. After a fixture decision, start B-106 (21903) on Group C alone.
-5. Do not start SIMD raster or CPU fusion until B-103 and B-101 have landed.
+1. Obtain matching host/build/app versions and fixtures for the UAR scenarios; reproduce startup, world-load, input-triggered crashes and Pocket Ants' long freeze separately.
+2. Reproduce Tiny Tower's close/failing-relaunch/next-launch sequence with the owner's actual sandbox history. Do not reset state as a workaround.
+3. Preserve Mega Jump's performance/effects and investigate missing music independently of FPS. Do not assume a shared decoder cause without evidence.
+4. After active Group B work settles, profile steady gameplay and compare a focused shared graphics improvement on matching host/build/input, preserving pixels and audio.
+5. Keep B-101/B-102 (16 KB permission/fault correctness) open. Merged clipping/regex/tmpnam and Codemagic build work supersede their old planned snapshots; signed-device behavior still needs device evidence.

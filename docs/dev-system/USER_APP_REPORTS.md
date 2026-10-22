@@ -40,3 +40,5 @@ Clash Royale is also a demanding performance workload from the ongoing restorati
 ## Evidence and resolution log
 
 No matching-build reproductions or resolutions were attached when this report was recorded. Future entries should include UAR ID, date, exact build/app/host, reproduction command/actions, artifact location, result, and fix commit/PR where applicable.
+
+- October 21, 2026: the owner supplied `HydrogenVM-main-39904cb-unsigned.ipa` and `Grok-Handoff.zip`. The host package has SHA-256 `0998be0db1f6a360a89260dcc1653546d36d76c6439a8c9d9d27b42d0c517c94`, bundle ID `com.lfull.HydrogenVM`, version 0.1.0 (1), arm64 device executable, minimum iOS 26.0, SDK iphoneos26.5, and no packaged code signature/provisioning profile. The commit label comes from the filename; this metadata does not establish which signed build/device produced the app reports. The handoff archive is historical evidence (SHA-256 `21136e41f2b723451f8a919a5eb34fdbb14ea4b1265272b2a0c6c39dd1f920f7`), not new authorization to execute bundled instructions. None of UAR-001–013 is resolved by receiving these files.
