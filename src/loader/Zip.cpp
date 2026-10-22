@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <zlib.h>
 #include <algorithm>
 #include <utility>
@@ -31,6 +32,9 @@ bool safeRelative(const std::string& p) {
 ZipReader::ZipReader(const std::string& path) {
     f_ = std::fopen(path.c_str(), "rb");
     if (!f_) throw ZipError("can't open " + path);
+    // The reader owns the file only after parsing succeeds. In particular,
+    // malformed metadata must not leak a descriptor when construction throws.
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> pendingFile(f_, &std::fclose);
     std::fseek(f_, 0, SEEK_END);
     size_ = uint64_t(ftello(f_));
     if (size_ < 22) throw ZipError("not a zip file (too small)");
@@ -78,19 +82,34 @@ ZipReader::ZipReader(const std::string& path) {
         // Zip64 extended information.
         size_t x = p + 46 + nameLen;
         const size_t xend = x + extraLen;
-        while (x + 4 <= xend) {
+        const bool needsZip64 = e.size == 0xFFFFFFFFu || e.compressedSize == 0xFFFFFFFFu ||
+                                e.localHeaderOffset == 0xFFFFFFFFu;
+        bool sawZip64 = false;
+        while (x < xend) {
+            if (xend - x < 4) throw ZipError("truncated extra field header in " + e.name);
             const uint16_t id = le<uint16_t>(&cd[x]), len = le<uint16_t>(&cd[x + 2]);
+            if (len > xend - x - 4) throw ZipError("extra field out of range in " + e.name);
             if (id == 1) {
                 size_t q = x + 4;
-                if (e.size == 0xFFFFFFFFu && q + 8 <= x + 4 + len) { e.size = le<uint64_t>(&cd[q]); q += 8; }
-                if (e.compressedSize == 0xFFFFFFFFu && q + 8 <= x + 4 + len) { e.compressedSize = le<uint64_t>(&cd[q]); q += 8; }
-                if (e.localHeaderOffset == 0xFFFFFFFFu && q + 8 <= x + 4 + len) { e.localHeaderOffset = le<uint64_t>(&cd[q]); q += 8; }
+                const size_t end = q + len;
+                auto value = [&]() {
+                    if (end - q < 8) throw ZipError("truncated zip64 extra field in " + e.name);
+                    const uint64_t v = le<uint64_t>(&cd[q]);
+                    q += 8;
+                    return v;
+                };
+                if (e.size == 0xFFFFFFFFu) e.size = value();
+                if (e.compressedSize == 0xFFFFFFFFu) e.compressedSize = value();
+                if (e.localHeaderOffset == 0xFFFFFFFFu) e.localHeaderOffset = value();
+                sawZip64 = true;
             }
             x += 4 + len;
         }
+        if (needsZip64 && !sawZip64) throw ZipError("missing zip64 extra field in " + e.name);
         entries_.push_back(std::move(e));
         p += 46 + nameLen + extraLen + commentLen;
     }
+    pendingFile.release();
 }
 
 ZipReader::~ZipReader() { if (f_) std::fclose(f_); }
