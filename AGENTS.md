@@ -23,11 +23,12 @@ Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
-ninja -C build hvm hvm_tests hvm_decodecheck
+ninja -C build hvm hvm_tests hvm_decodecheck hvm_heap_tests
 tools/build_tests.sh build/tests
 
 build/hvm_tests selftest
 build/hvm_tests fulltest
+build/hvm_heap_tests
 
 # One asm guest per file in tests/asm/*.S
 build/hvm_tests asm build/tests/<stem>.elf tests/asm/<stem>.S
