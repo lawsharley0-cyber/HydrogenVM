@@ -163,7 +163,7 @@ final class DirectoryModel {
 
     func rename(_ item: FileItem, to name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty, clean != item.name, !clean.contains("/") else { return }
+        guard validName(clean), clean != item.name else { return }
         run { try FileManager.default.moveItem(at: item.url, to: url.appending(path: clean)) }
     }
 
@@ -173,13 +173,13 @@ final class DirectoryModel {
 
     func newFolder(named name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
+        guard validName(clean) else { return }
         run { try FileManager.default.createDirectory(at: freeName(for: clean, suffix: ""), withIntermediateDirectories: false) }
     }
 
     func newFile(named name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
+        guard validName(clean) else { return }
         run { try Data().write(to: freeName(for: clean, suffix: "")) }
     }
 
@@ -188,13 +188,18 @@ final class DirectoryModel {
             for src in urls {
                 let scoped = src.startAccessingSecurityScopedResource()
                 defer { if scoped { src.stopAccessingSecurityScopedResource() } }
-                let dst = url.appending(path: src.lastPathComponent)
-                if FileManager.default.fileExists(atPath: dst.path(percentEncoded: false)) {
-                    try FileManager.default.removeItem(at: dst)
-                }
+                let dst = freeName(for: src.lastPathComponent, suffix: "")
                 try FileManager.default.copyItem(at: src, to: dst)
             }
         }
+    }
+
+    private func validName(_ name: String) -> Bool {
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else {
+            error = "Use a single file or folder name without path separators."
+            return false
+        }
+        return true
     }
 
     private func freeName(for name: String, suffix: String) -> URL {
@@ -515,26 +520,19 @@ struct SaveEditorDashboardView: View {
         }
         snapshots = urls.compactMap { u -> SaveSnapshot? in
             let v = try? u.resourceValues(forKeys: Set(keys))
-            guard v?.isDirectory == true else { return nil }
+            guard v?.isDirectory == true, !u.lastPathComponent.hasPrefix(".") else { return nil }
             return SaveSnapshot(url: u, name: u.lastPathComponent, created: v?.creationDate ?? Date())
         }.sorted { $0.created > $1.created }
     }
 
     private func createSnapshot(label: String) {
-        let fm = FileManager.default
         let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "-")
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let folderName = cleanLabel.isEmpty ? stamp : "\(cleanLabel) (\(stamp))"
+        let folderName = (cleanLabel.isEmpty ? stamp : "\(cleanLabel) (\(stamp))") + "-" + UUID().uuidString.prefix(8)
         let dest = backupsDir.appending(path: folderName)
         do {
-            try fm.createDirectory(at: dest, withIntermediateDirectories: true)
-            for sub in ["Documents", "Library"] {
-                let src = app.dataDir.appending(path: sub)
-                if fm.fileExists(atPath: src.path(percentEncoded: false)) {
-                    try fm.copyItem(at: src, to: dest.appending(path: sub))
-                }
-            }
+            try SaveSnapshotStore.create(home: app.dataDir, destination: dest)
             statusMessage = "Created snapshot '\(folderName)'"
             loadSnapshots()
         } catch {
@@ -543,28 +541,19 @@ struct SaveEditorDashboardView: View {
     }
 
     private func restoreSnapshot(_ snap: SaveSnapshot) {
-        let fm = FileManager.default
         do {
-            for sub in ["Documents", "Library"] {
-                let src = snap.url.appending(path: sub)
-                let dst = app.dataDir.appending(path: sub)
-                if fm.fileExists(atPath: src.path(percentEncoded: false)) {
-                    if fm.fileExists(atPath: dst.path(percentEncoded: false)) {
-                        try fm.removeItem(at: dst)
-                    }
-                    try fm.copyItem(at: src, to: dst)
-                }
-            }
+            // Preserve the current state as a separate snapshot before replacing it.
+            let recovery = backupsDir.appending(path: "Before restore-" + UUID().uuidString)
+            try SaveSnapshotStore.create(home: app.dataDir, destination: recovery)
+            try SaveSnapshotStore.restore(snapshot: snap.url, home: app.dataDir)
             statusMessage = "Restored snapshot '\(snap.name)'"
             scanSandbox()
-        } catch {
-            statusMessage = "Restore error: \(error.localizedDescription)"
-        }
+        } catch { statusMessage = "Restore error: \(error.localizedDescription)" }
     }
 
     private func deleteSnapshot(_ snap: SaveSnapshot) {
-        try? FileManager.default.removeItem(at: snap.url)
-        loadSnapshots()
+        do { try FileManager.default.removeItem(at: snap.url); loadSnapshots() }
+        catch { statusMessage = "Delete error: \(error.localizedDescription)" }
     }
 }
 
@@ -584,7 +573,9 @@ struct FileEditorSheet: View {
             FileEditorDestinationView(item: item)
                 .id(document.resetID)
         }
+        .modifier(FileEditorControls(save: { document.saveAction?() ?? false }))
         .environment(document)
+        .onDisappear { document.saveAction = nil }
         .interactiveDismissDisabled(document.dirty)
     }
 }
@@ -652,7 +643,7 @@ struct FileEditorDestinationView: View {
                     Menu {
                         Picker("Open As", selection: Binding(
                             get: { overrideMode ?? .auto },
-                            set: { overrideMode = ($0 == .auto) ? nil : $0 }
+                            set: { document.ready = false; overrideMode = ($0 == .auto) ? nil : $0 }
                         )) {
                             ForEach(EditorMode.allCases) { mode in
                                 Text(mode.rawValue).tag(mode)
@@ -925,7 +916,7 @@ struct TextEditorView: View {
                 Spacer()
             }
         }
-        .modifier(FileEditorControls(save: save))
+        .modifier(FileEditorRegistration(save: save))
         .alert("Save Failed", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
@@ -935,6 +926,7 @@ struct TextEditorView: View {
     }
 
     private func load() {
+        document.ready = false
         do {
             let (payload, fmt) = try SaveCompressionFormat.decode(document.store.load())
             compression = fmt
@@ -957,7 +949,7 @@ struct TextEditorView: View {
 
             return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
             return false
         }
     }
@@ -1069,7 +1061,7 @@ struct KeyValueEditorView: View {
                 Spacer()
             }
         }
-        .modifier(FileEditorControls(save: save))
+        .modifier(FileEditorRegistration(save: save))
         .alert("Add Config Key", isPresented: $addingEntry) {
             TextField("Section (optional)", text: $newSection)
             TextField("Key", text: $newKey)
@@ -1088,6 +1080,7 @@ struct KeyValueEditorView: View {
     }
 
     private func load() {
+        document.ready = false
         do {
             let (payload, fmt) = try SaveCompressionFormat.decode(document.store.load())
             compression = fmt
@@ -1161,7 +1154,7 @@ struct KeyValueEditorView: View {
             try document.commit(SaveCompressionFormat.encode(byteOrderMark + bytes, format: compression))
             return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
             return false
         }
     }
@@ -1272,7 +1265,7 @@ struct JSONEditorView: View {
                 Spacer()
             }
         }
-        .modifier(FileEditorControls(save: save))
+        .modifier(FileEditorRegistration(save: save))
         .alert("JSON Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
@@ -1282,6 +1275,7 @@ struct JSONEditorView: View {
     }
 
     private func load() {
+        document.ready = false
         do {
             let (payload, fmt) = try SaveCompressionFormat.decode(document.store.load())
             compression = fmt
@@ -1291,6 +1285,7 @@ struct JSONEditorView: View {
             rawText = text
             if let object = try? JSONSerialization.jsonObject(with: payload, options: [.fragmentsAllowed]) {
                 root = JSONNode.fromAny(object)
+                if !(object is [String: Any]) && !(object is [Any]) { rawMode = true }
             } else { rawMode = true }
             document.dirty = false
             document.ready = true
@@ -1331,7 +1326,7 @@ struct JSONEditorView: View {
             try document.commit(out)
             return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
             return false
         }
     }
@@ -1549,6 +1544,10 @@ private struct SQLiteCellRow: View {
 
 struct SQLiteEditorView: View {
     let url: URL
+    @Environment(FileEditorSession.self) private var document
+    @State private var workspace: SQLiteEditStore?
+    @State private var loaded = false
+    @State private var error: String?
     @State private var tables: [String] = []
     @State private var selectedTable: String = ""
     @State private var columns: [SQLiteColumnInfo] = []
@@ -1619,7 +1618,9 @@ struct SQLiteEditorView: View {
                             ForEach(columns) { col in
                                 let val = row.cells[col.name] ?? .null
                                 SQLiteCellRow(column: col, value: val) {
-                                    editCellText = val.displayString == "NULL" ? "" : val.displayString
+                                    if case .blob(let bytes) = val {
+                                        editCellText = bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
+                                    } else { editCellText = val.displayString == "NULL" ? "" : val.displayString }
                                     editingCell = EditingCellContext(rowid: row.rowid, column: col.name, currentValue: val)
                                 }
                             }
@@ -1633,8 +1634,8 @@ struct SQLiteEditorView: View {
             }
         }
         .navigationTitle(url.lastPathComponent)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 18) {
                 Button {
                     showingSQLConsole = true
                 } label: {
@@ -1647,6 +1648,10 @@ struct SQLiteEditorView: View {
                 }
             }
         }
+        .modifier(FileEditorRegistration(save: save))
+        .alert("Database Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: { Text(error ?? "") }
         .sheet(isPresented: $showingSQLConsole) {
             NavigationStack {
                 Form {
@@ -1693,8 +1698,7 @@ struct SQLiteEditorView: View {
                     }
                     Section {
                         Button("Set to NULL") {
-                            updateCellToNull(ctx: ctx)
-                            editingCell = nil
+                            if updateCellToNull(ctx: ctx) { editingCell = nil }
                         }
                     }
                 }
@@ -1706,22 +1710,52 @@ struct SQLiteEditorView: View {
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Update") {
-                            updateCell(ctx: ctx, newText: editCellText)
-                            editingCell = nil
+                            if updateCell(ctx: ctx, newText: editCellText) { editingCell = nil }
                         }
                     }
                 }
             }
             .presentationDetents([.medium])
         }
-        .onAppear { loadDatabase() }
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            document.ready = false
+            do {
+                workspace = try SQLiteEditStore(source: url)
+                try SQLiteEditStore.requireClosed(url)
+                _ = try document.store.load()
+                document.ready = true
+                loadDatabase()
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func save() -> Bool {
+        guard document.ready, let workspace else { return false }
+        do {
+            try SQLiteEditStore.requireClosed(url)
+            try document.commit(workspace.bytes())
+            return true
+        } catch {
+            document.saveError = error.localizedDescription
+            return false
+        }
     }
 
     private func openDB() -> OpaquePointer? {
+        guard let workspace else { return nil }
         var db: OpaquePointer?
-        if sqlite3_open_v2(url.path(percentEncoded: false), &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK {
+        if sqlite3_open_v2(workspace.url.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK {
+            // SQL is restricted to this working database; ATTACH and VACUUM INTO
+            // must not bypass the editor's Save/Discard boundary.
+            sqlite3_set_authorizer(db, { _, action, _, _, _, _ in
+                (action == SQLITE_ATTACH || action == SQLITE_DETACH) ? SQLITE_DENY : SQLITE_OK
+            }, nil)
             return db
         }
+        error = SQLiteEditStore.failure(db, "Open working database").localizedDescription
+        if let db { sqlite3_close(db) }
         return nil
     }
 
@@ -1802,8 +1836,8 @@ struct SQLiteEditorView: View {
         rows = loadedRows
     }
 
-    private func updateCell(ctx: EditingCellContext, newText: String) {
-        guard let db = openDB() else { return }
+    private func updateCell(ctx: EditingCellContext, newText: String) -> Bool {
+        guard let db = openDB() else { return false }
         defer { sqlite3_close(db) }
 
         let escapedTable = selectedTable.replacingOccurrences(of: "\"", with: "\"\"")
@@ -1812,7 +1846,7 @@ struct SQLiteEditorView: View {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             sqlResultMessage = String(cString: sqlite3_errmsg(db))
-            return
+            return false
         }
         defer { sqlite3_finalize(stmt) }
 
@@ -1830,6 +1864,21 @@ struct SQLiteEditorView: View {
             } else {
                 sqlite3_bind_text(stmt, 1, newText, -1, SQLITE_TRANSIENT)
             }
+        case .blob:
+            let hex = newText.filter { !$0.isWhitespace }
+            guard hex.count % 2 == 0 else { error = "Enter complete hexadecimal byte pairs."; return false }
+            var bytes = [UInt8]()
+            var index = hex.startIndex
+            while index != hex.endIndex {
+                let end = hex.index(index, offsetBy: 2)
+                guard let byte = UInt8(hex[index..<end], radix: 16) else {
+                    error = "Enter hexadecimal bytes (00–FF)."; return false
+                }
+                bytes.append(byte)
+                index = end
+            }
+            if bytes.isEmpty { sqlite3_bind_zeroblob(stmt, 1, 0) }
+            else { _ = bytes.withUnsafeBytes { sqlite3_bind_blob(stmt, 1, $0.baseAddress, Int32($0.count), SQLITE_TRANSIENT) } }
         default:
             if let v = Int64(newText), ctx.currentValue == .null {
                 sqlite3_bind_int64(stmt, 1, v)
@@ -1843,30 +1892,48 @@ struct SQLiteEditorView: View {
 
         if sqlite3_step(stmt) == SQLITE_DONE {
             sqlResultMessage = "Updated \(ctx.column) on row #\(ctx.rowid)"
+            document.markChanged()
             loadTable(selectedTable)
+            return true
         } else {
-            sqlResultMessage = String(cString: sqlite3_errmsg(db))
+            error = String(cString: sqlite3_errmsg(db))
+            return false
         }
     }
 
-    private func updateCellToNull(ctx: EditingCellContext) {
-        guard let db = openDB() else { return }
+    private func updateCellToNull(ctx: EditingCellContext) -> Bool {
+        guard let db = openDB() else { return false }
         defer { sqlite3_close(db) }
         let escapedTable = selectedTable.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedCol = ctx.column.replacingOccurrences(of: "\"", with: "\"\"")
         let sql = "UPDATE \"\(escapedTable)\" SET \"\(escapedCol)\" = NULL WHERE rowid = \(ctx.rowid);"
-        sqlite3_exec(db, sql, nil, nil, nil)
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            error = String(cString: sqlite3_errmsg(db)); return false
+        }
+        document.markChanged()
         loadTable(selectedTable)
+        return true
     }
 
     private func deleteRows(at offsets: IndexSet) {
         guard let db = openDB() else { return }
         defer { sqlite3_close(db) }
         let escapedTable = selectedTable.replacingOccurrences(of: "\"", with: "\"\"")
+        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
+            error = String(cString: sqlite3_errmsg(db)); return
+        }
         for idx in offsets {
             let rid = filteredRows[idx].rowid
-            sqlite3_exec(db, "DELETE FROM \"\(escapedTable)\" WHERE rowid = \(rid);", nil, nil, nil)
+            if sqlite3_exec(db, "DELETE FROM \"\(escapedTable)\" WHERE rowid = \(rid);", nil, nil, nil) != SQLITE_OK {
+                error = String(cString: sqlite3_errmsg(db))
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                return
+            }
         }
+        guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+            error = String(cString: sqlite3_errmsg(db)); return
+        }
+        document.markChanged()
         loadTable(selectedTable)
     }
 
@@ -1874,6 +1941,8 @@ struct SQLiteEditorView: View {
         guard let db = openDB() else { return }
         defer { sqlite3_close(db) }
         var errMsg: UnsafeMutablePointer<CChar>?
+        // Even a multi-statement command that fails can change the working copy.
+        document.markChanged()
         if sqlite3_exec(db, sql, nil, nil, &errMsg) == SQLITE_OK {
             let changes = sqlite3_changes(db)
             sqlResultMessage = "SQL executed (\(changes) rows affected)"
@@ -2062,7 +2131,7 @@ struct PlistEditorView: View {
                 Spacer()
             }
         }
-        .modifier(FileEditorControls(save: save))
+        .modifier(FileEditorRegistration(save: save))
         .alert("Save Failed", isPresented: Binding(get: { error != nil },
                                                     set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
@@ -2073,6 +2142,7 @@ struct PlistEditorView: View {
     }
 
     private func load() {
+        document.ready = false
         do {
             let (data, compressionFormat) = try SaveCompressionFormat.decode(document.store.load())
             compression = compressionFormat
@@ -2094,7 +2164,7 @@ struct PlistEditorView: View {
 
             return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
             return false
         }
     }
@@ -2639,7 +2709,7 @@ struct BinaryEditorView: View {
                 Spacer()
             }
         }
-        .modifier(FileEditorControls(save: save))
+        .modifier(FileEditorRegistration(save: save))
         .sheet(isPresented: $showingScanner) {
             NavigationStack {
                 Form {
@@ -2724,7 +2794,7 @@ struct BinaryEditorView: View {
             try document.commit(out)
             return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
             return false
         }
     }

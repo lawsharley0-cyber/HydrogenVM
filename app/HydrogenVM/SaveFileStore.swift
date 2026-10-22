@@ -9,7 +9,7 @@ final class SaveFileStore {
         var errorDescription: String? {
             switch self {
             case .notLoaded: "Open the file successfully before saving."
-            case .changedOnDisk: "This file changed on disk. Your edits are still open. Export a copy or close and reopen the file before trying again."
+            case .changedOnDisk: "This file changed on disk. Your edits are still open. Copy any text you need, then close and reopen the file before trying again."
             case .verificationFailed: "The saved bytes could not be verified. Your edits are still open."
             }
         }
@@ -34,6 +34,16 @@ final class SaveFileStore {
     var backupDirectory: URL {
         let key = SHA256.hash(data: Data(url.path.utf8)).map { String(format: "%02x", $0) }.joined()
         return backupRoot.appendingPathComponent(key, isDirectory: true)
+    }
+
+    func backups() throws -> [URL] {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: backupDirectory.path) else { return [] }
+        return try fm.contentsOfDirectory(at: backupDirectory, includingPropertiesForKeys: [.creationDateKey])
+            .filter { $0.pathExtension == "bak" }.sorted {
+                ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) >
+                ((try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
+            }
     }
 
     /// Refuse stale writes and preserve the exact original, including compression.

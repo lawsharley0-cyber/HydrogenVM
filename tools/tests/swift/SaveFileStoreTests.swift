@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 @main
 struct SaveFileStoreTests {
@@ -89,6 +90,58 @@ struct SaveFileStoreTests {
         try expect(decoded.text.data(using: decoded.encoding) == latin, "Latin-1 preserved")
         let json = try JSONSerialization.jsonObject(with: Data("42".utf8), options: [.fragmentsAllowed])
         try expect(JSONSerialization.data(withJSONObject: json, options: [.fragmentsAllowed]) == Data("42".utf8), "scalar JSON persists")
-        print("PASS: save/reopen, backups/retention, conflicts, failed backup, empty files, symlinks, deleted targets, compression and encodings")
+
+        // A committed WAL row must survive the working-copy import, and changes
+        // in that copy must not reach the source until the common Save step.
+        let database = root.appendingPathComponent("save.sqlite")
+        var db: OpaquePointer?
+        try expect(sqlite3_open(database.path, &db) == SQLITE_OK, "create SQLite fixture")
+        try expect(sqlite3_exec(db, "PRAGMA journal_mode=WAL; CREATE TABLE stats(coins INTEGER); INSERT INTO stats VALUES(10);", nil, nil, nil) == SQLITE_OK, "seed WAL")
+        let workspace = try SQLiteEditStore(source: database)
+        sqlite3_close(db)
+        db = nil
+        try SQLiteEditStore.requireClosed(database)
+        let databaseStore = SaveFileStore(url: database, backupRoot: root.appendingPathComponent("backups"))
+        let beforeDatabase = try databaseStore.load()
+        try expect(sqlite3_open(workspace.url.path, &db) == SQLITE_OK, "open working copy")
+        var statement: OpaquePointer?
+        try expect(sqlite3_prepare_v2(db, "SELECT coins FROM stats", -1, &statement, nil) == SQLITE_OK, "read copied WAL row")
+        try expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 10, "copied value is ten")
+        sqlite3_finalize(statement)
+        try expect(sqlite3_exec(db, "UPDATE stats SET coins=99", nil, nil, nil) == SQLITE_OK, "edit working copy")
+        sqlite3_close(db)
+        db = nil
+        try expect(Data(contentsOf: database) == beforeDatabase, "unsaved SQLite edits isolated")
+        try databaseStore.save(workspace.bytes())
+        try expect(sqlite3_open(database.path, &db) == SQLITE_OK, "reopen saved database")
+        try expect(sqlite3_prepare_v2(db, "SELECT coins FROM stats", -1, &statement, nil) == SQLITE_OK, "read saved row")
+        try expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 99, "saved SQLite value is ninety-nine")
+        sqlite3_finalize(statement)
+        sqlite3_close(db)
+        db = nil
+        let activeJournal = URL(fileURLWithPath: database.path + "-wal")
+        try Data([1]).write(to: activeJournal)
+        try rejects("active database journal") { try SQLiteEditStore.requireClosed(database) }
+        try fm.removeItem(at: activeJournal)
+
+        // A missing snapshot root must fail during staging, before originals move.
+        let home = root.appendingPathComponent("home")
+        try fm.createDirectory(at: home.appendingPathComponent("Documents"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home.appendingPathComponent("Library"), withIntermediateDirectories: true)
+        let save = home.appendingPathComponent("Documents/progress.bin")
+        try original.write(to: save)
+        let snapshot = root.appendingPathComponent("snapshot")
+        try SaveSnapshotStore.create(home: home, destination: snapshot)
+        try updated.write(to: save)
+        try SaveSnapshotStore.restore(snapshot: snapshot, home: home)
+        try expect(Data(contentsOf: save) == original, "snapshot restores complete original")
+        try fm.removeItem(at: snapshot.appendingPathComponent("Library"))
+        try updated.write(to: save)
+        try rejects("incomplete snapshot") { try SaveSnapshotStore.restore(snapshot: snapshot, home: home) }
+        try expect(Data(contentsOf: save) == updated, "failed snapshot preserves live save")
+        try expect(fm.contentsOfDirectory(atPath: home.path).sorted() == ["Documents", "Library"], "staging cleanup")
+        try rejects("duplicate snapshot name") { try SaveSnapshotStore.create(home: home, destination: snapshot) }
+        try expect(Data(contentsOf: snapshot.appendingPathComponent("Documents/progress.bin")) == original, "duplicate snapshot preserves existing backup")
+        print("PASS: persistence, conflict/failure handling, backup retention, encodings/compression, SQLite WAL isolation/save/reopen, staged snapshot restore")
     }
 }
