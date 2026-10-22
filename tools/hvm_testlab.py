@@ -268,6 +268,11 @@ def run_all_cases(
 ) -> list[dict]:
     results = []
     imported = False
+    # Start from a clean sandbox: imports keep app data, so stale prefs from an
+    # earlier run would otherwise turn TL-E phase 1 into a phase-2 read.
+    import shutil
+    shutil.rmtree(home, ignore_errors=True)
+    os.makedirs(home, exist_ok=True)
 
     for case_id in cases:
         if case_id == "TL-E":
@@ -295,8 +300,9 @@ def _run_case_e(hvm: str, ipa_path: str, home: str, timeout: int) -> dict:
         return cr1  # carry forward the interrupted result
 
     print(f"[testlab] running TL-E phase 2 (read) …", flush=True)
-    # IMPORTANT: do NOT re-import the IPA — that would replace the sandbox.
-    cr2 = run_case(hvm, ipa_path, "TL-E", home, timeout, import_ipa=False)
+    # Re-importing the IPA now preserves Documents/Library/tmp (app updates keep saves),
+    # so phase 2 can use the normal launch path and sees the same sandbox as phase 1.
+    cr2 = run_case(hvm, ipa_path, "TL-E", home, timeout)
     _print_result(cr2)
 
     # Phase 2 result is the canonical TL-E result.

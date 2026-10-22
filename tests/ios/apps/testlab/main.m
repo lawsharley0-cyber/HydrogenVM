@@ -28,6 +28,7 @@
 //
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#include <time.h>
 #import <OpenGLES/EAGL.h>
 #include <OpenGLES/ES2/gl.h>
 #include <math.h>
@@ -142,11 +143,13 @@ static void writeResult(NSArray *results, NSString *runId) {
     NSMutableArray *cases = [NSMutableArray array];
     for (TLResult *r in results) [cases addObject:[r toDict]];
 
-    // ISO-8601 UTC timestamp
-    NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
-    fmt.dateFormat     = @"yyyy-MM-dd'T'HH:mm:ss'Z'";
-    fmt.timeZone       = [NSTimeZone timeZoneWithAbbreviation:@"UTC"];
-    NSString *now      = [fmt stringFromDate:[NSDate date]];
+    // ISO-8601 UTC timestamp (C time APIs: the SDK stub has no NSDateFormatter/NSTimeZone)
+    time_t nowT = time(NULL);
+    struct tm *utcp = gmtime(&nowT);
+    struct tm utc = *utcp;
+    char nowBuf[32];
+    strftime(nowBuf, sizeof nowBuf, "%Y-%m-%dT%H:%M:%SZ", &utc);
+    NSString *now = [NSString stringWithUTF8String:nowBuf];
 
     NSDictionary *report = @{
         @"schemaVersion": @(kSchemaVersion),
@@ -222,7 +225,7 @@ static TLResult *runCaseA(void) {
 // ─────────────────────────── Case B — CPU correctness ────────────────────────
 
 // xorshift32 — same generator used by SelfTest. 10 M iterations.
-// Expected result is 0xA05A0848 (matches hvm_tests selftest on the baseline).
+// Expected result is 0x7E6798F5 (verified against a native x86-64 build of the same loop).
 static uint32_t xorshift32(uint32_t x) {
     x ^= x << 13;
     x ^= x >> 17;
@@ -238,7 +241,7 @@ static TLResult *runCaseB(void) {
     r.checkpointWritten = YES;
 
     const uint32_t kIterations = 10000000u;
-    const uint32_t kExpected   = 0xA05A0848u;
+    const uint32_t kExpected   = 0x7E6798F5u;
 
     volatile uint32_t x = 0x12345678u; // volatile prevents dead-code elimination
     for (uint32_t i = 0; i < kIterations; ++i) x = xorshift32(x);
@@ -396,13 +399,17 @@ static TLResult *runCaseC(void) {
     // Read back pixels
     // We sample three pixels whose expected dominant colour channel is known.
     // Pixel coordinates in glReadPixels are bottom-left origin.
-    // NDC ( 0,  0.8): screen (32, 61) after transform to [0..63]  (top vertex: red)
-    // NDC (-0.7,-0.5): screen ( 9, 14) (bottom-left vertex: green, y=14 in BL)
-    // NDC ( 0.7,-0.5): screen (54, 14) (bottom-right vertex: blue)
+    // Probes sit just inside each corner of the triangle. Viewport mapping for 64x64:
+    //   top vertex     NDC ( 0.0, 0.8) -> (32.0, 57.6)   red
+    //   bottom-left    NDC (-0.7,-0.5) -> ( 9.6, 16.0)   green
+    //   bottom-right   NDC ( 0.7,-0.5) -> (54.4, 16.0)   blue
+    // Pixel centres (32.5,55.5), (13.5,18.5), (50.5,18.5) are inside the triangle with
+    // barycentric weight of the corner's colour ~0.95, ~0.88, ~0.88 (>= 200/255).
+    // glReadPixels uses a bottom-left origin.
     struct { int x, y; uint8_t minR, minG, minB; const char *name; } probes[] = {
-        { 32, 61, 200,   0,   0, "top-red"   },
-        {  9, 14,   0, 200,   0, "bot-left-green"  },
-        { 54, 14,   0,   0, 200, "bot-right-blue"  },
+        { 32, 55, 200,   0,   0, "top-red"   },
+        { 13, 18,   0, 200,   0, "bot-left-green"  },
+        { 50, 18,   0,   0, 200, "bot-right-blue"  },
     };
 
     BOOL allOk = YES;

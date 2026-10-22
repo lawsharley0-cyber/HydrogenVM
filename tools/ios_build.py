@@ -169,7 +169,8 @@ def build_app(a):
         for dp, _, files in os.walk(app):
             for fn in files:
                 full = os.path.join(dp, fn)
-                z.write(full, os.path.join("Payload", os.path.relpath(full, out)))
+                z.write(full, os.path.join("Payload", os.path.relpath(full, out)),
+                        compress_type=(zipfile.ZIP_STORED if os.path.getsize(full) == 0 else zipfile.ZIP_DEFLATED))
     print(ipa)
 
 def main():
