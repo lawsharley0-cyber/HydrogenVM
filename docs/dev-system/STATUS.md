@@ -18,7 +18,7 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 Source: `docs/dev-system/BACKLOG.md`. Bands P0–P2. Score is `impact * severity / complexity` inside a band.
 
-Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D frameworks, E Apple shell. None of them are staffed in this snapshot.
+Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D frameworks, E Apple shell. Open PRs currently reserve graphics Group B (#11/#12), Clash tools (#13), allocations (#15), PCM decoding (#16), and ZIP loader metadata (#17). Recheck current changed-file lists before editing.
 
 ## Ownership
 
@@ -34,47 +34,46 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 
 ## Current compat results
 
-Measured on Linux x86_64, Clang 18.1.3, host page size **4096**, commit `a4b0f8b` (the commit that contains this JSON is the one after that; the report's `git.commit` is the code that was executed, and `git.dirty` was false). Artifact: `docs/dev-system/baselines/linux-headless.json`. `summary.ok` is true. Schema check passed. A self-diff has no regressions.
+Measured in an isolated **cloud Linux x86_64** worktree on clean `cb3509e234ae4b83452ce55bbee76935d9fa281d`, branch `codex/zip-entry-bounds`, draft [#17](https://github.com/lawsharley0-cyber/HydrogenVM/pull/17). Ubuntu 24.04/kernel 6.18.55, Intel Xeon Platinum 8573C, Clang 18.1.3, Release `-O3 -DNDEBUG -ffp-contract=off`, **4096-byte host pages**. Base is main `39904cb`; unmerged #11/#12/#15/#16 are not included.
 
-Harness self-tests: 56 passed, 0 failed (`python3 -m unittest discover -s tools/compat_harness/tests`). Counted on this branch. The baseline JSON below is still the `a4b0f8b` run.
-
-Indexed run from this branch, not a new baseline: `docs/dev-system/reports/linux-x86_64/20261021T185933Z-8771deca6655.json`. `git.commit` is `8771deca6655` and `git.dirty` was false. `summary.ok` is true. Diff against `baselines/linux-headless.json`: 0 regressions, 0 attention, 0 informational. Clash is still a skip. `docs/dev-system/reports/index.json` lists that one row. `latest.json` points at it.
+[Indexed compatibility JSON](reports/linux-x86_64/20261022T135259Z-cb3509e234ae.json): `git.dirty=false`, `summary.ok=true`, no crashes/launch failures, baseline and previous indexed diffs have zero regressions/attention. Timing differences from older hosts are informational. Existing tmpnam/regex binding improvements predate #17 and are not credited here. The `a4b0f8b` baseline and previous `8771deca6655` indexed run remain historical evidence; no baseline was replaced. #15/#16 retain their own branch evidence and do not become ancestors of this branch.
 
 | Suite | Result |
 |---|---|
-| selftest | pass. 10.0 M instructions, result `0xA05A0848`, about 541 MIPS on this VM |
-| fulltest | pass. 79 passed, 0 failed |
-| asm | pass. arm_alu 40, arm_mem 17, thumb 30, vfp_neon 23 (110) |
-| differential C | pass. 5 integer configs × 27 and 5 VFP/NEON configs × 29 (280) |
-| Python | pass. `verify_ipa`, `clash_protocol`, `clash_home_state` |
-| decoder fuzz | not run (pass `--fuzz`) |
-| ld64 iOS guests, CoreMark, simulator, device | not run. See headless limits |
+| ZIP metadata regression | 58 pass in Release and targeted ASan/UBSan; main has 39 failed checks and a focused 8-byte heap-buffer-overflow |
+| fulltest | 191 pass, zero failures |
+| CPU | selftest, four asm guests and ten differential C configurations pass |
+| Python | three required modules and 56 harness self-tests pass |
+| Decoder fuzz / CoreMark / ld64 / Apple device | Not run |
 
-| App | Status | Frames | Frame signal | Audio | Load-time gaps |
-|---|---|---:|---|---|---|
-| angry-birds | ran, no crash | 95 | mostly-one-color (about 93% near-white, 6% other). Not a title-screen proof | mixer silent | `tmpnam` |
-| tiny-tower | ran, no crash | 69 | varied | mixer active | `CGFontCopyTableForTag`, `CGFontGet*` queries, `glPointSizePointerOES` |
-| art-of-glow | ran, no crash | 50 | varied | mixer silent | `regcomp`, `regexec`, `regerror`, `regfree`. `SCNetworkReachability` reported offline (signal). `kCFNumberNaN` and infinities zero-filled (signal) |
-| clash-royale-2-1306-1 | skipped | — | not run | not measured | IPA not in the fixture root. Skip is not a pass |
+| App | 3-second smoke | Presented frames | Frame signal | Mixer signal |
+|---|---|---:|---|---|
+| Angry Birds 1.0 | Ran, no crash | 43 | mostly-one-color | silent |
+| Tiny Tower 1.0 | Ran, no crash | 48 | varied | active |
+| Art of Glow 1.1.2 | Ran, no crash | 32 | varied | silent |
+| Clash Royale 2.1306.1 | Optional fixture absent: **skip** | — | not run | not measured |
 
-A 4 KB pass is not an iPhone memory-model pass. Frame counts move between runs; the diff does not fail on that unless presented frames drop to zero. MIPS, average frame time, and mixer sample counts (`frames`, `nonSilentFrames`) that move by 25% or more while the signal stays `active` are informational. A smaller sample-count move is not noted.
+[Complete regression and import measurements](reports/performance/20261022-zip64-bounds.json) retain all samples, exact benchmark/driver source, before sanitizer evidence and host/build limits. Twelve serial before/after/after/before archive-read samples (eight complete archive reads each) across the three fixtures return matching entry/file/byte totals and content checksums, with per-entry CRC checks retained. Metadata wall time, resource-read wall time and process CPU time are separate. Timing is noisy; **no established speed gain or no-overhead claim**. This measures archive import work, not startup scenes or gameplay FPS. The earlier incomplete 11-sample capture is retained separately rather than hidden.
 
-Linux Actions is green on `6af9976`. The compat harness passed in run [39646706013](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646706013). The Linux CI job published `runs/20261021-175201-39646696896-linux` in run [39646696896](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646696896). The empty-step failure on `07fabbb` (run 39633887764) was real; it is history, not the current gate. The macOS CI job on that push was skipped by its existing condition.
+Targeted ASan/UBSan in the cloud container uses `ASAN_OPTIONS=detect_leaks=0` because LeakSanitizer cannot enumerate `/proc` tasks here; AddressSanitizer and UB checks remain enabled. The GitHub ZIP regression runs with default sanitizer settings. Current GitHub workflow links are in #17 and the evidence JSON.
 
-## Fixed regressions
+The owner's UAR-001..013 remain unresolved and preserved in [#15's USER_APP_REPORTS at e1684a8](https://github.com/lawsharley0-cyber/HydrogenVM/blob/e1684a89bc214cd8eac2bc30c1feb060e9ecfdab/docs/dev-system/USER_APP_REPORTS.md). This synthetic malformed-input defect is not an established cause of the reported startup/gameplay failures. A 4 KB Linux pass does not prove 16 KB iPhone permissions, precise faults, device signing, audible speakers, full gameplay, world loading, same-sandbox relaunch or offline Clash progression.
 
-None in the infrastructure change. The harness does not alter runtime behavior, so it cannot close a product bug by itself.
+## Fixed regressions awaiting independent review
 
-| ID | Was | Fix | Proven by |
+| ID | Trigger / root cause | Result | Evidence |
 |---|---|---|---|
-| — | — | — | — |
+| B-115 / #17 | ZIP64 field length exceeds enclosing entry; parser trusts it for 8-byte replacement reads | Validate field framing and all requested values before reading; reject incomplete/missing ZIP64 metadata and close the file on failed construction | `tests/loader/ZipBoundsTests.cpp`, `tools/test_zip_bounds.sh`, JSON above |
 
 ## Pending PRs
 
-| PR | Branch | What it contains | Merged |
-|---|---|---|---|
-| This change | `cursor/infra-dev-system-1960` | Docs, harness, tests, workflow, baseline JSON | No |
-| [#3](https://github.com/lawsharley0-cyber/HydrogenVM/pull/3) | `cursor/compat-report-index-c782` | `AGENTS.md`, indexed JSON reports, active-mixer sample notes. Base is the row above | No |
+| PR | Reserved scope | Integration |
+|---|---|---|
+| #11 / #12 | GLSL and uniform/register work, Group B and GLES tests | Open |
+| #13 | Clash continuation documentation/tools | Open; restoration incomplete |
+| #15 | Allocator overflow and owner report preservation | Open |
+| #16 | PCM sample-width/non-finite conversion | Draft, tests green, review pending |
+| #17 | ZIP loader metadata validation and failed-construction cleanup | Draft, independent review and owner merge required |
 
 ## Decisions
 
@@ -84,6 +83,7 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 | 2026-10-21 | Scope is the audit backlog, Clash past the 65% load, and performance follow-ons found while speeding apps up | Scope of this change | Does not by itself implement those items |
 | 2026-10-21 | Harness fixtures are SHA-256 plus a directory. Three existing IPAs stay grandfathered. New ids cannot use a repo path | This change | Deleting the committed IPAs is still open |
 | 2026-10-21 | Issue generator is dry-run. Nothing is auto-filed | This change | No GitHub issues exist on the repo |
+| 2026-10-22 | B-115 ZIP64 metadata fix is cloud-tested in draft #17, not integrated | Cloud author | 58 targeted checks; 191 full tests; Linux gate pass; no owner app report closed or speed gain claimed |
 
 ## Needs owner
 
@@ -101,8 +101,7 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 
 ## Next improvements
 
-1. Teach `tools/hvm_report.py` to run `fulltest` so the published `ci-reports` row matches the harness (B-002 follow-up). The compat job already runs `fulltest`. Do not treat the skipped macOS job as a pass.
-2. B-003 doc reconciliation, review/docs role, no runtime files.
-3. Staff Group B for the near clip (B-103) or Group D for `CGFont*` (B-109) or libc for `regcomp` (B-108). Do not staff two writers for one letter.
-4. After a fixture decision, start B-106 (21903) on Group C alone.
-5. Do not start SIMD raster or CPU fusion until B-103 and B-101 have landed.
+1. Independent review and owner integration of the tested drafts; the author does not merge. Preserve the separate ZIP/PCM/allocator gates when integrating.
+2. Select another reproducible shared failure only after rechecking ownership. Exact owner-report fixtures/scenarios remain needed to resolve UAR rows.
+3. Group B correctness/near clipping precedes raster SIMD or compositing changes; memory permissions precede CPU fusion. Cloud 4 KB passes do not bypass those dependencies.
+4. Continue B-003 documentation reconciliation separately. Regex/tmpnam implementations already present on main are not new fixes in this branch.

@@ -35,7 +35,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Planned |
 | B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | None, but the file is `OpenGLES.cpp` | Not while B-103 is in progress | Planned |
 | B-112 | Stop adding commercial IPAs to git. Hashes plus an external store. | 3 | 4 | 1 | 12.0 | — | Owner picks the store | Yes | Harness side Operational. Removing the three committed files is Needs owner |
-| B-115 | ZIP64 extra-field lengths must be checked against the enclosing directory record before reading replacement sizes/offsets. Synthetic malformed IPA import may read outside its metadata buffer. | 3 | 4 | 1 | 12.0 | Loader (`Zip.cpp`) | None | No other loader editor; beside B/C | Investigating on `codex/zip-entry-bounds`; owner app reports remain unresolved |
+| B-115 | ZIP64 extra-field lengths must be checked against the enclosing directory record before reading replacement sizes/offsets. Synthetic malformed IPA import reads outside its metadata buffer. Rejected construction also needs exception-safe file ownership. | 3 | 4 | 1 | 12.0 | Loader (`Zip.cpp`) | None | No other loader editor; beside B/C | Draft [#17](https://github.com/lawsharley0-cyber/HydrogenVM/pull/17): clean cloud `cb3509e`, 58 targeted checks plus Linux gate pass; independent review pending; owner app reports unresolved |
 
 ## P2
 
