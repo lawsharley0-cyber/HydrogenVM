@@ -10,6 +10,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -396,6 +399,7 @@ struct ProgramObject {
     std::vector<Binding> vertexInputs, vertexUniforms, fragmentUniforms;
     std::vector<Varying> varyings;
     int varyingWidth = 0;
+    bool budgetLogged = false;
 };
 
 struct SharegroupData : ObjC::HostObject {
@@ -893,7 +897,8 @@ GuestPtr gl_getString(Ctx& x, uint32_t name) {
                 "GL_EXT_texture_format_BGRA8888 GL_OES_vertex_array_object "
                 "GL_OES_mapbuffer GL_OES_draw_texture GL_OES_point_sprite "
                 "GL_OES_point_size_array GL_IMG_texture_compression_pvrtc "
-                "GL_APPLE_framebuffer_multisample GL_EXT_discard_framebuffer");
+                "GL_APPLE_framebuffer_multisample GL_EXT_discard_framebuffer "
+                "GL_OES_standard_derivatives");
         default: return 0;
     }
 }
@@ -2395,6 +2400,49 @@ void sampleShaderTexture(void* opaque, int unit, float u, float v, float* rgba) 
     }
     for (int i = 0; i < 4; ++i) rgba[i] = color[i];
 }
+// Shared by every shader invocation in one draw. Exhausting it aborts the draw,
+// drops the fragment that crossed the cap, and records GL_INVALID_OPERATION.
+// HVM_SHADER_BUDGET_REPORT=1 on fulltest: the heaviest GLES2 draw was 63656
+// instructions across 2051 invocations (~31 each) on a 64x64 target. The same
+// per-fragment cost over 320x480 is about 4.8e6 instructions. 2e8 is ~42x that
+// full-screen figure (about 1300 instructions on every fragment) and still
+// aborts a non-terminating fragment in a fraction of a second. The old cap was
+// 1e6 per fragment, about 431 s for one 320x480 triangle.
+constexpr int64_t kDrawInstructionBudget = 200'000'000;
+
+struct DrawBudget {
+    Ctx* ctx = nullptr;
+    ContextData* context = nullptr;
+    ProgramObject* program = nullptr;
+    int64_t remaining = kDrawInstructionBudget;
+    int64_t invocations = 0;
+    bool exceeded = false;
+    void fail() {
+        if (exceeded) return;
+        exceeded = true;
+        if (context && context->lastError == GL_NO_ERROR) context->lastError = GL_INVALID_OPERATION;
+        if (program && ctx && !program->budgetLogged) {
+            program->budgetLogged = true;
+            ctx->proc.logf(LogLevel::Warning,
+                           "GLSL program %u: instruction budget exceeded; draw aborted", program->id);
+        }
+    }
+};
+
+struct BudgetReport {
+    const DrawBudget* budget = nullptr;
+    ~BudgetReport() {
+        static const bool report = std::getenv("HVM_SHADER_BUDGET_REPORT") != nullptr;
+        if (!report || !budget) return;
+        static int64_t peak = 0;
+        const int64_t used = budget->exceeded ? kDrawInstructionBudget : kDrawInstructionBudget - budget->remaining;
+        if (!budget->exceeded && used > peak) peak = used;
+        std::fprintf(stderr, "shader-draw-insns used %lld peak %lld invocations %lld exceeded %d\n",
+                     static_cast<long long>(used), static_cast<long long>(peak),
+                     static_cast<long long>(budget->invocations), budget->exceeded ? 1 : 0);
+    }
+};
+
 void fillDepthRange(const ContextData& c, const Shader::Program& prog, Shader::Values& values) {
     if (auto* dr = prog.find("gl_DepthRange")) {
         values[dr->slot] = c.depthRange[0];
@@ -2402,14 +2450,13 @@ void fillDepthRange(const ContextData& c, const Shader::Program& prog, Shader::V
         values[dr->slot + 2] = c.depthRange[1] - c.depthRange[0];
     }
 }
-std::optional<Vec4> executeFragment(ContextData& c, SharegroupData& sg, const ShadedVertex& a, const ShadedVertex& b, const ShadedVertex& d,
-                     float w0, float w1, float w2, int px, int py, float z, bool front, float pointS, float pointT) {
-    const auto& p = sg.programs.at(c.currentProgram);
-    Shader::Values values;
+bool setupFragment(ContextData& c, const ProgramObject& p, Shader::Values& values,
+                   const ShadedVertex& a, const ShadedVertex& b, const ShadedVertex& d,
+                   float w0, float w1, float w2, int px, int py, float z, bool front, float pointS, float pointT) {
     p.fragment.initialize(values);
     loadShaderUniforms(p, p.fragmentUniforms, values);
     float denominator = w0 * a.invW + w1 * b.invW + w2 * d.invW;
-    if (std::abs(denominator) < 1e-12f) return Vec4{0, 0, 0, 0};
+    if (std::abs(denominator) < 1e-12f) return false;
     w0 = w0 * a.invW / denominator; w1 = w1 * b.invW / denominator; w2 = w2 * d.invW / denominator;
     for (auto& varying : p.varyings) for (int i = 0; i < varying.width; ++i) {
         int offset = varying.offset + i;
@@ -2424,13 +2471,25 @@ std::optional<Vec4> executeFragment(ContextData& c, SharegroupData& sg, const Sh
     if (auto* ff = p.fragment.find("gl_FrontFacing")) values[ff->slot] = front ? 1.f : 0.f;
     if (auto* pc = p.fragment.find("gl_PointCoord")) { values[pc->slot] = pointS; values[pc->slot + 1] = pointT; }
     fillDepthRange(c, p.fragment, values);
+    return true;
+}
+std::optional<Vec4> executeFragment(ContextData& c, SharegroupData& sg, const ShadedVertex& a, const ShadedVertex& b, const ShadedVertex& d,
+                     float w0, float w1, float w2, int px, int py, float z, bool front, float pointS, float pointT, DrawBudget* budget) {
+    const auto& p = sg.programs.at(c.currentProgram);
+    Shader::Values values;
+    if (!setupFragment(c, p, values, a, b, d, w0, w1, w2, px, py, z, front, pointS, pointT)) return Vec4{0, 0, 0, 0};
+    if (budget) ++budget->invocations;
     std::pair<ContextData*, SharegroupData*> state{&c, &sg};
-    if (!p.fragment.execute(values, sampleShaderTexture, &state)) return std::nullopt;
+    int64_t* left = budget ? &budget->remaining : nullptr;
+    if (!p.fragment.execute(values, sampleShaderTexture, &state, left)) {
+        if (budget && budget->remaining < 0) budget->fail();
+        return std::nullopt;
+    }
     const auto* f = &values[p.fragment.output];
     return Vec4{f[0], f[1], f[2], f[3]};
 }
 
-ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx) {
+ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx, DrawBudget* budget) {
     ShadedVertex sv;
     if (c.api == 1 || c.currentProgram == 0) {
         const Vec4 pos = fetchAttribute(x, sg, c.vertexPtr, idx, {0, 0, 0, 1});
@@ -2452,7 +2511,9 @@ ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx) {
         }
         fillDepthRange(c, p.vertex, values);
         std::pair<ContextData*, SharegroupData*> state{&c, &sg};
-        p.vertex.execute(values, sampleShaderTexture, &state);
+        int64_t* left = budget ? &budget->remaining : nullptr;
+        if (budget) ++budget->invocations;
+        if (!p.vertex.execute(values, sampleShaderTexture, &state, left) && budget && budget->remaining < 0) budget->fail();
         if (auto* ps = p.vertex.find("gl_PointSize")) sv.shaderPointSize = values[ps->slot];
         const float* f = &values[p.vertex.output];
         sv.clip = {f[0], f[1], f[2], f[3]};
@@ -2565,7 +2626,7 @@ const Texture2D* boundTextureForDraw(ContextData& c, SharegroupData& sg) {
 }
 
 void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
-                       const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2) {
+                       const ShadedVertex& v0, const ShadedVertex& v1, const ShadedVertex& v2, DrawBudget* budget) {
     for (auto* v : {&v0, &v1, &v2})
         if (!std::isfinite(v->screenX) || !std::isfinite(v->screenY) || !std::isfinite(v->screenZ)) return;
     const float area = (v1.screenX - v0.screenX) * (v2.screenY - v0.screenY) -
@@ -2607,18 +2668,76 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
         }
     }
 
-    for (int py = minY; py <= maxY; ++py) {
+    auto bary = [&](int px, int py, float& w0, float& w1, float& w2) {
+        const float fx = float(px) + 0.5f;
         const float fy = float(py) + 0.5f;
-        for (int px = minX; px <= maxX; ++px) {
-            const float fx = float(px) + 0.5f;
-            const float w0 = ((v2.screenX - v1.screenX) * (fy - v1.screenY) - (v2.screenY - v1.screenY) * (fx - v1.screenX)) * invArea;
-            const float w1 = ((v0.screenX - v2.screenX) * (fy - v2.screenY) - (v0.screenY - v2.screenY) * (fx - v2.screenX)) * invArea;
-            const float w2 = 1.0f - w0 - w1;
+        w0 = ((v2.screenX - v1.screenX) * (fy - v1.screenY) - (v2.screenY - v1.screenY) * (fx - v1.screenX)) * invArea;
+        w1 = ((v0.screenX - v2.screenX) * (fy - v2.screenY) - (v0.screenY - v2.screenY) * (fx - v2.screenX)) * invArea;
+        w2 = 1.0f - w0 - w1;
+    };
+    const bool shaded = c.api != 1 && c.currentProgram != 0;
+    // dFdx/dFdy are finite differences on a 2x2 window-aligned quad:
+    // lane 0 (x,y), lane 1 (x+1,y), lane 2 (x,y+1), lane 3 (x+1,y+1), x and y even.
+    // Helper lanes outside the triangle still run so a covered neighbor has a
+    // value; only covered in-bounds fragments are written. Lines and points have
+    // no quad, so their derivatives stay zero. Across divergent control flow the
+    // neighbor contributes whatever value it currently holds.
+    if (shaded && budget && sg.programs.at(c.currentProgram).fragment.usesDerivatives) {
+        const ProgramObject& prog = sg.programs.at(c.currentProgram);
+        const int x0 = minX & ~1;
+        const int y0 = minY & ~1;
+        for (int qy = y0; qy <= maxY && !budget->exceeded; qy += 2) {
+            for (int qx = x0; qx <= maxX && !budget->exceeded; qx += 2) {
+                const int px[4] = {qx, qx + 1, qx, qx + 1};
+                const int py[4] = {qy, qy, qy + 1, qy + 1};
+                float w0[4], w1[4], w2[4], z[4];
+                bool covered[4] = {};
+                bool any = false;
+                for (int lane = 0; lane < 4; ++lane) {
+                    bary(px[lane], py[lane], w0[lane], w1[lane], w2[lane]);
+                    const bool inClip = px[lane] >= clipX0 && px[lane] < clipX1 && py[lane] >= clipY0 && py[lane] < clipY1;
+                    covered[lane] = inClip && w0[lane] >= -1e-4f && w1[lane] >= -1e-4f && w2[lane] >= -1e-4f;
+                    z[lane] = w0[lane] * v0.screenZ + w1[lane] * v1.screenZ + w2[lane] * v2.screenZ;
+                    any = any || covered[lane];
+                }
+                if (!any) continue;
+                std::array<Shader::Values, 4> lanes{};
+                int active = 0;
+                for (int lane = 0; lane < 4; ++lane) {
+                    if (!setupFragment(c, prog, lanes[lane], v0, v1, v2, w0[lane], w1[lane], w2[lane], px[lane], py[lane], z[lane], isFront, 0, 0)) {
+                        if (covered[lane]) writeFragment(c, rt, px[lane], py[lane], z[lane], Vec4{0, 0, 0, 0});
+                        covered[lane] = false;
+                        continue;
+                    }
+                    active |= 1 << lane;
+                    ++budget->invocations;
+                }
+                if (!active) continue;
+                int discarded = 0;
+                std::pair<ContextData*, SharegroupData*> state{&c, &sg};
+                if (!prog.fragment.executeQuad(lanes, sampleShaderTexture, &state, &budget->remaining, active, discarded)) {
+                    if (budget->remaining < 0) budget->fail();
+                    return;
+                }
+                for (int lane = 0; lane < 4; ++lane) {
+                    if (!covered[lane] || (discarded & (1 << lane))) continue;
+                    const float* f = &lanes[lane][prog.fragment.output];
+                    writeFragment(c, rt, px[lane], py[lane], z[lane], Vec4{f[0], f[1], f[2], f[3]});
+                }
+            }
+        }
+        return;
+    }
+
+    for (int py = minY; py <= maxY && !(budget && budget->exceeded); ++py) {
+        for (int px = minX; px <= maxX && !(budget && budget->exceeded); ++px) {
+            float w0, w1, w2;
+            bary(px, py, w0, w1, w2);
             if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
 
             const float z = w0 * v0.screenZ + w1 * v1.screenZ + w2 * v2.screenZ;
-            if (c.api != 1 && c.currentProgram != 0) {
-                if (auto frag = executeFragment(c, sg, v0, v1, v2, w0, w1, w2, px, py, z, isFront, 0, 0))
+            if (shaded) {
+                if (auto frag = executeFragment(c, sg, v0, v1, v2, w0, w1, w2, px, py, z, isFront, 0, 0, budget))
                     writeFragment(c, rt, px, py, z, *frag);
                 continue;
             }
@@ -2657,18 +2776,18 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
 }
 
 void rasterizeLine(ContextData& c, SharegroupData& sg, RenderTarget& rt,
-                   const ShadedVertex& v0, const ShadedVertex& v1) {
+                   const ShadedVertex& v0, const ShadedVertex& v1, DrawBudget* budget) {
     const float dx = v1.screenX - v0.screenX, dy = v1.screenY - v0.screenY;
     const int steps = std::max(1, int(std::ceil(std::max(std::abs(dx), std::abs(dy)))));
     const Texture2D* tex = boundTextureForDraw(c, sg);
-    for (int i = 0; i <= steps; ++i) {
+    for (int i = 0; i <= steps && !(budget && budget->exceeded); ++i) {
         const float t = float(i) / float(steps);
         const int px = int(v0.screenX + dx * t);
         const int py = int(v0.screenY + dy * t);
         if (px < 0 || px >= rt.width || py < 0 || py >= rt.height) continue;
         const float z = v0.screenZ + (v1.screenZ - v0.screenZ) * t;
         if (c.api != 1 && c.currentProgram != 0) {
-            if (auto frag = executeFragment(c, sg, v0, v1, v1, 1 - t, t, 0, px, py, z, true, 0, 0))
+            if (auto frag = executeFragment(c, sg, v0, v1, v1, 1 - t, t, 0, px, py, z, true, 0, 0, budget))
                 writeFragment(c, rt, px, py, z, *frag);
             continue;
         }
@@ -2690,16 +2809,31 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || indices.empty()) return;
+    ProgramObject* bound = nullptr;
     if (c->api != 1 && c->currentProgram != 0) {
         auto it = sg->programs.find(c->currentProgram);
         if (it == sg->programs.end() || !it->second.linked) { c->lastError = GL_INVALID_OPERATION; return; }
+        bound = &it->second;
     }
     RenderTarget rt = activeTarget(x, *c, *sg);
     if (!rt.rgba || rt.width <= 0 || rt.height <= 0) return;
 
+    DrawBudget limit;
+    if (bound) {
+        limit.ctx = &x;
+        limit.context = c;
+        limit.program = bound;
+    }
+    DrawBudget* lim = bound ? &limit : nullptr;
+    BudgetReport report{lim};
+
     std::vector<ShadedVertex> verts;
     verts.reserve(indices.size());
-    for (int idx : indices) verts.push_back(shadeVertex(x, *c, *sg, idx));
+    for (int idx : indices) {
+        if (lim && lim->exceeded) break;
+        verts.push_back(shadeVertex(x, *c, *sg, idx, lim));
+    }
+    if (lim && lim->exceeded) return;
     // Debugging aid: HVM_TRACE_DRAW=1 prints each draw call (mode, vertex count, texture, blend).
     if (static const bool trace = std::getenv("HVM_TRACE_DRAW") != nullptr; trace) {
         const Texture2D* t = boundTextureForDraw(*c, *sg);
@@ -2710,46 +2844,47 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
 
     switch (mode) {
         case GL_TRIANGLES:
-            for (size_t i = 0; i + 2 < verts.size(); i += 3)
-                rasterizeTriangle(*c, *sg, rt, verts[i], verts[i + 1], verts[i + 2]);
+            for (size_t i = 0; i + 2 < verts.size() && !(lim && lim->exceeded); i += 3)
+                rasterizeTriangle(*c, *sg, rt, verts[i], verts[i + 1], verts[i + 2], lim);
             break;
         case GL_TRIANGLE_STRIP:
-            for (size_t i = 0; i + 2 < verts.size(); ++i) {
-                if (i & 1) rasterizeTriangle(*c, *sg, rt, verts[i + 1], verts[i], verts[i + 2]);
-                else rasterizeTriangle(*c, *sg, rt, verts[i], verts[i + 1], verts[i + 2]);
+            for (size_t i = 0; i + 2 < verts.size() && !(lim && lim->exceeded); ++i) {
+                if (i & 1) rasterizeTriangle(*c, *sg, rt, verts[i + 1], verts[i], verts[i + 2], lim);
+                else rasterizeTriangle(*c, *sg, rt, verts[i], verts[i + 1], verts[i + 2], lim);
             }
             break;
         case GL_TRIANGLE_FAN:
-            for (size_t i = 1; i + 1 < verts.size(); ++i)
-                rasterizeTriangle(*c, *sg, rt, verts[0], verts[i], verts[i + 1]);
+            for (size_t i = 1; i + 1 < verts.size() && !(lim && lim->exceeded); ++i)
+                rasterizeTriangle(*c, *sg, rt, verts[0], verts[i], verts[i + 1], lim);
             break;
         case GL_LINES:
-            for (size_t i = 0; i + 1 < verts.size(); i += 2)
-                rasterizeLine(*c, *sg, rt, verts[i], verts[i + 1]);
+            for (size_t i = 0; i + 1 < verts.size() && !(lim && lim->exceeded); i += 2)
+                rasterizeLine(*c, *sg, rt, verts[i], verts[i + 1], lim);
             break;
         case GL_LINE_STRIP:
-            for (size_t i = 0; i + 1 < verts.size(); ++i)
-                rasterizeLine(*c, *sg, rt, verts[i], verts[i + 1]);
+            for (size_t i = 0; i + 1 < verts.size() && !(lim && lim->exceeded); ++i)
+                rasterizeLine(*c, *sg, rt, verts[i], verts[i + 1], lim);
             break;
         case GL_LINE_LOOP:
-            for (size_t i = 0; i < verts.size(); ++i)
-                rasterizeLine(*c, *sg, rt, verts[i], verts[(i + 1) % verts.size()]);
+            for (size_t i = 0; i < verts.size() && !(lim && lim->exceeded); ++i)
+                rasterizeLine(*c, *sg, rt, verts[i], verts[(i + 1) % verts.size()], lim);
             break;
         case GL_POINTS: {
             for (const auto& v : verts) {
+                if (lim && lim->exceeded) break;
                 const bool shaded = c->api != 1 && c->currentProgram != 0;
                 const float ps = shaded && v.shaderPointSize > 0.f ? v.shaderPointSize : c->pointSize;
                 const int r = std::max(0, int(ps / 2.0f));
                 const float size = std::max(ps, 1.f);
                 const int cx = int(v.screenX), cy = int(v.screenY);
-                for (int dy = -r; dy <= r; ++dy) {
-                    for (int dx = -r; dx <= r; ++dx) {
+                for (int dy = -r; dy <= r && !(lim && lim->exceeded); ++dy) {
+                    for (int dx = -r; dx <= r && !(lim && lim->exceeded); ++dx) {
                         const int px = cx + dx, py = cy + dy;
                         if (px < 0 || px >= rt.width || py < 0 || py >= rt.height) continue;
                         if (!shaded) { writeFragment(*c, rt, px, py, v.screenZ, v.color); continue; }
                         const float pcx = (float(px) + 0.5f - v.screenX) / size + 0.5f;
                         const float pcy = (float(py) + 0.5f - v.screenY) / size + 0.5f;
-                        if (auto frag = executeFragment(*c, *sg, v, v, v, 1, 0, 0, px, py, v.screenZ, true, pcx, pcy))
+                        if (auto frag = executeFragment(*c, *sg, v, v, v, 1, 0, 0, px, py, v.screenZ, true, pcx, pcy, lim))
                             writeFragment(*c, rt, px, py, v.screenZ, *frag);
                     }
                 }
@@ -2838,8 +2973,8 @@ void gl_drawTexfOES(Ctx& x, float sx, float sy, float sz, float sw, float sh) {
     v1.screenX = sx + sw; v1.screenY = sy;      v1.screenZ = sz; v1.color = c->currentColor; v1.u = u1; v1.v = v0_coord;
     v2.screenX = sx + sw; v2.screenY = sy + sh; v2.screenZ = sz; v2.color = c->currentColor; v2.u = u1; v2.v = v1_coord;
     v3.screenX = sx;      v3.screenY = sy + sh; v3.screenZ = sz; v3.color = c->currentColor; v3.u = u0; v3.v = v1_coord;
-    rasterizeTriangle(*c, *sg, rt, v0, v1, v2);
-    rasterizeTriangle(*c, *sg, rt, v0, v2, v3);
+    rasterizeTriangle(*c, *sg, rt, v0, v1, v2, nullptr);
+    rasterizeTriangle(*c, *sg, rt, v0, v2, v3, nullptr);
 }
 void gl_drawTexiOES(Ctx& x, int32_t sx, int32_t sy, int32_t sz, int32_t sw, int32_t sh) {
     gl_drawTexfOES(x, float(sx), float(sy), float(sz), float(sw), float(sh));

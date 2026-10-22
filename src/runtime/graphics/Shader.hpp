@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,9 @@ namespace Hydrogen::Runtime::Shader {
 // but shipped shaders put precision first (`mediump varying`, `highp attribute`);
 // qualifiers are accepted in any order and the invariant bit is stored on the variable.
 // Unsupported syntax fails compilation and never selects rendering by identifier name.
+// GL_OES_standard_derivatives (dFdx, dFdy, fwidth) is accepted when that extension
+// is enabled. The rasterizer evaluates those ops across 2x2 pixel quads.
+// Draws pass one shared instruction budget into execute(); exhausting it aborts the draw.
 constexpr int MaxSlots = 2048;
 enum class Kind { Float, Int, Bool, Void };
 struct Type {
@@ -51,7 +55,7 @@ enum class Op {
     Abs, Floor, Ceil, Sqrt, InverseSqrt, Pow, Exp, Log, Exp2, Log2,
     Sin, Cos, Tan, Asin, Acos, Atan, Atan2,
     Less, LessEqual, Greater, GreaterEqual, Equal, NotEqual, Not,
-    IntDivide, TextureCube
+    IntDivide, TextureCube, DFdx, DFdy
 };
 struct Instruction {
     Op op;
@@ -67,10 +71,20 @@ struct Program {
     std::vector<Variable> variables;
     std::vector<Instruction> code;
     std::string error;
+    bool usesDerivatives = false;
     bool compile(const std::string& source, bool isVertex);
     void initialize(Values& values) const;
-    // Returns false when a fragment shader discards the pixel.
-    bool execute(Values& values, Sample sample = nullptr, void* context = nullptr) const;
+    // Returns false when a fragment discards, or when `budget` is exhausted.
+    // A null budget keeps a per-invocation safety cap and still returns true,
+    // matching direct unit-test execution. A draw passes one shared counter;
+    // on exhaustion the counter is set negative and the invocation is dropped.
+    bool execute(Values& values, Sample sample = nullptr, void* context = nullptr, int64_t* budget = nullptr) const;
+    // Lanes are window pixels (x,y), (x+1,y), (x,y+1), (x+1,y+1) with x and y even.
+    // activeMask selects lanes that run. discardedMask marks lanes that discarded.
+    // Returns false when the shared budget is exhausted; the caller writes nothing
+    // for that quad and aborts the rest of the draw.
+    bool executeQuad(std::array<Values, 4>& lanes, Sample sample, void* context, int64_t* budget,
+                     int activeMask, int& discardedMask) const;
     const Variable* find(const std::string& name) const;
 };
 } // namespace Hydrogen::Runtime::Shader
