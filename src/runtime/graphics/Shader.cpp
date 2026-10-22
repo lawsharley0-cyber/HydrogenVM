@@ -150,12 +150,14 @@ struct Preprocessor {
     int sourceFile = 0;
     int braces = 0;
     bool derivatives = false;
+    std::vector<std::string> warnings;
     struct Frame { bool parent = true, on = true, any = false, hadElse = false; };
     std::vector<Frame> stack;
     std::unordered_map<std::string, Macro> macros;
     std::vector<std::string> out;
 
     [[noreturn]] void fail(const std::string& why) const { ppFail(why, line); }
+    void warn(const std::string& why) { warnings.push_back(why + " at line " + std::to_string(line)); }
     bool active() const { return stack.empty() || stack.back().on; }
     bool defined(const std::string& name) const {
         return name == "__LINE__" || name == "__FILE__" || macros.count(name) > 0;
@@ -551,6 +553,7 @@ struct Preprocessor {
             if (name == "all" && (behavior == "require" || behavior == "enable")) fail("invalid extension");
             const bool deriv = name == "GL_OES_standard_derivatives";
             if (behavior == "require" && !deriv) fail("unsupported extension " + name);
+            if (behavior == "warn") warn("warning: #extension " + name + " : warn");
             if (name == "all" && behavior == "disable") derivatives = false;
             else if (deriv) derivatives = behavior != "disable";
             return;
@@ -611,11 +614,12 @@ struct Preprocessor {
     }
 };
 
-std::vector<std::string> preprocessShader(const std::string& source, bool vertex, bool& derivatives) {
+std::vector<std::string> preprocessShader(const std::string& source, bool vertex, bool& derivatives, std::vector<std::string>& warnings) {
     (void)vertex;
     Preprocessor pp;
     auto tokens = pp.run(source);
     derivatives = pp.derivatives;
+    warnings = std::move(pp.warnings);
     return tokens;
 }
 
@@ -660,7 +664,16 @@ struct Compiler {
     bool wroteFragColor = false, wroteFragData = false;
     bool derivatives = false;
     int constDepth = 0;
-    std::unordered_map<size_t, long> constInts;
+    std::vector<std::string> warnings;
+    // A fully folded constant. `width` is the component count (n*n for a matrix).
+    struct CVal {
+        Kind kind = Kind::Int;
+        int width = 1;
+        int matrix = 0;
+        double c[16] = {};
+        bool scalar() const { return matrix == 0 && width == 1; }
+    };
+    std::unordered_map<size_t, CVal> constVals;
 
     static constexpr float kPi = 3.14159265358979323846f;
 
@@ -728,83 +741,481 @@ struct Compiler {
         if (scopes.empty()) scopes.push_back({});
         if (scopes.back().count(name) || structs.count(name) || funcExists(name) || (name.starts_with("gl_") && !reservedOk))
             fail("duplicate/reserved variable " + name);
-        if (count < 1 || count > 32) fail("array size outside supported range");
+        if (count < 1 || count > MaxSlots) fail("array size outside supported range");
         int slot = alloc(std::max(1, t.width) * count);
         scopes.back()[name] = p.variables.size();
         p.variables.push_back(Variable{name, t, storage, slot, count, ro, isArray, invariant});
         return p.variables.back();
     }
-    // Integral constant expressions for array sizes: literals, parentheses,
-    // unary +/-, + - * /, and names of const ints folded earlier. Macros are
-    // already expanded. A non-constant leaves `at` unspecified; callers rewind.
-    std::optional<long> constUnary() {
-        if (++constDepth > 64) return std::nullopt;
-        struct Guard { int& d; ~Guard() { --d; } } guard{constDepth};
-        if (take("+")) return constUnary();
-        if (take("-")) {
-            auto v = constUnary();
-            if (!v) return std::nullopt;
-            return long(0ull - static_cast<unsigned long long>(*v));
+    // Integral constant expressions (ES 1.00 §4.3.3): literals, const values,
+    // parentheses, operators other than assignment and inc/dec, constructors,
+    // and built-ins other than texture lookups. A non-constant leaves `at`
+    // unspecified; callers rewind. Array sizes must fold to a scalar int.
+    std::optional<double> convertComp(double v, Kind from, Kind to) const {
+        if (to == Kind::Int && !std::isfinite(v)) return std::nullopt;
+        if (from == to) return v;
+        if (to == Kind::Bool) return v != 0.0 ? 1.0 : 0.0;
+        if (from == Kind::Bool) return v != 0.0 ? 1.0 : 0.0;
+        if (from == Kind::Float && to == Kind::Int) return std::trunc(v);
+        if (from == Kind::Int && to == Kind::Float) return v;
+        return std::nullopt;
+    }
+    std::optional<CVal> foldConstruct(const Type& t, const std::vector<CVal>& args) const {
+        if (t.sampler || t.kind == Kind::Void || t.isStruct() || args.empty()) return std::nullopt;
+        if (t.matrix && args.size() == 1 && args[0].scalar()) {
+            auto s = convertComp(args[0].c[0], args[0].kind, Kind::Float);
+            if (!s) return std::nullopt;
+            CVal m; m.kind = Kind::Float; m.matrix = t.matrix; m.width = t.width;
+            for (int i = 0; i < t.width; ++i) m.c[i] = (i % (t.matrix + 1) == 0) ? *s : 0;
+            return m;
         }
+        if (t.matrix && args.size() == 1 && args[0].matrix) {
+            int n = t.matrix, m = args[0].matrix;
+            CVal o; o.kind = Kind::Float; o.matrix = n; o.width = t.width;
+            for (int col = 0; col < n; ++col) for (int row = 0; row < n; ++row) {
+                int dst = col * n + row;
+                o.c[dst] = (col < m && row < m) ? args[0].c[col * m + row] : (col == row ? 1.0 : 0.0);
+            }
+            return o;
+        }
+        if (!t.matrix && args.size() == 1 && args[0].scalar() && t.width > 1) {
+            auto s = convertComp(args[0].c[0], args[0].kind, t.kind);
+            if (!s) return std::nullopt;
+            CVal o; o.kind = t.kind; o.width = t.width;
+            for (int i = 0; i < t.width; ++i) o.c[i] = *s;
+            return o;
+        }
+        std::vector<std::pair<double, Kind>> comps;
+        for (const auto& arg : args) {
+            if (arg.matrix) {
+                for (int i = 0; i < arg.width; ++i) comps.push_back({arg.c[i], Kind::Float});
+            } else {
+                for (int i = 0; i < arg.width; ++i) comps.push_back({arg.c[i], arg.kind});
+            }
+        }
+        if (int(comps.size()) != t.width) return std::nullopt;
+        Kind want = t.matrix ? Kind::Float : t.kind;
+        CVal o; o.kind = want; o.width = t.width; o.matrix = t.matrix;
+        for (int i = 0; i < t.width; ++i) {
+            auto c = convertComp(comps[size_t(i)].first, comps[size_t(i)].second, want);
+            if (!c) return std::nullopt;
+            o.c[i] = *c;
+        }
+        return o;
+    }
+    std::optional<CVal> applySwizzle(const CVal& v, const std::string& sel) const {
+        if (v.matrix || sel.empty() || sel.size() > 4) return std::nullopt;
+        const char* sets[] = {"xyzw", "rgba", "stpq"};
+        int set = -1;
+        int idx[4] = {};
+        for (size_t i = 0; i < sel.size(); ++i) {
+            int found = -1, which = -1;
+            for (int s = 0; s < 3 && found < 0; ++s) {
+                for (int k = 0; k < 4; ++k) if (sets[s][k] == sel[i]) { found = k; which = s; }
+            }
+            if (found < 0 || found >= v.width || (set >= 0 && set != which)) return std::nullopt;
+            set = which; idx[i] = found;
+        }
+        CVal o; o.kind = v.kind; o.width = int(sel.size());
+        for (size_t i = 0; i < sel.size(); ++i) o.c[i] = v.c[idx[i]];
+        return o;
+    }
+    std::optional<CVal> applyIndex(const CVal& v, const CVal& idx) const {
+        if (!idx.scalar() || idx.kind != Kind::Int || !std::isfinite(idx.c[0])) return std::nullopt;
+        const int i = int(std::trunc(idx.c[0]));
+        if (double(i) != idx.c[0]) return std::nullopt;
+        if (v.matrix) {
+            if (i < 0 || i >= v.matrix) return std::nullopt;
+            CVal o; o.kind = Kind::Float; o.width = v.matrix;
+            for (int row = 0; row < v.matrix; ++row) o.c[row] = v.c[i * v.matrix + row];
+            return o;
+        }
+        if (i < 0 || i >= v.width) return std::nullopt;
+        CVal o; o.kind = v.kind; o.width = 1; o.c[0] = v.c[i];
+        return o;
+    }
+    std::optional<CVal> foldBin(const CVal& a, const CVal& b, const std::string& op) const {
+        if (a.kind != b.kind || a.kind == Kind::Bool || a.matrix || b.matrix) return std::nullopt;
+        if (a.width != b.width && a.width != 1 && b.width != 1) return std::nullopt;
+        const int n = std::max(a.width, b.width);
+        CVal o; o.kind = a.kind; o.width = n;
+        for (int i = 0; i < n; ++i) {
+            const double x = a.c[a.width == 1 ? 0 : i];
+            const double y = b.c[b.width == 1 ? 0 : i];
+            double r = 0;
+            if (op == "+") r = x + y;
+            else if (op == "-") r = x - y;
+            else if (op == "*") r = x * y;
+            else {
+                if (y == 0.0) return std::nullopt;
+                r = a.kind == Kind::Int ? std::trunc(x / y) : x / y;
+            }
+            if (!std::isfinite(r)) return std::nullopt;
+            o.c[i] = r;
+        }
+        return o;
+    }
+    std::optional<CVal> foldMinMax(const CVal& a, const CVal& b, bool isMin) const {
+        if (a.matrix || b.matrix || a.kind != b.kind || (a.kind != Kind::Float && a.kind != Kind::Int)) return std::nullopt;
+        if (a.width != b.width && b.width != 1) return std::nullopt;
+        CVal o; o.kind = a.kind; o.width = a.width;
+        for (int i = 0; i < a.width; ++i) {
+            const double x = a.c[i], y = b.c[b.width == 1 ? 0 : i];
+            o.c[i] = isMin ? std::min(x, y) : std::max(x, y);
+        }
+        return o;
+    }
+    std::optional<CVal> foldBuiltin(const std::string& name, const std::vector<CVal>& args) const {
+        auto arity = [&](size_t n) { return args.size() == n; };
+        auto map1 = [&](auto fn) -> std::optional<CVal> {
+            if (!arity(1) || args[0].kind != Kind::Float || args[0].matrix) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) {
+                const double r = fn(o.c[i]);
+                if (!std::isfinite(r)) return std::nullopt;
+                o.c[i] = r;
+            }
+            return o;
+        };
+        auto zip = [&](auto fn) -> std::optional<CVal> {
+            if (!arity(2) || args[0].kind != Kind::Float || args[1].kind != Kind::Float || args[0].matrix || args[1].matrix ||
+                args[0].width != args[1].width) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) {
+                const double r = fn(args[0].c[i], args[1].c[i]);
+                if (!std::isfinite(r)) return std::nullopt;
+                o.c[i] = r;
+            }
+            return o;
+        };
+        if (name == "dFdx" || name == "dFdy" || name == "fwidth") {
+            if (!derivatives || !arity(1) || args[0].kind != Kind::Float || args[0].matrix) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) o.c[i] = 0;
+            return o;
+        }
+        if (name == "radians") return map1([](double v) { return v * 3.14159265358979323846 / 180.0; });
+        if (name == "degrees") return map1([](double v) { return v * 180.0 / 3.14159265358979323846; });
+        if (name == "sin") return map1([](double v) { return std::sin(v); });
+        if (name == "cos") return map1([](double v) { return std::cos(v); });
+        if (name == "tan") return map1([](double v) { return std::tan(v); });
+        if (name == "asin") return map1([](double v) { return std::asin(v); });
+        if (name == "acos") return map1([](double v) { return std::acos(v); });
+        if (name == "atan") {
+            if (arity(1)) return map1([](double v) { return std::atan(v); });
+            return zip([](double y, double x) { return std::atan2(y, x); });
+        }
+        if (name == "pow") return zip([](double x, double y) { return std::pow(x, y); });
+        if (name == "exp") return map1([](double v) { return std::exp(v); });
+        if (name == "log") return map1([](double v) { return v > 0 ? std::log(v) : 0; });
+        if (name == "exp2") return map1([](double v) { return std::exp2(v); });
+        if (name == "log2") return map1([](double v) { return v > 0 ? std::log2(v) : 0; });
+        if (name == "sqrt") return map1([](double v) { return v > 0 ? std::sqrt(v) : 0; });
+        if (name == "inversesqrt") return map1([](double v) { return v > 0 ? 1.0 / std::sqrt(v) : 0; });
+        if (name == "floor") return map1([](double v) { return std::floor(v); });
+        if (name == "ceil") return map1([](double v) { return std::ceil(v); });
+        if (name == "fract") return map1([](double v) { return v - std::floor(v); });
+        if (name == "abs") {
+            if (!arity(1) || args[0].matrix || (args[0].kind != Kind::Float && args[0].kind != Kind::Int)) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) o.c[i] = std::fabs(o.c[i]);
+            return o;
+        }
+        if (name == "sign") {
+            if (!arity(1) || args[0].matrix || (args[0].kind != Kind::Float && args[0].kind != Kind::Int)) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) o.c[i] = o.c[i] > 0 ? 1 : o.c[i] < 0 ? -1 : 0;
+            return o;
+        }
+        if (name == "mod") {
+            if (!arity(2) || args[0].kind != Kind::Float || args[0].matrix || args[1].kind != Kind::Float || args[1].matrix) return std::nullopt;
+            if (args[1].width != args[0].width && args[1].width != 1) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) {
+                const double y = args[1].c[args[1].width == 1 ? 0 : i];
+                if (y == 0.0) return std::nullopt;
+                o.c[i] = o.c[i] - y * std::floor(o.c[i] / y);
+                if (!std::isfinite(o.c[i])) return std::nullopt;
+            }
+            return o;
+        }
+        if (name == "min" || name == "max") {
+            if (!arity(2)) return std::nullopt;
+            return foldMinMax(args[0], args[1], name == "min");
+        }
+        if (name == "clamp") {
+            if (!arity(3)) return std::nullopt;
+            const bool scalarEnds = args[1].scalar() && args[2].scalar();
+            const bool same = !args[1].matrix && !args[2].matrix && args[1].width == args[0].width && args[2].width == args[0].width;
+            if (!scalarEnds && !same) return std::nullopt;
+            auto hi = foldMinMax(args[0], args[1], false);
+            if (!hi) return std::nullopt;
+            return foldMinMax(*hi, args[2], true);
+        }
+        if (name == "mix") {
+            if (!arity(3) || args[0].kind != Kind::Float || args[0].matrix || args[0].kind != args[1].kind || args[0].width != args[1].width ||
+                args[1].matrix || args[2].kind != Kind::Float || args[2].matrix) return std::nullopt;
+            if (args[2].width != 1 && args[2].width != args[0].width) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) {
+                const double a = args[2].c[args[2].width == 1 ? 0 : i];
+                o.c[i] = args[0].c[i] * (1.0 - a) + args[1].c[i] * a;
+                if (!std::isfinite(o.c[i])) return std::nullopt;
+            }
+            return o;
+        }
+        if (name == "step") {
+            if (!arity(2) || args[1].kind != Kind::Float || args[1].matrix || args[0].kind != Kind::Float || args[0].matrix) return std::nullopt;
+            if (args[0].width != args[1].width && args[0].width != 1) return std::nullopt;
+            CVal o; o.kind = Kind::Float; o.width = args[1].width;
+            for (int i = 0; i < o.width; ++i) o.c[i] = args[1].c[i] < args[0].c[args[0].width == 1 ? 0 : i] ? 0.0 : 1.0;
+            return o;
+        }
+        if (name == "smoothstep") {
+            if (!arity(3) || args[2].kind != Kind::Float || args[2].matrix) return std::nullopt;
+            const bool scalarEdge = args[0].scalar() && args[1].scalar() && args[0].kind == Kind::Float && args[1].kind == Kind::Float;
+            const bool same = args[0].kind == Kind::Float && args[1].kind == Kind::Float && !args[0].matrix && !args[1].matrix &&
+                              args[0].width == args[2].width && args[1].width == args[2].width;
+            if (!scalarEdge && !same) return std::nullopt;
+            CVal o; o.kind = Kind::Float; o.width = args[2].width;
+            for (int i = 0; i < o.width; ++i) {
+                const double e0 = args[0].c[args[0].width == 1 ? 0 : i];
+                const double e1 = args[1].c[args[1].width == 1 ? 0 : i];
+                if (e1 == e0) return std::nullopt;
+                double t = (args[2].c[i] - e0) / (e1 - e0);
+                t = std::clamp(t, 0.0, 1.0);
+                o.c[i] = t * t * (3.0 - 2.0 * t);
+            }
+            return o;
+        }
+        if (name == "length" || name == "distance" || name == "dot") {
+            if (name == "length" && arity(1) && args[0].kind == Kind::Float && !args[0].matrix) {
+                double s = 0;
+                for (int i = 0; i < args[0].width; ++i) s += args[0].c[i] * args[0].c[i];
+                CVal o; o.kind = Kind::Float; o.c[0] = std::sqrt(s);
+                return o;
+            }
+            if ((name == "distance" || name == "dot") && arity(2) && args[0].kind == Kind::Float && args[1].kind == Kind::Float &&
+                !args[0].matrix && !args[1].matrix && args[0].width == args[1].width) {
+                double s = 0;
+                for (int i = 0; i < args[0].width; ++i) {
+                    const double d = name == "dot" ? args[0].c[i] * args[1].c[i] : args[0].c[i] - args[1].c[i];
+                    s += name == "dot" ? d : d * d;
+                }
+                CVal o; o.kind = Kind::Float; o.c[0] = name == "dot" ? s : std::sqrt(s);
+                return o;
+            }
+        }
+        return std::nullopt;
+    }
+    std::optional<CVal> withPostfix(CVal v) {
+        while (peek() == "." || peek() == "[") {
+            if (take(".")) {
+                const std::string sel = peek();
+                if (sel.empty() || !std::isalpha(static_cast<unsigned char>(sel[0]))) return std::nullopt;
+                ++at;
+                auto next = applySwizzle(v, sel);
+                if (!next) return std::nullopt;
+                v = *next;
+            } else {
+                ++at;
+                auto idx = constTernary();
+                if (!idx || !take("]")) return std::nullopt;
+                auto next = applyIndex(v, *idx);
+                if (!next) return std::nullopt;
+                v = *next;
+            }
+        }
+        return v;
+    }
+    std::vector<CVal> constArgs() {
+        std::vector<CVal> args;
+        if (!take("(")) return {};
+        if (take(")")) return args;
+        do {
+            auto a = constTernary();
+            if (!a) return {};
+            args.push_back(*a);
+        } while (take(","));
+        if (!take(")")) return {};
+        return args;
+    }
+    std::optional<CVal> constPrimary() {
         if (take("(")) {
-            auto v = constAdd();
+            auto v = constTernary();
             if (!v || !take(")")) return std::nullopt;
+            return withPostfix(*v);
+        }
+        if (take("true")) return CVal{Kind::Bool, 1, 0, {1}};
+        if (take("false")) return CVal{Kind::Bool, 1, 0, {0}};
+        const std::string tok = peek();
+        if (!tok.empty() && (std::isdigit(static_cast<unsigned char>(tok[0])) || tok[0] == '.')) {
+            const bool isFloat = tok.find('.') != std::string::npos || tok.find('e') != std::string::npos || tok.find('E') != std::string::npos;
+            char* end = nullptr;
+            if (!isFloat) {
+                errno = 0;
+                const long n = std::strtol(tok.c_str(), &end, 10);
+                if (!end || *end || end == tok.c_str() || errno == ERANGE) return std::nullopt;
+                ++at;
+                CVal v; v.kind = Kind::Int; v.c[0] = double(n);
+                return v;
+            }
+            const double n = std::strtod(tok.c_str(), &end);
+            if (!end || *end || !std::isfinite(n)) return std::nullopt;
+            ++at;
+            CVal v; v.kind = Kind::Float; v.c[0] = n;
             return v;
         }
-        const std::string tok = peek();
-        if (!tok.empty() && std::isdigit(static_cast<unsigned char>(tok[0])) &&
-            tok.find('.') == std::string::npos && tok.find('e') == std::string::npos && tok.find('E') == std::string::npos) {
-            errno = 0;
-            char* end = nullptr;
-            long v = std::strtol(tok.c_str(), &end, 10);
-            if (!end || *end || end == tok.c_str() || errno == ERANGE) return std::nullopt;
+        if ((typeName(tok) || structs.count(tok)) && at + 1 < tokens.size() && tokens[at + 1] == "(") {
+            Type tyBuilt = type();
+            auto args = constArgs();
+            // constArgs yields an empty vector for both `()` and a failed argument.
+            // A failed argument does not leave the cursor on the closing paren.
+            if (at == 0 || tokens[at - 1] != ")") return std::nullopt;
+            auto built = foldConstruct(tyBuilt, args);
+            if (!built) return std::nullopt;
+            return withPostfix(*built);
+        }
+        if (ppIdent(tok) && at + 1 < tokens.size() && tokens[at + 1] == "(") {
+            const bool derivCall = derivatives && (tok == "dFdx" || tok == "dFdy" || tok == "fwidth");
+            if (!builtinName(tok) && !derivCall) return std::nullopt;
             ++at;
-            return v;
+            const size_t before = at;
+            auto args = constArgs();
+            if (at == before || tokens[at - 1] != ")") return std::nullopt;
+            auto built = foldBuiltin(tok, args);
+            if (!built) return std::nullopt;
+            return withPostfix(*built);
         }
         if (ppIdent(tok) && !keyword(tok)) {
             auto id = findName(tok);
             if (!id) return std::nullopt;
-            auto it = constInts.find(*id);
-            if (it == constInts.end()) return std::nullopt;
+            auto it = constVals.find(*id);
+            if (it == constVals.end()) return std::nullopt;
             ++at;
-            return it->second;
+            return withPostfix(it->second);
         }
         return std::nullopt;
     }
-    std::optional<long> constMul() {
+    std::optional<CVal> constUnary() {
+        if (++constDepth > 64) return std::nullopt;
+        struct Guard { int& d; ~Guard() { --d; } } guard{constDepth};
+        if (take("!") || take("+") || take("-")) {
+            const bool neg = tokens[at - 1] == "-";
+            const bool lnot = tokens[at - 1] == "!";
+            auto v = constUnary();
+            if (!v) return std::nullopt;
+            if (lnot) {
+                if (!v->scalar() || v->kind != Kind::Bool) return std::nullopt;
+                v->c[0] = v->c[0] == 0.0 ? 1.0 : 0.0;
+                return v;
+            }
+            if (v->kind == Kind::Bool) return std::nullopt;
+            if (neg) for (int i = 0; i < v->width; ++i) v->c[i] = -v->c[i];
+            return v;
+        }
+        return constPrimary();
+    }
+    std::optional<CVal> constMul() {
         auto v = constUnary();
         if (!v) return std::nullopt;
         while (peek() == "*" || peek() == "/") {
-            const bool div = peek() == "/";
+            const std::string op = peek();
             ++at;
             auto r = constUnary();
             if (!r) return std::nullopt;
-            if (div) {
-                if (*r == 0 || (*v == std::numeric_limits<long>::min() && *r == -1)) return std::nullopt;
-                v = *v / *r;
-            } else v = long(static_cast<unsigned long long>(*v) * static_cast<unsigned long long>(*r));
+            v = foldBin(*v, *r, op);
+            if (!v) return std::nullopt;
         }
         return v;
     }
-    std::optional<long> constAdd() {
+    std::optional<CVal> constAdd() {
         auto v = constMul();
         if (!v) return std::nullopt;
         while (peek() == "+" || peek() == "-") {
-            const bool sub = peek() == "-";
+            const std::string op = peek();
             ++at;
             auto r = constMul();
             if (!r) return std::nullopt;
-            const auto a = static_cast<unsigned long long>(*v);
-            const auto b = static_cast<unsigned long long>(*r);
-            v = long(sub ? a - b : a + b);
+            v = foldBin(*v, *r, op);
+            if (!v) return std::nullopt;
         }
         return v;
     }
+    std::optional<CVal> constRel() {
+        auto v = constAdd();
+        if (!v) return std::nullopt;
+        while (peek() == "<" || peek() == ">" || peek() == "<=" || peek() == ">=") {
+            const std::string op = peek();
+            ++at;
+            auto r = constAdd();
+            if (!r || !v->scalar() || !r->scalar() || v->kind != r->kind || v->kind == Kind::Bool) return std::nullopt;
+            const bool b = op == "<" ? v->c[0] < r->c[0] : op == ">" ? v->c[0] > r->c[0] : op == "<=" ? v->c[0] <= r->c[0] : v->c[0] >= r->c[0];
+            v = CVal{Kind::Bool, 1, 0, {b ? 1.0 : 0.0}};
+        }
+        return v;
+    }
+    std::optional<CVal> constEq() {
+        auto v = constRel();
+        if (!v) return std::nullopt;
+        while (peek() == "==" || peek() == "!=") {
+            const bool ne = peek() == "!=";
+            ++at;
+            auto r = constRel();
+            if (!r || v->kind != r->kind || v->width != r->width || v->matrix != r->matrix) return std::nullopt;
+            bool eq = true;
+            for (int i = 0; i < v->width; ++i) if (v->c[i] != r->c[i]) eq = false;
+            v = CVal{Kind::Bool, 1, 0, {(eq != ne) ? 1.0 : 0.0}};
+        }
+        return v;
+    }
+    std::optional<CVal> constAnd() {
+        auto v = constEq();
+        if (!v) return std::nullopt;
+        while (take("&&")) {
+            auto r = constEq();
+            if (!r || !v->scalar() || !r->scalar() || v->kind != Kind::Bool || r->kind != Kind::Bool) return std::nullopt;
+            v->c[0] = (v->c[0] != 0.0 && r->c[0] != 0.0) ? 1.0 : 0.0;
+        }
+        return v;
+    }
+    std::optional<CVal> constXor() {
+        auto v = constAnd();
+        if (!v) return std::nullopt;
+        while (take("^^")) {
+            auto r = constAnd();
+            if (!r || !v->scalar() || !r->scalar() || v->kind != Kind::Bool || r->kind != Kind::Bool) return std::nullopt;
+            v->c[0] = ((v->c[0] != 0.0) != (r->c[0] != 0.0)) ? 1.0 : 0.0;
+        }
+        return v;
+    }
+    std::optional<CVal> constOr() {
+        auto v = constXor();
+        if (!v) return std::nullopt;
+        while (take("||")) {
+            auto r = constXor();
+            if (!r || !v->scalar() || !r->scalar() || v->kind != Kind::Bool || r->kind != Kind::Bool) return std::nullopt;
+            v->c[0] = (v->c[0] != 0.0 || r->c[0] != 0.0) ? 1.0 : 0.0;
+        }
+        return v;
+    }
+    std::optional<CVal> constTernary() {
+        auto c = constOr();
+        if (!c) return std::nullopt;
+        if (!take("?")) return c;
+        auto a = constTernary();
+        if (!a || !take(":")) return std::nullopt;
+        auto b = constTernary();
+        if (!b || !c->scalar() || c->kind != Kind::Bool || a->kind != b->kind || a->width != b->width || a->matrix != b->matrix) return std::nullopt;
+        return c->c[0] != 0.0 ? a : b;
+    }
     int arraySize() {
-        size_t saved = at;
-        auto k = constAdd();
-        if (!k || *k < 1 || *k > 32) { at = saved; fail("invalid array size"); }
-        return int(*k);
+        const size_t saved = at;
+        auto k = constTernary();
+        const bool integral = k && k->scalar() && k->kind == Kind::Int && std::isfinite(k->c[0]);
+        const long n = integral ? long(std::trunc(k->c[0])) : 0;
+        if (!integral || double(n) != k->c[0] || n < 1 || n > MaxSlots) { at = saved; fail("invalid array size"); }
+        return int(n);
     }
     bool containsSampler(const Type& t) const {
         if (t.sampler) return true;
@@ -1916,15 +2327,16 @@ struct Compiler {
                 if (storage != Storage::Local) fail("unsupported global initializer");
                 if (count != 1 || isArray) fail("unsupported array initializer");
                 const size_t varIndex = p.variables.size() - 1;
-                const bool foldable = q.isConst && t.kind == Kind::Int && t.width == 1 && !t.matrix && !t.isStruct() && !t.sampler;
+                const bool foldable = q.isConst && !isArray && count == 1 && !t.sampler && !t.isStruct();
                 size_t saved = at;
-                std::optional<long> folded = foldable ? constAdd() : std::nullopt;
-                const bool complete = folded && (peek() == "," || peek() == ";");
+                std::optional<CVal> folded = foldable ? constTernary() : std::nullopt;
+                const bool complete = folded && folded->kind == t.kind && folded->width == t.width && folded->matrix == t.matrix &&
+                                      (peek() == "," || peek() == ";");
                 at = saved;
                 Expression dst = named(t, {}, true); dst.lvalue = true; dst.direct = true; dst.origin = slot;
                 for (int n = 0; n < t.width; ++n) dst.slots.push_back(slot + n);
                 store(dst, assignment());
-                if (complete) constInts[varIndex] = *folded;
+                if (complete) constVals[varIndex] = *folded;
             } else if (q.isConst) fail("const requires initializer");
         } while (take(","));
         need(";");
@@ -2249,6 +2661,8 @@ struct Compiler {
         auto iconst = [&](const char* n, int v) {
             auto& var = declare(n, ty(Kind::Int, 1), Storage::Local, 1, true, false, false, true);
             p.code.push_back({Op::Constant, var.slot, 0, 0, 0, float(v), 0});
+            CVal c; c.kind = Kind::Int; c.c[0] = v;
+            constVals[p.variables.size() - 1] = c;
         };
         iconst("gl_MaxVertexAttribs", 16);
         iconst("gl_MaxVertexUniformVectors", 128);
@@ -2261,7 +2675,7 @@ struct Compiler {
     }
     void tokenize(const std::string& source) {
         if (source.size() > 65536) fail("shader source too large");
-        tokens = preprocessShader(source, p.vertex, derivatives);
+        tokens = preprocessShader(source, p.vertex, derivatives, warnings);
         if (tokens.size() > 65536) fail("shader source too large");
     }
     void run(const std::string& source) {
@@ -2311,7 +2725,15 @@ struct Compiler {
 
 bool Program::compile(const std::string& source, bool isVertex) {
     *this = {}; vertex = isVertex;
-    try { Compiler{*this}.run(source); return true; }
+    try {
+        Compiler compiler{*this};
+        compiler.run(source);
+        for (const auto& w : compiler.warnings) {
+            if (!warnings.empty()) warnings.push_back('\n');
+            warnings += w;
+        }
+        return true;
+    }
     catch (const std::exception& e) { error = e.what(); code.clear(); return false; }
 }
 const Variable* Program::find(const std::string& name) const {

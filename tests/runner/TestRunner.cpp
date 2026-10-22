@@ -650,10 +650,70 @@ int runFullSubsystemTests() {
         check(runStage("#define N 4\nconst int K = 2;\nconst int A = 2, B = A * 3;\nfloat a[N * 3];\nfloat b[(K + 1)];\nfloat c[B];\n"
                        "void main() { a[11] = 0.25; b[2] = 0.5; c[5] = 0.75; gl_FragColor = vec4(a[11], b[2], c[5], 1.0); }",
                        false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1) &&
-                  shows("float a[40];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[2049];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
                   shows("float a[0];\nvoid main() { gl_FragColor = vec4(1.0); }", "invalid array size") &&
                   shows("void main() { int n = 3; float a[n]; gl_FragColor = vec4(a[0]); }", "invalid array size"),
               "GLSL accepts constant-expression array sizes and rejects the rest");
+        {
+            Shader::Program sized;
+            const char* bound = "uniform vec4 u[45];\nvoid main() { gl_FragColor = u[44]; }";
+            const bool literal = sized.compile(bound, false);
+            const auto* uniform = literal ? sized.find("u") : nullptr;
+            if (!literal) std::printf("    vec4 u[45] rejected: %s\n", sized.error.c_str());
+            Shader::Program nonconst;
+            const char* expr = "void main() { int n = 3; float a[45 * n]; gl_FragColor = vec4(a[0]); }";
+            const bool rejected = !nonconst.compile(expr, false) && nonconst.error.find("invalid array size") != std::string::npos &&
+                                  nonconst.error.find("('45')") != std::string::npos;
+            if (!rejected) std::printf("    expected token '45', got: %s\n", nonconst.error.c_str());
+            check(literal && uniform && uniform->count == 45 && rejected,
+                  "GLSL quotes a non-constant size's first token and accepts a literal bound of 45");
+        }
+        check(runStage(
+                  "const float F = -4.9;\n"
+                  "const int N = int(abs(-4.0));\n"
+                  "const int A = abs(-2);\n"
+                  "const int B = A + int(min(3.0, max(1.0, 4.0)));\n"
+                  "const int C = int(floor(abs(F)));\n"
+                  "const int D = clamp(int(ceil(3.2)), 1, sign(-1) * -8);\n"
+                  "const int E = int(mod(9.0, 5.0));\n"
+                  "const int G = int(vec4(4.8, 0.0, 0.0, 1.0).x);\n"
+                  "const int H = int(abs(vec2(-4.0, 1.0)).x);\n"
+                  "const int I = gl_MaxDrawBuffers + 3;\n"
+                  "uniform vec4 u[45];\n"
+                  "float a[int(4.0)];\nfloat b[N];\nfloat c[B];\nfloat d[C];\nfloat e[D];\nfloat f[E];\nfloat g[G];\nfloat h[H];\nfloat i[I];\n"
+                  "void main() { a[3] = 0.25; b[3] = u[44].x; c[4] = 0.5; d[3] = 0.75; e[3] = 0.125; f[3] = 1.0; h[3] = 0.25; g[3] = h[3]; i[3] = 0.25;\n"
+                  "gl_FragColor = vec4(a[3] + i[3], b[3], c[4] + e[3], d[3] + g[3]); }\n",
+                  false,
+                  [](Shader::Program& p, Shader::Values& v) {
+                      if (auto* u = p.find("u")) v[u->slot + 44 * 4] = 0.5f;
+                  },
+                  o) && near4(o, 0.5f, 0.5f, 0.625f, 1.0f) &&
+                  shows("float a[abs(-4.0)];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[4.0];\nvoid main() { gl_FragColor = vec4(1.0); }", "invalid array size") &&
+                  shows("float f() { return 4.0; }\nfloat a[int(f())];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("uniform int u;\nfloat a[u];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size"),
+              "GLSL folds constructors, constant builtins and chained consts into array sizes");
+        {
+            Shader::Program warned;
+            const bool ok = warned.compile(
+                "#extension GL_OES_foo : warn\n#extension GL_OES_standard_derivatives : warn\n"
+                "void main() { gl_FragColor = vec4(dFdx(1.0)); }\n",
+                false);
+            if (!ok) std::printf("    extension warn failed: %s\n", warned.error.c_str());
+            const bool saw = warned.warnings.find("warning") != std::string::npos &&
+                             warned.warnings.find("GL_OES_foo") != std::string::npos &&
+                             warned.warnings.find("GL_OES_standard_derivatives") != std::string::npos;
+            if (!saw) std::printf("    expected extension warnings, got: %s\n", warned.warnings.c_str());
+            bool ran = false;
+            if (ok) {
+                Shader::Values values;
+                warned.initialize(values);
+                warned.execute(values);
+                for (int c = 0; c < 4; ++c) o[c] = values[warned.output + c];
+                ran = near4(o, 0, 0, 0, 0);
+            }
+            check(ok && ran && saw, "GLSL #extension : warn warns and still enables a supported extension");
+        }
         check(runStage("#extension GL_OES_standard_derivatives : require\nvoid main() { gl_FragColor = vec4(dFdx(1.0)); }",
                        false, [](auto&, auto&) {}, o) && near4(o, 0, 0, 0, 0) &&
                   shows("void main() { gl_FragColor = vec4(dFdx(1.0)); }", "unknown variable/function") &&
@@ -1608,6 +1668,43 @@ int runFullSubsystemTests() {
                   proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
                   proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
               "GLES2 dFdx/dFdy/fwidth use 2x2 quads and advertise GL_OES_standard_derivatives");
+
+        uint32_t warnFs = shader(0x8B30, "#extension GL_OES_foo : warn\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+        callGL("_glGetShaderiv", {warnFs, 0x8B81, idsAddr + 36});
+        const bool warnCompiled = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glGetShaderiv", {warnFs, 0x8B84, idsAddr + 40});
+        const int32_t warnLen = proc.mem().read<int32_t>(idsAddr + 40);
+        const uint32_t warnLog = proc.heap().allocZeroed(256);
+        callGL("_glGetShaderInfoLog", {warnFs, 256, 0, warnLog});
+        std::string warnText;
+        for (int n = 0; n < 255; ++n) {
+            char ch = char(proc.mem().read<uint8_t>(warnLog + uint32_t(n)));
+            if (!ch) break;
+            warnText.push_back(ch);
+        }
+        uint32_t boneVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
+        uint32_t boneFs = shader(0x8B30,
+            "const int N = int(abs(-4.0));\nconst int Bones = 41 + N;\nuniform vec4 u[Bones];\n"
+            "void main() { gl_FragColor = u[44]; }");
+        uint32_t boneProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {boneProg, boneVs});
+        callGL("_glAttachShader", {boneProg, boneFs});
+        callGL("_glBindAttribLocation", {boneProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {boneProg});
+        callGL("_glGetProgramiv", {boneProg, 0x8B82, idsAddr + 36});
+        const bool boneLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {boneProg});
+        const int32_t boneLoc = int32_t(callGL("_glGetUniformLocation", {boneProg, proc.allocCString("u[44]")}));
+        callGL("_glUniform4f", {uint32_t(boneLoc), UIKit::fbits(1.0f), UIKit::fbits(0.0f), UIKit::fbits(0.0f), UIKit::fbits(1.0f)});
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(warnCompiled && warnLen > 1 && warnText.find("warning") != std::string::npos &&
+                  warnText.find("GL_OES_foo") != std::string::npos && boneLinked && boneLoc >= 0 &&
+                  proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 0 &&
+                  proc.mem().read<uint8_t>(idsAddr + 26) == 0 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 warns on #extension : warn and draws a uniform vec4 array of size 45");
 
         uint32_t loopVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
         uint32_t loopFs = shader(0x8B30, "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); for(;;) {} }");

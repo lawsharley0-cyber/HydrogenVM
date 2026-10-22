@@ -13,7 +13,10 @@ namespace Hydrogen::Runtime::Shader {
 // qualifiers are accepted in any order and the invariant bit is stored on the variable.
 // Unsupported syntax fails compilation and never selects rendering by identifier name.
 // GL_OES_standard_derivatives (dFdx, dFdy, fwidth) is accepted when that extension
-// is enabled. The rasterizer evaluates those ops across 2x2 pixel quads.
+// is enabled. `#extension name : warn` records a warning and still enables a
+// supported extension. The rasterizer evaluates those ops across 2x2 pixel quads.
+// Array sizes are integral constant expressions (literals, const values,
+// constructors, and constant-foldable built-ins) whose element count fits in MaxSlots.
 // Draws pass one shared instruction budget into execute(); exhausting it aborts the draw.
 constexpr int MaxSlots = 2048;
 enum class Kind { Float, Int, Bool, Void };
@@ -71,6 +74,9 @@ struct Program {
     std::vector<Variable> variables;
     std::vector<Instruction> code;
     std::string error;
+    // Non-fatal diagnostics, including `#extension name : warn`. Empty when the
+    // shader did not warn. Compilation can still succeed.
+    std::string warnings;
     bool usesDerivatives = false;
     bool compile(const std::string& source, bool isVertex);
     void initialize(Values& values) const;

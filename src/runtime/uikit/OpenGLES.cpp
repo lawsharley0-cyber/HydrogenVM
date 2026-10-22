@@ -1932,7 +1932,7 @@ void gl_compileShader(Ctx& x, uint32_t shader) {
     if (auto* sg = currentSg(x, currentCtx(x)); sg && sg->shaders.count(shader)) {
         auto& sh = sg->shaders[shader];
         sh.compiled = sh.executable.compile(sh.source, sh.type == GL_VERTEX_SHADER);
-        sh.infoLog = sh.executable.error;
+        sh.infoLog = sh.compiled && !sh.executable.warnings.empty() ? sh.executable.warnings : sh.executable.error;
         if (!sh.compiled) x.proc.logf(LogLevel::Warning, "GLSL shader %u: %s", shader, sh.infoLog.c_str());
     }
 }
