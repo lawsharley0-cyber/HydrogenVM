@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hydrogenvm.local/testlab/result.schema.json",
+  "title": "HydrogenVM Test Lab result",
+  "description": "Schema version 1. Both per-case and full-run reports use this document.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "generatedAt",
+    "runId",
+    "appVersion",
+    "cases"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "enum": ["hvm-testlab-result", "hvm-testlab-host-report"] },
+    "generatedAt": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp when the report was written."
+    },
+    "runId": {
+      "type": "string",
+      "description": "Stable unique identifier for this run (UUID or datetime-hex). Same across all cases in one run."
+    },
+    "appVersion": {
+      "type": "string",
+      "description": "CFBundleShortVersionString of the Test Lab guest app."
+    },
+    "appBuild": {
+      "type": "string",
+      "description": "CFBundleVersion of the Test Lab guest app."
+    },
+    "artifactSha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the IPA that was imported. null when not measured."
+    },
+    "workloadConfig": {
+      "type": ["string", "null"],
+      "description": "Describes the workload variant that was run (e.g. 'default', 'quick'). null when not applicable."
+    },
+    "sandboxMode": {
+      "type": ["string", "null"],
+      "description": "Sandbox/container mode, e.g. 'hvm-home', 'device-sandbox'. null when unknown."
+    },
+    "host": {
+      "type": "object",
+      "description": "Host/runner metadata. All fields optional so guest-side reports can omit them.",
+      "properties": {
+        "system": { "type": "string" },
+        "release": { "type": "string" },
+        "machine": { "type": "string" },
+        "pageSize": { "type": ["integer", "null"] },
+        "compiler": { "type": "string" },
+        "emulatorCommit": {
+          "type": ["string", "null"],
+          "description": "Git commit hash of the emulator that ran this test. null when not available — do not invent."
+        },
+        "emulatorDirty": {
+          "type": ["boolean", "null"],
+          "description": "True when the emulator working tree had uncommitted changes. null when not measured."
+        }
+      }
+    },
+    "startTime": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 UTC timestamp when the first case started."
+    },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/caseResult" }
+    }
+  },
+  "$defs": {
+    "caseResult": {
+      "type": "object",
+      "required": ["id", "version", "status"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable case identifier, e.g. 'TL-A', 'TL-B', 'TL-C', 'TL-D', 'TL-E'."
+        },
+        "version": {
+          "type": "integer",
+          "description": "Case implementation version. Increment when expected output changes."
+        },
+        "status": {
+          "enum": ["passed", "failed", "skipped", "interrupted"],
+          "description": "passed = assertion held; failed = assertion did not hold; skipped = precondition missing; interrupted = crash/kill detected on relaunch."
+        },
+        "expected": {
+          "description": "The value or description the test expected. Type depends on the case."
+        },
+        "actual": {
+          "description": "The value or description the test observed. Type depends on the case."
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "description": "Human-readable diagnostic. Required when status is failed, skipped, or interrupted."
+        },
+        "durationMs": {
+          "type": ["number", "null"],
+          "description": "Wall-clock time from case start to end, in milliseconds (monotonic clock)."
+        },
+        "clockDefinition": {
+          "type": ["string", "null"],
+          "description": "Which clock was used, e.g. 'mach_absolute_time', 'CLOCK_MONOTONIC'."
+        },
+        "checkpointWritten": {
+          "type": ["boolean", "null"],
+          "description": "True when the in-progress checkpoint was written before the risky section executed."
+        },
+        "diagnostics": {
+          "type": "object",
+          "description": "Case-specific key/value diagnostic data.",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}
