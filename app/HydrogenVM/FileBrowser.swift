@@ -1007,6 +1007,92 @@ enum KeychainSaveSync {
     }
 }
 
+// MARK: - Reliable Save Infrastructure (shared by every editor)
+
+/// Writes edited save data and proves it landed: makes read-only files writable,
+/// writes atomically, then re-reads the file and compares bytes.
+enum SafeFileWriter {
+    struct VerifyError: LocalizedError {
+        var errorDescription: String? { "The file was written but reading it back did not match. The game or another process may be modifying it." }
+    }
+
+    static func write(_ data: Data, to url: URL) throws {
+        let fm = FileManager.default
+        let path = url.path(percentEncoded: false)
+        if fm.fileExists(atPath: path), !fm.isWritableFile(atPath: path) {
+            try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            // Atomic replace can fail in sandboxed/locked directories; fall back to in-place write.
+            try data.write(to: url, options: [])
+        }
+        guard let back = try? Data(contentsOf: url), back == data else { throw VerifyError() }
+    }
+}
+
+/// Always-visible save bar pinned above the keyboard, plus Cmd+S, autosave when the
+/// editor is closed or the app leaves the foreground, and a visible saved/unsaved state.
+struct SaveBarModifier: ViewModifier {
+    @Binding var dirty: Bool
+    let save: () -> Void
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var lastSaved: Date?
+
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .bottom, spacing: 0) { bar }
+            .onChange(of: dirty) { old, new in
+                if old && !new { lastSaved = Date() }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active && dirty { save() }
+            }
+            .onDisappear {
+                if dirty { save() }
+            }
+    }
+
+    private var bar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: dirty ? "circle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(dirty ? Color.orange : Color.green)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(dirty ? "Unsaved changes" : "All changes saved")
+                    .font(.footnote.weight(.semibold))
+                if !dirty, let lastSaved {
+                    Text("Saved \(lastSaved.formatted(date: .omitted, time: .standard))")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else if dirty {
+                    Text("Saves automatically when you close this file")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button {
+                save()
+            } label: {
+                Label("Save", systemImage: "square.and.arrow.down")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!dirty)
+            .keyboardShortcut("s", modifiers: .command)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
+}
+
+extension View {
+    func saveBar(dirty: Binding<Bool>, save: @escaping () -> Void) -> some View {
+        modifier(SaveBarModifier(dirty: dirty, save: save))
+    }
+}
+
 // MARK: - Text Editor (with transparent Zlib/Gzip support)
 
 struct TextEditorView: View {
@@ -1015,6 +1101,7 @@ struct TextEditorView: View {
     @State private var encoding: String.Encoding = .utf8
     @State private var compression: SaveCompressionFormat = .none
     @State private var dirty = false
+    @State private var baseline = ""
     @State private var error: String?
 
     var body: some View {
@@ -1034,13 +1121,13 @@ struct TextEditorView: View {
                 .font(.system(.footnote, design: .monospaced))
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-                .onChange(of: text) { _, _ in dirty = true }
+                .onChange(of: text) { _, new in dirty = (new != baseline) }
         }
         .navigationTitle(url.lastPathComponent)
+        .saveBar(dirty: $dirty) { save() }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 ShareLink(item: url)
-                Button("Save") { save() }.disabled(!dirty)
             }
         }
         .alert("Save Failed", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
@@ -1064,6 +1151,7 @@ struct TextEditorView: View {
         for enc: String.Encoding in [.utf8, .utf16, .isoLatin1, .ascii] {
             if let s = String(data: payload, encoding: enc) {
                 text = s
+                baseline = s
                 encoding = enc
                 dirty = false
                 return
@@ -1077,8 +1165,9 @@ struct TextEditorView: View {
                 throw CocoaError(.fileWriteInapplicableStringEncoding)
             }
             let out = (compression == .none) ? raw : (SaveCompressionFormat.compress(raw, format: compression) ?? raw)
-            try out.write(to: url, options: .atomic)
+            try SafeFileWriter.write(out, to: url)
             KeychainSaveSync.syncFileToKeychainIfNeeded(fileURL: url, text: text)
+            baseline = text
             dirty = false
         } catch {
             self.error = error.localizedDescription
@@ -1164,6 +1253,7 @@ struct KeyValueEditorView: View {
             }
         }
         .navigationTitle(url.lastPathComponent)
+        .saveBar(dirty: $dirty) { save() }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
@@ -1185,7 +1275,6 @@ struct KeyValueEditorView: View {
                         Image(systemName: "plus")
                     }
                 }
-                Button("Save") { save() }.disabled(!dirty)
             }
         }
         .alert("Add Config Key", isPresented: $addingEntry) {
@@ -1262,7 +1351,7 @@ struct KeyValueEditorView: View {
     private func save() {
         let outText = rawMode ? rawText : serializeINI()
         do {
-            try (outText.data(using: .utf8) ?? Data()).write(to: url, options: .atomic)
+            try SafeFileWriter.write(outText.data(using: .utf8) ?? Data(), to: url)
             dirty = false
         } catch {
             self.error = error.localizedDescription
@@ -1364,6 +1453,7 @@ struct JSONEditorView: View {
             }
         }
         .navigationTitle(url.lastPathComponent)
+        .saveBar(dirty: $dirty) { save() }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
@@ -1372,7 +1462,6 @@ struct JSONEditorView: View {
                     Image(systemName: rawMode ? "list.bullet.indent" : "curlybraces")
                 }
                 ShareLink(item: url)
-                Button("Save") { save() }.disabled(!dirty)
             }
         }
         .alert("JSON Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
@@ -1431,7 +1520,7 @@ struct JSONEditorView: View {
                 return
             }
             let out = (compression == .none) ? jsonData : (SaveCompressionFormat.compress(jsonData, format: compression) ?? jsonData)
-            try out.write(to: url, options: .atomic)
+            try SafeFileWriter.write(out, to: url)
             dirty = false
         } catch {
             self.error = error.localizedDescription
@@ -2126,6 +2215,7 @@ struct PlistEditorView: View {
             }
         }
         .navigationTitle(url.lastPathComponent)
+        .saveBar(dirty: $dirty) { save() }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
@@ -2138,7 +2228,6 @@ struct PlistEditorView: View {
                     Image(systemName: "gearshape")
                 }
                 ShareLink(item: url)
-                Button("Save") { save() }.disabled(!dirty)
             }
         }
         .alert("Save Failed", isPresented: Binding(get: { error != nil && root != nil },
@@ -2176,7 +2265,7 @@ struct PlistEditorView: View {
         do {
             let data = try PropertyListSerialization.data(fromPropertyList: root.toAny(), format: format, options: 0)
             let out = (compression == .none) ? data : (SaveCompressionFormat.compress(data, format: compression) ?? data)
-            try out.write(to: url, options: .atomic)
+            try SafeFileWriter.write(out, to: url)
             KeychainSaveSync.syncKeychainToFileIfNeeded(keychainURL: url, plistRoot: root)
             dirty = false
         } catch {
@@ -2708,6 +2797,7 @@ struct BinaryEditorView: View {
             .font(.system(.caption, design: .monospaced))
         }
         .navigationTitle(url.lastPathComponent)
+        .saveBar(dirty: $dirty) { save() }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
@@ -2716,7 +2806,6 @@ struct BinaryEditorView: View {
                     Label("Value Scanner", systemImage: "magnifyingglass.circle")
                 }
                 ShareLink(item: url)
-                Button("Save") { save() }.disabled(!dirty)
             }
         }
         .sheet(isPresented: $showingScanner) {
@@ -2800,7 +2889,7 @@ struct BinaryEditorView: View {
     private func save() {
         do {
             let out = (compression == .none) ? data : (SaveCompressionFormat.compress(data, format: compression) ?? data)
-            try out.write(to: url, options: .atomic)
+            try SafeFileWriter.write(out, to: url)
             dirty = false
         } catch {
             self.error = error.localizedDescription
