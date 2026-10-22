@@ -263,9 +263,21 @@ int runFullSubsystemTests() {
         int sockets[2];
         const bool opened = socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0;
         bool received = false, stopped = false;
+        uint64_t dropped = 0, nonsilent = 0;
+        int transportError = -1, setupError = 0;
         if (opened) {
             int capacity = 8192;
             setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &capacity, sizeof capacity);
+#ifdef __APPLE__
+            // Darwin's default AF_UNIX datagram receive buffer is 4096 and the
+            // queued length includes the 16-byte unnamed sockaddr, so an
+            // 8192-byte block returns ENOBUFS before any sample is delivered.
+            // 8208 holds one block and rejects the next. Linux ignores
+            // SO_RCVBUF for this socket family; SO_SNDBUF above is the limit.
+            int receiveCapacity = 8192 + 16;
+            if (setsockopt(sockets[1], SOL_SOCKET, SO_RCVBUF, &receiveCapacity, sizeof receiveCapacity) != 0)
+                setupError = errno;
+#endif
             auto mixer = std::make_shared<Audio::Mixer>();
             auto pcm = std::make_shared<std::vector<int16_t>>(4096, 8192);
             Audio::VoiceParams params; params.loop = true;
@@ -280,10 +292,17 @@ int runFullSubsystemTests() {
             std::this_thread::sleep_for(std::chrono::milliseconds(300)); // leave the consumer stalled
             const auto began = std::chrono::steady_clock::now();
             output.stop();
-            stopped = output.droppedBlocks > 0 && output.nonSilentFrames > 0 && output.error == 0 &&
+            dropped = output.droppedBlocks;
+            nonsilent = output.nonSilentFrames;
+            transportError = output.error;
+            stopped = setupError == 0 && dropped > 0 && nonsilent > 0 && transportError == 0 &&
                       std::chrono::steady_clock::now() - began < std::chrono::milliseconds(200);
             close(sockets[0]); close(sockets[1]);
         }
+        if (!(received && stopped))
+            std::printf("    audio detail open=%d received=%d dropped=%llu nonsilent=%llu error=%d setup=%d\n",
+                        int(opened), int(received), (unsigned long long)dropped,
+                        (unsigned long long)nonsilent, transportError, setupError);
         check(received && stopped, "Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown");
     }
 

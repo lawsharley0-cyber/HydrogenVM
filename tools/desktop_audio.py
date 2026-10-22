@@ -27,6 +27,13 @@ class DesktopAudio:
             self.channel = pygame.mixer.Channel(0)
             self.reader, self.writer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
             self.writer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16384)
+            if os.uname().sysname == 'Darwin':
+                # SO_SNDBUF is the maximum datagram size on macOS, not the
+                # queue. The default receive buffer is 4096 and each queued
+                # block includes a 16-byte unnamed sockaddr, so 8192-byte
+                # audio would be rejected with ENOBUFS. Two blocks match the
+                # Linux queue depth of the send buffer set above.
+                self.reader.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, (8192 + 16) * 2)
             self.reader.settimeout(0.1)
             self.stats.update(enabled=True, format=list(pygame.mixer.get_init()),
                               driver=os.environ.get('SDL_AUDIODRIVER', 'SDL default'))
