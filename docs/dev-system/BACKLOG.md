@@ -83,6 +83,20 @@ These are Planned. They are not separate roles. Land B-103 first.
 
 ## Scheduling notes
 
+### Owner-reported investigation queue (unresolved)
+
+Source of truth: [USER_APP_REPORTS.md](USER_APP_REPORTS.md). Preserve its UAR IDs and original observations; exact builds, hosts and app hashes remain unspecified. These are reports to reproduce, not verified root causes or resolved defects.
+
+| Queue | UAR IDs | Required scenario | Ownership after diagnosis |
+|---|---|---|---|
+| Startup crashes | UAR-001, UAR-009, UAR-011, UAR-012 | Loading transition / first failure, guest PC and reached API | Loader/runtime/framework group established by evidence |
+| Later crashes | UAR-006, UAR-010 | Minecraft PE world load; Talking Larry click | Runtime/framework group established by evidence |
+| Freeze | UAR-007 | Pocket Ants beyond 10 seconds, execution/frame/audio/input liveness | Establish from hang capture |
+| Black output | UAR-002, UAR-005 | Goat Sim scene transition; identify Minecraft 1.1 separately | Coordinate active Group B before graphics edits |
+| Performance | UAR-003, UAR-008 | Jetpack Joyride gameplay; Retry's reported 4–15 FPS | Profile first; coordinate measured hot path |
+| Music with working effects | UAR-003, UAR-004 | Gameplay music, decoder/queue/loop/output evidence | Audio; preserve Mega Jump's positive performance control |
+| Relaunch crash | UAR-013 | Tiny Tower launch, close, failing relaunch, next launch in the same sandbox | Shutdown/persistence/runtime, after reproduction |
+
 - B-210 (P1, impact 4, severity 4, complexity 1, score 16): reject aligned-allocation size overflow and invalid alignments before touching the heap. Owned by `codex/aligned-allocation-safety` (`Heap.cpp`, libc `Stdlib.cpp`, separate heap regression executable). Reproduced on `39904cb`: `allocAligned(0xfffffff0, 4096)` returns a block with only 4080 usable bytes. This is a shared corruption risk, not yet attributed to any observed game crash. Does not change Group A mappings, locks, handlers or fault behavior.
 
 - B-001 is operational for Linux as of `6af9976`. The compat job runs the harness. Teaching `hvm_report.py` to run `fulltest` is still open and does not reopen B-001. The `07fabbb` empty-step failure (run 39633887764) stays on the record.

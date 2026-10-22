@@ -16,6 +16,8 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Backlog
 
+Current owner observations: [USER_APP_REPORTS.md](USER_APP_REPORTS.md), UAR-001–013. These are unresolved user reports with unspecified exact host/build/app versions. Investigate startup, world-load and interaction crashes, hangs, black output, missing music and low FPS separately. The historical Linux snapshot below does not supersede them. In particular, exercise Tiny Tower's close/failing-relaunch/next-launch sequence and retain Mega Jump's fast rendering and working effects as a control.
+
 Source: `docs/dev-system/BACKLOG.md`. Bands P0–P2. Score is `impact * severity / complexity` inside a band.
 
 Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D frameworks, E Apple shell. None of them are staffed in this snapshot.

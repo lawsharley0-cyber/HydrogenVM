@@ -15,6 +15,8 @@ This file is the working agreement for a coding agent. It does not change the em
 
 A 4 KB Linux result is not a 16 KB iPhone memory-model pass. Reports record `host.pageSize`.
 
+Read [USER_APP_REPORTS.md](docs/dev-system/USER_APP_REPORTS.md) before compatibility or performance work. It preserves the owner's unresolved startup, interaction, world-load, hang, missing-music and relaunch observations (UAR-001–013), including Mega Jump as a positive performance control. A passing different app version or short Linux smoke does not resolve those reports. Record scenario-specific evidence without removing the original observations.
+
 ## Build and test
 
 Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set.
