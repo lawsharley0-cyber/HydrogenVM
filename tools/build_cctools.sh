@@ -7,7 +7,7 @@ PREFIX="${1:-/opt/cctools}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 ulimit -s 65536 2>/dev/null || true
-export CC=clang CXX=g++
+export CC=clang CXX="clang++ -stdlib=libc++"
 
 git clone -q --depth 1 https://github.com/tpoechtrager/apple-libdispatch "$WORK/libdispatch"
 cmake -S "$WORK/libdispatch" -B "$WORK/libdispatch/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
