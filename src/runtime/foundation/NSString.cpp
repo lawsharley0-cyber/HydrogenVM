@@ -234,6 +234,32 @@ id i_initWithContentsOfFileUsed(Ctx& x, id self, SEL s, id path, GuestPtr usedEn
     return i_initWithContentsOfFile(x, self, s, path, kNSUTF8, err);
 }
 id i_initWithContentsOfFile1(Ctx& x, id self, SEL s, id path) { return i_initWithContentsOfFile(x, self, s, path, kNSUTF8, 0); }
+id i_initWithContentsOfURL(Ctx& x, id self, SEL s, id url, uint32_t enc, GuestPtr err) {
+    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+        if (err) x.mem.write<uint32_t>(err, 0);
+        rt(x).release(x.cpu, self);
+        return 0;
+    }
+    const id path = id(rt(x).send(x.cpu, url, "path"));
+    return i_initWithContentsOfFile(x, self, s, path, enc, err);
+}
+id i_initWithContentsOfURLUsed(Ctx& x, id self, SEL s, id url, GuestPtr usedEnc, GuestPtr err) {
+    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+        if (err) x.mem.write<uint32_t>(err, 0);
+        rt(x).release(x.cpu, self);
+        return 0;
+    }
+    const id path = id(rt(x).send(x.cpu, url, "path"));
+    return i_initWithContentsOfFileUsed(x, self, s, path, usedEnc, err);
+}
+id i_initWithContentsOfURL1(Ctx& x, id self, SEL s, id url) {
+    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+        rt(x).release(x.cpu, self);
+        return 0;
+    }
+    const id path = id(rt(x).send(x.cpu, url, "path"));
+    return i_initWithContentsOfFile1(x, self, s, path);
+}
 id i_initWithCapacity(Ctx& x, id self, SEL, uint32_t) { setValue(x, self, U16()); return self; }
 
 // convenience constructors: [[[self alloc] initXxx] autorelease]
@@ -257,6 +283,9 @@ id c_stringWithCharacters(Ctx& x, id self, SEL, GuestPtr c, uint32_t n) { return
 id c_stringWithContentsOfFile(Ctx& x, id self, SEL, id path, uint32_t enc, GuestPtr err) { return construct(x, self, i_initWithContentsOfFile, path, enc, err); }
 id c_stringWithContentsOfFileUsed(Ctx& x, id self, SEL, id path, GuestPtr used, GuestPtr err) { return construct(x, self, i_initWithContentsOfFileUsed, path, used, err); }
 id c_stringWithContentsOfFile1(Ctx& x, id self, SEL, id path) { return construct(x, self, i_initWithContentsOfFile1, path); }
+id c_stringWithContentsOfURL(Ctx& x, id self, SEL, id url, uint32_t enc, GuestPtr err) { return construct(x, self, i_initWithContentsOfURL, url, enc, err); }
+id c_stringWithContentsOfURLUsed(Ctx& x, id self, SEL, id url, GuestPtr used, GuestPtr err) { return construct(x, self, i_initWithContentsOfURLUsed, url, used, err); }
+id c_stringWithContentsOfURL1(Ctx& x, id self, SEL, id url) { return construct(x, self, i_initWithContentsOfURL1, url); }
 id c_stringWithCapacity(Ctx& x, id self, SEL, uint32_t n) { return construct(x, self, i_initWithCapacity, n); }
 id c_pathWithComponents(Ctx& x, id, SEL, id arr) {
     std::string out;
@@ -798,6 +827,9 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .cm<&c_stringWithContentsOfFile>("stringWithContentsOfFile:encoding:error:")
       .cm<&c_stringWithContentsOfFileUsed>("stringWithContentsOfFile:usedEncoding:error:")
       .cm<&c_stringWithContentsOfFile1>("stringWithContentsOfFile:")
+      .cm<&c_stringWithContentsOfURL>("stringWithContentsOfURL:encoding:error:")
+      .cm<&c_stringWithContentsOfURLUsed>("stringWithContentsOfURL:usedEncoding:error:")
+      .cm<&c_stringWithContentsOfURL1>("stringWithContentsOfURL:")
       .cm<&c_pathWithComponents>("pathWithComponents:");
     ns.m<&i_init>("init").m<&i_initWithString>("initWithString:").m<&i_initWithUTF8String>("initWithUTF8String:")
       .m<&i_initWithCString>("initWithCString:encoding:").m<&i_initWithCStringDefault>("initWithCString:")
@@ -806,6 +838,8 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&i_initWithBytesNoCopy>("initWithBytesNoCopy:length:encoding:freeWhenDone:")
       .m<&i_initWithData>("initWithData:encoding:").m<&i_initWithContentsOfFile>("initWithContentsOfFile:encoding:error:")
       .m<&i_initWithContentsOfFileUsed>("initWithContentsOfFile:usedEncoding:error:").m<&i_initWithContentsOfFile1>("initWithContentsOfFile:")
+      .m<&i_initWithContentsOfURL>("initWithContentsOfURL:encoding:error:")
+      .m<&i_initWithContentsOfURLUsed>("initWithContentsOfURL:usedEncoding:error:").m<&i_initWithContentsOfURL1>("initWithContentsOfURL:")
       .m<&s_length>("length", "I@:").m<&s_characterAtIndex>("characterAtIndex:", "S@:I")
       .m<&s_getCharactersRange>("getCharacters:range:", "v@:^S{_NSRange=II}").m<&s_getCharacters>("getCharacters:")
       .m<&s_UTF8String>("UTF8String", "*@:").m<&s_UTF8String>("cString").m<&s_UTF8String>("lossyCString")

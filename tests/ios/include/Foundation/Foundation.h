@@ -70,8 +70,14 @@ typedef struct {
 + (instancetype)stringWithFormat:(NSString *)format, ... NS_FORMAT_FUNCTION(1, 2);
 + (instancetype)stringWithCharacters:(const unsigned short *)c length:(NSUInteger)n;
 + (instancetype)stringWithContentsOfFile:(NSString *)path encoding:(NSStringEncoding)enc error:(NSError **)error;
++ (instancetype)stringWithContentsOfURL:(NSURL *)url encoding:(NSStringEncoding)enc error:(NSError **)error;
++ (instancetype)stringWithContentsOfURL:(NSURL *)url usedEncoding:(NSStringEncoding *)enc error:(NSError **)error;
++ (instancetype)stringWithContentsOfURL:(NSURL *)url;
 + (NSString *)pathWithComponents:(NSArray *)components;
 - (instancetype)initWithFormat:(NSString *)format, ... NS_FORMAT_FUNCTION(1, 2);
+- (instancetype)initWithContentsOfURL:(NSURL *)url encoding:(NSStringEncoding)enc error:(NSError **)error;
+- (instancetype)initWithContentsOfURL:(NSURL *)url usedEncoding:(NSStringEncoding *)enc error:(NSError **)error;
+- (instancetype)initWithContentsOfURL:(NSURL *)url;
 - (instancetype)initWithFormat:(NSString *)format arguments:(va_list)args;
 - (instancetype)initWithUTF8String:(const char *)s;
 - (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)enc;
