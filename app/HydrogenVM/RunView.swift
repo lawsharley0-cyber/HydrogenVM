@@ -18,6 +18,40 @@ final class RunModel {
     private(set) var log: [LogLine] = []
     private(set) var running = false
     private(set) var fps = 0
+    private(set) var orientation = GuestOrientation.portrait
+    private(set) var activity = PlayerActivity()
+    private(set) var frameTimeP95 = 0.0
+    var volume: Double = 1 { didSet { session?.outputVolume = Float(volume) } }
+    var inputEnabled: Bool { running && frame != nil && !closing && activity.acceptsInput }
+    @ObservationIgnored private var activityTimer: Timer?
+    @ObservationIgnored private var activeTouches: [Int: CGPoint] = [:]
+
+    private func cancelActiveTouches() {
+        for (finger, point) in activeTouches {
+            session?.touch(.cancelled, x: Float(point.x), y: Float(point.y), finger: UInt(finger))
+        }
+        activeTouches.removeAll()
+    }
+
+    func togglePause() {
+        guard running, !closing else { return }
+        cancelActiveTouches()
+        activity.userPaused.toggle()
+        reconcileActivity()
+    }
+
+    private func reconcileActivity() {
+        guard let session else { return }
+        guard !closing else { return }
+        let command = activity.reconcile(ready: frame != nil, backgrounded: session.isBackgrounded, running: running)
+        switch command {
+        case .background: session.enterBackground(); stopSensors()
+        case .foreground: session.enterForeground()
+        case nil: break
+        }
+        if inputEnabled && !motion.isAccelerometerActive { startSensors() }
+    }
+
     var crashReport: String?
     var exitMessage: String?
     /// Set when the session ended because the user pressed Stop.
@@ -75,6 +109,7 @@ final class RunModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.frame = image
+                self.orientation = GuestOrientation(rawValue: self.session?.interfaceOrientation ?? 1) ?? .portrait
                 self.frameCount += 1
                 self.scheduleAutoTaps()
                 if let size = self.session?.screenSize, size != self.screenSize { self.screenSize = size }
@@ -87,11 +122,16 @@ final class RunModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.running = false
+                self.closing = false
+                self.cancelActiveTouches()
                 self.stopSensors()
+                self.activityTimer?.invalidate()
+                self.fpsTimer?.invalidate()
+                self.reconcileActivity()
+                UIApplication.shared.isIdleTimerDisabled = false
                 if Self.automation {
                     Self.console("[hvm-exit] status=\(code)\(crash.map { " crash:\n" + $0 } ?? "")")
                 }
-                self.closing = false
                 self.endBackgroundTask()
                 if self.userStopped { self.finished = true }
                 else if let crash { self.crashReport = crash }
@@ -100,13 +140,19 @@ final class RunModel {
         }
         session = s
         running = true
+        activity.hostBackgrounded = UIApplication.shared.applicationState == .background
+        s.outputVolume = Float(volume)
         s.start()
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reconcileActivity() }
+        }
         observeHostLifecycle()
         UIApplication.shared.isIdleTimerDisabled = true
         startSensors()
         fpsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.frameTimeP95 = self.session?.frameTimeP95Milliseconds ?? 0
                 self.fps = self.frameCount
                 self.frameCount = 0
             }
@@ -117,6 +163,7 @@ final class RunModel {
     /// saves, then stops (onExit follows). The session force-stops a hung app after a few seconds.
     func stop() {
         guard running, !closing else { return }
+        cancelActiveTouches()
         userStopped = true
         closing = true
         session?.stopGracefully()
@@ -127,6 +174,9 @@ final class RunModel {
         stop()
         fpsTimer?.invalidate()
         fpsTimer = nil
+        activityTimer?.invalidate()
+        activityTimer = nil
+        cancelActiveTouches()
         for o in lifecycleObservers { NotificationCenter.default.removeObserver(o) }
         lifecycleObservers.removeAll()
         endBackgroundTask()
@@ -143,7 +193,9 @@ final class RunModel {
                 self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Save game") { [weak self] in
                     MainActor.assumeIsolated { self?.endBackgroundTask() }
                 }
-                self.session?.enterBackground()
+                self.cancelActiveTouches()
+                self.activity.hostBackgrounded = true
+                self.reconcileActivity()
                 self.stopSensors()
                 // Saving is quick; give the game a few seconds, then let iOS suspend us.
                 Task { @MainActor [weak self] in
@@ -156,8 +208,8 @@ final class RunModel {
             MainActor.assumeIsolated {
                 guard let self, self.running, !self.closing else { return }
                 self.endBackgroundTask()
-                self.session?.enterForeground()
-                self.startSensors()
+                self.activity.hostBackgrounded = false
+                self.reconcileActivity()
             }
         })
         lifecycleObservers.append(nc.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
@@ -178,6 +230,10 @@ final class RunModel {
     }
 
     func touch(_ phase: HVMTouchPhase, at p: CGPoint, finger: Int) {
+        guard phase == .cancelled || inputEnabled else { return }
+        guard phase == .began || activeTouches[finger] != nil else { return }
+        if phase == .ended || phase == .cancelled { activeTouches[finger] = nil }
+        else { activeTouches[finger] = p }
         session?.touch(phase, x: Float(p.x), y: Float(p.y), finger: UInt(finger))
     }
 
@@ -195,11 +251,18 @@ final class RunModel {
     var logText: String { log.map(\.text).joined(separator: "\n") }
 
     private func startSensors() {
-        guard motion.isAccelerometerAvailable else { return }
+        guard inputEnabled, motion.isAccelerometerAvailable, !motion.isAccelerometerActive else { return }
         motion.accelerometerUpdateInterval = 1.0 / 60
         motion.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
             guard let a = data?.acceleration else { return }
-            MainActor.assumeIsolated { self?.session?.setAccelerationX(a.x, y: a.y, z: a.z) }
+            MainActor.assumeIsolated {
+                guard let self, self.inputEnabled else { return }
+                let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                    .first { $0.activationState == .foregroundActive }
+                let host = GuestOrientation(rawValue: scene?.effectiveGeometry.interfaceOrientation.rawValue ?? 1) ?? .portrait
+                let mapped = self.orientation.acceleration(x: a.x, y: a.y, z: a.z, host: host)
+                self.session?.setAccelerationX(mapped.0, y: mapped.1, z: mapped.2)
+            }
         }
     }
 
@@ -211,6 +274,12 @@ struct RunView: View {
     let keepGoing: Bool
     @State private var model: RunModel
     @State private var showLog = false
+    @State private var showControls = false
+    @State private var inspectAfterStop = false
+    @State private var showFiles = false
+    @State private var confirmInspect = false
+    @AppStorage("player.scaleMode") private var scaleSetting = PlayerScaleMode.fit.rawValue
+    @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
     @Environment(\.dismiss) private var dismiss
 
     init(app: InstalledApp, keepGoing: Bool) {
@@ -225,12 +294,14 @@ struct RunView: View {
             VStack(spacing: 0) {
                 toolbar
                 GeometryReader { geo in
-                    let fit = fittedRect(in: geo.size)
                     ZStack {
-                        EmulatorScreen(image: model.frame, guestSize: model.screenSize) { phase, point, finger in
+                        EmulatorScreen(image: model.frame, guestSize: model.screenSize,
+                                       orientation: model.orientation,
+                                       mode: PlayerScaleMode(rawValue: scaleSetting) ?? .fit,
+                                       filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
+                                       inputEnabled: model.inputEnabled) { phase, point, finger in
                             model.touch(phase, at: point, finger: finger)
                         }
-                        .frame(width: fit.width, height: fit.height)
                         if model.closing {
                             VStack(spacing: 12) {
                                 ProgressView().tint(.white)
@@ -247,16 +318,36 @@ struct RunView: View {
                     }
                     .frame(width: geo.size.width, height: geo.size.height)
                 }
+                if showControls { controls }
                 if showLog { LogPanel(lines: model.log, copyText: { model.logText }).frame(height: 220) }
             }
         }
         .statusBarHidden(true)
+        .preferredColorScheme(.dark)
         .persistentSystemOverlays(.hidden)
         .onAppear {
-            OrientationLock.shared.lock(.portrait)
+            OrientationLock.shared.lock(model.orientation.mask)
             model.start(keepGoing: keepGoing)
         }
-        .onChange(of: model.finished) { _, done in if done { dismiss() } }
+        .onChange(of: model.orientation) { _, orientation in OrientationLock.shared.lock(orientation.mask) }
+        .onChange(of: model.finished) { _, done in
+            if done {
+                OrientationLock.shared.lock(.all)
+                if inspectAfterStop { showFiles = true }
+                else { dismiss() }
+            }
+        }
+        .sheet(isPresented: $showFiles, onDismiss: { if model.finished { dismiss() } }) {
+            FileBrowserView(app: app)
+        }
+        .confirmationDialog("Save and stop the game to inspect files?", isPresented: $confirmInspect, titleVisibility: .visible) {
+            Button("Save, Stop & Inspect") {
+                inspectAfterStop = true
+                if model.running { model.stop() } else { showFiles = true }
+            }
+        } message: {
+            Text("The game closes before files or snapshots can change. Relaunch it from the Library after editing.")
+        }
         .onDisappear {
             model.teardown()
             OrientationLock.shared.lock(.all)
@@ -282,8 +373,13 @@ struct RunView: View {
             .disabled(model.closing)
             Spacer()
             Text(app.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+            if model.activity.userPaused { Text("Paused").font(.caption).foregroundStyle(.yellow) }
             if model.running { Text("\(model.fps) fps").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
             Spacer()
+            Button { withAnimation { showControls.toggle() } } label: {
+                Label("Player Controls", systemImage: "slider.horizontal.3")
+            }
+            .accessibilityIdentifier("player-controls")
             Button { withAnimation { showLog.toggle() } } label: {
                 Label("Log", systemImage: showLog ? "text.alignleft" : "text.justify.left")
             }
@@ -295,12 +391,59 @@ struct RunView: View {
         .padding(.vertical, 8)
     }
 
-    private func fittedRect(in size: CGSize) -> CGSize {
-        let g = model.screenSize
-        guard g.width > 0, g.height > 0, size.width > 0, size.height > 0 else { return size }
-        let s = min(size.width / g.width, size.height / g.height)
-        return CGSize(width: (g.width * s).rounded(.down), height: (g.height * s).rounded(.down))
+    private var controls: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                HStack {
+                    Button(model.activity.userPaused ? "Resume" : "Pause",
+                           systemImage: model.activity.userPaused ? "play.fill" : "pause.fill") { model.togglePause() }
+                        .disabled(!model.running || model.closing)
+                        .accessibilityIdentifier("player-pause")
+                    Text(activityLabel).font(.caption)
+                    Spacer()
+                    Text(model.frameTimeP95 > 0 ? String(format: "work p95 %.1f ms", model.frameTimeP95) : "work p95 —")
+                        .font(.caption.monospacedDigit())
+                }
+                Picker("Display", selection: $scaleSetting) {
+                    ForEach(PlayerScaleMode.allCases) { Text($0.rawValue).tag($0.rawValue) }
+                }.pickerStyle(.segmented)
+                Picker("Filtering", selection: $filterSetting) {
+                    ForEach(PlayerFilter.allCases) { Text($0.rawValue).tag($0.rawValue) }
+                }.pickerStyle(.segmented)
+                if let error = OrientationLock.shared.errorMessage {
+                    Text("Display rotation: \(error)").font(.caption).foregroundStyle(.orange)
+                }
+                HStack {
+                    Button { model.volume = model.volume == 0 ? 1 : 0 } label: {
+                        Image(systemName: model.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel(model.volume == 0 ? "Unmute" : "Mute")
+                    .accessibilityIdentifier("player-mute")
+                    Slider(value: $model.volume, in: 0...1).accessibilityLabel("Game Volume")
+                }
+                Button("Save, Stop & Inspect Files", systemImage: "folder") { confirmInspect = true }
+                    .disabled(model.closing)
+                    .accessibilityIdentifier("player-inspect")
+            }
+            .padding()
+        }
+        .frame(maxHeight: 210)
+        .background(Color(white: 0.1))
+        .foregroundStyle(.white)
     }
+
+    private var activityLabel: String {
+        if model.closing { return "Saving…" }
+        switch model.activity.phase {
+        case .active: return "Running"
+        case .pausing: return "Pausing…"
+        case .paused: return "Paused"
+        case .resuming: return "Resuming…"
+        case .stopped: return "Stopped"
+        }
+    }
+
 }
 
 struct LogPanel: View {
@@ -345,65 +488,5 @@ struct LogPanel: View {
         case .stdout: .green
         default: .white
         }
-    }
-}
-
-/// UIKit view that shows frames and forwards multi-touch in guest points.
-struct EmulatorScreen: UIViewRepresentable {
-    let image: CGImage?
-    let guestSize: CGSize
-    let onTouch: (HVMTouchPhase, CGPoint, Int) -> Void
-
-    func makeUIView(context: Context) -> ScreenView {
-        let v = ScreenView()
-        v.onTouch = onTouch
-        return v
-    }
-
-    func updateUIView(_ v: ScreenView, context: Context) {
-        v.onTouch = onTouch
-        v.guestSize = guestSize
-        v.layer.contents = image
-    }
-
-    final class ScreenView: UIView {
-        var onTouch: ((HVMTouchPhase, CGPoint, Int) -> Void)?
-        var guestSize = CGSize(width: 320, height: 480)
-        private var fingers: [ObjectIdentifier: Int] = [:]
-
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            isMultipleTouchEnabled = true
-            backgroundColor = .black
-            layer.contentsGravity = .resize
-            layer.magnificationFilter = .linear
-            layer.minificationFilter = .trilinear
-        }
-        required init?(coder: NSCoder) { fatalError() }
-
-        private func guestPoint(_ t: UITouch) -> CGPoint {
-            let p = t.location(in: self)
-            guard bounds.width > 0, bounds.height > 0 else { return .zero }
-            return CGPoint(x: min(max(p.x / bounds.width * guestSize.width, 0), guestSize.width - 0.5),
-                           y: min(max(p.y / bounds.height * guestSize.height, 0), guestSize.height - 0.5))
-        }
-
-        private func send(_ touches: Set<UITouch>, _ phase: HVMTouchPhase) {
-            for t in touches {
-                let key = ObjectIdentifier(t)
-                let finger: Int
-                if let f = fingers[key] { finger = f } else {
-                    finger = (0...10).first { !fingers.values.contains($0) } ?? fingers.count
-                    fingers[key] = finger
-                }
-                onTouch?(phase, guestPoint(t), finger)
-                if phase == .ended || phase == .cancelled { fingers[key] = nil }
-            }
-        }
-
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) { send(touches, .began) }
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { send(touches, .moved) }
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { send(touches, .ended) }
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { send(touches, .cancelled) }
     }
 }

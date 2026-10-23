@@ -1,5 +1,44 @@
 # HydrogenVM — handoff (2026-10-20)
 
+## Current continuation — October 22, 2026
+
+Integration is `main`. Use a topic branch and a draft PR; the owner integrates
+after independent review. The notes below the historical heading describe older
+`gemini-merge` checkpoints and are not a request to change integration branches.
+Current task ordering and ownership are in `dev-system/BACKLOG.md` and
+`dev-system/STATUS.md`; the original architecture and client-decoder evidence
+remain useful, but historical counts are not current validation.
+
+The owner's immediate priority is filesystem/save-editor reliability (B-211).
+Draft PR #18 adds a shared revision-aware store, exact original-byte rolling
+backups, encoding/compression preservation, buffered SQLite changes, staged
+snapshot restoration, visible Save controls and guarded dismissal. See
+`dev-system/FILE_EDITOR_HANDOFF.md` for validation, device scenarios and the
+ordered continuation. Do not describe a compiled UI as a device interaction pass.
+
+The current shell is `app/HydrogenVM/HydrogenVMApp.swift`, `LibraryView.swift`,
+`RunView.swift`, `DiagnosticsView.swift`, `FileBrowser.swift`, and
+`Bridge/HVMEngine.h`/`Bridge/HVMEngine.mm`. Save persistence helpers are adjacent
+Swift files. The C++ runtime lives under `src/` and is shared with the CLI.
+
+Merged main already includes homogeneous clipping (PR #4), POSIX regex and
+`tmpnam` (PR #5), the GLSL preprocessor/functions and bounded execution (PRs
+#8/#9), and the unsigned Apple build workflow (PR #7). The software GLES/GLSL
+implementation is a tested subset, not full ES 1.00 conformance. Unsupported
+syntax must fail compilation with diagnostics; do not guess sampler roles.
+No performance or full-gameplay claim follows from a short smoke or a shader
+compile check.
+
+Group B remains owned by open PRs #11/#12; Clash planning/tools by #13.
+PRs #15–#17 cover allocator, PCM and ZIP safety. Do not duplicate or merge those
+patches from this save-editor branch. The next graphics limit correction (issue
+#14) and point-size work wait for Group B integration. Native 16 KiB-page
+permissions/precise faults, signed-device gameplay and earned Clash progression
+remain separate unresolved tasks. `CCCrypt` ciphers remain unimplemented and
+outbound networking remains disabled by default.
+
+## Historical handoff (superseded task ordering)
+
 ## Active Clash Royale continuation (updated after runtime fixes)
 
 **Latest home-state checkpoint:** the decoder-derived 184-byte initial home/avatar
@@ -77,14 +116,14 @@ The earlier Mach/allocator/TrueType fixes remain intact. GitHub Actions jobs
 previously failed before starting because of account billing/spending limits;
 validation is local until remote steps actually execute. The investigation
 workflow now dumps and compile-checks reached shaders; run
-`hvm_tests shaders <dump-directory>` locally. Work remains on `gemini-merge`;
+`hvm_tests shaders <dump-directory>` locally. That historical checkpoint used `gemini-merge`;
 no game binary or assets were changed. These goals take precedence over the
 older roadmap below.
 
 
 JIT-less emulator that runs **32-bit iOS apps (.ipa, armv6/armv7) on modern iPhones**.
 Sideload-only iPhone app, bundle id `com.lfull.HydrogenVM`.
-Repo `github.com/lawsharley0-cyber/HydrogenVM`, **all work on branch `gemini-merge`**.
+Repo `github.com/lawsharley0-cyber/HydrogenVM`, **integration branch `main`; work on topic branches**.
 The owner (Lawson) tests sideloaded builds on device and sends logs and IPAs. He wants
 **systematic fixes**: find every issue per IPA, fix it once in the shared runtime, and
 verify the fix across all apps.
@@ -238,7 +277,7 @@ AddressBook, …).
      extras.
    * Misc: UTType, CCHmac, objc_getClassList, and std::string accessors.
 
-## Open item to check first
+## Historical first-check item
 
 * **CI run `39379622776` (commit `1a0787b`, `[mac]`) was still running when this handoff was
   written.** It is the **first compile of `FileBrowser.swift` and the RunView lifecycle
@@ -246,7 +285,7 @@ AddressBook, …).
   likely Swift 6 concurrency or SwiftUI API mismatches. Then tell the user to grab the
   unsigned IPA.
 
-## Next steps (agreed with the user, in order)
+## Historical next steps (superseded by current continuation)
 
 1. **GLSL ES 1.00 interpreter (main task).** Today `gl_linkProgram` only regex-scans
    declarations and guesses roles: first mat4 = MVP, first sampler = texture, attribute names

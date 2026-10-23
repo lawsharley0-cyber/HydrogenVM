@@ -20,15 +20,20 @@ uint64_t readBE64(const uint8_t* p) { return (uint64_t(readBE32(p)) << 32) | rea
 
 // Linear PCM in any common layout -> interleaved stereo int16.
 void pcmToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels, int bits, bool isFloat, bool bigEndian) {
+    // Reject layouts we cannot convert before deriving shifts from file metadata.
+    // Float64 must not pass through the 32-bit integer accumulator below.
+    if (isFloat ? (bits != 32 && bits != 64) :
+                  (bits != 8 && bits != 16 && bits != 24 && bits != 32)) return;
     const int bps = bits / 8;
     if (channels < 1 || bps < 1) return;
     const size_t frameBytes = size_t(channels) * size_t(bps);
     const size_t frames = bytes / frameBytes;
     auto sample = [&](const uint8_t* s) -> float {
-        uint32_t v = 0;
-        for (int i = 0; i < bps; ++i) v |= uint32_t(s[bigEndian ? i : bps - 1 - i]) << (8 * (bps - 1 - i));
         if (isFloat) {
-            if (bps == 4) { float f; std::memcpy(&f, &v, 4); return f; }
+            if (bps == 4) {
+                const uint32_t v = bigEndian ? readBE32(s) : readLE32(s);
+                float f; std::memcpy(&f, &v, 4); return f;
+            }
             if (bps == 8) {
                 uint64_t w = 0;
                 for (int i = 0; i < 8; ++i) w |= uint64_t(s[bigEndian ? i : 7 - i]) << (8 * (7 - i));
@@ -36,17 +41,25 @@ void pcmToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels
             }
             return 0;
         }
+        uint32_t v = 0;
+        for (int i = 0; i < bps; ++i) v |= uint32_t(s[bigEndian ? i : bps - 1 - i]) << (8 * (bps - 1 - i));
         if (bps == 1) return (float(v) - 128.0f) / 128.0f;   // 8-bit PCM is unsigned
         const int shift = 32 - bits;
         return float(int32_t(v << shift)) / 2147483648.0f;
     };
     out.channels = channels;
     out.stereoPcm.resize(frames * 2);
+    auto toInt16 = [](float v) -> int16_t {
+        // A NaN has no integer representation. Silence it; infinities saturate
+        // just like finite samples outside [-1, 1].
+        if (std::isnan(v)) return 0;
+        return int16_t(std::clamp(v * 32767.0f, -32768.0f, 32767.0f));
+    };
     for (size_t f = 0; f < frames; ++f) {
         const uint8_t* fp = p + f * frameBytes;
         const float l = sample(fp), r = channels >= 2 ? sample(fp + bps) : l;
-        out.stereoPcm[f * 2] = int16_t(std::clamp(l * 32767.0f, -32768.0f, 32767.0f));
-        out.stereoPcm[f * 2 + 1] = int16_t(std::clamp(r * 32767.0f, -32768.0f, 32767.0f));
+        out.stereoPcm[f * 2] = toInt16(l);
+        out.stereoPcm[f * 2 + 1] = toInt16(r);
     }
     out.duration = out.sampleRate ? double(frames) / double(out.sampleRate) : 0;
 }

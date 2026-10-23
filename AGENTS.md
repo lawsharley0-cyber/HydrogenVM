@@ -15,6 +15,8 @@ This file is the working agreement for a coding agent. It does not change the em
 
 A 4 KB Linux result is not a 16 KB iPhone memory-model pass. Reports record `host.pageSize`.
 
+Read [USER_APP_REPORTS.md](docs/dev-system/USER_APP_REPORTS.md) before compatibility or performance work. It preserves the owner's unresolved startup, interaction, world-load, hang, missing-music and relaunch observations (UAR-001–013), including Mega Jump as a positive performance control. A passing different app version or short Linux smoke does not resolve those reports. Record scenario-specific evidence without removing the original observations.
+
 ## Test Lab is the first gate
 
 Before and after any change under `src/`, run the Test Lab (`TestLab.ipa`, a deterministic 32-bit iOS guest with independently derived expected values) in addition to `hvm_tests fulltest`:
@@ -31,11 +33,12 @@ Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
-ninja -C build hvm hvm_tests hvm_decodecheck
+ninja -C build hvm hvm_tests hvm_decodecheck hvm_heap_tests
 tools/build_tests.sh build/tests
 
 build/hvm_tests selftest
 build/hvm_tests fulltest
+build/hvm_heap_tests
 
 # One asm guest per file in tests/asm/*.S
 build/hvm_tests asm build/tests/<stem>.elf tests/asm/<stem>.S
@@ -89,7 +92,7 @@ What may run at the same time, when the edits do not touch the same file: differ
 
 One branch per agent. Open a draft pull request. Do not merge it. Do not force-push. An independent reviewer, not the author, re-runs the suites in this file, or reads the attached JSON including `host.pageSize`, and checks the group boundaries. The owner merges. The agent that wrote the patch does not. Nothing in the repository requires that second reader yet. Turning the requirement on is an owner action.
 
-The integration line for this system is `main`. `docs/HANDOFF.md` still says `gemini-merge`. Changing that sentence is backlog B-003, not a branch rename. A change that stacks on an unmerged parent uses that parent as its pull-request base until the parent lands.
+The integration line for this system is `main`. `docs/HANDOFF.md` now separates the current `main` continuation from archived `gemini-merge` evidence (B-003). A change that stacks on an unmerged parent uses that parent as its pull-request base until the parent lands.
 
 ## Rules
 

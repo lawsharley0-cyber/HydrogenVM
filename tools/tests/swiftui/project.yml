@@ -1,0 +1,60 @@
+name: SaveEditorHarness
+options:
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  SaveEditorHarness:
+    type: application
+    platform: iOS
+    sources:
+      - EditorHarness.swift
+      - PlayerHarness.swift
+      - ../../../app/HydrogenVM/RunView.swift
+      - ../../../app/HydrogenVM/PlayerGeometry.swift
+      - ../../../app/HydrogenVM/PlayerActivity.swift
+      - ../../../app/HydrogenVM/PlayerOrientation.swift
+      - ../../../app/HydrogenVM/PlayerViewport.swift
+      - ../../../app/HydrogenVM/FileBrowser.swift
+      - ../../../app/HydrogenVM/FileEditorSession.swift
+      - ../../../app/HydrogenVM/SaveFileStore.swift
+      - ../../../app/HydrogenVM/SaveTextCodec.swift
+      - ../../../app/HydrogenVM/SaveCompression.swift
+      - ../../../app/HydrogenVM/SaveSnapshotStore.swift
+      - ../../../app/HydrogenVM/SQLiteEditStore.swift
+      - ../../../app/HydrogenVM/SaveConfigLine.swift
+      - ../../../app/HydrogenVM/JSONSaveDocument.swift
+      - ../../../app/HydrogenVM/PlistSaveDocument.swift
+    dependencies:
+      - sdk: libsqlite3.tbd
+      - sdk: libz.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.EditorHarness
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+  SaveEditorUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - EditorUITests.swift
+      - PlayerUITests.swift
+    dependencies:
+      - target: SaveEditorHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.EditorUITests
+        TEST_TARGET_NAME: SaveEditorHarness
+schemes:
+  SaveEditorHarness:
+    build:
+      targets:
+        SaveEditorHarness: all
+    test:
+      targets:
+        - SaveEditorUITests

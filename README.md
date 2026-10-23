@@ -5,6 +5,10 @@ modern 64-bit hosts. The goal is running legacy 32-bit iOS apps on current
 Apple devices without JIT entitlements; Android `armeabi-v7a` native code is a
 later phase.
 
+## Clash Royale
+
+Read [`docs/clash-royale/README.md`](docs/clash-royale/README.md) before changing the Clash peer, protocol tools, save path, or modding hooks. The ordered tasks are in [`docs/clash-royale/TODO.md`](docs/clash-royale/TODO.md). `docs/CLASH_ROYALE_RESTORATION.md`, `docs/HANDOFF.md`, and `docs/LOCAL_TESTING.md` are earlier snapshots from `gemini-merge`. If `AGENTS.md` is added later, copy this pointer into it.
+
 **Status:**
 - **CPU Core:** Complete (ARMv7 integer, VFPv3/v4, NEON; ARM + Thumb-2) with lazy block decoding, dead-flag elimination, branch/loop fusion (`CMP`/`CMN`/`TST`/`SUBS`/`ADDS` + `B<cond>`), and intra-block superinstruction fusion (`MOVW`+`MOVT`, `BL`/`BLX`, `POP {..., pc}`, `LDR`+`LDR`, `STR`+`STR`, `LDR`+`ADD`/`SUB`, `STR`+`ADD`/`SUB`, `MOV`+`ADD`, `MOV`+`MOV`, `ADD`+`ADD`).
 - **Loaders & Runtime:** Mach-O loader, guest Objective-C runtime, `libSystem`, `Foundation` / `CoreFoundation` / `GCD`, `CoreGraphics`, and `QuartzCore` 60 Hz layer compositor.

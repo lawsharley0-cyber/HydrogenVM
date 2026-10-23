@@ -126,6 +126,13 @@ def encode_home(state, account):
     w.vint(0)  # seen replay list
     w.string('')  # home+11c
     w.vint(0)  # spell list, home+130
+    encode_avatar(w, avatar, account)
+    w.vint(0)  # OwnHomeDataMessage+38
+    return bytes(w.data)
+
+
+def encode_avatar(w, avatar, account):
+    """Native avatar body shared by the home fixture and the battle snapshot."""
     for _ in range(3):  # avatar/account/home IDs: helper uses pairs of VInts
         for value in account:
             w.vint(value)
@@ -155,5 +162,3 @@ def encode_home(state, account):
     for _ in range(6):
         w.vint(0)  # battle/win/loss/draw/NPC win/NPC loss counters
     w.boolean(False)  # avatar+b0
-    w.vint(0)  # OwnHomeDataMessage+38
-    return bytes(w.data)

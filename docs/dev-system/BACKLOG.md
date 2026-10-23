@@ -16,25 +16,37 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 |---|---|---:|---:|---:|---:|---|---|---|---|
 | B-001 | Make GitHub Actions execute and publish a report for `HEAD`. The empty-step failure on `07fabbb` (run 39633887764) was real. Linux CI on `6af9976` published `runs/20261021-175201-39646696896-linux` (run 39646696896), and the compat harness passed (run 39646706013). | 5 | 5 | 1 | 25.0 | — | — | Yes, except another edit of the same workflow | Operational as of `6af9976`. macOS CI remains conditional |
 | B-002 | Run `fulltest`, the Python protocol tests, and a 3 second smoke of the three in-repo IPAs on `main`. | 5 | 4 | 1 | 20.0 | — | — | Yes, as its own workflow file | Operational. The compat job is green on `6af9976` and runs `fulltest`. Folding the same suites into `hvm_report.py` (default `--only` is still `cpu,ios,bench`) is Planned. macOS CI was not part of that green run |
-| B-003 | Reconcile `docs/ARCHITECTURE.md`, `docs/HANDOFF.md`, and `docs/DEVELOPMENT_AND_RELEASE.md` with the code. Do not delete the shader subset, the missing near clip, or the `CCCrypt` refusal. | 4 | 3 | 1 | 12.0 | — | None | Yes | Planned |
-| B-004 | One Mac compile of current `app/`. `06a7b16` changed the file browser, was marked `[mac]`, and Actions never started. | 4 | 4 | 2 | 8.0 | E | B-001 if no local Mac | Not with another `app/**` edit | Needs owner |
+| B-003 | Reconcile `docs/ARCHITECTURE.md`, `docs/HANDOFF.md`, and `docs/DEVELOPMENT_AND_RELEASE.md` with the code. Preserve documented shader limits and `CCCrypt` policy; homogeneous clipping is now merged in PR #4. | 4 | 3 | 1 | 12.0 | — | None | Yes | Planned |
+| B-004 | One Mac compile of current `app/`. `06a7b16` changed the file browser, was marked `[mac]`, and Actions never started. | 4 | 4 | 2 | 8.0 | E | B-001 if no local Mac | Not with another `app/**` edit | Unsigned device IPA and simulator build/launch verified via Codemagic in PR #7. Signed iPhone guest gameplay remains unverified |
+| B-211 | Owner-priority file saving overhaul: verified writes, rolling backups, buffered SQLite, staged snapshots and reachable guarded Save controls. | 5 | 5 | 3 | 8.33 | E | None | Not with another app/** edit | Implemented in PR #18; Mac persistence, five UI tests, native compile and Linux gate pass on d3085f3. |
 
 ## P1
+
+Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
+
+- B-212 / UX-2 (Group E): guest-oriented viewport, display scaling/filtering,
+  inverse touch mapping and device-axis acceleration mapping. In progress;
+  Apple compile, synthetic simulator interaction and device acceptance required.
+- B-213 / UX-3 (Group E): lifecycle pause/resume and stop-before-inspect controls.
+  In progress. Live snapshot/restore while paused remains queued until the runtime
+  supplies an acknowledged quiescence/flush boundary and cache invalidation.
 
 | ID | Item | Impact | Sev | Cx | Score | Group | Depends on | Parallel | State |
 |---|---|---:|---:|---:|---:|---|---|---|---|
 | B-101 | Enforce guest 4 KB permissions on loads and stores, including the 16 KB host-page case. | 5 | 5 | 3 | 8.33 | A | None, but one owner for the whole group | Not with B-102, B-201, or B-208 | Planned |
 | B-102 | Precise fault PC. Do not `siglongjmp` out of an HLE frame that has live C++ objects. | 4 | 5 | 3 | 6.67 | A | Same owner as B-101, after or inside that design | Not with B-101 | Planned |
-| B-103 | Homogeneous near-plane clip. `OpenGLES.cpp:2320` is only a zero-W guard. Lines 2449–2452 rasterize the bbox of already-projected vertices; there is no near-plane clip. | 4 | 4 | 3 | 5.33 | B | None | Not with B-104, B-105, or B-111 | Operational |
-| B-104 | Widen the GLSL ES 1.00 subset only against a checked-in shader corpus. No guessed sampler roles. | 5 | 4 | 3 | 6.67 | B | B-103. Dump with `HVM_DUMP_SHADERS` first | Not with other B | In progress |
+| B-103 | Homogeneous near-plane clip. `OpenGLES.cpp:2320` is only a zero-W guard. Lines 2449–2452 rasterize the bbox of already-projected vertices; there is no near-plane clip. | 4 | 4 | 3 | 5.33 | B | None | Not with B-104, B-105, or B-111 | Merged in PR #4 on main; homogeneous view-volume clipping is implemented. Follow-ups still share Group B |
+| B-104 | Widen the GLSL ES 1.00 subset only against a checked-in shader corpus. No guessed sampler roles. | 5 | 4 | 3 | 6.67 | B | B-103. Dump with `HVM_DUMP_SHADERS` first | Not with other B | Initial translator and bounded execution merged in PRs #8/#9. PRs #11/#12 are merged; retain corpus/unsupported-syntax coverage |
 | B-105 | Raster and composite cost: SIMD triangles, threaded slices, dirty-rect present, upload-time texture conversion. Plus CPU-side ideas in `docs/PERFORMANCE.md` that are not Group A (those are B-201). | 5 | 3 | 3 | 5.0 | B | B-103 | Not with other B | Planned |
 | B-106 | Clash Royale past 65% load: 21903 sector state, then the next message the pinned client actually sends. Do not invent sector payloads. | 5 | 4 | 3 | 6.67 | C | Pinned IPA hash `29269ede…` | Not with edits to `src/runtime/libc/Net.cpp` | Planned. Fetching the third-party URL is Needs owner |
 | B-107 | Instruction oracle for encodings Clang does not emit. Put `tools/decode_fuzz.py` on a weekly job at the documented sample size. | 3 | 3 | 2 | 4.5 | Shares A if decoders change | None for a pure oracle | Beside B and C | Planned. `--fuzz N` on the harness runs it on demand |
-| B-108 | `regcomp` / `regexec` / `regerror` / `regfree` (Art of Glow). | 3 | 3 | 2 | 4.5 | — if the patch stays in `src/runtime/libc/` | None | Beside D | Operational |
-| B-109 | `CGFontCopyTableForTag` and the `CGFontGet*` queries Tiny Tower hits. `CGFontCopyTableForTag` is not a getter. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | Operational |
-| B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Operational |
-| B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | None, but the file is `OpenGLES.cpp` | Not while B-103 is in progress | Operational |
+| B-108 | `regcomp` / `regexec` / `regerror` / `regfree` (Art of Glow). | 3 | 3 | 2 | 4.5 | — if the patch stays in `src/runtime/libc/` | None | Beside D | Merged in PR #5 on main; current gate no longer reports these imports missing |
+| B-109 | `CGFontCopyTableForTag` and the `CGFontGet*` queries Tiny Tower hits. `CGFontCopyTableForTag` is not a getter. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | Implemented; verified with TestLab TL-B |
+| B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Merged in PR #5 on main; current gate no longer reports tmpnam missing |
+| B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | None, but the file is `OpenGLES.cpp` | Not while B-103 is in progress | Implemented; verified with TestLab TL-H |
 | B-112 | Stop adding commercial IPAs to git. Hashes plus an external store. | 3 | 4 | 1 | 12.0 | — | Owner picks the store | Yes | Harness side Operational. Removing the three committed files is Needs owner |
+| B-114 | Shared PCM decoder: valid 64-bit float samples reach a 32-bit shift, NaN reaches integer conversion, and unsupported sample widths reach unchecked shifts. Add synthetic WAV/CAF regression coverage before a focused decoder fix. Owner music reports UAR-003/004 remain unresolved. | 3 | 4 | 1 | 12.0 | Audio (`Decode.cpp` only) | None | Beside B; no PlatformStubs changes | Merged in PR #16; clean cloud `031b16d`: 42 targeted checks and Linux gate pass |
+| B-115 | ZIP64 extra-field lengths must be checked against the enclosing directory record before reading replacement sizes/offsets. Synthetic malformed IPA import reads outside its metadata buffer. Rejected construction also needs exception-safe file ownership. | 3 | 4 | 1 | 12.0 | Loader (`Zip.cpp`) | None | No other loader editor; beside B/C | Implemented in PR #17: clean cloud `cb3509e`, 58 targeted checks plus Linux gate pass; owner app reports unresolved |
 
 ## P2
 
@@ -52,7 +64,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 
 ## B-105 children (discovered performance work)
 
-These are Planned. They are not separate roles. Land B-103 first.
+These are planned follow-ups, not separate roles. B-103 is merged in PR #4; active Group B ownership still applies.
 
 | ID | Item | Where the audit or the perf notes put it |
 |---|---|---|
@@ -82,6 +94,22 @@ These are Planned. They are not separate roles. Land B-103 first.
 `src/loader/**` is the app-compatibility role but it is not group C. A loader fix may run beside the Clash peer. It may not run beside a second loader fix.
 
 ## Scheduling notes
+
+### Owner-reported investigation queue (unresolved)
+
+Source of truth: [USER_APP_REPORTS.md](USER_APP_REPORTS.md). Preserve its UAR IDs and original observations; exact builds, hosts and app hashes remain unspecified. These are reports to reproduce, not verified root causes or resolved defects.
+
+| Queue | UAR IDs | Required scenario | Ownership after diagnosis |
+|---|---|---|---|
+| Startup crashes | UAR-001, UAR-009, UAR-011, UAR-012 | Loading transition / first failure, guest PC and reached API | Loader/runtime/framework group established by evidence |
+| Later crashes | UAR-006, UAR-010 | Minecraft PE world load; Talking Larry click | Runtime/framework group established by evidence |
+| Freeze | UAR-007 | Pocket Ants beyond 10 seconds, execution/frame/audio/input liveness | Establish from hang capture |
+| Black output | UAR-002, UAR-005 | Goat Sim scene transition; identify Minecraft 1.1 separately | Coordinate active Group B before graphics edits |
+| Performance | UAR-003, UAR-008 | Jetpack Joyride gameplay; Retry's reported 4–15 FPS | Profile first; coordinate measured hot path |
+| Music with working effects | UAR-003, UAR-004 | Gameplay music, decoder/queue/loop/output evidence | Audio; preserve Mega Jump's positive performance control |
+| Relaunch crash | UAR-013 | Tiny Tower launch, close, failing relaunch, next launch in the same sandbox | Shutdown/persistence/runtime, after reproduction |
+
+- B-210 (P1, impact 4, severity 4, complexity 1, score 16): reject aligned-allocation size overflow and invalid alignments before touching the heap. Owned by `codex/aligned-allocation-safety` (`Heap.cpp`, libc `Stdlib.cpp`, separate heap regression executable). Reproduced on `39904cb`: `allocAligned(0xfffffff0, 4096)` returns a block with only 4080 usable bytes. Draft PR #15: six new checks pass in Release and targeted sanitizers; four fail on original main. Full Linux gate has zero regressions (see STATUS.md/indexed JSON). This shared corruption risk is not attributed to any observed game crash. Does not change Group A mappings, locks, handlers or fault behavior.
 
 - B-001 is operational for Linux as of `6af9976`. The compat job runs the harness. Teaching `hvm_report.py` to run `fulltest` is still open and does not reopen B-001. The `07fabbb` empty-step failure (run 39633887764) stays on the record.
 - B-111 shares `OpenGLES.cpp` with B-103. If the clipper is open, point-size waits.

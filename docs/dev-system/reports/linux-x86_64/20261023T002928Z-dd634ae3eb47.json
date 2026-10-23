@@ -1,0 +1,838 @@
+{
+  "schemaVersion": 1,
+  "kind": "hvm-compat-report",
+  "generatedAt": "2026-10-23T00:29:28+00:00",
+  "git": {
+    "commit": "dd634ae3eb47f37358cddc413983cbfba7ee31d4",
+    "short": "dd634ae3eb47",
+    "branch": "HEAD",
+    "dirty": false
+  },
+  "host": {
+    "system": "Linux",
+    "release": "6.17.0-1022-azure",
+    "machine": "x86_64",
+    "python": "3.12.3",
+    "pageSize": 4096,
+    "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "notes": [
+      "Host page size is the kernel page. Guest permissions are 4 KB and are not enforced on the fast path.",
+      "A pass recorded here is not a 16 KB iOS memory-model pass."
+    ]
+  },
+  "limits": {
+    "runsOnLinuxHeadless": [
+      "cmake/ninja build of hvm, hvm_tests, hvm_decodecheck",
+      "hvm_tests selftest and fulltest",
+      "asm and differential C guests (tools/build_tests.sh, ld.lld, armv7 clang)",
+      "python tools/tests/test_verify_ipa.py and the Clash protocol/home fixture tests",
+      "hvm run of decrypted IPAs with a software framebuffer, PNG screenshot, and JSON report",
+      "mixer levels when a datagram socket is passed as --audio-fd (no sound device)"
+    ],
+    "notRunHere": [
+      "Xcode, SwiftUI app/, simulator (tools/sim_test.sh), device signing, entitlements, Metal",
+      "iOS stub-SDK guests and CoreMark, which need ld64 from tools/build_cctools.sh",
+      "Clash Royale native two-launch probe; the IPA is not in git and this harness does not download it",
+      "16 KB host-page memory model (this report records the host page size and does not claim an iPhone pass)",
+      "pygame desktop viewer (tools/desktop.py), which needs a display",
+      "Unconditional macOS Actions. Linux CI and the compat harness passed on 6af9976; the empty-step failure on 07fabbb (run 39633887764) was real. The macOS job still runs only for [mac], workflow_dispatch, or the Monday schedule"
+    ]
+  },
+  "manifest": {
+    "path": "tools/compat_harness/manifests/apps.json",
+    "schemaVersion": 1,
+    "fixtureRoot": null,
+    "legacyRepoAllowed": true
+  },
+  "suites": {
+    "unit": {
+      "status": "pass",
+      "passed": 16,
+      "failed": 0,
+      "cases": [
+        {
+          "id": "selftest",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.026,
+          "summary": "selftest passed: exit=2 result=0xA05A0848 expected=0xA05A0848, 10.0 M insns in 0.020 s (496 MIPS)"
+        },
+        {
+          "id": "fulltest",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 1.595,
+          "summary": "max, and the 16.7 ms slow threshold; the first present wins\n  ok   two-frame percentiles come from the histogram, not from max or the average\n  ok   perf JSON adds percentile and time-to-first-frame fields without changing legacy ones\nfulltest: 191 passed, 0 failed\nLoopback resolver refused host: 192.0.2.1\n[warn] GLSL shader 5: unknown variable/function missing near token 10 (';')\n[warn] GLSL program 3: attached shader not compiled\n[warn] GLSL program 7: instruction budget exceeded; draw aborted"
+        },
+        {
+          "id": "asm:arm_alu",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.005,
+          "summary": "asm build/tests/arm_alu.elf                  40 passed, 0 failed"
+        },
+        {
+          "id": "asm:arm_mem",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.004,
+          "summary": "asm build/tests/arm_mem.elf                  17 passed, 0 failed"
+        },
+        {
+          "id": "asm:thumb",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.004,
+          "summary": "asm build/tests/thumb.elf                    30 passed, 0 failed"
+        },
+        {
+          "id": "asm:vfp_neon",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.004,
+          "summary": "asm build/tests/vfp_neon.elf                 23 passed, 0 failed"
+        },
+        {
+          "id": "c:ctests_arm",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.021,
+          "summary": "c   build/tests/ctests_arm.elf               27 passed, 0 failed (2649603 guest insns, 151 blocks)"
+        },
+        {
+          "id": "c:ctests_arm_os",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.022,
+          "summary": "c   build/tests/ctests_arm_os.elf            27 passed, 0 failed (2658062 guest insns, 151 blocks)"
+        },
+        {
+          "id": "c:ctests_thumb",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.022,
+          "summary": "c   build/tests/ctests_thumb.elf             27 passed, 0 failed (2542944 guest insns, 154 blocks)"
+        },
+        {
+          "id": "c:ctests_thumb_os",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.023,
+          "summary": "c   build/tests/ctests_thumb_os.elf          27 passed, 0 failed (2438787 guest insns, 153 blocks)"
+        },
+        {
+          "id": "c:ctests_thumb_idiv",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.028,
+          "summary": "c   build/tests/ctests_thumb_idiv.elf        27 passed, 0 failed (2437815 guest insns, 147 blocks)"
+        },
+        {
+          "id": "c:ftests_vfp_arm_hard",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.014,
+          "summary": "c   build/tests/ftests_vfp_arm_hard.elf      29 passed, 0 failed (717177 guest insns, 164 blocks)"
+        },
+        {
+          "id": "c:ftests_vfp_thumb_softfp",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.011,
+          "summary": "c   build/tests/ftests_vfp_thumb_softfp.elf  29 passed, 0 failed (725161 guest insns, 161 blocks)"
+        },
+        {
+          "id": "c:ftests_neon_thumb",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.011,
+          "summary": "c   build/tests/ftests_neon_thumb.elf        29 passed, 0 failed (671485 guest insns, 173 blocks)"
+        },
+        {
+          "id": "c:ftests_neon_arm",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.011,
+          "summary": "c   build/tests/ftests_neon_arm.elf          29 passed, 0 failed (662472 guest insns, 171 blocks)"
+        },
+        {
+          "id": "c:ftests_neon_thumb_os",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.012,
+          "summary": "c   build/tests/ftests_neon_thumb_os.elf     29 passed, 0 failed (696531 guest insns, 160 blocks)"
+        }
+      ]
+    },
+    "python": {
+      "status": "pass",
+      "passed": 3,
+      "failed": 0,
+      "cases": [
+        {
+          "id": "verify_ipa",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.061,
+          "summary": "......\n----------------------------------------------------------------------\nRan 6 tests in 0.004s\n\nOK"
+        },
+        {
+          "id": "clash_protocol",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.062,
+          "summary": "......\n----------------------------------------------------------------------\nRan 6 tests in 0.001s\n\nOK"
+        },
+        {
+          "id": "clash_home_state",
+          "status": "pass",
+          "exitCode": 0,
+          "durationSec": 0.059,
+          "summary": "......\n----------------------------------------------------------------------\nRan 6 tests in 0.005s\n\nOK"
+        }
+      ]
+    },
+    "fuzz": {
+      "status": "not-run",
+      "reason": "pass --fuzz N to sample the decoder",
+      "cases": []
+    },
+    "apps": {
+      "status": "partial",
+      "hvm": "build/hvm",
+      "apps": [
+        {
+          "id": "angry-birds",
+          "name": "Angry Birds",
+          "version": "1.0",
+          "optional": false,
+          "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+          "source": "legacy-repo",
+          "displayPath": "AngryBirds_v1.0_os30.ipa",
+          "status": "ran",
+          "reason": "",
+          "launchSuccess": true,
+          "crashed": false,
+          "exitStatus": 0,
+          "stillRunning": true,
+          "loadError": "",
+          "unimplementedImports": [],
+          "missingFunctions": [],
+          "warnings": [],
+          "errors": [],
+          "crashReport": "",
+          "perf": {
+            "wallSeconds": 3.049,
+            "guestInstructions": 39029869,
+            "guestMIPS": 12.801,
+            "blocksDecoded": 4786,
+            "frames": 94,
+            "framesPresented": 94,
+            "avgFrameMs": 24.326,
+            "avgCompositeMs": 24.131,
+            "maxFrameMs": 26.334,
+            "slowFrames": 94,
+            "p50FrameMs": 24.117,
+            "p95FrameMs": 24.642,
+            "p99FrameMs": 26.214,
+            "timeToFirstFrameMs": 117.433
+          },
+          "frame": {
+            "signal": "mostly-one-color",
+            "width": 640,
+            "height": 960,
+            "sampled": 9600,
+            "blackFraction": 0.0077,
+            "whiteFraction": 0.9348,
+            "otherFraction": 0.0575,
+            "uniqueQuantizedColors": 41,
+            "dominantShare": 0.9349,
+            "framesPresented": 94
+          },
+          "audio": {
+            "measured": true,
+            "signal": "silent",
+            "setupError": "",
+            "enabled": true,
+            "frames": 133120,
+            "nonSilentFrames": 0,
+            "peak": 0,
+            "droppedBlocks": 0,
+            "transportError": 0
+          },
+          "logExcerpt": "Created Throwable( \"Failed to open ... ydrogenVM/HydrogenVM/build/compat-report/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/bundleIndex.idx\" )\nCan't find bundle, using files directly...\nCreated Throwable( \"Failed to open ... nner/work/HydrogenVM/HydrogenVM/build/compat-report/work/angry-birds/home/com.clickgamer.AngryBirds/Documents/highscores.lua\" )\n\nUnable to load highscores!\n\nCreated Throwable( \"Failed to open ... runner/work/HydrogenVM/HydrogenVM/build/compat-report/work/angry-birds/home/com.clickgamer.AngryBirds/Documents/settings.lua\" )\nLoading image build/compat-report/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/SPLASHES.png: 481x831 B8G8R8 (as 512x1024 B8G8R8)\n",
+          "clusters": [
+            {
+              "kind": "render",
+              "key": "mostly-one-color",
+              "area": "framebuffer",
+              "likelyOwner": "graphics-audio-input",
+              "group": "B",
+              "severity": "signal",
+              "detail": "dominantShare=0.9349",
+              "apps": [
+                "angry-birds"
+              ]
+            }
+          ],
+          "durationSec": 3.15,
+          "command": [
+            "hvm",
+            "run",
+            "AngryBirds_v1.0_os30.ipa",
+            "--home",
+            "<work>/home",
+            "--run-for",
+            "3",
+            "--report",
+            "<work>/hvm-report.json",
+            "--screenshot",
+            "<work>/frame.png",
+            "--quiet",
+            "--audio-fd",
+            "<datagram>"
+          ]
+        },
+        {
+          "id": "tiny-tower",
+          "name": "Tiny Tower",
+          "version": "1.0",
+          "optional": false,
+          "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+          "source": "legacy-repo",
+          "displayPath": "Tiny_Tower_v1.0_os30.ipa",
+          "status": "ran",
+          "reason": "",
+          "launchSuccess": true,
+          "crashed": false,
+          "exitStatus": 0,
+          "stillRunning": true,
+          "loadError": "",
+          "unimplementedImports": [
+            "CGFontCopyTableForTag",
+            "CGFontGetAscent",
+            "CGFontGetCapHeight",
+            "CGFontGetDescent",
+            "CGFontGetGlyphAdvances",
+            "CGFontGetUnitsPerEm",
+            "CGFontGetXHeight",
+            "glPointSizePointerOES"
+          ],
+          "missingFunctions": [],
+          "warnings": [],
+          "errors": [],
+          "crashReport": "",
+          "perf": {
+            "wallSeconds": 3.08,
+            "guestInstructions": 2863174,
+            "guestMIPS": 0.93,
+            "blocksDecoded": 2874,
+            "frames": 140,
+            "framesPresented": 71,
+            "avgFrameMs": 18.152,
+            "avgCompositeMs": 24.19,
+            "maxFrameMs": 36.54,
+            "slowFrames": 71,
+            "p50FrameMs": 24.379,
+            "p95FrameMs": 36.176,
+            "p99FrameMs": 36.176,
+            "timeToFirstFrameMs": 248.362
+          },
+          "frame": {
+            "signal": "varied",
+            "width": 640,
+            "height": 960,
+            "sampled": 9600,
+            "blackFraction": 0.0128,
+            "whiteFraction": 0.0065,
+            "otherFraction": 0.9807,
+            "uniqueQuantizedColors": 449,
+            "dominantShare": 0.2029,
+            "framesPresented": 71
+          },
+          "audio": {
+            "measured": true,
+            "signal": "active",
+            "setupError": "",
+            "enabled": true,
+            "frames": 133120,
+            "nonSilentFrames": 122672,
+            "peak": 0.187828,
+            "droppedBlocks": 0,
+            "transportError": 0
+          },
+          "logExcerpt": "(localytics) Object Initialized.  Application's key is: <redacted>\n(localytics) File Path is: build/compat-report/work/tiny-tower/home/com.eeenmachine.tinytowers/Documents/localytics/\n(localytics) Succesfully opened session. UUID is: <uuid>\n(localytics) Session file is: s_<uuid>.yml\n(localytics) Close session file is: c_<uuid>.yml\n(localytics uploader) Beginning upload process\n(localytics uploader) Spawning new thread for upload\n(localytics uploader) Error Uploading.  Code: -1009,  Description: ?#\napplicationDidFinishLaunching\nglViewWidth: 320.000000\nCreated dialog layer...\nglViewWidth: 320.000000\nLOADED GAME FROM KEYCHAIN:\n(null)\nglViewWidth: 320.000000\nLoading 0 storyInfos in TowerLayer...\n_botY: 86.000000\nCreating floorGfx with id: 65535\nnum floors: 1\n_viewHeight: 112.000000\nglViewWidth: 320.000000\nLoading 0 bitInfo in TowerLayer...\nidealCountPerType: 1.000000\nBusiness count for type FOOD: 0\nBusiness count for type SERVICE: 0\nBusiness count for type RECREATION: 0\nBusiness count for type RETAIL: 0\nBusiness count for type CREATIVE: 0\napplicationDidBecomeActive\nUSER MUSIC PLAYING: NO\nmusic path:build/compat-report/work/tiny-tower/home/com.eeenmachine.tinytowers/Tiny Tower.app/song2.mp3\ncreated mplayer\nFinch Foreground\nUSER MUSIC PLAYING: NO\nmplayer.play\n",
+          "clusters": [
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontCopyTableForTag",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontCopyTableForTag",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetAscent",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetAscent",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetCapHeight",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetCapHeight",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetDescent",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetDescent",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetGlyphAdvances",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetGlyphAdvances",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetUnitsPerEm",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetUnitsPerEm",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "missing_symbol",
+              "key": "CGFontGetXHeight",
+              "area": "text",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "failure",
+              "detail": "CGFontGetXHeight",
+              "apps": [
+                "tiny-tower"
+              ]
+            },
+            {
+              "kind": "gl_feature",
+              "key": "glPointSizePointerOES",
+              "area": "gl",
+              "likelyOwner": "graphics-audio-input",
+              "group": "B",
+              "severity": "failure",
+              "detail": "glPointSizePointerOES",
+              "apps": [
+                "tiny-tower"
+              ]
+            }
+          ],
+          "durationSec": 3.151,
+          "command": [
+            "hvm",
+            "run",
+            "Tiny_Tower_v1.0_os30.ipa",
+            "--home",
+            "<work>/home",
+            "--run-for",
+            "3",
+            "--report",
+            "<work>/hvm-report.json",
+            "--screenshot",
+            "<work>/frame.png",
+            "--quiet",
+            "--audio-fd",
+            "<datagram>"
+          ]
+        },
+        {
+          "id": "art-of-glow",
+          "name": "Art of Glow",
+          "version": "1.1.2",
+          "optional": false,
+          "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+          "source": "legacy-repo",
+          "displayPath": "Art_Of_Glow_v1.1.2_os313.ipa",
+          "status": "ran",
+          "reason": "",
+          "launchSuccess": true,
+          "crashed": false,
+          "exitStatus": 0,
+          "stillRunning": true,
+          "loadError": "",
+          "unimplementedImports": [],
+          "missingFunctions": [
+            "SCNetworkReachability (network reported offline)"
+          ],
+          "warnings": [
+            {
+              "message": "Missing data symbol kCFNumberNaN (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+              "count": 1
+            },
+            {
+              "message": "Missing: SCNetworkReachability (network reported offline)",
+              "count": 1
+            },
+            {
+              "message": "The app finished launching without a key window (did it call makeKeyAndVisible?)",
+              "count": 1
+            }
+          ],
+          "errors": [],
+          "crashReport": "",
+          "perf": {
+            "wallSeconds": 3.133,
+            "guestInstructions": 13795754,
+            "guestMIPS": 4.403,
+            "blocksDecoded": 2493,
+            "frames": 48,
+            "framesPresented": 48,
+            "avgFrameMs": 60.03,
+            "avgCompositeMs": 12.866,
+            "maxFrameMs": 62.263,
+            "slowFrames": 48,
+            "p50FrameMs": 59.769,
+            "p95FrameMs": 61.342,
+            "p99FrameMs": 61.866,
+            "timeToFirstFrameMs": 248.882
+          },
+          "frame": {
+            "signal": "varied",
+            "width": 640,
+            "height": 960,
+            "sampled": 9600,
+            "blackFraction": 0.1041,
+            "whiteFraction": 0.0792,
+            "otherFraction": 0.8168,
+            "uniqueQuantizedColors": 333,
+            "dominantShare": 0.2235,
+            "framesPresented": 48
+          },
+          "audio": {
+            "measured": true,
+            "signal": "silent",
+            "setupError": "",
+            "enabled": true,
+            "frames": 135168,
+            "nonSilentFrames": 0,
+            "peak": 0,
+            "droppedBlocks": 0,
+            "transportError": 0
+          },
+          "logExcerpt": "iPhoneLoadTexture('particles_tiled_hd.png')\niPhoneLoadTexture('plain_white_8x8.png')\niPhoneLoadTexture('smr_icon_cfg.png')\niPhoneLoadTexture('slider_hd.png')\niPhoneLoadTexture('gp_icon_cycle@2x.png')\niPhoneLoadTexture('gp_icon_random_each@2x.png')\niPhoneLoadTexture('gp_icon_fully_random@2x.png')\niPhoneLoadTexture('gp_icon_record.png')\niPhoneLoadTexture('gp_icon_play.png')\niPhoneLoadTexture('gp_ask_to_buy_2x.png')\niPhoneLoadTexture('RadioStarsSize27Font.png')\n",
+          "clusters": [
+            {
+              "kind": "unavailable",
+              "key": "SCNetworkReachability",
+              "area": "system-configuration",
+              "likelyOwner": "graphics-audio-input",
+              "group": "",
+              "severity": "signal",
+              "detail": "network reported offline",
+              "apps": [
+                "art-of-glow"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "kCFNumberNaN",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol kCFNumberNaN (using zeros)",
+              "apps": [
+                "art-of-glow"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "kCFNumberNegativeInfinity",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+              "apps": [
+                "art-of-glow"
+              ]
+            },
+            {
+              "kind": "missing_data",
+              "key": "kCFNumberPositiveInfinity",
+              "area": "framework",
+              "likelyOwner": "guest-frameworks",
+              "group": "D",
+              "severity": "signal",
+              "detail": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+              "apps": [
+                "art-of-glow"
+              ]
+            }
+          ],
+          "durationSec": 3.175,
+          "command": [
+            "hvm",
+            "run",
+            "Art_Of_Glow_v1.1.2_os313.ipa",
+            "--home",
+            "<work>/home",
+            "--run-for",
+            "3",
+            "--report",
+            "<work>/hvm-report.json",
+            "--screenshot",
+            "<work>/frame.png",
+            "--quiet",
+            "--audio-fd",
+            "<datagram>"
+          ]
+        },
+        {
+          "id": "clash-royale-2-1306-1",
+          "name": "Clash Royale",
+          "version": "2.1306.1",
+          "optional": true,
+          "sha256": "29269ede437f39ffa62fb4234a1c323303ef417e7eb6ddc5c86f9be76e08fb3f",
+          "source": null,
+          "displayPath": null,
+          "status": "skipped",
+          "reason": "fixture not present; set HVM_FIXTURE_ROOT or --fixture-root",
+          "launchSuccess": false,
+          "crashed": false,
+          "exitStatus": null,
+          "stillRunning": false,
+          "loadError": "",
+          "unimplementedImports": [],
+          "missingFunctions": [],
+          "warnings": [],
+          "errors": [],
+          "crashReport": "",
+          "perf": {},
+          "frame": {
+            "signal": "not-run"
+          },
+          "audio": {
+            "measured": false,
+            "signal": "not-measured"
+          },
+          "logExcerpt": "",
+          "clusters": [],
+          "durationSec": 0,
+          "command": []
+        }
+      ]
+    }
+  },
+  "clusters": [
+    {
+      "kind": "gl_feature",
+      "key": "glPointSizePointerOES",
+      "area": "gl",
+      "likelyOwner": "graphics-audio-input",
+      "group": "B",
+      "severity": "failure",
+      "detail": "glPointSizePointerOES",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "kCFNumberNaN",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol kCFNumberNaN (using zeros)",
+      "apps": [
+        "art-of-glow"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "kCFNumberNegativeInfinity",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+      "apps": [
+        "art-of-glow"
+      ]
+    },
+    {
+      "kind": "missing_data",
+      "key": "kCFNumberPositiveInfinity",
+      "area": "framework",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "signal",
+      "detail": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+      "apps": [
+        "art-of-glow"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontCopyTableForTag",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontCopyTableForTag",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetAscent",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetAscent",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetCapHeight",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetCapHeight",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetDescent",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetDescent",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetGlyphAdvances",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetGlyphAdvances",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetUnitsPerEm",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetUnitsPerEm",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "missing_symbol",
+      "key": "CGFontGetXHeight",
+      "area": "text",
+      "likelyOwner": "guest-frameworks",
+      "group": "D",
+      "severity": "failure",
+      "detail": "CGFontGetXHeight",
+      "apps": [
+        "tiny-tower"
+      ]
+    },
+    {
+      "kind": "render",
+      "key": "mostly-one-color",
+      "area": "framebuffer",
+      "likelyOwner": "graphics-audio-input",
+      "group": "B",
+      "severity": "signal",
+      "detail": "dominantShare=0.9349",
+      "apps": [
+        "angry-birds"
+      ]
+    },
+    {
+      "kind": "unavailable",
+      "key": "SCNetworkReachability",
+      "area": "system-configuration",
+      "likelyOwner": "graphics-audio-input",
+      "group": "",
+      "severity": "signal",
+      "detail": "network reported offline",
+      "apps": [
+        "art-of-glow"
+      ]
+    }
+  ],
+  "summary": {
+    "ok": true,
+    "unitFailed": 0,
+    "pythonFailed": 0,
+    "fuzzStatus": "not-run",
+    "appsResolved": 3,
+    "appsSkipped": 1,
+    "appsCrashed": 0,
+    "appsLaunchFailed": 0,
+    "resolveErrors": 0,
+    "clusterCount": 13
+  }
+}

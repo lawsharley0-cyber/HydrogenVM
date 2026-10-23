@@ -72,8 +72,31 @@ def main(argv: list[str] | None = None) -> int:
     p_validate = sub.add_parser("validate", help="check a report against the harness schema")
     p_validate.add_argument("report")
 
+    p_doctor = sub.add_parser("doctor", help="read-only documentation commit and evidence consistency check")
+    p_doctor.add_argument("--repo", default=None)
+    p_doctor.add_argument("--report", help="optional clean compatibility report with explicit backlog IDs in case IDs")
+
     args = parser.parse_args(argv)
     try:
+        if args.cmd == "doctor":
+            from pathlib import Path
+            from .doctor import inspect
+            report = _load(args.report) if args.report else None
+            if report is not None:
+                errors = validate_report(report)
+                if errors:
+                    for error in errors:
+                        print(error, file=sys.stderr)
+                    return 2
+            findings = inspect(Path(args.repo or repo_root()), report)
+            for finding in findings:
+                location = finding.get("file", "report")
+                if "line" in finding:
+                    location += ":" + str(finding["line"])
+                print(f"{location}: {finding['kind']}: {finding['detail']}")
+            if not findings:
+                print("Documentation checks passed. No task status was changed.")
+            return 1 if findings else 0
         if args.cmd == "diff":
             return _cmd_diff(args)
         if args.cmd == "record":

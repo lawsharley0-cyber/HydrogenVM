@@ -44,6 +44,10 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
           ninja -C build hvm hvm_tests hvm_decodecheck
           tools/build_tests.sh build/tests
+      - name: Heap allocation regressions
+        run: |
+          cmake --build build --target hvm_heap_tests
+          build/hvm_heap_tests
       - name: Run compatibility harness
         env:
           HVM_ALLOW_LEGACY_IPAS: "1"

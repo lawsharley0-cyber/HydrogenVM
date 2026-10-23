@@ -43,6 +43,14 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);
 /// Emulated screen in points (known once the app has started; 320x480 or 320x568).
 @property (nonatomic, readonly) CGSize screenSize;
+/// Guest UIInterfaceOrientation (1...4), captured with the delivered frame.
+@property (nonatomic, readonly) NSInteger interfaceOrientation;
+/// Lifecycle background acknowledgement; not a filesystem replacement barrier.
+@property (nonatomic, readonly, getter=isBackgrounded) BOOL backgrounded;
+/// Guest frame-hook work, lifetime p95 in milliseconds; zero before samples.
+@property (nonatomic, readonly) double frameTimeP95Milliseconds;
+/// Host output gain, 0...1. Does not change guest audio source gains.
+@property (nonatomic) float outputVolume;
 @property (nonatomic, readonly, getter=isRunning) BOOL running;
 /// When YES, missing functions log and return 0 instead of stopping the app.
 @property (nonatomic) BOOL keepGoing;

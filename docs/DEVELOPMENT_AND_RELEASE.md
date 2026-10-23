@@ -41,14 +41,22 @@ Always identify the tested code/client when reporting a bug.
 4. Run runtime checks and the affected app probe. For shared changes, run the
    older-game regression set and any additional affected apps. Add focused
    checks for material correctness, rather than tests that mirror a patch.
-5. Review and commit the tested change on `gemini-merge`.
+5. Commit the tested change on a topic branch and open a draft PR against `main`. Independent review precedes owner integration.
 6. Use an Apple build for changes to SwiftUI, iOS integration, signing and device
    behavior. Windows tests cannot compile/verify those parts or establish iPhone
    performance, memory limits, Metal/UIKit behavior or device audio.
 
-Current baseline: 57 local runtime checks, four app regression probes, a generic
-Angry Birds desktop smoke test, and six package-validator unit tests. The latter
-use synthetic archive metadata, not installable application fixtures.
+For current measured counts and exact commits, use `dev-system/STATUS.md` and
+the indexed compatibility reports. Historical test counts are not release gates.
+Run the compatibility harness against its committed baseline; optional fixture
+absence is a skip. Package-validator tests use synthetic archive metadata.
+
+The SwiftUI shell is `app/HydrogenVM/HydrogenVMApp.swift`, `LibraryView.swift`,
+`RunView.swift`, `DiagnosticsView.swift`, and `FileBrowser.swift`, with the bridge
+in `app/HydrogenVM/Bridge/HVMEngine.h` and `HVMEngine.mm`. File-editor work uses
+`.github/workflows/file-editor.yml` for Swift persistence tests and an unsigned
+simulator compile. `dev-system/FILE_EDITOR_HANDOFF.md` lists the on-device editing
+and close/reopen scenarios that compilation does not cover.
 
 ## Building and packaging HydrogenVM.ipa
 

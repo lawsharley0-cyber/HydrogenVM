@@ -386,7 +386,7 @@ struct UniformValue {
 };
 
 struct ProgramObject {
-    struct Binding { int slot, location, width; bool sampler; };
+    struct Binding { int slot, location, width; bool sampler; bool memory = false; };
     struct Varying { int vertexSlot, fragmentSlot, width, offset; };
     uint32_t id = 0;
     std::vector<uint32_t> shaders;
@@ -1940,7 +1940,7 @@ void gl_compileShader(Ctx& x, uint32_t shader) {
     if (auto* sg = currentSg(x, currentCtx(x)); sg && sg->shaders.count(shader)) {
         auto& sh = sg->shaders[shader];
         sh.compiled = sh.executable.compile(sh.source, sh.type == GL_VERTEX_SHADER);
-        sh.infoLog = sh.executable.error;
+        sh.infoLog = sh.compiled && !sh.executable.warnings.empty() ? sh.executable.warnings : sh.executable.error;
         if (!sh.compiled) x.proc.logf(LogLevel::Warning, "GLSL shader %u: %s", shader, sh.infoLog.c_str());
     }
 }
@@ -2098,7 +2098,7 @@ void gl_linkProgram(Ctx& x, uint32_t prog) {
                     loc = it->location;
                 }
                 for (int e = 0; e < leaf.count; ++e)
-                    bindings.push_back({leaf.slot + e * leaf.type.width, loc + e, leaf.type.width, leaf.type.sampler});
+                    bindings.push_back({leaf.slot + e * leaf.type.width, loc + e, leaf.type.width, leaf.type.sampler, v.memory});
             }
         }
     }
@@ -2387,16 +2387,24 @@ Vec4 fetchAttribute(Ctx& x, SharegroupData& sg, const ArrayPointer& ap, int vert
     return out;
 }
 
-void loadShaderUniforms(const ProgramObject& p, const std::vector<ProgramObject::Binding>& bindings, Shader::Values& values) {
+void loadShaderUniforms(const ProgramObject& p, const Shader::Program& stage, const std::vector<ProgramObject::Binding>& bindings, Shader::Values& values) {
     for (auto& b : bindings) {
         auto it = p.uniformValues.find(b.location);
         if (it == p.uniformValues.end()) continue;
+        float* dst = nullptr;
+        if (b.memory) {
+            if (b.slot < 0 || size_t(b.slot) + size_t(std::max(b.width, 0)) > stage.uniformMem.size()) continue;
+            dst = &stage.uniformMem[size_t(b.slot)];
+        } else {
+            if (b.slot < 0 || b.slot + b.width > Shader::MaxSlots) continue;
+            dst = &values[size_t(b.slot)];
+        }
         const uint32_t ty = it->second.type;
         const bool integer = ty == GL_INT || ty == GL_INT_VEC2 || ty == GL_INT_VEC3 || ty == GL_INT_VEC4 ||
                              ty == GL_BOOL || ty == GL_BOOL_VEC2 || ty == GL_BOOL_VEC3 || ty == GL_BOOL_VEC4;
         if (b.sampler || integer) {
-            for (int n = 0; n < b.width && n < 4; ++n) values[b.slot + n] = float(it->second.i[n]);
-        } else std::copy_n(it->second.f, b.width, &values[b.slot]);
+            for (int n = 0; n < b.width && n < 4; ++n) dst[n] = float(it->second.i[n]);
+        } else std::copy_n(it->second.f, b.width, dst);
     }
 }
 void sampleShaderTexture(void* opaque, int unit, float u, float v, float* rgba) {
@@ -2462,7 +2470,7 @@ bool setupFragment(ContextData& c, const ProgramObject& p, Shader::Values& value
                    const ShadedVertex& a, const ShadedVertex& b, const ShadedVertex& d,
                    float w0, float w1, float w2, int px, int py, float z, bool front, float pointS, float pointT) {
     p.fragment.initialize(values);
-    loadShaderUniforms(p, p.fragmentUniforms, values);
+    loadShaderUniforms(p, p.fragment, p.fragmentUniforms, values);
     float denominator = w0 * a.invW + w1 * b.invW + w2 * d.invW;
     if (std::abs(denominator) < 1e-12f) return false;
     w0 = w0 * a.invW / denominator; w1 = w1 * b.invW / denominator; w2 = w2 * d.invW / denominator;
@@ -2516,7 +2524,7 @@ ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx, Dr
         const ProgramObject& p = sg.programs.at(c.currentProgram);
         Shader::Values values;
         p.vertex.initialize(values);
-        loadShaderUniforms(p, p.vertexUniforms, values);
+        loadShaderUniforms(p, p.vertex, p.vertexUniforms, values);
         for (auto& binding : p.vertexInputs) {
             const auto attr = fetchAttribute(x, sg, c.attribPtr[binding.location], idx, c.genericAttrib[binding.location]);
             for (int i = 0; i < binding.width; ++i) values[binding.slot + i] = attr[i];
