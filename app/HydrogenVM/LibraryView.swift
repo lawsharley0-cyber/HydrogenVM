@@ -231,24 +231,46 @@ private struct LibraryAppRow: View {
 
 struct AppRow: View {
     let app: InstalledApp
+
+    private var statusBadge: (text: String, color: Color, icon: String) {
+        if app.info.runnable {
+            return ("Ready · ARMv7", .green, "checkmark.circle.fill")
+        } else if app.info.encrypted {
+            return ("Encrypted · FairPlay Unsupported", .orange, "lock.fill")
+        } else if app.info.problem.localizedCaseInsensitiveContains("64") {
+            return ("64-Bit Only · Unsupported", .red, "xmark.octagon.fill")
+        } else {
+            let desc = app.info.problem.isEmpty ? "Unsupported" : app.info.problem
+            return (desc, .orange, "exclamationmark.triangle.fill")
+        }
+    }
+
     var body: some View {
         HStack(spacing: 14) {
             AppIcon(path: app.info.iconPath)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(app.title).font(.headline)
                 Text([app.info.version.isEmpty ? nil : "v\(app.info.version)",
                       app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+",
                       app.info.bundleIdentifier].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                if !app.info.runnable {
-                    Label(app.info.problem.isEmpty ? "Can't run" : app.info.problem, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.orange).lineLimit(2)
+
+                let badge = statusBadge
+                HStack(spacing: 4) {
+                    Image(systemName: badge.icon)
+                        .font(.caption2)
+                    Text(badge.text)
+                        .font(.caption2.weight(.semibold))
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(badge.color.opacity(0.15), in: Capsule())
+                .foregroundStyle(badge.color)
             }
             Spacer()
             if app.info.runnable { Image(systemName: "play.circle.fill").font(.title2).foregroundStyle(.tint) }
         }
         .contentShape(.rect)
-        .opacity(app.info.runnable ? 1 : 0.7)
+        .opacity(app.info.runnable ? 1 : 0.85)
     }
 }

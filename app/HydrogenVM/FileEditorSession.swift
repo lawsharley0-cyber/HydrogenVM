@@ -50,14 +50,29 @@ struct FileEditorControls: ViewModifier {
     @State private var showingClose = false
     @State private var showingRevert = false
     @State private var showingBackups = false
+    @State private var showSavedBanner = false
 
     private func commit() -> Bool { document.saveChanges() }
 
     func body(content: Content) -> some View {
         VStack(spacing: 0) {
             content
-                if document.ready || document.dirty {
+            if document.ready || document.dirty {
                 VStack(spacing: 8) {
+                    if showSavedBanner {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("Saved ✓")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.green)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 12)
+                        .background(Color.green.opacity(0.15), in: Capsule())
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+
                     HStack {
                         Toggle("Auto-save edits", isOn: $autoSave)
                         Button("Backups") { showingBackups = true }
@@ -82,8 +97,17 @@ struct FileEditorControls: ViewModifier {
                 }
                 .padding(12)
                 .background(.bar)
-                }
+            }
         }
+            .onChange(of: document.saved) { _, isSaved in
+                if isSaved {
+                    withAnimation(.spring(duration: 0.3)) { showSavedBanner = true }
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        withAnimation { showSavedBanner = false }
+                    }
+                }
+            }
             .onAppear {
                 document.requestClose = {
                     if document.dirty { showingClose = true } else { dismiss() }

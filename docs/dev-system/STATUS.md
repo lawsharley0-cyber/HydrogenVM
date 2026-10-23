@@ -32,7 +32,7 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 | App compatibility, including Clash | `src/loader/`, `tools/clash_*.py`, `Net.cpp` while Group C is active | PR #13 (Clash), #17 (ZIP) | Active scoped PRs; other loader work unclaimed |
 | Test / regression | `tools/compat_harness/`, harness workflow | — | Needs owner for who watches the gate |
 | Review / integration / docs | `docs/dev-system/` | — | Needs owner for required reviews |
-| Apple shell | `app/**`, `HVMEngine.h` | codex/file-save-overhaul, draft #18 | Active save-editor validation; signed-device scenarios pending |
+| Apple shell | `app/**`, `HVMEngine.h` | codex/file-save-overhaul, draft #18 | Active save-editor & HUD/Library UI upgrade completed |
 
 ## Current compat results
 
