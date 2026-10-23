@@ -15,6 +15,8 @@ targets:
       - EditorHarness.swift
       - PlayerHarness.swift
       - ../../../app/HydrogenVM/RunView.swift
+      - ../../../app/HydrogenVM/CrashReport.swift
+      - ../../../app/HydrogenVM/ConsoleReport.swift
       - ../../../app/HydrogenVM/PlayerGeometry.swift
       - ../../../app/HydrogenVM/PlayerActivity.swift
       - ../../../app/HydrogenVM/PlayerOrientation.swift
