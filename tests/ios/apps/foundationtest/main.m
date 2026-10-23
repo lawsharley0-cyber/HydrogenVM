@@ -302,7 +302,8 @@ static void testConcurrency(void) {
     CFRunLoopTimerContext ctx = {0, &cfFires, NULL, NULL, NULL};
     CFRunLoopTimerRef cft = CFRunLoopTimerCreate(NULL, CFAbsoluteTimeGetCurrent() + 0.01, 0, 0, 0, timerCallback, &ctx);
     CFRunLoopAddTimer(CFRunLoopGetCurrent(), cft, kCFRunLoopDefaultMode);
-    runLoopFor(0.25);
+    for (int i = 0; i < 50 && (p.timerFires < 3 || cfFires == 0 || p.delayed == 0); i++) runLoopFor(0.02);
+    runLoopFor(0.05);
     CHECK(p.timerFires == 3, "NSTimer repeats then invalidates");
     CHECK(p.delayed == 1, "performSelector:afterDelay: + cancel");
     CHECK(cfFires == 1, "CFRunLoopTimer");
