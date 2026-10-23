@@ -493,9 +493,9 @@ int runFullSubsystemTests() {
                   false,
                   [](Shader::Program& p, Shader::Values& v) {
                       if (auto* lights = p.find("lights")) {
-                          v[lights->slot + 3] = 2;          // lights[0].intensity
-                          v[lights->slot + 5] = 0.25f;      // lights[1].color.r
-                          v[lights->slot + 9] = 0.125f;     // lights[1].extra.z
+                          p.uniformMem[size_t(lights->slot + 3)] = 2;          // lights[0].intensity
+                          p.uniformMem[size_t(lights->slot + 5)] = 0.25f;      // lights[1].color.r
+                          p.uniformMem[size_t(lights->slot + 9)] = 0.125f;     // lights[1].extra.z
                       }
                       if (auto* anon = p.find("anon")) v[anon->slot] = 0.25f;
                   }, o) && near4(o, 0.5f, 0, 0, 0.375f),
@@ -508,9 +508,12 @@ int runFullSubsystemTests() {
                   "void main() { gl_FragColor = pal[0] + pal[1] + vec4(vf[1], 0.0, 0.0, 0.0) + (bones[1] * vec4(1.0, 0.0, 0.0, 0.0)); }",
                   false,
                   [](Shader::Program& p, Shader::Values& v) {
-                      if (auto* pal = p.find("pal")) { v[pal->slot] = 0.25f; v[pal->slot + 5] = 0.5f; }
+                      if (auto* pal = p.find("pal")) {
+                          p.uniformMem[size_t(pal->slot)] = 0.25f;
+                          p.uniformMem[size_t(pal->slot + 5)] = 0.5f;
+                      }
                       if (auto* vf = p.find("vf")) v[vf->slot + 1] = 0.125f;
-                      if (auto* bones = p.find("bones")) v[bones->slot + 16 + 2] = 0.125f; // column 0, row 2 of element 1
+                      if (auto* bones = p.find("bones")) p.uniformMem[size_t(bones->slot + 16 + 2)] = 0.125f; // column 0, row 2 of element 1
                   }, o) && near4(o, 0.375f, 0.5f, 0.125f, 0),
               "GLSL uniform arrays, varying arrays and matrix array elements");
         {
@@ -520,7 +523,7 @@ int runFullSubsystemTests() {
             Shader::Values values;
             if (compiled) {
                 program.initialize(values);
-                if (auto* tex = program.find("tex")) values[tex->slot + 1] = 4;
+                if (auto* tex = program.find("tex")) program.uniformMem[size_t(tex->slot + 1)] = 4;
                 program.execute(values, [](void* context, int unit, float u, float v, float* out) {
                     *static_cast<bool*>(context) = unit == 4 && u == 0.5f && v == 0.25f;
                     out[0] = 0.25f; out[1] = 0.5f; out[2] = 0.75f; out[3] = 1;
@@ -685,7 +688,7 @@ int runFullSubsystemTests() {
                   "gl_FragColor = vec4(a[3] + i[3], b[3], c[4] + e[3], d[3] + g[3]); }\n",
                   false,
                   [](Shader::Program& p, Shader::Values& v) {
-                      if (auto* u = p.find("u")) v[u->slot + 44 * 4] = 0.5f;
+                      if (auto* u = p.find("u")) p.uniformMem[size_t(u->slot + 44 * 4)] = 0.5f;
                   },
                   o) && near4(o, 0.5f, 0.5f, 0.625f, 1.0f) &&
                   shows("float a[abs(-4.0)];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
@@ -750,6 +753,142 @@ int runFullSubsystemTests() {
                 ran = near4(o, 0, 0, 0, 0);
             }
             check(ok && ran && saw, "GLSL #extension : warn warns and still enables a supported extension");
+        }
+        {
+            // Baseline instruction counts. Shaders that fit must keep this stream:
+            // uniform arrays change where the data lives, not how many ops a constant
+            // index compiles to, and a shader with no uniform array stays on the
+            // direct register path.
+            Shader::Program simple, pal;
+            const bool simpleOk = simple.compile("void main() { gl_FragColor = vec4(0.25); }", false);
+            const bool palOk = pal.compile("uniform vec4 pal[2];\nvoid main() { gl_FragColor = pal[0] + pal[1]; }", false);
+            if (!simpleOk || !palOk)
+                std::printf("    baseline compile failed: %s | %s\n", simple.error.c_str(), pal.error.c_str());
+            check(simpleOk && palOk && simple.code.size() == 21 && pal.code.size() == 22 && simple.uniformMem.empty() &&
+                      simple.spillCount == 0,
+                  "GLSL shaders that fit keep their instruction count");
+        }
+        {
+            const char* skin =
+                "uniform mat4 bones[45];\n"
+                "uniform vec4 idx;\n"
+                "uniform vec4 wgt;\n"
+                "void main() {\n"
+                "  vec4 p = vec4(0.0);\n"
+                "  p = p + (bones[int(idx.x)] * vec4(1.0, 0.0, 0.0, 1.0)) * wgt.x;\n"
+                "  p = p + (bones[int(idx.y)] * vec4(1.0, 0.0, 0.0, 1.0)) * wgt.y;\n"
+                "  gl_FragColor = p;\n"
+                "}\n";
+            Shader::Program program;
+            const bool compiled = program.compile(skin, false);
+            if (!compiled) std::printf("    skinning compile failed: %s\n", program.error.c_str());
+            auto* bones = compiled ? program.find("bones") : nullptr;
+            auto* idx = compiled ? program.find("idx") : nullptr;
+            auto* wgt = compiled ? program.find("wgt") : nullptr;
+            bool ran = false;
+            if (compiled && bones && bones->memory && idx && wgt && int(program.uniformMem.size()) >= bones->slot + 45 * 16) {
+                auto putMat = [&](int element, int col, int row, float value) {
+                    program.uniformMem[size_t(bones->slot + element * 16 + col * 4 + row)] = value;
+                };
+                // bones[3] column0 = (0.5, 0, 0, 0), column3 = (0, 0, 0, 1) so M * (1,0,0,1) = (0.5, 0, 0, 1)
+                putMat(3, 0, 0, 0.5f); putMat(3, 1, 1, 1.f); putMat(3, 2, 2, 1.f); putMat(3, 3, 3, 1.f);
+                // bones[10] column0 = (0, 0.25, 0, 0), column3 = (0, 0, 0, 1) so M * (1,0,0,1) = (0, 0.25, 0, 1)
+                putMat(10, 0, 1, 0.25f); putMat(10, 1, 1, 1.f); putMat(10, 2, 2, 1.f); putMat(10, 3, 3, 1.f);
+                Shader::Values values;
+                program.initialize(values);
+                values[idx->slot] = 3.f; values[idx->slot + 1] = 10.f;
+                values[wgt->slot] = 0.5f; values[wgt->slot + 1] = 0.5f;
+                ran = program.execute(values);
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            // Four select-chains over mat4[45] are thousands of instructions; a load per
+            // component stays well under that.
+            const bool compact = compiled && program.code.size() < 800;
+            if (compiled && !compact) std::printf("    skinning emitted %zu instructions\n", program.code.size());
+            if (ran && !near4(o, 0.25f, 0.125f, 0.f, 1.f))
+                std::printf("    skinning color %g %g %g %g\n", o[0], o[1], o[2], o[3]);
+            check(compiled && bones && bones->memory && bones->count == 45 && compact && ran && near4(o, 0.25f, 0.125f, 0.f, 1.f),
+                  "GLSL skinning indexes a 45-element mat4 uniform array without blowing the register file");
+        }
+        {
+            std::string src = "void main() { float x = 0.0;\n";
+            for (int n = 0; n < 1500; ++n) src += "x = x + 1.0;\n";
+            src += "gl_FragColor = vec4(x); }";
+            Shader::Program program;
+            const bool compiled = program.compile(src, false);
+            if (!compiled) std::printf("    recycled adds failed: %s\n", program.error.c_str());
+            bool ran = false;
+            if (compiled) {
+                Shader::Values values;
+                program.initialize(values);
+                ran = program.execute(values) && program.spillCount == 0;
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            check(compiled && ran && near4(o, 1500.f, 1500.f, 1500.f, 1500.f),
+                  "GLSL recycles temps so a long straight-line shader stays inside the register file");
+        }
+        {
+            const char* src =
+                "void main() {\n"
+                "  float a[1800];\n"
+                "  float b[1800];\n"
+                "  a[0] = 0.25;\n"
+                "  b[1799] = 0.5;\n"
+                "  int i = 4;\n"
+                "  b[i] = 0.125;\n"
+                "  gl_FragColor = vec4(a[0] + b[1799], b[i], 0.0, 1.0);\n"
+                "}\n";
+            Shader::Program program;
+            const bool compiled = program.compile(src, false);
+            if (!compiled) std::printf("    spilled locals failed: %s\n", program.error.c_str());
+            bool ran = false;
+            if (compiled) {
+                Shader::Values values;
+                program.initialize(values);
+                ran = program.execute(values) && program.spillCount > 0;
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            if (compiled && !ran)
+                std::printf("    spill count %d color %g %g %g %g\n", program.spillCount, o[0], o[1], o[2], o[3]);
+            check(compiled && ran && near4(o, 0.75f, 0.125f, 0.f, 1.f),
+                  "GLSL spills local arrays that do not fit beside each other in the register file");
+        }
+        {
+            const char* src =
+                "uniform vec4 pal[2];\n"
+                "void main() {\n"
+                "  vec4 huge = pal[int(1e20)];\n"
+                "  vec4 neg = pal[int(-1e20)];\n"
+                "  vec4 wide = pal[int(2147483648.0)];\n"
+                "  vec4 second = pal[1];\n"
+                "  float a[4];\n"
+                "  a[0] = 0.25; a[1] = 0.5; a[2] = 0.75; a[3] = 1.0;\n"
+                "  a[int(1e20)] = 0.125;\n"
+                "  a[int(-1e20)] = 0.125;\n"
+                "  gl_FragColor = vec4(huge.x, neg.y + wide.z, second.x, a[0] + a[1]);\n"
+                "}\n";
+            Shader::Program program;
+            const bool compiled = program.compile(src, false);
+            if (!compiled) std::printf("    out-of-range index failed: %s\n", program.error.c_str());
+            bool ran = false;
+            if (compiled) {
+                auto* pal = program.find("pal");
+                if (pal && pal->memory && int(program.uniformMem.size()) >= pal->slot + 8) {
+                    program.uniformMem[size_t(pal->slot + 0)] = 0.25f;
+                    program.uniformMem[size_t(pal->slot + 1)] = 0.5f;
+                    program.uniformMem[size_t(pal->slot + 2)] = 0.75f;
+                    program.uniformMem[size_t(pal->slot + 3)] = 1.f;
+                    program.uniformMem[size_t(pal->slot + 4)] = 0.125f;
+                }
+                Shader::Values values;
+                program.initialize(values);
+                ran = program.execute(values);
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            if (compiled && ran && !near4(o, 0.25f, 1.25f, 0.125f, 0.75f))
+                std::printf("    out-of-range index color %g %g %g %g\n", o[0], o[1], o[2], o[3]);
+            check(compiled && ran && near4(o, 0.25f, 1.25f, 0.125f, 0.75f),
+                  "GLSL out-of-range dynamic indexes read element 0 and write nothing");
         }
         check(runStage("#extension GL_OES_standard_derivatives : require\nvoid main() { gl_FragColor = vec4(dFdx(1.0)); }",
                        false, [](auto&, auto&) {}, o) && near4(o, 0, 0, 0, 0) &&
@@ -1742,6 +1881,36 @@ int runFullSubsystemTests() {
                   proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 0 &&
                   proc.mem().read<uint8_t>(idsAddr + 26) == 0 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
               "GLES2 warns on #extension : warn and draws a uniform vec4 array of size 45");
+
+        uint32_t skinVs = shader(0x8B31,
+            "attribute vec4 a_position;\nuniform mat4 bones[45];\nuniform int bone;\n"
+            "void main() { gl_Position = bones[bone] * a_position; }\n");
+        uint32_t skinFs = shader(0x8B30, "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }\n");
+        uint32_t skinProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {skinProg, skinVs});
+        callGL("_glAttachShader", {skinProg, skinFs});
+        callGL("_glBindAttribLocation", {skinProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {skinProg});
+        callGL("_glGetProgramiv", {skinProg, 0x8B82, idsAddr + 36});
+        const bool skinLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {skinProg});
+        const int32_t skinBone = int32_t(callGL("_glGetUniformLocation", {skinProg, proc.allocCString("bone")}));
+        const int32_t skinMat = int32_t(callGL("_glGetUniformLocation", {skinProg, proc.allocCString("bones[44]")}));
+        const float ident[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const uint32_t identPtr = proc.heap().alloc(sizeof ident);
+        proc.mem().copyIn(identPtr, ident, sizeof ident);
+        callGL("_glUniform1i", {uint32_t(skinBone), 44});
+        callGL("_glUniformMatrix4fv", {uint32_t(skinMat), 1, 0, identPtr});
+        callGL("_glClearColor", {UIKit::fbits(0.0f), UIKit::fbits(0.0f), UIKit::fbits(1.0f), UIKit::fbits(1.0f)});
+        callGL("_glClear", {0x00004000});
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(skinLinked && skinBone >= 0 && skinMat >= 0 &&
+                  proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 0 &&
+                  proc.mem().read<uint8_t>(idsAddr + 26) == 0 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 draws a skinned triangle from uniform mat4 bones[45]");
 
         uint32_t loopVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
         uint32_t loopFs = shader(0x8B30, "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); for(;;) {} }");
