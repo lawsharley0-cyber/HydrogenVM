@@ -11,6 +11,14 @@ final class FileEditorSession {
     var saved = false
     var saveError: String?
     @ObservationIgnored var saveAction: (() -> Bool)?
+    @ObservationIgnored var requestClose: (() -> Void)?
+
+    func saveChanges() -> Bool {
+        guard ready, let saveAction else { return false }
+        let success = saveAction()
+        if success { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        return success
+    }
 
     init(url: URL) { store = SaveFileStore(url: url) }
 
@@ -44,12 +52,7 @@ struct FileEditorControls: ViewModifier {
     @State private var showingBackups = false
     let save: () -> Bool
 
-    private func commit() -> Bool {
-        guard document.ready else { return false }
-        let success = save()
-        if success { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
-        return success
-    }
+    private func commit() -> Bool { document.saveChanges() }
 
     func body(content: Content) -> some View {
         content
@@ -76,27 +79,6 @@ struct FileEditorControls: ViewModifier {
                 .background(.bar)
                 }
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") {
-                        if document.dirty { showingClose = true } else { dismiss() }
-                    }
-                    .accessibilityIdentifier("editor-close")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") { _ = commit() }.bold().disabled(!document.dirty || !document.ready)
-                        .accessibilityIdentifier("navigation-save")
-                }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Button("Done") {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                                        to: nil, from: nil, for: nil)
-                    }
-                    Spacer()
-                    Button("Save") { _ = commit() }.bold().disabled(!document.dirty || !document.ready)
-                        .accessibilityIdentifier("keyboard-save")
-                }
-            }
             .safeAreaInset(edge: .top, spacing: 0) {
                 if document.ready {
                 HStack {
@@ -105,6 +87,11 @@ struct FileEditorControls: ViewModifier {
                         .disabled(document.dirty || !document.ready)
                 }
                 .font(.caption).padding(.horizontal).padding(.vertical, 4).background(.bar)
+                }
+            }
+            .onAppear {
+                document.requestClose = {
+                    if document.dirty { showingClose = true } else { dismiss() }
                 }
             }
             .sheet(isPresented: $showingBackups) { FileBackupHistoryView(document: document) }
@@ -140,8 +127,37 @@ struct FileEditorRegistration: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .toolbar { FileEditorToolbar() }
             .onAppear { document.saveAction = save }
             .onChange(of: document.editVersion) { _, _ in document.saveAction = save }
+    }
+}
+
+/// Navigation bars and keyboard accessories belong to the visible destination,
+/// while close confirmation and the persistent save bar belong to the sheet.
+@MainActor
+struct FileEditorToolbar: ToolbarContent {
+    @Environment(FileEditorSession.self) private var document
+
+    var body: some ToolbarContent {
+        ToolbarItem(id: "file-editor-close", placement: .topBarLeading) {
+            Button("Close") { document.requestClose?() }
+                .accessibilityIdentifier("editor-close")
+        }
+        ToolbarItem(id: "file-editor-save", placement: .topBarTrailing) {
+            Button("Save") { _ = document.saveChanges() }.bold()
+                .disabled(!document.dirty || !document.ready)
+                .accessibilityIdentifier("navigation-save")
+        }
+        ToolbarItemGroup(placement: .keyboard) {
+            Button("Done") {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
+            Spacer()
+            Button("Save") { _ = document.saveChanges() }.bold()
+                .disabled(!document.dirty || !document.ready)
+                .accessibilityIdentifier("keyboard-save")
+        }
     }
 }
 

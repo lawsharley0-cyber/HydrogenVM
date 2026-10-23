@@ -570,7 +570,7 @@ struct FileEditorSheet: View {
         .id(document.resetID)
         .modifier(FileEditorControls(save: { document.saveAction?() ?? false }))
         .environment(document)
-        .onDisappear { document.saveAction = nil }
+        .onDisappear { document.saveAction = nil; document.requestClose = nil }
         .interactiveDismissDisabled(document.dirty)
     }
 }
@@ -1316,6 +1316,7 @@ private struct JSONContainerListView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Search JSON keys…")
+        .toolbar { FileEditorToolbar() }
         .navigationTitle(isRoot ? "JSON Tree" : node.key)
         .alert("New JSON Key", isPresented: $addingKey) {
             TextField("Key", text: $newKeyName)
@@ -2068,6 +2069,7 @@ private struct KeyedArchiveObjectsView: View {
                 }
             }
         }
+        .toolbar { FileEditorToolbar() }
         .searchable(text: $searchText, prompt: "Search classes, keys, or values…")
     }
 
@@ -2133,6 +2135,7 @@ private struct PlistContainerView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Filter keys…")
+        .toolbar { FileEditorToolbar() }
         .navigationTitle(isRoot ? "Plist" : node.key)
         .alert("Add Key", isPresented: $addingKey) {
             TextField("Key name", text: $newKeyName)
@@ -2402,6 +2405,7 @@ private struct NestedDataInspectorView: View {
                 }
             }
         }
+        .toolbar { FileEditorToolbar() }
         .navigationTitle(key)
         .onAppear {
             guard !loaded else { return }
