@@ -331,6 +331,7 @@ struct RunView: View {
         .onChange(of: model.orientation) { _, orientation in OrientationLock.shared.lock(orientation.mask) }
         .onChange(of: model.finished) { _, done in
             if done {
+                OrientationLock.shared.lock(.all)
                 if inspectAfterStop { showFiles = true }
                 else { dismiss() }
             }

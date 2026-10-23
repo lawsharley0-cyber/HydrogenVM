@@ -86,7 +86,7 @@ struct PlayerHarness: View {
                 VStack {
                     Text(PlayerProbe.shared.touch).accessibilityIdentifier("probe-touch")
                     Text(PlayerProbe.shared.lifecycle).accessibilityIdentifier("probe-lifecycle")
-                    Text("\(PlayerProbe.shared.volume)").accessibilityIdentifier("probe-volume")
+                    Text(verbatim: String(PlayerProbe.shared.volume)).accessibilityIdentifier("probe-volume")
                     Text("\(PlayerProbe.shared.maximumTouches)").accessibilityIdentifier("probe-max-touches")
                     Text("\(PlayerProbe.shared.cancellations)").accessibilityIdentifier("probe-cancellations")
                     Button("Change Guest Orientation") {
