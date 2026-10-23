@@ -36,7 +36,9 @@ policy with no JIT entitlement.
 | `src/runtime/graphics/` | Software 2D: AA path rasteriser, strokes, clips, blend modes, PNG (incl. CgBI), text backend interface |
 | `src/runtime/uikit/` | CoreGraphics, QuartzCore (layer tree compositor), UIKit views/controls/scroll/table/nav/tab/text/gestures, nib & storyboard loading, OpenGL ES 1.1/2.0 (`OpenGLES.cpp`), audio & platform frameworks (`PlatformStubs.cpp`) |
 | `src/selftest/SelfTest.*` | Built-in smoke test + speed check (runs on device from the app) |
-| `app/` | iPhone app (XcodeGen project, SwiftUI shell, ObjC++ bridge) |
+| `app/HydrogenVM/HydrogenVMApp.swift`, `LibraryView.swift`, `RunView.swift`, `DiagnosticsView.swift` | SwiftUI entry point, installed app library, guest viewport/lifecycle, diagnostics |
+| `app/HydrogenVM/FileBrowser.swift`, `FileEditorSession.swift`, `SaveFileStore.swift`, `SaveCompression.swift`, `SaveTextCodec.swift`, `SQLiteEditStore.swift`, `SaveSnapshotStore.swift` | Sandbox browser and buffered save editors, verified persistence, rolling backups and staged snapshot restore |
+| `app/HydrogenVM/Bridge/HVMEngine.h`, `HVMEngine.mm` | Objective-C++ API between the Swift shell and shared C++ runtime |
 | `tests/` | Asm unit tests, C differential tests, runner, benchmark |
 
 ## Changes from the original handoff, and why
@@ -52,8 +54,8 @@ policy with no JIT entitlement.
 | `Op_LDR_Imm` raw pointer cast | Undefined behaviour on unaligned loads (which ARMv7 allows). | All guest memory access uses `memcpy`/atomics. |
 | `MapRegion` re-`mmap` with `MAP_FIXED` | iOS uses 16 KB host pages but 32-bit iOS binaries use 4 KB pages. Mapping a second segment that shares a host page wiped the first. | Commits are tracked per host page and never re-mapped; guest permissions are tracked in software at 4 KB granularity. |
 | HLE via UDF trap table at `0xFFFF0000` | Needs trap instructions written into guest memory. | **HLE by address**: imports are bound to addresses in `0xFFFF0000–0xFFFFFFFF`; when execution reaches one, the engine builds a block that calls the host function and returns to LR. Nothing is decoded there. |
-| "Zero-copy" bridging of 32-bit ObjC calls to 64-bit UIKit | 32-bit and 64-bit ABIs differ (pointer size, `NSInteger`, `CGFloat`, struct layout), so guest objects can't be handed to host frameworks as-is. | A guest-side Objective-C runtime whose framework classes (Foundation, UIKit, …) are implemented in C++ against guest memory, in the style of touchHLE. The UI is composited in software into a framebuffer the app displays. GLES will bridge to Metal. |
-| Faults | Not handled. | `SIGSEGV`/`SIGBUS` inside the arena unwind to `Engine::run` (`siglongjmp`; safe because every handler is a tail call) and report `Exit::MemFault` with the guest address. |
+| "Zero-copy" bridging of 32-bit ObjC calls to 64-bit UIKit | 32-bit and 64-bit ABIs differ (pointer size, `NSInteger`, `CGFloat`, struct layout), so guest objects can't be handed to host frameworks as-is. | A guest-side Objective-C runtime whose framework classes (Foundation, UIKit, …) are implemented in C++ against guest memory, in the style of touchHLE. The UI is composited in software into a framebuffer the app displays. GLES uses the software rasterizer and shader interpreter; a Metal backend is not implemented. |
+| Faults | Not handled. | `SIGSEGV`/`SIGBUS` inside the arena unwind to `Engine::run` (`siglongjmp`; B-102 still needs a precise fault boundary that cannot jump across live C++ objects in HLE frames) and report `Exit::MemFault` with the guest address. |
 
 ## Execution core
 
@@ -181,11 +183,14 @@ XcodeGen (`cd app && xcodegen`).
   copyable report + log.
 * **Diagnostics** — 4 GB arena check + CPU self-test with MIPS.
 
-`Bridge/HVMEngine.mm` also installs a CoreText text backend (real fonts in
+`app/HydrogenVM/Bridge/HVMEngine.mm` also installs a CoreText text backend (real fonts in
 place of the built-in bitmap font) and an ImageIO decoder for JPEG/GIF/TIFF.
 
-The Swift/Objective-C++ code hasn't been compiled yet (no Xcode in the build
-environment); the C++ it calls is the same code the test suite builds.
+The Apple shell has an unsigned device/simulator build path through
+`codemagic.yaml` and `.github/workflows/ci.yml` (PR #7). File-editor changes also
+have a focused Apple validation workflow. Check the exact commit and run in
+`dev-system/STATUS.md`; a build is not signed-device or guest-gameplay validation.
+The C++ it calls is the same shared runtime the host test suite builds.
 
 ### Testing on device
 
@@ -204,12 +209,17 @@ environment); the C++ it calls is the same code the test suite builds.
 
 ### Current limitations
 
-* App Store `.ipa` files are FairPlay-encrypted and must be decrypted first.
-* OpenGL ES isn't implemented yet (most games): they will start but not draw.
-* Audio is silent (AudioToolbox/AVFoundation are stubs).
-* Storyboards aren't supported (nibs are); neither are UITableView,
-  UIScrollView, UINavigationController, UITextField and other larger UIKit
-  classes yet — missing classes are logged by name.
+* FairPlay-encrypted and arm64-only guests are unsupported. No decryption is provided.
+* Software GLES 1.1/2.0 and a bounded GLSL subset are implemented. Unsupported
+  shader syntax/features still fail with diagnostics; this is not full ES conformance.
+* Audio decoding/mixing and host output are implemented. Device audibility,
+  interruptions and title-specific music still require evidence.
+* NIB/storyboard loading and larger UIKit classes have partial HLE support.
+  A registered class or selector does not establish full framework compatibility.
+* Guest 4 KiB permissions on a 16 KiB host and precise fault recovery remain
+  unresolved (B-101/B-102). A Linux green run cannot close those items.
+* `CCCrypt` encryption ciphers deliberately return `kCCUnimplemented`;
+  guest outbound networking stays disabled unless the owner changes policy.
 
 ## iOS-specific notes
 

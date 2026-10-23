@@ -79,7 +79,7 @@ What may run at the same time, when the edits do not touch the same file: differ
 
 One branch per agent. Open a draft pull request. Do not merge it. Do not force-push. An independent reviewer, not the author, re-runs the suites in this file, or reads the attached JSON including `host.pageSize`, and checks the group boundaries. The owner merges. The agent that wrote the patch does not. Nothing in the repository requires that second reader yet. Turning the requirement on is an owner action.
 
-The integration line for this system is `main`. `docs/HANDOFF.md` still says `gemini-merge`. Changing that sentence is backlog B-003, not a branch rename. A change that stacks on an unmerged parent uses that parent as its pull-request base until the parent lands.
+The integration line for this system is `main`. `docs/HANDOFF.md` now separates the current `main` continuation from archived `gemini-merge` evidence (B-003). A change that stacks on an unmerged parent uses that parent as its pull-request base until the parent lands.
 
 ## Rules
 

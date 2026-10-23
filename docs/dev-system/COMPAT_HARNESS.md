@@ -136,3 +136,8 @@ Screenshots and IPA bytes are not embedded. Logs are truncated, the repository p
 `.github/workflows/compat-harness.yml` runs on pushes to `main`, on pull requests, and on manual dispatch. Permissions are `contents: read`. It installs the toolchain, runs the harness unit tests, builds, runs the gate against the committed baseline, and uploads `report.json` and `diff.json`.
 
 The workflow ran green on `6af9976`: compat job [39646706013](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39646706013). The empty-step failure on `07fabbb` (run 39633887764) was real; it is not the current state. Reproduce the job locally with the commands at the top of this file when you are not on Actions. A failed diff is a real regression.
+
+## Read-only documentation doctor
+
+Run `python3 tools/hvm_compat.py doctor` to verify commit references in BACKLOG.md, STATUS.md and IMPLEMENTATION_PLAN.md. Missing objects are reported as unavailable; fetch historical branches before calling a reference invalid. Optional `--report report.json` accepts a schema-valid, passing, clean ancestor report and suggests reviewing Planned rows only when case IDs explicitly contain that backlog ID. A green fulltest or smoke alone never closes a task. The command does not modify documentation; findings exit 1 and invalid input exits 2.
+

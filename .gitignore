@@ -8,6 +8,7 @@
 /tmp/
 app/HydrogenVM.xcodeproj/
 app/xbuild/
+tools/tests/swiftui/SaveEditorHarness.xcodeproj/
 build/
 compat/
 xcuserdata/

@@ -571,8 +571,8 @@ struct FileEditorSheet: View {
     var body: some View {
         NavigationStack {
             FileEditorDestinationView(item: item)
-                .id(document.resetID)
         }
+        .id(document.resetID)
         .modifier(FileEditorControls(save: { document.saveAction?() ?? false }))
         .environment(document)
         .onDisappear { document.saveAction = nil }
@@ -1935,6 +1935,7 @@ struct PlistEditorView: View {
                         Text("Binary Plist").tag(PropertyListSerialization.PropertyListFormat.binary)
                         Text("XML Plist").tag(PropertyListSerialization.PropertyListFormat.xml)
                     }
+                    .disabled(root?.isKeyedArchiveRoot == true)
                 } label: {
                     Image(systemName: "gearshape")
                 }

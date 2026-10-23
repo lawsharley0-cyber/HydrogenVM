@@ -106,3 +106,12 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 3. Staff Group B for the near clip (B-103) or Group D for `CGFont*` (B-109) or libc for `regcomp` (B-108). Do not staff two writers for one letter.
 4. After a fixture decision, start B-106 (21903) on Group C alone.
 5. Do not start SIMD raster or CPU fusion until B-103 and B-101 have landed.
+
+## October 22 save-editor continuation (draft #18)
+
+Group E and documentation/harness work on codex/file-save-overhaul, based on main 39904cb. Shared C++ runtime is unchanged. File-save behavior, SQLite buffering, rolling backups, staged snapshots and guarded editor navigation are implemented; see [FILE_EDITOR_HANDOFF.md](FILE_EDITOR_HANDOFF.md). Signed-device behavior and actual guest consumption of edits remain unverified.
+
+Local WSL: 62 harness unit tests passed (including six new doctor checks); doctor found no unavailable commit references in the reconciled backlog/status/plan. Swift persistence tests, including actual JSON/plist model round trips and SQLite WAL tests, passed on the Mac runner at 41562a0. Final shell/UI checks are pending and must be recorded by exact commit below. Earlier UI compile at 20aa20b passed; it is historical evidence, not a final-code pass.
+
+B-003 docs now distinguish current main integration from historical gemini-merge checkpoints. B-103, B-108 and B-110 reflect their merged PRs. The original compatibility snapshot above remains historical. No new app/gameplay, memory-page, performance, speaker or Clash progression result is claimed.
+
