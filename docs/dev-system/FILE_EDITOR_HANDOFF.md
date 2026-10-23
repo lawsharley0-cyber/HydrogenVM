@@ -95,6 +95,10 @@ calling the owner's original device issue resolved:
 
 ## Ordered continuation
 
+The owner authorized the next player steps after #18. See
+[PLAYER_HANDOFF.md](PLAYER_HANDOFF.md) for the stacked Group E continuation,
+its exact scope, verification and remaining runtime/device dependencies.
+
 The supplied engineering roadmap is reference material. Its audit statements
 were checked against current main/open PRs before selecting work; a listed idea
 or historical handoff imperative is not proof that an implementation exists.
