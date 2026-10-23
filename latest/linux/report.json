@@ -2,23 +2,23 @@
   "host": {
     "os": "Linux 6.17.0-1022-azure",
     "arch": "x86_64",
-    "cpu": "AMD EPYC 9V45 96-Core Processor",
-    "commit": "187d01c",
-    "date": "2026-10-23T15:11:59+00:00"
+    "cpu": "Intel(R) Xeon(R) 6973P-C",
+    "commit": "7f4b034",
+    "date": "2026-10-23T15:12:07+00:00"
   },
-  "seconds": 108.1,
+  "seconds": 128.7,
   "ok": false,
   "suites": {
     "build": {
       "passed": 1,
       "failed": 0,
       "skipped": 0,
-      "seconds": 101.88801717758179,
+      "seconds": 121.89257836341858,
       "tests": [
         {
           "name": "engine",
           "result": "pass",
-          "seconds": 101.888,
+          "seconds": 121.893,
           "warnings": 16
         }
       ]
@@ -27,17 +27,17 @@
       "passed": 15,
       "failed": 0,
       "skipped": 0,
-      "seconds": 0.16370034217834473,
+      "seconds": 0.19978070259094238,
       "tests": [
         {
           "name": "selftest",
           "result": "pass",
-          "seconds": 0.013
+          "seconds": 0.021
         },
         {
           "name": "asm/arm_alu",
           "result": "pass",
-          "seconds": 0.005,
+          "seconds": 0.004,
           "checks": 40,
           "failedChecks": 0
         },
@@ -58,77 +58,77 @@
         {
           "name": "asm/vfp_neon",
           "result": "pass",
-          "seconds": 0.003,
-          "checks": 23,
+          "seconds": 0.004,
+          "checks": 26,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_arm",
           "result": "pass",
-          "seconds": 0.017,
+          "seconds": 0.018,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_arm_os",
           "result": "pass",
-          "seconds": 0.017,
+          "seconds": 0.019,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb",
           "result": "pass",
-          "seconds": 0.017,
+          "seconds": 0.018,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_os",
           "result": "pass",
-          "seconds": 0.017,
+          "seconds": 0.025,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_idiv",
           "result": "pass",
-          "seconds": 0.017,
+          "seconds": 0.019,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_arm_hard",
           "result": "pass",
-          "seconds": 0.009,
+          "seconds": 0.017,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.011,
+          "seconds": 0.012,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.009,
+          "seconds": 0.011,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_arm",
           "result": "pass",
-          "seconds": 0.009,
+          "seconds": 0.013,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb_os",
           "result": "pass",
-          "seconds": 0.011,
+          "seconds": 0.01,
           "checks": 29,
           "failedChecks": 0
         }
@@ -176,31 +176,31 @@
       "passed": 4,
       "failed": 1,
       "skipped": 0,
-      "seconds": 0.23311233520507812,
+      "seconds": 0.3047921657562256,
       "tests": [
         {
           "name": "mips/ctests_thumb",
           "result": "pass",
-          "seconds": 0.089,
-          "mips": 883.7
+          "seconds": 0.117,
+          "mips": 672.8
         },
         {
           "name": "mips/ctests_arm",
           "result": "pass",
-          "seconds": 0.086,
-          "mips": 957.9
+          "seconds": 0.119,
+          "mips": 690.7
         },
         {
           "name": "mips/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.029,
-          "mips": 863.5
+          "seconds": 0.034,
+          "mips": 709.3
         },
         {
           "name": "mips/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.029,
-          "mips": 798.6
+          "seconds": 0.035,
+          "mips": 639.5
         },
         {
           "name": "coremark",
@@ -212,10 +212,10 @@
   },
   "speed": {
     "interpreterMIPS": {
-      "ctests_thumb": 883.7,
-      "ctests_arm": 957.9,
-      "ftests_vfp_thumb_softfp": 863.5,
-      "ftests_neon_thumb": 798.6
+      "ctests_thumb": 672.8,
+      "ctests_arm": 690.7,
+      "ftests_vfp_thumb_softfp": 709.3,
+      "ftests_neon_thumb": 639.5
     }
   },
   "problems": [

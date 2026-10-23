@@ -1,20 +1,20 @@
-# HydrogenVM report — 187d01c
+# HydrogenVM report — 7f4b034
 
-2026-10-23T15:11:59+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-23T15:12:07+00:00 · Intel(R) Xeon(R) 6973P-C (x86_64, Linux 6.17.0-1022-azure)
 
 **7 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 101.9s |
+| build | 1 | 0 | 0 | 121.9s |
 | cpu | 15 | 0 | 0 | 0.2s |
 | ios | 0 | 6 | 0 | 0.0s |
-| bench | 4 | 1 | 0 | 0.2s |
+| bench | 4 | 1 | 0 | 0.3s |
 
 ## Speed
 
 
-Raw interpreter speed (CPU test programs): ctests_thumb 884 MIPS, ctests_arm 958 MIPS, ftests_vfp_thumb_softfp 864 MIPS, ftests_neon_thumb 799 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 673 MIPS, ctests_arm 691 MIPS, ftests_vfp_thumb_softfp 709 MIPS, ftests_neon_thumb 640 MIPS
 
 ## Problems (23)
 
