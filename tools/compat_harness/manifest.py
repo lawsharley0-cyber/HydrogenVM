@@ -32,10 +32,11 @@ def repo_root() -> str:
     return os.path.abspath(os.path.join(package_dir(), "..", ".."))
 
 
-def load_manifest(path: str) -> dict:
+def load_manifest(path: str, *, data: dict | None = None) -> dict:
     import json
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+    if data is None:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
     if not isinstance(data, dict):
         raise ManifestError("manifest must be a JSON object")
     if data.get("schemaVersion") != 1:
