@@ -2,11 +2,11 @@ GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
 Loaded AngryBirds: armv6, 578 imports, 10 initializers, entry 0x00004320 AngryBirds+13088 start
 Objective-C: 2 classes, 0 categories, 54 selector refs
 Screen: 320x480 @2x, landscape, status bar hidden
-Created Throwable( "Failed to open ... pplication/7D33324A-06A5-44F6-AFAC-9E3450E0656A/Documents/Apps/com.clickgamer.AngryBirds/AngryBirds.app/data/bundleIndex.idx" )
+Created Throwable( "Failed to open ... pplication/6985FF7D-DF3F-44A2-A5AF-977370ADB104/Documents/Apps/com.clickgamer.AngryBirds/AngryBirds.app/data/bundleIndex.idx" )
 
 Can't find bundle, using files directly...
 
-Created Throwable( "Path name buffer overflow, 505 bytes. Initial path name was "/Users/runner/Library/Developer/CoreSimulator/Devices/77AA4492-C787-4EEE-A772-05D4B3E9ECCD/data/Containers/Data/Application/7D33324A-06A5-44F6-AFAC-9E3450E0656A/Documents/Apps/com.clickgamer.Ang" )
+Created Throwable( "Path name buffer overflow, 505 bytes. Initial path name was "/Users/runner/Library/Developer/CoreSimulator/Devices/77AA4492-C787-4EEE-A772-05D4B3E9ECCD/data/Containers/Data/Application/6985FF7D-DF3F-44A2-A5AF-977370ADB104/Documents/Apps/com.clickgamer.Ang" )
 
 Stopped: ___cxa_throw: Uncaught C++ exception of type io::IOException
   pc [HydrogenVM] __cxa_throw
@@ -51,4 +51,4 @@ Stopped: ___cxa_throw: Uncaught C++ exception of type io::IOException
     [HydrogenVM] _hvm_return_to_host
     0x00004354 AngryBirds+13140 start + 0x34
 
-com.lfull.HydrogenVM: 31206
+com.lfull.HydrogenVM: 33598

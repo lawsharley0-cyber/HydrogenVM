@@ -1,0 +1,54 @@
+GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
+Loaded AngryBirds: armv6, 578 imports, 10 initializers, entry 0x00004320 AngryBirds+13088 start
+Objective-C: 2 classes, 0 categories, 54 selector refs
+Screen: 320x480 @2x, landscape, status bar hidden
+Created Throwable( "Failed to open ... pplication/6985FF7D-DF3F-44A2-A5AF-977370ADB104/Documents/Apps/com.clickgamer.AngryBirds/AngryBirds.app/data/bundleIndex.idx" )
+
+Can't find bundle, using files directly...
+
+Created Throwable( "Path name buffer overflow, 505 bytes. Initial path name was "/Users/runner/Library/Developer/CoreSimulator/Devices/77AA4492-C787-4EEE-A772-05D4B3E9ECCD/data/Containers/Data/Application/6985FF7D-DF3F-44A2-A5AF-977370ADB104/Documents/Apps/com.clickgamer.Ang" )
+
+Stopped: ___cxa_throw: Uncaught C++ exception of type io::IOException
+  pc [HydrogenVM] __cxa_throw
+  lr 0x00030b1c AngryBirds+195356 __ZN4lang10throwErrorIN2io11IOExceptionEEEvT_ + 0x3d0
+  r0  10199220  r1  0013f778  r2  00032cac  r3  ffffffff
+  r4  101992b8  r5  00000000  r6  ffffffff  r7  beffee60
+  r8  beffef54  r9  10199220  r10 00000000  r11 101992a8
+  r12 0013f1b8  r13 beffed70  r14 00030b1c  r15 ffff0e20
+  backtrace:
+    [HydrogenVM] __cxa_throw
+    0x00030b1c AngryBirds+195356 __ZN4lang10throwErrorIN2io11IOExceptionEEEvT_ + 0x3d0
+    0x000501b0 AngryBirds+324016 __ZN2io8PathName8allocateEi + 0xf4
+    0x000506f0 AngryBirds+325360 __ZN2io8PathName5parseEPKcS2_ + 0x230
+    0x00050c7c AngryBirds+326780 __ZN2io8PathNameC2ERKN4lang6StringES4_ + 0x4a8
+    0x001311d0 AngryBirds+1245648 __ZN11MaskedImageC2EPN2gr7ContextE + 0x160
+    0x0001075c AngryBirds+63324 __ZN7GameLuaC2EPN9framework3AppEPN4game9ResourcesEPN3lua8LuaStateEPN2gr7ContextE + 0x2e8
+    0x00005370 AngryBirds+17264 __ZN7GameAppC2EPN2gr7ContextEPN9framework11OSInterfaceE + 0x444
+    0x00005be4 AngryBirds+19428 __ZN9framework4initEPNS_11OSInterfaceEPN2gr7ContextE + 0x6c
+    0x00068ccc AngryBirds+425164 -[AppController applicationDidFinishLaunching:] + 0x5b0
+    [HydrogenVM] _hvm_return_to_host
+    0x00004354 AngryBirds+13140 start + 0x34
+
+[hvm-exit] status=-1 crash:
+Stopped: ___cxa_throw: Uncaught C++ exception of type io::IOException
+  pc [HydrogenVM] __cxa_throw
+  lr 0x00030b1c AngryBirds+195356 __ZN4lang10throwErrorIN2io11IOExceptionEEEvT_ + 0x3d0
+  r0  10199220  r1  0013f778  r2  00032cac  r3  ffffffff
+  r4  101992b8  r5  00000000  r6  ffffffff  r7  beffee60
+  r8  beffef54  r9  10199220  r10 00000000  r11 101992a8
+  r12 0013f1b8  r13 beffed70  r14 00030b1c  r15 ffff0e20
+  backtrace:
+    [HydrogenVM] __cxa_throw
+    0x00030b1c AngryBirds+195356 __ZN4lang10throwErrorIN2io11IOExceptionEEEvT_ + 0x3d0
+    0x000501b0 AngryBirds+324016 __ZN2io8PathName8allocateEi + 0xf4
+    0x000506f0 AngryBirds+325360 __ZN2io8PathName5parseEPKcS2_ + 0x230
+    0x00050c7c AngryBirds+326780 __ZN2io8PathNameC2ERKN4lang6StringES4_ + 0x4a8
+    0x001311d0 AngryBirds+1245648 __ZN11MaskedImageC2EPN2gr7ContextE + 0x160
+    0x0001075c AngryBirds+63324 __ZN7GameLuaC2EPN9framework3AppEPN4game9ResourcesEPN3lua8LuaStateEPN2gr7ContextE + 0x2e8
+    0x00005370 AngryBirds+17264 __ZN7GameAppC2EPN2gr7ContextEPN9framework11OSInterfaceE + 0x444
+    0x00005be4 AngryBirds+19428 __ZN9framework4initEPNS_11OSInterfaceEPN2gr7ContextE + 0x6c
+    0x00068ccc AngryBirds+425164 -[AppController applicationDidFinishLaunching:] + 0x5b0
+    [HydrogenVM] _hvm_return_to_host
+    0x00004354 AngryBirds+13140 start + 0x34
+
+com.lfull.HydrogenVM: 33598
