@@ -30,6 +30,8 @@ uint32_t m_reallocf(Ctx& x, uint32_t p, uint32_t n) { const uint32_t r = x.proc.
 void     m_free(Ctx& x, uint32_t p) { x.proc.heap().free(p); }
 uint32_t m_valloc(Ctx& x, uint32_t n) { return x.proc.heap().allocAligned(n, 4096); }
 int32_t  m_posix_memalign(Ctx& x, GuestPtr out, uint32_t align, uint32_t n) {
+    // sizeof(void*) is four in the ARMv7 guest, regardless of the host ABI.
+    if (align < 4 || (align & (align - 1))) return EINVAL;
     const uint32_t a = x.proc.heap().allocAligned(n, align);
     if (!a) return ENOMEM;
     x.mem.write<uint32_t>(out, a);
