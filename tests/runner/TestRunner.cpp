@@ -3274,6 +3274,73 @@ int runFullSubsystemTests() {
             return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
                    !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
         });
+        run("file open ring tracks guest opens across fopen, open, NSData, and NSFileHandle with live updates and rollover", [&] {
+            namespace fs = std::filesystem;
+            const std::string testDir = proc.homePath() + "/tmp/file_ring_test/";
+            std::error_code ec;
+            fs::create_directories(testDir, ec);
+            const std::string filePath = testDir + "sample.bin";
+            {
+                std::ofstream out(filePath, std::ios::binary);
+                out << "1234567890";
+            }
+            const uint32_t pathPtr = proc.allocCString(filePath);
+            const uint32_t modePtr = proc.allocCString("rb");
+
+            // 1. fopen (read 3 bytes, leave open)
+            const uint32_t fp = call("_fopen", {pathPtr, modePtr});
+            if (fp) {
+                const uint32_t buf = proc.heap().allocZeroed(16);
+                call("_fread", {buf, 1, 3, fp});
+            }
+
+            // Check live visibility before close
+            bool sawLiveOpen = false;
+            for (const auto& rec : proc.fileRing()) {
+                if (rec.path == filePath && rec.api == "fopen" && rec.isOpen && rec.bytesRead == 3) sawLiveOpen = true;
+            }
+
+            if (fp) call("_fclose", {fp});
+
+            // 2. open
+            const int32_t fd = int32_t(call("_open", {pathPtr, 0}));
+            if (fd >= 0) {
+                const uint32_t buf = proc.heap().allocZeroed(16);
+                call("_read", {uint32_t(fd), buf, 4});
+                call("_close", {uint32_t(fd)});
+            }
+
+            // 3. NSData
+            const auto nsPath = Foundation::makeString(cx, filePath);
+            const auto nsData = ObjC::id(r.send(cpu, r.getClass("NSData"), "dataWithContentsOfFile:", {nsPath}));
+
+            // 4. NSFileHandle
+            const auto handle = ObjC::id(r.send(cpu, r.getClass("NSFileHandle"), "fileHandleForReadingAtPath:", {nsPath}));
+            if (handle) {
+                r.send(cpu, handle, "readDataOfLength:", {5});
+                r.send(cpu, handle, "closeFile");
+            }
+
+            bool sawFopen = false, sawOpen = false, sawNSData = false, sawHandle = false;
+            for (const auto& rec : proc.fileRing()) {
+                if (rec.path == filePath) {
+                    if (rec.api == "fopen" && rec.size == 10 && rec.bytesRead == 3 && !rec.isOpen) sawFopen = true;
+                    if (rec.api == "open" && rec.size == 10 && rec.bytesRead == 4 && !rec.isOpen) sawOpen = true;
+                    if (rec.api == "NSData" && rec.size == 10 && rec.bytesRead == 10) sawNSData = true;
+                    if (rec.api == "NSFileHandle" && rec.size == 10 && rec.bytesRead == 5 && !rec.isOpen) sawHandle = true;
+                }
+            }
+
+            // 5. Test 32-entry rollover
+            for (int i = 0; i < 40; ++i) {
+                const std::string dummyPath = testDir + "dummy_" + std::to_string(i) + ".txt";
+                proc.recordFileOpen(dummyPath, "test", 0, 10, 0, false);
+            }
+            const auto history = proc.fileRing();
+            fs::remove_all(testDir, ec);
+
+            return sawLiveOpen && sawFopen && sawOpen && sawNSData && sawHandle && history.size() == 32;
+        });
         run("pmatch slots past re_nsub are -1", [&] {
             auto [rc, re] = compile("(a)", REG_EXTENDED);
             for (uint32_t i = 0; i < 4 * 16; i += 8) proc.mem().write<int64_t>(pm + i, 7);

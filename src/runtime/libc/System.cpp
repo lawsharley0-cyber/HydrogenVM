@@ -289,6 +289,13 @@ void s_noop(Ctx&) {}
 
 // ----------------------------------------------------- files (POSIX fds) ---
 
+struct OpenFds {
+    explicit OpenFds(Process&) {}
+    std::mutex mu;
+    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; };
+    std::unordered_map<int32_t, FdTrack> tracks;
+};
+
 int hostOpenFlags(uint32_t f) {
     int h = int(f & 3);
     if (f & 0x4) h |= O_NONBLOCK;
@@ -301,11 +308,32 @@ int hostOpenFlags(uint32_t f) {
 }
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
-    const int fd = ::open(x.proc.readCString(path).c_str(), hostOpenFlags(flags), mode & 0777);
-    return fd < 0 ? failD<int32_t>(x) : fd;
+    const std::string p = x.proc.readCString(path);
+    const int fd = ::open(p.c_str(), hostOpenFlags(flags), mode & 0777);
+    if (fd < 0) {
+        x.proc.recordFileOpen(p, "open", errno, -1, 0, false);
+        return failD<int32_t>(x);
+    }
+    int64_t sz = -1;
+    struct stat st;
+    if (::fstat(fd, &st) == 0) sz = st.st_size;
+    const uint64_t h = x.proc.recordFileOpen(p, "open", 0, sz, 0, true);
+    auto& ofs = x.proc.service<OpenFds>();
+    std::lock_guard<std::mutex> lk(ofs.mu);
+    ofs.tracks[fd] = {h, 0};
+    return fd;
 }
 int32_t f_close(Ctx& x, int32_t fd) {
     if (fd >= 0 && fd <= 2) return 0;
+    {
+        auto& ofs = x.proc.service<OpenFds>();
+        std::lock_guard<std::mutex> lk(ofs.mu);
+        auto it = ofs.tracks.find(fd);
+        if (it != ofs.tracks.end()) {
+            x.proc.recordFileClose(it->second.fileHandle);
+            ofs.tracks.erase(it);
+        }
+    }
     const int tracked = closeNetworkSocket(x.proc, fd);
     return (tracked == -2 ? ::close(fd) : tracked) < 0 ? failD<int32_t>(x) : 0;
 }
@@ -313,6 +341,15 @@ int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
     if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
+    if (r > 0) {
+        auto& ofs = x.proc.service<OpenFds>();
+        std::lock_guard<std::mutex> lk(ofs.mu);
+        auto it = ofs.tracks.find(fd);
+        if (it != ofs.tracks.end()) {
+            it->second.bytesRead += r;
+            x.proc.updateFileRead(it->second.fileHandle, it->second.bytesRead);
+        }
+    }
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
 }
 int32_t f_write(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
