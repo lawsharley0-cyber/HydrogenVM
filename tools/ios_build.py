@@ -12,7 +12,7 @@ usage:
   tools/ios_build.py app --name Foo --out build/ios [--min-ios 6.0] [--no-pie]
                          [--plist-extra key=value ...] [--resource path ...] src.m src.c ...
 """
-import argparse, os, plistlib, re, shutil, subprocess, sys, zipfile
+import argparse, os, plistlib, re, shutil, struct, subprocess, sys, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LD = os.environ.get("HVM_LD64") or shutil.which("arm-apple-darwin11-ld") or (
