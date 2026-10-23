@@ -38,6 +38,7 @@ targets:
       - sdk: CoreText.framework
       - sdk: ImageIO.framework
       - sdk: CoreMotion.framework
+      - sdk: AudioToolbox.framework
       - sdk: AVFoundation.framework
       - sdk: OpenGLES.framework                    # GLES on the GPU (Bridge/HostGLEAGL.mm)
       - sdk: QuartzCore.framework

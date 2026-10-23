@@ -45,7 +45,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev libsndfile1 python3-pil ccache
+          sudo apt-get install -yq clang llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg libsndfile1 python3-pil ccache
       - name: Cache C++ compilation
         uses: actions/cache@v4
         with:
@@ -67,6 +67,8 @@ jobs:
           cmake --build build-clash --target hvm hvm_tests hvm_machodump --parallel 2
       - name: Runtime regression checks
         run: build-clash/hvm_tests fulltest
+      - name: Synthetic host AAC comparison
+        run: python3 tools/test_m4a_audio.py --hvm-tests build-clash/hvm_tests --out clash-report/m4a.json
       - name: Compare pinned IMA WAV audio with independent decoder
         run: python3 tools/test_ima_wav_corpus.py clash-report/unpacked --hvm-tests build-clash/hvm_tests --out clash-report/ima-wav-comparison.json --require-count 107
       - name: Verify initial home and NPC request across two local launches
