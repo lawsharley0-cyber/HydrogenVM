@@ -2,23 +2,23 @@
   "host": {
     "os": "Linux 6.17.0-1022-azure",
     "arch": "x86_64",
-    "cpu": "Intel(R) Xeon(R) 6973P-C",
-    "commit": "7f4b034",
-    "date": "2026-10-23T15:12:07+00:00"
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "commit": "9664952",
+    "date": "2026-10-23T15:13:34+00:00"
   },
-  "seconds": 128.7,
-  "ok": false,
+  "seconds": 234.7,
+  "ok": true,
   "suites": {
     "build": {
       "passed": 1,
       "failed": 0,
       "skipped": 0,
-      "seconds": 121.89257836341858,
+      "seconds": 199.0321660041809,
       "tests": [
         {
           "name": "engine",
           "result": "pass",
-          "seconds": 121.893,
+          "seconds": 199.032,
           "warnings": 16
         }
       ]
@@ -27,195 +27,333 @@
       "passed": 15,
       "failed": 0,
       "skipped": 0,
-      "seconds": 0.19978070259094238,
+      "seconds": 0.2812306880950928,
       "tests": [
         {
           "name": "selftest",
           "result": "pass",
-          "seconds": 0.021
+          "seconds": 0.03
         },
         {
           "name": "asm/arm_alu",
           "result": "pass",
-          "seconds": 0.004,
+          "seconds": 0.006,
           "checks": 40,
           "failedChecks": 0
         },
         {
           "name": "asm/arm_mem",
           "result": "pass",
-          "seconds": 0.004,
+          "seconds": 0.006,
           "checks": 17,
           "failedChecks": 0
         },
         {
           "name": "asm/thumb",
           "result": "pass",
-          "seconds": 0.004,
+          "seconds": 0.005,
           "checks": 30,
           "failedChecks": 0
         },
         {
           "name": "asm/vfp_neon",
           "result": "pass",
-          "seconds": 0.004,
-          "checks": 26,
+          "seconds": 0.005,
+          "checks": 23,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_arm",
           "result": "pass",
-          "seconds": 0.018,
+          "seconds": 0.03,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_arm_os",
           "result": "pass",
-          "seconds": 0.019,
+          "seconds": 0.036,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb",
           "result": "pass",
-          "seconds": 0.018,
+          "seconds": 0.028,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_os",
           "result": "pass",
-          "seconds": 0.025,
+          "seconds": 0.032,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_idiv",
           "result": "pass",
-          "seconds": 0.019,
+          "seconds": 0.026,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_arm_hard",
           "result": "pass",
-          "seconds": 0.017,
+          "seconds": 0.014,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.012,
+          "seconds": 0.018,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.011,
+          "seconds": 0.014,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_arm",
           "result": "pass",
-          "seconds": 0.013,
+          "seconds": 0.018,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb_os",
           "result": "pass",
-          "seconds": 0.01,
+          "seconds": 0.014,
           "checks": 29,
           "failedChecks": 0
         }
       ]
     },
     "ios": {
-      "passed": 0,
-      "failed": 6,
+      "passed": 6,
+      "failed": 0,
       "skipped": 0,
-      "seconds": 0.0,
+      "seconds": 1.8585405349731445,
       "tests": [
         {
           "name": "CTest",
-          "result": "fail",
-          "seconds": 0.0
+          "result": "pass",
+          "seconds": 0.025,
+          "perf": {
+            "wallSeconds": 0.019705,
+            "guestInstructions": 148862,
+            "guestMIPS": 7.55454,
+            "blocksDecoded": 189,
+            "frames": 0,
+            "framesPresented": 0,
+            "avgFrameMs": 0,
+            "avgCompositeMs": 0,
+            "maxFrameMs": 0,
+            "slowFrames": 0,
+            "p50FrameMs": 0,
+            "p95FrameMs": 0,
+            "p99FrameMs": 0,
+            "timeToFirstFrameMs": 0
+          }
         },
         {
           "name": "CTestLegacy",
-          "result": "fail",
-          "seconds": 0.0
+          "result": "pass",
+          "seconds": 0.023,
+          "perf": {
+            "wallSeconds": 0.0183784,
+            "guestInstructions": 132093,
+            "guestMIPS": 7.18741,
+            "blocksDecoded": 193,
+            "frames": 0,
+            "framesPresented": 0,
+            "avgFrameMs": 0,
+            "avgCompositeMs": 0,
+            "maxFrameMs": 0,
+            "slowFrames": 0,
+            "p50FrameMs": 0,
+            "p95FrameMs": 0,
+            "p99FrameMs": 0,
+            "timeToFirstFrameMs": 0
+          }
         },
         {
           "name": "BinPlist",
-          "result": "fail",
-          "seconds": 0.0
+          "result": "pass",
+          "seconds": 0.026,
+          "perf": {
+            "wallSeconds": 0.0204737,
+            "guestInstructions": 148862,
+            "guestMIPS": 7.27087,
+            "blocksDecoded": 189,
+            "frames": 0,
+            "framesPresented": 0,
+            "avgFrameMs": 0,
+            "avgCompositeMs": 0,
+            "maxFrameMs": 0,
+            "slowFrames": 0,
+            "p50FrameMs": 0,
+            "p95FrameMs": 0,
+            "p99FrameMs": 0,
+            "timeToFirstFrameMs": 0
+          }
         },
         {
           "name": "ObjCTest",
-          "result": "fail",
-          "seconds": 0.0
+          "result": "pass",
+          "seconds": 0.014,
+          "perf": {
+            "wallSeconds": 0.00929593,
+            "guestInstructions": 3603,
+            "guestMIPS": 0.387589,
+            "blocksDecoded": 479,
+            "frames": 0,
+            "framesPresented": 0,
+            "avgFrameMs": 0,
+            "avgCompositeMs": 0,
+            "maxFrameMs": 0,
+            "slowFrames": 0,
+            "p50FrameMs": 0,
+            "p95FrameMs": 0,
+            "p99FrameMs": 0,
+            "timeToFirstFrameMs": 0
+          }
         },
         {
           "name": "FoundationTest",
-          "result": "fail",
-          "seconds": 0.0
+          "result": "pass",
+          "seconds": 0.746,
+          "perf": {
+            "wallSeconds": 0.637563,
+            "guestInstructions": 22620,
+            "guestMIPS": 0.0354788,
+            "blocksDecoded": 1677,
+            "frames": 0,
+            "framesPresented": 0,
+            "avgFrameMs": 0,
+            "avgCompositeMs": 0,
+            "maxFrameMs": 0,
+            "slowFrames": 0,
+            "p50FrameMs": 0,
+            "p95FrameMs": 0,
+            "p99FrameMs": 0,
+            "timeToFirstFrameMs": 0
+          }
         },
         {
           "name": "UIKitTest",
-          "result": "fail",
-          "seconds": 0.0
+          "result": "pass",
+          "seconds": 1.024,
+          "perf": {
+            "wallSeconds": 1.01869,
+            "guestInstructions": 11970,
+            "guestMIPS": 0.0117504,
+            "blocksDecoded": 1229,
+            "frames": 61,
+            "framesPresented": 5,
+            "avgFrameMs": 0.417724,
+            "avgCompositeMs": 4.5496,
+            "maxFrameMs": 7.15482,
+            "slowFrames": 0,
+            "p50FrameMs": 0.01664,
+            "p95FrameMs": 4.25984,
+            "p99FrameMs": 7.14342,
+            "timeToFirstFrameMs": 26.1112
+          }
         }
       ]
     },
     "bench": {
-      "passed": 4,
-      "failed": 1,
+      "passed": 5,
+      "failed": 0,
       "skipped": 0,
-      "seconds": 0.3047921657562256,
+      "seconds": 24.900920629501343,
       "tests": [
         {
           "name": "mips/ctests_thumb",
           "result": "pass",
-          "seconds": 0.117,
-          "mips": 672.8
+          "seconds": 0.168,
+          "mips": 467.9
         },
         {
           "name": "mips/ctests_arm",
           "result": "pass",
-          "seconds": 0.119,
-          "mips": 690.7
+          "seconds": 0.167,
+          "mips": 490.3
         },
         {
           "name": "mips/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.034,
-          "mips": 709.3
+          "seconds": 0.055,
+          "mips": 426.8
         },
         {
           "name": "mips/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.035,
-          "mips": 639.5
+          "seconds": 0.058,
+          "mips": 379.3
         },
         {
           "name": "coremark",
-          "result": "fail",
-          "seconds": 0.0
+          "result": "pass",
+          "seconds": 24.453,
+          "score": 1686.7
         }
       ]
     }
   },
   "speed": {
     "interpreterMIPS": {
-      "ctests_thumb": 672.8,
-      "ctests_arm": 690.7,
-      "ftests_vfp_thumb_softfp": 709.3,
-      "ftests_neon_thumb": 639.5
+      "ctests_thumb": 467.9,
+      "ctests_arm": 490.3,
+      "ftests_vfp_thumb_softfp": 426.8,
+      "ftests_neon_thumb": 379.3
+    },
+    "coremark": {
+      "score": 1686.7,
+      "guestMIPS": 564.0,
+      "quick": false,
+      "vsDevices": [
+        {
+          "device": "iPhone 3GS",
+          "cpu": "Cortex-A8",
+          "reference": 1440,
+          "percent": 117.1,
+          "effectiveMHz": 703,
+          "goal": false
+        },
+        {
+          "device": "iPhone 4",
+          "cpu": "Apple A4 (Cortex-A8)",
+          "reference": 1920,
+          "percent": 87.8,
+          "effectiveMHz": 703,
+          "goal": false
+        },
+        {
+          "device": "iPhone 4S",
+          "cpu": "Apple A5 (Cortex-A9)",
+          "reference": 2400,
+          "percent": 70.3,
+          "effectiveMHz": 562,
+          "goal": false
+        },
+        {
+          "device": "iPhone 5",
+          "cpu": "Apple A6 (Swift)",
+          "reference": 4550,
+          "percent": 37.1,
+          "effectiveMHz": 482,
+          "goal": true
+        }
+      ],
+      "goalDevice": "iPhone 5",
+      "goalPercent": 37.1
     }
   },
   "problems": [
@@ -316,46 +454,10 @@
       "message": "src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]"
     },
     {
-      "suite": "ios",
-      "test": "CTest",
-      "severity": "fail",
-      "message": "build failed:\nrk/CTest/main.c.o: name 'struct' is not defined\n/home/runner/cctools/bin/arm-apple-darwin11-ld -arch armv7 -ios_version_min 6.0 -syslibroot /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CTest/sdk -o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/CTest.app/CTest -pie /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CTest/main.c.o -lSystem\nUndefined symbols for architecture armv7:\n  \"___error\", referenced from:\n      _main in main.c.o\n  \"___stack_chk_fail\", referenced from:\n      _main in main.c.o\n  \"___stack_chk_guard\", referenced from:\n      _main in main.c.o\n  \"___stderrp\", referenced from:\n      _main in main.c.o\n  \"_atexit\", referenced from:\n      _main in main.c.o\n  \"_atof\", referenced from:\n      _main in main.c.o\n  \"_atoi\", referenced from:\n      _main in main.c.o\n  \"_bsearch\", referenced from:\n      _main in main.c.o\n  \"_calloc\", referenced from:\n      _main in main.c.o\n  \"_fclose\", referenced from:\n      _main in main.c.o\n  \"_feof\", referenced from:\n      _main in main.c.o\n  \"_fgets\", referenced from:\n      _main in main.c.o\n  \"_fopen\", referenced from:\n      _main in main.c.o\n  \"_fprintf\", referenced from:\n      _main in main.c.o\n  \"_free\", referenced from:\n      _main in main.c.o\n  \"_fseek\", referenced from:\n      _main in main.c.o\n  \"_ftell\", referenced from:\n      _main in main.c.o\n  \"_fwrite\", referenced from:\n      _main in main.c.o\n  \"_getenv\", referenced from:\n      _main in main.c.o\n  \"_longjmp\", referenced from:\n      _dive in main.c.o\n  \"_malloc\", referenced from:\n      _main in main.c.o\n  \"_memcmp\", referenced from:\n      _main in main.c.o\n  \"_memset\", referenced from:\n      _main in main.c.o\n  \"_printf\", referenced from:\n      _main in main.c.o\n  \"_pthread_create\", referenced from:\n      _main in main.c.o\n  \"_pthread_join\", referenced from:\n      _main in main.c.o\n  \"_pthread_mutex_lock\", referenced from:\n      _worker in main.c.o\n  \"_pthread_mutex_unlock\", referenced from:\n      _worker in main.c.o\n  \"_pthread_once\", referenced from:\n      _main in main.c.o\n  \"_puts\", referenced from:\n      _early in main.c.o\n      _main in main.c.o\n      _bye in main.c.o\n  \"_qsort\", referenced from:\n      _main in main.c.o\n  \"_realloc\", referenced from:\n      _main in main.c.o\n  \"_remove\", referenced from:\n      _main in main.c.o\n  \"_setjmp\", referenced from:\n      _main in main.c.o\n  \"_snprintf\", referenced from:\n      _main in main.c.o\n  \"_strcasecmp\", referenced from:\n      _main in main.c.o\n  \"_strchr\", referenced from:\n      _main in main.c.o\n  \"_strcspn\", referenced from:\n      _main in main.c.o\n  \"_strdup\", referenced from:\n      _main in main.c.o\n  \"_strlen\", referenced from:\n      _main in main.c.o\n  \"_strrchr\", referenced from:\n      _main in main.c.o\n  \"_strstr\", referenced from:\n      _main in main.c.o\n  \"_strtod\", referenced from:\n      _main in main.c.o\n  \"_strtol\", referenced from:\n      _main in main.c.o\n  \"_toupper\", referenced from:\n      _main in main.c.o\nld: symbol(s) not found for architecture armv7"
-    },
-    {
-      "suite": "ios",
-      "test": "CTestLegacy",
-      "severity": "fail",
-      "message": "build failed:\nversion_min 3.0 -syslibroot /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CTestLegacy/sdk -o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/CTestLegacy.app/CTestLegacy /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CTestLegacy/sdk/_src/crt1.o -e start /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CTestLegacy/main.c.o -lSystem\nUndefined symbols for architecture armv7:\n  \"___error\", referenced from:\n      _main in main.c.o\n  \"___stack_chk_fail\", referenced from:\n      _main in main.c.o\n  \"___stack_chk_guard\", referenced from:\n      _main in main.c.o\n  \"___stderrp\", referenced from:\n      _main in main.c.o\n  \"_atexit\", referenced from:\n      _main in main.c.o\n  \"_atof\", referenced from:\n      _main in main.c.o\n  \"_atoi\", referenced from:\n      _main in main.c.o\n  \"_bsearch\", referenced from:\n      _main in main.c.o\n  \"_calloc\", referenced from:\n      _main in main.c.o\n  \"_fclose\", referenced from:\n      _main in main.c.o\n  \"_feof\", referenced from:\n      _main in main.c.o\n  \"_fgets\", referenced from:\n      _main in main.c.o\n  \"_fopen\", referenced from:\n      _main in main.c.o\n  \"_fprintf\", referenced from:\n      _main in main.c.o\n  \"_free\", referenced from:\n      _main in main.c.o\n  \"_fseek\", referenced from:\n      _main in main.c.o\n  \"_ftell\", referenced from:\n      _main in main.c.o\n  \"_fwrite\", referenced from:\n      _main in main.c.o\n  \"_getenv\", referenced from:\n      _main in main.c.o\n  \"_longjmp\", referenced from:\n      _dive in main.c.o\n  \"_malloc\", referenced from:\n      _main in main.c.o\n  \"_memcmp\", referenced from:\n      _main in main.c.o\n  \"_memset\", referenced from:\n      _main in main.c.o\n  \"_printf\", referenced from:\n      _main in main.c.o\n  \"_pthread_create\", referenced from:\n      _main in main.c.o\n  \"_pthread_join\", referenced from:\n      _main in main.c.o\n  \"_pthread_mutex_lock\", referenced from:\n      _worker in main.c.o\n  \"_pthread_mutex_unlock\", referenced from:\n      _worker in main.c.o\n  \"_pthread_once\", referenced from:\n      _main in main.c.o\n  \"_puts\", referenced from:\n      _early in main.c.o\n      _main in main.c.o\n      _bye in main.c.o\n  \"_qsort\", referenced from:\n      _main in main.c.o\n  \"_realloc\", referenced from:\n      _main in main.c.o\n  \"_remove\", referenced from:\n      _main in main.c.o\n  \"_setjmp\", referenced from:\n      _main in main.c.o\n  \"_snprintf\", referenced from:\n      _main in main.c.o\n  \"_strcasecmp\", referenced from:\n      _main in main.c.o\n  \"_strchr\", referenced from:\n      _main in main.c.o\n  \"_strcspn\", referenced from:\n      _main in main.c.o\n  \"_strdup\", referenced from:\n      _main in main.c.o\n  \"_strlen\", referenced from:\n      _main in main.c.o\n  \"_strrchr\", referenced from:\n      _main in main.c.o\n  \"_strstr\", referenced from:\n      _main in main.c.o\n  \"_strtod\", referenced from:\n      _main in main.c.o\n  \"_strtol\", referenced from:\n      _main in main.c.o\n  \"_toupper\", referenced from:\n      _main in main.c.o\nld: symbol(s) not found for architecture armv7"
-    },
-    {
-      "suite": "ios",
-      "test": "BinPlist",
-      "severity": "fail",
-      "message": "build failed:\nn.c.o: name 'struct' is not defined\n/home/runner/cctools/bin/arm-apple-darwin11-ld -arch armv7 -ios_version_min 6.0 -syslibroot /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/BinPlist/sdk -o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/BinPlist.app/BinPlist -pie /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/BinPlist/main.c.o -lSystem\nUndefined symbols for architecture armv7:\n  \"___error\", referenced from:\n      _main in main.c.o\n  \"___stack_chk_fail\", referenced from:\n      _main in main.c.o\n  \"___stack_chk_guard\", referenced from:\n      _main in main.c.o\n  \"___stderrp\", referenced from:\n      _main in main.c.o\n  \"_atexit\", referenced from:\n      _main in main.c.o\n  \"_atof\", referenced from:\n      _main in main.c.o\n  \"_atoi\", referenced from:\n      _main in main.c.o\n  \"_bsearch\", referenced from:\n      _main in main.c.o\n  \"_calloc\", referenced from:\n      _main in main.c.o\n  \"_fclose\", referenced from:\n      _main in main.c.o\n  \"_feof\", referenced from:\n      _main in main.c.o\n  \"_fgets\", referenced from:\n      _main in main.c.o\n  \"_fopen\", referenced from:\n      _main in main.c.o\n  \"_fprintf\", referenced from:\n      _main in main.c.o\n  \"_free\", referenced from:\n      _main in main.c.o\n  \"_fseek\", referenced from:\n      _main in main.c.o\n  \"_ftell\", referenced from:\n      _main in main.c.o\n  \"_fwrite\", referenced from:\n      _main in main.c.o\n  \"_getenv\", referenced from:\n      _main in main.c.o\n  \"_longjmp\", referenced from:\n      _dive in main.c.o\n  \"_malloc\", referenced from:\n      _main in main.c.o\n  \"_memcmp\", referenced from:\n      _main in main.c.o\n  \"_memset\", referenced from:\n      _main in main.c.o\n  \"_printf\", referenced from:\n      _main in main.c.o\n  \"_pthread_create\", referenced from:\n      _main in main.c.o\n  \"_pthread_join\", referenced from:\n      _main in main.c.o\n  \"_pthread_mutex_lock\", referenced from:\n      _worker in main.c.o\n  \"_pthread_mutex_unlock\", referenced from:\n      _worker in main.c.o\n  \"_pthread_once\", referenced from:\n      _main in main.c.o\n  \"_puts\", referenced from:\n      _early in main.c.o\n      _main in main.c.o\n      _bye in main.c.o\n  \"_qsort\", referenced from:\n      _main in main.c.o\n  \"_realloc\", referenced from:\n      _main in main.c.o\n  \"_remove\", referenced from:\n      _main in main.c.o\n  \"_setjmp\", referenced from:\n      _main in main.c.o\n  \"_snprintf\", referenced from:\n      _main in main.c.o\n  \"_strcasecmp\", referenced from:\n      _main in main.c.o\n  \"_strchr\", referenced from:\n      _main in main.c.o\n  \"_strcspn\", referenced from:\n      _main in main.c.o\n  \"_strdup\", referenced from:\n      _main in main.c.o\n  \"_strlen\", referenced from:\n      _main in main.c.o\n  \"_strrchr\", referenced from:\n      _main in main.c.o\n  \"_strstr\", referenced from:\n      _main in main.c.o\n  \"_strtod\", referenced from:\n      _main in main.c.o\n  \"_strtol\", referenced from:\n      _main in main.c.o\n  \"_toupper\", referenced from:\n      _main in main.c.o\nld: symbol(s) not found for architecture armv7"
-    },
-    {
-      "suite": "ios",
-      "test": "ObjCTest",
-      "severity": "fail",
-      "message": "build failed:\nferenced from:\n      -[Animal weakFriend] in main.m.o\n      -[Forwarder forwardingTargetForSelector:] in main.m.o\n  \"_objc_destroyWeak\", referenced from:\n      -[Animal .cxx_destruct] in main.m.o\n      _main in main.m.o\n  \"_objc_getAssociatedObject\", referenced from:\n      _main in main.m.o\n  \"_objc_getClass\", referenced from:\n      _main in main.m.o\n  \"_objc_getProperty\", referenced from:\n      -[Animal atomicObj] in main.m.o\n      -[Forwarder target] in main.m.o\n  \"_objc_initWeak\", referenced from:\n      _main in main.m.o\n  \"_objc_loadWeakRetained\", referenced from:\n      -[Animal weakFriend] in main.m.o\n      _main in main.m.o\n  \"_objc_msgSend\", referenced from:\n      +[Animal initialize] in main.m.o\n      -[CopyMe copyWithZone:] in main.m.o\n      -[Forwarder forwardingTargetForSelector:] in main.m.o\n      _main in main.m.o\n  \"_objc_msgSendSuper2\", referenced from:\n      -[Animal init] in main.m.o\n      -[Animal dealloc] in main.m.o\n      -[Dog greet] in main.m.o\n      -[Dog speedFor:] in main.m.o\n      -[Tracker dealloc] in main.m.o\n  \"_objc_registerClassPair\", referenced from:\n      _main in main.m.o\n  \"_objc_release\", referenced from:\n      _main in main.m.o\n      ___destroy_helper_block_e4_20s in main.m.o\n  \"_objc_retain\", referenced from:\n      _main in main.m.o\n      ___copy_helper_block_e4_20s in main.m.o\n  \"_objc_retainAutoreleasedReturnValue\", referenced from:\n      -[Forwarder forwardingTargetForSelector:] in main.m.o\n      _main in main.m.o\n  \"_objc_retainBlock\", referenced from:\n      _main in main.m.o\n  \"_objc_setAssociatedObject\", referenced from:\n      _main in main.m.o\n  \"_objc_setProperty_atomic\", referenced from:\n      -[Animal setAtomicObj:] in main.m.o\n      -[Forwarder setTarget:] in main.m.o\n  \"_objc_setProperty_nonatomic_copy\", referenced from:\n      -[Animal setCopied:] in main.m.o\n  \"_objc_storeStrong\", referenced from:\n      -[Animal setFriendObj:] in main.m.o\n      -[Animal .cxx_destruct] in main.m.o\n      -[Holder hold:] in main.m.o\n      -[Holder .cxx_destruct] in main.m.o\n      -[Forwarder .cxx_destruct] in main.m.o\n  \"_objc_storeWeak\", referenced from:\n      -[Animal setWeakFriend:] in main.m.o\n  \"_objc_sync_enter\", referenced from:\n      _main in main.m.o\n  \"_objc_sync_exit\", referenced from:\n      _main in main.m.o\n  \"_object_getClass\", referenced from:\n      _main in main.m.o\n  \"_printf\", referenced from:\n      _main in main.m.o\n  \"_property_getName\", referenced from:\n      _main in main.m.o\n  \"_puts\", referenced from:\n      _main in main.m.o\n  \"_sel_getName\", referenced from:\n      +[Dynamic resolveInstanceMethod:] in main.m.o\n  \"_sel_registerName\", referenced from:\n      _main in main.m.o\n  \"_strcmp\", referenced from:\n      +[Dynamic resolveInstanceMethod:] in main.m.o\n      _main in main.m.o\n  \"_strlen\", referenced from:\n      +[Animal load] in main.m.o\n      +[Animal initialize] in main.m.o\n      +[Dog load] in main.m.o\n      +[Dog(Override) load] in main.m.o\nld: symbol(s) not found for architecture armv7"
-    },
-    {
-      "suite": "ios",
-      "test": "FoundationTest",
-      "severity": "fail",
-      "message": "build failed:\npDefaultMode\", referenced from:\n      _main in main.m.o\n  \"_kCFTypeArrayCallBacks\", referenced from:\n      _main in main.m.o\n  \"_kCFTypeDictionaryKeyCallBacks\", referenced from:\n      _main in main.m.o\n  \"_kCFTypeDictionaryValueCallBacks\", referenced from:\n      _main in main.m.o\n  \"_memcmp\", referenced from:\n      _main in main.m.o\n  \"_objc_autoreleasePoolPop\", referenced from:\n      -[Pinger background:] in main.m.o\n      _main in main.m.o\n  \"_objc_autoreleasePoolPush\", referenced from:\n      -[Pinger background:] in main.m.o\n      _main in main.m.o\n  \"_objc_autoreleaseReturnValue\", referenced from:\n      -[Person description] in main.m.o\n  \"_objc_enumerationMutation\", referenced from:\n      _main in main.m.o\n  \"_objc_msgSend\", referenced from:\n      -[Person description] in main.m.o\n      -[Person encodeWithCoder:] in main.m.o\n      -[Person initWithCoder:] in main.m.o\n      -[Pinger tick:] in main.m.o\n      -[Pinger later:] in main.m.o\n      -[Pinger note:] in main.m.o\n      -[Pinger onMain:] in main.m.o\n      ...\n  \"_objc_msgSendSuper2\", referenced from:\n      -[Person initWithCoder:] in main.m.o\n  \"_objc_msgSend_stret\", referenced from:\n      _main in main.m.o\n  \"_objc_release\", referenced from:\n      -[Person description] in main.m.o\n      -[Person encodeWithCoder:] in main.m.o\n      -[Person initWithCoder:] in main.m.o\n      -[Pinger note:] in main.m.o\n      -[Pinger background:] in main.m.o\n      _main in main.m.o\n      ___testNumbersAndCollections_block_invoke in main.m.o\n      ...\n  \"_objc_retain\", referenced from:\n      -[Person encodeWithCoder:] in main.m.o\n      -[Person initWithCoder:] in main.m.o\n      -[Pinger background:] in main.m.o\n      _main in main.m.o\n      ___testNumbersAndCollections_block_invoke in main.m.o\n      ___testNumbersAndCollections_block_invoke.389 in main.m.o\n      ___copy_helper_block_e4_20s24r in main.m.o\n      ...\n  \"_objc_retainAutoreleasedReturnValue\", referenced from:\n      -[Person description] in main.m.o\n      -[Person encodeWithCoder:] in main.m.o\n      -[Person initWithCoder:] in main.m.o\n      -[Pinger note:] in main.m.o\n      _main in main.m.o\n      ___testConcurrency_block_invoke in main.m.o\n  \"_objc_setProperty_nonatomic_copy\", referenced from:\n      -[Person setName:] in main.m.o\n  \"_objc_storeStrong\", referenced from:\n      -[Person .cxx_destruct] in main.m.o\n      -[Pinger setLastNoteName:] in main.m.o\n      -[Pinger .cxx_destruct] in main.m.o\n  \"_objc_sync_enter\", referenced from:\n      ___testConcurrency_block_invoke.777 in main.m.o\n      ___testConcurrency_block_invoke_2.784 in main.m.o\n  \"_objc_sync_exit\", referenced from:\n      ___testConcurrency_block_invoke.777 in main.m.o\n      ___testConcurrency_block_invoke_2.784 in main.m.o\n  \"_printf\", referenced from:\n      _main in main.m.o\n  \"_puts\", referenced from:\n      _main in main.m.o\n  \"_strcmp\", referenced from:\n      _main in main.m.o\n  \"_strstr\", referenced from:\n      _main in main.m.o\nld: symbol(s) not found for architecture armv7"
-    },
-    {
-      "suite": "ios",
-      "test": "UIKitTest",
-      "severity": "fail",
-      "message": "build failed:\nate runSynchronousChecks] in main.m.o\n  \"_glReadPixels\", referenced from:\n      -[AppDelegate runSynchronousChecks] in main.m.o\n  \"_objc_autoreleasePoolPop\", referenced from:\n      _main in main.m.o\n  \"_objc_autoreleasePoolPush\", referenced from:\n      _main in main.m.o\n  \"_objc_enumerationMutation\", referenced from:\n      -[AppDelegate runSynchronousChecks] in main.m.o\n  \"_objc_msgSend\", referenced from:\n      -[DrawView drawRect:] in main.m.o\n      -[LayoutView didMoveToWindow] in main.m.o\n      -[TapView touchesBegan:withEvent:] in main.m.o\n      -[TestViewController loadView] in main.m.o\n      -[TestViewController viewDidLoad] in main.m.o\n      -[TestViewController tapped:] in main.m.o\n      -[TestViewController animationDidStop:finished:context:] in main.m.o\n      ...\n  \"_objc_msgSendSuper2\", referenced from:\n      -[LayoutView layoutSubviews] in main.m.o\n      -[TestViewController viewDidLoad] in main.m.o\n      -[TestViewController viewWillAppear:] in main.m.o\n  \"_objc_msgSend_stret\", referenced from:\n      -[DrawView drawRect:] in main.m.o\n      -[TapView touchesBegan:withEvent:] in main.m.o\n      -[TestViewController loadView] in main.m.o\n      -[AppDelegate runSynchronousChecks] in main.m.o\n      -[AppDelegate application:didFinishLaunchingWithOptions:] in main.m.o\n  \"_objc_release\", referenced from:\n      -[DrawView drawRect:] in main.m.o\n      -[LayoutView didMoveToWindow] in main.m.o\n      -[TapView touchesBegan:withEvent:] in main.m.o\n      -[TestViewController loadView] in main.m.o\n      -[TestViewController viewDidLoad] in main.m.o\n      -[AppDelegate runSynchronousChecks] in main.m.o\n      ___destroy_helper_block_e4_20s in main.m.o\n      ...\n  \"_objc_retain\", referenced from:\n      -[AppDelegate runSynchronousChecks] in main.m.o\n      ___copy_helper_block_e4_20s in main.m.o\n  \"_objc_retainAutoreleasedReturnValue\", referenced from:\n      -[DrawView drawRect:] in main.m.o\n      -[LayoutView didMoveToWindow] in main.m.o\n      -[TapView touchesBegan:withEvent:] in main.m.o\n      -[TestViewController loadView] in main.m.o\n      -[TestViewController viewDidLoad] in main.m.o\n      -[AppDelegate runSynchronousChecks] in main.m.o\n      -[AppDelegate application:didFinishLaunchingWithOptions:] in main.m.o\n      ...\n  \"_objc_storeStrong\", referenced from:\n      -[TestViewController setPanelLabel:] in main.m.o\n      -[TestViewController setContainer:] in main.m.o\n      -[TestViewController setChild:] in main.m.o\n      -[TestViewController setButton:] in main.m.o\n      -[TestViewController setGestureView:] in main.m.o\n      -[TestViewController .cxx_destruct] in main.m.o\n      -[AppDelegate setWindow:] in main.m.o\n      ...\n  \"_printf\", referenced from:\n      -[AppDelegate runSynchronousChecks] in main.m.o\n      -[AppDelegate finish] in main.m.o\n  \"_puts\", referenced from:\n      -[AppDelegate finish] in main.m.o\n  \"_snprintf\", referenced from:\n      -[AppDelegate runSynchronousChecks] in main.m.o\nld: symbol(s) not found for architecture armv7"
-    },
-    {
       "suite": "bench",
       "test": "coremark",
-      "severity": "fail",
-      "message": "build failed:\nWarning parsing /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_list_join.c.o: name 'struct' is not defined\nWarning parsing /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_main.c.o: name 'struct' is not defined\nWarning parsing /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_matrix.c.o: name 'struct' is not defined\nWarning parsing /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_state.c.o: name 'struct' is not defined\nWarning parsing /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_util.c.o: name 'struct' is not defined\nWarning parsing /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_portme.c.o: name 'struct' is not defined\n/home/runner/cctools/bin/arm-apple-darwin11-ld -arch armv7 -ios_version_min 6.0 -syslibroot /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/sdk -o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/CoreMark.app/CoreMark -pie /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_list_join.c.o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_main.c.o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_matrix.c.o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_state.c.o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_util.c.o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/CoreMark/core_portme.c.o -lSystem\nUndefined symbols for architecture armv7:\n  \"___stack_chk_fail\", referenced from:\n      _main in core_main.c.o\n      _core_bench_state in core_state.c.o\n  \"___stack_chk_guard\", referenced from:\n      _main in core_main.c.o\n      _core_bench_state in core_state.c.o\n      _main in core_main.c.o\n      _core_bench_state in core_state.c.o\n  \"___udivsi3\", referenced from:\n      _main in core_main.c.o\n  \"_clock_gettime\", referenced from:\n      _start_time in core_portme.c.o\n      _stop_time in core_portme.c.o\n  \"_free\", referenced from:\n      _portable_free in core_portme.c.o\n     (maybe you meant: _portable_free)\n  \"_malloc\", referenced from:\n      _portable_malloc in core_portme.c.o\n     (maybe you meant: _portable_malloc)\n  \"_memset\", referenced from:\n      _core_init_state in core_state.c.o\n  \"_printf\", referenced from:\n      _main in core_main.c.o\n  \"_putchar\", referenced from:\n      _main in core_main.c.o\n  \"_puts\", referenced from:\n      _main in core_main.c.o\nld: symbol(s) not found for architecture armv7"
+      "severity": "perf",
+      "message": "37.1% of iPhone 5 single-core speed (goal: 100%)"
     }
   ]
 }
