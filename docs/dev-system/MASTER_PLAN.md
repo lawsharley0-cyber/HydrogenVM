@@ -288,3 +288,27 @@ agents working without one queue.
    Claude, Codex, Cursor, Jules and Gemini.
 4. **Device runs:** once phase 1 lands, play each game until it fails and send the crash
    bundle. It is one tap.
+
+## 8. Tickets (opened 2026-10-23)
+
+The queue is GitHub issues labelled `agent:<name>` and `phase-<n>`. The owner library is listed
+by SHA-256 in [`library.json`](library.json) (IPAs are never committed).
+
+| Issue | Agent | Item |
+|---|---|---|
+| #21 | Codex | Phase 1: device crash bundle and error screen |
+| #22 | Cursor | Phase 1: triage tool, linking-info dump, one scanner, full-library harness run |
+| #23 | Jules | Clumsy Ninja: `syscall()` |
+| #24 | Codex | M4A/AAC through the host (Mega Jump, Jetpack music) |
+| #25 | Gemini | Terraria startup crash |
+| #26 | Gemini | Tiny Tower relaunch crash |
+| #27 | Jules | Jetpack terminate-path crash |
+| #28 | Jules | Pocket Ants freeze |
+| #29 | Gemini | Minecraft PE world load |
+| #30 | Jules | Talking Larry tap crash |
+| #31 | Jules | libc / ObjC runtime / Mach load-time gaps |
+| #32 | Gemini | Foundation / UIKit classes for the Unity apps |
+| #33 | Claude | Phase 2 epic: GPU GLES backend |
+
+Library scan on Linux (2026-10-23, 30 s, `c8f6f80`): 10 of 12 run without a crash; Clumsy Ninja
+stops on `syscall`; Terraria crashes at startup. Device-only crashes are what #21 is for.

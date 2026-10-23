@@ -1,0 +1,112 @@
+{
+ "note": "Owner library. IPAs are never committed; they live in the private fixture store (HVM_FIXTURE_ROOT). Match by sha256.",
+ "apps": [
+  {
+   "id": "angry-birds",
+   "file": "AngryBirds_v1.0_os30.ipa",
+   "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+   "uar": "UAR-001",
+   "graphics": "GLES1"
+  },
+  {
+   "id": "art-of-glow",
+   "file": "Art_Of_Glow_v1.1.2_os313.ipa",
+   "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+   "uar": null,
+   "graphics": "GLES1"
+  },
+  {
+   "id": "clumsy-ninja",
+   "file": "Clumsy_Ninja_1_0_0.ipa",
+   "sha256": "da0bf18ed57f0c92b5568093f173d8d7ce5c73f4a3b092473abba2cfcfde6244",
+   "uar": null,
+   "graphics": "GLES2"
+  },
+  {
+   "id": "jetpack-joyride",
+   "file": "Jetpack_Joyride.ipa",
+   "sha256": "a7720c0b8daa5489e5f2a2db6495042b7650c48ad1c84dec1849d4cef3554f4d",
+   "uar": "UAR-003",
+   "graphics": "GLES1"
+  },
+  {
+   "id": "mega-jump",
+   "file": "Mega_Jump_v2.0_os30.ipa",
+   "sha256": "7c2cc082e5b5025cb408992853f730cde2ec2e1c620a9be11ddeb406942e36fe",
+   "uar": "UAR-004",
+   "graphics": "GLES1"
+  },
+  {
+   "id": "minecraft-pe-lite",
+   "file": "Minecraft_PE_Lite_v1.2_iOS_4.3_2011-11-17.ipa",
+   "sha256": "f91103af827e8ababce84554640fd71bc50a5c284cac7b12cd64c2008f95706d",
+   "uar": "UAR-006",
+   "graphics": "GLES1"
+  },
+  {
+   "id": "pocket-ants",
+   "file": "Pocket_Ants_1.0_1.0.31_ios_3.0.ipa",
+   "sha256": "80b3df4bff0c783f5786faeba910e252c433c71b7650c85b3055a7b398a38cdf",
+   "uar": "UAR-007",
+   "graphics": "GLES1"
+  },
+  {
+   "id": "retry",
+   "file": "RETRY_1_5_0_ios_6_0.ipa",
+   "sha256": "96561e24d475e39bbad46a2f803a74849b89fba70b87b78efdbafde04324cc60",
+   "uar": "UAR-008",
+   "graphics": "GLES2 Unity"
+  },
+  {
+   "id": "subway-surfers",
+   "file": "Subway_Surfers_1_41_0.ipa",
+   "sha256": "dc9ae1c4b5b7a13d701317317fb032e88b2c42633f9ced6a2b00f481c17845fe",
+   "uar": "UAR-009",
+   "graphics": "GLES2 Unity"
+  },
+  {
+   "id": "talking-larry",
+   "file": "Talking_Larry-1.0-Johnson1992.ipa",
+   "sha256": "1a55698c1b4f30c0427de1c73f6beaeb4ae8b9e0f6f1960c0ca0c0129947dd79",
+   "uar": "UAR-010",
+   "graphics": "UIKit"
+  },
+  {
+   "id": "terraria",
+   "file": "Terraria-v1_0-eromeu52-iOS5_1-_Clutch-1_4_6_.ipa",
+   "sha256": "4de3b0077eaeccbde0c0a6f052fc80216c57c9576ee0e9ca0aca2b2e6df4f7dd",
+   "uar": "UAR-012",
+   "graphics": "GLES1"
+  },
+  {
+   "id": "tiny-tower",
+   "file": "Tiny_Tower_v1.0_os30.ipa",
+   "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+   "uar": "UAR-013",
+   "graphics": "GLES1"
+  }
+ ],
+ "notYetSupplied": [
+  {
+   "id": "goat-simulator",
+   "uar": "UAR-002"
+  },
+  {
+   "id": "minecraft-1.1",
+   "uar": "UAR-005"
+  },
+  {
+   "id": "survivalcraft",
+   "uar": "UAR-011"
+  },
+  {
+   "id": "minecraft-story-mode",
+   "uar": null
+  },
+  {
+   "id": "clash-royale",
+   "uar": null,
+   "note": "parked by owner 2026-10-23"
+  }
+ ]
+}
