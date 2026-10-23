@@ -106,6 +106,9 @@ struct EmulatorScreen: UIViewRepresentable {
             picture.setAffineTransform(CGAffineTransform(rotationAngle: orientation.displayAngle))
             overlay.frame = picture.bounds
             if let gl = glLayer {
+                if RunModel.automation {
+                    RunModel.console("[gpu] layout picture \(picture.bounds.size) gl \(gl.bounds.size) super \(gl.superlayer === picture)")
+                }
                 // The GL layer's bounds are its drawable in pixels; scale it to fill the picture.
                 let src = gl.bounds.size
                 gl.position = CGPoint(x: picture.bounds.midX, y: picture.bounds.midY)

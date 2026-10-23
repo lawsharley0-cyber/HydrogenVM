@@ -866,6 +866,8 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
         storage(kRenderbuffer, kRgba8, width, height);
         ok = true;
     }
+    p.log(LogLevel::Info, "GPU: drawable " + std::to_string(width) + "x" + std::to_string(height) + " for renderbuffer " +
+                              std::to_string(rb) + (handled ? " (platform layer)" : " (RGBA8 storage)") + (ok ? "" : " FAILED"));
     std::lock_guard<std::mutex> lk(st.mu);
     Drawable& d = st.drawables[key2(hc->guestSharegroup, rb)];
     d.layer = layer;
@@ -899,7 +901,17 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     layer = d.layer;
     width = d.width;
     height = d.height;
-    if (st.platform->presentDirect(hc->handle, d.layer)) { direct = true; return true; }
+    if (st.platform->presentDirect(hc->handle, d.layer)) {
+        direct = true;
+        static std::atomic<int> presents{0};
+        const int n = ++presents;
+        if (n == 1 || n == 60 || n == 600) p.log(LogLevel::Info, "GPU: presented frame " + std::to_string(n) + " directly");
+        return true;
+    }
+    {
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true)) p.log(LogLevel::Warning, "GPU: direct present unavailable; reading frames back");
+    }
 
     // Read the drawable back for the software compositor.
     if (!hc->fn.glGenFramebuffers || !hc->fn.glReadPixels) return false;

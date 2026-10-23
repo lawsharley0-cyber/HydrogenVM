@@ -125,7 +125,10 @@ final class RunModel {
             }
         }
         s.onGLLayer = { [weak self] layer in
-            MainActor.assumeIsolated { self?.glLayer = layer }
+            MainActor.assumeIsolated {
+                Self.console("[gpu] GL layer \(layer.map { "\($0.bounds.size)" } ?? "removed")")
+                self?.glLayer = layer
+            }
         }
         s.onLog = { [weak self] line, level in
             MainActor.assumeIsolated { self?.append(line, level) }
