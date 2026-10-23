@@ -1,4 +1,6 @@
 #import "HVMEngine.h"
+#import "HostGLEAGL.h"
+#import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
 #import <AVFoundation/AVFoundation.h>
@@ -346,6 +348,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
 @property (nonatomic, readwrite) CGSize screenSize;
 @property (nonatomic, readwrite) NSInteger interfaceOrientation;
 @property (nonatomic, readwrite, getter=isRunning) BOOL running;
+@property (nonatomic, readwrite, nullable) CALayer *glLayer;
 @end
 
 @implementation HVMSession {
@@ -361,6 +364,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
         _core = std::make_shared<SessionCore>();
         _screenSize = CGSizeMake(320, 480);
         _interfaceOrientation = 1;
+        _useGPU = YES;
     }
     return self;
 }
@@ -377,6 +381,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
     __weak HVMSession *weakSelf = self;
     const std::string bundle = _bundlePath.UTF8String, home = _homePath.UTF8String;
     const bool keepGoing = _keepGoing;
+    const bool useGPU = _useGPU;
 
     auto flushLogs = [core, weakSelf]() {
         std::vector<std::pair<std::string, RT::LogLevel>> batch;
@@ -397,6 +402,16 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
         cfg.bundlePath = bundle;
         cfg.homePath = home;
         cfg.stopOnMissingFunction = !keepGoing;
+        if (useGPU) {
+            // GLES runs on the GPU through OpenGLES.framework; the host layer is
+            // handed to the player view, which puts it under the UIKit overlay.
+            cfg.hostGL = Hydrogen::App::makeEaglPlatform([weakSelf](CALayer *layer) {
+                HVMSession *s = weakSelf;
+                if (!s) return;
+                s.glLayer = layer;
+                if (s.onGLLayer) s.onGLLayer(layer);
+            });
+        }
         cfg.screenWidth = 320;
         cfg.screenHeight = 568;   // UIKit drops to 480 unless the app opts into 4"
         cfg.screenScale = 2;

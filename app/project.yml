@@ -39,6 +39,8 @@ targets:
       - sdk: ImageIO.framework
       - sdk: CoreMotion.framework
       - sdk: AVFoundation.framework
+      - sdk: OpenGLES.framework                    # GLES on the GPU (Bridge/HostGLEAGL.mm)
+      - sdk: QuartzCore.framework
     settings:
       configs:
         Release:
@@ -55,4 +57,5 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: HydrogenVM/Bridge/HydrogenVM-Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/../src
         OTHER_CPLUSPLUSFLAGS: $(inherited) -fno-strict-aliasing -ffp-contract=off
+        GCC_PREPROCESSOR_DEFINITIONS: $(inherited) GLES_SILENCE_DEPRECATION=1
         ENABLE_USER_SCRIPT_SANDBOXING: YES

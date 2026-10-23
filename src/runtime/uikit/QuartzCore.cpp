@@ -551,6 +551,11 @@ struct Compositor {
         else shape.addRect(d.bounds);
         const G::Path devShape = shape.transformed(m);
 
+        if (d.hostPresented) {
+            // Cut a hole down to the host's GPU layer, then draw what sits on top.
+            if (d.cornerRadius <= 0 && m.axisAligned()) G::fillRect(dst, m.applyRect(d.bounds), {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
+            else G::fillPath(dst, devShape, false, {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
+        } else
         // background
         if (d.backgroundPattern) {
             const G::Clip c2 = G::intersectClip(clip, devShape, false);
@@ -570,7 +575,8 @@ struct Compositor {
         // contents
         G::ImagePtr img;
         float imgScale = d.contentsScale;
-        if (d.externalContents) img = d.externalContents();
+        if (d.hostPresented) {}
+        else if (d.externalContents) img = d.externalContents();
         else if (d.contents) { img = CG::imageOf(x, d.contents); }
         else if (d.backing) img = d.backing;
         if (img && img->width > 0) {

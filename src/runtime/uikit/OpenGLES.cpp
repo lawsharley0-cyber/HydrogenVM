@@ -775,7 +775,10 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
         std::vector<uint8_t> pixels;
         if (!HostGL::presentRenderbuffer(x.proc, self, layer, w, h, pixels, direct)) return false;
         if (!direct) publishFrame(x, layer, pixels.data(), w, h);
-        else setNeedsComposite(x);
+        else {
+            layerData(x, layer).hostPresented = true;
+            setNeedsComposite(x);
+        }
         return true;
     }
     ContextData& c = rt(x).host<ContextData>(self);

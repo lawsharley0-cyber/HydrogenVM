@@ -1,6 +1,7 @@
 // Objective-C face of the C++ engine, for Swift.
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <QuartzCore/QuartzCore.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -38,6 +39,14 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 - (instancetype)init NS_UNAVAILABLE;
 
 @property (nonatomic, copy, nullable) void (^onFrame)(CGImageRef image);
+/// The layer that shows the guest's OpenGL ES drawable when it renders on the GPU
+/// (useGPU). onFrame images are then an overlay with a transparent hole over it.
+/// Sized in drawable pixels; the player scales it like the frame image.
+@property (nonatomic, copy, nullable) void (^onGLLayer)(CALayer *_Nullable layer);
+@property (nonatomic, readonly, nullable) CALayer *glLayer;
+/// Render OpenGL ES on the GPU (default YES). NO uses the software rasterizer.
+/// Takes effect at start.
+@property (nonatomic) BOOL useGPU;
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line, HVMLogLevel level);
 /// exitCode is the guest's exit status; crashReport is non-nil when it crashed (or failed to load).
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);

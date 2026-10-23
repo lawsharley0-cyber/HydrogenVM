@@ -14,6 +14,8 @@ final class RunModel {
 
     let app: InstalledApp
     private(set) var frame: CGImage?
+    /// GPU-rendered GL drawable, shown under `frame` (nil on the software renderer).
+    private(set) var glLayer: CALayer?
     private(set) var screenSize = CGSize(width: 320, height: 480)
     private(set) var log: [LogLine] = []
     private(set) var running = false
@@ -104,6 +106,8 @@ final class RunModel {
         guard session == nil else { return }
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
         s.keepGoing = keepGoing
+        // GPU rendering unless the player turned it off (Settings: "softwareRenderer").
+        s.useGPU = !UserDefaults.standard.bool(forKey: "softwareRenderer")
         // The bridge delivers every callback on the main queue.
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
@@ -114,6 +118,9 @@ final class RunModel {
                 self.scheduleAutoTaps()
                 if let size = self.session?.screenSize, size != self.screenSize { self.screenSize = size }
             }
+        }
+        s.onGLLayer = { [weak self] layer in
+            MainActor.assumeIsolated { self?.glLayer = layer }
         }
         s.onLog = { [weak self] line, level in
             MainActor.assumeIsolated { self?.append(line, level) }
@@ -300,7 +307,7 @@ struct RunView: View {
             // Viewport & Game Canvas
             GeometryReader { geo in
                 ZStack {
-                    EmulatorScreen(image: model.frame, guestSize: model.screenSize,
+                    EmulatorScreen(image: model.frame, glLayer: model.glLayer, guestSize: model.screenSize,
                                    orientation: effectiveOrientation,
                                    mode: PlayerScaleMode(rawValue: scaleSetting) ?? .fit,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,

@@ -15,6 +15,8 @@ extension GuestOrientation {
 /// Shows the guest's portrait framebuffer upright, undoing its root rotation.
 struct EmulatorScreen: UIViewRepresentable {
     let image: CGImage?
+    /// GPU-rendered GL drawable (HVMSession.glLayer); shown under `image`.
+    var glLayer: CALayer? = nil
     let guestSize: CGSize
     var orientation: GuestOrientation = .portrait
     var mode: PlayerScaleMode = .fit
@@ -26,7 +28,7 @@ struct EmulatorScreen: UIViewRepresentable {
 
     func updateUIView(_ view: ScreenView, context: Context) {
         view.onTouch = onTouch
-        view.configure(image: image, guest: guestSize, orientation: orientation,
+        view.configure(image: image, glLayer: glLayer, guest: guestSize, orientation: orientation,
                        mode: mode, filter: filter, enabled: inputEnabled)
     }
 
@@ -34,7 +36,11 @@ struct EmulatorScreen: UIViewRepresentable {
 
     final class ScreenView: UIView {
         var onTouch: ((HVMTouchPhase, CGPoint, Int) -> Void)?
+        /// Container scaled and rotated to the viewport: the GL layer (if any)
+        /// underneath, the composited UIKit frame on top.
         private let picture = CALayer()
+        private let overlay = CALayer()
+        private var glLayer: CALayer?
         private var guestSize = CGSize(width: 320, height: 480)
         private var pixelSize = CGSize(width: 640, height: 960)
         private var orientation = GuestOrientation.portrait
@@ -50,13 +56,14 @@ struct EmulatorScreen: UIViewRepresentable {
             backgroundColor = .black
             clipsToBounds = true
             layer.addSublayer(picture)
+            picture.addSublayer(overlay)
             isAccessibilityElement = true
             accessibilityLabel = "Game Screen"
             accessibilityIdentifier = "player-viewport"
         }
         required init?(coder: NSCoder) { fatalError() }
 
-        func configure(image: CGImage?, guest: CGSize, orientation: GuestOrientation,
+        func configure(image: CGImage?, glLayer newGL: CALayer?, guest: CGSize, orientation: GuestOrientation,
                        mode: PlayerScaleMode, filter: PlayerFilter, enabled: Bool) {
             let pixels = image.map { CGSize(width: $0.width, height: $0.height) } ?? pixelSize
             if guestSize != guest || self.orientation != orientation || self.mode != mode || pixelSize != pixels || !enabled {
@@ -69,9 +76,16 @@ struct EmulatorScreen: UIViewRepresentable {
             self.enabled = enabled
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            picture.contents = image
-            picture.magnificationFilter = filter == .nearest ? .nearest : .linear
-            picture.minificationFilter = filter == .nearest ? .nearest : .linear
+            overlay.contents = image
+            overlay.magnificationFilter = filter == .nearest ? .nearest : .linear
+            overlay.minificationFilter = filter == .nearest ? .nearest : .linear
+            if glLayer !== newGL {
+                glLayer?.removeFromSuperlayer()
+                glLayer = newGL
+                if let gl = newGL { picture.insertSublayer(gl, below: overlay) }
+            }
+            glLayer?.magnificationFilter = overlay.magnificationFilter
+            glLayer?.minificationFilter = overlay.minificationFilter
             CATransaction.commit()
             setNeedsLayout()
         }
@@ -90,6 +104,16 @@ struct EmulatorScreen: UIViewRepresentable {
                 ? CGSize(width: rect.height, height: rect.width) : rect.size)
             picture.position = CGPoint(x: rect.midX, y: rect.midY)
             picture.setAffineTransform(CGAffineTransform(rotationAngle: orientation.displayAngle))
+            overlay.frame = picture.bounds
+            if let gl = glLayer {
+                // The GL layer's bounds are its drawable in pixels; scale it to fill the picture.
+                let src = gl.bounds.size
+                gl.position = CGPoint(x: picture.bounds.midX, y: picture.bounds.midY)
+                if src.width > 0, src.height > 0 {
+                    gl.setAffineTransform(CGAffineTransform(scaleX: picture.bounds.width / src.width,
+                                                            y: picture.bounds.height / src.height))
+                }
+            }
             CATransaction.commit()
         }
 

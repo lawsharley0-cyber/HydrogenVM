@@ -62,6 +62,9 @@ struct LayerData : ObjC::HostObject {
     G::ImagePtr backing;             // result of -display
     id name = 0;                     // retained
     std::function<G::ImagePtr()> externalContents;   // CAEAGLLayer etc.: provides the current image
+    // The host shows this layer itself (GPU-presented CAEAGLLayer): the compositor
+    // leaves its area transparent so the host layer underneath shows through.
+    bool hostPresented = false;
 };
 
 struct ViewData : ObjC::HostObject {
