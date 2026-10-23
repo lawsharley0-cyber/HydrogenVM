@@ -1,10 +1,17 @@
 import subprocess
+import io
+import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from contextlib import redirect_stdout, redirect_stderr
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from compat_harness.doctor import inspect
+from compat_harness.cli import main
 
 
 class DoctorTests(unittest.TestCase):
@@ -63,3 +70,15 @@ class DoctorTests(unittest.TestCase):
     def test_missing_document_is_reported(self):
         self.backlog.unlink()
         self.assertEqual(inspect(self.root)[0]["kind"], "missing-document")
+
+    def test_cli_dispatches_read_only_doctor(self):
+        before = self.backlog.read_bytes()
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["doctor", "--repo", str(self.root)]), 0)
+        self.assertEqual(self.backlog.read_bytes(), before)
+
+    def test_cli_rejects_invalid_report_schema(self):
+        report = self.root / "invalid.json"
+        report.write_text(json.dumps({"summary": {"ok": True}}))
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["doctor", "--repo", str(self.root), "--report", str(report)]), 2)

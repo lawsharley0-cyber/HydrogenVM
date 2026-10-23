@@ -10,7 +10,7 @@ enum SaveCompressionFormat: String {
         guard data.count >= 2 else { return .none }
         let b0 = data[data.startIndex], b1 = data[data.startIndex + 1]
         if b0 == 0x1F && b1 == 0x8B { return .gzip }
-        if b0 == 0x78 && (b1 == 0x01 || b1 == 0x5E || b1 == 0x9C || b1 == 0xDA) { return .zlib }
+        if b0 & 0x0f == 8, b0 >> 4 <= 7, (Int(b0) * 256 + Int(b1)) % 31 == 0 { return .zlib }
         return .none
     }
 
@@ -48,7 +48,9 @@ enum SaveCompressionFormat: String {
             } while ret != Z_STREAM_END
             return ret
         }
-        guard status == Z_STREAM_END else { return nil }
+        // Unsupported concatenated members or custom trailing metadata must not
+        // disappear when the editor recompresses only the first stream.
+        guard status == Z_STREAM_END, stream.avail_in == 0 else { return nil }
         return (out, fmt)
     }
 

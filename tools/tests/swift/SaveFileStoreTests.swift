@@ -70,6 +70,13 @@ struct SaveFileStoreTests {
         }
         try rejects("truncated gzip") { _ = try SaveCompressionFormat.decode(Data([0x1f, 0x8b, 0])) }
         try rejects("truncated zlib") { _ = try SaveCompressionFormat.decode(Data([0x78, 0x9c, 0])) }
+        let compressed = try SaveCompressionFormat.encode(original, format: .gzip)
+        try rejects("trailing compressed metadata must not be dropped") {
+            _ = try SaveCompressionFormat.decode(compressed + Data([1, 2, 3]))
+        }
+        try rejects("concatenated gzip must not lose its second member") {
+            _ = try SaveCompressionFormat.decode(compressed + compressed)
+        }
         for encoding: String.Encoding in [.utf8, .utf16LittleEndian, .utf16BigEndian, .utf32LittleEndian, .utf32BigEndian] {
             let text = "score=42\r\nname=café\r\n"
             let bom: Data

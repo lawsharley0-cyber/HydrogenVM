@@ -106,12 +106,7 @@ enum FileKind: Equatable {
     }
 
     static func looksLikeCompressed(_ url: URL) -> Bool {
-        let d = head(url, 4)
-        guard d.count >= 2 else { return false }
-        let b0 = d[d.startIndex], b1 = d[d.startIndex + 1]
-        if b0 == 0x1F && b1 == 0x8B { return true } // gzip
-        if b0 == 0x78 && (b1 == 0x01 || b1 == 0x5E || b1 == 0x9C || b1 == 0xDA) { return true } // zlib
-        return false
+        SaveCompressionFormat.detect(head(url, 4)) != .none
     }
 
     static func looksLikeText(_ url: URL) -> Bool {
@@ -2382,13 +2377,14 @@ private struct NestedDataInspectorView: View {
             case .plist:
                 if let nestedPlist {
                     PlistContainerView(node: nestedPlist, isRoot: false, archiveRoot: nestedPlist) {
-                        if let serialized = try? PropertyListSerialization.data(
+                        do {
+                            let serialized = try PropertyListSerialization.data(
                             fromPropertyList: nestedPlist.toAny(),
                             format: nestedPlistFormat,
                             options: 0
-                        ) {
+                            )
                             apply(serialized)
-                        }
+                        } catch { self.error = error.localizedDescription }
                     }
                 }
             case .text:
