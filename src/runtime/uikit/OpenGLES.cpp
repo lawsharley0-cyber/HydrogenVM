@@ -776,8 +776,15 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
         if (!HostGL::presentRenderbuffer(x.proc, self, layer, w, h, pixels, direct)) return false;
         if (!direct) publishFrame(x, layer, pixels.data(), w, h);
         else {
-            layerData(x, layer).hostPresented = true;
-            setNeedsComposite(x);
+            // The host shows GL frames itself. The UIKit overlay only needs a new
+            // composite when the layer first switches to host presentation (or when
+            // UIKit content changes, which marks the composite dirty on its own).
+            LayerData& ld = layerData(x, layer);
+            if (!ld.hostPresented) {
+                ld.hostPresented = true;
+                setNeedsComposite(x);
+            }
+            x.proc.perf().notePresented();
         }
         return true;
     }
