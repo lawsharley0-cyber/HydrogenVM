@@ -2434,9 +2434,35 @@ int runFullSubsystemTests() {
         call("__ZNSsC1EPKcRKSaIcE", {c, cstr("abc"), 0});
         const int32_t cmp = int32_t(call("__ZNKSs7compareERKSs", {c, a}));
         call("__ZNSs4swapERSs", {a, c});
-        const bool ok = shared && str(a) == "abc" && str(c) == "hello" && str(b) == ">> hello world" && pos == 9 && str(sub) == "world" && cmp < 0;
+        call("__ZNSs6resizeEm", {a, 2});
+        const uint32_t emptyRep = call("__ZNSs4_Rep12_S_empty_repEv", {});
+        const uint32_t emptyRc = m.read<uint32_t>(emptyRep + 8);
+        const bool ok = shared && str(a) == "ab" && str(c) == "hello" && str(b) == ">> hello world" && pos == 9 && str(sub) == "world" && cmp < 0 && emptyRc == 0xFFFFFFFFu;
         for (uint32_t s : {a, b, c, sub}) call("__ZNSsD1Ev", {s});
-        check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap");
+        check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap, resize, emptyRep");
+
+        // libstdc++ __basic_file<char> tests
+        const uint32_t bfile = proc.heap().allocZeroed(16);
+        call("__ZNSt12__basic_fileIcEC1EP15__gthread_mutex", {bfile, 0});
+        const std::string tmpPath = proc.homePath() + "/basic_file_test.txt";
+        const uint32_t cpath = cstr(tmpPath.c_str());
+        const uint32_t opened = call("__ZNSt12__basic_fileIcE4openEPKcSt13_Ios_Openmodei", {bfile, cpath, 16 /* out */ | 32 /* trunc */, 0666});
+        const bool isOpen = (call("__ZNKSt12__basic_fileIcE7is_openEv", {bfile}) & 0xFF) != 0;
+        const int32_t fd = int32_t(call("__ZNKSt12__basic_fileIcE2fdEv", {bfile}));
+        const uint32_t writeBuf = cstr("Hello basic_file!");
+        const int32_t written = int32_t(call("__ZNSt12__basic_fileIcE6xsputnEPKci", {bfile, writeBuf, 17}));
+        call("__ZNSt12__basic_fileIcE5closeEv", {bfile});
+        const bool closed = !(call("__ZNKSt12__basic_fileIcE7is_openEv", {bfile}) & 0xFF);
+
+        // Reopen for reading and seek
+        call("__ZNSt12__basic_fileIcE4openEPKcSt13_Ios_Openmodei", {bfile, cpath, 8 /* in */, 0666});
+        const uint32_t readBuf = proc.heap().allocZeroed(32);
+        const int32_t readBytes = int32_t(call("__ZNSt12__basic_fileIcE6xsgetnEPci", {bfile, readBuf, 32}));
+        const std::string readStr = proc.readCString(readBuf);
+        call("__ZNSt12__basic_fileIcED1Ev", {bfile});
+        std::filesystem::remove(tmpPath);
+        check(opened != 0 && isOpen && fd >= 0 && written == 17 && closed && readBytes == 17 && readStr == "Hello basic_file!",
+              "libstdc++ __basic_file<char> open, write, read, close, fd");
     }
 
     // #31: independent ARMv7 API-family oracles (metadata is laid out by the public ABI).

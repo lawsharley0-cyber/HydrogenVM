@@ -43,6 +43,7 @@ struct Streams {
     explicit Streams(Process&) {}
     std::mutex mu;
     std::unordered_map<uint32_t, Stream> objects;   // keyed by the complete object's address
+    std::unordered_map<uint32_t, std::FILE*> basicFiles; // keyed by std::__basic_file<char> self pointer
     uint32_t vtIn = 0, vtOut = 0, vtIo = 0, vtIoOstream = 0;
 };
 Streams& S(Ctx& x) { return x.proc.service<Streams>(); }
@@ -193,6 +194,122 @@ bool fb_isOpen(Ctx& x, GuestPtr filebuf) {
     return fileOf(x, objectFor(x, filebuf, 2)) != nullptr;
 }
 
+int whence(uint32_t dir) { return dir == 0 ? SEEK_SET : dir == 1 ? SEEK_CUR : SEEK_END; }
+
+// -------------------------------------------------------- __basic_file<char> ---
+
+uint32_t bfile_ctor(Ctx& x, GuestPtr self, GuestPtr lock) {
+    x.mem.write<uint32_t>(self, 0);
+    x.mem.write<uint8_t>(self + 4, 0);
+    Streams& s = S(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (s.basicFiles.count(self) && s.basicFiles[self]) std::fclose(s.basicFiles[self]);
+    s.basicFiles[self] = nullptr;
+    return self;
+}
+
+void bfile_dtor(Ctx& x, GuestPtr self) {
+    Streams& s = S(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    auto it = s.basicFiles.find(self);
+    if (it != s.basicFiles.end()) {
+        if (it->second) std::fclose(it->second);
+        s.basicFiles.erase(it);
+    }
+}
+
+bool bfile_isOpen(Ctx& x, GuestPtr self) {
+    Streams& s = S(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    auto it = s.basicFiles.find(self);
+    return it != s.basicFiles.end() && it->second != nullptr;
+}
+
+uint32_t bfile_open(Ctx& x, GuestPtr self, GuestPtr path, uint32_t mode, int32_t prot) {
+    if (bfile_isOpen(x, self)) return 0;
+    const uint32_t m = mode & (kIn | kOut | kTrunc | kApp);
+    const char* fm = nullptr;
+    if (m == kIn) fm = "rb";
+    else if (m == kOut || m == (kOut | kTrunc)) fm = "wb";
+    else if (m == (kOut | kApp) || m == kApp) fm = "ab";
+    else if (m == (kIn | kOut)) fm = "r+b";
+    else if (m == (kIn | kOut | kTrunc)) fm = "w+b";
+    else if (m == (kIn | kOut | kApp) || m == (kIn | kApp)) fm = "a+b";
+    std::FILE* f = (fm && path) ? std::fopen(x.proc.readCString(path).c_str(), fm) : nullptr;
+    if (f && (mode & kAte)) std::fseek(f, 0, SEEK_END);
+    if (!f) return 0;
+    {
+        Streams& s = S(x);
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.basicFiles[self] = f;
+    }
+    x.mem.write<uint8_t>(self + 4, 1);
+    return self;
+}
+
+uint32_t bfile_close(Ctx& x, GuestPtr self) {
+    std::FILE* f = nullptr;
+    {
+        Streams& s = S(x);
+        std::lock_guard<std::mutex> lk(s.mu);
+        auto it = s.basicFiles.find(self);
+        if (it != s.basicFiles.end()) {
+            f = it->second;
+            it->second = nullptr;
+        }
+    }
+    x.mem.write<uint8_t>(self + 4, 0);
+    if (!f || std::fclose(f) != 0) return 0;
+    return self;
+}
+
+int32_t bfile_fd(Ctx& x, GuestPtr self) {
+    Streams& s = S(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    auto it = s.basicFiles.find(self);
+    if (it != s.basicFiles.end() && it->second) return fileno(it->second);
+    return -1;
+}
+
+uint32_t bfile_file(Ctx& x, GuestPtr self) {
+    return bfile_isOpen(x, self) ? self : 0;
+}
+
+int32_t bfile_sync(Ctx& x, GuestPtr self) {
+    Streams& s = S(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    auto it = s.basicFiles.find(self);
+    if (it != s.basicFiles.end() && it->second) return std::fflush(it->second);
+    return -1;
+}
+
+int32_t bfile_xsgetn(Ctx& x, GuestPtr self, GuestPtr buf, int32_t n) {
+    if (n <= 0) return 0;
+    Streams& s = S(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    auto it = s.basicFiles.find(self);
+    if (it == s.basicFiles.end() || !it->second) return 0;
+    return int32_t(std::fread(x.mem.host(buf), 1, size_t(n), it->second));
+}
+
+int32_t bfile_xsputn(Ctx& x, GuestPtr self, GuestPtr buf, int32_t n) {
+    if (n <= 0) return 0;
+    Streams& s = S(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    auto it = s.basicFiles.find(self);
+    if (it == s.basicFiles.end() || !it->second) return 0;
+    return int32_t(std::fwrite(x.mem.host(buf), 1, size_t(n), it->second));
+}
+
+int64_t bfile_seekoff(Ctx& x, GuestPtr self, int64_t off, uint32_t dir, uint32_t mode) {
+    Streams& s = S(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    auto it = s.basicFiles.find(self);
+    if (it == s.basicFiles.end() || !it->second) return -1;
+    if (std::fseek(it->second, long(off), whence(dir)) != 0) return -1;
+    return int64_t(std::ftell(it->second));
+}
+
 // istream& istream::read(char* s, streamsize n)
 uint32_t is_read(Ctx& x, GuestPtr self, GuestPtr buf, int32_t n) {
     if (!isFileStream(x, self, 0)) return hvmIstreamRead(x, self, buf, n);
@@ -217,9 +334,6 @@ uint32_t os_write(Ctx& x, GuestPtr self, GuestPtr buf, int32_t n) {
     return self;
 }
 
-int whence(uint32_t dir) { return dir == 0 ? SEEK_SET : dir == 1 ? SEEK_CUR : SEEK_END; }
-
-// istream& istream::seekg(off_type, ios_base::seekdir) and ostream::seekp.
 // 32-bit iOS passes arguments APCS-style (64-bit values aren't moved to an even
 // register): this in r0, the offset in r1:r2, the direction in r3.
 void seekAt(Ctx& x, int part, uint32_t self, int64_t off, uint32_t dir) {
@@ -373,6 +487,30 @@ void registerLibStdcxx(Process& p) {
     p.def<&fb_open>(sym(fb, "4openEPKcSt13_Ios_Openmode"));
     p.def<&fb_close>(sym(fb, "5closeEv"));
     p.def<&fb_isOpen>("__ZNKSt13basic_filebufIcSt11char_traitsIcEE7is_openEv");
+
+    // std::__basic_file<char>
+    p.def<&bfile_ctor>("__ZNSt12__basic_fileIcEC1EP15__gthread_mutex");
+    p.def<&bfile_ctor>("__ZNSt12__basic_fileIcEC2EP15__gthread_mutex");
+    p.def<&bfile_dtor>("__ZNSt12__basic_fileIcED1Ev");
+    p.def<&bfile_dtor>("__ZNSt12__basic_fileIcED2Ev");
+    p.def<&bfile_isOpen>("__ZNKSt12__basic_fileIcE7is_openEv");
+    p.def<&bfile_open>("__ZNSt12__basic_fileIcE4openEPKcSt13_Ios_Openmodei");
+    p.def<&bfile_close>("__ZNSt12__basic_fileIcE5closeEv");
+    p.def<&bfile_fd>("__ZNKSt12__basic_fileIcE2fdEv");
+    p.def<&bfile_file>("__ZNKSt12__basic_fileIcE4fileEv");
+    p.def<&bfile_sync>("__ZNSt12__basic_fileIcE4syncEv");
+    p.def<&bfile_xsgetn>("__ZNSt12__basic_fileIcE6xsgetnEPci");
+    p.def<&bfile_xsputn>("__ZNSt12__basic_fileIcE6xsputnEPKci");
+    p.defineFunction("__ZNSt12__basic_fileIcE7seekoffExSt12_Ios_SeekdirSt13_Ios_Openmode", [](Ctx& x) {
+        const uint32_t self = x.cpu.r[0];
+        const int64_t off = int64_t((uint64_t(x.cpu.r[2]) << 32) | x.cpu.r[1]);
+        const uint32_t dir = x.cpu.r[3];
+        const uint32_t mode = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
+        const int64_t pos = bfile_seekoff(x, self, off, dir, mode);
+        x.cpu.r[0] = uint32_t(pos);
+        x.cpu.r[1] = uint32_t(pos >> 32);
+    });
+
     p.def<&is_read>("__ZNSi4readEPci");
     p.def<&os_write>("__ZNSo5writeEPKci");
     p.defineFunction("__ZNSi5seekgExSt12_Ios_Seekdir", [](Ctx& x) { seekImpl(x, 0); });
