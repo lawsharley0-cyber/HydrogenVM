@@ -101,7 +101,7 @@ struct SaveFileStoreTests {
         sqlite3_close(db)
         db = nil
         print("SQLite: source closed after WAL import")
-        try SQLiteEditStore.requireClosed(database)
+        try SQLiteEditStore.requireCheckpointed(database)
         let databaseStore = SaveFileStore(url: database, backupRoot: root.appendingPathComponent("backups"))
         let beforeDatabase = try databaseStore.load()
         try expect(sqlite3_open(workspace.url.path, &db) == SQLITE_OK, "open working copy")
@@ -123,7 +123,7 @@ struct SaveFileStoreTests {
         db = nil
         let activeJournal = URL(fileURLWithPath: database.path + "-wal")
         try Data([1]).write(to: activeJournal)
-        try rejects("active database journal") { try SQLiteEditStore.requireClosed(database) }
+        try rejects("active database journal") { try SQLiteEditStore.requireCheckpointed(database) }
         try fm.removeItem(at: activeJournal)
 
         // A missing snapshot root must fail during staging, before originals move.

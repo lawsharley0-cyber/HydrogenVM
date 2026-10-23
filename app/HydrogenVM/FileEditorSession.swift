@@ -172,7 +172,7 @@ private struct FileBackupHistoryView: View {
                 Button("Restore Revision") {
                     guard let selected else { return }
                     do {
-                        try SQLiteEditStore.requireClosed(document.store.url)
+                        try SQLiteEditStore.requireCheckpointed(document.store.url)
                         try document.store.save(Data(contentsOf: selected))
                         document.revert()
                         dismiss()

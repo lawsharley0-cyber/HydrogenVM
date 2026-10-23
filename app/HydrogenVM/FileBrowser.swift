@@ -1719,7 +1719,7 @@ struct SQLiteEditorView: View {
             document.ready = false
             do {
                 workspace = try SQLiteEditStore(source: url)
-                try SQLiteEditStore.requireClosed(url)
+                try SQLiteEditStore.requireCheckpointed(url)
                 _ = try document.store.load()
                 document.ready = true
                 loadDatabase()
@@ -1730,7 +1730,7 @@ struct SQLiteEditorView: View {
     private func save() -> Bool {
         guard document.ready, let workspace else { return false }
         do {
-            try SQLiteEditStore.requireClosed(url)
+            try SQLiteEditStore.requireCheckpointed(url)
             try document.commit(workspace.bytes())
             return true
         } catch {

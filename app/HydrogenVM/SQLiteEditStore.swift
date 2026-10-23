@@ -49,16 +49,28 @@ final class SQLiteEditStore {
                        userInfo: [NSLocalizedDescriptionKey: "\(operation): \(detail)"])
     }
 
-    static func requireClosed(_ source: URL) throws {
+    static func requireCheckpointed(_ source: URL) throws {
         let fm = FileManager.default
-        for suffix in ["-wal", "-shm", "-journal"] where fm.fileExists(atPath: source.path + suffix) {
+        // SQLite may retain an empty WAL and an SHM index after checkpointing.
+        // Those are not pending database pages. A nonempty WAL or a hot rollback
+        // journal must be handled by SQLite before any raw file replacement.
+        for suffix in ["-wal", "-journal"] where fm.fileExists(atPath: source.path + suffix) {
+            let sidecar = URL(fileURLWithPath: source.path + suffix)
+            let size = try sidecar.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            if size == 0 { continue }
+            if suffix == "-journal" {
+                let handle = try FileHandle(forReadingFrom: sidecar)
+                defer { try? handle.close() }
+                let header = try handle.read(upToCount: 8) ?? Data()
+                if header.allSatisfy({ $0 == 0 }) { continue }
+            }
             throw NSError(domain: "HydrogenVM.SQLiteEditor", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "The database \(source.lastPathComponent) has a journal file (\(suffix)). Close the game and reopen the editor before saving."])
+                          userInfo: [NSLocalizedDescriptionKey: "The database \(source.lastPathComponent) has pending journal data (\(suffix), \(size) bytes). Close the game and reopen the editor before saving."])
         }
     }
 
     func bytes() throws -> Data {
-        try Self.requireClosed(url)
+        try Self.requireCheckpointed(url)
         return try Data(contentsOf: url)
     }
 }
