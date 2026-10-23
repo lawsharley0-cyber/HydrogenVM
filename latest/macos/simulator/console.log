@@ -1,6 +1,7 @@
 GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
 [gpu] GL layer (64.0, 64.0)
 [gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
+[gpu] GL layer removed
 Loaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main
 Objective-C: 5 classes, 0 categories, 168 selector refs
 Screen: 320x480 @2x, portrait, status bar visible
@@ -128,8 +129,6 @@ ok glCheckFramebufferStatus complete
 GPU: presented frame 1 directly (average rgb 255,0,0, 64/64 samples lit)
 ok OpenGL ES clear, glReadPixels & presentRenderbuffer
 
-[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
-[gpu] GL layer removed
 [autotap] 70.0,350.0
 [autotap] 230.0,350.0
 ok drawRect: was called by the compositor
@@ -150,4 +149,4 @@ ALL CHECKS PASSED
 
 App exited with code 0
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 21776
+com.lfull.HydrogenVM: 22240
