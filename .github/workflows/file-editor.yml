@@ -22,6 +22,7 @@ jobs:
             app/HydrogenVM/SaveFileStore.swift app/HydrogenVM/SaveCompression.swift \
             app/HydrogenVM/SaveTextCodec.swift app/HydrogenVM/SQLiteEditStore.swift \
             app/HydrogenVM/SaveSnapshotStore.swift app/HydrogenVM/SaveConfigLine.swift \
+            app/HydrogenVM/JSONSaveDocument.swift app/HydrogenVM/PlistSaveDocument.swift \
             tools/tests/swift/SaveFileStoreTests.swift -lz -lsqlite3
           set -o pipefail
           build/file-editor/tests 2>&1 | tee build/file-editor/persistence.log

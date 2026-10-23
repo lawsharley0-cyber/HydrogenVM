@@ -12,7 +12,7 @@ struct SaveFileStoreTests {
         throw NSError(domain: "Expected failure: \(message)", code: 1)
     }
 
-    static func main() throws {
+    @MainActor static func main() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -96,6 +96,23 @@ struct SaveFileStoreTests {
         try rejects("newline in config value") { _ = try config.replacingValue("1\nother=2") }
         let json = try JSONSerialization.jsonObject(with: Data("42".utf8), options: [.fragmentsAllowed])
         try expect(JSONSerialization.data(withJSONObject: json, options: [.fragmentsAllowed]) == Data("42".utf8), "scalar JSON persists")
+        let precise = try JSONSerialization.jsonObject(with: Data("{\"count\":9007199254740993,\"max\":18446744073709551615,\"name\":\"before\"}".utf8))
+        let jsonTree = JSONNode.fromAny(precise)
+        if case .object(let fields) = jsonTree.value {
+            fields.first { $0.key == "name" }!.value = .string("after")
+        }
+        let jsonAfter = jsonTree.toAny() as! [String: Any]
+        try expect((jsonAfter["count"] as! NSNumber).stringValue == "9007199254740993", "JSON integers above 2^53 stay exact")
+        try expect((jsonAfter["max"] as! NSNumber).stringValue == "18446744073709551615", "JSON UInt64 stays exact")
+        let archived = try NSKeyedArchiver.archivedData(withRootObject: ["score": 42], requiringSecureCoding: false)
+        let archiveObject = try PropertyListSerialization.propertyList(from: archived, format: nil)
+        let archiveTree = PlistNode.fromAny(archiveObject)
+        let roundtrip = try PropertyListSerialization.data(fromPropertyList: archiveTree.toAny(), format: .binary, options: 0)
+        let unarchiver = try NSKeyedUnarchiver(forReadingFrom: roundtrip)
+        unarchiver.requiresSecureCoding = false
+        let decodedArchive = unarchiver.decodeObject(forKey: NSKeyedArchiveRootObjectKey) as? [String: Int]
+        unarchiver.finishDecoding()
+        try expect(decodedArchive?["score"] == 42, "binary NSKeyedArchiver references survive the actual plist model")
 
         // A committed WAL row must survive the working-copy import, and changes
         // in that copy must not reach the source until the common Save step.
