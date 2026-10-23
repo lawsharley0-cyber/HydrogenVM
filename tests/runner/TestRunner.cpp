@@ -1310,6 +1310,46 @@ int runFullSubsystemTests() {
             r.release(cpu,copy);r.release(cpu,style);
         }
         check(support,"Paragraph styles copy independent properties; NSURLCredential snapshots password");
+        bool indexSetArrays = false;
+        {
+            const uint32_t a0 = Foundation::makeString(cx, "A"), a1 = Foundation::makeString(cx, "B"),
+                           a2 = Foundation::makeString(cx, "C"), a3 = Foundation::makeString(cx, "D"),
+                           a4 = Foundation::makeString(cx, "E");
+            const uint32_t arr = Foundation::makeArray(cx, {a0, a1, a2, a3, a4});
+            const uint32_t is13 = Foundation::makeIndexSet(cx, {1, 3});
+            const uint32_t sub = call(arr, "objectsAtIndexes:", {is13});
+            bool subOk = Foundation::arrayItems(cx, sub) == std::vector<id>{a1, a3};
+
+            bool oobSub = false;
+            try { const uint32_t badIS = Foundation::makeIndexSet(cx, {1, 5}); call(arr, "objectsAtIndexes:", {badIS}); }
+            catch (const std::exception& e) { oobSub = std::string(e.what()).find("beyond bounds") != std::string::npos; }
+
+            const uint32_t marr = Foundation::makeArray(cx, {a0, a1, a2, a3, a4}, true, true);
+            call(marr, "removeObjectsAtIndexes:", {is13});
+            bool remOk = Foundation::arrayItems(cx, marr) == std::vector<id>{a0, a2, a4};
+
+            const uint32_t xObj = Foundation::makeString(cx, "X"), yObj = Foundation::makeString(cx, "Y");
+            const uint32_t insArr = Foundation::makeArray(cx, {a0, a1}, true, true);
+            const uint32_t insItems = Foundation::makeArray(cx, {xObj, yObj});
+            call(insArr, "insertObjects:atIndexes:", {insItems, is13});
+            bool insOk = Foundation::arrayItems(cx, insArr) == std::vector<id>{a0, xObj, a1, yObj};
+
+            bool mismatchIns = false;
+            try { const uint32_t oneItem = Foundation::makeArray(cx, {xObj}); call(insArr, "insertObjects:atIndexes:", {oneItem, is13}); }
+            catch (const std::exception& e) { mismatchIns = std::string(e.what()).find("differs from count") != std::string::npos; }
+
+            const uint32_t replArr = Foundation::makeArray(cx, {a0, a1, a2, a3}, true, true);
+            call(replArr, "replaceObjectsAtIndexes:withObjects:", {is13, insItems});
+            bool replOk = Foundation::arrayItems(cx, replArr) == std::vector<id>{a0, xObj, a2, yObj};
+
+            bool oobRepl = false;
+            try { const uint32_t oobIS = Foundation::makeIndexSet(cx, {1, 10}); call(replArr, "replaceObjectsAtIndexes:withObjects:", {oobIS, insItems}); }
+            catch (const std::exception& e) { oobRepl = std::string(e.what()).find("beyond bounds") != std::string::npos; }
+
+            r.release(cpu, marr); r.release(cpu, insArr); r.release(cpu, replArr);
+            indexSetArrays = subOk && oobSub && remOk && insOk && mismatchIns && replOk && oobRepl;
+        }
+        check(indexSetArrays, "NSArray / NSMutableArray index set operations (objectsAtIndexes, remove, insert, replace, bounds)");
         bool geometry=false;
         if(r.getClass("UIBezierPath")) {
             const auto f=[](float v){return std::bit_cast<uint32_t>(v);};
