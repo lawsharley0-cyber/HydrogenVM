@@ -78,6 +78,8 @@ final class SaveFileStore {
         }
         // Always retain the backup just created, even on filesystems whose
         // creation timestamps have coarse resolution.
-        for old in ordered.filter({ $0 != backup }).dropFirst(9) { try? fm.removeItem(at: old) }
+        for old in ordered.filter({ $0.lastPathComponent != backup.lastPathComponent }).dropFirst(9) {
+            try? fm.removeItem(at: old)
+        }
     }
 }
