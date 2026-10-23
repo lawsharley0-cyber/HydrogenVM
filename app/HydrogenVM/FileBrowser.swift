@@ -1171,7 +1171,7 @@ final class JSONNode: Identifiable {
 
     enum Kind {
         case string(String)
-        case number(Double, isInteger: Bool)
+        case number(NSNumber)
         case bool(Bool)
         case null
         case array([JSONNode])
@@ -1180,7 +1180,7 @@ final class JSONNode: Identifiable {
         var label: String {
             switch self {
             case .string: "String"
-            case .number(_, let isInt): isInt ? "Integer" : "Number"
+            case .number: "Number"
             case .bool: "Boolean"
             case .null: "Null"
             case .array(let a): "Array (\(a.count))"
@@ -1207,9 +1207,7 @@ final class JSONNode: Identifiable {
             if CFGetTypeID(n) == CFBooleanGetTypeID() {
                 return JSONNode(key: key, value: .bool(n.boolValue))
             }
-            let d = n.doubleValue
-            let isInt = floor(d) == d && abs(d) < Double(Int64.max)
-            return JSONNode(key: key, value: .number(d, isInteger: isInt))
+            return JSONNode(key: key, value: .number(n))
         } else {
             return JSONNode(key: key, value: .null)
         }
@@ -1218,7 +1216,7 @@ final class JSONNode: Identifiable {
     func toAny() -> Any {
         switch value {
         case .string(let s): return s
-        case .number(let d, let isInt): return isInt ? NSNumber(value: Int64(d)) : NSNumber(value: d)
+        case .number(let number): return number
         case .bool(let b): return b
         case .null: return NSNull()
         case .array(let a): return a.map { $0.toAny() }
@@ -1378,7 +1376,7 @@ private struct JSONContainerListView: View {
                         newKeyName = ""
                         addingKey = true
                     case .array(var a):
-                        a.append(JSONNode(key: "[\(a.count)]", value: .number(0, isInteger: true)))
+                        a.append(JSONNode(key: "[\(a.count)]", value: .number(NSNumber(value: 0))))
                         node.value = .array(a)
                         onMutate()
                     default: break
@@ -1394,7 +1392,7 @@ private struct JSONContainerListView: View {
             TextField("Key", text: $newKeyName)
             Button("Add") {
                 if case .object(var a) = node.value, !newKeyName.isEmpty {
-                    a.append(JSONNode(key: newKeyName, value: .number(0, isInteger: true)))
+                    a.append(JSONNode(key: newKeyName, value: .number(NSNumber(value: 0))))
                     node.value = .object(a)
                     onMutate()
                 }
@@ -1427,18 +1425,16 @@ private struct JSONRowView: View {
             )) {
                 Text(node.key).font(.system(.body, design: .monospaced))
             }
-        case .number(let d, let isInt):
+        case .number(let number):
             HStack {
                 Text(node.key).font(.system(.body, design: .monospaced))
                 Spacer()
                 TextField("0", text: Binding(
-                    get: { isInt ? String(Int64(d)) : String(d) },
+                    get: { number.stringValue },
                     set: { s in
-                        if let i = Int64(s) {
-                            node.value = .number(Double(i), isInteger: true)
-                            onMutate()
-                        } else if let v = Double(s) {
-                            node.value = .number(v, isInteger: false)
+                        if let object = try? JSONSerialization.jsonObject(with: Data(s.utf8), options: [.fragmentsAllowed]),
+                           let value = object as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() {
+                            node.value = .number(value)
                             onMutate()
                         }
                     }
@@ -2545,6 +2541,8 @@ private struct NestedDataInspectorView: View {
     @State private var textRepresentation: String = ""
     @State private var mode: Mode = .hex
     @State private var loaded = false
+    @State private var compression: SaveCompressionFormat = .none
+    @State private var error: String?
 
     enum Mode: String, CaseIterable {
         case plist = "Nested Plist"
@@ -2573,8 +2571,7 @@ private struct NestedDataInspectorView: View {
                             format: nestedPlistFormat,
                             options: 0
                         ) {
-                            data = serialized
-                            onUpdate(serialized)
+                            apply(serialized)
                         }
                     }
                 }
@@ -2582,8 +2579,7 @@ private struct NestedDataInspectorView: View {
                 TextEditor(text: Binding(get: { textRepresentation }, set: { value in
                     textRepresentation = value
                     let encoded = Data(value.utf8)
-                    data = encoded
-                    onUpdate(encoded)
+                    apply(encoded)
                 }))
                     .font(.system(.footnote, design: .monospaced))
             case .hex:
@@ -2598,6 +2594,11 @@ private struct NestedDataInspectorView: View {
         .onAppear {
             guard !loaded else { return }
             loaded = true
+            do {
+                let (payload, fmt) = try SaveCompressionFormat.decode(data)
+                data = payload
+                compression = fmt
+            } catch { self.error = error.localizedDescription; return }
             var fmt: PropertyListSerialization.PropertyListFormat = .binary
             if let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: &fmt) {
                 nestedPlistFormat = fmt
@@ -2611,7 +2612,18 @@ private struct NestedDataInspectorView: View {
                 mode = .hex
             }
         }
+        .alert("Nested Data Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: { Text(error ?? "") }
     }
+    private func apply(_ payload: Data) {
+        do {
+            let encoded = try SaveCompressionFormat.encode(payload, format: compression)
+            data = payload
+            onUpdate(encoded)
+        } catch { self.error = error.localizedDescription }
+    }
+
 }
 
 // MARK: - Binary / Hex Editor with Value Inspector & Cheat Scanner

@@ -100,6 +100,7 @@ struct SaveFileStoreTests {
         let workspace = try SQLiteEditStore(source: database)
         sqlite3_close(db)
         db = nil
+        print("SQLite: source closed after WAL import")
         try SQLiteEditStore.requireClosed(database)
         let databaseStore = SaveFileStore(url: database, backupRoot: root.appendingPathComponent("backups"))
         let beforeDatabase = try databaseStore.load()
@@ -111,6 +112,7 @@ struct SaveFileStoreTests {
         try expect(sqlite3_exec(db, "UPDATE stats SET coins=99", nil, nil, nil) == SQLITE_OK, "edit working copy")
         sqlite3_close(db)
         db = nil
+        print("SQLite: working copy closed before Save")
         try expect(Data(contentsOf: database) == beforeDatabase, "unsaved SQLite edits isolated")
         try databaseStore.save(workspace.bytes())
         try expect(sqlite3_open(database.path, &db) == SQLITE_OK, "reopen saved database")

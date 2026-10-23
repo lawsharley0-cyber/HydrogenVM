@@ -53,7 +53,7 @@ final class SQLiteEditStore {
         let fm = FileManager.default
         for suffix in ["-wal", "-shm", "-journal"] where fm.fileExists(atPath: source.path + suffix) {
             throw NSError(domain: "HydrogenVM.SQLiteEditor", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "The database has active journal files. Close the game and reopen the editor before saving."])
+                          userInfo: [NSLocalizedDescriptionKey: "The database \(source.lastPathComponent) has a journal file (\(suffix)). Close the game and reopen the editor before saving."])
         }
     }
 
