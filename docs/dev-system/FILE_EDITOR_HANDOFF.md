@@ -8,9 +8,13 @@ based on `main` at `39904cb`. No other checkout's uncommitted changes are includ
 
 All six editable formats (text, config, JSON, plist, SQLite and binary) use a
 common Save action. Each file opens in a sheet with its own NavigationStack.
-The sheet owns the bottom Save Changes bar, navigation Save, keyboard Save/Done,
-Close, unsaved-change confirmation, Revert and optional debounced autosave.
-Those controls remain outside nested editor navigation. Revert rebuilds the
+The sheet owns the persistent Save Changes bar, unsaved-change confirmation,
+Revert and optional debounced autosave. Each visible destination supplies its
+navigation Save/Close and keyboard Save/Done toolbar. Both use the same session,
+so saving and guarded closing remain available throughout nested navigation.
+The footer reserves its own layout space and moves with keyboard avoidance;
+autosave/settings cannot cover the navigation bar. Text editors use explicit
+focus handling for taps in the editing surface. Revert rebuilds the
 navigation stack; returning from a nested view no longer reloads the root file.
 Changing editor types is disabled until edits are saved or reverted.
 
@@ -62,8 +66,15 @@ copy/save/reopen and staged snapshot failure handling. It then builds the actual
 iOS shell and runs an isolated SwiftUI harness on an iPhone simulator. The harness
 compiles the production editor sources without the emulator or commercial assets.
 
-See STATUS.md and the PR checks for exact final tested commits/run links. An
-earlier successful build does not validate later edits. Simulator interaction
+Final tested source is `d3085f3`:
+[Apple validation](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39881742994)
+passed the persistence/model tests, all five simulator interaction tests and the
+full native shell compile.
+[Linux compatibility](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39881742977)
+passed 64 harness self-tests and all 16 unit/asm/differential configurations,
+including 191 runtime checks, with zero baseline/previous-indexed regressions.
+The exact report is indexed in STATUS.md. Evidence-only commits do not change
+the tested code. Earlier failed UI runs are not treated as passes. Simulator interaction
 is separate from signed-device guest behavior. Run these device scenarios before
 calling the owner's original device issue resolved:
 
@@ -90,7 +101,7 @@ or historical handoff imperative is not proof that an implementation exists.
 
 | Order | Task | State / dependency |
 |---|---|---|
-| 1 | UX-1 / B-211 save overhaul | Implemented in draft #18; final checks and device scenarios above govern closure |
+| 1 | UX-1 / B-211 save overhaul | Implemented in draft #18; automated checks pass; review and device scenarios above govern closure |
 | 2 | B-003 documentation reconciliation | Updated on this branch: main integration, shell file map, implemented GLES/audio/UIKit, limits and merged-item status |
 | 3 | Read-only docs doctor | `python3 tools/hvm_compat.py doctor`; validates commit references in backlog/status/plan. Optional `--report` uses only explicitly backlog-tagged passing cases from a clean ancestor report to suggest status review; never auto-closes tasks |
 | 4 | Issue #14 and B-111 graphics limits/point sizes | Wait for Group B PRs #11/#12 and coordinate one owner; no competing edits here |

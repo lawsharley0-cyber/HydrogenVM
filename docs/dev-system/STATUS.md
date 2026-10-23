@@ -26,11 +26,11 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 |---|---|---|---|
 | Runtime / CPU and memory | `src/core/cpu/`, `src/core/memory/`, Group A lines in `System.cpp` | — | Needs owner |
 | Guest frameworks | `src/runtime/objc/`, `foundation/`, UIKit except GLES, libc symbols | — | Needs owner |
-| Graphics, audio, input | `OpenGLES.cpp`, `Shader.*`, `audio/`, gestures | — | Needs owner |
-| App compatibility, including Clash | `src/loader/`, `tools/clash_*.py`, `Net.cpp` while Group C is active | — | Needs owner |
+| Graphics, audio, input | `OpenGLES.cpp`, `Shader.*`, `audio/`, gestures | PRs #11/#12 (Group B), #16 (PCM) | Active scoped PRs; other input work unclaimed |
+| App compatibility, including Clash | `src/loader/`, `tools/clash_*.py`, `Net.cpp` while Group C is active | PR #13 (Clash), #17 (ZIP) | Active scoped PRs; other loader work unclaimed |
 | Test / regression | `tools/compat_harness/`, harness workflow | — | Needs owner for who watches the gate |
 | Review / integration / docs | `docs/dev-system/` | — | Needs owner for required reviews |
-| Apple shell | `app/**`, `HVMEngine.h` | — | Needs owner and a Mac |
+| Apple shell | `app/**`, `HVMEngine.h` | codex/file-save-overhaul, draft #18 | Active save-editor validation; signed-device scenarios pending |
 
 ## Current compat results
 
@@ -109,8 +109,65 @@ None in the infrastructure change. The harness does not alter runtime behavior, 
 
 ## October 22 save-editor continuation (draft #18)
 
-Group E and documentation/harness work on codex/file-save-overhaul, based on main 39904cb. Shared C++ runtime is unchanged. File-save behavior, SQLite buffering, rolling backups, staged snapshots and guarded editor navigation are implemented; see [FILE_EDITOR_HANDOFF.md](FILE_EDITOR_HANDOFF.md). Signed-device behavior and actual guest consumption of edits remain unverified.
+Group E is owned by `codex/file-save-overhaul`, draft #18, based on main
+`39904cb`. The shared C++ runtime is unchanged. See
+[FILE_EDITOR_HANDOFF.md](FILE_EDITOR_HANDOFF.md) for implemented behavior and the
+remaining ordered queue. B-003 is reconciled on this branch; B-103, B-108 and
+B-110 reflect their merged PRs. Other roadmap tasks remain open.
 
-Local WSL: 62 harness unit tests passed (including six new doctor checks); doctor found no unavailable commit references in the reconciled backlog/status/plan. Swift persistence tests, including actual JSON/plist model round trips and SQLite WAL tests, passed on the Mac runner at 41562a0. Final shell/UI checks are pending and must be recorded by exact commit below. Earlier UI compile at 20aa20b passed; it is historical evidence, not a final-code pass.
+**Final tested source: `d3085f3`.**
+[Apple validation](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39881742994)
+passed the Swift 6 persistence/model executable, all five iPhone simulator UI
+tests, and the actual unsigned Release simulator shell compile. UI tests prove
+nested Save & Close with reopen, discard, returning to the root without losing
+edits, autosave, and native text entry saved through the keyboard toolbar.
+The final footer reserves layout space rather than covering the viewport;
+visible destinations supply toolbars, and text editors explicitly request focus.
 
-B-003 docs now distinguish current main integration from historical gemini-merge checkpoints. B-103, B-108 and B-110 reflect their merged PRs. The original compatibility snapshot above remains historical. No new app/gameplay, memory-page, performance, speaker or Clash progression result is claimed.
+Local WSL and CI harness self-tests pass: **64 tests**, including eight doctor
+checks. `python3 tools/hvm_compat.py doctor` passes on the reconciled documents.
+The original baseline and historical snapshot above remain unchanged.
+
+Simulator interaction is not signed-device or real-guest save/relaunch proof.
+The device scenarios in the handoff remain required before closing the owner's
+device report. No new gameplay, 16 KiB guest-permission, performance, speaker or
+Clash progression result is claimed. Independent review and owner integration
+remain pending. Evidence-only commits after the tested source do not change
+app, runtime or test code.
+
+### Indexed Linux evidence for this continuation
+
+The [compatibility run on aba7fec](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39876854191)
+passed with `git.dirty=false` on PR merge 47c4876d7feef516f091837af0f69cee55e81d87.
+The exact uploaded JSON is indexed as
+[20261023T001828Z-47c4876d7fee.json](reports/linux-x86_64/20261023T001828Z-47c4876d7fee.json).
+The filename uses UTC; the local date was October 22.
+Host: Ubuntu Linux x86_64, Clang 18.1.3, **4096-byte pages**.
+Selftest, fulltest (191 passed), four asm guests, ten differential configurations,
+required Python modules and 64 harness self-tests passed. Three grandfathered
+fixtures ran without recorded crashes; optional Clash was absent and skipped.
+Baseline and previous-indexed diffs both had zero regressions and attention.
+The previous-indexed import improvements are from merged PR #5, not this change.
+The baseline is unchanged. This does not resolve existing real-game observations.
+
+The [subsequent Linux run at 83c143d](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39878110661)
+also passed after the toolbar correction. Swift persistence tests also pass on
+that source revision. Simulator interaction and signed-device results are
+separate; do not infer them from either headless run.
+
+### Final Linux source revision
+
+[Final compatibility run](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39881742977)
+passed on `d3085f3` (clean PR merge ef383fe348d27251d6d7921ac2eae52c9a10ac17).
+Its exact uploaded report is
+[20261023T011004Z-ef383fe348d2.json](reports/linux-x86_64/20261023T011004Z-ef383fe348d2.json).
+Host: Linux x86_64, Clang 18.1.3, 4096-byte pages. All 16 unit/asm/differential
+configurations pass, including fulltest's **191 passed, 0 failed**. Required
+Python suites pass; three bundled apps run without recorded crashes and optional
+Clash remains skipped. Baseline and previous-indexed diffs have zero regressions,
+attention and informational changes. No prior import improvement is credited to
+this save-editor patch. JSON schema validation passes; the baseline is unchanged.
+
+Decision: keep the save overhaul in draft #18 for independent review/device
+validation, and preserve remaining roadmap work as queued rather than calling
+the entire handoff complete.

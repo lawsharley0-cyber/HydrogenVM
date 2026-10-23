@@ -35,9 +35,10 @@ policy with no JIT entitlement.
 | `src/runtime/foundation/` | Foundation + CoreFoundation + GCD reimplemented as host classes |
 | `src/runtime/graphics/` | Software 2D: AA path rasteriser, strokes, clips, blend modes, PNG (incl. CgBI), text backend interface |
 | `src/runtime/uikit/` | CoreGraphics, QuartzCore (layer tree compositor), UIKit views/controls/scroll/table/nav/tab/text/gestures, nib & storyboard loading, OpenGL ES 1.1/2.0 (`OpenGLES.cpp`), audio & platform frameworks (`PlatformStubs.cpp`) |
+| `src/runtime/audio/` | Shared PCM/IMA decoding, audio queues, mixing and host-output integration |
 | `src/selftest/SelfTest.*` | Built-in smoke test + speed check (runs on device from the app) |
 | `app/HydrogenVM/HydrogenVMApp.swift`, `LibraryView.swift`, `RunView.swift`, `DiagnosticsView.swift` | SwiftUI entry point, installed app library, guest viewport/lifecycle, diagnostics |
-| `app/HydrogenVM/FileBrowser.swift`, `FileEditorSession.swift`, `SaveFileStore.swift`, `SaveCompression.swift`, `SaveTextCodec.swift`, `SQLiteEditStore.swift`, `SaveSnapshotStore.swift` | Sandbox browser and buffered save editors, verified persistence, rolling backups and staged snapshot restore |
+| `app/HydrogenVM/FileBrowser.swift`, `FileEditorSession.swift`, `SaveFileStore.swift`, `SaveCompression.swift`, `SaveTextCodec.swift`, `SaveConfigLine.swift`, `JSONSaveDocument.swift`, `PlistSaveDocument.swift`, `SQLiteEditStore.swift`, `SaveSnapshotStore.swift` | Sandbox browser and buffered save editors, verified persistence, rolling backups and staged snapshot restore |
 | `app/HydrogenVM/Bridge/HVMEngine.h`, `HVMEngine.mm` | Objective-C++ API between the Swift shell and shared C++ runtime |
 | `tests/` | Asm unit tests, C differential tests, runner, benchmark |
 

@@ -18,6 +18,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-002 | Run `fulltest`, the Python protocol tests, and a 3 second smoke of the three in-repo IPAs on `main`. | 5 | 4 | 1 | 20.0 | — | — | Yes, as its own workflow file | Operational. The compat job is green on `6af9976` and runs `fulltest`. Folding the same suites into `hvm_report.py` (default `--only` is still `cpu,ios,bench`) is Planned. macOS CI was not part of that green run |
 | B-003 | Reconcile `docs/ARCHITECTURE.md`, `docs/HANDOFF.md`, and `docs/DEVELOPMENT_AND_RELEASE.md` with the code. Do not delete the shader subset, the missing near clip, or the `CCCrypt` refusal. | 4 | 3 | 1 | 12.0 | — | None | Yes | Documentation reconciled on the file-save-overhaul branch; independent review pending |
 | B-004 | One Mac compile of current `app/`. `06a7b16` changed the file browser, was marked `[mac]`, and Actions never started. | 4 | 4 | 2 | 8.0 | E | B-001 if no local Mac | Not with another `app/**` edit | Needs owner || Unsigned device/simulator workflow merged in PR #7. Signed-device gameplay remains unverified |
+| B-211 | Owner-priority file saving overhaul: verified writes, rolling backups, buffered SQLite, staged snapshots and reachable guarded Save controls. | 5 | 5 | 3 | 8.33 | E | None | Not with another app/** edit | Implemented in draft #18; Mac persistence, five UI tests, native compile and Linux gate pass on d3085f3. Review/device validation pending; see FILE_EDITOR_HANDOFF.md |
 
 ## P1
 
@@ -88,5 +89,3 @@ These are planned follow-ups, not separate roles. B-103 is merged; active Group 
 - B-109 shares Group D with any Foundation or UIKit class change. Regex and `tmpnam` do not, if they stay in libc.
 - A 4 KB-page green harness run does not close B-101.
 - The three in-repo smokes already have unimplemented imports. The diff fails when a **new** load-time import appears. It does not fail on the imports already in the baseline. Whether a brand-new import should fail even the first time it shows up in a longer run is owner question 9 from the audit; the harness treats runtime-only misses as attention, not a hard failure, because a 3 second smoke is not a full playthrough.
-
-- B-211 (P0, Group E): rebuild file-editor persistence with conflict detection, rolling original-byte backups, explicit serialization failures, reachable Save controls and guarded dismissal. In progress on codex/file-save-overhaul; Apple validation pending.

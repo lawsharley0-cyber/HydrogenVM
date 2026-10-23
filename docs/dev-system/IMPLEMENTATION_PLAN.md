@@ -133,7 +133,7 @@ Open a PR against `main`. Do not merge it from the agent that wrote the patch. T
 
 ### 8. Continuous PM — Operational template, Planned cadence
 
-Update `docs/dev-system/STATUS.md` when a lap finishes: backlog counts, who owns the open groups, the latest compat summary, regressions fixed, open PRs, decisions, and the next lap. The issue generator can refresh the wording (`python3 tools/hvm_compat.py issues report.json`). It does not file. Filing, and any tracker besides this file, is Needs owner. There are no GitHub issues on the repository today.
+Update `docs/dev-system/STATUS.md` when a lap finishes: backlog counts, who owns the open groups, the latest compat summary, regressions fixed, open PRs, decisions, and the next lap. The issue generator can refresh the wording (`python3 tools/hvm_compat.py issues report.json`). It does not file. Filing, and any tracker besides this file, is Needs owner. Consult the live tracker for current issues; the harness itself does not create them.
 
 ## Headless limits
 
