@@ -312,3 +312,12 @@ by SHA-256 in [`library.json`](library.json) (IPAs are never committed).
 
 Library scan on Linux (2026-10-23, 30 s, `c8f6f80`): 10 of 12 run without a crash; Clumsy Ninja
 stops on `syscall`; Terraria crashes at startup. Device-only crashes are what #21 is for.
+
+## 9. Progress log
+
+- 2026-10-23 — CCCrypt forwarded to the host library (`5c65fea`).
+- 2026-10-23 — Phase 2 steps 1–3: host GLES backend (`src/runtime/gl`), Linux EGL platform,
+  iOS OpenGLES.framework platform with direct CAEAGLLayer present, compositor hole-punch,
+  GPU/software parity check in CI (`c363dd0`, `0489392`, `c296c89`). Awaiting a device run.
+- 2026-10-23 — #34 opened: Subway Surfers' missing world is a CPU-side camera matrix problem,
+  reproduced identically on both renderers.
