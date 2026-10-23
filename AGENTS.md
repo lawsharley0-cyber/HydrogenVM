@@ -31,7 +31,7 @@ Read [docs/TEST_LAB.md](docs/TEST_LAB.md), especially "Agent guide": what each c
 
 ## Build and test
 
-Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set.
+Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `libssl-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
@@ -102,7 +102,7 @@ The integration line for this system is `main`. `docs/HANDOFF.md` now separates 
 - Do not trade a passing test, or an app the baseline already runs, for a one-off win. Prefer a fix that helps many apps over a special case for one title.
 - Do not mark a backlog row, a status line, or a bug resolved without a reproducible run that shows the new result. The issue generator (`python3 tools/hvm_compat.py issues`) is a dry run. It does not file GitHub issues.
 - Do not weaken `fulltest`, and do not change the emulator, in order to make a baseline look green. The harness records. A crash that was already in the baseline stays recorded. A new one fails the diff.
-- No FairPlay decryption. `CCCrypt` ciphers stay unimplemented until an owner changes that policy. There is no general outbound network. Loopback IPv4 TCP exists only when that flag is set.
+- No FairPlay decryption. `CCCrypt` is forwarded to the host platform library (system CommonCrypto on Apple, OpenSSL on Linux); never add cipher code to the emulator. There is no general outbound network. Loopback IPv4 TCP exists only when that flag is set.
 
 ## Where to record status
 

@@ -45,7 +45,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang llvm cmake ninja-build zlib1g-dev libsqlite3-dev libsndfile1 python3-pil ccache
+          sudo apt-get install -yq clang llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev libsndfile1 python3-pil ccache
       - name: Cache C++ compilation
         uses: actions/cache@v4
         with:

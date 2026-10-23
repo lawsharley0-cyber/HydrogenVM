@@ -221,7 +221,7 @@ tools/compat.py scan <ipas|apps|dirs> --out compat --seconds 30 [--relaunch] [--
   resolve to constant NSStrings, including for weak imports.
 * The network is deliberately **offline** everywhere (sockets, CFNetwork, NSURLConnection,
   reachability).
-* `CCCrypt` deliberately returns kCCUnimplemented; implementing ciphers was declined.
+* `CCCrypt` / `CCCryptor*` forward to the host crypto library (owner decision 2026-10-23); the emulator contains no cipher code.
 * **FairPlay-encrypted IPAs are unsupported.** We do not help decrypt.
 * Debugging aids:
   * `HVM_TRACE_BLOCKS=lo-hi` logs blocks with registers (slow).

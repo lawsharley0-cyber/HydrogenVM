@@ -99,7 +99,7 @@ A 4 KB Linux pass does not prove 16 KB iPhone permissions, precise fault behavio
 | Mac runner and which devices are sideloaded with the extended-virtual-addressing entitlement | Group E and the 16 KB page question |
 | Device signing certificates | Not in this environment, and they must not be committed |
 | Strictness of new unimplemented imports on a longer-than-3-second run | Audit question 9. The diff fails closed on new **load-time** imports and treats new runtime-only misses as attention |
-| `CCCrypt` ciphers | Code refuses them on purpose |
+| `CCCrypt` ciphers | Decided 2026-10-23: forward to the host crypto library. Done |
 | Android APK | Listed as a later phase. Not scheduled |
 | A tracker other than `STATUS.md` | Issues are unused. The generator will not file |
 

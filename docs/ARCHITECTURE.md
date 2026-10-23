@@ -219,7 +219,7 @@ The C++ it calls is the same shared runtime the host test suite builds.
   A registered class or selector does not establish full framework compatibility.
 * Guest 4 KiB permissions on a 16 KiB host and precise fault recovery remain
   unresolved (B-101/B-102). A Linux green run cannot close those items.
-* `CCCrypt` encryption ciphers deliberately return `kCCUnimplemented`;
+* `CCCrypt` and `CCCryptor*` are forwarded to the host crypto library (`HostCrypto.cpp`: system CommonCrypto on Apple, OpenSSL 3 on Linux); without one they return `kCCUnimplemented`;
   guest outbound networking stays disabled unless the owner changes policy.
 
 ## iOS-specific notes

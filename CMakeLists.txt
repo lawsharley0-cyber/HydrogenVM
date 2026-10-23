@@ -32,6 +32,17 @@ find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
 target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB SQLite::SQLite3 Threads::Threads)
+# CommonCrypto ciphers are forwarded to a host library: the system CommonCrypto
+# on Apple hosts, OpenSSL elsewhere. Without OpenSSL, CCCrypt reports kCCUnimplemented.
+if(NOT APPLE)
+  find_package(OpenSSL 3)
+  if(OpenSSL_FOUND)
+    target_link_libraries(hvm_core PUBLIC OpenSSL::Crypto)
+    target_compile_definitions(hvm_core PUBLIC HVM_HAVE_OPENSSL=1)
+  else()
+    message(STATUS "OpenSSL 3 not found: CCCrypt will report kCCUnimplemented")
+  endif()
+endif()
 # -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
 target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off)
 

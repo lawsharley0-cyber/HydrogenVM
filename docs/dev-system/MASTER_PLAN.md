@@ -68,7 +68,7 @@ raster cost.
 | Player viewport, HUD, orientation (#19) | Letterbox-aware viewport, lifecycle controls | Good. It is the right base for the GPU presentation layer | Host the GPU layer inside it (phase 2) |
 | libc and frameworks (regex 1.1 k lines, CF, streams, keychain, Cocos2d threading, RETRY FBO, Mega Jump, Pocket Ants, Minecraft fixes) | App-driven fixes with evidence in `COMPAT.md` | Good. These are the shared runtime fixes the method asks for | Keep using one shared fix per bug class, each with a Test Lab case |
 | stb_image and stb_truetype | Replace hand-rolled decoders | Good | — |
-| `CCCrypt` | Still `kCCUnimplemented`. Jetpack calls it about 12 times at boot | Its save and config data probably fail to decrypt | Owner decision (B-204). The low-risk route is to **forward to the platform's own CommonCrypto on iOS** (the app is calling Apple's library; we call the same library) and to OpenSSL EVP on Linux, instead of writing cipher code |
+| `CCCrypt` | Still `kCCUnimplemented`. Jetpack calls it about 12 times at boot | Its save and config data probably fail to decrypt | **Done 2026-10-23** (owner approved). The route taken is to **forward to the platform's own CommonCrypto on iOS** (the app is calling Apple's library; we call the same library) and to OpenSSL EVP on Linux, instead of writing cipher code |
 | Branches | `main` is 62 commits ahead of `gemini-merge`. `ci-reports` is 180 ahead. There are 14 agent branches | Two "integration" lines, and `HANDOFF.md` still says `gemini-merge` | `main` only. Delete merged agent branches. `gemini-merge` becomes read-only |
 
 ## 4. Phases
@@ -281,9 +281,10 @@ agents working without one queue.
 2. **Agents:** connect the agents you want to use (Codex, Cursor, Jules) to the GitHub repo, and
    tell each one: "work on open issues labelled `agent:<name>`, one PR per issue, follow
    `AGENTS.md`." I will create and label the issues.
-3. **Decisions:**
-   - `CCCrypt` forwarding to the platform library (yes or no).
-   - Park Clash Royale (yes or no).
-   - Delete `gemini-merge` and the merged agent branches (yes or no).
+3. **Decisions (answered 2026-10-23):** `CCCrypt` forwards to the platform library (done);
+   Clash Royale is parked until the emulator is further along; `gemini-merge` and the merged
+   agent branches are deleted (the session proxy cannot delete branches, so the owner removes
+   them on GitHub's Branches page). All agents that have worked on the repo stay in use:
+   Claude, Codex, Cursor, Jules and Gemini.
 4. **Device runs:** once phase 1 lands, play each game until it fails and send the crash
    bundle. It is one tap.

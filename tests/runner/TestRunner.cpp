@@ -199,6 +199,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 #include <random>
 #include <vector>
 namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std::string& s); }
+#include "runtime/libc/HostCrypto.hpp"
 #include "runtime/uikit/UIKit.hpp"
 #include "runtime/foundation/Foundation.hpp"
 #include "runtime/uikit/CoreGraphics.hpp"
@@ -2502,6 +2503,49 @@ int runFullSubsystemTests() {
               hex(Runtime::hvmDigest(2, "abc")) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" &&
               hex(Runtime::hvmDigest(1, std::string(1000, 'a'))).size() == 40,
               "CC_MD5 / CC_SHA1 / CC_SHA256 match the reference digests");
+        // CCCrypt / CCCryptor (guest entry points, forwarded to the host crypto library)
+        // against NIST SP 800-38A F.2.1 (AES-128-CBC) and FIPS-197 C.1 (AES-128-ECB).
+        if (Runtime::HostCrypto::available()) {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            auto unhex = [](const char* s) { std::vector<uint8_t> v; for (; s[0] && s[1]; s += 2) v.push_back(uint8_t(std::stoul(std::string(s, 2), nullptr, 16))); return v; };
+            auto put = [&](const std::vector<uint8_t>& v) { const uint32_t g = proc.heap().allocZeroed(uint32_t(v.size()) + 16); proc.mem().copyIn(g, v.data(), v.size()); return g; };
+            auto get = [&](uint32_t g, size_t n) { std::vector<uint8_t> v(n); proc.mem().copyOut(v.data(), g, n); return v; };
+            const auto key = unhex("2b7e151628aed2a6abf7158809cf4f3c"), iv = unhex("000102030405060708090a0b0c0d0e0f");
+            const auto pt = unhex("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
+            const char* ctHex = "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2";
+            const uint32_t gk = put(key), giv = put(iv), gpt = put(pt), out = proc.heap().allocZeroed(64), moved = proc.heap().allocZeroed(4);
+            // CCCrypt(encrypt, AES, no padding, key, 16, iv, in, 32, out, 64, &moved)
+            const uint32_t st = call("_CCCrypt", {0, 0, 0, gk, 16, giv, gpt, 32, out, 64, moved});
+            const bool encOk = st == 0 && proc.mem().read<uint32_t>(moved) == 32 && hex(get(out, 32)) == ctHex;
+            // Decrypt it back with PKCS7 after encrypting with PKCS7: round trip of 32 bytes yields 48 then 32.
+            const uint32_t padded = proc.heap().allocZeroed(64), back = proc.heap().allocZeroed(64);
+            const uint32_t st2 = call("_CCCrypt", {0, 0, 1, gk, 16, giv, gpt, 32, padded, 64, moved});
+            const uint32_t n2 = proc.mem().read<uint32_t>(moved);
+            const uint32_t st3 = call("_CCCrypt", {1, 0, 1, gk, 16, giv, padded, n2, back, 64, moved});
+            const bool roundOk = st2 == 0 && n2 == 48 && st3 == 0 && proc.mem().read<uint32_t>(moved) == 32 && get(back, 32) == pt;
+            // Too small an output buffer reports kCCBufferTooSmall and the needed size.
+            const uint32_t st4 = call("_CCCrypt", {0, 0, 1, gk, 16, giv, gpt, 32, out, 16, moved});
+            const bool smallOk = int32_t(st4) == -4301 && proc.mem().read<uint32_t>(moved) == 48;
+            // CCCryptorCreate/Update/Final, ECB mode, FIPS-197 C.1, fed in two pieces.
+            const auto k2 = unhex("000102030405060708090a0b0c0d0e0f"), p2 = unhex("00112233445566778899aabbccddeeff");
+            const uint32_t gk2 = put(k2), gp2 = put(p2), ref = proc.heap().allocZeroed(4), o2 = proc.heap().allocZeroed(32);
+            const uint32_t c1 = call("_CCCryptorCreate", {0, 0, 2, gk2, 16, 0, ref});
+            const uint32_t r = proc.mem().read<uint32_t>(ref);
+            const uint32_t u1 = call("_CCCryptorUpdate", {r, gp2, 5, o2, 32, moved});
+            const uint32_t m1 = proc.mem().read<uint32_t>(moved);
+            const uint32_t u2 = call("_CCCryptorUpdate", {r, gp2 + 5, 11, o2 + m1, 32 - m1, moved});
+            const uint32_t m2 = proc.mem().read<uint32_t>(moved);
+            const uint32_t f = call("_CCCryptorFinal", {r, o2 + m1 + m2, 16, moved});
+            call("_CCCryptorRelease", {r});
+            const bool streamOk = c1 == 0 && r && u1 == 0 && m1 == 0 && u2 == 0 && m2 == 16 && f == 0 &&
+                                  hex(get(o2, 16)) == "69c4e0d86a7b0430d8cdb78070b4c55a";
+            // A wrong AES key size is kCCKeySizeError.
+            const uint32_t st5 = call("_CCCrypt", {0, 0, 1, gk, 15, giv, gpt, 32, out, 64, moved});
+            check(encOk && roundOk && smallOk && streamOk && int32_t(st5) == -4310,
+                  "CCCrypt / CCCryptor AES match NIST vectors (CBC, ECB, PKCS7 round trip, buffer and key-size errors)");
+        } else {
+            std::printf("  (CCCrypt: no host crypto library in this build; skipped)\n");
+        }
         // Incremental CCHmacInit/Update/Final (guest entry points) vs RFC 4231 test case 2.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };

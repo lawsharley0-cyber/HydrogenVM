@@ -3,8 +3,12 @@
 // The CC_*_CTX structs the app allocates are big enough to hold our state
 // directly (MD5 92 bytes, SHA1 96, SHA256 104); we keep it there, copied in and
 // out with memcpy since guest memory may not be aligned for host types.
-// CCCrypt (AES/DES) isn't provided: it reports kCCUnimplemented.
+// CCCrypt and the CCCryptor API are forwarded to the host platform's crypto
+// library (HostCrypto.cpp); this file implements no cipher.
 #include "runtime/Process.hpp"
+#include "runtime/libc/HostCrypto.hpp"
+#include <mutex>
+#include <unordered_map>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -253,12 +257,118 @@ void cc_hmac(Ctx& x) {
     else throw std::runtime_error("CCHmac: algorithm " + std::to_string(alg) + " isn't supported");
     x.mem.copyIn(out, mac.data(), mac.size());
 }
-// CCCrypt: 11 arguments; report kCCUnimplemented and no output.
+const uint8_t* hostPtr(Ctx& x, GuestPtr p, size_t n) { return (p && n) ? x.mem.host(p) : nullptr; }
+
+void warnUnavailable(Ctx& x) {
+    static const char key = 0;
+    uint32_t& warned = x.proc.processSlot(&key);
+    if (warned) return;
+    warned = 1;
+    x.proc.log(LogLevel::Warning, "CCCrypt: no host crypto library in this build; the app gets kCCUnimplemented");
+}
+
+// CCCrypt(op, alg, options, key, keyLength, iv, dataIn, dataInLength, dataOut,
+//         dataOutAvailable, dataOutMoved): r0-r3, then seven words on the stack.
 void cc_crypt(Ctx& x) {
+    const uint32_t op = x.cpu.r[0], alg = x.cpu.r[1], options = x.cpu.r[2], key = x.cpu.r[3];
     const uint32_t sp = x.cpu.r[CPU::kSP];
-    if (const uint32_t moved = x.mem.read<uint32_t>(sp + 24)) x.mem.write<uint32_t>(moved, 0);
-    x.proc.log(LogLevel::Warning, "CCCrypt (encryption) isn't implemented; the app gets kCCUnimplemented");
-    x.cpu.r[0] = uint32_t(-4305);
+    const uint32_t keyLen = x.mem.read<uint32_t>(sp), iv = x.mem.read<uint32_t>(sp + 4);
+    const uint32_t in = x.mem.read<uint32_t>(sp + 8), inLen = x.mem.read<uint32_t>(sp + 12);
+    const uint32_t out = x.mem.read<uint32_t>(sp + 16), outAvail = x.mem.read<uint32_t>(sp + 20);
+    const uint32_t movedPtr = x.mem.read<uint32_t>(sp + 24);
+    if (!HostCrypto::available()) warnUnavailable(x);
+    std::vector<uint8_t> result(static_cast<size_t>(outAvail));
+    size_t moved = 0;
+    const int32_t st = HostCrypto::oneShot(op, alg, options, hostPtr(x, key, keyLen), keyLen, hostPtr(x, iv, 1),
+                                           hostPtr(x, in, inLen), inLen, result.data(), outAvail, &moved);
+    if (st == HostCrypto::kSuccess && moved) x.mem.copyIn(out, result.data(), moved);
+    if (movedPtr) x.mem.write<uint32_t>(movedPtr, uint32_t(moved));
+    x.cpu.r[0] = uint32_t(st);
+}
+
+// CCCryptorRef handles: a small guest block per cryptor, mapped to the host object.
+struct Cryptors {
+    explicit Cryptors(Process&) {}
+    ~Cryptors() { for (auto& [h, c] : live) HostCrypto::release(c); }
+    std::mutex mu;
+    std::unordered_map<uint32_t, HostCrypto::Cryptor*> live;
+};
+HostCrypto::Cryptor* cryptorOf(Ctx& x, uint32_t h) {
+    auto& s = x.proc.service<Cryptors>();
+    std::lock_guard<std::mutex> lk(s.mu);
+    auto it = s.live.find(h);
+    return it == s.live.end() ? nullptr : it->second;
+}
+
+// CCCryptorCreate(op, alg, options, key, keyLength, iv, cryptorRef*)
+void cc_cryptorCreate(Ctx& x) {
+    const uint32_t op = x.cpu.r[0], alg = x.cpu.r[1], options = x.cpu.r[2], key = x.cpu.r[3];
+    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t keyLen = x.mem.read<uint32_t>(sp), iv = x.mem.read<uint32_t>(sp + 4), outRef = x.mem.read<uint32_t>(sp + 8);
+    if (!HostCrypto::available()) warnUnavailable(x);
+    HostCrypto::Cryptor* c = nullptr;
+    const int32_t st = HostCrypto::create(op, alg, options, hostPtr(x, key, keyLen), keyLen, hostPtr(x, iv, 1), &c);
+    uint32_t h = 0;
+    if (st == HostCrypto::kSuccess) {
+        h = x.proc.heap().allocZeroed(16);
+        auto& s = x.proc.service<Cryptors>();
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.live[h] = c;
+    }
+    if (outRef) x.mem.write<uint32_t>(outRef, h);
+    x.cpu.r[0] = uint32_t(st);
+}
+// CCCryptorUpdate(ref, dataIn, dataInLength, dataOut, dataOutAvailable, dataOutMoved*)
+void cc_cryptorUpdate(Ctx& x) {
+    const uint32_t ref = x.cpu.r[0], in = x.cpu.r[1], inLen = x.cpu.r[2], out = x.cpu.r[3];
+    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t outAvail = x.mem.read<uint32_t>(sp), movedPtr = x.mem.read<uint32_t>(sp + 4);
+    HostCrypto::Cryptor* c = cryptorOf(x, ref);
+    size_t moved = 0;
+    int32_t st = HostCrypto::kParamError;
+    if (c) {
+        std::vector<uint8_t> result(static_cast<size_t>(outAvail));
+        st = HostCrypto::update(c, hostPtr(x, in, inLen), inLen, result.data(), outAvail, &moved);
+        if (st == HostCrypto::kSuccess && moved) x.mem.copyIn(out, result.data(), moved);
+    }
+    if (movedPtr) x.mem.write<uint32_t>(movedPtr, uint32_t(moved));
+    x.cpu.r[0] = uint32_t(st);
+}
+// CCCryptorFinal(ref, dataOut, dataOutAvailable, dataOutMoved*)
+void cc_cryptorFinal(Ctx& x) {
+    const uint32_t ref = x.cpu.r[0], out = x.cpu.r[1], outAvail = x.cpu.r[2], movedPtr = x.cpu.r[3];
+    HostCrypto::Cryptor* c = cryptorOf(x, ref);
+    size_t moved = 0;
+    int32_t st = HostCrypto::kParamError;
+    if (c) {
+        std::vector<uint8_t> result(size_t(outAvail) + 64);
+        st = HostCrypto::final(c, result.data(), outAvail, &moved);
+        if (st == HostCrypto::kSuccess && moved) x.mem.copyIn(out, result.data(), moved);
+    }
+    if (movedPtr) x.mem.write<uint32_t>(movedPtr, uint32_t(moved));
+    x.cpu.r[0] = uint32_t(st);
+}
+int32_t cc_cryptorRelease(Ctx& x, uint32_t ref) {
+    HostCrypto::Cryptor* c = nullptr;
+    {
+        auto& s = x.proc.service<Cryptors>();
+        std::lock_guard<std::mutex> lk(s.mu);
+        auto it = s.live.find(ref);
+        if (it == s.live.end()) return HostCrypto::kSuccess;
+        c = it->second;
+        s.live.erase(it);
+    }
+    HostCrypto::release(c);
+    x.proc.heap().free(ref);
+    return HostCrypto::kSuccess;
+}
+int32_t cc_cryptorReset(Ctx& x, uint32_t ref, GuestPtr iv) {
+    HostCrypto::Cryptor* c = cryptorOf(x, ref);
+    return c ? HostCrypto::reset(c, hostPtr(x, iv, 1)) : HostCrypto::kParamError;
+}
+uint32_t cc_cryptorGetOutputLength(Ctx& x, uint32_t ref, uint32_t inLen, uint32_t final) {
+    HostCrypto::Cryptor* c = cryptorOf(x, ref);
+    return c ? uint32_t(HostCrypto::outputLength(c, inLen, (final & 0xff) != 0)) : 0;
 }
 
 } // namespace
@@ -281,6 +391,12 @@ void registerCommonCrypto(Process& p) {
     p.def<&cc_hmacUpdate>("_CCHmacUpdate");
     p.def<&cc_hmacFinal>("_CCHmacFinal");
     p.defineFunction("_CCCrypt", cc_crypt);
+    p.defineFunction("_CCCryptorCreate", cc_cryptorCreate);
+    p.defineFunction("_CCCryptorUpdate", cc_cryptorUpdate);
+    p.defineFunction("_CCCryptorFinal", cc_cryptorFinal);
+    p.def<&cc_cryptorRelease>("_CCCryptorRelease");
+    p.def<&cc_cryptorReset>("_CCCryptorReset");
+    p.def<&cc_cryptorGetOutputLength>("_CCCryptorGetOutputLength");
 }
 
 // For tests: HMAC-SHA256 of `data` with `key` (RFC 4231 test case 2 is key "Jefe").
