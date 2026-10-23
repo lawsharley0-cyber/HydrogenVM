@@ -470,6 +470,13 @@ void o_performOnMain(Ctx& x, id self, SEL, SEL sel, id arg, bool wait) {
 }
 void o_performOnMainModes(Ctx& x, id self, SEL s, SEL sel, id arg, bool wait, id) { o_performOnMain(x, self, s, sel, arg, wait); }
 
+struct ThreadData : ObjC::HostObject {
+    GuestThread* t = nullptr;
+    id target = 0, arg = 0, name = 0, dict = 0;
+    SEL sel = 0;
+    bool cancelled = false;
+    std::atomic<bool> started{false}, finished{false};   // -isExecuting / -isFinished
+};
 void bindThreadObject(Ctx& x, id threadObj, GuestThread* t);
 // background performs run on a new guest thread through a host trampoline
 void perform_trampoline(Ctx& x, GuestPtr req) {
@@ -478,6 +485,10 @@ void perform_trampoline(Ctx& x, GuestPtr req) {
     const id threadObj = x.mem.read<uint32_t>(req + 12);
     x.proc.heap().free(req);
     if (threadObj) bindThreadObject(x, threadObj, &x.proc.currentThread());
+    struct MarkFinished {
+        Ctx& x; id o;
+        ~MarkFinished() { if (o) if (ThreadData* d = rt(x).hostIf<ThreadData>(o)) d->finished = true; }
+    } mark{x, threadObj};
     const uint32_t pool = rt(x).poolPush();
     rt(x).send(x.cpu, target, sel, {arg});
     rt(x).poolPop(x.cpu, pool);
@@ -496,12 +507,6 @@ void o_performInBackground(Ctx& x, id self, SEL, SEL sel, id arg) { startBackgro
 
 // -------------------------------------------------------------- NSThread ---
 
-struct ThreadData : ObjC::HostObject {
-    GuestThread* t = nullptr;
-    id target = 0, arg = 0, name = 0, dict = 0;
-    SEL sel = 0;
-    bool cancelled = false;
-};
 id threadObject(Ctx& x, GuestThread* t) {
     auto& l = L(x);
     {
@@ -512,6 +517,7 @@ id threadObject(Ctx& x, GuestThread* t) {
     const id o = rt(x).createInstance(l.nsThread);
     auto h = std::make_unique<ThreadData>();
     h->t = t;
+    h->started = true;
     rt(x).setHost(o, std::move(h));
     rt(x).makeImmortal(o);
     std::lock_guard<std::mutex> lk(l.mu);
@@ -586,6 +592,9 @@ id th_initWithTarget(Ctx& x, id self, SEL, id target, SEL sel, id arg) {
 }
 void th_start(Ctx& x, id self, SEL) {
     ThreadData* d = rt(x).hostIf<ThreadData>(self);
+    if (d) {
+        if (d->started.exchange(true)) return;   // NSInvalidArgumentException on iOS; starting twice is a no-op here
+    }
     if (d && d->target) startBackground(x, d->target, d->sel, d->arg, self);
     else if (d) startBackground(x, self, rt(x).sel("main"), 0, self);
 }
@@ -600,6 +609,8 @@ id th_dict(Ctx& x, id self, SEL) {
 }
 void th_cancel(Ctx& x, id self, SEL) { if (ThreadData* d = rt(x).hostIf<ThreadData>(self)) d->cancelled = true; }
 bool th_isCancelled(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d && d->cancelled; }
+bool th_isExecuting(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d && d->started && !d->finished; }
+bool th_isFinished(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d && d->finished; }
 double th_priority(Ctx&, id, SEL) { return 0.5; }
 bool th_setPriority(Ctx&, id, SEL, double) { return true; }
 
@@ -675,6 +686,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     th.m<&th_initWithTarget>("initWithTarget:selector:object:").m<&th_start>("start", "v@:").m<&th_isMain>("isMainThread", "c@:")
       .m<&th_noop>("main", "v@:").m<&th_name>("name").m<&th_setName>("setName:").m<&th_dict>("threadDictionary")
       .m<&th_cancel>("cancel", "v@:").m<&th_isCancelled>("isCancelled", "c@:")
+      .m<&th_isExecuting>("isExecuting", "c@:").m<&th_isFinished>("isFinished", "c@:")
       .m<&th_priority>("threadPriority", "d@:").m<&th_setPriority>("setThreadPriority:", "c@:d");
 
     p.def<&cf_getCurrent>("_CFRunLoopGetCurrent");

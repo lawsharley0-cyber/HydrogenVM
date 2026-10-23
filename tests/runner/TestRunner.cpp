@@ -2895,6 +2895,28 @@ int runFullSubsystemTests() {
                   "NSScanner int / case-insensitive string / double / hex / scanUpToString");
         }
 
+        // NSThread -isExecuting / -isFinished across start and the end of the thread's work (Jetpack, #75).
+        {
+            std::atomic<bool> release{false}, entered{false};
+            ObjC::ClassBuilder tgt = r.defineClass("HVMTestThreadTarget", "NSObject");
+            tgt.method("work:", [&](Ctx&) {
+                entered = true;
+                for (int i = 0; i < 400 && !release; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }, "v@:@");
+            const ObjC::id target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, tgt.cls(), r.selAlloc)), "init"));
+            const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
+                                                "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
+            auto flag = [&](const char* sel) { return (uint32_t(r.send(cpu, th, sel)) & 0xFF) != 0; };
+            const bool before = !flag("isExecuting") && !flag("isFinished");
+            r.send(cpu, th, "start");
+            for (int i = 0; i < 400 && !entered; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            const bool during = flag("isExecuting") && !flag("isFinished");
+            release = true;
+            for (int i = 0; i < 400 && !flag("isFinished"); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            const bool after = !flag("isExecuting") && flag("isFinished");
+            check(before && during && after, "NSThread isExecuting/isFinished follow start and the end of its work");
+        }
+
         // NSXMLParser: elements, attributes, entities, CDATA, self-closing tags, errors.
         {
             Ctx x{proc, cpu, proc.mem()};
