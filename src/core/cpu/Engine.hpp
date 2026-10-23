@@ -119,6 +119,8 @@ public:
     static const std::string& lastHostError();
     static void setLastHostError(std::string s);
 
+    static void recordLogLineAsyncSafe(const char* data, size_t len);
+
     struct Stats { uint64_t blocks_decoded = 0, guest_insns_decoded = 0, ops_emitted = 0; };
     Stats stats() const { std::lock_guard<std::mutex> lk(mu_); return stats_; }
 
