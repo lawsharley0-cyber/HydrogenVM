@@ -728,7 +728,7 @@ struct Compiler {
         if (scopes.empty()) scopes.push_back({});
         if (scopes.back().count(name) || structs.count(name) || funcExists(name) || (name.starts_with("gl_") && !reservedOk))
             fail("duplicate/reserved variable " + name);
-        if (count < 1 || count > 32) fail("array size outside supported range");
+        if (count < 1 || count > 256) fail("array size outside supported range");
         int slot = alloc(std::max(1, t.width) * count);
         scopes.back()[name] = p.variables.size();
         p.variables.push_back(Variable{name, t, storage, slot, count, ro, isArray, invariant});
@@ -803,7 +803,7 @@ struct Compiler {
     int arraySize() {
         size_t saved = at;
         auto k = constAdd();
-        if (!k || *k < 1 || *k > 32) { at = saved; fail("invalid array size"); }
+        if (!k || *k < 1 || *k > 256) { at = saved; fail("invalid array size"); }
         return int(*k);
     }
     bool containsSampler(const Type& t) const {
@@ -916,12 +916,7 @@ struct Compiler {
             auto sorted = comps; std::sort(sorted.begin(), sorted.end());
             if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) fail("duplicate destination swizzle");
             for (size_t j = 0; j < comps.size(); ++j) {
-                for (int i = 0; i < dst.elemCount; ++i) {
-                    int addr = dst.origin + i * dst.elemStride + comps[j];
-                    int cond = emit(Op::Equal, dst.indexSlot, cst(float(i)));
-                    int sel = emit(Op::Select, cond, src.slots[j], addr);
-                    mov(addr, sel);
-                }
+                p.code.push_back({Op::StoreIndexed, src.slots[j], dst.origin, dst.indexSlot, dst.elemStride, float(comps[j]), dst.elemCount});
             }
             noteWrite(dst); return;
         }
@@ -966,12 +961,9 @@ struct Compiler {
         o.origin = base.origin; o.elemStride = stride; o.elemCount = count; o.indexSlot = frozen;
         for (int c = 0; c < n; ++c) o.dynComp.push_back(c);
         for (int c = 0; c < n; ++c) {
-            int cur = base.origin + c;
-            for (int i = 1; i < count; ++i) {
-                int cond = emit(Op::Equal, frozen, cst(float(i)));
-                cur = emit(Op::Select, cond, base.origin + i * stride + c, cur);
-            }
-            o.slots.push_back(cur);
+            int dst = alloc();
+            p.code.push_back({Op::LoadIndexed, dst, base.origin, frozen, stride, float(c), count});
+            o.slots.push_back(dst);
         }
         return o;
     }
@@ -2383,6 +2375,22 @@ void execOp(Values& v, const Instruction& i, Sample sample, void* context) {
         case Op::DFdy:
             v[i.dst] = 0.f;
             break;
+        case Op::LoadIndexed: {
+            int idx = int(std::floor(v[i.b] + 0.5f));
+            if (idx < 0) idx = 0;
+            else if (idx >= i.d) idx = i.d - 1;
+            int src = i.a + idx * i.c + int(i.value);
+            v[i.dst] = (src >= 0 && src < MaxSlots) ? v[src] : 0.f;
+            break;
+        }
+        case Op::StoreIndexed: {
+            int idx = int(std::floor(v[i.b] + 0.5f));
+            if (idx >= 0 && idx < i.d) {
+                int addr = i.a + idx * i.c + int(i.value);
+                if (addr >= 0 && addr < MaxSlots) v[addr] = v[i.dst];
+            }
+            break;
+        }
         case Op::Jump:
         case Op::JumpIfFalse:
         case Op::Discard:

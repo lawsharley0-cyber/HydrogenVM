@@ -603,8 +603,21 @@ int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint
     return 0;
 }
 int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
-int32_t k_mach_wait_until(Ctx&, uint64_t) {
-    std::this_thread::yield();
+int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
+    if (x.proc.stopping()) throw ProcessExit(0, "stopping");
+    const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (deadline > now) {
+        const uint64_t diffNs = deadline - now;
+        if (diffNs >= 1000000ULL) {
+            const uint64_t sleepNs = std::min<uint64_t>(diffNs, 50000000ULL);
+            std::this_thread::sleep_for(std::chrono::nanoseconds(sleepNs));
+        } else {
+            std::this_thread::yield();
+        }
+    } else {
+        std::this_thread::yield();
+    }
     return 0;
 }
 

@@ -671,7 +671,7 @@ int runFullSubsystemTests() {
         check(runStage("#define N 4\nconst int K = 2;\nconst int A = 2, B = A * 3;\nfloat a[N * 3];\nfloat b[(K + 1)];\nfloat c[B];\n"
                        "void main() { a[11] = 0.25; b[2] = 0.5; c[5] = 0.75; gl_FragColor = vec4(a[11], b[2], c[5], 1.0); }",
                        false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1) &&
-                  shows("float a[40];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[300];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
                   shows("float a[0];\nvoid main() { gl_FragColor = vec4(1.0); }", "invalid array size") &&
                   shows("void main() { int n = 3; float a[n]; gl_FragColor = vec4(a[0]); }", "invalid array size"),
               "GLSL accepts constant-expression array sizes and rejects the rest");

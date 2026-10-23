@@ -15,7 +15,7 @@ namespace Hydrogen::Runtime::Shader {
 // GL_OES_standard_derivatives (dFdx, dFdy, fwidth) is accepted when that extension
 // is enabled. The rasterizer evaluates those ops across 2x2 pixel quads.
 // Draws pass one shared instruction budget into execute(); exhausting it aborts the draw.
-constexpr int MaxSlots = 2048;
+constexpr int MaxSlots = 8192;
 enum class Kind { Float, Int, Bool, Void };
 struct Type {
     struct Field {
@@ -55,7 +55,8 @@ enum class Op {
     Abs, Floor, Ceil, Sqrt, InverseSqrt, Pow, Exp, Log, Exp2, Log2,
     Sin, Cos, Tan, Asin, Acos, Atan, Atan2,
     Less, LessEqual, Greater, GreaterEqual, Equal, NotEqual, Not,
-    IntDivide, TextureCube, DFdx, DFdy
+    IntDivide, TextureCube, DFdx, DFdy,
+    LoadIndexed, StoreIndexed
 };
 struct Instruction {
     Op op;
