@@ -206,6 +206,27 @@ static void testFilesAndBundle(void) {
     NSError *err = nil;
     CHECK([@"level=3" writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:&err], "writeToFile");
     CHECK_STR([NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:NULL], "level=3", "stringWithContentsOfFile");
+
+    NSURL *fileURL = [NSURL fileURLWithPath:file];
+    CHECK_STR([NSString stringWithContentsOfURL:fileURL encoding:NSUTF8StringEncoding error:NULL], "level=3", "stringWithContentsOfURL:encoding:error:");
+    CHECK_STR([NSString stringWithContentsOfURL:fileURL], "level=3", "stringWithContentsOfURL:");
+    CHECK_STR([[NSString alloc] initWithContentsOfURL:fileURL encoding:NSUTF8StringEncoding error:NULL], "level=3", "initWithContentsOfURL:encoding:error:");
+    NSStringEncoding usedEnc = 0;
+    CHECK_STR([[NSString alloc] initWithContentsOfURL:fileURL usedEncoding:&usedEnc error:NULL], "level=3", "initWithContentsOfURL:usedEncoding:error:");
+    CHECK(usedEnc == NSUTF8StringEncoding, "initWithContentsOfURL:usedEncoding:error: sets usedEnc");
+    CHECK_STR([[NSString alloc] initWithContentsOfURL:fileURL], "level=3", "initWithContentsOfURL:");
+
+    NSURL *missingURL = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:@"missing.txt"]];
+    CHECK([NSString stringWithContentsOfURL:missingURL encoding:NSUTF8StringEncoding error:NULL] == nil, "stringWithContentsOfURL missing file returns nil");
+    CHECK([[NSString alloc] initWithContentsOfURL:missingURL encoding:NSUTF8StringEncoding error:NULL] == nil, "initWithContentsOfURL missing file returns nil");
+
+    NSURL *remoteURL = [NSURL URLWithString:@"https://example.com/test.txt"];
+    CHECK([NSString stringWithContentsOfURL:remoteURL encoding:NSUTF8StringEncoding error:NULL] == nil, "stringWithContentsOfURL remote URL returns nil");
+    CHECK([[NSString alloc] initWithContentsOfURL:remoteURL] == nil, "initWithContentsOfURL remote URL returns nil");
+
+    CHECK([NSString stringWithContentsOfURL:nil encoding:NSUTF8StringEncoding error:NULL] == nil, "stringWithContentsOfURL nil returns nil");
+    CHECK([[NSString alloc] initWithContentsOfURL:nil] == nil, "initWithContentsOfURL nil returns nil");
+
     BOOL isDir = NO;
     CHECK([fm fileExistsAtPath:dir isDirectory:&isDir] && isDir, "fileExistsAtPath:isDirectory:");
     CHECK(([[fm contentsOfDirectoryAtPath:dir error:NULL] isEqualToArray:@[@"state.txt"]]), "contentsOfDirectoryAtPath");
