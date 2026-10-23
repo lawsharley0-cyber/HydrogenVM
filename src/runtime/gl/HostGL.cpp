@@ -145,9 +145,38 @@ void loadFns(Platform& pf, HostContext& hc) {
     }
 }
 
+std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestContext, uint32_t sharegroup, bool worker);
+
+// iOS lets one EAGLContext be current on several threads (the app serializes
+// its use; loader threads do this). EGL refuses a context that is current on
+// another thread, and the calls on this thread would then go nowhere. In that
+// case this thread gets its own context in the same share group (textures,
+// buffers and programs are shared; framebuffers and vertex arrays are not).
+HostContext* threadClone(Process& p, HostContext* hc) {
+    State& st = S(p);
+    const uint64_t k = key2(p.currentThread().id, hc->guestSharegroup);
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        auto it = st.workers.find(k);
+        if (it != st.workers.end()) return it->second.get();
+    }
+    auto made = makeContext(p, hc->api, hc->guestContext, hc->guestSharegroup, true);
+    if (!made) return nullptr;
+    p.log(LogLevel::Info, "GPU: thread " + std::to_string(p.currentThread().id) +
+                              " made a context current that is in use on another thread; gave it a shared context");
+    HostContext* raw = made.get();
+    std::lock_guard<std::mutex> lk(st.mu);
+    st.workers[k] = std::move(made);
+    return raw;
+}
+
 void bind(Process& p, HostContext* hc) {
-    if (hc) S(p).platform->makeCurrent(hc->handle);
-    else if (S(p).platform) S(p).platform->makeCurrent(nullptr);
+    State& st = S(p);
+    if (hc && !st.platform->makeCurrent(hc->handle) && !hc->implicitWorker) {
+        if (HostContext* clone = threadClone(p, hc); clone && st.platform->makeCurrent(clone->handle)) hc = clone;
+    } else if (!hc && st.platform) {
+        st.platform->makeCurrent(nullptr);
+    }
     tls.proc = &p;
     tls.ctx = hc;
     tls.software = false;
@@ -276,6 +305,7 @@ template <typename... A> std::string hgArgs(A... a) {
     ((s += s.empty() ? "" : ", ", hgArg(s, a)), ...);
     return s;
 }
+static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname);
 template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* name, F args) {
     if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, std::string("GL ") + name + "(" + args() + ")");
     if (!hc->fn.glGetError) return;
@@ -283,9 +313,21 @@ template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* n
     if (!e) return;
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 200)
-        x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }());
+        x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }() +
+                                          (e == 0x0506 && hc->fn.glCheckFramebufferStatus ? [&] {
+                                              // Say why the framebuffer is incomplete.
+                                              char b[64];
+                                              std::snprintf(b, sizeof b, " (framebuffer %d status 0x%04x)", hgGetIntFwd(hc, 0x8CA6),
+                                                            hc->fn.glCheckFramebufferStatus(0x8D40));
+                                              return std::string(b);
+                                          }() : std::string()));
 }
 
+static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname) {
+    int32_t v[4] = {};
+    if (hc && hc->fn.glGetIntegerv) hc->fn.glGetIntegerv(pname, v);
+    return v[0];
+}
 static int32_t hgGetInt(HostContext* hc, uint32_t pname) {
     int32_t v[4] = {};
     if (hc && hc->fn.glGetIntegerv) hc->fn.glGetIntegerv(pname, v);
@@ -500,7 +542,10 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
         int32_t size = 0;
         hc->fn.glGetBufferParameteriv(target, kBufferSize, &size);
         length = size - offset;
-        if (length <= 0) return 0;
+        if (length <= 0) {
+            if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, "GL map target " + std::to_string(target) + ": buffer size " + std::to_string(size));
+            return 0;
+        }
     }
     void* host = nullptr;
     if (hc->fn.glMapBufferRange) host = hc->fn.glMapBufferRange(target, offset, length, access & ~uint32_t(0x8 /*INVALIDATE_BUFFER*/));
@@ -513,6 +558,9 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
     if (host && (access & kMapReadBit)) std::memcpy(x.mem.host(m.guest), host, size_t(length));
     else if (host && !(access & (0x4 | 0x8))) std::memcpy(x.mem.host(m.guest), host, size_t(length));   // keep contents unless invalidated
     hc->mapped[target] = m;
+    if (hgDebugLevel >= 2)
+        x.proc.log(LogLevel::Debug, "GL map target " + std::to_string(target) + " +" + std::to_string(offset) + " len " +
+                                        std::to_string(length) + (host ? "" : " (driver gave no mapping)"));
     return m.guest;
 }
 
@@ -829,7 +877,12 @@ void contextMakeCurrent(Process& p, uint32_t guestContext) {
         if (it != st.contexts.end()) hc = it->second.get();
         if (hc) st.lastGuestContext = guestContext;
     }
-    if (tls.proc == &p && tls.ctx == hc && hc) return;
+    if (hgDebugLevel >= 2)
+        p.log(LogLevel::Debug, "GL setCurrentContext guest " + std::to_string(guestContext) + " on thread " +
+                                   std::to_string(p.currentThread().id) + (hc ? "" : " (no host context)"));
+    if (tls.proc == &p && hc && tls.ctx &&
+        (tls.ctx == hc || (tls.ctx->implicitWorker && tls.ctx->guestContext == guestContext)))
+        return;   // already current here (or this thread's shared stand-in for it)
     bind(p, hc);
     // A guest context without a host context (its API isn't available on this
     // driver) renders in software; GL calls on this thread go to that path.
