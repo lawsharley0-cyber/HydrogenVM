@@ -4,6 +4,7 @@
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
+#include <unistd.h>   // write() in the host-fault diagnostics
 
 namespace Hydrogen::CPU {
 
@@ -46,7 +47,6 @@ void hvmProfilePair(Handler a, Handler b) {
 // siglongjmp. All IR handlers are tail calls, so there are no C++ frames with
 // destructors between the fault and run() to skip.
 
-#include <unistd.h>
 
 namespace {
 
