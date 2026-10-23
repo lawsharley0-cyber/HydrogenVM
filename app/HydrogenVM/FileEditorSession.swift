@@ -54,8 +54,8 @@ struct FileEditorControls: ViewModifier {
     private func commit() -> Bool { document.saveChanges() }
 
     func body(content: Content) -> some View {
-        content
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+        VStack(spacing: 0) {
+            content
                 if document.ready || document.dirty {
                 VStack(spacing: 8) {
                     HStack {
@@ -83,7 +83,7 @@ struct FileEditorControls: ViewModifier {
                 .padding(12)
                 .background(.bar)
                 }
-            }
+        }
             .onAppear {
                 document.requestClose = {
                     if document.dirty { showingClose = true } else { dismiss() }
