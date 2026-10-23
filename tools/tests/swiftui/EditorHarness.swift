@@ -16,6 +16,7 @@ struct HarnessHome: View {
     @State private var file: FileItem?
     @State private var nestedEnabled = false
     @State private var diskText = ""
+    @State private var prepared = false
     private let root = URL.documentsDirectory.appendingPathComponent("EditorFixtures")
 
     var body: some View {
@@ -29,6 +30,8 @@ struct HarnessHome: View {
             .navigationTitle("Editor Test Fixtures")
         }
         .onAppear {
+            guard !prepared else { return }
+            prepared = true
             UserDefaults.standard.set(false, forKey: "fileEditor.autoSave")
             do {
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
