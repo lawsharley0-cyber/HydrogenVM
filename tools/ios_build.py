@@ -15,7 +15,9 @@ usage:
 import argparse, os, plistlib, re, shutil, subprocess, sys, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LD = os.environ.get("HVM_LD64", "/opt/cctools/bin/arm-apple-darwin11-ld")
+LD = os.environ.get("HVM_LD64") or shutil.which("arm-apple-darwin11-ld") or (
+    "/home/lawson/cctools/bin/arm-apple-darwin11-ld" if os.path.exists("/home/lawson/cctools/bin/arm-apple-darwin11-ld") else "/opt/cctools/bin/arm-apple-darwin11-ld"
+)
 CLANG = os.environ.get("HVM_CLANG", "clang")
 NM = os.environ.get("HVM_NM", "llvm-nm")
 SDK_SRC = os.path.join(ROOT, "tests", "ios", "sdk")
