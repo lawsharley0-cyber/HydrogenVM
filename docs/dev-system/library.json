@@ -9,6 +9,13 @@
    "graphics": "GLES1"
   },
   {
+   "id": "army-of-darkness-defense",
+   "file": "Army_of_Darkness_Defense_1_0_1_ios_3_0.ipa",
+   "sha256": "18c21d365ed7104ab025c21ced3353c97450c2890fa7c676f5c58622efdd1ebd",
+   "uar": null,
+   "graphics": "GLES1/GLES2"
+  },
+  {
    "id": "art-of-glow",
    "file": "Art_Of_Glow_v1.1.2_os313.ipa",
    "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
@@ -16,11 +23,25 @@
    "graphics": "GLES1"
   },
   {
+   "id": "bad-piggies",
+   "file": "Bad_Piggies_1_0_0.ipa",
+   "sha256": "dd3653312a8ca49ffc149eb8b1bb01f3d22af21c1e7c1be4959382cf0c268d8f",
+   "uar": null,
+   "graphics": "GLES1/GLES2"
+  },
+  {
    "id": "clumsy-ninja",
    "file": "Clumsy_Ninja_1_0_0.ipa",
    "sha256": "da0bf18ed57f0c92b5568093f173d8d7ce5c73f4a3b092473abba2cfcfde6244",
    "uar": null,
    "graphics": "GLES2"
+  },
+  {
+   "id": "hungry-shark-evolution",
+   "file": "Hungry_Shark_Evolution_2_5_0_ios_4_3.ipa",
+   "sha256": "9a7e294f969b09c83f81b26a53419a8d674322e28e16c2c0b1be27c084326581",
+   "uar": null,
+   "graphics": "GLES1/GLES2"
   },
   {
    "id": "jetpack-joyride",
@@ -44,6 +65,13 @@
    "graphics": "GLES1"
   },
   {
+   "id": "minion-rush",
+   "file": "Minion_Rush-_com_gameloft_despicableme2_-1_0_0-_iOS_5_0_-26a40199f561ccf8f173601e6bb96102.ipa",
+   "sha256": "5bb800a3b39c6b6b5d3725681cff108aef48316d3f8ff4aaa28e6528e17b37f0",
+   "uar": null,
+   "graphics": "GLES2"
+  },
+  {
    "id": "pocket-ants",
    "file": "Pocket_Ants_1.0_1.0.31_ios_3.0.ipa",
    "sha256": "80b3df4bff0c783f5786faeba910e252c433c71b7650c85b3055a7b398a38cdf",
@@ -65,6 +93,13 @@
    "graphics": "GLES2 Unity"
   },
   {
+   "id": "talking-bacteria",
+   "file": "Talking_Bacteria_John_John__John_1.0.ipa",
+   "sha256": "2c30697c5fc5ebacb708479895b47f9503f5e988b53883cc980931432bdac0f4",
+   "uar": null,
+   "graphics": "UIKit"
+  },
+  {
    "id": "talking-larry",
    "file": "Talking_Larry-1.0-Johnson1992.ipa",
    "sha256": "1a55698c1b4f30c0427de1c73f6beaeb4ae8b9e0f6f1960c0ca0c0129947dd79",
@@ -76,6 +111,13 @@
    "file": "Terraria-v1_0-eromeu52-iOS5_1-_Clutch-1_4_6_.ipa",
    "sha256": "4de3b0077eaeccbde0c0a6f052fc80216c57c9576ee0e9ca0aca2b2e6df4f7dd",
    "uar": "UAR-012",
+   "graphics": "GLES1"
+  },
+  {
+   "id": "the-sandbox",
+   "file": "The_Sandbox_v1.02_iPhone_OS_3.1_2012-05-23.ipa",
+   "sha256": "61f79e23c14e05fcf4d5d31d3195f398e5f2cdd70fd327209105cafd68b46919",
+   "uar": null,
    "graphics": "GLES1"
   },
   {
