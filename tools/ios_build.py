@@ -19,7 +19,7 @@ LD = os.environ.get("HVM_LD64") or shutil.which("arm-apple-darwin11-ld") or (
     "/home/lawson/cctools/bin/arm-apple-darwin11-ld" if os.path.exists("/home/lawson/cctools/bin/arm-apple-darwin11-ld") else "/opt/cctools/bin/arm-apple-darwin11-ld"
 )
 CLANG = os.environ.get("HVM_CLANG", "clang")
-NM = os.environ.get("HVM_NM", "llvm-nm")
+NM = os.environ.get("HVM_NM") or shutil.which("llvm-nm") or "nm"
 SDK_SRC = os.path.join(ROOT, "tests", "ios", "sdk")
 HEADERS = os.path.join(ROOT, "tests", "ios", "include")
 
@@ -69,12 +69,31 @@ def compile_sources(srcs, objdir, min_ios, extra_cflags):
     return objs
 
 def undefined_symbols(objs):
-    out = run([NM, "-u", "--just-symbol-name"] + objs)
     syms = set()
-    for l in out.splitlines():
-        l = l.strip()
-        if l and not l.endswith(":"):
-            syms.add(l)
+    for obj in objs:
+        try:
+            with open(obj, 'rb') as f:
+                data = f.read()
+            if len(data) < 28:
+                continue
+            magic = struct.unpack('<I', data[:4])[0]
+            if magic != 0xfeedface:  # Mach-O 32-bit
+                continue
+            cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags = struct.unpack('<IIIIII', data[4:28])
+            off = 28
+            for _ in range(ncmds):
+                cmd, cmdsize = struct.unpack('<II', data[off:off+8])
+                if cmd == 2:  # LC_SYMTAB
+                    symoff, nsyms, stroff, strsize = struct.unpack('<IIII', data[off+8:off+24])
+                    for i in range(nsyms):
+                        n_strx, n_type, n_sect, n_desc, n_value = struct.unpack('<IBBHI', data[symoff+i*12 : symoff+(i+1)*12])
+                        if (n_type & 0xe0) == 0 and (n_type & 0x0e) == 0 and n_strx != 0:
+                            end = data.find(b'\x00', stroff + n_strx)
+                            if end != -1:
+                                syms.add(data[stroff + n_strx : end].decode('utf-8'))
+                off += cmdsize
+        except Exception as e:
+            sys.stderr.write(f"Warning parsing {obj}: {e}\n")
     return syms
 
 def build_stub_sdk(sdk, syms, min_ios):

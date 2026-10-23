@@ -1515,6 +1515,39 @@ int runFullSubsystemTests() {
               "NSFileManager URL directory search agrees with the C path API");
     }
 
+    // Keychain SecItemCopyMatching with kSecReturnAttributes returns kSecValueData
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+        const ObjC::id key = Foundation::makeString(cx, "com.eeenmachine.tinytowers.gameData");
+        const ObjC::id account = Foundation::makeString(cx, "gameData");
+        const ObjC::id secretData = Foundation::makeData(cx, "coins=100;bux=10;", 17);
+        const ObjC::id clsGenp = Foundation::makeString(cx, "genp");
+
+        const ObjC::id addDict = Foundation::makeDict(cx, {
+            {Foundation::makeString(cx, "class"), clsGenp},
+            {Foundation::makeString(cx, "svce"), key},
+            {Foundation::makeString(cx, "acct"), account},
+            {Foundation::makeString(cx, "v_Data"), secretData}
+        });
+        call("_SecItemAdd", {addDict, 0});
+
+        const ObjC::id queryDict = Foundation::makeDict(cx, {
+            {Foundation::makeString(cx, "class"), clsGenp},
+            {Foundation::makeString(cx, "svce"), key},
+            {Foundation::makeString(cx, "acct"), account},
+            {Foundation::makeString(cx, "r_Attributes"), Foundation::makeNumberInt(cx, 1)}
+        });
+        const uint32_t resPtr = proc.heap().allocZeroed(4);
+        const uint32_t status = call("_SecItemCopyMatching", {queryDict, resPtr});
+        const ObjC::id returnedDict = proc.mem().read<uint32_t>(resPtr);
+        const ObjC::id returnedData = returnedDict ? ObjC::id(r.send(cpu, returnedDict, "objectForKey:", {Foundation::makeString(cx, "v_Data")})) : 0;
+        const auto strData = returnedData ? Foundation::utf8(cx, ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSString"), r.selAlloc)), "initWithData:encoding:", {returnedData, 4}))) : "";
+        check(status == 0 && returnedData != 0 && strData == "coins=100;bux=10;",
+              "SecItemCopyMatching with kSecReturnAttributes returns dictionary including kSecValueData");
+    }
+
     // Fixed-offset zones are used by HockeyApp's UTC date formatter on launch.
     {
         const auto cls = r.getClass("NSTimeZone");

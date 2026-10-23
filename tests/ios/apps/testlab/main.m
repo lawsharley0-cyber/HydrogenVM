@@ -800,6 +800,27 @@ static TLResult *runCaseG(void) {
     }
     BOOL dataMatched = [secret isEqualToString:retrievedString];
 
+    // 3b. Query matching attributes (returns dictionary including kSecValueData)
+    NSDictionary *attrQuery = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @"com.hydrogenvm.testlab.kc",
+        (__bridge id)kSecAttrAccount: @"test_account",
+        (__bridge id)kSecReturnAttributes: (__bridge id)kCFBooleanTrue,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+    };
+    CFTypeRef attrResult = NULL;
+    OSStatus attrStatus = SecItemCopyMatching((__bridge CFDictionaryRef)attrQuery, &attrResult);
+    BOOL attrOk = (attrStatus == errSecSuccess && attrResult != NULL);
+    BOOL attrDataMatched = NO;
+    if (attrOk) {
+        NSDictionary *attrDict = (__bridge_transfer NSDictionary *)attrResult;
+        NSData *attrValueData = attrDict[(__bridge id)kSecValueData];
+        if (attrValueData) {
+            NSString *attrStr = [[NSString alloc] initWithData:attrValueData encoding:NSUTF8StringEncoding];
+            attrDataMatched = [secret isEqualToString:attrStr];
+        }
+    }
+
     // 4. Delete item
     OSStatus deleteStatus = SecItemDelete((__bridge CFDictionaryRef)delQuery);
     BOOL deleteOk = (deleteStatus == errSecSuccess);
@@ -819,7 +840,7 @@ static TLResult *runCaseG(void) {
     r.actual   = [NSString stringWithFormat:@"add=%d, dup=%d, retrieved=%@, del=%d, delAgain=%d",
                   (int)addStatus, (int)dupStatus, (retrievedString ?: @"nil"), (int)deleteStatus, (int)deleteAgainStatus];
 
-    if (dupRejected && queryOk && dataMatched && deleteOk && notFoundOk) {
+    if (dupRejected && queryOk && dataMatched && attrOk && attrDataMatched && deleteOk && notFoundOk) {
         r.status = @"passed";
     } else {
         r.status = @"failed";
