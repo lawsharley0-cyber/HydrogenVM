@@ -635,7 +635,89 @@ void Process::runAtExitHandlers(CPU::Cpu& cpu) {
 
 // ------------------------------------------------------------------- run ---
 
+// HVM_GUEST_PROFILE=<file>: sample every guest thread's current block about once
+// a millisecond and write the hottest guest functions (and the host calls the
+// guest is waiting in) to <file> when the app ends. Finds the guest code worth a
+// native fast path.
+namespace {
+struct GuestSampler {
+    Process& p;
+    std::string path;
+    std::atomic<bool> stop{false};
+    std::thread th;
+    std::mutex mu;
+    std::unordered_map<uint32_t, uint64_t> guestBlocks, hostCallers, hostFns;
+    uint64_t total = 0;
+    GuestSampler(Process& proc, std::string out) : p(proc), path(std::move(out)) {
+        th = std::thread([this] {
+            while (!stop.load()) {
+                std::this_thread::sleep_for(std::chrono::microseconds(1000));
+                for (uint32_t id : p.liveThreadIds()) {
+                    GuestThread* t = p.findThreadById(id);
+                    if (!t) continue;
+                    const bool inGuest = t->cpu.in_guest.load(std::memory_order_relaxed);
+                    const uint32_t pc = inGuest ? t->cpu.block_pc : t->cpu.r[CPU::kLR];
+                    if (!pc) continue;
+                    const uint32_t hle = t->cpu.current_hle.load(std::memory_order_relaxed);
+                    std::lock_guard<std::mutex> lk(mu);
+                    ++(inGuest ? guestBlocks : hostCallers)[pc & ~1u];
+                    if (!inGuest) ++hostFns[hle];
+                    ++total;
+                }
+            }
+        });
+    }
+    ~GuestSampler() {
+        stop = true;
+        if (th.joinable()) th.join();
+        auto fold = [&](const std::unordered_map<uint32_t, uint64_t>& m) {
+            std::map<std::string, uint64_t> bySym;
+            for (auto& [pc, n] : m) {
+                std::string d = p.describeAddress(pc);
+                if (const size_t plus = d.rfind(" + "); plus != std::string::npos) d.resize(plus);
+                bySym[d] += n;
+            }
+            std::vector<std::pair<uint64_t, std::string>> v;
+            for (auto& [k, n] : bySym) v.emplace_back(n, k);
+            std::sort(v.rbegin(), v.rend());
+            return v;
+        };
+        const auto g = fold(guestBlocks), h = fold(hostCallers);
+        uint64_t gsum = 0, hsum = 0;
+        for (auto& e : g) gsum += e.first;
+        for (auto& e : h) hsum += e.first;
+        std::FILE* f = std::fopen(path.c_str(), "w");
+        if (!f) return;
+        std::fprintf(f, "samples %llu: guest code %.1f%%, host (HLE) calls %.1f%%\n\n", (unsigned long long)total,
+                     total ? 100.0 * double(gsum) / double(total) : 0.0, total ? 100.0 * double(hsum) / double(total) : 0.0);
+        std::fprintf(f, "## hottest guest functions (nearest symbol; stripped binaries map to the preceding export)\n");
+        for (size_t i = 0; i < g.size() && i < 60; ++i)
+            std::fprintf(f, "%6.2f%%  %s\n", 100.0 * double(g[i].first) / double(std::max<uint64_t>(total, 1)), g[i].second.c_str());
+        std::vector<std::pair<uint64_t, uint32_t>> raw;
+        for (auto& [pc, n] : guestBlocks) raw.emplace_back(n, pc);
+        std::sort(raw.rbegin(), raw.rend());
+        std::fprintf(f, "\n## hottest guest blocks\n");
+        for (size_t i = 0; i < raw.size() && i < 40; ++i)
+            std::fprintf(f, "%6.2f%%  0x%08x  %s\n", 100.0 * double(raw[i].first) / double(std::max<uint64_t>(total, 1)), raw[i].second,
+                         p.describeAddress(raw[i].second).c_str());
+        std::vector<std::pair<uint64_t, uint32_t>> fns;
+        for (auto& [idx, n] : hostFns) fns.emplace_back(n, idx);
+        std::sort(fns.rbegin(), fns.rend());
+        std::fprintf(f, "\n## host functions the guest threads are in (blocking waits included)\n");
+        for (size_t i = 0; i < fns.size() && i < 40; ++i)
+            std::fprintf(f, "%6.2f%%  %s\n", 100.0 * double(fns[i].first) / double(std::max<uint64_t>(total, 1)),
+                         fns[i].second == 0xFFFFFFFFu ? "(none: parked or between calls)" : p.hleFunctionName(fns[i].second).c_str());
+        std::fprintf(f, "\n## guest code waiting in host calls (by caller)\n");
+        for (size_t i = 0; i < h.size() && i < 40; ++i)
+            std::fprintf(f, "%6.2f%%  %s\n", 100.0 * double(h[i].first) / double(std::max<uint64_t>(total, 1)), h[i].second.c_str());
+        std::fclose(f);
+    }
+};
+} // namespace
+
 int Process::run() {
+    std::unique_ptr<GuestSampler> sampler;
+    if (const char* prof = std::getenv("HVM_GUEST_PROFILE"); prof && *prof) sampler = std::make_unique<GuestSampler>(*this, prof);
     t_thread = mainThread_;
     CPU::Cpu& c = mainThread_->cpu;
     CPU::Engine::lastFault() = {};
@@ -686,6 +768,7 @@ int Process::run() {
         try { h(); } catch (const std::exception& e) { logf(LogLevel::Warning, "exit hook failed: %s", e.what()); }
     }
     requestStop();
+    sampler.reset();
     return crashed_ ? -1 : exitCode_;
 }
 
@@ -777,6 +860,8 @@ std::vector<std::string> Process::missingSymbols() const {
     std::lock_guard<std::mutex> lk(missingMu_);
     return {missing_.begin(), missing_.end()};
 }
+
+std::string Process::hleFunctionName(uint32_t index) const { return demangle(engine_->hleName(index)); }
 
 std::string Process::describeAddress(uint32_t addr) const {
     char buf[32];

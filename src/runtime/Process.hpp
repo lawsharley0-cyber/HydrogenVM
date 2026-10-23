@@ -275,6 +275,7 @@ public:
     void logf(LogLevel lvl, const char* fmt, ...) const __attribute__((format(printf, 3, 4)));
     void reportMissing(const std::string& what);   // logs once per name
     std::string describeAddress(uint32_t addr) const;
+    std::string hleFunctionName(uint32_t index) const;
     std::string backtrace(const CPU::Cpu& c, int maxFrames = 24) const;
 
     // ---- host input (any thread); UIKit installs the handler
