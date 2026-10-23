@@ -2,23 +2,23 @@
   "host": {
     "os": "Linux 6.17.0-1022-azure",
     "arch": "x86_64",
-    "cpu": "AMD EPYC 9V45 96-Core Processor",
-    "commit": "4c337e4",
-    "date": "2026-10-23T02:38:26+00:00"
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "commit": "09162a2",
+    "date": "2026-10-23T02:47:49+00:00"
   },
-  "seconds": 123.9,
+  "seconds": 157.0,
   "ok": true,
   "suites": {
     "build": {
       "passed": 1,
       "failed": 0,
       "skipped": 0,
-      "seconds": 98.83113646507263,
+      "seconds": 128.6446237564087,
       "tests": [
         {
           "name": "engine",
           "result": "pass",
-          "seconds": 98.831,
+          "seconds": 128.645,
           "warnings": 9
         }
       ]
@@ -27,24 +27,24 @@
       "passed": 15,
       "failed": 0,
       "skipped": 0,
-      "seconds": 0.1594834327697754,
+      "seconds": 0.2459263801574707,
       "tests": [
         {
           "name": "selftest",
           "result": "pass",
-          "seconds": 0.013
+          "seconds": 0.019
         },
         {
           "name": "asm/arm_alu",
           "result": "pass",
-          "seconds": 0.004,
+          "seconds": 0.005,
           "checks": 40,
           "failedChecks": 0
         },
         {
           "name": "asm/arm_mem",
           "result": "pass",
-          "seconds": 0.003,
+          "seconds": 0.004,
           "checks": 17,
           "failedChecks": 0
         },
@@ -65,70 +65,70 @@
         {
           "name": "c/ctests_arm",
           "result": "pass",
-          "seconds": 0.016,
+          "seconds": 0.026,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_arm_os",
           "result": "pass",
-          "seconds": 0.017,
+          "seconds": 0.026,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb",
           "result": "pass",
-          "seconds": 0.021,
+          "seconds": 0.031,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_os",
           "result": "pass",
-          "seconds": 0.016,
+          "seconds": 0.026,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_idiv",
           "result": "pass",
-          "seconds": 0.016,
+          "seconds": 0.031,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_arm_hard",
           "result": "pass",
-          "seconds": 0.008,
+          "seconds": 0.016,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.01,
+          "seconds": 0.016,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.009,
+          "seconds": 0.013,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_arm",
           "result": "pass",
-          "seconds": 0.009,
+          "seconds": 0.013,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb_os",
           "result": "pass",
-          "seconds": 0.009,
+          "seconds": 0.012,
           "checks": 29,
           "failedChecks": 0
         }
@@ -138,132 +138,108 @@
       "passed": 6,
       "failed": 0,
       "skipped": 0,
-      "seconds": 1.9654905796051025,
+      "seconds": 1.977973222732544,
       "tests": [
         {
           "name": "CTest",
           "result": "pass",
-          "seconds": 0.02,
+          "seconds": 0.023,
           "perf": {
-            "wallSeconds": 0.0147391,
+            "wallSeconds": 0.0183422,
             "guestInstructions": 148862,
-            "guestMIPS": 10.0998,
+            "guestMIPS": 8.11584,
             "blocksDecoded": 189,
             "frames": 0,
             "framesPresented": 0,
             "avgFrameMs": 0,
             "avgCompositeMs": 0,
             "maxFrameMs": 0,
-            "slowFrames": 0,
-            "p50FrameMs": 0,
-            "p95FrameMs": 0,
-            "p99FrameMs": 0,
-            "timeToFirstFrameMs": 0
+            "slowFrames": 0
           }
         },
         {
           "name": "CTestLegacy",
           "result": "pass",
-          "seconds": 0.016,
+          "seconds": 0.023,
           "perf": {
-            "wallSeconds": 0.0121798,
+            "wallSeconds": 0.0175831,
             "guestInstructions": 132093,
-            "guestMIPS": 10.8453,
+            "guestMIPS": 7.5125,
             "blocksDecoded": 193,
             "frames": 0,
             "framesPresented": 0,
             "avgFrameMs": 0,
             "avgCompositeMs": 0,
             "maxFrameMs": 0,
-            "slowFrames": 0,
-            "p50FrameMs": 0,
-            "p95FrameMs": 0,
-            "p99FrameMs": 0,
-            "timeToFirstFrameMs": 0
+            "slowFrames": 0
           }
         },
         {
           "name": "BinPlist",
           "result": "pass",
-          "seconds": 0.02,
+          "seconds": 0.018,
           "perf": {
-            "wallSeconds": 0.0140928,
+            "wallSeconds": 0.0144012,
             "guestInstructions": 148862,
-            "guestMIPS": 10.563,
+            "guestMIPS": 10.3368,
             "blocksDecoded": 189,
             "frames": 0,
             "framesPresented": 0,
             "avgFrameMs": 0,
             "avgCompositeMs": 0,
             "maxFrameMs": 0,
-            "slowFrames": 0,
-            "p50FrameMs": 0,
-            "p95FrameMs": 0,
-            "p99FrameMs": 0,
-            "timeToFirstFrameMs": 0
+            "slowFrames": 0
           }
         },
         {
           "name": "ObjCTest",
           "result": "pass",
-          "seconds": 0.014,
+          "seconds": 0.013,
           "perf": {
-            "wallSeconds": 0.00821024,
+            "wallSeconds": 0.00905247,
             "guestInstructions": 3603,
-            "guestMIPS": 0.438842,
+            "guestMIPS": 0.398013,
             "blocksDecoded": 479,
             "frames": 0,
             "framesPresented": 0,
             "avgFrameMs": 0,
             "avgCompositeMs": 0,
             "maxFrameMs": 0,
-            "slowFrames": 0,
-            "p50FrameMs": 0,
-            "p95FrameMs": 0,
-            "p99FrameMs": 0,
-            "timeToFirstFrameMs": 0
+            "slowFrames": 0
           }
         },
         {
           "name": "FoundationTest",
           "result": "pass",
-          "seconds": 0.877,
+          "seconds": 0.883,
           "perf": {
-            "wallSeconds": 0.769895,
-            "guestInstructions": 22344,
-            "guestMIPS": 0.0290221,
+            "wallSeconds": 0.774481,
+            "guestInstructions": 22342,
+            "guestMIPS": 0.0288477,
             "blocksDecoded": 1664,
             "frames": 0,
             "framesPresented": 0,
             "avgFrameMs": 0,
             "avgCompositeMs": 0,
             "maxFrameMs": 0,
-            "slowFrames": 0,
-            "p50FrameMs": 0,
-            "p95FrameMs": 0,
-            "p99FrameMs": 0,
-            "timeToFirstFrameMs": 0
+            "slowFrames": 0
           }
         },
         {
           "name": "UIKitTest",
           "result": "pass",
-          "seconds": 1.019,
+          "seconds": 1.018,
           "perf": {
-            "wallSeconds": 1.01267,
+            "wallSeconds": 1.01222,
             "guestInstructions": 11970,
-            "guestMIPS": 0.0118202,
+            "guestMIPS": 0.0118255,
             "blocksDecoded": 1229,
             "frames": 61,
             "framesPresented": 5,
-            "avgFrameMs": 0.2146,
-            "avgCompositeMs": 2.21481,
-            "maxFrameMs": 4.80207,
-            "slowFrames": 0,
-            "p50FrameMs": 0.008192,
-            "p95FrameMs": 1.93331,
-            "p99FrameMs": 4.78413,
-            "timeToFirstFrameMs": 17.5182
+            "avgFrameMs": 0.335589,
+            "avgCompositeMs": 3.61031,
+            "maxFrameMs": 5.95856,
+            "slowFrames": 0
           }
         }
       ]
@@ -272,88 +248,88 @@
       "passed": 5,
       "failed": 0,
       "skipped": 0,
-      "seconds": 16.118144512176514,
+      "seconds": 18.556545734405518,
       "tests": [
         {
           "name": "mips/ctests_thumb",
           "result": "pass",
-          "seconds": 0.089,
-          "mips": 885.5
+          "seconds": 0.135,
+          "mips": 582.9
         },
         {
           "name": "mips/ctests_arm",
           "result": "pass",
-          "seconds": 0.086,
-          "mips": 955.1
+          "seconds": 0.134,
+          "mips": 612.3
         },
         {
           "name": "mips/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.026,
-          "mips": 965.4
+          "seconds": 0.045,
+          "mips": 525.1
         },
         {
           "name": "mips/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.027,
-          "mips": 825.8
+          "seconds": 0.048,
+          "mips": 456.3
         },
         {
           "name": "coremark",
           "result": "pass",
-          "seconds": 15.889,
-          "score": 3214.4
+          "seconds": 18.195,
+          "score": 2261.9
         }
       ]
     }
   },
   "speed": {
     "interpreterMIPS": {
-      "ctests_thumb": 885.5,
-      "ctests_arm": 955.1,
-      "ftests_vfp_thumb_softfp": 965.4,
-      "ftests_neon_thumb": 825.8
+      "ctests_thumb": 582.9,
+      "ctests_arm": 612.3,
+      "ftests_vfp_thumb_softfp": 525.1,
+      "ftests_neon_thumb": 456.3
     },
     "coremark": {
-      "score": 3214.4,
-      "guestMIPS": 1079.3,
+      "score": 2261.9,
+      "guestMIPS": 758.0,
       "quick": false,
       "vsDevices": [
         {
           "device": "iPhone 3GS",
           "cpu": "Cortex-A8",
           "reference": 1440,
-          "percent": 223.2,
-          "effectiveMHz": 1339,
+          "percent": 157.1,
+          "effectiveMHz": 942,
           "goal": false
         },
         {
           "device": "iPhone 4",
           "cpu": "Apple A4 (Cortex-A8)",
           "reference": 1920,
-          "percent": 167.4,
-          "effectiveMHz": 1339,
+          "percent": 117.8,
+          "effectiveMHz": 942,
           "goal": false
         },
         {
           "device": "iPhone 4S",
           "cpu": "Apple A5 (Cortex-A9)",
           "reference": 2400,
-          "percent": 133.9,
-          "effectiveMHz": 1071,
+          "percent": 94.2,
+          "effectiveMHz": 754,
           "goal": false
         },
         {
           "device": "iPhone 5",
           "cpu": "Apple A6 (Swift)",
           "reference": 4550,
-          "percent": 70.6,
-          "effectiveMHz": 918,
+          "percent": 49.7,
+          "effectiveMHz": 646,
           "goal": true
         }
       ],
       "goalDevice": "iPhone 5",
-      "goalPercent": 70.6
+      "goalPercent": 49.7
     }
   },
   "problems": [
@@ -415,7 +391,7 @@
       "suite": "bench",
       "test": "coremark",
       "severity": "perf",
-      "message": "70.6% of iPhone 5 single-core speed (goal: 100%)"
+      "message": "49.7% of iPhone 5 single-core speed (goal: 100%)"
     }
   ]
 }
