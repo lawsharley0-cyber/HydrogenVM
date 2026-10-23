@@ -1289,6 +1289,8 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     // NSFoundationVersionNumber (double): iOS 6.1 = 993.00
     const uint32_t ver = p.defineDataBlock("_NSFoundationVersionNumber", 8);
     p.mem().write<double>(ver, 993.0);
+    const uint32_t cfVer = p.defineDataBlock("_kCFCoreFoundationVersionNumber", 8);
+    p.mem().write<double>(cfVer, 793.0);
 }
 
 } // namespace Hydrogen::Runtime::Foundation

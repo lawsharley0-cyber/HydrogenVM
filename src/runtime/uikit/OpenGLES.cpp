@@ -162,6 +162,7 @@ enum : uint32_t {
     GL_NORMAL_ARRAY = 0x8075,
     GL_COLOR_ARRAY = 0x8076,
     GL_TEXTURE_COORD_ARRAY = 0x8078,
+    GL_POINT_SIZE_ARRAY_OES = 0x8B9C,
 
     GL_FUNC_ADD = 0x8006,
     GL_FUNC_SUBTRACT = 0x800A,
@@ -487,6 +488,7 @@ struct ContextData : ObjC::HostObject {
     ArrayPointer colorPtr;
     ArrayPointer normalPtr;
     ArrayPointer texCoordPtr[8];
+    ArrayPointer pointSizePtr;
 
     // GLES 2.0 Vertex Attributes (16 slots)
     ArrayPointer attribPtr[16];
@@ -933,6 +935,7 @@ bool gl_isEnabled(Ctx& x, uint32_t cap) {
         case GL_COLOR_ARRAY: return c->colorPtr.enabled;
         case GL_NORMAL_ARRAY: return c->normalPtr.enabled;
         case GL_TEXTURE_COORD_ARRAY: return c->texCoordPtr[c->clientActiveTexture & 7].enabled;
+        case GL_POINT_SIZE_ARRAY_OES: return c->pointSizePtr.enabled;
         default: return false;
     }
 }
@@ -1054,7 +1057,7 @@ void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
         case GL_MAX_TEXTURE_UNITS: case GL_MAX_TEXTURE_IMAGE_UNITS: case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS: wr(8); break;
         case GL_MAX_VERTEX_ATTRIBS: wr(16); break;
         case GL_MAX_VERTEX_UNIFORM_VECTORS: wr(256); break;
-        case GL_MAX_VARYING_VECTORS: wr(16); break;
+        case GL_MAX_VARYING_VECTORS: wr(8); break;
         case GL_MAX_FRAGMENT_UNIFORM_VECTORS: wr(64); break;
         case GL_SUBPIXEL_BITS: wr(4); break;
         case GL_RED_BITS: case GL_GREEN_BITS: case GL_BLUE_BITS: case GL_ALPHA_BITS: wr(8); break;
@@ -1859,6 +1862,7 @@ void gl_enableClientState(Ctx& x, uint32_t array) {
     else if (array == GL_COLOR_ARRAY) c->colorPtr.enabled = true;
     else if (array == GL_NORMAL_ARRAY) c->normalPtr.enabled = true;
     else if (array == GL_TEXTURE_COORD_ARRAY) c->texCoordPtr[c->clientActiveTexture & 7].enabled = true;
+    else if (array == GL_POINT_SIZE_ARRAY_OES) c->pointSizePtr.enabled = true;
 }
 void gl_disableClientState(Ctx& x, uint32_t array) {
     auto* c = currentCtx(x);
@@ -1867,6 +1871,7 @@ void gl_disableClientState(Ctx& x, uint32_t array) {
     else if (array == GL_COLOR_ARRAY) c->colorPtr.enabled = false;
     else if (array == GL_NORMAL_ARRAY) c->normalPtr.enabled = false;
     else if (array == GL_TEXTURE_COORD_ARRAY) c->texCoordPtr[c->clientActiveTexture & 7].enabled = false;
+    else if (array == GL_POINT_SIZE_ARRAY_OES) c->pointSizePtr.enabled = false;
 }
 void gl_vertexPointer(Ctx& x, int32_t size, uint32_t type, int32_t stride, GuestPtr ptr) {
     if (auto* c = currentCtx(x)) { c->vertexPtr = {c->vertexPtr.enabled, size, type, false, stride, ptr, c->arrayBuffer}; }
@@ -1882,6 +1887,9 @@ void gl_texCoordPointer(Ctx& x, int32_t size, uint32_t type, int32_t stride, Gue
 }
 void gl_normalPointer(Ctx& x, uint32_t type, int32_t stride, GuestPtr ptr) {
     if (auto* c = currentCtx(x)) { c->normalPtr = {c->normalPtr.enabled, 3, type, true, stride, ptr, c->arrayBuffer}; }
+}
+void gl_pointSizePointerOES(Ctx& x, uint32_t type, int32_t stride, GuestPtr ptr) {
+    if (auto* c = currentCtx(x)) { c->pointSizePtr = {c->pointSizePtr.enabled, 1, type, false, stride, ptr, c->arrayBuffer}; }
 }
 
 // =================================== GLES 2.0 Shaders, Programs & Uniforms ===
@@ -2506,6 +2514,10 @@ ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx, Dr
         const Vec4 tcXformed = c.textureStack.back().apply(tc);
         sv.u = tcXformed.x;
         sv.v = tcXformed.y;
+        if (c.pointSizePtr.enabled) {
+            const Vec4 ps = fetchAttribute(x, sg, c.pointSizePtr, idx, {c.pointSize, 0, 0, 0});
+            sv.shaderPointSize = ps.x;
+        }
         const Mat4 mvp = c.projectionStack.back() * c.modelviewStack.back();
         sv.clip = mvp.apply(pos);
     } else {
@@ -2691,7 +2703,7 @@ ShadedVertex interpolateInClipSpace(const ShadedVertex& a, const ShadedVertex& b
     o.color.w = lerp(a.color.w, b.color.w);
     o.u = lerp(a.u, b.u);
     o.v = lerp(a.v, b.v);
-    for (int i = 0; i < 32; ++i) o.varyings[i] = lerp(a.varyings[i], b.varyings[i]);
+    for (size_t i = 0; i < o.varyings.size(); ++i) o.varyings[i] = lerp(a.varyings[i], b.varyings[i]);
     return o;
 }
 
@@ -3062,7 +3074,7 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
                 if (!std::isfinite(v.screenX) || !std::isfinite(v.screenY)) continue;
                 if (v.screenX < -1.0e7f || v.screenX > 1.0e7f || v.screenY < -1.0e7f || v.screenY > 1.0e7f) continue;
                 const bool shaded = c->api != 1 && c->currentProgram != 0;
-                const float ps = shaded && v.shaderPointSize > 0.f ? v.shaderPointSize : c->pointSize;
+                const float ps = v.shaderPointSize > 0.f ? v.shaderPointSize : c->pointSize;
                 const int r = std::max(0, int(ps / 2.0f));
                 const float size = std::max(ps, 1.f);
                 const int cx = int(v.screenX), cy = int(v.screenY);
@@ -3387,6 +3399,7 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_colorPointer>("_glColorPointer");
     p.def<&gl_texCoordPointer>("_glTexCoordPointer");
     p.def<&gl_normalPointer>("_glNormalPointer");
+    p.def<&gl_pointSizePointerOES>("_glPointSizePointerOES");
     p.def<&gl_texEnvi>("_glTexEnvi");
     p.def<&gl_texEnvf>("_glTexEnvf");
     p.def<&gl_texEnvx>("_glTexEnvx");
@@ -3404,6 +3417,8 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_noop3>("_glMaterialfv");
     p.def<&gl_noop2>("_glFogf");
     p.def<&gl_noop2>("_glFogfv");
+    p.def<&gl_noop2>("_glFogx");
+    p.def<&gl_noop2>("_glFogxv");
     p.def<&gl_drawTexfOES>("_glDrawTexfOES");
     p.def<&gl_drawTexiOES>("_glDrawTexiOES");
     p.def<&gl_drawTexsOES>("_glDrawTexsOES");

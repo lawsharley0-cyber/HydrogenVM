@@ -1408,6 +1408,28 @@ int runFullSubsystemTests() {
         const uint32_t provider = uint32_t(call("_CGDataProviderCreateWithCFData", {data}));
         const uint32_t cg = uint32_t(call("_CGFontCreateWithDataProvider", {provider}));
         const uint32_t ct = uint32_t(call("_CTFontCreateWithGraphicsFont", {cg, std::bit_cast<uint32_t>(20.0f), 0, 0}));
+
+        // CGFont table copying and metric queries (B-109)
+        const uint32_t cmapTable = uint32_t(call("_CGFontCopyTableForTag", {cg, 0x636D6170}));
+        const uint32_t bogusTable = uint32_t(call("_CGFontCopyTableForTag", {cg, 0x78797A77}));
+        const uint32_t units = uint32_t(call("_CGFontGetUnitsPerEm", {cg}));
+        const int32_t ascent = int32_t(call("_CGFontGetAscent", {cg}));
+        const int32_t descent = int32_t(call("_CGFontGetDescent", {cg}));
+        const int32_t capHeight = int32_t(call("_CGFontGetCapHeight", {cg}));
+        const uint32_t numGlyphs = uint32_t(call("_CGFontGetNumberOfGlyphs", {cg}));
+        const uint32_t advBuf = proc.heap().allocZeroed(16);
+        const uint32_t testGlyphsMem = proc.heap().allocZeroed(8);
+        proc.mem().write<uint16_t>(testGlyphsMem, 2);
+        proc.mem().write<uint16_t>(testGlyphsMem + 2, 1);
+        const bool advOk = call("_CGFontGetGlyphAdvances", {cg, testGlyphsMem, 2, advBuf});
+        const int32_t advA = proc.mem().read<int32_t>(advBuf);
+        check(cmapTable != 0 && bogusTable == 0 && units == 1000 && ascent == 800 && descent == -200 &&
+              capHeight == 700 && numGlyphs == 3 && advOk && advA == 600,
+              "CGFontCopyTableForTag and CGFontGet* unscaled design metrics match TrueType tables");
+        call("_CFRelease", {cmapTable});
+        proc.heap().free(advBuf);
+        proc.heap().free(testGlyphsMem);
+
         call("_CGDataProviderRelease", {provider}); call("_CFRelease", {data}); call("_CGFontRelease", {cg});
         const uint32_t desc = uint32_t(call("_CTFontCopyFontDescriptor", {ct}));
         const uint32_t copy = uint32_t(call("_CTFontCreateWithFontDescriptor", {desc, 0, 0}));
@@ -2390,6 +2412,18 @@ int runFullSubsystemTests() {
         const uint8_t b1 = proc.mem().read<uint8_t>(texIds + 10);
         check(r1 == 255 && g1 == 0 && b1 == 0, "OpenGL ES 1.1 fixed-function ortho + 2D texture + glDrawElements");
 
+        // Point size array client state (B-111)
+        check(!callGL("_glIsEnabled", {0x8B9C /* GL_POINT_SIZE_ARRAY_OES */}), "glPointSizePointerOES initial state disabled");
+        callGL("_glEnableClientState", {0x8B9C});
+        check(callGL("_glIsEnabled", {0x8B9C}), "glEnableClientState enables GL_POINT_SIZE_ARRAY_OES");
+        const float ptSizes[] = {12.0f};
+        const uint32_t ptSizeMem = proc.heap().alloc(sizeof ptSizes);
+        proc.mem().copyIn(ptSizeMem, ptSizes, sizeof ptSizes);
+        callGL("_glPointSizePointerOES", {0x1406 /* GL_FLOAT */, 0, ptSizeMem});
+        callGL("_glDisableClientState", {0x8B9C});
+        check(!callGL("_glIsEnabled", {0x8B9C}), "glDisableClientState disables GL_POINT_SIZE_ARRAY_OES");
+        proc.heap().free(ptSizeMem);
+
         // Fixed-function path shares the raster clip. A frustum triangle with
         // every vertex behind the camera (eye z>0 => clip w<0) must not paint.
         callGL("_glDisable", {0x0DE1 /* GL_TEXTURE_2D */});
@@ -2539,8 +2573,13 @@ int runFullSubsystemTests() {
             call("__ZNKSt15basic_stringbufIcSt11char_traitsIcESaIcEE3strEv", {strRet, oss + 4});
             const uint32_t data = proc.mem().read<uint32_t>(strRet);
             const std::string v = proc.readCString(data);
+            const uint32_t strRet2 = proc.heap().allocZeroed(4);
+            call("__ZNKSt19basic_ostringstreamIcSt11char_traitsIcESaIcEE3strEv", {strRet2, oss});
+            const std::string v2 = proc.readCString(proc.mem().read<uint32_t>(strRet2));
             call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEED1Ev", {oss});
-            check(v == "score=-42 0xff     7", "std::ostringstream formatting (int, hex+showbase, width) and str()");
+            check(v == "score=-42 0xff     7" && v2 == v, "std::ostringstream formatting (int, hex+showbase, width) and str()");
+            proc.heap().free(strRet);
+            proc.heap().free(strRet2);
         }
 
         // NSCalendar / NSDateComponents: compose, break down, add, difference.

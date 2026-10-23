@@ -18,6 +18,19 @@ public:
     float advance(int glyph, float size) const;
     Rect bounds(int glyph, float size) const;
     Path outline(int glyph, float size) const;
+
+    // Font table access and unscaled metrics for CGFont
+    std::vector<uint8_t> table(uint32_t tag) const;
+    std::vector<uint32_t> tableTags() const;
+    int unitsPerEm() const;
+    int ascentUnits() const;
+    int descentUnits() const;
+    int leadingUnits() const;
+    int capHeight() const;
+    int xHeight() const;
+    Rect fontBBox() const;
+    bool glyphBBox(int glyph, Rect& box) const;
+    bool glyphAdvance(int glyph, int& advance) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

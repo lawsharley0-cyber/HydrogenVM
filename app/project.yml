@@ -30,6 +30,7 @@ targets:
           - "**/*.md"
           - "**/README.*"
           - "**/LICENSE.*"
+          - "**/*.txt"
     dependencies:
       - sdk: libz.tbd
       - sdk: libsqlite3.tbd

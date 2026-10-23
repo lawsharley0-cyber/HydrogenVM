@@ -370,6 +370,30 @@ void sb_setStr(Ctx& x, GuestPtr sb, GuestPtr str) {
     const std::string v = guestStringValue(x, str);
     withBuf(x, sb, [&](Buf& b) { b.s = v; b.g = 0; b.p = (b.mode & (mAte | mApp)) ? uint32_t(v.size()) : 0; return 0; });
 }
+void oss_str(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], oss = x.cpu.r[1];
+    const uint32_t sb = oss + 4;
+    const std::string v = ours(x, sb) ? withBuf(x, sb, [](Buf& b) { return b.s; }) : std::string();
+    wr(x, ret, guestStringData(x, v));
+    x.cpu.r[0] = ret;
+}
+void iss_str(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], iss = x.cpu.r[1];
+    const uint32_t sb = iss + 8;
+    const std::string v = ours(x, sb) ? withBuf(x, sb, [](Buf& b) { return b.s; }) : std::string();
+    wr(x, ret, guestStringData(x, v));
+    x.cpu.r[0] = ret;
+}
+void ss_str(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], ss = x.cpu.r[1];
+    const uint32_t sb = ss + 12;
+    const std::string v = ours(x, sb) ? withBuf(x, sb, [](Buf& b) { return b.s; }) : std::string();
+    wr(x, ret, guestStringData(x, v));
+    x.cpu.r[0] = ret;
+}
+void oss_setStr(Ctx& x, GuestPtr oss, GuestPtr str) { sb_setStr(x, oss + 4, str); }
+void iss_setStr(Ctx& x, GuestPtr iss, GuestPtr str) { sb_setStr(x, iss + 8, str); }
+void ss_setStr(Ctx& x, GuestPtr ss, GuestPtr str) { sb_setStr(x, ss + 12, str); }
 int32_t sb_overflow(Ctx& x, GuestPtr sb, int32_t c) {
     if (c == kEofChar) return 0;
     const char ch = char(c);
@@ -1014,6 +1038,13 @@ void registerLibStdcxxStreams(Process& p) {
     // stringstream's ostream-subobject thunk ("non-virtual thunk", -8).
     p.defineFunction(std::string("__ZThn8_N") + SS_ + "D1Ev", [](Ctx& x) { ssAny_dtor(x, x.cpu.r[0] - 8); });
     p.defineFunction(std::string("__ZThn8_N") + SS_ + "D0Ev", [](Ctx& x) { ssAny_dtorDelete(x, x.cpu.r[0] - 8); });
+
+    p.defineFunction(std::string("__ZNK") + OSS + "3strEv", oss_str);
+    p.defineFunction(std::string("__ZNK") + ISS + "3strEv", iss_str);
+    p.defineFunction(std::string("__ZNK") + SS_ + "3strEv", ss_str);
+    p.def<&oss_setStr>(std::string("__ZN") + OSS + "3strERKSs");
+    p.def<&iss_setStr>(std::string("__ZN") + ISS + "3strERKSs");
+    p.def<&ss_setStr>(std::string("__ZN") + SS_ + "3strERKSs");
 
     // Wide stringstream (std::wstringstream)
     const char* WSS = "St18basic_stringstreamIwSt11char_traitsIwESaIwEE";

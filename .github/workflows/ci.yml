@@ -93,6 +93,10 @@ jobs:
           xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
             -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
           grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
+          # Surface compiler errors as public annotations so they are readable without log access.
+          grep -E "error:" device-build.log | sort -u | head -20 | while IFS= read -r line; do
+            echo "::error title=xcodebuild::${line//%/%25}"
+          done
           exit $rc
       - name: Package unsigned IPA for sideloading
         working-directory: app

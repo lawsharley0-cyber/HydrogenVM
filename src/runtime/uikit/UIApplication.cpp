@@ -138,7 +138,7 @@ id topWindowAt(Ctx& x, G::Point screenP) {
         if (!layerData(x, viewLayer(x, w)).bounds.contains(wp)) continue;
         if (!best || d.windowLevel >= bestLevel) { best = w; bestLevel = d.windowLevel; }
     }
-    return best ? best : u.keyWindow;
+    return best ? best : (u.keyWindow ? u.keyWindow : (!u.windows.empty() ? u.windows.front() : 0));
 }
 
 struct TapMemory { G::Point p; double t = 0; int count = 0; };
@@ -563,7 +563,10 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
     r.poolPop(x.cpu, pool);
 
     if (u.windows.empty()) x.proc.log(LogLevel::Warning, "The app finished launching without creating a window");
-    else if (!u.keyWindow) x.proc.log(LogLevel::Warning, "The app finished launching without a key window (did it call makeKeyAndVisible?)");
+    else if (!u.keyWindow) {
+        x.proc.log(LogLevel::Warning, "The app finished launching without a key window; making first window key");
+        r.send(x.cpu, u.windows.front(), "makeKeyAndVisible");
+    }
 
     // Frame loop: input, display links, layout, drawing, compositing — 60 Hz on the main run loop.
     Process* p = &x.proc;

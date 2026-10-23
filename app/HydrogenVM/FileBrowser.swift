@@ -875,6 +875,71 @@ private struct ImagePreviewView: View {
     }
 }
 
+// MARK: - Keychain & Save File Auto-Synchronization
+
+enum KeychainSaveSync {
+    static func syncFileToKeychainIfNeeded(fileURL: URL, text: String) {
+        let filename = fileURL.lastPathComponent
+        guard filename == "backup.txt" || text.contains("coins=") || text.contains("bux=") else { return }
+
+        var cur = fileURL.deletingLastPathComponent()
+        var keychainURL: URL?
+        for _ in 0..<5 {
+            let candidate = cur.appending(path: "Library/Keychains/hvm-keychain.plist")
+            if FileManager.default.fileExists(atPath: candidate.path(percentEncoded: false)) {
+                keychainURL = candidate
+                break
+            }
+            cur = cur.deletingLastPathComponent()
+        }
+        guard let kURL = keychainURL,
+              let plistData = try? Data(contentsOf: kURL),
+              var plistArray = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [[String: Any]] else {
+            return
+        }
+        guard let textData = text.data(using: .utf8) else { return }
+        var modified = false
+        for i in 0..<plistArray.count {
+            var item = plistArray[i]
+            let svce = item["svce"] as? String ?? ""
+            if svce == "com.eeenmachine.tinytowers.gameData" || svce.contains("gameData") || (item["v_Data"] as? Data).flatMap({ String(data: $0, encoding: .utf8) })?.contains("coins=") == true {
+                item["v_Data"] = textData
+                plistArray[i] = item
+                modified = true
+            }
+        }
+        if modified {
+            if let outData = try? PropertyListSerialization.data(fromPropertyList: plistArray, format: .xml, options: 0) {
+                try? outData.write(to: kURL, options: .atomic)
+            }
+        }
+    }
+
+    @MainActor
+    static func syncKeychainToFileIfNeeded(keychainURL: URL, plistRoot: PlistNode) {
+        guard keychainURL.lastPathComponent == "hvm-keychain.plist" else { return }
+        guard case .array(let items) = plistRoot.value else { return }
+        for item in items {
+            guard case .dict(let entries) = item.value else { continue }
+            var isTower = false
+            var payloadData: Data?
+            for entry in entries {
+                if entry.key == "svce", case .string(let s) = entry.value, s.contains("gameData") {
+                    isTower = true
+                }
+                if entry.key == "v_Data", case .data(let d) = entry.value {
+                    payloadData = d
+                }
+            }
+            if isTower, let data = payloadData, let s = String(data: data, encoding: .utf8), s.contains("coins=") {
+                let dataDir = keychainURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                let backupURL = dataDir.appending(path: "Documents/backup.txt")
+                try? data.write(to: backupURL, options: .atomic)
+            }
+        }
+    }
+}
+
 // MARK: - Text Editor
 
 struct TextEditorView: View {
@@ -944,6 +1009,7 @@ struct TextEditorView: View {
             }
             let out = try SaveCompressionFormat.encode(byteOrderMark + raw, format: compression)
             try document.commit(out)
+            KeychainSaveSync.syncFileToKeychainIfNeeded(fileURL: url, text: text)
 
             return true
         } catch {
@@ -1973,6 +2039,7 @@ struct PlistEditorView: View {
             let data = try PropertyListSerialization.data(fromPropertyList: root.toAny(), format: format, options: 0)
             let out = try SaveCompressionFormat.encode(data, format: compression)
             try document.commit(out)
+            KeychainSaveSync.syncKeychainToFileIfNeeded(keychainURL: url, plistRoot: root)
 
             return true
         } catch {

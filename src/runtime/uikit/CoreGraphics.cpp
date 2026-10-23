@@ -963,6 +963,84 @@ uint32_t font_createWithProvider(Ctx& x, id provider) {
     return newObject(x, S(x).font, std::move(h));
 }
 uint32_t font_copyName(Ctx& x, id f) { FontData* d = hd<FontData>(x, f); return Foundation::makeString(x, d ? d->name : "Helvetica", true); }
+uint32_t font_copyTableForTag(Ctx& x, id font, uint32_t tag) {
+    auto* f = hd<FontData>(x, font);
+    if (!f || !f->face) return 0;
+    auto bytes = f->face->table(tag);
+    if (bytes.empty()) return 0;
+    return Foundation::makeData(x, bytes.data(), uint32_t(bytes.size()), true);
+}
+uint32_t font_copyTableTags(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    if (!f || !f->face) return 0;
+    auto tags = f->face->tableTags();
+    std::vector<id> objs;
+    objs.reserve(tags.size());
+    for (uint32_t t : tags) objs.push_back(Foundation::makeNumberInt(x, int64_t(t), true));
+    return Foundation::makeArray(x, objs, true);
+}
+int32_t font_getUnitsPerEm(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f && f->face ? f->face->unitsPerEm() : 1000;
+}
+int32_t font_getAscent(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f && f->face ? f->face->ascentUnits() : 800;
+}
+int32_t font_getDescent(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f && f->face ? f->face->descentUnits() : -200;
+}
+int32_t font_getLeading(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f && f->face ? f->face->leadingUnits() : 0;
+}
+int32_t font_getCapHeight(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f && f->face ? f->face->capHeight() : 700;
+}
+int32_t font_getXHeight(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f && f->face ? f->face->xHeight() : 500;
+}
+void font_getFontBBox(Ctx& x, GuestPtr ret, id font) {
+    auto* f = hd<FontData>(x, font);
+    G::Rect b = f && f->face ? f->face->fontBBox() : G::Rect{0, -200, 1000, 1000};
+    writeStruct(x, ret, fromG(b));
+}
+uint32_t font_getNumberOfGlyphs(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f && f->face ? uint32_t(f->face->glyphCount()) : 0;
+}
+uint16_t font_getGlyphWithName(Ctx& x, id font, id name) {
+    auto* f = hd<FontData>(x, font);
+    if (!f || !f->face || !name) return 0;
+    std::string s = Foundation::utf8(x, name);
+    if (s.empty()) return 0;
+    return uint16_t(f->face->glyph(uint32_t(uint8_t(s[0]))));
+}
+bool font_getGlyphBBoxes(Ctx& x, id font, GuestPtr glyphs, uint32_t count, GuestPtr bboxes) {
+    auto* f = hd<FontData>(x, font);
+    if (!f || !f->face || !glyphs || !bboxes) return false;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint16_t g = x.mem.read<uint16_t>(glyphs + i * 2);
+        G::Rect box;
+        f->face->glyphBBox(int(g), box);
+        writeStruct(x, bboxes + i * sizeof(CGRect), fromG(box));
+    }
+    return true;
+}
+bool font_getGlyphAdvances(Ctx& x, id font, GuestPtr glyphs, uint32_t count, GuestPtr advances) {
+    auto* f = hd<FontData>(x, font);
+    if (!f || !f->face || !glyphs || !advances) return false;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint16_t g = x.mem.read<uint16_t>(glyphs + i * 2);
+        int adv = 0;
+        f->face->glyphAdvance(int(g), adv);
+        x.mem.write<int32_t>(advances + i * 4, adv);
+    }
+    return true;
+}
 
 uint32_t ct_createGraphics(Ctx& x, id font, float size, GuestPtr matrix, id) {
     auto* f = hd<FontData>(x, font);
@@ -1570,6 +1648,19 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&font_createWithProvider>("_CGFontCreateWithDataProvider");
     p.def<&font_copyName>("_CGFontCopyFullName");
     p.def<&font_copyName>("_CGFontCopyPostScriptName");
+    p.def<&font_copyTableForTag>("_CGFontCopyTableForTag");
+    p.def<&font_copyTableTags>("_CGFontCopyTableTags");
+    p.def<&font_getUnitsPerEm>("_CGFontGetUnitsPerEm");
+    p.def<&font_getAscent>("_CGFontGetAscent");
+    p.def<&font_getDescent>("_CGFontGetDescent");
+    p.def<&font_getLeading>("_CGFontGetLeading");
+    p.def<&font_getCapHeight>("_CGFontGetCapHeight");
+    p.def<&font_getXHeight>("_CGFontGetXHeight");
+    p.def<&font_getFontBBox>("_CGFontGetFontBBox");
+    p.def<&font_getNumberOfGlyphs>("_CGFontGetNumberOfGlyphs");
+    p.def<&font_getGlyphWithName>("_CGFontGetGlyphWithGlyphName");
+    p.def<&font_getGlyphBBoxes>("_CGFontGetGlyphBBoxes");
+    p.def<&font_getGlyphAdvances>("_CGFontGetGlyphAdvances");
     p.def<&ct_createGraphics>("_CTFontCreateWithGraphicsFont");
     p.def<&ct_createName>("_CTFontCreateWithName");
     p.def<&ct_copyDescriptor>("_CTFontCopyFontDescriptor");
