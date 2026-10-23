@@ -162,7 +162,22 @@ id sig_typeString(Ctx& x, id self, SEL) { Signature* s = sig(x, self); return ma
 
 // NSObject: -methodSignatureForSelector:, +instanceMethodSignatureForSelector:
 id o_methodSignature(Ctx& x, id self, SEL, SEL s) {
-    const std::string t = R(x).methodTypes(R(x).classOf(self), s);
+    if (!self || !s) return 0;
+    std::string t = R(x).methodTypes(R(x).classOf(self), s);
+    if (t.empty()) {
+        const SEL ftSel = R(x).selForwardingTarget;
+        const IMP ftImp = R(x).lookup(R(x).classOf(self), ftSel);
+        if (ftImp) {
+            const id target = id(x.proc.callGuest(x.cpu, ftImp, {self, ftSel, s}));
+            if (target && target != self) {
+                const SEL msigSel = R(x).sel("methodSignatureForSelector:");
+                const IMP msigImp = R(x).lookup(R(x).classOf(target), msigSel);
+                if (msigImp) {
+                    return id(x.proc.callGuest(x.cpu, msigImp, {target, msigSel, s}));
+                }
+            }
+        }
+    }
     return t.empty() ? 0 : makeSignature(x, t);
 }
 id oc_instanceMethodSignature(Ctx& x, id cls, SEL, SEL s) {
