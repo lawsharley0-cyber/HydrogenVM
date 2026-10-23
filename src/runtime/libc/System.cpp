@@ -5,7 +5,6 @@
 #include "MachPorts.hpp"
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
-#include "PathUtils.hpp"
 #include <sys/socket.h>
 #include <sys/file.h>
 #include <sys/uio.h>
@@ -290,6 +289,13 @@ void s_noop(Ctx&) {}
 
 // ----------------------------------------------------- files (POSIX fds) ---
 
+struct OpenFds {
+    explicit OpenFds(Process&) {}
+    std::mutex mu;
+    struct FdTrack { std::string path; int64_t size = -1; int64_t bytesRead = 0; };
+    std::unordered_map<int32_t, FdTrack> tracks;
+};
+
 int hostOpenFlags(uint32_t f) {
     int h = int(f & 3);
     if (f & 0x4) h |= O_NONBLOCK;
@@ -302,16 +308,31 @@ int hostOpenFlags(uint32_t f) {
 }
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
-    const std::string rawP = x.proc.readCString(path);
-    const std::string p = resolveCasePath(rawP);
-    int fd = ::open(p.c_str(), hostOpenFlags(flags), mode & 0777);
-    if (fd < 0 && p != rawP) {
-        fd = ::open(rawP.c_str(), hostOpenFlags(flags), mode & 0777);
+    const std::string p = x.proc.readCString(path);
+    const int fd = ::open(p.c_str(), hostOpenFlags(flags), mode & 0777);
+    if (fd < 0) {
+        x.proc.recordFileOpen(p, "open", errno, -1, 0);
+        return failD<int32_t>(x);
     }
-    return fd < 0 ? failD<int32_t>(x) : fd;
+    int64_t sz = -1;
+    struct stat st;
+    if (::fstat(fd, &st) == 0) sz = st.st_size;
+    auto& ofs = x.proc.service<OpenFds>();
+    std::lock_guard<std::mutex> lk(ofs.mu);
+    ofs.tracks[fd] = {p, sz, 0};
+    return fd;
 }
 int32_t f_close(Ctx& x, int32_t fd) {
     if (fd >= 0 && fd <= 2) return 0;
+    {
+        auto& ofs = x.proc.service<OpenFds>();
+        std::lock_guard<std::mutex> lk(ofs.mu);
+        auto it = ofs.tracks.find(fd);
+        if (it != ofs.tracks.end()) {
+            x.proc.recordFileOpen(it->second.path, "open", 0, it->second.size, it->second.bytesRead);
+            ofs.tracks.erase(it);
+        }
+    }
     const int tracked = closeNetworkSocket(x.proc, fd);
     return (tracked == -2 ? ::close(fd) : tracked) < 0 ? failD<int32_t>(x) : 0;
 }
@@ -319,6 +340,12 @@ int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
     if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
+    if (r > 0) {
+        auto& ofs = x.proc.service<OpenFds>();
+        std::lock_guard<std::mutex> lk(ofs.mu);
+        auto it = ofs.tracks.find(fd);
+        if (it != ofs.tracks.end()) it->second.bytesRead += r;
+    }
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
 }
 int32_t f_write(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
@@ -436,17 +463,13 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
 }
 int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    const std::string rawP = x.proc.readCString(path);
-    const std::string p = resolveCasePath(rawP);
-    if (::stat(p.c_str(), &st) < 0 && (p == rawP || ::stat(rawP.c_str(), &st) < 0)) return failD<int32_t>(x);
+    if (::stat(x.proc.readCString(path).c_str(), &st) < 0) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
 int32_t f_lstat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    const std::string rawP = x.proc.readCString(path);
-    const std::string p = resolveCasePath(rawP);
-    if (::lstat(p.c_str(), &st) < 0 && (p == rawP || ::lstat(rawP.c_str(), &st) < 0)) return failD<int32_t>(x);
+    if (::lstat(x.proc.readCString(path).c_str(), &st) < 0) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
@@ -457,12 +480,7 @@ int32_t f_fstat(Ctx& x, int32_t fd, GuestPtr out) {
     storeStat(x, out, st);
     return 0;
 }
-int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) {
-    const std::string rawP = x.proc.readCString(path);
-    const std::string p = resolveCasePath(rawP);
-    if (::access(p.c_str(), mode) < 0 && (p == rawP || ::access(rawP.c_str(), mode) < 0)) return failD<int32_t>(x);
-    return 0;
-}
+int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.readCString(path).c_str(), mode) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.readCString(path).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }

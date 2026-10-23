@@ -934,12 +934,36 @@ std::string Process::crashBundle() {
         std::lock_guard<std::mutex> lk(logRingMu_);
         for (size_t i = 0; i < logRing_.size(); ++i) out << (i ? "," : "") << quote(logRing_[i]);
     }
+    out << "],\"fileHistory\":[";
+    {
+        std::lock_guard<std::mutex> lk(fileRingMu_);
+        for (size_t i = 0; i < fileRing_.size(); ++i) {
+            const auto& f = fileRing_[i];
+            out << (i ? "," : "")
+                << "{\"path\":" << quote(f.path)
+                << ",\"api\":" << quote(f.api)
+                << ",\"hostResult\":" << f.hostResult
+                << ",\"size\":" << f.size
+                << ",\"bytesRead\":" << f.bytesRead << "}";
+        }
+    }
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count();
     out << "],\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
     return out.str();
 }
 
 // ------------------------------------------------------------ diagnostics ---
+
+void Process::recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead) {
+    std::lock_guard<std::mutex> lk(fileRingMu_);
+    if (fileRing_.size() >= 32) fileRing_.pop_front();
+    fileRing_.push_back({path, api, hostResult, size, bytesRead});
+}
+
+std::vector<Process::FileRecord> Process::fileRing() const {
+    std::lock_guard<std::mutex> lk(fileRingMu_);
+    return std::vector<FileRecord>(fileRing_.begin(), fileRing_.end());
+}
 
 void Process::log(LogLevel lvl, const std::string& msg) const {
     {
