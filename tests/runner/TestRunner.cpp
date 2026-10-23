@@ -1319,6 +1319,15 @@ int runFullSubsystemTests() {
         check(call("_mach_port_mod_refs", {0x103, 0x103, 0, 1}) == 0 && refs(0x103) == 2 &&
               call("_mach_port_deallocate", {0x103, 0x103}) == 0 && refs(0x103) == 1,
               "Mach task send references increment and deallocate symmetrically");
+
+        // Direct HLE _syscall validation
+        const uint32_t errAddr = proc.currentThread().errnoAddr ? proc.currentThread().errnoAddr : proc.heap().allocZeroed(4);
+        proc.currentThread().errnoAddr = errAddr;
+        const auto getErrno = [&]() { return proc.mem().read<uint32_t>(errAddr); };
+        check(call("_syscall", {20}) == 1234, "_syscall(20) returns getpid");
+        check(int32_t(call("_syscall", {286})) == -1 && getErrno() == 3, "_syscall(286) returns -1 and ESRCH (3)");
+        check(call("_syscall", {372}) == proc.currentThread().id, "_syscall(372) returns thread_selfid");
+        check(int32_t(call("_syscall", {999})) == -1 && getErrno() == 78, "_syscall(unhandled) returns -1 and ENOSYS (78)");
         check(call("_mach_port_mod_refs", {42, 0x103, 0, 1}) == 16 &&
               call("_mach_port_mod_refs", {0x103, 42, 0, 1}) == 15 &&
               call("_mach_port_mod_refs", {0x103, 0x103, 1, 1}) == 17 &&
