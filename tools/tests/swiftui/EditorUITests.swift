@@ -43,7 +43,7 @@ final class EditorUITests: XCTestCase {
     func testReturningFromNestedJSONKeepsEdits() {
         openNestedJSON()
         app.switches["enabled"].tap()
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["BackButton"].tap()
         // The root must retain the edited model and a reachable Save button.
         let save = app.buttons["save-changes"]
         XCTAssertTrue(save.isEnabled)

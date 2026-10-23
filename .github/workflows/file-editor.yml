@@ -54,6 +54,7 @@ jobs:
               exit 1
             }
       - name: Compile iOS shell (unsigned simulator)
+        if: ${{ !cancelled() }}
         run: |
           set -o pipefail
           xcodebuild -project app/HydrogenVM.xcodeproj -target HydrogenVM \
