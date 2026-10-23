@@ -25,11 +25,10 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
 
 - B-212 / UX-2 (Group E): guest-oriented viewport, display scaling/filtering,
-  inverse touch mapping and device-axis acceleration mapping. In progress;
-  Apple compile, synthetic simulator interaction and device acceptance required.
+  inverse touch mapping and device-axis acceleration mapping. Implemented in Group E;
+  collapsible floating HUD pill and manual orientation override completed.
 - B-213 / UX-3 (Group E): lifecycle pause/resume and stop-before-inspect controls.
-  In progress. Live snapshot/restore while paused remains queued until the runtime
-  supplies an acknowledged quiescence/flush boundary and cache invalidation.
+  Implemented in Group E; direct Save & Files Inspector sheet trigger and status badges completed.
 
 | ID | Item | Impact | Sev | Cx | Score | Group | Depends on | Parallel | State |
 |---|---|---:|---:|---:|---:|---|---|---|---|

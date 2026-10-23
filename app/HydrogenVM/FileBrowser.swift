@@ -980,6 +980,7 @@ struct TextEditorView: View {
             }
         }
         .modifier(FileEditorRegistration(save: save))
+        .editorSaveBottomBar()
         .alert("Save Failed", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
@@ -1131,6 +1132,7 @@ struct KeyValueEditorView: View {
             }
         }
         .modifier(FileEditorRegistration(save: save))
+        .editorSaveBottomBar()
         .alert("Add Config Key", isPresented: $addingEntry) {
             TextField("Section (optional)", text: $newSection)
             TextField("Key", text: $newKey)
@@ -1263,6 +1265,7 @@ struct JSONEditorView: View {
             }
         }
         .modifier(FileEditorRegistration(save: save))
+        .editorSaveBottomBar()
         .alert("JSON Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
@@ -2010,6 +2013,7 @@ struct PlistEditorView: View {
             }
         }
         .modifier(FileEditorRegistration(save: save))
+        .editorSaveBottomBar()
         .alert("Save Failed", isPresented: Binding(get: { error != nil },
                                                     set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
@@ -2610,6 +2614,7 @@ struct BinaryEditorView: View {
             }
         }
         .modifier(FileEditorRegistration(save: save))
+        .editorSaveBottomBar()
         .sheet(isPresented: $showingScanner) {
             NavigationStack {
                 Form {

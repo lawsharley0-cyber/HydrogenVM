@@ -16,7 +16,10 @@ final class FileEditorSession {
     func saveChanges() -> Bool {
         guard ready, let saveAction else { return false }
         let success = saveAction()
-        if success { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        if success {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            saved = true
+        }
         return success
     }
 
@@ -42,63 +45,128 @@ final class FileEditorSession {
     }
 }
 
-/// Shared by every buffered editor, including when a child tree is visible.
+/// Sticky bottom save bar modifier attached via `.safeAreaInset(edge: .bottom)`.
+struct EditorSaveBottomBarModifier: ViewModifier {
+    @Environment(FileEditorSession.self) private var document
+    @State private var showingRevert = false
+    @State private var showingBackups = false
+    @State private var showSavedBanner = false
+
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .bottom) {
+                if document.ready || document.dirty {
+                    VStack(spacing: 6) {
+                        if showSavedBanner {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("Saved ✓")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.green)
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 12)
+                            .background(Color.green.opacity(0.15), in: Capsule())
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: document.dirty ? "pencil.circle.fill" : "checkmark.circle.fill")
+                                        .foregroundStyle(document.dirty ? .orange : .green)
+                                    Text(document.dirty ? "Unsaved Changes" : "All Changes Saved")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(document.dirty ? .orange : .secondary)
+                                }
+                                HStack(spacing: 10) {
+                                    Button("Revert", role: .destructive) {
+                                        showingRevert = true
+                                    }
+                                    .font(.caption2)
+                                    .disabled(!document.dirty)
+
+                                    Button {
+                                        showingBackups = true
+                                    } label: {
+                                        Label("Revisions", systemImage: "clock.arrow.circlepath")
+                                    }
+                                    .font(.caption2)
+                                    .disabled(document.dirty || !document.ready)
+                                }
+                            }
+
+                            Spacer()
+
+                            Button {
+                                if document.saveChanges() {
+                                    withAnimation(.spring(duration: 0.3)) {
+                                        showSavedBanner = true
+                                    }
+                                }
+                            } label: {
+                                Label("Save Changes", systemImage: "square.and.arrow.down.fill")
+                                    .fontWeight(.semibold)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("save-changes")
+                            .disabled(!document.dirty || !document.ready)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial)
+                    .overlay(Divider(), alignment: .top)
+                    .confirmationDialog("Discard edits and reload from disk?", isPresented: $showingRevert, titleVisibility: .visible) {
+                        Button("Discard Changes", role: .destructive) { document.revert() }
+                        Button("Cancel", role: .cancel) {}
+                    }
+                    .sheet(isPresented: $showingBackups) { FileBackupHistoryView(document: document) }
+                    .onChange(of: document.saved) { _, isSaved in
+                        if isSaved {
+                            withAnimation(.spring(duration: 0.3)) {
+                                showSavedBanner = true
+                            }
+                            Task {
+                                try? await Task.sleep(for: .seconds(2))
+                                withAnimation {
+                                    showSavedBanner = false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    func editorSaveBottomBar() -> some View {
+        modifier(EditorSaveBottomBarModifier())
+    }
+}
+
+/// Shared by every buffered editor sheet.
 struct FileEditorControls: ViewModifier {
     @Environment(FileEditorSession.self) private var document
     @Environment(\.dismiss) private var dismiss
     @AppStorage("fileEditor.autoSave") private var autoSave = false
     @State private var showingClose = false
-    @State private var showingRevert = false
-    @State private var showingBackups = false
 
     private func commit() -> Bool { document.saveChanges() }
 
     func body(content: Content) -> some View {
-        VStack(spacing: 0) {
-            content
-                if document.ready || document.dirty {
-                VStack(spacing: 8) {
-                    HStack {
-                        Toggle("Auto-save edits", isOn: $autoSave)
-                        Button("Backups") { showingBackups = true }
-                            .disabled(document.dirty || !document.ready)
-                    }
-                    .font(.caption)
-                    HStack {
-                        Label(document.dirty ? "Unsaved Changes" : (document.saved ? "Saved ✓" : "No Changes"),
-                              systemImage: document.dirty ? "pencil.circle" : "checkmark.circle")
-                            .font(.caption)
-                        Spacer()
-                        Button("Revert", role: .destructive) { showingRevert = true }
-                            .disabled(!document.dirty)
-                    }
-                    Button { _ = commit() } label: {
-                        Label("Save Changes", systemImage: "square.and.arrow.down.fill")
-                            .frame(maxWidth: .infinity, minHeight: 34)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("save-changes")
-                    .disabled(!document.dirty || !document.ready)
-                }
-                .padding(12)
-                .background(.bar)
-                }
-        }
+        content
             .onAppear {
                 document.requestClose = {
                     if document.dirty { showingClose = true } else { dismiss() }
                 }
             }
-            .sheet(isPresented: $showingBackups) { FileBackupHistoryView(document: document) }
             .interactiveDismissDisabled(document.dirty)
             .confirmationDialog("Unsaved Changes", isPresented: $showingClose, titleVisibility: .visible) {
                 Button("Save & Close") { if commit() { dismiss() } }
                 Button("Discard Changes", role: .destructive) { document.revert(); dismiss() }
-                Button("Cancel", role: .cancel) {}
-            }
-            .confirmationDialog("Discard edits and reload from disk?", isPresented: $showingRevert,
-                                titleVisibility: .visible) {
-                Button("Discard Changes", role: .destructive) { document.revert() }
                 Button("Cancel", role: .cancel) {}
             }
             .alert("Save Failed", isPresented: Binding(get: { document.saveError != nil },
@@ -128,8 +196,7 @@ struct FileEditorRegistration: ViewModifier {
     }
 }
 
-/// Navigation bars and keyboard accessories belong to the visible destination,
-/// while close confirmation and the persistent save bar belong to the sheet.
+/// Navigation bars and keyboard accessories belong to the visible destination.
 @MainActor
 struct FileEditorToolbar: ToolbarContent {
     @Environment(FileEditorSession.self) private var document
