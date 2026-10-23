@@ -2293,6 +2293,95 @@ int runFullSubsystemTests() {
         check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap");
     }
 
+    // #31: independent ARMv7 API-family oracles (metadata is laid out by the public ABI).
+    {
+        auto bound = [&](std::initializer_list<const char*> names) { for (auto n : names) if (!proc.lookupSymbol(n)) return false; return true; };
+        auto call = [&](const char* name, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(name), args)); };
+        const uint32_t scratch = proc.heap().allocZeroed(512);
+        bool libc = bound({"_getprogname", "_strsignal", "_writev", "_flock", "_pthread_cancel"});
+        if (libc) {
+            int descriptors[2]; libc = ::pipe(descriptors) == 0;
+            if (libc) {
+                proc.mem().copyIn(scratch + 64, "ABCdef", 6);
+                proc.mem().write<uint32_t>(scratch, scratch + 64); proc.mem().write<uint32_t>(scratch + 4, 3);
+                proc.mem().write<uint32_t>(scratch + 8, scratch + 67); proc.mem().write<uint32_t>(scratch + 12, 3);
+                libc = call("_writev", {uint32_t(descriptors[1]), scratch, 2}) == 6;
+                ::close(descriptors[1]);
+                char bytes[6]{}; libc &= ::read(descriptors[0], bytes, 6) == 6 && std::memcmp(bytes, "ABCdef", 6) == 0;
+                ::close(descriptors[0]);
+            }
+            libc &= proc.readCString(call("_strsignal", {10})) == "Bus error" && !proc.readCString(call("_getprogname", {})).empty();
+            libc &= call("_pthread_cancel", {0xdeadbeef}) == 3;
+            if (bound({"_pthread_testcancel", "_pthread_join"})) {
+                std::atomic<bool> entered{false};
+                const auto worker = proc.defineFunction("__startup_cancel_worker", [&](Ctx& workerContext) {
+                    entered = true;
+                    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                    while (std::chrono::steady_clock::now() < end) {
+                        proc.callGuest(workerContext.cpu, *proc.lookupSymbol("_pthread_testcancel"), {});
+                        std::this_thread::yield();
+                    }
+                    workerContext.cpu.r[0] = 42;
+                });
+                const auto thread = proc.startThread(worker, 0, 512u << 10, false);
+                const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+                while (!entered && std::chrono::steady_clock::now() < end) std::this_thread::yield();
+                const bool prior = libc;
+                const uint32_t cancelled = call("_pthread_cancel", {thread});
+                uint32_t returned = 0;
+                const bool joined = proc.joinThread(thread, &returned);
+                libc &= cancelled == 0 && joined && returned == 0xffffffffu;
+                if (!libc) std::printf("    startup libc prior=%d entered=%d cancel=%u joined=%d returned=%08x\n", prior, bool(entered), cancelled, joined, returned);
+            } else libc = false;
+        }
+        check(libc, "startup libc exports writev bytes, Darwin signal names and invalid-thread cancellation errors");
+        bool protocols = bound({"_protocol_conformsToProtocol", "_protocol_copyProtocolList", "_protocol_copyMethodDescriptionList"});
+        if (protocols) {
+            const uint32_t parent = scratch + 96, child = scratch + 128, list = scratch + 160, methods = scratch + 176;
+            proc.mem().write<uint32_t>(parent + 4, proc.internCString("Parent31"));
+            proc.mem().write<uint32_t>(child + 4, proc.internCString("Child31"));
+            proc.mem().write<uint32_t>(child + 8, list); proc.mem().write<uint32_t>(list, 1); proc.mem().write<uint32_t>(list + 4, parent);
+            proc.mem().write<uint32_t>(child + 12, methods); proc.mem().write<uint32_t>(methods, 1);
+            proc.mem().write<uint32_t>(methods + 4, proc.internCString("method31")); proc.mem().write<uint32_t>(methods + 8, proc.internCString("v@:"));
+            const auto copied = call("_protocol_copyProtocolList", {child, scratch + 208});
+            const auto descriptions = call("_protocol_copyMethodDescriptionList", {child, 1, 1, scratch + 212});
+            protocols = call("_protocol_conformsToProtocol", {child, parent}) && !call("_protocol_conformsToProtocol", {parent, child}) &&
+                proc.mem().read<uint32_t>(scratch + 208) == 1 && proc.mem().read<uint32_t>(copied) == parent && proc.mem().read<uint32_t>(copied + 4) == 0 &&
+                proc.mem().read<uint32_t>(scratch + 212) == 1 && proc.mem().read<uint32_t>(descriptions) == r.sel("method31") &&
+                proc.readCString(proc.mem().read<uint32_t>(descriptions + 4)) == "v@:";
+            proc.heap().free(copied); proc.heap().free(descriptions);
+        }
+        check(protocols, "startup protocol metadata preserves adoption, method selectors, types and owned lists");
+        bool bitvectors = bound({"_CFBitVectorCreate", "_CFBitVectorCreateMutableCopy", "_CFBitVectorGetBitAtIndex", "_CFBitVectorSetBitAtIndex"});
+        if (bitvectors) {
+            proc.mem().write<uint8_t>(scratch + 224, 0xa5);
+            const auto original = call("_CFBitVectorCreate", {0, scratch + 224, 8});
+            const auto copy = call("_CFBitVectorCreateMutableCopy", {0, 0, original});
+            call("_CFBitVectorSetBitAtIndex", {copy, 1, 1});
+            bitvectors = call("_CFBitVectorGetBitAtIndex", {original, 0}) == 1 && call("_CFBitVectorGetBitAtIndex", {original, 1}) == 0 &&
+                call("_CFBitVectorGetBitAtIndex", {copy, 1}) == 1 && call("_CFBitVectorGetBitAtIndex", {original, 7}) == 1;
+            call("_CFRelease", {copy}); call("_CFRelease", {original});
+        }
+        check(bitvectors, "startup CF bit vectors use MSB-first bits and mutable copies own their storage");
+        bool mach = bound({"_mach_port_allocate", "_mach_port_insert_right", "_mach_msg", "_task_swap_exception_ports", "_thread_swap_exception_ports", "_vm_map", "_vm_protect"});
+        if (mach) {
+            mach = call("_mach_port_allocate", {0x103, 1, scratch + 256}) == 0;
+            const auto port = proc.mem().read<uint32_t>(scratch + 256);
+            mach &= call("_mach_port_insert_right", {0x103, port, port, 20}) == 0;
+            const uint32_t msg = scratch + 288;
+            proc.mem().write<uint32_t>(msg, 19); proc.mem().write<uint32_t>(msg + 4, 28); proc.mem().write<uint32_t>(msg + 8, port);
+            proc.mem().write<uint32_t>(msg + 24, 0x13579bdf);
+            mach &= call("_mach_msg", {msg, 3, 28, 28, port, 0, 0}) == 0 && proc.mem().read<uint32_t>(msg + 12) == port && proc.mem().read<uint32_t>(msg + 24) == 0x13579bdf;
+            mach &= call("_mach_msg", {msg, 0x102, 0, 28, port, 0, 0}) == 0x10004003;
+            mach &= call("_vm_map", {0x103, scratch + 260, 4096, 4095, 1, 0, 0, 0, 0, 3, 7, 0}) == 0;
+            const auto address = proc.mem().read<uint32_t>(scratch + 260);
+            mach &= address && !(address & 4095) && call("_vm_protect", {0x103, address, 4096, 0, 1}) == 0 && proc.mem().protAt(address) == Memory::kProtRead;
+            call("_vm_protect", {0x103, address, 4096, 0, 3}); call("_vm_deallocate", {0x103, address, 4096});
+            call("_mach_port_destroy", {0x103, port});
+        }
+        check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
+    }
+
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)
