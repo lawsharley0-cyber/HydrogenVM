@@ -57,7 +57,7 @@ final class EditorUITests: XCTestCase {
         openNestedJSON()
         app.switches["Auto-save edits"].tap()
         app.switches["enabled"].tap()
-        let saved = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Saved ✓")).firstMatch
+        let saved = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Saved ✓")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 10))
         app.buttons["editor-close"].tap()
         XCTAssertTrue(app.staticTexts["disk-json"].waitForExistence(timeout: 5))

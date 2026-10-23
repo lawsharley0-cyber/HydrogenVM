@@ -30,6 +30,7 @@ jobs:
           brew install xcodegen
           cd app && xcodegen
       - name: Exercise save and close flows on an iPhone simulator
+        timeout-minutes: 15
         run: |
           set -o pipefail
           xcodegen --spec tools/tests/swiftui/project.yml --project tools/tests/swiftui
@@ -42,6 +43,9 @@ jobs:
                   if device["name"].startswith("iPhone"):
                       print(device["udid"]); sys.exit(0)
           sys.exit("No iPhone simulator")')
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool NO
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
           xcodebuild -project tools/tests/swiftui/SaveEditorHarness.xcodeproj \
             -scheme SaveEditorHarness -destination "platform=iOS Simulator,id=$UDID" \
             -parallel-testing-enabled NO -resultBundlePath build/file-editor/EditorUITests.xcresult \
