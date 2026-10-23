@@ -22,6 +22,10 @@ The compatibility alias remains for IPA files or directories containing IPAs:
 python3 tools/compat.py scan path/to/ipas/ more.ipa --out compat --seconds 30
 ```
 
+`--relaunch` retains two launches sharing one sandbox; `--only` selects input
+filenames or generated app IDs. `compat.macho_info` remains available to the
+pinned-client metadata probe.
+
 It writes the harness `compat/report.json`, with raw reports and screenshots
 under `compat/work/` and diagnostic runs under `compat/keep-going/`.
 Use `hvm_compat.py issues compat/report.json` for ranked shared API gaps and

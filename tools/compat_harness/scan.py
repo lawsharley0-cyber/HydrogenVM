@@ -16,6 +16,7 @@ def main(argv=None):
     parser.add_argument('--seconds', type=float, default=30)
     parser.add_argument('--hvm', default='build/hvm')
     parser.add_argument('--only')
+    parser.add_argument('--relaunch', action='store_true', help='two strict launches sharing saves')
     parser.add_argument('--jobs', type=int, default=1, help='accepted for compatibility; runs sequentially')
     args = parser.parse_args(argv)
     files = set()
@@ -42,6 +43,7 @@ def main(argv=None):
         manifest.write_text(json.dumps(dict(schemaVersion=1, apps=apps)))
         command = ['apps', '--manifest', str(manifest), '--fixture-root', str(root), '--out', args.out,
                    '--seconds', str(args.seconds), '--hvm', args.hvm, '--keep-going']
+        if args.relaunch: command += ['--launches', '2']
         if args.only:
             selected = [app['id'] for app in apps if app['id'] in args.only.split(',') or Path(app['fixtureRelPath']).stem in args.only.split(',')]
             if not selected: parser.error('--only did not match any input IPA')

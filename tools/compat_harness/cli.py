@@ -24,6 +24,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def add_common(p: argparse.ArgumentParser) -> None:
         p.add_argument("--library", help="owner library JSON; missing fixtures are explicitly optional")
+        p.add_argument("--launches", type=int, default=1, help="launches sharing one sandbox; >1 uses graceful shutdown")
         p.add_argument("--keep-going", action="store_true", help="also collect runtime misses in an isolated sandbox")
         p.add_argument("--manifest", default=default_manifest_path())
         p.add_argument("--fixture-root", default=os.environ.get("HVM_FIXTURE_ROOT") or None)
@@ -121,6 +122,9 @@ def main(argv: list[str] | None = None) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     root = repo_root()
+    if args.launches < 1:
+        print("--launches must be positive", file=sys.stderr)
+        return 2
     from .library import load_library
     manifest = load_library(args.library, args.fixture_root) if args.library else load_manifest(args.manifest)
     if args.library:
@@ -160,7 +164,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     else:
         fuzz = {"status": "not-run", "cases": []}
     if args.cmd == "apps" or (args.cmd == "run" and not args.skip_apps):
-        apps = runner.run_apps(manifest, resolved, hvm=hvm, out_dir=args.out, seconds=args.seconds, keep_going=args.keep_going)
+        apps = runner.run_apps(manifest, resolved, hvm=hvm, out_dir=args.out, seconds=args.seconds, keep_going=args.keep_going, launches=args.launches)
     else:
         apps = {"status": "skip", "apps": []}
     if args.cmd == "unit":

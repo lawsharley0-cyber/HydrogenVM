@@ -57,3 +57,16 @@ class LibraryTriageTests(unittest.TestCase):
             self.assertTrue(output['apps'][0]['crashed'])
             self.assertFalse(output['apps'][0]['keepGoing']['crashed'])
             self.assertNotEqual(calls[0][0], calls[1][0])
+
+    def test_existing_scan_relaunch_caller_and_probe_import(self):
+        from compat import macho_info
+        from compat_harness.scan import main as scan
+        self.assertTrue(callable(macho_info))
+        with tempfile.TemporaryDirectory() as directory:
+            ipa = Path(directory) / 'fixture.ipa'
+            ipa.write_bytes(b'fixture')
+            with patch('compat_harness.scan.harness_main', return_value=0) as run:
+                self.assertEqual(scan(['scan', str(ipa), '--relaunch']), 0)
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index('--launches') + 1], '2')
+            self.assertIn('--keep-going', command)

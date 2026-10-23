@@ -116,7 +116,7 @@ def run_fuzz(root: str, build_dir: str, count: int) -> dict:
     return _suite([case])
 
 
-def run_apps(manifest: dict, resolved: list[dict], *, hvm: str, out_dir: str, seconds: float | None, keep_going: bool = False) -> dict:
+def run_apps(manifest: dict, resolved: list[dict], *, hvm: str, out_dir: str, seconds: float | None, keep_going: bool = False, launches: int = 1) -> dict:
     apps = []
     by_id = {a["id"]: a for a in manifest["apps"]}
     if not os.path.isfile(hvm):
@@ -131,10 +131,11 @@ def run_apps(manifest: dict, resolved: list[dict], *, hvm: str, out_dir: str, se
             apps.append(_unrun(item, spec, item["status"], item.get("reason") or ""))
             continue
         run_seconds = float(seconds if seconds is not None else spec.get("seconds") or 3)
-        row = _run_one(hvm, spec, item, out_dir, run_seconds)
+        options = {"launches": launches} if launches > 1 else {}
+        row = _run_one(hvm, spec, item, out_dir, run_seconds, **options)
         if keep_going:
             # Separate home and reports: diagnostic continuation cannot change the strict result or saves.
-            continuation = _run_one(hvm, spec, item, os.path.join(out_dir, "keep-going"), run_seconds, keep_going=True)
+            continuation = _run_one(hvm, spec, item, os.path.join(out_dir, "keep-going"), run_seconds, keep_going=True, **options)
             row["keepGoing"] = continuation
         apps.append(row)
     # Load errors and crashes are measurements. Timeouts, fixture/hash
@@ -213,7 +214,7 @@ def build_report(*, root: str, unit: dict, python: dict, fuzz: dict, apps: dict,
     }
 
 
-def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float, keep_going: bool = False) -> dict:
+def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float, keep_going: bool = False, launches: int = 1) -> dict:
     work = os.path.join(out_dir, "work", spec["id"])
     os.makedirs(work, exist_ok=True)
     report_path = os.path.join(work, "hvm-report.json")
@@ -232,6 +233,8 @@ def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float, kee
         "--screenshot", shot_path,
         "--quiet",
     ]
+    if launches > 1:
+        cmd.extend(["--launches", str(launches)])
     if keep_going:
         cmd.append("--keep-going")
     if audio.fd is not None:
@@ -244,6 +247,10 @@ def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float, kee
         "--screenshot", "<work>/frame.png",
         "--quiet",
     ]
+    if launches > 1:
+        display_cmd.extend(["--launches", str(launches)])
+    if keep_going:
+        display_cmd.append("--keep-going")
     if audio.fd is not None:
         display_cmd.extend(["--audio-fd", "<datagram>"])
     started = time.monotonic()
@@ -256,7 +263,7 @@ def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float, kee
             capture_output=True,
             text=True,
             errors="replace",
-            timeout=max(45.0, seconds * 5 + 30),
+            timeout=max(45.0, seconds * 5 + 30) * launches,
             pass_fds=audio.pass_fds,
         )
         exit_code = proc.returncode
@@ -280,6 +287,7 @@ def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float, kee
     hvm_report = _read_json(report_path)
     row = _base_row(item, spec)
     row["durationSec"] = duration
+    row["launches"] = launches
     row["command"] = display_cmd
     row["exitStatus"] = hvm_report.get("exitStatus", exit_code)
     row["stillRunning"] = bool(hvm_report.get("stillRunning"))
