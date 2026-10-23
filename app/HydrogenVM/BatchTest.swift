@@ -386,7 +386,7 @@ final class BatchTestRunner {
 
         s.onExit = { [weak self] code, crash in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard self != nil else { return }
                 didExit = true
                 exitStatusCode = code
                 capturedCrash = crash

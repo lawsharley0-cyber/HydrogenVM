@@ -1,6 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+extension HVMAppInfo: @unchecked Sendable {}
+
 /// Installed apps live in Documents/Apps/<bundle id>/<Name>.app, with the
 /// app's sandbox (Documents/, Library/, tmp/) beside the bundle. Any .ipa
 /// dropped into Documents through Files or Finder is imported on refresh.
