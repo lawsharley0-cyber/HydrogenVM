@@ -69,6 +69,8 @@ id dictGet(Ctx& x, id dict, const std::string& key);
 bool isDict(Ctx& x, id obj);
 id makeSet(Ctx& x, const std::vector<id>& items, bool owned = false, bool isMutable = false);
 std::vector<id> setItems(Ctx& x, id set);
+id makeIndexSet(Ctx& x, const std::set<uint32_t>& indices, bool owned = false, bool isMutable = false);
+std::vector<uint32_t> indexSetIndices(Ctx& x, id indexSet);
 
 // ---- data
 id makeData(Ctx& x, const void* bytes, uint32_t n, bool owned = false, bool isMutable = false);
