@@ -1,0 +1,246 @@
+name: Test Lab
+
+# Builds the TestLab IPA and runs all five cases through the HVM CLI on Linux.
+# One case per process; external timeout + crash-continuation are exercised.
+# Results are uploaded as an artifact.
+#
+# This workflow does NOT run fulltest or modify the compat baseline.
+# It is additive and does not overlap with compat-harness.yml.
+
+on:
+  push:
+    branches: [main, codex/test-lab-v1]
+    paths:
+      - 'tests/ios/apps/testlab/**'
+      - 'tools/hvm_testlab.py'
+      - 'tools/testlab_schema/**'
+      - '.github/workflows/testlab.yml'
+  pull_request:
+    paths:
+      - 'tests/ios/apps/testlab/**'
+      - 'tools/hvm_testlab.py'
+      - 'tools/testlab_schema/**'
+      - '.github/workflows/testlab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testlab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testlab-linux:
+    name: Test Lab — Linux headless
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq clang lld llvm cmake ninja-build \
+            zlib1g-dev libsqlite3-dev uuid-dev python3 g++ libstdc++-14-dev
+          clang++ --version | head -1
+
+      - name: Schema unit tests
+        run: python3 -m unittest discover -s tools/testlab_schema/tests -v
+
+      - name: Cache ld64 (cctools-port)
+        id: cctools
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/cctools
+          key: cctools-${{ runner.os }}-${{ hashFiles('tools/build_cctools.sh') }}
+
+      - name: Build ld64
+        if: steps.cctools.outputs.cache-hit != 'true'
+        run: tools/build_cctools.sh /home/runner/cctools
+
+      - name: Build HVM engine
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Release
+          ninja -C build hvm hvm_tests
+        env:
+          HVM_LD64: /home/runner/cctools/bin/arm-apple-darwin11-ld
+
+      - name: Verify IPA packaging checks
+        run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
+
+      - name: Generate tone.wav
+        run: python3 tests/ios/apps/testlab/gen_tone_wav.py tests/ios/apps/testlab/tone.wav
+
+      - name: Build TestLab IPA
+        run: |
+          python3 tools/ios_build.py app \
+            --name TestLab \
+            --display "Test Lab" \
+            --out build/ios \
+            --min-ios 6.0 \
+            --resource tests/ios/apps/testlab/tone.wav \
+            --resource tests/ios/apps/testlab/empty.dat \
+            tests/ios/apps/testlab/main.m
+        env:
+          HVM_LD64: /home/runner/cctools/bin/arm-apple-darwin11-ld
+
+      - name: Verify IPA contents
+        run: |
+          python3 -c "
+          import zipfile, sys
+          required = [
+              'Payload/TestLab.app/TestLab',
+              'Payload/TestLab.app/Info.plist',
+              'Payload/TestLab.app/tone.wav',
+              'Payload/TestLab.app/empty.dat',
+          ]
+          with zipfile.ZipFile('build/ios/TestLab.ipa') as z:
+              names = z.namelist()
+              missing = [r for r in required if r not in names]
+          if missing:
+              print('MISSING:', missing); sys.exit(1)
+          print('IPA contents OK:', len(names), 'entries')
+          "
+
+      - name: Run Test Lab — TL-A (import and launch)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-A \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-B (CPU correctness)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-B \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-C (GLES graphics)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-C \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-D (audio)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-D \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-E (persistence, two launches)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-E \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 60
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-F (threading)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-F \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-G (keychain)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-G \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-H (filesystem)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-H \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-I (texture formats / NPOT)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-I \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-J (performance throughput gate)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-J \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Run Test Lab — all cases (integration)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --out build/testlab-report-all \
+            --skip-build \
+            --timeout 30
+        continue-on-error: true
+
+      - name: Validate report schema
+        run: |
+          python3 tools/hvm_testlab.py validate build/testlab-report-all/testlab_report.json
+
+      - name: Print summary
+        if: always()
+        run: |
+          for f in build/testlab-report/testlab_report.json build/testlab-report-all/testlab_report.json; do
+            if [ -f "$f" ]; then
+              echo "=== $f ===" 
+              python3 -c "
+          import json, sys
+          d = json.load(open('$f'))
+          for c in d.get('cases', []):
+              r = c.get('reason', '')
+              print(f'  {c[\"id\"]:6s} {c[\"status\"]:12s} {r[:60]}')
+          "
+            fi
+          done
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: testlab-report
+          path: |
+            build/testlab-report/testlab_report.json
+            build/testlab-report-all/testlab_report.json
+            build/ios/TestLab.ipa
+          if-no-files-found: warn

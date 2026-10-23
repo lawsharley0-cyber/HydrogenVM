@@ -34,6 +34,7 @@ LIBS = [
     ("/System/Library/Frameworks/AVFoundation.framework/AVFoundation", re.compile(r"^(_OBJC_(META)?CLASS_\$_AV|_AV)")),
     ("/System/Library/Frameworks/OpenAL.framework/OpenAL", re.compile(r"^(_al|_alc)")),
     ("/System/Library/Frameworks/Foundation.framework/Foundation", re.compile(r"^(_OBJC_(META)?CLASS_\$_NS|_NS|__NS)")),
+    ("/System/Library/Frameworks/Security.framework/Security", re.compile(r"^(_Sec|_kSec)")),
     ("/usr/lib/libstdc++.6.dylib", re.compile(r"^(__Z|___cxa|___gxx|__Unwind|___dynamic_cast)")),
     ("/usr/lib/libSystem.B.dylib", re.compile(r".")),
 ]
@@ -169,7 +170,8 @@ def build_app(a):
         for dp, _, files in os.walk(app):
             for fn in files:
                 full = os.path.join(dp, fn)
-                z.write(full, os.path.join("Payload", os.path.relpath(full, out)))
+                z.write(full, os.path.join("Payload", os.path.relpath(full, out)),
+                        compress_type=(zipfile.ZIP_STORED if os.path.getsize(full) == 0 else zipfile.ZIP_DEFLATED))
     print(ipa)
 
 def main():

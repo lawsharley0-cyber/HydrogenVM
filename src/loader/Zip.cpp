@@ -135,6 +135,9 @@ std::vector<uint8_t> ZipReader::read(const ZipEntry& e) const {
     std::vector<uint8_t> out;
     if (e.method == 0) {
         out = std::move(comp);
+    } else if (e.method == 8 && e.size == 0) {
+        // A valid empty deflate stream produces no output; zlib rejects a null/zero-length
+        // output buffer, so accept it directly (the CRC check below still applies).
     } else if (e.method == 8) {
         out.resize(size_t(e.size));
         z_stream zs{};

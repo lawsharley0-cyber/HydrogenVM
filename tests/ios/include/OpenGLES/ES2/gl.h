@@ -45,6 +45,7 @@ typedef char GLchar;
 #define GL_TEXTURE 0x1702
 #define GL_RGB 0x1907
 #define GL_RGBA 0x1908
+#define GL_LUMINANCE 0x1909
 #define GL_NEAREST 0x2600
 #define GL_LINEAR 0x2601
 #define GL_TEXTURE_MAG_FILTER 0x2800
@@ -75,17 +76,21 @@ void glEnable(GLenum cap);
 void glDisable(GLenum cap);
 void glBlendFunc(GLenum sfactor, GLenum dfactor);
 void glGenFramebuffers(GLsizei n, GLuint *framebuffers);
+void glDeleteFramebuffers(GLsizei n, const GLuint *framebuffers);
 void glBindFramebuffer(GLenum target, GLuint framebuffer);
 void glGenRenderbuffers(GLsizei n, GLuint *renderbuffers);
+void glDeleteRenderbuffers(GLsizei n, const GLuint *renderbuffers);
 void glBindRenderbuffer(GLenum target, GLuint renderbuffer);
 void glRenderbufferStorage(GLenum target, GLenum internalformat, GLsizei width, GLsizei height);
 void glFramebufferRenderbuffer(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
 GLenum glCheckFramebufferStatus(GLenum target);
 void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid *pixels);
 void glGenBuffers(GLsizei n, GLuint *buffers);
+void glDeleteBuffers(GLsizei n, const GLuint *buffers);
 void glBindBuffer(GLenum target, GLuint buffer);
 void glBufferData(GLenum target, GLsizeiptr size, const GLvoid *data, GLenum usage);
 void glGenTextures(GLsizei n, GLuint *textures);
+void glDeleteTextures(GLsizei n, const GLuint *textures);
 void glBindTexture(GLenum target, GLuint texture);
 void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const GLvoid *pixels);
 void glTexParameteri(GLenum target, GLenum pname, GLint param);
@@ -117,3 +122,29 @@ void glEnableVertexAttribArray(GLuint index);
 void glVertexAttribPointer(GLuint indx, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const GLvoid *ptr);
 void glUniform4f(GLint location, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
 void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+
+/* Test Lab additions */
+#ifndef GL_TEXTURE0
+#define GL_TEXTURE0 0x84C0
+#endif
+#ifndef GL_NO_ERROR
+#define GL_NO_ERROR 0
+#endif
+#ifndef GL_INFO_LOG_LENGTH
+#define GL_INFO_LOG_LENGTH 0x8B84
+#endif
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+#ifndef GL_TEXTURE_WRAP_S
+#define GL_TEXTURE_WRAP_S 0x2802
+#define GL_TEXTURE_WRAP_T 0x2803
+#endif
+void glUniform1f(GLint location, GLfloat x);
+void glUniform1i(GLint location, GLint x);
+void glUniform4fv(GLint location, GLsizei count, const GLfloat *v);
+void glGetShaderInfoLog(GLuint shader, GLsizei bufsize, GLsizei *length, GLchar *infolog);
+void glGetProgramInfoLog(GLuint program, GLsizei bufsize, GLsizei *length, GLchar *infolog);
+GLenum glGetError(void);
+void glActiveTexture(GLenum texture);
+void glGenerateMipmap(GLenum target);

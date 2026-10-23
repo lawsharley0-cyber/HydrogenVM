@@ -4,6 +4,7 @@
 #include "Zip.hpp"
 #include <filesystem>
 #include <set>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -120,6 +121,17 @@ AppInfo importIpa(const std::string& ipaPath, const std::string& appsRoot) {
     fs::create_directories(staging / appName);
     zip.extract(appDir, (staging / appName).string());
     // Bundled iTunesMetadata / artwork are outside Payload; ignore them.
+    // Re-importing an app (an update) replaces the bundle but must keep the app's data
+    // (Documents/, Library/, tmp/) so saves and preferences survive the update.
+    if (fs::is_directory(container, ec)) {
+        std::vector<fs::path> keep;
+        for (const auto& entry : fs::directory_iterator(container, ec)) {
+            const std::string name = entry.path().filename().string();
+            if (entry.is_directory(ec) && name.size() > 4 && name.compare(name.size() - 4, 4, ".app") == 0) continue;
+            keep.push_back(entry.path());
+        }
+        for (const auto& p : keep) fs::rename(p, staging / p.filename(), ec);
+    }
     fs::remove_all(container, ec);
     fs::rename(staging, container);
     return readBundle((container / appName).string());
