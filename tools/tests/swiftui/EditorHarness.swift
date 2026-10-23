@@ -5,6 +5,8 @@ struct InstalledApp {
     let dataDir: URL
     let bundleDir: URL
     let title: String
+    var homeURL: URL { dataDir }
+    var info: HarnessAppInfo { HarnessAppInfo(bundlePath: bundleDir.path) }
 }
 
 @main
@@ -13,6 +15,7 @@ struct EditorHarness: App {
 }
 
 struct HarnessHome: View {
+    @State private var showPlayer = false
     @State private var file: FileItem?
     @State private var nestedEnabled = false
     @State private var diskText = ""
@@ -22,6 +25,7 @@ struct HarnessHome: View {
     var body: some View {
         NavigationStack {
             List {
+                Button("Open Player") { showPlayer = true }
                 Button("Open JSON") { open("sample.json") }
                 Button("Open Text") { open("sample.txt") }
                 Text("nested=\(nestedEnabled ? "true" : "false")").accessibilityIdentifier("disk-json")
@@ -29,9 +33,14 @@ struct HarnessHome: View {
             }
             .navigationTitle("Editor Test Fixtures")
         }
+        .fullScreenCover(isPresented: $showPlayer) {
+            PlayerHarness(app: InstalledApp(dataDir: root, bundleDir: root.appendingPathComponent("Harness.app"), title: "Synthetic Player"))
+        }
         .onAppear {
             guard !prepared else { return }
             prepared = true
+            UserDefaults.standard.set("Aspect Fit", forKey: "player.scaleMode")
+            UserDefaults.standard.set("Bilinear", forKey: "player.filter")
             UserDefaults.standard.set(false, forKey: "fileEditor.autoSave")
             do {
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

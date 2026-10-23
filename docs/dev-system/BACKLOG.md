@@ -22,6 +22,15 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 
 ## P1
 
+Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
+
+- B-212 / UX-2 (Group E): guest-oriented viewport, display scaling/filtering,
+  inverse touch mapping and device-axis acceleration mapping. In progress;
+  Apple compile, synthetic simulator interaction and device acceptance required.
+- B-213 / UX-3 (Group E): lifecycle pause/resume and stop-before-inspect controls.
+  In progress. Live snapshot/restore while paused remains queued until the runtime
+  supplies an acknowledged quiescence/flush boundary and cache invalidation.
+
 | ID | Item | Impact | Sev | Cx | Score | Group | Depends on | Parallel | State |
 |---|---|---:|---:|---:|---:|---|---|---|---|
 | B-101 | Enforce guest 4 KB permissions on loads and stores, including the 16 KB host-page case. | 5 | 5 | 3 | 8.33 | A | None, but one owner for the whole group | Not with B-102, B-201, or B-208 | Planned |
