@@ -214,6 +214,29 @@ void aq_enqueueWithParams(Ctx& x) {
     if (actual) for (uint32_t i = 0; i < 64; i += 4) x.mem.write<uint32_t>(actual + i, 0);   // AudioTimeStamp: "now"
     x.cpu.r[0] = uint32_t(aq_enqueueBuffer(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]));
 }
+int32_t aq_addPropertyListener(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t aq_removePropertyListener(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t aq_getProperty(Ctx& x, uint32_t qid, uint32_t prop, GuestPtr outData, GuestPtr ioSize) {
+    if (outData && ioSize) {
+        const uint32_t sz = x.mem.read<uint32_t>(ioSize);
+        if (prop == 0x61717275 /* 'aqru' kAudioQueueProperty_IsRunning */ && sz >= 4) {
+            bool running = false;
+            auto& st = ATS(x);
+            if (st.queues.count(qid)) running = st.queues[qid].running;
+            x.mem.write<uint32_t>(outData, running ? 1 : 0);
+        } else if (sz >= 4) {
+            x.mem.write<uint32_t>(outData, 0);
+        }
+    }
+    return 0;
+}
+int32_t aq_getPropertySize(Ctx& x, uint32_t, uint32_t, GuestPtr outSize) {
+    if (outSize) x.mem.write<uint32_t>(outSize, 4);
+    return 0;
+}
+int32_t aq_newInput(Ctx& x, GuestPtr format, uint32_t callbackProc, uint32_t userData, uint32_t runLoop, uint32_t runLoopMode, uint32_t flags, GuestPtr outAQ) {
+    return aq_newOutput(x, format, callbackProc, userData, runLoop, runLoopMode, flags, outAQ);
+}
 int32_t aq_setProperty(Ctx&, uint32_t, uint32_t, GuestPtr, uint32_t) { return 0; }   // channel layout, converter quality, ...
 int32_t aq_createTimeline(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint32_t>(out, 0x71740001); return 0; }
 int32_t aq_disposeTimeline(Ctx&, uint32_t, uint32_t) { return 0; }
@@ -1216,11 +1239,16 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
 
     // AudioQueue
     p.def<&aq_newOutput>("_AudioQueueNewOutput");
+    p.def<&aq_newInput>("_AudioQueueNewInput");
     p.def<&aq_allocateBuffer>("_AudioQueueAllocateBuffer");
     p.def<&aq_freeBuffer>("_AudioQueueFreeBuffer");
     p.def<&aq_enqueueBuffer>("_AudioQueueEnqueueBuffer");
     p.defineFunction("_AudioQueueEnqueueBufferWithParameters", aq_enqueueWithParams);
     p.def<&aq_setProperty>("_AudioQueueSetProperty");
+    p.def<&aq_getProperty>("_AudioQueueGetProperty");
+    p.def<&aq_getPropertySize>("_AudioQueueGetPropertySize");
+    p.def<&aq_addPropertyListener>("_AudioQueueAddPropertyListener");
+    p.def<&aq_removePropertyListener>("_AudioQueueRemovePropertyListener");
     p.def<&aq_createTimeline>("_AudioQueueCreateTimeline");
     p.def<&aq_disposeTimeline>("_AudioQueueDisposeTimeline");
     p.def<&aq_getCurrentTime>("_AudioQueueGetCurrentTime");

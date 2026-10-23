@@ -59,6 +59,7 @@ static const char *kAppBuild        = "1";
 #define CASE_H  @"TL-H"
 #define CASE_I  @"TL-I"
 #define CASE_J  @"TL-J"
+#define CASE_K  @"TL-K"
 #define CASE_L  @"TL-L"
 
 static const int kVersionA = 1;
@@ -71,6 +72,7 @@ static const int kVersionG = 1;
 static const int kVersionH = 1;
 static const int kVersionI = 1;
 static const int kVersionJ = 1;
+static const int kVersionK = 1;
 
 // ─────────────────────────── timing ──────────────────────────────────────────
 
@@ -1266,6 +1268,77 @@ static TLResult *runCaseJ(void) {
     return r;
 }
 
+// ─────────────────────────── Case K — UIKit Control Tap & Sort ────────────────
+
+@interface TLKHelper : NSObject
+@property (nonatomic) BOOL buttonTapped;
+@property (nonatomic) BOOL controlChanged;
+- (void)onButtonTap:(id)sender;
+- (void)onControlChange:(id)sender;
+@end
+
+@implementation TLKHelper
+- (void)onButtonTap:(id)sender {
+    self.buttonTapped = YES;
+}
+- (void)onControlChange:(id)sender {
+    self.controlChanged = YES;
+}
+@end
+
+static TLResult *runCaseK(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_K version:kVersionK];
+    double t0 = monoMs();
+
+    writeCheckpoint(CASE_K);
+    r.checkpointWritten = YES;
+
+    TLKHelper *helper = [[TLKHelper alloc] init];
+
+    // 1. UIButton target-action
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    [btn addTarget:helper action:@selector(onButtonTap:) forControlEvents:UIControlEventTouchUpInside];
+    [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
+    BOOL btnOk = helper.buttonTapped;
+
+    // 2. UISwitch target-action
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(0, 0, 80, 30)];
+    [sw addTarget:helper action:@selector(onControlChange:) forControlEvents:UIControlEventValueChanged];
+    [sw sendActionsForControlEvents:UIControlEventValueChanged];
+    BOOL swOk = helper.controlChanged;
+
+    // 3. UISearchBar properties
+    UISearchBar *sb = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, 320, 44)];
+    [sb setPlaceholder:@"Search here"];
+    [sb setText:@"Test Query"];
+    BOOL sbOk = [sb.placeholder isEqualToString:@"Search here"] && [sb.text isEqualToString:@"Test Query"];
+
+    // 4. NSSortDescriptor
+    NSSortDescriptor *sd = [NSSortDescriptor sortDescriptorWithKey:@"length" ascending:YES];
+    NSArray *arr = @[@"banana", @"a", @"cat"];
+    NSArray *sorted = [arr sortedArrayUsingDescriptors:@[sd]];
+    BOOL sortOk = sorted.count == 3 && [sorted[0] isEqualToString:@"a"] && [sorted[1] isEqualToString:@"cat"] && [sorted[2] isEqualToString:@"banana"];
+
+    r.diagnostics[@"btnOk"] = @(btnOk);
+    r.diagnostics[@"swOk"] = @(swOk);
+    r.diagnostics[@"sbOk"] = @(sbOk);
+    r.diagnostics[@"sortOk"] = @(sortOk);
+
+    BOOL allOk = btnOk && swOk && sbOk && sortOk;
+    r.status = allOk ? @"passed" : @"failed";
+    r.expected = @"buttonTapped=1, controlChanged=1, searchBarOk=1, sortOk=1";
+    r.actual = [NSString stringWithFormat:@"buttonTapped=%d, controlChanged=%d, searchBarOk=%d, sortOk=%d",
+                btnOk, swOk, sbOk, sortOk];
+
+    if (!allOk) {
+        r.reason = [NSString stringWithFormat:@"UIKit mismatch: btn=%d sw=%d sb=%d sort=%d", btnOk, swOk, sbOk, sortOk];
+    }
+
+    clearCheckpoint();
+    r.durationMs = monoMs() - t0;
+    return r;
+}
+
 // ─────────────────────────── run all cases ───────────────────────────────────
 
 // A unique run ID for this launch.
@@ -1278,7 +1351,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1307,6 +1380,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseI()];
         } else if ([cid isEqualToString:CASE_J]) {
             [results addObject:runCaseJ()];
+        } else if ([cid isEqualToString:CASE_K]) {
+            [results addObject:runCaseK()];
         }
     }
     return results;
@@ -1331,6 +1406,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_H]) return runCaseH();
     if ([caseId isEqualToString:CASE_I]) return runCaseI();
     if ([caseId isEqualToString:CASE_J]) return runCaseJ();
+    if ([caseId isEqualToString:CASE_K]) return runCaseK();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1363,8 +1439,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J      ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1378,6 +1454,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_H version:kVersionH],
         [[TLResult alloc] initWithId:CASE_I version:kVersionI],
         [[TLResult alloc] initWithId:CASE_J version:kVersionJ],
+        [[TLResult alloc] initWithId:CASE_K version:kVersionK],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1437,7 +1514,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

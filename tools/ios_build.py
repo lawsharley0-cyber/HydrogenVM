@@ -19,7 +19,7 @@ LD = os.environ.get("HVM_LD64") or shutil.which("arm-apple-darwin11-ld") or (
     "/home/lawson/cctools/bin/arm-apple-darwin11-ld" if os.path.exists("/home/lawson/cctools/bin/arm-apple-darwin11-ld") else "/opt/cctools/bin/arm-apple-darwin11-ld"
 )
 CLANG = os.environ.get("HVM_CLANG", "clang")
-NM = os.environ.get("HVM_NM", "llvm-nm")
+NM = os.environ.get("HVM_NM") or shutil.which("llvm-nm") or shutil.which("llvm-nm-18") or "llvm-nm"
 SDK_SRC = os.path.join(ROOT, "tests", "ios", "sdk")
 HEADERS = os.path.join(ROOT, "tests", "ios", "include")
 
@@ -69,7 +69,7 @@ def compile_sources(srcs, objdir, min_ios, extra_cflags):
     return objs
 
 def undefined_symbols(objs):
-    out = run([NM, "-u", "--just-symbol-name"] + objs)
+    out = run([NM, "-u", "-j"] + objs)
     syms = set()
     for l in out.splitlines():
         l = l.strip()
