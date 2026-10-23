@@ -13,6 +13,8 @@ final class PlayerProbe {
     var volume: Float = 1
     var stopCount = 0
     var lastOrientation = 1
+    var maximumTouches = 0
+    var cancellations = 0
     weak var session: HVMSession?
 }
 
@@ -29,6 +31,7 @@ final class HVMSession {
     var isBackgrounded = false
     var frameTimeP95Milliseconds = 4.2
     var outputVolume: Float = 1 { didSet { PlayerProbe.shared.volume = outputVolume } }
+    private var activeFingers: Set<UInt> = []
     init(bundlePath: String, homePath: String) { PlayerProbe.shared.session = self }
     func start() {
         interfaceOrientation = Int(ProcessInfo.processInfo.environment["PLAYER_ORIENTATION"] ?? "1") ?? 1
@@ -66,7 +69,11 @@ final class HVMSession {
     }
     func enterForeground() { isBackgrounded = false; PlayerProbe.shared.lifecycle = "active" }
     func touch(_ phase: HVMTouchPhase, x: Float, y: Float, finger: UInt) {
-        PlayerProbe.shared.touch = "\(phase.rawValue):\(Int(x)),\(Int(y)):\(finger)"
+        if phase == .began { activeFingers.insert(finger) }
+        PlayerProbe.shared.maximumTouches = max(PlayerProbe.shared.maximumTouches, activeFingers.count)
+        if phase == .cancelled { PlayerProbe.shared.cancellations += 1 }
+        if phase == .ended || phase == .cancelled { activeFingers.remove(finger) }
+        PlayerProbe.shared.touch = "\(phase.rawValue):\(Int(x.rounded())),\(Int(y.rounded())):\(finger)"
     }
     func setAccelerationX(_ x: Double, y: Double, z: Double) {}
 }
@@ -80,11 +87,21 @@ struct PlayerHarness: View {
                     Text(PlayerProbe.shared.touch).accessibilityIdentifier("probe-touch")
                     Text(PlayerProbe.shared.lifecycle).accessibilityIdentifier("probe-lifecycle")
                     Text("\(PlayerProbe.shared.volume)").accessibilityIdentifier("probe-volume")
+                    Text("\(PlayerProbe.shared.maximumTouches)").accessibilityIdentifier("probe-max-touches")
+                    Text("\(PlayerProbe.shared.cancellations)").accessibilityIdentifier("probe-cancellations")
                     Button("Change Guest Orientation") {
                         guard let session = PlayerProbe.shared.session else { return }
                         session.interfaceOrientation = session.interfaceOrientation == 3 ? 4 : 3
                         session.deliverFrame()
                     }.accessibilityIdentifier("probe-rotate")
+                    Button("Rotate During Touch") {
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(2))
+                            guard let session = PlayerProbe.shared.session else { return }
+                            session.interfaceOrientation = session.interfaceOrientation == 3 ? 4 : 3
+                            session.deliverFrame()
+                        }
+                    }.accessibilityIdentifier("probe-delayed-rotate")
                 }
                 .font(.system(size: 9))
                 .foregroundStyle(.white)

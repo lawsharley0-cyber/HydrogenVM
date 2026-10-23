@@ -50,6 +50,8 @@ struct EmulatorScreen: UIViewRepresentable {
             backgroundColor = .black
             clipsToBounds = true
             layer.addSublayer(picture)
+            isAccessibilityElement = true
+            accessibilityLabel = "Game Screen"
             accessibilityIdentifier = "player-viewport"
         }
         required init?(coder: NSCoder) { fatalError() }

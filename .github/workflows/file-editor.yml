@@ -37,6 +37,18 @@ jobs:
           export HOMEBREW_NO_AUTO_UPDATE=1
           brew install xcodegen
           cd app && xcodegen
+      - name: Compile iOS shell (unsigned simulator)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          xcodebuild -project app/HydrogenVM.xcodeproj -target HydrogenVM \
+            -configuration Release -sdk iphonesimulator \
+            SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
+            SYMROOT="$PWD/build/file-editor/xbuild" CODE_SIGNING_ALLOWED=NO \
+            build >build/file-editor/simulator.log 2>&1 || {
+              tail -150 build/file-editor/simulator.log
+              exit 1
+            }
       - name: Exercise save and close flows on an iPhone simulator
         timeout-minutes: 15
         run: |
@@ -59,18 +71,6 @@ jobs:
             -parallel-testing-enabled NO -resultBundlePath build/file-editor/EditorUITests.xcresult \
             test >build/file-editor/ui-tests.log 2>&1 || {
               tail -150 build/file-editor/ui-tests.log
-              exit 1
-            }
-      - name: Compile iOS shell (unsigned simulator)
-        if: ${{ !cancelled() }}
-        run: |
-          set -o pipefail
-          xcodebuild -project app/HydrogenVM.xcodeproj -target HydrogenVM \
-            -configuration Release -sdk iphonesimulator \
-            SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
-            SYMROOT="$PWD/build/file-editor/xbuild" CODE_SIGNING_ALLOWED=NO \
-            build >build/file-editor/simulator.log 2>&1 || {
-              tail -150 build/file-editor/simulator.log
               exit 1
             }
       - uses: actions/upload-artifact@v4

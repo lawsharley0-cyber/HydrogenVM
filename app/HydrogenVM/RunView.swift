@@ -122,6 +122,7 @@ final class RunModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.running = false
+                self.closing = false
                 self.cancelActiveTouches()
                 self.stopSensors()
                 self.activityTimer?.invalidate()
@@ -131,7 +132,6 @@ final class RunModel {
                 if Self.automation {
                     Self.console("[hvm-exit] status=\(code)\(crash.map { " crash:\n" + $0 } ?? "")")
                 }
-                self.closing = false
                 self.endBackgroundTask()
                 if self.userStopped { self.finished = true }
                 else if let crash { self.crashReport = crash }

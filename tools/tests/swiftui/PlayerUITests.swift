@@ -64,4 +64,17 @@ final class PlayerUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Done"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["player-pause"].isHittable)
     }
+
+    @MainActor
+    func testMultitouchAndRotationCancelsHeldFinger() {
+        let app = open()
+        let screen = app.otherElements["player-viewport"]
+        screen.pinch(withScale: 1.3, velocity: 1)
+        wait(app.staticTexts["probe-max-touches"], label: "2")
+        app.buttons["probe-delayed-rotate"].tap()
+        screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 4)
+        let predicate = NSPredicate(format: "label != '0'")
+        expectation(for: predicate, evaluatedWith: app.staticTexts["probe-cancellations"])
+        waitForExpectations(timeout: 10)
+    }
 }
