@@ -35,7 +35,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev uuid-dev python3 g++ libstdc++-14-dev \
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 g++ libstdc++-14-dev \
             libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri python3-pil
           clang++ --version | head -1
       - name: Harness self-tests

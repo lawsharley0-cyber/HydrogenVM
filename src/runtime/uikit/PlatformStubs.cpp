@@ -308,6 +308,7 @@ int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile)
     af.id = fid;
     af.rawBytes.assign((std::istreambuf_iterator<char>(in)), {});
     af.decoded = decodeAudioBytes(af.rawBytes.data(), af.rawBytes.size());
+    if (af.decoded.stereoPcm.empty()) { x.mem.write<uint32_t>(outFile, 0); return 1954115647; }
     st.files[fid] = std::move(af);
     x.mem.write<uint32_t>(outFile, fid);
     return 0;

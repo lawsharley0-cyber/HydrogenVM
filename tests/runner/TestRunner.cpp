@@ -2287,6 +2287,36 @@ int runFullSubsystemTests() {
             std::memcpy(&wav[44 + i * 4 + 2], &sample, 2);
         }
 
+        auto audioCall = [&](const char* symbol, std::initializer_list<uint32_t> args) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(symbol), args));
+        };
+        const std::string filePath = proc.homePath() + "/audiofile-regression.wav";
+        { std::ofstream file(filePath, std::ios::binary); file << "invalid audio"; }
+        const auto fileURL = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, filePath)}));
+        const uint32_t fileOut = proc.heap().allocZeroed(64), pcmOut = proc.heap().allocZeroed(64);
+        proc.mem().write<uint32_t>(fileOut, 0xDEADBEEF);
+        const auto badStatus = audioCall("_AudioFileOpenURL", {fileURL, 1, 0, fileOut});
+        const auto badFile = proc.mem().read<uint32_t>(fileOut);
+        check(badStatus == 1954115647 && badFile == 0,
+              "AudioFileOpenURL rejects undecodable audio instead of publishing a successful empty stream");
+        if (!badStatus) audioCall("_AudioFileClose", {badFile});
+        { std::ofstream file(filePath, std::ios::binary); file.write(reinterpret_cast<const char*>(wav.data()), wav.size()); }
+        const auto goodStatus = audioCall("_AudioFileOpenURL", {fileURL, 1, 0, fileOut});
+        const auto fileID = proc.mem().read<uint32_t>(fileOut);
+        proc.mem().write<uint32_t>(fileOut + 4, 8);
+        audioCall("_AudioFileGetProperty", {fileID, 0x62636E74, fileOut + 4, fileOut + 8});
+        proc.mem().write<uint32_t>(fileOut + 4, 8);
+        audioCall("_AudioFileGetProperty", {fileID, 0x70636E74, fileOut + 4, fileOut + 16});
+        proc.mem().write<uint32_t>(fileOut + 24, 12);
+        proc.mem().write<uint32_t>(fileOut + 28, 10);
+        const auto readStatus = audioCall("_AudioFileReadPacketData", {fileID, 0, fileOut + 24, 0, 0, 0, fileOut + 28, pcmOut});
+        check(goodStatus == 0 && readStatus == 0 && proc.mem().read<uint64_t>(fileOut + 8) == dataBytes &&
+              proc.mem().read<uint64_t>(fileOut + 16) == 4410 && proc.mem().read<uint32_t>(fileOut + 24) == 12 &&
+              proc.mem().read<uint32_t>(fileOut + 28) == 3 && std::memcmp(proc.mem().host(pcmOut), wav.data() + 44, 12) == 0,
+              "AudioFileOpenURL decoded LPCM packets retain sample bytes and packet/byte counts");
+        audioCall("_AudioFileClose", {fileID});
+        std::filesystem::remove(filePath);
+
         const ObjC::id nsData = Foundation::makeData(cx, wav.data(), uint32_t(wav.size()));
         const ObjC::Class apCls = r.getClass("AVAudioPlayer");
         const ObjC::id player = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, apCls, r.selAlloc)), "initWithData:error:", {nsData, 0}));
