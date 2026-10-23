@@ -69,8 +69,13 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
         }
     }
     bool ran = !work.empty();
-    for (auto& fn : work) fn(c);
+    for (auto& fn : work) {
+        if (proc.stopping()) throw ProcessExit(0, "stopping");
+        fn(c);
+    }
+    if (proc.stopping()) throw ProcessExit(0, "stopping");
     for (auto& tm : due) {
+        if (proc.stopping()) throw ProcessExit(0, "stopping");
         if (!tm->valid) continue;
         if (tm->repeats && tm->interval > 0) {
             const double t = now();
@@ -82,9 +87,13 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
         ran = true;
         tm->fire(c);
     }
+    if (proc.stopping()) throw ProcessExit(0, "stopping");
     if (frameDue) {
         const double t = now();
-        for (auto& h : hooks) h(c, t);
+        for (auto& h : hooks) {
+            if (proc.stopping()) throw ProcessExit(0, "stopping");
+            h(c, t);
+        }
     }
     return ran;
 }
@@ -219,6 +228,7 @@ struct TimerData : ObjC::HostObject {
 TimerData* td(Ctx& x, id t) { return rt(x).hostIf<TimerData>(t); }
 
 void fireTimer(Ctx& x, id timer) {
+    if (x.proc.stopping()) return;
     TimerData* d = td(x, timer);
     if (!d || !d->valid) return;
     const bool oneShot = !d->repeats;

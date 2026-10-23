@@ -470,6 +470,7 @@ void installLifecycle(Process& p) {
                 toBackground(x, *st);
                 deliverLifecycle(x, "applicationWillTerminate:", "UIApplicationWillTerminateNotification");
                 persistNow(x);
+                ui(x).links.clear();
                 x.proc.log(LogLevel::Info, "The app saved and closed");
                 pp->requestStop();
                 return;
@@ -571,6 +572,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
     // Frame loop: input, display links, layout, drawing, compositing — 60 Hz on the main run loop.
     Process* p = &x.proc;
     Foundation::mainRunLoop(x.proc).addFrameHook([p](CPU::Cpu& c, double now) {
+        if (p->stopping()) return;
         Ctx cx{*p, c, p->mem()};
         const uint32_t fp = rt(cx).poolPush();
         runFrame(cx, now);
@@ -673,6 +675,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
 
     // Host input → main thread.
     p.setTouchHandler([&p](TouchPhase phase, float tx, float ty, uint32_t fid) {
+        if (p.stopping()) return;
         auto& st = ui(p);
         {
             std::lock_guard<std::mutex> lk(st.inputMu);

@@ -45,7 +45,7 @@ ROOT = Path(__file__).parent.parent
 TESTLAB_SRC = ROOT / "tests" / "ios" / "apps" / "testlab"
 SCHEMA_MOD  = str(ROOT / "tools" / "testlab_schema")
 
-CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J"]
+CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K"]
 # Wall-clock timeout (seconds) per case process, including hvm startup.
 DEFAULT_TIMEOUT = 30
 # TL-E phase 1 is fast; allow extra for the full two-launch cycle.
@@ -149,14 +149,18 @@ def run_case(
     home: str,
     timeout: int,
     import_ipa: bool = True,
+    graceful: bool = False,
+    run_for: int | None = None,
 ) -> dict:
     """Run one case in a subprocess.  Returns a caseResult dict."""
     t0 = time.monotonic()
 
-    # hvm run imports the IPA on first use; for phase 2 of TL-E we must NOT
+    # hvm run imports the IPA on first use; for phase 2 of TL-E / TL-K we must NOT
     # re-import (that would replace the sandbox and erase the persisted prefs).
-    cmd = [hvm, "run", ipa_path, "--home", home, "--quiet",
-           "--run-for", str(timeout),
+    run_for_sec = run_for if run_for is not None else timeout
+    extra_flags = ["--graceful"] if graceful else []
+    cmd = [hvm, "run", ipa_path, "--home", home, "--quiet"] + extra_flags + [
+           "--run-for", str(run_for_sec),
            "--", "--run", case_id]
     if not import_ipa:
         # Pass a flag (if supported) or use the already-extracted .app path.
@@ -164,8 +168,8 @@ def run_case(
         # re-import. We use the installed .app path instead.
         app_path = _find_installed_app(home)
         if app_path:
-            cmd = [hvm, "run", app_path, "--home", home, "--quiet",
-                   "--run-for", str(timeout),
+            cmd = [hvm, "run", app_path, "--home", home, "--quiet"] + extra_flags + [
+                   "--run-for", str(run_for_sec),
                    "--", "--run", case_id]
 
     try:
@@ -330,6 +334,10 @@ def run_all_cases(
             result = _run_case_e(hvm, ipa_path, home, TIMEOUT_E_TOTAL)
             results.append(result)
             continue
+        if case_id == "TL-K":
+            result = _run_case_k(hvm, ipa_path, home, TIMEOUT_E_TOTAL)
+            results.append(result)
+            continue
 
         print(f"[testlab] running {case_id} …", flush=True)
         cr = run_case(hvm, ipa_path, case_id, home, timeout, import_ipa=not imported)
@@ -340,6 +348,23 @@ def run_all_cases(
         results.append(cr)
 
     return results
+
+
+def _run_case_k(hvm: str, ipa_path: str, home: str, timeout: int) -> dict:
+    """Two-launch termination test for TL-K."""
+    print(f"[testlab] running TL-K phase 1 (setup & terminate) …", flush=True)
+    cr1 = run_case(hvm, ipa_path, "TL-K", home, timeout, graceful=True, run_for=3)
+    _print_result(cr1)
+
+    if cr1["status"] == "interrupted":
+        return cr1
+
+    print(f"[testlab] running TL-K phase 2 (verify) …", flush=True)
+    cr2 = run_case(hvm, ipa_path, "TL-K", home, timeout, import_ipa=False)
+    _print_result(cr2)
+
+    cr2["diagnostics"]["phase1Result"] = cr1["status"]
+    return cr2
 
 
 def _run_case_e(hvm: str, ipa_path: str, home: str, timeout: int) -> dict:

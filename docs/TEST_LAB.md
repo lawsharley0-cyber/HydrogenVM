@@ -40,6 +40,9 @@ signal, and sandboxed persistence.
 | TL-F | Threading & Mutex | `pthread_create` spawns a background worker thread computing a 64 KB FNV-1a hash (`0x75389DC5`), while main and worker threads safely increment a shared counter under `pthread_mutex_t` to 20,000, verified via `pthread_join` |
 | TL-G | Keychain | `Security.framework` (`SecItemAdd`, `SecItemCopyMatching`, `SecItemDelete`); verifies generic password addition, duplicate key rejection (`errSecDuplicateItem`), query data matching, and removal/not-found verification (`errSecItemNotFound`) |
 | TL-H | File System & Sandbox | `NSFileManager` nested directory creation (`createDirectoryAtPath:withIntermediateDirectories:`), atomic write of 1024-byte payload, file/dir existence and size verification via `attributesOfItemAtPath:`, payload integrity check, and recursive removal |
+| TL-I | Texture Formats & NPOT | Uploads RGBA, Luminance, NPOT (37x19) and 2x2 corner textures to offscreen FBOs and verifies pixel readback |
+| TL-J | Performance Throughput | Fixed dot-product matrix-multiply workload verifying computational throughput against baseline |
+| TL-K | Lifecycle Termination | Verifies `applicationWillTerminate:` state saving and that no timers/`CADisplayLink` fire callbacks after termination |
 
 ### Checkpoint / interrupted-case protocol
 

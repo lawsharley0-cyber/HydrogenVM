@@ -58,6 +58,7 @@ static const char *kAppBuild        = "1";
 #define CASE_H  @"TL-H"
 #define CASE_I  @"TL-I"
 #define CASE_J  @"TL-J"
+#define CASE_K  @"TL-K"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -69,6 +70,7 @@ static const int kVersionG = 1;
 static const int kVersionH = 1;
 static const int kVersionI = 1;
 static const int kVersionJ = 1;
+static const int kVersionK = 1;
 
 // ─────────────────────────── timing ──────────────────────────────────────────
 
@@ -1264,6 +1266,129 @@ static TLResult *runCaseJ(void) {
     return r;
 }
 
+// ─────────────────────────── Case K — Lifecycle Termination ───────────────────
+
+static NSString *kTLKSavedPath(void) {
+    return [documentsDir() stringByAppendingPathComponent:@"tl_k_saved.dat"];
+}
+static NSString *kTLKFailPath(void) {
+    return [documentsDir() stringByAppendingPathComponent:@"tl_k_fail.dat"];
+}
+
+static BOOL g_tlkTerminated = NO;
+
+@interface TLKHandler : NSObject
+- (void)onTerminate:(NSNotification *)note;
+- (void)onTimer:(NSTimer *)timer;
+- (void)onDisplayLink:(CADisplayLink *)link;
+@end
+
+@implementation TLKHandler
+- (void)onTerminate:(NSNotification *)note {
+    g_tlkTerminated = YES;
+    uint32_t val = 0x5445524D; // "TERM"
+    NSData *d = [NSData dataWithBytes:&val length:sizeof(val)];
+    [d writeToFile:kTLKSavedPath() atomically:YES];
+}
+- (void)onTimer:(NSTimer *)timer {
+    if (g_tlkTerminated) {
+        uint32_t failVal = 1;
+        NSData *d = [NSData dataWithBytes:&failVal length:sizeof(failVal)];
+        [d writeToFile:kTLKFailPath() atomically:YES];
+    }
+}
+- (void)onDisplayLink:(CADisplayLink *)link {
+    if (g_tlkTerminated) {
+        uint32_t failVal = 1;
+        NSData *d = [NSData dataWithBytes:&failVal length:sizeof(failVal)];
+        [d writeToFile:kTLKFailPath() atomically:YES];
+    }
+}
+@end
+
+static TLKHandler *g_tlkHandler = nil;
+
+static TLResult *runCaseK_phase2(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_K version:kVersionK];
+    double t0 = monoMs();
+    r.checkpointWritten = NO;
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *savedPath = kTLKSavedPath();
+    NSString *failPath = kTLKFailPath();
+
+    BOOL savedExists = [fm fileExistsAtPath:savedPath];
+    BOOL failExists = [fm fileExistsAtPath:failPath];
+
+    uint32_t val = 0;
+    if (savedExists) {
+        NSData *d = [NSData dataWithContentsOfFile:savedPath];
+        if (d && d.length >= 4) {
+            memcpy(&val, d.bytes, 4);
+        }
+    }
+
+    BOOL savedOk = (savedExists && val == 0x5445524D);
+    BOOL noPostCallbacks = !failExists;
+
+    r.diagnostics[@"savedExists"] = @(savedExists);
+    r.diagnostics[@"savedVal"] = [NSString stringWithFormat:@"0x%08X", val];
+    r.diagnostics[@"failExists"] = @(failExists);
+
+    r.expected = @"saved=0x5445524D, postCallbacks=0";
+    r.actual = [NSString stringWithFormat:@"saved=0x%08X, failExists=%d", val, failExists];
+
+    // Clean up
+    [fm removeItemAtPath:savedPath error:nil];
+    [fm removeItemAtPath:failPath error:nil];
+
+    BOOL allOk = savedOk && noPostCallbacks;
+    r.status = allOk ? @"passed" : @"failed";
+    if (!savedOk) r.reason = @"applicationWillTerminate state was not saved before exit";
+    else if (!noPostCallbacks) r.reason = @"Callbacks were delivered after applicationWillTerminate";
+
+    r.durationMs = monoMs() - t0;
+    return r;
+}
+
+static TLResult *runCaseK(BOOL automatedSingleRun) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:kTLKSavedPath()]) {
+        return runCaseK_phase2();
+    }
+
+    TLResult *r = [[TLResult alloc] initWithId:CASE_K version:kVersionK];
+    double t0 = monoMs();
+
+    writeCheckpoint(CASE_K);
+    r.checkpointWritten = YES;
+
+    g_tlkHandler = [[TLKHandler alloc] init];
+    [[NSNotificationCenter defaultCenter] addObserver:g_tlkHandler
+                                             selector:@selector(onTerminate:)
+                                                 name:@"UIApplicationWillTerminateNotification"
+                                               object:nil];
+
+    [NSTimer scheduledTimerWithTimeInterval:0.005
+                                     target:g_tlkHandler
+                                   selector:@selector(onTimer:)
+                                   userInfo:nil
+                                    repeats:YES];
+
+    CADisplayLink *link = [CADisplayLink displayLinkWithTarget:g_tlkHandler
+                                                     selector:@selector(onDisplayLink:)];
+    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+
+    clearCheckpoint();
+    r.durationMs = monoMs() - t0;
+
+    r.status = @"skipped";
+    r.reason = @"phase 1 setup complete; awaiting graceful stop";
+    r.expected = @"saved=0x5445524D, postCallbacks=0";
+    r.actual = @"(awaiting terminate)";
+    return r;
+}
+
 // ─────────────────────────── run all cases ───────────────────────────────────
 
 // A unique run ID for this launch.
@@ -1276,7 +1401,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1305,6 +1430,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseI()];
         } else if ([cid isEqualToString:CASE_J]) {
             [results addObject:runCaseJ()];
+        } else if ([cid isEqualToString:CASE_K]) {
+            [results addObject:runCaseK(automatedSingleRunMode)];
         }
     }
     return results;
@@ -1329,6 +1456,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_H]) return runCaseH();
     if ([caseId isEqualToString:CASE_I]) return runCaseI();
     if ([caseId isEqualToString:CASE_J]) return runCaseJ();
+    if ([caseId isEqualToString:CASE_K]) return runCaseK(YES);
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1361,8 +1489,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J      ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,      CASE_K        ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Terminate" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1376,6 +1504,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_H version:kVersionH],
         [[TLResult alloc] initWithId:CASE_I version:kVersionI],
         [[TLResult alloc] initWithId:CASE_J version:kVersionJ],
+        [[TLResult alloc] initWithId:CASE_K version:kVersionK],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1427,7 +1556,7 @@ static UIColor *colorForStatus(NSString *s) {
     [self.view addSubview:export];
 }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
@@ -1504,6 +1633,13 @@ static UIColor *colorForStatus(NSString *s) {
     BOOL automatedMode = (runCase != nil || runAll);
 
     if (automatedMode) {
+        if (runCase && [runCase isEqualToString:CASE_K] && ![[NSFileManager defaultManager] fileExistsAtPath:kTLKSavedPath()]) {
+            runSingleCase(CASE_K);
+            printf("TESTLAB TL-K phase-1-setup\n");
+            // Return YES so UIApplicationMain enters the run loop and receives graceful stop.
+            return YES;
+        }
+
         NSArray *results;
         NSString *runId = makeRunId();
         if (runAll) {

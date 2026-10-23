@@ -730,6 +730,7 @@ void displayPass(Ctx& x, id layer, IMP baseDrawRect) {
 }
 
 void runFrame(Ctx& x, double now) {
+    if (x.proc.stopping()) return;
     auto& u = ui(x);
     using Clock = std::chrono::steady_clock;
     const auto t0 = Clock::now();

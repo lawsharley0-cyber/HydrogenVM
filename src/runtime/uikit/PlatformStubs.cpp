@@ -197,6 +197,7 @@ int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
 }
 // Hands finished buffers back to the app's callback (on the main run loop).
 void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
+    if (p.stopping()) return;
     auto& st = p.service<AudioToolboxState>();
     auto it = st.queues.find(qid);
     if (it == st.queues.end()) return;
@@ -745,6 +746,7 @@ bool ap_play(Ctx& x, id self, SEL) {
     Process* p = &x.proc;
     // Finite loop counts and the delegate callback are driven from here.
     d.timer = Foundation::mainRunLoop(x.proc).addTimer(0.05, 0.05, true, [p, self](CPU::Cpu& c) {
+        if (p->stopping()) return;
         Ctx cx{*p, c, p->mem()};
         PlayerData* pd = rt(cx).hostIf<PlayerData>(self);
         if (!pd || !pd->playing || pd->paused) return;

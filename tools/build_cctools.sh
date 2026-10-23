@@ -3,13 +3,12 @@
 # tools/ios_build.py to link the 32-bit iOS test apps.
 #   tools/build_cctools.sh [prefix]     (default /opt/cctools)
 set -euo pipefail
+ulimit -s 65536 2>/dev/null || true
 PREFIX="${1:-/opt/cctools}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-export CC=clang CXX=clang++
-
 git clone -q --depth 1 https://github.com/tpoechtrager/apple-libdispatch "$WORK/libdispatch"
-cmake -S "$WORK/libdispatch" -B "$WORK/libdispatch/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+CC=clang CXX=clang++ cmake -S "$WORK/libdispatch" -B "$WORK/libdispatch/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="$PREFIX" >/dev/null
 ninja -C "$WORK/libdispatch/build" install >/dev/null
 
