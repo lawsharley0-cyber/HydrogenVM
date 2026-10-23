@@ -103,4 +103,3 @@ enum SaveCompressionFormat: String {
         return status == Z_STREAM_END ? out : nil
     }
 }
-

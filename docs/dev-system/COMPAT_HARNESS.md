@@ -140,4 +140,3 @@ The workflow ran green on `6af9976`: compat job [39646706013](https://github.com
 ## Read-only documentation doctor
 
 Run `python3 tools/hvm_compat.py doctor` to verify commit references in BACKLOG.md, STATUS.md and IMPLEMENTATION_PLAN.md. Missing objects are reported as unavailable; fetch historical branches before calling a reference invalid. Optional `--report report.json` accepts a schema-valid, passing, clean ancestor report and suggests reviewing Planned rows only when case IDs explicitly contain that backlog ID. A green fulltest or smoke alone never closes a task. The command does not modify documentation; findings exit 1 and invalid input exits 2.
-

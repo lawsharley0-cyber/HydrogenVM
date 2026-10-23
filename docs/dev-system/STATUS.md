@@ -114,4 +114,3 @@ Group E and documentation/harness work on codex/file-save-overhaul, based on mai
 Local WSL: 62 harness unit tests passed (including six new doctor checks); doctor found no unavailable commit references in the reconciled backlog/status/plan. Swift persistence tests, including actual JSON/plist model round trips and SQLite WAL tests, passed on the Mac runner at 41562a0. Final shell/UI checks are pending and must be recorded by exact commit below. Earlier UI compile at 20aa20b passed; it is historical evidence, not a final-code pass.
 
 B-003 docs now distinguish current main integration from historical gemini-merge checkpoints. B-103, B-108 and B-110 reflect their merged PRs. The original compatibility snapshot above remains historical. No new app/gameplay, memory-page, performance, speaker or Clash progression result is claimed.
-

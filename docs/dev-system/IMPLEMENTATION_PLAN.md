@@ -154,4 +154,3 @@ Detail is in `docs/dev-system/COMPAT_HARNESS.md`. Short form:
 ## October 22 continuation
 
 B-003 reconciliation and the read-only docs doctor are implemented on codex/file-save-overhaul. The save-editor overhaul is draft PR #18. See [FILE_EDITOR_HANDOFF.md](FILE_EDITOR_HANDOFF.md) for implemented behavior, tests, device scenarios and the remaining ordered queue. Queued runtime/graphics/framework tasks remain open; this change does not resolve them.
-
