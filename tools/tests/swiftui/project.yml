@@ -1,0 +1,50 @@
+name: SaveEditorHarness
+options:
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  SaveEditorHarness:
+    type: application
+    platform: iOS
+    sources:
+      - EditorHarness.swift
+      - ../../../app/HydrogenVM/FileBrowser.swift
+      - ../../../app/HydrogenVM/FileEditorSession.swift
+      - ../../../app/HydrogenVM/SaveFileStore.swift
+      - ../../../app/HydrogenVM/SaveTextCodec.swift
+      - ../../../app/HydrogenVM/SaveCompression.swift
+      - ../../../app/HydrogenVM/SaveSnapshotStore.swift
+      - ../../../app/HydrogenVM/SQLiteEditStore.swift
+      - ../../../app/HydrogenVM/SaveConfigLine.swift
+      - ../../../app/HydrogenVM/JSONSaveDocument.swift
+      - ../../../app/HydrogenVM/PlistSaveDocument.swift
+    dependencies:
+      - sdk: libsqlite3.tbd
+      - sdk: libz.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.EditorHarness
+  SaveEditorUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - EditorUITests.swift
+    dependencies:
+      - target: SaveEditorHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.EditorUITests
+        TEST_TARGET_NAME: SaveEditorHarness
+schemes:
+  SaveEditorHarness:
+    build:
+      targets:
+        SaveEditorHarness: all
+    test:
+      targets:
+        - SaveEditorUITests

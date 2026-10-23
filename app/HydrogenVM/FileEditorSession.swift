@@ -69,6 +69,7 @@ struct FileEditorControls: ViewModifier {
                             .frame(maxWidth: .infinity, minHeight: 34)
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("save-changes")
                     .disabled(!document.dirty || !document.ready)
                 }
                 .padding(12)
@@ -80,9 +81,11 @@ struct FileEditorControls: ViewModifier {
                     Button("Close") {
                         if document.dirty { showingClose = true } else { dismiss() }
                     }
+                    .accessibilityIdentifier("editor-close")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") { _ = commit() }.bold().disabled(!document.dirty || !document.ready)
+                        .accessibilityIdentifier("navigation-save")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Button("Done") {
@@ -91,6 +94,7 @@ struct FileEditorControls: ViewModifier {
                     }
                     Spacer()
                     Button("Save") { _ = commit() }.bold().disabled(!document.dirty || !document.ready)
+                        .accessibilityIdentifier("keyboard-save")
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) {

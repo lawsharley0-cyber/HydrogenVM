@@ -3,7 +3,7 @@ on:
   push:
     branches: ['codex/file-save-overhaul']
   pull_request:
-    paths: ['app/**', 'tools/tests/swift/**', '.github/workflows/file-editor.yml']
+    paths: ['app/**', 'tools/tests/swift/**', 'tools/tests/swiftui/**', '.github/workflows/file-editor.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -40,6 +40,26 @@ jobs:
             SYMROOT="$PWD/build/file-editor/xbuild" CODE_SIGNING_ALLOWED=NO \
             build >build/file-editor/simulator.log 2>&1 || {
               tail -150 build/file-editor/simulator.log
+              exit 1
+            }
+      - name: Exercise save and close flows on an iPhone simulator
+        run: |
+          set -o pipefail
+          xcodegen --spec tools/tests/swiftui/project.yml --project tools/tests/swiftui
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices=json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if "iOS" not in runtime: continue
+              for device in devices[runtime]:
+                  if device["name"].startswith("iPhone"):
+                      print(device["udid"]); sys.exit(0)
+          sys.exit("No iPhone simulator")')
+          xcodebuild -project tools/tests/swiftui/SaveEditorHarness.xcodeproj \
+            -scheme SaveEditorHarness -destination "platform=iOS Simulator,id=$UDID" \
+            -parallel-testing-enabled NO -resultBundlePath build/file-editor/EditorUITests.xcresult \
+            test >build/file-editor/ui-tests.log 2>&1 || {
+              tail -150 build/file-editor/ui-tests.log
               exit 1
             }
       - uses: actions/upload-artifact@v4

@@ -905,6 +905,7 @@ struct TextEditorView: View {
                 .background(Color.orange.opacity(0.15))
             }
             TextEditor(text: Binding(get: { text }, set: { text = $0; document.markChanged() }))
+                .accessibilityIdentifier("plain-text-editor")
                 .font(.system(.footnote, design: .monospaced))
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -1351,6 +1352,7 @@ private struct JSONRowView: View {
                     Text(node.value.label).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            .accessibilityIdentifier("json-container-\(node.key)")
         case .bool(let b):
             Toggle(isOn: Binding(
                 get: { b },
