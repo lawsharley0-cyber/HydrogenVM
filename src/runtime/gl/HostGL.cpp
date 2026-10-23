@@ -621,6 +621,23 @@ void hg_glGetBufferPointervOES(Ctx& x, uint32_t target, uint32_t pname, GuestPtr
 
 // ------------------------------------------------------------- multisample ---
 
+// ------------------------------------------------------------- attachments ---
+// Apple's drivers accept a detach written as (target, attachment, 0, 0); the ES
+// spec wants GL_RENDERBUFFER as the third argument even then, and other drivers
+// reject it, leaving the old attachment in place.
+void hg_glFramebufferRenderbuffer(Ctx& x, uint32_t target, uint32_t attachment, uint32_t rbtarget, uint32_t renderbuffer) {
+    HG_BEGIN(glFramebufferRenderbuffer)
+    if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
+    hc->fn.glFramebufferRenderbuffer(target, attachment, rbtarget, renderbuffer);
+    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+}
+void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t target, uint32_t attachment, uint32_t rbtarget, uint32_t renderbuffer) {
+    HG_BEGIN(glFramebufferRenderbufferOES)
+    if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
+    hc->fn.glFramebufferRenderbufferOES(target, attachment, rbtarget, renderbuffer);
+    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+}
+
 void hg_glResolveMultisampleFramebufferAPPLE(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc) return;
