@@ -37,6 +37,7 @@ void RunLoop::post(std::function<void(CPU::Cpu&)> fn) {
 }
 
 bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
+    if (proc.terminating() || proc.stopping()) return false;
     std::deque<std::function<void(CPU::Cpu&)>> work;
     std::vector<std::shared_ptr<Timer>> due;
     std::vector<std::function<void(CPU::Cpu&, double)>> hooks;
@@ -69,8 +70,12 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
         }
     }
     bool ran = !work.empty();
-    for (auto& fn : work) fn(c);
+    for (auto& fn : work) {
+        if (proc.terminating() || proc.stopping()) return ran;
+        fn(c);
+    }
     for (auto& tm : due) {
+        if (proc.terminating() || proc.stopping()) return ran;
         if (!tm->valid) continue;
         if (tm->repeats && tm->interval > 0) {
             const double t = now();
@@ -84,7 +89,10 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
     }
     if (frameDue) {
         const double t = now();
-        for (auto& h : hooks) h(c, t);
+        for (auto& h : hooks) {
+            if (proc.terminating() || proc.stopping()) return ran;
+            h(c, t);
+        }
     }
     return ran;
 }
@@ -92,6 +100,7 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
 void RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource) {
     for (;;) {
         if (proc.stopping()) throw ProcessExit(0, "stopping");
+        if (proc.terminating()) return;
         {
             std::lock_guard<std::mutex> lk(mu);
             if (stopFlag) { stopFlag = false; return; }
@@ -356,7 +365,7 @@ void timer_dealloc(Ctx& x, id self, SEL) {
 id rc_current(Ctx& x, id, SEL) { return loopObject(x, currentLoop(x)); }
 id rc_main(Ctx& x, id, SEL) { return loopObject(x, *L(x).main); }
 void r_addTimer(Ctx& x, id self, SEL, id timer, id) { scheduleTimer(x, timer, loopOf(x, self)); }
-void r_run(Ctx& x, id self, SEL) { for (;;) loopOf(x, self).runUntil(x.cpu, 1e18); }
+void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopOf(x, self).runUntil(x.cpu, 1e18); }
 void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopOf(x, self).runUntil(x.cpu, dateValue(x, date)); }
 bool r_runModeBeforeDate(Ctx& x, id self, SEL, id, id date) { loopOf(x, self).runUntil(x.cpu, dateValue(x, date), true); return true; }
 id r_currentMode(Ctx& x, id, SEL) { return constString(x.proc, "kCFDefaultRunLoopMode"); }
@@ -371,6 +380,7 @@ int32_t cf_runInMode(Ctx& x, uint32_t, double seconds, bool returnAfterSource) {
     const double until = now() + std::max(0.0, seconds);
     for (;;) {
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
+        if (x.proc.terminating()) return 2;   // kCFRunLoopRunStopped
         {
             std::lock_guard<std::mutex> lk(rl.mu);
             if (rl.stopFlag) { rl.stopFlag = false; return 2; }   // kCFRunLoopRunStopped

@@ -486,6 +486,7 @@ void installLifecycle(Process& p) {
             if (pp->stopping()) return;
             if (what == Process::Lifecycle::Terminate) {
                 toBackground(x, *st);
+                pp->beginTermination();
                 deliverLifecycle(x, "applicationWillTerminate:", "UIApplicationWillTerminateNotification");
                 persistNow(x);
                 x.proc.log(LogLevel::Info, "The app saved and closed");
