@@ -33,6 +33,10 @@ final class PlayerUITests: XCTestCase {
         wait(app.staticTexts["probe-volume"], label: "0.0")
         app.buttons["Unmute"].tap()
         wait(app.staticTexts["probe-volume"], label: "1.0")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Player controls portrait"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor
@@ -53,6 +57,10 @@ final class PlayerUITests: XCTestCase {
         app.buttons["Nearest Neighbor"].tap()
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Player controls landscape"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor
