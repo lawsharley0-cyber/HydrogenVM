@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <chrono>
 #include <thread>
+#include <unordered_set>
 
 namespace Hydrogen::Runtime {
 namespace {
@@ -54,10 +55,18 @@ struct Threads {
     std::unordered_map<uint32_t, int> once;   // 1 running, 2 done
     uint32_t nextKey = 0x100;                 // low keys are reserved by the system
     std::unordered_map<uint32_t, uint32_t> keyDestructors;
+    std::unordered_set<uint32_t> cancelled, cancelDisabled;
 };
 
 Threads& T(Ctx& x) { return x.proc.service<Threads>(); }
 inline uint32_t tid(Ctx& x) { return x.proc.currentThread().id; }
+void t_exit(Ctx&, GuestPtr);
+bool cancelPending(Ctx& x) {
+    auto& state = T(x); std::lock_guard lock(state.mu);
+    const auto self = x.proc.currentThread().self;
+    return state.cancelled.count(self) && !state.cancelDisabled.count(self);
+}
+void t_testcancel(Ctx& x) { if (cancelPending(x)) t_exit(x, 0xffffffffu); }
 inline void checkStop(Ctx& x) { if (x.proc.stopping()) throw ProcessExit(0, "stopping"); }
 
 GuestMutex& mutexFor(Ctx& x, uint32_t addr) {
@@ -134,6 +143,7 @@ GuestCond& condFor(Ctx& x, uint32_t addr) {
 
 // deadline: 0 = none, else nanoseconds since the Unix epoch.
 int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
+    t_testcancel(x);
     GuestCond& c = condFor(x, cv);
     GuestMutex& m = mutexFor(x, mu);
     uint64_t gen;
@@ -153,7 +163,7 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
         while (c.gen == gen) {
             c.cv.wait_for(lk, 50ms);
             if (c.gen != gen) break;
-            if (x.proc.stopping()) { result = -1; break; }
+            if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
             if (deadlineNs) {
                 const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                 if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
@@ -162,6 +172,7 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
     }
     lockMutex(x, m, false);
     { std::lock_guard<std::mutex> lk(m.m); m.count = saved; }
+    t_testcancel(x); // POSIX requires the mutex to be reacquired before cancellation.
     if (result < 0) checkStop(x);
     return result;
 }
@@ -285,6 +296,26 @@ int32_t t_join(Ctx& x, uint32_t th, GuestPtr ret) {
     uint32_t r = 0;
     if (!x.proc.joinThread(th, &r)) return D_ESRCH;
     if (ret) x.mem.write<uint32_t>(ret, r);
+    return 0;
+}
+int32_t t_cancel(Ctx& x, uint32_t self) {
+    auto* thread = x.proc.findThread(self);
+    if (!thread || thread->finished) return D_ESRCH;
+    auto& state = T(x); std::lock_guard lock(state.mu);
+    state.cancelled.insert(self); return 0;
+}
+int32_t t_cancelstate(Ctx& x, int32_t disabled, GuestPtr old) {
+    if (disabled != 0 && disabled != 1) return 22;
+    auto& state = T(x); std::lock_guard lock(state.mu);
+    const auto self = x.proc.currentThread().self;
+    if (old) x.mem.write<uint32_t>(old, state.cancelDisabled.count(self) ? 1 : 0);
+    if (disabled) state.cancelDisabled.insert(self); else state.cancelDisabled.erase(self);
+    return 0;
+}
+int32_t t_canceltype(Ctx& x, int32_t type, GuestPtr old) {
+    // Cancellation is deferred at testcancel and condition waits; asynchronous host unwinding is unsafe.
+    if (type != 0) return type == 1 ? 45 : 22;
+    if (old) x.mem.write<uint32_t>(old, 0);
     return 0;
 }
 int32_t t_detach(Ctx& x, uint32_t th) { x.proc.detachThread(th); return 0; }
@@ -455,6 +486,10 @@ void spin_unlock(Ctx& x, GuestPtr p) { __atomic_store_n(A<int32_t>(x, p), 0, __A
 } // namespace
 
 void registerLibcPthread(Process& p) {
+    p.def<&t_cancel>("_pthread_cancel");
+    p.def<&t_testcancel>("_pthread_testcancel");
+    p.def<&t_cancelstate>("_pthread_setcancelstate");
+    p.def<&t_canceltype>("_pthread_setcanceltype");
     p.def<&pm_init>("_pthread_mutex_init");
     p.def<&pm_lock>("_pthread_mutex_lock");
     p.def<&pm_trylock>("_pthread_mutex_trylock");

@@ -17,6 +17,7 @@ namespace {
 
 using U16 = std::u16string;
 
+struct BitVector : ObjC::HostObject { std::vector<uint8_t> bytes; uint32_t count = 0; };
 struct RawArray : ObjC::HostObject { std::vector<uint32_t> items; bool retains = false; };
 struct Allocator : ObjC::HostObject { std::array<uint32_t, 9> context{}; bool null = false; };
 struct RawDict : ObjC::HostObject {
@@ -26,7 +27,7 @@ struct RawDict : ObjC::HostObject {
 
 struct CF {
     explicit CF(Process&) {}
-    Class rawArray = 0, rawDict = 0, allocator = 0;
+    Class rawArray = 0, rawDict = 0, allocator = 0, bitVector = 0;
     id systemAllocator = 0, nullAllocator = 0;
     uint32_t arrayCallbacks = 0, dictKeyCallbacks = 0, dictValueCallbacks = 0, copyStringKeyCallbacks = 0, setCallbacks = 0,
              copyStringSetCallbacks = 0;
@@ -37,12 +38,52 @@ CF& cf(Ctx& x) { return x.proc.service<CF>(); }
 auto& R(Ctx& x) { return rt(x); }
 uint64_t send(Ctx& x, id o, const char* sel, std::initializer_list<uint32_t> a = {}) { return R(x).send(x.cpu, o, sel, a); }
 
+BitVector* bits(Ctx& x, id object) { return R(x).hostIf<BitVector>(object); }
+id bv_mutable(Ctx& x, id, int32_t capacity) {
+    if (capacity < 0 || capacity > (1 << 27)) return 0;
+    const id object = R(x).createInstance(cf(x).bitVector);
+    R(x).setHost(object, std::make_unique<BitVector>());
+    return object;
+}
+void bv_setCount(Ctx& x, id object, int32_t count) {
+    auto* b = bits(x, object);
+    if (!b || count < 0 || count > (1 << 27)) return;
+    b->bytes.resize((uint32_t(count) + 7) / 8, 0); b->count = uint32_t(count);
+    if ((count & 7) && !b->bytes.empty()) b->bytes.back() &= uint8_t(0xff << (8 - (count & 7)));
+}
+id bv_create(Ctx& x, id allocator, GuestPtr bytes, int32_t count) {
+    if (count < 0 || count > (1 << 27) || (count && !bytes)) return 0;
+    const id object = bv_mutable(x, allocator, count);
+    bv_setCount(x, object, count);
+    if (count) x.mem.copyOut(bits(x, object)->bytes.data(), bytes, (uint32_t(count) + 7) / 8);
+    if ((count & 7) && count) bits(x, object)->bytes.back() &= uint8_t(0xff << (8 - (count & 7)));
+    return object;
+}
+id bv_copy(Ctx& x, id allocator, int32_t capacity, id source) {
+    auto* b = bits(x, source);
+    if (!b) return 0;
+    const id object = bv_mutable(x, allocator, capacity);
+    if (object) *bits(x, object) = *b;
+    return object;
+}
+uint32_t bv_count(Ctx& x, id object) { auto* b = bits(x, object); return b ? b->count : 0; }
+uint32_t bv_get(Ctx& x, id object, int32_t index) {
+    auto* b = bits(x, object);
+    return b && index >= 0 && uint32_t(index) < b->count ? (b->bytes[index / 8] >> (7 - (index & 7))) & 1 : 0;
+}
+void bv_set(Ctx& x, id object, int32_t index, uint32_t value) {
+    auto* b = bits(x, object);
+    if (!b || index < 0 || uint32_t(index) >= b->count) return;
+    const uint8_t mask = uint8_t(1 << (7 - (index & 7)));
+    b->bytes[index / 8] = (b->bytes[index / 8] & ~mask) | (value ? mask : 0);
+}
+
 // ------------------------------------------------------------- CFType ---
 
 enum TypeID : uint32_t {
     kTypeNull = 16, kTypeSet = 17, kTypeDict = 18, kTypeArray = 19, kTypeData = 20, kTypeBool = 21, kTypeNumber = 22,
     kTypeString = 7, kTypeDate = 42, kTypeURL = 29, kTypeBundle = 31, kTypeRunLoop = 43, kTypeTimer = 44, kTypeUUID = 45,
-    kTypeTimeZone = 46, kTypeLocale = 47, kTypeCharSet = 48, kTypeAllocator = 2, kTypeOther = 1,
+    kTypeTimeZone = 46, kTypeLocale = 47, kTypeCharSet = 48, kTypeAllocator = 2, kTypeBitVector = 49, kTypeOther = 1,
 };
 
 uint32_t cf_retain(Ctx& x, id o) {
@@ -86,6 +127,7 @@ uint32_t typeOf(Ctx& x, id o) {
     if (is("NSLocale")) return kTypeLocale;
     if (is("NSCharacterSet")) return kTypeCharSet;
     if (r.hostIf<Allocator>(o)) return kTypeAllocator;
+    if (r.hostIf<BitVector>(o)) return kTypeBitVector;
     return kTypeOther;
 }
 uint32_t cf_getTypeID(Ctx& x, id o) { return typeOf(x, o); }
@@ -1083,6 +1125,14 @@ void cs_addRange(Ctx& x, id set, uint32_t loc, uint32_t len) {
 
 void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     auto& c = p.service<CF>();
+    c.bitVector = r.defineClass("__HVMCFBitVector", "NSObject").cls();
+    p.def<&bv_create>("_CFBitVectorCreate");
+    p.def<&bv_mutable>("_CFBitVectorCreateMutable");
+    p.def<&bv_copy>("_CFBitVectorCreateMutableCopy");
+    p.def<&bv_count>("_CFBitVectorGetCount");
+    p.def<&bv_setCount>("_CFBitVectorSetCount");
+    p.def<&bv_get>("_CFBitVectorGetBitAtIndex");
+    p.def<&bv_set>("_CFBitVectorSetBitAtIndex");
     // CFType
     c.cfRetainFn = p.def<&cf_retain>("_CFRetain");
     c.cfReleaseFn = p.def<&cf_release>("_CFRelease");
@@ -1095,6 +1145,7 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&cf_show>("_CFShow");
     p.def<&cf_getAllocator>("_CFGetAllocator");
     p.def<&cf_getTypeID>("_CFGetTypeID");
+    p.def<&cf_typeID<kTypeBitVector>>("_CFBitVectorGetTypeID");
     p.def<&cf_copyTypeIDDescription>("_CFCopyTypeIDDescription");
     p.def<&cf_typeID<kTypeString>>("_CFStringGetTypeID");
     p.def<&cf_typeID<kTypeArray>>("_CFArrayGetTypeID");
