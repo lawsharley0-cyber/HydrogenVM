@@ -897,6 +897,7 @@ static TLResult *runCaseH(void) {
     clearCheckpoint();
     r.durationMs = monoMs() - t0;
     return r;
+}
 
 // ─────────────────────────── Case I — Texture Formats & NPOT ─────────────────
 //

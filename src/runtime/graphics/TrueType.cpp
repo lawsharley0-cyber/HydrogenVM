@@ -11,7 +11,11 @@ struct TrueTypeFont::Impl {
     int units = 0, asc = 0, desc = 0, gap = 0;
     uint32_t traits = 0;
     int underline = 0;
-    float scale(float size) const { return size / float(units); }
+    int capHeight = 0;
+    int xHeight = 0;
+    Rect fontBBox{};
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> tables;
+    float scale(float size) const { return size / float(units ? units : 1); }
 };
 TrueTypeFont::TrueTypeFont() : impl(std::make_unique<Impl>()) {}
 TrueTypeFont::~TrueTypeFont() = default;
@@ -146,9 +150,42 @@ std::shared_ptr<TrueTypeFont> TrueTypeFont::load(std::vector<uint8_t> bytes) {
     const uint32_t style = u16(head + 44);
     f->impl->traits = ((style & 1) ? 2u : 0u) | ((style & 2) ? 1u : 0u) | ((post && u32(post + 12)) ? 1024u : 0u);
     f->impl->underline = post ? int(int16_t(u16(post + 10))) : 0;
+    f->impl->tables = std::move(tables);
     f->impl->bytes = std::move(bytes);
     if (!stbtt_InitFont(&f->impl->info, f->impl->bytes.data(), 0)) return {};
     stbtt_GetFontVMetrics(&f->impl->info, &f->impl->asc, &f->impl->desc, &f->impl->gap);
+
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    stbtt_GetFontBoundingBox(&f->impl->info, &x0, &y0, &x1, &y1);
+    f->impl->fontBBox = Rect{float(x0), float(y0), float(x1 - x0), float(y1 - y0)};
+
+    if (f->impl->tables.count(0x4F532F32)) {
+        const auto [os2Off, os2Len] = f->impl->tables.at(0x4F532F32);
+        if (os2Len >= 90) {
+            const uint16_t os2Ver = (uint32_t(f->impl->bytes[os2Off]) << 8) | f->impl->bytes[os2Off + 1];
+            if (os2Ver >= 2) {
+                f->impl->xHeight = int(int16_t((uint32_t(f->impl->bytes[os2Off + 86]) << 8) | f->impl->bytes[os2Off + 87]));
+                f->impl->capHeight = int(int16_t((uint32_t(f->impl->bytes[os2Off + 88]) << 8) | f->impl->bytes[os2Off + 89]));
+            }
+        }
+    }
+    if (f->impl->capHeight <= 0) {
+        int gH = stbtt_FindGlyphIndex(&f->impl->info, 'H');
+        if (gH <= 0) gH = stbtt_FindGlyphIndex(&f->impl->info, 'A');
+        if (gH > 0 && stbtt_GetGlyphBox(&f->impl->info, gH, &x0, &y0, &x1, &y1)) {
+            f->impl->capHeight = y1;
+        } else {
+            f->impl->capHeight = int(f->impl->asc * 0.7f);
+        }
+    }
+    if (f->impl->xHeight <= 0) {
+        int gx = stbtt_FindGlyphIndex(&f->impl->info, 'x');
+        if (gx > 0 && stbtt_GetGlyphBox(&f->impl->info, gx, &x0, &y0, &x1, &y1)) {
+            f->impl->xHeight = y1;
+        } else {
+            f->impl->xHeight = int(f->impl->asc * 0.5f);
+        }
+    }
     return f;
 }
 std::string TrueTypeFont::name(bool family) const {
@@ -200,4 +237,46 @@ Path TrueTypeFont::outline(int g, float s) const {
     stbtt_FreeShape(&impl->info, v);
     return path;
 }
+
+std::vector<uint8_t> TrueTypeFont::table(uint32_t tag) const {
+    auto it = impl->tables.find(tag);
+    if (it == impl->tables.end()) return {};
+    const auto& [offset, size] = it->second;
+    if (offset + size > impl->bytes.size()) return {};
+    return std::vector<uint8_t>(impl->bytes.begin() + offset, impl->bytes.begin() + offset + size);
 }
+
+std::vector<uint32_t> TrueTypeFont::tableTags() const {
+    std::vector<uint32_t> tags;
+    tags.reserve(impl->tables.size());
+    for (const auto& [tag, _] : impl->tables) tags.push_back(tag);
+    return tags;
+}
+
+int TrueTypeFont::unitsPerEm() const { return impl->units; }
+int TrueTypeFont::ascentUnits() const { return impl->asc; }
+int TrueTypeFont::descentUnits() const { return impl->desc; }
+int TrueTypeFont::leadingUnits() const { return impl->gap; }
+int TrueTypeFont::capHeight() const { return impl->capHeight; }
+int TrueTypeFont::xHeight() const { return impl->xHeight; }
+Rect TrueTypeFont::fontBBox() const { return impl->fontBBox; }
+
+bool TrueTypeFont::glyphBBox(int g, Rect& box) const {
+    if (g < 0 || g >= glyphCount()) return false;
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    if (!stbtt_GetGlyphBox(&impl->info, g, &x0, &y0, &x1, &y1)) {
+        box = Rect{};
+        return false;
+    }
+    box = Rect{float(x0), float(y0), float(x1 - x0), float(y1 - y0)};
+    return true;
+}
+
+bool TrueTypeFont::glyphAdvance(int g, int& adv) const {
+    if (g < 0 || g >= glyphCount()) { adv = 0; return false; }
+    int lsb = 0;
+    stbtt_GetGlyphHMetrics(&impl->info, g, &adv, &lsb);
+    return true;
+}
+
+} // namespace Hydrogen::Graphics

@@ -45,6 +45,7 @@ typedef char GLchar;
 #define GL_TEXTURE 0x1702
 #define GL_RGB 0x1907
 #define GL_RGBA 0x1908
+#define GL_LUMINANCE 0x1909
 #define GL_NEAREST 0x2600
 #define GL_LINEAR 0x2601
 #define GL_TEXTURE_MAG_FILTER 0x2800
@@ -75,17 +76,21 @@ void glEnable(GLenum cap);
 void glDisable(GLenum cap);
 void glBlendFunc(GLenum sfactor, GLenum dfactor);
 void glGenFramebuffers(GLsizei n, GLuint *framebuffers);
+void glDeleteFramebuffers(GLsizei n, const GLuint *framebuffers);
 void glBindFramebuffer(GLenum target, GLuint framebuffer);
 void glGenRenderbuffers(GLsizei n, GLuint *renderbuffers);
+void glDeleteRenderbuffers(GLsizei n, const GLuint *renderbuffers);
 void glBindRenderbuffer(GLenum target, GLuint renderbuffer);
 void glRenderbufferStorage(GLenum target, GLenum internalformat, GLsizei width, GLsizei height);
 void glFramebufferRenderbuffer(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
 GLenum glCheckFramebufferStatus(GLenum target);
 void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid *pixels);
 void glGenBuffers(GLsizei n, GLuint *buffers);
+void glDeleteBuffers(GLsizei n, const GLuint *buffers);
 void glBindBuffer(GLenum target, GLuint buffer);
 void glBufferData(GLenum target, GLsizeiptr size, const GLvoid *data, GLenum usage);
 void glGenTextures(GLsizei n, GLuint *textures);
+void glDeleteTextures(GLsizei n, const GLuint *textures);
 void glBindTexture(GLenum target, GLuint texture);
 void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const GLvoid *pixels);
 void glTexParameteri(GLenum target, GLenum pname, GLint param);
