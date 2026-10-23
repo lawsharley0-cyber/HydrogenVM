@@ -1530,6 +1530,16 @@ int runFullSubsystemTests() {
               "NSFileManager URL directory search agrees with the C path API");
     }
 
+    // NSUbiquitousKeyValueStore keeps values in the sandbox (no iCloud) so they survive a relaunch.
+    {
+        const ObjC::id store = ObjC::id(r.send(cpu, r.getClass("NSUbiquitousKeyValueStore"), "defaultStore"));
+        r.send(cpu, store, "setObject:forKey:", {Foundation::makeString(cx, "level-7"), Foundation::makeString(cx, "progress")});
+        const bool synced = (r.send(cpu, store, "synchronize") & 0xFF) != 0;
+        auto saved = Plist::parseFile(proc.homePath() + "/Library/Preferences/HydrogenVM.UbiquitousKeyValueStore.plist");
+        const Plist::Value* v = saved ? saved->get("progress") : nullptr;
+        check(synced && v && v->s == "level-7", "NSUbiquitousKeyValueStore writes its values to the sandbox");
+    }
+
     // Fixed-offset zones are used by HockeyApp's UTC date formatter on launch.
     {
         const auto cls = r.getClass("NSTimeZone");

@@ -35,8 +35,8 @@ find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
 target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB SQLite::SQLite3 Threads::Threads)
-# CommonCrypto ciphers are forwarded to a host library: the system CommonCrypto
-# on Apple hosts, OpenSSL elsewhere. Without OpenSSL, CCCrypt reports kCCUnimplemented.
+# Codecs and ciphers come from host libraries: AudioToolbox and CommonCrypto on
+# Apple hosts; FFmpeg (M4A) and OpenSSL (CCCrypt) elsewhere, both optional.
 if(APPLE)
   target_link_libraries(hvm_core PUBLIC "-framework AudioToolbox")
 else()

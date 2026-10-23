@@ -5,6 +5,7 @@
 #include "Foundation.hpp"
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -1040,11 +1041,40 @@ void cache_dealloc(Ctx& x, id self, SEL) {
 }
 
 // ------------------------------------------ NSUbiquitousKeyValueStore ---
+// No iCloud: the store is kept on the device, in the app's sandbox, so games that
+// save through it keep their progress across launches.
 struct KVSData : ObjC::HostObject { id dict = 0; };
+std::string kvsPath(Ctx& x) { return x.proc.homePath() + "/Library/Preferences/HydrogenVM.UbiquitousKeyValueStore.plist"; }
 KVSData& KVSD(Ctx& x, id self) {
     KVSData& d = R(x).host<KVSData>(self);
-    if (!d.dict) d.dict = makeDict(x, {}, true, true);
+    if (!d.dict) {
+        std::error_code ec;
+        if (std::filesystem::exists(kvsPath(x), ec)) {
+            try {
+                if (auto v = Plist::parseFile(kvsPath(x)); v && v->type == Plist::Value::Type::Dict)
+                    d.dict = R(x).retain(x.cpu, plistToObject(x, *v, true));
+            } catch (const std::exception& e) {
+                x.proc.logf(LogLevel::Warning, "NSUbiquitousKeyValueStore: ignoring unreadable store: %s", e.what());
+            }
+        }
+        if (!d.dict) d.dict = makeDict(x, {}, true, true);
+    }
     return d;
+}
+bool kvsSave(Ctx& x, KVSData& d) {
+    Plist::ValuePtr v = objectToPlist(x, d.dict);
+    if (!v) return false;
+    std::error_code ec;
+    std::filesystem::create_directories(x.proc.homePath() + "/Library/Preferences", ec);
+    const std::string path = kvsPath(x), tmp = path + ".tmp";
+    try {
+        Plist::writeXmlFile(*v, tmp);
+    } catch (const std::exception& e) {
+        x.proc.logf(LogLevel::Warning, "NSUbiquitousKeyValueStore: can't write %s: %s", path.c_str(), e.what());
+        return false;
+    }
+    std::filesystem::rename(tmp, path, ec);
+    return !ec;
 }
 id kvs_default(Ctx& x, id cls, SEL) {
     static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
@@ -1057,6 +1087,7 @@ void kvs_setObject(Ctx& x, id self, SEL, id obj, id key) {
     KVSData& d = KVSD(x, self);
     if (!obj) R(x).send(x.cpu, d.dict, "removeObjectForKey:", {key});
     else R(x).send(x.cpu, d.dict, "setObject:forKey:", {obj, key});
+    kvsSave(x, d);
 }
 id kvs_string(Ctx& x, id self, SEL, id key) {
     const id v = kvs_object(x, self, 0, key);
@@ -1100,9 +1131,12 @@ void kvs_setDouble(Ctx& x, id self, SEL, double v, id key) {
     kvs_setObject(x, self, 0, makeNumberDouble(x, v), key);
 }
 void kvs_remove(Ctx& x, id self, SEL, id key) {
-    if (key) R(x).send(x.cpu, KVSD(x, self).dict, "removeObjectForKey:", {key});
+    if (!key) return;
+    KVSData& d = KVSD(x, self);
+    R(x).send(x.cpu, d.dict, "removeObjectForKey:", {key});
+    kvsSave(x, d);
 }
-bool kvs_sync(Ctx&, id, SEL) { return true; }
+bool kvs_sync(Ctx& x, id self, SEL) { return kvsSave(x, KVSD(x, self)); }
 id kvs_dictRep(Ctx& x, id self, SEL) { return id(R(x).send(x.cpu, KVSD(x, self).dict, "copy")); }
 
 // ------------------------------------------------------- NSDecimalNumber ---
