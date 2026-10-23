@@ -50,7 +50,6 @@ struct FileEditorControls: ViewModifier {
     @State private var showingClose = false
     @State private var showingRevert = false
     @State private var showingBackups = false
-    let save: () -> Bool
 
     private func commit() -> Bool { document.saveChanges() }
 
@@ -59,6 +58,12 @@ struct FileEditorControls: ViewModifier {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if document.ready || document.dirty {
                 VStack(spacing: 8) {
+                    HStack {
+                        Toggle("Auto-save edits", isOn: $autoSave)
+                        Button("Backups") { showingBackups = true }
+                            .disabled(document.dirty || !document.ready)
+                    }
+                    .font(.caption)
                     HStack {
                         Label(document.dirty ? "Unsaved Changes" : (document.saved ? "Saved ✓" : "No Changes"),
                               systemImage: document.dirty ? "pencil.circle" : "checkmark.circle")
@@ -77,16 +82,6 @@ struct FileEditorControls: ViewModifier {
                 }
                 .padding(12)
                 .background(.bar)
-                }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if document.ready {
-                HStack {
-                    Toggle("Auto-save edits", isOn: $autoSave)
-                    Button("Backups") { showingBackups = true }
-                        .disabled(document.dirty || !document.ready)
-                }
-                .font(.caption).padding(.horizontal).padding(.vertical, 4).background(.bar)
                 }
             }
             .onAppear {
@@ -204,5 +199,17 @@ private struct FileBackupHistoryView: View {
                 Button("OK", role: .cancel) { error = nil }
             } message: { Text(error ?? "") }
         }
+    }
+}
+
+/// Explicit focus also makes taps in the blank part of a text editor begin
+/// editing, rather than depending on the text layout's current hit point.
+struct FileEditorTextFocus: ViewModifier {
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focused($focused)
+            .simultaneousGesture(TapGesture().onEnded { focused = true })
     }
 }

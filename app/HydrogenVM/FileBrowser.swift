@@ -566,9 +566,10 @@ struct FileEditorSheet: View {
     var body: some View {
         NavigationStack {
             FileEditorDestinationView(item: item)
+                .navigationBarTitleDisplayMode(.inline)
         }
         .id(document.resetID)
-        .modifier(FileEditorControls(save: { document.saveAction?() ?? false }))
+        .modifier(FileEditorControls())
         .environment(document)
         .onDisappear { document.saveAction = nil; document.requestClose = nil }
         .interactiveDismissDisabled(document.dirty)
@@ -900,6 +901,7 @@ struct TextEditorView: View {
                 .background(Color.orange.opacity(0.15))
             }
             TextEditor(text: Binding(get: { text }, set: { text = $0; document.markChanged() }))
+                .modifier(FileEditorTextFocus())
                 .accessibilityIdentifier("plain-text-editor")
                 .font(.system(.footnote, design: .monospaced))
                 .autocorrectionDisabled()
@@ -997,6 +999,7 @@ struct KeyValueEditorView: View {
         Group {
             if rawMode {
                 TextEditor(text: Binding(get: { rawText }, set: { rawText = $0; document.markChanged() }))
+                .modifier(FileEditorTextFocus())
                     .font(.system(.footnote, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
@@ -1171,6 +1174,7 @@ struct JSONEditorView: View {
         Group {
             if rawMode {
                 TextEditor(text: Binding(get: { rawText }, set: { rawText = $0; document.markChanged() }))
+                .modifier(FileEditorTextFocus())
                     .font(.system(.footnote, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
@@ -2396,6 +2400,7 @@ private struct NestedDataInspectorView: View {
                     let encoded = Data(value.utf8)
                     apply(encoded)
                 }))
+                    .modifier(FileEditorTextFocus())
                     .font(.system(.footnote, design: .monospaced))
             case .hex:
                 ScrollView {

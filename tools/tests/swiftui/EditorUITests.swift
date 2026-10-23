@@ -76,7 +76,7 @@ final class EditorUITests: XCTestCase {
         app.buttons["Open Text"].tap()
         let editor = app.textViews["plain-text-editor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.02)).tap()
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.3)).tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Text entry must acquire keyboard focus.")
         editor.typeText("edited")
         let save = app.buttons["keyboard-save"]
