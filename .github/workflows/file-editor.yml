@@ -1,7 +1,5 @@
 name: File editor Apple validation
 on:
-  push:
-    branches: ['codex/file-save-overhaul']
   pull_request:
     paths: ['app/**', 'tools/tests/swift/**', 'tools/tests/swiftui/**', '.github/workflows/file-editor.yml']
   workflow_dispatch:
@@ -31,17 +29,6 @@ jobs:
           export HOMEBREW_NO_AUTO_UPDATE=1
           brew install xcodegen
           cd app && xcodegen
-      - name: Compile iOS shell (unsigned simulator)
-        run: |
-          set -o pipefail
-          xcodebuild -project app/HydrogenVM.xcodeproj -target HydrogenVM \
-            -configuration Release -sdk iphonesimulator \
-            SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
-            SYMROOT="$PWD/build/file-editor/xbuild" CODE_SIGNING_ALLOWED=NO \
-            build >build/file-editor/simulator.log 2>&1 || {
-              tail -150 build/file-editor/simulator.log
-              exit 1
-            }
       - name: Exercise save and close flows on an iPhone simulator
         run: |
           set -o pipefail
@@ -62,8 +49,21 @@ jobs:
               tail -150 build/file-editor/ui-tests.log
               exit 1
             }
+      - name: Compile iOS shell (unsigned simulator)
+        run: |
+          set -o pipefail
+          xcodebuild -project app/HydrogenVM.xcodeproj -target HydrogenVM \
+            -configuration Release -sdk iphonesimulator \
+            SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
+            SYMROOT="$PWD/build/file-editor/xbuild" CODE_SIGNING_ALLOWED=NO \
+            build >build/file-editor/simulator.log 2>&1 || {
+              tail -150 build/file-editor/simulator.log
+              exit 1
+            }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: file-editor-validation
-          path: build/file-editor/*.log
+          path: |
+            build/file-editor/*.log
+            build/file-editor/EditorUITests.xcresult
