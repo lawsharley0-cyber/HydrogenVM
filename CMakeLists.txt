@@ -28,6 +28,9 @@ add_library(hvm_core STATIC
   ${HVM_RUNTIME_SOURCES}
 )
 target_include_directories(hvm_core PUBLIC src)
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  OUTPUT_VARIABLE HVM_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+target_compile_definitions(hvm_core PRIVATE HVM_COMMIT="${HVM_COMMIT}")
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)

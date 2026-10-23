@@ -1425,7 +1425,15 @@ static UIColor *colorForStatus(NSString *s) {
     export.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1];
     [export addTarget:self action:@selector(exportResults:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:export];
+
+    UIButton *crash = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    crash.frame = CGRectMake(10, y + 46, 280, 34);
+    [crash setTitle:@"Force diagnostic crash (ends session)" forState:UIControlStateNormal];
+    [crash addTarget:self action:@selector(forceDiagnosticCrash:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:crash];
 }
+
+- (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
 - (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J]; }
 
@@ -1487,6 +1495,9 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (BOOL)application:(UIApplication *)application
     didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+
+    // Opt-in diagnostic repro; deliberately excluded from the passing case suite.
+    if ([[[NSProcessInfo processInfo] arguments] containsObject:@"--force-crash"]) __builtin_trap();
 
     // Parse arguments
     NSArray *args = [[NSProcessInfo processInfo] arguments];

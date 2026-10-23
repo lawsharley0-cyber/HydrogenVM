@@ -345,6 +345,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
 }
 
 @interface HVMSession ()
+@property (nonatomic, readwrite, copy, nullable) NSString *crashBundle;
 @property (nonatomic, readwrite) CGSize screenSize;
 @property (nonatomic, readwrite) NSInteger interfaceOrientation;
 @property (nonatomic, readwrite, getter=isRunning) BOOL running;
@@ -451,7 +452,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
             });
         };
         int code = -1;
-        std::string crash;
+        std::string crash, bundleJSON;
         try {
             auto proc = std::make_shared<RT::Process>(std::move(cfg));
             {
@@ -464,7 +465,10 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
                 core->ready = true;
                 if (core->stopRequested) proc->requestStop();
                 code = proc->run();
-                if (proc->crashed()) crash = proc->crashReport().empty() ? "The app crashed." : proc->crashReport();
+                if (proc->crashed()) {
+                    crash = proc->crashReport().empty() ? "The app crashed." : proc->crashReport();
+                    bundleJSON = proc->crashBundle();
+                }
             }
             core->ready = false;
             std::lock_guard<std::mutex> lk(core->mu);
@@ -487,7 +491,8 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
             HVMSession *s = weakSelf;
             if (!s) return;
             s.running = NO;
-            if (s.onExit) s.onExit(code, (crash.empty() || userStopped) ? nil : str(crash));
+            s.crashBundle = bundleJSON.empty() ? nil : str(bundleJSON);
+            if (s.onExit) s.onExit(code, crash.empty() ? nil : str(crash));
         });
     });
 }
