@@ -77,8 +77,8 @@ final class EditorUITests: XCTestCase {
         let editor = app.textViews["plain-text-editor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.3)).tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Text entry must acquire keyboard focus.")
         editor.typeText("edited")
+        XCTAssertTrue((editor.value as? String)?.contains("edited") == true, "Native text input must arrive before saving.")
         let save = app.buttons["keyboard-save"]
         XCTAssertTrue(save.waitForExistence(timeout: 5))
         XCTAssertTrue(save.isHittable)
