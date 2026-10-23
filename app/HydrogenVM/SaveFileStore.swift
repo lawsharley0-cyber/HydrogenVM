@@ -27,6 +27,9 @@ final class SaveFileStore {
 
     func load() throws -> Data {
         let bytes = try Data(contentsOf: url)
+        if bytes.starts(with: Data("SQLite format 3".utf8)) {
+            try SQLiteEditStore.requireCheckpointed(url)
+        }
         revision = bytes
         return bytes
     }
@@ -51,6 +54,9 @@ final class SaveFileStore {
     /// catches external changes made while a sheet is open.
     func save(_ bytes: Data) throws {
         guard let revision else { throw Failure.notLoaded }
+        if revision.starts(with: Data("SQLite format 3".utf8)) {
+            try SQLiteEditStore.requireCheckpointed(url)
+        }
         guard try Data(contentsOf: url) == revision else { throw Failure.changedOnDisk }
         if bytes == revision { return }
         let fm = FileManager.default
@@ -70,6 +76,8 @@ final class SaveFileStore {
             ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) >
             ((try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
         }
-        for old in ordered.dropFirst(10) { try? fm.removeItem(at: old) }
+        // Always retain the backup just created, even on filesystems whose
+        // creation timestamps have coarse resolution.
+        for old in ordered.filter({ $0 != backup }).dropFirst(9) { try? fm.removeItem(at: old) }
     }
 }

@@ -88,6 +88,12 @@ struct SaveFileStoreTests {
         let latin = Data([0x63, 0x61, 0x66, 0xe9])
         let decoded = try SaveTextCodec.decode(latin)
         try expect(decoded.text.data(using: decoded.encoding) == latin, "Latin-1 preserved")
+        let config = SaveConfigLine(" coins :  12  ; earned coins\r")!
+        try expect(config.replacingValue("99") == " coins :  99  ; earned coins\r", "config separators/comments/CRLF preserved")
+        let quoted = SaveConfigLine("name=\"player\" # comment")!
+        try expect(quoted.replacingValue("new player") == "name=\"new player\" # comment", "quoted config preserved")
+        try rejects("quote injection") { _ = try quoted.replacingValue("bad\"value") }
+        try rejects("newline in config value") { _ = try config.replacingValue("1\nother=2") }
         let json = try JSONSerialization.jsonObject(with: Data("42".utf8), options: [.fragmentsAllowed])
         try expect(JSONSerialization.data(withJSONObject: json, options: [.fragmentsAllowed]) == Data("42".utf8), "scalar JSON persists")
 
@@ -124,6 +130,9 @@ struct SaveFileStoreTests {
         let activeJournal = URL(fileURLWithPath: database.path + "-wal")
         try Data([1]).write(to: activeJournal)
         try rejects("active database journal") { try SQLiteEditStore.requireCheckpointed(database) }
+        try rejects("hex mode cannot bypass WAL guard") { try databaseStore.save(beforeDatabase) }
+        try Data().write(to: activeJournal)
+        try SQLiteEditStore.requireCheckpointed(database)
         try fm.removeItem(at: activeJournal)
 
         // A missing snapshot root must fail during staging, before originals move.

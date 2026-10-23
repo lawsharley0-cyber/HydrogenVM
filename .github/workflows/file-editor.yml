@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: file-editor-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   editor:
     runs-on: macos-26
@@ -18,8 +21,10 @@ jobs:
           xcrun swiftc -swift-version 6 -o build/file-editor/tests \
             app/HydrogenVM/SaveFileStore.swift app/HydrogenVM/SaveCompression.swift \
             app/HydrogenVM/SaveTextCodec.swift app/HydrogenVM/SQLiteEditStore.swift \
-            app/HydrogenVM/SaveSnapshotStore.swift tools/tests/swift/SaveFileStoreTests.swift -lz -lsqlite3
-          build/file-editor/tests
+            app/HydrogenVM/SaveSnapshotStore.swift app/HydrogenVM/SaveConfigLine.swift \
+            tools/tests/swift/SaveFileStoreTests.swift -lz -lsqlite3
+          set -o pipefail
+          build/file-editor/tests 2>&1 | tee build/file-editor/persistence.log
       - name: Generate project
         run: |
           export HOMEBREW_NO_AUTO_UPDATE=1

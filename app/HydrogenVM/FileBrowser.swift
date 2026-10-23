@@ -963,11 +963,15 @@ struct KeyValueEntry: Identifiable {
     var key: String
     var value: String
     var comment: String?
+    var sourceLine: Int? = nil
+    var originalValue: String? = nil
 }
 
 struct KeyValueEditorView: View {
     let url: URL
     @State private var entries: [KeyValueEntry] = []
+    @State private var originalLines: [String] = []
+    @State private var originalEntryLines: Set<Int> = []
     @State private var searchText = ""
     @State private var rawMode = false
     @State private var rawText = ""
@@ -1042,7 +1046,7 @@ struct KeyValueEditorView: View {
                     if rawMode {
                         parseINI(rawText)
                     } else {
-                        rawText = serializeINI()
+                        do { rawText = try serializeINI() } catch { self.error = error.localizedDescription; return }
                     }
                     rawMode.toggle()
                 } label: {
@@ -1097,56 +1101,51 @@ struct KeyValueEditorView: View {
     }
 
     private func parseINI(_ text: String) {
+        originalLines = text.components(separatedBy: "\n")
         var parsed: [KeyValueEntry] = []
         var currentSection = ""
-        for line in text.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix(";") || trimmed.hasPrefix("//") {
-                parsed.append(KeyValueEntry(section: currentSection, key: "", value: "", comment: line))
-                continue
-            }
+        for (index, line) in originalLines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
                 currentSection = String(trimmed.dropFirst().dropLast())
-                continue
-            }
-            if let eq = line.firstIndex(of: "=") ?? line.firstIndex(of: ":") {
-                let k = String(line[..<eq]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                var v = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if v.hasSuffix(";") { v.removeLast() }
-                v = v.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                parsed.append(KeyValueEntry(section: currentSection, key: k, value: v))
-            } else {
-                parsed.append(KeyValueEntry(section: currentSection, key: "", value: "", comment: line))
+            } else if let field = SaveConfigLine(line) {
+                parsed.append(KeyValueEntry(section: currentSection, key: field.key, value: field.value,
+                    sourceLine: index, originalValue: field.value))
             }
         }
         entries = parsed
+        originalEntryLines = Set(parsed.compactMap(\.sourceLine))
     }
 
-    private func serializeINI() -> String {
+    private func serializeINI() throws -> String {
+        let existing = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
+            entry.sourceLine.map { ($0, entry) }
+        })
         var lines: [String] = []
-        var lastSection = ""
-        let isStrings = url.pathExtension.lowercased() == "strings"
-        for e in entries {
-            if e.key.isEmpty, let c = e.comment {
-                lines.append(c)
-                continue
-            }
-            if e.section != lastSection && !e.section.isEmpty {
-                lines.append("[\(e.section)]")
-                lastSection = e.section
-            }
-            if isStrings {
-                lines.append("\"\(e.key)\" = \"\(e.value)\";")
+        for (index, line) in originalLines.enumerated() {
+            if !originalEntryLines.contains(index) { lines.append(line); continue }
+            guard let entry = existing[index] else { continue }
+            if entry.value == entry.originalValue { lines.append(line) }
+            else if let field = SaveConfigLine(line) { lines.append(try field.replacingValue(entry.value)) }
+        }
+        var result = lines.joined(separator: "\n")
+        let newline = rawText.contains("\r\n") ? "\r\n" : "\n"
+        for entry in entries where entry.sourceLine == nil {
+            let line = "\(entry.key)=\(entry.value)" + newline
+            if entry.section.isEmpty {
+                // Global values belong before the first section header.
+                result = line + result
             } else {
-                lines.append("\(e.key)=\(e.value)")
+                if !result.isEmpty && !result.hasSuffix("\n") { result += newline }
+                result += "[\(entry.section)]" + newline + line
             }
         }
-        return lines.joined(separator: "\n")
+        return result
     }
 
     private func save() -> Bool {
-        let outText = rawMode ? rawText : serializeINI()
+        let outText: String
+        do { outText = rawMode ? rawText : try serializeINI() } catch { document.saveError = error.localizedDescription; return false }
         do {
             guard let bytes = outText.data(using: encoding, allowLossyConversion: false) else {
                 throw CocoaError(.fileWriteInapplicableStringEncoding)
