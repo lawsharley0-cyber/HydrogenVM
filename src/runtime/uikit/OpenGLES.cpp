@@ -3409,6 +3409,8 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_noop3>("_glMaterialfv");
     p.def<&gl_noop2>("_glFogf");
     p.def<&gl_noop2>("_glFogfv");
+    p.def<&gl_noop2>("_glFogx");
+    p.def<&gl_noop2>("_glFogxv");
     p.def<&gl_drawTexfOES>("_glDrawTexfOES");
     p.def<&gl_drawTexiOES>("_glDrawTexiOES");
     p.def<&gl_drawTexsOES>("_glDrawTexsOES");

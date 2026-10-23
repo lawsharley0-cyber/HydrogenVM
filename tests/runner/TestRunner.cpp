@@ -2270,8 +2270,13 @@ int runFullSubsystemTests() {
             call("__ZNKSt15basic_stringbufIcSt11char_traitsIcESaIcEE3strEv", {strRet, oss + 4});
             const uint32_t data = proc.mem().read<uint32_t>(strRet);
             const std::string v = proc.readCString(data);
+            const uint32_t strRet2 = proc.heap().allocZeroed(4);
+            call("__ZNKSt19basic_ostringstreamIcSt11char_traitsIcESaIcEE3strEv", {strRet2, oss});
+            const std::string v2 = proc.readCString(proc.mem().read<uint32_t>(strRet2));
             call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEED1Ev", {oss});
-            check(v == "score=-42 0xff     7", "std::ostringstream formatting (int, hex+showbase, width) and str()");
+            check(v == "score=-42 0xff     7" && v2 == v, "std::ostringstream formatting (int, hex+showbase, width) and str()");
+            proc.heap().free(strRet);
+            proc.heap().free(strRet2);
         }
 
         // NSCalendar / NSDateComponents: compose, break down, add, difference.
