@@ -150,12 +150,14 @@ struct Preprocessor {
     int sourceFile = 0;
     int braces = 0;
     bool derivatives = false;
+    std::vector<std::string> warnings;
     struct Frame { bool parent = true, on = true, any = false, hadElse = false; };
     std::vector<Frame> stack;
     std::unordered_map<std::string, Macro> macros;
     std::vector<std::string> out;
 
     [[noreturn]] void fail(const std::string& why) const { ppFail(why, line); }
+    void warn(const std::string& why) { warnings.push_back(why + " at line " + std::to_string(line)); }
     bool active() const { return stack.empty() || stack.back().on; }
     bool defined(const std::string& name) const {
         return name == "__LINE__" || name == "__FILE__" || macros.count(name) > 0;
@@ -551,6 +553,7 @@ struct Preprocessor {
             if (name == "all" && (behavior == "require" || behavior == "enable")) fail("invalid extension");
             const bool deriv = name == "GL_OES_standard_derivatives";
             if (behavior == "require" && !deriv) fail("unsupported extension " + name);
+            if (behavior == "warn") warn("warning: #extension " + name + " : warn");
             if (name == "all" && behavior == "disable") derivatives = false;
             else if (deriv) derivatives = behavior != "disable";
             return;
@@ -611,11 +614,12 @@ struct Preprocessor {
     }
 };
 
-std::vector<std::string> preprocessShader(const std::string& source, bool vertex, bool& derivatives) {
+std::vector<std::string> preprocessShader(const std::string& source, bool vertex, bool& derivatives, std::vector<std::string>& warnings) {
     (void)vertex;
     Preprocessor pp;
     auto tokens = pp.run(source);
     derivatives = pp.derivatives;
+    warnings = std::move(pp.warnings);
     return tokens;
 }
 
@@ -660,7 +664,18 @@ struct Compiler {
     bool wroteFragColor = false, wroteFragData = false;
     bool derivatives = false;
     int constDepth = 0;
-    std::unordered_map<size_t, long> constInts;
+    size_t limitAt = 0;
+    bool crossedLimit = false;
+    std::vector<std::string> warnings;
+    // A fully folded constant. `width` is the component count (n*n for a matrix).
+    struct CVal {
+        Kind kind = Kind::Int;
+        int width = 1;
+        int matrix = 0;
+        double c[16] = {};
+        bool scalar() const { return matrix == 0 && width == 1; }
+    };
+    std::unordered_map<size_t, CVal> constVals;
 
     static constexpr float kPi = 3.14159265358979323846f;
 
@@ -696,9 +711,23 @@ struct Compiler {
         if (!ppIdent(s) || keyword(s)) fail("expected identifier");
         ++at; return s;
     }
+    // Negative slots address uniformMem: offset = -1 - slot. Positive slots are
+    // registers. Adding a component moves down the uniform buffer and up the file.
+    static int addrAdd(int base, int delta) { return base < 0 ? base - delta : base + delta; }
+    static int memEncode(int offset) { return -1 - offset; }
     int alloc(int n = 1) {
-        if (n < 1 || p.slots + n > MaxSlots) fail("shader register limit exceeded");
+        // Virtual registers may pass MaxSlots. recycleRegisters() packs them back
+        // into the file or spills them; shaders that never cross stay byte-identical.
+        if (n < 1 || p.slots > (1 << 20) - n) fail("shader register limit exceeded");
+        if (!crossedLimit && p.slots + n > MaxSlots) { crossedLimit = true; limitAt = at; }
         int out = p.slots; p.slots += n; return out;
+    }
+    // width * count, formed in 64 bits. A nested array of 2048 can overflow
+    // signed int; reject that before the product is narrowed or allocated.
+    int checkedSpan(int width, int count) {
+        const int64_t n = int64_t(std::max(1, width)) * int64_t(count);
+        if (count < 1 || n < 1 || n > int64_t(MaxSlots)) fail("shader register limit exceeded");
+        return int(n);
     }
     int emit(Op op, int a = 0, int b = 0, int c = 0, float value = 0, int d = 0) {
         int dst = alloc();
@@ -728,83 +757,499 @@ struct Compiler {
         if (scopes.empty()) scopes.push_back({});
         if (scopes.back().count(name) || structs.count(name) || funcExists(name) || (name.starts_with("gl_") && !reservedOk))
             fail("duplicate/reserved variable " + name);
-        if (count < 1 || count > 32) fail("array size outside supported range");
-        int slot = alloc(std::max(1, t.width) * count);
+        if (count < 1 || count > MaxSlots) fail("array size outside supported range");
+        // Uniform arrays are memory, not registers. A mat4[45] palette is 720
+        // floats; keeping it in the file leaves no room for the index math.
+        // width * count is formed in 64 bits so a nested array cannot wrap
+        // before the spill and uniform-memory cap.
+        const bool memory = storage == Storage::Uniform && (isArray || count != 1);
+        const int64_t n64 = int64_t(std::max(1, t.width)) * int64_t(count);
+        if (n64 < 1 || n64 > (int64_t(1) << 20)) fail("shader register limit exceeded");
+        const int n = int(n64);
+        int slot;
+        if (memory) {
+            if (p.uniformMem.size() > (size_t(1) << 20) - size_t(n)) fail("shader register limit exceeded");
+            slot = int(p.uniformMem.size());
+            p.uniformMem.resize(p.uniformMem.size() + size_t(n), 0.f);
+        } else slot = alloc(n);
         scopes.back()[name] = p.variables.size();
-        p.variables.push_back(Variable{name, t, storage, slot, count, ro, isArray, invariant});
+        p.variables.push_back(Variable{name, t, storage, slot, count, ro, isArray, invariant, memory});
         return p.variables.back();
     }
-    // Integral constant expressions for array sizes: literals, parentheses,
-    // unary +/-, + - * /, and names of const ints folded earlier. Macros are
-    // already expanded. A non-constant leaves `at` unspecified; callers rewind.
-    std::optional<long> constUnary() {
-        if (++constDepth > 64) return std::nullopt;
-        struct Guard { int& d; ~Guard() { --d; } } guard{constDepth};
-        if (take("+")) return constUnary();
-        if (take("-")) {
-            auto v = constUnary();
-            if (!v) return std::nullopt;
-            return long(0ull - static_cast<unsigned long long>(*v));
+    // Integral constant expressions (ES 1.00 §4.3.3): literals, const values,
+    // parentheses, operators other than assignment and inc/dec, constructors,
+    // and built-ins other than texture lookups. A non-constant leaves `at`
+    // unspecified; callers rewind. Array sizes must fold to a scalar int.
+    std::optional<double> convertComp(double v, Kind from, Kind to) const {
+        if (to == Kind::Int && !std::isfinite(v)) return std::nullopt;
+        if (from == to) return v;
+        if (to == Kind::Bool) return v != 0.0 ? 1.0 : 0.0;
+        if (from == Kind::Bool) return v != 0.0 ? 1.0 : 0.0;
+        if (from == Kind::Float && to == Kind::Int) return std::trunc(v);
+        if (from == Kind::Int && to == Kind::Float) return v;
+        return std::nullopt;
+    }
+    std::optional<CVal> foldConstruct(const Type& t, const std::vector<CVal>& args) const {
+        if (t.sampler || t.kind == Kind::Void || t.isStruct() || args.empty()) return std::nullopt;
+        if (t.matrix && args.size() == 1 && args[0].scalar()) {
+            auto s = convertComp(args[0].c[0], args[0].kind, Kind::Float);
+            if (!s) return std::nullopt;
+            CVal m; m.kind = Kind::Float; m.matrix = t.matrix; m.width = t.width;
+            for (int i = 0; i < t.width; ++i) m.c[i] = (i % (t.matrix + 1) == 0) ? *s : 0;
+            return m;
         }
+        if (t.matrix && args.size() == 1 && args[0].matrix) {
+            int n = t.matrix, m = args[0].matrix;
+            CVal o; o.kind = Kind::Float; o.matrix = n; o.width = t.width;
+            for (int col = 0; col < n; ++col) for (int row = 0; row < n; ++row) {
+                int dst = col * n + row;
+                o.c[dst] = (col < m && row < m) ? args[0].c[col * m + row] : (col == row ? 1.0 : 0.0);
+            }
+            return o;
+        }
+        if (!t.matrix && args.size() == 1 && args[0].scalar() && t.width > 1) {
+            auto s = convertComp(args[0].c[0], args[0].kind, t.kind);
+            if (!s) return std::nullopt;
+            CVal o; o.kind = t.kind; o.width = t.width;
+            for (int i = 0; i < t.width; ++i) o.c[i] = *s;
+            return o;
+        }
+        std::vector<std::pair<double, Kind>> comps;
+        for (const auto& arg : args) {
+            if (arg.matrix) {
+                for (int i = 0; i < arg.width; ++i) comps.push_back({arg.c[i], Kind::Float});
+            } else {
+                for (int i = 0; i < arg.width; ++i) comps.push_back({arg.c[i], arg.kind});
+            }
+        }
+        if (int(comps.size()) != t.width) return std::nullopt;
+        Kind want = t.matrix ? Kind::Float : t.kind;
+        CVal o; o.kind = want; o.width = t.width; o.matrix = t.matrix;
+        for (int i = 0; i < t.width; ++i) {
+            auto c = convertComp(comps[size_t(i)].first, comps[size_t(i)].second, want);
+            if (!c) return std::nullopt;
+            o.c[i] = *c;
+        }
+        return o;
+    }
+    std::optional<CVal> applySwizzle(const CVal& v, const std::string& sel) const {
+        if (v.matrix || sel.empty() || sel.size() > 4) return std::nullopt;
+        const char* sets[] = {"xyzw", "rgba", "stpq"};
+        int set = -1;
+        int idx[4] = {};
+        for (size_t i = 0; i < sel.size(); ++i) {
+            int found = -1, which = -1;
+            for (int s = 0; s < 3 && found < 0; ++s) {
+                for (int k = 0; k < 4; ++k) if (sets[s][k] == sel[i]) { found = k; which = s; }
+            }
+            if (found < 0 || found >= v.width || (set >= 0 && set != which)) return std::nullopt;
+            set = which; idx[i] = found;
+        }
+        CVal o; o.kind = v.kind; o.width = int(sel.size());
+        for (size_t i = 0; i < sel.size(); ++i) o.c[i] = v.c[idx[i]];
+        return o;
+    }
+    std::optional<CVal> applyIndex(const CVal& v, const CVal& idx) const {
+        if (!idx.scalar() || idx.kind != Kind::Int || !std::isfinite(idx.c[0])) return std::nullopt;
+        const double truncated = std::trunc(idx.c[0]);
+        if (truncated != idx.c[0]) return std::nullopt;
+        const int limit = v.matrix ? v.matrix : v.width;
+        // Cast only after the index is known to fit. int(1e20) and int(2^31) are undefined.
+        if (limit < 1 || truncated < 0.0 || truncated >= double(limit)) return std::nullopt;
+        const int i = int(truncated);
+        if (v.matrix) {
+            CVal o; o.kind = Kind::Float; o.width = v.matrix;
+            for (int row = 0; row < v.matrix; ++row) o.c[row] = v.c[i * v.matrix + row];
+            return o;
+        }
+        CVal o; o.kind = v.kind; o.width = 1; o.c[0] = v.c[i];
+        return o;
+    }
+    std::optional<CVal> foldBin(const CVal& a, const CVal& b, const std::string& op) const {
+        if (a.kind != b.kind || a.kind == Kind::Bool || a.matrix || b.matrix) return std::nullopt;
+        if (a.width != b.width && a.width != 1 && b.width != 1) return std::nullopt;
+        const int n = std::max(a.width, b.width);
+        CVal o; o.kind = a.kind; o.width = n;
+        for (int i = 0; i < n; ++i) {
+            const double x = a.c[a.width == 1 ? 0 : i];
+            const double y = b.c[b.width == 1 ? 0 : i];
+            double r = 0;
+            if (op == "+") r = x + y;
+            else if (op == "-") r = x - y;
+            else if (op == "*") r = x * y;
+            else {
+                if (y == 0.0) return std::nullopt;
+                r = a.kind == Kind::Int ? std::trunc(x / y) : x / y;
+            }
+            if (!std::isfinite(r)) return std::nullopt;
+            o.c[i] = r;
+        }
+        return o;
+    }
+    std::optional<CVal> foldMinMax(const CVal& a, const CVal& b, bool isMin) const {
+        if (a.matrix || b.matrix || a.kind != b.kind || (a.kind != Kind::Float && a.kind != Kind::Int)) return std::nullopt;
+        if (a.width != b.width && b.width != 1) return std::nullopt;
+        CVal o; o.kind = a.kind; o.width = a.width;
+        for (int i = 0; i < a.width; ++i) {
+            const double x = a.c[i], y = b.c[b.width == 1 ? 0 : i];
+            o.c[i] = isMin ? std::min(x, y) : std::max(x, y);
+        }
+        return o;
+    }
+    std::optional<CVal> foldBuiltin(const std::string& name, const std::vector<CVal>& args) const {
+        auto arity = [&](size_t n) { return args.size() == n; };
+        auto map1 = [&](auto fn) -> std::optional<CVal> {
+            if (!arity(1) || args[0].kind != Kind::Float || args[0].matrix) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) {
+                const double r = fn(o.c[i]);
+                if (!std::isfinite(r)) return std::nullopt;
+                o.c[i] = r;
+            }
+            return o;
+        };
+        auto zip = [&](auto fn) -> std::optional<CVal> {
+            if (!arity(2) || args[0].kind != Kind::Float || args[1].kind != Kind::Float || args[0].matrix || args[1].matrix ||
+                args[0].width != args[1].width) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) {
+                const double r = fn(args[0].c[i], args[1].c[i]);
+                if (!std::isfinite(r)) return std::nullopt;
+                o.c[i] = r;
+            }
+            return o;
+        };
+        if (name == "dFdx" || name == "dFdy" || name == "fwidth") {
+            if (!derivatives || !arity(1) || args[0].kind != Kind::Float || args[0].matrix) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) o.c[i] = 0;
+            return o;
+        }
+        if (name == "radians") return map1([](double v) { return v * 3.14159265358979323846 / 180.0; });
+        if (name == "degrees") return map1([](double v) { return v * 180.0 / 3.14159265358979323846; });
+        if (name == "sin") return map1([](double v) { return std::sin(v); });
+        if (name == "cos") return map1([](double v) { return std::cos(v); });
+        if (name == "tan") return map1([](double v) { return std::tan(v); });
+        if (name == "asin") return map1([](double v) { return std::asin(v); });
+        if (name == "acos") return map1([](double v) { return std::acos(v); });
+        if (name == "atan") {
+            if (arity(1)) return map1([](double v) { return std::atan(v); });
+            return zip([](double y, double x) { return std::atan2(y, x); });
+        }
+        if (name == "pow") return zip([](double x, double y) { return std::pow(x, y); });
+        if (name == "exp") return map1([](double v) { return std::exp(v); });
+        if (name == "log") return map1([](double v) { return v > 0 ? std::log(v) : 0; });
+        if (name == "exp2") return map1([](double v) { return std::exp2(v); });
+        if (name == "log2") return map1([](double v) { return v > 0 ? std::log2(v) : 0; });
+        if (name == "sqrt") return map1([](double v) { return v > 0 ? std::sqrt(v) : 0; });
+        if (name == "inversesqrt") return map1([](double v) { return v > 0 ? 1.0 / std::sqrt(v) : 0; });
+        if (name == "floor") return map1([](double v) { return std::floor(v); });
+        if (name == "ceil") return map1([](double v) { return std::ceil(v); });
+        if (name == "fract") return map1([](double v) { return v - std::floor(v); });
+        if (name == "abs") {
+            if (!arity(1) || args[0].matrix || (args[0].kind != Kind::Float && args[0].kind != Kind::Int)) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) o.c[i] = std::fabs(o.c[i]);
+            return o;
+        }
+        if (name == "sign") {
+            if (!arity(1) || args[0].matrix || (args[0].kind != Kind::Float && args[0].kind != Kind::Int)) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) o.c[i] = o.c[i] > 0 ? 1 : o.c[i] < 0 ? -1 : 0;
+            return o;
+        }
+        if (name == "mod") {
+            if (!arity(2) || args[0].kind != Kind::Float || args[0].matrix || args[1].kind != Kind::Float || args[1].matrix) return std::nullopt;
+            if (args[1].width != args[0].width && args[1].width != 1) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) {
+                const double y = args[1].c[args[1].width == 1 ? 0 : i];
+                if (y == 0.0) return std::nullopt;
+                o.c[i] = o.c[i] - y * std::floor(o.c[i] / y);
+                if (!std::isfinite(o.c[i])) return std::nullopt;
+            }
+            return o;
+        }
+        if (name == "min" || name == "max") {
+            if (!arity(2)) return std::nullopt;
+            return foldMinMax(args[0], args[1], name == "min");
+        }
+        if (name == "clamp") {
+            if (!arity(3)) return std::nullopt;
+            const bool scalarEnds = args[1].scalar() && args[2].scalar();
+            const bool same = !args[1].matrix && !args[2].matrix && args[1].width == args[0].width && args[2].width == args[0].width;
+            if (!scalarEnds && !same) return std::nullopt;
+            auto hi = foldMinMax(args[0], args[1], false);
+            if (!hi) return std::nullopt;
+            return foldMinMax(*hi, args[2], true);
+        }
+        if (name == "mix") {
+            if (!arity(3) || args[0].kind != Kind::Float || args[0].matrix || args[0].kind != args[1].kind || args[0].width != args[1].width ||
+                args[1].matrix || args[2].kind != Kind::Float || args[2].matrix) return std::nullopt;
+            if (args[2].width != 1 && args[2].width != args[0].width) return std::nullopt;
+            CVal o = args[0];
+            for (int i = 0; i < o.width; ++i) {
+                const double a = args[2].c[args[2].width == 1 ? 0 : i];
+                o.c[i] = args[0].c[i] * (1.0 - a) + args[1].c[i] * a;
+                if (!std::isfinite(o.c[i])) return std::nullopt;
+            }
+            return o;
+        }
+        if (name == "step") {
+            if (!arity(2) || args[1].kind != Kind::Float || args[1].matrix || args[0].kind != Kind::Float || args[0].matrix) return std::nullopt;
+            if (args[0].width != args[1].width && args[0].width != 1) return std::nullopt;
+            CVal o; o.kind = Kind::Float; o.width = args[1].width;
+            for (int i = 0; i < o.width; ++i) o.c[i] = args[1].c[i] < args[0].c[args[0].width == 1 ? 0 : i] ? 0.0 : 1.0;
+            return o;
+        }
+        if (name == "smoothstep") {
+            if (!arity(3) || args[2].kind != Kind::Float || args[2].matrix) return std::nullopt;
+            const bool scalarEdge = args[0].scalar() && args[1].scalar() && args[0].kind == Kind::Float && args[1].kind == Kind::Float;
+            const bool same = args[0].kind == Kind::Float && args[1].kind == Kind::Float && !args[0].matrix && !args[1].matrix &&
+                              args[0].width == args[2].width && args[1].width == args[2].width;
+            if (!scalarEdge && !same) return std::nullopt;
+            CVal o; o.kind = Kind::Float; o.width = args[2].width;
+            for (int i = 0; i < o.width; ++i) {
+                const double e0 = args[0].c[args[0].width == 1 ? 0 : i];
+                const double e1 = args[1].c[args[1].width == 1 ? 0 : i];
+                if (e1 == e0) return std::nullopt;
+                double t = (args[2].c[i] - e0) / (e1 - e0);
+                t = std::clamp(t, 0.0, 1.0);
+                o.c[i] = t * t * (3.0 - 2.0 * t);
+            }
+            return o;
+        }
+        if (name == "length" || name == "distance" || name == "dot") {
+            if (name == "length" && arity(1) && args[0].kind == Kind::Float && !args[0].matrix) {
+                double s = 0;
+                for (int i = 0; i < args[0].width; ++i) s += args[0].c[i] * args[0].c[i];
+                CVal o; o.kind = Kind::Float; o.c[0] = std::sqrt(s);
+                return o;
+            }
+            if ((name == "distance" || name == "dot") && arity(2) && args[0].kind == Kind::Float && args[1].kind == Kind::Float &&
+                !args[0].matrix && !args[1].matrix && args[0].width == args[1].width) {
+                double s = 0;
+                for (int i = 0; i < args[0].width; ++i) {
+                    const double d = name == "dot" ? args[0].c[i] * args[1].c[i] : args[0].c[i] - args[1].c[i];
+                    s += name == "dot" ? d : d * d;
+                }
+                CVal o; o.kind = Kind::Float; o.c[0] = name == "dot" ? s : std::sqrt(s);
+                return o;
+            }
+        }
+        return std::nullopt;
+    }
+    std::optional<CVal> withPostfix(CVal v) {
+        while (peek() == "." || peek() == "[") {
+            if (take(".")) {
+                const std::string sel = peek();
+                if (sel.empty() || !std::isalpha(static_cast<unsigned char>(sel[0]))) return std::nullopt;
+                ++at;
+                auto next = applySwizzle(v, sel);
+                if (!next) return std::nullopt;
+                v = *next;
+            } else {
+                ++at;
+                auto idx = constTernary();
+                if (!idx || !take("]")) return std::nullopt;
+                auto next = applyIndex(v, *idx);
+                if (!next) return std::nullopt;
+                v = *next;
+            }
+        }
+        return v;
+    }
+    std::vector<CVal> constArgs() {
+        std::vector<CVal> args;
+        if (!take("(")) return {};
+        if (take(")")) return args;
+        do {
+            auto a = constTernary();
+            if (!a) return {};
+            args.push_back(*a);
+        } while (take(","));
+        if (!take(")")) return {};
+        return args;
+    }
+    std::optional<CVal> constPrimary() {
         if (take("(")) {
-            auto v = constAdd();
+            auto v = constTernary();
             if (!v || !take(")")) return std::nullopt;
+            return withPostfix(*v);
+        }
+        if (take("true")) return CVal{Kind::Bool, 1, 0, {1}};
+        if (take("false")) return CVal{Kind::Bool, 1, 0, {0}};
+        const std::string tok = peek();
+        if (!tok.empty() && (std::isdigit(static_cast<unsigned char>(tok[0])) || tok[0] == '.')) {
+            const bool isFloat = tok.find('.') != std::string::npos || tok.find('e') != std::string::npos || tok.find('E') != std::string::npos;
+            char* end = nullptr;
+            if (!isFloat) {
+                errno = 0;
+                const long n = std::strtol(tok.c_str(), &end, 10);
+                if (!end || *end || end == tok.c_str() || errno == ERANGE) return std::nullopt;
+                ++at;
+                CVal v; v.kind = Kind::Int; v.c[0] = double(n);
+                return v;
+            }
+            const double n = std::strtod(tok.c_str(), &end);
+            if (!end || *end || !std::isfinite(n)) return std::nullopt;
+            ++at;
+            CVal v; v.kind = Kind::Float; v.c[0] = n;
             return v;
         }
-        const std::string tok = peek();
-        if (!tok.empty() && std::isdigit(static_cast<unsigned char>(tok[0])) &&
-            tok.find('.') == std::string::npos && tok.find('e') == std::string::npos && tok.find('E') == std::string::npos) {
-            errno = 0;
-            char* end = nullptr;
-            long v = std::strtol(tok.c_str(), &end, 10);
-            if (!end || *end || end == tok.c_str() || errno == ERANGE) return std::nullopt;
+        if ((typeName(tok) || structs.count(tok)) && at + 1 < tokens.size() && tokens[at + 1] == "(") {
+            Type tyBuilt = type();
+            auto args = constArgs();
+            // constArgs yields an empty vector for both `()` and a failed argument.
+            // A failed argument does not leave the cursor on the closing paren.
+            if (at == 0 || tokens[at - 1] != ")") return std::nullopt;
+            auto built = foldConstruct(tyBuilt, args);
+            if (!built) return std::nullopt;
+            return withPostfix(*built);
+        }
+        if (ppIdent(tok) && at + 1 < tokens.size() && tokens[at + 1] == "(") {
+            const bool derivCall = derivatives && (tok == "dFdx" || tok == "dFdy" || tok == "fwidth");
+            if (!builtinName(tok) && !derivCall) return std::nullopt;
             ++at;
-            return v;
+            const size_t before = at;
+            auto args = constArgs();
+            if (at == before || tokens[at - 1] != ")") return std::nullopt;
+            auto built = foldBuiltin(tok, args);
+            if (!built) return std::nullopt;
+            return withPostfix(*built);
         }
         if (ppIdent(tok) && !keyword(tok)) {
             auto id = findName(tok);
             if (!id) return std::nullopt;
-            auto it = constInts.find(*id);
-            if (it == constInts.end()) return std::nullopt;
+            auto it = constVals.find(*id);
+            if (it == constVals.end()) return std::nullopt;
             ++at;
-            return it->second;
+            return withPostfix(it->second);
         }
         return std::nullopt;
     }
-    std::optional<long> constMul() {
+    std::optional<CVal> constUnary() {
+        if (++constDepth > 64) return std::nullopt;
+        struct Guard { int& d; ~Guard() { --d; } } guard{constDepth};
+        if (take("!") || take("+") || take("-")) {
+            const bool neg = tokens[at - 1] == "-";
+            const bool lnot = tokens[at - 1] == "!";
+            auto v = constUnary();
+            if (!v) return std::nullopt;
+            if (lnot) {
+                if (!v->scalar() || v->kind != Kind::Bool) return std::nullopt;
+                v->c[0] = v->c[0] == 0.0 ? 1.0 : 0.0;
+                return v;
+            }
+            if (v->kind == Kind::Bool) return std::nullopt;
+            if (neg) for (int i = 0; i < v->width; ++i) v->c[i] = -v->c[i];
+            return v;
+        }
+        return constPrimary();
+    }
+    std::optional<CVal> constMul() {
         auto v = constUnary();
         if (!v) return std::nullopt;
         while (peek() == "*" || peek() == "/") {
-            const bool div = peek() == "/";
+            const std::string op = peek();
             ++at;
             auto r = constUnary();
             if (!r) return std::nullopt;
-            if (div) {
-                if (*r == 0 || (*v == std::numeric_limits<long>::min() && *r == -1)) return std::nullopt;
-                v = *v / *r;
-            } else v = long(static_cast<unsigned long long>(*v) * static_cast<unsigned long long>(*r));
+            v = foldBin(*v, *r, op);
+            if (!v) return std::nullopt;
         }
         return v;
     }
-    std::optional<long> constAdd() {
+    std::optional<CVal> constAdd() {
         auto v = constMul();
         if (!v) return std::nullopt;
         while (peek() == "+" || peek() == "-") {
-            const bool sub = peek() == "-";
+            const std::string op = peek();
             ++at;
             auto r = constMul();
             if (!r) return std::nullopt;
-            const auto a = static_cast<unsigned long long>(*v);
-            const auto b = static_cast<unsigned long long>(*r);
-            v = long(sub ? a - b : a + b);
+            v = foldBin(*v, *r, op);
+            if (!v) return std::nullopt;
         }
         return v;
     }
+    std::optional<CVal> constRel() {
+        auto v = constAdd();
+        if (!v) return std::nullopt;
+        while (peek() == "<" || peek() == ">" || peek() == "<=" || peek() == ">=") {
+            const std::string op = peek();
+            ++at;
+            auto r = constAdd();
+            if (!r || !v->scalar() || !r->scalar() || v->kind != r->kind || v->kind == Kind::Bool) return std::nullopt;
+            const bool b = op == "<" ? v->c[0] < r->c[0] : op == ">" ? v->c[0] > r->c[0] : op == "<=" ? v->c[0] <= r->c[0] : v->c[0] >= r->c[0];
+            v = CVal{Kind::Bool, 1, 0, {b ? 1.0 : 0.0}};
+        }
+        return v;
+    }
+    std::optional<CVal> constEq() {
+        auto v = constRel();
+        if (!v) return std::nullopt;
+        while (peek() == "==" || peek() == "!=") {
+            const bool ne = peek() == "!=";
+            ++at;
+            auto r = constRel();
+            if (!r || v->kind != r->kind || v->width != r->width || v->matrix != r->matrix) return std::nullopt;
+            bool eq = true;
+            for (int i = 0; i < v->width; ++i) if (v->c[i] != r->c[i]) eq = false;
+            v = CVal{Kind::Bool, 1, 0, {(eq != ne) ? 1.0 : 0.0}};
+        }
+        return v;
+    }
+    std::optional<CVal> constAnd() {
+        auto v = constEq();
+        if (!v) return std::nullopt;
+        while (take("&&")) {
+            auto r = constEq();
+            if (!r || !v->scalar() || !r->scalar() || v->kind != Kind::Bool || r->kind != Kind::Bool) return std::nullopt;
+            v->c[0] = (v->c[0] != 0.0 && r->c[0] != 0.0) ? 1.0 : 0.0;
+        }
+        return v;
+    }
+    std::optional<CVal> constXor() {
+        auto v = constAnd();
+        if (!v) return std::nullopt;
+        while (take("^^")) {
+            auto r = constAnd();
+            if (!r || !v->scalar() || !r->scalar() || v->kind != Kind::Bool || r->kind != Kind::Bool) return std::nullopt;
+            v->c[0] = ((v->c[0] != 0.0) != (r->c[0] != 0.0)) ? 1.0 : 0.0;
+        }
+        return v;
+    }
+    std::optional<CVal> constOr() {
+        auto v = constXor();
+        if (!v) return std::nullopt;
+        while (take("||")) {
+            auto r = constXor();
+            if (!r || !v->scalar() || !r->scalar() || v->kind != Kind::Bool || r->kind != Kind::Bool) return std::nullopt;
+            v->c[0] = (v->c[0] != 0.0 || r->c[0] != 0.0) ? 1.0 : 0.0;
+        }
+        return v;
+    }
+    std::optional<CVal> constTernary() {
+        auto c = constOr();
+        if (!c) return std::nullopt;
+        if (!take("?")) return c;
+        auto a = constTernary();
+        if (!a || !take(":")) return std::nullopt;
+        auto b = constTernary();
+        if (!b || !c->scalar() || c->kind != Kind::Bool || a->kind != b->kind || a->width != b->width || a->matrix != b->matrix) return std::nullopt;
+        return c->c[0] != 0.0 ? a : b;
+    }
     int arraySize() {
-        size_t saved = at;
-        auto k = constAdd();
-        if (!k || *k < 1 || *k > 32) { at = saved; fail("invalid array size"); }
-        return int(*k);
+        const size_t saved = at;
+        auto k = constTernary();
+        const double raw = k ? k->c[0] : 0.0;
+        const double truncated = std::trunc(raw);
+        // Compare the double before any integer cast. 1e20 and 2^63 do not fit in a long.
+        const bool integral = k && k->scalar() && k->kind == Kind::Int && std::isfinite(raw) &&
+                              truncated == raw && truncated >= 1.0 && truncated <= double(MaxSlots);
+        if (!integral) { at = saved; fail("invalid array size"); }
+        return int(truncated);
     }
     bool containsSampler(const Type& t) const {
         if (t.sampler) return true;
@@ -842,7 +1287,10 @@ struct Compiler {
                 field.name = fname; field.offset = offset; field.width = ft.width; field.count = count;
                 field.matrix = ft.matrix; field.sampler = ft.sampler; field.array = isArray; field.fields = ft.fields;
                 field.kind = ft.kind; field.cube = ft.cube;
-                offset += std::max(1, ft.width) * count;
+                const int span = checkedSpan(ft.width, count);
+                const int64_t next = int64_t(offset) + span;
+                if (next > int64_t(MaxSlots)) fail("shader register limit exceeded");
+                offset = int(next);
                 fields.push_back(std::move(field));
             } while (take(","));
             need(";");
@@ -895,7 +1343,7 @@ struct Compiler {
         if (dst.fragTag == 1) wroteFragColor = true;
         if (dst.fragTag == 2) wroteFragData = true;
         bool hit = dst.fragTag != 0;
-        if (dst.dynamic) {
+        if (dst.dynamic && dst.origin >= 0) {
             int span = dst.elemCount * std::max(1, dst.elemStride);
             if (dst.origin < p.output + 4 && dst.origin + span > p.output) hit = true;
         } else for (int s : dst.slots) if (s >= p.output && s < p.output + 4) hit = true;
@@ -917,7 +1365,7 @@ struct Compiler {
             if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) fail("duplicate destination swizzle");
             for (size_t j = 0; j < comps.size(); ++j) {
                 for (int i = 0; i < dst.elemCount; ++i) {
-                    int addr = dst.origin + i * dst.elemStride + comps[j];
+                    int addr = addrAdd(dst.origin, i * dst.elemStride + comps[j]);
                     int cond = emit(Op::Equal, dst.indexSlot, cst(float(i)));
                     int sel = emit(Op::Select, cond, src.slots[j], addr);
                     mov(addr, sel);
@@ -932,14 +1380,18 @@ struct Compiler {
     }
     Expression varRef(size_t index) {
         const Variable& v = p.variables[index];
-        Expression e; e.type = v.type; e.lvalue = !v.readOnly; e.direct = true; e.origin = v.slot;
+        Expression e; e.type = v.type; e.lvalue = !v.readOnly && !v.memory; e.direct = true;
+        e.origin = v.memory ? memEncode(v.slot) : v.slot;
         if (v.name == "gl_FragColor") e.fragTag = 1;
         if (v.name == "gl_FragData") e.fragTag = 2;
         if (v.array || v.count != 1) {
-            e.needsIndex = true; e.elemCount = v.count; e.elemStride = std::max(1, v.type.width); return e;
+            e.needsIndex = true; e.elemCount = v.count;
+            e.elemStride = v.type.sampler ? 1 : std::max(1, v.type.width);
+            return e;
         }
-        e.contig = true;
-        for (int i = 0; i < v.type.width; ++i) e.slots.push_back(v.slot + i);
+        e.contig = !v.memory;
+        const int n = v.type.sampler ? 1 : std::max(1, v.type.width);
+        for (int i = 0; i < n; ++i) e.slots.push_back(addrAdd(e.origin, i));
         return e;
     }
     Expression takeConst(const Expression& base, int index, Type elem, int stride) {
@@ -948,8 +1400,8 @@ struct Compiler {
         int n = elem.kind == Kind::Void ? 0 : std::max(1, elem.width);
         if (elem.sampler) n = 1;
         if (base.direct) {
-            o.direct = true; o.contig = true; o.origin = base.origin + index * stride;
-            for (int c = 0; c < n; ++c) o.slots.push_back(o.origin + c);
+            o.direct = true; o.contig = base.origin >= 0; o.origin = addrAdd(base.origin, index * stride);
+            for (int c = 0; c < n; ++c) o.slots.push_back(addrAdd(o.origin, c));
         } else {
             if (index * stride + n > int(base.slots.size())) fail("array index must be an in-range literal");
             for (int c = 0; c < n; ++c) o.slots.push_back(base.slots[size_t(index * stride + c)]);
@@ -960,6 +1412,23 @@ struct Compiler {
     Expression takeDynamic(const Expression& base, const Expression& idx, Type elem, int stride, int count) {
         if (elem.sampler) fail("sampler index must be a constant");
         if (!base.direct) fail("dynamic index requires an addressable value");
+        // A uniform array is memory. One load per component replaces the select
+        // chain, which allocated three registers per element per component and
+        // died on `bones[i] * pos` for a 45-element mat4.
+        if (base.origin < 0) {
+            int frozen = alloc(); mov(frozen, idx.slots[0]);
+            int n = std::max(1, elem.width);
+            std::vector<int> slots;
+            slots.reserve(size_t(n));
+            for (int c = 0; c < n; ++c) {
+                int dst = alloc();
+                p.code.push_back({Op::Load, dst, frozen, stride, count, 0.f, addrAdd(base.origin, c)});
+                slots.push_back(dst);
+            }
+            auto out = named(elem, std::move(slots), false);
+            out.fragTag = base.fragTag;
+            return out;
+        }
         int frozen = alloc(); mov(frozen, idx.slots[0]);
         int n = std::max(1, elem.width);
         Expression o; o.type = elem; o.lvalue = base.lvalue; o.dynamic = true; o.fragTag = base.fragTag;
@@ -1029,7 +1498,7 @@ struct Compiler {
             if (field->array || field->count != 1) {
                 Expression o; o.type = ft; o.lvalue = e.lvalue; o.fragTag = e.fragTag; o.needsIndex = true;
                 o.elemCount = field->count; o.elemStride = std::max(1, field->width);
-                if (e.direct) { o.direct = true; o.origin = e.origin + field->offset; }
+                if (e.direct) { o.direct = true; o.origin = addrAdd(e.origin, field->offset); }
                 else fail("array requires literal index");
                 return o;
             }
@@ -1044,7 +1513,7 @@ struct Compiler {
                 return o;
             }
             std::vector<int> slots;
-            if (e.direct) for (int c = 0; c < ft.width; ++c) slots.push_back(e.origin + field->offset + c);
+            if (e.direct) for (int c = 0; c < ft.width; ++c) slots.push_back(addrAdd(e.origin, field->offset + c));
             else {
                 if (field->offset + ft.width > int(e.slots.size())) fail("struct field out of range");
                 for (int c = 0; c < ft.width; ++c) slots.push_back(e.slots[size_t(field->offset + c)]);
@@ -1088,7 +1557,7 @@ struct Compiler {
                 }
             }
             if (component < 0 || component >= e.type.width) fail("swizzle component out of range");
-            slots.push_back(e.direct ? e.origin + component : e.slots[size_t(component)]);
+            slots.push_back(e.direct ? addrAdd(e.origin, component) : e.slots[size_t(component)]);
         }
         auto o = named(ty(e.type.kind, int(mask.size())), slots, e.lvalue); o.fragTag = e.fragTag; return o;
     }
@@ -1466,7 +1935,7 @@ struct Compiler {
             if (param.isArray) {
                 if (!args[i].direct) fail("array argument must be addressable");
                 int n = param.count * std::max(1, param.type.width);
-                if (param.qual != 1) for (int c = 0; c < n; ++c) mov(slot + c, args[i].origin + c);
+                if (param.qual != 1) for (int c = 0; c < n; ++c) mov(slot + c, addrAdd(args[i].origin, c));
                 if (param.qual != 0) outs.push_back({args[i], slot, n, true});
             } else if (param.qual != 1) {
                 rvalue(args[i]);
@@ -1495,11 +1964,11 @@ struct Compiler {
         for (auto& o : outs) {
             if (o.block) {
                 std::vector<int> src, dst;
-                for (int c = 0; c < o.n; ++c) { src.push_back(o.origin + c); dst.push_back(o.dst.origin + c); }
+                for (int c = 0; c < o.n; ++c) { src.push_back(addrAdd(o.origin, c)); dst.push_back(addrAdd(o.dst.origin, c)); }
                 assignSlots(dst, src);
             } else {
                 std::vector<int> slots;
-                for (int c = 0; c < o.n; ++c) slots.push_back(o.origin + c);
+                for (int c = 0; c < o.n; ++c) slots.push_back(addrAdd(o.origin, c));
                 store(o.dst, named(o.dst.type, slots, false));
             }
         }
@@ -1916,15 +2385,16 @@ struct Compiler {
                 if (storage != Storage::Local) fail("unsupported global initializer");
                 if (count != 1 || isArray) fail("unsupported array initializer");
                 const size_t varIndex = p.variables.size() - 1;
-                const bool foldable = q.isConst && t.kind == Kind::Int && t.width == 1 && !t.matrix && !t.isStruct() && !t.sampler;
+                const bool foldable = q.isConst && !isArray && count == 1 && !t.sampler && !t.isStruct();
                 size_t saved = at;
-                std::optional<long> folded = foldable ? constAdd() : std::nullopt;
-                const bool complete = folded && (peek() == "," || peek() == ";");
+                std::optional<CVal> folded = foldable ? constTernary() : std::nullopt;
+                const bool complete = folded && folded->kind == t.kind && folded->width == t.width && folded->matrix == t.matrix &&
+                                      (peek() == "," || peek() == ";");
                 at = saved;
                 Expression dst = named(t, {}, true); dst.lvalue = true; dst.direct = true; dst.origin = slot;
                 for (int n = 0; n < t.width; ++n) dst.slots.push_back(slot + n);
                 store(dst, assignment());
-                if (complete) constInts[varIndex] = *folded;
+                if (complete) constVals[varIndex] = *folded;
             } else if (q.isConst) fail("const requires initializer");
         } while (take(","));
         need(";");
@@ -2249,6 +2719,8 @@ struct Compiler {
         auto iconst = [&](const char* n, int v) {
             auto& var = declare(n, ty(Kind::Int, 1), Storage::Local, 1, true, false, false, true);
             p.code.push_back({Op::Constant, var.slot, 0, 0, 0, float(v), 0});
+            CVal c; c.kind = Kind::Int; c.c[0] = v;
+            constVals[p.variables.size() - 1] = c;
         };
         iconst("gl_MaxVertexAttribs", 16);
         iconst("gl_MaxVertexUniformVectors", 128);
@@ -2261,7 +2733,7 @@ struct Compiler {
     }
     void tokenize(const std::string& source) {
         if (source.size() > 65536) fail("shader source too large");
-        tokens = preprocessShader(source, p.vertex, derivatives);
+        tokens = preprocessShader(source, p.vertex, derivatives, warnings);
         if (tokens.size() > 65536) fail("shader source too large");
     }
     void run(const std::string& source) {
@@ -2305,13 +2777,181 @@ struct Compiler {
         popScope();
         if (wroteFragColor && wroteFragData) fail("cannot write both gl_FragColor and gl_FragData");
         if (!wroteOutput) fail("shader never writes stage output");
+        recycleRegisters();
+    }
+    // Operand fields that are slots. `count` is 1 for a use, or the width of a
+    // def that the interpreter treats as a contiguous base (texture writes four).
+    // Jump targets and Load's address immediate are not slots.
+    template <class Fn>
+    void eachSlot(Instruction& ins, Fn&& fn) {
+        auto use = [&](int& s) { fn(s, 1); };
+        auto def = [&](int& s, int n) { fn(s, n); };
+        switch (ins.op) {
+            case Op::Jump:
+            case Op::Discard:
+                return;
+            case Op::JumpIfFalse:
+                use(ins.a); return;
+            case Op::Constant:
+                def(ins.dst, 1); return;
+            case Op::Load:
+                def(ins.dst, 1); use(ins.a); return;
+            case Op::Texture:
+                def(ins.dst, 4); use(ins.a); use(ins.b); use(ins.c); return;
+            case Op::TextureCube:
+                def(ins.dst, 4); use(ins.a); use(ins.b); use(ins.c); use(ins.d); return;
+            case Op::Select:
+                def(ins.dst, 1); use(ins.a); use(ins.b); use(ins.c); return;
+            case Op::Add: case Op::Subtract: case Op::Multiply: case Op::Divide: case Op::IntDivide:
+            case Op::Pow: case Op::Atan2:
+            case Op::Less: case Op::LessEqual: case Op::Greater: case Op::GreaterEqual:
+            case Op::Equal: case Op::NotEqual:
+                def(ins.dst, 1); use(ins.a); use(ins.b); return;
+            default:
+                def(ins.dst, 1); use(ins.a); return;
+        }
+    }
+    int varFloats(const Variable& v) const {
+        const int w = v.type.sampler ? 1 : std::max(1, v.type.width);
+        return w * std::max(1, v.count);
+    }
+    // Pack virtual registers back into MaxSlots. Variables the host addresses keep
+    // their slots when those slots already fit, so a shader that never crossed
+    // MaxSlots is not rewritten. Locals that do not fit move into the spill buffer.
+    // Temps reuse registers whose last use has passed.
+    void recycleRegisters() {
+        if (p.slots <= MaxSlots) return;
+        const int virt = p.slots;
+        std::vector<int> phys(size_t(virt), -1);
+        std::vector<char> isVar(size_t(virt), 0);
+        std::vector<char> reserved(size_t(MaxSlots), 0);
+        struct Place { size_t index; int old; int n; bool host; };
+        std::vector<Place> relocate;
+        for (size_t vi = 0; vi < p.variables.size(); ++vi) {
+            Variable& v = p.variables[vi];
+            if (v.memory) continue;
+            const int n = varFloats(v);
+            if (n < 1 || v.slot < 0 || v.slot >= virt) continue;
+            const int nUse = std::min(n, virt - v.slot);
+            for (int i = 0; i < nUse; ++i) isVar[size_t(v.slot + i)] = 1;
+            if (v.slot + n <= MaxSlots) {
+                for (int i = 0; i < n; ++i) {
+                    phys[size_t(v.slot + i)] = v.slot + i;
+                    reserved[size_t(v.slot + i)] = 1;
+                }
+            } else {
+                const bool host = v.storage != Storage::Local;
+                relocate.push_back({vi, v.slot, n, host});
+            }
+        }
+        int spill = 0;
+        auto giveUp = [&]() {
+            if (crossedLimit) at = limitAt;
+            fail("shader register limit exceeded");
+        };
+        for (auto& pl : relocate) {
+            int hole = -1, run = 0;
+            for (int s = 0; s < MaxSlots && run != pl.n; ++s) {
+                if (!reserved[size_t(s)]) {
+                    if (run == 0) hole = s;
+                    ++run;
+                } else { run = 0; hole = -1; }
+            }
+            if (run != pl.n) hole = -1;
+            Variable& v = p.variables[pl.index];
+            if (hole >= 0) {
+                for (int i = 0; i < pl.n && pl.old + i < virt; ++i) phys[size_t(pl.old + i)] = hole + i;
+                for (int i = 0; i < pl.n; ++i) reserved[size_t(hole + i)] = 1;
+                v.slot = hole;
+                if (v.storage == Storage::Output && (v.name == "gl_Position" || v.name == "gl_FragColor")) p.output = hole;
+            } else if (pl.host) {
+                giveUp();
+            } else {
+                if (spill > (1 << 20) - pl.n) giveUp();
+                const int base = spill;
+                spill += pl.n;
+                for (int i = 0; i < pl.n && pl.old + i < virt; ++i) phys[size_t(pl.old + i)] = MaxSlots + base + i;
+                v.slot = MaxSlots + base;
+            }
+        }
+        std::vector<int> last(size_t(virt), -1);
+        for (int pc = 0; pc < int(p.code.size()); ++pc) {
+            eachSlot(p.code[size_t(pc)], [&](int& s, int count) {
+                if (s < 0) return;
+                for (int k = 0; k < count; ++k) {
+                    const int vs = s + k;
+                    if (vs >= 0 && vs < virt) last[size_t(vs)] = pc;
+                }
+            });
+        }
+        std::vector<char> freeReg(size_t(MaxSlots), 0);
+        for (int s = 0; s < MaxSlots; ++s) if (!reserved[size_t(s)]) freeReg[size_t(s)] = 1;
+        std::vector<std::vector<int>> releaseAt(p.code.size() + 1);
+        auto takeRegs = [&](int n) -> int {
+            if (n == 1) {
+                for (int s = 0; s < MaxSlots; ++s) if (freeReg[size_t(s)]) { freeReg[size_t(s)] = 0; return s; }
+                return -1;
+            }
+            int run = 0, start = -1;
+            for (int s = 0; s < MaxSlots; ++s) {
+                if (freeReg[size_t(s)]) {
+                    if (run == 0) start = s;
+                    if (++run == n) {
+                        for (int k = 0; k < n; ++k) freeReg[size_t(start + k)] = 0;
+                        return start;
+                    }
+                } else run = 0;
+            }
+            return -1;
+        };
+        auto takeSpill = [&](int n) {
+            if (spill > (1 << 20) - n) giveUp();
+            const int base = MaxSlots + spill;
+            spill += n;
+            return base;
+        };
+        auto ensure = [&](int s, int n, int pc) {
+            if (s < 0 || s >= virt || phys[size_t(s)] >= 0) return;
+            int got = takeRegs(n);
+            if (got < 0) got = takeSpill(n);
+            for (int k = 0; k < n && s + k < virt; ++k) {
+                phys[size_t(s + k)] = got + k;
+                if (got + k >= MaxSlots) continue; // spill temps are not reused
+                int lu = last[size_t(s + k)];
+                if (lu < pc) lu = pc;
+                releaseAt[size_t(lu + 1)].push_back(got + k);
+            }
+        };
+        for (int pc = 0; pc < int(p.code.size()); ++pc) {
+            for (int reg : releaseAt[size_t(pc)]) freeReg[size_t(reg)] = 1;
+            eachSlot(p.code[size_t(pc)], [&](int& s, int count) {
+                if (s < 0) return;
+                if (s >= virt) giveUp();
+                ensure(s, count, pc);
+                if (phys[size_t(s)] < 0) giveUp();
+                s = phys[size_t(s)];
+            });
+        }
+        int high = 0;
+        for (int s = 0; s < virt; ++s) if (phys[size_t(s)] >= 0 && phys[size_t(s)] < MaxSlots)
+            high = std::max(high, phys[size_t(s)] + 1);
+        p.slots = high;
+        p.spillCount = spill;
     }
 };
 } // namespace
 
 bool Program::compile(const std::string& source, bool isVertex) {
     *this = {}; vertex = isVertex;
-    try { Compiler{*this}.run(source); return true; }
+    try {
+        Compiler compiler{*this};
+        compiler.run(source);
+        for (const auto& w : compiler.warnings) {
+            if (!warnings.empty()) warnings.push_back('\n');
+            warnings += w;
+        }
+        return true;
+    }
     catch (const std::exception& e) { error = e.what(); code.clear(); return false; }
 }
 const Variable* Program::find(const std::string& name) const {
@@ -2321,30 +2961,58 @@ const Variable* Program::find(const std::string& name) const {
 void Program::initialize(Values& v) const { std::fill_n(v.begin(), slots, 0.0f); }
 
 namespace {
-void execOp(Values& v, const Instruction& i, Sample sample, void* context) {
+// Indirect is false for shaders with no uniform array and no spill. The reads
+// and writes below then compile to plain register indexing.
+template <bool Indirect>
+float readSlot(Values& v, const std::vector<float>& mem, const float* spill, int s) {
+    if constexpr (!Indirect) return v[size_t(s)];
+    if (s >= 0) {
+        if (s < MaxSlots) return v[size_t(s)];
+        return spill ? spill[size_t(s - MaxSlots)] : 0.f;
+    }
+    const int off = -1 - s;
+    if (off < 0 || size_t(off) >= mem.size()) return 0.f;
+    return mem[size_t(off)];
+}
+template <bool Indirect>
+void writeSlot(Values& v, float* spill, int s, float x) {
+    if constexpr (!Indirect) { v[size_t(s)] = x; return; }
+    if (s >= 0 && s < MaxSlots) v[size_t(s)] = x;
+    else if (s >= MaxSlots && spill) spill[size_t(s - MaxSlots)] = x;
+}
+template <bool Indirect>
+void execOp(Values& v, const std::vector<float>& mem, float* spill, const Instruction& i, Sample sample, void* context) {
+    auto rd = [&](int s) { return readSlot<Indirect>(v, mem, spill, s); };
+    auto wr = [&](int s, float x) { writeSlot<Indirect>(v, spill, s, x); };
     auto unitOf = [&](int slot) {
-        float u = v[slot];
+        float u = rd(slot);
         return std::isfinite(u) && u >= 0 && u < 8 ? int(u) : -1;
     };
     auto sampleAt = [&](int dst, int unitSlot, float s, float t) {
-        if (sample) sample(context, unitOf(unitSlot), s, t, &v[dst]);
-        else std::fill_n(&v[dst], 4, 0.0f);
+        if constexpr (!Indirect) {
+            if (sample) sample(context, unitOf(unitSlot), s, t, &v[size_t(dst)]);
+            else std::fill_n(&v[size_t(dst)], 4, 0.0f);
+            return;
+        }
+        float rgba[4] = {};
+        if (sample) sample(context, unitOf(unitSlot), s, t, rgba);
+        for (int k = 0; k < 4; ++k) wr(dst + k, rgba[k]);
     };
     switch (i.op) {
-        case Op::Constant: v[i.dst] = i.value; break;
-        case Op::Move: v[i.dst] = v[i.a]; break;
-        case Op::Add: v[i.dst] = v[i.a] + v[i.b]; break;
-        case Op::Subtract: v[i.dst] = v[i.a] - v[i.b]; break;
-        case Op::Multiply: v[i.dst] = v[i.a] * v[i.b]; break;
-        case Op::Divide: v[i.dst] = v[i.a] / v[i.b]; break;
+        case Op::Constant: wr(i.dst, i.value); break;
+        case Op::Move: wr(i.dst, rd(i.a)); break;
+        case Op::Add: wr(i.dst, rd(i.a) + rd(i.b)); break;
+        case Op::Subtract: wr(i.dst, rd(i.a) - rd(i.b)); break;
+        case Op::Multiply: wr(i.dst, rd(i.a) * rd(i.b)); break;
+        case Op::Divide: wr(i.dst, rd(i.a) / rd(i.b)); break;
         case Op::IntDivide: {
-            float d = v[i.b];
-            v[i.dst] = d == 0.f ? 0.f : std::trunc(v[i.a] / d);
+            float d = rd(i.b);
+            wr(i.dst, d == 0.f ? 0.f : std::trunc(rd(i.a) / d));
             break;
         }
-        case Op::Texture: sampleAt(i.dst, i.a, v[i.b], v[i.c]); break;
+        case Op::Texture: sampleAt(i.dst, i.a, rd(i.b), rd(i.c)); break;
         case Op::TextureCube: {
-            float x = v[i.b], y = v[i.c], z = v[i.d];
+            float x = rd(i.b), y = rd(i.c), z = rd(i.d);
             float ax = std::fabs(x), ay = std::fabs(y), az = std::fabs(z), sc, tc, ma;
             if (ax >= ay && ax >= az) { ma = ax; sc = x >= 0 ? -z : z; tc = -y; }
             else if (ay >= az) { ma = ay; sc = x; tc = y >= 0 ? z : -z; }
@@ -2354,35 +3022,49 @@ void execOp(Values& v, const Instruction& i, Sample sample, void* context) {
             sampleAt(i.dst, i.a, s, t);
             break;
         }
-        case Op::Select: v[i.dst] = v[i.a] != 0.f ? v[i.b] : v[i.c]; break;
-        case Op::Abs: v[i.dst] = std::fabs(v[i.a]); break;
-        case Op::Floor: v[i.dst] = std::floor(v[i.a]); break;
-        case Op::Ceil: v[i.dst] = std::ceil(v[i.a]); break;
-        case Op::Sqrt: v[i.dst] = v[i.a] > 0.f ? std::sqrt(v[i.a]) : 0.f; break;
-        case Op::InverseSqrt: v[i.dst] = v[i.a] > 0.f ? 1.f / std::sqrt(v[i.a]) : 0.f; break;
-        case Op::Pow: v[i.dst] = std::pow(v[i.a], v[i.b]); break;
-        case Op::Exp: v[i.dst] = std::exp(v[i.a]); break;
-        case Op::Log: v[i.dst] = v[i.a] > 0.f ? std::log(v[i.a]) : 0.f; break;
-        case Op::Exp2: v[i.dst] = std::exp2(v[i.a]); break;
-        case Op::Log2: v[i.dst] = v[i.a] > 0.f ? std::log2(v[i.a]) : 0.f; break;
-        case Op::Sin: v[i.dst] = std::sin(v[i.a]); break;
-        case Op::Cos: v[i.dst] = std::cos(v[i.a]); break;
-        case Op::Tan: v[i.dst] = std::tan(v[i.a]); break;
-        case Op::Asin: v[i.dst] = std::asin(v[i.a]); break;
-        case Op::Acos: v[i.dst] = std::acos(v[i.a]); break;
-        case Op::Atan: v[i.dst] = std::atan(v[i.a]); break;
-        case Op::Atan2: v[i.dst] = std::atan2(v[i.a], v[i.b]); break;
-        case Op::Less: v[i.dst] = v[i.a] < v[i.b] ? 1.f : 0.f; break;
-        case Op::LessEqual: v[i.dst] = v[i.a] <= v[i.b] ? 1.f : 0.f; break;
-        case Op::Greater: v[i.dst] = v[i.a] > v[i.b] ? 1.f : 0.f; break;
-        case Op::GreaterEqual: v[i.dst] = v[i.a] >= v[i.b] ? 1.f : 0.f; break;
-        case Op::Equal: v[i.dst] = v[i.a] == v[i.b] ? 1.f : 0.f; break;
-        case Op::NotEqual: v[i.dst] = v[i.a] != v[i.b] ? 1.f : 0.f; break;
-        case Op::Not: v[i.dst] = v[i.a] == 0.f ? 1.f : 0.f; break;
+        case Op::Select: wr(i.dst, rd(i.a) != 0.f ? rd(i.b) : rd(i.c)); break;
+        case Op::Abs: wr(i.dst, std::fabs(rd(i.a))); break;
+        case Op::Floor: wr(i.dst, std::floor(rd(i.a))); break;
+        case Op::Ceil: wr(i.dst, std::ceil(rd(i.a))); break;
+        case Op::Sqrt: wr(i.dst, rd(i.a) > 0.f ? std::sqrt(rd(i.a)) : 0.f); break;
+        case Op::InverseSqrt: wr(i.dst, rd(i.a) > 0.f ? 1.f / std::sqrt(rd(i.a)) : 0.f); break;
+        case Op::Pow: wr(i.dst, std::pow(rd(i.a), rd(i.b))); break;
+        case Op::Exp: wr(i.dst, std::exp(rd(i.a))); break;
+        case Op::Log: wr(i.dst, rd(i.a) > 0.f ? std::log(rd(i.a)) : 0.f); break;
+        case Op::Exp2: wr(i.dst, std::exp2(rd(i.a))); break;
+        case Op::Log2: wr(i.dst, rd(i.a) > 0.f ? std::log2(rd(i.a)) : 0.f); break;
+        case Op::Sin: wr(i.dst, std::sin(rd(i.a))); break;
+        case Op::Cos: wr(i.dst, std::cos(rd(i.a))); break;
+        case Op::Tan: wr(i.dst, std::tan(rd(i.a))); break;
+        case Op::Asin: wr(i.dst, std::asin(rd(i.a))); break;
+        case Op::Acos: wr(i.dst, std::acos(rd(i.a))); break;
+        case Op::Atan: wr(i.dst, std::atan(rd(i.a))); break;
+        case Op::Atan2: wr(i.dst, std::atan2(rd(i.a), rd(i.b))); break;
+        case Op::Less: wr(i.dst, rd(i.a) < rd(i.b) ? 1.f : 0.f); break;
+        case Op::LessEqual: wr(i.dst, rd(i.a) <= rd(i.b) ? 1.f : 0.f); break;
+        case Op::Greater: wr(i.dst, rd(i.a) > rd(i.b) ? 1.f : 0.f); break;
+        case Op::GreaterEqual: wr(i.dst, rd(i.a) >= rd(i.b) ? 1.f : 0.f); break;
+        case Op::Equal: wr(i.dst, rd(i.a) == rd(i.b) ? 1.f : 0.f); break;
+        case Op::NotEqual: wr(i.dst, rd(i.a) != rd(i.b) ? 1.f : 0.f); break;
+        case Op::Not: wr(i.dst, rd(i.a) == 0.f ? 1.f : 0.f); break;
         case Op::DFdx:
         case Op::DFdy:
-            v[i.dst] = 0.f;
+            wr(i.dst, 0.f);
             break;
+        case Op::Load: {
+            // Out-of-range indexes read element 0 and never write. Compare the
+            // float before casting: 1e20, -1e20 and 2^31 are not representable as int.
+            float iv = rd(i.a);
+            int idx = 0;
+            if (std::isfinite(iv)) {
+                const float truncated = std::trunc(iv);
+                if (truncated >= 0.f && truncated < float(i.c) && truncated <= float(std::numeric_limits<int>::max()))
+                    idx = int(truncated);
+            }
+            const int addr = i.d < 0 ? i.d - idx * i.b : i.d + idx * i.b;
+            wr(i.dst, rd(addr));
+            break;
+        }
         case Op::Jump:
         case Op::JumpIfFalse:
         case Op::Discard:
@@ -2392,6 +3074,9 @@ void execOp(Values& v, const Instruction& i, Sample sample, void* context) {
 } // namespace
 
 bool Program::execute(Values& v, Sample sample, void* context, int64_t* budget) const {
+    std::vector<float> spill;
+    if (spillCount > 0) spill.assign(size_t(spillCount), 0.f);
+    const bool indirect = !uniformMem.empty() || spillCount > 0;
     int64_t local = 1000000;
     int64_t* left = budget ? budget : &local;
     for (size_t pc = 0; pc < code.size();) {
@@ -2403,9 +3088,11 @@ bool Program::execute(Values& v, Sample sample, void* context, int64_t* budget) 
         const Instruction& i = code[pc];
         if (i.op == Op::Jump) { pc = size_t(i.a); continue; }
         if (i.op == Op::JumpIfFalse) {
-            if (v[i.a] == 0.f) { pc = size_t(i.b); continue; }
+            const float cond = indirect ? readSlot<true>(v, uniformMem, spill.data(), i.a) : v[size_t(i.a)];
+            if (cond == 0.f) { pc = size_t(i.b); continue; }
         } else if (i.op == Op::Discard) return false;
-        else execOp(v, i, sample, context);
+        else if (indirect) execOp<true>(v, uniformMem, spill.data(), i, sample, context);
+        else execOp<false>(v, uniformMem, nullptr, i, sample, context);
         ++pc;
     }
     return true;
@@ -2413,6 +3100,9 @@ bool Program::execute(Values& v, Sample sample, void* context, int64_t* budget) 
 
 bool Program::executeQuad(std::array<Values, 4>& lanes, Sample sample, void* context, int64_t* budget,
                           int activeMask, int& discardedMask) const {
+    std::array<std::vector<float>, 4> spills;
+    const bool indirect = !uniformMem.empty() || spillCount > 0;
+    if (spillCount > 0) for (auto& s : spills) s.assign(size_t(spillCount), 0.f);
     size_t pc[4] = {};
     bool live[4] = {};
     discardedMask = 0;
@@ -2441,7 +3131,12 @@ bool Program::executeQuad(std::array<Values, 4>& lanes, Sample sample, void* con
             for (int lane = 0; lane < 4; ++lane) if (mask & (1 << lane)) {
                 const int hi = ins.op == Op::DFdx ? (lane | 1) : (lane | 2);
                 const int lo = ins.op == Op::DFdx ? (lane & ~1) : (lane & ~2);
-                lanes[lane][ins.dst] = lanes[hi][ins.a] - lanes[lo][ins.a];
+                float delta;
+                if (!indirect) delta = lanes[hi][size_t(ins.a)] - lanes[lo][size_t(ins.a)];
+                else delta = readSlot<true>(lanes[hi], uniformMem, spills[hi].data(), ins.a) -
+                             readSlot<true>(lanes[lo], uniformMem, spills[lo].data(), ins.a);
+                if (!indirect) lanes[lane][size_t(ins.dst)] = delta;
+                else writeSlot<true>(lanes[lane], spills[lane].data(), ins.dst, delta);
                 ++pc[lane];
             }
             continue;
@@ -2459,13 +3154,16 @@ bool Program::executeQuad(std::array<Values, 4>& lanes, Sample sample, void* con
         }
         if (ins.op == Op::JumpIfFalse) {
             for (int lane = 0; lane < 4; ++lane) if (mask & (1 << lane)) {
-                if (lanes[lane][ins.a] == 0.f) pc[lane] = size_t(ins.b);
+                const float cond = indirect ? readSlot<true>(lanes[lane], uniformMem, spills[lane].data(), ins.a)
+                                            : lanes[lane][size_t(ins.a)];
+                if (cond == 0.f) pc[lane] = size_t(ins.b);
                 else ++pc[lane];
             }
             continue;
         }
         for (int lane = 0; lane < 4; ++lane) if (mask & (1 << lane)) {
-            execOp(lanes[lane], ins, sample, context);
+            if (indirect) execOp<true>(lanes[lane], uniformMem, spills[lane].data(), ins, sample, context);
+            else execOp<false>(lanes[lane], uniformMem, nullptr, ins, sample, context);
             ++pc[lane];
         }
     }

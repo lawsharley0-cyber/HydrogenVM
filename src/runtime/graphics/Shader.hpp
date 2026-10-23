@@ -13,8 +13,16 @@ namespace Hydrogen::Runtime::Shader {
 // qualifiers are accepted in any order and the invariant bit is stored on the variable.
 // Unsupported syntax fails compilation and never selects rendering by identifier name.
 // GL_OES_standard_derivatives (dFdx, dFdy, fwidth) is accepted when that extension
-// is enabled. The rasterizer evaluates those ops across 2x2 pixel quads.
-// Draws pass one shared instruction budget into execute(); exhausting it aborts the draw.
+// is enabled. `#extension name : warn` records a warning and still enables a
+// supported extension. The rasterizer evaluates those ops across 2x2 pixel quads.
+// Array sizes are integral constant expressions (literals, const values,
+// constructors, and constant-foldable built-ins) whose element count fits in MaxSlots.
+// Struct layouts use the same limit. The component total is computed in 64 bits
+// and rejected when it exceeds MaxSlots, so a nested array cannot wrap.
+// Uniform arrays live in uniformMem and are indexed with a load, so a palette does
+// not occupy one register per component. Temps past MaxSlots are recycled or spilled.
+// Shaders that fit keep the direct register path. Draws pass one shared instruction
+// budget into execute(); exhausting it aborts the draw.
 constexpr int MaxSlots = 2048;
 enum class Kind { Float, Int, Bool, Void };
 struct Type {
@@ -48,6 +56,8 @@ struct Variable {
     bool readOnly = false;
     bool array = false;
     bool invariant = false;
+    // Uniform arrays address uniformMem at `slot` instead of the register file.
+    bool memory = false;
 };
 enum class Op {
     Constant, Move, Add, Subtract, Multiply, Divide, Texture,
@@ -55,7 +65,10 @@ enum class Op {
     Abs, Floor, Ceil, Sqrt, InverseSqrt, Pow, Exp, Log, Exp2, Log2,
     Sin, Cos, Tan, Asin, Acos, Atan, Atan2,
     Less, LessEqual, Greater, GreaterEqual, Equal, NotEqual, Not,
-    IntDivide, TextureCube, DFdx, DFdy
+    IntDivide, TextureCube, DFdx, DFdy,
+    // dst = mem[addrAdd(d, trunc(reg[a]) * b)], clamped to element 0 when the
+    // index is out of range. b is the element stride and c is the element count.
+    Load
 };
 struct Instruction {
     Op op;
@@ -71,7 +84,16 @@ struct Program {
     std::vector<Variable> variables;
     std::vector<Instruction> code;
     std::string error;
+    // Non-fatal diagnostics, including `#extension name : warn`. Empty when the
+    // shader did not warn. Compilation can still succeed.
+    std::string warnings;
     bool usesDerivatives = false;
+    // Filled by the host for uniform arrays. Instruction operands below zero
+    // address it as -1 - offset. Empty when the shader has no uniform array,
+    // which keeps execute on the direct register path.
+    mutable std::vector<float> uniformMem;
+    // Per-invocation spill slots. Zero when every live value fits in MaxSlots.
+    int spillCount = 0;
     bool compile(const std::string& source, bool isVertex);
     void initialize(Values& values) const;
     // Returns false when a fragment discards, or when `budget` is exhausted.

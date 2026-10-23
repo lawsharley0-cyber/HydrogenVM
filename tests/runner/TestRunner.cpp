@@ -514,9 +514,9 @@ int runFullSubsystemTests() {
                   false,
                   [](Shader::Program& p, Shader::Values& v) {
                       if (auto* lights = p.find("lights")) {
-                          v[lights->slot + 3] = 2;          // lights[0].intensity
-                          v[lights->slot + 5] = 0.25f;      // lights[1].color.r
-                          v[lights->slot + 9] = 0.125f;     // lights[1].extra.z
+                          p.uniformMem[size_t(lights->slot + 3)] = 2;          // lights[0].intensity
+                          p.uniformMem[size_t(lights->slot + 5)] = 0.25f;      // lights[1].color.r
+                          p.uniformMem[size_t(lights->slot + 9)] = 0.125f;     // lights[1].extra.z
                       }
                       if (auto* anon = p.find("anon")) v[anon->slot] = 0.25f;
                   }, o) && near4(o, 0.5f, 0, 0, 0.375f),
@@ -529,9 +529,12 @@ int runFullSubsystemTests() {
                   "void main() { gl_FragColor = pal[0] + pal[1] + vec4(vf[1], 0.0, 0.0, 0.0) + (bones[1] * vec4(1.0, 0.0, 0.0, 0.0)); }",
                   false,
                   [](Shader::Program& p, Shader::Values& v) {
-                      if (auto* pal = p.find("pal")) { v[pal->slot] = 0.25f; v[pal->slot + 5] = 0.5f; }
+                      if (auto* pal = p.find("pal")) {
+                          p.uniformMem[size_t(pal->slot)] = 0.25f;
+                          p.uniformMem[size_t(pal->slot + 5)] = 0.5f;
+                      }
                       if (auto* vf = p.find("vf")) v[vf->slot + 1] = 0.125f;
-                      if (auto* bones = p.find("bones")) v[bones->slot + 16 + 2] = 0.125f; // column 0, row 2 of element 1
+                      if (auto* bones = p.find("bones")) p.uniformMem[size_t(bones->slot + 16 + 2)] = 0.125f; // column 0, row 2 of element 1
                   }, o) && near4(o, 0.375f, 0.5f, 0.125f, 0),
               "GLSL uniform arrays, varying arrays and matrix array elements");
         {
@@ -541,7 +544,7 @@ int runFullSubsystemTests() {
             Shader::Values values;
             if (compiled) {
                 program.initialize(values);
-                if (auto* tex = program.find("tex")) values[tex->slot + 1] = 4;
+                if (auto* tex = program.find("tex")) program.uniformMem[size_t(tex->slot + 1)] = 4;
                 program.execute(values, [](void* context, int unit, float u, float v, float* out) {
                     *static_cast<bool*>(context) = unit == 4 && u == 0.5f && v == 0.25f;
                     out[0] = 0.25f; out[1] = 0.5f; out[2] = 0.75f; out[3] = 1;
@@ -671,10 +674,243 @@ int runFullSubsystemTests() {
         check(runStage("#define N 4\nconst int K = 2;\nconst int A = 2, B = A * 3;\nfloat a[N * 3];\nfloat b[(K + 1)];\nfloat c[B];\n"
                        "void main() { a[11] = 0.25; b[2] = 0.5; c[5] = 0.75; gl_FragColor = vec4(a[11], b[2], c[5], 1.0); }",
                        false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0.75f, 1) &&
-                  shows("float a[40];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[2049];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
                   shows("float a[0];\nvoid main() { gl_FragColor = vec4(1.0); }", "invalid array size") &&
                   shows("void main() { int n = 3; float a[n]; gl_FragColor = vec4(a[0]); }", "invalid array size"),
               "GLSL accepts constant-expression array sizes and rejects the rest");
+        {
+            Shader::Program sized;
+            const char* bound = "uniform vec4 u[45];\nvoid main() { gl_FragColor = u[44]; }";
+            const bool literal = sized.compile(bound, false);
+            const auto* uniform = literal ? sized.find("u") : nullptr;
+            if (!literal) std::printf("    vec4 u[45] rejected: %s\n", sized.error.c_str());
+            Shader::Program nonconst;
+            const char* expr = "void main() { int n = 3; float a[45 * n]; gl_FragColor = vec4(a[0]); }";
+            const bool rejected = !nonconst.compile(expr, false) && nonconst.error.find("invalid array size") != std::string::npos &&
+                                  nonconst.error.find("('45')") != std::string::npos;
+            if (!rejected) std::printf("    expected token '45', got: %s\n", nonconst.error.c_str());
+            check(literal && uniform && uniform->count == 45 && rejected,
+                  "GLSL quotes a non-constant size's first token and accepts a literal bound of 45");
+        }
+        check(runStage(
+                  "const float F = -4.9;\n"
+                  "const int N = int(abs(-4.0));\n"
+                  "const int A = abs(-2);\n"
+                  "const int B = A + int(min(3.0, max(1.0, 4.0)));\n"
+                  "const int C = int(floor(abs(F)));\n"
+                  "const int D = clamp(int(ceil(3.2)), 1, sign(-1) * -8);\n"
+                  "const int E = int(mod(9.0, 5.0));\n"
+                  "const int G = int(vec4(4.8, 0.0, 0.0, 1.0).x);\n"
+                  "const int H = int(abs(vec2(-4.0, 1.0)).x);\n"
+                  "const int I = gl_MaxDrawBuffers + 3;\n"
+                  "uniform vec4 u[45];\n"
+                  "float a[int(4.0)];\nfloat b[N];\nfloat c[B];\nfloat d[C];\nfloat e[D];\nfloat f[E];\nfloat g[G];\nfloat h[H];\nfloat i[I];\n"
+                  "void main() { a[3] = 0.25; b[3] = u[44].x; c[4] = 0.5; d[3] = 0.75; e[3] = 0.125; f[3] = 1.0; h[3] = 0.25; g[3] = h[3]; i[3] = 0.25;\n"
+                  "gl_FragColor = vec4(a[3] + i[3], b[3], c[4] + e[3], d[3] + g[3]); }\n",
+                  false,
+                  [](Shader::Program& p, Shader::Values& v) {
+                      if (auto* u = p.find("u")) p.uniformMem[size_t(u->slot + 44 * 4)] = 0.5f;
+                  },
+                  o) && near4(o, 0.5f, 0.5f, 0.625f, 1.0f) &&
+                  shows("float a[abs(-4.0)];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[4.0];\nvoid main() { gl_FragColor = vec4(1.0); }", "invalid array size") &&
+                  shows("float f() { return 4.0; }\nfloat a[int(f())];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("uniform int u;\nfloat a[u];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size"),
+              "GLSL folds constructors, constant builtins and chained consts into array sizes");
+        check(shows("float a[int(1e20)];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[int(-1e20)];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[9223372036854775807];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[int(9223372036854775807.0)];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[int(vec4(1.0, 2.0, 3.0, 4.0)[int(1e20)])];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("float a[int(vec4(1.0)[int(-1e20)])];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("const int i = int(mat2(1.0)[int(2147483648.0)].x);\nfloat a[i];\nvoid main() { gl_FragColor = vec4(a[0]); }", "invalid array size") &&
+                  shows("struct C { float x[2048]; };\nstruct B { C c[2048]; };\nstruct A { B b[2048]; };\nA a;\n"
+                        "void main() { gl_FragColor = vec4(a.b[0].c[0].x[0]); }", "shader register limit exceeded") &&
+                  shows("struct C { float x[2048]; };\nstruct B { C c[2048]; };\nB b[512];\n"
+                        "void main() { gl_FragColor = vec4(b[0].c[0].x[0]); }", "shader register limit exceeded") &&
+                  shows("struct C { float x[2048]; float extra; };\nvoid main() { gl_FragColor = vec4(1.0); }", "shader register limit exceeded") &&
+                  runStage("struct C { float x[2048]; };\nvoid main() { gl_FragColor = vec4(1.0); }", false, [](auto&, auto&) {}, o) &&
+                  near4(o, 1, 1, 1, 1) &&
+                  runStage("const int N = int(vec4(4.0, 1.0, 2.0, 3.0)[0]);\nfloat a[N];\nvoid main() { a[3] = 0.25; gl_FragColor = vec4(a[3]); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.25f, 0.25f, 0.25f) &&
+                  runStage("struct S { float x; float y; };\nS s;\nvoid main() { s.x = 0.25; s.y = 0.5; gl_FragColor = vec4(s.x, s.y, 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0, 1),
+              "GLSL rejects out-of-range constant sizes and struct layouts that overflow the register file");
+        // Integer literals are stored as float32. 2147483647 rounds to 2147483648,
+        // which does not fit in int. The compile must reject that index instead of
+        // casting first (undefined, and UBSan aborts).
+        check(shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[2147483647]); }", "array index must be an in-range literal") &&
+                  shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[2147483648]); }", "array index must be an in-range literal") &&
+                  shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[9223372036854775807]); }", "array index must be an in-range literal") &&
+                  shows("void main() { vec4 v = vec4(1.0); gl_FragColor = vec4(v[2147483647]); }", "array index must be an in-range literal") &&
+                  shows("void main() { ivec4 v = ivec4(1, 2, 3, 4); gl_FragColor = vec4(float(v[2147483647])); }", "array index must be an in-range literal") &&
+                  shows("void main() { mat2 m = mat2(1.0); gl_FragColor = vec4(m[2147483647]); }", "array index must be an in-range literal") &&
+                  shows("struct S { float x[4]; };\nvoid main() { S s; gl_FragColor = vec4(s.x[2147483647]); }", "array index must be an in-range literal") &&
+                  shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[4]); }", "array index must be an in-range literal") &&
+                  shows("void main() { vec4 v = vec4(1.0); gl_FragColor = vec4(v[5]); }", "array index must be an in-range literal") &&
+                  shows("void main() { mat2 m = mat2(1.0); gl_FragColor = m[2]; }", "array index must be an in-range literal") &&
+                  runStage("float a[4];\nvoid main() { a[0] = 0.25; a[3] = 0.5; gl_FragColor = vec4(a[0], a[3], 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 0.25f, 0.5f, 0, 1) &&
+                  runStage("void main() { vec4 v = vec4(1.0, 2.0, 3.0, 4.0); mat2 m = mat2(1.0, 2.0, 3.0, 4.0); gl_FragColor = vec4(v[2], m[1].x, m[1].y, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 3, 3, 4, 1),
+              "GLSL rejects out-of-range constant indexes, including float32 literals that do not fit in int");
+        {
+            Shader::Program warned;
+            const bool ok = warned.compile(
+                "#extension GL_OES_foo : warn\n#extension GL_OES_standard_derivatives : warn\n"
+                "void main() { gl_FragColor = vec4(dFdx(1.0)); }\n",
+                false);
+            if (!ok) std::printf("    extension warn failed: %s\n", warned.error.c_str());
+            const bool saw = warned.warnings.find("warning") != std::string::npos &&
+                             warned.warnings.find("GL_OES_foo") != std::string::npos &&
+                             warned.warnings.find("GL_OES_standard_derivatives") != std::string::npos;
+            if (!saw) std::printf("    expected extension warnings, got: %s\n", warned.warnings.c_str());
+            bool ran = false;
+            if (ok) {
+                Shader::Values values;
+                warned.initialize(values);
+                warned.execute(values);
+                for (int c = 0; c < 4; ++c) o[c] = values[warned.output + c];
+                ran = near4(o, 0, 0, 0, 0);
+            }
+            check(ok && ran && saw, "GLSL #extension : warn warns and still enables a supported extension");
+        }
+        {
+            // Baseline instruction counts. Shaders that fit must keep this stream:
+            // uniform arrays change where the data lives, not how many ops a constant
+            // index compiles to, and a shader with no uniform array stays on the
+            // direct register path.
+            Shader::Program simple, pal;
+            const bool simpleOk = simple.compile("void main() { gl_FragColor = vec4(0.25); }", false);
+            const bool palOk = pal.compile("uniform vec4 pal[2];\nvoid main() { gl_FragColor = pal[0] + pal[1]; }", false);
+            if (!simpleOk || !palOk)
+                std::printf("    baseline compile failed: %s | %s\n", simple.error.c_str(), pal.error.c_str());
+            check(simpleOk && palOk && simple.code.size() == 21 && pal.code.size() == 22 && simple.uniformMem.empty() &&
+                      simple.spillCount == 0,
+                  "GLSL shaders that fit keep their instruction count");
+        }
+        {
+            const char* skin =
+                "uniform mat4 bones[45];\n"
+                "uniform vec4 idx;\n"
+                "uniform vec4 wgt;\n"
+                "void main() {\n"
+                "  vec4 p = vec4(0.0);\n"
+                "  p = p + (bones[int(idx.x)] * vec4(1.0, 0.0, 0.0, 1.0)) * wgt.x;\n"
+                "  p = p + (bones[int(idx.y)] * vec4(1.0, 0.0, 0.0, 1.0)) * wgt.y;\n"
+                "  gl_FragColor = p;\n"
+                "}\n";
+            Shader::Program program;
+            const bool compiled = program.compile(skin, false);
+            if (!compiled) std::printf("    skinning compile failed: %s\n", program.error.c_str());
+            auto* bones = compiled ? program.find("bones") : nullptr;
+            auto* idx = compiled ? program.find("idx") : nullptr;
+            auto* wgt = compiled ? program.find("wgt") : nullptr;
+            bool ran = false;
+            if (compiled && bones && bones->memory && idx && wgt && int(program.uniformMem.size()) >= bones->slot + 45 * 16) {
+                auto putMat = [&](int element, int col, int row, float value) {
+                    program.uniformMem[size_t(bones->slot + element * 16 + col * 4 + row)] = value;
+                };
+                // bones[3] column0 = (0.5, 0, 0, 0), column3 = (0, 0, 0, 1) so M * (1,0,0,1) = (0.5, 0, 0, 1)
+                putMat(3, 0, 0, 0.5f); putMat(3, 1, 1, 1.f); putMat(3, 2, 2, 1.f); putMat(3, 3, 3, 1.f);
+                // bones[10] column0 = (0, 0.25, 0, 0), column3 = (0, 0, 0, 1) so M * (1,0,0,1) = (0, 0.25, 0, 1)
+                putMat(10, 0, 1, 0.25f); putMat(10, 1, 1, 1.f); putMat(10, 2, 2, 1.f); putMat(10, 3, 3, 1.f);
+                Shader::Values values;
+                program.initialize(values);
+                values[idx->slot] = 3.f; values[idx->slot + 1] = 10.f;
+                values[wgt->slot] = 0.5f; values[wgt->slot + 1] = 0.5f;
+                ran = program.execute(values);
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            // Four select-chains over mat4[45] are thousands of instructions; a load per
+            // component stays well under that.
+            const bool compact = compiled && program.code.size() < 800;
+            if (compiled && !compact) std::printf("    skinning emitted %zu instructions\n", program.code.size());
+            if (ran && !near4(o, 0.25f, 0.125f, 0.f, 1.f))
+                std::printf("    skinning color %g %g %g %g\n", o[0], o[1], o[2], o[3]);
+            check(compiled && bones && bones->memory && bones->count == 45 && compact && ran && near4(o, 0.25f, 0.125f, 0.f, 1.f),
+                  "GLSL skinning indexes a 45-element mat4 uniform array without blowing the register file");
+        }
+        {
+            std::string src = "void main() { float x = 0.0;\n";
+            for (int n = 0; n < 1500; ++n) src += "x = x + 1.0;\n";
+            src += "gl_FragColor = vec4(x); }";
+            Shader::Program program;
+            const bool compiled = program.compile(src, false);
+            if (!compiled) std::printf("    recycled adds failed: %s\n", program.error.c_str());
+            bool ran = false;
+            if (compiled) {
+                Shader::Values values;
+                program.initialize(values);
+                ran = program.execute(values) && program.spillCount == 0;
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            check(compiled && ran && near4(o, 1500.f, 1500.f, 1500.f, 1500.f),
+                  "GLSL recycles temps so a long straight-line shader stays inside the register file");
+        }
+        {
+            const char* src =
+                "void main() {\n"
+                "  float a[1800];\n"
+                "  float b[1800];\n"
+                "  a[0] = 0.25;\n"
+                "  b[1799] = 0.5;\n"
+                "  int i = 4;\n"
+                "  b[i] = 0.125;\n"
+                "  gl_FragColor = vec4(a[0] + b[1799], b[i], 0.0, 1.0);\n"
+                "}\n";
+            Shader::Program program;
+            const bool compiled = program.compile(src, false);
+            if (!compiled) std::printf("    spilled locals failed: %s\n", program.error.c_str());
+            bool ran = false;
+            if (compiled) {
+                Shader::Values values;
+                program.initialize(values);
+                ran = program.execute(values) && program.spillCount > 0;
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            if (compiled && !ran)
+                std::printf("    spill count %d color %g %g %g %g\n", program.spillCount, o[0], o[1], o[2], o[3]);
+            check(compiled && ran && near4(o, 0.75f, 0.125f, 0.f, 1.f),
+                  "GLSL spills local arrays that do not fit beside each other in the register file");
+        }
+        {
+            const char* src =
+                "uniform vec4 pal[2];\n"
+                "void main() {\n"
+                "  vec4 huge = pal[int(1e20)];\n"
+                "  vec4 neg = pal[int(-1e20)];\n"
+                "  vec4 wide = pal[int(2147483648.0)];\n"
+                "  vec4 second = pal[1];\n"
+                "  float a[4];\n"
+                "  a[0] = 0.25; a[1] = 0.5; a[2] = 0.75; a[3] = 1.0;\n"
+                "  a[int(1e20)] = 0.125;\n"
+                "  a[int(-1e20)] = 0.125;\n"
+                "  gl_FragColor = vec4(huge.x, neg.y + wide.z, second.x, a[0] + a[1]);\n"
+                "}\n";
+            Shader::Program program;
+            const bool compiled = program.compile(src, false);
+            if (!compiled) std::printf("    out-of-range index failed: %s\n", program.error.c_str());
+            bool ran = false;
+            if (compiled) {
+                auto* pal = program.find("pal");
+                if (pal && pal->memory && int(program.uniformMem.size()) >= pal->slot + 8) {
+                    program.uniformMem[size_t(pal->slot + 0)] = 0.25f;
+                    program.uniformMem[size_t(pal->slot + 1)] = 0.5f;
+                    program.uniformMem[size_t(pal->slot + 2)] = 0.75f;
+                    program.uniformMem[size_t(pal->slot + 3)] = 1.f;
+                    program.uniformMem[size_t(pal->slot + 4)] = 0.125f;
+                }
+                Shader::Values values;
+                program.initialize(values);
+                ran = program.execute(values);
+                for (int c = 0; c < 4; ++c) o[c] = values[program.output + c];
+            }
+            if (compiled && ran && !near4(o, 0.25f, 1.25f, 0.125f, 0.75f))
+                std::printf("    out-of-range index color %g %g %g %g\n", o[0], o[1], o[2], o[3]);
+            check(compiled && ran && near4(o, 0.25f, 1.25f, 0.125f, 0.75f),
+                  "GLSL out-of-range dynamic indexes read element 0 and write nothing");
+        }
         check(runStage("#extension GL_OES_standard_derivatives : require\nvoid main() { gl_FragColor = vec4(dFdx(1.0)); }",
                        false, [](auto&, auto&) {}, o) && near4(o, 0, 0, 0, 0) &&
                   shows("void main() { gl_FragColor = vec4(dFdx(1.0)); }", "unknown variable/function") &&
@@ -1629,6 +1865,73 @@ int runFullSubsystemTests() {
                   proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
                   proc.mem().read<uint8_t>(idsAddr + 26) == 255 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
               "GLES2 dFdx/dFdy/fwidth use 2x2 quads and advertise GL_OES_standard_derivatives");
+
+        uint32_t warnFs = shader(0x8B30, "#extension GL_OES_foo : warn\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+        callGL("_glGetShaderiv", {warnFs, 0x8B81, idsAddr + 36});
+        const bool warnCompiled = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glGetShaderiv", {warnFs, 0x8B84, idsAddr + 40});
+        const int32_t warnLen = proc.mem().read<int32_t>(idsAddr + 40);
+        const uint32_t warnLog = proc.heap().allocZeroed(256);
+        callGL("_glGetShaderInfoLog", {warnFs, 256, 0, warnLog});
+        std::string warnText;
+        for (int n = 0; n < 255; ++n) {
+            char ch = char(proc.mem().read<uint8_t>(warnLog + uint32_t(n)));
+            if (!ch) break;
+            warnText.push_back(ch);
+        }
+        uint32_t boneVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
+        uint32_t boneFs = shader(0x8B30,
+            "const int N = int(abs(-4.0));\nconst int Bones = 41 + N;\nuniform vec4 u[Bones];\n"
+            "void main() { gl_FragColor = u[44]; }");
+        uint32_t boneProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {boneProg, boneVs});
+        callGL("_glAttachShader", {boneProg, boneFs});
+        callGL("_glBindAttribLocation", {boneProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {boneProg});
+        callGL("_glGetProgramiv", {boneProg, 0x8B82, idsAddr + 36});
+        const bool boneLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {boneProg});
+        const int32_t boneLoc = int32_t(callGL("_glGetUniformLocation", {boneProg, proc.allocCString("u[44]")}));
+        callGL("_glUniform4f", {uint32_t(boneLoc), UIKit::fbits(1.0f), UIKit::fbits(0.0f), UIKit::fbits(0.0f), UIKit::fbits(1.0f)});
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(warnCompiled && warnLen > 1 && warnText.find("warning") != std::string::npos &&
+                  warnText.find("GL_OES_foo") != std::string::npos && boneLinked && boneLoc >= 0 &&
+                  proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 0 &&
+                  proc.mem().read<uint8_t>(idsAddr + 26) == 0 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 warns on #extension : warn and draws a uniform vec4 array of size 45");
+
+        uint32_t skinVs = shader(0x8B31,
+            "attribute vec4 a_position;\nuniform mat4 bones[45];\nuniform int bone;\n"
+            "void main() { gl_Position = bones[bone] * a_position; }\n");
+        uint32_t skinFs = shader(0x8B30, "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }\n");
+        uint32_t skinProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {skinProg, skinVs});
+        callGL("_glAttachShader", {skinProg, skinFs});
+        callGL("_glBindAttribLocation", {skinProg, 0, proc.allocCString("a_position")});
+        callGL("_glLinkProgram", {skinProg});
+        callGL("_glGetProgramiv", {skinProg, 0x8B82, idsAddr + 36});
+        const bool skinLinked = proc.mem().read<int32_t>(idsAddr + 36) == 1;
+        callGL("_glUseProgram", {skinProg});
+        const int32_t skinBone = int32_t(callGL("_glGetUniformLocation", {skinProg, proc.allocCString("bone")}));
+        const int32_t skinMat = int32_t(callGL("_glGetUniformLocation", {skinProg, proc.allocCString("bones[44]")}));
+        const float ident[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const uint32_t identPtr = proc.heap().alloc(sizeof ident);
+        proc.mem().copyIn(identPtr, ident, sizeof ident);
+        callGL("_glUniform1i", {uint32_t(skinBone), 44});
+        callGL("_glUniformMatrix4fv", {uint32_t(skinMat), 1, 0, identPtr});
+        callGL("_glClearColor", {UIKit::fbits(0.0f), UIKit::fbits(0.0f), UIKit::fbits(1.0f), UIKit::fbits(1.0f)});
+        callGL("_glClear", {0x00004000});
+        callGL("_glBufferData", {0x8892, sizeof cover, coverPtr, 0x88E4});
+        callGL("_glVertexAttribPointer", {0, 2, 0x1406, 0, 0, 0});
+        callGL("_glDrawArrays", {0x0004, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(skinLinked && skinBone >= 0 && skinMat >= 0 &&
+                  proc.mem().read<uint8_t>(idsAddr + 24) == 255 && proc.mem().read<uint8_t>(idsAddr + 25) == 0 &&
+                  proc.mem().read<uint8_t>(idsAddr + 26) == 0 && proc.mem().read<uint8_t>(idsAddr + 27) == 255,
+              "GLES2 draws a skinned triangle from uniform mat4 bones[45]");
 
         uint32_t loopVs = shader(0x8B31, "attribute vec4 a_position;\nvoid main() { gl_Position = a_position; }");
         uint32_t loopFs = shader(0x8B30, "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); for(;;) {} }");
