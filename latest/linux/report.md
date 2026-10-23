@@ -1,85 +1,43 @@
-# HydrogenVM report — 69e677d
+# HydrogenVM report — d0d945c
 
-2026-10-23T20:27:19+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-23T20:26:58+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
 
-**1 test(s) failed.**
+**All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 113.5s |
-| cpu | 15 | 0 | 0 | 0.5s |
-| ios | 5 | 1 | 0 | 1.2s |
-| bench | 5 | 0 | 0 | 22.6s |
+| build | 1 | 0 | 0 | 219.8s |
+| cpu | 15 | 0 | 0 | 0.7s |
+| ios | 6 | 0 | 0 | 2.0s |
+| bench | 5 | 0 | 0 | 24.6s |
 
 ## Speed
 
-CoreMark **3157.9** iterations/s (1068.8 guest MIPS)
+CoreMark **1701.8** iterations/s (572.7 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **219.3%** | 1316 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **164.5%** | 1316 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **131.6%** | 1053 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **69.4%** | 902 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **118.2%** | 709 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **88.6%** | 709 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **70.9%** | 567 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.4%** | 486 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 860 MIPS, ctests_arm 945 MIPS, ftests_vfp_thumb_softfp 939 MIPS, ftests_neon_thumb 862 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 469 MIPS, ctests_arm 504 MIPS, ftests_vfp_thumb_softfp 438 MIPS, ftests_neon_thumb 420 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
 | CTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.01s | 61 | 0.21 ms | 4.03 ms | 0 |
+| FoundationTest | 0.64s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.02s | 61 | 0.49 ms | 10.70 ms | 0 |
 
-## Problems (30)
-
-### Failures (1)
-
-- **ios / FoundationTest**
-
-  ```
-  build failed:
-                        ^~~~~~~~~~~~~~~~~
-  main.m:170:18: error: no visible @interface for 'NSMutableArray' declares the selector 'removeObjectsAtIndexes:'
-    170 |         [maIndex removeObjectsAtIndexes:[NSIndexSet indexSetWithIndex:10]];
-        |          ~~~~~~~ ^~~~~~~~~~~~~~~~~~~~~~
-  main.m:177:12: error: no visible @interface for 'NSMutableArray' declares the selector 'insertObjects:atIndexes:'
-    177 |     [maIns insertObjects:@[@"X", @"Y"] atIndexes:is13];
-        |      ~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  main.m:182:16: error: no visible @interface for 'NSMutableArray' declares the selector 'insertObjects:atIndexes:'
-    182 |         [maIns insertObjects:@[@"X"] atIndexes:is13];
-        |          ~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  main.m:190:60: error: no known class method for selector 'indexSetWithIndex:'
-    190 |         [maIns insertObjects:@[@"X"] atIndexes:[NSIndexSet indexSetWithIndex:100]];
-        |                                                            ^~~~~~~~~~~~~~~~~
-  main.m:190:16: error: no visible @interface for 'NSMutableArray' declares the selector 'insertObjects:atIndexes:'
-    190 |         [maIns insertObjects:@[@"X"] atIndexes:[NSIndexSet indexSetWithIndex:100]];
-        |          ~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  main.m:197:13: error: no visible @interface for 'NSMutableArray' declares the selector 'replaceObjectsAtIndexes:withObjects:'
-    197 |     [maRepl replaceObjectsAtIndexes:is13 withObjects:@[@"X", @"Y"]];
-        |      ~~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  main.m:202:17: error: no visible @interface for 'NSMutableArray' declares the selector 'replaceObjectsAtIndexes:withObjects:'
-    202 |         [maRepl replaceObjectsAtIndexes:is13 withObjects:@[@"X"]];
-        |          ~~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  main.m:210:53: error: no known class method for selector 'indexSetWithIndex:'
-    210 |         [maRepl replaceObjectsAtIndexes:[NSIndexSet indexSetWithIndex:10] withObjects:@[@"X"]];
-        |                                                     ^~~~~~~~~~~~~~~~~
-  main.m:210:17: error: no visible @interface for 'NSMutableArray' declares the selector 'replaceObjectsAtIndexes:withObjects:'
-    210 |         [maRepl replaceObjectsAtIndexes:[NSIndexSet indexSetWithIndex:10] withObjects:@[@"X"]];
-        |          ~~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  main.m:217:33: error: no visible @interface for 'NSArray' declares the selector 'indexesOfObjectsPassingTest:'
-    217 |     NSIndexSet *passed = [words indexesOfObjectsPassingTest:^BOOL(NSString *obj, NSUInteger idx, BOOL *stop) {
-        |                           ~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~
-  main.m:223:34: error: no visible @interface for 'NSArray' declares the selector 'indexesOfObjectsPassingTest:'
-    223 |     NSIndexSet *stopped = [words indexesOfObjectsPassingTest:^BOOL(NSString *obj, NSUInteger idx, BOOL *stop) {
-        |                            ~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~
-  17 errors generated.
-  ```
+## Problems (29)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 69.4% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 37.4% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (28)
 
