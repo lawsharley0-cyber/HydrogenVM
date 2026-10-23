@@ -154,6 +154,7 @@ uint32_t c_className(Ctx& x, Class c) { return c ? x.proc.internCString(rt(x).cl
 Class c_superclass(Ctx& x, Class c) { return rt(x).superclass(c); }
 bool c_isMeta(Ctx& x, Class c) { return rt(x).isMeta(c); }
 uint32_t c_instanceSize(Ctx& x, Class c) { const ClassInfo* ci = rt(x).info(c); return ci ? ci->instanceSize : 0; }
+uint32_t c_getIvarLayout(Ctx&, Class) { return 0; }
 Class o_getClass(Ctx& x, id o) { return rt(x).classOf(o); }
 Class o_setClass(Ctx& x, id o, Class c) { const Class old = rt(x).classOf(o); if (o) x.mem.write<uint32_t>(o, c); return old; }
 uint32_t o_getClassName(Ctx& x, id o) { return x.proc.internCString(o ? rt(x).objectClassName(o) : "nil"); }
@@ -466,6 +467,7 @@ void registerObjCApi(Process& p, Runtime& r) {
     p.def<&c_superclass>("_class_getSuperclass");
     p.def<&c_isMeta>("_class_isMetaClass");
     p.def<&c_instanceSize>("_class_getInstanceSize");
+    p.def<&c_getIvarLayout>("_class_getIvarLayout");
     p.def<&o_getClass>("_object_getClass");
     p.def<&o_setClass>("_object_setClass");
     p.def<&o_getClassName>("_object_getClassName");

@@ -1277,6 +1277,12 @@ int runFullSubsystemTests() {
             std::printf("dictionary primitive results: got=%d absent=%d reads=%d writes=%d removes=%d\n", got, absent, reads, writes, removes);
         check(got && absent && reads == 2 && writes == 2 && removes == 2,
               "Dictionary subscript/KVC access dispatches subclass primitives and nil removes entries");
+
+        // _class_getIvarLayout test
+        const auto ivarLayoutAddr = proc.lookupSymbol("_class_getIvarLayout");
+        const bool hasIvarLayout = ivarLayoutAddr.has_value() &&
+            proc.callGuest(cpu, *ivarLayoutAddr, {r.getClass("NSObject")}) == 0;
+        check(hasIvarLayout, "_class_getIvarLayout symbol exists and returns NULL for NSObject");
         r.send(cpu, instance, "setObject:forKey:", {value,key});
         const auto keys = ObjC::id(r.send(cpu, instance, "allKeys"));
         const auto values = ObjC::id(r.send(cpu, instance, "allValues"));
