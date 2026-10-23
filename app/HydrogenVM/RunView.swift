@@ -129,6 +129,7 @@ final class RunModel {
             MainActor.assumeIsolated {
                 Self.console("[gpu] GL layer \(layer.map { "\($0.bounds.size)" } ?? "removed")")
                 self?.glLayer = layer
+                self?.syncOrientation()
             }
         }
         s.onLog = { [weak self] line, level in
@@ -197,8 +198,42 @@ final class RunModel {
                 self.fps = presented >= self.lastPresented ? max(Int(presented - self.lastPresented), self.frameCount) : self.frameCount
                 self.lastPresented = presented
                 self.frameCount = 0
+                // On the GPU path onFrame rarely fires, so follow the guest's
+                // orientation here too (landscape games rotate at startup).
+                self.syncOrientation()
             }
         }
+    }
+
+    private func syncOrientation() {
+        guard let s = session else { return }
+        let o = GuestOrientation(rawValue: s.interfaceOrientation) ?? .portrait
+        if o != orientation { orientation = o }
+    }
+
+    /// A GitHub issue for this session, built from the console: only the lines that
+    /// point at a problem (errors, warnings, missing functions, crashes, GPU status),
+    /// with repeats folded into a count, plus the last few lines for context.
+    func consoleIssueURL() -> URL {
+        let report = ConsoleReport(lines: log.map { ($0.text, $0.level) })
+        let title = "[console] \(app.info.bundleIdentifier): \(report.headline ?? "problem report")"
+        var body = "**App:** \(app.title) \(app.info.version) (`\(app.info.bundleIdentifier)`)\n"
+        body += "**Emulator:** `\(HVMSession.emulatorCommit.prefix(12))` · renderer \(session?.useGPU == false ? "software" : "GPU")"
+        body += " · \(fps) fps · p95 frame \(String(format: "%.1f", frameTimeP95)) ms\n"
+        body += "**Device:** \(CrashReport.deviceModel), iOS \(UIDevice.current.systemVersion)\n\n"
+        let full = report.markdown(limit: 200_000)
+        let short = report.markdown(limit: 3600 - body.count)
+        body += short
+        if short.count < full.count {
+            // GitHub caps the URL, so the full filtered list goes to the clipboard.
+            UIPasteboard.general.string = full
+            body += "\n_The full list of problems was copied to the clipboard; paste it below._\n"
+        }
+        body += "\n_Sent from the in-game console. Describe what you were doing when it went wrong:_\n\n"
+        var url = URLComponents(string: "https://github.com/lawsharley0-cyber/HydrogenVM/issues/new")!
+        url.queryItems = [URLQueryItem(name: "title", value: String(title.prefix(150))),
+                          URLQueryItem(name: "body", value: body)]
+        return url.url!
     }
 
     private func sampleMemory() {
@@ -390,7 +425,7 @@ struct RunView: View {
             if showLog {
                 VStack {
                     Spacer()
-                    LogPanel(lines: model.log, copyText: { model.logText })
+                    LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() })
                         .frame(height: 220)
                 }
             }
@@ -665,12 +700,19 @@ struct RunView: View {
 struct LogPanel: View {
     let lines: [RunModel.LogLine]
     let copyText: () -> String
+    var issueURL: (() -> URL)? = nil
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 14) {
                 Text("Log").font(.caption.weight(.semibold))
                 Spacer()
+                if let issueURL {
+                    Button("Report on GitHub", systemImage: "exclamationmark.bubble") { openURL(issueURL()) }
+                        .font(.caption)
+                        .accessibilityHint("Opens a GitHub issue with the errors from this session")
+                }
                 Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = copyText() }
                     .labelStyle(.iconOnly).font(.caption)
             }

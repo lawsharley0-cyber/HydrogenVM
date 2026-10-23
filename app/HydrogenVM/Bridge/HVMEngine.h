@@ -27,6 +27,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSString *problem;
 @end
 
+/// Set on the GPU drawable layer (an NSValue holding a CGAffineTransform): maps a
+/// drawable pixel, from its top-left, onto the guest screen scaled to 0...1.
+FOUNDATION_EXPORT NSString *const HVMGLLayerUnitTransformKey;
+/// Posted on the main queue (object: the layer) when that transform changes.
+FOUNDATION_EXPORT NSNotificationName const HVMGLLayerGeometryDidChangeNotification;
+
 typedef NS_ENUM(NSInteger, HVMLogLevel) {
     HVMLogLevelDebug, HVMLogLevelInfo, HVMLogLevelWarning, HVMLogLevelError, HVMLogLevelStdout, HVMLogLevelStderr,
 };
@@ -52,8 +58,11 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);
 /// Emulated screen in points (known once the app has started; 320x480 or 320x568).
 @property (nonatomic, readonly) CGSize screenSize;
-/// Guest UIInterfaceOrientation (1...4), captured with the delivered frame.
+/// Guest UIInterfaceOrientation (1...4). Read live from the guest, so it stays
+/// current on the GPU path, where UIKit frames are no longer delivered every frame.
 @property (nonatomic, readonly) NSInteger interfaceOrientation;
+/// Git revision the emulator core was built from ("unknown" if not recorded).
+@property (class, nonatomic, readonly) NSString *emulatorCommit;
 /// Lifecycle background acknowledgement; not a filesystem replacement barrier.
 @property (nonatomic, readonly, getter=isBackgrounded) BOOL backgrounded;
 /// Guest frame-hook work, lifetime p95 in milliseconds; zero before samples.

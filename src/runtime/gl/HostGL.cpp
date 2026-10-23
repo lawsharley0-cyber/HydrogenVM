@@ -46,6 +46,7 @@ struct Drawable {
     uint32_t layer = 0;
     int width = 0, height = 0;
 };
+struct Placement { float unit[6] = {}; };
 
 struct State {
     explicit State(Process&) {}
@@ -60,6 +61,7 @@ struct State {
     std::set<std::string> missingLogged;
     uint32_t lastGuestContext = 0;
     std::unordered_map<std::string, uint32_t> strings;
+    std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -960,8 +962,43 @@ void layerGone(Process& p, uint32_t layer) {
             if (it->second.layer == layer) it = st.drawables.erase(it);
             else ++it;
         }
+        st.placed.erase(layer);
     }
     if (st.platform) st.platform->releaseLayer(layer);
+}
+
+void layerPlaced(Process& p, uint32_t layer, const float m[6], float bx, float by, float bw, float bh, int surfaceW,
+                 int surfaceH) {
+    State& st = S(p);
+    if (!st.platform || surfaceW <= 0 || surfaceH <= 0 || bw <= 0 || bh <= 0) return;
+    int w = 0, h = 0;
+    Placement next;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        for (const auto& [k, d] : st.drawables)
+            if (d.layer == layer) { w = d.width; h = d.height; break; }
+        if (w <= 0 || h <= 0) return;
+        // drawable pixels -> layer bounds (points) -> surface pixels -> unit square
+        const float sx = bw / float(w), sy = bh / float(h), ux = 1.0f / float(surfaceW), uy = 1.0f / float(surfaceH);
+        next.unit[0] = sx * m[0] * ux;
+        next.unit[1] = sx * m[1] * uy;
+        next.unit[2] = sy * m[2] * ux;
+        next.unit[3] = sy * m[3] * uy;
+        next.unit[4] = (bx * m[0] + by * m[2] + m[4]) * ux;
+        next.unit[5] = (bx * m[1] + by * m[3] + m[5]) * uy;
+        auto it = st.placed.find(layer);
+        if (it != st.placed.end()) {
+            bool same = true;
+            for (int i = 0; i < 6; ++i) same = same && std::fabs(it->second.unit[i] - next.unit[i]) < 1e-5f;
+            if (same) return;
+        }
+        st.placed[layer] = next;
+    }
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "GPU: drawable %dx%d placed at [%.4g %.4g %.4g %.4g %.4g %.4g] of the screen", w, h,
+                  next.unit[0], next.unit[1], next.unit[2], next.unit[3], next.unit[4], next.unit[5]);
+    p.log(LogLevel::Info, buf);
+    st.platform->layerGeometry(layer, next.unit);
 }
 
 // ------------------------------------------------------------ registration ---

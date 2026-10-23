@@ -132,6 +132,14 @@ jobs:
           unzip -q Tiny_Tower_v1.0_os30.ipa -d build/gl
           tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "build/gl/Payload/Tiny Tower.app" \
             "GPU: presented frame 60 directly" "160,240@6" sim-gl-out
+      - name: A landscape GLES game on the GPU path (simulator)
+        # Angry Birds (GLES 1.1, landscape, in-repo fixture): the GPU layer must be rotated like the guest view.
+        continue-on-error: true
+        run: |
+          rm -rf build/gl-ab && mkdir -p build/gl-ab
+          unzip -q AngryBirds_v1.0_os30.ipa -d build/gl-ab
+          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "$(ls -d build/gl-ab/Payload/*.app | head -1)" \
+            "GPU: presented frame 600 directly" "" sim-gl-landscape-out
       - name: Same game with GLES 1.1 emulated on an ES 2 context (simulator)
         continue-on-error: true
         env:
@@ -157,6 +165,7 @@ jobs:
           cp -R sim-out/. report/simulator/ 2>/dev/null || true
           mkdir -p report/simulator-gl && cp -R sim-gl-out/. report/simulator-gl/ 2>/dev/null || true
           mkdir -p report/simulator-gl-emu && cp -R sim-gl-emu-out/. report/simulator-gl-emu/ 2>/dev/null || true
+          mkdir -p report/simulator-gl-landscape && cp -R sim-gl-landscape-out/. report/simulator-gl-landscape/ 2>/dev/null || true
           tools/publish_report.sh report macos
       - name: Upload results
         if: always()
