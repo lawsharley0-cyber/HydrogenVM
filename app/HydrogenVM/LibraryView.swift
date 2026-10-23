@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 /// Installed apps live in Documents/Apps/<bundle id>/<Name>.app, with the
 /// app's sandbox (Documents/, Library/, tmp/) beside the bundle. Any .ipa
 /// dropped into Documents through Files or Finder is imported on refresh.
-struct InstalledApp: Identifiable, Hashable {
+struct InstalledApp: Identifiable, Hashable, Sendable {
     let info: HVMAppInfo
     var id: String { info.bundlePath }
     /// Directory that contains the `.app` plus the guest sandbox (`Documents/`, `Library/`, `tmp/`).
@@ -214,8 +214,8 @@ struct LibraryView: View {
                     }
 
                     let mdText = runner.buildMarkdownReport()
-                    try? mdText.write(to: reportsDir.appending(path: "batch_report.md"), options: .atomic)
-                    try? mdText.write(to: reportsDir.appending(path: "latest_batch_report.md"), options: .atomic)
+                    try? mdText.write(to: reportsDir.appending(path: "batch_report.md"), atomically: true, encoding: .utf8)
+                    try? mdText.write(to: reportsDir.appending(path: "latest_batch_report.md"), atomically: true, encoding: .utf8)
 
                     RunModel.console("[hvm-batch-exit] batch test finished with \(runner.results.count) results")
                     return

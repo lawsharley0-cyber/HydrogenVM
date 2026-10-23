@@ -2,29 +2,29 @@ import Foundation
 import CoreGraphics
 import UIKit
 
-public enum BatchRendererMode: String, Codable, CaseIterable, Identifiable, Sendable {
+enum BatchRendererMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case software = "software"
     case gpu = "gpu"
     case both = "both"
 
-    public var id: String { rawValue }
+    var id: String { rawValue }
 
-    public var displayName: String {
+    var displayName: String {
         switch self {
         case .software: return "Software"
         case .gpu: return "GPU"
         case .both: return "Both (Software & GPU)"
         }
-        }
+    }
 }
 
-public struct BatchTestOptions: Codable, Sendable {
-    public var secondsPerApp: Int = 10
-    public var rendererMode: BatchRendererMode = .both
-    public var keepGoing: Bool = true
-    public var resetSandbox: Bool = false
+struct BatchTestOptions: Codable, Sendable {
+    var secondsPerApp: Int = 10
+    var rendererMode: BatchRendererMode = .both
+    var keepGoing: Bool = true
+    var resetSandbox: Bool = false
 
-    public init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false) {
+    init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false) {
         self.secondsPerApp = secondsPerApp
         self.rendererMode = rendererMode
         self.keepGoing = keepGoing
@@ -32,54 +32,54 @@ public struct BatchTestOptions: Codable, Sendable {
     }
 }
 
-public enum FrameSignal: String, Codable, Sendable {
+enum FrameSignal: String, Codable, Sendable {
     case ok = "ok"
     case allBlack = "all-black"
     case allWhite = "all-white"
     case noFrames = "no-frames"
 }
 
-public struct BatchPerf: Codable, Sendable {
-    public var framesPresented: Int
-    public var fps: Int
-    public var frameTimeP95Ms: Double
+struct BatchPerf: Codable, Sendable {
+    var framesPresented: Int
+    var fps: Int
+    var frameTimeP95Ms: Double
 
-    public init(framesPresented: Int = 0, fps: Int = 0, frameTimeP95Ms: Double = 0.0) {
+    init(framesPresented: Int = 0, fps: Int = 0, frameTimeP95Ms: Double = 0.0) {
         self.framesPresented = framesPresented
         self.fps = fps
         self.frameTimeP95Ms = frameTimeP95Ms
     }
 }
 
-public struct BatchFrameInfo: Codable, Sendable {
-    public var signal: String
-    public var thumbnailPath: String?
+struct BatchFrameInfo: Codable, Sendable {
+    var signal: String
+    var thumbnailPath: String?
 
-    public init(signal: String = "no-frames", thumbnailPath: String? = nil) {
+    init(signal: String = "no-frames", thumbnailPath: String? = nil) {
         self.signal = signal
         self.thumbnailPath = thumbnailPath
     }
 }
 
-public struct BatchAppResult: Codable, Identifiable, Sendable {
-    public var id: String { "\(bundleId)_\(mode)" }
-    public var bundleId: String
-    public var name: String
-    public var version: String
-    public var minOS: String
-    public var mode: String // "software" or "gpu"
-    public var crashed: Bool
-    public var exitCode: Int
-    public var summary: String
-    public var signature: String?
-    public var exceptionKind: String?
-    public var crashReport: String?
-    public var perf: BatchPerf
-    public var frame: BatchFrameInfo
-    public var keepGoing: Bool
-    public var logs: String
+struct BatchAppResult: Codable, Identifiable, Sendable {
+    var id: String { "\(bundleId)_\(mode)" }
+    var bundleId: String
+    var name: String
+    var version: String
+    var minOS: String
+    var mode: String // "software" or "gpu"
+    var crashed: Bool
+    var exitCode: Int
+    var summary: String
+    var signature: String?
+    var exceptionKind: String?
+    var crashReport: String?
+    var perf: BatchPerf
+    var frame: BatchFrameInfo
+    var keepGoing: Bool
+    var logs: String
 
-    public init(bundleId: String, name: String, version: String, minOS: String, mode: String, crashed: Bool, exitCode: Int, summary: String, signature: String? = nil, exceptionKind: String? = nil, crashReport: String? = nil, perf: BatchPerf = BatchPerf(), frame: BatchFrameInfo = BatchFrameInfo(), keepGoing: Bool = true, logs: String = "") {
+    init(bundleId: String, name: String, version: String, minOS: String, mode: String, crashed: Bool, exitCode: Int, summary: String, signature: String? = nil, exceptionKind: String? = nil, crashReport: String? = nil, perf: BatchPerf = BatchPerf(), frame: BatchFrameInfo = BatchFrameInfo(), keepGoing: Bool = true, logs: String = "") {
         self.bundleId = bundleId
         self.name = name
         self.version = version
@@ -98,14 +98,14 @@ public struct BatchAppResult: Codable, Identifiable, Sendable {
     }
 }
 
-public struct BatchSessionState: Codable, Sendable {
-    public var runId: String
-    public var timestamp: String
-    public var options: BatchTestOptions
-    public var completedResults: [BatchAppResult]
-    public var pendingBundleIds: [String]
+struct BatchSessionState: Codable, Sendable {
+    var runId: String
+    var timestamp: String
+    var options: BatchTestOptions
+    var completedResults: [BatchAppResult]
+    var pendingBundleIds: [String]
 
-    public init(runId: String = UUID().uuidString, timestamp: String = ISO8601DateFormatter().string(from: Date()), options: BatchTestOptions = BatchTestOptions(), completedResults: [BatchAppResult] = [], pendingBundleIds: [String] = []) {
+    init(runId: String = UUID().uuidString, timestamp: String = ISO8601DateFormatter().string(from: Date()), options: BatchTestOptions = BatchTestOptions(), completedResults: [BatchAppResult] = [], pendingBundleIds: [String] = []) {
         self.runId = runId
         self.timestamp = timestamp
         self.options = options
@@ -114,7 +114,7 @@ public struct BatchSessionState: Codable, Sendable {
     }
 }
 
-public enum BatchTestStatus: String, Codable, Sendable {
+enum BatchTestStatus: String, Codable, Sendable {
     case idle
     case running
     case paused
@@ -122,16 +122,16 @@ public enum BatchTestStatus: String, Codable, Sendable {
     case cancelled
 }
 
-public struct BatchTarget: Sendable {
-    public let app: InstalledApp
-    public let useGPU: Bool
-    public var modeName: String { useGPU ? "gpu" : "software" }
-    public var targetId: String { "\(app.info.bundleIdentifier)_\(modeName)" }
+struct BatchTarget: Sendable {
+    let app: InstalledApp
+    let useGPU: Bool
+    var modeName: String { useGPU ? "gpu" : "software" }
+    var targetId: String { "\(app.info.bundleIdentifier)_\(modeName)" }
 }
 
 @MainActor
-public final class FrameAnalyzer {
-    public static func analyze(_ image: CGImage?) -> FrameSignal {
+final class FrameAnalyzer {
+    static func analyze(_ image: CGImage?) -> FrameSignal {
         guard let image else { return .noFrames }
         let width = image.width
         let height = image.height
@@ -191,7 +191,7 @@ public final class FrameAnalyzer {
         return .ok
     }
 
-    public static func savePNG(_ image: CGImage, to url: URL) -> Bool {
+    static func savePNG(_ image: CGImage, to url: URL) -> Bool {
         let uiImage = UIImage(cgImage: image)
         guard let data = uiImage.pngData() else { return false }
         do {
@@ -206,19 +206,19 @@ public final class FrameAnalyzer {
 
 @Observable
 @MainActor
-public final class BatchTestRunner {
-    public private(set) var options = BatchTestOptions()
-    public private(set) var status: BatchTestStatus = .idle
-    public private(set) var results: [BatchAppResult] = []
-    public private(set) var targets: [BatchTarget] = []
-    public private(set) var currentIndex: Int = 0
+final class BatchTestRunner {
+    var options = BatchTestOptions()
+    private(set) var status: BatchTestStatus = .idle
+    private(set) var results: [BatchAppResult] = []
+    private(set) var targets: [BatchTarget] = []
+    private(set) var currentIndex: Int = 0
 
-    public private(set) var currentApp: InstalledApp?
-    public private(set) var currentModeName: String = "software"
-    public private(set) var currentFrame: CGImage?
-    public private(set) var currentFPS: Int = 0
-    public private(set) var currentLogs: [String] = []
-    public private(set) var progressText: String = ""
+    private(set) var currentApp: InstalledApp?
+    private(set) var currentModeName: String = "software"
+    private(set) var currentFrame: CGImage?
+    private(set) var currentFPS: Int = 0
+    private(set) var currentLogs: [String] = []
+    private(set) var progressText: String = ""
 
     @ObservationIgnored private var activeSession: HVMSession?
     @ObservationIgnored private var currentTestTask: Task<Void, Never>?
@@ -227,29 +227,29 @@ public final class BatchTestRunner {
     @ObservationIgnored private var fpsTimer: Timer?
     @ObservationIgnored private var lastCapturedFrame: CGImage?
 
-    public static var reportsDir: URL {
+    static var reportsDir: URL {
         URL.documentsDirectory.appending(path: "TestReports", directoryHint: .isDirectory)
     }
 
-    public static var pendingSessionURL: URL {
+    static var pendingSessionURL: URL {
         reportsDir.appending(path: "batch_session.json")
     }
 
-    public static var thumbnailsDir: URL {
+    static var thumbnailsDir: URL {
         reportsDir.appending(path: "thumbnails", directoryHint: .isDirectory)
     }
 
-    public init() {}
+    init() {}
 
-    public static func hasPendingSession() -> Bool {
+    static func hasPendingSession() -> Bool {
         FileManager.default.fileExists(atPath: pendingSessionURL.path)
     }
 
-    public func clearPendingSession() {
+    func clearPendingSession() {
         try? FileManager.default.removeItem(at: Self.pendingSessionURL)
     }
 
-    public func startNewBatch(apps: [InstalledApp], options: BatchTestOptions) {
+    func startNewBatch(apps: [InstalledApp], options: BatchTestOptions) {
         self.options = options
         self.clearPendingSession()
         self.results = []
@@ -275,7 +275,7 @@ public final class BatchTestRunner {
         runNextTarget()
     }
 
-    public func resumePendingSession(allApps: [InstalledApp]) {
+    func resumePendingSession(allApps: [InstalledApp]) {
         guard let data = try? Data(contentsOf: Self.pendingSessionURL),
               let saved = try? JSONDecoder().decode(BatchSessionState.self, from: data) else {
             return
@@ -309,7 +309,7 @@ public final class BatchTestRunner {
         runNextTarget()
     }
 
-    public func cancel() {
+    func cancel() {
         guard status == .running || status == .paused else { return }
         status = .cancelled
         currentTestTask?.cancel()
@@ -368,7 +368,7 @@ public final class BatchTestRunner {
         var didExit = false
 
         s.onFrame = { [weak self] img in
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.currentFrame = img
                 self.lastCapturedFrame = img
@@ -377,7 +377,7 @@ public final class BatchTestRunner {
         }
 
         s.onLog = { [weak self] line, _ in
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.currentLogs.append(line)
                 if self.currentLogs.count > 500 { self.currentLogs.removeFirst() }
@@ -385,7 +385,7 @@ public final class BatchTestRunner {
         }
 
         s.onExit = { [weak self] code, crash in
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 didExit = true
                 exitStatusCode = code
@@ -394,7 +394,7 @@ public final class BatchTestRunner {
         }
 
         fpsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 guard let self, let s = self.activeSession else { return }
                 let presented = s.framesPresented
                 self.currentFPS = presented >= self.lastPresentedFrames ? max(Int(presented - self.lastPresentedFrames), self.frameCount) : self.frameCount
@@ -500,7 +500,7 @@ public final class BatchTestRunner {
         }
     }
 
-    public func buildCompatReportJSON() -> [String: Any] {
+    func buildCompatReportJSON() -> [String: Any] {
         let rows = results.map { r -> [String: Any] in
             var dict: [String: Any] = [
                 "bundleId": r.bundleId,
@@ -548,7 +548,7 @@ public final class BatchTestRunner {
         ]
     }
 
-    public func buildMarkdownReport() -> String {
+    func buildMarkdownReport() -> String {
         var md = "# HydrogenVM — Test All Games Report\n\n"
         md += "**Date:** \(ISO8601DateFormatter().string(from: Date()))  \n"
         md += "**Device:** \(UIDevice.current.model), iOS \(UIDevice.current.systemVersion)  \n"
@@ -588,10 +588,10 @@ public final class BatchTestRunner {
 
         let mdText = buildMarkdownReport()
         let mdURL = Self.reportsDir.appending(path: "latest_batch_report.md")
-        try? mdText.write(to: Data(mdText.utf8), options: .atomic)
+        try? mdText.write(to: mdURL, atomically: true, encoding: .utf8)
     }
 
-    public func consoleIssueURL(for result: BatchAppResult) -> URL {
+    func consoleIssueURL(for result: BatchAppResult) -> URL {
         let title = "[test-all] \(result.bundleId) (\(result.mode)): \(result.summary)"
         var body = "**App:** \(result.name) \(result.version) (`\(result.bundleId)`)\n"
         body += "**Emulator:** `\(HVMSession.emulatorCommit.prefix(12))` · renderer \(result.mode)\n"

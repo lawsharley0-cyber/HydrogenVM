@@ -1,21 +1,21 @@
 import SwiftUI
 import UIKit
 
-public struct ShareSheet: UIViewControllerRepresentable {
-    public let items: [Any]
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
 
-    public init(items: [Any]) {
+    init(items: [Any]) {
         self.items = items
     }
 
-    public func makeUIViewController(context: Context) -> UIActivityViewController {
+    func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
 
-    public func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-public struct BatchTestView: View {
+struct BatchTestView: View {
     let installedApps: [InstalledApp]
     @State private var runner = BatchTestRunner()
     @State private var showOptionsSheet = false
@@ -24,11 +24,11 @@ public struct BatchTestView: View {
     @State private var copiedMarkdownAlert = false
     @Environment(\.dismiss) private var dismiss
 
-    public init(installedApps: [InstalledApp]) {
+    init(installedApps: [InstalledApp]) {
         self.installedApps = installedApps
     }
 
-    public var body: some View {
+    var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 if runner.status == .running {
