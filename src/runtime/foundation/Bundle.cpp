@@ -453,6 +453,10 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
     const fs::path root = subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir);
     const std::string lang = localization.empty() ? (B(x).language.empty() ? chooseLanguage(bundle) : B(x).language) : localization;
     std::vector<fs::path> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
+    auto toLower = [](std::string s) {
+        for (char& c : s) c = char(std::tolower(uint8_t(c)));
+        return s;
+    };
     for (const auto& d : dirs) {
         if (name.empty()) {   // first file of that type
             if (!fs::is_directory(d, ec)) continue;
@@ -463,6 +467,15 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
         for (const std::string& candidate : {name + "~iphone" + ext, name + ext}) {
             const fs::path p = d / candidate;
             if (fs::exists(p, ec)) return p.string();
+        }
+        // Case-insensitive fallback for Linux
+        if (fs::is_directory(d, ec)) {
+            for (const std::string& candidate : {name + "~iphone" + ext, name + ext}) {
+                const std::string targetLower = toLower(candidate);
+                for (auto& e : fs::directory_iterator(d, ec)) {
+                    if (toLower(e.path().filename().string()) == targetLower) return e.path().string();
+                }
+            }
         }
     }
     return {};

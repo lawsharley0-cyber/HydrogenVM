@@ -1,3 +1,4 @@
+import Darwin
 import CoreMotion
 import SwiftUI
 import UIKit
@@ -55,6 +56,10 @@ final class RunModel {
     }
 
     var crashReport: String?
+    var savedCrash: CrashReport?
+    var reportSaveError: String?
+    @ObservationIgnored private var memoryTimer: Timer?
+    @ObservationIgnored private var memorySamples: [[String: Any]] = []
     var exitMessage: String?
     /// Set when the session ended because the user pressed Stop.
     private(set) var finished = false
@@ -68,6 +73,7 @@ final class RunModel {
     @ObservationIgnored private let motion = CMMotionManager()
     @ObservationIgnored private var nextLogID = 0
     @ObservationIgnored private var frameCount = 0
+    @ObservationIgnored private var lastPresented: UInt64 = 0
     @ObservationIgnored private var fpsTimer: Timer?
 
     init(app: InstalledApp) { self.app = app }
@@ -120,7 +126,11 @@ final class RunModel {
             }
         }
         s.onGLLayer = { [weak self] layer in
-            MainActor.assumeIsolated { self?.glLayer = layer }
+            MainActor.assumeIsolated {
+                Self.console("[gpu] GL layer \(layer.map { "\($0.bounds.size)" } ?? "removed")")
+                self?.glLayer = layer
+                self?.syncOrientation()
+            }
         }
         s.onLog = { [weak self] line, level in
             MainActor.assumeIsolated { self?.append(line, level) }
@@ -140,12 +150,34 @@ final class RunModel {
                     Self.console("[hvm-exit] status=\(code)\(crash.map { " crash:\n" + $0 } ?? "")")
                 }
                 self.endBackgroundTask()
-                if self.userStopped { self.finished = true }
-                else if let crash { self.crashReport = crash }
-                else { self.exitMessage = "The app exited (status \(code))." }
+                self.memoryTimer?.invalidate()
+                if let crash {
+                    var fields = self.session?.crashBundle.flatMap { $0.data(using: .utf8) }
+                        .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
+                    fields["summary"] = fields["summary"] ?? crash.components(separatedBy: "\n").first
+                    fields["report"] = crash
+                    fields["bundleId"] = self.app.info.bundleIdentifier
+                    fields["memorySamples"] = self.memorySamples
+                    do {
+                        self.savedCrash = try CrashReport.save(fields, app: self.app.info.bundleIdentifier)
+                        CrashReport.clearPending()
+                    } catch {
+                        self.reportSaveError = "Could not save the crash report: \(error.localizedDescription)"
+                        self.crashReport = crash
+                    }
+                } else {
+                    CrashReport.clearPending()
+                    if self.userStopped { self.finished = true }
+                    else { self.exitMessage = "The app exited (status \(code))." }
+                }
             }
         }
         session = s
+        sampleMemory()
+        HVMCrashJournal.openSignalFile(CrashReport.signal.path)
+        memoryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sampleMemory() }
+        }
         running = true
         activity.hostBackgrounded = UIApplication.shared.applicationState == .background
         s.outputVolume = Float(volume)
@@ -160,10 +192,65 @@ final class RunModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.frameTimeP95 = self.session?.frameTimeP95Milliseconds ?? 0
-                self.fps = self.frameCount
+                // GPU-presented games show frames without a new UIKit composite,
+                // so count what the engine presented rather than delivered images.
+                let presented = self.session?.framesPresented ?? 0
+                self.fps = presented >= self.lastPresented ? max(Int(presented - self.lastPresented), self.frameCount) : self.frameCount
+                self.lastPresented = presented
                 self.frameCount = 0
+                // On the GPU path onFrame rarely fires, so follow the guest's
+                // orientation here too (landscape games rotate at startup).
+                self.syncOrientation()
             }
         }
+    }
+
+    private func syncOrientation() {
+        guard let s = session else { return }
+        let o = GuestOrientation(rawValue: s.interfaceOrientation) ?? .portrait
+        if o != orientation { orientation = o }
+    }
+
+    /// A GitHub issue for this session, built from the console: only the lines that
+    /// point at a problem (errors, warnings, missing functions, crashes, GPU status),
+    /// with repeats folded into a count, plus the last few lines for context.
+    func consoleIssueURL() -> URL {
+        let report = ConsoleReport(lines: log.map { ($0.text, $0.level) })
+        let title = "[console] \(app.info.bundleIdentifier): \(report.headline ?? "problem report")"
+        var body = "**App:** \(app.title) \(app.info.version) (`\(app.info.bundleIdentifier)`)\n"
+        body += "**Emulator:** `\(HVMSession.emulatorCommit.prefix(12))` · renderer \(session?.useGPU == false ? "software" : "GPU")"
+        body += " · \(fps) fps · p95 frame \(String(format: "%.1f", frameTimeP95)) ms\n"
+        body += "**Device:** \(CrashReport.deviceModel), iOS \(UIDevice.current.systemVersion)\n\n"
+        let full = report.markdown(limit: 200_000)
+        let short = report.markdown(limit: 3600 - body.count)
+        body += short
+        if short.count < full.count {
+            // GitHub caps the URL, so the full filtered list goes to the clipboard.
+            UIPasteboard.general.string = full
+            body += "\n_The full list of problems was copied to the clipboard; paste it below._\n"
+        }
+        body += "\n_Sent from the in-game console. Describe what you were doing when it went wrong:_\n\n"
+        var url = URLComponents(string: "https://github.com/lawsharley0-cyber/HydrogenVM/issues/new")!
+        url.queryItems = [URLQueryItem(name: "title", value: String(title.prefix(150))),
+                          URLQueryItem(name: "body", value: body)]
+        return url.url!
+    }
+
+    private func sampleMemory() {
+        memorySamples.append(["utc": ISO8601DateFormatter().string(from: Date()),
+                              "availableBytes": HVMCrashJournal.availableMemory()])
+        if memorySamples.count > 120 { memorySamples.removeFirst() }
+        let fields: [String: Any] = ["bundleId": app.info.bundleIdentifier, "appVersion": app.info.version,
+                                     "deviceModel": CrashReport.deviceModel,
+                                     "iOSVersion": UIDevice.current.systemVersion,
+                                     "host": ["pageSize": getpagesize()],
+                                     "memorySamples": memorySamples,
+                                     "logs": log.suffix(2000).map(\.text)]
+        do {
+            try FileManager.default.createDirectory(at: CrashReport.directory, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: fields)
+            try data.write(to: CrashReport.pending, options: .atomic)
+        } catch { reportSaveError = "Could not save the session snapshot: \(error.localizedDescription)" }
     }
 
     /// Close the app the way iOS would: it gets resign-active / background / terminate and
@@ -179,6 +266,7 @@ final class RunModel {
 
     func teardown() {
         stop()
+        memoryTimer?.invalidate()
         fpsTimer?.invalidate()
         fpsTimer = nil
         activityTimer?.invalidate()
@@ -288,6 +376,8 @@ struct RunView: View {
     @State private var overrideOrientation: GuestOrientation?
     @AppStorage("player.scaleMode") private var scaleSetting = PlayerScaleMode.fit.rawValue
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
+    /// Read by the session at start (RunModel.start): GPU rendering unless this is on.
+    @AppStorage("softwareRenderer") private var softwareRenderer = false
     @Environment(\.dismiss) private var dismiss
 
     init(app: InstalledApp, keepGoing: Bool) {
@@ -335,7 +425,7 @@ struct RunView: View {
             if showLog {
                 VStack {
                     Spacer()
-                    LogPanel(lines: model.log, copyText: { model.logText })
+                    LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() })
                         .frame(height: 220)
                 }
             }
@@ -375,12 +465,13 @@ struct RunView: View {
             model.teardown()
             OrientationLock.shared.lock(.all)
         }
+        .sheet(item: $model.savedCrash) { CrashReportView(report: $0) }
         .alert("\(app.title) crashed", isPresented: Binding(get: { model.crashReport != nil }, set: { if !$0 { model.crashReport = nil } })) {
             Button("Copy Report") { UIPasteboard.general.string = (model.crashReport ?? "") + "\n\n--- log ---\n" + model.logText; dismiss() }
             Button("Show Log") { showLog = true }
             Button("Close", role: .cancel) { dismiss() }
         } message: {
-            Text(String((model.crashReport ?? "").prefix(600)))
+            Text((model.reportSaveError ?? "") + "\n" + String((model.crashReport ?? "").prefix(600)))
         }
         .alert(model.exitMessage ?? "", isPresented: Binding(get: { model.exitMessage != nil }, set: { if !$0 { model.exitMessage = nil } })) {
             Button("Show Log") { showLog = true }
@@ -504,6 +595,12 @@ struct RunView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+
+                        Toggle(isOn: Binding(get: { !softwareRenderer }, set: { softwareRenderer = !$0 })) {
+                            Text("GPU rendering (takes effect next launch)")
+                                .font(.caption)
+                        }
+                        .accessibilityIdentifier("player-gpu-rendering")
                     }
 
                     // Audio & System Footer
@@ -603,12 +700,19 @@ struct RunView: View {
 struct LogPanel: View {
     let lines: [RunModel.LogLine]
     let copyText: () -> String
+    var issueURL: (() -> URL)? = nil
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 14) {
                 Text("Log").font(.caption.weight(.semibold))
                 Spacer()
+                if let issueURL {
+                    Button("Report on GitHub", systemImage: "exclamationmark.bubble") { openURL(issueURL()) }
+                        .font(.caption)
+                        .accessibilityHint("Opens a GitHub issue with the errors from this session")
+                }
                 Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = copyText() }
                     .labelStyle(.iconOnly).font(.caption)
             }

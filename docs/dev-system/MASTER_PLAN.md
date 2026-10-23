@@ -321,3 +321,12 @@ stops on `syscall`; Terraria crashes at startup. Device-only crashes are what #2
   GPU/software parity check in CI (`c363dd0`, `0489392`, `c296c89`). Awaiting a device run.
 - 2026-10-23 — #34 opened: Subway Surfers' missing world is a CPU-side camera matrix problem,
   reproduced identically on both renderers.
+- 2026-10-23 — Device report "sound but no picture" on the GPU path: the simulator showed 60+
+  frames presented with a black screen. Cause: the guest thread has no run loop, so the
+  Core Animation transaction carrying CAEAGLLayer contents was never committed; fixed with
+  `[CATransaction flush]` (`ed083b9`). Frames 1/60/600 now log a sampled colour.
+- 2026-10-23 — GLES 1.1 on ES 2 contexts (`Gles1Emu.cpp`, `HVM_GL1_EMULATE=1` to force) so ES1
+  games keep the GPU when the host has no ES 1.1 context. Parity with the software
+  rasterizer in CI (Tiny Tower 0.4, Angry Birds 1.4, Art of Glow 0.0 mean diff).
+- 2026-10-23 — Six more owner IPAs in `library.json`. All six stop on missing HLE (string /
+  libstdc++, AVAudioSession, AudioFormat, nil release) before rendering: tickets #61–#63.

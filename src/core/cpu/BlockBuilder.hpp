@@ -1,6 +1,7 @@
 // HydrogenVM — builds one IR block and runs block-local optimisations.
 #pragma once
 #include "Handlers.hpp"
+#include "FpHandlers.hpp"
 #include <array>
 #include <utility>
 #include <vector>
@@ -410,6 +411,22 @@ private:
                     a.c = b.a;      // rd
                     a.d = b.b;      // rx
                     a.imm2 = b.fn == subImmAlu ? (0u - b.imm) : b.imm;
+                    ops.erase(ops.begin() + long(i) + 1);
+                    meta_.erase(meta_.begin() + long(i) + 1);
+                    continue;
+                }
+            }
+
+            // 6. VCMP{E} + VMRS APSR_nzcv, FPSCR -> one op that sets both.
+            if (b.fn == &H_Vmrs && b.a == 15 && b.imm == 1) {
+                Handler fused = a.fn == &H_VfpCmp<false, false> ? &H_VfpCmpToApsr<false, false>
+                              : a.fn == &H_VfpCmp<false, true>  ? &H_VfpCmpToApsr<false, true>
+                              : a.fn == &H_VfpCmp<true, false>  ? &H_VfpCmpToApsr<true, false>
+                              : a.fn == &H_VfpCmp<true, true>   ? &H_VfpCmpToApsr<true, true> : nullptr;
+                if (fused) {
+                    a.fn = fused;
+                    meta_[i].writes |= meta_[i + 1].writes;
+                    meta_[i].reads |= meta_[i + 1].reads;
                     ops.erase(ops.begin() + long(i) + 1);
                     meta_.erase(meta_.begin() + long(i) + 1);
                     continue;

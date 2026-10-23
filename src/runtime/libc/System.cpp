@@ -6,18 +6,23 @@
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
 #include <sys/socket.h>
+#include <sys/file.h>
+#include <sys/uio.h>
 #include <cerrno>
 #include <csignal>
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
 #include <filesystem>
+#include <mutex>
 #include <random>
 #include <sys/stat.h>
+#include <unordered_set>
 #include <unistd.h>
 
 namespace Hydrogen::Runtime {
 
+void registerStartupMach(Process& p);
 void flushGuestStdio(Process& p);
 
 namespace {
@@ -56,7 +61,41 @@ uint32_t s_NSGetProgname(Ctx& x) {
 }
 uint32_t s_NSGetMachExecuteHeader(Ctx& x) { return x.proc.image().headerAddr; }
 
+uint32_t s_getprogname(Ctx& x) {
+    auto name = std::filesystem::path(x.proc.executablePath()).filename().string();
+    if (name.empty()) name = std::filesystem::path(x.proc.bundlePath()).stem().string();
+    return x.proc.internCString(name);
+}
+uint32_t s_strsignal(Ctx& x, int32_t signal) {
+    // Darwin numbering differs from the Linux host at SIGBUS, SIGSYS, SIGCHLD, etc.
+    static const char* names[] = {"Signal 0", "Hangup", "Interrupt", "Quit", "Illegal instruction", "Trace/BPT trap", "Abort trap", "EMT trap", "Floating point exception", "Killed", "Bus error", "Segmentation fault", "Bad system call", "Broken pipe", "Alarm clock", "Terminated", "Urgent I/O condition", "Suspended (signal)", "Suspended", "Continued", "Child exited", "Stopped (tty input)", "Stopped (tty output)", "I/O possible", "Cputime limit exceeded", "Filesize limit exceeded", "Virtual timer expired", "Profiling timer expired", "Window size changes", "Information request", "User defined signal 1", "User defined signal 2"};
+    return x.proc.internCString(signal >= 0 && signal < 32 ? names[signal] : "Unknown signal: " + std::to_string(signal));
+}
+
 int32_t s_getpid(Ctx&) { return 1234; }
+int32_t s_syscall(Ctx& x, int32_t num, VarArgs) {
+    switch (num) {
+        case 20: // SYS_getpid
+            return s_getpid(x);
+        case 286: // SYS_gettid
+            setErrno(x, 3); // ESRCH
+            return -1;
+        case 372: // thread_selfid
+            return int32_t(x.proc.currentThread().id);
+        default: {
+            static std::mutex mu;
+            static std::unordered_set<int32_t> warned;
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                if (warned.insert(num).second) {
+                    x.proc.logf(LogLevel::Warning, "syscall(%d) is not implemented", num);
+                }
+            }
+            setErrno(x, 78); // ENOSYS
+            return -1;
+        }
+    }
+}
 int32_t s_getppid(Ctx&) { return 1; }
 uint32_t s_getuid(Ctx&) { return 501; }
 GuestPtr s_getpwuid(Ctx& x, uint32_t) {
@@ -285,6 +324,45 @@ int32_t f_write(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     const ssize_t r = ::write(fd, x.mem.host(buf), n);
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
 }
+int32_t f_writev(Ctx& x, int32_t fd, GuestPtr vectors, int32_t count) {
+    auto readable = [&](uint32_t address, uint32_t size) {
+        if (!size) return true;
+        const uint64_t end = uint64_t(address) + size;
+        if (end > (1ull << 32)) return false;
+        for (uint64_t page = address & ~4095u; page < end; page += 4096)
+            if (!(x.mem.protAt(uint32_t(page)) & Memory::kProtRead)) return false;
+        return true;
+    };
+    if (count < 0 || count > 1024) { setErrno(x, 22); return -1; }
+    if (!readable(vectors, uint32_t(count) * 8)) { setErrno(x, 14); return -1; }
+    std::vector<iovec> native;
+    uint64_t total = 0;
+    for (int i = 0; i < count; ++i) {
+        const uint32_t base = x.mem.read<uint32_t>(vectors + i * 8), size = x.mem.read<uint32_t>(vectors + i * 8 + 4);
+        if (!readable(base, size)) { setErrno(x, 14); return -1; }
+        total += size;
+        if (total > 0x7fffffff) { setErrno(x, 22); return -1; }
+        native.push_back({x.mem.host(base), size});
+    }
+    if (fd == 1 || fd == 2 || isNetworkSocket(x.proc, fd)) {
+        int32_t written = 0;
+        for (int i = 0; i < count; ++i) {
+            if (!native[i].iov_len) continue;
+            const int32_t n = f_write(x, fd, x.mem.read<uint32_t>(vectors + i * 8), uint32_t(native[i].iov_len));
+            if (n < 0) return written ? written : n;
+            written += n;
+            if (uint32_t(n) < native[i].iov_len) break;
+        }
+        return written;
+    }
+    const auto result = ::writev(fd, native.data(), count);
+    return result < 0 ? failD<int32_t>(x) : int32_t(result);
+}
+int32_t f_flock(Ctx& x, int32_t fd, int32_t operation) {
+    if ((operation & ~15) || !((operation & 3) == 1 || (operation & 3) == 2 || (operation & 8))) { setErrno(x, 22); return -1; }
+    return ::flock(fd, operation) < 0 ? failD<int32_t>(x) : 0;
+}
+
 int32_t f_pread(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, int64_t off) {
     const ssize_t r = ::pread(fd, x.mem.host(buf), n, off_t(off));
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
@@ -624,6 +702,11 @@ int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
 } // namespace
 
 void registerLibcSystem(Process& p) {
+    registerStartupMach(p);
+    p.def<&s_getprogname>("_getprogname");
+    p.def<&s_strsignal>("_strsignal");
+    p.def<&f_writev>("_writev");
+    p.def<&f_flock>("_flock");
     std::random_device rd;
     const uint32_t guard = p.defineDataBlock("___stack_chk_guard", 4);
     p.mem().write<uint32_t>(guard, (rd() & 0xFFFFFF00u) | 0x0A);
@@ -641,6 +724,7 @@ void registerLibcSystem(Process& p) {
     p.def<&s_NSGetProgname>("__NSGetProgname");
     p.def<&s_NSGetMachExecuteHeader>("__NSGetMachExecuteHeader");
     p.def<&s_getpid>("_getpid");
+    p.def<&s_syscall>("_syscall");
     p.def<&s_getppid>("_getppid");
     p.def<&s_getuid>("_getuid");
     p.def<&s_getuid>("_geteuid");

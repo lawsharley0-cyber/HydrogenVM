@@ -192,6 +192,7 @@ typedef struct {
 - (NSString *)componentsJoinedByString:(NSString *)s;
 - (NSArray *)sortedArrayUsingSelector:(SEL)s;
 - (NSArray *)sortedArrayUsingComparator:(NSComparator)cmp;
+- (NSArray *)sortedArrayUsingDescriptors:(NSArray *)sortDescriptors;
 - (NSArray *)filteredArrayUsingPredicate:(id)p;
 - (void)enumerateObjectsUsingBlock:(void (^)(id obj, NSUInteger idx, BOOL *stop))block;
 - (void)makeObjectsPerformSelector:(SEL)s;
@@ -488,6 +489,18 @@ NSString *NSTemporaryDirectory(void);
 @interface NSUUID : NSObject <NSCopying>
 + (instancetype)UUID;
 - (NSString *)UUIDString;
+@end
+
+@interface NSSortDescriptor : NSObject <NSCopying>
++ (instancetype)sortDescriptorWithKey:(NSString *)key ascending:(BOOL)ascending;
++ (instancetype)sortDescriptorWithKey:(NSString *)key ascending:(BOOL)ascending selector:(SEL)selector;
+- (instancetype)initWithKey:(NSString *)key ascending:(BOOL)ascending;
+- (instancetype)initWithKey:(NSString *)key ascending:(BOOL)ascending selector:(SEL)selector;
+@property(readonly, copy) NSString *key;
+@property(readonly) BOOL ascending;
+@property(readonly) SEL selector;
+- (NSComparisonResult)compareObject:(id)object1 toObject:(id)object2;
+- (instancetype)reversedSortDescriptor;
 @end
 
 @interface NSJSONSerialization : NSObject

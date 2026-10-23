@@ -136,6 +136,9 @@ struct alignas(64) Cpu {
     // complete, stable picture of its guest state.
     std::atomic<uint32_t> suspend_count{0};
     std::atomic<bool> in_guest{false};
+    // Index of the host function this thread is in (outermost-latest), for the
+    // guest sampling profiler. Not used for control flow.
+    std::atomic<uint32_t> current_hle{0xFFFFFFFFu};
 
     uint32_t pc() const { return r[kPC]; }
     uint32_t cpsr() const { return nzcv | (q << 27) | ge | (thumb << 5) | 0x10 /*USR*/; }

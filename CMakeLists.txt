@@ -28,13 +28,26 @@ add_library(hvm_core STATIC
   ${HVM_RUNTIME_SOURCES}
 )
 target_include_directories(hvm_core PUBLIC src)
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  OUTPUT_VARIABLE HVM_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+target_compile_definitions(hvm_core PRIVATE HVM_COMMIT="${HVM_COMMIT}")
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
 target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB SQLite::SQLite3 Threads::Threads)
-# CommonCrypto ciphers are forwarded to a host library: the system CommonCrypto
-# on Apple hosts, OpenSSL elsewhere. Without OpenSSL, CCCrypt reports kCCUnimplemented.
-if(NOT APPLE)
+# Codecs and ciphers come from host libraries: AudioToolbox and CommonCrypto on
+# Apple hosts; FFmpeg (M4A) and OpenSSL (CCCrypt) elsewhere, both optional.
+if(APPLE)
+  target_link_libraries(hvm_core PUBLIC "-framework AudioToolbox")
+else()
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec libavutil)
+    if(FFMPEG_FOUND)
+      set_source_files_properties(src/runtime/audio/HostDecode.cpp PROPERTIES COMPILE_DEFINITIONS HVM_HAVE_FFMPEG=1)
+      target_link_libraries(hvm_core PUBLIC PkgConfig::FFMPEG)
+    endif()
+  endif()
   find_package(OpenSSL 3)
   if(OpenSSL_FOUND)
     target_link_libraries(hvm_core PUBLIC OpenSSL::Crypto)

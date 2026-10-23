@@ -553,3 +553,89 @@ t_neon_mix:
     add     sp, #4                   @ drop saved r4 so the test sees its value
     pop     {pc}
     .ltorg
+
+    .arm
+@ NEON float always flushes denormals (inputs and results keep only the sign)
+@ and returns the default NaN, in both the D and the Q forms.
+@ TEST neon_ftz_default_nan
+@ EXPECT r0=0x00000000 r1=0x80000000 r2=0x7FC00000 r3=0x7FC00000
+    .global neon_ftz_default_nan
+neon_ftz_default_nan:
+    ldr     r0, =0x00000001         @ smallest positive denormal
+    ldr     r1, =0x80000003         @ negative denormal
+    ldr     r2, =0x7F800001         @ signalling NaN
+    ldr     r3, =0x7F800000         @ +inf
+    vmov    d0, r0, r1
+    vmov    d1, r2, r3
+    ldr     r0, =0x3F800000
+    vdup.32 d6, r0                  @ 1.0
+    vmul.f32 d4, d0, d6             @ denormal * 1 -> +0 / -0
+    vadd.f32 d5, d1, d6             @ lane0: NaN + 1 -> default NaN
+    vmov    d7, d1
+    vsub.f32 q4, q3, q3             @ (Q form) inf - inf in lane 1 of d7 -> default NaN
+    vmov    r0, r1, d4
+    vmov    r2, s10
+    vmov    r3, s19
+    bx      lr
+
+@ NEON VCVT with fraction bits, Q form, including saturation.
+@ TEST neon_cvt_fixed_q
+@ EXPECT r0=0x00000018 r1=0xFFFFFFDC r2=0x7FFFFFFF r3=0x0000000C
+    .global neon_cvt_fixed_q
+neon_cvt_fixed_q:
+    ldr     r0, =0x3FC00000         @ 1.5
+    ldr     r1, =0xC0100000         @ -2.25
+    ldr     r2, =0x4F32D05E         @ 3e9 (saturates)
+    ldr     r3, =0x3F400000         @ 0.75
+    vmov    d0, r0, r1
+    vmov    d1, r2, r3
+    vcvt.s32.f32 q1, q0, #4
+    vmov    r0, r1, d2
+    vmov    r2, r3, d3
+    bx      lr
+
+@ NEON VCVT back (D form), VCGT.F32 (D form) and VABS.F32 (Q form).
+@ TEST neon_cvt_cmp_abs
+@ EXPECT r0=0x3FC00000 r1=0xC0100000 r2=0xFFFFFFFF r3=0x40100000
+    .global neon_cvt_cmp_abs
+neon_cvt_cmp_abs:
+    ldr     r0, =0x00000018
+    ldr     r1, =0xFFFFFFDC
+    vmov    d2, r0, r1
+    vcvt.f32.s32 d4, d2, #4         @ {1.5, -2.25}
+    ldr     r2, =0xC0100000
+    ldr     r3, =0x3FC00000
+    vmov    d5, r2, r3              @ {-2.25, 1.5}
+    vcgt.f32 d6, d4, d5             @ lane0: 1.5 > -2.25
+    vabs.f32 q4, q2                 @ lane1: |-2.25|
+    vmov    r0, r1, d4
+    vmov    r2, s12
+    vmov    r3, s17
+    bx      lr
+    .ltorg
+
+@ VCMP + VMRS APSR_nzcv (fused into one op by the block builder): integer flags
+@ and FPSCR both get the result; an unordered compare sets V.
+@ TEST vfp_cmp_vmrs_flags
+@ EXPECT r0=1 r1=0x8 r2=1 r3=0x3
+    .global vfp_cmp_vmrs_flags
+vfp_cmp_vmrs_flags:
+    vmov.f32 s0, #1.0
+    vmov.f32 s1, #2.0
+    mov     r0, #0
+    vcmpe.f32 s0, s1
+    vmrs    APSR_nzcv, fpscr
+    movlt   r0, #1
+    movge   r0, #2
+    vmrs    r1, fpscr
+    lsr     r1, r1, #28
+    ldr     r3, =0x7FC00000
+    vmov    s2, r3
+    mov     r2, #0
+    vcmp.f32 s2, #0
+    vmrs    APSR_nzcv, fpscr
+    movvs   r2, #1
+    vmrs    r3, fpscr
+    lsr     r3, r3, #28
+    bx      lr
+    .ltorg

@@ -9,13 +9,18 @@
 // OpenGL ES is deprecated on iOS but still present; if it ever disappears,
 // makeEaglPlatform returns null and the software rasterizer is used.
 #import "HostGLEAGL.h"
+#import "HVMEngine.h"
 #import <OpenGLES/EAGL.h>
 #import <OpenGLES/EAGLDrawable.h>
 #import <OpenGLES/ES2/gl.h>
 #import <QuartzCore/QuartzCore.h>
+#import <UIKit/UIKit.h>
 #include <dlfcn.h>
 #include <mutex>
 #include <unordered_map>
+
+NSString *const HVMGLLayerUnitTransformKey = @"hvmUnitTransform";
+NSNotificationName const HVMGLLayerGeometryDidChangeNotification = @"HVMGLLayerGeometryDidChange";
 
 namespace Hydrogen::App {
 namespace {
@@ -90,6 +95,7 @@ public:
         layer.bounds = CGRectMake(0, 0, width, height);
         [CATransaction commit];
         const BOOL ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:layer];
+        [CATransaction flush];
         if (created || ok) {
             auto notify = onLayer_;
             CALayer *shown = layer;
@@ -100,7 +106,27 @@ public:
 
     bool presentDirect(void *ctx, uint32_t) override {
         EAGLContext *c = (__bridge EAGLContext *)ctx;
-        return [c presentRenderbuffer:GL_RENDERBUFFER];
+        const BOOL ok = [c presentRenderbuffer:GL_RENDERBUFFER];
+        // The guest thread has no run loop, so its implicit Core Animation
+        // transaction (which carries the new layer contents) is never committed
+        // on its own: commit it now or the layer stays blank.
+        [CATransaction flush];
+        return ok;
+    }
+
+    void layerGeometry(uint32_t layerKey, const float unit[6]) override {
+        CAEAGLLayer *layer = nil;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            auto it = layers_.find(layerKey);
+            if (it != layers_.end()) layer = (__bridge CAEAGLLayer *)it->second;
+        }
+        if (!layer) return;
+        const CGAffineTransform t = CGAffineTransformMake(unit[0], unit[1], unit[2], unit[3], unit[4], unit[5]);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [layer setValue:[NSValue valueWithCGAffineTransform:t] forKey:HVMGLLayerUnitTransformKey];
+            [[NSNotificationCenter defaultCenter] postNotificationName:HVMGLLayerGeometryDidChangeNotification object:layer];
+        });
     }
 
     void releaseLayer(uint32_t layerKey) override {

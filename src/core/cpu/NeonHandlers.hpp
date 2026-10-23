@@ -47,10 +47,22 @@ template <typename T> inline T wadd(T a, T b) { using U = std::make_unsigned_t<T
 template <typename T> inline T wsub(T a, T b) { using U = std::make_unsigned_t<T>; return T(U(U(a) - U(b))); }
 
 // NEON float input/output conditioning: flush denormals, default NaN.
-inline float nIn(float x)  { return flushDenorm(x); }
-inline float nOut(float r) { r = flushDenorm(r); return std::isnan(r) ? defaultNaN<float>() : r; }
+// Bit-level so the lane loops vectorise: a zero exponent with a nonzero
+// mantissa is a denormal (keep only the sign); an all-ones exponent with a
+// nonzero mantissa is a NaN (becomes the default NaN 0x7FC00000).
 inline uint32_t fbits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
 inline float bitsf(uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; }
+inline float nIn(float x) {
+    const uint32_t b = fbits(x);
+    return bitsf((b & 0x7F800000u) == 0 ? (b & 0x80000000u) : b);
+}
+inline float nOut(float r) {
+    uint32_t b = fbits(r);
+    const uint32_t e = b & 0x7F800000u;
+    b = e == 0 ? (b & 0x80000000u) : b;
+    b = (e == 0x7F800000u && (b & 0x007FFFFFu)) ? 0x7FC00000u : b;
+    return bitsf(b);
+}
 
 // Shift by a signed register amount (VSHL/VRSHL/VQSHL/VQRSHL semantics).
 template <typename T> inline T shlReg(Cpu* c, T n, int sh, bool rnd, bool saturate) {
@@ -132,17 +144,29 @@ HVM_NF(FRsqrts, false, { T a = nIn(n), b = nIn(m);
                         T p = nOut(a * b); return nOut((T(3) - p) / T(2)); })
 
 // a = d, b = n, c = m, imm = number of D registers (1 or 2)
+// The D (8-byte) and Q (16-byte) forms get separate fixed-size bodies so the
+// compiler unrolls and vectorises the lane loop. HVM_DQ(body) runs `body` with
+// a constexpr BYTES of 8 or 16 chosen by op->imm (1 or 2 D registers).
+#define HVM_DQ(...)                                                              \
+    do {                                                                         \
+        auto hvmBody = [&]<uint32_t BYTES>() { __VA_ARGS__ };                    \
+        if (op->imm == 2) hvmBody.template operator()<16>();                     \
+        else hvmBody.template operator()<8>();                                   \
+    } while (0)
+template <class F, typename T, uint32_t BYTES>
+inline void n3Body(Cpu* c, const Op* op) {
+    constexpr int cnt = int(BYTES / sizeof(T));
+    T n[cnt], mm[cnt], d[cnt] = {};
+    vld(c, op->b, n, BYTES);
+    vld(c, op->c, mm, BYTES);
+    if constexpr (F::kReadsD) vld(c, op->a, d, BYTES);
+    for (int i = 0; i < cnt; ++i) d[i] = F::template f<T>(c, n[i], mm[i], d[i]);
+    vst(c, op->a, d, BYTES);
+}
 template <class F, typename T>
 HVM_H(H_N3) {
-    constexpr int L = 16 / int(sizeof(T));
-    T n[L], mm[L], d[L] = {};
-    const uint32_t bytes = op->imm * 8;
-    const int cnt = int(bytes / sizeof(T));
-    vld(c, op->b, n, bytes);
-    vld(c, op->c, mm, bytes);
-    if constexpr (F::kReadsD) vld(c, op->a, d, bytes);
-    for (int i = 0; i < cnt; ++i) d[i] = F::template f<T>(c, n[i], mm[i], d[i]);
-    vst(c, op->a, d, bytes);
+    if (op->imm == 2) n3Body<F, T, 16>(c, op);
+    else n3Body<F, T, 8>(c, op);
     HVM_NEXT();
 }
 
@@ -150,27 +174,26 @@ HVM_H(H_N3) {
 // (KIND 5 LE0, 6 LT0 only with ZERO).
 template <int KIND, bool ZERO>
 HVM_H(H_NFCmp) {
-    float n[4], mm[4] = {};
-    uint32_t out[4];
-    const uint32_t bytes = op->imm * 8;
-    const int cnt = int(bytes / 4);
-    vld(c, op->b, n, bytes);
-    if constexpr (!ZERO) vld(c, op->c, mm, bytes);
-    for (int i = 0; i < cnt; ++i) {
-        float a = nIn(n[i]), b = nIn(mm[i]);
-        bool r;
-        switch (KIND) {
-            case 0: r = a == b; break;
-            case 1: r = a >= b; break;
-            case 2: r = a > b; break;
-            case 3: r = std::fabs(a) >= std::fabs(b); break;
-            case 4: r = std::fabs(a) > std::fabs(b); break;
-            case 5: r = a <= b; break;
-            default: r = a < b; break;
+    HVM_DQ(
+        constexpr int cnt = int(BYTES / 4);
+        float n[cnt], mm[cnt] = {};
+        uint32_t out[cnt];
+        vld(c, op->b, n, BYTES);
+        if constexpr (!ZERO) vld(c, op->c, mm, BYTES);
+        for (int i = 0; i < cnt; ++i) {
+            float a = nIn(n[i]), b = nIn(mm[i]);
+            bool r;
+            if constexpr (KIND == 0) r = a == b;
+            else if constexpr (KIND == 1) r = a >= b;
+            else if constexpr (KIND == 2) r = a > b;
+            else if constexpr (KIND == 3) r = std::fabs(a) >= std::fabs(b);
+            else if constexpr (KIND == 4) r = std::fabs(a) > std::fabs(b);
+            else if constexpr (KIND == 5) r = a <= b;
+            else r = a < b;
+            out[i] = r ? 0xFFFFFFFFu : 0;
         }
-        out[i] = r ? 0xFFFFFFFFu : 0;
-    }
-    vst(c, op->a, out, bytes);
+        vst(c, op->a, out, BYTES);
+    );
     HVM_NEXT();
 }
 
@@ -216,12 +239,13 @@ HVM_H(H_NShImm) {
     constexpr int L = 16 / int(sizeof(T));
     constexpr int esz = kBits<T>;
     using U = std::make_unsigned_t<T>;
-    T mm[L], d[L] = {};
-    const uint32_t bytes = op->imm * 8;
-    const int cnt = int(bytes / sizeof(T));
+    (void)L;
+    HVM_DQ(
+    constexpr int cnt = int(BYTES / sizeof(T));
+    T mm[cnt], d[cnt] = {};
     const int s = op->d;
-    vld(c, op->c, mm, bytes);
-    if constexpr (OP == kNSra || OP == kNRSra || OP == kNSri || OP == kNSli) vld(c, op->a, d, bytes);
+    vld(c, op->c, mm, BYTES);
+    if constexpr (OP == kNSra || OP == kNRSra || OP == kNSri || OP == kNSli) vld(c, op->a, d, BYTES);
     for (int i = 0; i < cnt; ++i) {
         const i128 v = i128(mm[i]);
         if constexpr (OP == kNShr || OP == kNSra) {
@@ -246,7 +270,8 @@ HVM_H(H_NShImm) {
             d[i] = T(sat<U>(c, v << s));
         }
     }
-    vst(c, op->a, d, bytes);
+    vst(c, op->a, d, BYTES);
+    );
     HVM_NEXT();
 }
 
@@ -294,22 +319,25 @@ HVM_H(H_NWiden) {
 // a = d, c = m, imm = registers, d = fraction bits
 template <bool TO_FIXED, bool UNSIGNED>
 HVM_H(H_NCvtFixed) {
-    uint32_t v[4];
-    const uint32_t bytes = op->imm * 8;
-    const int cnt = int(bytes / 4);
-    vld(c, op->c, v, bytes);
-    for (int i = 0; i < cnt; ++i) {
-        if constexpr (TO_FIXED) {
-            double x = std::trunc(std::ldexp(double(nIn(bitsf(v[i]))), op->d));
-            uint32_t s = 0;
-            v[i] = fpToInt(x, !UNSIGNED, 32, s);
-            if (s) setQC(c);
-        } else {
-            double x = UNSIGNED ? double(v[i]) : double(int32_t(v[i]));
-            v[i] = fbits(nOut(float(std::ldexp(x, -int(op->d)))));
+    // Scaling by 2^fbits is exact in double, so a multiply replaces ldexp.
+    const double up = std::ldexp(1.0, int(op->d)), down = 1.0 / up;
+    HVM_DQ(
+        constexpr int cnt = int(BYTES / 4);
+        uint32_t v[cnt];
+        vld(c, op->c, v, BYTES);
+        for (int i = 0; i < cnt; ++i) {
+            if constexpr (TO_FIXED) {
+                double x = std::trunc(double(nIn(bitsf(v[i]))) * up);
+                uint32_t s = 0;
+                v[i] = fpToInt(x, !UNSIGNED, 32, s);
+                if (s) setQC(c);
+            } else {
+                double x = UNSIGNED ? double(v[i]) : double(int32_t(v[i]));
+                v[i] = fbits(nOut(float(x * down)));
+            }
         }
-    }
-    vst(c, op->a, v, bytes);
+        vst(c, op->a, v, BYTES);
+    );
     HVM_NEXT();
 }
 
@@ -430,12 +458,14 @@ HVM_NU(UFNeg, return bitsf(fbits(x) ^ 0x80000000u);)
 template <class F, typename T>
 HVM_H(H_NUnary) {
     constexpr int L = 16 / int(sizeof(T));
-    T v[L];
-    const uint32_t bytes = op->imm * 8;
-    const int cnt = int(bytes / sizeof(T));
-    vld(c, op->c, v, bytes);
-    for (int i = 0; i < cnt; ++i) v[i] = F::template f<T>(c, v[i]);
-    vst(c, op->a, v, bytes);
+    (void)L;
+    HVM_DQ(
+        constexpr int cnt = int(BYTES / sizeof(T));
+        T v[cnt];
+        vld(c, op->c, v, BYTES);
+        for (int i = 0; i < cnt; ++i) v[i] = F::template f<T>(c, v[i]);
+        vst(c, op->a, v, BYTES);
+    );
     HVM_NEXT();
 }
 

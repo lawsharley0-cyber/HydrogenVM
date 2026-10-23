@@ -122,7 +122,11 @@ void Engine::setLastHostError(std::string s) { t_hostError = std::move(s); }
 
 void Engine::callHle(Cpu* c, uint32_t index) {
     c->in_guest.store(false, std::memory_order_release);
-    struct Reenter { Engine* e; Cpu* c; ~Reenter() { e->enterGuest(*c); } } reenter{this, c};
+    const uint32_t outerHle = c->current_hle.exchange(index, std::memory_order_relaxed);
+    struct Reenter {
+        Engine* e; Cpu* c; uint32_t outer;
+        ~Reenter() { c->current_hle.store(outer, std::memory_order_relaxed); e->enterGuest(*c); }
+    } reenter{this, c, outerHle};
     try {
         hle_[index].fn(*c);
     } catch (const GuestFault& f) {

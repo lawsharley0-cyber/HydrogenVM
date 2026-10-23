@@ -26,6 +26,7 @@ from hvm_testlab import (
     _baseline_mflops_ceiling,
     _parse_case_output,
     make_host_report,
+    run_case,
     verify_ipa_contents,
 )
 from testlab_schema.validate_result import validate
@@ -115,6 +116,20 @@ class TestVerifyIpaContents(unittest.TestCase):
 
 
 # ─────────────────────────── output parsing ──────────────────────────────────
+
+class TestLifecycleResult(unittest.TestCase):
+    def test_passing_guest_line_requires_clean_exit_and_persisted_save(self):
+        for exit_code, saved, expected in [(0, True, "passed"), (1, True, "failed"), (0, False, "failed")]:
+            with self.subTest(exit_code=exit_code, saved=saved), tempfile.TemporaryDirectory() as home:
+                if saved:
+                    path = Path(home) / "com.hydrogenvm.test.testlab" / "Documents" / "lifecycle-save.txt"
+                    path.parent.mkdir(parents=True)
+                    path.write_text("saved before termination completed")
+                process = MagicMock(returncode=exit_code, stdout="TESTLAB TL-L passed\n", stderr="")
+                with patch("hvm_testlab.subprocess.run", return_value=process):
+                    result = run_case("hvm", "TestLab.ipa", "TL-L", home, 10)
+                self.assertEqual(result["status"], expected)
+
 
 class TestParseCaseOutput(unittest.TestCase):
 

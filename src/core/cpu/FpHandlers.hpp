@@ -138,6 +138,23 @@ HVM_H(H_VfpCmp) {
     HVM_NEXT();
 }
 
+// VCMP{E} + VMRS APSR_nzcv, FPSCR fused (BlockBuilder::fuseOps): the compare's
+// flags go to FPSCR and straight to the integer flags.
+template <bool DP, bool ZERO>
+HVM_H(H_VfpCmpToApsr) {
+    using T = FpT<DP>;
+    T x = rdF<DP>(c, op->a), y = ZERO ? T(0) : rdF<DP>(c, op->c);
+    if (c->fpscr & kFpscrFZ) { x = flushDenorm(x); y = flushDenorm(y); }
+    uint32_t f;
+    if (std::isnan(x) || std::isnan(y)) f = 0x3;
+    else if (x == y) f = 0x6;
+    else if (x < y) f = 0x8;
+    else f = 0x2;
+    c->fpscr = (c->fpscr & 0x0FFFFFFFu) | (f << 28);
+    c->nzcv = (f << 28) & kFlagMaskNZCV;
+    HVM_NEXT();
+}
+
 // VCVT between single and double: TO_DOUBLE: a = Dd, c = Sm; else a = Sd, c = Dm
 template <bool TO_DOUBLE>
 HVM_H(H_VfpCvtSD) {
@@ -316,8 +333,14 @@ HVM_H(H_Vmsr) { c->fpscr = c->r[op->a] & 0xFFC09F9Fu; HVM_NEXT(); }
 template <bool LOAD>
 HVM_H(H_VLdrStr) {
     const uint32_t addr = c->r[op->b] + op->imm;
-    if constexpr (LOAD) std::memcpy(vregs(c) + 4 * op->a, m + uint64_t(addr), 4 * op->d);
-    else std::memcpy(m + uint64_t(addr), vregs(c) + 4 * op->a, 4 * op->d);
+    // Fixed sizes so the copies compile to single loads/stores (no memcpy call).
+    uint8_t* reg = vregs(c) + 4 * op->a;
+    uint8_t* mem = m + uint64_t(addr);
+    if (op->d == 1) {
+        if constexpr (LOAD) std::memcpy(reg, mem, 4); else std::memcpy(mem, reg, 4);
+    } else {
+        if constexpr (LOAD) std::memcpy(reg, mem, 8); else std::memcpy(mem, reg, 8);
+    }
     HVM_NEXT();
 }
 

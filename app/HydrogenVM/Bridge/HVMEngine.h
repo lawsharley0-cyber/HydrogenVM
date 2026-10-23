@@ -27,6 +27,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSString *problem;
 @end
 
+/// Set on the GPU drawable layer (an NSValue holding a CGAffineTransform): maps a
+/// drawable pixel, from its top-left, onto the guest screen scaled to 0...1.
+FOUNDATION_EXPORT NSString *const HVMGLLayerUnitTransformKey;
+/// Posted on the main queue (object: the layer) when that transform changes.
+FOUNDATION_EXPORT NSNotificationName const HVMGLLayerGeometryDidChangeNotification;
+
 typedef NS_ENUM(NSInteger, HVMLogLevel) {
     HVMLogLevelDebug, HVMLogLevelInfo, HVMLogLevelWarning, HVMLogLevelError, HVMLogLevelStdout, HVMLogLevelStderr,
 };
@@ -52,15 +58,22 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);
 /// Emulated screen in points (known once the app has started; 320x480 or 320x568).
 @property (nonatomic, readonly) CGSize screenSize;
-/// Guest UIInterfaceOrientation (1...4), captured with the delivered frame.
+/// Guest UIInterfaceOrientation (1...4). Read live from the guest, so it stays
+/// current on the GPU path, where UIKit frames are no longer delivered every frame.
 @property (nonatomic, readonly) NSInteger interfaceOrientation;
+/// Git revision the emulator core was built from ("unknown" if not recorded).
+@property (class, nonatomic, readonly) NSString *emulatorCommit;
 /// Lifecycle background acknowledgement; not a filesystem replacement barrier.
 @property (nonatomic, readonly, getter=isBackgrounded) BOOL backgrounded;
 /// Guest frame-hook work, lifetime p95 in milliseconds; zero before samples.
 @property (nonatomic, readonly) double frameTimeP95Milliseconds;
+/// Frames shown so far (software composites and GPU presents).
+@property (nonatomic, readonly) uint64_t framesPresented;
 /// Host output gain, 0...1. Does not change guest audio source gains.
 @property (nonatomic) float outputVolume;
 @property (nonatomic, readonly, getter=isRunning) BOOL running;
+/// JSON captured before the guest process is released.
+@property (nonatomic, readonly, copy, nullable) NSString *crashBundle;
 /// When YES, missing functions log and return 0 instead of stopping the app.
 @property (nonatomic) BOOL keepGoing;
 
@@ -78,6 +91,13 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger;
 /// Accelerometer in g, device axes (portrait), like UIAcceleration.
 - (void)setAccelerationX:(double)x y:(double)y z:(double)z;
+@end
+
+@interface HVMCrashJournal : NSObject
++ (void)installSignalHandlers;
++ (void)openSignalFile:(NSString *)path;
++ (void)closeSignalFile;
++ (uint64_t)availableMemory;
 @end
 
 @interface HVMEngine : NSObject

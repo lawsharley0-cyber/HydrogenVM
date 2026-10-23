@@ -1243,11 +1243,88 @@ int runFullSubsystemTests() {
     CPU::Cpu& cpu = proc.mainThread().cpu;
     Ctx cx{proc, cpu, proc.mem()};
     auto& r = ObjC::rt(proc);
-
     // Initialize main thread stack & environment for direct host->guest ObjC calls
     proc.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
     cpu.r[CPU::kSP] = 0xBF000000u - 256;
     const uint32_t outerPool = r.poolPush();
+
+    // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.
+    {
+        using namespace Foundation;
+        auto call=[&](uint32_t object,const char* sel,std::initializer_list<uint32_t> args={}) {return uint32_t(r.send(cpu,object,sel,args));};
+        const auto key=makeString(cx,"score");
+        const auto low=makeDict(cx,{{key,makeNumberInt(cx,2)}}), high=makeDict(cx,{{key,makeNumberInt(cx,9)}});
+        const auto rows=makeArray(cx,{high,low,high});
+        bool sorted=false;
+        if(r.getClass("NSSortDescriptor")) {
+            const auto mutableKey=makeString(cx,"score",false,true);
+            const auto descriptor=call(r.getClass("NSSortDescriptor"),"sortDescriptorWithKey:ascending:",{mutableKey,1});
+            call(mutableKey,"setString:",{makeString(cx,"changed")});
+            auto values=arrayItems(cx,call(rows,"sortedArrayUsingDescriptors:",{makeArray(cx,{descriptor})}));
+            auto reverse=call(descriptor,"reversedSortDescriptor");
+            sorted=values==std::vector<ObjC::id>{low,high,high} && int32_t(call(reverse,"compareObject:toObject:",{low,high}))>0;
+        }
+        check(sorted,"NSSortDescriptor copies key, stable-sorts and reverses comparison");
+        bool predicates=false;
+        if(r.getClass("NSPredicate")) {
+            auto predicate=call(r.getClass("NSPredicate"),"predicateWithFormat:",{makeString(cx,"score >= %d"),5});
+            auto values=arrayItems(cx,call(rows,"filteredArrayUsingPredicate:",{predicate}));
+            auto equal=call(r.getClass("NSPredicate"),"predicateWithFormat:argumentArray:",{makeString(cx,"%K == %@"),makeArray(cx,{key,makeNumberInt(cx,2)})});
+            bool rejected=false;try{call(r.getClass("NSPredicate"),"predicateWithFormat:",{makeString(cx,"score BETWEEN {1, 3}")});}catch(const std::exception& e){rejected=std::string(e.what()).find("unsupported NSPredicate format")!=std::string::npos;}
+            predicates=values==std::vector<ObjC::id>{high,high} && call(equal,"evaluateWithObject:",{low}) && !call(equal,"evaluateWithObject:",{high}) && rejected;
+        }
+        check(predicates,"NSPredicate key comparisons/filtering and explicit unsupported syntax");
+        bool tables=false;
+        if(r.getClass("NSHashTable") && r.getClass("NSMapTable")) {
+            auto weak=call(r.getClass("NSHashTable"),"weakObjectsHashTable");
+            auto strong=call(r.getClass("NSMapTable"),"strongToStrongObjectsMapTable");
+            auto weakMap=call(r.getClass("NSMapTable"),"strongToWeakObjectsMapTable");
+            const auto object=r.createInstance(r.nsObject);
+            call(weak,"addObject:",{object});call(weakMap,"setObject:forKey:",{object,key});call(strong,"setObject:forKey:",{object,key});
+            r.release(cpu,object);
+            bool retained=call(weak,"count")==1 && call(strong,"objectForKey:",{key})==object;
+            call(strong,"removeObjectForKey:",{key});
+            tables=retained && call(weak,"count")==0 && call(weakMap,"count")==0 && !call(weakMap,"objectForKey:",{key});
+        }
+        check(tables,"NSHashTable/NSMapTable retain strong entries and zero weak entries on release");
+        bool attributed=false;
+        if(r.getClass("NSMutableAttributedString")) {
+            auto object=call(r.createInstance(r.getClass("NSMutableAttributedString")),"initWithString:attributes:",{makeString(cx,std::u16string(u"A\U0001f600B")),makeDict(cx,{{key,makeNumberInt(cx,1)}})});
+            call(object,"addAttribute:value:range:",{key,makeNumberInt(cx,7),1,2});
+            auto range=proc.heap().allocZeroed(8);
+            auto val=call(object,"attribute:atIndex:effectiveRange:",{key,2,range});
+            bool utf16=call(object,"length")==4 && numberInt(cx,val)==7 && proc.mem().read<uint32_t>(range)==1 && proc.mem().read<uint32_t>(range+4)==2;
+            auto snapshot=call(object,"copy");auto view=call(object,"mutableString");
+            call(view,"replaceCharactersInRange:withString:",{1,2,makeString(cx,"xy")});call(view,"appendString:",{makeString(cx,"!")});
+            attributed=utf16 && utf8(cx,call(object,"string"))=="AxyB!" && numberInt(cx,call(object,"attribute:atIndex:effectiveRange:",{key,1,0}))==7 && call(snapshot,"length")==4 && stringValue(cx,call(snapshot,"string"))==u"A\U0001f600B";
+            r.release(cpu,snapshot);r.release(cpu,object);proc.heap().free(range);
+        }
+        check(attributed,"NSMutableAttributedString preserves UTF-16 ranges, copied snapshots and mutableString edits");
+        bool support=false;
+        if(r.getClass("NSMutableParagraphStyle") && r.getClass("NSURLCredential")) {
+            auto style=r.createInstance(r.getClass("NSMutableParagraphStyle"));
+            call(style,"setLineSpacing:",{std::bit_cast<uint32_t>(2.5f)});call(style,"setAlignment:",{2});auto copy=call(style,"copy");call(style,"setAlignment:",{1});
+            auto password=makeString(cx,"secret",false,true);
+            auto credential=call(r.getClass("NSURLCredential"),"credentialWithUser:password:persistence:",{makeString(cx,"user"),password,1});call(password,"setString:",{makeString(cx,"changed")});
+            support=call(copy,"alignment")==2 && std::bit_cast<float>(call(copy,"lineSpacing"))==2.5f && utf8(cx,call(credential,"password"))=="secret" && call(credential,"persistence")==1;
+            r.release(cpu,copy);r.release(cpu,style);
+        }
+        check(support,"Paragraph styles copy independent properties; NSURLCredential snapshots password");
+        bool geometry=false;
+        if(r.getClass("UIBezierPath")) {
+            const auto f=[](float v){return std::bit_cast<uint32_t>(v);};
+            auto path=call(r.getClass("UIBezierPath"),"bezierPathWithRect:",{f(1),f(2),f(10),f(20)});
+            auto copy=call(path,"copy");call(path,"removeAllPoints");
+            bool inside=call(copy,"containsPoint:",{f(5),f(5)}) && !call(copy,"containsPoint:",{f(50),f(50)});
+            const auto out=proc.heap().allocZeroed(16);
+            // ARMv7 CGRect returns through r0, before self and selector.
+            proc.callGuest(cpu,r.lookup(r.classOf(copy),r.sel("bounds")),{out,copy,r.sel("bounds")});
+            geometry=inside && call(path,"isEmpty") && proc.mem().read<float>(out)==1 && proc.mem().read<float>(out+4)==2 && proc.mem().read<float>(out+8)==10 && proc.mem().read<float>(out+12)==20;
+            proc.heap().free(out);r.release(cpu,copy);
+        }
+        check(geometry,"UIBezierPath owns CGPath copies, contains points and returns ARMv7 CGRect bounds");
+    }
+
 
     {
         const auto backing = Foundation::makeDict(cx, {}, true, true);
@@ -1325,6 +1402,15 @@ int runFullSubsystemTests() {
         check(call("_mach_port_mod_refs", {0x103, 0x103, 0, 1}) == 0 && refs(0x103) == 2 &&
               call("_mach_port_deallocate", {0x103, 0x103}) == 0 && refs(0x103) == 1,
               "Mach task send references increment and deallocate symmetrically");
+
+        // Direct HLE _syscall validation
+        const uint32_t errAddr = proc.currentThread().errnoAddr ? proc.currentThread().errnoAddr : proc.heap().allocZeroed(4);
+        proc.currentThread().errnoAddr = errAddr;
+        const auto getErrno = [&]() { return proc.mem().read<uint32_t>(errAddr); };
+        check(call("_syscall", {20}) == 1234, "_syscall(20) returns getpid");
+        check(int32_t(call("_syscall", {286})) == -1 && getErrno() == 3, "_syscall(286) returns -1 and ESRCH (3)");
+        check(call("_syscall", {372}) == proc.currentThread().id, "_syscall(372) returns thread_selfid");
+        check(int32_t(call("_syscall", {999})) == -1 && getErrno() == 78, "_syscall(unhandled) returns -1 and ENOSYS (78)");
         check(call("_mach_port_mod_refs", {42, 0x103, 0, 1}) == 16 &&
               call("_mach_port_mod_refs", {0x103, 42, 0, 1}) == 15 &&
               call("_mach_port_mod_refs", {0x103, 0x103, 1, 1}) == 17 &&
@@ -1519,6 +1605,16 @@ int runFullSubsystemTests() {
         check(urls.size() == 1 &&
               Foundation::utf8(cx, ObjC::id(r.send(cpu, urls[0], "path"))) == localPath,
               "NSFileManager URL directory search agrees with the C path API");
+    }
+
+    // NSUbiquitousKeyValueStore keeps values in the sandbox (no iCloud) so they survive a relaunch.
+    {
+        const ObjC::id store = ObjC::id(r.send(cpu, r.getClass("NSUbiquitousKeyValueStore"), "defaultStore"));
+        r.send(cpu, store, "setObject:forKey:", {Foundation::makeString(cx, "level-7"), Foundation::makeString(cx, "progress")});
+        const bool synced = (r.send(cpu, store, "synchronize") & 0xFF) != 0;
+        auto saved = Plist::parseFile(proc.homePath() + "/Library/Preferences/HydrogenVM.UbiquitousKeyValueStore.plist");
+        const Plist::Value* v = saved ? saved->get("progress") : nullptr;
+        check(synced && v && v->s == "level-7", "NSUbiquitousKeyValueStore writes its values to the sandbox");
     }
 
     // Fixed-offset zones are used by HockeyApp's UTC date formatter on launch.
@@ -2274,6 +2370,95 @@ int runFullSubsystemTests() {
         check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap");
     }
 
+    // #31: independent ARMv7 API-family oracles (metadata is laid out by the public ABI).
+    {
+        auto bound = [&](std::initializer_list<const char*> names) { for (auto n : names) if (!proc.lookupSymbol(n)) return false; return true; };
+        auto call = [&](const char* name, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(name), args)); };
+        const uint32_t scratch = proc.heap().allocZeroed(512);
+        bool libc = bound({"_getprogname", "_strsignal", "_writev", "_flock", "_pthread_cancel"});
+        if (libc) {
+            int descriptors[2]; libc = ::pipe(descriptors) == 0;
+            if (libc) {
+                proc.mem().copyIn(scratch + 64, "ABCdef", 6);
+                proc.mem().write<uint32_t>(scratch, scratch + 64); proc.mem().write<uint32_t>(scratch + 4, 3);
+                proc.mem().write<uint32_t>(scratch + 8, scratch + 67); proc.mem().write<uint32_t>(scratch + 12, 3);
+                libc = call("_writev", {uint32_t(descriptors[1]), scratch, 2}) == 6;
+                ::close(descriptors[1]);
+                char bytes[6]{}; libc &= ::read(descriptors[0], bytes, 6) == 6 && std::memcmp(bytes, "ABCdef", 6) == 0;
+                ::close(descriptors[0]);
+            }
+            libc &= proc.readCString(call("_strsignal", {10})) == "Bus error" && !proc.readCString(call("_getprogname", {})).empty();
+            libc &= call("_pthread_cancel", {0xdeadbeef}) == 3;
+            if (bound({"_pthread_testcancel", "_pthread_join"})) {
+                std::atomic<bool> entered{false};
+                const auto worker = proc.defineFunction("__startup_cancel_worker", [&](Ctx& workerContext) {
+                    entered = true;
+                    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                    while (std::chrono::steady_clock::now() < end) {
+                        proc.callGuest(workerContext.cpu, *proc.lookupSymbol("_pthread_testcancel"), {});
+                        std::this_thread::yield();
+                    }
+                    workerContext.cpu.r[0] = 42;
+                });
+                const auto thread = proc.startThread(worker, 0, 512u << 10, false);
+                const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+                while (!entered && std::chrono::steady_clock::now() < end) std::this_thread::yield();
+                const bool prior = libc;
+                const uint32_t cancelled = call("_pthread_cancel", {thread});
+                uint32_t returned = 0;
+                const bool joined = proc.joinThread(thread, &returned);
+                libc &= cancelled == 0 && joined && returned == 0xffffffffu;
+                if (!libc) std::printf("    startup libc prior=%d entered=%d cancel=%u joined=%d returned=%08x\n", prior, bool(entered), cancelled, joined, returned);
+            } else libc = false;
+        }
+        check(libc, "startup libc exports writev bytes, Darwin signal names and invalid-thread cancellation errors");
+        bool protocols = bound({"_protocol_conformsToProtocol", "_protocol_copyProtocolList", "_protocol_copyMethodDescriptionList"});
+        if (protocols) {
+            const uint32_t parent = scratch + 96, child = scratch + 128, list = scratch + 160, methods = scratch + 176;
+            proc.mem().write<uint32_t>(parent + 4, proc.internCString("Parent31"));
+            proc.mem().write<uint32_t>(child + 4, proc.internCString("Child31"));
+            proc.mem().write<uint32_t>(child + 8, list); proc.mem().write<uint32_t>(list, 1); proc.mem().write<uint32_t>(list + 4, parent);
+            proc.mem().write<uint32_t>(child + 12, methods); proc.mem().write<uint32_t>(methods, 1);
+            proc.mem().write<uint32_t>(methods + 4, proc.internCString("method31")); proc.mem().write<uint32_t>(methods + 8, proc.internCString("v@:"));
+            const auto copied = call("_protocol_copyProtocolList", {child, scratch + 208});
+            const auto descriptions = call("_protocol_copyMethodDescriptionList", {child, 1, 1, scratch + 212});
+            protocols = call("_protocol_conformsToProtocol", {child, parent}) && !call("_protocol_conformsToProtocol", {parent, child}) &&
+                proc.mem().read<uint32_t>(scratch + 208) == 1 && proc.mem().read<uint32_t>(copied) == parent && proc.mem().read<uint32_t>(copied + 4) == 0 &&
+                proc.mem().read<uint32_t>(scratch + 212) == 1 && proc.mem().read<uint32_t>(descriptions) == r.sel("method31") &&
+                proc.readCString(proc.mem().read<uint32_t>(descriptions + 4)) == "v@:";
+            proc.heap().free(copied); proc.heap().free(descriptions);
+        }
+        check(protocols, "startup protocol metadata preserves adoption, method selectors, types and owned lists");
+        bool bitvectors = bound({"_CFBitVectorCreate", "_CFBitVectorCreateMutableCopy", "_CFBitVectorGetBitAtIndex", "_CFBitVectorSetBitAtIndex"});
+        if (bitvectors) {
+            proc.mem().write<uint8_t>(scratch + 224, 0xa5);
+            const auto original = call("_CFBitVectorCreate", {0, scratch + 224, 8});
+            const auto copy = call("_CFBitVectorCreateMutableCopy", {0, 0, original});
+            call("_CFBitVectorSetBitAtIndex", {copy, 1, 1});
+            bitvectors = call("_CFBitVectorGetBitAtIndex", {original, 0}) == 1 && call("_CFBitVectorGetBitAtIndex", {original, 1}) == 0 &&
+                call("_CFBitVectorGetBitAtIndex", {copy, 1}) == 1 && call("_CFBitVectorGetBitAtIndex", {original, 7}) == 1;
+            call("_CFRelease", {copy}); call("_CFRelease", {original});
+        }
+        check(bitvectors, "startup CF bit vectors use MSB-first bits and mutable copies own their storage");
+        bool mach = bound({"_mach_port_allocate", "_mach_port_insert_right", "_mach_msg", "_task_swap_exception_ports", "_thread_swap_exception_ports", "_vm_map", "_vm_protect"});
+        if (mach) {
+            mach = call("_mach_port_allocate", {0x103, 1, scratch + 256}) == 0;
+            const auto port = proc.mem().read<uint32_t>(scratch + 256);
+            mach &= call("_mach_port_insert_right", {0x103, port, port, 20}) == 0;
+            const uint32_t msg = scratch + 288;
+            proc.mem().write<uint32_t>(msg, 19); proc.mem().write<uint32_t>(msg + 4, 28); proc.mem().write<uint32_t>(msg + 8, port);
+            proc.mem().write<uint32_t>(msg + 24, 0x13579bdf);
+            mach &= call("_mach_msg", {msg, 3, 28, 28, port, 0, 0}) == 0 && proc.mem().read<uint32_t>(msg + 12) == port && proc.mem().read<uint32_t>(msg + 24) == 0x13579bdf;
+            mach &= call("_mach_msg", {msg, 0x102, 0, 28, port, 0, 0}) == 0x10004003;
+            mach &= call("_vm_map", {0x103, scratch + 260, 4096, 4095, 1, 0, 0, 0, 0, 3, 7, 0}) == 0;
+            const auto address = proc.mem().read<uint32_t>(scratch + 260);
+            mach &= address && !(address & 4095) && call("_vm_protect", {0x103, address, 4096, 0, 1}) == 0 && proc.mem().protAt(address) == Memory::kProtRead;
+            call("_vm_protect", {0x103, address, 4096, 0, 3}); call("_vm_deallocate", {0x103, address, 4096});
+            call("_mach_port_destroy", {0x103, port});
+        }
+        check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
+    }
+
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)
@@ -2292,6 +2477,36 @@ int runFullSubsystemTests() {
             std::memcpy(&wav[44 + i * 4], &sample, 2);
             std::memcpy(&wav[44 + i * 4 + 2], &sample, 2);
         }
+
+        auto audioCall = [&](const char* symbol, std::initializer_list<uint32_t> args) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(symbol), args));
+        };
+        const std::string filePath = proc.homePath() + "/audiofile-regression.wav";
+        { std::ofstream file(filePath, std::ios::binary); file << "invalid audio"; }
+        const auto fileURL = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, filePath)}));
+        const uint32_t fileOut = proc.heap().allocZeroed(64), pcmOut = proc.heap().allocZeroed(64);
+        proc.mem().write<uint32_t>(fileOut, 0xDEADBEEF);
+        const auto badStatus = audioCall("_AudioFileOpenURL", {fileURL, 1, 0, fileOut});
+        const auto badFile = proc.mem().read<uint32_t>(fileOut);
+        check(badStatus == 1954115647 && badFile == 0,
+              "AudioFileOpenURL rejects undecodable audio instead of publishing a successful empty stream");
+        if (!badStatus) audioCall("_AudioFileClose", {badFile});
+        { std::ofstream file(filePath, std::ios::binary); file.write(reinterpret_cast<const char*>(wav.data()), wav.size()); }
+        const auto goodStatus = audioCall("_AudioFileOpenURL", {fileURL, 1, 0, fileOut});
+        const auto fileID = proc.mem().read<uint32_t>(fileOut);
+        proc.mem().write<uint32_t>(fileOut + 4, 8);
+        audioCall("_AudioFileGetProperty", {fileID, 0x62636E74, fileOut + 4, fileOut + 8});
+        proc.mem().write<uint32_t>(fileOut + 4, 8);
+        audioCall("_AudioFileGetProperty", {fileID, 0x70636E74, fileOut + 4, fileOut + 16});
+        proc.mem().write<uint32_t>(fileOut + 24, 12);
+        proc.mem().write<uint32_t>(fileOut + 28, 10);
+        const auto readStatus = audioCall("_AudioFileReadPacketData", {fileID, 0, fileOut + 24, 0, 0, 0, fileOut + 28, pcmOut});
+        check(goodStatus == 0 && readStatus == 0 && proc.mem().read<uint64_t>(fileOut + 8) == dataBytes &&
+              proc.mem().read<uint64_t>(fileOut + 16) == 4410 && proc.mem().read<uint32_t>(fileOut + 24) == 12 &&
+              proc.mem().read<uint32_t>(fileOut + 28) == 3 && std::memcmp(proc.mem().host(pcmOut), wav.data() + 44, 12) == 0,
+              "AudioFileOpenURL decoded LPCM packets retain sample bytes and packet/byte counts");
+        audioCall("_AudioFileClose", {fileID});
+        std::filesystem::remove(filePath);
 
         const ObjC::id nsData = Foundation::makeData(cx, wav.data(), uint32_t(wav.size()));
         const ObjC::Class apCls = r.getClass("AVAudioPlayer");
@@ -2678,6 +2893,28 @@ int runFullSubsystemTests() {
             const bool end = uint32_t(r.send(cpu, sc, "isAtEnd")) & 0xFF;
             check(a && i == 42 && b && c && d == 3.5 && e && h == 31 && f && rest == "rest of it" && end,
                   "NSScanner int / case-insensitive string / double / hex / scanUpToString");
+        }
+
+        // NSThread -isExecuting / -isFinished across start and the end of the thread's work (Jetpack, #75).
+        {
+            std::atomic<bool> release{false}, entered{false};
+            ObjC::ClassBuilder tgt = r.defineClass("HVMTestThreadTarget", "NSObject");
+            tgt.method("work:", [&](Ctx&) {
+                entered = true;
+                for (int i = 0; i < 400 && !release; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }, "v@:@");
+            const ObjC::id target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, tgt.cls(), r.selAlloc)), "init"));
+            const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
+                                                "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
+            auto flag = [&](const char* sel) { return (uint32_t(r.send(cpu, th, sel)) & 0xFF) != 0; };
+            const bool before = !flag("isExecuting") && !flag("isFinished");
+            r.send(cpu, th, "start");
+            for (int i = 0; i < 400 && !entered; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            const bool during = flag("isExecuting") && !flag("isFinished");
+            release = true;
+            for (int i = 0; i < 400 && !flag("isFinished"); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            const bool after = !flag("isExecuting") && flag("isFinished");
+            check(before && during && after, "NSThread isExecuting/isFinished follow start and the end of its work");
         }
 
         // NSXMLParser: elements, attributes, entities, CDATA, self-closing tags, errors.
@@ -3298,6 +3535,24 @@ int runFullSubsystemTests() {
     }
 
     r.poolPop(cpu, outerPool);
+    {
+        ProcessConfig stopCfg;
+        stopCfg.homePath = "/tmp/hvm_terminate_callbacks";
+        Process stopped(stopCfg);
+        auto& loop = Foundation::mainRunLoop(stopped);
+        int queued = 0, timers = 0, frames = 0;
+        bool saved = false;
+        loop.post([&](CPU::Cpu&) { saved = true; stopped.requestStop(); });
+        loop.post([&](CPU::Cpu&) { ++queued; });
+        loop.addTimer(0, 0, false, [&](CPU::Cpu&) { ++timers; });
+        loop.addFrameHook([&](CPU::Cpu&, double) { ++frames; });
+        loop.runOnce(stopped.mainThread().cpu, 0);
+        // Work has already been collected before the first callback stops the process.
+        loop.post([&](CPU::Cpu&) { ++queued; });
+        loop.runOnce(stopped.mainThread().cpu, 0);
+        check(saved && queued == 0 && timers == 0 && frames == 0,
+              "Termination finishes save work and suppresses collected/late queue, timer and frame callbacks");
+    }
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

@@ -59,6 +59,7 @@ public:
     // `cpu.exit` to stop, or throw (reported as Exit::HostError).
     uint32_t registerHle(std::string name, HleFn fn);
     const std::string& hleName(uint32_t index) const { return hle_[index].name; }
+    const HleFn& hleFunction(uint32_t index) const { return hle_[index].fn; }
     bool isHleAddress(uint32_t addr) const {
         return addr >= Memory::GuestArena::kHleBase &&
                (addr - Memory::GuestArena::kHleBase) / 4 < hleCount_.load(std::memory_order_acquire);
