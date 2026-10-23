@@ -18,8 +18,18 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-002 | Run `fulltest`, the Python protocol tests, and a 3 second smoke of the three in-repo IPAs on `main`. | 5 | 4 | 1 | 20.0 | — | — | Yes, as its own workflow file | Operational. The compat job is green on `6af9976` and runs `fulltest`. Folding the same suites into `hvm_report.py` (default `--only` is still `cpu,ios,bench`) is Planned. macOS CI was not part of that green run |
 | B-003 | Reconcile `docs/ARCHITECTURE.md`, `docs/HANDOFF.md`, and `docs/DEVELOPMENT_AND_RELEASE.md` with the code. Preserve documented shader limits and `CCCrypt` policy; homogeneous clipping is now merged in PR #4. | 4 | 3 | 1 | 12.0 | — | None | Yes | Planned |
 | B-004 | One Mac compile of current `app/`. `06a7b16` changed the file browser, was marked `[mac]`, and Actions never started. | 4 | 4 | 2 | 8.0 | E | B-001 if no local Mac | Not with another `app/**` edit | Unsigned device IPA and simulator build/launch verified via Codemagic in PR #7. Signed iPhone guest gameplay remains unverified |
+| B-211 | Owner-priority file saving overhaul: verified writes, rolling backups, buffered SQLite, staged snapshots and reachable guarded Save controls. | 5 | 5 | 3 | 8.33 | E | None | Not with another app/** edit | Implemented in PR #18; Mac persistence, five UI tests, native compile and Linux gate pass on d3085f3. |
 
 ## P1
+
+Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
+
+- B-212 / UX-2 (Group E): guest-oriented viewport, display scaling/filtering,
+  inverse touch mapping and device-axis acceleration mapping. In progress;
+  Apple compile, synthetic simulator interaction and device acceptance required.
+- B-213 / UX-3 (Group E): lifecycle pause/resume and stop-before-inspect controls.
+  In progress. Live snapshot/restore while paused remains queued until the runtime
+  supplies an acknowledged quiescence/flush boundary and cache invalidation.
 
 | ID | Item | Impact | Sev | Cx | Score | Group | Depends on | Parallel | State |
 |---|---|---:|---:|---:|---:|---|---|---|---|
@@ -54,7 +64,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 
 ## B-105 children (discovered performance work)
 
-These are follow-on work, not separate roles. B-103 is merged in PR #4; active Group B ownership still applies.
+These are planned follow-ups, not separate roles. B-103 is merged in PR #4; active Group B ownership still applies.
 
 | ID | Item | Where the audit or the perf notes put it |
 |---|---|---|

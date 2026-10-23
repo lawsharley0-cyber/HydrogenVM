@@ -8,9 +8,11 @@
 #include "runtime/Process.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/graphics/Graphics.hpp"
+#include "runtime/uikit/UIKit.hpp"
 #include "selftest/SelfTest.hpp"
 #include <pthread.h>
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -243,7 +245,7 @@ struct SessionCore {
     std::atomic<bool> ready{false};       // load() finished: input handlers are installed
     std::atomic<bool> stopRequested{false};
     std::atomic<bool> framePending{false};
-    std::atomic<float> width{320}, height{480};
+    std::atomic<float> outputVolume{1};
     // Log batching: lines are flushed to the main queue a few times a second.
     std::mutex logMu;
     std::vector<std::pair<std::string, RT::LogLevel>> logs;
@@ -328,6 +330,7 @@ void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrog
     AVAudioEngine *engine = [[AVAudioEngine alloc] init];
     [engine attachNode:src];
     [engine connect:src to:engine.mainMixerNode format:fmt];
+    engine.mainMixerNode.outputVolume = core->outputVolume.load();
     NSError *err = nil;
     if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to start: %@", err);
     core->audioEngine = engine;
@@ -341,6 +344,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
 
 @interface HVMSession ()
 @property (nonatomic, readwrite) CGSize screenSize;
+@property (nonatomic, readwrite) NSInteger interfaceOrientation;
 @property (nonatomic, readwrite, getter=isRunning) BOOL running;
 @end
 
@@ -356,6 +360,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
         _homePath = [homePath copy];
         _core = std::make_shared<SessionCore>();
         _screenSize = CGSizeMake(320, 480);
+        _interfaceOrientation = 1;
     }
     return self;
 }
@@ -405,9 +410,13 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
             }
         };
         cfg.present = [core, weakSelf](const uint8_t *rgba, int w, int h) {
-            core->width = float(w) / 2;
-            core->height = float(h) / 2;
             if (core->framePending.exchange(true)) return;   // the UI hasn't taken the last one: drop
+            // Read UIKit only on this guest render thread. Capture metadata with
+            // the pixels, rather than reading mutable state from the host queue.
+            std::shared_ptr<RT::Process> p;
+            { std::lock_guard<std::mutex> lk(core->mu); p = core->proc; }
+            const NSInteger orientation = p ? RT::UIKit::ui(*p).statusBarOrientation : 1;
+            const CGSize size = CGSizeMake(float(w) / 2, float(h) / 2);
             NSData *pixels = [NSData dataWithBytes:rgba length:size_t(w) * size_t(h) * 4];
             CGDataProviderRef dp = CGDataProviderCreateWithCFData((__bridge CFDataRef)pixels);
             CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
@@ -419,7 +428,8 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
                 core->framePending = false;
                 HVMSession *s = weakSelf;
                 if (s) {
-                    s.screenSize = CGSizeMake(core->width, core->height);
+                    s.screenSize = size;
+                    s.interfaceOrientation = orientation;
                     if (s.onFrame && img) s.onFrame(img);
                 }
                 if (img) CGImageRelease(img);
@@ -495,6 +505,27 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
         p = _core->proc;
     }
     if (p && _core->ready) p->enterBackground();
+}
+
+- (BOOL)isBackgrounded {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    return p && _core->ready && p->backgrounded();
+}
+
+- (double)frameTimeP95Milliseconds {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    return p ? double(p->perf().frameTimes.percentile(95)) / 1e6 : 0;
+}
+
+- (float)outputVolume { return _core->outputVolume.load(); }
+- (void)setOutputVolume:(float)value {
+    if (!std::isfinite(value)) return;
+    value = std::clamp(value, 0.0f, 1.0f);
+    std::lock_guard<std::mutex> lk(_core->audioMu);
+    _core->outputVolume = value;
+    _core->audioEngine.mainMixerNode.outputVolume = value;
 }
 
 - (void)enterForeground {

@@ -106,12 +106,7 @@ enum FileKind: Equatable {
     }
 
     static func looksLikeCompressed(_ url: URL) -> Bool {
-        let d = head(url, 4)
-        guard d.count >= 2 else { return false }
-        let b0 = d[d.startIndex], b1 = d[d.startIndex + 1]
-        if b0 == 0x1F && b1 == 0x8B { return true } // gzip
-        if b0 == 0x78 && (b1 == 0x01 || b1 == 0x5E || b1 == 0x9C || b1 == 0xDA) { return true } // zlib
-        return false
+        SaveCompressionFormat.detect(head(url, 4)) != .none
     }
 
     static func looksLikeText(_ url: URL) -> Bool {
@@ -123,95 +118,6 @@ enum FileKind: Equatable {
 }
 
 // MARK: - Compression Helpers (Zlib / Gzip)
-
-enum SaveCompressionFormat: String {
-    case none = "Uncompressed"
-    case zlib = "Zlib"
-    case gzip = "Gzip"
-
-    static func detect(_ data: Data) -> SaveCompressionFormat {
-        guard data.count >= 2 else { return .none }
-        let b0 = data[data.startIndex], b1 = data[data.startIndex + 1]
-        if b0 == 0x1F && b1 == 0x8B { return .gzip }
-        if b0 == 0x78 && (b1 == 0x01 || b1 == 0x5E || b1 == 0x9C || b1 == 0xDA) { return .zlib }
-        return .none
-    }
-
-    static func decompress(_ data: Data) -> (Data, SaveCompressionFormat)? {
-        let fmt = detect(data)
-        guard fmt != .none, !data.isEmpty else { return nil }
-        var stream = z_stream()
-        let windowBits: Int32 = (fmt == .gzip) ? (MAX_WBITS + 16) : MAX_WBITS
-        guard inflateInit2_(&stream, windowBits, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else {
-            return nil
-        }
-        defer { inflateEnd(&stream) }
-
-        var out = Data(capacity: data.count * 3)
-        let chunkSize = 32768
-        var chunk = [UInt8](repeating: 0, count: chunkSize)
-
-        let status: Int32 = data.withUnsafeBytes { rawBuf in
-            guard let base = rawBuf.bindMemory(to: Bytef.self).baseAddress else { return Z_DATA_ERROR }
-            stream.next_in = UnsafeMutablePointer<Bytef>(mutating: base)
-            stream.avail_in = uInt(data.count)
-            var ret: Int32 = Z_OK
-            repeat {
-                ret = chunk.withUnsafeMutableBufferPointer { outBuf in
-                    stream.next_out = outBuf.baseAddress
-                    stream.avail_out = uInt(chunkSize)
-                    return inflate(&stream, Z_NO_FLUSH)
-                }
-                if ret == Z_OK || ret == Z_STREAM_END {
-                    let have = chunkSize - Int(stream.avail_out)
-                    if have > 0 { out.append(chunk, count: have) }
-                } else {
-                    break
-                }
-            } while ret != Z_STREAM_END
-            return ret
-        }
-        guard status == Z_STREAM_END else { return nil }
-        return (out, fmt)
-    }
-
-    static func compress(_ data: Data, format: SaveCompressionFormat) -> Data? {
-        guard format != .none else { return data }
-        var stream = z_stream()
-        let windowBits: Int32 = (format == .gzip) ? (MAX_WBITS + 16) : MAX_WBITS
-        guard deflateInit2_(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits, 8, Z_DEFAULT_STRATEGY,
-                            ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else {
-            return nil
-        }
-        defer { deflateEnd(&stream) }
-
-        var out = Data()
-        let chunkSize = 32768
-        var chunk = [UInt8](repeating: 0, count: chunkSize)
-
-        let status: Int32 = data.withUnsafeBytes { rawBuf in
-            let base = rawBuf.bindMemory(to: Bytef.self).baseAddress
-            stream.next_in = UnsafeMutablePointer<Bytef>(mutating: base)
-            stream.avail_in = uInt(data.count)
-            var ret: Int32 = Z_OK
-            repeat {
-                ret = chunk.withUnsafeMutableBufferPointer { outBuf in
-                    stream.next_out = outBuf.baseAddress
-                    stream.avail_out = uInt(chunkSize)
-                    return deflate(&stream, Z_FINISH)
-                }
-                if ret == Z_OK || ret == Z_STREAM_END {
-                    let have = chunkSize - Int(stream.avail_out)
-                    if have > 0 { out.append(chunk, count: have) }
-                } else {
-                    break
-                }
-            } while ret != Z_STREAM_END
-            return ret
-        }
-        return status == Z_STREAM_END ? out : nil
-    }
-}
 
 // MARK: - Directory Model
 
@@ -252,7 +158,7 @@ final class DirectoryModel {
 
     func rename(_ item: FileItem, to name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty, clean != item.name, !clean.contains("/") else { return }
+        guard validName(clean), clean != item.name else { return }
         run { try FileManager.default.moveItem(at: item.url, to: url.appending(path: clean)) }
     }
 
@@ -262,13 +168,13 @@ final class DirectoryModel {
 
     func newFolder(named name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
+        guard validName(clean) else { return }
         run { try FileManager.default.createDirectory(at: freeName(for: clean, suffix: ""), withIntermediateDirectories: false) }
     }
 
     func newFile(named name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
+        guard validName(clean) else { return }
         run { try Data().write(to: freeName(for: clean, suffix: "")) }
     }
 
@@ -277,13 +183,18 @@ final class DirectoryModel {
             for src in urls {
                 let scoped = src.startAccessingSecurityScopedResource()
                 defer { if scoped { src.stopAccessingSecurityScopedResource() } }
-                let dst = url.appending(path: src.lastPathComponent)
-                if FileManager.default.fileExists(atPath: dst.path(percentEncoded: false)) {
-                    try FileManager.default.removeItem(at: dst)
-                }
+                let dst = freeName(for: src.lastPathComponent, suffix: "")
                 try FileManager.default.copyItem(at: src, to: dst)
             }
         }
+    }
+
+    private func validName(_ name: String) -> Bool {
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else {
+            error = "Use a single file or folder name without path separators."
+            return false
+        }
+        return true
     }
 
     private func freeName(for name: String, suffix: String) -> URL {
@@ -390,6 +301,7 @@ struct SaveSnapshot: Identifiable {
 
 struct SaveEditorDashboardView: View {
     let app: InstalledApp
+    @State private var editingFile: FileItem?
     @State private var discovered: [DiscoveredSaveFile] = []
     @State private var snapshots: [SaveSnapshot] = []
     @State private var searchText = ""
@@ -487,7 +399,7 @@ struct SaveEditorDashboardView: View {
                     if !group.isEmpty {
                         Section(cat.rawValue) {
                             ForEach(group) { entry in
-                                NavigationLink(value: entry.item) {
+                                Button { editingFile = entry.item } label: {
                                     HStack(spacing: 12) {
                                         Image(systemName: entry.kind.symbol)
                                             .font(.title3)
@@ -524,8 +436,8 @@ struct SaveEditorDashboardView: View {
         }
         .navigationTitle("\(app.title) — Save Editor")
         .searchable(text: $searchText, prompt: "Search saves, plists, databases…")
-        .navigationDestination(for: FileItem.self) { item in
-            FileEditorDestinationView(item: item)
+        .sheet(item: $editingFile, onDismiss: scanSandbox) { item in
+            FileEditorSheet(item: item)
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -603,26 +515,19 @@ struct SaveEditorDashboardView: View {
         }
         snapshots = urls.compactMap { u -> SaveSnapshot? in
             let v = try? u.resourceValues(forKeys: Set(keys))
-            guard v?.isDirectory == true else { return nil }
+            guard v?.isDirectory == true, !u.lastPathComponent.hasPrefix(".") else { return nil }
             return SaveSnapshot(url: u, name: u.lastPathComponent, created: v?.creationDate ?? Date())
         }.sorted { $0.created > $1.created }
     }
 
     private func createSnapshot(label: String) {
-        let fm = FileManager.default
         let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "-")
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let folderName = cleanLabel.isEmpty ? stamp : "\(cleanLabel) (\(stamp))"
+        let folderName = (cleanLabel.isEmpty ? stamp : "\(cleanLabel) (\(stamp))") + "-" + UUID().uuidString.prefix(8)
         let dest = backupsDir.appending(path: folderName)
         do {
-            try fm.createDirectory(at: dest, withIntermediateDirectories: true)
-            for sub in ["Documents", "Library"] {
-                let src = app.dataDir.appending(path: sub)
-                if fm.fileExists(atPath: src.path(percentEncoded: false)) {
-                    try fm.copyItem(at: src, to: dest.appending(path: sub))
-                }
-            }
+            try SaveSnapshotStore.create(home: app.dataDir, destination: dest)
             statusMessage = "Created snapshot '\(folderName)'"
             loadSnapshots()
         } catch {
@@ -631,36 +536,50 @@ struct SaveEditorDashboardView: View {
     }
 
     private func restoreSnapshot(_ snap: SaveSnapshot) {
-        let fm = FileManager.default
         do {
-            for sub in ["Documents", "Library"] {
-                let src = snap.url.appending(path: sub)
-                let dst = app.dataDir.appending(path: sub)
-                if fm.fileExists(atPath: src.path(percentEncoded: false)) {
-                    if fm.fileExists(atPath: dst.path(percentEncoded: false)) {
-                        try fm.removeItem(at: dst)
-                    }
-                    try fm.copyItem(at: src, to: dst)
-                }
-            }
+            // Preserve the current state as a separate snapshot before replacing it.
+            let recovery = backupsDir.appending(path: "Before restore-" + UUID().uuidString)
+            try SaveSnapshotStore.create(home: app.dataDir, destination: recovery)
+            try SaveSnapshotStore.restore(snapshot: snap.url, home: app.dataDir)
             statusMessage = "Restored snapshot '\(snap.name)'"
             scanSandbox()
-        } catch {
-            statusMessage = "Restore error: \(error.localizedDescription)"
-        }
+        } catch { statusMessage = "Restore error: \(error.localizedDescription)" }
     }
 
     private func deleteSnapshot(_ snap: SaveSnapshot) {
-        try? FileManager.default.removeItem(at: snap.url)
-        loadSnapshots()
+        do { try FileManager.default.removeItem(at: snap.url); loadSnapshots() }
+        catch { statusMessage = "Delete error: \(error.localizedDescription)" }
     }
 }
 
 // MARK: - Unified File Editor Router
 
+struct FileEditorSheet: View {
+    let item: FileItem
+    @State private var document: FileEditorSession
+
+    init(item: FileItem) {
+        self.item = item
+        _document = State(initialValue: FileEditorSession(url: item.url))
+    }
+
+    var body: some View {
+        NavigationStack {
+            FileEditorDestinationView(item: item)
+                .navigationBarTitleDisplayMode(.inline)
+        }
+        .id(document.resetID)
+        .modifier(FileEditorControls())
+        .environment(document)
+        .onDisappear { document.saveAction = nil; document.requestClose = nil }
+        .interactiveDismissDisabled(document.dirty)
+    }
+}
+
 struct FileEditorDestinationView: View {
     let item: FileItem
     @State private var overrideMode: EditorMode?
+    @Environment(FileEditorSession.self) private var document
 
     enum EditorMode: String, CaseIterable, Identifiable {
         case auto = "Smart Editor"
@@ -713,22 +632,26 @@ struct FileEditorDestinationView: View {
                 BinaryEditorView(url: item.url)
             }
         }
-        .toolbar {
+        .id(overrideMode ?? .auto)
+        .safeAreaInset(edge: .top, spacing: 0) {
             if !item.isDirectory {
-                ToolbarItem(placement: .topBarTrailing) {
+                HStack {
                     Menu {
                         Picker("Open As", selection: Binding(
                             get: { overrideMode ?? .auto },
-                            set: { overrideMode = ($0 == .auto) ? nil : $0 }
+                            set: { document.ready = false; overrideMode = ($0 == .auto) ? nil : $0 }
                         )) {
                             ForEach(EditorMode.allCases) { mode in
                                 Text(mode.rawValue).tag(mode)
                             }
                         }
                     } label: {
-                        Image(systemName: "slider.horizontal.2.square")
+                        Label("Open As", systemImage: "slider.horizontal.2.square")
                     }
+                    .disabled(document.dirty)
+                    Spacer()
                 }
+                .font(.caption).padding(.horizontal).padding(.vertical, 6).background(.bar)
             }
         }
     }
@@ -741,6 +664,7 @@ struct DirectoryView: View {
     let title: String
     let isRoot: Bool
 
+    @State private var editingFile: FileItem?
     @State private var model: DirectoryModel
     @State private var importing = false
     @State private var prompt: Prompt?
@@ -778,8 +702,13 @@ struct DirectoryView: View {
                                        description: Text("Use the + menu to import or create files."))
             }
             ForEach(model.items) { item in
-                NavigationLink(value: item) {
-                    FileRow(item: item)
+                Group {
+                    if item.isDirectory {
+                        NavigationLink(value: item) { FileRow(item: item) }
+                    } else {
+                        Button { editingFile = item } label: { FileRow(item: item) }
+                            .foregroundStyle(.primary)
+                    }
                 }
                 .contextMenu { itemMenu(item) }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -800,9 +729,10 @@ struct DirectoryView: View {
         .navigationDestination(for: FileItem.self) { item in
             if item.isDirectory {
                 DirectoryView(url: item.url, title: item.name, isRoot: false)
-            } else {
-                FileEditorDestinationView(item: item)
             }
+        }
+        .sheet(item: $editingFile, onDismiss: { model.reload() }) { item in
+            FileEditorSheet(item: item)
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -945,79 +875,16 @@ private struct ImagePreviewView: View {
     }
 }
 
-// MARK: - Keychain & Save File Auto-Synchronization
-
-enum KeychainSaveSync {
-    static func syncFileToKeychainIfNeeded(fileURL: URL, text: String) {
-        let filename = fileURL.lastPathComponent
-        guard filename == "backup.txt" || text.contains("coins=") || text.contains("bux=") else { return }
-
-        var cur = fileURL.deletingLastPathComponent()
-        var keychainURL: URL?
-        for _ in 0..<5 {
-            let candidate = cur.appending(path: "Library/Keychains/hvm-keychain.plist")
-            if FileManager.default.fileExists(atPath: candidate.path(percentEncoded: false)) {
-                keychainURL = candidate
-                break
-            }
-            cur = cur.deletingLastPathComponent()
-        }
-        guard let kURL = keychainURL,
-              let plistData = try? Data(contentsOf: kURL),
-              var plistArray = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [[String: Any]] else {
-            return
-        }
-        guard let textData = text.data(using: .utf8) else { return }
-        var modified = false
-        for i in 0..<plistArray.count {
-            var item = plistArray[i]
-            let svce = item["svce"] as? String ?? ""
-            if svce == "com.eeenmachine.tinytowers.gameData" || svce.contains("gameData") || (item["v_Data"] as? Data).flatMap({ String(data: $0, encoding: .utf8) })?.contains("coins=") == true {
-                item["v_Data"] = textData
-                plistArray[i] = item
-                modified = true
-            }
-        }
-        if modified {
-            if let outData = try? PropertyListSerialization.data(fromPropertyList: plistArray, format: .xml, options: 0) {
-                try? outData.write(to: kURL, options: .atomic)
-            }
-        }
-    }
-
-    @MainActor
-    static func syncKeychainToFileIfNeeded(keychainURL: URL, plistRoot: PlistNode) {
-        guard keychainURL.lastPathComponent == "hvm-keychain.plist" else { return }
-        guard case .array(let items) = plistRoot.value else { return }
-        for item in items {
-            guard case .dict(let entries) = item.value else { continue }
-            var isTower = false
-            var payloadData: Data?
-            for entry in entries {
-                if entry.key == "svce", case .string(let s) = entry.value, s.contains("gameData") {
-                    isTower = true
-                }
-                if entry.key == "v_Data", case .data(let d) = entry.value {
-                    payloadData = d
-                }
-            }
-            if isTower, let data = payloadData, let s = String(data: data, encoding: .utf8), s.contains("coins=") {
-                let dataDir = keychainURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-                let backupURL = dataDir.appending(path: "Documents/backup.txt")
-                try? data.write(to: backupURL, options: .atomic)
-            }
-        }
-    }
-}
-
-// MARK: - Text Editor (with transparent Zlib/Gzip support)
+// MARK: - Text Editor
 
 struct TextEditorView: View {
     let url: URL
     @State private var text = ""
     @State private var encoding: String.Encoding = .utf8
+    @State private var byteOrderMark = Data()
     @State private var compression: SaveCompressionFormat = .none
-    @State private var dirty = false
+    @Environment(FileEditorSession.self) private var document
+    @State private var loaded = false
     @State private var error: String?
 
     var body: some View {
@@ -1033,58 +900,55 @@ struct TextEditorView: View {
                 .padding(.vertical, 6)
                 .background(Color.orange.opacity(0.15))
             }
-            TextEditor(text: $text)
+            TextEditor(text: Binding(get: { text }, set: { text = $0; document.markChanged() }))
+                .modifier(FileEditorTextFocus())
+                .accessibilityIdentifier("plain-text-editor")
                 .font(.system(.footnote, design: .monospaced))
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-                .onChange(of: text) { _, _ in dirty = true }
         }
         .navigationTitle(url.lastPathComponent)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 18) {
                 ShareLink(item: url)
-                Button("Save") { save() }.disabled(!dirty)
+                Spacer()
             }
         }
+        .modifier(FileEditorRegistration(save: save))
         .alert("Save Failed", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
             Text(error ?? "")
         }
-        .onAppear { load() }
+        .onAppear { if !loaded { load(); loaded = true } }
     }
 
     private func load() {
-        guard let rawData = try? Data(contentsOf: url) else { return }
-        let payload: Data
-        if let (decomp, fmt) = SaveCompressionFormat.decompress(rawData) {
-            payload = decomp
+        document.ready = false
+        do {
+            let (payload, fmt) = try SaveCompressionFormat.decode(document.store.load())
             compression = fmt
-        } else {
-            payload = rawData
-            compression = .none
-        }
-        for enc: String.Encoding in [.utf8, .utf16, .isoLatin1, .ascii] {
-            if let s = String(data: payload, encoding: enc) {
-                text = s
-                encoding = enc
-                dirty = false
-                return
-            }
-        }
+            let decoded = try SaveTextCodec.decode(payload)
+            text = decoded.text
+            encoding = decoded.encoding
+            byteOrderMark = decoded.byteOrderMark
+            document.dirty = false
+            document.ready = true
+        } catch { self.error = error.localizedDescription }
     }
 
-    private func save() {
+    private func save() -> Bool {
         do {
-            guard let raw = text.data(using: encoding) ?? text.data(using: .utf8) else {
+            guard let raw = text.data(using: encoding, allowLossyConversion: false) else {
                 throw CocoaError(.fileWriteInapplicableStringEncoding)
             }
-            let out = (compression == .none) ? raw : (SaveCompressionFormat.compress(raw, format: compression) ?? raw)
-            try out.write(to: url, options: .atomic)
-            KeychainSaveSync.syncFileToKeychainIfNeeded(fileURL: url, text: text)
-            dirty = false
+            let out = try SaveCompressionFormat.encode(byteOrderMark + raw, format: compression)
+            try document.commit(out)
+
+            return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
+            return false
         }
     }
 }
@@ -1097,15 +961,23 @@ struct KeyValueEntry: Identifiable {
     var key: String
     var value: String
     var comment: String?
+    var sourceLine: Int? = nil
+    var originalValue: String? = nil
 }
 
 struct KeyValueEditorView: View {
     let url: URL
     @State private var entries: [KeyValueEntry] = []
+    @State private var originalLines: [String] = []
+    @State private var originalEntryLines: Set<Int> = []
     @State private var searchText = ""
     @State private var rawMode = false
     @State private var rawText = ""
-    @State private var dirty = false
+    @State private var encoding: String.Encoding = .utf8
+    @State private var byteOrderMark = Data()
+    @State private var compression: SaveCompressionFormat = .none
+    @Environment(FileEditorSession.self) private var document
+    @State private var loaded = false
     @State private var addingEntry = false
     @State private var newSection = ""
     @State private var newKey = ""
@@ -1126,11 +998,11 @@ struct KeyValueEditorView: View {
     var body: some View {
         Group {
             if rawMode {
-                TextEditor(text: $rawText)
+                TextEditor(text: Binding(get: { rawText }, set: { rawText = $0; document.markChanged() }))
+                .modifier(FileEditorTextFocus())
                     .font(.system(.footnote, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .onChange(of: rawText) { _, _ in dirty = true }
             } else {
                 List {
                     ForEach(filteredIndices, id: \.self) { idx in
@@ -1147,7 +1019,7 @@ struct KeyValueEditorView: View {
                                 }
                                 TextField("Value", text: Binding(
                                     get: { entries[idx].value },
-                                    set: { entries[idx].value = $0; dirty = true }
+                                    set: { entries[idx].value = $0; document.markChanged() }
                                 ))
                                 .font(.system(.body, design: .monospaced))
                                 .textFieldStyle(.roundedBorder)
@@ -1160,25 +1032,26 @@ struct KeyValueEditorView: View {
                     .onDelete { offsets in
                         let toRemove = IndexSet(offsets.map { filteredIndices[$0] })
                         entries.remove(atOffsets: toRemove)
-                        dirty = true
+                        document.markChanged()
                     }
                 }
                 .searchable(text: $searchText, prompt: "Filter keys or values…")
             }
         }
         .navigationTitle(url.lastPathComponent)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 18) {
                 Button {
                     if rawMode {
                         parseINI(rawText)
                     } else {
-                        rawText = serializeINI()
+                        do { rawText = try serializeINI() } catch { self.error = error.localizedDescription; return }
                     }
                     rawMode.toggle()
                 } label: {
                     Image(systemName: rawMode ? "list.bullet" : "doc.plaintext")
                 }
+                .disabled(url.pathExtension.lowercased() == "strings")
                 if !rawMode {
                     Button {
                         newKey = ""
@@ -1188,9 +1061,10 @@ struct KeyValueEditorView: View {
                         Image(systemName: "plus")
                     }
                 }
-                Button("Save") { save() }.disabled(!dirty)
+                Spacer()
             }
         }
+        .modifier(FileEditorRegistration(save: save))
         .alert("Add Config Key", isPresented: $addingEntry) {
             TextField("Section (optional)", text: $newSection)
             TextField("Key", text: $newKey)
@@ -1198,150 +1072,93 @@ struct KeyValueEditorView: View {
             Button("Add") {
                 guard !newKey.isEmpty else { return }
                 entries.append(KeyValueEntry(section: newSection, key: newKey, value: newVal))
-                dirty = true
+                document.markChanged()
             }
             Button("Cancel", role: .cancel) {}
         }
-        .onAppear { load() }
+        .alert("Save Failed", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: { Text(error ?? "") }
+        .onAppear { if !loaded { load(); loaded = true } }
     }
 
     private func load() {
-        guard let d = try? Data(contentsOf: url),
-              let s = String(data: d, encoding: .utf8) ?? String(data: d, encoding: .isoLatin1) else { return }
-        rawText = s
-        parseINI(s)
-        dirty = false
+        document.ready = false
+        do {
+            let (payload, fmt) = try SaveCompressionFormat.decode(document.store.load())
+            compression = fmt
+            let decoded = try SaveTextCodec.decode(payload)
+            encoding = decoded.encoding
+            byteOrderMark = decoded.byteOrderMark
+            rawText = decoded.text
+            parseINI(rawText)
+            // .strings has escaping/comment rules beyond the INI parser.
+            rawMode = true
+            document.dirty = false
+            document.ready = true
+        } catch { self.error = error.localizedDescription }
     }
 
     private func parseINI(_ text: String) {
+        originalLines = text.components(separatedBy: "\n")
         var parsed: [KeyValueEntry] = []
         var currentSection = ""
-        for line in text.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix(";") || trimmed.hasPrefix("//") {
-                parsed.append(KeyValueEntry(section: currentSection, key: "", value: "", comment: line))
-                continue
-            }
+        for (index, line) in originalLines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
                 currentSection = String(trimmed.dropFirst().dropLast())
-                continue
-            }
-            if let eq = line.firstIndex(of: "=") ?? line.firstIndex(of: ":") {
-                let k = String(line[..<eq]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                var v = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if v.hasSuffix(";") { v.removeLast() }
-                v = v.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                parsed.append(KeyValueEntry(section: currentSection, key: k, value: v))
-            } else {
-                parsed.append(KeyValueEntry(section: currentSection, key: "", value: "", comment: line))
+            } else if let field = SaveConfigLine(line) {
+                parsed.append(KeyValueEntry(section: currentSection, key: field.key, value: field.value,
+                    sourceLine: index, originalValue: field.value))
             }
         }
         entries = parsed
+        originalEntryLines = Set(parsed.compactMap(\.sourceLine))
     }
 
-    private func serializeINI() -> String {
+    private func serializeINI() throws -> String {
+        let existing = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
+            entry.sourceLine.map { ($0, entry) }
+        })
         var lines: [String] = []
-        var lastSection = ""
-        let isStrings = url.pathExtension.lowercased() == "strings"
-        for e in entries {
-            if e.key.isEmpty, let c = e.comment {
-                lines.append(c)
-                continue
-            }
-            if e.section != lastSection && !e.section.isEmpty {
-                lines.append("[\(e.section)]")
-                lastSection = e.section
-            }
-            if isStrings {
-                lines.append("\"\(e.key)\" = \"\(e.value)\";")
+        for (index, line) in originalLines.enumerated() {
+            if !originalEntryLines.contains(index) { lines.append(line); continue }
+            guard let entry = existing[index] else { continue }
+            if entry.value == entry.originalValue { lines.append(line) }
+            else if let field = SaveConfigLine(line) { lines.append(try field.replacingValue(entry.value)) }
+        }
+        var result = lines.joined(separator: "\n")
+        let newline = rawText.contains("\r\n") ? "\r\n" : "\n"
+        for entry in entries where entry.sourceLine == nil {
+            let line = "\(entry.key)=\(entry.value)" + newline
+            if entry.section.isEmpty {
+                // Global values belong before the first section header.
+                result = line + result
             } else {
-                lines.append("\(e.key)=\(e.value)")
+                if !result.isEmpty && !result.hasSuffix("\n") { result += newline }
+                result += "[\(entry.section)]" + newline + line
             }
         }
-        return lines.joined(separator: "\n")
+        return result
     }
 
-    private func save() {
-        let outText = rawMode ? rawText : serializeINI()
+    private func save() -> Bool {
+        let outText: String
+        do { outText = rawMode ? rawText : try serializeINI() } catch { document.saveError = error.localizedDescription; return false }
         do {
-            try (outText.data(using: .utf8) ?? Data()).write(to: url, options: .atomic)
-            dirty = false
+            guard let bytes = outText.data(using: encoding, allowLossyConversion: false) else {
+                throw CocoaError(.fileWriteInapplicableStringEncoding)
+            }
+            try document.commit(SaveCompressionFormat.encode(byteOrderMark + bytes, format: compression))
+            return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
+            return false
         }
     }
 }
 
 // MARK: - Structured JSON Editor
-
-@MainActor
-@Observable
-final class JSONNode: Identifiable {
-    let id = UUID()
-    var key: String
-    var value: Kind
-
-    enum Kind {
-        case string(String)
-        case number(Double, isInteger: Bool)
-        case bool(Bool)
-        case null
-        case array([JSONNode])
-        case object([JSONNode])
-
-        var label: String {
-            switch self {
-            case .string: "String"
-            case .number(_, let isInt): isInt ? "Integer" : "Number"
-            case .bool: "Boolean"
-            case .null: "Null"
-            case .array(let a): "Array (\(a.count))"
-            case .object(let o): "Object (\(o.count))"
-            }
-        }
-    }
-
-    init(key: String, value: Kind) {
-        self.key = key
-        self.value = value
-    }
-
-    static func fromAny(_ any: Any, key: String = "root") -> JSONNode {
-        if let dict = any as? [String: Any] {
-            let children = dict.keys.sorted().map { k in fromAny(dict[k]!, key: k) }
-            return JSONNode(key: key, value: .object(children))
-        } else if let arr = any as? [Any] {
-            let children = arr.enumerated().map { i, v in fromAny(v, key: "[\(i)]") }
-            return JSONNode(key: key, value: .array(children))
-        } else if let s = any as? String {
-            return JSONNode(key: key, value: .string(s))
-        } else if let n = any as? NSNumber {
-            if CFGetTypeID(n) == CFBooleanGetTypeID() {
-                return JSONNode(key: key, value: .bool(n.boolValue))
-            }
-            let d = n.doubleValue
-            let isInt = floor(d) == d && abs(d) < Double(Int64.max)
-            return JSONNode(key: key, value: .number(d, isInteger: isInt))
-        } else {
-            return JSONNode(key: key, value: .null)
-        }
-    }
-
-    func toAny() -> Any {
-        switch value {
-        case .string(let s): return s
-        case .number(let d, let isInt): return isInt ? NSNumber(value: Int64(d)) : NSNumber(value: d)
-        case .bool(let b): return b
-        case .null: return NSNull()
-        case .array(let a): return a.map { $0.toAny() }
-        case .object(let o):
-            var dict: [String: Any] = [:]
-            for child in o { dict[child.key] = child.toAny() }
-            return dict
-        }
-    }
-}
 
 struct JSONEditorView: View {
     let url: URL
@@ -1349,58 +1166,61 @@ struct JSONEditorView: View {
     @State private var rawMode = false
     @State private var rawText = ""
     @State private var compression: SaveCompressionFormat = .none
-    @State private var dirty = false
+    @Environment(FileEditorSession.self) private var document
+    @State private var loaded = false
     @State private var error: String?
 
     var body: some View {
         Group {
             if rawMode {
-                TextEditor(text: $rawText)
+                TextEditor(text: Binding(get: { rawText }, set: { rawText = $0; document.markChanged() }))
+                .modifier(FileEditorTextFocus())
                     .font(.system(.footnote, design: .monospaced))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .onChange(of: rawText) { _, _ in dirty = true }
             } else if let root {
-                JSONContainerListView(node: root, isRoot: true, onMutate: { dirty = true })
+                JSONContainerListView(node: root, isRoot: true, onMutate: { document.markChanged() })
             } else {
                 ContentUnavailableView("Invalid JSON", systemImage: "exclamationmark.triangle")
             }
         }
         .navigationTitle(url.lastPathComponent)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 18) {
                 Button {
                     toggleRawMode()
                 } label: {
                     Image(systemName: rawMode ? "list.bullet.indent" : "curlybraces")
                 }
                 ShareLink(item: url)
-                Button("Save") { save() }.disabled(!dirty)
+                Spacer()
             }
         }
+        .modifier(FileEditorRegistration(save: save))
         .alert("JSON Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
             Text(error ?? "")
         }
-        .onAppear { load() }
+        .onAppear { if !loaded { load(); loaded = true } }
     }
 
     private func load() {
-        guard let rawData = try? Data(contentsOf: url) else { return }
-        let payload: Data
-        if let (decomp, fmt) = SaveCompressionFormat.decompress(rawData) {
-            payload = decomp
+        document.ready = false
+        do {
+            let (payload, fmt) = try SaveCompressionFormat.decode(document.store.load())
             compression = fmt
-        } else {
-            payload = rawData
-            compression = .none
-        }
-        rawText = String(data: payload, encoding: .utf8) ?? ""
-        if let obj = try? JSONSerialization.jsonObject(with: payload, options: [.fragmentsAllowed]) {
-            root = JSONNode.fromAny(obj)
-        }
-        dirty = false
+            guard let text = String(data: payload, encoding: .utf8) else {
+                throw CocoaError(.fileReadInapplicableStringEncoding)
+            }
+            rawText = text
+            if let object = try? JSONSerialization.jsonObject(with: payload, options: [.fragmentsAllowed]) {
+                root = JSONNode.fromAny(object)
+                if !(object is [String: Any]) && !(object is [Any]) { rawMode = true }
+            } else { rawMode = true }
+            document.dirty = false
+            document.ready = true
+        } catch { self.error = error.localizedDescription }
     }
 
     private func toggleRawMode() {
@@ -1413,7 +1233,7 @@ struct JSONEditorView: View {
                 error = "Raw text is not valid JSON."
             }
         } else if let root {
-            if let data = try? JSONSerialization.data(withJSONObject: root.toAny(), options: [.prettyPrinted, .sortedKeys]),
+            if let data = try? JSONSerialization.data(withJSONObject: root.toAny(), options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]),
                let s = String(data: data, encoding: .utf8) {
                 rawText = s
             }
@@ -1421,23 +1241,24 @@ struct JSONEditorView: View {
         }
     }
 
-    private func save() {
+    private func save() -> Bool {
         do {
             let jsonData: Data
             if rawMode {
-                guard let d = rawText.data(using: .utf8) else { return }
+                guard let d = rawText.data(using: .utf8) else { return false }
                 _ = try JSONSerialization.jsonObject(with: d, options: [.fragmentsAllowed])
                 jsonData = d
             } else if let root {
-                jsonData = try JSONSerialization.data(withJSONObject: root.toAny(), options: [.prettyPrinted, .sortedKeys])
+                jsonData = try JSONSerialization.data(withJSONObject: root.toAny(), options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed])
             } else {
-                return
+                return false
             }
-            let out = (compression == .none) ? jsonData : (SaveCompressionFormat.compress(jsonData, format: compression) ?? jsonData)
-            try out.write(to: url, options: .atomic)
-            dirty = false
+            let out = try SaveCompressionFormat.encode(jsonData, format: compression)
+            try document.commit(out)
+            return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
+            return false
         }
     }
 }
@@ -1467,11 +1288,13 @@ private struct JSONContainerListView: View {
             .onDelete { offsets in
                 switch node.value {
                 case .object(var a):
-                    a.remove(atOffsets: offsets)
+                    let ids = Set(offsets.map { children[$0].id })
+                    a.removeAll { ids.contains($0.id) }
                     node.value = .object(a)
                     onMutate()
                 case .array(var a):
-                    a.remove(atOffsets: offsets)
+                    let ids = Set(offsets.map { children[$0].id })
+                    a.removeAll { ids.contains($0.id) }
                     for i in a.indices { a[i].key = "[\(i)]" }
                     node.value = .array(a)
                     onMutate()
@@ -1486,7 +1309,7 @@ private struct JSONContainerListView: View {
                         newKeyName = ""
                         addingKey = true
                     case .array(var a):
-                        a.append(JSONNode(key: "[\(a.count)]", value: .number(0, isInteger: true)))
+                        a.append(JSONNode(key: "[\(a.count)]", value: .number(NSNumber(value: 0))))
                         node.value = .array(a)
                         onMutate()
                     default: break
@@ -1497,12 +1320,13 @@ private struct JSONContainerListView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Search JSON keys…")
+        .toolbar { FileEditorToolbar() }
         .navigationTitle(isRoot ? "JSON Tree" : node.key)
         .alert("New JSON Key", isPresented: $addingKey) {
             TextField("Key", text: $newKeyName)
             Button("Add") {
                 if case .object(var a) = node.value, !newKeyName.isEmpty {
-                    a.append(JSONNode(key: newKeyName, value: .number(0, isInteger: true)))
+                    a.append(JSONNode(key: newKeyName, value: .number(NSNumber(value: 0))))
                     node.value = .object(a)
                     onMutate()
                 }
@@ -1528,6 +1352,7 @@ private struct JSONRowView: View {
                     Text(node.value.label).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            .accessibilityIdentifier("json-container-\(node.key)")
         case .bool(let b):
             Toggle(isOn: Binding(
                 get: { b },
@@ -1535,18 +1360,16 @@ private struct JSONRowView: View {
             )) {
                 Text(node.key).font(.system(.body, design: .monospaced))
             }
-        case .number(let d, let isInt):
+        case .number(let number):
             HStack {
                 Text(node.key).font(.system(.body, design: .monospaced))
                 Spacer()
                 TextField("0", text: Binding(
-                    get: { isInt ? String(Int64(d)) : String(d) },
+                    get: { number.stringValue },
                     set: { s in
-                        if let i = Int64(s) {
-                            node.value = .number(Double(i), isInteger: true)
-                            onMutate()
-                        } else if let v = Double(s) {
-                            node.value = .number(v, isInteger: false)
+                        if let object = try? JSONSerialization.jsonObject(with: Data(s.utf8), options: [.fragmentsAllowed]),
+                           let value = object as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() {
+                            node.value = .number(value)
                             onMutate()
                         }
                     }
@@ -1652,6 +1475,10 @@ private struct SQLiteCellRow: View {
 
 struct SQLiteEditorView: View {
     let url: URL
+    @Environment(FileEditorSession.self) private var document
+    @State private var workspace: SQLiteEditStore?
+    @State private var loaded = false
+    @State private var error: String?
     @State private var tables: [String] = []
     @State private var selectedTable: String = ""
     @State private var columns: [SQLiteColumnInfo] = []
@@ -1722,7 +1549,9 @@ struct SQLiteEditorView: View {
                             ForEach(columns) { col in
                                 let val = row.cells[col.name] ?? .null
                                 SQLiteCellRow(column: col, value: val) {
-                                    editCellText = val.displayString == "NULL" ? "" : val.displayString
+                                    if case .blob(let bytes) = val {
+                                        editCellText = bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
+                                    } else { editCellText = val.displayString == "NULL" ? "" : val.displayString }
                                     editingCell = EditingCellContext(rowid: row.rowid, column: col.name, currentValue: val)
                                 }
                             }
@@ -1736,8 +1565,8 @@ struct SQLiteEditorView: View {
             }
         }
         .navigationTitle(url.lastPathComponent)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 18) {
                 Button {
                     showingSQLConsole = true
                 } label: {
@@ -1750,6 +1579,10 @@ struct SQLiteEditorView: View {
                 }
             }
         }
+        .modifier(FileEditorRegistration(save: save))
+        .alert("Database Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: { Text(error ?? "") }
         .sheet(isPresented: $showingSQLConsole) {
             NavigationStack {
                 Form {
@@ -1796,8 +1629,7 @@ struct SQLiteEditorView: View {
                     }
                     Section {
                         Button("Set to NULL") {
-                            updateCellToNull(ctx: ctx)
-                            editingCell = nil
+                            if updateCellToNull(ctx: ctx) { editingCell = nil }
                         }
                     }
                 }
@@ -1809,22 +1641,52 @@ struct SQLiteEditorView: View {
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Update") {
-                            updateCell(ctx: ctx, newText: editCellText)
-                            editingCell = nil
+                            if updateCell(ctx: ctx, newText: editCellText) { editingCell = nil }
                         }
                     }
                 }
             }
             .presentationDetents([.medium])
         }
-        .onAppear { loadDatabase() }
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            document.ready = false
+            do {
+                workspace = try SQLiteEditStore(source: url)
+                try SQLiteEditStore.requireCheckpointed(url)
+                _ = try document.store.load()
+                document.ready = true
+                loadDatabase()
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func save() -> Bool {
+        guard document.ready, let workspace else { return false }
+        do {
+            try SQLiteEditStore.requireCheckpointed(url)
+            try document.commit(workspace.bytes())
+            return true
+        } catch {
+            document.saveError = error.localizedDescription
+            return false
+        }
     }
 
     private func openDB() -> OpaquePointer? {
+        guard let workspace else { return nil }
         var db: OpaquePointer?
-        if sqlite3_open_v2(url.path(percentEncoded: false), &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK {
+        if sqlite3_open_v2(workspace.url.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK {
+            // SQL is restricted to this working database; ATTACH and VACUUM INTO
+            // must not bypass the editor's Save/Discard boundary.
+            sqlite3_set_authorizer(db, { _, action, _, _, _, _ in
+                (action == SQLITE_ATTACH || action == SQLITE_DETACH) ? SQLITE_DENY : SQLITE_OK
+            }, nil)
             return db
         }
+        error = SQLiteEditStore.failure(db, "Open working database").localizedDescription
+        if let db { sqlite3_close(db) }
         return nil
     }
 
@@ -1905,8 +1767,8 @@ struct SQLiteEditorView: View {
         rows = loadedRows
     }
 
-    private func updateCell(ctx: EditingCellContext, newText: String) {
-        guard let db = openDB() else { return }
+    private func updateCell(ctx: EditingCellContext, newText: String) -> Bool {
+        guard let db = openDB() else { return false }
         defer { sqlite3_close(db) }
 
         let escapedTable = selectedTable.replacingOccurrences(of: "\"", with: "\"\"")
@@ -1915,7 +1777,7 @@ struct SQLiteEditorView: View {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             sqlResultMessage = String(cString: sqlite3_errmsg(db))
-            return
+            return false
         }
         defer { sqlite3_finalize(stmt) }
 
@@ -1933,6 +1795,21 @@ struct SQLiteEditorView: View {
             } else {
                 sqlite3_bind_text(stmt, 1, newText, -1, SQLITE_TRANSIENT)
             }
+        case .blob:
+            let hex = newText.filter { !$0.isWhitespace }
+            guard hex.count % 2 == 0 else { error = "Enter complete hexadecimal byte pairs."; return false }
+            var bytes = [UInt8]()
+            var index = hex.startIndex
+            while index != hex.endIndex {
+                let end = hex.index(index, offsetBy: 2)
+                guard let byte = UInt8(hex[index..<end], radix: 16) else {
+                    error = "Enter hexadecimal bytes (00–FF)."; return false
+                }
+                bytes.append(byte)
+                index = end
+            }
+            if bytes.isEmpty { sqlite3_bind_zeroblob(stmt, 1, 0) }
+            else { _ = bytes.withUnsafeBytes { sqlite3_bind_blob(stmt, 1, $0.baseAddress, Int32($0.count), SQLITE_TRANSIENT) } }
         default:
             if let v = Int64(newText), ctx.currentValue == .null {
                 sqlite3_bind_int64(stmt, 1, v)
@@ -1946,30 +1823,48 @@ struct SQLiteEditorView: View {
 
         if sqlite3_step(stmt) == SQLITE_DONE {
             sqlResultMessage = "Updated \(ctx.column) on row #\(ctx.rowid)"
+            document.markChanged()
             loadTable(selectedTable)
+            return true
         } else {
-            sqlResultMessage = String(cString: sqlite3_errmsg(db))
+            error = String(cString: sqlite3_errmsg(db))
+            return false
         }
     }
 
-    private func updateCellToNull(ctx: EditingCellContext) {
-        guard let db = openDB() else { return }
+    private func updateCellToNull(ctx: EditingCellContext) -> Bool {
+        guard let db = openDB() else { return false }
         defer { sqlite3_close(db) }
         let escapedTable = selectedTable.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedCol = ctx.column.replacingOccurrences(of: "\"", with: "\"\"")
         let sql = "UPDATE \"\(escapedTable)\" SET \"\(escapedCol)\" = NULL WHERE rowid = \(ctx.rowid);"
-        sqlite3_exec(db, sql, nil, nil, nil)
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            error = String(cString: sqlite3_errmsg(db)); return false
+        }
+        document.markChanged()
         loadTable(selectedTable)
+        return true
     }
 
     private func deleteRows(at offsets: IndexSet) {
         guard let db = openDB() else { return }
         defer { sqlite3_close(db) }
         let escapedTable = selectedTable.replacingOccurrences(of: "\"", with: "\"\"")
+        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
+            error = String(cString: sqlite3_errmsg(db)); return
+        }
         for idx in offsets {
             let rid = filteredRows[idx].rowid
-            sqlite3_exec(db, "DELETE FROM \"\(escapedTable)\" WHERE rowid = \(rid);", nil, nil, nil)
+            if sqlite3_exec(db, "DELETE FROM \"\(escapedTable)\" WHERE rowid = \(rid);", nil, nil, nil) != SQLITE_OK {
+                error = String(cString: sqlite3_errmsg(db))
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                return
+            }
         }
+        guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+            error = String(cString: sqlite3_errmsg(db)); return
+        }
+        document.markChanged()
         loadTable(selectedTable)
     }
 
@@ -1977,6 +1872,8 @@ struct SQLiteEditorView: View {
         guard let db = openDB() else { return }
         defer { sqlite3_close(db) }
         var errMsg: UnsafeMutablePointer<CChar>?
+        // Even a multi-statement command that fails can change the working copy.
+        document.markChanged()
         if sqlite3_exec(db, sql, nil, nil, &errMsg) == SQLITE_OK {
             let changes = sqlite3_changes(db)
             sqlResultMessage = "SQL executed (\(changes) rows affected)"
@@ -1992,133 +1889,14 @@ struct SQLiteEditorView: View {
 
 /// Editable property-list tree node that preserves `CFKeyedArchiverUID` opaque references
 /// so editing NSKeyedArchiver game saves never corrupts UID links.
-@MainActor
-@Observable
-final class PlistNode: Identifiable {
-    let id = UUID()
-    var key: String
-    var value: Kind
-
-    enum Kind {
-        case string(String)
-        case integer(Int64)
-        case real(Double)
-        case bool(Bool)
-        case date(Date)
-        case data(Data)
-        case uid(Any) // Preserves CFKeyedArchiverUID opaque reference
-        case array([PlistNode])
-        case dict([PlistNode])
-
-        var typeLabel: String {
-            switch self {
-            case .string: "String"
-            case .integer: "Integer"
-            case .real: "Number"
-            case .bool: "Boolean"
-            case .date: "Date"
-            case .data(let d): "Data (\(d.count) B)"
-            case .uid(let ref): "UID (\(PlistNode.uidIndex(ref) ?? 0))"
-            case .array(let a): "Array (\(a.count))"
-            case .dict(let d): "Dict (\(d.count))"
-            }
-        }
-    }
-
-    init(key: String, value: Kind) {
-        self.key = key
-        self.value = value
-    }
-
-    nonisolated static func isKeyedArchiverUID(_ any: Any) -> Bool {
-        let desc = String(describing: any)
-        return desc.contains("CFKeyedArchiverUID")
-    }
-
-    nonisolated static func uidIndex(_ any: Any) -> Int? {
-        if let num = any as? NSNumber { return num.intValue }
-        if let i = any as? Int { return i }
-        let desc = String(describing: any)
-        // Format: "<CFKeyedArchiverUID ...>{value = 42}"
-        guard let range = desc.range(of: "value = ") else { return nil }
-        let tail = desc[range.upperBound...]
-        let digits = tail.prefix { $0.isNumber }
-        return Int(digits)
-    }
-
-    static func fromAny(_ any: Any, key: String = "Root") -> PlistNode {
-        if let dict = any as? [String: Any] {
-            if dict.count == 1, let uidVal = dict["CF$UID"] as? NSNumber {
-                return PlistNode(key: key, value: .uid(uidVal.intValue))
-            }
-            let children = dict.keys.sorted().map { k in fromAny(dict[k]!, key: k) }
-            return PlistNode(key: key, value: .dict(children))
-        } else if let arr = any as? [Any] {
-            let children = arr.enumerated().map { i, v in fromAny(v, key: "[\(i)]") }
-            return PlistNode(key: key, value: .array(children))
-        } else if let s = any as? String {
-            return PlistNode(key: key, value: .string(s))
-        } else if let d = any as? Date {
-            return PlistNode(key: key, value: .date(d))
-        } else if let d = any as? Data {
-            return PlistNode(key: key, value: .data(d))
-        } else if let n = any as? NSNumber {
-            if CFGetTypeID(n) == CFBooleanGetTypeID() {
-                return PlistNode(key: key, value: .bool(n.boolValue))
-            }
-            let t = String(cString: n.objCType)
-            if t == "f" || t == "d" {
-                return PlistNode(key: key, value: .real(n.doubleValue))
-            }
-            return PlistNode(key: key, value: .integer(n.int64Value))
-        } else if isKeyedArchiverUID(any) {
-            return PlistNode(key: key, value: .uid(any))
-        } else {
-            return PlistNode(key: key, value: .string(String(describing: any)))
-        }
-    }
-
-    func toAny() -> Any {
-        switch value {
-        case .string(let s): return s
-        case .integer(let i): return NSNumber(value: i)
-        case .real(let r): return NSNumber(value: r)
-        case .bool(let b): return NSNumber(value: b)
-        case .date(let d): return d
-        case .data(let d): return d
-        case .uid(let ref):
-            if let idx = PlistNode.uidIndex(ref) {
-                return ["CF$UID": NSNumber(value: idx)]
-            }
-            return ref
-        case .array(let a): return a.map { $0.toAny() }
-        case .dict(let d):
-            var out: [String: Any] = [:]
-            for c in d { out[c.key] = c.toAny() }
-            return out
-        }
-    }
-
-    var isKeyedArchiveRoot: Bool {
-        guard case .dict(let d) = value else { return false }
-        return d.contains(where: { $0.key == "$archiver" }) && d.contains(where: { $0.key == "$objects" })
-    }
-
-    var keyedArchiveObjects: [PlistNode]? {
-        guard case .dict(let d) = value,
-              let objsNode = d.first(where: { $0.key == "$objects" }),
-              case .array(let arr) = objsNode.value else { return nil }
-        return arr
-    }
-}
-
 struct PlistEditorView: View {
     let url: URL
     @State private var root: PlistNode?
     @State private var format: PropertyListSerialization.PropertyListFormat = .binary
     @State private var compression: SaveCompressionFormat = .none
     @State private var viewMode: ViewMode = .smart
-    @State private var dirty = false
+    @Environment(FileEditorSession.self) private var document
+    @State private var loaded = false
     @State private var error: String?
 
     enum ViewMode: String, CaseIterable {
@@ -2140,9 +1918,9 @@ struct PlistEditorView: View {
 
             if let root {
                 if root.isKeyedArchiveRoot && viewMode == .smart {
-                    KeyedArchiveObjectsView(root: root, onMutate: { dirty = true })
+                    KeyedArchiveObjectsView(root: root, onMutate: { document.markChanged() })
                 } else {
-                    PlistContainerView(node: root, isRoot: true, archiveRoot: root, onMutate: { dirty = true })
+                    PlistContainerView(node: root, isRoot: true, archiveRoot: root, onMutate: { document.markChanged() })
                 }
             } else {
                 ContentUnavailableView("Invalid Property List", systemImage: "exclamationmark.triangle",
@@ -2150,61 +1928,56 @@ struct PlistEditorView: View {
             }
         }
         .navigationTitle(url.lastPathComponent)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 18) {
                 Menu {
-                    Picker("Format", selection: $format) {
+                    Picker("Format", selection: Binding(get: { format }, set: { format = $0; document.markChanged() })) {
                         Text("Binary Plist").tag(PropertyListSerialization.PropertyListFormat.binary)
                         Text("XML Plist").tag(PropertyListSerialization.PropertyListFormat.xml)
                     }
-                    .onChange(of: format) { _, _ in dirty = true }
+                    .disabled(root?.isKeyedArchiveRoot == true)
                 } label: {
                     Image(systemName: "gearshape")
                 }
                 ShareLink(item: url)
-                Button("Save") { save() }.disabled(!dirty)
+                Spacer()
             }
         }
-        .alert("Save Failed", isPresented: Binding(get: { error != nil && root != nil },
+        .modifier(FileEditorRegistration(save: save))
+        .alert("Save Failed", isPresented: Binding(get: { error != nil },
                                                     set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
             Text(error ?? "")
         }
-        .onAppear { load() }
+        .onAppear { if !loaded { load(); loaded = true } }
     }
 
     private func load() {
+        document.ready = false
         do {
-            let rawData = try Data(contentsOf: url)
-            let data: Data
-            if let (decomp, fmt) = SaveCompressionFormat.decompress(rawData) {
-                data = decomp
-                compression = fmt
-            } else {
-                data = rawData
-                compression = .none
-            }
+            let (data, compressionFormat) = try SaveCompressionFormat.decode(document.store.load())
+            compression = compressionFormat
             var fmt: PropertyListSerialization.PropertyListFormat = .binary
             let obj = try PropertyListSerialization.propertyList(from: data, options: [], format: &fmt)
             format = fmt
             root = PlistNode.fromAny(obj)
-            dirty = false
-        } catch {
-            self.error = error.localizedDescription
-        }
+            document.dirty = false
+            document.ready = true
+        } catch { self.error = error.localizedDescription }
     }
 
-    private func save() {
-        guard let root else { return }
+    private func save() -> Bool {
+        guard let root else { return false }
         do {
             let data = try PropertyListSerialization.data(fromPropertyList: root.toAny(), format: format, options: 0)
-            let out = (compression == .none) ? data : (SaveCompressionFormat.compress(data, format: compression) ?? data)
-            try out.write(to: url, options: .atomic)
-            KeychainSaveSync.syncKeychainToFileIfNeeded(keychainURL: url, plistRoot: root)
-            dirty = false
+            let out = try SaveCompressionFormat.encode(data, format: compression)
+            try document.commit(out)
+
+            return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
+            return false
         }
     }
 }
@@ -2300,6 +2073,7 @@ private struct KeyedArchiveObjectsView: View {
                 }
             }
         }
+        .toolbar { FileEditorToolbar() }
         .searchable(text: $searchText, prompt: "Search classes, keys, or values…")
     }
 
@@ -2365,6 +2139,7 @@ private struct PlistContainerView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Filter keys…")
+        .toolbar { FileEditorToolbar() }
         .navigationTitle(isRoot ? "Plist" : node.key)
         .alert("Add Key", isPresented: $addingKey) {
             TextField("Key name", text: $newKeyName)
@@ -2404,10 +2179,12 @@ private struct PlistContainerView: View {
     private func deleteChildren(at offsets: IndexSet) {
         switch node.value {
         case .dict(var c):
-            c.remove(atOffsets: offsets)
+            let ids = Set(offsets.map { children[$0].id })
+            c.removeAll { ids.contains($0.id) }
             node.value = .dict(c)
         case .array(var c):
-            c.remove(atOffsets: offsets)
+            let ids = Set(offsets.map { children[$0].id })
+            c.removeAll { ids.contains($0.id) }
             for i in c.indices { c[i].key = "[\(i)]" }
             node.value = .array(c)
         default: break
@@ -2581,6 +2358,9 @@ private struct NestedDataInspectorView: View {
     @State private var nestedPlistFormat: PropertyListSerialization.PropertyListFormat = .binary
     @State private var textRepresentation: String = ""
     @State private var mode: Mode = .hex
+    @State private var loaded = false
+    @State private var compression: SaveCompressionFormat = .none
+    @State private var error: String?
 
     enum Mode: String, CaseIterable {
         case plist = "Nested Plist"
@@ -2604,25 +2384,24 @@ private struct NestedDataInspectorView: View {
             case .plist:
                 if let nestedPlist {
                     PlistContainerView(node: nestedPlist, isRoot: false, archiveRoot: nestedPlist) {
-                        if let serialized = try? PropertyListSerialization.data(
+                        do {
+                            let serialized = try PropertyListSerialization.data(
                             fromPropertyList: nestedPlist.toAny(),
                             format: nestedPlistFormat,
                             options: 0
-                        ) {
-                            data = serialized
-                            onUpdate(serialized)
-                        }
+                            )
+                            apply(serialized)
+                        } catch { self.error = error.localizedDescription }
                     }
                 }
             case .text:
-                TextEditor(text: $textRepresentation)
+                TextEditor(text: Binding(get: { textRepresentation }, set: { value in
+                    textRepresentation = value
+                    let encoded = Data(value.utf8)
+                    apply(encoded)
+                }))
+                    .modifier(FileEditorTextFocus())
                     .font(.system(.footnote, design: .monospaced))
-                    .onChange(of: textRepresentation) { _, newValue in
-                        if let encoded = newValue.data(using: .utf8) {
-                            data = encoded
-                            onUpdate(encoded)
-                        }
-                    }
             case .hex:
                 ScrollView {
                     Text(data.map { String(format: "%02X", $0) }.joined(separator: " "))
@@ -2631,8 +2410,16 @@ private struct NestedDataInspectorView: View {
                 }
             }
         }
+        .toolbar { FileEditorToolbar() }
         .navigationTitle(key)
         .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            do {
+                let (payload, fmt) = try SaveCompressionFormat.decode(data)
+                data = payload
+                compression = fmt
+            } catch { self.error = error.localizedDescription; return }
             var fmt: PropertyListSerialization.PropertyListFormat = .binary
             if let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: &fmt) {
                 nestedPlistFormat = fmt
@@ -2646,7 +2433,18 @@ private struct NestedDataInspectorView: View {
                 mode = .hex
             }
         }
+        .alert("Nested Data Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: { Text(error ?? "") }
     }
+    private func apply(_ payload: Data) {
+        do {
+            let encoded = try SaveCompressionFormat.encode(payload, format: compression)
+            data = payload
+            onUpdate(encoded)
+        } catch { self.error = error.localizedDescription }
+    }
+
 }
 
 // MARK: - Binary / Hex Editor with Value Inspector & Cheat Scanner
@@ -2662,7 +2460,8 @@ struct BinaryEditorView: View {
     @State private var data = Data()
     @State private var compression: SaveCompressionFormat = .none
     @State private var selectedOffset: Int = 0
-    @State private var dirty = false
+    @Environment(FileEditorSession.self) private var document
+    @State private var loaded = false
     @State private var error: String?
 
     // Value Search / Cheat Scanner
@@ -2705,7 +2504,7 @@ struct BinaryEditorView: View {
             // Interactive Multi-Type Value Inspector Bar at `selectedOffset`
             if !data.isEmpty && selectedOffset < data.count {
                 BinaryValueInspectorBar(data: $data, offset: $selectedOffset, totalCount: data.count) {
-                    dirty = true
+                    document.markChanged()
                 }
                 Divider()
             }
@@ -2723,7 +2522,7 @@ struct BinaryEditorView: View {
                         selectedOffset: $selectedOffset
                     ) { offset, byte in
                         data[offset] = byte
-                        dirty = true
+                        document.markChanged()
                     }
                     .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
                 }
@@ -2732,17 +2531,18 @@ struct BinaryEditorView: View {
             .font(.system(.caption, design: .monospaced))
         }
         .navigationTitle(url.lastPathComponent)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 18) {
                 Button {
                     showingScanner = true
                 } label: {
                     Label("Value Scanner", systemImage: "magnifyingglass.circle")
                 }
                 ShareLink(item: url)
-                Button("Save") { save() }.disabled(!dirty)
+                Spacer()
             }
         }
+        .modifier(FileEditorRegistration(save: save))
         .sheet(isPresented: $showingScanner) {
             NavigationStack {
                 Form {
@@ -2809,25 +2609,26 @@ struct BinaryEditorView: View {
             Text(error ?? "")
         }
         .onAppear {
-            guard let raw = try? Data(contentsOf: url) else { return }
-            if let (decomp, fmt) = SaveCompressionFormat.decompress(raw) {
-                data = decomp
+            guard !loaded else { return }
+            loaded = true
+            do {
+                let (payload, fmt) = try SaveCompressionFormat.decode(document.store.load())
+                data = payload
                 compression = fmt
-            } else {
-                data = raw
-                compression = .none
-            }
-            dirty = false
+                document.dirty = false
+                document.ready = true
+            } catch { self.error = error.localizedDescription }
         }
     }
 
-    private func save() {
+    private func save() -> Bool {
         do {
-            let out = (compression == .none) ? data : (SaveCompressionFormat.compress(data, format: compression) ?? data)
-            try out.write(to: url, options: .atomic)
-            dirty = false
+            let out = try SaveCompressionFormat.encode(data, format: compression)
+            try document.commit(out)
+            return true
         } catch {
-            self.error = error.localizedDescription
+            document.saveError = error.localizedDescription
+            return false
         }
     }
 
@@ -2901,7 +2702,7 @@ struct BinaryEditorView: View {
             guard m.offset + replacement.count <= data.count else { continue }
             data.replaceSubrange(m.offset..<(m.offset + replacement.count), with: replacement)
         }
-        dirty = true
+        document.markChanged()
         runBinarySearch()
     }
 }

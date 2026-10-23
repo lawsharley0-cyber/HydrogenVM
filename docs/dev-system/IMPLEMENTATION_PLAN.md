@@ -106,8 +106,8 @@ The fix lands in the owner's files, with a `fulltest` assertion when the behavio
 
 - Tail-call handlers and `siglongjmp` are safe only while no C++ object is live across the fault.
 - Guest 4 KB permissions are not consulted by the fast load/store path. A 4 KB Linux pass does not prove a 16 KB iPhone.
-- `OpenGLES.cpp:2320` only substitutes a near-zero clip W (`std::abs(sv.clip.w) > 1e-6f`) with `1`. It does not replace a negative W with its absolute value. The near-clip gap is lines 2449–2452, which rasterize the axis-aligned bounding box of vertices that are already projected. There is no homogeneous near-plane clip. SIMD raster waits until that clip exists.
-- The GLSL subset rejects control flow on purpose. Do not fall back to guessed sampler roles.
+- Historical pre-PR #4 audit (homogeneous clipping is now merged): `OpenGLES.cpp:2320` only substituted a near-zero clip W (`std::abs(sv.clip.w) > 1e-6f`) with `1`. It does not replace a negative W with its absolute value. The near-clip gap is lines 2449–2452, which rasterize the axis-aligned bounding box of vertices that are already projected. There is no homogeneous near-plane clip. SIMD raster waits until that clip exists.
+- The GLSL implementation is a bounded subset with real compile/link diagnostics. Do not claim full ES conformance or fall back to guessed sampler roles.
 - `CCCrypt` returns unimplemented on purpose.
 - Sockets fail closed unless `loopbackNetwork` is set, and that flag is loopback IPv4 TCP only.
 
@@ -133,7 +133,7 @@ Open a PR against `main`. Do not merge it from the agent that wrote the patch. T
 
 ### 8. Continuous PM — Operational template, Planned cadence
 
-Update `docs/dev-system/STATUS.md` when a lap finishes: backlog counts, who owns the open groups, the latest compat summary, regressions fixed, open PRs, decisions, and the next lap. The issue generator can refresh the wording (`python3 tools/hvm_compat.py issues report.json`). It does not file. Filing, and any tracker besides this file, is Needs owner. There are no GitHub issues on the repository today.
+Update `docs/dev-system/STATUS.md` when a lap finishes: backlog counts, who owns the open groups, the latest compat summary, regressions fixed, open PRs, decisions, and the next lap. The issue generator can refresh the wording (`python3 tools/hvm_compat.py issues report.json`). It does not file. Filing, and any tracker besides this file, is Needs owner. Consult the live tracker for current issues; the harness itself does not create them.
 
 ## Headless limits
 
@@ -150,3 +150,7 @@ Detail is in `docs/dev-system/COMPAT_HARNESS.md`. Short form:
 - Downloading the Clash client.
 - Removing the IPAs that are already in git history.
 - Auto-opening GitHub issues.
+
+## October 22 continuation
+
+B-003 reconciliation and the read-only docs doctor are implemented on codex/file-save-overhaul. The save-editor overhaul is draft PR #18. See [FILE_EDITOR_HANDOFF.md](FILE_EDITOR_HANDOFF.md) for implemented behavior, tests, device scenarios and the remaining ordered queue. Queued runtime/graphics/framework tasks remain open; this change does not resolve them.

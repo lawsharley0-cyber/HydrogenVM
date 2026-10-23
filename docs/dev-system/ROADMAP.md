@@ -2,7 +2,7 @@
 
 Phases match `IMPLEMENTATION_PLAN.md`. There is no calendar on this roadmap. Ordering is by dependency and by the no-parallel groups.
 
-Integration branch for this system: `main`. `docs/HANDOFF.md` still says `gemini-merge`. Updating that sentence is backlog B-003, not a branch move.
+Integration branch for this system: `main`. `docs/HANDOFF.md` separates current `main` integration from archived `gemini-merge` evidence (B-003).
 
 ## Phase 0 — Repository system
 
@@ -21,7 +21,7 @@ Depends on Phase 0.
 
 1. Done for Linux on `6af9976`. Compat harness run 39646706013 passed. Linux CI run 39646696896 published a report. The macOS job was skipped by its existing condition, not by the old empty-step failure on `07fabbb` (run 39633887764).
 2. The harness workflow is the Linux gate: `python3 tools/hvm_compat.py run --baseline docs/dev-system/baselines/linux-headless.json`. A missing required fixture fails the process. `--require-resolved` is still accepted.
-3. Reconcile stale docs with the code, keeping the shader subset, the missing near clip, and the `CCCrypt` refusal.
+3. Reconcile stale docs with the code, keeping the documented shader subset, remaining memory/fault limits, and the `CCCrypt` refusal. Homogeneous clipping is merged in PR #4.
 4. Optionally teach `tools/hvm_report.py` to run `fulltest` so `ci-reports` matches the harness. Separate patch, test/regression role only.
 
 ## Phase 2 — In-tree apps

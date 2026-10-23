@@ -28,11 +28,11 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 |---|---|---|---|
 | Runtime / CPU and memory | `src/core/cpu/`, `src/core/memory/`, Group A lines in `System.cpp` | — | Needs owner |
 | Guest frameworks | `src/runtime/objc/`, `foundation/`, UIKit except GLES, libc symbols | — | Needs owner |
-| Graphics, audio, input | `OpenGLES.cpp`, `Shader.*`, `audio/`, gestures | PRs #11/#12 for Group B | Active Group B; other subareas unclaimed |
-| App compatibility, including Clash | `src/loader/`, `tools/clash_*.py`, `Net.cpp` while Group C is active | — | Needs owner |
+| Graphics, audio, input | `OpenGLES.cpp`, `Shader.*`, `audio/`, gestures | PRs #11/#12 (Group B), #16 (PCM) | Active scoped PRs; other input work unclaimed |
+| App compatibility, including Clash | `src/loader/`, `tools/clash_*.py`, `Net.cpp` while Group C is active | PR #13 (Clash), #17 (ZIP) | Active scoped PRs; other loader work unclaimed |
 | Test / regression | `tools/compat_harness/`, harness workflow | — | Needs owner for who watches the gate |
 | Review / integration / docs | `docs/dev-system/` | — | Needs owner for required reviews |
-| Apple shell | `app/**`, `HVMEngine.h` | — | Needs owner and a Mac |
+| Apple shell | `app/**`, `HVMEngine.h` | codex/file-save-overhaul, draft #18 | Active save-editor validation; signed-device scenarios pending |
 
 ## Current compat results
 
@@ -112,3 +112,17 @@ A 4 KB Linux pass does not prove 16 KB iPhone permissions, precise fault behavio
 5. Keep B-101/B-102 (16 KB permission/fault correctness) open. Merged clipping/regex/tmpnam and Codemagic build work supersede their old planned snapshots; signed-device behavior still needs device evidence.
 6. Group B correctness/near clipping precedes raster SIMD or compositing changes; memory permissions precede CPU fusion. Cloud 4 KB passes do not bypass those dependencies.
 7. Continue B-003 documentation reconciliation separately. Regex/tmpnam binding improvements already present on main are not new work for this PR.
+
+## October 22 save-editor continuation (PR #18)
+
+Group E is owned by `codex/file-save-overhaul` (PR #18). The shared C++ runtime is unchanged. See [FILE_EDITOR_HANDOFF.md](FILE_EDITOR_HANDOFF.md) for implemented behavior and the remaining ordered queue.
+
+**Final tested source: `d3085f3`.**
+[Apple validation](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39881742994)
+passed the Swift 6 persistence/model executable, all five iPhone simulator UI tests, and the actual unsigned Release simulator shell compile. UI tests prove nested Save & Close with reopen, discard, returning to the root without losing edits, autosave, and native text entry saved through the keyboard toolbar. The final footer reserves layout space rather than covering the viewport; visible destinations supply toolbars, and text editors explicitly request focus.
+
+Local WSL and CI harness self-tests pass: **64 tests**, including eight doctor checks. `python3 tools/hvm_compat.py doctor` passes on the reconciled documents.
+
+### Final Linux source revision
+
+[Final compatibility run](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39881742977) passed on `d3085f3` (clean PR merge ef383fe348d27251d6d7921ac2eae52c9a10ac17). Exact uploaded report is [20261023T011004Z-ef383fe348d2.json](reports/linux-x86_64/20261023T011004Z-ef383fe348d2.json). All 16 unit/asm/differential configurations pass, including fulltest's **191 passed, 0 failed**. Required Python suites pass; three bundled apps run without recorded crashes and optional Clash remains skipped. Baseline and previous-indexed diffs have zero regressions.
