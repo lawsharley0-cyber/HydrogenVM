@@ -1,3 +1,4 @@
+import Darwin
 import CoreMotion
 import SwiftUI
 import UIKit
@@ -55,6 +56,10 @@ final class RunModel {
     }
 
     var crashReport: String?
+    var savedCrash: CrashReport?
+    var reportSaveError: String?
+    @ObservationIgnored private var memoryTimer: Timer?
+    @ObservationIgnored private var memorySamples: [[String: Any]] = []
     var exitMessage: String?
     /// Set when the session ended because the user pressed Stop.
     private(set) var finished = false
@@ -140,12 +145,34 @@ final class RunModel {
                     Self.console("[hvm-exit] status=\(code)\(crash.map { " crash:\n" + $0 } ?? "")")
                 }
                 self.endBackgroundTask()
-                if self.userStopped { self.finished = true }
-                else if let crash { self.crashReport = crash }
-                else { self.exitMessage = "The app exited (status \(code))." }
+                self.memoryTimer?.invalidate()
+                if let crash {
+                    var fields = self.session?.crashBundle.flatMap { $0.data(using: .utf8) }
+                        .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
+                    fields["summary"] = fields["summary"] ?? crash.components(separatedBy: "\n").first
+                    fields["report"] = crash
+                    fields["bundleId"] = self.app.info.bundleIdentifier
+                    fields["memorySamples"] = self.memorySamples
+                    do {
+                        self.savedCrash = try CrashReport.save(fields, app: self.app.info.bundleIdentifier)
+                        CrashReport.clearPending()
+                    } catch {
+                        self.reportSaveError = "Could not save the crash report: \(error.localizedDescription)"
+                        self.crashReport = crash
+                    }
+                } else {
+                    CrashReport.clearPending()
+                    if self.userStopped { self.finished = true }
+                    else { self.exitMessage = "The app exited (status \(code))." }
+                }
             }
         }
         session = s
+        sampleMemory()
+        HVMCrashJournal.openSignalFile(CrashReport.signal.path)
+        memoryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sampleMemory() }
+        }
         running = true
         activity.hostBackgrounded = UIApplication.shared.applicationState == .background
         s.outputVolume = Float(volume)
@@ -166,6 +193,23 @@ final class RunModel {
         }
     }
 
+    private func sampleMemory() {
+        memorySamples.append(["utc": ISO8601DateFormatter().string(from: Date()),
+                              "availableBytes": HVMCrashJournal.availableMemory()])
+        if memorySamples.count > 120 { memorySamples.removeFirst() }
+        let fields: [String: Any] = ["bundleId": app.info.bundleIdentifier, "appVersion": app.info.version,
+                                     "deviceModel": CrashReport.deviceModel,
+                                     "iOSVersion": UIDevice.current.systemVersion,
+                                     "host": ["pageSize": getpagesize()],
+                                     "memorySamples": memorySamples,
+                                     "logs": log.suffix(2000).map(\.text)]
+        do {
+            try FileManager.default.createDirectory(at: CrashReport.directory, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: fields)
+            try data.write(to: CrashReport.pending, options: .atomic)
+        } catch { reportSaveError = "Could not save the session snapshot: \(error.localizedDescription)" }
+    }
+
     /// Close the app the way iOS would: it gets resign-active / background / terminate and
     /// saves, then stops (onExit follows). The session force-stops a hung app after a few seconds.
     func stop() {
@@ -179,6 +223,7 @@ final class RunModel {
 
     func teardown() {
         stop()
+        memoryTimer?.invalidate()
         fpsTimer?.invalidate()
         fpsTimer = nil
         activityTimer?.invalidate()
@@ -377,12 +422,13 @@ struct RunView: View {
             model.teardown()
             OrientationLock.shared.lock(.all)
         }
+        .sheet(item: $model.savedCrash) { CrashReportView(report: $0) }
         .alert("\(app.title) crashed", isPresented: Binding(get: { model.crashReport != nil }, set: { if !$0 { model.crashReport = nil } })) {
             Button("Copy Report") { UIPasteboard.general.string = (model.crashReport ?? "") + "\n\n--- log ---\n" + model.logText; dismiss() }
             Button("Show Log") { showLog = true }
             Button("Close", role: .cancel) { dismiss() }
         } message: {
-            Text(String((model.crashReport ?? "").prefix(600)))
+            Text((model.reportSaveError ?? "") + "\n" + String((model.crashReport ?? "").prefix(600)))
         }
         .alert(model.exitMessage ?? "", isPresented: Binding(get: { model.exitMessage != nil }, set: { if !$0 { model.exitMessage = nil } })) {
             Button("Show Log") { showLog = true }

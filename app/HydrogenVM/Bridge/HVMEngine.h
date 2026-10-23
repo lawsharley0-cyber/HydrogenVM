@@ -61,6 +61,8 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 /// Host output gain, 0...1. Does not change guest audio source gains.
 @property (nonatomic) float outputVolume;
 @property (nonatomic, readonly, getter=isRunning) BOOL running;
+/// JSON captured before the guest process is released.
+@property (nonatomic, readonly, copy, nullable) NSString *crashBundle;
 /// When YES, missing functions log and return 0 instead of stopping the app.
 @property (nonatomic) BOOL keepGoing;
 
@@ -78,6 +80,13 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger;
 /// Accelerometer in g, device axes (portrait), like UIAcceleration.
 - (void)setAccelerationX:(double)x y:(double)y z:(double)z;
+@end
+
+@interface HVMCrashJournal : NSObject
++ (void)installSignalHandlers;
++ (void)openSignalFile:(NSString *)path;
++ (void)closeSignalFile;
++ (uint64_t)availableMemory;
 @end
 
 @interface HVMEngine : NSObject

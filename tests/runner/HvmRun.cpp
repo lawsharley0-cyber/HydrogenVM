@@ -202,6 +202,8 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"stillRunning\": " << (timedStop ? "true" : "false") << ",\n";   // reached --run-for without failing
             f << "  \"crashed\": " << (proc.crashed() ? "true" : "false") << ",\n";
             f << "  \"crashReport\": \"" << jsonEscape(proc.crashReport()) << "\",\n";
+            f << "  \"signature\": \"" << proc.crashSignature() << "\",\n";
+            f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
             f << "  \"unimplementedImports\": " << jsonList(proc.unimplementedImports()) << ",\n";

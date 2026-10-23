@@ -1,6 +1,7 @@
 // HydrogenVM — one emulated iOS process: guest memory, CPU engine, loaded
 // image, host-implemented system libraries, guest threads, logging.
 #pragma once
+#include <deque>
 #include "Abi.hpp"
 #include "FrameHistogram.hpp"
 #include "Heap.hpp"
@@ -180,6 +181,8 @@ public:
     // ---- results
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
+    std::string crashBundle();
+    const std::string& crashSignature() const { return crashSignature_; }
     std::vector<std::string> missingSymbols() const;
     // Imports bound to "missing" stubs at load (functions), in file order — the static gap list.
     const std::vector<std::string>& unimplementedImports() const { return unimplementedImports_; }
@@ -361,6 +364,11 @@ private:
     std::function<bool(Ctx&, const std::exception&)> hostErrorHook_;
     std::shared_ptr<Audio::Mixer> mixer_;
     std::string crashReport_;
+    std::string crashSignature_, crashKind_, crashLocation_, crashDetail_, executableHash_;
+    std::array<uint32_t, 16> crashRegisters_{};
+    mutable std::mutex logRingMu_;
+    mutable std::deque<std::string> logRing_;
+    void captureCrash(const CPU::Cpu& c, const std::string& kind, const std::string& detail);
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
     std::function<void(float, float, float)> accelHandler_;

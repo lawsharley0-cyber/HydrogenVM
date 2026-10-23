@@ -8,11 +8,22 @@
 #include <cxxabi.h>
 #include <filesystem>
 #include <pthread.h>
+#include <unistd.h>
+#include <iomanip>
+#if defined(__APPLE__)
+#include <CommonCrypto/CommonDigest.h>
+#elif defined(HVM_HAVE_OPENSSL)
+#include <openssl/sha.h>
+#endif
+#ifndef HVM_COMMIT
+#define HVM_COMMIT "unknown"
+#endif
 
 namespace fs = std::filesystem;
 
 namespace Hydrogen::Runtime {
 
+std::vector<uint8_t> hvmDigest(int alg, const std::string& s);
 void flushGuestStdio(Process& p);   // libc/Stdio.cpp
 
 namespace {
@@ -169,6 +180,13 @@ void Process::requestGracefulStop(double timeout) {
             if (!live->alive || stopping()) return;
             if (std::chrono::steady_clock::now() >= end) {
                 log(LogLevel::Warning, "The app didn't finish saving in time; stopping it");
+                {
+                    std::lock_guard<std::mutex> lk(exitMu_);
+                    crashed_ = true;
+                    crashReport_ = "The game did not finish saving before the watchdog stopped it.";
+                    CPU::Cpu empty{}; // The guest is running: do not race its register writes.
+                    captureCrash(empty, "graceful-stop-watchdog", "registers unavailable while running");
+                }
                 requestStop();
                 return;
             }
@@ -204,6 +222,18 @@ void Process::load() {
     executablePath_ = (fs::path(cfg_.bundlePath) / exe).string();
 
     const auto file = Loader::readFile(executablePath_);
+    unsigned char digest[32];
+#if defined(__APPLE__)
+    CC_SHA256(file.data(), CC_LONG(file.size()), digest);
+#elif defined(HVM_HAVE_OPENSSL)
+    SHA256(file.data(), file.size(), digest);
+#else
+    const auto bytes = hvmDigest(2, std::string(file.begin(), file.end()));
+    std::copy(bytes.begin(), bytes.end(), digest);
+#endif
+    std::ostringstream hash;
+    for (auto b : digest) hash << std::hex << std::setw(2) << std::setfill('0') << unsigned(b);
+    executableHash_ = hash.str();
     image_ = Loader::loadMachO(*mem_, file, executablePath_);
     logf(LogLevel::Info, "Loaded %s: %s, %zu imports, %zu initializers, entry %s",
          exe.c_str(), image_.cpuSubtype == Loader::kCpuArmV7S ? "armv7s" : image_.cpuSubtype == Loader::kCpuArmV6 ? "armv6" : "armv7",
@@ -577,7 +607,16 @@ void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
     } catch (const CPU::GuestFault& f) {
         if (!t->pthreadExited && !exiting_ && !stopping()) finishCrash(t->cpu, f.exit);
     } catch (const std::exception& e) {
-        if (!exiting_ && !stopping()) log(LogLevel::Error, std::string("guest thread failed: ") + e.what());
+        if (!exiting_ && !stopping()) {
+            std::lock_guard<std::mutex> lk(exitMu_);
+            if (!crashed_) {
+                crashed_ = true;
+                crashReport_ = std::string("HydrogenVM error: ") + e.what();
+                captureCrash(t->cpu, "hle-exception", e.what());
+                log(LogLevel::Error, crashReport_);
+                engine_->requestStop();
+            }
+        }
     }
     {
         std::lock_guard<std::mutex> lk(t->m);
@@ -761,6 +800,7 @@ int Process::run() {
             try { flushGuestStdio(*this); } catch (...) {}
             crashed_ = true;
             crashReport_ = std::string("HydrogenVM error: ") + e.what();
+            captureCrash(c, "hle-exception", e.what());
             log(LogLevel::Error, crashReport_);
         }
     }
@@ -816,13 +856,100 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     std::memcpy(tmp.r, r, sizeof r);
     rep += "  backtrace:\n" + backtrace(tmp);
     crashReport_ = rep;
+    CPU::Cpu snapshot;
+    std::memcpy(snapshot.r, r, sizeof r);
+    captureCrash(snapshot, std::to_string(int(why)), why == CPU::Exit::HostError ? CPU::Engine::lastHostError() : "");
     log(LogLevel::Error, rep);
     engine_->requestStop();
+}
+
+namespace {
+std::string quote(const std::string& value) {
+    std::ostringstream out;
+    out << '"';
+    for (unsigned char c : value) {
+        if (c == '"' || c == '\\') out << '\\' << char(c);
+        else if (c < 32 || c >= 127) out << "\\u00" << std::hex << std::setw(2) << std::setfill('0') << unsigned(c);
+        else out << char(c);
+    }
+    return out.str() + '"';
+}
+}
+
+void Process::captureCrash(const CPU::Cpu& c, const std::string& kind, const std::string& detail) {
+    std::copy(c.r, c.r + 16, crashRegisters_.begin());
+    crashKind_ = kind;
+    crashDetail_ = detail;
+    // HLE PCs are host-dispatch slots, not stable image offsets. Use the guest caller.
+    const uint32_t pc = engine_->isHleAddress(c.r[15] & ~1u) ? c.r[14] : c.r[15];
+    crashLocation_ = fs::path(executablePath_).filename().string() + "+" + (pc ? std::to_string((pc & ~1u) - image_.headerAddr) : "unavailable");
+    // Do not hash caller descriptions: their absolute addresses vary with image placement.
+    const auto end = detail.find(" (called from ");
+    const std::string key = kind + "\n" + crashLocation_ + "\n" + detail.substr(0, end);
+    unsigned char digest[20];
+#if defined(__APPLE__)
+    CC_SHA1(key.data(), CC_LONG(key.size()), digest);
+#elif defined(HVM_HAVE_OPENSSL)
+    SHA1(reinterpret_cast<const unsigned char*>(key.data()), key.size(), digest);
+#else
+    const auto bytes = hvmDigest(1, key);
+    std::copy(bytes.begin(), bytes.end(), digest);
+#endif
+    std::ostringstream hash;
+    for (int i = 0; i < 6; ++i) hash << std::hex << std::setw(2) << std::setfill('0') << unsigned(digest[i]);
+    crashSignature_ = hash.str();
+}
+
+std::string Process::crashBundle() {
+    if (!crashed_) return "null";
+    std::ostringstream out;
+    std::string summary = crashReport_.substr(0, crashReport_.find('\n'));
+    const auto missing = crashDetail_.find("Missing function: ");
+    if (missing != std::string::npos) {
+        auto name = crashDetail_.substr(missing + 18);
+        name = name.substr(0, name.find(" (called from "));
+        summary = "This game needs " + name + ", which HydrogenVM does not support yet.";
+    }
+    out << "{\"signature\":" << quote(crashSignature_) << ",\"exceptionKind\":" << quote(crashKind_)
+        << ",\"location\":" << quote(crashLocation_) << ",\"detail\":" << quote(crashDetail_)
+        << ",\"summary\":" << quote(summary)
+        << ",\"report\":" << quote(crashReport_) << ",\"bundleId\":" << quote(infoPlist_ ? infoPlist_->getString("CFBundleIdentifier") : "")
+        << ",\"appVersion\":" << quote(infoPlist_ ? infoPlist_->getString("CFBundleShortVersionString") : "")
+        << ",\"executableSHA256\":" << quote(executableHash_) << ",\"host\":{\"pageSize\":" << sysconf(_SC_PAGESIZE)
+        << ",\"emulatorCommit\":" << quote(HVM_COMMIT) << "},\"registers\":[";
+    for (size_t i = 0; i < crashRegisters_.size(); ++i) out << (i ? "," : "") << crashRegisters_[i];
+    out << "],\"backtrace\":[";
+    // Walk only once execution has stopped; the watchdog has no safe register snapshot.
+    CPU::Cpu c{};
+    std::copy(crashRegisters_.begin(), crashRegisters_.end(), c.r);
+    std::istringstream trace(backtrace(c));
+    bool first = true;
+    for (std::string line; std::getline(trace, line);) {
+        out << (first ? "" : ",") << quote(line); first = false;
+    }
+    out << "],\"unimplementedImports\":[";
+    for (size_t i = 0; i < unimplementedImports_.size(); ++i) out << (i ? "," : "") << quote(unimplementedImports_[i]);
+    out << "],\"logs\":[";
+    {
+        std::lock_guard<std::mutex> lk(logRingMu_);
+        for (size_t i = 0; i < logRing_.size(); ++i) out << (i ? "," : "") << quote(logRing_[i]);
+    }
+    const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count();
+    out << "],\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
+    return out.str();
 }
 
 // ------------------------------------------------------------ diagnostics ---
 
 void Process::log(LogLevel lvl, const std::string& msg) const {
+    {
+        std::lock_guard<std::mutex> lk(logRingMu_);
+        std::istringstream lines(msg);
+        for (std::string line; std::getline(lines, line);) {
+            if (logRing_.size() == 2000) logRing_.pop_front();
+            logRing_.push_back(line.substr(0, 4096));
+        }
+    }
     if (cfg_.log) { cfg_.log(lvl, msg); return; }
     const char* tag = lvl == LogLevel::Error ? "[error] " : lvl == LogLevel::Warning ? "[warn] " : lvl == LogLevel::Debug ? "[debug] " : "";
     if (lvl == LogLevel::GuestStdout) { std::fwrite(msg.data(), 1, msg.size(), stdout); std::fflush(stdout); return; }
@@ -868,6 +995,12 @@ std::string Process::describeAddress(uint32_t addr) const {
     if (engine_->isHleAddress(addr & ~1u)) return "[HydrogenVM] " + demangle(engine_->hleName(engine_->hleIndex(addr & ~1u)));
     std::snprintf(buf, sizeof buf, "0x%08x", addr);
     std::string s = image_.symbolicate(addr & ~1u);
+    for (const auto& segment : image_.segments) {
+        if ((addr & ~1u) >= segment.vmaddr && (addr & ~1u) - segment.vmaddr < segment.vmsize) {
+            s = fs::path(executablePath_).filename().string() + "+" + std::to_string((addr & ~1u) - image_.headerAddr) + " " + s;
+            break;
+        }
+    }
     return s.empty() ? std::string(buf) : std::string(buf) + " " + demangle(s);
 }
 
