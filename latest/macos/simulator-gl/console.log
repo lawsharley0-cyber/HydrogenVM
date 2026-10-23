@@ -47,13 +47,13 @@ Business count for type CREATIVE: 0
 
 (localytics) Object Initialized.  Application's key is: 67955ed4ab97031c133c125-c6a883c0-7bdf-11e0-fc9a-007f58cb3154
 
-(localytics) File Path is: /Users/runner/Library/Developer/CoreSimulator/Devices/E839A11B-51B4-4AD3-ACF4-A53B95B7C957/data/Containers/Data/Application/9F67F74B-DAE4-4BC5-823C-6A798AA7BF4E/Documents/Apps/com.eeenmachine.tinytowers//Documents/localytics/
+(localytics) File Path is: /Users/runner/Library/Developer/CoreSimulator/Devices/77AA4492-C787-4EEE-A772-05D4B3E9ECCD/data/Containers/Data/Application/D3872715-7206-4847-80C9-84AF94029200/Documents/Apps/com.eeenmachine.tinytowers//Documents/localytics/
 
-(localytics) Succesfully opened session. UUID is: 38CC5ED0-0F94-4FBD-BC2B-3C703310B797
+(localytics) Succesfully opened session. UUID is: 6BB48251-08E5-401A-9332-93B70AF2BB7E
 
-(localytics) Session file is: s_38CC5ED0-0F94-4FBD-BC2B-3C703310B797.yml
+(localytics) Session file is: s_6BB48251-08E5-401A-9332-93B70AF2BB7E.yml
 
-(localytics) Close session file is: c_38CC5ED0-0F94-4FBD-BC2B-3C703310B797.yml
+(localytics) Close session file is: c_6BB48251-08E5-401A-9332-93B70AF2BB7E.yml
 
 (localytics uploader) Beginning upload process
 
@@ -63,9 +63,12 @@ applicationDidBecomeActive
 
 USER MUSIC PLAYING: NO
 
-music path:/Users/runner/Library/Developer/CoreSimulator/Devices/E839A11B-51B4-4AD3-ACF4-A53B95B7C957/data/Containers/Data/Application/9F67F74B-DAE4-4BC5-823C-6A798AA7BF4E/Documents/Apps/com.eeenmachine.tinytowers/Tiny Tower.app/song2.mp3
+music path:/Users/runner/Library/Developer/CoreSimulator/Devices/77AA4492-C787-4EEE-A772-05D4B3E9ECCD/data/Containers/Data/Application/D3872715-7206-4847-80C9-84AF94029200/Documents/Apps/com.eeenmachine.tinytowers/Tiny Tower.app/song2.mp3
 
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] GL layer (320.0, 480.0)
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 created mplayer
 
 Finch Foreground
@@ -75,7 +78,7 @@ USER MUSIC PLAYING: NO
 mplayer.play
 
 GPU: drawable 320x480 for renderbuffer 1 (platform layer)
-GPU: presented frame 1 directly
+GPU: presented frame 1 directly (average rgb 107,148,178, 63/64 samples lit)
 (localytics uploader) Error Uploading.  Code: -1009,  Description: �#
 
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -99,7 +102,7 @@ GPU: presented frame 1 directly
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-GPU: presented frame 60 directly
+GPU: presented frame 60 directly (average rgb 113,139,167, 63/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -294,6 +297,7 @@ glViewWidth: 320.000000
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+GPU: presented frame 600 directly (average rgb 72,75,104, 63/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -314,7 +318,9 @@ glViewWidth: 320.000000
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-GPU: presented frame 600 directly
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -1651,8 +1657,9 @@ audioPlayerDidFinishPlaying
 
 USER MUSIC PLAYING: NO
 
-music path:/Users/runner/Library/Developer/CoreSimulator/Devices/E839A11B-51B4-4AD3-ACF4-A53B95B7C957/data/Containers/Data/Application/9F67F74B-DAE4-4BC5-823C-6A798AA7BF4E/Documents/Apps/com.eeenmachine.tinytowers/Tiny Tower.app/song3.mp3
+music path:/Users/runner/Library/Developer/CoreSimulator/Devices/77AA4492-C787-4EEE-A772-05D4B3E9ECCD/data/Containers/Data/Application/D3872715-7206-4847-80C9-84AF94029200/Documents/Apps/com.eeenmachine.tinytowers/Tiny Tower.app/song3.mp3
 
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -2178,4 +2185,162 @@ created mplayer
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-com.lfull.HydrogenVM: 22196
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+com.lfull.HydrogenVM: 22572
