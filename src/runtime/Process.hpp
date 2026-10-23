@@ -184,13 +184,17 @@ public:
 
     // ---- guest file open history ring (~32 entries)
     struct FileRecord {
+        uint64_t handle = 0;
         std::string path;
         std::string api;
         int hostResult = 0;
         int64_t size = -1;
         int64_t bytesRead = 0;
+        bool isOpen = true;
     };
-    void recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead = 0);
+    uint64_t recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead = 0, bool isOpen = true);
+    void updateFileRead(uint64_t handle, int64_t bytesRead);
+    void recordFileClose(uint64_t handle);
     std::vector<FileRecord> fileRing() const;
 
     // ---- results
@@ -388,6 +392,7 @@ private:
     mutable std::deque<std::string> logRing_;
     mutable std::mutex fileRingMu_;
     mutable std::deque<FileRecord> fileRing_;
+    uint64_t nextFileHandle_ = 0;
     void captureCrash(const CPU::Cpu& c, const std::string& kind, const std::string& detail);
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;

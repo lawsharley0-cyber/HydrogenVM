@@ -944,7 +944,8 @@ std::string Process::crashBundle() {
                 << ",\"api\":" << quote(f.api)
                 << ",\"hostResult\":" << f.hostResult
                 << ",\"size\":" << f.size
-                << ",\"bytesRead\":" << f.bytesRead << "}";
+                << ",\"bytesRead\":" << f.bytesRead
+                << ",\"isOpen\":" << (f.isOpen ? "true" : "false") << "}";
         }
     }
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count();
@@ -954,10 +955,28 @@ std::string Process::crashBundle() {
 
 // ------------------------------------------------------------ diagnostics ---
 
-void Process::recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead) {
+uint64_t Process::recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead, bool isOpen) {
     std::lock_guard<std::mutex> lk(fileRingMu_);
     if (fileRing_.size() >= 32) fileRing_.pop_front();
-    fileRing_.push_back({path, api, hostResult, size, bytesRead});
+    const uint64_t h = ++nextFileHandle_;
+    fileRing_.push_back({h, path, api, hostResult, size, bytesRead, isOpen});
+    return h;
+}
+
+void Process::updateFileRead(uint64_t handle, int64_t bytesRead) {
+    if (!handle) return;
+    std::lock_guard<std::mutex> lk(fileRingMu_);
+    for (auto& r : fileRing_) {
+        if (r.handle == handle) { r.bytesRead = bytesRead; break; }
+    }
+}
+
+void Process::recordFileClose(uint64_t handle) {
+    if (!handle) return;
+    std::lock_guard<std::mutex> lk(fileRingMu_);
+    for (auto& r : fileRing_) {
+        if (r.handle == handle) { r.isOpen = false; break; }
+    }
 }
 
 std::vector<Process::FileRecord> Process::fileRing() const {

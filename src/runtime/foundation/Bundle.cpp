@@ -1005,12 +1005,11 @@ struct FileHandleData : ObjC::HostObject {
     FILE* f = nullptr;
     int stdStream = -1;   // 0 in, 1 out, 2 err
     bool closeOnDealloc = true;
-    std::string path;
-    int64_t size = -1;
+    uint64_t fileHandle = 0;
     int64_t bytesRead = 0;
     Process* proc = nullptr;
     ~FileHandleData() override {
-        if (!path.empty() && proc) proc->recordFileOpen(path, "NSFileHandle", f ? 0 : ENOENT, size, bytesRead);
+        if (fileHandle && proc) proc->recordFileClose(fileHandle);
         if (f && closeOnDealloc) std::fclose(f);
     }
 };
@@ -1028,19 +1027,19 @@ id fh_reading(Ctx& x, id, SEL, id p) {
     const std::string path = P(x, p);
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) {
-        x.proc.recordFileOpen(path, "NSFileHandle", errno ? errno : ENOENT, -1, 0);
+        x.proc.recordFileOpen(path, "NSFileHandle", errno ? errno : ENOENT, -1, 0, false);
         return 0;
     }
     int64_t sz = -1;
     struct stat st;
     if (::fstat(fileno(f), &st) == 0) sz = st.st_size;
-    const id h = newHandle(x, f, -1);
-    if (FileHandleData* d = fhd(x, h)) {
-        d->path = path;
-        d->size = sz;
+    const uint64_t h = x.proc.recordFileOpen(path, "NSFileHandle", 0, sz, 0, true);
+    const id handleObj = newHandle(x, f, -1);
+    if (FileHandleData* d = fhd(x, handleObj)) {
+        d->fileHandle = h;
         d->proc = &x.proc;
     }
-    return h;
+    return handleObj;
 }
 id fh_writing(Ctx& x, id, SEL, id p) {
     // NSFileHandle doesn't create or truncate: the file must exist
@@ -1066,6 +1065,7 @@ id fh_readToEnd(Ctx& x, id self, SEL) {
         while ((n = std::fread(buf, 1, sizeof buf, d->f)) > 0) {
             out.insert(out.end(), buf, buf + n);
             d->bytesRead += n;
+            if (d->proc) d->proc->updateFileRead(d->fileHandle, d->bytesRead);
         }
     }
     return makeData(x, out.data(), uint32_t(out.size()));
@@ -1074,7 +1074,10 @@ id fh_readLength(Ctx& x, id self, SEL, uint32_t len) {
     FileHandleData* d = fhd(x, self);
     std::vector<uint8_t> out(len);
     size_t n = d && d->f ? std::fread(out.data(), 1, len, d->f) : 0;
-    if (d && n > 0) d->bytesRead += n;
+    if (d && n > 0) {
+        d->bytesRead += n;
+        if (d->proc) d->proc->updateFileRead(d->fileHandle, d->bytesRead);
+    }
     return makeData(x, out.data(), uint32_t(n));
 }
 id fh_available(Ctx& x, id self, SEL s) { return fh_readToEnd(x, self, s); }
@@ -1104,7 +1107,10 @@ void fh_truncate(Ctx& x, id self, SEL, uint64_t off) {
 }
 void fh_sync(Ctx& x, id self, SEL) { if (FileHandleData* d = fhd(x, self); d && d->f) std::fflush(d->f); }
 void fh_close(Ctx& x, id self, SEL) {
-    if (FileHandleData* d = fhd(x, self); d && d->f) { std::fclose(d->f); d->f = nullptr; }
+    if (FileHandleData* d = fhd(x, self); d) {
+        if (d->fileHandle && d->proc) { d->proc->recordFileClose(d->fileHandle); d->fileHandle = 0; }
+        if (d->f) { std::fclose(d->f); d->f = nullptr; }
+    }
 }
 int32_t fh_fd(Ctx& x, id self, SEL) { FileHandleData* d = fhd(x, self); return d ? d->stdStream : -1; }
 

@@ -22,7 +22,7 @@ struct Stdio {
     explicit Stdio(Process& p) : proc(p) {}
     Process& proc;
     std::mutex mu;
-    struct File { std::FILE* f = nullptr; int stream = 0; /*1 stdout 2 stderr*/ std::string pending; int unget = -1; bool eof = false; std::string path; int64_t size = -1; int64_t bytesRead = 0; };
+    struct File { std::FILE* f = nullptr; int stream = 0; /*1 stdout 2 stderr*/ std::string pending; int unget = -1; bool eof = false; uint64_t fileHandle = 0; int64_t bytesRead = 0; };
     std::unordered_map<uint32_t, File> files;
     uint32_t sF = 0;   // __sF[3]
 
@@ -134,14 +134,15 @@ void f_perror(Ctx& x, GuestPtr s) {
 uint32_t f_fopen(Ctx& x, GuestPtr path, GuestPtr mode) {
     const std::string p = x.proc.readCString(path), m = x.proc.readCString(mode);
     std::FILE* f = std::fopen(p.c_str(), m.c_str());
-    if (!f) { x.proc.recordFileOpen(p, "fopen", errno, -1, 0); setErrno(x, errno); return 0; }
+    if (!f) { x.proc.recordFileOpen(p, "fopen", errno, -1, 0, false); setErrno(x, errno); return 0; }
     int64_t sz = -1;
     struct stat st;
     if (::fstat(fileno(f), &st) == 0) sz = st.st_size;
+    const uint64_t h = x.proc.recordFileOpen(p, "fopen", 0, sz, 0, true);
     const uint32_t fp = newFile(x, f);
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* sf = S(x).get(fp);
-    if (sf) { sf->path = p; sf->size = sz; sf->bytesRead = 0; }
+    if (sf) { sf->fileHandle = h; sf->bytesRead = 0; }
     return fp;
 }
 uint32_t f_fdopen(Ctx& x, int32_t fd, GuestPtr mode) {
@@ -167,7 +168,7 @@ int32_t f_fclose(Ctx& x, GuestPtr fp) {
     auto* f = S(x).get(fp);
     if (!f) return -1;
     if (f->stream) { S(x).flush(*f); return 0; }
-    if (f->f) x.proc.recordFileOpen(f->path, "fopen", 0, f->size, f->bytesRead);
+    if (f->f) x.proc.recordFileClose(f->fileHandle);
     const int r = f->f ? std::fclose(f->f) : 0;
     S(x).files.erase(fp);
     lk.unlock();
@@ -184,6 +185,7 @@ uint32_t f_fread(Ctx& x, GuestPtr ptr, uint32_t size, uint32_t n, GuestPtr fp) {
     got += std::fread(dst + got, 1, total - got, f->f);
     if (got < total) f->eof = std::feof(f->f);
     f->bytesRead += got;
+    x.proc.updateFileRead(f->fileHandle, f->bytesRead);
     return uint32_t(got / size);
 }
 int32_t f_fgetc(Ctx& x, GuestPtr fp) {

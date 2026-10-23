@@ -292,7 +292,7 @@ void s_noop(Ctx&) {}
 struct OpenFds {
     explicit OpenFds(Process&) {}
     std::mutex mu;
-    struct FdTrack { std::string path; int64_t size = -1; int64_t bytesRead = 0; };
+    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; };
     std::unordered_map<int32_t, FdTrack> tracks;
 };
 
@@ -311,15 +311,16 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const std::string p = x.proc.readCString(path);
     const int fd = ::open(p.c_str(), hostOpenFlags(flags), mode & 0777);
     if (fd < 0) {
-        x.proc.recordFileOpen(p, "open", errno, -1, 0);
+        x.proc.recordFileOpen(p, "open", errno, -1, 0, false);
         return failD<int32_t>(x);
     }
     int64_t sz = -1;
     struct stat st;
     if (::fstat(fd, &st) == 0) sz = st.st_size;
+    const uint64_t h = x.proc.recordFileOpen(p, "open", 0, sz, 0, true);
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
-    ofs.tracks[fd] = {p, sz, 0};
+    ofs.tracks[fd] = {h, 0};
     return fd;
 }
 int32_t f_close(Ctx& x, int32_t fd) {
@@ -329,7 +330,7 @@ int32_t f_close(Ctx& x, int32_t fd) {
         std::lock_guard<std::mutex> lk(ofs.mu);
         auto it = ofs.tracks.find(fd);
         if (it != ofs.tracks.end()) {
-            x.proc.recordFileOpen(it->second.path, "open", 0, it->second.size, it->second.bytesRead);
+            x.proc.recordFileClose(it->second.fileHandle);
             ofs.tracks.erase(it);
         }
     }
@@ -344,7 +345,10 @@ int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
         auto& ofs = x.proc.service<OpenFds>();
         std::lock_guard<std::mutex> lk(ofs.mu);
         auto it = ofs.tracks.find(fd);
-        if (it != ofs.tracks.end()) it->second.bytesRead += r;
+        if (it != ofs.tracks.end()) {
+            it->second.bytesRead += r;
+            x.proc.updateFileRead(it->second.fileHandle, it->second.bytesRead);
+        }
     }
     return r < 0 ? failD<int32_t>(x) : int32_t(r);
 }
