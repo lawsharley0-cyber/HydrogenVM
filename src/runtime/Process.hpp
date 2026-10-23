@@ -29,6 +29,8 @@ namespace Hydrogen::Runtime {
 
 enum class LogLevel { Debug, Info, Warning, Error, GuestStdout, GuestStderr };
 
+namespace HostGL { class Platform; }
+
 struct ProcessConfig {
     std::string bundlePath;            // …/Foo.app
     std::string homePath;              // sandbox home (Documents/, Library/, tmp/ live here); default: bundle's parent
@@ -45,6 +47,8 @@ struct ProcessConfig {
     // Called on the emulated main thread with each new frame (premultiplied
     // RGBA, screenWidth*scale x screenHeight*scale, portrait). Optional.
     std::function<void(const uint8_t* rgba, int width, int height)> present;
+    // OpenGL ES on the host GPU (runtime/gl/HostGL.hpp). Null: software rasterizer.
+    std::shared_ptr<HostGL::Platform> hostGL;
     // Audio: the platform pulls mixed sound from Process::mixer() (see audio/Audio.hpp).
 };
 

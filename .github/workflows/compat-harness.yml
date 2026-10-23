@@ -35,7 +35,8 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev uuid-dev python3 g++ libstdc++-14-dev
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev uuid-dev python3 g++ libstdc++-14-dev \
+            libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri python3-pil
           clang++ --version | head -1
       - name: Harness self-tests
         run: python3 -m unittest discover -s tools/compat_harness/tests -v
@@ -58,6 +59,12 @@ jobs:
             --baseline docs/dev-system/baselines/linux-headless.json \
             --require-resolved \
             --allow-legacy-repo
+      - name: GPU backend matches the software rasterizer
+        # hvm run --gpu forwards GLES to Mesa (llvmpipe, EGL surfaceless).
+        run: |
+          python3 tools/gen_hostgl.py --check
+          python3 tools/gpu_compare.py --hvm build/hvm --seconds 12 --out build/gpu-compare \
+            Tiny_Tower_v1.0_os30.ipa AngryBirds_v1.0_os30.ipa Art_Of_Glow_v1.1.2_os313.ipa
       - name: Upload JSON report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -66,4 +73,6 @@ jobs:
           path: |
             build/compat-report/report.json
             build/compat-report/diff.json
+            build/gpu-compare/*.png
+            build/gpu-compare/*.json
           if-no-files-found: warn

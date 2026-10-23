@@ -4,6 +4,7 @@
 // OES_framebuffer_object and OES_draw_texture) and OpenGL ES 2.0 (shaders,
 // programs, uniforms, vertex attributes, VBOs, FBOs, textures) state tracker
 // and software rasterizer wired into CAEAGLLayer via LayerData::externalContents.
+#include "runtime/gl/HostGL.hpp"
 #include "UIKit.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
 #include "runtime/graphics/Shader.hpp"
@@ -631,6 +632,7 @@ id eaglLayer_initWithCoder(Ctx& x, id self, SEL, id) {
 }
 
 void eaglLayer_dealloc(Ctx& x, id self, SEL s) {
+    if (HostGL::enabled(x.proc)) HostGL::layerGone(x.proc, self);
     if (auto* d = rt(x).hostIf<EAGLLayerData>(self)) {
         if (d->drawableProperties) rt(x).release(x.cpu, d->drawableProperties);
         d->drawableProperties = 0;
@@ -671,10 +673,12 @@ id ctx_initWithAPISharegroup(Ctx& x, id self, SEL, uint32_t api, id sg) {
     } else {
         d.sharegroup = rt(x).retain(x.cpu, sg);
     }
+    if (HostGL::enabled(x.proc) && !HostGL::contextCreate(x.proc, self, int(api), d.sharegroup)) return 0;
     return self;
 }
 
 void ctx_dealloc(Ctx& x, id self, SEL) {
+    if (HostGL::enabled(x.proc)) HostGL::contextDestroy(x.proc, self);
     if (auto* d = rt(x).hostIf<ContextData>(self)) {
         if (d->sharegroup) rt(x).release(x.cpu, d->sharegroup);
         d->sharegroup = 0;
@@ -693,6 +697,7 @@ void ctx_dealloc(Ctx& x, id self, SEL) {
 bool ctx_setCurrent(Ctx& x, id, SEL, id ctx) {
     auto& st = GLS(x);
     const uint32_t tid = x.proc.currentThread().id;
+    if (HostGL::enabled(x.proc)) HostGL::contextMakeCurrent(x.proc, ctx);
     std::lock_guard<std::mutex> lk(st.mu);
     if (ctx) {
         st.currentByThread[tid] = ctx;
@@ -718,6 +723,18 @@ id ctx_sharegroup(Ctx& x, id self, SEL) { return rt(x).host<ContextData>(self).s
 
 bool ctx_renderbufferStorage(Ctx& x, id self, SEL, uint32_t target, id drawable) {
     (void)target;
+    if (HostGL::enabled(x.proc)) {
+        int w = 0, h = 0;
+        if (drawable) {
+            LayerData& ld = layerData(x, drawable);
+            const float scale = ld.contentsScale > 0 ? ld.contentsScale : ui(x).scale;
+            const float bw = ld.bounds.w > 0 ? ld.bounds.w : ui(x).screenW;
+            const float bh = ld.bounds.h > 0 ? ld.bounds.h : ui(x).screenH;
+            w = std::max(1, int(std::round(bw * scale)));
+            h = std::max(1, int(std::round(bh * scale)));
+        }
+        return HostGL::renderbufferStorageFromDrawable(x.proc, self, drawable, w, h);
+    }
     ContextData& c = rt(x).host<ContextData>(self);
     SharegroupData* sg = currentSg(x, &c);
     if (!sg || c.renderbuffer == 0) return false;
@@ -747,8 +764,20 @@ bool ctx_renderbufferStorage(Ctx& x, id self, SEL, uint32_t target, id drawable)
 
 static std::atomic<int> totalDrawCalls{0};
 
+void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, int height);
+
 bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
     (void)target;
+    if (HostGL::enabled(x.proc)) {
+        uint32_t layer = 0;
+        int w = 0, h = 0;
+        bool direct = false;
+        std::vector<uint8_t> pixels;
+        if (!HostGL::presentRenderbuffer(x.proc, self, layer, w, h, pixels, direct)) return false;
+        if (!direct) publishFrame(x, layer, pixels.data(), w, h);
+        else setNeedsComposite(x);
+        return true;
+    }
     ContextData& c = rt(x).host<ContextData>(self);
     SharegroupData* sg = currentSg(x, &c);
     if (!sg) return false;
@@ -823,6 +852,13 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
         }
     }
 
+    publishFrame(x, rb.drawableLayer, rb.rgba.data(), rb.width, rb.height);
+    return true;
+}
+
+// Hand a presented frame (straight RGBA, GL bottom-left row order) to the compositor.
+void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, int height) {
+    struct Rb { int width, height; const uint8_t* data; id drawableLayer; } rb{width, height, rgbaBottomLeft, layer};
     auto img = std::make_shared<G::Image>();
     img->width = rb.width;
     img->height = rb.height;
@@ -836,12 +872,12 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
         if (std::FILE* fp = std::fopen(f, "wb")) {
             const int32_t wh[2] = {rb.width, rb.height};
             std::fwrite(wh, 4, 2, fp);
-            std::fwrite(rb.rgba.data(), 1, rb.rgba.size(), fp);
+            std::fwrite(rb.data, 1, size_t(rb.width) * size_t(rb.height) * 4, fp);
             std::fclose(fp);
         }
     }
     for (int y = 0; y < rb.height; ++y) {
-        const uint8_t* srcRow = &rb.rgba[size_t(rb.height - 1 - y) * size_t(rb.width) * 4];
+        const uint8_t* srcRow = rb.data + size_t(rb.height - 1 - y) * size_t(rb.width) * 4;
         uint8_t* dstRow = &img->rgba[size_t(y) * size_t(rb.width) * 4];
         for (int px = 0; px < rb.width; ++px) {
             const uint8_t r = srcRow[px * 4 + 0];
@@ -872,7 +908,6 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
         };
     }
     setNeedsComposite(x);
-    return true;
 }
 
 // =========================================================== GL C Functions ===
@@ -3487,6 +3522,9 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_texStorage2D>("_glTexStorage2D");
     p.def<&gl_copyTextureLevels>("_glCopyTextureLevelsAPPLE");
     p.def<&gl_getShaderSource>("_glGetShaderSource");
+
+    // GPU backend: forward the C functions to the host driver (overrides the above).
+    if (HostGL::enabled(p)) HostGL::registerFunctions(p);
 }
 
 } // namespace Hydrogen::Runtime::UIKit

@@ -31,6 +31,7 @@ targets:
           - "**/README.*"
           - "**/LICENSE.*"
           - "**/*.txt"
+          - "**/*.inc"   # textual includes (gl/HostGLTable.inc), not resources
     dependencies:
       - sdk: libz.tbd
       - sdk: libsqlite3.tbd

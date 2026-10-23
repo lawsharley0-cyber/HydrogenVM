@@ -1,0 +1,268 @@
+# GL entry points forwarded by the host GL backend (src/runtime/gl).
+# Format: <ret> <name>(<type> <arg>, ...)   types:
+#   E enum/uint32  U uint  BF bitfield  I int  S sizei  B boolean  F float
+#   IP intptr  SP sizeiptr  p const pointer in  w pointer out  cs const char*
+#   Y GLsync  L uint64  (returns: P void*, Y GLsync, cs string; '!' rows only)
+#   o vertex-array pointer or offset (GL_ARRAY_BUFFER)  e index pointer or offset (GL_ELEMENT_ARRAY_BUFFER)
+# Lines starting with '!' are declared in the table but wrapped by hand (HostGL.cpp).
+# Suffix [es1] / [es2] limits registration to that API family (both by default).
+
+# ---------------- shared ES 1.1 / ES 2.0 core
+v glActiveTexture(E texture)
+v glBindBuffer(E target, U buffer)
+v glBindTexture(E target, U texture)
+v glBlendFunc(E sfactor, E dfactor)
+v glBufferData(E target, SP size, p data, E usage)
+v glBufferSubData(E target, IP offset, SP size, p data)
+v glClear(BF mask)
+v glClearColor(F r, F g, F b, F a)
+v glClearDepthf(F d)
+v glClearStencil(I s)
+v glColorMask(B r, B g, B b, B a)
+!v glCompressedTexImage2D(E target, I level, E internalformat, S width, S height, I border, S imageSize, p data)
+!v glCompressedTexSubImage2D(E target, I level, I xoffset, I yoffset, S width, S height, E format, S imageSize, p data)
+v glCopyTexImage2D(E target, I level, E internalformat, I x, I y, S width, S height, I border)
+v glCopyTexSubImage2D(E target, I level, I xoffset, I yoffset, I x, I y, S width, S height)
+v glCullFace(E mode)
+v glDeleteBuffers(S n, p buffers)
+v glDeleteTextures(S n, p textures)
+v glDepthFunc(E func)
+v glDepthMask(B flag)
+v glDepthRangef(F n, F f)
+v glDisable(E cap)
+v glDrawArrays(E mode, I first, S count)
+v glDrawElements(E mode, S count, E type, e indices)
+v glEnable(E cap)
+v glFinish()
+v glFlush()
+v glFrontFace(E mode)
+v glGenBuffers(S n, w buffers)
+v glGenTextures(S n, w textures)
+v glGetBooleanv(E pname, w data)
+v glGetBufferParameteriv(E target, E pname, w params)
+E glGetError()
+v glGetFloatv(E pname, w data)
+!v glGetIntegerv(E pname, w data)
+v glGetTexParameterfv(E target, E pname, w params)
+v glGetTexParameteriv(E target, E pname, w params)
+v glHint(E target, E mode)
+B glIsBuffer(U buffer)
+B glIsEnabled(E cap)
+B glIsTexture(U texture)
+v glLineWidth(F width)
+v glPixelStorei(E pname, I param)
+v glPolygonOffset(F factor, F units)
+v glReadPixels(I x, I y, S width, S height, E format, E type, w pixels)
+v glSampleCoverage(F value, B invert)
+v glScissor(I x, I y, S width, S height)
+v glStencilFunc(E func, I ref, U mask)
+v glStencilMask(U mask)
+v glStencilOp(E fail, E zfail, E zpass)
+!v glTexImage2D(E target, I level, I internalformat, S width, S height, I border, E format, E type, p pixels)
+v glTexParameterf(E target, E pname, F param)
+v glTexParameterfv(E target, E pname, p params)
+v glTexParameteri(E target, E pname, I param)
+v glTexParameteriv(E target, E pname, p params)
+!v glTexSubImage2D(E target, I level, I xoffset, I yoffset, S width, S height, E format, E type, p pixels)
+v glViewport(I x, I y, S width, S height)
+
+# ---------------- ES 1.1 fixed function
+v glAlphaFunc(E func, F ref) [es1]
+v glClientActiveTexture(E texture) [es1]
+v glColor4f(F r, F g, F b, F a) [es1]
+v glColor4ub(B r, B g, B b, B a) [es1]
+v glColorPointer(I size, E type, S stride, o pointer) [es1]
+v glDisableClientState(E array) [es1]
+v glEnableClientState(E array) [es1]
+v glFogf(E pname, F param) [es1]
+v glFogfv(E pname, p params) [es1]
+!v glFrustumf(F l, F r, F b, F t, F n, F f) [es1]
+!v glClipPlanef(E plane, p equation) [es1]
+!v glGetClipPlanef(E plane, w equation) [es1]
+v glGetLightfv(E light, E pname, w params) [es1]
+v glGetMaterialfv(E face, E pname, w params) [es1]
+!v glGetPointerv(E pname, w params)
+v glGetTexEnvfv(E target, E pname, w params) [es1]
+v glGetTexEnviv(E target, E pname, w params) [es1]
+v glLightModelf(E pname, F param) [es1]
+v glLightModelfv(E pname, p params) [es1]
+v glLightf(E light, E pname, F param) [es1]
+v glLightfv(E light, E pname, p params) [es1]
+v glLoadIdentity() [es1]
+v glLoadMatrixf(p m) [es1]
+v glLogicOp(E opcode) [es1]
+v glMaterialf(E face, E pname, F param) [es1]
+v glMaterialfv(E face, E pname, p params) [es1]
+v glMatrixMode(E mode) [es1]
+v glMultMatrixf(p m) [es1]
+v glMultiTexCoord4f(E target, F s, F t, F r, F q) [es1]
+v glNormal3f(F nx, F ny, F nz) [es1]
+v glNormalPointer(E type, S stride, o pointer) [es1]
+!v glOrthof(F l, F r, F b, F t, F n, F f) [es1]
+v glPointParameterf(E pname, F param) [es1]
+v glPointParameterfv(E pname, p params) [es1]
+v glPointSize(F size) [es1]
+v glPopMatrix() [es1]
+v glPushMatrix() [es1]
+v glRotatef(F angle, F x, F y, F z) [es1]
+v glScalef(F x, F y, F z) [es1]
+v glShadeModel(E mode) [es1]
+v glTexCoordPointer(I size, E type, S stride, o pointer) [es1]
+v glTexEnvf(E target, E pname, F param) [es1]
+v glTexEnvfv(E target, E pname, p params) [es1]
+v glTexEnvi(E target, E pname, I param) [es1]
+v glTexEnviv(E target, E pname, p params) [es1]
+v glTranslatef(F x, F y, F z) [es1]
+v glVertexPointer(I size, E type, S stride, o pointer) [es1]
+v glPointSizePointerOES(E type, S stride, o pointer) [es1]
+v glDrawTexfOES(F x, F y, F z, F w, F h) [es1]
+v glDrawTexiOES(I x, I y, I z, I w, I h) [es1]
+v glDrawTexsOES(I x, I y, I z, I w, I h) [es1]
+v glDrawTexxOES(I x, I y, I z, I w, I h) [es1]
+
+# ---------------- ES 1.1 OES framebuffer / blend / mipmap extensions (desktop: suffix dropped)
+v glBindFramebufferOES(E target, U framebuffer) [es1]
+v glBindRenderbufferOES(E target, U renderbuffer) [es1]
+E glCheckFramebufferStatusOES(E target) [es1]
+v glDeleteFramebuffersOES(S n, p framebuffers) [es1]
+v glDeleteRenderbuffersOES(S n, p renderbuffers) [es1]
+v glFramebufferRenderbufferOES(E target, E attachment, E rbtarget, U renderbuffer) [es1]
+v glFramebufferTexture2DOES(E target, E attachment, E textarget, U texture, I level) [es1]
+v glGenFramebuffersOES(S n, w framebuffers) [es1]
+v glGenRenderbuffersOES(S n, w renderbuffers) [es1]
+v glGenerateMipmapOES(E target) [es1]
+v glGetFramebufferAttachmentParameterivOES(E target, E attachment, E pname, w params) [es1]
+v glGetRenderbufferParameterivOES(E target, E pname, w params) [es1]
+B glIsFramebufferOES(U framebuffer) [es1]
+B glIsRenderbufferOES(U renderbuffer) [es1]
+v glRenderbufferStorageOES(E target, E internalformat, S width, S height) [es1]
+v glBlendEquationOES(E mode) [es1]
+v glBlendEquationSeparateOES(E modeRGB, E modeAlpha) [es1]
+v glBlendFuncSeparateOES(E srcRGB, E dstRGB, E srcAlpha, E dstAlpha) [es1]
+
+# ---------------- ES 2.0 core
+v glAttachShader(U program, U shader) [es2]
+v glBindAttribLocation(U program, U index, cs name) [es2]
+v glBindFramebuffer(E target, U framebuffer)
+v glBindRenderbuffer(E target, U renderbuffer)
+v glBlendColor(F r, F g, F b, F a)
+v glBlendEquation(E mode)
+v glBlendEquationSeparate(E modeRGB, E modeAlpha)
+v glBlendFuncSeparate(E srcRGB, E dstRGB, E srcAlpha, E dstAlpha)
+E glCheckFramebufferStatus(E target)
+!v glCompileShader(U shader) [es2]
+U glCreateProgram() [es2]
+U glCreateShader(E type) [es2]
+v glDeleteFramebuffers(S n, p framebuffers)
+v glDeleteProgram(U program) [es2]
+v glDeleteRenderbuffers(S n, p renderbuffers)
+v glDeleteShader(U shader) [es2]
+v glDetachShader(U program, U shader) [es2]
+v glDisableVertexAttribArray(U index) [es2]
+v glEnableVertexAttribArray(U index) [es2]
+v glFramebufferRenderbuffer(E target, E attachment, E rbtarget, U renderbuffer)
+v glFramebufferTexture2D(E target, E attachment, E textarget, U texture, I level)
+v glGenFramebuffers(S n, w framebuffers)
+v glGenRenderbuffers(S n, w renderbuffers)
+v glGenerateMipmap(E target)
+v glGetActiveAttrib(U program, U index, S bufSize, w length, w size, w type, w name) [es2]
+v glGetActiveUniform(U program, U index, S bufSize, w length, w size, w type, w name) [es2]
+v glGetAttachedShaders(U program, S maxCount, w count, w shaders) [es2]
+I glGetAttribLocation(U program, cs name) [es2]
+v glGetFramebufferAttachmentParameteriv(E target, E attachment, E pname, w params)
+v glGetProgramInfoLog(U program, S bufSize, w length, w infoLog) [es2]
+v glGetProgramiv(U program, E pname, w params) [es2]
+v glGetRenderbufferParameteriv(E target, E pname, w params)
+v glGetShaderInfoLog(U shader, S bufSize, w length, w infoLog) [es2]
+v glGetShaderPrecisionFormat(E shadertype, E precisiontype, w range, w precision) [es2]
+v glGetShaderSource(U shader, S bufSize, w length, w source) [es2]
+v glGetShaderiv(U shader, E pname, w params) [es2]
+v glGetUniformfv(U program, I location, w params) [es2]
+v glGetUniformiv(U program, I location, w params) [es2]
+I glGetUniformLocation(U program, cs name) [es2]
+v glGetVertexAttribfv(U index, E pname, w params) [es2]
+v glGetVertexAttribiv(U index, E pname, w params) [es2]
+!v glGetVertexAttribPointerv(U index, E pname, w pointer) [es2]
+B glIsFramebuffer(U framebuffer)
+B glIsProgram(U program) [es2]
+B glIsRenderbuffer(U renderbuffer)
+B glIsShader(U shader) [es2]
+!v glLinkProgram(U program) [es2]
+v glReleaseShaderCompiler() [es2]
+v glRenderbufferStorage(E target, E internalformat, S width, S height)
+v glShaderBinary(S count, p shaders, E binaryformat, p binary, S length) [es2]
+!v glShaderSource(U shader, S count, p string, p length) [es2]
+v glStencilFuncSeparate(E face, E func, I ref, U mask)
+v glStencilMaskSeparate(E face, U mask)
+v glStencilOpSeparate(E face, E sfail, E dpfail, E dppass)
+v glUniform1f(I location, F v0) [es2]
+v glUniform1fv(I location, S count, p value) [es2]
+v glUniform1i(I location, I v0) [es2]
+v glUniform1iv(I location, S count, p value) [es2]
+v glUniform2f(I location, F v0, F v1) [es2]
+v glUniform2fv(I location, S count, p value) [es2]
+v glUniform2i(I location, I v0, I v1) [es2]
+v glUniform2iv(I location, S count, p value) [es2]
+v glUniform3f(I location, F v0, F v1, F v2) [es2]
+v glUniform3fv(I location, S count, p value) [es2]
+v glUniform3i(I location, I v0, I v1, I v2) [es2]
+v glUniform3iv(I location, S count, p value) [es2]
+v glUniform4f(I location, F v0, F v1, F v2, F v3) [es2]
+v glUniform4fv(I location, S count, p value) [es2]
+v glUniform4i(I location, I v0, I v1, I v2, I v3) [es2]
+v glUniform4iv(I location, S count, p value) [es2]
+v glUniformMatrix2fv(I location, S count, B transpose, p value) [es2]
+v glUniformMatrix3fv(I location, S count, B transpose, p value) [es2]
+v glUniformMatrix4fv(I location, S count, B transpose, p value) [es2]
+v glUseProgram(U program) [es2]
+v glValidateProgram(U program) [es2]
+v glVertexAttrib1f(U index, F x) [es2]
+v glVertexAttrib1fv(U index, p v) [es2]
+v glVertexAttrib2f(U index, F x, F y) [es2]
+v glVertexAttrib2fv(U index, p v) [es2]
+v glVertexAttrib3f(U index, F x, F y, F z) [es2]
+v glVertexAttrib3fv(U index, p v) [es2]
+v glVertexAttrib4f(U index, F x, F y, F z, F w) [es2]
+v glVertexAttrib4fv(U index, p v) [es2]
+v glVertexAttribPointer(U index, I size, E type, B normalized, S stride, o pointer) [es2]
+
+# ---------------- iOS extensions (ES 3.0 core names on the host where they exist)
+v glBindVertexArrayOES(U array)
+v glDeleteVertexArraysOES(S n, p arrays)
+v glGenVertexArraysOES(S n, w arrays)
+B glIsVertexArrayOES(U array)
+v glDiscardFramebufferEXT(E target, S numAttachments, p attachments)
+v glInvalidateFramebuffer(E target, S numAttachments, p attachments)
+!P glMapBufferOES(E target, E access)
+!P glMapBuffer(E target, E access)
+!P glMapBufferRange(E target, IP offset, SP length, BF access)
+!P glMapBufferRangeEXT(E target, IP offset, SP length, BF access)
+!v glFlushMappedBufferRange(E target, IP offset, SP length)
+!v glFlushMappedBufferRangeEXT(E target, IP offset, SP length)
+!B glUnmapBufferOES(E target)
+!B glUnmapBuffer(E target)
+!v glGetBufferPointervOES(E target, E pname, w params)
+v glRenderbufferStorageMultisampleAPPLE(E target, S samples, E internalformat, S width, S height)
+v glRenderbufferStorageMultisample(E target, S samples, E internalformat, S width, S height)
+v glRenderbufferStorageMultisampleEXT(E target, S samples, E internalformat, S width, S height)
+!v glResolveMultisampleFramebufferAPPLE()
+v glBlitFramebuffer(I srcX0, I srcY0, I srcX1, I srcY1, I dstX0, I dstY0, I dstX1, I dstY1, BF mask, E filter)
+v glTexStorage2D(E target, S levels, E internalformat, S width, S height)
+v glTexStorage2DEXT(E target, S levels, E internalformat, S width, S height)
+!Y glFenceSyncAPPLE(E condition, BF flags)
+!B glIsSyncAPPLE(Y sync)
+!v glDeleteSyncAPPLE(Y sync)
+!E glClientWaitSyncAPPLE(Y sync, BF flags, L timeout)
+!v glWaitSyncAPPLE(Y sync, BF flags, L timeout)
+!v glGetSyncivAPPLE(Y sync, E pname, S bufSize, w length, w values)
+v glDrawArraysInstanced(E mode, I first, S count, S instancecount)
+v glDrawArraysInstancedEXT(E mode, I first, S count, S instancecount)
+v glDrawElementsInstanced(E mode, S count, E type, e indices, S instancecount)
+v glDrawElementsInstancedEXT(E mode, S count, E type, e indices, S instancecount)
+v glVertexAttribDivisor(U index, U divisor)
+v glVertexAttribDivisorEXT(U index, U divisor)
+!v glLabelObjectEXT(E type, U object, S length, cs label)
+!v glPushGroupMarkerEXT(S length, cs marker)
+!v glPopGroupMarkerEXT()
+!v glInsertEventMarkerEXT(S length, cs marker)
+v glCopyTextureLevelsAPPLE(U dst, U src, I srcBase, S count)

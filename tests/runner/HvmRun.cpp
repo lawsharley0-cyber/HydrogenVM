@@ -3,6 +3,7 @@
 //          [--report FILE.json] [-- args...]`
 // --report writes a machine-readable summary: exit status, crash report, every
 // warning/error the runtime logged, missing functions, and performance counters.
+#include "runtime/gl/HostGL.hpp"
 #include "loader/AppBundle.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/graphics/Graphics.hpp"
@@ -104,6 +105,11 @@ int hvmRunMain(int argc, char** argv) {
             }
         }
         else if (!std::strcmp(argv[i], "--trace")) cfg.traceCalls = true;
+        else if (!std::strcmp(argv[i], "--gpu")) {
+            std::string why;
+            cfg.hostGL = Hydrogen::Runtime::HostGL::createEglPlatform(&why);
+            if (!cfg.hostGL) { std::fprintf(stderr, "--gpu: no host OpenGL ES (%s)\n", why.c_str()); return 2; }
+        }
         else if (!std::strcmp(argv[i], "--loopback-network")) cfg.loopbackNetwork = true;
         else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--quiet")) quiet = true;
