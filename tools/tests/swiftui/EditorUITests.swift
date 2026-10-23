@@ -19,9 +19,17 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(app.switches["enabled"].waitForExistence(timeout: 5))
     }
 
+    func turnOn(_ control: XCUIElement) {
+        print("Switch before tap: \(control.debugDescription)")
+        // SwiftUI can expose the label and thumb as one accessibility element.
+        // Tap the actual thumb rather than the center of the label's row.
+        control.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        XCTAssertEqual(control.value as? String, "1", "The switch must change before testing persistence.")
+    }
+
     func testSaveAndCloseFromNestedJSONPersistsOnReopen() {
         openNestedJSON()
-        app.switches["enabled"].tap()
+        turnOn(app.switches["enabled"])
         XCTAssertTrue(app.buttons["save-changes"].isEnabled)
         app.buttons["editor-close"].tap()
         app.buttons["Save & Close"].tap()
@@ -33,7 +41,7 @@ final class EditorUITests: XCTestCase {
 
     func testDiscardFromNestedJSONPreservesDisk() {
         openNestedJSON()
-        app.switches["enabled"].tap()
+        turnOn(app.switches["enabled"])
         app.buttons["editor-close"].tap()
         app.buttons["Discard Changes"].tap()
         XCTAssertTrue(app.staticTexts["disk-json"].waitForExistence(timeout: 5))
@@ -42,7 +50,7 @@ final class EditorUITests: XCTestCase {
 
     func testReturningFromNestedJSONKeepsEdits() {
         openNestedJSON()
-        app.switches["enabled"].tap()
+        turnOn(app.switches["enabled"])
         app.buttons["BackButton"].tap()
         // The root must retain the edited model and a reachable Save button.
         let save = app.buttons["save-changes"]
@@ -55,8 +63,8 @@ final class EditorUITests: XCTestCase {
 
     func testAutoSaveFromNestedJSON() {
         openNestedJSON()
-        app.switches["Auto-save edits"].tap()
-        app.switches["enabled"].tap()
+        turnOn(app.switches["Auto-save edits"])
+        turnOn(app.switches["enabled"])
         let saved = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Saved ✓")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 10))
         app.buttons["editor-close"].tap()
@@ -68,7 +76,8 @@ final class EditorUITests: XCTestCase {
         app.buttons["Open Text"].tap()
         let editor = app.textViews["plain-text-editor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.tap()
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.02)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Text entry must acquire keyboard focus.")
         editor.typeText("edited")
         let save = app.buttons["keyboard-save"]
         XCTAssertTrue(save.waitForExistence(timeout: 5))
