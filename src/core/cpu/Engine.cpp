@@ -104,9 +104,11 @@ void recordLogLineAsyncSafeImpl(const char* data, size_t len) {
 }
 
 // Async-signal-safe I/O primitives using raw write(STDERR_FILENO).
+static std::atomic<int> g_faultFd{STDERR_FILENO};
 static void safeWrite(const char* str, size_t len) {
+    const int fd = g_faultFd.load(std::memory_order_relaxed);
     while (len > 0) {
-        ssize_t r = ::write(STDERR_FILENO, str, len);
+        ssize_t r = ::write(fd, str, len);
         if (r <= 0) break;
         str += r;
         len -= r;
@@ -240,6 +242,7 @@ Cpu::~Cpu() { unregisterCpu(this); }
 void Engine::recordLogLineAsyncSafe(const char* data, size_t len) {
     recordLogLineAsyncSafeImpl(data, len);
 }
+void Engine::setFaultReportFd(int fd) { g_faultFd.store(fd >= 0 ? fd : STDERR_FILENO, std::memory_order_relaxed); }
 
 // ---------------------------------------------------------------- engine ---
 

@@ -991,6 +991,7 @@ void Process::log(LogLevel lvl, const std::string& msg) const {
         for (std::string line; std::getline(lines, line);) {
             if (logRing_.size() == 2000) logRing_.pop_front();
             logRing_.push_back(line.substr(0, 4096));
+            CPU::Engine::recordLogLineAsyncSafe(line.data(), line.size());   // for host-fault diagnostics
         }
     }
     if (cfg_.log) { cfg_.log(lvl, msg); return; }

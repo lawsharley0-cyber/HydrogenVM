@@ -17,6 +17,8 @@ struct CrashReport: Identifiable {
     }
     static var pending: URL { directory.appending(path: "pending.json") }
     static var signal: URL { directory.appending(path: "pending.signal.json") }
+    /// The emulator's host-fault diagnostics (log tail, guest threads), written from its signal handler.
+    static var hostFault: URL { directory.appending(path: "pending.hostfault.txt") }
 
     static func save(_ fields: [String: Any], app: String) throws -> CrashReport {
         var fields = fields
@@ -52,6 +54,9 @@ struct CrashReport: Identifiable {
             fields.merge(fault) { _, new in new }
             fields["summary"] = "HydrogenVM encountered a host memory fault. Share this report to help diagnose it."
         }
+        if let text = try? String(contentsOf: hostFault, encoding: .utf8), !text.isEmpty {
+            fields["hostFaultDiagnostics"] = String(text.suffix(60_000))
+        }
         guard let report = try? save(fields, app: fields["bundleId"] as? String ?? "unknown") else { return nil }
         clearPending()
         return report
@@ -61,6 +66,7 @@ struct CrashReport: Identifiable {
         HVMCrashJournal.closeSignalFile()
         try? FileManager.default.removeItem(at: pending)
         try? FileManager.default.removeItem(at: signal)
+        try? FileManager.default.removeItem(at: hostFault)
     }
 
     var issueURL: URL {

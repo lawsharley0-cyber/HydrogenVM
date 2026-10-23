@@ -2441,6 +2441,27 @@ int runFullSubsystemTests() {
         for (uint32_t s : {a, b, c, sub}) call("__ZNSsD1Ev", {s});
         check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap, resize, emptyRep");
 
+        // Out-of-line members some games import (Army of Darkness Defense).
+        {
+            const uint32_t t = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {t, cstr("abcdef"), 0});
+            call("__ZNSs7replaceEmmPKc", {t, 1, 2, cstr("XYZ")});
+            const bool replaced = str(t) == "aXYZdef";
+            const uint32_t rb = call("__ZNSs6rbeginEv", {t});
+            const bool rbeginOk = rb == m.read<uint32_t>(t) + 7;
+            // _M_set_length_and_sharable on a private rep: length 3, terminator, refcount 0.
+            const uint32_t rep = m.read<uint32_t>(t) - 12;
+            call("__ZNSs4_Rep26_M_set_length_and_sharableEm", {rep, 3});
+            const bool setLen = str(t) == "aXY" && m.read<uint8_t>(rep + 12 + 3) == 0 && m.read<uint32_t>(rep + 8) == 0;
+            call("__ZNSs5clearEv", {t});
+            const bool cleared = str(t).empty();
+            const uint32_t hider = proc.heap().allocZeroed(4);
+            call("__ZNSs12_Alloc_hiderC1EPcRKSaIcE", {hider, 0x1234, 0});
+            call("__ZNSsD1Ev", {t});
+            check(replaced && rbeginOk && setLen && cleared && m.read<uint32_t>(hider) == 0x1234,
+                  "std::string out-of-line members: replace(pos,n,const char*), rbegin, _M_set_length_and_sharable, clear, _Alloc_hider");
+        }
+
         // libstdc++ __basic_file<char> tests
         const uint32_t bfile = proc.heap().allocZeroed(16);
         call("__ZNSt12__basic_fileIcEC1EP15__gthread_mutex", {bfile, 0});

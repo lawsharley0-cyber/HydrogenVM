@@ -191,6 +191,17 @@ final class FrameAnalyzer {
         return .ok
     }
 
+    /// From "GPU: presented frame N directly (average rgb r,g,b, L/64 samples lit)":
+    /// the latest sample decides (all dark = black screen).
+    static func analyzeGPUSamples(_ lines: [String]) -> FrameSignal {
+        guard let last = lines.last(where: { $0.contains("samples lit") }) else { return .ok }
+        guard let range = last.range(of: #"(\d+)/64 samples lit"#, options: .regularExpression) else { return .ok }
+        let lit = Int(last[range].split(separator: "/").first ?? "") ?? 1
+        if lit == 0 { return .allBlack }
+        if last.contains("average rgb 255,255,255") { return .allWhite }
+        return .ok
+    }
+
     static func savePNG(_ image: CGImage, to url: URL) -> Bool {
         let uiImage = UIImage(cgImage: image)
         guard let data = uiImage.pngData() else { return false }
@@ -202,6 +213,14 @@ final class FrameAnalyzer {
             return false
         }
     }
+}
+
+/// Exit state of the session under test, written by its onExit callback.
+@MainActor
+final class ExitBox {
+    var exited = false
+    var code: NSInteger = -1
+    var crash: String?
 }
 
 @Observable
@@ -226,6 +245,7 @@ final class BatchTestRunner {
     @ObservationIgnored private var frameCount: Int = 0
     @ObservationIgnored private var fpsTimer: Timer?
     @ObservationIgnored private var lastCapturedFrame: CGImage?
+    @ObservationIgnored private var gpuSampleLines: [String] = []
 
     static var reportsDir: URL {
         URL.documentsDirectory.appending(path: "TestReports", directoryHint: .isDirectory)
@@ -348,6 +368,7 @@ final class BatchTestRunner {
         currentLogs = []
         currentFrame = nil
         lastCapturedFrame = nil
+        gpuSampleLines = []
         frameCount = 0
         lastPresentedFrames = 0
         progressText = "Testing \(currentIndex + 1)/\(targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
@@ -363,12 +384,11 @@ final class BatchTestRunner {
         s.useGPU = target.useGPU
         activeSession = s
 
-        var capturedCrash: String?
-        var exitStatusCode: NSInteger = -1
-        var didExit = false
+        let exitBox = ExitBox()
 
+        // The bridge delivers every callback on the main queue (see RunModel).
         s.onFrame = { [weak self] img in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 self.currentFrame = img
                 self.lastCapturedFrame = img
@@ -377,24 +397,24 @@ final class BatchTestRunner {
         }
 
         s.onLog = { [weak self] line, _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 self.currentLogs.append(line)
                 if self.currentLogs.count > 500 { self.currentLogs.removeFirst() }
+                if line.contains("GPU: presented frame") { self.gpuSampleLines.append(line) }
             }
         }
 
-        s.onExit = { [weak self] code, crash in
-            Task { @MainActor [weak self] in
-                guard self != nil else { return }
-                didExit = true
-                exitStatusCode = code
-                capturedCrash = crash
+        s.onExit = { code, crash in
+            MainActor.assumeIsolated {
+                exitBox.exited = true
+                exitBox.code = code
+                exitBox.crash = crash
             }
         }
 
         fpsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self, let s = self.activeSession else { return }
                 let presented = s.framesPresented
                 self.currentFPS = presented >= self.lastPresentedFrames ? max(Int(presented - self.lastPresentedFrames), self.frameCount) : self.frameCount
@@ -410,14 +430,14 @@ final class BatchTestRunner {
             let durationSeconds = Double(self.options.secondsPerApp)
             let deadline = Date().addingTimeInterval(durationSeconds)
 
-            while Date() < deadline && !didExit && self.status == .running {
+            while Date() < deadline && !exitBox.exited && self.status == .running {
                 try? await Task.sleep(for: .milliseconds(250))
             }
 
-            if !didExit && self.status == .running {
+            if !exitBox.exited && self.status == .running {
                 self.activeSession?.stopGracefully()
                 let gracefulDeadline = Date().addingTimeInterval(2.0)
-                while Date() < gracefulDeadline && !didExit {
+                while Date() < gracefulDeadline && !exitBox.exited {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             }
@@ -427,11 +447,19 @@ final class BatchTestRunner {
 
             guard self.status == .running else { return }
 
-            let presented = s.framesPresented
-            let p95Ms = s.frameTimeP95Milliseconds
-            let isCrashed = capturedCrash != nil || (didExit && exitStatusCode != 0)
+            let session = self.activeSession
+            let presented = session?.framesPresented ?? 0
+            let p95Ms = session?.frameTimeP95Milliseconds ?? 0
+            let capturedCrash = exitBox.crash
+            let exitStatusCode = exitBox.code
+            let isCrashed = capturedCrash != nil || (exitBox.exited && exitStatusCode != 0)
 
-            let frameSig = FrameAnalyzer.analyze(self.lastCapturedFrame)
+            // On the GPU path the delivered image is only the UIKit overlay (with a
+            // hole where the GL layer shows), so judge the picture from the
+            // engine's own samples of presented GL frames instead.
+            let frameSig = target.useGPU && !self.gpuSampleLines.isEmpty
+                ? FrameAnalyzer.analyzeGPUSamples(self.gpuSampleLines)
+                : FrameAnalyzer.analyze(self.lastCapturedFrame)
             var thumbRelPath: String? = nil
 
             if let img = self.lastCapturedFrame {
