@@ -48,6 +48,7 @@ final class FileEditorSession {
 /// Sticky bottom save bar modifier attached via `.safeAreaInset(edge: .bottom)`.
 struct EditorSaveBottomBarModifier: ViewModifier {
     @Environment(FileEditorSession.self) private var document
+    @AppStorage("fileEditor.autoSave") private var autoSave = false
     @State private var showingRevert = false
     @State private var showingBackups = false
     @State private var showSavedBanner = false
@@ -56,66 +57,44 @@ struct EditorSaveBottomBarModifier: ViewModifier {
         content
             .safeAreaInset(edge: .bottom) {
                 if document.ready || document.dirty {
-                    VStack(spacing: 6) {
-                        if showSavedBanner {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                Text("Saved ✓")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(.green)
-                            }
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 12)
-                            .background(Color.green.opacity(0.15), in: Capsule())
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: document.dirty ? "pencil.circle.fill" : "checkmark.circle.fill")
-                                        .foregroundStyle(document.dirty ? .orange : .green)
-                                    Text(document.dirty ? "Unsaved Changes" : "All Changes Saved")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(document.dirty ? .orange : .secondary)
-                                }
-                                HStack(spacing: 10) {
-                                    Button("Revert", role: .destructive) {
-                                        showingRevert = true
-                                    }
-                                    .font(.caption2)
-                                    .disabled(!document.dirty)
-
-                                    Button {
-                                        showingBackups = true
-                                    } label: {
-                                        Label("Revisions", systemImage: "clock.arrow.circlepath")
-                                    }
-                                    .font(.caption2)
-                                    .disabled(document.dirty || !document.ready)
-                                }
-                            }
-
+                    VStack(spacing: 8) {
+                        HStack {
+                            Toggle("Auto-save edits", isOn: $autoSave)
+                                .font(.caption)
                             Spacer()
-
-                            Button {
-                                if document.saveChanges() {
-                                    withAnimation(.spring(duration: 0.3)) {
-                                        showSavedBanner = true
-                                    }
-                                }
-                            } label: {
-                                Label("Save Changes", systemImage: "square.and.arrow.down.fill")
-                                    .fontWeight(.semibold)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .accessibilityIdentifier("save-changes")
-                            .disabled(!document.dirty || !document.ready)
+                            Button("Backups") { showingBackups = true }
+                                .font(.caption)
+                                .disabled(document.dirty || !document.ready)
                         }
+                        HStack {
+                            Label(document.dirty ? "Unsaved Changes" : (document.saved ? "Saved ✓" : "All Changes Saved"),
+                                  systemImage: document.dirty ? "pencil.circle" : "checkmark.circle")
+                                .font(.caption)
+                            Spacer()
+                            Button("Revert", role: .destructive) { showingRevert = true }
+                                .font(.caption)
+                                .disabled(!document.dirty)
+                        }
+                        Button {
+                            if document.saveChanges() {
+                                withAnimation(.spring(duration: 0.3)) {
+                                    showSavedBanner = true
+                                }
+                                Task {
+                                    try? await Task.sleep(for: .seconds(2))
+                                    withAnimation { showSavedBanner = false }
+                                }
+                            }
+                        } label: {
+                            Label(showSavedBanner ? "Saved ✓" : "Save Changes",
+                                  systemImage: showSavedBanner ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
+                                .frame(maxWidth: .infinity, minHeight: 34)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("save-changes")
+                        .disabled(!document.dirty || !document.ready)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+                    .padding(12)
                     .background(.ultraThinMaterial)
                     .overlay(Divider(), alignment: .top)
                     .confirmationDialog("Discard edits and reload from disk?", isPresented: $showingRevert, titleVisibility: .visible) {
@@ -123,19 +102,6 @@ struct EditorSaveBottomBarModifier: ViewModifier {
                         Button("Cancel", role: .cancel) {}
                     }
                     .sheet(isPresented: $showingBackups) { FileBackupHistoryView(document: document) }
-                    .onChange(of: document.saved) { _, isSaved in
-                        if isSaved {
-                            withAnimation(.spring(duration: 0.3)) {
-                                showSavedBanner = true
-                            }
-                            Task {
-                                try? await Task.sleep(for: .seconds(2))
-                                withAnimation {
-                                    showSavedBanner = false
-                                }
-                            }
-                        }
-                    }
                 }
             }
     }
@@ -158,6 +124,7 @@ struct FileEditorControls: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .editorSaveBottomBar()
             .onAppear {
                 document.requestClose = {
                     if document.dirty { showingClose = true } else { dismiss() }

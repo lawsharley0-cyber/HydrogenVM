@@ -570,6 +570,7 @@ struct RunView: View {
                     .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
                 }
                 .accessibilityIdentifier("hud-handle")
+                .accessibilityIdentifier("player-controls")
                 .transition(.scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
             }
         }

@@ -974,13 +974,35 @@ struct TextEditorView: View {
         }
         .navigationTitle(url.lastPathComponent)
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 18) {
-                ShareLink(item: url)
+            HStack {
+                Menu {
+                    ShareLink(item: url)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
                 Spacer()
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(.bar)
         }
         .modifier(FileEditorRegistration(save: save))
-        .editorSaveBottomBar()
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("navigation-save")
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Button("Done") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+                Spacer()
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("keyboard-save")
+            }
+        }
         .alert("Save Failed", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
@@ -1107,32 +1129,51 @@ struct KeyValueEditorView: View {
         }
         .navigationTitle(url.lastPathComponent)
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 18) {
-                Button {
-                    if rawMode {
-                        parseINI(rawText)
-                    } else {
-                        do { rawText = try serializeINI() } catch { self.error = error.localizedDescription; return }
+            HStack {
+                Menu {
+                    Button(rawMode ? "Tree / Key-Value View" : "Raw Text View") {
+                        if rawMode {
+                            parseINI(rawText)
+                        } else {
+                            do { rawText = try serializeINI() } catch { self.error = error.localizedDescription; return }
+                        }
+                        rawMode.toggle()
                     }
-                    rawMode.toggle()
+                    .disabled(url.pathExtension.lowercased() == "strings")
+                    if !rawMode {
+                        Button("Add Key") {
+                            newKey = ""
+                            newVal = ""
+                            addingEntry = true
+                        }
+                    }
+                    ShareLink(item: url)
                 } label: {
-                    Image(systemName: rawMode ? "list.bullet" : "doc.plaintext")
-                }
-                .disabled(url.pathExtension.lowercased() == "strings")
-                if !rawMode {
-                    Button {
-                        newKey = ""
-                        newVal = ""
-                        addingEntry = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
+                    Image(systemName: "ellipsis.circle")
                 }
                 Spacer()
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(.bar)
         }
         .modifier(FileEditorRegistration(save: save))
-        .editorSaveBottomBar()
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("navigation-save")
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Button("Done") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+                Spacer()
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("keyboard-save")
+            }
+        }
         .alert("Add Config Key", isPresented: $addingEntry) {
             TextField("Section (optional)", text: $newSection)
             TextField("Key", text: $newKey)
@@ -1254,18 +1295,38 @@ struct JSONEditorView: View {
         }
         .navigationTitle(url.lastPathComponent)
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 18) {
-                Button {
-                    toggleRawMode()
+            HStack {
+                Menu {
+                    Button(rawMode ? "Structured JSON Tree" : "Raw JSON Text") {
+                        toggleRawMode()
+                    }
+                    ShareLink(item: url)
                 } label: {
-                    Image(systemName: rawMode ? "list.bullet.indent" : "curlybraces")
+                    Image(systemName: "ellipsis.circle")
                 }
-                ShareLink(item: url)
                 Spacer()
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(.bar)
         }
         .modifier(FileEditorRegistration(save: save))
-        .editorSaveBottomBar()
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("navigation-save")
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Button("Done") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+                Spacer()
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("keyboard-save")
+            }
+        }
         .alert("JSON Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
         } message: {
@@ -1998,22 +2059,41 @@ struct PlistEditorView: View {
         }
         .navigationTitle(url.lastPathComponent)
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 18) {
+            HStack {
                 Menu {
                     Picker("Format", selection: Binding(get: { format }, set: { format = $0; document.markChanged() })) {
                         Text("Binary Plist").tag(PropertyListSerialization.PropertyListFormat.binary)
                         Text("XML Plist").tag(PropertyListSerialization.PropertyListFormat.xml)
                     }
                     .disabled(root?.isKeyedArchiveRoot == true)
+
+                    ShareLink(item: url)
                 } label: {
-                    Image(systemName: "gearshape")
+                    Image(systemName: "ellipsis.circle")
                 }
-                ShareLink(item: url)
                 Spacer()
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(.bar)
         }
         .modifier(FileEditorRegistration(save: save))
-        .editorSaveBottomBar()
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("navigation-save")
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Button("Done") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+                Spacer()
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("keyboard-save")
+            }
+        }
         .alert("Save Failed", isPresented: Binding(get: { error != nil },
                                                     set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) { error = nil }
@@ -2482,6 +2562,7 @@ private struct NestedDataInspectorView: View {
             }
         }
         .toolbar { FileEditorToolbar() }
+        .editorSaveBottomBar()
         .navigationTitle(key)
         .onAppear {
             guard !loaded else { return }
@@ -2603,18 +2684,38 @@ struct BinaryEditorView: View {
         }
         .navigationTitle(url.lastPathComponent)
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 18) {
-                Button {
-                    showingScanner = true
+            HStack {
+                Menu {
+                    Button("Cheat / Value Scanner") {
+                        showingScanner = true
+                    }
+                    ShareLink(item: url)
                 } label: {
-                    Label("Value Scanner", systemImage: "magnifyingglass.circle")
+                    Image(systemName: "ellipsis.circle")
                 }
-                ShareLink(item: url)
                 Spacer()
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(.bar)
         }
         .modifier(FileEditorRegistration(save: save))
-        .editorSaveBottomBar()
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("navigation-save")
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Button("Done") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+                Spacer()
+                Button("Save") { _ = document.saveChanges() }.bold()
+                    .disabled(!document.dirty || !document.ready)
+                    .accessibilityIdentifier("keyboard-save")
+            }
+        }
         .sheet(isPresented: $showingScanner) {
             NavigationStack {
                 Form {
