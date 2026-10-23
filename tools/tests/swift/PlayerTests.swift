@@ -1,6 +1,7 @@
 import Foundation
 
 @main
+@MainActor
 struct PlayerTests {
     static var checks = 0
     static func check(_ condition: @autoclosure () -> Bool, _ message: String) {

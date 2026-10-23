@@ -32,6 +32,7 @@ jobs:
           set -o pipefail
           build/file-editor/player-tests 2>&1 | tee build/file-editor/player-models.log
       - name: Generate project
+        if: ${{ !cancelled() }}
         run: |
           export HOMEBREW_NO_AUTO_UPDATE=1
           brew install xcodegen
