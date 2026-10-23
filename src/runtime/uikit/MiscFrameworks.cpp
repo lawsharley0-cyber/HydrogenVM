@@ -242,6 +242,21 @@ void vc_dismissMovie(Ctx& x, id self, SEL) {
     }
 }
 
+// ---- AdSupport: ASIdentifierManager
+id ad_shared(Ctx& x, id cls, SEL) {
+    static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
+    if (!shared) { shared = rt(x).createInstance(cls); rt(x).makeImmortal(shared); }
+    return shared;
+}
+id ad_uuid(Ctx& x, id, SEL) {
+    const Class uuidCls = rt(x).getClass("NSUUID");
+    if (!uuidCls) return 0;
+    const id uuid = id(rt(x).send(x.cpu, uuidCls, rt(x).selAlloc));
+    const id str = Foundation::makeString(x, "00000000-0000-0000-0000-000000000000");
+    return Foundation::autoreleased(x, id(rt(x).send(x.cpu, uuid, "initWithUUIDString:", {str})));
+}
+bool ad_trackingEnabled(Ctx&, id, SEL) { return false; }
+
 // ---- MPMusicPlayerController: the iPod app isn't playing (so games play their own music).
 id mus_shared(Ctx& x, id cls, SEL) {
     static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
@@ -363,6 +378,11 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
     // CaptiveNetwork: no Wi-Fi interface information.
     p.def<&z1>("_CNCopySupportedInterfaces");
     p.def<&z1>("_CNCopyCurrentNetworkInfo");
+    ObjC::ClassBuilder ad = r.defineClass("ASIdentifierManager", "NSObject");
+    ad.cm<&ad_shared>("sharedManager")
+      .m<&ad_uuid>("advertisingIdentifier")
+      .m<&ad_trackingEnabled>("isAdvertisingTrackingEnabled", "c@:");
+
     // Security: certificates and public-key operations aren't available.
     p.def<&z2>("_SecCertificateCreateWithData");
     p.def<&z1>("_SecCertificateCopySubjectSummary");

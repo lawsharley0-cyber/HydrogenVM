@@ -2225,8 +2225,23 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
         auto& d = getPbData(x, x.cpu.r[0]);
         x.cpu.r[0] = id(rt(x).send(x.cpu, d.itemsDict, "allKeys"));
     }, "@@:");
-    pb.method("containsPasteboardTypes:", [](Ctx& x) { x.cpu.r[0] = 0; }, "c@:@");
-    for (const char* n : {"UIPasteboardNameGeneral", "UIPasteboardNameFind", "UIPasteboardChangedNotification", "UIPasteboardRemovedNotification"}) {
+    pb.method("containsPasteboardTypes:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        const id types = x.cpu.r[2];
+        if (!types) { x.cpu.r[0] = 0; return; }
+        const auto want = Foundation::arrayItems(x, types);
+        for (id t : want) {
+            if (Foundation::dictGet(x, d.itemsDict, t)) { x.cpu.r[0] = 1; return; }
+        }
+        x.cpu.r[0] = 0;
+    }, "c@:@");
+    pb.method("numberOfItems", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        const auto entries = Foundation::dictEntries(x, d.itemsDict);
+        x.cpu.r[0] = entries.empty() ? 0 : 1;
+    }, "i@:");
+    for (const char* n : {"UIPasteboardNameGeneral", "UIPasteboardNameFind", "UIPasteboardChangedNotification", "UIPasteboardRemovedNotification",
+                          "UIPasteboardTypeListString", "UIPasteboardTypeListURL", "UIPasteboardTypeListImage", "UIPasteboardTypeListColor"}) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         p.mem().write<uint32_t>(cell, Foundation::constString(p, n));
     }

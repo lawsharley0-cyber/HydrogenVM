@@ -302,6 +302,8 @@ bool app_sendAction(Ctx& x, id self, SEL, SEL action, id target, id sender, id e
     r.send(x.cpu, target, action, {sender, event});
     return true;
 }
+int32_t app_layoutDirection(Ctx&, id, SEL) { return 0; }
+uint32_t app_supportedOrientations(Ctx&, id, SEL, id) { return 0x1E; }
 id app_nextResponder(Ctx& x, id, SEL) {
     const id d = ui(x).appDelegate;
     return d && rt(x).isKindOf(d, ui(x).responder) ? d : 0;
@@ -624,7 +626,9 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_endBackgroundTask>("endBackgroundTask:", "v@:I").m<&app_false>("isProtectedDataAvailable", "c@:")
        .m<&app_ignoreBool>("setApplicationSupportsShakeToEdit:", "v@:c").m<&app_true>("applicationSupportsShakeToEdit", "c@:")
        .m<&app_sendEvent>("sendEvent:", "v@:@").m<&app_sendAction>("sendAction:to:from:forEvent:", "c@::@@@")
-       .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory");
+       .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory")
+       .m<&app_layoutDirection>("userInterfaceLayoutDirection", "i@:")
+       .m<&app_supportedOrientations>("supportedInterfaceOrientationsForWindow:", "I@:@");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
     p.mem().write<uint32_t>(p.defineDataBlock("_UIBackgroundTaskInvalid", 4), 0);
     p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalMinimum", 8), 0.0);

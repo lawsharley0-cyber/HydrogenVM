@@ -1039,6 +1039,72 @@ void cache_dealloc(Ctx& x, id self, SEL) {
     R(x).disposeInstance(x.cpu, self);
 }
 
+// ------------------------------------------ NSUbiquitousKeyValueStore ---
+struct KVSData : ObjC::HostObject { id dict = 0; };
+KVSData& KVSD(Ctx& x, id self) {
+    KVSData& d = R(x).host<KVSData>(self);
+    if (!d.dict) d.dict = makeDict(x, {}, true, true);
+    return d;
+}
+id kvs_default(Ctx& x, id cls, SEL) {
+    static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
+    if (!shared) { shared = R(x).createInstance(cls); R(x).makeImmortal(shared); }
+    return shared;
+}
+id kvs_object(Ctx& x, id self, SEL, id key) { return key ? dictGet(x, KVSD(x, self).dict, key) : 0; }
+void kvs_setObject(Ctx& x, id self, SEL, id obj, id key) {
+    if (!key) return;
+    KVSData& d = KVSD(x, self);
+    if (!obj) R(x).send(x.cpu, d.dict, "removeObjectForKey:", {key});
+    else R(x).send(x.cpu, d.dict, "setObject:forKey:", {obj, key});
+}
+id kvs_string(Ctx& x, id self, SEL, id key) {
+    const id v = kvs_object(x, self, 0, key);
+    return v && isString(x, v) ? v : 0;
+}
+void kvs_setString(Ctx& x, id self, SEL s, id str, id key) { kvs_setObject(x, self, s, str, key); }
+id kvs_array(Ctx& x, id self, SEL, id key) {
+    const id v = kvs_object(x, self, 0, key);
+    return v && isArray(x, v) ? v : 0;
+}
+void kvs_setArray(Ctx& x, id self, SEL s, id arr, id key) { kvs_setObject(x, self, s, arr, key); }
+id kvs_dict(Ctx& x, id self, SEL, id key) {
+    const id v = kvs_object(x, self, 0, key);
+    return v && isDict(x, v) ? v : 0;
+}
+void kvs_setDict(Ctx& x, id self, SEL s, id dict, id key) { kvs_setObject(x, self, s, dict, key); }
+id kvs_data(Ctx& x, id self, SEL, id key) {
+    const id v = kvs_object(x, self, 0, key);
+    return v && isData(x, v) ? v : 0;
+}
+void kvs_setData(Ctx& x, id self, SEL s, id data, id key) { kvs_setObject(x, self, s, data, key); }
+int64_t kvs_longLong(Ctx& x, id self, SEL, id key) {
+    const id v = kvs_object(x, self, 0, key);
+    return v ? numberInt(x, v) : 0;
+}
+void kvs_setLongLong(Ctx& x, id self, SEL, int64_t v, id key) {
+    kvs_setObject(x, self, 0, makeNumberInt(x, v), key);
+}
+bool kvs_bool(Ctx& x, id self, SEL, id key) {
+    const id v = kvs_object(x, self, 0, key);
+    return v ? numberInt(x, v) != 0 : false;
+}
+void kvs_setBool(Ctx& x, id self, SEL, bool b, id key) {
+    kvs_setObject(x, self, 0, makeNumberInt(x, b ? 1 : 0), key);
+}
+double kvs_double(Ctx& x, id self, SEL, id key) {
+    const id v = kvs_object(x, self, 0, key);
+    return v ? numberDouble(x, v) : 0.0;
+}
+void kvs_setDouble(Ctx& x, id self, SEL, double v, id key) {
+    kvs_setObject(x, self, 0, makeNumberDouble(x, v), key);
+}
+void kvs_remove(Ctx& x, id self, SEL, id key) {
+    if (key) R(x).send(x.cpu, KVSD(x, self).dict, "removeObjectForKey:", {key});
+}
+bool kvs_sync(Ctx&, id, SEL) { return true; }
+id kvs_dictRep(Ctx& x, id self, SEL) { return id(R(x).send(x.cpu, KVSD(x, self).dict, "copy")); }
+
 // ------------------------------------------------------- NSDecimalNumber ---
 // Backed by double: exact enough for prices and scores, not for accounting.
 double numArg(Ctx& x, id n) { return n ? numberDouble(x, n) : 0.0; }
@@ -1163,6 +1229,32 @@ void registerFoundationExtras(Process& p, ObjC::Runtime& r) {
       .m<&cache_name>("name").m<&cache_setName>("setName:", "v@:@").m<&cache_delegate>("delegate").m<&cache_setDelegate>("setDelegate:", "v@:@")
       .m<&cache_yes>("evictsObjectsWithDiscardedContent", "c@:").m<&cache_ignoreBool>("setEvictsObjectsWithDiscardedContent:", "v@:c")
       .m<&cache_dealloc>("dealloc", "v@:");
+
+    ObjC::ClassBuilder kvs = r.defineClass("NSUbiquitousKeyValueStore", "NSObject");
+    kvs.cm<&kvs_default>("defaultStore").cm<&kvs_default>("defaultKeyValueStore")
+       .m<&kvs_object>("objectForKey:").m<&kvs_setObject>("setObject:forKey:", "v@:@@")
+       .m<&kvs_string>("stringForKey:").m<&kvs_setString>("setString:forKey:", "v@:@@")
+       .m<&kvs_array>("arrayForKey:").m<&kvs_setArray>("setArray:forKey:", "v@:@@")
+       .m<&kvs_dict>("dictionaryForKey:").m<&kvs_setDict>("setDictionary:forKey:", "v@:@@")
+       .m<&kvs_data>("dataForKey:").m<&kvs_setData>("setData:forKey:", "v@:@@")
+       .m<&kvs_longLong>("longLongForKey:", "q@:@")
+       .method("setLongLong:forKey:", [](Ctx& x) {
+           const uint64_t val = (uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2];
+           const id key = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
+           kvs_setLongLong(x, x.cpu.r[0], 0, int64_t(val), key);
+       }, "v@:q@")
+       .m<&kvs_bool>("boolForKey:", "c@:@").m<&kvs_setBool>("setBool:forKey:", "v@:c@")
+       .m<&kvs_double>("doubleForKey:", "d@:@")
+       .method("setDouble:forKey:", [](Ctx& x) {
+           const uint64_t bits = (uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2];
+           double val; std::memcpy(&val, &bits, 8);
+           const id key = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
+           kvs_setDouble(x, x.cpu.r[0], 0, val, key);
+       }, "v@:d@")
+       .m<&kvs_remove>("removeObjectForKey:", "v@:@")
+       .m<&kvs_sync>("synchronize", "c@:")
+       .m<&kvs_dictRep>("dictionaryRepresentation");
+    p.mem().write<uint32_t>(p.defineDataBlock("_NSUbiquitousKeyValueStoreDidChangeExternallyNotification", 4), constString(p, "NSUbiquitousKeyValueStoreDidChangeExternallyNotification"));
 
     ObjC::ClassBuilder dn = r.defineClass("NSDecimalNumber", "NSNumber");
     dn.cm<&dec_fromString>("decimalNumberWithString:").cm<&dec_fromStringLocale>("decimalNumberWithString:locale:")
