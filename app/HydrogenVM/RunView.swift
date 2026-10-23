@@ -288,6 +288,8 @@ struct RunView: View {
     @State private var overrideOrientation: GuestOrientation?
     @AppStorage("player.scaleMode") private var scaleSetting = PlayerScaleMode.fit.rawValue
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
+    /// Read by the session at start (RunModel.start): GPU rendering unless this is on.
+    @AppStorage("softwareRenderer") private var softwareRenderer = false
     @Environment(\.dismiss) private var dismiss
 
     init(app: InstalledApp, keepGoing: Bool) {
@@ -504,6 +506,12 @@ struct RunView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+
+                        Toggle(isOn: Binding(get: { !softwareRenderer }, set: { softwareRenderer = !$0 })) {
+                            Text("GPU rendering (takes effect next launch)")
+                                .font(.caption)
+                        }
+                        .accessibilityIdentifier("player-gpu-rendering")
                     }
 
                     // Audio & System Footer

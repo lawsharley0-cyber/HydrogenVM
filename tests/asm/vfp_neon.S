@@ -613,3 +613,29 @@ neon_cvt_cmp_abs:
     vmov    r3, s17
     bx      lr
     .ltorg
+
+@ VCMP + VMRS APSR_nzcv (fused into one op by the block builder): integer flags
+@ and FPSCR both get the result; an unordered compare sets V.
+@ TEST vfp_cmp_vmrs_flags
+@ EXPECT r0=1 r1=0x8 r2=1 r3=0x3
+    .global vfp_cmp_vmrs_flags
+vfp_cmp_vmrs_flags:
+    vmov.f32 s0, #1.0
+    vmov.f32 s1, #2.0
+    mov     r0, #0
+    vcmpe.f32 s0, s1
+    vmrs    APSR_nzcv, fpscr
+    movlt   r0, #1
+    movge   r0, #2
+    vmrs    r1, fpscr
+    lsr     r1, r1, #28
+    ldr     r3, =0x7FC00000
+    vmov    s2, r3
+    mov     r2, #0
+    vcmp.f32 s2, #0
+    vmrs    APSR_nzcv, fpscr
+    movvs   r2, #1
+    vmrs    r3, fpscr
+    lsr     r3, r3, #28
+    bx      lr
+    .ltorg
