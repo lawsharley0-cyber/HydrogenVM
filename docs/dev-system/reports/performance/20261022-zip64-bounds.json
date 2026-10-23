@@ -1,0 +1,634 @@
+{
+  "schemaVersion": 1,
+  "kind": "hvm-zip64-metadata-evidence",
+  "generatedAt": "2026-10-22T13:55:29.426896+00:00",
+  "beforeCommit": "39904cb5f80d8743f135eb5c8635c97224b2a5bb",
+  "testedCommit": "cb3509e234ae4b83452ce55bbee76935d9fa281d",
+  "testedDirty": false,
+  "host": {
+    "system": "Linux",
+    "release": "6.18.55",
+    "machine": "x86_64",
+    "python": "3.12.14",
+    "pageSize": 4096,
+    "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "notes": [
+      "Host page size is the kernel page. Guest permissions are 4 KB and are not enforced on the fast path.",
+      "A pass recorded here is not a 16 KB iOS memory-model pass."
+    ],
+    "cpu": "Intel Xeon Platinum 8573C",
+    "os": "Ubuntu 24.04 cloud container"
+  },
+  "build": {
+    "type": "Release",
+    "compiler": "Clang 18.1.3",
+    "runtimeFlags": "-O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off",
+    "benchmarkFlags": "-std=c++20 -O3 -DNDEBUG -Isrc [-Isrc/loader for before copy] -lz",
+    "source": "Isolated cloud worktree at current main; no user PC or external proprietary fixtures",
+    "unmergedBranchesNotIncluded": [
+      "#11",
+      "#12",
+      "#15",
+      "#16"
+    ]
+  },
+  "trigger": "Central ZIP64 extra field declares 8 bytes while its enclosing central-directory entry contains only the 4-byte extra header. Parser reads 8 bytes at the end of its metadata buffer.",
+  "fix": "Check extra-header and payload lengths against enclosing entry before reading, require complete requested ZIP64 values/missing fields, keep FILE under temporary RAII ownership until constructor succeeds.",
+  "regression": {
+    "cases": 58,
+    "beforeRelease": "PASS stored\nPASS deflated\nPASS zip64-stored-mask1\nPASS zip64-deflated-mask1\nFAIL missing-zip64-mask1\nPASS zip64-stored-mask2\nPASS zip64-deflated-mask2\nFAIL missing-zip64-mask2\nPASS zip64-stored-mask3\nPASS zip64-deflated-mask3\nFAIL missing-zip64-mask3\nPASS zip64-stored-mask4\nPASS zip64-deflated-mask4\nFAIL missing-zip64-mask4\nPASS zip64-stored-mask5\nPASS zip64-deflated-mask5\nFAIL missing-zip64-mask5\nPASS zip64-stored-mask6\nPASS zip64-deflated-mask6\nFAIL missing-zip64-mask6\nPASS zip64-stored-mask7\nPASS zip64-deflated-mask7\nFAIL missing-zip64-mask7\nPASS unknown-before-zip64\nPASS unknown-after-zip64\nPASS zero-length-unneeded-zip64\nFAIL short-zip64-0\nFAIL short-zip64-1\nFAIL short-zip64-2\nFAIL short-zip64-3\nFAIL short-zip64-4\nFAIL short-zip64-5\nFAIL short-zip64-6\nFAIL short-zip64-7\nFAIL short-zip64-8\nFAIL short-zip64-9\nFAIL short-zip64-10\nFAIL short-zip64-11\nFAIL short-zip64-12\nFAIL short-zip64-13\nFAIL short-zip64-14\nFAIL short-zip64-15\nFAIL short-zip64-16\nFAIL short-zip64-17\nFAIL short-zip64-18\nFAIL short-zip64-19\nFAIL short-zip64-20\nFAIL short-zip64-21\nFAIL short-zip64-22\nFAIL short-zip64-23\nFAIL truncated-field-header-1\nFAIL truncated-field-header-2\nFAIL truncated-field-header-3\nFAIL field-overrun-at-directory-end\nFAIL field-overrun-into-next-entry\nFAIL unknown-field-overrun\nFAIL field-borrows-next-field\nFAIL malformed-constructor-closes-file\nZIP metadata: 19 passed, 39 failed\n",
+    "beforeAsan": "=================================================================\n==9==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x507000000070 at pc 0x5643bec0a197 bp 0x7ffdb4d074b0 sp 0x7ffdb4d074a8\nREAD of size 8 at 0x507000000070 thread T0\n    #0 0x5643bec0a196 in unsigned long Hydrogen::Loader::(anonymous namespace)::le<unsigned long>(unsigned char const*) /workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/build/ZipBefore.cpp:14:53\n    #1 0x5643bec0a196 in Hydrogen::Loader::ZipReader::ZipReader(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) /workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/build/ZipBefore.cpp:85:79\n    #2 0x5643bec01fdc in main::$_0::operator()(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::vector<unsigned char, std::allocator<unsigned char>> const&, bool) const /workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/tests/loader/ZipBoundsTests.cpp:56:23\n    #3 0x5643bec0032c in main /workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/tests/loader/ZipBoundsTests.cpp:78:5\n    #4 0x7f229ba841c9  (/lib/x86_64-linux-gnu/libc.so.6+0x2a1c9) (BuildId: 274eec488d230825a136fa9c4d85370fed7a0a5e)\n    #5 0x7f229ba8428a in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2a28a) (BuildId: 274eec488d230825a136fa9c4d85370fed7a0a5e)\n    #6 0x5643beb20884 in _start (/workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/build/zip-before-sanitized+0x31884) (BuildId: 2975f1ba52bf0216752abe61eaadcc3ab4aa69a8)\n\n0x507000000070 is located 0 bytes after 80-byte region [0x507000000020,0x507000000070)\nallocated by thread T0 here:\n    #0 0x5643bebf9cf1 in operator new(unsigned long) (/workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/build/zip-before-sanitized+0x10acf1) (BuildId: 2975f1ba52bf0216752abe61eaadcc3ab4aa69a8)\n    #1 0x5643bec02ce8 in std::__new_allocator<unsigned char>::allocate(unsigned long, void const*) /usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/bits/new_allocator.h:151:27\n    #2 0x5643bec02ce8 in std::allocator<unsigned char>::allocate(unsigned long) /usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/bits/allocator.h:198:32\n    #3 0x5643bec02ce8 in std::allocator_traits<std::allocator<unsigned char>>::allocate(std::allocator<unsigned char>&, unsigned long) /usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/bits/alloc_traits.h:482:20\n    #4 0x5643bec02ce8 in std::_Vector_base<unsigned char, std::allocator<unsigned char>>::_M_allocate(unsigned long) /usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/bits/stl_vector.h:381:20\n    #5 0x5643bec02ce8 in std::_Vector_base<unsigned char, std::allocator<unsigned char>>::_M_create_storage(unsigned long) /usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/bits/stl_vector.h:398:33\n    #6 0x5643bec02ce8 in std::_Vector_base<unsigned char, std::allocator<unsigned char>>::_Vector_base(unsigned long, std::allocator<unsigned char> const&) /usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/bits/stl_vector.h:335:9\n    #7 0x5643bec02ce8 in std::vector<unsigned char, std::allocator<unsigned char>>::vector(unsigned long, std::allocator<unsigned char> const&) /usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/bits/stl_vector.h:557:9\n    #8 0x5643bec0923d in Hydrogen::Loader::ZipReader::ZipReader(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) /workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/build/ZipBefore.cpp:61:26\n    #9 0x5643bec01fdc in main::$_0::operator()(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::vector<unsigned char, std::allocator<unsigned char>> const&, bool) const /workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/tests/loader/ZipBoundsTests.cpp:56:23\n    #10 0x5643bec0032c in main /workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/tests/loader/ZipBoundsTests.cpp:78:5\n    #11 0x7f229ba841c9  (/lib/x86_64-linux-gnu/libc.so.6+0x2a1c9) (BuildId: 274eec488d230825a136fa9c4d85370fed7a0a5e)\n    #12 0x7f229ba8428a in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2a28a) (BuildId: 274eec488d230825a136fa9c4d85370fed7a0a5e)\n    #13 0x5643beb20884 in _start (/workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/build/zip-before-sanitized+0x31884) (BuildId: 2975f1ba52bf0216752abe61eaadcc3ab4aa69a8)\n\nSUMMARY: AddressSanitizer: heap-buffer-overflow /workspace/scratch/1bfe0a92d0ce/HydrogenVM-zip/build/ZipBefore.cpp:14:53 in unsigned long Hydrogen::Loader::(anonymous namespace)::le<unsigned long>(unsigned char const*)\nShadow bytes around the buggy address:\n  0x506ffffffd80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n  0x506ffffffe00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n  0x506ffffffe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n  0x506fffffff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n  0x506fffffff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n=>0x507000000000: fa fa fa fa 00 00 00 00 00 00 00 00 00 00[fa]fa\n  0x507000000080: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa\n  0x507000000100: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa\n  0x507000000180: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa\n  0x507000000200: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa\n  0x507000000280: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa\nShadow byte legend (one shadow byte represents 8 application bytes):\n  Addressable:           00\n  Partially addressable: 01 02 03 04 05 06 07 \n  Heap left redzone:       fa\n  Freed heap region:       fd\n  Stack left redzone:      f1\n  Stack mid redzone:       f2\n  Stack right redzone:     f3\n  Stack after return:      f5\n  Stack use after scope:   f8\n  Global redzone:          f9\n  Global init order:       f6\n  Poisoned by user:        f7\n  Container overflow:      fc\n  Array cookie:            ac\n  Intra object redzone:    bb\n  ASan internal:           fe\n  Left alloca redzone:     ca\n  Right alloca redzone:    cb\n==9==ABORTING\n",
+    "afterReleaseAndSanitizers": "PASS stored\nPASS deflated\nPASS zip64-stored-mask1\nPASS zip64-deflated-mask1\nPASS missing-zip64-mask1\nPASS zip64-stored-mask2\nPASS zip64-deflated-mask2\nPASS missing-zip64-mask2\nPASS zip64-stored-mask3\nPASS zip64-deflated-mask3\nPASS missing-zip64-mask3\nPASS zip64-stored-mask4\nPASS zip64-deflated-mask4\nPASS missing-zip64-mask4\nPASS zip64-stored-mask5\nPASS zip64-deflated-mask5\nPASS missing-zip64-mask5\nPASS zip64-stored-mask6\nPASS zip64-deflated-mask6\nPASS missing-zip64-mask6\nPASS zip64-stored-mask7\nPASS zip64-deflated-mask7\nPASS missing-zip64-mask7\nPASS unknown-before-zip64\nPASS unknown-after-zip64\nPASS zero-length-unneeded-zip64\nPASS short-zip64-0\nPASS short-zip64-1\nPASS short-zip64-2\nPASS short-zip64-3\nPASS short-zip64-4\nPASS short-zip64-5\nPASS short-zip64-6\nPASS short-zip64-7\nPASS short-zip64-8\nPASS short-zip64-9\nPASS short-zip64-10\nPASS short-zip64-11\nPASS short-zip64-12\nPASS short-zip64-13\nPASS short-zip64-14\nPASS short-zip64-15\nPASS short-zip64-16\nPASS short-zip64-17\nPASS short-zip64-18\nPASS short-zip64-19\nPASS short-zip64-20\nPASS short-zip64-21\nPASS short-zip64-22\nPASS short-zip64-23\nPASS truncated-field-header-1\nPASS truncated-field-header-2\nPASS truncated-field-header-3\nPASS field-overrun-at-directory-end\nPASS field-overrun-into-next-entry\nPASS unknown-field-overrun\nPASS field-borrows-next-field\nPASS malformed-constructor-closes-file\nZIP metadata: 58 passed, 0 failed\nPASS stored\nPASS deflated\nPASS zip64-stored-mask1\nPASS zip64-deflated-mask1\nPASS missing-zip64-mask1\nPASS zip64-stored-mask2\nPASS zip64-deflated-mask2\nPASS missing-zip64-mask2\nPASS zip64-stored-mask3\nPASS zip64-deflated-mask3\nPASS missing-zip64-mask3\nPASS zip64-stored-mask4\nPASS zip64-deflated-mask4\nPASS missing-zip64-mask4\nPASS zip64-stored-mask5\nPASS zip64-deflated-mask5\nPASS missing-zip64-mask5\nPASS zip64-stored-mask6\nPASS zip64-deflated-mask6\nPASS missing-zip64-mask6\nPASS zip64-stored-mask7\nPASS zip64-deflated-mask7\nPASS missing-zip64-mask7\nPASS unknown-before-zip64\nPASS unknown-after-zip64\nPASS zero-length-unneeded-zip64\nPASS short-zip64-0\nPASS short-zip64-1\nPASS short-zip64-2\nPASS short-zip64-3\nPASS short-zip64-4\nPASS short-zip64-5\nPASS short-zip64-6\nPASS short-zip64-7\nPASS short-zip64-8\nPASS short-zip64-9\nPASS short-zip64-10\nPASS short-zip64-11\nPASS short-zip64-12\nPASS short-zip64-13\nPASS short-zip64-14\nPASS short-zip64-15\nPASS short-zip64-16\nPASS short-zip64-17\nPASS short-zip64-18\nPASS short-zip64-19\nPASS short-zip64-20\nPASS short-zip64-21\nPASS short-zip64-22\nPASS short-zip64-23\nPASS truncated-field-header-1\nPASS truncated-field-header-2\nPASS truncated-field-header-3\nPASS field-overrun-at-directory-end\nPASS field-overrun-into-next-entry\nPASS unknown-field-overrun\nPASS field-borrows-next-field\nPASS malformed-constructor-closes-file\nZIP metadata: 58 passed, 0 failed\n",
+    "command": "tools/test_zip_bounds.sh",
+    "beforeCommand": "Compile current tests against git show 39904cb:src/loader/Zip.cpp using -Isrc -Isrc/loader; sanitizer reproduction passes filter field-overrun-at-directory-end",
+    "constructorFailure": "64 separate constructions of a 22-byte archive with no EOCD; Linux /proc/self/fd count stays stable after fix, grows on main",
+    "containerSanitizerEnvironment": "ASAN_OPTIONS=detect_leaks=0 because LeakSanitizer cannot enumerate proc tasks in this container. AddressSanitizer/UBSan remain enabled. GitHub regression runs with defaults."
+  },
+  "compatibility": {
+    "report": "../linux-x86_64/20261022T135259Z-cb3509e234ae.json",
+    "summary": {
+      "ok": true,
+      "unitFailed": 0,
+      "pythonFailed": 0,
+      "fuzzStatus": "not-run",
+      "appsResolved": 3,
+      "appsSkipped": 1,
+      "appsCrashed": 0,
+      "appsLaunchFailed": 0,
+      "resolveErrors": 0,
+      "clusterCount": 13
+    },
+    "baselineDiff": {
+      "schemaVersion": 1,
+      "kind": "hvm-compat-diff",
+      "ok": true,
+      "regressions": [],
+      "improvements": [
+        {
+          "kind": "unimplemented-import",
+          "id": "angry-birds",
+          "message": "angry-birds import now bound: tmpnam"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regcomp"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regerror"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regexec"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regfree"
+        }
+      ],
+      "attention": [],
+      "informational": [
+        {
+          "kind": "perf",
+          "id": "angry-birds",
+          "message": "angry-birds avgFrameMs 23.902 -> 49.066 (+105%); not a failure"
+        },
+        {
+          "kind": "perf",
+          "id": "art-of-glow",
+          "message": "art-of-glow avgFrameMs 57.133 -> 87.178 (+53%); not a failure"
+        },
+        {
+          "kind": "perf",
+          "id": "tiny-tower",
+          "message": "tiny-tower avgFrameMs 18.558 -> 26.035 (+40%); not a failure"
+        }
+      ]
+    },
+    "previousIndexedDiff": {
+      "schemaVersion": 1,
+      "kind": "hvm-compat-diff",
+      "ok": true,
+      "regressions": [],
+      "improvements": [
+        {
+          "kind": "unimplemented-import",
+          "id": "angry-birds",
+          "message": "angry-birds import now bound: tmpnam"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regcomp"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regerror"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regexec"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regfree"
+        }
+      ],
+      "attention": [],
+      "informational": [
+        {
+          "kind": "perf",
+          "id": "angry-birds",
+          "message": "angry-birds avgFrameMs 19.082 -> 49.066 (+157%); not a failure"
+        },
+        {
+          "kind": "perf",
+          "id": "art-of-glow",
+          "message": "art-of-glow avgFrameMs 49.849 -> 87.178 (+75%); not a failure"
+        },
+        {
+          "kind": "perf",
+          "id": "tiny-tower",
+          "message": "tiny-tower avgFrameMs 15.117 -> 26.035 (+72%); not a failure"
+        }
+      ]
+    },
+    "fulltestPassed": 191,
+    "harnessSelftests": 56,
+    "githubRuns": {
+      "zip": 39790646800,
+      "compat": 39790646525,
+      "ci": 39790646448
+    }
+  },
+  "archiveReadMeasurement": {
+    "scenario": "Serial before/after/after/before order for each grandfathered SHA-256-verified IPA. Each sample constructs/read-decompresses the archive eight times, reads every non-directory entry, and verifies CRC inside ZipReader::read. All output content is hashed outside timed sections. Same host, compiler and flags; only Zip.cpp differs. No concurrent build/test on this host during samples.",
+    "timing": "Separate host-wall metadata parsing and resource read/decompression; process CPU time for both. Content hashing is excluded. No guest simulation/gameplay involved. Filesystem cache is not flushed.",
+    "conclusion": "Identical entries/files/byte totals/content checksum across all four samples for each archive. Timings vary; no established performance gain or no-overhead claim. Import-resource microbenchmark, not game FPS.",
+    "summary": {
+      "angry-birds": {
+        "before": {
+          "metadataWallSeconds": [
+            0.001162467,
+            0.001046763
+          ],
+          "readWallSeconds": [
+            0.619574685,
+            0.602322459
+          ],
+          "parseReadCpuSeconds": [
+            0.620715,
+            0.603385
+          ]
+        },
+        "after": {
+          "metadataWallSeconds": [
+            0.001896644,
+            0.000871385
+          ],
+          "readWallSeconds": [
+            0.647537396,
+            0.610520208
+          ],
+          "parseReadCpuSeconds": [
+            0.649449,
+            0.607639
+          ]
+        }
+      },
+      "art-of-glow": {
+        "before": {
+          "metadataWallSeconds": [
+            0.000954901,
+            0.000572904
+          ],
+          "readWallSeconds": [
+            0.199453452,
+            0.189091611
+          ],
+          "parseReadCpuSeconds": [
+            0.20046,
+            0.189702
+          ]
+        },
+        "after": {
+          "metadataWallSeconds": [
+            0.001129577,
+            0.000554607
+          ],
+          "readWallSeconds": [
+            0.212762521,
+            0.184387591
+          ],
+          "parseReadCpuSeconds": [
+            0.213918,
+            0.184913
+          ]
+        }
+      },
+      "tiny-tower": {
+        "before": {
+          "metadataWallSeconds": [
+            0.00091271,
+            0.001328848
+          ],
+          "readWallSeconds": [
+            0.32611934,
+            0.272566314
+          ],
+          "parseReadCpuSeconds": [
+            0.320422,
+            0.273929
+          ]
+        },
+        "after": {
+          "metadataWallSeconds": [
+            0.000851188,
+            0.001376038
+          ],
+          "readWallSeconds": [
+            0.381757366,
+            0.258571712
+          ],
+          "parseReadCpuSeconds": [
+            0.382634,
+            0.259985
+          ]
+        }
+      }
+    },
+    "samples": [
+      {
+        "iterations": 8,
+        "entriesPerIteration": 549,
+        "filesPerIteration": 538,
+        "bytesAcrossIterations": 134795544,
+        "contentFnv1a64": "b0fb9c39169b8f25",
+        "metadataWallSeconds": 0.001162467,
+        "readWallSeconds": 0.619574685,
+        "parseReadCpuSeconds": 0.620715,
+        "id": "angry-birds",
+        "version": "1.0",
+        "fixtureSha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+        "variant": "before",
+        "iteration": 0
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 549,
+        "filesPerIteration": 538,
+        "bytesAcrossIterations": 134795544,
+        "contentFnv1a64": "b0fb9c39169b8f25",
+        "metadataWallSeconds": 0.001896644,
+        "readWallSeconds": 0.647537396,
+        "parseReadCpuSeconds": 0.649449,
+        "id": "angry-birds",
+        "version": "1.0",
+        "fixtureSha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+        "variant": "after",
+        "iteration": 1
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 549,
+        "filesPerIteration": 538,
+        "bytesAcrossIterations": 134795544,
+        "contentFnv1a64": "b0fb9c39169b8f25",
+        "metadataWallSeconds": 0.000871385,
+        "readWallSeconds": 0.610520208,
+        "parseReadCpuSeconds": 0.607639,
+        "id": "angry-birds",
+        "version": "1.0",
+        "fixtureSha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+        "variant": "after",
+        "iteration": 2
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 549,
+        "filesPerIteration": 538,
+        "bytesAcrossIterations": 134795544,
+        "contentFnv1a64": "b0fb9c39169b8f25",
+        "metadataWallSeconds": 0.001046763,
+        "readWallSeconds": 0.602322459,
+        "parseReadCpuSeconds": 0.603385,
+        "id": "angry-birds",
+        "version": "1.0",
+        "fixtureSha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+        "variant": "before",
+        "iteration": 3
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 481,
+        "filesPerIteration": 481,
+        "bytesAcrossIterations": 171247624,
+        "contentFnv1a64": "3decaf8c64b19705",
+        "metadataWallSeconds": 0.00091271,
+        "readWallSeconds": 0.32611934,
+        "parseReadCpuSeconds": 0.320422,
+        "id": "tiny-tower",
+        "version": "1.0",
+        "fixtureSha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+        "variant": "before",
+        "iteration": 0
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 481,
+        "filesPerIteration": 481,
+        "bytesAcrossIterations": 171247624,
+        "contentFnv1a64": "3decaf8c64b19705",
+        "metadataWallSeconds": 0.000851188,
+        "readWallSeconds": 0.381757366,
+        "parseReadCpuSeconds": 0.382634,
+        "id": "tiny-tower",
+        "version": "1.0",
+        "fixtureSha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+        "variant": "after",
+        "iteration": 1
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 481,
+        "filesPerIteration": 481,
+        "bytesAcrossIterations": 171247624,
+        "contentFnv1a64": "3decaf8c64b19705",
+        "metadataWallSeconds": 0.001376038,
+        "readWallSeconds": 0.258571712,
+        "parseReadCpuSeconds": 0.259985,
+        "id": "tiny-tower",
+        "version": "1.0",
+        "fixtureSha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+        "variant": "after",
+        "iteration": 2
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 481,
+        "filesPerIteration": 481,
+        "bytesAcrossIterations": 171247624,
+        "contentFnv1a64": "3decaf8c64b19705",
+        "metadataWallSeconds": 0.001328848,
+        "readWallSeconds": 0.272566314,
+        "parseReadCpuSeconds": 0.273929,
+        "id": "tiny-tower",
+        "version": "1.0",
+        "fixtureSha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+        "variant": "before",
+        "iteration": 3
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 70,
+        "filesPerIteration": 67,
+        "bytesAcrossIterations": 99070744,
+        "contentFnv1a64": "a1a1f28c5268cce5",
+        "metadataWallSeconds": 0.000954901,
+        "readWallSeconds": 0.199453452,
+        "parseReadCpuSeconds": 0.20046,
+        "id": "art-of-glow",
+        "version": "1.1.2",
+        "fixtureSha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+        "variant": "before",
+        "iteration": 0
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 70,
+        "filesPerIteration": 67,
+        "bytesAcrossIterations": 99070744,
+        "contentFnv1a64": "a1a1f28c5268cce5",
+        "metadataWallSeconds": 0.001129577,
+        "readWallSeconds": 0.212762521,
+        "parseReadCpuSeconds": 0.213918,
+        "id": "art-of-glow",
+        "version": "1.1.2",
+        "fixtureSha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+        "variant": "after",
+        "iteration": 1
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 70,
+        "filesPerIteration": 67,
+        "bytesAcrossIterations": 99070744,
+        "contentFnv1a64": "a1a1f28c5268cce5",
+        "metadataWallSeconds": 0.000554607,
+        "readWallSeconds": 0.184387591,
+        "parseReadCpuSeconds": 0.184913,
+        "id": "art-of-glow",
+        "version": "1.1.2",
+        "fixtureSha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+        "variant": "after",
+        "iteration": 2
+      },
+      {
+        "iterations": 8,
+        "entriesPerIteration": 70,
+        "filesPerIteration": 67,
+        "bytesAcrossIterations": 99070744,
+        "contentFnv1a64": "a1a1f28c5268cce5",
+        "metadataWallSeconds": 0.000572904,
+        "readWallSeconds": 0.189091611,
+        "parseReadCpuSeconds": 0.189702,
+        "id": "art-of-glow",
+        "version": "1.1.2",
+        "fixtureSha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+        "variant": "before",
+        "iteration": 3
+      }
+    ],
+    "benchmarkSource": "#include \"loader/Zip.hpp\"\n#include <chrono>\n#include <ctime>\n#include <cinttypes>\n#include <cstdio>\n#include <vector>\nusing Clock=std::chrono::steady_clock;\nint main(int argc,char** argv) {\n    if(argc!=2)return 2;\n    double metadata=0,decode=0,cpu=0;\n    uint64_t hash=14695981039346656037ull;size_t bytes=0,files=0,entries=0;\n    constexpr int iterations=8;\n    for(int i=0;i<iterations;++i) {\n        const auto cpu0=std::clock();auto t=Clock::now();\n        Hydrogen::Loader::ZipReader z(argv[1]);const auto afterMetadata=Clock::now();\n        std::vector<std::vector<uint8_t>> all;\n        for(const auto& e:z.entries())if(!e.isDirectory())all.push_back(z.read(e));\n        const auto afterDecode=Clock::now();cpu+=double(std::clock()-cpu0)/CLOCKS_PER_SEC;\n        metadata+=std::chrono::duration<double>(afterMetadata-t).count();\n        decode+=std::chrono::duration<double>(afterDecode-afterMetadata).count();\n        entries=z.entries().size();files=all.size();\n        // Content verification is outside measured parse/decode time.\n        for(const auto& a:all){bytes+=a.size();for(auto b:a){hash^=b;hash*=1099511628211ull;}}\n    }\n    std::printf(\"{\\\"iterations\\\":%d,\\\"entriesPerIteration\\\":%zu,\\\"filesPerIteration\\\":%zu,\\\"bytesAcrossIterations\\\":%zu,\\\"contentFnv1a64\\\":\\\"%016\" PRIx64 \"\\\",\\\"metadataWallSeconds\\\":%.9f,\\\"readWallSeconds\\\":%.9f,\\\"parseReadCpuSeconds\\\":%.9f}\\n\",iterations,entries,files,bytes,hash,metadata,decode,cpu);\n}\n",
+    "driverSource": "import hashlib,json,pathlib,subprocess\nroot=pathlib.Path('.').resolve()\nmanifest=json.load(open('tools/compat_harness/manifests/apps.json'))\nrows=[]\nfor spec in manifest['apps']:\n    if 'legacyRepoPath' not in spec:continue\n    path=root/spec['legacyRepoPath']\n    assert hashlib.sha256(path.read_bytes()).hexdigest()==spec['sha256']\n    for i,variant in enumerate(['before','after','after','before']):\n        binary=root/'build'/('zip-read-'+variant)\n        p=subprocess.run([str(binary),str(path)],text=True,capture_output=True,check=True)\n        a=json.loads(p.stdout);a.update(id=spec['id'],version=spec['version'],fixtureSha256=spec['sha256'],variant=variant,iteration=i)\n        rows.append(a)\n        json.dump(rows,open('build/zip-read-samples.json','w'),indent=2)\n        print(spec['id'],variant,i,a['metadataWallSeconds'],a['readWallSeconds'],a['contentFnv1a64'],flush=True)\n",
+    "binaries": {
+      "build/zip-read-before": "067025ef5b1f982c479e0e9ca3aa9591daee262171cc10dc0860172dbc19520c",
+      "build/zip-read-after": "8858d21b02ec5b793a8e22e39bc4fa52678cb4cc07b2cb018c722fcfc8a9707b"
+    },
+    "earlierIncompleteCapture": {
+      "note": "The first capture persisted 11 samples; the final Art of Glow before sample was missing when finalization checked. Retain those samples here, then repeat the entire serial ABBA series. The 12 primary samples above are the completed series.",
+      "samples": [
+        {
+          "iterations": 8,
+          "entriesPerIteration": 549,
+          "filesPerIteration": 538,
+          "bytesAcrossIterations": 134795544,
+          "contentFnv1a64": "b0fb9c39169b8f25",
+          "metadataWallSeconds": 0.001285431,
+          "readWallSeconds": 0.675253296,
+          "parseReadCpuSeconds": 0.676493,
+          "id": "angry-birds",
+          "version": "1.0",
+          "fixtureSha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+          "variant": "before",
+          "iteration": 0
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 549,
+          "filesPerIteration": 538,
+          "bytesAcrossIterations": 134795544,
+          "contentFnv1a64": "b0fb9c39169b8f25",
+          "metadataWallSeconds": 0.002415279,
+          "readWallSeconds": 0.709737529,
+          "parseReadCpuSeconds": 0.712097,
+          "id": "angry-birds",
+          "version": "1.0",
+          "fixtureSha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+          "variant": "after",
+          "iteration": 1
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 549,
+          "filesPerIteration": 538,
+          "bytesAcrossIterations": 134795544,
+          "contentFnv1a64": "b0fb9c39169b8f25",
+          "metadataWallSeconds": 0.001110046,
+          "readWallSeconds": 0.698129397,
+          "parseReadCpuSeconds": 0.699247,
+          "id": "angry-birds",
+          "version": "1.0",
+          "fixtureSha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+          "variant": "after",
+          "iteration": 2
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 549,
+          "filesPerIteration": 538,
+          "bytesAcrossIterations": 134795544,
+          "contentFnv1a64": "b0fb9c39169b8f25",
+          "metadataWallSeconds": 0.001573766,
+          "readWallSeconds": 0.537179735,
+          "parseReadCpuSeconds": 0.538786,
+          "id": "angry-birds",
+          "version": "1.0",
+          "fixtureSha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+          "variant": "before",
+          "iteration": 3
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 481,
+          "filesPerIteration": 481,
+          "bytesAcrossIterations": 171247624,
+          "contentFnv1a64": "3decaf8c64b19705",
+          "metadataWallSeconds": 0.001675999,
+          "readWallSeconds": 0.34272704,
+          "parseReadCpuSeconds": 0.344454,
+          "id": "tiny-tower",
+          "version": "1.0",
+          "fixtureSha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+          "variant": "before",
+          "iteration": 0
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 481,
+          "filesPerIteration": 481,
+          "bytesAcrossIterations": 171247624,
+          "contentFnv1a64": "3decaf8c64b19705",
+          "metadataWallSeconds": 0.001801491,
+          "readWallSeconds": 0.353604841,
+          "parseReadCpuSeconds": 0.355116,
+          "id": "tiny-tower",
+          "version": "1.0",
+          "fixtureSha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+          "variant": "after",
+          "iteration": 1
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 481,
+          "filesPerIteration": 481,
+          "bytesAcrossIterations": 171247624,
+          "contentFnv1a64": "3decaf8c64b19705",
+          "metadataWallSeconds": 0.001071478,
+          "readWallSeconds": 0.26332331,
+          "parseReadCpuSeconds": 0.264462,
+          "id": "tiny-tower",
+          "version": "1.0",
+          "fixtureSha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+          "variant": "after",
+          "iteration": 2
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 481,
+          "filesPerIteration": 481,
+          "bytesAcrossIterations": 171247624,
+          "contentFnv1a64": "3decaf8c64b19705",
+          "metadataWallSeconds": 0.00215786,
+          "readWallSeconds": 0.297240682,
+          "parseReadCpuSeconds": 0.299427,
+          "id": "tiny-tower",
+          "version": "1.0",
+          "fixtureSha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+          "variant": "before",
+          "iteration": 3
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 70,
+          "filesPerIteration": 67,
+          "bytesAcrossIterations": 99070744,
+          "contentFnv1a64": "a1a1f28c5268cce5",
+          "metadataWallSeconds": 0.001167422,
+          "readWallSeconds": 0.228779241,
+          "parseReadCpuSeconds": 0.229983,
+          "id": "art-of-glow",
+          "version": "1.1.2",
+          "fixtureSha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+          "variant": "before",
+          "iteration": 0
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 70,
+          "filesPerIteration": 67,
+          "bytesAcrossIterations": 99070744,
+          "contentFnv1a64": "a1a1f28c5268cce5",
+          "metadataWallSeconds": 0.000719816,
+          "readWallSeconds": 0.204549447,
+          "parseReadCpuSeconds": 0.205309,
+          "id": "art-of-glow",
+          "version": "1.1.2",
+          "fixtureSha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+          "variant": "after",
+          "iteration": 1
+        },
+        {
+          "iterations": 8,
+          "entriesPerIteration": 70,
+          "filesPerIteration": 67,
+          "bytesAcrossIterations": 99070744,
+          "contentFnv1a64": "a1a1f28c5268cce5",
+          "metadataWallSeconds": 0.000701189,
+          "readWallSeconds": 0.224160624,
+          "parseReadCpuSeconds": 0.224837,
+          "id": "art-of-glow",
+          "version": "1.1.2",
+          "fixtureSha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+          "variant": "after",
+          "iteration": 2
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "Owner UAR-001..013 remain unresolved and unchanged in #15; no causal connection to reported startup/gameplay crashes established",
+    "Three available apps only; optional Clash fixture absent and skipped, not passed",
+    "4 KiB Linux does not prove 16 KiB iPhone permissions, precise faults or signed-device behavior",
+    "Headless mixer signal does not prove audible speakers",
+    "No gameplay, world load, same-sandbox relaunch or offline Clash progression verified",
+    "This is not a complete ZIP/security audit; other parser/importer limitations are outside this focused fix"
+  ]
+}
