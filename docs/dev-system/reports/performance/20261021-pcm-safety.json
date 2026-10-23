@@ -1,0 +1,1369 @@
+{
+  "schemaVersion": 1,
+  "kind": "hvm-pcm-safety-evidence",
+  "generatedAt": "2026-10-22T04:35:53.480086+00:00",
+  "beforeCommit": "39904cb5f80d8743f135eb5c8635c97224b2a5bb",
+  "testedCommit": "031b16d9062ebb341ac2505a102d1817611c5e1f",
+  "testedDirty": false,
+  "host": {
+    "system": "Linux",
+    "release": "6.18.55",
+    "machine": "x86_64",
+    "python": "3.12.14",
+    "pageSize": 4096,
+    "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "notes": [
+      "Host page size is the kernel page. Guest permissions are 4 KB and are not enforced on the fast path.",
+      "A pass recorded here is not a 16 KB iOS memory-model pass."
+    ],
+    "cpu": "Intel Xeon Platinum 8573C",
+    "os": "Ubuntu 24.04 cloud container"
+  },
+  "build": {
+    "type": "Release",
+    "compiler": "Clang 18.1.3",
+    "flags": "-O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off",
+    "source": "Cloud clone only; no user machine, WSL or local fixtures used",
+    "beforeVariant": "Copy tested static archive, replace its single Decode.cpp.o with main Decode.cpp compiled with the same runtime flags and includes; link same CLI objects/dependencies. No runtime difference beyond Decode.cpp."
+  },
+  "binaries": {
+    "build/hvm": "acc217317a6e7e221522199b794ade0074a9cd64e6166c34db07ca50f5790ae3",
+    "build/before/hvm": "bebed3523f616a9c62a108cc7b860ce123569fd485545b240b155ad9d207ee81"
+  },
+  "regression": {
+    "syntheticCases": 42,
+    "beforeRelease": "PASS float32-wav\nPASS nonfinite-float32-wav\nPASS float32-caf-le\nPASS nonfinite-float32-caf-le\nPASS float32-caf-be\nPASS nonfinite-float32-caf-be\nPASS float64-wav\nPASS nonfinite-float64-wav\nPASS float64-caf-le\nPASS nonfinite-float64-caf-le\nPASS float64-caf-be\nPASS nonfinite-float64-caf-be\nPASS integer8-le\nPASS integer8-be\nPASS integer16-le\nPASS integer16-be\nPASS integer24-le\nPASS integer-wav24\nPASS integer24-be\nPASS integer32-le\nPASS integer-wav32\nPASS integer32-be\nPASS reject-integer0\nPASS reject-caf-integer0\nPASS reject-integer4\nPASS reject-caf-integer4\nPASS reject-integer12\nFAIL reject-caf-integer12\nFAIL reject-integer20\nFAIL reject-caf-integer20\nFAIL reject-integer40\nFAIL reject-caf-integer40\nFAIL reject-integer64\nFAIL reject-caf-integer64\nPASS reject-integer65535\nPASS reject-caf-integer65535\nFAIL reject-float8\nFAIL reject-float16\nFAIL reject-float24\nFAIL reject-float40\nFAIL reject-float80\nPASS truncated-float64\nPCM decode: 30 passed, 12 failed\n",
+    "afterReleaseAndSanitizers": "PASS float32-wav\nPASS nonfinite-float32-wav\nPASS float32-caf-le\nPASS nonfinite-float32-caf-le\nPASS float32-caf-be\nPASS nonfinite-float32-caf-be\nPASS float64-wav\nPASS nonfinite-float64-wav\nPASS float64-caf-le\nPASS nonfinite-float64-caf-le\nPASS float64-caf-be\nPASS nonfinite-float64-caf-be\nPASS integer8-le\nPASS integer8-be\nPASS integer16-le\nPASS integer16-be\nPASS integer24-le\nPASS integer-wav24\nPASS integer24-be\nPASS integer32-le\nPASS integer-wav32\nPASS integer32-be\nPASS reject-integer0\nPASS reject-caf-integer0\nPASS reject-integer4\nPASS reject-caf-integer4\nPASS reject-integer12\nPASS reject-caf-integer12\nPASS reject-integer20\nPASS reject-caf-integer20\nPASS reject-integer40\nPASS reject-caf-integer40\nPASS reject-integer64\nPASS reject-caf-integer64\nPASS reject-integer65535\nPASS reject-caf-integer65535\nPASS reject-float8\nPASS reject-float16\nPASS reject-float24\nPASS reject-float40\nPASS reject-float80\nPASS truncated-float64\nPCM decode: 42 passed, 0 failed\nPASS float32-wav\nPASS nonfinite-float32-wav\nPASS float32-caf-le\nPASS nonfinite-float32-caf-le\nPASS float32-caf-be\nPASS nonfinite-float32-caf-be\nPASS float64-wav\nPASS nonfinite-float64-wav\nPASS float64-caf-le\nPASS nonfinite-float64-caf-le\nPASS float64-caf-be\nPASS nonfinite-float64-caf-be\nPASS integer8-le\nPASS integer8-be\nPASS integer16-le\nPASS integer16-be\nPASS integer24-le\nPASS integer-wav24\nPASS integer24-be\nPASS integer32-le\nPASS integer-wav32\nPASS integer32-be\nPASS reject-integer0\nPASS reject-caf-integer0\nPASS reject-integer4\nPASS reject-caf-integer4\nPASS reject-integer12\nPASS reject-caf-integer12\nPASS reject-integer20\nPASS reject-caf-integer20\nPASS reject-integer40\nPASS reject-caf-integer40\nPASS reject-integer64\nPASS reject-caf-integer64\nPASS reject-integer65535\nPASS reject-caf-integer65535\nPASS reject-float8\nPASS reject-float16\nPASS reject-float24\nPASS reject-float40\nPASS reject-float80\nPASS truncated-float64\nPCM decode: 42 passed, 0 failed\n",
+    "beforeUBSan": {
+      "float64-wav": "build/DecodeBefore.cpp:29:85: runtime error: shift exponent 56 is too large for 32-bit type 'uint32_t' (aka 'unsigned int')\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior build/DecodeBefore.cpp:29:85 \n",
+      "nonfinite-float32-wav": "build/DecodeBefore.cpp:48:40: runtime error: nan is outside the range of representable values of type 'short'\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior build/DecodeBefore.cpp:48:40 \n",
+      "reject-integer40": "build/DecodeBefore.cpp:29:85: runtime error: shift exponent 32 is too large for 32-bit type 'uint32_t' (aka 'unsigned int')\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior build/DecodeBefore.cpp:29:85 \n"
+    },
+    "command": "tools/test_pcm_decode.sh",
+    "containerSanitizerEnvironment": "ASAN_OPTIONS=detect_leaks=0; LeakSanitizer cannot enumerate proc tasks in this container. AddressSanitizer/UBSan/float-cast-overflow retained. GitHub workflow passes with default LeakSanitizer settings."
+  },
+  "compatibility": {
+    "report": "../linux-x86_64/20261022T043240Z-031b16d9062e.json",
+    "summary": {
+      "ok": true,
+      "unitFailed": 0,
+      "pythonFailed": 0,
+      "fuzzStatus": "not-run",
+      "appsResolved": 3,
+      "appsSkipped": 1,
+      "appsCrashed": 0,
+      "appsLaunchFailed": 0,
+      "resolveErrors": 0,
+      "clusterCount": 13
+    },
+    "baselineDiff": {
+      "schemaVersion": 1,
+      "kind": "hvm-compat-diff",
+      "ok": true,
+      "regressions": [],
+      "improvements": [
+        {
+          "kind": "unimplemented-import",
+          "id": "angry-birds",
+          "message": "angry-birds import now bound: tmpnam"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regcomp"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regerror"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regexec"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regfree"
+        }
+      ],
+      "attention": [],
+      "informational": [
+        {
+          "kind": "perf",
+          "id": "angry-birds",
+          "message": "angry-birds avgFrameMs 23.902 -> 30.466 (+27%); not a failure"
+        },
+        {
+          "kind": "perf",
+          "id": "art-of-glow",
+          "message": "art-of-glow avgFrameMs 57.133 -> 75.829 (+33%); not a failure"
+        }
+      ]
+    },
+    "previousIndexedDiff": {
+      "schemaVersion": 1,
+      "kind": "hvm-compat-diff",
+      "ok": true,
+      "regressions": [],
+      "improvements": [
+        {
+          "kind": "unimplemented-import",
+          "id": "angry-birds",
+          "message": "angry-birds import now bound: tmpnam"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regcomp"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regerror"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regexec"
+        },
+        {
+          "kind": "unimplemented-import",
+          "id": "art-of-glow",
+          "message": "art-of-glow import now bound: regfree"
+        }
+      ],
+      "attention": [],
+      "informational": [
+        {
+          "kind": "perf",
+          "id": "angry-birds",
+          "message": "angry-birds avgFrameMs 19.082 -> 30.466 (+60%); not a failure"
+        },
+        {
+          "kind": "perf",
+          "id": "art-of-glow",
+          "message": "art-of-glow avgFrameMs 49.849 -> 75.829 (+52%); not a failure"
+        },
+        {
+          "kind": "perf",
+          "id": "tiny-tower",
+          "message": "tiny-tower avgFrameMs 15.117 -> 20.986 (+39%); not a failure"
+        }
+      ]
+    },
+    "harnessSelftests": 56,
+    "fulltestPassed": 191,
+    "githubRuns": {
+      "pcm": 39722798751,
+      "compat": 39722798705,
+      "ci": 39722798790
+    },
+    "githubConclusion": "All three succeeded on tested commit; macOS skipped"
+  },
+  "measurement": {
+    "purpose": "Check available startup workloads for behavioral changes and measure timing without extrapolating to gameplay",
+    "scenario": "Serial 10-second fresh-start runs per app in before/after/after/before order; no input; each sample has a fresh sandbox and IPA import. Hard stop captures live output, no graceful teardown. No concurrent cloud build/test during samples.",
+    "durationType": "Host wall time, not guest simulation time",
+    "fixtures": "Only three grandfathered SHA-256-verified main fixtures; exact hashes and versions in every sample",
+    "driverSource": "import hashlib,json,pathlib,sys,platform,subprocess\nsys.path.insert(0,str(pathlib.Path('.').resolve()/'tools'))\nfrom compat_harness.runner import _run_one\nroot=pathlib.Path('.').resolve()\nmanifest=json.load(open('tools/compat_harness/manifests/apps.json'))\nrows=[]\nfor spec in manifest['apps']:\n    if 'legacyRepoPath' not in spec:continue\n    path=root/spec['legacyRepoPath']\n    assert hashlib.sha256(path.read_bytes()).hexdigest()==spec['sha256']\n    item=dict(id=spec['id'],sha256=spec['sha256'],status='resolved',path=str(path),displayPath=path.name,source='legacy-repo')\n    for i,variant in enumerate(['before','after','after','before']):\n        hvm=root/('build/before/hvm' if variant=='before' else 'build/hvm')\n        out=root/'build'/'startup-abba'/str(i)\n        a=_run_one(str(hvm),spec,item,str(out),10)\n        a.update(variant=variant,iteration=i)\n        shot=out/'work'/spec['id']/'frame.png'\n        a['screenshotSha256']=hashlib.sha256(shot.read_bytes()).hexdigest() if shot.exists() else None\n        rows.append(a)\n        json.dump(rows,open('build/startup-samples.json','w'),indent=2)\n        print(spec['id'],variant,i,a['launchSuccess'],a['perf'].get('avgFrameMs'),a['frame'].get('signal'),a['audio'].get('signal'),flush=True)\n",
+    "conclusion": "Timing moves both directions; no performance improvement or sustained gameplay FPS gain established. All launches succeed, all final frame signals varied; Tiny Tower mixer stays active, others silent, with no dropped blocks or transport errors. Tiny Tower and Art of Glow screenshots match exactly across variants; Angry Birds frame hashes differ as startup advances.",
+    "summary": {
+      "angry-birds": {
+        "before": {
+          "avgFrameMsSamples": [
+            30.475,
+            38.33
+          ],
+          "medianAvgFrameMs": 34.4025,
+          "presentedFrameSamples": [
+            178,
+            141
+          ]
+        },
+        "after": {
+          "avgFrameMsSamples": [
+            32.252,
+            35.099
+          ],
+          "medianAvgFrameMs": 33.6755,
+          "presentedFrameSamples": [
+            167,
+            160
+          ]
+        }
+      },
+      "art-of-glow": {
+        "before": {
+          "avgFrameMsSamples": [
+            80.683,
+            84.141
+          ],
+          "medianAvgFrameMs": 82.412,
+          "presentedFrameSamples": [
+            122,
+            116
+          ]
+        },
+        "after": {
+          "avgFrameMsSamples": [
+            78.97,
+            87.427
+          ],
+          "medianAvgFrameMs": 83.1985,
+          "presentedFrameSamples": [
+            124,
+            112
+          ]
+        }
+      },
+      "tiny-tower": {
+        "before": {
+          "avgFrameMsSamples": [
+            25.939,
+            25.684
+          ],
+          "medianAvgFrameMs": 25.811500000000002,
+          "presentedFrameSamples": [
+            175,
+            177
+          ]
+        },
+        "after": {
+          "avgFrameMsSamples": [
+            29.372,
+            24.986
+          ],
+          "medianAvgFrameMs": 27.179000000000002,
+          "presentedFrameSamples": [
+            156,
+            181
+          ]
+        }
+      }
+    },
+    "samples": [
+      {
+        "id": "angry-birds",
+        "name": "Angry Birds",
+        "version": "1.0",
+        "optional": false,
+        "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+        "source": "legacy-repo",
+        "displayPath": "AngryBirds_v1.0_os30.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [],
+        "missingFunctions": [],
+        "warnings": [],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.183,
+          "guestInstructions": 476749900,
+          "guestMIPS": 46.816,
+          "blocksDecoded": 7265,
+          "frames": 178,
+          "framesPresented": 178,
+          "avgFrameMs": 30.475,
+          "avgCompositeMs": 30.133,
+          "maxFrameMs": 66.958,
+          "slowFrames": 178,
+          "p50FrameMs": 28.312,
+          "p95FrameMs": 44.04,
+          "p99FrameMs": 63.439,
+          "timeToFirstFrameMs": 140.537
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.0,
+          "whiteFraction": 0.1113,
+          "otherFraction": 0.8888,
+          "uniqueQuantizedColors": 458,
+          "dominantShare": 0.1126,
+          "framesPresented": 178
+        },
+        "audio": {
+          "measured": true,
+          "signal": "silent",
+          "setupError": "",
+          "enabled": true,
+          "frames": 442368,
+          "nonSilentFrames": 0,
+          "peak": 0,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_1.pvr: 866x1005 R4G4B4A4 (as 1024x1024 R4G4B4A4)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_2.pvr: 1024x1024 RGB_PVRTC_GL_4BPP (as 1024x1024 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_3.pvr: 480x242 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_4.pvr: 480x193 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_5.pvr: 480x168 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_6.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_7.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_8.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU.png: 1011x511 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU_1.png: 1014x658 A8B8G8R8 (as 1024x1024 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU_2.png: 511x276 A8B8G8R8 (as 512x512 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/TUTORIALS.png: 798x412 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/TUTORIALS_1.png: 459x206 A8B8G8R8 (as 512x256 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/LEVELSELECTION.png: 511x972 A8B8G8R8 (as 512x1024 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/CUTSCENES.png: 996x441 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/CUTSCENES_1.png: 996x960 A8B8G8R8 (as 1024x1024 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_BASIC.png: 1024x42 A8B8G8R8 (as 1024x64 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_MENU.png: 1024x112 A8B8G8R8 (as 1024x128 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_SCORE.png: 1008x61 A8B8G8R8 (as 1024x64 A8B8G8R8)\nLoading image build/startup-abba/0/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_BIG_NUMBERS.png: 754x50 A8B8G8R8 (as 1024x64 A8B8G8R8)\n",
+        "clusters": [],
+        "durationSec": 10.357,
+        "command": [
+          "hvm",
+          "run",
+          "AngryBirds_v1.0_os30.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "before",
+        "iteration": 0,
+        "screenshotSha256": "a4a94bf707c31e6c0dbd88011e2033cba9a10728f466b6d4baaa08f8984aabb5"
+      },
+      {
+        "id": "angry-birds",
+        "name": "Angry Birds",
+        "version": "1.0",
+        "optional": false,
+        "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+        "source": "legacy-repo",
+        "displayPath": "AngryBirds_v1.0_os30.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [],
+        "missingFunctions": [],
+        "warnings": [],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.13,
+          "guestInstructions": 476889634,
+          "guestMIPS": 47.077,
+          "blocksDecoded": 7265,
+          "frames": 167,
+          "framesPresented": 167,
+          "avgFrameMs": 32.252,
+          "avgCompositeMs": 31.849,
+          "maxFrameMs": 54.266,
+          "slowFrames": 167,
+          "p50FrameMs": 31.195,
+          "p95FrameMs": 37.224,
+          "p99FrameMs": 49.283,
+          "timeToFirstFrameMs": 164.104
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.0,
+          "whiteFraction": 0.1123,
+          "otherFraction": 0.8877,
+          "uniqueQuantizedColors": 462,
+          "dominantShare": 0.1133,
+          "framesPresented": 167
+        },
+        "audio": {
+          "measured": true,
+          "signal": "silent",
+          "setupError": "",
+          "enabled": true,
+          "frames": 442368,
+          "nonSilentFrames": 0,
+          "peak": 0,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_1.pvr: 866x1005 R4G4B4A4 (as 1024x1024 R4G4B4A4)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_2.pvr: 1024x1024 RGB_PVRTC_GL_4BPP (as 1024x1024 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_3.pvr: 480x242 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_4.pvr: 480x193 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_5.pvr: 480x168 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_6.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_7.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_8.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU.png: 1011x511 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU_1.png: 1014x658 A8B8G8R8 (as 1024x1024 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU_2.png: 511x276 A8B8G8R8 (as 512x512 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/TUTORIALS.png: 798x412 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/TUTORIALS_1.png: 459x206 A8B8G8R8 (as 512x256 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/LEVELSELECTION.png: 511x972 A8B8G8R8 (as 512x1024 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/CUTSCENES.png: 996x441 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/CUTSCENES_1.png: 996x960 A8B8G8R8 (as 1024x1024 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_BASIC.png: 1024x42 A8B8G8R8 (as 1024x64 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_MENU.png: 1024x112 A8B8G8R8 (as 1024x128 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_SCORE.png: 1008x61 A8B8G8R8 (as 1024x64 A8B8G8R8)\nLoading image build/startup-abba/1/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_BIG_NUMBERS.png: 754x50 A8B8G8R8 (as 1024x64 A8B8G8R8)\n",
+        "clusters": [],
+        "durationSec": 10.274,
+        "command": [
+          "hvm",
+          "run",
+          "AngryBirds_v1.0_os30.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "after",
+        "iteration": 1,
+        "screenshotSha256": "d9bd8c9930f841b1600c994fdd2c49931b92de32feec86e87043784560f736a9"
+      },
+      {
+        "id": "angry-birds",
+        "name": "Angry Birds",
+        "version": "1.0",
+        "optional": false,
+        "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+        "source": "legacy-repo",
+        "displayPath": "AngryBirds_v1.0_os30.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [],
+        "missingFunctions": [],
+        "warnings": [],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.139,
+          "guestInstructions": 473469515,
+          "guestMIPS": 46.699,
+          "blocksDecoded": 7266,
+          "frames": 160,
+          "framesPresented": 160,
+          "avgFrameMs": 35.099,
+          "avgCompositeMs": 34.695,
+          "maxFrameMs": 447.165,
+          "slowFrames": 160,
+          "p50FrameMs": 31.195,
+          "p95FrameMs": 40.37,
+          "p99FrameMs": 79.692,
+          "timeToFirstFrameMs": 169.093
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.0,
+          "whiteFraction": 0.1116,
+          "otherFraction": 0.8884,
+          "uniqueQuantizedColors": 453,
+          "dominantShare": 0.1128,
+          "framesPresented": 160
+        },
+        "audio": {
+          "measured": true,
+          "signal": "silent",
+          "setupError": "",
+          "enabled": true,
+          "frames": 436224,
+          "nonSilentFrames": 0,
+          "peak": 0,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_1.pvr: 866x1005 R4G4B4A4 (as 1024x1024 R4G4B4A4)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_2.pvr: 1024x1024 RGB_PVRTC_GL_4BPP (as 1024x1024 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_3.pvr: 480x242 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_4.pvr: 480x193 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_5.pvr: 480x168 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_6.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_7.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_8.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU.png: 1011x511 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU_1.png: 1014x658 A8B8G8R8 (as 1024x1024 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU_2.png: 511x276 A8B8G8R8 (as 512x512 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/TUTORIALS.png: 798x412 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/TUTORIALS_1.png: 459x206 A8B8G8R8 (as 512x256 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/LEVELSELECTION.png: 511x972 A8B8G8R8 (as 512x1024 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/CUTSCENES.png: 996x441 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/CUTSCENES_1.png: 996x960 A8B8G8R8 (as 1024x1024 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_BASIC.png: 1024x42 A8B8G8R8 (as 1024x64 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_MENU.png: 1024x112 A8B8G8R8 (as 1024x128 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_SCORE.png: 1008x61 A8B8G8R8 (as 1024x64 A8B8G8R8)\nLoading image build/startup-abba/2/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_BIG_NUMBERS.png: 754x50 A8B8G8R8 (as 1024x64 A8B8G8R8)\n",
+        "clusters": [],
+        "durationSec": 10.282,
+        "command": [
+          "hvm",
+          "run",
+          "AngryBirds_v1.0_os30.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "after",
+        "iteration": 2,
+        "screenshotSha256": "c2c86771d1c5832a509a508a7de9faf21a7b2594a74c48705d2e594e8387e186"
+      },
+      {
+        "id": "angry-birds",
+        "name": "Angry Birds",
+        "version": "1.0",
+        "optional": false,
+        "sha256": "cdea1290dcaa67ec75cf555e78caaa8d90cfaa90021ec7f05e40089fb87944cf",
+        "source": "legacy-repo",
+        "displayPath": "AngryBirds_v1.0_os30.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [],
+        "missingFunctions": [],
+        "warnings": [],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.17,
+          "guestInstructions": 473899424,
+          "guestMIPS": 46.596,
+          "blocksDecoded": 7268,
+          "frames": 141,
+          "framesPresented": 141,
+          "avgFrameMs": 38.33,
+          "avgCompositeMs": 37.819,
+          "maxFrameMs": 80.246,
+          "slowFrames": 141,
+          "p50FrameMs": 32.506,
+          "p95FrameMs": 65.012,
+          "p99FrameMs": 75.498,
+          "timeToFirstFrameMs": 157.564
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.0,
+          "whiteFraction": 0.1116,
+          "otherFraction": 0.8884,
+          "uniqueQuantizedColors": 458,
+          "dominantShare": 0.1128,
+          "framesPresented": 141
+        },
+        "audio": {
+          "measured": true,
+          "signal": "silent",
+          "setupError": "",
+          "enabled": true,
+          "frames": 444416,
+          "nonSilentFrames": 0,
+          "peak": 0,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_1.pvr: 866x1005 R4G4B4A4 (as 1024x1024 R4G4B4A4)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_2.pvr: 1024x1024 RGB_PVRTC_GL_4BPP (as 1024x1024 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_3.pvr: 480x242 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_4.pvr: 480x193 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_5.pvr: 480x168 R4G4B4A4 (as 512x256 R4G4B4A4)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_6.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_7.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/INGAME_8.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU.png: 1011x511 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU_1.png: 1014x658 A8B8G8R8 (as 1024x1024 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/MENU_2.png: 511x276 A8B8G8R8 (as 512x512 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/TUTORIALS.png: 798x412 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/TUTORIALS_1.png: 459x206 A8B8G8R8 (as 512x256 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/LEVELSELECTION.png: 511x972 A8B8G8R8 (as 512x1024 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/CUTSCENES.png: 996x441 A8B8G8R8 (as 1024x512 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/CUTSCENES_1.png: 996x960 A8B8G8R8 (as 1024x1024 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_BASIC.png: 1024x42 A8B8G8R8 (as 1024x64 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_MENU.png: 1024x112 A8B8G8R8 (as 1024x128 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_SCORE.png: 1008x61 A8B8G8R8 (as 1024x64 A8B8G8R8)\nLoading image build/startup-abba/3/work/angry-birds/home/com.clickgamer.AngryBirds/AngryBirds.app/data/FONT_BIG_NUMBERS.png: 754x50 A8B8G8R8 (as 1024x64 A8B8G8R8)\n",
+        "clusters": [],
+        "durationSec": 10.311,
+        "command": [
+          "hvm",
+          "run",
+          "AngryBirds_v1.0_os30.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "before",
+        "iteration": 3,
+        "screenshotSha256": "7b4ffb26f1394526d9c6acd1ab500ed25043023e8bc4b82feb044f51468962b9"
+      },
+      {
+        "id": "tiny-tower",
+        "name": "Tiny Tower",
+        "version": "1.0",
+        "optional": false,
+        "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+        "source": "legacy-repo",
+        "displayPath": "Tiny_Tower_v1.0_os30.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [
+          "CGFontCopyTableForTag",
+          "CGFontGetAscent",
+          "CGFontGetCapHeight",
+          "CGFontGetDescent",
+          "CGFontGetGlyphAdvances",
+          "CGFontGetUnitsPerEm",
+          "CGFontGetXHeight",
+          "glPointSizePointerOES"
+        ],
+        "missingFunctions": [],
+        "warnings": [],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.168,
+          "guestInstructions": 4211058,
+          "guestMIPS": 0.414,
+          "blocksDecoded": 2875,
+          "frames": 348,
+          "framesPresented": 175,
+          "avgFrameMs": 25.939,
+          "avgCompositeMs": 33.871,
+          "maxFrameMs": 119.686,
+          "slowFrames": 175,
+          "p50FrameMs": 31.982,
+          "p95FrameMs": 59.769,
+          "p99FrameMs": 94.372,
+          "timeToFirstFrameMs": 390.826
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.0128,
+          "whiteFraction": 0.0065,
+          "otherFraction": 0.9807,
+          "uniqueQuantizedColors": 449,
+          "dominantShare": 0.2029,
+          "framesPresented": 175
+        },
+        "audio": {
+          "measured": true,
+          "signal": "active",
+          "setupError": "",
+          "enabled": true,
+          "frames": 444416,
+          "nonSilentFrames": 427824,
+          "peak": 0.190636,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "(localytics) Object Initialized.  Application's key is: <redacted>\n(localytics) File Path is: build/startup-abba/0/work/tiny-tower/home/com.eeenmachine.tinytowers/Documents/localytics/\n(localytics) Succesfully opened session. UUID is: <uuid>\n(localytics) Session file is: s_<uuid>.yml\n(localytics) Close session file is: c_<uuid>.yml\n(localytics uploader) Beginning upload process\n(localytics uploader) Spawning new thread for upload\n(localytics uploader) Error Uploading.  Code: -1009,  Description: ?#\napplicationDidFinishLaunching\nglViewWidth: 320.000000\nCreated dialog layer...\nglViewWidth: 320.000000\nLOADED GAME FROM KEYCHAIN:\n(null)\nglViewWidth: 320.000000\nLoading 0 storyInfos in TowerLayer...\n_botY: 86.000000\nCreating floorGfx with id: 65535\nnum floors: 1\n_viewHeight: 112.000000\nglViewWidth: 320.000000\nLoading 0 bitInfo in TowerLayer...\nidealCountPerType: 1.000000\nBusiness count for type FOOD: 0\nBusiness count for type SERVICE: 0\nBusiness count for type RECREATION: 0\nBusiness count for type RETAIL: 0\nBusiness count for type CREATIVE: 0\napplicationDidBecomeActive\nUSER MUSIC PLAYING: NO\nmusic path:build/startup-abba/0/work/tiny-tower/home/com.eeenmachine.tinytowers/Tiny Tower.app/song2.mp3\ncreated mplayer\nFinch Foreground\nUSER MUSIC PLAYING: NO\nmplayer.play\n",
+        "clusters": [],
+        "durationSec": 10.299,
+        "command": [
+          "hvm",
+          "run",
+          "Tiny_Tower_v1.0_os30.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "before",
+        "iteration": 0,
+        "screenshotSha256": "14df396e01752b882b964160a2d16e5d66bc021a9461ba57103a3e6aefabe361"
+      },
+      {
+        "id": "tiny-tower",
+        "name": "Tiny Tower",
+        "version": "1.0",
+        "optional": false,
+        "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+        "source": "legacy-repo",
+        "displayPath": "Tiny_Tower_v1.0_os30.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [
+          "CGFontCopyTableForTag",
+          "CGFontGetAscent",
+          "CGFontGetCapHeight",
+          "CGFontGetDescent",
+          "CGFontGetGlyphAdvances",
+          "CGFontGetUnitsPerEm",
+          "CGFontGetXHeight",
+          "glPointSizePointerOES"
+        ],
+        "missingFunctions": [],
+        "warnings": [],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.158,
+          "guestInstructions": 3964362,
+          "guestMIPS": 0.39,
+          "blocksDecoded": 2875,
+          "frames": 310,
+          "framesPresented": 156,
+          "avgFrameMs": 29.372,
+          "avgCompositeMs": 38.845,
+          "maxFrameMs": 195.51,
+          "slowFrames": 156,
+          "p50FrameMs": 35.127,
+          "p95FrameMs": 92.275,
+          "p99FrameMs": 110.1,
+          "timeToFirstFrameMs": 380.385
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.0128,
+          "whiteFraction": 0.0065,
+          "otherFraction": 0.9807,
+          "uniqueQuantizedColors": 449,
+          "dominantShare": 0.2029,
+          "framesPresented": 156
+        },
+        "audio": {
+          "measured": true,
+          "signal": "active",
+          "setupError": "",
+          "enabled": true,
+          "frames": 440320,
+          "nonSilentFrames": 423728,
+          "peak": 0.190636,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "(localytics) Object Initialized.  Application's key is: <redacted>\n(localytics) File Path is: build/startup-abba/1/work/tiny-tower/home/com.eeenmachine.tinytowers/Documents/localytics/\n(localytics) Succesfully opened session. UUID is: <uuid>\n(localytics) Session file is: s_<uuid>.yml\n(localytics) Close session file is: c_<uuid>.yml\n(localytics uploader) Beginning upload process\n(localytics uploader) Spawning new thread for upload\n(localytics uploader) Error Uploading.  Code: -1009,  Description: ?#\napplicationDidFinishLaunching\nglViewWidth: 320.000000\nCreated dialog layer...\nglViewWidth: 320.000000\nLOADED GAME FROM KEYCHAIN:\n(null)\nglViewWidth: 320.000000\nLoading 0 storyInfos in TowerLayer...\n_botY: 86.000000\nCreating floorGfx with id: 65535\nnum floors: 1\n_viewHeight: 112.000000\nglViewWidth: 320.000000\nLoading 0 bitInfo in TowerLayer...\nidealCountPerType: 1.000000\nBusiness count for type FOOD: 0\nBusiness count for type SERVICE: 0\nBusiness count for type RECREATION: 0\nBusiness count for type RETAIL: 0\nBusiness count for type CREATIVE: 0\napplicationDidBecomeActive\nUSER MUSIC PLAYING: NO\nmusic path:build/startup-abba/1/work/tiny-tower/home/com.eeenmachine.tinytowers/Tiny Tower.app/song2.mp3\ncreated mplayer\nFinch Foreground\nUSER MUSIC PLAYING: NO\nmplayer.play\n",
+        "clusters": [],
+        "durationSec": 10.284,
+        "command": [
+          "hvm",
+          "run",
+          "Tiny_Tower_v1.0_os30.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "after",
+        "iteration": 1,
+        "screenshotSha256": "14df396e01752b882b964160a2d16e5d66bc021a9461ba57103a3e6aefabe361"
+      },
+      {
+        "id": "tiny-tower",
+        "name": "Tiny Tower",
+        "version": "1.0",
+        "optional": false,
+        "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+        "source": "legacy-repo",
+        "displayPath": "Tiny_Tower_v1.0_os30.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [
+          "CGFontCopyTableForTag",
+          "CGFontGetAscent",
+          "CGFontGetCapHeight",
+          "CGFontGetDescent",
+          "CGFontGetGlyphAdvances",
+          "CGFontGetUnitsPerEm",
+          "CGFontGetXHeight",
+          "glPointSizePointerOES"
+        ],
+        "missingFunctions": [],
+        "warnings": [],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.117,
+          "guestInstructions": 4289235,
+          "guestMIPS": 0.424,
+          "blocksDecoded": 2900,
+          "frames": 360,
+          "framesPresented": 181,
+          "avgFrameMs": 24.986,
+          "avgCompositeMs": 33.345,
+          "maxFrameMs": 205.77,
+          "slowFrames": 181,
+          "p50FrameMs": 38.797,
+          "p95FrameMs": 54.526,
+          "p99FrameMs": 63.963,
+          "timeToFirstFrameMs": 393.676
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.0128,
+          "whiteFraction": 0.0065,
+          "otherFraction": 0.9807,
+          "uniqueQuantizedColors": 449,
+          "dominantShare": 0.2029,
+          "framesPresented": 181
+        },
+        "audio": {
+          "measured": true,
+          "signal": "active",
+          "setupError": "",
+          "enabled": true,
+          "frames": 442368,
+          "nonSilentFrames": 427824,
+          "peak": 0.190636,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "(localytics) Object Initialized.  Application's key is: <redacted>\n(localytics) File Path is: build/startup-abba/2/work/tiny-tower/home/com.eeenmachine.tinytowers/Documents/localytics/\n(localytics) Succesfully opened session. UUID is: <uuid>\n(localytics) Session file is: s_<uuid>.yml\n(localytics) Close session file is: c_<uuid>.yml\n(localytics uploader) Beginning upload process\n(localytics uploader) Spawning new thread for upload\n(localytics uploader) Error Uploading.  Code: -1009,  Description: ?#\napplicationDidFinishLaunching\nglViewWidth: 320.000000\nCreated dialog layer...\nglViewWidth: 320.000000\nLOADED GAME FROM KEYCHAIN:\n(null)\nglViewWidth: 320.000000\nLoading 0 storyInfos in TowerLayer...\n_botY: 86.000000\nCreating floorGfx with id: 65535\nnum floors: 1\n_viewHeight: 112.000000\nglViewWidth: 320.000000\nLoading 0 bitInfo in TowerLayer...\nidealCountPerType: 1.000000\nBusiness count for type FOOD: 0\nBusiness count for type SERVICE: 0\nBusiness count for type RECREATION: 0\nBusiness count for type RETAIL: 0\nBusiness count for type CREATIVE: 0\napplicationDidBecomeActive\nUSER MUSIC PLAYING: NO\nmusic path:build/startup-abba/2/work/tiny-tower/home/com.eeenmachine.tinytowers/Tiny Tower.app/song2.mp3\ncreated mplayer\nFinch Foreground\nUSER MUSIC PLAYING: NO\nmplayer.play\n",
+        "clusters": [],
+        "durationSec": 10.24,
+        "command": [
+          "hvm",
+          "run",
+          "Tiny_Tower_v1.0_os30.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "after",
+        "iteration": 2,
+        "screenshotSha256": "14df396e01752b882b964160a2d16e5d66bc021a9461ba57103a3e6aefabe361"
+      },
+      {
+        "id": "tiny-tower",
+        "name": "Tiny Tower",
+        "version": "1.0",
+        "optional": false,
+        "sha256": "7f84f2d2c561373917a05866337bdf8d8653b3ac8b801248d298f20b5c649578",
+        "source": "legacy-repo",
+        "displayPath": "Tiny_Tower_v1.0_os30.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [
+          "CGFontCopyTableForTag",
+          "CGFontGetAscent",
+          "CGFontGetCapHeight",
+          "CGFontGetDescent",
+          "CGFontGetGlyphAdvances",
+          "CGFontGetUnitsPerEm",
+          "CGFontGetXHeight",
+          "glPointSizePointerOES"
+        ],
+        "missingFunctions": [],
+        "warnings": [],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.157,
+          "guestInstructions": 4237930,
+          "guestMIPS": 0.417,
+          "blocksDecoded": 2875,
+          "frames": 352,
+          "framesPresented": 177,
+          "avgFrameMs": 25.684,
+          "avgCompositeMs": 33.992,
+          "maxFrameMs": 200.263,
+          "slowFrames": 177,
+          "p50FrameMs": 29.098,
+          "p95FrameMs": 59.245,
+          "p99FrameMs": 80.74,
+          "timeToFirstFrameMs": 378.143
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.0128,
+          "whiteFraction": 0.0065,
+          "otherFraction": 0.9807,
+          "uniqueQuantizedColors": 449,
+          "dominantShare": 0.2029,
+          "framesPresented": 177
+        },
+        "audio": {
+          "measured": true,
+          "signal": "active",
+          "setupError": "",
+          "enabled": true,
+          "frames": 440320,
+          "nonSilentFrames": 423728,
+          "peak": 0.190636,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "(localytics) Object Initialized.  Application's key is: <redacted>\n(localytics) File Path is: build/startup-abba/3/work/tiny-tower/home/com.eeenmachine.tinytowers/Documents/localytics/\n(localytics) Succesfully opened session. UUID is: <uuid>\n(localytics) Session file is: s_<uuid>.yml\n(localytics) Close session file is: c_<uuid>.yml\n(localytics uploader) Beginning upload process\n(localytics uploader) Spawning new thread for upload\n(localytics uploader) Error Uploading.  Code: -1009,  Description: ?#\napplicationDidFinishLaunching\nglViewWidth: 320.000000\nCreated dialog layer...\nglViewWidth: 320.000000\nLOADED GAME FROM KEYCHAIN:\n(null)\nglViewWidth: 320.000000\nLoading 0 storyInfos in TowerLayer...\n_botY: 86.000000\nCreating floorGfx with id: 65535\nnum floors: 1\n_viewHeight: 112.000000\nglViewWidth: 320.000000\nLoading 0 bitInfo in TowerLayer...\nidealCountPerType: 1.000000\nBusiness count for type FOOD: 0\nBusiness count for type SERVICE: 0\nBusiness count for type RECREATION: 0\nBusiness count for type RETAIL: 0\nBusiness count for type CREATIVE: 0\napplicationDidBecomeActive\nUSER MUSIC PLAYING: NO\nmusic path:build/startup-abba/3/work/tiny-tower/home/com.eeenmachine.tinytowers/Tiny Tower.app/song2.mp3\ncreated mplayer\nFinch Foreground\nUSER MUSIC PLAYING: NO\nmplayer.play\n",
+        "clusters": [],
+        "durationSec": 10.282,
+        "command": [
+          "hvm",
+          "run",
+          "Tiny_Tower_v1.0_os30.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "before",
+        "iteration": 3,
+        "screenshotSha256": "14df396e01752b882b964160a2d16e5d66bc021a9461ba57103a3e6aefabe361"
+      },
+      {
+        "id": "art-of-glow",
+        "name": "Art of Glow",
+        "version": "1.1.2",
+        "optional": false,
+        "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+        "source": "legacy-repo",
+        "displayPath": "Art_Of_Glow_v1.1.2_os313.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [],
+        "missingFunctions": [
+          "SCNetworkReachability (network reported offline)"
+        ],
+        "warnings": [
+          {
+            "message": "Missing data symbol kCFNumberNaN (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing: SCNetworkReachability (network reported offline)",
+            "count": 1
+          },
+          {
+            "message": "The app finished launching without a key window (did it call makeKeyAndVisible?)",
+            "count": 1
+          }
+        ],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.153,
+          "guestInstructions": 14493514,
+          "guestMIPS": 1.428,
+          "blocksDecoded": 2493,
+          "frames": 122,
+          "framesPresented": 122,
+          "avgFrameMs": 80.683,
+          "avgCompositeMs": 17.616,
+          "maxFrameMs": 172.641,
+          "slowFrames": 122,
+          "p50FrameMs": 75.498,
+          "p95FrameMs": 96.469,
+          "p99FrameMs": 157.286,
+          "timeToFirstFrameMs": 346.295
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.1041,
+          "whiteFraction": 0.0792,
+          "otherFraction": 0.8168,
+          "uniqueQuantizedColors": 333,
+          "dominantShare": 0.2235,
+          "framesPresented": 122
+        },
+        "audio": {
+          "measured": true,
+          "signal": "silent",
+          "setupError": "",
+          "enabled": true,
+          "frames": 444416,
+          "nonSilentFrames": 0,
+          "peak": 0,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "iPhoneLoadTexture('particles_tiled_hd.png')\niPhoneLoadTexture('plain_white_8x8.png')\niPhoneLoadTexture('smr_icon_cfg.png')\niPhoneLoadTexture('slider_hd.png')\niPhoneLoadTexture('gp_icon_cycle@2x.png')\niPhoneLoadTexture('gp_icon_random_each@2x.png')\niPhoneLoadTexture('gp_icon_fully_random@2x.png')\niPhoneLoadTexture('gp_icon_record.png')\niPhoneLoadTexture('gp_icon_play.png')\niPhoneLoadTexture('gp_ask_to_buy_2x.png')\niPhoneLoadTexture('RadioStarsSize27Font.png')\n",
+        "clusters": [],
+        "durationSec": 10.213,
+        "command": [
+          "hvm",
+          "run",
+          "Art_Of_Glow_v1.1.2_os313.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "before",
+        "iteration": 0,
+        "screenshotSha256": "ff4cb6734790d7b0a78a194c4f2e400ad5510240231f6597c5120d240d2fcd13"
+      },
+      {
+        "id": "art-of-glow",
+        "name": "Art of Glow",
+        "version": "1.1.2",
+        "optional": false,
+        "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+        "source": "legacy-repo",
+        "displayPath": "Art_Of_Glow_v1.1.2_os313.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [],
+        "missingFunctions": [
+          "SCNetworkReachability (network reported offline)"
+        ],
+        "warnings": [
+          {
+            "message": "Missing data symbol kCFNumberNaN (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing: SCNetworkReachability (network reported offline)",
+            "count": 1
+          },
+          {
+            "message": "The app finished launching without a key window (did it call makeKeyAndVisible?)",
+            "count": 1
+          }
+        ],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.12,
+          "guestInstructions": 14512372,
+          "guestMIPS": 1.434,
+          "blocksDecoded": 2493,
+          "frames": 124,
+          "framesPresented": 124,
+          "avgFrameMs": 78.97,
+          "avgCompositeMs": 17.209,
+          "maxFrameMs": 91.351,
+          "slowFrames": 124,
+          "p50FrameMs": 76.546,
+          "p95FrameMs": 89.129,
+          "p99FrameMs": 90.177,
+          "timeToFirstFrameMs": 345.255
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.1041,
+          "whiteFraction": 0.0792,
+          "otherFraction": 0.8168,
+          "uniqueQuantizedColors": 333,
+          "dominantShare": 0.2235,
+          "framesPresented": 124
+        },
+        "audio": {
+          "measured": true,
+          "signal": "silent",
+          "setupError": "",
+          "enabled": true,
+          "frames": 442368,
+          "nonSilentFrames": 0,
+          "peak": 0,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "iPhoneLoadTexture('particles_tiled_hd.png')\niPhoneLoadTexture('plain_white_8x8.png')\niPhoneLoadTexture('smr_icon_cfg.png')\niPhoneLoadTexture('slider_hd.png')\niPhoneLoadTexture('gp_icon_cycle@2x.png')\niPhoneLoadTexture('gp_icon_random_each@2x.png')\niPhoneLoadTexture('gp_icon_fully_random@2x.png')\niPhoneLoadTexture('gp_icon_record.png')\niPhoneLoadTexture('gp_icon_play.png')\niPhoneLoadTexture('gp_ask_to_buy_2x.png')\niPhoneLoadTexture('RadioStarsSize27Font.png')\n",
+        "clusters": [],
+        "durationSec": 10.178,
+        "command": [
+          "hvm",
+          "run",
+          "Art_Of_Glow_v1.1.2_os313.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "after",
+        "iteration": 1,
+        "screenshotSha256": "ff4cb6734790d7b0a78a194c4f2e400ad5510240231f6597c5120d240d2fcd13"
+      },
+      {
+        "id": "art-of-glow",
+        "name": "Art of Glow",
+        "version": "1.1.2",
+        "optional": false,
+        "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+        "source": "legacy-repo",
+        "displayPath": "Art_Of_Glow_v1.1.2_os313.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [],
+        "missingFunctions": [
+          "SCNetworkReachability (network reported offline)"
+        ],
+        "warnings": [
+          {
+            "message": "Missing data symbol kCFNumberNaN (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing: SCNetworkReachability (network reported offline)",
+            "count": 1
+          },
+          {
+            "message": "The app finished launching without a key window (did it call makeKeyAndVisible?)",
+            "count": 1
+          }
+        ],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.102,
+          "guestInstructions": 14399235,
+          "guestMIPS": 1.425,
+          "blocksDecoded": 2493,
+          "frames": 112,
+          "framesPresented": 112,
+          "avgFrameMs": 87.427,
+          "avgCompositeMs": 17.736,
+          "maxFrameMs": 250.357,
+          "slowFrames": 112,
+          "p50FrameMs": 75.498,
+          "p95FrameMs": 155.189,
+          "p99FrameMs": 234.881,
+          "timeToFirstFrameMs": 322.443
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.1041,
+          "whiteFraction": 0.0792,
+          "otherFraction": 0.8168,
+          "uniqueQuantizedColors": 333,
+          "dominantShare": 0.2235,
+          "framesPresented": 112
+        },
+        "audio": {
+          "measured": true,
+          "signal": "silent",
+          "setupError": "",
+          "enabled": true,
+          "frames": 438272,
+          "nonSilentFrames": 0,
+          "peak": 0,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "iPhoneLoadTexture('particles_tiled_hd.png')\niPhoneLoadTexture('plain_white_8x8.png')\niPhoneLoadTexture('smr_icon_cfg.png')\niPhoneLoadTexture('slider_hd.png')\niPhoneLoadTexture('gp_icon_cycle@2x.png')\niPhoneLoadTexture('gp_icon_random_each@2x.png')\niPhoneLoadTexture('gp_icon_fully_random@2x.png')\niPhoneLoadTexture('gp_icon_record.png')\niPhoneLoadTexture('gp_icon_play.png')\niPhoneLoadTexture('gp_ask_to_buy_2x.png')\niPhoneLoadTexture('RadioStarsSize27Font.png')\n",
+        "clusters": [],
+        "durationSec": 10.181,
+        "command": [
+          "hvm",
+          "run",
+          "Art_Of_Glow_v1.1.2_os313.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "after",
+        "iteration": 2,
+        "screenshotSha256": "ff4cb6734790d7b0a78a194c4f2e400ad5510240231f6597c5120d240d2fcd13"
+      },
+      {
+        "id": "art-of-glow",
+        "name": "Art of Glow",
+        "version": "1.1.2",
+        "optional": false,
+        "sha256": "79266fe649b0449aaedefa7228c3d242e2f39b34d8cb2a1f1802467851b96f0e",
+        "source": "legacy-repo",
+        "displayPath": "Art_Of_Glow_v1.1.2_os313.ipa",
+        "status": "ran",
+        "reason": "",
+        "launchSuccess": true,
+        "crashed": false,
+        "exitStatus": 0,
+        "stillRunning": true,
+        "loadError": "",
+        "unimplementedImports": [],
+        "missingFunctions": [
+          "SCNetworkReachability (network reported offline)"
+        ],
+        "warnings": [
+          {
+            "message": "Missing data symbol kCFNumberNaN (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing data symbol kCFNumberNegativeInfinity (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing data symbol kCFNumberPositiveInfinity (using zeros)",
+            "count": 1
+          },
+          {
+            "message": "Missing: SCNetworkReachability (network reported offline)",
+            "count": 1
+          },
+          {
+            "message": "The app finished launching without a key window (did it call makeKeyAndVisible?)",
+            "count": 1
+          }
+        ],
+        "errors": [],
+        "crashReport": "",
+        "perf": {
+          "wallSeconds": 10.093,
+          "guestInstructions": 14436940,
+          "guestMIPS": 1.43,
+          "blocksDecoded": 2493,
+          "frames": 116,
+          "framesPresented": 116,
+          "avgFrameMs": 84.141,
+          "avgCompositeMs": 19.04,
+          "maxFrameMs": 280.415,
+          "slowFrames": 116,
+          "p50FrameMs": 80.74,
+          "p95FrameMs": 97.518,
+          "p99FrameMs": 153.092,
+          "timeToFirstFrameMs": 350.894
+        },
+        "frame": {
+          "signal": "varied",
+          "width": 640,
+          "height": 960,
+          "sampled": 9600,
+          "blackFraction": 0.1041,
+          "whiteFraction": 0.0792,
+          "otherFraction": 0.8168,
+          "uniqueQuantizedColors": 333,
+          "dominantShare": 0.2235,
+          "framesPresented": 116
+        },
+        "audio": {
+          "measured": true,
+          "signal": "silent",
+          "setupError": "",
+          "enabled": true,
+          "frames": 438272,
+          "nonSilentFrames": 0,
+          "peak": 0,
+          "droppedBlocks": 0,
+          "transportError": 0
+        },
+        "logExcerpt": "iPhoneLoadTexture('particles_tiled_hd.png')\niPhoneLoadTexture('plain_white_8x8.png')\niPhoneLoadTexture('smr_icon_cfg.png')\niPhoneLoadTexture('slider_hd.png')\niPhoneLoadTexture('gp_icon_cycle@2x.png')\niPhoneLoadTexture('gp_icon_random_each@2x.png')\niPhoneLoadTexture('gp_icon_fully_random@2x.png')\niPhoneLoadTexture('gp_icon_record.png')\niPhoneLoadTexture('gp_icon_play.png')\niPhoneLoadTexture('gp_ask_to_buy_2x.png')\niPhoneLoadTexture('RadioStarsSize27Font.png')\n",
+        "clusters": [],
+        "durationSec": 10.157,
+        "command": [
+          "hvm",
+          "run",
+          "Art_Of_Glow_v1.1.2_os313.ipa",
+          "--home",
+          "<work>/home",
+          "--run-for",
+          "10",
+          "--report",
+          "<work>/hvm-report.json",
+          "--screenshot",
+          "<work>/frame.png",
+          "--quiet",
+          "--audio-fd",
+          "<datagram>"
+        ],
+        "variant": "before",
+        "iteration": 3,
+        "screenshotSha256": "ff4cb6734790d7b0a78a194c4f2e400ad5510240231f6597c5120d240d2fcd13"
+      }
+    ]
+  },
+  "limitations": [
+    "UAR-001..013 remain unresolved; exact failing app/build/device fixtures unavailable",
+    "No causal link from this synthetic PCM defect to reported missing music",
+    "Optional Clash absent: skipped, not passed",
+    "4 KiB host does not establish iPhone 16 KiB permissions or precise faults",
+    "No signed-device, speaker, world-load, sustained gameplay or offline Clash restoration validation",
+    "CoreMark and iOS stub SDK guests not run"
+  ]
+}

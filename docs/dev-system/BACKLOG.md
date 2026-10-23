@@ -35,6 +35,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Merged in PR #5 on main; current gate no longer reports tmpnam missing |
 | B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | None, but the file is `OpenGLES.cpp` | Not while B-103 is in progress | Planned |
 | B-112 | Stop adding commercial IPAs to git. Hashes plus an external store. | 3 | 4 | 1 | 12.0 | — | Owner picks the store | Yes | Harness side Operational. Removing the three committed files is Needs owner |
+| B-114 | Shared PCM decoder: valid 64-bit float samples reach a 32-bit shift, NaN reaches integer conversion, and unsupported sample widths reach unchecked shifts. Add synthetic WAV/CAF regression coverage before a focused decoder fix. Owner music reports UAR-003/004 remain unresolved. | 3 | 4 | 1 | 12.0 | Audio (`Decode.cpp` only) | None | Beside B; no PlatformStubs changes | Implemented in draft [#16](https://github.com/lawsharley0-cyber/HydrogenVM/pull/16); clean cloud `031b16d`: 42 targeted checks and Linux gate pass; independent review pending |
 
 ## P2
 

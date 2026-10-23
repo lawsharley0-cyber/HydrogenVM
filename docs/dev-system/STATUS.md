@@ -20,7 +20,7 @@ Current owner observations: [USER_APP_REPORTS.md](USER_APP_REPORTS.md), UAR-001�
 
 Source: `docs/dev-system/BACKLOG.md`. Bands P0–P2. Score is `impact * severity / complexity` inside a band.
 
-Groups A–E remain exclusive. Open PRs #11/#12 own Group B; #13 owns Clash tools. Draft #15 changes only Heap/Stdlib allocation behavior, its independent tests, CI and documentation. It does not claim ownership of Group A mappings, handlers or faults.
+Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D frameworks, E Apple shell. Current open PRs reserve Group B (#11/#12), Clash tools (#13), and heap/allocator work (#15). PR #16 owns only the shared PCM decoder and its standalone tests. Read current PR file lists before editing; this table is not an ownership lock.
 
 ## Ownership
 
@@ -36,53 +36,46 @@ Groups A–E remain exclusive. Open PRs #11/#12 own Group B; #13 owns Clash tool
 
 ## Current compat results
 
-Measured October 21, 2026 (America/Chicago), Linux x86_64 WSL, Intel Core Ultra 9 185H, Clang 18.1.3, **4096-byte host pages**. Code/instructions at clean commit `d165df4684df18b35bd1a07c6bcc9037bfab987d`, on draft [PR #15](https://github.com/lawsharley0-cyber/HydrogenVM/pull/15), not merged main. Release flags: `-O3 -DNDEBUG -g -fno-omit-frame-pointer`.
+Cloud Linux x86_64 (Ubuntu 24.04, kernel 6.18.55), Intel Xeon Platinum 8573C, Clang 18.1.3, Release `-O3 -DNDEBUG`, `-ffp-contract=off`, **4096-byte host pages**. Tested clean commit `031b16d9062ebb341ac2505a102d1817611c5e1f`, branch `codex/pcm-decoder-safety`, draft [#16](https://github.com/lawsharley0-cyber/HydrogenVM/pull/16).
 
-Indexed JSON: [20261022T040205Z-d165df4684df.json](reports/linux-x86_64/20261022T040205Z-d165df4684df.json). The filename uses UTC. `git.dirty=false`, `summary.ok=true`, four fixtures resolved, zero app crashes, zero skips. Schema validation passed. Baseline and previous-indexed diffs both have zero regressions. The committed `a4b0f8b` baseline is unchanged. The baseline diff has four informational notes, including new Clash coverage; timing across those different hosts/builds is not an A/B speed comparison. Regex/tmpnam import improvements belong to merged PR #5, not #15.
+Indexed evidence: [20261022T043240Z-031b16d9062e.json](reports/linux-x86_64/20261022T043240Z-031b16d9062e.json). `git.dirty=false`, `summary.ok=true`; baseline and previous indexed diffs have **zero regressions and zero attention**. Timing differences from older hosts are informational. Existing tmpnam/regex binding improvements predate this patch and are not credited to #16. The committed baseline remains unchanged. The preceding indexed `8771deca6655` run and `a4b0f8b` baseline remain historical evidence.
 
 | Suite | Result |
 |---|---|
-| selftest | pass, result `0xA05A0848` |
-| fulltest | 191 passed, 0 failed |
-| asm | arm_alu 40, arm_mem 17, thumb 30, vfp_neon 23; all pass |
-| differential C | all 5 integer and 5 VFP/NEON configurations pass |
-| Python | packaging, Clash protocol/home suites pass; harness self-tests 56 pass |
-| independent heap gate | 6 pass in Release and targeted ASan/UBSan; 4 negative cases fail on original main |
-| decoder fuzz, CoreMark, simulator/device | not run in this milestone |
+| PCM regression | 42 pass in Release and targeted ASan/UBSan/float-cast-overflow; main fails 12 release checks and three separate sanitizer probes |
+| fulltest | 191 pass, zero failures |
+| CPU | selftest, four asm guests and ten differential C configurations pass |
+| Python | three required modules and 56 harness tests pass |
+| decoder fuzz / ld64 / CoreMark / Apple device | Not run |
 
-Three-second manifest captures:
-
-| App | Status | Frames presented | Frame | Mixer |
+| App | 3-second smoke | Presented frames | Frame signal | Mixer signal |
 |---|---|---:|---|---|
-| angry-birds | ran, no crash | 20 | varied | silent |
-| tiny-tower | ran, no crash | 56 | varied | active |
-| art-of-glow | ran, no crash | 37 | varied | silent |
-| clash-royale-2-1306-1 | ran, no crash | 2 | all-black | active |
+| Angry Birds 1.0 | Ran, no crash | 73 | mostly-one-color | silent |
+| Tiny Tower 1.0 | Ran, no crash | 60 | varied | active |
+| Art of Glow 1.1.2 | Ran, no crash | 37 | varied | silent |
+| Clash Royale 2.1306.1 | Optional fixture absent: **skip** | — | not run | not measured |
 
-Clash's three-second capture is black. The baseline skipped that fixture, so a green diff is new coverage, not proof of correct rendering. Separate ten-second captures reach the Supercell logo and have varied pixels. This does not establish gameplay, peer/tutorial execution or playability. Tiny Tower's separate ten/twenty-second captures show its tutorial; the interactive scanner's black final frame follows graceful shutdown and must not be called a gameplay-render failure.
+GitHub on `031b16d`: [PCM sanitizer regression](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39722798751), [compatibility gate](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39722798705), and [Linux CI](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39722798790) all succeeded. macOS was skipped, not passed. The cloud container's targeted ASan run used `ASAN_OPTIONS=detect_leaks=0` because LeakSanitizer cannot enumerate `/proc` tasks here; GitHub's sanitizer job passed with its defaults. Address, undefined-behavior and float-cast-overflow instrumentation remained enabled in both.
 
-Serial ten-second startup ABBA runs (before main `39904cb`, after allocator fix `60106d2`; two samples each) retain varied frames and the same mixer signal on all four apps, with no recorded crashes, dropped audio blocks or transport errors. They are loading/idle scenes with no injected input. Timing varies in both directions; no FPS improvement is claimed. The exploratory Angry Birds profile points at `drawImage` (~26%), GLES texture sampling (~22%), fragment writes (~12%) and triangles (~10%). Coordinate Group B before changing those paths.
+A 4 KB Linux pass does not prove 16 KB iPhone permissions, precise fault behavior, signed-device operation, speaker output, or full gameplay. The original 13 owner observations remain unresolved, preserved in [#15's USER_APP_REPORTS.md at e1684a8](https://github.com/lawsharley0-cyber/HydrogenVM/blob/e1684a89bc214cd8eac2bc30c1feb060e9ecfdab/docs/dev-system/USER_APP_REPORTS.md). No missing-music report is attributed to this synthetic PCM defect without matching fixtures.
 
-Tiny Tower 1.0 also completed three separate twenty-second processes with one preserved sandbox per variant, before and after. This did not reproduce the reported intermittent first-relaunch crash and does not resolve UAR-013. All UAR observations remain open until matching scenarios/platforms/versions pass.
+Matching-build [startup measurements and complete targeted evidence](reports/performance/20261021-pcm-safety.json): 12 serial 10-second ABBA samples across the three fixtures. Timings move both directions; **no speed gain established**. All live frame signals stay varied, Tiny Tower mixer stays active, and no audio blocks are dropped. These are fresh-start samples, not same-sandbox relaunch or gameplay validation.
 
-A 4 KB pass does not establish the 16 KB iPhone memory model. Audio signal is mixer capture, not a speaker test. On tested commit `d165df4`, GitHub Actions [compat harness](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39720138763) and [Linux CI](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39720138932) both succeeded. The conditional macOS job is not a device pass. Later evidence-only commits do not change the tested runtime; independent review remains pending.
+## Fixed regressions
 
-## Fixed defects on this branch (awaiting review)
-
-| ID | Was | Fix | Proven by |
+| ID | Trigger / root cause | Result | Evidence |
 |---|---|---|---|
 | B-210 | `allocAligned(0xfffffff0,4096)` returned only 4080 usable bytes | Validate size/alignment before mutation and use 64-bit arithmetic; validate ARMv7 posix_memalign alignment | `hvm_heap_tests`: original main 2 pass/4 fail, fixed 6 pass; targeted sanitizers 6 pass; full compatibility gate above |
-
-This defect has not been attributed to any specific UAR crash. No owner-reported app failure is marked resolved.
+| B-114 / #16 | Float64 PCM enters a 32-bit accumulator and shifts by 56; NaN reaches an int16 cast; unsupported widths drive unchecked shifts | Validate layouts first, decode float values at their own width, silence NaN and saturate infinities; preserve supported finite PCM outputs | `tests/audio/PcmDecodeTests.cpp`, `tools/test_pcm_decode.sh`, JSON above and matching-build evidence below |
 
 ## Pending PRs
 
-| PR | Area | State |
+| PR | Scope / reserved files | Integration |
 |---|---|---|
-| [#11](https://github.com/lawsharley0-cyber/HydrogenVM/pull/11) | GLSL constant-expression bounds | Open; Group B |
-| [#12](https://github.com/lawsharley0-cyber/HydrogenVM/pull/12) | Uniform arrays/register allocation | Open, stacked on #11; Group B |
-| [#13](https://github.com/lawsharley0-cyber/HydrogenVM/pull/13) | Clash continuation plan/tools | Open; local restoration is not merged main |
-| [#15](https://github.com/lawsharley0-cyber/HydrogenVM/pull/15) | Aligned allocation safety, owner reports and evidence | Draft; independent review pending; author does not merge |
+| #11 / #12 | GLSL bounds / uniform storage and register allocation, Group B and GLES tests | Open; do not duplicate |
+| #13 | Clash continuation docs/tools | Open; restoration not complete |
+| #15 | Aligned allocations, heap/stdlib and standalone allocator gate; owner app reports | Merged |
+| #16 | `audio/Decode.cpp`, synthetic PCM tests and separate PCM workflow | Merging |
 
 ## Decisions
 
@@ -94,6 +87,7 @@ This defect has not been attributed to any specific UAR crash. No owner-reported
 | 2026-10-21 | Issue generator is dry-run. Nothing is auto-filed | This change | No GitHub issues exist on the repo |
 | 2026-10-21 | Preserve all 13 owner reports and prioritize broad stability/performance | Owner request; draft #15 | Short Linux smokes do not resolve matching-device/world-load/input/relaunch reports. Mega Jump is a positive performance control |
 | 2026-10-21 | Keep allocation-safety work separate from active graphics and unfinished Clash progression | Draft #15 | Measured hot graphics files remain with #11/#12; no FPS or UAR resolution claim |
+| 2026-10-21 | B-114 PCM safety fix is cloud-tested in draft #16, not integrated | Cloud author | 42 synthetic checks; Linux compatibility gate green; 4 KB and headless limits retained. No owner app report closed |
 
 ## Needs owner
 
@@ -116,3 +110,7 @@ This defect has not been attributed to any specific UAR crash. No owner-reported
 3. Preserve Mega Jump's performance/effects and investigate missing music independently of FPS. Do not assume a shared decoder cause without evidence.
 4. After active Group B work settles, profile steady gameplay and compare a focused shared graphics improvement on matching host/build/input, preserving pixels and audio.
 5. Keep B-101/B-102 (16 KB permission/fault correctness) open. Merged clipping/regex/tmpnam and Codemagic build work supersede their old planned snapshots; signed-device behavior still needs device evidence.
+6. Independent review of #16 and #15; author does not merge. Preserve both standalone gates during owner integration.
+7. Recheck current ownership before selecting another reproducible shared failure. Group D `CGFont*` remains a possible synthetic/available-fixture task; exact owner app reports need matching scenarios.
+8. Graphics SIMD/compositing work still waits on Group B's clipper/correctness work. CPU fusion waits on B-101; no bypass based on a 4 KB cloud pass.
+9. Continue B-003 documentation reconciliation separately. Regex/tmpnam binding improvements already present on main are not new work for this PR.
