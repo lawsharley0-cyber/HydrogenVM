@@ -45,7 +45,7 @@ ROOT = Path(__file__).parent.parent
 TESTLAB_SRC = ROOT / "tests" / "ios" / "apps" / "testlab"
 SCHEMA_MOD  = str(ROOT / "tools" / "testlab_schema")
 
-CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J"]
+CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-L"]
 # Wall-clock timeout (seconds) per case process, including hvm startup.
 DEFAULT_TIMEOUT = 30
 # TL-E phase 1 is fast; allow extra for the full two-launch cycle.
@@ -168,6 +168,12 @@ def run_case(
                    "--run-for", str(timeout),
                    "--", "--run", case_id]
 
+    if case_id == "TL-L":
+        # Termination is initiated by the host after launch, not by guest exit().
+        run_for = cmd.index("--run-for") + 1
+        cmd[run_for] = "1"
+        cmd.insert(cmd.index("--"), "--graceful")
+
     try:
         proc = subprocess.run(
             cmd,
@@ -188,6 +194,13 @@ def run_case(
         timed_out = True
 
     case_result = _parse_case_output(stdout, case_id, elapsed, rc, timed_out, stderr)
+    if case_id == "TL-L":
+        save = Path(home) / "com.hydrogenvm.test.testlab" / "Documents" / "lifecycle-save.txt"
+        saved = save.is_file() and save.read_text() == "saved before termination completed"
+        case_result["diagnostics"]["saveVerifiedByHost"] = saved
+        if case_result["status"] == "passed" and (rc != 0 or not saved):
+            case_result["status"] = "failed"
+            case_result["reason"] = "Termination crashed after the result, or its save is missing"
     return case_result
 
 

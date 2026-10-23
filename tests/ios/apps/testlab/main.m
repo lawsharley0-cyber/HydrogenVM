@@ -29,6 +29,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#import <QuartzCore/QuartzCore.h>
 #include <pthread.h>
 #include <time.h>
 #import <OpenGLES/EAGL.h>
@@ -58,6 +59,7 @@ static const char *kAppBuild        = "1";
 #define CASE_H  @"TL-H"
 #define CASE_I  @"TL-I"
 #define CASE_J  @"TL-J"
+#define CASE_L  @"TL-L"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -1489,6 +1491,10 @@ static UIColor *colorForStatus(NSString *s) {
 
 @interface AppDelegate : UIResponder <UIApplicationDelegate>
 @property (strong, nonatomic) UIWindow *window;
+@property BOOL lifecycleTest;
+@property BOOL terminationDelivered;
+@property int callbacksBeforeTermination;
+@property int callbacksAfterTermination;
 @end
 
 @implementation AppDelegate
@@ -1510,6 +1516,17 @@ static UIColor *colorForStatus(NSString *s) {
         } else if ([args[i] isEqualToString:@"--runall"]) {
             runAll = YES;
         }
+    }
+
+    // The host drives this case with --run-for 1 --graceful. It must reach the
+    // real UIApplication lifecycle, rather than exiting from didFinishLaunching.
+    if ([runCase isEqualToString:CASE_L]) {
+        self.lifecycleTest = YES;
+        writeCheckpoint(CASE_L);
+        [NSTimer scheduledTimerWithTimeInterval:0.001 target:self selector:@selector(lifecycleTick:) userInfo:nil repeats:YES];
+        CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(lifecycleTick:)];
+        [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+        return YES;
     }
 
     BOOL automatedMode = (runCase != nil || runAll);
@@ -1545,6 +1562,31 @@ static UIColor *colorForStatus(NSString *s) {
     self.window.rootViewController = vc;
     [self.window makeKeyAndVisible];
     return YES;
+}
+- (void)lifecycleTick:(id)sender {
+    if (self.terminationDelivered) self.callbacksAfterTermination++;
+    else self.callbacksBeforeTermination++;
+}
+
+- (void)applicationWillTerminate:(UIApplication *)application {
+    if (!self.lifecycleTest) return;
+    self.terminationDelivered = YES;
+    // Model games that tear down their scene, then pump a nested loop while
+    // completing a save. No automatic game callbacks may touch that scene.
+    [NSTimer scheduledTimerWithTimeInterval:0 target:self selector:@selector(lifecycleTick:) userInfo:nil repeats:NO];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.005]];
+    NSString *save = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/lifecycle-save.txt"];
+    BOOL saved = [@"saved before termination completed" writeToFile:save atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    TLResult *r = [[TLResult alloc] initWithId:CASE_L version:1];
+    r.expected = @{ @"callbacksAfterTermination": @0, @"saveWritten": @YES };
+    r.actual = @{ @"callbacksBeforeTermination": @(self.callbacksBeforeTermination), @"callbacksAfterTermination": @(self.callbacksAfterTermination), @"saveWritten": @(saved) };
+    r.status = saved && self.callbacksBeforeTermination > 0 && self.callbacksAfterTermination == 0 ? @"passed" : @"failed";
+    if (![r.status isEqualToString:@"passed"]) r.reason = @"Callbacks ran during termination, or save did not finish";
+    clearCheckpoint();
+    writeResult(@[r], makeRunId());
+    printf("TESTLAB TL-L %s\n", r.status.UTF8String);
+    if (r.reason) printf("  reason: %s\n", r.reason.UTF8String);
+    fflush(stdout);
 }
 @end
 

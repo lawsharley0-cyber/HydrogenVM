@@ -3513,6 +3513,24 @@ int runFullSubsystemTests() {
     }
 
     r.poolPop(cpu, outerPool);
+    {
+        ProcessConfig stopCfg;
+        stopCfg.homePath = "/tmp/hvm_terminate_callbacks";
+        Process stopped(stopCfg);
+        auto& loop = Foundation::mainRunLoop(stopped);
+        int queued = 0, timers = 0, frames = 0;
+        bool saved = false;
+        loop.post([&](CPU::Cpu&) { saved = true; stopped.requestStop(); });
+        loop.post([&](CPU::Cpu&) { ++queued; });
+        loop.addTimer(0, 0, false, [&](CPU::Cpu&) { ++timers; });
+        loop.addFrameHook([&](CPU::Cpu&, double) { ++frames; });
+        loop.runOnce(stopped.mainThread().cpu, 0);
+        // Work has already been collected before the first callback stops the process.
+        loop.post([&](CPU::Cpu&) { ++queued; });
+        loop.runOnce(stopped.mainThread().cpu, 0);
+        check(saved && queued == 0 && timers == 0 && frames == 0,
+              "Termination finishes save work and suppresses collected/late queue, timer and frame callbacks");
+    }
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

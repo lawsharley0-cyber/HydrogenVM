@@ -202,7 +202,7 @@ void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
     if (it == st.queues.end()) return;
     const uint32_t cb = it->second.callback, ud = it->second.userData;
     for (uint64_t buf : MX(p).takeProcessed(it->second.voice)) {
-        if (!cb || !st.queues.count(qid)) break;
+        if (p.terminating() || p.stopping() || !cb || !st.queues.count(qid)) break;
         p.callGuest(c, cb, {ud, qid, uint32_t(buf)});
     }
 }
