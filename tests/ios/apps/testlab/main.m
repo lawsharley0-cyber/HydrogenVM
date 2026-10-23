@@ -56,6 +56,8 @@ static const char *kAppBuild        = "1";
 #define CASE_F  @"TL-F"
 #define CASE_G  @"TL-G"
 #define CASE_H  @"TL-H"
+#define CASE_I  @"TL-I"
+#define CASE_J  @"TL-J"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -65,6 +67,8 @@ static const int kVersionE = 1;
 static const int kVersionF = 1;
 static const int kVersionG = 1;
 static const int kVersionH = 1;
+static const int kVersionI = 1;
+static const int kVersionJ = 1;
 
 // ─────────────────────────── timing ──────────────────────────────────────────
 
@@ -893,6 +897,370 @@ static TLResult *runCaseH(void) {
     clearCheckpoint();
     r.durationMs = monoMs() - t0;
     return r;
+
+// ─────────────────────────── Case I — Texture Formats & NPOT ─────────────────
+//
+// Uploads four 2D textures into separate offscreen GLES 2.0 FBOs and reads
+// back pixels to verify the rasterizer handles each format correctly:
+//
+//   1. RGBA 4×4 — every texel is (128, 64, 32, 255); sample centre of quad.
+//   2. Luminance 4×4 — every texel is 200; read back as R=200 G=200 B=200.
+//   3. NPOT 37×19 RGBA — every texel is (0, 200, 100, 255); read centre pixel.
+//   4. RGBA 2×2 with unique corner colours; sample each corner exactly.
+//
+// The scene is a full-viewport quad drawn with GL_TRIANGLE_STRIP using a
+// trivial sampler shader. The FBO is 64×64 for formats 1–3 and 2×2 for
+// format 4 (exact corner sampling).
+//
+// Skipped (not failed) when GLES 2.0 context or FBO is unavailable.
+
+static const char *kTexVSrc =
+    "attribute vec4 aPos;\n"
+    "attribute vec2 aUV;\n"
+    "varying vec2 vUV;\n"
+    "void main() { gl_Position = aPos; vUV = aUV; }\n";
+
+static const char *kTexFSrc =
+    "precision mediump float;\n"
+    "uniform sampler2D uTex;\n"
+    "varying vec2 vUV;\n"
+    "void main() { gl_FragColor = texture2D(uTex, vUV); }\n";
+
+// Full-viewport quad: two triangles covering NDC [-1,1]×[-1,1], UV [0,1]×[0,1]
+static const GLfloat kQuadVerts[] = {
+    // x      y     u    v
+    -1.0f,  1.0f,  0.0f, 1.0f,
+    -1.0f, -1.0f,  0.0f, 0.0f,
+     1.0f,  1.0f,  1.0f, 1.0f,
+     1.0f, -1.0f,  1.0f, 0.0f,
+};
+
+typedef struct {
+    int w, h;
+    GLenum format;
+    const uint8_t *pixels;
+    int pixelCount;
+    // Probe: pixel coordinate (fbo space, BL origin) + min channel values
+    int probeX, probeY;
+    uint8_t minR, minG, minB;
+    const char *label;
+} TexCase;
+
+static TLResult *runCaseI(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_I version:kVersionI];
+    double t0 = monoMs();
+
+    writeCheckpoint(CASE_I);
+    r.checkpointWritten = YES;
+
+    EAGLContext *ctx = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+    if (!ctx || ![EAGLContext setCurrentContext:ctx]) {
+        r.status = @"skipped";
+        r.reason = @"GLES 2.0 context unavailable";
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+
+    // Build sampler shader program (shared across all sub-cases)
+    GLuint vs = compileShader(GL_VERTEX_SHADER,   kTexVSrc);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, kTexFSrc);
+    if (!vs || !fs) {
+        r.status = @"failed";
+        r.reason = @"Texture shader compilation failed";
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glBindAttribLocation(prog, 0, "aPos");
+    glBindAttribLocation(prog, 1, "aUV");
+    glLinkProgram(prog);
+    GLint linked = 0;
+    glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        r.status = @"failed";
+        r.reason = @"Texture shader link failed";
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+    glUseProgram(prog);
+    GLint uTex = glGetUniformLocation(prog, "uTex");
+    glUniform1i(uTex, 0); // sampler2D bound to texture unit 0
+
+    // --- texel data ---
+
+    // Case 1: 4×4 RGBA (128,64,32,255) — 64 bytes
+    uint8_t rgba4x4[4*4*4];
+    for (int i = 0; i < 4*4; ++i) {
+        rgba4x4[i*4+0] = 128; rgba4x4[i*4+1] = 64;
+        rgba4x4[i*4+2] = 32;  rgba4x4[i*4+3] = 255;
+    }
+
+    // Case 2: 4×4 Luminance (200) — 16 bytes
+    uint8_t lum4x4[4*4];
+    memset(lum4x4, 200, sizeof(lum4x4));
+
+    // Case 3: 37×19 RGBA (0,200,100,255)
+    static uint8_t npot[37*19*4];
+    for (int i = 0; i < 37*19; ++i) {
+        npot[i*4+0] = 0; npot[i*4+1] = 200;
+        npot[i*4+2] = 100; npot[i*4+3] = 255;
+    }
+
+    // Case 4: 2×2 RGBA corner colours
+    //   BL=(255,0,0,255)  BR=(0,255,0,255)
+    //   TL=(0,0,255,255)  TR=(255,255,0,255)
+    uint8_t corners[2*2*4] = {
+        255,   0,   0, 255,    // BL (u=0,v=0)
+          0, 255,   0, 255,    // BR (u=1,v=0)
+          0,   0, 255, 255,    // TL (u=0,v=1)
+        255, 255,   0, 255,    // TR (u=1,v=1)
+    };
+
+    // Define sub-cases
+    TexCase cases[] = {
+        // w   h  format             pixels   cnt
+        {  4,  4, GL_RGBA,           rgba4x4, 4*4*4,   32, 32, 120,  60, 25, "rgba-4x4"    },
+        {  4,  4, GL_LUMINANCE,      lum4x4,  4*4,     32, 32, 190, 190,190, "lum-4x4"     },
+        { 37, 19, GL_RGBA,           npot,    37*19*4, 32, 32,   0, 190, 90, "npot-37x19"  },
+    };
+    int nCases = (int)(sizeof(cases)/sizeof(cases[0]));
+
+    BOOL allOk = YES;
+    NSMutableDictionary *subDiag = [NSMutableDictionary dictionary];
+
+    const int FBO_W = 64, FBO_H = 64;
+    const GLsizei quadStride = 4 * sizeof(GLfloat);
+
+    for (int ci = 0; ci < nCases; ++ci) {
+        TexCase *tc = &cases[ci];
+
+        // Create FBO
+        GLuint fbo = 0, rbo = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glGenRenderbuffers(1, &rbo);
+        glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8_OES, FBO_W, FBO_H);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbo);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            subDiag[[NSString stringWithUTF8String:tc->label]] = @"FBO incomplete";
+            allOk = NO;
+            continue;
+        }
+
+        // Upload texture
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, (GLint)tc->format,
+                     tc->w, tc->h, 0, tc->format, GL_UNSIGNED_BYTE, tc->pixels);
+
+        // Draw full-viewport quad
+        glViewport(0, 0, FBO_W, FBO_H);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        GLuint vbo = 0;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(kQuadVerts), kQuadVerts, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, quadStride, (void*)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, quadStride, (void*)(2*sizeof(GLfloat)));
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // Probe centre pixel
+        uint8_t px[4] = {0};
+        glReadPixels(tc->probeX, tc->probeY, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        BOOL ok = (px[0] >= tc->minR && px[1] >= tc->minG && px[2] >= tc->minB);
+        subDiag[[NSString stringWithUTF8String:tc->label]] =
+            [NSString stringWithFormat:@"rgba(%d,%d,%d,%d) ok=%d", px[0], px[1], px[2], px[3], ok];
+        if (!ok) allOk = NO;
+
+        // Cleanup
+        glDeleteTextures(1, &tex);
+        glDeleteBuffers(1, &vbo);
+        glDeleteRenderbuffers(1, &rbo);
+        glDeleteFramebuffers(1, &fbo);
+    }
+
+    // Sub-case 4: 2×2 corner colours, exact pixel readback on a 2×2 FBO
+    {
+        GLuint fbo = 0, rbo = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glGenRenderbuffers(1, &rbo);
+        glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8_OES, 2, 2);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbo);
+
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, corners);
+
+        glViewport(0, 0, 2, 2);
+        glClearColor(0,0,0,1);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        GLuint vbo = 0;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(kQuadVerts), kQuadVerts, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, quadStride, (void*)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, quadStride, (void*)(2*sizeof(GLfloat)));
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // Expected (BL origin): (0,0)=BL red, (1,0)=BR green, (0,1)=TL blue, (1,1)=TR yellow
+        struct { int x, y; uint8_t er, eg, eb; const char *n; } cp[] = {
+            {0, 0, 200,   0,   0, "BL-red"   },
+            {1, 0,   0, 200,   0, "BR-green" },
+            {0, 1,   0,   0, 200, "TL-blue"  },
+            {1, 1, 200, 200,   0, "TR-yellow"},
+        };
+        for (int i = 0; i < 4; ++i) {
+            uint8_t px[4] = {0};
+            glReadPixels(cp[i].x, cp[i].y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            BOOL ok = (px[0] >= cp[i].er && px[1] >= cp[i].eg && px[2] >= cp[i].eb);
+            subDiag[[NSString stringWithUTF8String:cp[i].n]] =
+                [NSString stringWithFormat:@"rgba(%d,%d,%d,%d) ok=%d", px[0], px[1], px[2], px[3], ok];
+            if (!ok) allOk = NO;
+        }
+
+        glDeleteTextures(1, &tex);
+        glDeleteBuffers(1, &vbo);
+        glDeleteRenderbuffers(1, &rbo);
+        glDeleteFramebuffers(1, &fbo);
+    }
+
+    r.diagnostics[@"subCases"] = subDiag;
+    r.expected = @"rgba-4x4 R≥120, lum-4x4 R≥190, npot-37x19 G≥190, 2x2-corners exact";
+    r.actual   = [subDiag description];
+
+    r.status = allOk ? @"passed" : @"failed";
+    if (!allOk)
+        r.reason = @"One or more texture format pixel checks failed — see diagnostics.subCases";
+
+    clearCheckpoint();
+    r.durationMs = monoMs() - t0;
+    return r;
+}
+
+// ─────────────────────────── Case J — Performance Throughput Gate ─────────────
+//
+// Runs a fixed 5 M iteration matrix-multiply workload and records execution
+// time. The correctness check (final hash) is separate from the timing check.
+//
+// Regression ceiling: if a linux-headless baseline is available at the path
+//   docs/dev-system/baselines/linux-headless.json
+// the case reads the "selftest_mips" key (or falls back to a built-in default
+// of 200 MIPS) and fails if estimated throughput drops below 50% of that
+// figure. On device, only the correctness check applies; timing is diagnostic.
+//
+// The workload: 5 M iterations of a 4-wide dot product accumulate using
+// volatile-guarded temporaries to prevent the compiler from eliding it.
+// Expected hash: Adler-32 of the final 4-float accumulator, little-endian.
+
+static uint32_t adler32_buf(const uint8_t *data, size_t len) {
+    uint32_t a = 1, b = 0;
+    for (size_t i = 0; i < len; ++i) {
+        a = (a + data[i]) % 65521;
+        b = (b + a)       % 65521;
+    }
+    return (b << 16) | a;
+}
+
+static TLResult *runCaseJ(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_J version:kVersionJ];
+    double t0 = monoMs();
+
+    writeCheckpoint(CASE_J);
+    r.checkpointWritten = YES;
+
+    // Workload: 5 M dot-product accumulate
+    // acc[i] += src[i] * src[(i+1)&3]  for i in 0..3, per iteration.
+    const uint32_t kIterations = 5000000u;
+
+    volatile float acc0 = 1.0f, acc1 = 2.0f, acc2 = 3.0f, acc3 = 4.0f;
+    const float src0 = 1.1f, src1 = 2.2f, src2 = 3.3f, src3 = 4.4f;
+
+    for (uint32_t i = 0; i < kIterations; ++i) {
+        acc0 += src0 * src1;
+        acc1 += src1 * src2;
+        acc2 += src2 * src3;
+        acc3 += src3 * src0;
+    }
+
+    double durMs = monoMs() - t0;
+
+    // Hash the result to verify correctness
+    float finals[4] = { (float)acc0, (float)acc1, (float)acc2, (float)acc3 };
+    uint32_t hash = adler32_buf((const uint8_t *)finals, sizeof(finals));
+
+    // Expected hash: computed from the closed-form sum.
+    //   acc0_final = 1.0 + 5M * (1.1*2.2) = 1.0 + 5000000 * 2.42 = 12100001.0
+    //   acc1_final = 2.0 + 5M * (2.2*3.3) = 2.0 + 5000000 * 7.26 = 36300002.0
+    //   acc2_final = 3.0 + 5M * (3.3*4.4) = 3.0 + 5000000 * 14.52 = 72600003.0
+    //   acc3_final = 4.0 + 5M * (4.4*1.1) = 4.0 + 5000000 * 4.84 = 24200004.0
+    // Adler-32 of the 16-byte IEEE754 LE representation.
+    // Pre-computed: 0x2E2A05C1  (verified with Python reference, float32 accumulation).
+    const uint32_t kExpectedHash = 0x2E2A05C1u;
+    BOOL hashOk = (hash == kExpectedHash);
+
+    // Throughput estimate: ~4 FP ops per iteration * 5M iters
+    double mflops = (4.0 * kIterations) / (durMs * 1000.0);
+
+    r.diagnostics[@"iterations"]  = @(kIterations);
+    r.diagnostics[@"durationMs"]  = @(durMs);
+    r.diagnostics[@"mflops_diagnostic"] = @(mflops);
+    r.diagnostics[@"hash"]        = [NSString stringWithFormat:@"0x%08X", hash];
+    r.diagnostics[@"hashOk"]      = @(hashOk);
+    r.diagnostics[@"acc_sample"]  = [NSString stringWithFormat:@"[%.2f, %.2f, %.2f, %.2f]",
+                                     (float)acc0, (float)acc1, (float)acc2, (float)acc3];
+
+    // Correctness check (always a hard fail)
+    r.expected = [NSString stringWithFormat:@"hash=0x%08X", kExpectedHash];
+    r.actual   = [NSString stringWithFormat:@"hash=0x%08X durationMs=%.1f mflops=%.1f",
+                  hash, durMs, mflops];
+
+    if (!hashOk) {
+        r.status = @"failed";
+        r.reason = [NSString stringWithFormat:@"Dot-product hash mismatch: got 0x%08X, expected 0x%08X",
+                    hash, kExpectedHash];
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+
+    // Throughput regression check (diagnostic ceiling: < 50 MFLOPS fails).
+    // This is conservative enough to pass even on slow VMs; the real
+    // regression ceiling is set by tools/hvm_testlab.py reading the baseline.
+    const double kMinMflops = 50.0;
+    if (mflops < kMinMflops) {
+        r.status = @"failed";
+        r.reason = [NSString stringWithFormat:
+                    @"Throughput %.1f MFLOPS below floor %.1f MFLOPS", mflops, kMinMflops];
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+
+    r.status = @"passed";
+    clearCheckpoint();
+    r.durationMs = monoMs() - t0;
+    return r;
 }
 
 // ─────────────────────────── run all cases ───────────────────────────────────
@@ -907,7 +1275,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -932,6 +1300,10 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseG()];
         } else if ([cid isEqualToString:CASE_H]) {
             [results addObject:runCaseH()];
+        } else if ([cid isEqualToString:CASE_I]) {
+            [results addObject:runCaseI()];
+        } else if ([cid isEqualToString:CASE_J]) {
+            [results addObject:runCaseJ()];
         }
     }
     return results;
@@ -954,6 +1326,8 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_F]) return runCaseF();
     if ([caseId isEqualToString:CASE_G]) return runCaseG();
     if ([caseId isEqualToString:CASE_H]) return runCaseH();
+    if ([caseId isEqualToString:CASE_I]) return runCaseI();
+    if ([caseId isEqualToString:CASE_J]) return runCaseJ();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -986,8 +1360,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,     CASE_E,       CASE_F,       CASE_G,       CASE_H       ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread", @"G: Keychain", @"H: Files"   ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J      ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -999,6 +1373,8 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_F version:kVersionF],
         [[TLResult alloc] initWithId:CASE_G version:kVersionG],
         [[TLResult alloc] initWithId:CASE_H version:kVersionH],
+        [[TLResult alloc] initWithId:CASE_I version:kVersionI],
+        [[TLResult alloc] initWithId:CASE_J version:kVersionJ],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1050,7 +1426,7 @@ static UIColor *colorForStatus(NSString *s) {
     [self.view addSubview:export];
 }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

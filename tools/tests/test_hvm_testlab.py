@@ -6,6 +6,7 @@ Tests cover:
 - Interrupted-case detection via exit code
 - Host report assembly and schema validation
 - Correct failure/interrupted detection for wrong expected output
+- TL-J baseline ceiling logic
 """
 import json
 import os
@@ -21,6 +22,8 @@ ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 from hvm_testlab import (
+    _apply_tj_ceiling,
+    _baseline_mflops_ceiling,
     _parse_case_output,
     make_host_report,
     verify_ipa_contents,
@@ -238,6 +241,72 @@ class TestDeliberateFailure(unittest.TestCase):
         # rc=134 = SIGABRT, no TESTLAB lines
         r = _parse_case_output("", "TL-D", 0.5, 134, False, "")
         self.assertNotEqual(r["status"], "passed")
+
+
+# ─────────────────────────── TL-J ceiling tests ──────────────────────────────
+
+class TestTJCeiling(unittest.TestCase):
+    """Tests for the host-side TL-J baseline regression ceiling."""
+
+    def _make_passed_tj(self, mflops: float) -> dict:
+        return {
+            "id":          "TL-J",
+            "version":     1,
+            "status":      "passed",
+            "diagnostics": {"stdoutTail": f"mflops={mflops:.1f}"},
+        }
+
+    def test_no_ceiling_when_baseline_absent(self):
+        """When baseline is not present, _baseline_mflops_ceiling returns None."""
+        import unittest.mock as mock
+        with mock.patch("hvm_testlab.Path.read_text", side_effect=FileNotFoundError):
+            result = _baseline_mflops_ceiling()
+        self.assertIsNone(result)
+
+    def test_ceiling_applied_above_threshold_passes(self):
+        """A result with MFLOPS well above the ceiling is left as passed."""
+        cr = self._make_passed_tj(9999.0)
+        import unittest.mock as mock
+        with mock.patch("hvm_testlab._baseline_mflops_ceiling", return_value=100.0):
+            result = _apply_tj_ceiling(cr)
+        self.assertEqual(result["status"], "passed")
+
+    def test_ceiling_applied_below_threshold_fails(self):
+        """A result with MFLOPS below the ceiling is changed to failed."""
+        cr = self._make_passed_tj(10.0)
+        import unittest.mock as mock
+        with mock.patch("hvm_testlab._baseline_mflops_ceiling", return_value=100.0):
+            result = _apply_tj_ceiling(cr)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("MFLOPS", result.get("reason", ""))
+
+    def test_ceiling_not_applied_to_already_failed(self):
+        """The ceiling function does not change a case that already failed."""
+        cr = {"id": "TL-J", "version": 1, "status": "failed",
+              "reason": "hash mismatch", "diagnostics": {}}
+        import unittest.mock as mock
+        with mock.patch("hvm_testlab._baseline_mflops_ceiling", return_value=100.0):
+            result = _apply_tj_ceiling(cr)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["reason"], "hash mismatch")
+
+    def test_ceiling_skipped_when_no_mflops_in_output(self):
+        """If no mflops= token in stdout tail, ceiling is not applied."""
+        cr = {"id": "TL-J", "version": 1, "status": "passed",
+              "diagnostics": {"stdoutTail": "no timing info here"}}
+        import unittest.mock as mock
+        with mock.patch("hvm_testlab._baseline_mflops_ceiling", return_value=100.0):
+            result = _apply_tj_ceiling(cr)
+        self.assertEqual(result["status"], "passed")
+
+    def test_ceiling_records_observed_mflops(self):
+        """When ceiling is applied, observed_mflops is recorded in diagnostics."""
+        cr = self._make_passed_tj(500.0)
+        import unittest.mock as mock
+        with mock.patch("hvm_testlab._baseline_mflops_ceiling", return_value=100.0):
+            result = _apply_tj_ceiling(cr)
+        self.assertIn("observed_mflops", result["diagnostics"])
+        self.assertAlmostEqual(result["diagnostics"]["observed_mflops"], 500.0)
 
 
 if __name__ == "__main__":
