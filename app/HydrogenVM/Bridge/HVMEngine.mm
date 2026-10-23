@@ -539,6 +539,12 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
     return p ? double(p->perf().frameTimes.percentile(95)) / 1e6 : 0;
 }
 
+- (uint64_t)framesPresented {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    return p ? p->perf().framesPresented.load() : 0;
+}
+
 - (float)outputVolume { return _core->outputVolume.load(); }
 - (void)setOutputVolume:(float)value {
     if (!std::isfinite(value)) return;

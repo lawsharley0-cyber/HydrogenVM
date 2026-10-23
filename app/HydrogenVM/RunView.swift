@@ -73,6 +73,7 @@ final class RunModel {
     @ObservationIgnored private let motion = CMMotionManager()
     @ObservationIgnored private var nextLogID = 0
     @ObservationIgnored private var frameCount = 0
+    @ObservationIgnored private var lastPresented: UInt64 = 0
     @ObservationIgnored private var fpsTimer: Timer?
 
     init(app: InstalledApp) { self.app = app }
@@ -190,7 +191,11 @@ final class RunModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.frameTimeP95 = self.session?.frameTimeP95Milliseconds ?? 0
-                self.fps = self.frameCount
+                // GPU-presented games show frames without a new UIKit composite,
+                // so count what the engine presented rather than delivered images.
+                let presented = self.session?.framesPresented ?? 0
+                self.fps = presented >= self.lastPresented ? max(Int(presented - self.lastPresented), self.frameCount) : self.frameCount
+                self.lastPresented = presented
                 self.frameCount = 0
             }
         }

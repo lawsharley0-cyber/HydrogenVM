@@ -65,6 +65,13 @@ jobs:
           python3 tools/gen_hostgl.py --check
           python3 tools/gpu_compare.py --hvm build/hvm --seconds 12 --out build/gpu-compare \
             Tiny_Tower_v1.0_os30.ipa AngryBirds_v1.0_os30.ipa Art_Of_Glow_v1.1.2_os313.ipa
+      - name: GLES 1.1 emulation on an ES 2 context matches the software rasterizer
+        # What iOS hosts without an ES 1.1 EAGL context use (Gles1Emu.cpp).
+        env:
+          HVM_GL1_EMULATE: "1"
+        run: |
+          python3 tools/gpu_compare.py --hvm build/hvm --seconds 12 --out build/gpu-compare-gles1emu \
+            Tiny_Tower_v1.0_os30.ipa AngryBirds_v1.0_os30.ipa Art_Of_Glow_v1.1.2_os313.ipa
       - name: Upload JSON report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -75,4 +82,5 @@ jobs:
             build/compat-report/diff.json
             build/gpu-compare/*.png
             build/gpu-compare/*.json
+            build/gpu-compare-gles1emu/*.png
           if-no-files-found: warn

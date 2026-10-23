@@ -90,6 +90,7 @@ public:
         layer.bounds = CGRectMake(0, 0, width, height);
         [CATransaction commit];
         const BOOL ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:layer];
+        [CATransaction flush];
         if (created || ok) {
             auto notify = onLayer_;
             CALayer *shown = layer;
@@ -100,7 +101,12 @@ public:
 
     bool presentDirect(void *ctx, uint32_t) override {
         EAGLContext *c = (__bridge EAGLContext *)ctx;
-        return [c presentRenderbuffer:GL_RENDERBUFFER];
+        const BOOL ok = [c presentRenderbuffer:GL_RENDERBUFFER];
+        // The guest thread has no run loop, so its implicit Core Animation
+        // transaction (which carries the new layer contents) is never committed
+        // on its own: commit it now or the layer stays blank.
+        [CATransaction flush];
+        return ok;
     }
 
     void releaseLayer(uint32_t layerKey) override {

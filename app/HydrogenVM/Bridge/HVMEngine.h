@@ -58,6 +58,8 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly, getter=isBackgrounded) BOOL backgrounded;
 /// Guest frame-hook work, lifetime p95 in milliseconds; zero before samples.
 @property (nonatomic, readonly) double frameTimeP95Milliseconds;
+/// Frames shown so far (software composites and GPU presents).
+@property (nonatomic, readonly) uint64_t framesPresented;
 /// Host output gain, 0...1. Does not change guest audio source gains.
 @property (nonatomic) float outputVolume;
 @property (nonatomic, readonly, getter=isRunning) BOOL running;

@@ -1,5 +1,6 @@
 // HydrogenVM — OpenGL ES forwarded to the host GPU. See HostGL.hpp.
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/gl/HostGLInternal.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
 #include <algorithm>
@@ -38,46 +39,6 @@ constexpr uint32_t kBufferSize = 0x8764;
 constexpr uint32_t kPvrtcRgb4 = 0x8C00, kPvrtcRgb2 = 0x8C01, kPvrtcRgba4 = 0x8C02, kPvrtcRgba2 = 0x8C03;
 
 } // namespace
-
-// The forwarded entry points, loaded per host context (the same name can resolve
-// differently on an ES context and on a desktop compatibility context).
-struct Fns {
-#define HOSTGL_FN(name, ret, params) ret (*name) params = nullptr;
-#define HOSTGL_TABLE
-#include "runtime/gl/HostGLTable.inc"
-#undef HOSTGL_TABLE
-#undef HOSTGL_FN
-    // Desktop-only replacements for ES 1.1 entry points.
-    void (*glOrtho)(double, double, double, double, double, double) = nullptr;
-    void (*glFrustum)(double, double, double, double, double, double) = nullptr;
-    void (*glClipPlane)(uint32_t, const double*) = nullptr;
-    void (*glGetClipPlane)(uint32_t, double*) = nullptr;
-    // ES 3.0 / desktop names used to emulate Apple extensions.
-    void* (*glFenceSync)(uint32_t, uint32_t) = nullptr;
-    uint8_t (*glIsSync)(void*) = nullptr;
-    void (*glDeleteSync)(void*) = nullptr;
-    uint32_t (*glClientWaitSync)(void*, uint32_t, uint64_t) = nullptr;
-    void (*glWaitSync)(void*, uint32_t, uint64_t) = nullptr;
-    void (*glGetSynciv)(void*, uint32_t, int32_t, int32_t*, int32_t*) = nullptr;
-};
-
-struct MappedBuffer {
-    uint32_t guest = 0;      // guest shadow copy handed to the app
-    void* host = nullptr;    // the driver's mapping
-    intptr_t offset = 0, length = 0;
-    uint32_t access = 0;
-};
-
-struct HostContext {
-    void* handle = nullptr;
-    int api = 2;
-    bool desktop = false;    // ES 1.1 guest on a desktop compatibility context
-    bool implicitWorker = false;
-    uint32_t guestContext = 0, guestSharegroup = 0;
-    Fns fn;
-    uint32_t readFbo = 0;    // scratch FBO for read-backs
-    std::unordered_map<uint32_t, MappedBuffer> mapped;   // key: target
-};
 
 namespace {
 
@@ -204,14 +165,33 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
     hc->guestSharegroup = sharegroup;
     hc->implicitWorker = worker;
     bool desktop = false;
-    hc->handle = st.platform->createContext(api, root ? root->handle : nullptr, desktop);
-    if (!hc->handle && root) hc->handle = st.platform->createContext(api, nullptr, desktop);   // e.g. ES1 and ES2 can't share
+    // ES 1.1 guests: a native ES 1.1 context when the driver has one; otherwise
+    // (or with HVM_GL1_EMULATE=1) an ES 2/3 context with the fixed-function
+    // pipeline emulated in shaders (Gles1Emu.cpp).
+    const char* forceEmu = std::getenv("HVM_GL1_EMULATE");
+    bool emulate = api == 1 && forceEmu && *forceEmu && *forceEmu != '0';
+    if (!emulate) {
+        hc->handle = st.platform->createContext(api, root ? root->handle : nullptr, desktop);
+        if (!hc->handle && root) hc->handle = st.platform->createContext(api, nullptr, desktop);   // e.g. ES1 and ES2 can't share
+    }
+    if (!hc->handle && api == 1) {
+        emulate = true;
+        desktop = false;
+        hc->handle = st.platform->createContext(2, root ? root->handle : nullptr, desktop);
+        if (!hc->handle && root) hc->handle = st.platform->createContext(2, nullptr, desktop);
+        if (hc->handle) p.log(LogLevel::Info, "GPU: OpenGL ES 1.1 runs on an ES 2 context (fixed function in shaders)");
+    }
     if (!hc->handle) {
         p.log(LogLevel::Error, std::string("GPU: couldn't create a host OpenGL ES ") + std::to_string(api) + " context");
         return nullptr;
     }
     hc->desktop = desktop;
+    if (emulate) hc->api = 2;          // resolve the table as an ES 2 context
     loadFns(*st.platform, *hc);
+    if (emulate) {
+        hc->api = 1;
+        installGles1Emulation(*hc);
+    }
     {
         std::lock_guard<std::mutex> lk(st.mu);
         if (!st.shareRoot.count(sharegroup)) st.shareRoot[sharegroup] = hc.get();
@@ -220,6 +200,8 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
 }
 
 } // namespace
+
+HostContext* currentHostContext() { return tls.ctx; }
 
 // ------------------------------------------------------------ current context ---
 
@@ -927,11 +909,27 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     layer = d.layer;
     width = d.width;
     height = d.height;
+    static std::atomic<int> presents{0};
+    const int n = presents + 1;
+    std::string probe;
+    if ((n == 1 || n == 60 || n == 600) && hc->fn.glReadPixels) {
+        // Diagnostic: sample the frame before it goes to the display, so a blank
+        // screen can be told apart from a frame the GPU really rendered black.
+        uint64_t sum[3] = {}, lit = 0;
+        for (int gy = 0; gy < 8; ++gy)
+            for (int gx = 0; gx < 8; ++gx) {
+                uint8_t px[4] = {};
+                hc->fn.glReadPixels(int32_t((gx * 2 + 1) * width / 16), int32_t((gy * 2 + 1) * height / 16), 1, 1, kRgba, kUnsignedByte, px);
+                sum[0] += px[0]; sum[1] += px[1]; sum[2] += px[2];
+                if (px[0] > 8 || px[1] > 8 || px[2] > 8) ++lit;
+            }
+        probe = " (average rgb " + std::to_string(sum[0] / 64) + "," + std::to_string(sum[1] / 64) + "," +
+                std::to_string(sum[2] / 64) + ", " + std::to_string(lit) + "/64 samples lit)";
+    }
     if (st.platform->presentDirect(hc->handle, d.layer)) {
         direct = true;
-        static std::atomic<int> presents{0};
-        const int n = ++presents;
-        if (n == 1 || n == 60 || n == 600) p.log(LogLevel::Info, "GPU: presented frame " + std::to_string(n) + " directly");
+        ++presents;
+        if (!probe.empty()) p.log(LogLevel::Info, "GPU: presented frame " + std::to_string(n) + " directly" + probe);
         return true;
     }
     {
