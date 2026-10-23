@@ -4,6 +4,7 @@
 #include "Format.hpp"
 #include "runtime/Process.hpp"
 #include "Network.hpp"
+#include "PathUtils.hpp"
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -131,8 +132,12 @@ void f_perror(Ctx& x, GuestPtr s) {
 // ----------------------------------------------------------------- files ---
 
 uint32_t f_fopen(Ctx& x, GuestPtr path, GuestPtr mode) {
-    const std::string p = x.proc.readCString(path), m = x.proc.readCString(mode);
+    const std::string rawP = x.proc.readCString(path), m = x.proc.readCString(mode);
+    const std::string p = resolveCasePath(rawP);
     std::FILE* f = std::fopen(p.c_str(), m.c_str());
+    if (!f && p != rawP) {
+        f = std::fopen(rawP.c_str(), m.c_str());
+    }
     if (!f) { setErrno(x, errno); return 0; }
     return newFile(x, f);
 }
@@ -172,7 +177,11 @@ uint32_t f_fread(Ctx& x, GuestPtr ptr, uint32_t size, uint32_t n, GuestPtr fp) {
     char* dst = reinterpret_cast<char*>(x.mem.host(ptr));
     size_t total = size_t(size) * n, got = 0;
     if (f->unget >= 0) { dst[got++] = char(f->unget); f->unget = -1; }
-    got += std::fread(dst + got, 1, total - got, f->f);
+    while (got < total) {
+        size_t r = std::fread(dst + got, 1, total - got, f->f);
+        got += r;
+        if (r == 0) break;
+    }
     if (got < total) f->eof = std::feof(f->f);
     return uint32_t(got / size);
 }

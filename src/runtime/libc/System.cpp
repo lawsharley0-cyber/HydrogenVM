@@ -5,6 +5,7 @@
 #include "MachPorts.hpp"
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
+#include "PathUtils.hpp"
 #include <sys/socket.h>
 #include <sys/file.h>
 #include <sys/uio.h>
@@ -301,7 +302,12 @@ int hostOpenFlags(uint32_t f) {
 }
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
-    const int fd = ::open(x.proc.readCString(path).c_str(), hostOpenFlags(flags), mode & 0777);
+    const std::string rawP = x.proc.readCString(path);
+    const std::string p = resolveCasePath(rawP);
+    int fd = ::open(p.c_str(), hostOpenFlags(flags), mode & 0777);
+    if (fd < 0 && p != rawP) {
+        fd = ::open(rawP.c_str(), hostOpenFlags(flags), mode & 0777);
+    }
     return fd < 0 ? failD<int32_t>(x) : fd;
 }
 int32_t f_close(Ctx& x, int32_t fd) {
@@ -430,13 +436,17 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
 }
 int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    if (::stat(x.proc.readCString(path).c_str(), &st) < 0) return failD<int32_t>(x);
+    const std::string rawP = x.proc.readCString(path);
+    const std::string p = resolveCasePath(rawP);
+    if (::stat(p.c_str(), &st) < 0 && (p == rawP || ::stat(rawP.c_str(), &st) < 0)) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
 int32_t f_lstat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    if (::lstat(x.proc.readCString(path).c_str(), &st) < 0) return failD<int32_t>(x);
+    const std::string rawP = x.proc.readCString(path);
+    const std::string p = resolveCasePath(rawP);
+    if (::lstat(p.c_str(), &st) < 0 && (p == rawP || ::lstat(rawP.c_str(), &st) < 0)) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
@@ -447,7 +457,12 @@ int32_t f_fstat(Ctx& x, int32_t fd, GuestPtr out) {
     storeStat(x, out, st);
     return 0;
 }
-int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.readCString(path).c_str(), mode) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) {
+    const std::string rawP = x.proc.readCString(path);
+    const std::string p = resolveCasePath(rawP);
+    if (::access(p.c_str(), mode) < 0 && (p == rawP || ::access(rawP.c_str(), mode) < 0)) return failD<int32_t>(x);
+    return 0;
+}
 int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.readCString(path).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }

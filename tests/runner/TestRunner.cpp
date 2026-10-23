@@ -3223,6 +3223,45 @@ int runFullSubsystemTests() {
             return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
                    !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
         });
+        run("f_fread loops for full reads and case-insensitive fopen/open/stat resolve case mismatch", [&] {
+            namespace fs = std::filesystem;
+            const std::string testDir = proc.homePath() + "/tmp/case_test_dir/";
+            std::error_code ec;
+            fs::create_directories(testDir, ec);
+            const std::string exactFile = testDir + "TEXTS_BASIC.DAT";
+            {
+                std::ofstream out(exactFile, std::ios::binary);
+                out << "ello World 1234567890";
+            }
+            const std::string lowerPath = testDir + "texts_basic.dat";
+            const uint32_t mode = proc.allocCString("rb");
+            const uint32_t lowerPathPtr = proc.allocCString(lowerPath);
+
+            // Test fopen on case-mismatched path
+            const uint32_t fp = call("_fopen", {lowerPathPtr, mode});
+            if (!fp) return false;
+
+            // Test ungetc + fread full read
+            call("_ungetc", {uint32_t('H'), fp});
+            const uint32_t buf = proc.heap().allocZeroed(64);
+            // Request 22 bytes (first byte from ungetc, remaining 21 from file)
+            const uint32_t readCount = call("_fread", {buf, 1, 22, fp});
+            std::string readContent = proc.readCString(buf, 64);
+            call("_fclose", {fp});
+
+            // Test open on case-mismatched path
+            const int32_t fd = int32_t(call("_open", {lowerPathPtr, 0}));
+            bool openOk = fd >= 0;
+            if (openOk) call("_close", {uint32_t(fd)});
+
+            // Test stat and access on case-mismatched path
+            const uint32_t statBuf = proc.heap().allocZeroed(108);
+            const bool statOk = call("_stat", {lowerPathPtr, statBuf}) == 0;
+            const bool accessOk = call("_access", {lowerPathPtr, 0}) == 0;
+
+            fs::remove_all(testDir, ec);
+            return readCount == 22 && readContent == "Hello World 1234567890" && openOk && statOk && accessOk;
+        });
         run("pmatch slots past re_nsub are -1", [&] {
             auto [rc, re] = compile("(a)", REG_EXTENDED);
             for (uint32_t i = 0; i < 4 * 16; i += 8) proc.mem().write<int64_t>(pm + i, 7);
