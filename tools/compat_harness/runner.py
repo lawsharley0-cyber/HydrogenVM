@@ -116,7 +116,7 @@ def run_fuzz(root: str, build_dir: str, count: int) -> dict:
     return _suite([case])
 
 
-def run_apps(manifest: dict, resolved: list[dict], *, hvm: str, out_dir: str, seconds: float | None) -> dict:
+def run_apps(manifest: dict, resolved: list[dict], *, hvm: str, out_dir: str, seconds: float | None, keep_going: bool = False) -> dict:
     apps = []
     by_id = {a["id"]: a for a in manifest["apps"]}
     if not os.path.isfile(hvm):
@@ -131,7 +131,12 @@ def run_apps(manifest: dict, resolved: list[dict], *, hvm: str, out_dir: str, se
             apps.append(_unrun(item, spec, item["status"], item.get("reason") or ""))
             continue
         run_seconds = float(seconds if seconds is not None else spec.get("seconds") or 3)
-        apps.append(_run_one(hvm, spec, item, out_dir, run_seconds))
+        row = _run_one(hvm, spec, item, out_dir, run_seconds)
+        if keep_going:
+            # Separate home and reports: diagnostic continuation cannot change the strict result or saves.
+            continuation = _run_one(hvm, spec, item, os.path.join(out_dir, "keep-going"), run_seconds, keep_going=True)
+            row["keepGoing"] = continuation
+        apps.append(row)
     # Load errors and crashes are measurements. Timeouts, fixture/hash
     # errors, and a missing required fixture mean the harness did not
     # measure something it was asked to measure. An optional skip is partial,
@@ -208,7 +213,7 @@ def build_report(*, root: str, unit: dict, python: dict, fuzz: dict, apps: dict,
     }
 
 
-def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float) -> dict:
+def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float, keep_going: bool = False) -> dict:
     work = os.path.join(out_dir, "work", spec["id"])
     os.makedirs(work, exist_ok=True)
     report_path = os.path.join(work, "hvm-report.json")
@@ -227,6 +232,8 @@ def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float) -> 
         "--screenshot", shot_path,
         "--quiet",
     ]
+    if keep_going:
+        cmd.append("--keep-going")
     if audio.fd is not None:
         cmd.extend(["--audio-fd", str(audio.fd)])
     display_cmd = [
@@ -279,6 +286,7 @@ def _run_one(hvm: str, spec: dict, item: dict, out_dir: str, seconds: float) -> 
     row["crashed"] = bool(hvm_report.get("crashed"))
     row["loadError"] = hvm_report.get("loadError") or ""
     row["crashReport"] = hvm_report.get("crashReport") or ""
+    row["signature"] = hvm_report.get("signature") or ""
     row["unimplementedImports"] = list(hvm_report.get("unimplementedImports") or [])
     row["missingFunctions"] = list(hvm_report.get("missingFunctions") or [])
     row["warnings"] = _pairs(hvm_report.get("warnings"))

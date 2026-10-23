@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--library", help="owner library JSON; missing fixtures are explicitly optional")
+        p.add_argument("--keep-going", action="store_true", help="also collect runtime misses in an isolated sandbox")
         p.add_argument("--manifest", default=default_manifest_path())
         p.add_argument("--fixture-root", default=os.environ.get("HVM_FIXTURE_ROOT") or None)
         p.add_argument("--allow-legacy-repo", action="store_true", default=False)
@@ -119,7 +121,11 @@ def main(argv: list[str] | None = None) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     root = repo_root()
-    manifest = load_manifest(args.manifest)
+    from .library import load_library
+    manifest = load_library(args.library, args.fixture_root) if args.library else load_manifest(args.manifest)
+    if args.library:
+        args.manifest = args.library
+        if args.seconds is None: args.seconds = 30
     allow = False if args.no_legacy_repo else True if args.allow_legacy_repo else legacy_allowed(None)
     selected = None
     if args.only:
@@ -154,7 +160,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     else:
         fuzz = {"status": "not-run", "cases": []}
     if args.cmd == "apps" or (args.cmd == "run" and not args.skip_apps):
-        apps = runner.run_apps(manifest, resolved, hvm=hvm, out_dir=args.out, seconds=args.seconds)
+        apps = runner.run_apps(manifest, resolved, hvm=hvm, out_dir=args.out, seconds=args.seconds, keep_going=args.keep_going)
     else:
         apps = {"status": "skip", "apps": []}
     if args.cmd == "unit":
