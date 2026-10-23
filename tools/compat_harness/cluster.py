@@ -82,7 +82,7 @@ def clusters_for_app(app: dict) -> list[dict]:
         add(_fault_cluster(app.get("crashReport") or ""))
     for name in app.get("unimplementedImports") or []:
         _add_symbol(add, str(name), from_import=True)
-    for name in app.get("missingFunctions") or []:
+    for name in (app.get("missingFunctions") or []) + ((app.get("keepGoing") or {}).get("missingFunctions") or []):
         _add_symbol(add, str(name), from_import=False)
     for warning in app.get("warnings") or []:
         message = warning.get("message", "") if isinstance(warning, dict) else str(warning)

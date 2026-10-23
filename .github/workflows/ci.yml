@@ -29,7 +29,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev uuid-dev python3
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
         run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
@@ -44,6 +44,8 @@ jobs:
         run: tools/build_cctools.sh /home/runner/cctools
       - name: Test + performance report
         run: python3 tools/hvm_report.py --out report
+      - name: Host AAC decoder comparison
+        run: python3 tools/test_m4a_audio.py --hvm-tests build/hvm_tests --out report/m4a.json
       - name: Publish report to ci-reports branch
         if: always()
         run: tools/publish_report.sh report linux
@@ -121,6 +123,30 @@ jobs:
         run: |
           tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
             "ALL CHECKS PASSED" "70,350@0.3;230,350@0.5" sim-out
+      - name: Run a GLES game on the GPU path inside HydrogenVM (simulator)
+        # Tiny Tower (GLES 1.1, in-repo fixture). Diagnostic: the screenshot and
+        # console go to ci-reports under simulator-gl/; it does not gate the build.
+        continue-on-error: true
+        run: |
+          rm -rf build/gl && mkdir -p build/gl
+          unzip -q Tiny_Tower_v1.0_os30.ipa -d build/gl
+          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "build/gl/Payload/Tiny Tower.app" \
+            "GPU: presented frame 60 directly" "160,240@6" sim-gl-out
+      - name: A landscape GLES game on the GPU path (simulator)
+        # Angry Birds (GLES 1.1, landscape, in-repo fixture): the GPU layer must be rotated like the guest view.
+        continue-on-error: true
+        run: |
+          rm -rf build/gl-ab && mkdir -p build/gl-ab
+          unzip -q AngryBirds_v1.0_os30.ipa -d build/gl-ab
+          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "$(ls -d build/gl-ab/Payload/*.app | head -1)" \
+            "GPU: presented frame 600 directly" "" sim-gl-landscape-out
+      - name: Same game with GLES 1.1 emulated on an ES 2 context (simulator)
+        continue-on-error: true
+        env:
+          SIMCTL_CHILD_HVM_GL1_EMULATE: "1"
+        run: |
+          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "build/gl/Payload/Tiny Tower.app" \
+            "GPU: presented frame 60 directly" "160,240@6" sim-gl-emu-out
       - name: Upload validated unsigned device package
         uses: actions/upload-artifact@v4
         with:
@@ -137,6 +163,9 @@ jobs:
           cp app/device-build.log app/sim-build.log report/xcode/ 2>/dev/null || true
           grep -E "error:|warning:" app/device-build.log app/sim-build.log 2>/dev/null | sort -u | head -300 > report/xcode/diagnostics.txt || true
           cp -R sim-out/. report/simulator/ 2>/dev/null || true
+          mkdir -p report/simulator-gl && cp -R sim-gl-out/. report/simulator-gl/ 2>/dev/null || true
+          mkdir -p report/simulator-gl-emu && cp -R sim-gl-emu-out/. report/simulator-gl-emu/ 2>/dev/null || true
+          mkdir -p report/simulator-gl-landscape && cp -R sim-gl-landscape-out/. report/simulator-gl-landscape/ 2>/dev/null || true
           tools/publish_report.sh report macos
       - name: Upload results
         if: always()

@@ -1,6 +1,7 @@
 // HydrogenVM — one emulated iOS process: guest memory, CPU engine, loaded
 // image, host-implemented system libraries, guest threads, logging.
 #pragma once
+#include <deque>
 #include "Abi.hpp"
 #include "FrameHistogram.hpp"
 #include "Heap.hpp"
@@ -124,6 +125,10 @@ public:
     void enterForeground();
     bool backgrounded() const { return backgrounded_.load(); }
     bool gracefulStopRequested() const { return gracefulStop_.load(); }
+    // UIKit marks this immediately before willTerminate. Keep guest execution
+    // available for the delegate/save flush, but suppress automatic callbacks.
+    void beginTermination() { terminating_.store(true); }
+    bool terminating() const { return terminating_.load(); }
     // Used by the lifecycle handler while the app is in the background (parks the caller).
     void waitWhileBackgrounded();
     void setBackgrounded(bool b);
@@ -180,6 +185,8 @@ public:
     // ---- results
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
+    std::string crashBundle();
+    const std::string& crashSignature() const { return crashSignature_; }
     std::vector<std::string> missingSymbols() const;
     // Imports bound to "missing" stubs at load (functions), in file order — the static gap list.
     const std::vector<std::string>& unimplementedImports() const { return unimplementedImports_; }
@@ -275,6 +282,10 @@ public:
     void logf(LogLevel lvl, const char* fmt, ...) const __attribute__((format(printf, 3, 4)));
     void reportMissing(const std::string& what);   // logs once per name
     std::string describeAddress(uint32_t addr) const;
+    std::string hleFunctionName(uint32_t index) const;
+    // The host function currently bound to an exported symbol (null if none / not host code).
+    // Used to chain a new implementation in front of an existing one.
+    std::function<void(CPU::Cpu&)> hostFunctionFor(const std::string& symbol) const;
     std::string backtrace(const CPU::Cpu& c, int maxFrames = 24) const;
 
     // ---- host input (any thread); UIKit installs the handler
@@ -329,7 +340,7 @@ private:
     std::function<void(Lifecycle)> lifecycleHandler_;
     struct Liveness { std::mutex mu; bool alive = true; };
     std::shared_ptr<Liveness> liveness_ = std::make_shared<Liveness>();   // for helper threads that outlive us
-    std::atomic<bool> backgrounded_{false}, gracefulStop_{false};
+    std::atomic<bool> backgrounded_{false}, gracefulStop_{false}, terminating_{false};
     std::mutex lifeMu_;
     std::condition_variable lifeCv_;
     std::mutex slotMu_;
@@ -360,6 +371,11 @@ private:
     std::function<bool(Ctx&, const std::exception&)> hostErrorHook_;
     std::shared_ptr<Audio::Mixer> mixer_;
     std::string crashReport_;
+    std::string crashSignature_, crashKind_, crashLocation_, crashDetail_, executableHash_;
+    std::array<uint32_t, 16> crashRegisters_{};
+    mutable std::mutex logRingMu_;
+    mutable std::deque<std::string> logRing_;
+    void captureCrash(const CPU::Cpu& c, const std::string& kind, const std::string& detail);
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
     std::function<void(float, float, float)> accelHandler_;

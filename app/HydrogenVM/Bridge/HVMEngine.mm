@@ -345,6 +345,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
 }
 
 @interface HVMSession ()
+@property (nonatomic, readwrite, copy, nullable) NSString *crashBundle;
 @property (nonatomic, readwrite) CGSize screenSize;
 @property (nonatomic, readwrite) NSInteger interfaceOrientation;
 @property (nonatomic, readwrite, getter=isRunning) BOOL running;
@@ -451,7 +452,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
             });
         };
         int code = -1;
-        std::string crash;
+        std::string crash, bundleJSON;
         try {
             auto proc = std::make_shared<RT::Process>(std::move(cfg));
             {
@@ -464,7 +465,10 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
                 core->ready = true;
                 if (core->stopRequested) proc->requestStop();
                 code = proc->run();
-                if (proc->crashed()) crash = proc->crashReport().empty() ? "The app crashed." : proc->crashReport();
+                if (proc->crashed()) {
+                    crash = proc->crashReport().empty() ? "The app crashed." : proc->crashReport();
+                    bundleJSON = proc->crashBundle();
+                }
             }
             core->ready = false;
             std::lock_guard<std::mutex> lk(core->mu);
@@ -487,7 +491,8 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
             HVMSession *s = weakSelf;
             if (!s) return;
             s.running = NO;
-            if (s.onExit) s.onExit(code, (crash.empty() || userStopped) ? nil : str(crash));
+            s.crashBundle = bundleJSON.empty() ? nil : str(bundleJSON);
+            if (s.onExit) s.onExit(code, crash.empty() ? nil : str(crash));
         });
     });
 }
@@ -532,6 +537,31 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
     std::shared_ptr<RT::Process> p;
     { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
     return p ? double(p->perf().frameTimes.percentile(95)) / 1e6 : 0;
+}
+
+- (NSInteger)interfaceOrientation {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    // UIKit state exists once a frame has been shown; before that keep the captured value.
+    if (p && p->perf().framesPresented.load() > 0) {
+        const int32_t o = RT::UIKit::ui(*p).statusBarOrientation;
+        if (o >= 1 && o <= 4) return o;
+    }
+    return _interfaceOrientation;
+}
+
++ (NSString *)emulatorCommit {
+#ifdef HVM_COMMIT
+    return @HVM_COMMIT;
+#else
+    return @"unknown";
+#endif
+}
+
+- (uint64_t)framesPresented {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    return p ? p->perf().framesPresented.load() : 0;
 }
 
 - (float)outputVolume { return _core->outputVolume.load(); }

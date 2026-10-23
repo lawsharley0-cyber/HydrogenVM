@@ -1,6 +1,7 @@
 // HydrogenVM — libobjc's C API: message dispatch, ARC entry points,
 // introspection, exceptions, @synchronized, associated objects.
 #include "ObjC.hpp"
+#include <unordered_set>
 
 namespace Hydrogen::Runtime::ObjC {
 namespace {
@@ -154,6 +155,7 @@ uint32_t c_className(Ctx& x, Class c) { return c ? x.proc.internCString(rt(x).cl
 Class c_superclass(Ctx& x, Class c) { return rt(x).superclass(c); }
 bool c_isMeta(Ctx& x, Class c) { return rt(x).isMeta(c); }
 uint32_t c_instanceSize(Ctx& x, Class c) { const ClassInfo* ci = rt(x).info(c); return ci ? ci->instanceSize : 0; }
+uint32_t c_getIvarLayout(Ctx&, Class) { return 0; }
 Class o_getClass(Ctx& x, id o) { return rt(x).classOf(o); }
 Class o_setClass(Ctx& x, id o, Class c) { const Class old = rt(x).classOf(o); if (o) x.mem.write<uint32_t>(o, c); return old; }
 uint32_t o_getClassName(Ctx& x, id o) { return x.proc.internCString(o ? rt(x).objectClassName(o) : "nil"); }
@@ -178,6 +180,45 @@ IMP c_getMethodImplementation(Ctx& x, Class c, SEL s) {
 bool c_conformsTo(Ctx& x, Class c, uint32_t p) { return rt(x).conformsTo(c, p); }
 uint32_t p_get(Ctx& x, GuestPtr name) { return rt(x).getProtocol(x.proc.readCString(name)); }
 uint32_t p_getName(Ctx& x, uint32_t p) { return x.proc.internCString(rt(x).protocolName(p)); }
+
+// ARMv7 protocol_t metadata: adopted list at +8, four method-description lists at +12..24.
+uint32_t p_copyProtocols(Ctx& x, uint32_t protocol, GuestPtr count) {
+    const uint32_t list = protocol ? x.mem.read<uint32_t>(protocol + 8) : 0;
+    const uint32_t n = list ? x.mem.read<uint32_t>(list) : 0;
+    if (n > 65536) { if (count) x.mem.write<uint32_t>(count, 0); return 0; }
+    if (count) x.mem.write<uint32_t>(count, n);
+    if (!n) return 0;
+    const uint32_t result = x.proc.heap().allocZeroed((n + 1) * 4);
+    x.mem.copyIn(result, x.mem.host(list + 4), n * 4);
+    return result;
+}
+bool p_conforms(Ctx& x, uint32_t protocol, uint32_t other) {
+    if (!protocol || !other) return false;
+    std::vector<uint32_t> todo{protocol};
+    std::unordered_set<uint32_t> seen;
+    while (!todo.empty() && seen.size() < 65536) {
+        const uint32_t p = todo.back(); todo.pop_back();
+        if (!seen.insert(p).second) continue;
+        if (p == other || rt(x).protocolName(p) == rt(x).protocolName(other)) return true;
+        const uint32_t list = x.mem.read<uint32_t>(p + 8), n = list ? x.mem.read<uint32_t>(list) : 0;
+        for (uint32_t i = 0; i < std::min(n, 65536u); ++i) todo.push_back(x.mem.read<uint32_t>(list + 4 + i * 4));
+    }
+    return false;
+}
+uint32_t p_copyMethods(Ctx& x, uint32_t protocol, bool required, bool instance, GuestPtr count) {
+    const uint32_t offset = 12 + (required ? 0 : 8) + (instance ? 0 : 4);
+    const uint32_t list = protocol ? x.mem.read<uint32_t>(protocol + offset) : 0;
+    const uint32_t n = list ? x.mem.read<uint32_t>(list) : 0;
+    if (n > 65536) { if (count) x.mem.write<uint32_t>(count, 0); return 0; }
+    if (count) x.mem.write<uint32_t>(count, n);
+    if (!n) return 0;
+    const uint32_t result = x.proc.heap().allocZeroed((n + 1) * 8);
+    for (uint32_t i = 0; i < n; ++i) {
+        x.mem.write<uint32_t>(result + i * 8, rt(x).selFromString(x.mem.read<uint32_t>(list + 4 + i * 8)));
+        x.mem.write<uint32_t>(result + i * 8 + 4, x.mem.read<uint32_t>(list + 8 + i * 8));
+    }
+    return result;
+}
 
 // Method objects: guest method_t {SEL name; char *types; IMP imp} per (class, selector).
 struct Methods {
@@ -466,6 +507,7 @@ void registerObjCApi(Process& p, Runtime& r) {
     p.def<&c_superclass>("_class_getSuperclass");
     p.def<&c_isMeta>("_class_isMetaClass");
     p.def<&c_instanceSize>("_class_getInstanceSize");
+    p.def<&c_getIvarLayout>("_class_getIvarLayout");
     p.def<&o_getClass>("_object_getClass");
     p.def<&o_setClass>("_object_setClass");
     p.def<&o_getClassName>("_object_getClassName");
@@ -482,6 +524,9 @@ void registerObjCApi(Process& p, Runtime& r) {
     p.def<&c_conformsTo>("_class_conformsToProtocol");
     p.def<&p_get>("_objc_getProtocol");
     p.def<&p_getName>("_protocol_getName");
+    p.def<&p_conforms>("_protocol_conformsToProtocol");
+    p.def<&p_copyProtocols>("_protocol_copyProtocolList");
+    p.def<&p_copyMethods>("_protocol_copyMethodDescriptionList");
     p.def<&c_getInstanceMethod>("_class_getInstanceMethod");
     p.def<&c_getClassMethod>("_class_getClassMethod");
     p.def<&m_getName>("_method_getName");

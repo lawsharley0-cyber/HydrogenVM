@@ -3,6 +3,7 @@
 // interpolation yet) and the compositor that turns the layer trees of all
 // visible windows into the framebuffer.
 #include "UIKit.hpp"
+#include "runtime/gl/HostGL.hpp"
 #include <chrono>
 
 namespace Hydrogen::Runtime::UIKit {
@@ -552,6 +553,9 @@ struct Compositor {
         const G::Path devShape = shape.transformed(m);
 
         if (d.hostPresented) {
+            // Tell the host where its GPU layer goes (rotated for landscape games).
+            const float tm[6] = {m.a, m.b, m.c, m.d, m.tx, m.ty};
+            HostGL::layerPlaced(x.proc, layer, tm, d.bounds.x, d.bounds.y, d.bounds.w, d.bounds.h, dst.width, dst.height);
             // Cut a hole down to the host's GPU layer, then draw what sits on top.
             if (d.cornerRadius <= 0 && m.axisAligned()) G::fillRect(dst, m.applyRect(d.bounds), {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
             else G::fillPath(dst, devShape, false, {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);

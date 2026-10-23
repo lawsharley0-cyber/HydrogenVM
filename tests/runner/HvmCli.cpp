@@ -1,6 +1,12 @@
 // hvm — command-line front end used by the test suite (and handy for
 // debugging on a desktop): import .ipa files, inspect bundles, run apps.
 #include "loader/AppBundle.hpp"
+#include "runtime/objc/ObjC.hpp"
+#include <set>
+#include <iostream>
+#include <iomanip>
+#include <sstream>
+#include <cxxabi.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -15,6 +21,89 @@ static void printInfo(const Loader::AppInfo& a) {
     if (!a.problem.empty()) std::printf("problem: %s\n", a.problem.c_str());
 }
 
+static std::string quoted(const std::string& value) {
+    std::ostringstream out;
+    out << '"';
+    for (unsigned char c : value) {
+        if (c == '"' || c == '\\') out << '\\' << char(c);
+        else if (c < 32) out << "\\u00" << std::hex << std::setw(2) << std::setfill('0') << unsigned(c);
+        else out << char(c);
+    }
+    return out.str() + '"';
+}
+
+static std::string pretty(std::string name) {
+    if (!name.empty() && name[0] == '_') name.erase(0, 1);
+    int status = 0;
+    char* demangled = abi::__cxa_demangle(name.c_str(), nullptr, nullptr, &status);
+    if (demangled && !status) name = demangled;
+    std::free(demangled);
+    return name;
+}
+
+static void linkingInfo(const char* path) {
+    Runtime::ProcessConfig cfg;
+    cfg.bundlePath = path;
+    std::set<std::string> zeroData;
+    cfg.log = [&](Runtime::LogLevel, const std::string& message) {
+        const std::string prefix = "Missing data symbol ";
+        const auto end = message.find(" (using zeros)");
+        if (message.starts_with(prefix) && end != std::string::npos)
+            zeroData.insert(message.substr(prefix.size(), end - prefix.size()));
+    };
+    Runtime::Process process(cfg);
+    process.load(); // Binds and registers metadata; never runs +load or guest initializers.
+    auto& objc = Runtime::ObjC::rt(process);
+    const auto missing = process.unimplementedImports();
+    std::set<std::pair<std::string, std::string>> seen;
+    bool first = true;
+    std::cout << "{\"selectorResolution\":\"candidate implementations only; the receiver is determined at runtime\",\"references\":[";
+    auto emit = [&](const std::string& kind, const std::string& name, const std::string& binding) {
+        if (!seen.emplace(kind, name).second) return;
+        std::cout << (first ? "" : ",") << "{\"kind\":" << quoted(kind) << ",\"name\":" << quoted(name)
+                  << ",\"binding\":" << quoted(binding) << "}";
+        first = false;
+    };
+    auto imports = process.image().binds;
+    imports.insert(imports.end(), process.image().weakBinds.begin(), process.image().weakBinds.end());
+    for (const auto& bind : imports) {
+        const auto target = process.mem().read<uint32_t>(bind.address);
+        const auto symbol = process.lookupSymbol(bind.symbol).value_or(0);
+        if (bind.symbol.starts_with("_OBJC_CLASS_$_") || bind.symbol.starts_with("_OBJC_METACLASS_$_")) {
+            const auto at = bind.symbol.find("$_");
+            const auto name = bind.symbol.substr(at + 2);
+            const auto cls = objc.getClass(name);
+            const auto info = cls ? objc.info(cls) : nullptr;
+            emit("class", name, !target || !info ? "missing" : info->stub ? "placeholder class" : "implemented");
+        } else {
+            const auto name = pretty(bind.symbol);
+            const bool stub = std::find(missing.begin(), missing.end(), name) != missing.end();
+            bool function = bind.lazy || (symbol && process.engine().isHleAddress(symbol));
+            for (const auto& segment : process.image().segments)
+                function |= (segment.initprot & 4) && (target & ~1u) >= segment.vmaddr && (target & ~1u) - segment.vmaddr < segment.vmsize;
+            emit(function ? "function" : "data", bind.symbol, !target ? "missing" : stub ? "stub" : zeroData.count(name) ? "zero-filled data" : "implemented");
+        }
+    }
+    for (const auto& section : process.image().sections) {
+        if (section.sectname != "__objc_selrefs" && section.sectname != "__objc_classrefs") continue;
+        for (uint32_t offset = 0; offset + 4 <= section.size; offset += 4) {
+            const auto value = process.mem().read<uint32_t>(section.addr + offset);
+            if (section.sectname == "__objc_classrefs") {
+                const auto info = value ? objc.info(value) : nullptr;
+                if (info) emit("class", info->name, info->stub ? "placeholder class" : "implemented");
+                continue;
+            }
+            bool provided = false;
+            for (auto cls : objc.classList()) {
+                const auto info = objc.info(cls);
+                provided |= objc.lookup(cls, value) != 0 || (info && objc.lookup(info->meta, value) != 0);
+            }
+            emit("selector", objc.selName(value), provided ? "implemented" : "missing");
+        }
+    }
+    std::cout << "]}\n";
+}
+
 int hvmRunMain(int argc, char** argv);   // HvmRun.cpp
 
 int main(int argc, char** argv) {
@@ -24,6 +113,7 @@ int main(int argc, char** argv) {
     }
     try {
         if (!std::strcmp(argv[1], "import") && argc >= 4) { printInfo(Loader::importIpa(argv[2], argv[3])); return 0; }
+        if (!std::strcmp(argv[1], "info") && argc == 5 && !std::strcmp(argv[2], "--linking") && !std::strcmp(argv[4], "--json")) { linkingInfo(argv[3]); return 0; }
         if (!std::strcmp(argv[1], "info") && argc >= 3) { printInfo(Loader::readBundle(argv[2])); return 0; }
         if (!std::strcmp(argv[1], "run")) return hvmRunMain(argc - 1, argv + 1);
     } catch (const std::exception& e) {

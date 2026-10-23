@@ -1,5 +1,6 @@
 // HydrogenVM — OpenGL ES forwarded to the host GPU. See HostGL.hpp.
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/gl/HostGLInternal.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
 #include <algorithm>
@@ -39,52 +40,13 @@ constexpr uint32_t kPvrtcRgb4 = 0x8C00, kPvrtcRgb2 = 0x8C01, kPvrtcRgba4 = 0x8C0
 
 } // namespace
 
-// The forwarded entry points, loaded per host context (the same name can resolve
-// differently on an ES context and on a desktop compatibility context).
-struct Fns {
-#define HOSTGL_FN(name, ret, params) ret (*name) params = nullptr;
-#define HOSTGL_TABLE
-#include "runtime/gl/HostGLTable.inc"
-#undef HOSTGL_TABLE
-#undef HOSTGL_FN
-    // Desktop-only replacements for ES 1.1 entry points.
-    void (*glOrtho)(double, double, double, double, double, double) = nullptr;
-    void (*glFrustum)(double, double, double, double, double, double) = nullptr;
-    void (*glClipPlane)(uint32_t, const double*) = nullptr;
-    void (*glGetClipPlane)(uint32_t, double*) = nullptr;
-    // ES 3.0 / desktop names used to emulate Apple extensions.
-    void* (*glFenceSync)(uint32_t, uint32_t) = nullptr;
-    uint8_t (*glIsSync)(void*) = nullptr;
-    void (*glDeleteSync)(void*) = nullptr;
-    uint32_t (*glClientWaitSync)(void*, uint32_t, uint64_t) = nullptr;
-    void (*glWaitSync)(void*, uint32_t, uint64_t) = nullptr;
-    void (*glGetSynciv)(void*, uint32_t, int32_t, int32_t*, int32_t*) = nullptr;
-};
-
-struct MappedBuffer {
-    uint32_t guest = 0;      // guest shadow copy handed to the app
-    void* host = nullptr;    // the driver's mapping
-    intptr_t offset = 0, length = 0;
-    uint32_t access = 0;
-};
-
-struct HostContext {
-    void* handle = nullptr;
-    int api = 2;
-    bool desktop = false;    // ES 1.1 guest on a desktop compatibility context
-    bool implicitWorker = false;
-    uint32_t guestContext = 0, guestSharegroup = 0;
-    Fns fn;
-    uint32_t readFbo = 0;    // scratch FBO for read-backs
-    std::unordered_map<uint32_t, MappedBuffer> mapped;   // key: target
-};
-
 namespace {
 
 struct Drawable {
     uint32_t layer = 0;
     int width = 0, height = 0;
 };
+struct Placement { float unit[6] = {}; };
 
 struct State {
     explicit State(Process&) {}
@@ -99,6 +61,7 @@ struct State {
     std::set<std::string> missingLogged;
     uint32_t lastGuestContext = 0;
     std::unordered_map<std::string, uint32_t> strings;
+    std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -106,6 +69,7 @@ State& S(Process& p) { return p.service<State>(); }
 struct Tls {
     Process* proc = nullptr;
     HostContext* ctx = nullptr;
+    bool software = false;   // the guest made a software-rendered context current on this thread
 };
 thread_local Tls tls;
 
@@ -186,6 +150,7 @@ void bind(Process& p, HostContext* hc) {
     else if (S(p).platform) S(p).platform->makeCurrent(nullptr);
     tls.proc = &p;
     tls.ctx = hc;
+    tls.software = false;
 }
 
 std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestContext, uint32_t sharegroup, bool worker) {
@@ -202,14 +167,33 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
     hc->guestSharegroup = sharegroup;
     hc->implicitWorker = worker;
     bool desktop = false;
-    hc->handle = st.platform->createContext(api, root ? root->handle : nullptr, desktop);
-    if (!hc->handle && root) hc->handle = st.platform->createContext(api, nullptr, desktop);   // e.g. ES1 and ES2 can't share
+    // ES 1.1 guests: a native ES 1.1 context when the driver has one; otherwise
+    // (or with HVM_GL1_EMULATE=1) an ES 2/3 context with the fixed-function
+    // pipeline emulated in shaders (Gles1Emu.cpp).
+    const char* forceEmu = std::getenv("HVM_GL1_EMULATE");
+    bool emulate = api == 1 && forceEmu && *forceEmu && *forceEmu != '0';
+    if (!emulate) {
+        hc->handle = st.platform->createContext(api, root ? root->handle : nullptr, desktop);
+        if (!hc->handle && root) hc->handle = st.platform->createContext(api, nullptr, desktop);   // e.g. ES1 and ES2 can't share
+    }
+    if (!hc->handle && api == 1) {
+        emulate = true;
+        desktop = false;
+        hc->handle = st.platform->createContext(2, root ? root->handle : nullptr, desktop);
+        if (!hc->handle && root) hc->handle = st.platform->createContext(2, nullptr, desktop);
+        if (hc->handle) p.log(LogLevel::Info, "GPU: OpenGL ES 1.1 runs on an ES 2 context (fixed function in shaders)");
+    }
     if (!hc->handle) {
         p.log(LogLevel::Error, std::string("GPU: couldn't create a host OpenGL ES ") + std::to_string(api) + " context");
         return nullptr;
     }
     hc->desktop = desktop;
+    if (emulate) hc->api = 2;          // resolve the table as an ES 2 context
     loadFns(*st.platform, *hc);
+    if (emulate) {
+        hc->api = 1;
+        installGles1Emulation(*hc);
+    }
     {
         std::lock_guard<std::mutex> lk(st.mu);
         if (!st.shareRoot.count(sharegroup)) st.shareRoot[sharegroup] = hc.get();
@@ -219,10 +203,13 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
 
 } // namespace
 
+HostContext* currentHostContext() { return tls.ctx; }
+
 // ------------------------------------------------------------ current context ---
 
 HostContext* hgCurrent(Ctx& x) {
     if (tls.proc == &x.proc && tls.ctx) return tls.ctx;
+    if (tls.proc == &x.proc && tls.software) return nullptr;
     // No context on this thread. iOS apps (Cocos2d texture loaders, for one) issue
     // GL from worker threads after setting the shared context there; when they
     // don't, the software path borrowed the last active context. A host context
@@ -804,6 +791,8 @@ static State& ready(Process& p) {
 
 void* contextCreate(Process& p, uint32_t guestContext, int api, uint32_t guestSharegroup) {
     State& st = ready(p);
+    // Testing aid: HVM_GPU_DISABLE_API=1 (or 2) acts as if the driver lacked that API.
+    if (const char* off = std::getenv("HVM_GPU_DISABLE_API"); off && std::atoi(off) == api) return nullptr;
     auto hc = makeContext(p, api, guestContext, guestSharegroup, false);
     if (!hc) return nullptr;
     void* h = hc->handle;
@@ -842,6 +831,27 @@ void contextMakeCurrent(Process& p, uint32_t guestContext) {
     }
     if (tls.proc == &p && tls.ctx == hc && hc) return;
     bind(p, hc);
+    // A guest context without a host context (its API isn't available on this
+    // driver) renders in software; GL calls on this thread go to that path.
+    if (!hc && guestContext) tls.software = true;
+}
+
+bool isHostContext(Process& p, uint32_t guestContext) {
+    if (!enabled(p)) return false;
+    State& st = S(p);
+    std::lock_guard<std::mutex> lk(st.mu);
+    return st.contexts.count(guestContext) != 0;
+}
+
+// Which implementation serves a GL call on this thread.
+static bool hgUseHost(Ctx& x) {
+    if (tls.proc == &x.proc) {
+        if (tls.ctx) return true;
+        if (tls.software) return false;
+    }
+    State& st = S(x.proc);
+    std::lock_guard<std::mutex> lk(st.mu);
+    return st.lastGuestContext != 0 && st.contexts.count(st.lastGuestContext) != 0;
 }
 
 static HostContext* contextFor(Process& p, uint32_t guestContext) {
@@ -866,6 +876,8 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
         storage(kRenderbuffer, kRgba8, width, height);
         ok = true;
     }
+    p.log(LogLevel::Info, "GPU: drawable " + std::to_string(width) + "x" + std::to_string(height) + " for renderbuffer " +
+                              std::to_string(rb) + (handled ? " (platform layer)" : " (RGBA8 storage)") + (ok ? "" : " FAILED"));
     std::lock_guard<std::mutex> lk(st.mu);
     Drawable& d = st.drawables[key2(hc->guestSharegroup, rb)];
     d.layer = layer;
@@ -899,7 +911,33 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     layer = d.layer;
     width = d.width;
     height = d.height;
-    if (st.platform->presentDirect(hc->handle, d.layer)) { direct = true; return true; }
+    static std::atomic<int> presents{0};
+    const int n = presents + 1;
+    std::string probe;
+    if ((n == 1 || n == 60 || n == 600) && hc->fn.glReadPixels) {
+        // Diagnostic: sample the frame before it goes to the display, so a blank
+        // screen can be told apart from a frame the GPU really rendered black.
+        uint64_t sum[3] = {}, lit = 0;
+        for (int gy = 0; gy < 8; ++gy)
+            for (int gx = 0; gx < 8; ++gx) {
+                uint8_t px[4] = {};
+                hc->fn.glReadPixels(int32_t((gx * 2 + 1) * width / 16), int32_t((gy * 2 + 1) * height / 16), 1, 1, kRgba, kUnsignedByte, px);
+                sum[0] += px[0]; sum[1] += px[1]; sum[2] += px[2];
+                if (px[0] > 8 || px[1] > 8 || px[2] > 8) ++lit;
+            }
+        probe = " (average rgb " + std::to_string(sum[0] / 64) + "," + std::to_string(sum[1] / 64) + "," +
+                std::to_string(sum[2] / 64) + ", " + std::to_string(lit) + "/64 samples lit)";
+    }
+    if (st.platform->presentDirect(hc->handle, d.layer)) {
+        direct = true;
+        ++presents;
+        if (!probe.empty()) p.log(LogLevel::Info, "GPU: presented frame " + std::to_string(n) + " directly" + probe);
+        return true;
+    }
+    {
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true)) p.log(LogLevel::Warning, "GPU: direct present unavailable; reading frames back");
+    }
 
     // Read the drawable back for the software compositor.
     if (!hc->fn.glGenFramebuffers || !hc->fn.glReadPixels) return false;
@@ -924,56 +962,101 @@ void layerGone(Process& p, uint32_t layer) {
             if (it->second.layer == layer) it = st.drawables.erase(it);
             else ++it;
         }
+        st.placed.erase(layer);
     }
     if (st.platform) st.platform->releaseLayer(layer);
 }
 
+void layerPlaced(Process& p, uint32_t layer, const float m[6], float bx, float by, float bw, float bh, int surfaceW,
+                 int surfaceH) {
+    State& st = S(p);
+    if (!st.platform || surfaceW <= 0 || surfaceH <= 0 || bw <= 0 || bh <= 0) return;
+    int w = 0, h = 0;
+    Placement next;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        for (const auto& [k, d] : st.drawables)
+            if (d.layer == layer) { w = d.width; h = d.height; break; }
+        if (w <= 0 || h <= 0) return;
+        // drawable pixels -> layer bounds (points) -> surface pixels -> unit square
+        const float sx = bw / float(w), sy = bh / float(h), ux = 1.0f / float(surfaceW), uy = 1.0f / float(surfaceH);
+        next.unit[0] = sx * m[0] * ux;
+        next.unit[1] = sx * m[1] * uy;
+        next.unit[2] = sy * m[2] * ux;
+        next.unit[3] = sy * m[3] * uy;
+        next.unit[4] = (bx * m[0] + by * m[2] + m[4]) * ux;
+        next.unit[5] = (bx * m[1] + by * m[3] + m[5]) * uy;
+        auto it = st.placed.find(layer);
+        if (it != st.placed.end()) {
+            bool same = true;
+            for (int i = 0; i < 6; ++i) same = same && std::fabs(it->second.unit[i] - next.unit[i]) < 1e-5f;
+            if (same) return;
+        }
+        st.placed[layer] = next;
+    }
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "GPU: drawable %dx%d placed at [%.4g %.4g %.4g %.4g %.4g %.4g] of the screen", w, h,
+                  next.unit[0], next.unit[1], next.unit[2], next.unit[3], next.unit[4], next.unit[5]);
+    p.log(LogLevel::Info, buf);
+    st.platform->layerGeometry(layer, next.unit);
+}
+
 // ------------------------------------------------------------ registration ---
+
+static void chain(Process& p, const std::string& symbol, void (*host)(Ctx&)) {
+    auto soft = p.hostFunctionFor(symbol);
+    p.defineFunction(symbol, [soft, host](Ctx& x) {
+        if (!soft || hgUseHost(x)) host(x);
+        else soft(x.cpu);
+    });
+}
 
 void registerFunctions(Process& p) {
     ready(p);
     // glGetString stays on the software path: the strings describe the iOS GPU
     // the app expects (vendor, renderer, extensions), not the host's.
-#define HOSTGL_REG(name) p.def<&hg_##name>("_" #name);
+// Each entry point keeps the software implementation it replaces, for contexts
+// that couldn't get a host context (e.g. an API the driver lacks).
+#define HOSTGL_REG(name) chain(p, "_" #name, [](Ctx& x) { callWrapped<&hg_##name>(x); });
 #define HOSTGL_REGISTER
 #include "runtime/gl/HostGLTable.inc"
 #undef HOSTGL_REGISTER
 #undef HOSTGL_REG
     // ES 1.1 fixed-point entry points.
-    p.def<&hgx_alphaFuncx>("_glAlphaFuncx");
-    p.def<&hgx_clearColorx>("_glClearColorx");
-    p.def<&hgx_clearDepthx>("_glClearDepthx");
-    p.def<&hgx_clipPlanex>("_glClipPlanex");
-    p.def<&hgx_color4x>("_glColor4x");
-    p.def<&hgx_depthRangex>("_glDepthRangex");
-    p.def<&hgx_fogx>("_glFogx");
-    p.def<&hgx_fogxv>("_glFogxv");
-    p.def<&hgx_frustumx>("_glFrustumx");
-    p.def<&hgx_getFixedv>("_glGetFixedv");
-    p.def<&hgx_lightModelx>("_glLightModelx");
-    p.def<&hgx_lightModelxv>("_glLightModelxv");
-    p.def<&hgx_lightx>("_glLightx");
-    p.def<&hgx_lightxv>("_glLightxv");
-    p.def<&hgx_lineWidthx>("_glLineWidthx");
-    p.def<&hgx_loadMatrixx>("_glLoadMatrixx");
-    p.def<&hgx_materialx>("_glMaterialx");
-    p.def<&hgx_materialxv>("_glMaterialxv");
-    p.def<&hgx_multMatrixx>("_glMultMatrixx");
-    p.def<&hgx_multiTexCoord4x>("_glMultiTexCoord4x");
-    p.def<&hgx_normal3x>("_glNormal3x");
-    p.def<&hgx_orthox>("_glOrthox");
-    p.def<&hgx_pointParameterx>("_glPointParameterx");
-    p.def<&hgx_pointParameterxv>("_glPointParameterxv");
-    p.def<&hgx_pointSizex>("_glPointSizex");
-    p.def<&hgx_polygonOffsetx>("_glPolygonOffsetx");
-    p.def<&hgx_rotatex>("_glRotatex");
-    p.def<&hgx_sampleCoveragex>("_glSampleCoveragex");
-    p.def<&hgx_scalex>("_glScalex");
-    p.def<&hgx_texEnvx>("_glTexEnvx");
-    p.def<&hgx_texEnvxv>("_glTexEnvxv");
-    p.def<&hgx_texParameterx>("_glTexParameterx");
-    p.def<&hgx_texParameterxv>("_glTexParameterxv");
-    p.def<&hgx_translatex>("_glTranslatex");
+    chain(p, "_glAlphaFuncx", [](Ctx& x) { callWrapped<&hgx_alphaFuncx>(x); });
+    chain(p, "_glClearColorx", [](Ctx& x) { callWrapped<&hgx_clearColorx>(x); });
+    chain(p, "_glClearDepthx", [](Ctx& x) { callWrapped<&hgx_clearDepthx>(x); });
+    chain(p, "_glClipPlanex", [](Ctx& x) { callWrapped<&hgx_clipPlanex>(x); });
+    chain(p, "_glColor4x", [](Ctx& x) { callWrapped<&hgx_color4x>(x); });
+    chain(p, "_glDepthRangex", [](Ctx& x) { callWrapped<&hgx_depthRangex>(x); });
+    chain(p, "_glFogx", [](Ctx& x) { callWrapped<&hgx_fogx>(x); });
+    chain(p, "_glFogxv", [](Ctx& x) { callWrapped<&hgx_fogxv>(x); });
+    chain(p, "_glFrustumx", [](Ctx& x) { callWrapped<&hgx_frustumx>(x); });
+    chain(p, "_glGetFixedv", [](Ctx& x) { callWrapped<&hgx_getFixedv>(x); });
+    chain(p, "_glLightModelx", [](Ctx& x) { callWrapped<&hgx_lightModelx>(x); });
+    chain(p, "_glLightModelxv", [](Ctx& x) { callWrapped<&hgx_lightModelxv>(x); });
+    chain(p, "_glLightx", [](Ctx& x) { callWrapped<&hgx_lightx>(x); });
+    chain(p, "_glLightxv", [](Ctx& x) { callWrapped<&hgx_lightxv>(x); });
+    chain(p, "_glLineWidthx", [](Ctx& x) { callWrapped<&hgx_lineWidthx>(x); });
+    chain(p, "_glLoadMatrixx", [](Ctx& x) { callWrapped<&hgx_loadMatrixx>(x); });
+    chain(p, "_glMaterialx", [](Ctx& x) { callWrapped<&hgx_materialx>(x); });
+    chain(p, "_glMaterialxv", [](Ctx& x) { callWrapped<&hgx_materialxv>(x); });
+    chain(p, "_glMultMatrixx", [](Ctx& x) { callWrapped<&hgx_multMatrixx>(x); });
+    chain(p, "_glMultiTexCoord4x", [](Ctx& x) { callWrapped<&hgx_multiTexCoord4x>(x); });
+    chain(p, "_glNormal3x", [](Ctx& x) { callWrapped<&hgx_normal3x>(x); });
+    chain(p, "_glOrthox", [](Ctx& x) { callWrapped<&hgx_orthox>(x); });
+    chain(p, "_glPointParameterx", [](Ctx& x) { callWrapped<&hgx_pointParameterx>(x); });
+    chain(p, "_glPointParameterxv", [](Ctx& x) { callWrapped<&hgx_pointParameterxv>(x); });
+    chain(p, "_glPointSizex", [](Ctx& x) { callWrapped<&hgx_pointSizex>(x); });
+    chain(p, "_glPolygonOffsetx", [](Ctx& x) { callWrapped<&hgx_polygonOffsetx>(x); });
+    chain(p, "_glRotatex", [](Ctx& x) { callWrapped<&hgx_rotatex>(x); });
+    chain(p, "_glSampleCoveragex", [](Ctx& x) { callWrapped<&hgx_sampleCoveragex>(x); });
+    chain(p, "_glScalex", [](Ctx& x) { callWrapped<&hgx_scalex>(x); });
+    chain(p, "_glTexEnvx", [](Ctx& x) { callWrapped<&hgx_texEnvx>(x); });
+    chain(p, "_glTexEnvxv", [](Ctx& x) { callWrapped<&hgx_texEnvxv>(x); });
+    chain(p, "_glTexParameterx", [](Ctx& x) { callWrapped<&hgx_texParameterx>(x); });
+    chain(p, "_glTexParameterxv", [](Ctx& x) { callWrapped<&hgx_texParameterxv>(x); });
+    chain(p, "_glTranslatex", [](Ctx& x) { callWrapped<&hgx_translatex>(x); });
     p.log(LogLevel::Info, std::string("GPU: OpenGL ES calls go to the host driver (") + S(p).platform->name() + ")");
 }
 

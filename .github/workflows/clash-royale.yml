@@ -45,7 +45,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev libsndfile1 python3-pil ccache
+          sudo apt-get install -yq clang llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg libsndfile1 python3-pil ccache
       - name: Cache C++ compilation
         uses: actions/cache@v4
         with:
@@ -67,6 +67,8 @@ jobs:
           cmake --build build-clash --target hvm hvm_tests hvm_machodump --parallel 2
       - name: Runtime regression checks
         run: build-clash/hvm_tests fulltest
+      - name: Synthetic host AAC comparison
+        run: python3 tools/test_m4a_audio.py --hvm-tests build-clash/hvm_tests --out clash-report/m4a.json
       - name: Compare pinned IMA WAV audio with independent decoder
         run: python3 tools/test_ima_wav_corpus.py clash-report/unpacked --hvm-tests build-clash/hvm_tests --out clash-report/ima-wav-comparison.json --require-count 107
       - name: Verify initial home and NPC request across two local launches
@@ -84,13 +86,14 @@ jobs:
       - name: Strict and exploratory compatibility runs
         run: |
           python3 tools/compat.py scan clash-report/client.ipa regression-fixtures/AngryBirds_v1.0_os30.ipa regression-fixtures/Tiny_Tower_v1.0_os30.ipa regression-fixtures/Art_Of_Glow_v1.1.2_os313.ipa --hvm build-clash/hvm --out clash-compat --seconds 15 --jobs 1 --relaunch
-          python3 -c 'import json; d=json.load(open("clash-compat/results.json")); assert len(d["apps"]) == 4, "Expected Clash Royale and three regression fixtures"'
-          cat clash-compat/REPORT.md
-          cat clash-compat/results.json
+          python3 -c 'import json; d=json.load(open("clash-compat/report.json")); assert len(d["suites"]["apps"]["apps"]) == 4, "Expected Clash Royale and three regression fixtures"'
+          python3 tools/hvm_compat.py issues clash-compat/report.json > clash-compat/ISSUES.md
+          cat clash-compat/ISSUES.md
+          cat clash-compat/report.json
       - name: Publish investigation summary
         if: always()
         run: |
-          if test -f clash-compat/REPORT.md; then cat clash-compat/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if test -f clash-compat/ISSUES.md; then cat clash-compat/ISSUES.md >> "$GITHUB_STEP_SUMMARY"; fi
           if test -f clash-report/metadata.json; then
             echo '### Pinned client metadata' >> "$GITHUB_STEP_SUMMARY"
             echo '```json' >> "$GITHUB_STEP_SUMMARY"
@@ -111,7 +114,8 @@ jobs:
             clash-home/run-*/protocol-events.json
             clash-home/run-*/*.log
             clash-home/run-*/*.png
-            clash-compat/REPORT.md
-            clash-compat/results.json
-            clash-compat/runs/**/*.json
-            clash-compat/shots/*.png
+            clash-compat/ISSUES.md
+            clash-compat/report.json
+            clash-compat/work/**/*.json
+            clash-compat/keep-going/**/*.json
+            clash-compat/work/**/*.png

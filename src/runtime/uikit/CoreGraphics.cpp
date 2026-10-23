@@ -1318,6 +1318,62 @@ void ctx_convertRectToDevice(Ctx& x, GuestPtr ret, id c, CGRect r) {
     writeStruct(x, ret, d ? fromG(d->gs().ctm.then(baseCTM(*d).inverted()).applyRect(toG(r))) : r);
 }
 
+// UIBezierPath owns a CGPath snapshot and draws through the existing CGContext.
+struct Bezier : ObjC::HostObject { id path=0; GState style; bool evenOdd=false; };
+Bezier& bezier(Ctx& x,id self) { auto& b=rt(x).host<Bezier>(self); if(!b.path)b.path=newPath(x); return b; }
+id bezier_make(Ctx& x,Class cls,SEL) { id result=rt(x).createInstance(cls);bezier(x,result);return Foundation::autoreleased(x,result); }
+id bezier_rect(Ctx& x,Class cls,SEL,CGRect rect) { id result=bezier_make(x,cls,0);path_addRect(x,bezier(x,result).path,0,rect);return result; }
+id bezier_oval(Ctx& x,Class cls,SEL,CGRect rect) { id result=bezier_make(x,cls,0);path_addEllipse(x,bezier(x,result).path,0,rect);return result; }
+id bezier_round(Ctx& x,Class cls,SEL,CGRect rect,float radius) { id result=bezier_make(x,cls,0);path_addRounded(x,bezier(x,result).path,0,rect,radius,radius);return result; }
+void bezier_set_path(Ctx& x,id self,SEL,id path) { id copy=path?path_copy(x,path):newPath(x); if(!copy)throw ObjC::ObjCError("invalid UIBezierPath CGPath");auto& b=bezier(x,self);rt(x).release(x.cpu,b.path);b.path=copy; }
+id bezier_from_path(Ctx& x,Class cls,SEL,id path) { id result=bezier_make(x,cls,0);bezier_set_path(x,result,0,path);return result; }
+id bezier_path(Ctx& x,id self,SEL) {return bezier(x,self).path;}
+void bezier_free(Ctx& x,id self,SEL) {if(auto* b=rt(x).hostIf<Bezier>(self);b&&b->path)rt(x).release(x.cpu,b->path);rt(x).disposeInstance(x.cpu,self);}
+void bezier_move(Ctx& x,id self,SEL,CGPoint p) {path_moveTo(x,bezier(x,self).path,0,p.x,p.y);}
+void bezier_line(Ctx& x,id self,SEL,CGPoint p) {path_lineTo(x,bezier(x,self).path,0,p.x,p.y);}
+void bezier_quad(Ctx& x,id self,SEL,CGPoint p,CGPoint c) {path_quadTo(x,bezier(x,self).path,0,c.x,c.y,p.x,p.y);}
+void bezier_curve(Ctx& x,id self,SEL,CGPoint p,CGPoint c1,CGPoint c2) {path_curveTo(x,bezier(x,self).path,0,c1.x,c1.y,c2.x,c2.y,p.x,p.y);}
+void bezier_arc(Ctx& x,id self,SEL,CGPoint center,float radius,float start,float end,bool clockwise) {pathOf(x,bezier(x,self).path)->arc(toG(center),radius,start,end,clockwise);}
+void bezier_close(Ctx& x,id self,SEL) {path_close(x,bezier(x,self).path);}
+void bezier_clear(Ctx& x,id self,SEL) {*pathOf(x,bezier(x,self).path)=G::Path{};}
+void bezier_append(Ctx& x,id self,SEL,id other) {path_addPath(x,bezier(x,self).path,0,bezier(x,other).path);}
+void bezier_transform(Ctx& x,id self,SEL,CGAffineTransform t) {auto* path=pathOf(x,bezier(x,self).path);*path=path->transformed(toG(t));}
+bool bezier_empty(Ctx& x,id self,SEL) {return path_isEmpty(x,bezier(x,self).path);}
+bool bezier_contains(Ctx& x,id self,SEL,CGPoint p) {auto& b=bezier(x,self);return path_contains(x,b.path,0,p,b.evenOdd);}
+void bezier_bounds(Ctx& x,GuestPtr out,id self,SEL) {path_bbox(x,out,bezier(x,self).path);}
+void bezier_current(Ctx& x,GuestPtr out,id self,SEL) {path_current(x,out,bezier(x,self).path);}
+bool bezier_eo(Ctx& x,id self,SEL) {return bezier(x,self).evenOdd;}
+void bezier_set_eo(Ctx& x,id self,SEL,bool v) {bezier(x,self).evenOdd=v;}
+float bezier_float(Ctx& x,id self,SEL sel) {auto& s=bezier(x,self).style;auto name=rt(x).selName(sel);return name=="lineWidth"?s.lineWidth:name=="miterLimit"?s.miterLimit:s.flatness;}
+void bezier_set_float(Ctx& x,id self,SEL sel,float v) {auto& s=bezier(x,self).style;auto name=rt(x).selName(sel);if(name=="setLineWidth:")s.lineWidth=v;else if(name=="setMiterLimit:")s.miterLimit=v;else s.flatness=v;}
+int32_t bezier_int(Ctx& x,id self,SEL sel) {auto& s=bezier(x,self).style;return rt(x).selName(sel)=="lineCapStyle"?s.lineCap:s.lineJoin;}
+void bezier_set_int(Ctx& x,id self,SEL sel,int32_t v) {auto& s=bezier(x,self).style;if(rt(x).selName(sel)=="setLineCapStyle:")s.lineCap=v;else s.lineJoin=v;}
+void bezier_dash(Ctx& x,id self,SEL,GuestPtr pattern,int32_t count,float phase) {if(count<0 || count>65536 || (count&&!pattern))throw ObjC::ObjCError("invalid UIBezierPath dash");auto& s=bezier(x,self).style;s.dash.clear();for(int32_t i=0;i<count;++i)s.dash.push_back(x.mem.read<float>(pattern+4*i));s.dashPhase=phase;}
+void bezier_get_dash(Ctx& x,id self,SEL,GuestPtr pattern,GuestPtr count,GuestPtr phase) {auto& s=bezier(x,self).style;if(pattern)for(size_t i=0;i<s.dash.size();++i)x.mem.write<float>(pattern+4*i,s.dash[i]);if(count)x.mem.write<uint32_t>(count,uint32_t(s.dash.size()));if(phase)x.mem.write<float>(phase,s.dashPhase);}
+void bezier_draw(Ctx& x,id self,SEL sel) {
+    auto& b=bezier(x,self);auto* d=context(x,currentContext(x));if(!d)return;
+    auto path=pathOf(x,b.path)->transformed(d->gs().ctm);auto name=rt(x).selName(sel);
+    if(name=="addClip") {d->gs().clip=G::intersectClip(d->gs().clip,path,b.evenOdd);return;}
+    if(name=="fill") {doFill(*d,path,b.evenOdd);return;}
+    ctx_save(x,currentContext(x));auto& s=d->gs();s.lineWidth=b.style.lineWidth;s.lineCap=b.style.lineCap;s.lineJoin=b.style.lineJoin;s.miterLimit=b.style.miterLimit;s.flatness=b.style.flatness;s.dash=b.style.dash;s.dashPhase=b.style.dashPhase;
+    doStroke(*d,path);ctx_restore(x,currentContext(x));
+}
+id bezier_copy(Ctx& x,id self,SEL,uint32_t) {id result=rt(x).createInstance(rt(x).classOf(self));auto& a=bezier(x,self);auto& b=bezier(x,result);bezier_set_path(x,result,0,a.path);b.style=a.style;b.evenOdd=a.evenOdd;return result;}
+void registerBezier(ObjC::Runtime& r) {
+    auto b=r.defineClass("UIBezierPath","NSObject");
+    b.cm<&bezier_make>("bezierPath").cm<&bezier_rect>("bezierPathWithRect:").cm<&bezier_oval>("bezierPathWithOvalInRect:")
+     .cm<&bezier_round>("bezierPathWithRoundedRect:cornerRadius:").cm<&bezier_from_path>("bezierPathWithCGPath:")
+     .m<&bezier_path>("CGPath").m<&bezier_set_path>("setCGPath:").m<&bezier_move>("moveToPoint:").m<&bezier_line>("addLineToPoint:")
+     .m<&bezier_quad>("addQuadCurveToPoint:controlPoint:").m<&bezier_curve>("addCurveToPoint:controlPoint1:controlPoint2:")
+     .m<&bezier_arc>("addArcWithCenter:radius:startAngle:endAngle:clockwise:").m<&bezier_close>("closePath").m<&bezier_clear>("removeAllPoints")
+     .m<&bezier_append>("appendPath:").m<&bezier_transform>("applyTransform:").m<&bezier_empty>("isEmpty").m<&bezier_contains>("containsPoint:")
+     .m<&bezier_bounds>("bounds").m<&bezier_current>("currentPoint").m<&bezier_eo>("usesEvenOddFillRule").m<&bezier_set_eo>("setUsesEvenOddFillRule:")
+     .m<&bezier_draw>("fill").m<&bezier_draw>("stroke").m<&bezier_draw>("addClip").m<&bezier_dash>("setLineDash:count:phase:")
+     .m<&bezier_get_dash>("getLineDash:count:phase:").m<&bezier_copy>("copyWithZone:").m<&bezier_copy>("copy").m<&bezier_free>("dealloc");
+    for(const char* key:{"lineWidth","miterLimit","flatness"}) {b.m<&bezier_float>(key);std::string setter="set"+std::string(key);setter[3]=char(std::toupper(uint8_t(setter[3])));setter+=':';b.m<&bezier_set_float>(setter);}
+    for(const char* key:{"lineCapStyle","lineJoinStyle"}) {b.m<&bezier_int>(key);std::string setter="set"+std::string(key);setter[3]=char(std::toupper(uint8_t(setter[3])));setter+=':';b.m<&bezier_set_int>(setter);}
+}
+
 } // namespace
 
 // ================================================================ exports ===
@@ -1431,6 +1487,7 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     s.ctfont = cls("__HVMCTFont", nullptr);
     s.descriptor = cls("__HVMCTFontDescriptor", nullptr);
     s.text = cls("__HVMCTText", &text_dealloc);
+    registerBezier(r);
 
     // geometry
     p.def<&r_minX>("_CGRectGetMinX"); p.def<&r_minY>("_CGRectGetMinY"); p.def<&r_maxX>("_CGRectGetMaxX"); p.def<&r_maxY>("_CGRectGetMaxY");

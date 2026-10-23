@@ -298,9 +298,29 @@ bool app_sendAction(Ctx& x, id self, SEL, SEL action, id target, id sender, id e
         }
         if (!target && ui(x).appDelegate && r.respondsTo(ui(x).appDelegate, action)) target = ui(x).appDelegate;
         if (!target) return false;
+    } else {
+        if (!r.respondsTo(target, action)) return false;
     }
     r.send(x.cpu, target, action, {sender, event});
     return true;
+}
+int32_t app_layoutDirection(Ctx&, id, SEL) { return 0; }
+// UIInterfaceOrientationMask from Info.plist (UISupportedInterfaceOrientations[~iphone]);
+// iPhone apps without the key get AllButUpsideDown, as on iOS.
+uint32_t app_supportedOrientations(Ctx& x, id, SEL, id) {
+    const Plist::Value* info = x.proc.infoPlist();
+    const Plist::Value* sup = info ? info->get("UISupportedInterfaceOrientations~iphone") : nullptr;
+    if (!sup && info) sup = info->get("UISupportedInterfaceOrientations");
+    if (!sup || sup->type != Plist::Value::Type::Array || sup->array.empty()) return 0x1A;
+    uint32_t mask = 0;
+    for (const auto& v : sup->array) {
+        if (!v) continue;
+        if (v->s == "UIInterfaceOrientationPortrait") mask |= 1u << 1;
+        else if (v->s == "UIInterfaceOrientationPortraitUpsideDown") mask |= 1u << 2;
+        else if (v->s == "UIInterfaceOrientationLandscapeRight") mask |= 1u << 3;
+        else if (v->s == "UIInterfaceOrientationLandscapeLeft") mask |= 1u << 4;
+    }
+    return mask ? mask : 0x1A;
 }
 id app_nextResponder(Ctx& x, id, SEL) {
     const id d = ui(x).appDelegate;
@@ -468,6 +488,7 @@ void installLifecycle(Process& p) {
             if (pp->stopping()) return;
             if (what == Process::Lifecycle::Terminate) {
                 toBackground(x, *st);
+                pp->beginTermination();
                 deliverLifecycle(x, "applicationWillTerminate:", "UIApplicationWillTerminateNotification");
                 persistNow(x);
                 x.proc.log(LogLevel::Info, "The app saved and closed");
@@ -624,7 +645,9 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_endBackgroundTask>("endBackgroundTask:", "v@:I").m<&app_false>("isProtectedDataAvailable", "c@:")
        .m<&app_ignoreBool>("setApplicationSupportsShakeToEdit:", "v@:c").m<&app_true>("applicationSupportsShakeToEdit", "c@:")
        .m<&app_sendEvent>("sendEvent:", "v@:@").m<&app_sendAction>("sendAction:to:from:forEvent:", "c@::@@@")
-       .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory");
+       .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory")
+       .m<&app_layoutDirection>("userInterfaceLayoutDirection", "i@:")
+       .m<&app_supportedOrientations>("supportedInterfaceOrientationsForWindow:", "I@:@");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
     p.mem().write<uint32_t>(p.defineDataBlock("_UIBackgroundTaskInvalid", 4), 0);
     p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalMinimum", 8), 0.0);

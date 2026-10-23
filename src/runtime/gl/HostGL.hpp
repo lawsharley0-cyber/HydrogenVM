@@ -58,6 +58,11 @@ public:
     virtual bool presentDirect(void* ctx, uint32_t layer) { return false; }
     // The guest layer went away.
     virtual void releaseLayer(uint32_t layer) {}
+    // Where the directly presented drawable of `layer` sits on the guest screen:
+    // `unit` (a, b, c, d, tx, ty, as CGAffineTransform) maps a point of the
+    // drawable, in pixels from its top-left corner, to the guest screen scaled
+    // to 0...1 on both axes (portrait, top-left origin). Sent when it changes.
+    virtual void layerGeometry(uint32_t layer, const float unit[6]) {}
 };
 
 // Linux / any EGL with Mesa: surfaceless display, ES 2/3 contexts, and a desktop
@@ -72,12 +77,19 @@ bool enabled(Process& p);
 void* contextCreate(Process& p, uint32_t guestContext, int api, uint32_t guestSharegroup);
 void contextDestroy(Process& p, uint32_t guestContext);
 void contextMakeCurrent(Process& p, uint32_t guestContext);   // 0: none
+// True when this guest EAGLContext has a host context (false: it renders in software).
+bool isHostContext(Process& p, uint32_t guestContext);
 bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t layer, int width, int height);
 // Presents the bound renderbuffer. When the platform can't present directly,
 // fills `rgbaBottomLeft` (straight RGBA, GL row order) and returns true.
 bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int& width, int& height,
                          std::vector<uint8_t>& rgbaBottomLeft, bool& direct);
 void layerGone(Process& p, uint32_t layer);
+// From the compositor, for a layer presented by the host: `toDevice` (a, b, c, d,
+// tx, ty) maps the layer's bounds coordinates (points) to the composited surface
+// of surfaceW x surfaceH pixels.
+void layerPlaced(Process& p, uint32_t layer, const float toDevice[6], float boundsX, float boundsY, float boundsW,
+                 float boundsH, int surfaceW, int surfaceH);
 
 // Registers the forwarded `_gl*` symbols (overriding the software ones).
 void registerFunctions(Process& p);

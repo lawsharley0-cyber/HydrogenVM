@@ -667,6 +667,8 @@ id sc_modes(Ctx& x, id s, SEL c) { return Foundation::makeArray(x, {sc_currentMo
 void sm_size(Ctx& x, GuestPtr ret, id, SEL) { auto& u = ui(x); CG::writeStruct(x, ret, CGSize{u.screenW * u.scale, u.screenH * u.scale}); }
 float sm_aspect(Ctx&, id, SEL) { return 1; }
 id sc_nil(Ctx&, id, SEL) { return 0; }
+int32_t sc_overscan(Ctx&, id, SEL) { return 0; }
+float sc_zeroFloat(Ctx&, id, SEL) { return 0.0f; }
 
 // ======================================================= UIViewController ===
 
@@ -1031,7 +1033,9 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
     scr.m<&sc_bounds>("bounds", R + "@:").m<&sc_nativeBounds>("nativeBounds", R + "@:").m<&sc_appFrame>("applicationFrame", R + "@:")
        .m<&sc_scale>("scale", "f@:").m<&sc_scale>("nativeScale", "f@:").m<&sc_brightness>("brightness", "f@:")
        .m<&sc_setBrightness>("setBrightness:", "v@:f").m<&sc_currentMode>("currentMode").m<&sc_currentMode>("preferredMode")
-       .m<&sc_modes>("availableModes").m<&sc_setMode>("setCurrentMode:").m<&sc_setMode>("setOverscanCompensation:").m<&sc_nil>("mirroredScreen")
+       .m<&sc_modes>("availableModes").m<&sc_setMode>("setCurrentMode:").m<&sc_setMode>("setOverscanCompensation:")
+       .m<&sc_overscan>("overscanCompensation", "i@:").m<&sc_zeroFloat>("overscanCompensationPixelsPerInch", "f@:")
+       .m<&sc_nil>("mirroredScreen")
        .m<&sc_displayLink>("displayLinkWithTarget:selector:", "@@:@:");
     ObjC::ClassBuilder mode = r.defineClass("UIScreenMode", "NSObject");
     mode.m<&sm_size>("size", S + "@:").m<&sm_aspect>("pixelAspectRatio", "f@:");

@@ -50,6 +50,11 @@ struct EmulatorScreen: UIViewRepresentable {
         private struct Finger { let id: Int; var point: CGPoint }
         private var fingers: [ObjectIdentifier: Finger] = [:]
 
+        @objc private func glGeometryChanged(_ note: Notification) {
+            guard let gl = glLayer, (note.object as AnyObject?) === gl else { return }
+            setNeedsLayout()
+        }
+
         override init(frame: CGRect) {
             super.init(frame: frame)
             isMultipleTouchEnabled = true
@@ -57,6 +62,10 @@ struct EmulatorScreen: UIViewRepresentable {
             clipsToBounds = true
             layer.addSublayer(picture)
             picture.addSublayer(overlay)
+            // Selector observers are removed automatically when the view goes away.
+            NotificationCenter.default.addObserver(self, selector: #selector(glGeometryChanged(_:)),
+                                                   name: Notification.Name("HVMGLLayerGeometryDidChange"),
+                                                   object: nil)
             isAccessibilityElement = true
             accessibilityLabel = "Game Screen"
             accessibilityIdentifier = "player-viewport"
@@ -106,12 +115,25 @@ struct EmulatorScreen: UIViewRepresentable {
             picture.setAffineTransform(CGAffineTransform(rotationAngle: orientation.displayAngle))
             overlay.frame = picture.bounds
             if let gl = glLayer {
-                // The GL layer's bounds are its drawable in pixels; scale it to fill the picture.
-                let src = gl.bounds.size
-                gl.position = CGPoint(x: picture.bounds.midX, y: picture.bounds.midY)
-                if src.width > 0, src.height > 0 {
-                    gl.setAffineTransform(CGAffineTransform(scaleX: picture.bounds.width / src.width,
-                                                            y: picture.bounds.height / src.height))
+                if RunModel.automation {
+                    RunModel.console("[gpu] layout picture \(picture.bounds.size) gl \(gl.bounds.size) super \(gl.superlayer === picture)")
+                }
+                // The GL layer's bounds are its drawable in pixels. The emulator says where
+                // that drawable sits on the guest screen (rotated for landscape games);
+                // until it does, scale the layer to fill the picture.
+                if let unit = (gl.value(forKey: HVMGLLayerUnitTransformKey) as? NSValue)?.cgAffineTransformValue {
+                    gl.anchorPoint = .zero
+                    gl.position = .zero
+                    gl.setAffineTransform(unit.concatenating(CGAffineTransform(scaleX: picture.bounds.width,
+                                                                               y: picture.bounds.height)))
+                } else {
+                    let src = gl.bounds.size
+                    gl.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+                    gl.position = CGPoint(x: picture.bounds.midX, y: picture.bounds.midY)
+                    if src.width > 0, src.height > 0 {
+                        gl.setAffineTransform(CGAffineTransform(scaleX: picture.bounds.width / src.width,
+                                                                y: picture.bounds.height / src.height))
+                    }
                 }
             }
             CATransaction.commit()

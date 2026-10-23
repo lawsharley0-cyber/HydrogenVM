@@ -1618,6 +1618,103 @@ void pc_setPages(Ctx& x, id self, SEL, int32_t n) { PCD(x, self).pages = std::ma
 int32_t pc_current(Ctx& x, id self, SEL) { return PCD(x, self).current; }
 void pc_setCurrent(Ctx& x, id self, SEL, int32_t c) { PCD(x, self).current = std::clamp(c, 0, std::max(0, PCD(x, self).pages - 1)); rt(x).send(x.cpu, self, "setNeedsDisplay"); }
 
+// ============================================================ UISearchBar ===
+
+struct SearchBarData : ObjC::HostObject {
+    id text = 0, placeholder = 0, prompt = 0, delegate = 0;
+    id scopeButtonTitles = 0, tintColor = 0, barTintColor = 0;
+    int32_t barStyle = 0, selectedScopeButtonIndex = 0;
+    bool showsCancelButton = false, showsBookmarkButton = false, showsScopeBar = false, translucent = false;
+};
+SearchBarData& SRBD(Ctx& x, id sb) { return rt(x).host<SearchBarData>(sb); }
+
+id sb_initWithFrame(Ctx& x, id self, SEL s, CGRect f) {
+    if (f.size.height <= 0) f.size.height = 44;
+    const id me = id(rt(x).sendSuper(x.cpu, self, ui(x).view, s, {fbits(f.origin.x), fbits(f.origin.y), fbits(f.size.width), fbits(f.size.height)}));
+    if (me) {
+        SearchBarData& d = SRBD(x, me);
+        d.text = rt(x).retain(x.cpu, makeString(x, ""));
+        rt(x).send(x.cpu, me, "setBackgroundColor:", {makeUIColor(x, {0.8f, 0.82f, 0.85f, 1})});
+    }
+    return me;
+}
+id sb_initWithCoder(Ctx& x, id self, SEL s, id coder) {
+    const id me = id(rt(x).sendSuper(x.cpu, self, ui(x).view, s, {coder}));
+    if (me) {
+        SearchBarData& d = SRBD(x, me);
+        setRetained(x, d.text, decode(x, coder, "UIText") ? decode(x, coder, "UIText") : makeString(x, ""));
+        setRetained(x, d.placeholder, decode(x, coder, "UIPlaceholder"));
+        setRetained(x, d.prompt, decode(x, coder, "UIPrompt"));
+        if (has(x, coder, "UIShowsCancelButton")) d.showsCancelButton = decodeBool(x, coder, "UIShowsCancelButton");
+        if (has(x, coder, "UIBarStyle")) d.barStyle = decodeInt(x, coder, "UIBarStyle");
+    }
+    return me;
+}
+void sb_dealloc(Ctx& x, id self, SEL s) {
+    if (SearchBarData* d = rt(x).hostIf<SearchBarData>(self)) {
+        for (id* o : {&d->text, &d->placeholder, &d->prompt, &d->scopeButtonTitles, &d->tintColor, &d->barTintColor}) {
+            if (*o) rt(x).release(x.cpu, *o);
+            *o = 0;
+        }
+    }
+    rt(x).sendSuper(x.cpu, self, ui(x).view, s);
+}
+id sb_text(Ctx& x, id self, SEL) { return SRBD(x, self).text ? SRBD(x, self).text : makeString(x, ""); }
+void sb_setText(Ctx& x, id self, SEL, id t) {
+    setRetained(x, SRBD(x, self).text, t ? autoreleased(x, id(rt(x).send(x.cpu, t, "copy"))) : makeString(x, ""));
+    rt(x).send(x.cpu, self, "setNeedsDisplay");
+}
+id sb_placeholder(Ctx& x, id self, SEL) { return SRBD(x, self).placeholder; }
+void sb_setPlaceholder(Ctx& x, id self, SEL, id p) {
+    setRetained(x, SRBD(x, self).placeholder, p ? autoreleased(x, id(rt(x).send(x.cpu, p, "copy"))) : 0);
+    rt(x).send(x.cpu, self, "setNeedsDisplay");
+}
+id sb_prompt(Ctx& x, id self, SEL) { return SRBD(x, self).prompt; }
+void sb_setPrompt(Ctx& x, id self, SEL, id p) {
+    setRetained(x, SRBD(x, self).prompt, p ? autoreleased(x, id(rt(x).send(x.cpu, p, "copy"))) : 0);
+    rt(x).send(x.cpu, self, "setNeedsDisplay");
+}
+id sb_delegate(Ctx& x, id self, SEL) { return SRBD(x, self).delegate; }
+void sb_setDelegate(Ctx& x, id self, SEL, id d) { SRBD(x, self).delegate = d; }
+bool sb_showsCancel(Ctx& x, id self, SEL) { return SRBD(x, self).showsCancelButton; }
+void sb_setShowsCancel(Ctx& x, id self, SEL, bool b) { SRBD(x, self).showsCancelButton = b; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+void sb_setShowsCancelAnim(Ctx& x, id self, SEL s, bool b, bool) { sb_setShowsCancel(x, self, s, b); }
+bool sb_showsBookmark(Ctx& x, id self, SEL) { return SRBD(x, self).showsBookmarkButton; }
+void sb_setShowsBookmark(Ctx& x, id self, SEL, bool b) { SRBD(x, self).showsBookmarkButton = b; }
+int32_t sb_barStyle(Ctx& x, id self, SEL) { return SRBD(x, self).barStyle; }
+void sb_setBarStyle(Ctx& x, id self, SEL, int32_t s) { SRBD(x, self).barStyle = s; }
+bool sb_translucent(Ctx& x, id self, SEL) { return SRBD(x, self).translucent; }
+void sb_setTranslucent(Ctx& x, id self, SEL, bool b) { SRBD(x, self).translucent = b; }
+id sb_tintColor(Ctx& x, id self, SEL) { return SRBD(x, self).tintColor; }
+void sb_setTintColor(Ctx& x, id self, SEL, id c) { setRetained(x, SRBD(x, self).tintColor, c); }
+id sb_barTintColor(Ctx& x, id self, SEL) { return SRBD(x, self).barTintColor; }
+void sb_setBarTintColor(Ctx& x, id self, SEL, id c) { setRetained(x, SRBD(x, self).barTintColor, c); rt(x).send(x.cpu, self, "setBackgroundColor:", {c}); }
+id sb_scopeTitles(Ctx& x, id self, SEL) { return SRBD(x, self).scopeButtonTitles; }
+void sb_setScopeTitles(Ctx& x, id self, SEL, id arr) { setRetained(x, SRBD(x, self).scopeButtonTitles, arr ? autoreleased(x, id(rt(x).send(x.cpu, arr, "copy"))) : 0); }
+int32_t sb_selectedScope(Ctx& x, id self, SEL) { return SRBD(x, self).selectedScopeButtonIndex; }
+void sb_setSelectedScope(Ctx& x, id self, SEL, int32_t idx) { SRBD(x, self).selectedScopeButtonIndex = idx; }
+bool sb_showsScopeBar(Ctx& x, id self, SEL) { return SRBD(x, self).showsScopeBar; }
+void sb_setShowsScopeBar(Ctx& x, id self, SEL, bool b) { SRBD(x, self).showsScopeBar = b; }
+
+void sb_drawRect(Ctx& x, id self, SEL, CGRect) {
+    const id ctx = CG::currentContext(x);
+    if (!ctx) return;
+    const SearchBarData& d = SRBD(x, self);
+    const G::Rect b = boundsOf(x, self);
+    CG::fillRect(x, ctx, b, d.barTintColor ? uiColor(x, d.barTintColor) : G::Color{0.8f, 0.82f, 0.85f, 1});
+    const float fieldW = d.showsCancelButton ? b.w - 70 : b.w - 12;
+    CG::fillRect(x, ctx, {6, 6, fieldW, b.h - 12}, {1, 1, 1, 1});
+    const std::string txt = textOf(x, d.text);
+    const G::FontDesc fd{"Helvetica", 14, false, false};
+    if (!txt.empty()) {
+        drawText(x, ctx, txt, fd, {12, (b.h - fd.size) / 2, fieldW - 12, fd.size + 2}, {0, 0, 0, 1}, 4, 0, 1);
+    } else if (d.placeholder) {
+        const std::string ph = textOf(x, d.placeholder);
+        if (!ph.empty()) drawText(x, ctx, ph, fd, {12, (b.h - fd.size) / 2, fieldW - 12, fd.size + 2}, {0.6f, 0.6f, 0.65f, 1}, 4, 0, 1);
+    }
+    if (d.showsCancelButton) drawText(x, ctx, "Cancel", {"Helvetica", 15, false, false}, {b.w - 58, (b.h - 18) / 2, 52, 18}, {0, 0.478f, 1, 1}, 4, 1, 1);
+}
+
 // ======================================= UIStoryboard & UIStoryboardSegue ===
 
 struct StoryboardData : ObjC::HostObject {
@@ -2042,6 +2139,27 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
         p.mem().write<uint32_t>(cell, Foundation::constString(p, n));
     }
 
+    // UISearchBar
+    ObjC::ClassBuilder searchBar = r.defineClass("UISearchBar", "UIView");
+    searchBar.m<&sb_initWithFrame>("initWithFrame:", "@@:" + R).m<&sb_initWithCoder>("initWithCoder:").m<&sb_dealloc>("dealloc", "v@:")
+             .m<&sb_text>("text").m<&sb_setText>("setText:", "v@:@")
+             .m<&sb_placeholder>("placeholder").m<&sb_setPlaceholder>("setPlaceholder:", "v@:@")
+             .m<&sb_prompt>("prompt").m<&sb_setPrompt>("setPrompt:", "v@:@")
+             .m<&sb_delegate>("delegate").m<&sb_setDelegate>("setDelegate:", "v@:@")
+             .m<&sb_showsCancel>("showsCancelButton", "c@:").m<&sb_setShowsCancel>("setShowsCancelButton:", "v@:c")
+             .m<&sb_setShowsCancelAnim>("setShowsCancelButton:animated:", "v@:cc")
+             .m<&sb_showsBookmark>("showsBookmarkButton", "c@:").m<&sb_setShowsBookmark>("setShowsBookmarkButton:", "v@:c")
+             .m<&sb_barStyle>("barStyle", "i@:").m<&sb_setBarStyle>("setBarStyle:", "v@:i")
+             .m<&sb_translucent>("isTranslucent", "c@:").m<&sb_setTranslucent>("setTranslucent:", "v@:c")
+             .m<&sb_tintColor>("tintColor").m<&sb_setTintColor>("setTintColor:", "v@:@")
+             .m<&sb_barTintColor>("barTintColor").m<&sb_setBarTintColor>("setBarTintColor:", "v@:@")
+             .m<&sb_scopeTitles>("scopeButtonTitles").m<&sb_setScopeTitles>("setScopeButtonTitles:", "v@:@")
+             .m<&sb_selectedScope>("selectedScopeButtonIndex", "i@:").m<&sb_setSelectedScope>("setSelectedScopeButtonIndex:", "v@:i")
+             .m<&sb_showsScopeBar>("showsScopeBar", "c@:").m<&sb_setShowsScopeBar>("setShowsScopeBar:", "v@:c")
+             .m<&tf_ignoreInt>("setAutocapitalizationType:", "v@:i").m<&tf_ignoreInt>("setAutocorrectionType:", "v@:i")
+             .m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i").m<&tf_ignoreInt>("setKeyboardType:", "v@:i")
+             .m<&sb_drawRect>("drawRect:", "v@:" + R);
+
     // UISwitch, UISlider, UISegmentedControl, UIProgressView, UIPageControl
     ObjC::ClassBuilder sw = r.defineClass("UISwitch", "UIControl");
     sw.m<&sw_initWithFrame>("initWithFrame:", "@@:" + R)
@@ -2225,8 +2343,23 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
         auto& d = getPbData(x, x.cpu.r[0]);
         x.cpu.r[0] = id(rt(x).send(x.cpu, d.itemsDict, "allKeys"));
     }, "@@:");
-    pb.method("containsPasteboardTypes:", [](Ctx& x) { x.cpu.r[0] = 0; }, "c@:@");
-    for (const char* n : {"UIPasteboardNameGeneral", "UIPasteboardNameFind", "UIPasteboardChangedNotification", "UIPasteboardRemovedNotification"}) {
+    pb.method("containsPasteboardTypes:", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        const id types = x.cpu.r[2];
+        if (!types) { x.cpu.r[0] = 0; return; }
+        const auto want = Foundation::arrayItems(x, types);
+        for (id t : want) {
+            if (Foundation::dictGet(x, d.itemsDict, t)) { x.cpu.r[0] = 1; return; }
+        }
+        x.cpu.r[0] = 0;
+    }, "c@:@");
+    pb.method("numberOfItems", [getPbData](Ctx& x) {
+        auto& d = getPbData(x, x.cpu.r[0]);
+        const auto entries = Foundation::dictEntries(x, d.itemsDict);
+        x.cpu.r[0] = entries.empty() ? 0 : 1;
+    }, "i@:");
+    for (const char* n : {"UIPasteboardNameGeneral", "UIPasteboardNameFind", "UIPasteboardChangedNotification", "UIPasteboardRemovedNotification",
+                          "UIPasteboardTypeListString", "UIPasteboardTypeListURL", "UIPasteboardTypeListImage", "UIPasteboardTypeListColor"}) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         p.mem().write<uint32_t>(cell, Foundation::constString(p, n));
     }

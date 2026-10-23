@@ -8,6 +8,7 @@
 #include "thirdparty/minimp3/minimp3.h"
 
 namespace Hydrogen::Runtime::Audio {
+bool decodeHostContainer(DecodedAudio&, const uint8_t*, size_t);
 namespace {
 
 
@@ -354,6 +355,8 @@ bool looksLikeMp3(const uint8_t* d, size_t n) {
 } // namespace
 
 DecodedAudio decode(const uint8_t* data, size_t n) {
+    DecodedAudio host;
+    if (decodeHostContainer(host, data, n)) return host;
     if (data && looksLikeMp3(data, n)) {
         DecodedAudio out;
         if (decodeMp3(out, data, n)) return out;

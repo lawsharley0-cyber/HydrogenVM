@@ -148,9 +148,7 @@ uint32_t p_nl_langinfo(Ctx& x, int32_t item) {
     return item == 0 /* CODESET */ ? l.utf8 : l.empty;
 }
 
-// pthread cancellation: never cancelled; report the previous state as "enabled/deferred" (0).
-int32_t p_setcancel(Ctx& x, int32_t, GuestPtr old) { if (old) x.mem.write<uint32_t>(old, 0); return 0; }
-void p_testcancel(Ctx&) {}
+
 
 int32_t p_zero(Ctx&) { return 0; }
 // Apple System Log: messages go to the app log (levels 0-3 as errors, 4 warnings, the rest info).
@@ -208,9 +206,6 @@ void registerLibcPosix(Process& p) {
     p.def<&x_listxattr>("_listxattr");
     p.def<&x_fsetxattr>("_fsetxattr");
     p.def<&x_fgetxattr>("_fgetxattr");
-    p.def<&p_setcancel>("_pthread_setcancelstate");
-    p.def<&p_setcancel>("_pthread_setcanceltype");
-    p.def<&p_testcancel>("_pthread_testcancel");
     p.def<&p_getdtablesize>("_getdtablesize");
     p.def<&p_gethostname>("_gethostname");
     p.def<&p_stacksize>("_pthread_get_stacksize_np");

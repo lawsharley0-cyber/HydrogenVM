@@ -67,9 +67,11 @@ void c_sendAction(Ctx& x, id self, SEL, SEL action, id target, id event) {
     rt(x).send(x.cpu, ui(x).app, "sendAction:to:from:forEvent:", {action, target, self, event});
 }
 void sendActions(Ctx& x, id self, uint32_t events, id event) {
+    rt(x).retain(x.cpu, self);
     const std::vector<Target> t = CD(x, self).targets;
     for (const auto& e : t)
         if (e.events & events) rt(x).send(x.cpu, self, "sendAction:to:forEvent:", {e.action, e.target, event});
+    rt(x).release(x.cpu, self);
 }
 void c_sendActionsForEvents(Ctx& x, id self, SEL, uint32_t events) { sendActions(x, self, events, 0); }
 bool c_enabled(Ctx& x, id self, SEL) { return CD(x, self).enabled; }
@@ -130,8 +132,9 @@ void c_touchesMoved(Ctx& x, id self, SEL, id touches, id event) {
     sendActions(x, self, inside ? kTouchDragInside : kTouchDragOutside, event);
 }
 void c_touchesEnded(Ctx& x, id self, SEL, id touches, id event) {
+    rt(x).retain(x.cpu, self);
     ControlData& d = CD(x, self);
-    if (!d.tracking) return;
+    if (!d.tracking) { rt(x).release(x.cpu, self); return; }
     const id t = anyTouch(x, touches);
     const bool inside = insideWithSlop(x, self, touchPoint(x, t, self));
     d.tracking = false;
@@ -139,6 +142,7 @@ void c_touchesEnded(Ctx& x, id self, SEL, id touches, id event) {
     rt(x).send(x.cpu, self, "setHighlighted:", {0});
     rt(x).send(x.cpu, self, "endTrackingWithTouch:withEvent:", {t, event});
     sendActions(x, self, inside ? kTouchUpInside : kTouchUpOutside, event);
+    rt(x).release(x.cpu, self);
 }
 void c_touchesCancelled(Ctx& x, id self, SEL, id, id event) {
     ControlData& d = CD(x, self);
