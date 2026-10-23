@@ -1243,11 +1243,88 @@ int runFullSubsystemTests() {
     CPU::Cpu& cpu = proc.mainThread().cpu;
     Ctx cx{proc, cpu, proc.mem()};
     auto& r = ObjC::rt(proc);
-
     // Initialize main thread stack & environment for direct host->guest ObjC calls
     proc.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
     cpu.r[CPU::kSP] = 0xBF000000u - 256;
     const uint32_t outerPool = r.poolPush();
+
+    // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.
+    {
+        using namespace Foundation;
+        auto call=[&](uint32_t object,const char* sel,std::initializer_list<uint32_t> args={}) {return uint32_t(r.send(cpu,object,sel,args));};
+        const auto key=makeString(cx,"score");
+        const auto low=makeDict(cx,{{key,makeNumberInt(cx,2)}}), high=makeDict(cx,{{key,makeNumberInt(cx,9)}});
+        const auto rows=makeArray(cx,{high,low,high});
+        bool sorted=false;
+        if(r.getClass("NSSortDescriptor")) {
+            const auto mutableKey=makeString(cx,"score",false,true);
+            const auto descriptor=call(r.getClass("NSSortDescriptor"),"sortDescriptorWithKey:ascending:",{mutableKey,1});
+            call(mutableKey,"setString:",{makeString(cx,"changed")});
+            auto values=arrayItems(cx,call(rows,"sortedArrayUsingDescriptors:",{makeArray(cx,{descriptor})}));
+            auto reverse=call(descriptor,"reversedSortDescriptor");
+            sorted=values==std::vector<ObjC::id>{low,high,high} && int32_t(call(reverse,"compareObject:toObject:",{low,high}))>0;
+        }
+        check(sorted,"NSSortDescriptor copies key, stable-sorts and reverses comparison");
+        bool predicates=false;
+        if(r.getClass("NSPredicate")) {
+            auto predicate=call(r.getClass("NSPredicate"),"predicateWithFormat:",{makeString(cx,"score >= %d"),5});
+            auto values=arrayItems(cx,call(rows,"filteredArrayUsingPredicate:",{predicate}));
+            auto equal=call(r.getClass("NSPredicate"),"predicateWithFormat:argumentArray:",{makeString(cx,"%K == %@"),makeArray(cx,{key,makeNumberInt(cx,2)})});
+            bool rejected=false;try{call(r.getClass("NSPredicate"),"predicateWithFormat:",{makeString(cx,"score BETWEEN {1, 3}")});}catch(const std::exception& e){rejected=std::string(e.what()).find("unsupported NSPredicate format")!=std::string::npos;}
+            predicates=values==std::vector<ObjC::id>{high,high} && call(equal,"evaluateWithObject:",{low}) && !call(equal,"evaluateWithObject:",{high}) && rejected;
+        }
+        check(predicates,"NSPredicate key comparisons/filtering and explicit unsupported syntax");
+        bool tables=false;
+        if(r.getClass("NSHashTable") && r.getClass("NSMapTable")) {
+            auto weak=call(r.getClass("NSHashTable"),"weakObjectsHashTable");
+            auto strong=call(r.getClass("NSMapTable"),"strongToStrongObjectsMapTable");
+            auto weakMap=call(r.getClass("NSMapTable"),"strongToWeakObjectsMapTable");
+            const auto object=r.createInstance(r.nsObject);
+            call(weak,"addObject:",{object});call(weakMap,"setObject:forKey:",{object,key});call(strong,"setObject:forKey:",{object,key});
+            r.release(cpu,object);
+            bool retained=call(weak,"count")==1 && call(strong,"objectForKey:",{key})==object;
+            call(strong,"removeObjectForKey:",{key});
+            tables=retained && call(weak,"count")==0 && call(weakMap,"count")==0 && !call(weakMap,"objectForKey:",{key});
+        }
+        check(tables,"NSHashTable/NSMapTable retain strong entries and zero weak entries on release");
+        bool attributed=false;
+        if(r.getClass("NSMutableAttributedString")) {
+            auto object=call(r.createInstance(r.getClass("NSMutableAttributedString")),"initWithString:attributes:",{makeString(cx,std::u16string(u"A\U0001f600B")),makeDict(cx,{{key,makeNumberInt(cx,1)}})});
+            call(object,"addAttribute:value:range:",{key,makeNumberInt(cx,7),1,2});
+            auto range=proc.heap().allocZeroed(8);
+            auto val=call(object,"attribute:atIndex:effectiveRange:",{key,2,range});
+            bool utf16=call(object,"length")==4 && numberInt(cx,val)==7 && proc.mem().read<uint32_t>(range)==1 && proc.mem().read<uint32_t>(range+4)==2;
+            auto snapshot=call(object,"copy");auto view=call(object,"mutableString");
+            call(view,"replaceCharactersInRange:withString:",{1,2,makeString(cx,"xy")});call(view,"appendString:",{makeString(cx,"!")});
+            attributed=utf16 && utf8(cx,call(object,"string"))=="AxyB!" && numberInt(cx,call(object,"attribute:atIndex:effectiveRange:",{key,1,0}))==7 && call(snapshot,"length")==4 && stringValue(cx,call(snapshot,"string"))==u"A\U0001f600B";
+            r.release(cpu,snapshot);r.release(cpu,object);proc.heap().free(range);
+        }
+        check(attributed,"NSMutableAttributedString preserves UTF-16 ranges, copied snapshots and mutableString edits");
+        bool support=false;
+        if(r.getClass("NSMutableParagraphStyle") && r.getClass("NSURLCredential")) {
+            auto style=r.createInstance(r.getClass("NSMutableParagraphStyle"));
+            call(style,"setLineSpacing:",{std::bit_cast<uint32_t>(2.5f)});call(style,"setAlignment:",{2});auto copy=call(style,"copy");call(style,"setAlignment:",{1});
+            auto password=makeString(cx,"secret",false,true);
+            auto credential=call(r.getClass("NSURLCredential"),"credentialWithUser:password:persistence:",{makeString(cx,"user"),password,1});call(password,"setString:",{makeString(cx,"changed")});
+            support=call(copy,"alignment")==2 && std::bit_cast<float>(call(copy,"lineSpacing"))==2.5f && utf8(cx,call(credential,"password"))=="secret" && call(credential,"persistence")==1;
+            r.release(cpu,copy);r.release(cpu,style);
+        }
+        check(support,"Paragraph styles copy independent properties; NSURLCredential snapshots password");
+        bool geometry=false;
+        if(r.getClass("UIBezierPath")) {
+            const auto f=[](float v){return std::bit_cast<uint32_t>(v);};
+            auto path=call(r.getClass("UIBezierPath"),"bezierPathWithRect:",{f(1),f(2),f(10),f(20)});
+            auto copy=call(path,"copy");call(path,"removeAllPoints");
+            bool inside=call(copy,"containsPoint:",{f(5),f(5)}) && !call(copy,"containsPoint:",{f(50),f(50)});
+            const auto out=proc.heap().allocZeroed(16);
+            // ARMv7 CGRect returns through r0, before self and selector.
+            proc.callGuest(cpu,r.lookup(r.classOf(copy),r.sel("bounds")),{out,copy,r.sel("bounds")});
+            geometry=inside && call(path,"isEmpty") && proc.mem().read<float>(out)==1 && proc.mem().read<float>(out+4)==2 && proc.mem().read<float>(out+8)==10 && proc.mem().read<float>(out+12)==20;
+            proc.heap().free(out);r.release(cpu,copy);
+        }
+        check(geometry,"UIBezierPath owns CGPath copies, contains points and returns ARMv7 CGRect bounds");
+    }
+
 
     {
         const auto backing = Foundation::makeDict(cx, {}, true, true);

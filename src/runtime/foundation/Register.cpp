@@ -30,6 +30,7 @@ void registerFoundation(Process& p) {
     registerInvocation(p, r);
     registerURLLoading(p, r);
     registerFoundationExtras(p, r);
+    registerCompatibilityClasses(p, r);
 
     // String constants from frameworks we don't otherwise model: a constant NSString
     // instead of nil, so apps can still use them as dictionary keys and notification names.
