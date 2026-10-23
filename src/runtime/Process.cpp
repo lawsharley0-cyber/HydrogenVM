@@ -989,6 +989,11 @@ std::vector<std::string> Process::missingSymbols() const {
 }
 
 std::string Process::hleFunctionName(uint32_t index) const { return demangle(engine_->hleName(index)); }
+std::function<void(CPU::Cpu&)> Process::hostFunctionFor(const std::string& symbol) const {
+    const auto addr = lookupSymbol(symbol);
+    if (!addr || !engine_->isHleAddress(*addr & ~1u)) return {};
+    return engine_->hleFunction(engine_->hleIndex(*addr & ~1u));
+}
 
 std::string Process::describeAddress(uint32_t addr) const {
     char buf[32];

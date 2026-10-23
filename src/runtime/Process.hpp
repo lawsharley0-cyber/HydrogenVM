@@ -279,6 +279,9 @@ public:
     void reportMissing(const std::string& what);   // logs once per name
     std::string describeAddress(uint32_t addr) const;
     std::string hleFunctionName(uint32_t index) const;
+    // The host function currently bound to an exported symbol (null if none / not host code).
+    // Used to chain a new implementation in front of an existing one.
+    std::function<void(CPU::Cpu&)> hostFunctionFor(const std::string& symbol) const;
     std::string backtrace(const CPU::Cpu& c, int maxFrames = 24) const;
 
     // ---- host input (any thread); UIKit installs the handler

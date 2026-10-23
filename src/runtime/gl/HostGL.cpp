@@ -106,6 +106,7 @@ State& S(Process& p) { return p.service<State>(); }
 struct Tls {
     Process* proc = nullptr;
     HostContext* ctx = nullptr;
+    bool software = false;   // the guest made a software-rendered context current on this thread
 };
 thread_local Tls tls;
 
@@ -186,6 +187,7 @@ void bind(Process& p, HostContext* hc) {
     else if (S(p).platform) S(p).platform->makeCurrent(nullptr);
     tls.proc = &p;
     tls.ctx = hc;
+    tls.software = false;
 }
 
 std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestContext, uint32_t sharegroup, bool worker) {
@@ -223,6 +225,7 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
 
 HostContext* hgCurrent(Ctx& x) {
     if (tls.proc == &x.proc && tls.ctx) return tls.ctx;
+    if (tls.proc == &x.proc && tls.software) return nullptr;
     // No context on this thread. iOS apps (Cocos2d texture loaders, for one) issue
     // GL from worker threads after setting the shared context there; when they
     // don't, the software path borrowed the last active context. A host context
@@ -804,6 +807,8 @@ static State& ready(Process& p) {
 
 void* contextCreate(Process& p, uint32_t guestContext, int api, uint32_t guestSharegroup) {
     State& st = ready(p);
+    // Testing aid: HVM_GPU_DISABLE_API=1 (or 2) acts as if the driver lacked that API.
+    if (const char* off = std::getenv("HVM_GPU_DISABLE_API"); off && std::atoi(off) == api) return nullptr;
     auto hc = makeContext(p, api, guestContext, guestSharegroup, false);
     if (!hc) return nullptr;
     void* h = hc->handle;
@@ -842,6 +847,27 @@ void contextMakeCurrent(Process& p, uint32_t guestContext) {
     }
     if (tls.proc == &p && tls.ctx == hc && hc) return;
     bind(p, hc);
+    // A guest context without a host context (its API isn't available on this
+    // driver) renders in software; GL calls on this thread go to that path.
+    if (!hc && guestContext) tls.software = true;
+}
+
+bool isHostContext(Process& p, uint32_t guestContext) {
+    if (!enabled(p)) return false;
+    State& st = S(p);
+    std::lock_guard<std::mutex> lk(st.mu);
+    return st.contexts.count(guestContext) != 0;
+}
+
+// Which implementation serves a GL call on this thread.
+static bool hgUseHost(Ctx& x) {
+    if (tls.proc == &x.proc) {
+        if (tls.ctx) return true;
+        if (tls.software) return false;
+    }
+    State& st = S(x.proc);
+    std::lock_guard<std::mutex> lk(st.mu);
+    return st.lastGuestContext != 0 && st.contexts.count(st.lastGuestContext) != 0;
 }
 
 static HostContext* contextFor(Process& p, uint32_t guestContext) {
@@ -942,50 +968,60 @@ void layerGone(Process& p, uint32_t layer) {
 
 // ------------------------------------------------------------ registration ---
 
+static void chain(Process& p, const std::string& symbol, void (*host)(Ctx&)) {
+    auto soft = p.hostFunctionFor(symbol);
+    p.defineFunction(symbol, [soft, host](Ctx& x) {
+        if (!soft || hgUseHost(x)) host(x);
+        else soft(x.cpu);
+    });
+}
+
 void registerFunctions(Process& p) {
     ready(p);
     // glGetString stays on the software path: the strings describe the iOS GPU
     // the app expects (vendor, renderer, extensions), not the host's.
-#define HOSTGL_REG(name) p.def<&hg_##name>("_" #name);
+// Each entry point keeps the software implementation it replaces, for contexts
+// that couldn't get a host context (e.g. an API the driver lacks).
+#define HOSTGL_REG(name) chain(p, "_" #name, [](Ctx& x) { callWrapped<&hg_##name>(x); });
 #define HOSTGL_REGISTER
 #include "runtime/gl/HostGLTable.inc"
 #undef HOSTGL_REGISTER
 #undef HOSTGL_REG
     // ES 1.1 fixed-point entry points.
-    p.def<&hgx_alphaFuncx>("_glAlphaFuncx");
-    p.def<&hgx_clearColorx>("_glClearColorx");
-    p.def<&hgx_clearDepthx>("_glClearDepthx");
-    p.def<&hgx_clipPlanex>("_glClipPlanex");
-    p.def<&hgx_color4x>("_glColor4x");
-    p.def<&hgx_depthRangex>("_glDepthRangex");
-    p.def<&hgx_fogx>("_glFogx");
-    p.def<&hgx_fogxv>("_glFogxv");
-    p.def<&hgx_frustumx>("_glFrustumx");
-    p.def<&hgx_getFixedv>("_glGetFixedv");
-    p.def<&hgx_lightModelx>("_glLightModelx");
-    p.def<&hgx_lightModelxv>("_glLightModelxv");
-    p.def<&hgx_lightx>("_glLightx");
-    p.def<&hgx_lightxv>("_glLightxv");
-    p.def<&hgx_lineWidthx>("_glLineWidthx");
-    p.def<&hgx_loadMatrixx>("_glLoadMatrixx");
-    p.def<&hgx_materialx>("_glMaterialx");
-    p.def<&hgx_materialxv>("_glMaterialxv");
-    p.def<&hgx_multMatrixx>("_glMultMatrixx");
-    p.def<&hgx_multiTexCoord4x>("_glMultiTexCoord4x");
-    p.def<&hgx_normal3x>("_glNormal3x");
-    p.def<&hgx_orthox>("_glOrthox");
-    p.def<&hgx_pointParameterx>("_glPointParameterx");
-    p.def<&hgx_pointParameterxv>("_glPointParameterxv");
-    p.def<&hgx_pointSizex>("_glPointSizex");
-    p.def<&hgx_polygonOffsetx>("_glPolygonOffsetx");
-    p.def<&hgx_rotatex>("_glRotatex");
-    p.def<&hgx_sampleCoveragex>("_glSampleCoveragex");
-    p.def<&hgx_scalex>("_glScalex");
-    p.def<&hgx_texEnvx>("_glTexEnvx");
-    p.def<&hgx_texEnvxv>("_glTexEnvxv");
-    p.def<&hgx_texParameterx>("_glTexParameterx");
-    p.def<&hgx_texParameterxv>("_glTexParameterxv");
-    p.def<&hgx_translatex>("_glTranslatex");
+    chain(p, "_glAlphaFuncx", [](Ctx& x) { callWrapped<&hgx_alphaFuncx>(x); });
+    chain(p, "_glClearColorx", [](Ctx& x) { callWrapped<&hgx_clearColorx>(x); });
+    chain(p, "_glClearDepthx", [](Ctx& x) { callWrapped<&hgx_clearDepthx>(x); });
+    chain(p, "_glClipPlanex", [](Ctx& x) { callWrapped<&hgx_clipPlanex>(x); });
+    chain(p, "_glColor4x", [](Ctx& x) { callWrapped<&hgx_color4x>(x); });
+    chain(p, "_glDepthRangex", [](Ctx& x) { callWrapped<&hgx_depthRangex>(x); });
+    chain(p, "_glFogx", [](Ctx& x) { callWrapped<&hgx_fogx>(x); });
+    chain(p, "_glFogxv", [](Ctx& x) { callWrapped<&hgx_fogxv>(x); });
+    chain(p, "_glFrustumx", [](Ctx& x) { callWrapped<&hgx_frustumx>(x); });
+    chain(p, "_glGetFixedv", [](Ctx& x) { callWrapped<&hgx_getFixedv>(x); });
+    chain(p, "_glLightModelx", [](Ctx& x) { callWrapped<&hgx_lightModelx>(x); });
+    chain(p, "_glLightModelxv", [](Ctx& x) { callWrapped<&hgx_lightModelxv>(x); });
+    chain(p, "_glLightx", [](Ctx& x) { callWrapped<&hgx_lightx>(x); });
+    chain(p, "_glLightxv", [](Ctx& x) { callWrapped<&hgx_lightxv>(x); });
+    chain(p, "_glLineWidthx", [](Ctx& x) { callWrapped<&hgx_lineWidthx>(x); });
+    chain(p, "_glLoadMatrixx", [](Ctx& x) { callWrapped<&hgx_loadMatrixx>(x); });
+    chain(p, "_glMaterialx", [](Ctx& x) { callWrapped<&hgx_materialx>(x); });
+    chain(p, "_glMaterialxv", [](Ctx& x) { callWrapped<&hgx_materialxv>(x); });
+    chain(p, "_glMultMatrixx", [](Ctx& x) { callWrapped<&hgx_multMatrixx>(x); });
+    chain(p, "_glMultiTexCoord4x", [](Ctx& x) { callWrapped<&hgx_multiTexCoord4x>(x); });
+    chain(p, "_glNormal3x", [](Ctx& x) { callWrapped<&hgx_normal3x>(x); });
+    chain(p, "_glOrthox", [](Ctx& x) { callWrapped<&hgx_orthox>(x); });
+    chain(p, "_glPointParameterx", [](Ctx& x) { callWrapped<&hgx_pointParameterx>(x); });
+    chain(p, "_glPointParameterxv", [](Ctx& x) { callWrapped<&hgx_pointParameterxv>(x); });
+    chain(p, "_glPointSizex", [](Ctx& x) { callWrapped<&hgx_pointSizex>(x); });
+    chain(p, "_glPolygonOffsetx", [](Ctx& x) { callWrapped<&hgx_polygonOffsetx>(x); });
+    chain(p, "_glRotatex", [](Ctx& x) { callWrapped<&hgx_rotatex>(x); });
+    chain(p, "_glSampleCoveragex", [](Ctx& x) { callWrapped<&hgx_sampleCoveragex>(x); });
+    chain(p, "_glScalex", [](Ctx& x) { callWrapped<&hgx_scalex>(x); });
+    chain(p, "_glTexEnvx", [](Ctx& x) { callWrapped<&hgx_texEnvx>(x); });
+    chain(p, "_glTexEnvxv", [](Ctx& x) { callWrapped<&hgx_texEnvxv>(x); });
+    chain(p, "_glTexParameterx", [](Ctx& x) { callWrapped<&hgx_texParameterx>(x); });
+    chain(p, "_glTexParameterxv", [](Ctx& x) { callWrapped<&hgx_texParameterxv>(x); });
+    chain(p, "_glTranslatex", [](Ctx& x) { callWrapped<&hgx_translatex>(x); });
     p.log(LogLevel::Info, std::string("GPU: OpenGL ES calls go to the host driver (") + S(p).platform->name() + ")");
 }
 

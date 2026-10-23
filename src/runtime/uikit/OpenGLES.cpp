@@ -673,7 +673,8 @@ id ctx_initWithAPISharegroup(Ctx& x, id self, SEL, uint32_t api, id sg) {
     } else {
         d.sharegroup = rt(x).retain(x.cpu, sg);
     }
-    if (HostGL::enabled(x.proc) && !HostGL::contextCreate(x.proc, self, int(api), d.sharegroup)) return 0;
+    if (HostGL::enabled(x.proc) && !HostGL::contextCreate(x.proc, self, int(api), d.sharegroup))
+        x.proc.logf(LogLevel::Warning, "GPU: the host driver has no OpenGL ES %u context; this context renders in software", api);
     return self;
 }
 
@@ -723,7 +724,7 @@ id ctx_sharegroup(Ctx& x, id self, SEL) { return rt(x).host<ContextData>(self).s
 
 bool ctx_renderbufferStorage(Ctx& x, id self, SEL, uint32_t target, id drawable) {
     (void)target;
-    if (HostGL::enabled(x.proc)) {
+    if (HostGL::isHostContext(x.proc, self)) {
         int w = 0, h = 0;
         if (drawable) {
             LayerData& ld = layerData(x, drawable);
@@ -768,7 +769,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
 
 bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
     (void)target;
-    if (HostGL::enabled(x.proc)) {
+    if (HostGL::isHostContext(x.proc, self)) {
         uint32_t layer = 0;
         int w = 0, h = 0;
         bool direct = false;

@@ -72,6 +72,8 @@ bool enabled(Process& p);
 void* contextCreate(Process& p, uint32_t guestContext, int api, uint32_t guestSharegroup);
 void contextDestroy(Process& p, uint32_t guestContext);
 void contextMakeCurrent(Process& p, uint32_t guestContext);   // 0: none
+// True when this guest EAGLContext has a host context (false: it renders in software).
+bool isHostContext(Process& p, uint32_t guestContext);
 bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t layer, int width, int height);
 // Presents the bound renderbuffer. When the platform can't present directly,
 // fills `rgbaBottomLeft` (straight RGBA, GL row order) and returns true.
