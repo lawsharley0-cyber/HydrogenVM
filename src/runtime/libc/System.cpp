@@ -12,8 +12,10 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <filesystem>
+#include <mutex>
 #include <random>
 #include <sys/stat.h>
+#include <unordered_set>
 #include <unistd.h>
 
 namespace Hydrogen::Runtime {
@@ -57,6 +59,29 @@ uint32_t s_NSGetProgname(Ctx& x) {
 uint32_t s_NSGetMachExecuteHeader(Ctx& x) { return x.proc.image().headerAddr; }
 
 int32_t s_getpid(Ctx&) { return 1234; }
+int32_t s_syscall(Ctx& x, int32_t num, VarArgs) {
+    switch (num) {
+        case 20: // SYS_getpid
+            return s_getpid(x);
+        case 286: // SYS_gettid
+            setErrno(x, 3); // ESRCH
+            return -1;
+        case 372: // thread_selfid
+            return int32_t(x.proc.currentThread().id);
+        default: {
+            static std::mutex mu;
+            static std::unordered_set<int32_t> warned;
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                if (warned.insert(num).second) {
+                    x.proc.logf(LogLevel::Warning, "syscall(%d) is not implemented", num);
+                }
+            }
+            setErrno(x, 78); // ENOSYS
+            return -1;
+        }
+    }
+}
 int32_t s_getppid(Ctx&) { return 1; }
 uint32_t s_getuid(Ctx&) { return 501; }
 GuestPtr s_getpwuid(Ctx& x, uint32_t) {
@@ -641,6 +666,7 @@ void registerLibcSystem(Process& p) {
     p.def<&s_NSGetProgname>("__NSGetProgname");
     p.def<&s_NSGetMachExecuteHeader>("__NSGetMachExecuteHeader");
     p.def<&s_getpid>("_getpid");
+    p.def<&s_syscall>("_syscall");
     p.def<&s_getppid>("_getppid");
     p.def<&s_getuid>("_getuid");
     p.def<&s_getuid>("_geteuid");
