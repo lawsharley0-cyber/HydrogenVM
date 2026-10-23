@@ -7,7 +7,11 @@ OUT="${1:-$ROOT/build/tests}"
 mkdir -p "$OUT"
 
 CC=${CC_GUEST:-clang}
-LINK="-fuse-ld=lld -nostdlib -static -Wl,-Ttext=0x10000 -Wl,--entry=0"
+if command -v lld >/dev/null 2>&1 || command -v ld.lld >/dev/null 2>&1; then
+  LINK="-fuse-ld=lld -nostdlib -static -Wl,-Ttext=0x10000 -Wl,--entry=0"
+else
+  LINK="-nostdlib -static -Wl,-Ttext=0x10000 -Wl,--entry=0"
+fi
 BASE="-O2 -ffreestanding -fno-builtin -fno-stack-protector -fno-math-errno -ffp-contract=off -Wall -Wno-unused-function"
 C="$ROOT/tests/c"
 
