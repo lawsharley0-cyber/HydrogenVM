@@ -323,6 +323,7 @@ struct RunView: View {
             }
         }
         .statusBarHidden(true)
+        .preferredColorScheme(.dark)
         .persistentSystemOverlays(.hidden)
         .onAppear {
             OrientationLock.shared.lock(model.orientation.mask)
@@ -413,9 +414,13 @@ struct RunView: View {
                     Text("Display rotation: \(error)").font(.caption).foregroundStyle(.orange)
                 }
                 HStack {
-                    Image(systemName: model.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    Button { model.volume = model.volume == 0 ? 1 : 0 } label: {
+                        Image(systemName: model.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel(model.volume == 0 ? "Unmute" : "Mute")
+                    .accessibilityIdentifier("player-mute")
                     Slider(value: $model.volume, in: 0...1).accessibilityLabel("Game Volume")
-                    Button(model.volume == 0 ? "Unmute" : "Mute") { model.volume = model.volume == 0 ? 1 : 0 }
                 }
                 Button("Save, Stop & Inspect Files", systemImage: "folder") { confirmInspect = true }
                     .disabled(model.closing)
