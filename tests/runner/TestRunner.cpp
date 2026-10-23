@@ -1857,6 +1857,35 @@ int runFullSubsystemTests() {
             int32_t(callGL("_glGetAttribLocation", {pipeline,proc.allocCString("absent")})) == -1;
         check(diagnostics, "GLES2 exposes compile/link errors, bounded info logs and unknown locations");
 
+        // GL_MAX_VARYING_VECTORS agrees with the linker and gl_MaxVaryingVectors (#14):
+        // N vec4 varyings link, N + 1 do not.
+        {
+            callGL("_glGetIntegerv", {0x8DFC /* GL_MAX_VARYING_VECTORS */, idsAddr + 36});
+            const int32_t maxVaryings = int32_t(proc.mem().read<uint32_t>(idsAddr + 36));
+            auto linksWith = [&](int n) {
+                std::string decl, vbody = "gl_Position = a;", fbody = "vec4 s = vec4(0.0);";
+                for (int i = 0; i < n; ++i) {
+                    decl += "varying vec4 v" + std::to_string(i) + ";";
+                    vbody += "v" + std::to_string(i) + " = a;";
+                    fbody += "s += v" + std::to_string(i) + ";";
+                }
+                const std::string vsrc = "attribute vec4 a;" + decl + "void main(){" + vbody + "}";
+                const std::string fsrc = "precision mediump float;" + decl + "void main(){" + fbody + "gl_FragColor = s;}";
+                const uint32_t v = uint32_t(callGL("_glCreateShader", {0x8B31})), f = uint32_t(callGL("_glCreateShader", {0x8B30}));
+                proc.mem().write<uint32_t>(idsAddr + 48, proc.allocCString(vsrc.c_str()));
+                proc.mem().write<uint32_t>(idsAddr + 52, proc.allocCString(fsrc.c_str()));
+                callGL("_glShaderSource", {v, 1, idsAddr + 48, 0}); callGL("_glCompileShader", {v});
+                callGL("_glShaderSource", {f, 1, idsAddr + 52, 0}); callGL("_glCompileShader", {f});
+                const uint32_t pr = uint32_t(callGL("_glCreateProgram", {}));
+                callGL("_glAttachShader", {pr, v}); callGL("_glAttachShader", {pr, f});
+                callGL("_glLinkProgram", {pr});
+                callGL("_glGetProgramiv", {pr, 0x8B82 /* GL_LINK_STATUS */, idsAddr + 36});
+                return proc.mem().read<uint32_t>(idsAddr + 36) != 0;
+            };
+            check(maxVaryings == 8 && linksWith(maxVaryings) && !linksWith(maxVaryings + 1),
+                  "GL_MAX_VARYING_VECTORS (8) matches the linker: 8 vec4 varyings link, 9 do not");
+        }
+
         // Struct leaves and array elements are real uniform locations. The count==1
         // uniforms above keep the locations this draw already checked.
         uint32_t structVs = shader(0x8B31,
