@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Values match the guest's UIInterfaceOrientation, not UIDeviceOrientation.
 enum GuestOrientation: Int, CaseIterable {
