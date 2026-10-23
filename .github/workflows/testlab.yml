@@ -9,7 +9,7 @@ name: Test Lab
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/test-lab-v1]
     paths:
       - 'tests/ios/apps/testlab/**'
       - 'tools/hvm_testlab.py'
@@ -88,7 +88,8 @@ jobs:
           HVM_LD64: /home/runner/cctools/bin/arm-apple-darwin11-ld
 
       - name: Verify IPA contents
-        run: python3 -c "
+        run: |
+          python3 -c "
           import zipfile, sys
           required = [
               'Payload/TestLab.app/TestLab',
