@@ -368,6 +368,16 @@ void UIRectFill(CGRect r);
 @property(readonly) UITabBarController *tabBarController;
 @end
 
+@interface UISearchBar : UIView
+@property(copy) NSString *text;
+@property(copy) NSString *placeholder;
+@property(copy) NSString *prompt;
+@property(weak) id delegate;
+@property BOOL showsCancelButton;
+@property BOOL showsBookmarkButton;
+@property NSInteger barStyle;
+@end
+
 @interface UITextField : UIControl
 @property(copy) NSString *text;
 @property(copy) NSString *placeholder;

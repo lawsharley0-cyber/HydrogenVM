@@ -303,6 +303,18 @@ std::vector<id> sortedByBlock(Ctx& x, std::vector<id> v, id block) {
 id a_sortedUsingSelector(Ctx& x, id self, SEL, SEL s) { return makeArray(x, sortedBySelector(x, itemsOf(x, self), s)); }
 id a_sortedUsingFunction(Ctx& x, id self, SEL, uint32_t fn, uint32_t ctx) { return makeArray(x, sortedByFunction(x, itemsOf(x, self), fn, ctx)); }
 id a_sortedUsingComparator(Ctx& x, id self, SEL, id block) { return makeArray(x, sortedByBlock(x, itemsOf(x, self), block)); }
+id a_sortedUsingDescriptors(Ctx& x, id self, SEL, id descriptors) {
+    auto v = itemsOf(x, self);
+    auto descs = itemsOf(x, descriptors);
+    stableSort(v, [&](id a, id b) {
+        for (id sd : descs) {
+            int32_t res = int32_t(rt(x).send(x.cpu, sd, "compareObject:toObject:", {a, b}));
+            if (res != 0) return res;
+        }
+        return 0;
+    });
+    return makeArray(x, v);
+}
 void m_sortUsingSelector(Ctx& x, id self, SEL, SEL s) { auto& d = mut(x, self); d.items = sortedBySelector(x, d.items, s); bump(x, d.mutationCell); }
 void m_sortUsingFunction(Ctx& x, id self, SEL, uint32_t fn, uint32_t ctx) { auto& d = mut(x, self); d.items = sortedByFunction(x, d.items, fn, ctx); }
 void m_sortUsingComparator(Ctx& x, id self, SEL, id block) { auto& d = mut(x, self); d.items = sortedByBlock(x, d.items, block); }
@@ -783,6 +795,74 @@ void enum_dealloc(Ctx& x, id self, SEL) {
     releaseObj(x, owner);
 }
 
+// ----------------------------------------------------- NSSortDescriptor ---
+
+struct SortDescriptorData : ObjC::HostObject {
+    id key = 0;              // retained NSString
+    bool ascending = true;
+    SEL selector = 0;
+};
+SortDescriptorData& SDD(Ctx& x, id sd) { return rt(x).host<SortDescriptorData>(sd); }
+
+id sd_initWithKeyAscendingSel(Ctx& x, id self, SEL, id key, bool ascending, SEL selector) {
+    SortDescriptorData& d = SDD(x, self);
+    if (key) rt(x).retain(x.cpu, key);
+    if (d.key) rt(x).release(x.cpu, d.key);
+    d.key = key;
+    d.ascending = ascending;
+    d.selector = selector ? selector : rt(x).sel("compare:");
+    return self;
+}
+id sd_initWithKeyAscending(Ctx& x, id self, SEL, id key, bool ascending) {
+    return sd_initWithKeyAscendingSel(x, self, 0, key, ascending, rt(x).sel("compare:"));
+}
+id sdc_sortDescriptorWithKeyAscendingSel(Ctx& x, id self, SEL, id key, bool ascending, SEL selector) {
+    id sd = rt(x).createInstance(self);
+    sd_initWithKeyAscendingSel(x, sd, 0, key, ascending, selector);
+    return autoreleased(x, sd);
+}
+id sdc_sortDescriptorWithKeyAscending(Ctx& x, id self, SEL, id key, bool ascending) {
+    return sdc_sortDescriptorWithKeyAscendingSel(x, self, 0, key, ascending, rt(x).sel("compare:"));
+}
+id sd_initWithCoder(Ctx& x, id self, SEL, id coder) {
+    auto& r = rt(x);
+    const id key = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "NSKey")}));
+    const bool ascending = (uint32_t(r.send(x.cpu, coder, "decodeBoolForKey:", {makeString(x, "NSAscending")})) & 0xFF) != 0;
+    const id selStr = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "NSSelector")}));
+    const SEL sel = selStr ? r.sel(utf8(x, selStr)) : r.sel("compare:");
+    return sd_initWithKeyAscendingSel(x, self, 0, key, ascending, sel);
+}
+void sd_dealloc(Ctx& x, id self, SEL) {
+    if (SortDescriptorData* d = rt(x).hostIf<SortDescriptorData>(self)) {
+        if (d->key) { rt(x).release(x.cpu, d->key); d->key = 0; }
+    }
+    rt(x).disposeInstance(x.cpu, self);
+}
+id sd_key(Ctx& x, id self, SEL) { return SDD(x, self).key; }
+bool sd_ascending(Ctx& x, id self, SEL) { return SDD(x, self).ascending; }
+SEL sd_selector(Ctx& x, id self, SEL) { return SDD(x, self).selector; }
+
+int32_t sd_compareObjectToObject(Ctx& x, id self, SEL, id object1, id object2) {
+    SortDescriptorData& d = SDD(x, self);
+    auto& r = rt(x);
+    id v1 = object1, v2 = object2;
+    if (d.key) {
+        v1 = id(r.send(x.cpu, object1, "valueForKey:", {d.key}));
+        v2 = id(r.send(x.cpu, object2, "valueForKey:", {d.key}));
+    }
+    if (!v1 && !v2) return 0;
+    if (!v1) return d.ascending ? -1 : 1;
+    if (!v2) return d.ascending ? 1 : -1;
+    const SEL sel = d.selector ? d.selector : r.sel("compare:");
+    int32_t result = int32_t(r.send(x.cpu, v1, sel, {v2}));
+    return d.ascending ? result : -result;
+}
+id sd_reversed(Ctx& x, id self, SEL) {
+    SortDescriptorData& d = SDD(x, self);
+    return sdc_sortDescriptorWithKeyAscendingSel(x, rt(x).classOf(self), 0, d.key, !d.ascending, d.selector);
+}
+id sd_copy(Ctx& x, id self, SEL, uint32_t) { return rt(x).retain(x.cpu, self); }
+
 // -------------------------------------------------------- descriptions ---
 
 std::string quoteIfNeeded(const std::string& s) {
@@ -948,7 +1028,8 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&a_enumerateUsingBlock>("enumerateObjectsUsingBlock:", "v@:@?").m<&a_enumerateWithOptions>("enumerateObjectsWithOptions:usingBlock:")
       .m<&a_indexOfObjectPassingTest>("indexOfObjectPassingTest:")
       .m<&a_sortedUsingSelector>("sortedArrayUsingSelector:").m<&a_sortedUsingFunction>("sortedArrayUsingFunction:context:")
-      .m<&a_sortedUsingComparator>("sortedArrayUsingComparator:").m<&a_valueForKey>("valueForKey:")
+      .m<&a_sortedUsingComparator>("sortedArrayUsingComparator:").m<&a_sortedUsingDescriptors>("sortedArrayUsingDescriptors:")
+      .m<&a_valueForKey>("valueForKey:")
       .m<&a_writeToFile>("writeToFile:atomically:").m<&a_description>("description");
     nma.cm<&ac_arrayWithCapacity>("arrayWithCapacity:")
        .m<&ai_initWithCapacity>("initWithCapacity:")
@@ -1029,6 +1110,18 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
     ne.m<&e_nextObject>("nextObject").m<&e_allObjects>("allObjects")
       .m<&e_countByEnumerating>("countByEnumeratingWithState:objects:count:", "I@:^v^@I");
     ae.m<&enum_dealloc>("dealloc", "v@:");
+
+    ObjC::ClassBuilder nsd = r.defineClass("NSSortDescriptor", "NSObject");
+    nsd.cm<&sdc_sortDescriptorWithKeyAscending>("sortDescriptorWithKey:ascending:", "@@:@c")
+       .cm<&sdc_sortDescriptorWithKeyAscendingSel>("sortDescriptorWithKey:ascending:selector:", "@@:@c:")
+       .m<&sd_initWithKeyAscending>("initWithKey:ascending:", "@@:@c")
+       .m<&sd_initWithKeyAscendingSel>("initWithKey:ascending:selector:", "@@:@c:")
+       .m<&sd_initWithCoder>("initWithCoder:")
+       .m<&sd_dealloc>("dealloc", "v@:")
+       .m<&sd_key>("key").m<&sd_ascending>("ascending", "c@:").m<&sd_selector>("selector", ":@:")
+       .m<&sd_compareObjectToObject>("compareObject:toObject:", "i@:@@")
+       .m<&sd_reversed>("reversedSortDescriptor")
+       .m<&sd_copy>("copyWithZone:").m<&sd_copy>("copy");
 }
 
 } // namespace Hydrogen::Runtime::Foundation

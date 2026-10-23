@@ -298,6 +298,8 @@ bool app_sendAction(Ctx& x, id self, SEL, SEL action, id target, id sender, id e
         }
         if (!target && ui(x).appDelegate && r.respondsTo(ui(x).appDelegate, action)) target = ui(x).appDelegate;
         if (!target) return false;
+    } else {
+        if (!r.respondsTo(target, action)) return false;
     }
     r.send(x.cpu, target, action, {sender, event});
     return true;
