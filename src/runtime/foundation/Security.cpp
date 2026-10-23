@@ -154,7 +154,7 @@ id itemResult(Ctx& x, const Plist::Value& item, bool wantData, bool wantAttrs) {
     const Plist::Value* data = item.get("v_Data");
     if (!wantAttrs) return data ? plistToObject(x, *data) : makeData(x, nullptr, 0);
     auto d = Plist::Value::makeDict();
-    for (const auto& [k, v] : item.dict) d->set(k, v);
+    for (const auto& [k, v] : item.dict) if (k != "v_Data" || wantData) d->set(k, v);
     return plistToObject(x, *d, true);
 }
 

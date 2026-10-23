@@ -15,7 +15,6 @@ extern const CFStringRef kSecAttrService;
 extern const CFStringRef kSecAttrAccount;
 extern const CFStringRef kSecValueData;
 extern const CFStringRef kSecReturnData;
-extern const CFStringRef kSecReturnAttributes;
 extern const CFStringRef kSecMatchLimit;
 extern const CFStringRef kSecMatchLimitOne;
 
