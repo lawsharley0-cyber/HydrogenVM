@@ -1,4 +1,6 @@
 GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
+[gpu] GL layer (64.0, 64.0)
+[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
 Loaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main
 Objective-C: 5 classes, 0 categories, 168 selector refs
 Screen: 320x480 @2x, portrait, status bar visible
@@ -118,10 +120,13 @@ ok UISwitch, UISlider, UISegmentedControl
 
 ok EAGLContext creation & setCurrentContext
 
+GPU: drawable 64x64 for renderbuffer 1 (platform layer)
 ok EAGLContext renderbufferStorage:fromDrawable:
 
 ok glCheckFramebufferStatus complete
 
+[gpu] GL layer removed
+GPU: presented frame 1 directly
 ok OpenGL ES clear, glReadPixels & presentRenderbuffer
 
 [autotap] 70.0,350.0
@@ -144,4 +149,4 @@ ALL CHECKS PASSED
 
 App exited with code 0
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 19304
+com.lfull.HydrogenVM: 20999
