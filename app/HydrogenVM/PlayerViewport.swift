@@ -113,19 +113,11 @@ struct EmulatorScreen: UIViewRepresentable {
             setNeedsLayout()
         }
 
-        /// The orientation the picture is drawn in. When a landscape game's phone is
-        /// turned to the other landscape, the picture (and touch mapping) turn over
-        /// with it; the game itself keeps its orientation.
-        private var displayOrientation: GuestOrientation {
-            guard orientation.landscape,
-                  let raw = window?.windowScene?.effectiveGeometry.interfaceOrientation.rawValue,
-                  let host = GuestOrientation(rawValue: raw), host.landscape else { return orientation }
-            return host
-        }
-
         override func layoutSubviews() {
             super.layoutSubviews()
-            let orientation = displayOrientation
+            // The picture's turns depend only on the guest's orientation: the window
+            // already turns with the phone between the two landscapes, so the
+            // picture stays upright without changing them.
             let next = PlayerGeometry(container: bounds.size, guest: guestSize, pixels: pixelSize,
                                       orientation: orientation, mode: mode,
                                       displayScale: window?.screen.scale ?? traitCollection.displayScale)
