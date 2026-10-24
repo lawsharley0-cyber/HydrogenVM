@@ -26,7 +26,7 @@ final class SaveFileStore {
     }
 
     func load() throws -> Data {
-        let bytes = try Data(contentsOf: url)
+        let bytes = try Data(contentsOf: url, options: .alwaysMapped)
         if bytes.starts(with: Data("SQLite format 3".utf8)) {
             try SQLiteEditStore.requireCheckpointed(url)
         }
