@@ -437,35 +437,7 @@ struct SaveEditorDashboardView: View {
                     if !group.isEmpty {
                         Section(cat.rawValue) {
                             ForEach(group) { entry in
-                                Button { editingFile = entry.item } label: {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: entry.kind.symbol)
-                                            .font(.title3)
-                                            .foregroundStyle(.tint)
-                                            .frame(width: 28)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(entry.item.name)
-                                                .font(.body.weight(.medium))
-                                                .lineLimit(1)
-                                            Text(entry.relativePath)
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                        Spacer()
-                                        VStack(alignment: .trailing, spacing: 2) {
-                                            Text(entry.kind.badgeLabel)
-                                                .font(.caption2.weight(.semibold))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(.tint.opacity(0.15), in: Capsule())
-                                                .foregroundStyle(.tint)
-                                            Text(ByteCountFormatter.string(fromByteCount: entry.item.size, countStyle: .file))
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
+                                Button { editingFile = entry.item } label: { SaveFileRow(entry: entry) }
                             }
                         }
                     }
@@ -2570,3 +2542,40 @@ private struct NestedDataInspectorView: View {
 
 }
 
+
+
+/// One row of the save editor's file list (kept separate so the list body stays
+/// small enough for the Swift type checker).
+private struct SaveFileRow: View {
+    let entry: DiscoveredSaveFile
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: entry.kind.symbol)
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.item.name)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(entry.relativePath)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(entry.kind.badgeLabel)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.tint)
+                Text(ByteCountFormatter.string(fromByteCount: entry.item.size, countStyle: .file))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
