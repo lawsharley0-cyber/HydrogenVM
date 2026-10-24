@@ -9,6 +9,7 @@
 #include <fstream>
 #include <cstdio>
 #include <algorithm>
+#include <zlib.h>
 using namespace Hydrogen::Runtime;
 using namespace Hydrogen::Runtime::Offline;
 namespace fs=std::filesystem;
@@ -59,6 +60,31 @@ int main() {
     int failed=0;auto check=[&](bool pass,const char* text){std::printf("%s %s\n",pass?"ok":"FAIL",text);failed+=!pass;};
     const fs::path saved=root/"home/Library/Application Support/HydrogenVM/ClashOffline.plist";
     ProcessConfig cfg;cfg.bundlePath=(root/"app").string();cfg.homePath=(root/"home").string();
+    {
+        // Native addChest (0x124bf0) increments home+0xbc and stores that ID
+        // in chest+8. A slot number is not a chest identity.
+        ClashProfile p;auto home=ClashFixtures(cfg.bundlePath).home(p);
+        const std::string marker="Offline Player";
+        auto avatar=std::search(home.begin(),home.end(),marker.begin(),marker.end());
+        size_t offset=size_t(avatar-home.begin())-10;
+        home=replaceClashHomeChests(home,{19000000,0,0,0},offset);
+        home=replaceClashHomeChests(home,{19000000,19000001,0,0},offset);
+        auto two=inspectClashHome(home);
+        check(two.states[0].value8==1 && two.states[1].value8==2,"earned chests get distinct native monotonically increasing IDs");
+        home=replaceClashHomeChests(home,{0,19000001,0,0},offset);
+        home=replaceClashHomeChests(home,{19000002,19000001,0,0},offset);
+        auto reused=inspectClashHome(home);
+        check(reused.states[0].value8==3 && reused.states[1].value8==2,"reusing a slot preserves the other chest ID and advances the ID counter");
+        // The counter is the first VInt after the fixed eight-byte home ID.
+        Bytes enlarged(home.begin(),home.begin()+8);clashVint(enlarged,63);
+        enlarged.insert(enlarged.end(),home.begin()+reused.chestCounterEnd,home.end());
+        offset=offset-(reused.chestCounterEnd-8)+1;home=std::move(enlarged);
+        home=replaceClashHomeChests(home,{19000002,19000001,19000003,0},offset);
+        auto expanded=inspectClashHome(home);
+        const std::string storedName(home.begin()+offset+10,home.begin()+offset+10+marker.size());
+        check(expanded.lastChestId==64 && expanded.states[2].value8==64 && storedName==marker,
+              "chest ID counter VInt expansion preserves the avatar boundary");
+    }
     {
         Process process(cfg);ClashOffline service(process);
         int fd=::socket(AF_INET,SOCK_STREAM,0);timeval timeout{3,0};::setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof timeout);
@@ -155,7 +181,7 @@ int main() {
         auto stored=Plist::parseFile(saved.string());
         stored->set("nativeHome",Plist::Value::makeData(std::string(home.begin(),home.end())));
         stored->set("avatarOffset",Plist::Value::makeInt(name-home.begin()-10));
-        const Bytes pending{0x95,3,0,0,1,0x7f,0x7f,0x7f,0,0};
+        const Bytes pending{0x95,3,0,1,1,0x7f,0x7f,0x7f,0,0};
         stored->set("pendingReward",Plist::Value::makeData(std::string(pending.begin(),pending.end())));
         stored->set("pendingRewardSlot",Plist::Value::makeInt(1));
         auto chests=Plist::Value::makeArray();for(auto chest:p.chests)chests->array.push_back(Plist::Value::makeInt(chest));stored->set("chests",chests);
@@ -187,6 +213,20 @@ int main() {
         check(cpu.exit==Hydrogen::CPU::Exit::None && state->get("npcWins")->i==1 && state->get("lastRewardedWin")->i==1 &&
               state->get("chestCycleIndex")->i==1 && state->get("chests")->array[0]->i==19000000 && state->get("chests")->array[1]->i==0,
               "native win without battle log banks the CSV chest exactly once");
+    }
+    {
+        std::string npcs="Name,Location,PredefinedDeck,Seed,StartingMana,WizardHpMultiplier,ExpLevel\nString,String,String,int,int,int,int\n";
+        for(int i=1;i<=7;++i)npcs+="Npc"+std::to_string(i)+",FirstMatch,BasicDeck1,2,1,40,1\n";
+        put("csv_logic/npcs.csv",npcs);cfg.homePath=(root/"seventh-mission").string();
+        Process process(cfg);ClashOffline service(process);SocketPeer client(service.port());
+        Bytes login;clashInt(login,0);clashInt(login,0);clashInt(login,-1);for(int n:{2,0,1306})clashVint(login,n);
+        client.send(10101,login);client.receive();client.receive();client.send(14104,{18,6});
+        auto packet=client.receive();const auto expected=ClashFixtures(cfg.bundlePath,18000006).sector(ClashProfile{});
+        Bytes decoded(expected.size()+1024);uLongf size=decoded.size();
+        bool valid=packet.first==21903 && packet.second.size()>5 &&
+            ::uncompress(decoded.data(),&size,packet.second.data()+5,packet.second.size()-5)==Z_OK;
+        decoded.resize(size);
+        check(valid && decoded==expected,"seventh training mission keeps its bundled location and training arena");
     }
     fs::remove_all(root);return failed?1:0;
 }

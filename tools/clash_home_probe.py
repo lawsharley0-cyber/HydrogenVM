@@ -8,6 +8,7 @@ open a speaker device. Use desktop.py for device playback.
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import signal
 import socket
@@ -127,7 +128,8 @@ def main():
                 item = {'launch':launch,'exitCode':run.returncode,'seconds':round(time.monotonic()-began,2),
                         'nativeHomeAccepted':'Loaded own home from server' in text,
                         'nativeTutorialVoiceLoaded':'Start loading: sfx/king_tut_first_vo_01.wav' in text,
-                        'nativeNpcSupplied':'Offline Clash: native Npc1 sector supplied' in text,
+                        'nativeNpcSupplied':bool(re.search(r'Offline Clash: native Npc[1-9][0-9]* sector supplied',text)),
+                        'nativeNpcIds':sorted({int(n) for n in re.findall(r'Offline Clash: native Npc([1-9][0-9]*) sector supplied',text)}),
                         'nativeOfflineServiceStarted':'Offline Clash: phone-local' in text,
                         'crashed':report.get('crashed',True),'errors':report.get('errors',[]),
                         'audio':report.get('audio'),'audioCaptureErrors':audio_errors}

@@ -89,8 +89,8 @@ std::vector<ClashHomeCommand> decodeClashHomeTurn(const Bytes& bytes) {
         if(high!=0 || low!=1)throw std::runtime_error("Offline Clash: home command executor mismatch");
         c.argument=c.type==504?r.ref():r.v();
         if(c.type==506 || c.type==537)c.flag=r.b();
-        if((c.type==502 || c.type==503 || c.type==506) && (c.argument<0 || c.argument>=4))
-            throw std::runtime_error("Offline Clash: invalid chest slot");
+        if((c.type==502 || c.type==503 || c.type==506) && c.argument<0)
+            throw std::runtime_error("Offline Clash: invalid chest ID");
         commands.push_back(c);
     }
     // ClientEndTurn carries a fixed big-endian -1 when debug data is absent.
@@ -99,14 +99,17 @@ std::vector<ClashHomeCommand> decodeClashHomeTurn(const Bytes& bytes) {
     return commands;
 }
 ClashHomeView inspectClashHome(const Bytes& bytes) {
-    Cursor r{bytes};for(int i=0;i<8;++i)r.byte();for(int i=0;i<6;++i)r.v();
+    Cursor r{bytes};for(int i=0;i<8;++i)r.byte();
+    ClashHomeView view;view.lastChestId=r.v();view.chestCounterEnd=r.at;
+    if(view.lastChestId<0)throw std::runtime_error("Offline Clash: negative native chest counter");
+    for(int i=0;i<5;++i)r.v();
     const int decks=r.v();if(decks<1 || decks>3)throw std::runtime_error("Offline Clash: invalid native decks");
     std::vector<std::vector<ClashFixtures::Card>> all;
     for(int i=0;i<decks;++i){std::array<bool,8> present{};for(auto&& p:present)p=r.b();std::vector<ClashFixtures::Card> cards;for(bool p:present)if(p)cards.push_back(r.card());all.push_back(cards);}
     const int count=r.v();if(count<0 || count>10000)throw std::runtime_error("Offline Clash: invalid native collection");
     for(int i=0;i<count;++i)r.card();r.v();const int selected=r.v();const int slots=r.v();
     if(selected<0 || selected>=decks || slots!=4)throw std::runtime_error("Offline Clash: invalid native home selection");
-    ClashHomeView view;view.deck=all[selected];view.chestOffset=r.at;
+    view.deck=all[selected];view.chestOffset=r.at;
     for(int i=0;i<4;++i)if(r.b()) {auto& c=view.states[i];c.data=r.ref();view.chests[i]=c.data;c.unlocked=r.b();c.claimed=r.b();c.isNew=r.b();c.hasTimer=r.b();if(c.hasTimer)for(auto& n:c.timer)n=r.v();c.value8=r.v();c.source=r.v();c.valueC=r.v();}
     view.chestEnd=r.at;return view;
 }
@@ -115,9 +118,25 @@ Bytes replaceClashHomeChests(const Bytes& bytes,const std::array<int32_t,4>& che
     if(avatarOffset<view.chestEnd)throw std::runtime_error("Offline Clash: avatar overlaps the chest list");
     // Preserve native timer/unlock state when the slot is unchanged. This path
     // only appends newly earned rewards to empty slots, never rewrites a chest.
-    Writer w;for(size_t i=0;i<4;++i){auto c=view.states[i];const auto chest=chests[i];w.b(chest!=0);if(chest){if(c.data!=chest){if(c.data)throw std::runtime_error("Offline Clash: cannot replace an occupied native chest slot");c=ClashHomeView::Chest{};c.data=chest;}w.ref(c.data);w.b(c.unlocked);w.b(c.claimed);w.b(c.isNew);w.b(c.hasTimer);if(c.hasTimer)for(auto n:c.timer)w.v(n);w.v(c.value8);w.v(c.source);w.v(c.valueC);}}
-    Bytes result(bytes.begin(),bytes.begin()+view.chestOffset);result.insert(result.end(),w.data.begin(),w.data.end());result.insert(result.end(),bytes.begin()+view.chestEnd,bytes.end());
-    avatarOffset=avatarOffset-view.chestEnd+view.chestOffset+w.data.size();return result;
+    int32_t lastId=view.lastChestId;
+    for(const auto& c:view.states)if(c.data)lastId=std::max(lastId,c.value8);
+    Writer w;
+    for(size_t i=0;i<4;++i) {
+        auto c=view.states[i];const auto chest=chests[i];w.b(chest!=0);
+        if(!chest)continue;
+        if(c.data!=chest) {
+            if(c.data)throw std::runtime_error("Offline Clash: cannot replace an occupied native chest slot");
+            if(lastId==INT32_MAX)throw std::runtime_error("Offline Clash: native chest ID exhausted");
+            c=ClashHomeView::Chest{};c.data=chest;c.value8=++lastId;
+        }
+        w.ref(c.data);w.b(c.unlocked);w.b(c.claimed);w.b(c.isNew);w.b(c.hasTimer);
+        if(c.hasTimer)for(auto n:c.timer)w.v(n);w.v(c.value8);w.v(c.source);w.v(c.valueC);
+    }
+    Bytes counter;clashVint(counter,lastId);
+    Bytes result(bytes.begin(),bytes.begin()+8);result.insert(result.end(),counter.begin(),counter.end());
+    result.insert(result.end(),bytes.begin()+view.chestCounterEnd,bytes.begin()+view.chestOffset);
+    result.insert(result.end(),w.data.begin(),w.data.end());result.insert(result.end(),bytes.begin()+view.chestEnd,bytes.end());
+    avatarOffset=avatarOffset-view.chestEnd+view.chestOffset+w.data.size()-(view.chestCounterEnd-8)+counter.size();return result;
 }
 namespace {
 void avatar(Writer& w,const ClashProfile& profile,bool npc,const std::string& trainer="Trainer Earl") {
@@ -223,11 +242,12 @@ Bytes ClashFixtures::home(const ClashProfile& p) const {
         if(!p.nativeAvatar.empty()){if(offset>=result.size())throw std::runtime_error("Offline Clash: invalid native avatar offset");result.resize(offset);result.insert(result.end(),p.nativeAvatar.begin(),p.nativeAvatar.end());result.push_back(0);}
         return result;
     }
-    Writer w;w.i(0);w.i(1);w.zeros(2);w.timer();w.v(0);w.v(1);deck(w,playerDeck);
+    int32_t lastChestId=0;for(int i=0;i<4;++i)if(p.chests[i])lastChestId=i+1;
+    Writer w;w.i(0);w.i(1);w.v(lastChestId);w.v(0);w.timer();w.v(0);w.v(1);deck(w,playerDeck);
     w.v(0);w.v(1);w.v(0);w.v(4);
     for(int i=0;i<4;++i) {
         const bool present=p.chests[i]!=0;w.b(present);
-        if(present){w.ref(p.chests[i]);w.b(false);w.b(false);w.b(true);w.b(false);w.v(0);w.v(0);w.v(-1);}
+        if(present){w.ref(p.chests[i]);w.b(false);w.b(false);w.b(true);w.b(false);w.v(i+1);w.v(0);w.v(-1);}
     }
     w.timer(freeChestTicks);w.timer();w.b(false);w.b(false);w.v(0);w.b(true);w.timer();w.b(false);w.timer();
     w.zeros(9);w.v(1);w.ref(0);w.v(-1);w.v(-1);w.v(-1);w.timer();w.v(0);w.timer();w.timer();w.zeros(6);w.v(0);w.s("");w.v(0);

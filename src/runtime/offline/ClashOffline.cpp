@@ -272,9 +272,13 @@ struct ClashOffline::Impl {
             next.arenaLevel = 1;
         }
         if(wins && csvEngine)bankNpcChest(next);
-        if(!wins || next.lastRewardedWin==next.npcWins)save(path,next);profile=next;pendingBattleAvatar=avatar;
+        // On a real client the post-setter continuation commits the updated
+        // native avatar and counters/reward together. Saving just the counters
+        // here could leave an older avatar after interruption.
+        if(!process.image().entry && (!wins || next.lastRewardedWin==next.npcWins))save(path,next);
+        profile=next;pendingBattleAvatar=avatar;
         process.logf(LogLevel::Info,"Offline Clash: native NPC %s observed (%d, trophies=%d, arena=%d)%s",
-            wins?"win":"loss",count,next.trophies,next.arenaLevel,wins?"; awaiting reward commit":"; persisted");
+            wins?"win":"loss",count,next.trophies,next.arenaLevel,process.image().entry?"; awaiting native avatar commit":"; metadata test transaction");
     }
     std::pair<Bytes,size_t> encodeNative(uint32_t home,uint32_t avatar) {
         if(!scratch){scratch=process.heap().allocZeroed(256*1024);stream=process.heap().allocZeroed(64);}
@@ -299,6 +303,7 @@ struct ClashOffline::Impl {
             throw std::runtime_error("Offline Clash: native battle avatar did not complete its counter transition");
         auto next=profile;next.nativeAvatar=encodeNative(0,avatar).first;
         save(path,next);profile=std::move(next);pendingBattleAvatar=0;
+        process.log(LogLevel::Info,"Offline Clash: native battle avatar and earned progress committed together");
     }
     Bytes encodeNativeReward(uint32_t home,uint32_t chest,int32_t chestId) {
         if(!scratch){scratch=process.heap().allocZeroed(256*1024);stream=process.heap().allocZeroed(64);}
@@ -419,8 +424,9 @@ struct ClashOffline::Impl {
             else if(kind==14104) {
                 const int32_t table=r.v(),id=r.v();auto state=snapshot();
                 if(table!=18 || id<0 || id>6)throw std::runtime_error("Offline Clash: mission does not match the supported training progress");
-                int32_t arenaLevel = id >= 6 ? 1 : 0;
-                auto mission=id==0?fixtures:ClashFixtures(process.config().bundlePath,18000000+id,arenaLevel);
+                // All seven bundled training NPCs use their own Location.
+                // NPC7 is still TrainingCamp; Arena 1 begins after graduation.
+                auto mission=id==0?fixtures:ClashFixtures(process.config().bundlePath,18000000+id);
                 send(21903,1,compressed(mission.sector(state)));process.logf(LogLevel::Info,"Offline Clash: native Npc%d sector supplied",id+1);
             } else if(kind==14101) {
                 if(body.size()!=1 || body[0]>1)throw std::runtime_error("Offline Clash: unsupported GoHome schema");

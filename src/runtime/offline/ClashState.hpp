@@ -32,6 +32,8 @@ struct ClashFixtures {
 struct ClashHomeView {
     struct Chest {int32_t data=0;bool unlocked=false,claimed=false,isNew=true,hasTimer=false;std::array<int32_t,3> timer{};int32_t value8=0,source=0,valueC=-1;};
     size_t chestOffset=0,chestEnd=0;
+    size_t chestCounterEnd=0;
+    int32_t lastChestId=0;
     std::array<int32_t,4> chests{};
     std::array<Chest,4> states{};
     std::vector<ClashFixtures::Card> deck;

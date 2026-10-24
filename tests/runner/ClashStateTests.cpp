@@ -49,6 +49,8 @@ int main(int argc, char** argv) {
     if(claim.size()!=1 || claim[0].type!=503 || claim[0].argument!=0) {
         std::fprintf(stderr,"FAIL native StartRewardClaim command\n");return 1;
     }
+    const auto laterClaim=decodeClashHomeTurn({10,0,1,0xb7,7,0,0,0,1,17,255,255,255,255});
+    if(laterClaim[0].argument!=17) {std::fprintf(stderr,"FAIL chest ID treated as a slot index\n");return 1;}
 
     // 2. ClashCsvEngine tests with mock Supercell tables
     const fs::path root = fs::temp_directory_path() / ("hvm-clash-csv-test-" + std::to_string(::getpid()));
