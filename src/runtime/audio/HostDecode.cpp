@@ -71,8 +71,28 @@ struct Decoder {
 #endif
 }
 
+// MP4/M4A, and CAF holding a codec the built-in decoders don't read (AAC in
+// Jetpack Joyride's music archive). CAF with LPCM or IMA4 stays built in.
+bool hostContainer(const uint8_t* data, size_t size) {
+    if (std::memcmp(data + 4, "ftyp", 4) == 0) return true;
+    if (std::memcmp(data, "caff", 4) != 0) return false;
+    for (size_t pos = 8; pos + 12 + 12 <= size;) {
+        const uint8_t* h = data + pos;
+        uint64_t chunk = 0;
+        for (int i = 0; i < 8; ++i) chunk = (chunk << 8) | h[4 + i];
+        if (std::memcmp(h, "desc", 4) == 0 && chunk >= 32) {
+            const uint8_t* f = h + 12 + 8;
+            const uint32_t fmt = (uint32_t(f[0]) << 24) | (uint32_t(f[1]) << 16) | (uint32_t(f[2]) << 8) | f[3];
+            return fmt != 0x6C70636D /* lpcm */ && fmt != 0x696D6134 /* ima4 */;
+        }
+        if (chunk > size - pos - 12) break;
+        pos += 12 + size_t(chunk);
+    }
+    return false;
+}
+
 bool decodeHostContainer(DecodedAudio& out, const uint8_t* data, size_t size) {
-    if (!data || size < 12 || size > 256u * 1024 * 1024 || std::memcmp(data + 4, "ftyp", 4)) return false;
+    if (!data || size < 12 || size > 256u * 1024 * 1024 || !hostContainer(data, size)) return false;
     DecodedAudio decoded;
 #if defined(__APPLE__)
     Input input{data, size};

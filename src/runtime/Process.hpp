@@ -48,6 +48,10 @@ struct ProcessConfig {
     // Called on the emulated main thread with each new frame (premultiplied
     // RGBA, screenWidth*scale x screenHeight*scale, portrait). Optional.
     std::function<void(const uint8_t* rgba, int width, int height)> present;
+    // Called (from a guest thread) when the guest starts recording (true) and
+    // when its last recording queue stops (false). The host captures the
+    // microphone in between and hands samples to Process::pushMicrophone.
+    std::function<void(bool on)> microphone;
     // OpenGL ES on the host GPU (runtime/gl/HostGL.hpp). Null: software rasterizer.
     std::shared_ptr<HostGL::Platform> hostGL;
     // Audio: the platform pulls mixed sound from Process::mixer() (see audio/Audio.hpp).
@@ -181,6 +185,12 @@ public:
     Perf& perf() { return perf_; }
     // Guest instructions retired by every thread so far (approximate while running).
     uint64_t guestInstructions();
+
+    // ---- microphone: the host pushes mono samples at its own rate; recording
+    // queues pull them at theirs (silence when nothing has been captured).
+    void pushMicrophone(const float* mono, size_t frames, double rate);
+    void pullMicrophone(float* out, size_t frames, double rate);
+    void microphoneUser(bool start);   // count of running recording queues
 
     // ---- guest file open history ring (~32 entries)
     struct FileRecord {
@@ -390,6 +400,10 @@ private:
     std::array<uint32_t, 16> crashRegisters_{};
     mutable std::mutex logRingMu_;
     mutable std::deque<std::string> logRing_;
+    std::mutex micMu_;
+    std::deque<float> mic_;
+    double micRate_ = 48000, micPos_ = 0;
+    int micUsers_ = 0;
     mutable std::mutex fileRingMu_;
     mutable std::deque<FileRecord> fileRing_;
     uint64_t nextFileHandle_ = 0;

@@ -4,6 +4,8 @@
 #include "UIKit.hpp"
 #include "runtime/audio/Audio.hpp"
 #include <algorithm>
+#include <chrono>
+#include <deque>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -53,6 +55,13 @@ struct AudioQueueInstance {
     uint32_t voice = 0;   // mixer stream; buffers go back to the app as they finish
     std::shared_ptr<Foundation::RunLoop::Timer> pump;
     std::vector<AudioQueueBufferInfo> buffers;
+    // Recording queues (AudioQueueNewInput): buffers wait here until they are filled
+    // with microphone audio at the queue's rate.
+    bool input = false, micClaimed = false;
+    std::deque<uint32_t> pending;
+    double dueFrames = 0, sampleTime = 0;
+    std::chrono::steady_clock::time_point last{};
+    uint32_t timeStamp = 0;   // guest AudioTimeStamp handed to the input callback
 };
 
 struct AudioFileInstance {
@@ -88,6 +97,9 @@ int32_t as_getProperty(Ctx& x, uint32_t prop, GuestPtr size, GuestPtr out) {
         const uint32_t n = x.mem.read<uint32_t>(size);
         if (prop == 0x63687372 /* 'chsr' hw sample rate */ && n >= 8) x.mem.write<double>(out, 44100.0);
         else if (prop == 0x6368766C /* 'chvl' output volume */ && n >= 4) x.mem.write<float>(out, 1.0f);
+        else if (prop == 0x61696176 /* 'aiav' audio input available */ && n >= 4) x.mem.write<uint32_t>(out, 1);
+        else if (prop == 0x63686963 /* 'chic' input channels */ && n >= 4) x.mem.write<uint32_t>(out, 1);
+        else if (prop == 0x63686f63 /* 'choc' output channels */ && n >= 4) x.mem.write<uint32_t>(out, 2);
         else if (n >= 4) x.mem.write<uint32_t>(out, 0);
     }
     return 0;
@@ -206,10 +218,12 @@ int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
     return 0;
 }
 // Hands finished buffers back to the app's callback (on the main run loop).
+void aqPumpInput(Process& p, CPU::Cpu& c, uint32_t qid);
 void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
     auto& st = p.service<AudioToolboxState>();
     auto it = st.queues.find(qid);
     if (it == st.queues.end()) return;
+    if (it->second.input) { aqPumpInput(p, c, qid); return; }
     const uint32_t cb = it->second.callback, ud = it->second.userData;
     for (uint64_t buf : MX(p).takeProcessed(it->second.voice)) {
         if (p.terminating() || p.stopping() || !cb || !st.queues.count(qid)) break;
@@ -244,9 +258,65 @@ int32_t aq_getPropertySize(Ctx& x, uint32_t, uint32_t, GuestPtr outSize) {
     if (outSize) x.mem.write<uint32_t>(outSize, 4);
     return 0;
 }
+// Recording: AudioQueueNewInput(format, callback, userData, runLoop, mode, flags, outAQ). The
+// callback is AudioQueueInputCallback(userData, queue, buffer, const AudioTimeStamp*, numPackets,
+// packetDescs); buffers are filled with linear PCM from the host microphone in real time.
 int32_t aq_newInput(Ctx& x, GuestPtr format, uint32_t callbackProc, uint32_t userData, uint32_t runLoop, uint32_t runLoopMode, uint32_t flags, GuestPtr outAQ) {
-    return aq_newOutput(x, format, callbackProc, userData, runLoop, runLoopMode, flags, outAQ);
+    const int32_t r = aq_newOutput(x, format, callbackProc, userData, runLoop, runLoopMode, flags, outAQ);
+    if (r != 0 || !outAQ) return r;
+    auto& q = ATS(x).queues[x.mem.read<uint32_t>(outAQ)];
+    MX(x.proc).release(q.voice);
+    q.voice = 0;
+    q.input = true;
+    q.timeStamp = x.proc.heap().allocZeroed(64);
+    return 0;
 }
+void aqPumpInput(Process& p, CPU::Cpu& c, uint32_t qid) {
+    auto& st = p.service<AudioToolboxState>();
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end() || !it->second.running) return;
+    AudioQueueInstance* qp = &it->second;
+#define q (*qp)
+    const auto now = std::chrono::steady_clock::now();
+    q.dueFrames += std::chrono::duration<double>(now - q.last).count() * q.sampleRate;
+    q.last = now;
+    const int bps = std::max(1, q.bitsPerChannel / 8), ch = std::max(1, q.channels);
+    const uint32_t bytesPerFrame = uint32_t(bps * (q.nonInterleaved ? 1 : ch));
+    // Never more than two buffers in one go (after a stall, catch up gently).
+    for (int filled = 0; filled < 2 && !q.pending.empty(); ++filled) {
+        const uint32_t buf = q.pending.front();
+        const uint32_t cap = p.mem().read<uint32_t>(buf);
+        const uint32_t data = p.mem().read<uint32_t>(buf + 4);
+        const uint32_t frames = bytesPerFrame ? cap / bytesPerFrame : 0;
+        if (!frames || !data || q.dueFrames < frames) break;
+        std::vector<float> mono(frames);
+        p.pullMicrophone(mono.data(), frames, q.sampleRate);
+        for (uint32_t f = 0; f < frames; ++f) {
+            const float v = std::clamp(mono[f], -1.0f, 1.0f);
+            for (int k = 0; k < (q.nonInterleaved ? 1 : ch); ++k) {
+                const uint32_t a = data + (f * uint32_t(q.nonInterleaved ? 1 : ch) + uint32_t(k)) * uint32_t(bps);
+                if (q.isFloat && bps == 4) p.mem().write<float>(a, v);
+                else if (bps == 4) p.mem().write<int32_t>(a, int32_t(v * 2147483647.0f));
+                else if (bps == 2) p.mem().write<int16_t>(a, int16_t(std::lrint(v * 32767.0f)));
+                else p.mem().write<uint8_t>(a, uint8_t(std::lrint(v * 127.0f) + 128));
+            }
+        }
+        p.mem().write<uint32_t>(buf + 8, frames * bytesPerFrame);   // mAudioDataByteSize
+        p.mem().write<double>(q.timeStamp, q.sampleTime);         // mSampleTime
+        p.mem().write<uint32_t>(q.timeStamp + 56, 1);             // kAudioTimeStampSampleTimeValid
+        q.sampleTime += frames;
+        q.dueFrames -= frames;
+        q.pending.pop_front();
+        const uint32_t cb = q.callback, ud = q.userData, ts = q.timeStamp;
+        if (p.terminating() || p.stopping() || !cb) break;
+        p.callGuest(c, cb, {ud, qid, buf, ts, frames, 0});
+        it = st.queues.find(qid);          // the callback may have stopped or disposed the queue
+        if (it == st.queues.end() || !it->second.running) return;
+        qp = &it->second;
+    }
+    if (q.pending.empty()) q.dueFrames = std::min(q.dueFrames, double(q.sampleRate) / 10);   // no buffer waiting: don't bank time
+}
+#undef q
 int32_t aq_setProperty(Ctx&, uint32_t, uint32_t, GuestPtr, uint32_t) { return 0; }   // channel layout, converter quality, ...
 int32_t aq_createTimeline(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint32_t>(out, 0x71740001); return 0; }
 int32_t aq_disposeTimeline(Ctx&, uint32_t, uint32_t) { return 0; }
@@ -256,7 +326,8 @@ int32_t aq_getCurrentTime(Ctx& x, uint32_t qid, uint32_t, GuestPtr outTime, Gues
         for (uint32_t i = 0; i < 64; i += 4) x.mem.write<uint32_t>(outTime + i, 0);
         double t = 0;
         auto& st = ATS(x);
-        if (st.queues.count(qid)) t = MX(x.proc).positionSeconds(st.queues[qid].voice) * 44100.0;
+        if (st.queues.count(qid))
+            t = st.queues[qid].input ? st.queues[qid].sampleTime : MX(x.proc).positionSeconds(st.queues[qid].voice) * 44100.0;
         x.mem.write<double>(outTime, t);              // mSampleTime
         x.mem.write<uint32_t>(outTime + 56, 1);       // mFlags: kAudioTimeStampSampleTimeValid
     }
@@ -268,6 +339,14 @@ int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr)
     auto it = st.queues.find(qid);
     if (it == st.queues.end() || !buf) return -50;
     AudioQueueInstance& q = it->second;
+    if (q.input) {   // an empty buffer for the recorder to fill
+        q.pending.push_back(buf);
+        if (!q.pump) {
+            Process* p = &x.proc;
+            q.pump = Foundation::mainRunLoop(x.proc).addTimer(0.01, 0.01, true, [p, qid](CPU::Cpu& c) { aqPump(*p, c, qid); });
+        }
+        return 0;
+    }
     const uint32_t dataPtr = x.mem.read<uint32_t>(buf + 4);
     const uint32_t byteSize = x.mem.read<uint32_t>(buf + 8);
     std::vector<int16_t> stereo;
@@ -292,25 +371,60 @@ int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr)
     }
     return 0;
 }
-int32_t aq_start(Ctx& x, uint32_t qid, GuestPtr) { if (ATS(x).queues.count(qid)) { auto& q = ATS(x).queues[qid]; q.running = true; MX(x.proc).setPaused(q.voice, false); } return 0; }
-int32_t aq_pause(Ctx& x, uint32_t qid) { if (ATS(x).queues.count(qid)) { auto& q = ATS(x).queues[qid]; q.running = false; MX(x.proc).setPaused(q.voice, true); } return 0; }
+void micRelease(Ctx& x, AudioQueueInstance& q) {
+    if (q.micClaimed) { q.micClaimed = false; x.proc.microphoneUser(false); }
+}
+int32_t aq_start(Ctx& x, uint32_t qid, GuestPtr) {
+    if (!ATS(x).queues.count(qid)) return 0;
+    auto& q = ATS(x).queues[qid];
+    q.running = true;
+    if (q.input) {
+        q.last = std::chrono::steady_clock::now();
+        q.dueFrames = 0;
+        if (!q.micClaimed) { q.micClaimed = true; x.proc.microphoneUser(true); }
+        if (!q.pump) {
+            Process* p = &x.proc;
+            q.pump = Foundation::mainRunLoop(x.proc).addTimer(0.01, 0.01, true, [p, qid](CPU::Cpu& c) { aqPump(*p, c, qid); });
+        }
+        return 0;
+    }
+    MX(x.proc).setPaused(q.voice, false);
+    return 0;
+}
+int32_t aq_pause(Ctx& x, uint32_t qid) {
+    if (!ATS(x).queues.count(qid)) return 0;
+    auto& q = ATS(x).queues[qid];
+    q.running = false;
+    if (q.input) { micRelease(x, q); return 0; }
+    MX(x.proc).setPaused(q.voice, true);
+    return 0;
+}
 int32_t aq_stop(Ctx& x, uint32_t qid, bool) {
     if (!ATS(x).queues.count(qid)) return 0;
     auto& q = ATS(x).queues[qid];
     q.running = false;
+    if (q.input) { micRelease(x, q); q.pending.clear(); return 0; }
     MX(x.proc).stop(q.voice);
     MX(x.proc).takeProcessed(q.voice);   // stopped buffers are not called back
     MX(x.proc).setPaused(q.voice, true);
     return 0;
 }
 int32_t aq_flush(Ctx&, uint32_t) { return 0; }
-int32_t aq_reset(Ctx& x, uint32_t qid) { if (ATS(x).queues.count(qid)) MX(x.proc).stop(ATS(x).queues[qid].voice); return 0; }
+int32_t aq_reset(Ctx& x, uint32_t qid) {
+    if (!ATS(x).queues.count(qid)) return 0;
+    auto& q = ATS(x).queues[qid];
+    if (q.input) q.pending.clear();
+    else MX(x.proc).stop(q.voice);
+    return 0;
+}
 int32_t aq_dispose(Ctx& x, uint32_t qid, bool) {
     auto& st = ATS(x);
     if (st.queues.count(qid)) {
         auto& q = st.queues[qid];
         if (q.pump) q.pump->valid = false;
-        MX(x.proc).release(q.voice);
+        micRelease(x, q);
+        if (q.timeStamp) x.proc.heap().free(q.timeStamp);
+        if (q.voice) MX(x.proc).release(q.voice);
         for (const auto& b : q.buffers) if (b.guestAddr) x.proc.heap().free(b.guestAddr);
         st.queues.erase(qid);
     }
@@ -727,6 +841,8 @@ bool avs_yesDoubleErr(Ctx&, id, SEL, double, GuestPtr) { return true; }
 id avs_mode(Ctx& x, id, SEL) { return makeString(x, "AVAudioSessionModeDefault"); }
 uint32_t avs_zero(Ctx&, id, SEL) { return 0; }
 uint32_t avs_two(Ctx&, id, SEL) { return 2; }
+uint32_t avs_one(Ctx&, id, SEL) { return 1; }
+bool avs_yes(Ctx&, id, SEL) { return true; }
 double avs_ioDuration(Ctx&, id, SEL) { return 0.0058; }   // 256 frames at 44.1 kHz
 id avs_emptyArray(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
 
@@ -1411,8 +1527,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
        .m<&avs_yesDoubleErr>("setPreferredSampleRate:error:", "c@:d^@").m<&avs_yesDoubleErr>("setPreferredHardwareSampleRate:error:", "c@:d^@")
        .m<&avs_yesDoubleErr>("setPreferredIOBufferDuration:error:", "c@:d^@").m<&avs_volume>("outputVolume", "f@:")
        // Read-only state (Hungry Shark Evolution asks for -mode at startup).
-       .m<&avs_mode>("mode").m<&avs_zero>("categoryOptions", "I@:").m<&avs_no>("isInputAvailable", "c@:")
-       .m<&avs_no>("inputIsAvailable", "c@:").m<&avs_two>("outputNumberOfChannels", "i@:").m<&avs_zero>("inputNumberOfChannels", "i@:")
+       .m<&avs_mode>("mode").m<&avs_zero>("categoryOptions", "I@:").m<&avs_yes>("isInputAvailable", "c@:")
+       .m<&avs_yes>("inputIsAvailable", "c@:").m<&avs_two>("outputNumberOfChannels", "i@:").m<&avs_one>("inputNumberOfChannels", "i@:")
        .m<&avs_ioDuration>("IOBufferDuration", "d@:").m<&avs_ioDuration>("preferredIOBufferDuration", "d@:")
        .m<&avs_ioDuration>("outputLatency", "d@:").m<&avs_ioDuration>("inputLatency", "d@:")
        .m<&avs_emptyArray>("availableInputs");

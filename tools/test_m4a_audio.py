@@ -30,11 +30,13 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         synthetic = []
-        for channels, rate in [(1, 22050), (2, 44100)]:
-            path = root / f'synthetic-{channels}ch-{rate}.m4a'
-            command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', f'sine=frequency=440:sample_rate={rate}:duration=0.15',
-                     '-ac', str(channels), '-c:a', 'aac', '-y', str(path)])
-            synthetic.append(path)
+        # AAC in MP4 (.m4a) and in CAF (Jetpack Joyride's music archive).
+        for container in ['m4a', 'caf']:
+            for channels, rate in [(1, 22050), (2, 44100)]:
+                path = root / f'synthetic-{channels}ch-{rate}.{container}'
+                command(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', f'sine=frequency=440:sample_rate={rate}:duration=0.15',
+                         '-ac', str(channels), '-c:a', 'aac', '-y', str(path)])
+                synthetic.append(path)
         assets = sorted(args.assets.rglob('*.m4a')) if args.assets else []
         for index, path in enumerate(synthetic + assets):
             row = {'name': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}

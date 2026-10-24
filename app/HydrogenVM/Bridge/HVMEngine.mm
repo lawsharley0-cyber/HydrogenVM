@@ -254,6 +254,7 @@ struct SessionCore {
     bool logFlushScheduled = false;
     AVAudioEngine *audioEngine = nil;   // pulls from the guest's mixer
     std::mutex audioMu;
+    bool micOn = false;                  // input tap installed (the guest is recording)
     // Per-run log file in Documents/Logs (visible in the Files app). Written and
     // flushed line by line on the engine thread, so it survives a hard crash.
     FILE *logFile = nullptr;
@@ -339,8 +340,62 @@ void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrog
 }
 void stopAudio(const std::shared_ptr<SessionCore> &core) {
     std::lock_guard<std::mutex> lk(core->audioMu);
+    if (core->micOn) [core->audioEngine.inputNode removeTapOnBus:0];
+    core->micOn = false;
     [core->audioEngine stop];
     core->audioEngine = nil;
+}
+
+// Microphone: while the guest has a recording queue running, the engine's input
+// node is tapped and its first channel goes to Process::pushMicrophone. The
+// session switches to play-and-record (still out of the speaker) only then, so
+// apps that never record never ask for the microphone.
+void beginCapture(const std::shared_ptr<SessionCore> &core) {
+    std::lock_guard<std::mutex> lk(core->audioMu);
+    AVAudioEngine *engine = core->audioEngine;
+    if (!engine || core->micOn) return;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    [engine stop];
+    [session setCategory:AVAudioSessionCategoryPlayAndRecord
+             withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers
+                   error:nil];
+    [session setActive:YES error:nil];
+    AVAudioInputNode *input = engine.inputNode;
+    AVAudioFormat *fmt = [input outputFormatForBus:0];
+    if (fmt.sampleRate > 0 && fmt.channelCount > 0) {
+        const double rate = fmt.sampleRate;
+        std::weak_ptr<SessionCore> weak = core;
+        [input installTapOnBus:0 bufferSize:1024 format:fmt block:^(AVAudioPCMBuffer *buffer, AVAudioTime *) {
+            auto c = weak.lock();
+            if (!c || !buffer.floatChannelData) return;
+            std::shared_ptr<RT::Process> p;
+            { std::lock_guard<std::mutex> plk(c->mu); p = c->proc; }
+            if (p) p->pushMicrophone(buffer.floatChannelData[0], buffer.frameLength, rate);
+        }];
+        core->micOn = true;
+    }
+    NSError *err = nil;
+    if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to restart for recording: %@", err);
+}
+void endCapture(const std::shared_ptr<SessionCore> &core) {
+    std::lock_guard<std::mutex> lk(core->audioMu);
+    AVAudioEngine *engine = core->audioEngine;
+    if (!engine || !core->micOn) return;
+    [engine stop];
+    [engine.inputNode removeTapOnBus:0];
+    core->micOn = false;
+    [AVAudioSession.sharedInstance setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
+    NSError *err = nil;
+    if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to restart: %@", err);
+}
+void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
+    if (!on) { dispatch_async(dispatch_get_main_queue(), ^{ endCapture(core); }); return; }
+    [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (granted) beginCapture(core);
+            else NSLog(@"HydrogenVM: microphone permission denied; the app records silence");
+        });
+    }];
 }
 }
 
@@ -425,6 +480,7 @@ void stopAudio(const std::shared_ptr<SessionCore> &core) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ flushLogs(); });
             }
         };
+        cfg.microphone = [core](bool on) { setMicrophone(core, on); };
         cfg.present = [core, weakSelf](const uint8_t *rgba, int w, int h) {
             if (core->framePending.exchange(true)) return;   // the UI hasn't taken the last one: drop
             // Read UIKit only on this guest render thread. Capture metadata with

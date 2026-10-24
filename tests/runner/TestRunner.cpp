@@ -3078,6 +3078,45 @@ int runFullSubsystemTests() {
                   "NSScanner int / case-insensitive string / double / hex / scanUpToString");
         }
 
+        // AudioQueue recording: microphone samples reach the input callback in the queue's format.
+        {
+            auto callAT = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            int calls = 0;
+            uint32_t gotBytes = 0, gotPackets = 0;
+            int16_t firstSample = 0;
+            const auto cb = proc.registerHostFunction("hvm_test_aq_input", [&](Ctx& cx) {
+                ++calls;
+                const uint32_t buf = cx.cpu.r[2];
+                gotBytes = cx.mem.read<uint32_t>(buf + 8);
+                gotPackets = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
+                firstSample = cx.mem.read<int16_t>(cx.mem.read<uint32_t>(buf + 4));
+            });
+            const uint32_t fmt = proc.heap().allocZeroed(40), out = proc.heap().allocZeroed(8);
+            proc.mem().write<double>(fmt, 8000.0);
+            proc.mem().write<uint32_t>(fmt + 8, 0x6C70636D);   // lpcm
+            proc.mem().write<uint32_t>(fmt + 12, 0x0C);         // signed integer, packed
+            proc.mem().write<uint32_t>(fmt + 16, 2);            // bytes per packet
+            proc.mem().write<uint32_t>(fmt + 20, 1);
+            proc.mem().write<uint32_t>(fmt + 24, 2);            // bytes per frame
+            proc.mem().write<uint32_t>(fmt + 28, 1);            // mono
+            proc.mem().write<uint32_t>(fmt + 32, 16);
+            const uint32_t st1 = callAT("_AudioQueueNewInput", {fmt, cb, 0, 0, 0, 0, out});
+            const uint32_t aq = proc.mem().read<uint32_t>(out);
+            callAT("_AudioQueueAllocateBuffer", {aq, 1600, out + 4});   // 800 frames = 0.1 s
+            const uint32_t buf = proc.mem().read<uint32_t>(out + 4);
+            callAT("_AudioQueueEnqueueBuffer", {aq, buf, 0, 0});
+            std::vector<float> tone(9600, 0.5f);                          // 0.2 s at 48 kHz
+            proc.pushMicrophone(tone.data(), tone.size(), 48000);
+            callAT("_AudioQueueStart", {aq, 0});
+            auto& loop = Foundation::mainRunLoop(proc);
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (calls == 0 && std::chrono::steady_clock::now() < until) loop.runOnce(cpu, 0.02);
+            callAT("_AudioQueueStop", {aq, 1});
+            callAT("_AudioQueueDispose", {aq, 1});
+            check(st1 == 0 && calls == 1 && gotBytes == 1600 && gotPackets == 800 && std::abs(firstSample - 16384) < 64,
+                  "AudioQueue recording fills buffers with microphone audio at the queue's rate and format");
+        }
+
         // NSThread -isExecuting / -isFinished across start and the end of the thread's work (Jetpack, #75).
         {
             std::atomic<bool> release{false}, entered{false};

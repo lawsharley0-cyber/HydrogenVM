@@ -953,6 +953,52 @@ std::string Process::crashBundle() {
     return out.str();
 }
 
+// ------------------------------------------------------------- microphone ---
+
+void Process::pushMicrophone(const float* mono, size_t frames, double rate) {
+    if (!mono || !frames || !(rate > 0)) return;
+    std::lock_guard<std::mutex> lk(micMu_);
+    micRate_ = rate;
+    mic_.insert(mic_.end(), mono, mono + frames);
+    // Keep at most a second: a recording queue that fell behind starts from "now".
+    const size_t cap = size_t(rate);
+    if (mic_.size() > cap) { mic_.erase(mic_.begin(), mic_.begin() + std::ptrdiff_t(mic_.size() - cap)); micPos_ = 0; }
+}
+
+void Process::pullMicrophone(float* out, size_t frames, double rate) {
+    std::lock_guard<std::mutex> lk(micMu_);
+    const double step = rate > 0 ? micRate_ / rate : 1;
+    for (size_t i = 0; i < frames; ++i) {
+        const size_t at = size_t(micPos_);
+        if (at + 1 < mic_.size()) {
+            const double t = micPos_ - double(at);
+            out[i] = float(mic_[at] * (1 - t) + mic_[at + 1] * t);
+            micPos_ += step;
+        } else {
+            out[i] = 0;   // not captured (yet): silence
+        }
+    }
+    const size_t used = std::min(mic_.size(), size_t(micPos_));
+    mic_.erase(mic_.begin(), mic_.begin() + std::ptrdiff_t(used));
+    micPos_ -= double(used);
+}
+
+void Process::microphoneUser(bool start) {
+    bool notify = false, on = false;
+    {
+        std::lock_guard<std::mutex> lk(micMu_);
+        const int before = micUsers_;
+        micUsers_ = std::max(0, micUsers_ + (start ? 1 : -1));
+        notify = (before == 0) != (micUsers_ == 0);
+        on = micUsers_ > 0;
+        if (notify && !on) { mic_.clear(); micPos_ = 0; }
+    }
+    if (notify) {
+        log(LogLevel::Info, on ? "Microphone: the app started recording" : "Microphone: recording stopped");
+        if (cfg_.microphone) cfg_.microphone(on);
+    }
+}
+
 // ------------------------------------------------------------ diagnostics ---
 
 uint64_t Process::recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead, bool isOpen) {

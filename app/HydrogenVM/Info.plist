@@ -29,6 +29,8 @@
 		<string>arm64</string>
 		<string>metal</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Games that listen to you (like Talking Larry or Talking John) use the microphone while they record.</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
