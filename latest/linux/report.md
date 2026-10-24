@@ -1,45 +1,132 @@
-# HydrogenVM report — 5c3c1aa
+# HydrogenVM report — 954b699
 
-2026-10-24T00:39:39+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-24T00:40:53+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
 
-**All tests passed.**
+**1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 132.7s |
-| cpu | 15 | 0 | 0 | 0.5s |
-| ios | 6 | 0 | 0 | 2.0s |
-| bench | 5 | 0 | 0 | 16.4s |
+| build | 1 | 0 | 0 | 218.5s |
+| cpu | 15 | 0 | 0 | 0.7s |
+| ios | 5 | 1 | 0 | 1.0s |
+| bench | 5 | 0 | 0 | 24.5s |
 
 ## Speed
 
-CoreMark **3203.1** iterations/s (1070.8 guest MIPS)
+CoreMark **1717.8** iterations/s (575.3 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **222.4%** | 1335 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **166.8%** | 1335 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **133.5%** | 1068 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **70.4%** | 915 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **119.3%** | 716 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.5%** | 716 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.6%** | 573 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.8%** | 491 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 809 MIPS, ctests_arm 886 MIPS, ftests_vfp_thumb_softfp 877 MIPS, ftests_neon_thumb 788 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 447 MIPS, ctests_arm 515 MIPS, ftests_vfp_thumb_softfp 445 MIPS, ftests_neon_thumb 416 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
 | CTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
 | CTestLegacy | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.64s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.02s | 61 | 0.30 ms | 6.56 ms | 0 |
+| FoundationTest | 0.65s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
 
-## Problems (29)
+## Problems (33)
+
+### Failures (1)
+
+- **ios / UIKitTest**
+
+  ```
+  exit 70 (want 0); expected line missing
+  ok transformed frame
+  ok identity transform restores frame
+  ok autoresizing (flexible width + top margin)
+  ok setNeedsLayout + layoutIfNeeded
+  ok bringSubviewToFront
+  ok UIColor components
+  ok UIColor CGColor
+  ok UIFont metrics
+  ok sizeWithFont:
+  ok sizeWithFont:constrainedToSize: wraps
+  ok imageNamed: picks @2x
+  ok CGImage of @2x image
+  ok imageNamed: missing returns nil
+  ok CgBI (Xcode-crushed) PNG decodes
+  ok CgBI channel order
+  ok UIGraphicsGetImageFromCurrentImageContext
+  ok UIRectFill pixels
+  ok drawInRect: pixels (top-left origin)
+  ok untouched pixels stay clear
+  ok PNG encode/decode round trip
+  ok CGBitmapContext y-up fill
+  ok CGPathContainsPoint
+  ok CGRectIntersection
+  ok NSStringFromCGRect / CGRectFromString
+  ok NSValue CGRect
+  --- stderr ---
+  [hvm:error] Stopped: -[NSBundle loadNibNamed:owner:options:]: Could not load NIB in bundle: 'Panel'
+    pc [HydrogenVM] objc_msgSend
+    lr 0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+    r0  100003a0  r1  0e018fec  r2  00010204  r3  10010100
+    r4  100003a0  r5  10010100  r6  10000200  r7  beffff68
+    r8  0000f1d6  r9  00000000  r10 00010204  r11 00000000
+    r12 000100e0  r13 befffbc0  r14 0000c251  r15 ffff0c7c
+    backtrace:
+      [HydrogenVM] objc_msgSend
+      0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+      0x0000e1f7 UIKitTest+41462 -[AppDelegate application:didFinishLaunchingWithOptions:] + 0x1e2
+      [HydrogenVM] _hvm_return_to_host
+      [HydrogenVM] _hvm_return_to_host
+  ```
+
+### Crashes (1)
+
+- **ios / UIKitTest**
+
+  ```
+  Stopped: -[NSBundle loadNibNamed:owner:options:]: Could not load NIB in bundle: 'Panel'
+    pc [HydrogenVM] objc_msgSend
+    lr 0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+    r0  100003a0  r1  0e018fec  r2  00010204  r3  10010100
+    r4  100003a0  r5  10010100  r6  10000200  r7  beffff68
+    r8  0000f1d6  r9  00000000  r10 00010204  r11 00000000
+    r12 000100e0  r13 befffbc0  r14 0000c251  r15 ffff0c7c
+    backtrace:
+      [HydrogenVM] objc_msgSend
+      0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+      0x0000e1f7 UIKitTest+41462 -[AppDelegate application:didFinishLaunchingWithOptions:] + 0x1e2
+      [HydrogenVM] _hvm_return_to_host
+      [HydrogenVM] _hvm_return_to_host
+  ```
+
+### Runtime errors (1)
+
+- **ios / UIKitTest**
+
+  ```
+  Stopped: -[NSBundle loadNibNamed:owner:options:]: Could not load NIB in bundle: 'Panel'
+    pc [HydrogenVM] objc_msgSend
+    lr 0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+    r0  100003a0  r1  0e018fec  r2  00010204  r3  10010100
+    r4  100003a0  r5  10010100  r6  10000200  r7  beffff68
+    r8  0000f1d6  r9  00000000  r10 00010204  r11 00000000
+    r12 000100e0  r13 befffbc0  r14 0000c251  r15 ffff0c7c
+    backtrace:
+      [HydrogenVM] objc_msgSend
+      0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+      0x0000e1f7 UIKitTest+41462 -[AppDelegate application:didFinishLaunchingWithOptions:] + 0x1e2
+      [HydrogenVM] _hvm_return_to_host
+      [HydrogenVM] _hvm_return_to_host
+  ```
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 70.4% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 37.8% of iPhone 5 single-core speed (goal: 100%)
 
-### Warnings (28)
+### Warnings (29)
 
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:142:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
@@ -69,4 +156,5 @@ Raw interpreter speed (CPU test programs): ctests_thumb 809 MIPS, ctests_arm 886
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
+- **ios / UIKitTest**: nib "Panel" not found in the app bundle
 
