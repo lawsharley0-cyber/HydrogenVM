@@ -1457,12 +1457,16 @@ int runFullSubsystemTests() {
         // 2. Protocol method signature lookup
         const uint32_t protoMem = proc.allocStatic(28);
         const uint32_t protoName = proc.allocCString("HVMTestSigProtocol");
-        const uint32_t pListMem = proc.allocStatic(12);
+        // A real objc2 method_list_t, as in a Mach-O __objc_const section:
+        // { entsizeAndFlags = 12, count = 1, { name, types, imp = 0 } }.
+        const uint32_t pListMem = proc.allocStatic(20);
         const uint32_t pSelName = proc.allocCString("protoMethod:");
         const uint32_t pTypeEnc = proc.allocCString("v@:i");
-        proc.mem().write<uint32_t>(pListMem, 1); // count = 1
-        proc.mem().write<uint32_t>(pListMem + 4, pSelName);
-        proc.mem().write<uint32_t>(pListMem + 8, pTypeEnc);
+        proc.mem().write<uint32_t>(pListMem, 12);
+        proc.mem().write<uint32_t>(pListMem + 4, 1);
+        proc.mem().write<uint32_t>(pListMem + 8, pSelName);
+        proc.mem().write<uint32_t>(pListMem + 12, pTypeEnc);
+        proc.mem().write<uint32_t>(pListMem + 16, 0);
         proc.mem().write<uint32_t>(protoMem + 4, protoName);
         proc.mem().write<uint32_t>(protoMem + 12, pListMem); // required instance methods at +12
 

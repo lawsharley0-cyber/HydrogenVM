@@ -301,13 +301,18 @@ std::string findProtocolMethodType(Process& proc, const Runtime& rt, uint32_t pr
     const std::string sname = rt.selName(s);
     auto checkList = [&](uint32_t list) -> std::string {
         if (!list) return {};
-        const uint32_t n = m.read<uint32_t>(list);
-        for (uint32_t i = 0; i < n && i < 65536u; ++i) {
-            const uint32_t selPtr = m.read<uint32_t>(list + 4 + i * 8);
+        // method_list_t: { uint32 entsizeAndFlags; uint32 count; method_t[count] },
+        // method_t: { SEL name; const char* types; IMP imp } (12 bytes; imp is 0 in protocols).
+        const uint32_t entsize = m.read<uint32_t>(list) & ~3u;
+        const uint32_t n = m.read<uint32_t>(list + 4);
+        if (entsize < 12 || entsize > 64 || n > 100000) return {};   // not a method list
+        const uint32_t step = entsize;
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t selPtr = m.read<uint32_t>(list + 8 + i * step);
             if (!selPtr) continue;
             const std::string name = proc.readCString(selPtr, 512);
             if (name == sname) {
-                const uint32_t typePtr = m.read<uint32_t>(list + 8 + i * 8);
+                const uint32_t typePtr = m.read<uint32_t>(list + 8 + i * step + 4);
                 return typePtr ? proc.readCString(typePtr, 512) : "v@:";
             }
         }
