@@ -457,6 +457,8 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
+        // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
+        cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
         if (useGPU) {
             // GLES runs on the GPU through OpenGLES.framework; the host layer is

@@ -258,11 +258,12 @@ private:
     std::vector<std::pair<Class, bool>> pendingLoads_;   // (class, isCategoryOwner)
     std::vector<uint32_t> pendingCategoryLoads_;
 
+    // HVM_ZOMBIES=1 or ProcessConfig::enableZombies: freed objects keep their
+    // memory (so the address isn't reused) and remember their class and the guest
+    // backtrace of the release that freed them; a later message names them.
     bool zombiesEnabled_ = false;
-    Class zombieClass_ = 0;
     std::mutex zombieMu_;
-    std::unordered_map<id, std::string> zombieClassNames_;
-    std::unordered_map<id, std::string> zombieBacktraces_;
+    std::unordered_map<id, std::pair<std::string, std::string>> zombies_;   // class, backtrace
 };
 
 Runtime& rt(Process& p);

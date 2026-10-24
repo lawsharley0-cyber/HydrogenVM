@@ -3105,6 +3105,33 @@ int runFullSubsystemTests() {
             proc.heap().free(buf);
         }
 
+        // CFNumber NaN/infinity constants, NSObject's isa ivar offset, proxy constants.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t out = proc.heap().allocZeroed(8);
+            auto num = [&](const char* sym) {
+                const uint32_t n = proc.mem().read<uint32_t>(*proc.lookupSymbol(sym));
+                call("_CFNumberGetValue", {n, 13 /* kCFNumberDoubleType */, out});
+                return proc.mem().read<double>(out);
+            };
+            const bool nums = std::isnan(num("_kCFNumberNaN")) && num("_kCFNumberPositiveInfinity") == HUGE_VAL &&
+                              num("_kCFNumberNegativeInfinity") == -HUGE_VAL;
+            const bool ivar = proc.mem().read<uint32_t>(*proc.lookupSymbol("_OBJC_IVAR_$_NSObject.isa")) == 0;
+            const uint32_t proxy = proc.mem().read<uint32_t>(*proc.lookupSymbol("_NSURLProtectionSpaceHTTPProxy"));
+            const bool prox = proxy && Foundation::utf8(cx, proxy) == "http";
+            check(nums && ivar && prox, "kCFNumberNaN/±Infinity hold real CFNumbers; OBJC_IVAR_$_NSObject.isa is 0; NSURLProtectionSpaceHTTPProxy is @\"http\"");
+        }
+
+        // HVM_ZOMBIES=1: a message to a freed object names its class (run only in that mode).
+        if (const char* z = std::getenv("HVM_ZOMBIES"); z && *z == '1') {
+            const ObjC::id o = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSObject"), r.selAlloc)), "init"));
+            r.send(cpu, o, "release");
+            std::string msg;
+            try { r.send(cpu, o, "description"); } catch (const std::exception& e) { msg = e.what(); }
+            check(msg.find("-[NSObject description]: message sent to deallocated instance") != std::string::npos,
+                  "HVM_ZOMBIES names the class of a freed object that is messaged");
+        }
+
         // iconv forwarded to the host, and the getpw*_r family.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };

@@ -455,6 +455,14 @@ void registerNetwork(Process& p, ObjC::Runtime& r) {
         const uint32_t cell = p.defineDataBlock(name, 4);
         p.mem().write<uint32_t>(cell, constString(p, name + 1));
     }
+    // NSURLProtectionSpace proxy types and auth methods (values as on iOS).
+    for (auto [name, value] : std::initializer_list<std::pair<const char*, const char*>>{
+             {"_NSURLProtectionSpaceHTTPProxy", "http"}, {"_NSURLProtectionSpaceHTTPSProxy", "https"},
+             {"_NSURLProtectionSpaceFTPProxy", "ftp"}, {"_NSURLProtectionSpaceSOCKSProxy", "SOCKS"},
+             {"_NSURLProtectionSpaceHTTP", "http"}, {"_NSURLProtectionSpaceHTTPS", "https"}, {"_NSURLProtectionSpaceFTP", "ftp"}}) {
+        if (p.lookupSymbol(name)) continue;
+        p.mem().write<uint32_t>(p.defineDataBlock(name, 4), constString(p, value));
+    }
 }
 
 } // namespace Hydrogen::Runtime::Foundation
