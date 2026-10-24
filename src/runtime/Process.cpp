@@ -116,18 +116,6 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     for (const char* d : {"Documents", "Library", "Library/Caches", "Library/Preferences", "tmp"})
         fs::create_directories(fs::path(homePath_) / d, ec);
 
-    const auto digest = hvmDigest(1, homePath_);
-    char uuidBuf[37];
-    std::snprintf(uuidBuf, sizeof(uuidBuf),
-                  "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
-                  digest[0], digest[1], digest[2], digest[3],
-                  digest[4], digest[5], digest[6], digest[7],
-                  digest[8], digest[9], digest[10], digest[11],
-                  digest[12], digest[13], digest[14], digest[15]);
-    guestHomePath_ = std::string("/var/mobile/Applications/") + uuidBuf;
-    const std::string bundleName = fs::path(cfg_.bundlePath).filename().string();
-    guestBundlePath_ = guestHomePath_ + "/" + (bundleName.empty() ? "App.app" : bundleName);
-
     mainThreadOwner_ = std::make_unique<GuestThread>(*this);
     mainThread_ = mainThreadOwner_.get();
     mainThread_->id = nextThreadId_++;
@@ -229,6 +217,22 @@ void Process::waitWhileBackgrounded() {
 void Process::load() {
     const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
     if (fs::exists(plist)) infoPlist_ = Plist::parseFile(plist.string());
+
+    const std::string bundleId = infoPlist_ ? infoPlist_->getString("CFBundleIdentifier") : "";
+    const std::string seed = bundleId.empty() ? cfg_.bundlePath : bundleId;
+    const auto digest = hvmDigest(1, seed);
+    char uuidBuf[37];
+    std::snprintf(uuidBuf, sizeof(uuidBuf),
+                  "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                  digest[0], digest[1], digest[2], digest[3],
+                  digest[4], digest[5], digest[6], digest[7],
+                  digest[8], digest[9], digest[10], digest[11],
+                  digest[12], digest[13], digest[14], digest[15]);
+    guestHomePath_ = std::string("/var/mobile/Applications/") + uuidBuf;
+
+    const std::string bundleName = fs::path(cfg_.bundlePath).filename().string();
+    guestBundlePath_ = guestHomePath_ + "/" + (bundleName.empty() ? "App.app" : bundleName);
+
     std::string exe = infoPlist_ ? infoPlist_->getString("CFBundleExecutable") : "";
     if (exe.empty()) exe = fs::path(cfg_.bundlePath).stem().string();
     executablePath_ = (fs::path(cfg_.bundlePath) / exe).string();

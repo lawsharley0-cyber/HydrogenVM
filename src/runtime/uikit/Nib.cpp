@@ -386,7 +386,10 @@ std::string nibPath(Ctx& x, const std::string& name, id bundle) {
     std::string base = name;
     if (base.size() > 4 && base.substr(base.size() - 4) == ".nib") base.resize(base.size() - 4);
     std::string bundlePath = x.proc.bundlePath();
-    if (bundle && rt(x).respondsTo(bundle, rt(x).sel("bundlePath"))) bundlePath = utf8(x, id(rt(x).send(x.cpu, bundle, "bundlePath")));
+    if (bundle && rt(x).respondsTo(bundle, rt(x).sel("bundlePath"))) {
+        const std::string bp = utf8(x, id(rt(x).send(x.cpu, bundle, "bundlePath")));
+        bundlePath = x.proc.hostPath(bp);
+    }
     std::string p = bundlePath == x.proc.bundlePath() ? Foundation::bundleResource(x, base, "nib") : "";
     if (p.empty()) {
         std::error_code ec;

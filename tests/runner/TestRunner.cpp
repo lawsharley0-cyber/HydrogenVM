@@ -3739,50 +3739,79 @@ int runFullSubsystemTests() {
 
     // Path mapping tests (Issue #80: short iOS guest paths and boundaries)
     {
-        std::string longHome = "/tmp/hydrogenvm_test_long_home_directory_path_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890";
-        std::string longBundle = longHome + "/TestApp.app";
-        ProcessConfig pathCfg;
-        pathCfg.homePath = longHome;
-        pathCfg.bundlePath = longBundle;
-        Process pathProc(pathCfg);
+        std::string longHome1 = "/tmp/hydrogenvm_test_long_home_dir_1_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890";
+        std::string longHome2 = "/tmp/hydrogenvm_test_long_home_dir_2_9876543210_9876543210_9876543210_9876543210_9876543210_9876543210";
+        std::string longBundle1 = longHome1 + "/TestApp.app";
+        std::string longBundle2 = longHome2 + "/TestApp.app";
+
+        ProcessConfig pathCfg1;
+        pathCfg1.homePath = longHome1;
+        pathCfg1.bundlePath = longBundle1;
+
+        ProcessConfig pathCfg2;
+        pathCfg2.homePath = longHome2;
+        pathCfg2.bundlePath = longBundle2;
+
+        Process proc1(pathCfg1);
+        Process proc2(pathCfg2);
+        proc1.load();
+        proc2.load();
 
         // 1. Check guest home path format (/var/mobile/Applications/<UUID>)
-        std::string gHome = pathProc.guestHomePath();
-        std::string gBundle = pathProc.guestBundlePath();
-        bool validGHome = gHome.rfind("/var/mobile/Applications/", 0) == 0 && gHome.size() == 61;
-        bool validGBundle = gBundle == gHome + "/TestApp.app";
+        std::string gHome1 = proc1.guestHomePath();
+        std::string gHome2 = proc2.guestHomePath();
+        std::string gBundle1 = proc1.guestBundlePath();
 
-        // 2. Test hostPath and guestPath mapping
-        std::string hDoc = pathProc.hostPath(gHome + "/Documents/save.dat");
-        std::string hBundleRes = pathProc.hostPath(gBundle + "/data/level1.bin");
-        std::string hTmp = pathProc.hostPath("/tmp/scratch.tmp");
-        std::string hTilde = pathProc.hostPath("~/Library/Preferences");
+        bool validGHome = gHome1.rfind("/var/mobile/Applications/", 0) == 0 && gHome1.size() == 61;
+        bool validGBundle = gBundle1 == gHome1 + "/TestApp.app";
 
-        bool hostMapOk = (hDoc == longHome + "/Documents/save.dat") &&
-                          (hBundleRes == longBundle + "/data/level1.bin") &&
-                          (hTmp == longHome + "/tmp/scratch.tmp") &&
-                          (hTilde == longHome + "/Library/Preferences");
+        // 2. Same bundle ID / path seed yields identical UUID across different host home roots
+        bool sameBundleIdSameGHome = (gHome1 == gHome2);
 
-        // 3. Round-trip testing (300-character guest path round-trip)
+        // 3. Distinct bundle IDs / seeds yield distinct UUIDs
+        ProcessConfig pathCfg3;
+        pathCfg3.homePath = longHome1;
+        pathCfg3.bundlePath = longHome1 + "/OtherApp.app";
+        Process proc3(pathCfg3);
+        proc3.load();
+        bool distinctBundleDistinctGHome = (proc3.guestHomePath() != gHome1);
+
+        // 4. Test hostPath and guestPath mapping
+        std::string hDoc1 = proc1.hostPath(gHome1 + "/Documents/save.dat");
+        std::string hDoc2 = proc2.hostPath(gHome2 + "/Documents/save.dat");
+        std::string hBundleRes = proc1.hostPath(gBundle1 + "/data/level1.bin");
+        std::string hTmp = proc1.hostPath("/tmp/scratch.tmp");
+        std::string hTilde = proc1.hostPath("~/Library/Preferences");
+
+        bool hostMapOk = (hDoc1 == longHome1 + "/Documents/save.dat") &&
+                         (hDoc2 == longHome2 + "/Documents/save.dat") &&
+                         (hBundleRes == longBundle1 + "/data/level1.bin") &&
+                         (hTmp == longHome1 + "/tmp/scratch.tmp") &&
+                         (hTilde == longHome1 + "/Library/Preferences");
+
+        // 5. Round-trip testing (300-character guest path round-trip)
         std::string longSubpath = "/Documents/";
         while (longSubpath.size() < 250) longSubpath += "sub_dir_123456789/";
         longSubpath += "file.txt";
-        std::string g300 = gHome + longSubpath; // 24 + 36 + ~250 = ~310 chars
-        std::string h300 = pathProc.hostPath(g300);
-        std::string back300 = pathProc.guestPath(h300);
+        std::string g300 = gHome1 + longSubpath; // 24 + 36 + ~250 = ~310 chars
+        std::string h300 = proc1.hostPath(g300);
+        std::string back300 = proc1.guestPath(h300);
 
         bool roundTripOk = (g300.size() >= 300) && (back300 == g300);
 
-        // 4. Double-mapping prevention
-        std::string doubleHost = pathProc.hostPath(hDoc);
-        std::string doubleGuest = pathProc.guestPath(gHome + "/Documents/save.dat");
-        bool noDoubleMap = (doubleHost == hDoc) && (doubleGuest == gHome + "/Documents/save.dat");
+        // 6. Double-mapping prevention
+        std::string doubleHost = proc1.hostPath(hDoc1);
+        std::string doubleGuest = proc1.guestPath(gHome1 + "/Documents/save.dat");
+        bool noDoubleMap = (doubleHost == hDoc1) && (doubleGuest == gHome1 + "/Documents/save.dat");
 
-        // 5. Virtual guest paths map bidirectionally to host paths
-        bool envOk = (pathProc.hostPath(gHome) == longHome) &&
-                     (pathProc.guestPath(longHome) == gHome);
+        // 7. Virtual guest paths map bidirectionally to host paths
+        bool envOk = (proc1.hostPath(gHome1) == longHome1) &&
+                     (proc1.guestPath(longHome1) == gHome1) &&
+                     (proc2.hostPath(gHome2) == longHome2) &&
+                     (proc2.guestPath(longHome2) == gHome2);
 
-        check(validGHome && validGBundle && hostMapOk && roundTripOk && noDoubleMap && envOk,
+        check(validGHome && validGBundle && sameBundleIdSameGHome && distinctBundleDistinctGHome &&
+              hostMapOk && roundTripOk && noDoubleMap && envOk,
               "Process::hostPath and guestPath perform 300-char round trips with virtual short paths and no double mapping");
     }
 
