@@ -115,3 +115,5 @@ Source of truth: [USER_APP_REPORTS.md](USER_APP_REPORTS.md). Preserve its UAR ID
 - B-109 shares Group D with any Foundation or UIKit class change. Regex and `tmpnam` do not, if they stay in libc.
 - A 4 KB-page green harness run does not close B-101.
 - The three in-repo smokes already have unimplemented imports. The diff fails when a **new** load-time import appears. It does not fail on the imports already in the baseline. Whether a brand-new import should fail even the first time it shows up in a longer run is owner question 9 from the audit; the harness treats runtime-only misses as attention, not a hard failure, because a 3 second smoke is not a full playthrough.
+
+| B-118 | Angry Birds locale load EOF (UAR-001) | 3 | 4 | 2 | 12.0 | Loader/Runtime | Need fresh device trace post-#80 | Not yet started | Blocked on #80 and device crash report |

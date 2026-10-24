@@ -126,3 +126,6 @@ Local WSL and CI harness self-tests pass: **64 tests**, including eight doctor c
 ### Final Linux source revision
 
 [Final compatibility run](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39881742977) passed on `d3085f3` (clean PR merge ef383fe348d27251d6d7921ac2eae52c9a10ac17). Exact uploaded report is [20261023T011004Z-ef383fe348d2.json](reports/linux-x86_64/20261023T011004Z-ef383fe348d2.json). All 16 unit/asm/differential configurations pass, including fulltest's **191 passed, 0 failed**. Required Python suites pass; three bundled apps run without recorded crashes and optional Clash remains skipped. Baseline and previous-indexed diffs have zero regressions.
+## UAR-001 / Angry Birds Locale Text Crash (B-118)
+
+Explored Angry Birds locale loading issues (#106 / #89 / #67). Replicated short and long (~100 chars) sandbox installation paths. Neither configuration crashed on the Linux build, demonstrating that the `ByteArrayInputStream` "Unexpected end of file" exception is distinct from the PathName::allocate overflow (#80). It remains a device-only bug, possibly related to 16KB host pages, unimplemented short-read retries, or platform stub differences. Further work is blocked on integration of the #80 long-path PR and receiving fresh device evidence from the integrated build.
