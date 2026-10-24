@@ -1794,6 +1794,28 @@ int runFullSubsystemTests() {
         check(top == childVC && navOfChild == nav, "UINavigationController pushViewController & navigationController property");
         const ObjC::id popped = ObjC::id(r.send(cpu, nav, "popViewControllerAnimated:", {0}));
         check(popped == childVC && ObjC::id(r.send(cpu, nav, "topViewController")) == rootVC, "UINavigationController popViewControllerAnimated");
+
+        // UIBarButtonItem addTarget:action:forControlEvents: and customView forwarding test
+        const ObjC::Class bbiCls = r.getClass("UIBarButtonItem");
+        const ObjC::id item = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, bbiCls, r.selAlloc)), "initWithTitle:style:target:action:",
+                                               {Foundation::makeString(cx, "Action"), 0, 0, 0}));
+        const ObjC::SEL act = r.sel("btnTapped:");
+        r.send(cpu, item, "addTarget:action:forControlEvents:", {rootVC, act, 1u << 6 /* UIControlEventTouchUpInside */});
+        const ObjC::id t1 = ObjC::id(r.send(cpu, item, "target"));
+        const ObjC::SEL a1 = ObjC::SEL(r.send(cpu, item, "action"));
+        check(t1 == rootVC && a1 == act, "UIBarButtonItem addTarget:action:forControlEvents: sets target and action");
+
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id customBtn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 40.0f, 40.0f});
+        r.send(cpu, item, "setCustomView:", {customBtn});
+        const ObjC::id btnAllTargets = ObjC::id(r.send(cpu, customBtn, "allTargets"));
+        const auto targetsList = Foundation::setItems(cx, btnAllTargets);
+        check(std::find(targetsList.begin(), targetsList.end(), rootVC) != targetsList.end(), "UIBarButtonItem setCustomView forwards existing target/action to customView");
+
+        r.send(cpu, item, "removeTarget:action:forControlEvents:", {rootVC, act, 1u << 6});
+        const ObjC::id t2 = ObjC::id(r.send(cpu, item, "target"));
+        const ObjC::SEL a2 = ObjC::SEL(r.send(cpu, item, "action"));
+        check(t2 == 0 && a2 == 0, "UIBarButtonItem removeTarget:action:forControlEvents: clears target and action");
     }
 
     // 2d. UITabBarController, UITabBar, UITabBarItem
