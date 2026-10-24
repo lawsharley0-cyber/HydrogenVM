@@ -375,9 +375,10 @@ int32_t i_getOffset(Ctx& x, uint32_t iv) { return iv ? int32_t(x.mem.read<uint32
 id o_getIvar(Ctx& x, id o, uint32_t iv) { return o && iv ? x.mem.read<uint32_t>(o + x.mem.read<uint32_t>(iv + 8)) : 0; }
 void o_setIvar(Ctx& x, id o, uint32_t iv, id v) { if (o && iv) x.mem.write<uint32_t>(o + x.mem.read<uint32_t>(iv + 8), v); }
 uint32_t o_getInstanceVariable(Ctx& x, id o, GuestPtr name, GuestPtr out) {
-    if (!o) return 0;
-    const Ivar* iv = rt(x).findIvar(rt(x).classOf(o), x.proc.readCString(name));
-    if (!iv) return 0;
+    // Like objc4: *outValue is cleared when the object or ivar is missing
+    // (MonoTouch reads it as the managed GC handle without checking the result).
+    const Ivar* iv = o && name ? rt(x).findIvar(rt(x).classOf(o), x.proc.readCString(name)) : nullptr;
+    if (!iv) { if (out) x.mem.write<uint32_t>(out, 0); return 0; }
     const uint32_t off = iv->offsetPtr ? x.mem.read<uint32_t>(iv->offsetPtr) : iv->offset;
     if (out) x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(o + off));
     return ivarObject(x, *iv);

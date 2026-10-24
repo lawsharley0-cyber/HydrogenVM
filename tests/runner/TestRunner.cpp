@@ -3137,6 +3137,22 @@ int runFullSubsystemTests() {
                   "HVM_ZOMBIES names the class of a freed object that is messaged");
         }
 
+        // A virtual call through a vtable nothing provides names the class and slot.
+        {
+            const uint32_t vt = proc.makeMissingStub("__ZTV13HvmNoSuchType");
+            const uint32_t slot3 = proc.mem().read<uint32_t>(vt + 8 + 3 * 4);
+            std::string msg;
+            try { proc.callGuest(cpu, slot3, {0}); } catch (const std::exception& e) { msg = e.what(); }
+            const uint32_t vtt = proc.makeMissingStub("__ZTT13HvmNoSuchType");
+            const uint32_t vptr = proc.mem().read<uint32_t>(vtt);
+            std::string msg2;
+            try { proc.callGuest(cpu, proc.mem().read<uint32_t>(vptr), {0}); } catch (const std::exception& e) { msg2 = e.what(); }
+            check(msg.find("virtual function #3 of vtable for HvmNoSuchType") != std::string::npos &&
+                  msg2.find("virtual function #0 of VTT for HvmNoSuchType") != std::string::npos &&
+                  proc.mem().read<uint32_t>(vptr - 12) == 0,
+                  "Missing vtables and VTTs report the class and slot of a virtual call instead of jumping to 0");
+        }
+
         // iconv forwarded to the host, and the getpw*_r family.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
@@ -3159,6 +3175,87 @@ int runFullSubsystemTests() {
                               proc.readCString(proc.mem().read<uint32_t>(pwd + 28)) == proc.guestHomePath();
             const bool pwMissing = call("_getpwnam_r", {proc.allocCString("root"), pwd, 0, 0, res}) == 0 && proc.mem().read<uint32_t>(res) == 0;
             check(conv && closed && pwOk && pwMissing, "iconv converts UTF-8 to UTF-16LE through the host and advances the guest pointers; getpwnam_r finds only mobile");
+        }
+
+        // CVPixelBuffer holds real memory; AVAssetWriter accepts inputs; dlopen(NULL) is RTLD_DEFAULT.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t out = proc.heap().allocZeroed(4);
+            const bool made = call("_CVPixelBufferCreate", {0, 100, 20, 0x42475241, 0, out}) == 0;
+            const uint32_t pbuf = proc.mem().read<uint32_t>(out);
+            const uint32_t base = call("_CVPixelBufferGetBaseAddress", {pbuf}), bpr = call("_CVPixelBufferGetBytesPerRow", {pbuf});
+            if (base) proc.mem().write<uint32_t>(base + bpr * 19 + 396, 0xAABBCCDD);   // last pixel is writable
+            const bool pbOk = made && pbuf && call("_CVPixelBufferGetWidth", {pbuf}) == 100 && call("_CVPixelBufferGetHeight", {pbuf}) == 20 &&
+                              bpr >= 400 && base && call("_CVPixelBufferLockBaseAddress", {pbuf, 0}) == 0;
+            call("_CVPixelBufferRelease", {pbuf});
+            const ObjC::id input = ObjC::id(r.send(cpu, r.getClass("AVAssetWriterInput"), "assetWriterInputWithMediaType:outputSettings:",
+                                                   {Foundation::makeString(cx, "vide"), 0}));
+            const uint32_t errOut = proc.heap().allocZeroed(4);
+            proc.mem().write<uint32_t>(errOut, 0x1234);
+            ObjC::id writer = ObjC::id(r.send(cpu, r.getClass("AVAssetWriter"), r.selAlloc));
+            // initWithURL:fileType:error: takes the error pointer on the stack.
+            const uint32_t sp0 = cpu.r[CPU::kSP];
+            cpu.r[CPU::kSP] = sp0 - 16;
+            proc.mem().write<uint32_t>(cpu.r[CPU::kSP], errOut);
+            writer = ObjC::id(r.send(cpu, writer, "initWithURL:fileType:error:", {0, 0}));
+            cpu.r[CPU::kSP] = sp0;
+            const bool can = writer && input && (r.send(cpu, writer, "canAddInput:", {input}) & 0xFF) == 1;
+            r.send(cpu, writer, "addInput:", {input});
+            const bool writes = (r.send(cpu, writer, "startWriting") & 0xFF) == 1 && uint32_t(r.send(cpu, writer, "status")) == 1 &&
+                                uint32_t(r.send(cpu, ObjC::id(r.send(cpu, writer, "inputs")), "count")) == 1 && proc.mem().read<uint32_t>(errOut) == 0;
+            const bool rtldDefault = call("_dlopen", {0, 1}) == 0xFFFFFFFEu;
+            check(pbOk && can && writes && rtldDefault,
+                  "CVPixelBuffer has real memory; AVAssetWriter takes inputs and starts writing; dlopen(NULL) returns RTLD_DEFAULT");
+        }
+
+        // A std::filebuf has a vtable, so app code can call its virtuals (sgetc, sbumpc, delete).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const std::string path = proc.guestHomePath() + "/Documents/hvm_filebuf.txt";
+            { std::FILE* f = std::fopen(proc.hostPath(path).c_str(), "wb"); if (f) { std::fputs("Hi", f); std::fclose(f); } }
+            const uint32_t fb = proc.heap().allocZeroed(128);
+            call("__ZNSt13basic_filebufIcSt11char_traitsIcEEC1Ev", {fb});
+            const uint32_t opened = call("__ZNSt13basic_filebufIcSt11char_traitsIcEE4openEPKcSt13_Ios_Openmode", {fb, proc.allocCString(path), 8});
+            const uint32_t vptr = proc.mem().read<uint32_t>(fb);
+            auto virt = [&](uint32_t slot, std::initializer_list<uint32_t> args) {
+                std::vector<uint32_t> a{fb};
+                a.insert(a.end(), args);
+                return uint32_t(proc.callGuest(cpu, proc.mem().read<uint32_t>(vptr + 4 * slot), a));
+            };
+            const bool peek = vptr && virt(9, {}) == 'H';          // underflow
+            const bool get = virt(10, {}) == 'H' && virt(10, {}) == 'i' && virt(10, {}) == 0xFFFFFFFFu;   // uflow
+            check(opened == fb && peek && get, "std::filebuf has a vtable whose underflow/uflow read the open file");
+        }
+
+        // GCC-layout string-stream vtables (apps store __ZTV+12 / +32 inline), and
+        // +[NSString stringWithString:] of a constant string is the constant.
+        {
+            const uint32_t ss = *proc.lookupSymbol("__ZTVSt18basic_stringstreamIcSt11char_traitsIcESaIcEE");
+            const uint32_t oss = *proc.lookupSymbol("__ZTVSt19basic_ostringstreamIcSt11char_traitsIcESaIcEE");
+            auto rd = [&](uint32_t a) { return int32_t(proc.mem().read<uint32_t>(a)); };
+            const bool layout = rd(ss + 12 - 12) == 52 && rd(ss + 32 - 12) == 44 && rd(ss + 32 - 8) == -8 && rd(ss + 12) != 0 &&
+                                rd(ss + 32) != 0 && rd(oss + 12 - 12) == 44 && rd(oss + 12) != 0;
+            const ObjC::id k = Foundation::constString(proc, "hvm constant");
+            const bool same = ObjC::id(r.send(cpu, r.getClass("NSString"), "stringWithString:", {k})) == k &&
+                              ObjC::id(r.send(cpu, r.getClass("NSMutableString"), "stringWithString:", {k})) != k;
+            check(layout && same, "String-stream __ZTV symbols have GCC's address points; stringWithString: of a constant string returns it");
+        }
+
+        // -[NSKeyedUnarchiver initForReadingWithData:nil] is an empty unarchiver (iOS 6), not an exception.
+        {
+            ObjC::id un = 0;
+            bool threw = false;
+            try {
+                un = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSKeyedUnarchiver"), r.selAlloc)), "initForReadingWithData:", {0}));
+            } catch (const std::exception&) { threw = true; }
+            const bool empty = un && !ObjC::id(r.send(cpu, un, "decodeObjectForKey:", {Foundation::makeString(cx, "kusername")}));
+            bool junkThrows = false;
+            try {
+                const uint8_t junk[4] = {1, 2, 3, 4};
+                r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSKeyedUnarchiver"), r.selAlloc)), "initForReadingWithData:",
+                       {Foundation::makeData(cx, junk, 4)});
+            } catch (const std::exception&) { junkThrows = true; }
+            check(!threw && empty && junkThrows, "NSKeyedUnarchiver with nil data decodes nothing; junk data still raises");
         }
 
         // CFURLCreateAbsoluteURLWithBytes resolves against the base URL.

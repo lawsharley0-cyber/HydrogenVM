@@ -464,8 +464,10 @@ static TLResult *runCaseC(void) {
 
 // Original Microsoft ADPCM vector: predictor 0 uses coefficients (256,0),
 // delta 16, history (0,0), nibbles (1,2). Independently expected samples are
-// (0,0,16,48); mono is duplicated to stereo by HydrogenVM's AudioFile facade.
+// (0,0,16,48). AudioFile preserves the file's mono layout; the mixer may
+// duplicate channels later, but a file read must not double the buffer size.
 extern int32_t AudioFileOpenURL(NSURL *,uint8_t,uint32_t,uint32_t *);
+extern int32_t AudioFileGetProperty(uint32_t,uint32_t,uint32_t *,void *);
 extern int32_t AudioFileReadBytes(uint32_t,uint8_t,int64_t,uint32_t *,void *);
 extern int32_t AudioFileClose(uint32_t);
 static void ms16(uint8_t *b,int *p,uint16_t n){b[(*p)++]=n;b[(*p)++]=n>>8;}
@@ -482,9 +484,16 @@ static BOOL verifyMicrosoftAdpcm(void) {
     NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/ms-adpcm-vector.wav"];
     if(![[NSData dataWithBytes:data length:p] writeToFile:path atomically:YES])return NO;
     uint32_t file=0;if(AudioFileOpenURL([NSURL fileURLWithPath:path],1,0,&file)!=0)return NO;
-    int16_t actual[8]={0};const int16_t expected[8]={0,0,0,0,16,16,48,48};uint32_t bytes=sizeof actual;
+    uint8_t format[40]={0};uint32_t formatBytes=sizeof format;
+    int32_t formatStatus=AudioFileGetProperty(file,0x64666d74,&formatBytes,format); // 'dfmt'
+    uint32_t bytesPerFrame=0,channels=0;
+    memcpy(&bytesPerFrame,format+24,4);memcpy(&channels,format+28,4);
+    int16_t actual[8];for(int i=0;i<8;i++)actual[i]=12345;
+    const int16_t expected[4]={0,0,16,48};uint32_t bytes=sizeof actual;
     int32_t status=AudioFileReadBytes(file,0,0,&bytes,actual);AudioFileClose(file);
-    return status==0 && bytes==sizeof actual && memcmp(actual,expected,sizeof actual)==0;
+    BOOL guard=YES;for(int i=4;i<8;i++)guard=guard && actual[i]==12345;
+    return formatStatus==0 && formatBytes==40 && channels==1 && bytesPerFrame==2 &&
+        status==0 && bytes==sizeof expected && memcmp(actual,expected,sizeof expected)==0 && guard;
 }
 
 // ─────────────────────────── Case D — audio ──────────────────────────────────

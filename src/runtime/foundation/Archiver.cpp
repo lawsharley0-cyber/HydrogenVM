@@ -667,8 +667,21 @@ id ku_unarchiveFile(Ctx& x, id self, SEL s, id path) {
 }
 id ku_initForReading(Ctx& x, id self, SEL, id data) {
     rt(x).disposeInstance(x.cpu, self);
-    const id un = data ? newUnarchiver(x, dataBytes(x, data)) : 0;
-    if (!un) throw ObjC::ObjCError("*** -[NSKeyedUnarchiver initForReadingWithData:]: incomprehensible archive");
+    if (!data) {
+        // iOS 6 and earlier hand back an unarchiver with nothing in it for nil data
+        // (apps read a saved file that isn't there yet: Talking Larry's YouTube login).
+        const id un = rt(x).createInstance(A(x).unarchiver);
+        rt(x).setHost(un, std::make_unique<UnarchiverData>());
+        return un;
+    }
+    const auto bytes = dataBytes(x, data);
+    const id un = newUnarchiver(x, bytes);
+    if (!un) {
+        char head[64] = "";
+        for (size_t i = 0, n = 0; i < bytes.size() && i < 8; ++i) n += size_t(std::snprintf(head + n, sizeof head - n, "%02x", bytes[i]));
+        x.proc.logf(LogLevel::Warning, "NSKeyedUnarchiver: not a keyed archive (%zu bytes, starts %s)", bytes.size(), head);
+        throw ObjC::ObjCError("*** -[NSKeyedUnarchiver initForReadingWithData:]: incomprehensible archive");
+    }
     return un;
 }
 id ku_decodeObject(Ctx& x, id self, SEL, id key) { return decodeValue(x, self, field(x, self, key)); }

@@ -47,6 +47,12 @@ void registerFoundation(Process& p) {
             {"NSHTTPCookieDomain", "Domain"}, {"NSHTTPCookieName", "Name"}, {"NSHTTPCookiePath", "Path"},
             {"NSHTTPCookieValue", "Value"}, {"NSHTTPCookieExpires", "Expires"}, {"NSHTTPCookieVersion", "Version"},
             {"NSHTTPCookieSecure", "Secure"}, {"NSHTTPCookieOriginURL", "OriginURL"},
+            {"AVVideoCodecH264", "avc1"}, {"AVVideoCodecJPEG", "jpeg"},
+            {"AVVideoProfileLevelH264Baseline30", "H264_Baseline_3_0"}, {"AVVideoProfileLevelH264Baseline31", "H264_Baseline_3_1"},
+            {"AVVideoProfileLevelH264Baseline41", "H264_Baseline_4_1"}, {"AVVideoProfileLevelH264Main30", "H264_Main_3_0"},
+            {"AVVideoProfileLevelH264Main31", "H264_Main_3_1"}, {"AVVideoProfileLevelH264Main32", "H264_Main_3_2"},
+            {"AVVideoProfileLevelH264Main41", "H264_Main_4_1"}, {"AVVideoProfileLevelH264High40", "H264_High_4_0"},
+            {"AVVideoProfileLevelH264High41", "H264_High_4_1"},
             {"kCFHTTPVersion1_0", "HTTP/1.0"}, {"kCFHTTPVersion1_1", "HTTP/1.1"},
             {"NSURLAuthenticationMethodServerTrust", "NSURLAuthenticationMethodServerTrust"},
             {"NSURLAuthenticationMethodClientCertificate", "NSURLAuthenticationMethodClientCertificate"},
@@ -74,7 +80,7 @@ void registerFoundation(Process& p) {
                  ends("Preset") || ends("RunLoopMode") ||
                  starts("AVCaptureSessionPreset") || starts("AVMediaType") || starts("AVLayerVideoGravity") ||
                  starts("AVAudioSession") || starts("AVAssetExportPreset") || starts("AVFileType") ||
-                 starts("UIActivityType") || starts("UITransitionContext") || starts("UIFontTextStyle") ||
+                 starts("AVVideo") || starts("AVMetadata") || starts("UIActivityType") || starts("UITransitionContext") || starts("UIFontTextStyle") ||
                  starts("ADBannerContentSizeIdentifier") || starts("SLServiceType") ||
                  starts("ACAccountTypeIdentifier") || starts("SKStoreProductParameter") ||
                  (name[0] == 'k' && std::isupper(uint8_t(name[1])) &&

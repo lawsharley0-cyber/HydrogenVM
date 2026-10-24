@@ -45,6 +45,7 @@ struct Streams {
     std::unordered_map<uint32_t, Stream> objects;   // keyed by the complete object's address
     std::unordered_map<uint32_t, std::FILE*> basicFiles; // keyed by std::__basic_file<char> self pointer
     uint32_t vtIn = 0, vtOut = 0, vtIo = 0, vtIoOstream = 0;
+    uint32_t vtFilebuf = 0;   // basic_filebuf vptr: apps call its virtuals inline (rdbuf()->sgetc(), delete fb)
 };
 Streams& S(Ctx& x) { return x.proc.service<Streams>(); }
 
@@ -90,6 +91,7 @@ void construct(Ctx& x, uint32_t obj, Kind k, uint32_t vtt) {
     x.mem.write<uint32_t>(obj + kVbase + 4, 6);     // precision
     x.mem.write<uint32_t>(obj + kVbase + 12, 0x1002); // flags: skipws | dec
     x.mem.write<uint32_t>(obj + kVbase + 120, obj + filebufOffset(k)); // _M_streambuf
+    x.mem.write<uint32_t>(obj + filebufOffset(k), s.vtFilebuf);         // so rdbuf()->virtual works
     std::lock_guard<std::mutex> lk(s.mu);
     Stream& st = s.objects[obj];
     if (st.f) std::fclose(st.f);
@@ -178,6 +180,7 @@ void st_close(Ctx& x, GuestPtr self) { close(x, objectFor(x, self, 0)); }
 uint32_t fb_ctor(Ctx& x, GuestPtr sb) {
     for (uint32_t i = 0; i < 32; i += 4) x.mem.write<uint32_t>(sb + i, 0);
     Streams& s = S(x);
+    x.mem.write<uint32_t>(sb, s.vtFilebuf);
     std::lock_guard<std::mutex> lk(s.mu);
     Stream& st = s.objects[sb];
     if (st.f) std::fclose(st.f);
@@ -443,6 +446,47 @@ int64_t hvmFilebufSeek(Ctx& x, uint32_t sb, int64_t off, uint32_t dir) {
     return int64_t(std::ftell(f));
 }
 
+namespace {
+// basic_filebuf virtuals, for app code that calls them through the vptr.
+uint32_t fbv_setbuf(Ctx&, GuestPtr sb, GuestPtr, int32_t) { return sb; }
+int32_t fbv_sync(Ctx& x, GuestPtr sb) {
+    if (!hvmIsFilebuf(x, sb)) return -1;
+    std::FILE* f = fileOf(x, objectFor(x, sb, 2));
+    return f && std::fflush(f) == 0 ? 0 : -1;
+}
+int32_t fbv_zero(Ctx&, GuestPtr) { return 0; }
+int32_t fbv_xsgetn(Ctx& x, GuestPtr sb, GuestPtr buf, int32_t n) { return hvmFilebufRead(x, sb, buf, n); }
+int32_t fbv_underflow(Ctx& x, GuestPtr sb) { return hvmFilebufPeek(x, sb); }
+int32_t fbv_uflow(Ctx& x, GuestPtr sb) { return hvmFilebufGet(x, sb); }
+int32_t fbv_pbackfail(Ctx& x, GuestPtr sb, int32_t c) { return hvmFilebufUnget(x, sb, c); }
+int32_t fbv_xsputn(Ctx& x, GuestPtr sb, GuestPtr buf, int32_t n) {
+    if (n <= 0) return 0;
+    return hvmFilebufWrite(x, sb, reinterpret_cast<const char*>(x.mem.host(buf)), uint32_t(n));
+}
+int32_t fbv_overflow(Ctx& x, GuestPtr sb, int32_t c) {
+    if (c == -1) return 0;
+    const char ch = char(c);
+    return hvmFilebufWrite(x, sb, &ch, 1) == 1 ? (c & 0xFF) : -1;
+}
+// pos_type seekoff(off_type, seekdir, openmode) / seekpos(pos_type, openmode): the
+// 136-byte fpos is returned through r0; this is r1, the offset r2:r3, the direction on the stack.
+void fbv_seekoff(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], sb = x.cpu.r[1];
+    const int64_t off = int64_t((uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2]);
+    const uint32_t dir = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
+    const int64_t pos = hvmFilebufSeek(x, sb, off, dir);
+    x.mem.write<uint64_t>(ret, uint64_t(pos));
+    for (uint32_t i = 8; i < 136; i += 4) x.mem.write<uint32_t>(ret + i, 0);
+}
+void fbv_seekpos(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], sb = x.cpu.r[1];
+    const int64_t off = int64_t((uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2]);
+    const int64_t pos = hvmFilebufSeek(x, sb, off, 0);
+    x.mem.write<uint64_t>(ret, uint64_t(pos));
+    for (uint32_t i = 8; i < 136; i += 4) x.mem.write<uint32_t>(ret + i, 0);
+}
+} // namespace
+
 // For the stream code: formatted output to one of our file streams. False if `os` isn't one.
 bool hvmFstreamWrite(Ctx& x, uint32_t os, const char* data, uint32_t n) {
     if (!isFileStream(x, os, 1)) return false;
@@ -520,9 +564,23 @@ void registerLibStdcxx(Process& p) {
         p.def<&st_open>(sym(cls, "4openEPKcSt13_Ios_Openmode"));
         p.def<&st_close>(sym(cls, "5closeEv"));
     }
-    p.def<&fb_dtor>(sym(fb, "D1Ev"));
+    const uint32_t fbD1 = p.def<&fb_dtor>(sym(fb, "D1Ev"));
     p.def<&fb_dtor>(sym(fb, "D2Ev"));
-    p.def<&fb_dtorDelete>(sym(fb, "D0Ev"));
+    const uint32_t fbD0 = p.def<&fb_dtorDelete>(sym(fb, "D0Ev"));
+    {
+        // [offset to top][typeinfo][D1 D0 imbue setbuf seekoff seekpos sync showmanyc xsgetn underflow uflow pbackfail xsputn overflow]
+        const uint32_t slots[] = {
+            fbD1, fbD0, p.def<&noop2>(sym(fb, "5imbueERKSt6locale")), p.def<&fbv_setbuf>(sym(fb, "6setbufEPci")),
+            p.defineFunction(sym(fb, "7seekoffExSt12_Ios_SeekdirSt13_Ios_Openmode"), fbv_seekoff),
+            p.defineFunction(sym(fb, "7seekposESt4fposI11__mbstate_tESt13_Ios_Openmode"), fbv_seekpos),
+            p.def<&fbv_sync>(sym(fb, "4syncEv")), p.def<&fbv_zero>(sym(fb, "9showmanycEv")),
+            p.def<&fbv_xsgetn>(sym(fb, "6xsgetnEPci")), p.def<&fbv_underflow>(sym(fb, "9underflowEv")),
+            p.def<&fbv_uflow>(sym(fb, "5uflowEv")), p.def<&fbv_pbackfail>(sym(fb, "9pbackfailEi")),
+            p.def<&fbv_xsputn>(sym(fb, "6xsputnEPKci")), p.def<&fbv_overflow>(sym(fb, "8overflowEi"))};
+        const uint32_t vt = p.defineDataBlock(std::string("__ZTV") + fb, 8 + sizeof slots);
+        for (uint32_t i = 0; i < sizeof slots / 4; ++i) p.mem().write<uint32_t>(vt + 8 + 4 * i, slots[i]);
+        s.vtFilebuf = vt + 8;
+    }
     p.def<&fb_open>(sym(fb, "4openEPKcSt13_Ios_Openmode"));
     p.def<&fb_close>(sym(fb, "5closeEv"));
     p.def<&fb_isOpen>("__ZNKSt13basic_filebufIcSt11char_traitsIcEE7is_openEv");

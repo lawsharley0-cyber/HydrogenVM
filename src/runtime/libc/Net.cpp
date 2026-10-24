@@ -285,7 +285,13 @@ uint32_t n_gaiStrerror(Ctx& x, int32_t e) {
 }
 uint32_t n_nullHost(Ctx&, GuestPtr) { return 0; }
 uint32_t n_nullHost3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
-uint32_t n_ifNameToIndex(Ctx& x, GuestPtr name) { return x.proc.readCString(name) == "lo0" ? 1 : 0; }
+// Interfaces a phone has: lo0 and en0 (Wi-Fi). Apps read en0's MAC address
+// through sysctl(NET_RT_IFLIST) (System.cpp) and fail when en0 is missing.
+uint32_t n_ifNameToIndex(Ctx& x, GuestPtr name) {
+    if (!name) return 0;
+    const std::string n = x.proc.readCString(name);
+    return n == "lo0" ? 1 : n == "en0" ? 2 : 0;
+}
 
 // ---- inet_*
 uint32_t n_inetAddr(Ctx& x, GuestPtr s) {

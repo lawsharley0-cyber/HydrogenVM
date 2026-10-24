@@ -473,6 +473,18 @@ int32_t af_getPropertyInfo(Ctx& x, uint32_t, uint32_t prop, GuestPtr outSize, Gu
     }
     return 0;
 }
+// AudioFile presents 16-bit LPCM in the source's own channel count (mono files
+// stay mono): apps such as Talking John size their read buffers from the file's
+// real layout, and a stereo view overran them by 2x.
+uint32_t afChannels(const AudioFileInstance& af) { return af.decoded.channels == 1 ? 1 : 2; }
+// Copies frames [first, first+n) of the decoded stereo PCM to guest memory in the file's layout.
+void afCopyFrames(Ctx& x, const AudioFileInstance& af, uint64_t first, uint64_t n, GuestPtr out) {
+    const auto& pcm = af.decoded.stereoPcm;
+    if (afChannels(af) == 2) { x.mem.copyIn(out, reinterpret_cast<const uint8_t*>(pcm.data() + first * 2), size_t(n * 4)); return; }
+    std::vector<int16_t> mono(n);
+    for (uint64_t i = 0; i < n; ++i) mono[i] = pcm[(first + i) * 2];
+    x.mem.copyIn(out, reinterpret_cast<const uint8_t*>(mono.data()), size_t(n * 2));
+}
 int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, GuestPtr outData) {
     auto& st = ATS(x);
     if (!st.files.count(fid) || !outData || !ioSize) return -50;
@@ -482,20 +494,20 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         x.mem.write<double>(outData + 0, double(af.decoded.sampleRate));
         x.mem.write<uint32_t>(outData + 8, 0x6C70636D /* 'lpcm' */);
         x.mem.write<uint32_t>(outData + 12, 0x0C /* signed int | packed */);
-        x.mem.write<uint32_t>(outData + 16, 4);
+        x.mem.write<uint32_t>(outData + 16, 2 * afChannels(af));
         x.mem.write<uint32_t>(outData + 20, 1);
-        x.mem.write<uint32_t>(outData + 24, 4);
-        x.mem.write<uint32_t>(outData + 28, 2);
+        x.mem.write<uint32_t>(outData + 24, 2 * afChannels(af));
+        x.mem.write<uint32_t>(outData + 28, afChannels(af));
         x.mem.write<uint32_t>(outData + 32, 16);
         x.mem.write<uint32_t>(outData + 36, 0);
     } else if (prop == 0x62636E74 /* 'bcnt' byte count */ && cap >= 8) {
-        x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() * 2));
+        x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2) * 2 * afChannels(af));
     } else if (prop == 0x65647572 /* 'edur' estimated duration */ && cap >= 8) {
         x.mem.write<double>(outData, af.decoded.duration);
     } else if (prop == 0x70636E74 /* 'pcnt' audio data packet count */ && cap >= 8) {
         x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
     } else if ((prop == 0x70737A65 /* 'psze' */ || prop == 0x706B7562 /* 'pkub' */) && cap >= 4) {
-        x.mem.write<uint32_t>(outData, 4);
+        x.mem.write<uint32_t>(outData, 2 * afChannels(af));
     } else if (prop == 0x66666D74 /* 'ffmt' file format */ && cap >= 4) {
         x.mem.write<uint32_t>(outData, 0x63616666 /* 'caff' */);
     }
@@ -504,13 +516,14 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
 int32_t af_readBytes(Ctx& x, uint32_t fid, bool, int64_t inStartingByte, GuestPtr ioNumBytes, GuestPtr outBuffer) {
     auto& st = ATS(x);
     if (!st.files.count(fid) || !ioNumBytes || !outBuffer) return -50;
-    const auto& pcm = st.files[fid].decoded.stereoPcm;
-    const size_t totalBytes = pcm.size() * 2;
+    const AudioFileInstance& af = st.files[fid];
+    const uint32_t bpf = 2 * afChannels(af);
+    const uint64_t frames = af.decoded.stereoPcm.size() / 2;
     const uint32_t req = x.mem.read<uint32_t>(ioNumBytes);
-    const size_t start = std::min(size_t(std::max<int64_t>(0, inStartingByte)), totalBytes);
-    const size_t toCopy = std::min(size_t(req), totalBytes - start);
-    if (toCopy > 0) x.mem.copyIn(outBuffer, reinterpret_cast<const uint8_t*>(pcm.data()) + start, toCopy);
-    x.mem.write<uint32_t>(ioNumBytes, uint32_t(toCopy));
+    const uint64_t first = std::min<uint64_t>(uint64_t(std::max<int64_t>(0, inStartingByte)) / bpf, frames);
+    const uint64_t n = std::min<uint64_t>(req / bpf, frames - first);
+    if (n) afCopyFrames(x, af, first, n, outBuffer);
+    x.mem.write<uint32_t>(ioNumBytes, uint32_t(n * bpf));
     return 0;
 }
 int32_t af_close(Ctx& x, uint32_t fid) { ATS(x).files.erase(fid); return 0; }
@@ -561,15 +574,16 @@ void af_readPackets(Ctx& x, bool numBytesIsInOut) {
     const uint32_t ioNumPackets = x.mem.read<uint32_t>(sp + 8), out = x.mem.read<uint32_t>(sp + 12);
     auto& st = ATS(x);
     if (!st.files.count(fid) || !ioNumPackets || !out) { x.cpu.r[0] = uint32_t(-50); return; }
-    const auto& pcm = st.files[fid].decoded.stereoPcm;
-    const uint64_t frames = pcm.size() / 2;
+    const AudioFileInstance& af = st.files[fid];
+    const uint32_t bpf = 2 * afChannels(af);
+    const uint64_t frames = af.decoded.stereoPcm.size() / 2;
     uint64_t want = x.mem.read<uint32_t>(ioNumPackets);
-    if (numBytesIsInOut && ioNumBytes) want = std::min<uint64_t>(want, x.mem.read<uint32_t>(ioNumBytes) / 4);
+    if (numBytesIsInOut && ioNumBytes) want = std::min<uint64_t>(want, x.mem.read<uint32_t>(ioNumBytes) / bpf);
     const uint64_t first = uint64_t(std::max<int64_t>(0, start));
     const uint64_t n = first >= frames ? 0 : std::min<uint64_t>(want, frames - first);
-    if (n) x.mem.copyIn(out, reinterpret_cast<const uint8_t*>(pcm.data() + first * 2), size_t(n * 4));
+    if (n) afCopyFrames(x, af, first, n, out);
     x.mem.write<uint32_t>(ioNumPackets, uint32_t(n));
-    if (ioNumBytes) x.mem.write<uint32_t>(ioNumBytes, uint32_t(n * 4));
+    if (ioNumBytes) x.mem.write<uint32_t>(ioNumBytes, uint32_t(n * bpf));
     x.cpu.r[0] = 0;
 }
 

@@ -565,15 +565,17 @@ Exit Engine::runToExit(Cpu& cpu) {
             if (stopRequested()) { cpu.exit = Exit::Halt; return Exit::Halt; }
             const uint32_t pc = cpu.r[kPC];
             if (pc >= lo && pc < hi)
-                std::fprintf(stderr, "[blk] %08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x\n", pc | (cpu.thumb & 1),
+                std::fprintf(stderr, "[blk] %08x lr=%08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x\n", pc | (cpu.thumb & 1), cpu.r[14],
                              cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3], cpu.r[4], cpu.r[5], cpu.r[6]);
             const Exit e = run(cpu, 1);
+            if (e == Exit::MemFault && faultHook_ && faultHook_(cpu, e)) continue;
             if (e != Exit::Budget) return e;
         }
     }
     for (;;) {
         if (stopRequested()) { cpu.exit = Exit::Halt; return Exit::Halt; }
         const Exit e = run(cpu, kSlice);
+        if (e == Exit::MemFault && faultHook_ && faultHook_(cpu, e)) continue;
         if (e != Exit::Budget) return e;
     }
 }

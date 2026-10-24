@@ -75,7 +75,7 @@ bool looksLikeData(const std::string& s) {
          ends("AttributeName") || ends("Identity") || ends("Callbacks") || ends("CallBacks") || ends("Preset") ||
          starts("_AVCaptureSessionPreset") || starts("_AVMediaType") || starts("_AVLayerVideoGravity") ||
          starts("_AVAudioSession") || starts("_AVAssetExportPreset") || starts("_AVFileType") ||
-         starts("_UIActivityType") || starts("_UITransitionContext") || starts("_UIFontTextStyle") ||
+         starts("_AVVideo") || starts("_AVMetadata") || starts("_UIActivityType") || starts("_UITransitionContext") || starts("_UIFontTextStyle") ||
          starts("_ADBannerContentSizeIdentifier") || starts("_SLServiceType") ||
          starts("_ACAccountTypeIdentifier") || starts("_SKStoreProductParameter")))
         return true;
@@ -338,7 +338,42 @@ uint32_t Process::makeMissingStub(const std::string& name) {
     // through a lazy stub) and it has a Cocoa-style constant name (NSFooKey,
     // UIBackgroundTaskInvalid, NSGregorianCalendar, ...).
     const bool cocoaName = name.size() > 2 && name[0] == '_' && std::isupper(uint8_t(name[1]));
-    if (looksLikeData(name) || name.compare(0, 5, "__ZTT") == 0 || (cocoaName && !calledImports_.count(name) && !looksLikeFunction(name))) {
+    // Missing C++ vtables and VTTs: instead of zeros (a virtual call then jumps to
+    // address 0 with nothing to say why), fill the slots with stubs that name the
+    // class and slot, so the crash report says what the app tried to call.
+    const bool vtable = name.compare(0, 5, "__ZTV") == 0, vtt = name.compare(0, 5, "__ZTT") == 0;
+    if (vtable || vtt) {
+        const std::string pretty = demangle(name);
+        auto trapTable = [&](uint32_t block, uint32_t firstSlotWord, uint32_t words) {
+            for (uint32_t i = firstSlotWord; i < words; ++i) {
+                const uint32_t slot = i - firstSlotWord;
+                const uint32_t fn = defineFunction(name + "$hvm_slot" + std::to_string(slot), [this, pretty, slot](Ctx& x) {
+                    const std::string what = "virtual function #" + std::to_string(slot) + " of " + pretty;
+                    reportMissing(what);
+                    if (!cfg_.stopOnMissingFunction) { x.cpu.r[0] = x.cpu.r[1] = 0; return; }   // keep going: like other missing functions
+                    throw MissingFunction("Missing " + what + " (HydrogenVM doesn't provide this C++ class; called from " +
+                                          describeAddress(x.cpu.r[CPU::kLR]) + ")");
+                });
+                mem_->write<uint32_t>(block + 4 * i, fn);
+            }
+        };
+        if (vtable) {
+            // [offset-to-top][typeinfo][slot 0...]: objects point at +8.
+            const uint32_t a = defineDataBlock(name, 64);
+            trapTable(a, 2, 16);
+            log(LogLevel::Warning, "Missing data symbol " + pretty + " (virtual calls through it report the slot)");
+            return a;
+        }
+        // VTT: every entry points at a stand-in vtable whose slots report the call;
+        // the words before the address point (vbase/top offsets) stay 0.
+        const uint32_t table = allocStatic(80);
+        trapTable(table, 4, 20);
+        const uint32_t a = defineDataBlock(name, 64);
+        for (uint32_t i = 0; i < 16; ++i) mem_->write<uint32_t>(a + 4 * i, table + 16);
+        log(LogLevel::Warning, "Missing data symbol " + pretty + " (virtual calls through it report the slot)");
+        return a;
+    }
+    if (looksLikeData(name) || (cocoaName && !calledImports_.count(name) && !looksLikeFunction(name))) {
         const uint32_t a = defineDataBlock(name, 64);
         log(LogLevel::Warning, "Missing data symbol " + demangle(name) + " (using zeros)");
         return a;

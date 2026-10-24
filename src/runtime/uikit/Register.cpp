@@ -21,6 +21,7 @@ void registerUIKit(Process& p) {
     UIKit::registerOpenGLES(p, r);
     UIKit::registerGameKit(p, r);
     UIKit::registerPlatformStubs(p, r);
+    UIKit::registerAVWriter(p, r);
     UIKit::registerMiscFrameworks(p, r);
 }
 

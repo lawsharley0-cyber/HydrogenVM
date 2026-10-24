@@ -15,6 +15,7 @@ BOOL class_addMethod(Class, SEL, IMP, const char *);
 IMP class_replaceMethod(Class, SEL, IMP, const char *);
 BOOL class_respondsToSelector(Class, SEL);
 Ivar class_getInstanceVariable(Class, const char *);
+Ivar object_getInstanceVariable(id, const char *, void **);
 ptrdiff_t ivar_getOffset(Ivar);
 const char *ivar_getName(Ivar);
 Ivar *class_copyIvarList(Class, unsigned *);
