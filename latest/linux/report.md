@@ -1,28 +1,28 @@
-# HydrogenVM report — f6c02c6
+# HydrogenVM report — 4a7fc68
 
-2026-10-24T06:24:08+00:00 · INTEL(R) XEON(R) PLATINUM 8573C (x86_64, Linux 6.17.0-1022-azure)
+2026-10-24T06:24:06+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
 
 **1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 149.2s |
-| cpu | 15 | 0 | 0 | 0.5s |
-| ios | 5 | 1 | 0 | 1.2s |
-| bench | 5 | 0 | 0 | 21.1s |
+| build | 1 | 0 | 0 | 218.4s |
+| cpu | 15 | 0 | 0 | 0.7s |
+| ios | 5 | 1 | 0 | 1.3s |
+| bench | 5 | 0 | 0 | 24.1s |
 
 ## Speed
 
-CoreMark **2468.1** iterations/s (830.5 guest MIPS)
+CoreMark **1746.1** iterations/s (585.2 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **171.4%** | 1028 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **128.5%** | 1028 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **102.8%** | 823 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **54.2%** | 705 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **121.3%** | 728 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **90.9%** | 728 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **72.8%** | 582 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.4%** | 499 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 560 MIPS, ctests_arm 582 MIPS, ftests_vfp_thumb_softfp 567 MIPS, ftests_neon_thumb 587 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 470 MIPS, ctests_arm 516 MIPS, ftests_vfp_thumb_softfp 448 MIPS, ftests_neon_thumb 413 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -31,7 +31,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 560 MIPS, ctests_arm 582
 | BinPlist | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.01s | 61 | 0.34 ms | 5.68 ms | 0 |
+| UIKitTest | 1.02s | 61 | 0.45 ms | 8.24 ms | 0 |
 
 ## Problems (33)
 
@@ -67,13 +67,13 @@ Raw interpreter speed (CPU test programs): ctests_thumb 560 MIPS, ctests_arm 582
   ok CFStringCreateWithFormat
   ok CFNumber
   --- stderr ---
-  [hvm:error] Crash: bad memory access at 0xffff6208 (inside missing data symbol __kCFNumberNaN)
+  [hvm:error] Crash: bad memory access at 0xffff6238 (inside missing data symbol __kCFNumberNaN)
     pc [HydrogenVM] CFNumberGetValue
     lr 0x00010e51 FoundationTest+52816 _main + 0x7980
-    r0  ffff6208  r1  0000000d  r2  befffc48  r3  00000070
+    r0  ffff6238  r1  0000000d  r2  befffc48  r3  00000070
     r4  ffffffff  r5  00000001  r6  ffffffff  r7  beffffb8
     r8  0001925c  r9  befff474  r10 00019154  r11 00019258
-    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d00
+    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d30
     backtrace:
       [HydrogenVM] CFNumberGetValue
       0x00010e51 FoundationTest+52816 _main + 0x7980
@@ -85,13 +85,13 @@ Raw interpreter speed (CPU test programs): ctests_thumb 560 MIPS, ctests_arm 582
 - **ios / FoundationTest**
 
   ```
-  Crash: bad memory access at 0xffff6208 (inside missing data symbol __kCFNumberNaN)
+  Crash: bad memory access at 0xffff6238 (inside missing data symbol __kCFNumberNaN)
     pc [HydrogenVM] CFNumberGetValue
     lr 0x00010e51 FoundationTest+52816 _main + 0x7980
-    r0  ffff6208  r1  0000000d  r2  befffc48  r3  00000070
+    r0  ffff6238  r1  0000000d  r2  befffc48  r3  00000070
     r4  ffffffff  r5  00000001  r6  ffffffff  r7  beffffb8
     r8  0001925c  r9  befff474  r10 00019154  r11 00019258
-    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d00
+    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d30
     backtrace:
       [HydrogenVM] CFNumberGetValue
       0x00010e51 FoundationTest+52816 _main + 0x7980
@@ -103,13 +103,13 @@ Raw interpreter speed (CPU test programs): ctests_thumb 560 MIPS, ctests_arm 582
 - **ios / FoundationTest**
 
   ```
-  Crash: bad memory access at 0xffff6208 (inside missing data symbol __kCFNumberNaN)
+  Crash: bad memory access at 0xffff6238 (inside missing data symbol __kCFNumberNaN)
     pc [HydrogenVM] CFNumberGetValue
     lr 0x00010e51 FoundationTest+52816 _main + 0x7980
-    r0  ffff6208  r1  0000000d  r2  befffc48  r3  00000070
+    r0  ffff6238  r1  0000000d  r2  befffc48  r3  00000070
     r4  ffffffff  r5  00000001  r6  ffffffff  r7  beffffb8
     r8  0001925c  r9  befff474  r10 00019154  r11 00019258
-    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d00
+    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d30
     backtrace:
       [HydrogenVM] CFNumberGetValue
       0x00010e51 FoundationTest+52816 _main + 0x7980
@@ -118,7 +118,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 560 MIPS, ctests_arm 582
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 54.2% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 38.4% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
@@ -137,11 +137,11 @@ Raw interpreter speed (CPU test programs): ctests_thumb 560 MIPS, ctests_arm 582
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:81:43: warning: unused variable 'kRenderbuffer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:26:47: warning: unused variable 'kDrawFramebuffer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:27:54: warning: unused variable 'kDrawFramebufferBinding' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:35:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:35:50: warning: unused variable 'kNormalArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:35:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:36:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:36:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:37:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:37:50: warning: unused variable 'kNormalArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:37:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:38:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:38:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxx.cpp:38:40: warning: unused variable 'kBinary' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:51:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:57:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
