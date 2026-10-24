@@ -3214,6 +3214,23 @@ int runFullSubsystemTests() {
             check(layout && same, "String-stream __ZTV symbols have GCC's address points; stringWithString: of a constant string returns it");
         }
 
+        // -[NSKeyedUnarchiver initForReadingWithData:nil] is an empty unarchiver (iOS 6), not an exception.
+        {
+            ObjC::id un = 0;
+            bool threw = false;
+            try {
+                un = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSKeyedUnarchiver"), r.selAlloc)), "initForReadingWithData:", {0}));
+            } catch (const std::exception&) { threw = true; }
+            const bool empty = un && !ObjC::id(r.send(cpu, un, "decodeObjectForKey:", {Foundation::makeString(cx, "kusername")}));
+            bool junkThrows = false;
+            try {
+                const uint8_t junk[4] = {1, 2, 3, 4};
+                r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSKeyedUnarchiver"), r.selAlloc)), "initForReadingWithData:",
+                       {Foundation::makeData(cx, junk, 4)});
+            } catch (const std::exception&) { junkThrows = true; }
+            check(!threw && empty && junkThrows, "NSKeyedUnarchiver with nil data decodes nothing; junk data still raises");
+        }
+
         // CFURLCreateAbsoluteURLWithBytes resolves against the base URL.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
