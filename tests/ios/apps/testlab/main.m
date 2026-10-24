@@ -38,6 +38,8 @@
 extern FILE *popen(const char *, const char *);
 extern int pclose(FILE *);
 extern unsigned int alarm(unsigned int);
+extern int fstat(int, void *);
+extern int fileno(FILE *);
 #include <time.h>
 #import <OpenGLES/EAGL.h>
 #include <OpenGLES/ES2/gl.h>
@@ -77,7 +79,7 @@ static const int kVersionD = 2;
 static const int kVersionE = 1;
 static const int kVersionF = 1;
 static const int kVersionG = 1;
-static const int kVersionH = 1;
+static const int kVersionH = 2;
 static const int kVersionI = 1;
 static const int kVersionJ = 1;
 static const int kVersionK = 1;
@@ -908,6 +910,18 @@ static TLResult *runCaseH(void) {
     NSData *readData = [NSData dataWithContentsOfFile:testFile];
     BOOL contentOk = [readData isEqualToData:data];
 
+    // iPhoneOS has only the 64-bit-inode stat ABI even under the unsuffixed
+    // fstat symbol (Apple XNU cdefs.h / stat.h). ARMv7 st_size is at byte 60.
+    // This raw buffer deliberately avoids inheriting a host struct layout.
+    uint32_t statWords[29];memset(statWords,0xa5,sizeof(statWords));
+    FILE *statFile=fopen([testFile UTF8String],"rb");
+    int statResult=statFile?fstat(fileno(statFile),statWords):-1;
+    uint64_t nativeSize=0;memcpy(&nativeSize,(uint8_t *)statWords+60,8);
+    BOOL nativeStatOk=statResult==0 && nativeSize==sizeof(buffer) &&
+        statWords[27]==0xa5a5a5a5 && statWords[28]==0xa5a5a5a5;
+    if(statFile)fclose(statFile);
+    r.diagnostics[@"nativeFstatLayout"] = @(nativeStatOk);
+
     // 6. Clean up
     NSString *topTestDir = [documentsDir() stringByAppendingPathComponent:@"testlab_fs_dir"];
     BOOL removed = [fm removeItemAtPath:topTestDir error:&err];
@@ -932,11 +946,11 @@ static TLResult *runCaseH(void) {
     unsigned int al = alarm(5);
     BOOL alarmOk = (al == 0);
 
-    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, gone=1, posixOk=1";
-    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, gone=%d, posixOk=%d",
-                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, gone, (popenOk && pcloseOk && alarmOk)];
+    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, nativeStatOk=1, gone=1, posixOk=1";
+    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, nativeStatOk=%d, gone=%d, posixOk=%d",
+                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, nativeStatOk, gone, (popenOk && pcloseOk && alarmOk)];
 
-    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && removed && gone && popenOk && pcloseOk && alarmOk) {
+    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && nativeStatOk && removed && gone && popenOk && pcloseOk && alarmOk) {
         r.status = @"passed";
     } else {
         r.status = @"failed";

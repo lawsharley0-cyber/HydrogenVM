@@ -3083,25 +3083,24 @@ int runFullSubsystemTests() {
             proc.heap().free(strRet2);
         }
 
-        // stat layouts: plain _stat/_fstat are the legacy 96-byte struct (size at 48);
-        // the $INODE64 variants are 108 bytes (size at 60). Guard bytes past 96 stay intact.
+        // Apple XNU cdefs.h: PLATFORM_iPhoneOS has ONLY_64_BIT_INO_T=1,
+        // so unsuffixed stat has the same layout as the $INODE64 alias.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
             const std::string file = proc.homePath() + "/Documents/hvm_stat_layout.bin";
             { std::ofstream o(file, std::ios::binary); o << std::string(1234, 'x'); }
             const uint32_t path = proc.allocCString(file);
             const uint32_t buf = proc.heap().allocZeroed(128);
-            for (uint32_t i = 96; i < 128; i += 4) proc.mem().write<uint32_t>(buf + i, 0xA5A5A5A5);
+            for (uint32_t i = 108; i < 128; i += 4) proc.mem().write<uint32_t>(buf + i, 0xA5A5A5A5);
             const uint32_t r1 = call("_stat", {path, buf});
-            const bool legacy = r1 == 0 && proc.mem().read<uint64_t>(buf + 48) == 1234 &&
-                                (proc.mem().read<uint16_t>(buf + 8) & 0170000) == 0100000 &&
-                                proc.mem().read<uint32_t>(buf + 96) == 0xA5A5A5A5 && proc.mem().read<uint32_t>(buf + 104) == 0xA5A5A5A5;
+            const bool plain = r1 == 0 && proc.mem().read<uint64_t>(buf + 60) == 1234 &&
+                               (proc.mem().read<uint16_t>(buf + 4) & 0170000) == 0100000 &&
+                               proc.mem().read<uint32_t>(buf + 108) == 0xA5A5A5A5 && proc.mem().read<uint32_t>(buf + 124) == 0xA5A5A5A5;
             std::memset(proc.mem().host(buf), 0, 128);
             const uint32_t r2 = call("_stat$INODE64", {path, buf});
             const bool wide = r2 == 0 && proc.mem().read<uint64_t>(buf + 60) == 1234 &&
                               (proc.mem().read<uint16_t>(buf + 4) & 0170000) == 0100000;
-            if (!(legacy && wide)) std::printf("    r1=%u r2=%u legacy=%d wide=%d s48=%llu s60=%llu\n", r1, r2, legacy, wide, (unsigned long long)proc.mem().read<uint64_t>(buf + 48), (unsigned long long)proc.mem().read<uint64_t>(buf + 60));
-            check(legacy && wide, "stat: plain symbols fill the legacy 96-byte struct, $INODE64 the 108-byte one");
+            check(plain && wide, "stat: unsuffixed iPhone symbols and $INODE64 use the 108-byte ARMv7 layout");
             proc.heap().free(buf);
         }
 

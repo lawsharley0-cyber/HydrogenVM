@@ -470,49 +470,6 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
     x.mem.write<int64_t>(out + 68, int64_t(st.st_blocks));
     x.mem.write<int32_t>(out + 76, int32_t(st.st_blksize));
 }
-// Legacy struct stat (32-bit ino_t), what the plain _stat/_lstat/_fstat symbols
-// fill on armv7 iOS: 96 bytes, st_size at 48. Writing the 108-byte $INODE64
-// layout there put the size at 60 (apps read 0) and ran 12 bytes past the
-// caller's buffer (Survivalcraft/Mono: "Could not load Manifest asset!").
-void storeStatLegacy(Ctx& x, GuestPtr out, const struct stat& st) {
-    uint8_t wide[108];
-    const GuestPtr tmp = x.proc.heap().alloc(108);
-    storeStat(x, tmp, st);
-    std::memcpy(wide, x.mem.host(tmp), 108);
-    x.proc.heap().free(tmp);
-    auto rd32 = [&](uint32_t o) { uint32_t v; std::memcpy(&v, wide + o, 4); return v; };
-    std::memset(x.mem.host(out), 0, 96);
-    x.mem.write<uint32_t>(out + 0, rd32(0));                       // st_dev
-    x.mem.write<uint32_t>(out + 4, uint32_t(st.st_ino));           // st_ino (32-bit)
-    x.mem.write<uint16_t>(out + 8, uint16_t(rd32(4) & 0xffff));    // st_mode
-    x.mem.write<uint16_t>(out + 10, uint16_t(rd32(4) >> 16));      // st_nlink
-    x.mem.write<uint32_t>(out + 12, rd32(16));                     // st_uid
-    x.mem.write<uint32_t>(out + 16, rd32(20));                     // st_gid
-    x.mem.write<uint32_t>(out + 20, rd32(24));                     // st_rdev
-    std::memcpy(x.mem.host(out + 24), wide + 28, 24);              // atime, mtime, ctime
-    std::memcpy(x.mem.host(out + 48), wide + 60, 8);               // st_size
-    std::memcpy(x.mem.host(out + 56), wide + 68, 8);               // st_blocks
-    x.mem.write<uint32_t>(out + 64, rd32(76));                     // st_blksize
-}
-int32_t f_statLegacy(Ctx& x, GuestPtr path, GuestPtr out) {
-    struct stat st;
-    if (::stat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
-    storeStatLegacy(x, out, st);
-    return 0;
-}
-int32_t f_lstatLegacy(Ctx& x, GuestPtr path, GuestPtr out) {
-    struct stat st;
-    if (::lstat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
-    storeStatLegacy(x, out, st);
-    return 0;
-}
-int32_t f_fstatLegacy(Ctx& x, int32_t fd, GuestPtr out) {
-    struct stat st;
-    if (fd <= 2) { std::memset(&st, 0, sizeof st); st.st_mode = S_IFCHR | 0666; storeStatLegacy(x, out, st); return 0; }
-    if (::fstat(fd, &st) < 0) return failD<int32_t>(x);
-    storeStatLegacy(x, out, st);
-    return 0;
-}
 int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
     if (::stat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
@@ -860,9 +817,11 @@ void registerLibcSystem(Process& p) {
     for (const char* n : {"_stat$INODE64", "_stat64"}) p.def<&f_stat>(n);
     for (const char* n : {"_lstat$INODE64", "_lstat64"}) p.def<&f_lstat>(n);
     for (const char* n : {"_fstat$INODE64", "_fstat64"}) p.def<&f_fstat>(n);
-    p.def<&f_statLegacy>("_stat");
-    p.def<&f_lstatLegacy>("_lstat");
-    p.def<&f_fstatLegacy>("_fstat");
+    // iPhoneOS is __DARWIN_ONLY_64_BIT_INO_T: cdefs.h deliberately emits
+    // no $INODE64 suffix there. Unsuffixed symbols use the same ARMv7 ABI.
+    p.def<&f_stat>("_stat");
+    p.def<&f_lstat>("_lstat");
+    p.def<&f_fstat>("_fstat");
     p.def<&f_access>("_access");
     p.def<&f_mkdir>("_mkdir");
     p.def<&f_rmdir>("_rmdir");
