@@ -78,6 +78,8 @@ final class ExplorePhase {
 
     func recordLogLine(_ raw: String, level: HVMLogLevel) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // GPU status samples ("presented frame N", drawable sizes) are progress, not problems.
+        if text.hasPrefix("GPU: presented frame") || text.hasPrefix("GPU: drawable") { return }
         if let rank = ConsoleReport.rank(text, level), rank > 0 || rank == 0 {
             let key = ConsoleReport.normalized(text)
             if !exploring { knownProblemHashes.insert(key); return }
