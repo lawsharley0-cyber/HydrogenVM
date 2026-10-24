@@ -548,6 +548,7 @@ uint32_t f_getcwd(Ctx& x, GuestPtr buf, uint32_t size) {
 }
 int32_t f_chmod(Ctx&, GuestPtr, uint32_t) { return 0; }
 int32_t f_utimes(Ctx&, GuestPtr, GuestPtr) { return 0; }
+int32_t f_utime(Ctx&, GuestPtr, GuestPtr) { return 0; }
 
 struct Dirs {
     explicit Dirs(Process&) {}
@@ -870,6 +871,7 @@ void registerLibcSystem(Process& p) {
     p.def<&f_getcwd>("_getcwd");
     p.def<&f_chmod>("_chmod");
     p.def<&f_utimes>("_utimes");
+    p.def<&f_utime>("_utime");
     for (const char* n : {"_opendir", "_opendir$INODE64", "_opendir$INODE64$UNIX2003", "_opendir$UNIX2003"}) p.def<&f_opendir>(n);
     for (const char* n : {"_readdir", "_readdir$INODE64"}) p.def<&f_readdir>(n);
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
