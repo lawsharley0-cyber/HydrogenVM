@@ -1,0 +1,1 @@
+app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/app/HydrogenVM/FileBrowser.swift:450:45: error: the compiler is unable to type-check this expression in reasonable time; try breaking up the expression into distinct sub-expressions
