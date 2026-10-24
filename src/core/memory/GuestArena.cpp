@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <stdexcept>
 #include <algorithm>
+#include <chrono>
+#include <thread>
 
 namespace Hydrogen::Memory {
 
@@ -14,8 +16,14 @@ GuestArena::GuestArena() {
     // NOTE (iOS): reserving 4 GB of address space needs the
     // com.apple.developer.kernel.extended-virtual-addressing entitlement on most
     // devices; without it this mmap fails. See docs/ARCHITECTURE.md.
-    void* p = mmap(nullptr, size_t(kArenaSize), PROT_NONE,
-                   MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    // The previous game's arena may still be on its way out (its threads are
+    // finishing); iOS has room for about one 4 GB reservation, so wait a few
+    // seconds for it rather than failing the next launch (Test All Games).
+    void* p = MAP_FAILED;
+    for (int attempt = 0; attempt < 20 && p == MAP_FAILED; ++attempt) {
+        if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        p = mmap(nullptr, size_t(kArenaSize), PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    }
     if (p == MAP_FAILED)
         throw std::runtime_error("HydrogenVM: failed to reserve 4 GB guest arena "
                                  "(on iOS, check the extended-virtual-addressing entitlement)");

@@ -392,6 +392,8 @@ void registerLibcStdlib(Process& p) {
     p.def<&r_srand>("_srand");
     p.def<&r_random>("_random");
     p.def<&r_srandom>("_srandom");
+    // srandomdev(): seed random() from the host's entropy.
+    p.def<+[](Ctx& x) { r_srandom(x, std::random_device{}()); }>("_srandomdev");
     p.def<&r_arc4random>("_arc4random");
     p.def<&r_arc4random_uniform>("_arc4random_uniform");
     p.def<&r_arc4random_buf>("_arc4random_buf");

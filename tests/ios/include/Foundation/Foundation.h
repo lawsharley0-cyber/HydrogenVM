@@ -30,7 +30,7 @@ enum { NSJSONWritingPrettyPrinted = 1 };
 enum { NSPropertyListImmutable = 0, NSPropertyListMutableContainers = 1 };
 enum { NSPropertyListXMLFormat_v1_0 = 100, NSPropertyListBinaryFormat_v1_0 = 200 };
 
-@class NSArray, NSDictionary, NSData, NSError, NSURL, NSDate, NSSet, NSCharacterSet, NSLocale, NSMutableArray, NSMutableDictionary;
+@class NSArray, NSDictionary, NSData, NSError, NSURL, NSDate, NSSet, NSIndexSet, NSMutableIndexSet, NSCharacterSet, NSLocale, NSMutableArray, NSMutableDictionary;
 
 typedef struct {
     unsigned long state;
@@ -70,8 +70,14 @@ typedef struct {
 + (instancetype)stringWithFormat:(NSString *)format, ... NS_FORMAT_FUNCTION(1, 2);
 + (instancetype)stringWithCharacters:(const unsigned short *)c length:(NSUInteger)n;
 + (instancetype)stringWithContentsOfFile:(NSString *)path encoding:(NSStringEncoding)enc error:(NSError **)error;
++ (instancetype)stringWithContentsOfURL:(NSURL *)url encoding:(NSStringEncoding)enc error:(NSError **)error;
++ (instancetype)stringWithContentsOfURL:(NSURL *)url usedEncoding:(NSStringEncoding *)enc error:(NSError **)error;
++ (instancetype)stringWithContentsOfURL:(NSURL *)url;
 + (NSString *)pathWithComponents:(NSArray *)components;
 - (instancetype)initWithFormat:(NSString *)format, ... NS_FORMAT_FUNCTION(1, 2);
+- (instancetype)initWithContentsOfURL:(NSURL *)url encoding:(NSStringEncoding)enc error:(NSError **)error;
+- (instancetype)initWithContentsOfURL:(NSURL *)url usedEncoding:(NSStringEncoding *)enc error:(NSError **)error;
+- (instancetype)initWithContentsOfURL:(NSURL *)url;
 - (instancetype)initWithFormat:(NSString *)format arguments:(va_list)args;
 - (instancetype)initWithUTF8String:(const char *)s;
 - (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)enc;
@@ -189,6 +195,8 @@ typedef struct {
 - (NSArray *)arrayByAddingObject:(id)o;
 - (NSArray *)arrayByAddingObjectsFromArray:(NSArray *)a;
 - (NSArray *)subarrayWithRange:(NSRange)r;
+- (NSArray *)objectsAtIndexes:(NSIndexSet *)indexes;
+- (NSIndexSet *)indexesOfObjectsPassingTest:(BOOL (^)(id obj, NSUInteger idx, BOOL *stop))predicate;
 - (NSString *)componentsJoinedByString:(NSString *)s;
 - (NSArray *)sortedArrayUsingSelector:(SEL)s;
 - (NSArray *)sortedArrayUsingComparator:(NSComparator)cmp;
@@ -206,6 +214,9 @@ typedef struct {
 - (void)addObjectsFromArray:(NSArray *)a;
 - (void)insertObject:(id)o atIndex:(NSUInteger)i;
 - (void)removeObjectAtIndex:(NSUInteger)i;
+- (void)removeObjectsAtIndexes:(NSIndexSet *)indexes;
+- (void)insertObjects:(NSArray *)objects atIndexes:(NSIndexSet *)indexes;
+- (void)replaceObjectsAtIndexes:(NSIndexSet *)indexes withObjects:(NSArray *)objects;
 - (void)removeObject:(id)o;
 - (void)removeLastObject;
 - (void)removeAllObjects;
@@ -475,6 +486,8 @@ NSString *NSTemporaryDirectory(void);
 - (NSInteger)section;
 @end
 @interface NSIndexSet : NSObject <NSCopying, NSMutableCopying>
++ (instancetype)indexSet;
++ (instancetype)indexSetWithIndex:(NSUInteger)value;
 + (instancetype)indexSetWithIndexesInRange:(NSRange)r;
 - (NSUInteger)count;
 - (BOOL)containsIndex:(NSUInteger)i;

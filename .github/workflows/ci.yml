@@ -110,6 +110,17 @@ jobs:
           (cd ipa && zip -qry "$PWD/../HydrogenVM-unsigned.ipa" Payload)
           unzip -l HydrogenVM-unsigned.ipa | tail -1
           python3 ../tools/verify_ipa.py HydrogenVM-unsigned.ipa --out HydrogenVM-unsigned.manifest.json --source-commit "$(git rev-parse HEAD)"
+      - name: Upload validated unsigned device package
+        # Right after packaging, so the .ipa can be downloaded while the
+        # simulator diagnostics below are still running.
+        uses: actions/upload-artifact@v4
+        with:
+          name: HydrogenVM-device-ipa
+          if-no-files-found: error
+          path: |
+            app/HydrogenVM-unsigned.ipa
+            app/HydrogenVM-unsigned.manifest.json
+            app/HydrogenVM-unsigned.manifest.sha256
       - name: Build for simulator
         working-directory: app
         run: |
@@ -140,6 +151,20 @@ jobs:
           unzip -q AngryBirds_v1.0_os30.ipa -d build/gl-ab
           tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "$(ls -d build/gl-ab/Payload/*.app | head -1)" \
             "GPU: presented frame 600 directly" "" sim-gl-landscape-out
+      - name: Run Test all games batch workflow in simulator
+        continue-on-error: true
+        env:
+          SIMCTL_CHILD_HVM_TEST_ALL_GAMES: "1"
+          SIMCTL_CHILD_HVM_TEST_ALL_GAMES_MODE: "both"
+          SIMCTL_CHILD_HVM_TEST_ALL_GAMES_SECONDS: "5"
+          SIMCTL_CHILD_HVM_TEST_ALL_GAMES_OUT: "sim-batch-out"
+        run: |
+          mkdir -p sim-batch-out
+          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
+            "[hvm-batch-exit]" "" sim-batch-out
+          if [ -f sim-batch-out/batch_report.json ]; then
+            python3 tools/triage.py ingest sim-batch-out/batch_report.json
+          fi
       - name: Same game with GLES 1.1 emulated on an ES 2 context (simulator)
         continue-on-error: true
         env:
@@ -147,15 +172,6 @@ jobs:
         run: |
           tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "build/gl/Payload/Tiny Tower.app" \
             "GPU: presented frame 60 directly" "160,240@6" sim-gl-emu-out
-      - name: Upload validated unsigned device package
-        uses: actions/upload-artifact@v4
-        with:
-          name: HydrogenVM-device-ipa
-          if-no-files-found: error
-          path: |
-            app/HydrogenVM-unsigned.ipa
-            app/HydrogenVM-unsigned.manifest.json
-            app/HydrogenVM-unsigned.manifest.sha256
       - name: Publish report to ci-reports branch
         if: always()
         run: |
@@ -166,6 +182,7 @@ jobs:
           mkdir -p report/simulator-gl && cp -R sim-gl-out/. report/simulator-gl/ 2>/dev/null || true
           mkdir -p report/simulator-gl-emu && cp -R sim-gl-emu-out/. report/simulator-gl-emu/ 2>/dev/null || true
           mkdir -p report/simulator-gl-landscape && cp -R sim-gl-landscape-out/. report/simulator-gl-landscape/ 2>/dev/null || true
+          mkdir -p report/simulator-batch && cp -R sim-batch-out/. report/simulator-batch/ 2>/dev/null || true
           tools/publish_report.sh report macos
       - name: Upload results
         if: always()

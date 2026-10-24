@@ -126,7 +126,7 @@ v glBindRenderbufferOES(E target, U renderbuffer) [es1]
 E glCheckFramebufferStatusOES(E target) [es1]
 v glDeleteFramebuffersOES(S n, p framebuffers) [es1]
 v glDeleteRenderbuffersOES(S n, p renderbuffers) [es1]
-v glFramebufferRenderbufferOES(E target, E attachment, E rbtarget, U renderbuffer) [es1]
+!v glFramebufferRenderbufferOES(E target, E attachment, E rbtarget, U renderbuffer) [es1]
 v glFramebufferTexture2DOES(E target, E attachment, E textarget, U texture, I level) [es1]
 v glGenFramebuffersOES(S n, w framebuffers) [es1]
 v glGenRenderbuffersOES(S n, w renderbuffers) [es1]
@@ -160,7 +160,7 @@ v glDeleteShader(U shader) [es2]
 v glDetachShader(U program, U shader) [es2]
 v glDisableVertexAttribArray(U index) [es2]
 v glEnableVertexAttribArray(U index) [es2]
-v glFramebufferRenderbuffer(E target, E attachment, E rbtarget, U renderbuffer)
+!v glFramebufferRenderbuffer(E target, E attachment, E rbtarget, U renderbuffer)
 v glFramebufferTexture2D(E target, E attachment, E textarget, U texture, I level)
 v glGenFramebuffers(S n, w framebuffers)
 v glGenRenderbuffers(S n, w renderbuffers)

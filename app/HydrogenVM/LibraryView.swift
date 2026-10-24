@@ -1,10 +1,12 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+extension HVMAppInfo: @unchecked Sendable {}
+
 /// Installed apps live in Documents/Apps/<bundle id>/<Name>.app, with the
 /// app's sandbox (Documents/, Library/, tmp/) beside the bundle. Any .ipa
 /// dropped into Documents through Files or Finder is imported on refresh.
-struct InstalledApp: Identifiable, Hashable {
+struct InstalledApp: Identifiable, Hashable, Sendable {
     let info: HVMAppInfo
     var id: String { info.bundlePath }
     /// Directory that contains the `.app` plus the guest sandbox (`Documents/`, `Library/`, `tmp/`).
@@ -124,6 +126,7 @@ struct LibraryView: View {
     @State private var running: InstalledApp?
     @State private var browsing: InstalledApp?
     @State private var keepGoing = false
+    @State private var testingAllGames = false
 
     var body: some View {
         NavigationStack {
@@ -167,6 +170,10 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu("Options", systemImage: "gearshape") {
+                        Button("Test All Games", systemImage: "play.grid.2x2") {
+                            testingAllGames = true
+                        }
+                        Divider()
                         Toggle("Continue past missing functions", isOn: $keepGoing)
                     }
                 }
@@ -184,6 +191,38 @@ struct LibraryView: View {
                 Button("OK") { store.lastError = nil }
             } message: { Text(store.lastError ?? "") }
             .task {
+                // Headless Test All Games CI hook
+                if ProcessInfo.processInfo.environment["HVM_TEST_ALL_GAMES"] != nil {
+                    store.refresh()
+                    let runner = BatchTestRunner()
+                    let seconds = Int(ProcessInfo.processInfo.environment["HVM_TEST_ALL_GAMES_SECONDS"] ?? "10") ?? 10
+                    let modeStr = (ProcessInfo.processInfo.environment["HVM_TEST_ALL_GAMES_MODE"] ?? "both").lowercased()
+                    let mode = BatchRendererMode(rawValue: modeStr) ?? .both
+                    let options = BatchTestOptions(secondsPerApp: seconds, rendererMode: mode, keepGoing: true)
+                    RunModel.console("[hvm-batch-start] starting headless batch test for \(store.apps.filter(\.info.runnable).count) apps")
+                    runner.startNewBatch(apps: store.apps, options: options)
+
+                    while runner.status == .running {
+                        try? await Task.sleep(for: .milliseconds(500))
+                    }
+
+                    let reportsDir = BatchTestRunner.reportsDir
+                    try? FileManager.default.createDirectory(at: reportsDir, withIntermediateDirectories: true)
+
+                    let jsonDict = runner.buildCompatReportJSON()
+                    if let jsonData = try? JSONSerialization.data(withJSONObject: jsonDict, options: [.prettyPrinted, .sortedKeys]) {
+                        try? jsonData.write(to: reportsDir.appending(path: "batch_report.json"), options: .atomic)
+                        try? jsonData.write(to: reportsDir.appending(path: "latest_batch_report.json"), options: .atomic)
+                    }
+
+                    let mdText = runner.buildMarkdownReport()
+                    try? mdText.write(to: reportsDir.appending(path: "batch_report.md"), atomically: true, encoding: .utf8)
+                    try? mdText.write(to: reportsDir.appending(path: "latest_batch_report.md"), atomically: true, encoding: .utf8)
+
+                    RunModel.console("[hvm-batch-exit] batch test finished with \(runner.results.count) results")
+                    return
+                }
+
                 // CI hook (see RunModel.automation): launch an installed app by bundle id.
                 if let id = ProcessInfo.processInfo.environment["HVM_AUTORUN"], running == nil {
                     store.refresh()
@@ -199,6 +238,9 @@ struct LibraryView: View {
             }
             .sheet(item: $browsing) { app in
                 FileBrowserView(app: app)
+            }
+            .sheet(isPresented: $testingAllGames) {
+                BatchTestView(installedApps: store.apps)
             }
         }
     }

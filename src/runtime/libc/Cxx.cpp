@@ -73,6 +73,11 @@ void registerCxxRuntime(Process& p) {
                           "__ZSt17__throw_bad_allocv", "__ZSt16__throw_bad_castv", "__ZSt19__throw_range_errorPKc",
                           "__ZSt21__throw_bad_exceptionv", "__ZSt25__throw_bad_function_callv"})
         p.def<&x_throw_msg>(n);
+    p.def<+[](Ctx&) { throw std::runtime_error("C++ library error: std::bad_typeid (typeid of a null pointer)"); }>("___cxa_bad_typeid");
+    p.def<+[](Ctx&) { throw std::runtime_error("C++ library error: std::bad_cast (failed dynamic_cast to a reference)"); }>("___cxa_bad_cast");
+    // Exception-object destructors with nothing to release.
+    for (const char* n : {"__ZNSt8bad_castD1Ev", "__ZNSt8bad_castD2Ev", "__ZNSt10bad_typeidD1Ev", "__ZNSt10bad_typeidD2Ev"})
+        p.def<+[](Ctx&, GuestPtr self) { return self; }>(n);
 }
 
 } // namespace Hydrogen::Runtime

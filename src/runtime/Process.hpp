@@ -182,6 +182,21 @@ public:
     // Guest instructions retired by every thread so far (approximate while running).
     uint64_t guestInstructions();
 
+    // ---- guest file open history ring (~32 entries)
+    struct FileRecord {
+        uint64_t handle = 0;
+        std::string path;
+        std::string api;
+        int hostResult = 0;
+        int64_t size = -1;
+        int64_t bytesRead = 0;
+        bool isOpen = true;
+    };
+    uint64_t recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead = 0, bool isOpen = true);
+    void updateFileRead(uint64_t handle, int64_t bytesRead);
+    void recordFileClose(uint64_t handle);
+    std::vector<FileRecord> fileRing() const;
+
     // ---- results
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
@@ -375,6 +390,9 @@ private:
     std::array<uint32_t, 16> crashRegisters_{};
     mutable std::mutex logRingMu_;
     mutable std::deque<std::string> logRing_;
+    mutable std::mutex fileRingMu_;
+    mutable std::deque<FileRecord> fileRing_;
+    uint64_t nextFileHandle_ = 0;
     void captureCrash(const CPU::Cpu& c, const std::string& kind, const std::string& detail);
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;

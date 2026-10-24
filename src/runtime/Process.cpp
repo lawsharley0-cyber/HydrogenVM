@@ -934,12 +934,55 @@ std::string Process::crashBundle() {
         std::lock_guard<std::mutex> lk(logRingMu_);
         for (size_t i = 0; i < logRing_.size(); ++i) out << (i ? "," : "") << quote(logRing_[i]);
     }
+    out << "],\"fileHistory\":[";
+    {
+        std::lock_guard<std::mutex> lk(fileRingMu_);
+        for (size_t i = 0; i < fileRing_.size(); ++i) {
+            const auto& f = fileRing_[i];
+            out << (i ? "," : "")
+                << "{\"path\":" << quote(f.path)
+                << ",\"api\":" << quote(f.api)
+                << ",\"hostResult\":" << f.hostResult
+                << ",\"size\":" << f.size
+                << ",\"bytesRead\":" << f.bytesRead
+                << ",\"isOpen\":" << (f.isOpen ? "true" : "false") << "}";
+        }
+    }
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count();
     out << "],\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
     return out.str();
 }
 
 // ------------------------------------------------------------ diagnostics ---
+
+uint64_t Process::recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead, bool isOpen) {
+    std::lock_guard<std::mutex> lk(fileRingMu_);
+    if (fileRing_.size() >= 32) fileRing_.pop_front();
+    const uint64_t h = ++nextFileHandle_;
+    fileRing_.push_back({h, path, api, hostResult, size, bytesRead, isOpen});
+    return h;
+}
+
+void Process::updateFileRead(uint64_t handle, int64_t bytesRead) {
+    if (!handle) return;
+    std::lock_guard<std::mutex> lk(fileRingMu_);
+    for (auto& r : fileRing_) {
+        if (r.handle == handle) { r.bytesRead = bytesRead; break; }
+    }
+}
+
+void Process::recordFileClose(uint64_t handle) {
+    if (!handle) return;
+    std::lock_guard<std::mutex> lk(fileRingMu_);
+    for (auto& r : fileRing_) {
+        if (r.handle == handle) { r.isOpen = false; break; }
+    }
+}
+
+std::vector<Process::FileRecord> Process::fileRing() const {
+    std::lock_guard<std::mutex> lk(fileRingMu_);
+    return std::vector<FileRecord>(fileRing_.begin(), fileRing_.end());
+}
 
 void Process::log(LogLevel lvl, const std::string& msg) const {
     {
@@ -948,6 +991,7 @@ void Process::log(LogLevel lvl, const std::string& msg) const {
         for (std::string line; std::getline(lines, line);) {
             if (logRing_.size() == 2000) logRing_.pop_front();
             logRing_.push_back(line.substr(0, 4096));
+            CPU::Engine::recordLogLineAsyncSafe(line.data(), line.size());   // for host-fault diagnostics
         }
     }
     if (cfg_.log) { cfg_.log(lvl, msg); return; }

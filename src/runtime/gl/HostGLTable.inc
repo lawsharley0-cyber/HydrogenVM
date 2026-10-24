@@ -883,12 +883,6 @@ void hg_glDeleteRenderbuffersOES(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) 
     hc->fn.glDeleteRenderbuffersOES(a_n, HG_PTR(x, a_renderbuffers));
     if (hgDebug) hgAfter(x, hc, "glDeleteRenderbuffersOES", [&] { return hgArgs(a_n, a_renderbuffers); });
 }
-void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t a_target, uint32_t a_attachment, uint32_t a_rbtarget, uint32_t a_renderbuffer) {
-    HostContext* hc = hgCurrent(x);
-    if (!hc || !hc->fn.glFramebufferRenderbufferOES) { hgMissing(x, hc, "glFramebufferRenderbufferOES"); return; }
-    hc->fn.glFramebufferRenderbufferOES(a_target, a_attachment, a_rbtarget, a_renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(a_target, a_attachment, a_rbtarget, a_renderbuffer); });
-}
 void hg_glFramebufferTexture2DOES(Ctx& x, uint32_t a_target, uint32_t a_attachment, uint32_t a_textarget, uint32_t a_texture, int32_t a_level) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glFramebufferTexture2DOES) { hgMissing(x, hc, "glFramebufferTexture2DOES"); return; }
@@ -1073,12 +1067,6 @@ void hg_glEnableVertexAttribArray(Ctx& x, uint32_t a_index) {
     if (!hc || !hc->fn.glEnableVertexAttribArray) { hgMissing(x, hc, "glEnableVertexAttribArray"); return; }
     hc->fn.glEnableVertexAttribArray(a_index);
     if (hgDebug) hgAfter(x, hc, "glEnableVertexAttribArray", [&] { return hgArgs(a_index); });
-}
-void hg_glFramebufferRenderbuffer(Ctx& x, uint32_t a_target, uint32_t a_attachment, uint32_t a_rbtarget, uint32_t a_renderbuffer) {
-    HostContext* hc = hgCurrent(x);
-    if (!hc || !hc->fn.glFramebufferRenderbuffer) { hgMissing(x, hc, "glFramebufferRenderbuffer"); return; }
-    hc->fn.glFramebufferRenderbuffer(a_target, a_attachment, a_rbtarget, a_renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(a_target, a_attachment, a_rbtarget, a_renderbuffer); });
 }
 void hg_glFramebufferTexture2D(Ctx& x, uint32_t a_target, uint32_t a_attachment, uint32_t a_textarget, uint32_t a_texture, int32_t a_level) {
     HostContext* hc = hgCurrent(x);

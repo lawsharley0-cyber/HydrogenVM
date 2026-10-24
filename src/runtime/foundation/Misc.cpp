@@ -1042,6 +1042,28 @@ id f_userName(Ctx& x) { return makeString(x, "mobile"); }
 
 // Exported helpers ------------------------------------------------------------
 
+id makeIndexSet(Ctx& x, const std::set<uint32_t>& indices, bool owned, bool isMutable) {
+    const Class cls = isMutable ? M(x).mutableIndexSet : M(x).indexSet;
+    const id o = newIndexSet(x, cls, indices);
+    return owned ? o : autoreleased(x, o);
+}
+
+std::vector<uint32_t> indexSetIndices(Ctx& x, id indexSet) {
+    if (!indexSet) return {};
+    if (IndexSetData* d = rt(x).hostIf<IndexSetData>(indexSet)) {
+        return std::vector<uint32_t>(d->idx.begin(), d->idx.end());
+    }
+    std::vector<uint32_t> result;
+    const uint32_t count = uint32_t(rt(x).send(x.cpu, indexSet, "count"));
+    if (count == 0) return result;
+    uint32_t idx = uint32_t(rt(x).send(x.cpu, indexSet, "firstIndex"));
+    while (idx != kNotFound && result.size() < count) {
+        result.push_back(idx);
+        idx = uint32_t(rt(x).send(x.cpu, indexSet, "indexGreaterThanIndex:", {idx}));
+    }
+    return result;
+}
+
 bool characterSetContains(Ctx& x, id set, char16_t c) {
     if (CharSetData* d = csd(x, set)) return d->test(c);
     if (!set) return false;

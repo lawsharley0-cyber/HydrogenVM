@@ -42,7 +42,7 @@ for _ in $(seq 1 240); do
   if [ $shot = 0 ] && grep -q '\[autotap\]' "$LOG" 2>/dev/null; then
     sleep 0.2; xcrun simctl io "$UDID" screenshot "$OUTDIR/screen.png" >/dev/null 2>&1 && shot=1
   fi
-  grep -q '\[hvm-exit\]' "$LOG" 2>/dev/null && break
+  if grep -qE '\[(hvm-exit|hvm-batch-exit)\]' "$LOG" 2>/dev/null; then break; fi
 done
 [ $shot = 1 ] || xcrun simctl io "$UDID" screenshot "$OUTDIR/screen.png" >/dev/null 2>&1
 sleep 1
@@ -50,6 +50,9 @@ kill $LAUNCH 2>/dev/null || true
 xcrun simctl terminate "$UDID" com.lfull.HydrogenVM 2>/dev/null || true
 # Host-side crash logs, if the emulator itself crashed.
 cp ~/Library/Logs/DiagnosticReports/HydrogenVM* "$OUTDIR/" 2>/dev/null || true
+if [ -d "$DATA/Documents/TestReports" ]; then
+  cp -R "$DATA/Documents/TestReports/." "$OUTDIR/" 2>/dev/null || true
+fi
 
 echo "------ console (last 60 lines) ------"
 tail -60 "$LOG"
