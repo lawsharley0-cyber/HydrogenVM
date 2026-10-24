@@ -24,11 +24,11 @@
   "skipped": [
     {
       "name": "synthetic-1ch-22050.caf",
-      "reason": "[caf @ 0x5592957d50c0] muxing codec currently unsupported\n[out#0/caf @ 0x5592957d4500] Could not write header (incorrect codec parameters ?): Not yet implemented in FFmpeg, patches welcome\nError while filtering: Not yet implemented in FFmpeg, patches welcome\n[out#0/caf @ 0x5592957d4500] Nothing was "
+      "reason": "[caf @ 0x5563ba55f0c0] muxing codec currently unsupported\n[out#0/caf @ 0x5563ba55e500] Could not write header (incorrect codec parameters ?): Not yet implemented in FFmpeg, patches welcome\nError while filtering: Not yet implemented in FFmpeg, patches welcome\n[out#0/caf @ 0x5563ba55e500] Nothing was "
     },
     {
       "name": "synthetic-2ch-44100.caf",
-      "reason": "[caf @ 0x55c5fc7e10c0] muxing codec currently unsupported\n[out#0/caf @ 0x55c5fc7e0500] Could not write header (incorrect codec parameters ?): Not yet implemented in FFmpeg, patches welcome\nError while filtering: Not yet implemented in FFmpeg, patches welcome\n[out#0/caf @ 0x55c5fc7e0500] Nothing was "
+      "reason": "[caf @ 0x5600a74690c0] muxing codec currently unsupported\n[out#0/caf @ 0x5600a7468500] Could not write header (incorrect codec parameters ?): Not yet implemented in FFmpeg, patches welcome\nError while filtering: Not yet implemented in FFmpeg, patches welcome\n[out#0/caf @ 0x5600a7468500] Nothing was "
     }
   ],
   "ok": true
