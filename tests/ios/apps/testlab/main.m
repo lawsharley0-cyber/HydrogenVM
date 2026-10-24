@@ -29,8 +29,15 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#include <stdio.h>
+#include <errno.h>
+#include <unistd.h>
 #import <QuartzCore/QuartzCore.h>
 #include <pthread.h>
+
+extern FILE *popen(const char *, const char *);
+extern int pclose(FILE *);
+extern unsigned int alarm(unsigned int);
 #include <time.h>
 #import <OpenGLES/EAGL.h>
 #include <OpenGLES/ES2/gl.h>
@@ -888,15 +895,25 @@ static TLResult *runCaseH(void) {
     r.diagnostics[@"removed"] = @(removed);
     r.diagnostics[@"gone"] = @(gone);
 
-    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, gone=1";
-    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, gone=%d",
-                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, gone];
+    // 7. Check POSIX missing imports (popen, pclose, alarm)
+    errno = 0;
+    FILE *pf = popen("ls", "r");
+    BOOL popenOk = (pf == NULL && errno == 78 /* ENOSYS */);
+    errno = 0;
+    int pc = pclose((FILE*)0x1234);
+    BOOL pcloseOk = (pc == -1 && errno == 10 /* ECHILD */);
+    unsigned int al = alarm(5);
+    BOOL alarmOk = (al == 0);
 
-    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && removed && gone) {
+    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, gone=1, posixOk=1";
+    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, gone=%d, posixOk=%d",
+                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, gone, (popenOk && pcloseOk && alarmOk)];
+
+    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && removed && gone && popenOk && pcloseOk && alarmOk) {
         r.status = @"passed";
     } else {
         r.status = @"failed";
-        r.reason = @"File system sandbox operation failed";
+        r.reason = [NSString stringWithFormat:@"FS failed or POSIX failed (popen=%d, pclose=%d, alarm=%d)", popenOk, pcloseOk, alarmOk];
     }
 
     clearCheckpoint();
