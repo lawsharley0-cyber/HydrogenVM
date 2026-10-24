@@ -23,12 +23,16 @@ struct BatchTestOptions: Codable, Sendable {
     var rendererMode: BatchRendererMode = .both
     var keepGoing: Bool = true
     var resetSandbox: Bool = false
+    var exploreEnabled: Bool = true
+    var exploreTime: Int = 30
 
-    init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false) {
+    init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false, exploreEnabled: Bool = true, exploreTime: Int = 30) {
         self.secondsPerApp = secondsPerApp
         self.rendererMode = rendererMode
         self.keepGoing = keepGoing
         self.resetSandbox = resetSandbox
+        self.exploreEnabled = exploreEnabled
+        self.exploreTime = exploreTime
     }
 }
 
@@ -80,8 +84,9 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
     var logs: String
     /// The last files the game opened (path, result, size, bytes read), JSON, from the crash bundle.
     var fileHistory: String? = nil
+    var explore: ExploreResult?
 
-    init(bundleId: String, name: String, version: String, minOS: String, mode: String, crashed: Bool, exitCode: Int, summary: String, signature: String? = nil, exceptionKind: String? = nil, crashReport: String? = nil, perf: BatchPerf = BatchPerf(), frame: BatchFrameInfo = BatchFrameInfo(), keepGoing: Bool = true, logs: String = "") {
+    init(bundleId: String, name: String, version: String, minOS: String, mode: String, crashed: Bool, exitCode: Int, summary: String, signature: String? = nil, exceptionKind: String? = nil, crashReport: String? = nil, perf: BatchPerf = BatchPerf(), frame: BatchFrameInfo = BatchFrameInfo(), keepGoing: Bool = true, logs: String = "", explore: ExploreResult? = nil) {
         self.bundleId = bundleId
         self.name = name
         self.version = version
@@ -97,6 +102,7 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
         self.frame = frame
         self.keepGoing = keepGoing
         self.logs = logs
+        self.explore = explore
     }
 }
 
@@ -476,8 +482,47 @@ final class BatchTestRunner {
             let durationSeconds = Double(self.options.secondsPerApp)
             let deadline = Date().addingTimeInterval(durationSeconds)
 
-            while Date() < deadline && !exitBox.exited && self.status == .running {
-                try? await Task.sleep(for: .milliseconds(250))
+            var initialLogs: [(String, HVMLogLevel)] = []
+            var explorePhase: ExplorePhase? = nil
+            if self.options.exploreEnabled {
+                explorePhase = ExplorePhase(session: s, options: self.options, bundleId: target.app.info.bundleIdentifier) { [weak self] in self?.lastCapturedFrame }
+
+                let originalOnLog = s.onLog
+                s.onLog = { [weak self] line, level in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.keepLog(line)
+                        if line.contains("GPU: presented frame") { self.gpuSampleLines.append(line) }
+
+                        if let ep = explorePhase {
+                            ep.recordLogLine(line, level: level)
+                        } else {
+                            initialLogs.append((line, level))
+                        }
+                    }
+                }
+
+                while Date() < deadline && !exitBox.exited && self.status == .running {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+
+                if !exitBox.exited && self.status == .running {
+                    let exploreDuration = Double(self.options.exploreTime)
+                    let exploreDeadline = Date().addingTimeInterval(exploreDuration)
+
+                    if let ep = explorePhase {
+                        ep.seedKnownProblems(from: initialLogs)
+                        self.progressText = "Exploring \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
+                        await ep.run(deadline: exploreDeadline, exitBox: exitBox)
+                    }
+                }
+
+                s.onLog = originalOnLog
+
+            } else {
+                while Date() < deadline && !exitBox.exited && self.status == .running {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
             }
 
             if !exitBox.exited && self.status == .running {
@@ -554,7 +599,8 @@ final class BatchTestRunner {
                 perf: BatchPerf(framesPresented: Int(presented), fps: self.currentFPS, frameTimeP95Ms: p95Ms),
                 frame: BatchFrameInfo(signal: frameSig.rawValue, thumbnailPath: thumbRelPath),
                 keepGoing: self.options.keepGoing,
-                logs: logExcerpt
+                logs: logExcerpt,
+                explore: explorePhase?.buildResult(crashed: isCrashed)
             )
 
             var finished = appResult
@@ -615,6 +661,13 @@ final class BatchTestRunner {
             if let files = r.fileHistory, let data = files.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: data) { dict["fileHistory"] = parsed }
             if let ex = r.exceptionKind { dict["exceptionKind"] = ex }
+
+            if let explore = r.explore {
+                if let expData = try? JSONEncoder().encode(explore),
+                   let expParsed = try? JSONSerialization.jsonObject(with: expData) {
+                    dict["explore"] = expParsed
+                }
+            }
             return dict
         }
 
@@ -650,11 +703,21 @@ final class BatchTestRunner {
         let wrongSignal = results.filter { !$0.crashed && $0.frame.signal != "ok" }.count
         let passed = total - crashed - wrongSignal
 
+        let explored = results.filter { $0.explore?.enabled == true }.count
+        let exploreCrashed = results.filter { $0.explore?.enabled == true && $0.explore?.crashed == true }.count
+        let exploreProblems = results.reduce(0) { $0 + ($1.explore?.newProblems.count ?? 0) }
+
         md += "### Summary\n\n"
         md += "- **Total Tests Run:** \(total)\n"
         md += "- **Passed:** \(passed)\n"
         md += "- **Crashed:** \(crashed)\n"
-        md += "- **Wrong Output:** \(wrongSignal)\n\n"
+        md += "- **Wrong Output:** \(wrongSignal)\n"
+        if explored > 0 {
+            md += "- **Explored:** \(explored)\n"
+            md += "- **Explore Crashes:** \(exploreCrashed)\n"
+            md += "- **Explore Problems Discovered:** \(exploreProblems)\n"
+        }
+        md += "\n"
 
         md += "### App Results\n\n"
         md += "| App | Mode | Status | FPS | P95 (ms) | Signal | Summary |\n"
