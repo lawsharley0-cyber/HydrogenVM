@@ -393,10 +393,11 @@ void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
     hc->fn.glGetIntegerv(pname, out);
     if (pname == kMaxTextureSize) *out = std::min(*out, 4096);   // what iOS devices of this era report
     if (pname == 0x8DF9 /*GL_NUM_SHADER_BINARY_FORMATS*/) *out = 0;
-    if (pname == 0x8D57 /*GL_MAX_SAMPLES_APPLE*/) *out = 4;
-    if (pname == 0x851C /*GL_MAX_CUBE_MAP_TEXTURE_SIZE*/) *out = 4096;
-    if (pname == 0x8B4C /*GL_MAX_VERTEX_ATTRIBS*/) *out = 16;
-    if (pname == 0x8872 /*GL_MAX_TEXTURE_IMAGE_UNITS*/) *out = 8;
+    // iPhone 5-era limits, never above what the host can actually do.
+    if (pname == 0x8D57 /*GL_MAX_SAMPLES_APPLE*/) *out = std::min(*out, 4);
+    if (pname == 0x851C /*GL_MAX_CUBE_MAP_TEXTURE_SIZE*/) *out = std::min(*out, 4096);
+    if (pname == 0x8B4C /*GL_MAX_VERTEX_ATTRIBS*/) *out = std::min(*out, 16);
+    if (pname == 0x8872 /*GL_MAX_TEXTURE_IMAGE_UNITS*/) *out = std::min(*out, 8);
 
     if (pname == kImplementationColorReadType) *out = kUnsignedByte;
     if (pname == kImplementationColorReadFormat) *out = kRgba;
