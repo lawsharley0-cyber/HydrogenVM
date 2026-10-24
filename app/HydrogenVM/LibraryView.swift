@@ -73,7 +73,22 @@ final class LibraryStore {
         let root = Self.appsDir.path(percentEncoded: false)
         Task.detached {
             var message: String?
-            do { _ = try HVMEngine.importIPA(staged.path(percentEncoded: false), intoDirectory: root) }
+            do {
+                let info = try HVMEngine.importIPA(staged.path(percentEncoded: false), intoDirectory: root)
+                let keepIpa = UserDefaults.standard.bool(forKey: "keepIpaForReinstall")
+                if keepIpa {
+                    let bundleId = info.bundleIdentifier
+                    if let sha256 = staged.sha256 {
+                        let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                        let ipaDir = appSupport.appendingPathComponent("HydrogenVM/IPAs/\(bundleId)", isDirectory: true)
+                        try FileManager.default.createDirectory(at: ipaDir, withIntermediateDirectories: true)
+                        let targetIPA = ipaDir.appendingPathComponent("\(sha256).ipa")
+                        // Replace if exists (e.g. reinstall over same version)
+                        try? FileManager.default.removeItem(at: targetIPA)
+                        try FileManager.default.copyItem(at: staged, to: targetIPA)
+                    }
+                }
+            }
             catch { message = (error as NSError).localizedDescription }
             try? FileManager.default.removeItem(at: staged)
             let failure = message
@@ -87,6 +102,10 @@ final class LibraryStore {
 
     func delete(_ app: InstalledApp) {
         try? FileManager.default.removeItem(at: app.homeURL)
+        if let appSupport = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
+            let ipaDir = appSupport.appendingPathComponent("HydrogenVM/IPAs/\(app.info.bundleIdentifier)", isDirectory: true)
+            try? FileManager.default.removeItem(at: ipaDir)
+        }
         reloadList()
     }
 
@@ -121,6 +140,7 @@ struct AppIcon: View {
 }
 
 struct LibraryView: View {
+    @AppStorage("keepIpaForReinstall") private var keepIpaForReinstall = true
     @State private var store = LibraryStore()
     @State private var pickingFile = false
     @State private var running: InstalledApp?
@@ -158,6 +178,8 @@ struct LibraryView: View {
                                     store.resetData(app)
                                 } delete: {
                                     store.delete(app)
+                                } reinstall: { url in
+                                    store.importIPA(at: url)
                                 }
                             }
                             .onDelete { idx in idx.map { store.apps[$0] }.forEach(store.delete) }
@@ -175,6 +197,7 @@ struct LibraryView: View {
                         }
                         Divider()
                         Toggle("Continue past missing functions", isOn: $keepGoing)
+                        Toggle("Keep .ipa for reinstall", isOn: $keepIpaForReinstall)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -253,6 +276,38 @@ private struct LibraryAppRow: View {
     let browse: () -> Void
     let reset: () -> Void
     let delete: () -> Void
+    let reinstall: (URL) -> Void
+
+    @State private var showingReinstallConfirm = false
+    @State private var showingReinstallMissing = false
+    @State private var pickingReinstallIPA = false
+    @State private var verifyResult: VerificationResult? = nil
+    @State private var showingVerifyResult = false
+    @State private var verifyError: String? = nil
+    @State private var showingVerifyError = false
+
+    private var storedIPAURL: URL? {
+        guard let appSupport = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return nil }
+        let ipaDir = appSupport.appendingPathComponent("HydrogenVM/IPAs/\(app.info.bundleIdentifier)", isDirectory: true)
+        let files = (try? FileManager.default.contentsOfDirectory(at: ipaDir, includingPropertiesForKeys: nil)) ?? []
+        return files.first { $0.pathExtension == "ipa" }
+    }
+
+    private func doVerify() {
+        guard let ipa = storedIPAURL else {
+            verifyError = "Stored .ipa missing. Cannot verify."
+            showingVerifyError = true
+            return
+        }
+        do {
+            let res = try verifyAppFiles(appBundleURL: app.bundleDir, ipaURL: ipa)
+            verifyResult = res
+            showingVerifyResult = true
+        } catch {
+            verifyError = "Verification failed: \(error.localizedDescription)"
+            showingVerifyError = true
+        }
+    }
 
     var body: some View {
         Button(action: open) {
@@ -265,8 +320,51 @@ private struct LibraryAppRow: View {
         }
         .contextMenu {
             Button("Files", systemImage: "folder", action: browse)
+            Button("Verify files", systemImage: "checkmark.seal", action: doVerify)
+            Button("Reinstall", systemImage: "arrow.down.app") {
+                if storedIPAURL != nil {
+                    showingReinstallConfirm = true
+                } else {
+                    showingReinstallMissing = true
+                }
+            }
             Button("Reset App Data", systemImage: "arrow.counterclockwise", action: reset)
             Button("Delete", systemImage: "trash", role: .destructive, action: delete)
+        }
+        .confirmationDialog("Reinstall \(app.title)?", isPresented: $showingReinstallConfirm, titleVisibility: .visible) {
+            Button("Reinstall", role: .destructive) {
+                if let ipa = storedIPAURL { reinstall(ipa) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Your saves are kept.") }
+        .alert("Stored .ipa missing", isPresented: $showingReinstallMissing) {
+            Button("Choose .ipa…") { pickingReinstallIPA = true }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Reinstalling needs the original .ipa. Choose it from your files.") }
+        .fileImporter(isPresented: $pickingReinstallIPA, allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .zip, .zip]) { result in
+            if case .success(let url) = result { reinstall(url) }
+        }
+        .alert("Verify failed", isPresented: $showingVerifyError) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(verifyError ?? "") }
+        .alert(verifyResult?.mismatched.isEmpty == true && verifyResult?.missing.isEmpty == true ? "All \(verifyResult?.matchCount ?? 0) files match" : "Verification Failed", isPresented: $showingVerifyResult, presenting: verifyResult) { res in
+            if !res.mismatched.isEmpty || !res.missing.isEmpty {
+                Button("Reinstall") {
+                    if storedIPAURL != nil { showingReinstallConfirm = true } else { showingReinstallMissing = true }
+                }
+                Button("Cancel", role: .cancel) {}
+            } else {
+                Button("OK", role: .cancel) {}
+            }
+        } message: { res in
+            if !res.mismatched.isEmpty || !res.missing.isEmpty {
+                let m1 = res.missing.isEmpty ? "" : "\(res.missing.count) missing"
+                let m2 = res.mismatched.isEmpty ? "" : "\(res.mismatched.count) mismatched"
+                let both = [m1, m2].filter { !$0.isEmpty }.joined(separator: ", ")
+                Text("\(both). Your saves are kept.")
+            } else {
+                Text("Your saves are kept.")
+            }
         }
     }
 }
