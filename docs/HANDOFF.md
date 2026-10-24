@@ -1,5 +1,25 @@
 # HydrogenVM — handoff (2026-10-20)
 
+## Clash continuation — October 24, 2026
+
+The owner explicitly prioritizes core offline Clash functionality. Draft
+[PR #138](https://github.com/lawsharley0-cyber/HydrogenVM/pull/138), branch
+`codex/clash-offline-continuation`, checkpoints the embedded backend and local
+Gemini work. Read [current evidence](clash-royale/PROGRESS.md) first. Native NPC
+victory and saved 1/7 progress were reproduced on Linux, not on a newly signed
+iPhone build. Chest collection remains blocked: StartRewardClaim=503 marks the
+chest claimed, but delivery of LogicClaimRewardCommand=213 is still missing.
+Capture now retains the previous checkpoint while isClaimingReward is true;
+older half-claimed saves need explicit recovery research, not flag resets.
+
+Next: integrate current main without losing local work, implement and verify the
+reward transaction, then collect/relaunch and continue native NPC battles. Review
+experimental trophy formulas/guest trophy writes before treating arena coverage
+as faithful. Intermittent sound, King cannon motion, absent princesses and UI
+alignment are deferred owner reports, not resolved issues. No assets/private
+saves are in the PR. Do not merge the draft or equate its unit tests with a
+complete playable game.
+
 ## Current continuation — October 22, 2026
 
 Integration is `main`. Use a topic branch and a draft PR; the owner integrates
