@@ -3954,6 +3954,28 @@ int runFullSubsystemTests() {
               "Process::hostPath and guestPath perform 300-char round trips with virtual short paths and no double mapping");
     }
 
+    // The iPhone app passes directory URL paths: trailing '/', and /private/var
+    // spellings mixed with /var. Joins must keep their '/' (device regression:
+    // ".../<UUID>AngryBirds.app/data/...").
+    {
+        std::error_code ec;
+        const std::string root = "/tmp/hvm_paths_slash/private/var/mobile/Containers/X/Documents/Apps/com.test.app";
+        std::filesystem::create_directories(root + "/Game.app", ec);
+        ProcessConfig c;
+        c.homePath = root + "/";
+        c.bundlePath = root + "/Game.app/";
+        Process pp(c);
+        const std::string gh = pp.guestHomePath(), gb = pp.guestBundlePath();
+        bool ok = gb == gh + "/Game.app" && pp.bundlePath() == root + "/Game.app" && pp.homePath() == root;
+        ok &= pp.guestPath(root + "/Game.app/data/a.png") == gb + "/data/a.png";
+        ok &= pp.guestPath(root + "/Documents/s.dat") == gh + "/Documents/s.dat";
+        ok &= pp.hostPath(gb + "/data/a.png") == root + "/Game.app/data/a.png";
+        ok &= pp.hostPath(gh + "/Documents/s.dat") == root + "/Documents/s.dat";
+        ok &= pp.hostPath("/private" + gh + "/Documents/s.dat") == root + "/Documents/s.dat";
+        if (!ok) std::printf("    gh=%s gb=%s g(res)=%s\n", gh.c_str(), gb.c_str(), pp.guestPath(root + "/Game.app/data/a.png").c_str());
+        check(ok, "Path mapping keeps '/' when the app passes paths with a trailing slash, and accepts /private/var spellings");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

@@ -111,7 +111,12 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     staticTop_ = kStaticBase;
     staticEnd_ = kStaticBase + (1u << 20);
 
-    homePath_ = cfg_.homePath.empty() ? fs::path(cfg_.bundlePath).parent_path().string() : cfg_.homePath;
+    // The app passes directory URLs' paths, which end in '/'. Path mapping joins
+    // prefixes with the rest of a path, so keep both without a trailing slash
+    // (a trailing slash here turned ".../Documents" into "<UUID>Documents").
+    auto trimSlash = [](std::string s) { while (s.size() > 1 && s.back() == '/') s.pop_back(); return s; };
+    cfg_.bundlePath = trimSlash(cfg_.bundlePath);
+    homePath_ = trimSlash(cfg_.homePath.empty() ? fs::path(cfg_.bundlePath).parent_path().string() : cfg_.homePath);
     std::error_code ec;
     for (const char* d : {"Documents", "Library", "Library/Caches", "Library/Preferences", "tmp"})
         fs::create_directories(fs::path(homePath_) / d, ec);
@@ -506,87 +511,47 @@ void Process::setupEnvironment() {
 
 namespace {
 bool matchesPathPrefix(const std::string& path, const std::string& prefix) {
-    if (prefix.empty() || path.rfind(prefix, 0) != 0) return false;
-    if (path.size() == prefix.size()) return true;
-    if (prefix.back() == '/') return true;
-    return path[prefix.size()] == '/';
+    if (prefix.empty() || path.compare(0, prefix.size(), prefix) != 0) return false;
+    return path.size() == prefix.size() || path[prefix.size()] == '/';
 }
-}
+// iOS reaches the same files as /var/... and /private/var/...; compare in the
+// /var form so either spelling of a host or guest path matches.
+std::string canonVar(const std::string& p) { return p.compare(0, 13, "/private/var/") == 0 ? p.substr(8) : p; }
+} // namespace
 
 std::string Process::hostPath(const std::string& guestPath) const {
     if (guestPath.empty()) return {};
-
     std::string p = guestPath;
-
-    if (p == "~") {
-        p = guestHomePath_;
-    } else if (p.rfind("~/", 0) == 0) {
-        p = guestHomePath_ + p.substr(1);
-    }
-
-    std::string norm = p;
-    if (norm.rfind("/private/var/", 0) == 0) {
-        norm = norm.substr(8);
-    }
-
-    if (!bundlePath().empty() && matchesPathPrefix(norm, bundlePath())) return p;
-    if (!homePath_.empty() && matchesPathPrefix(norm, homePath_)) return p;
-
-    if (!guestBundlePath_.empty() && matchesPathPrefix(norm, guestBundlePath_)) {
-        const std::string rel = norm.substr(guestBundlePath_.size());
-        return bundlePath() + rel;
-    }
-    if (!guestHomePath_.empty() && matchesPathPrefix(norm, guestHomePath_)) {
-        const std::string rel = norm.substr(guestHomePath_.size());
-        return homePath_ + rel;
-    }
-    if (matchesPathPrefix(norm, "/tmp")) {
-        const std::string rel = norm.substr(4);
-        return (fs::path(homePath_) / "tmp").string() + rel;
-    }
-    if (matchesPathPrefix(norm, "/var/tmp")) {
-        const std::string rel = norm.substr(8);
-        return (fs::path(homePath_) / "tmp").string() + rel;
-    }
-
+    if (p == "~") p = guestHomePath_;
+    else if (p.compare(0, 2, "~/") == 0) p = guestHomePath_ + p.substr(1);
+    const std::string norm = canonVar(p);
+    // Already a host path: leave it alone.
+    if (matchesPathPrefix(norm, canonVar(bundlePath())) || matchesPathPrefix(norm, canonVar(homePath_))) return p;
+    // Guest paths, most specific first (the bundle sits inside the home).
+    if (matchesPathPrefix(norm, guestBundlePath_)) return bundlePath() + norm.substr(guestBundlePath_.size());
+    if (matchesPathPrefix(norm, guestHomePath_)) return homePath_ + norm.substr(guestHomePath_.size());
+    const std::string hostTmp = homePath_ + "/tmp";
+    if (matchesPathPrefix(norm, "/tmp")) return hostTmp + norm.substr(4);
+    if (matchesPathPrefix(norm, "/var/tmp")) return hostTmp + norm.substr(8);
     return p;
 }
 
 std::string Process::guestPath(const std::string& hostPath) const {
     if (hostPath.empty()) return {};
-
-    std::string p = hostPath;
-
-    if (p.rfind("/var/mobile/Applications", 0) == 0 ||
-        p.rfind("/private/var/mobile/Applications", 0) == 0) {
-        if (p.rfind("/private/var/", 0) == 0) return p.substr(8);
-        return p;
-    }
-
-    const std::string hostTmp = (fs::path(homePath_) / "tmp").string();
-
-    struct PrefixMapping {
-        std::string hostPrefix;
-        std::string guestPrefix;
+    const std::string norm = canonVar(hostPath);
+    if (matchesPathPrefix(norm, "/var/mobile/Applications")) return norm;
+    // Longest host prefix first: the bundle, its home's tmp, then the home.
+    const std::pair<std::string, std::string> mappings[] = {
+        {canonVar(bundlePath()), guestBundlePath_},
+        {canonVar(homePath_ + "/tmp"), guestHomePath_ + "/tmp"},
+        {canonVar(homePath_), guestHomePath_},
     };
-
-    std::vector<PrefixMapping> mappings;
-    if (!bundlePath().empty()) mappings.push_back({bundlePath(), guestBundlePath_});
-    if (!homePath_.empty()) mappings.push_back({homePath_, guestHomePath_});
-    if (!hostTmp.empty()) mappings.push_back({hostTmp, guestHomePath_ + "/tmp"});
-
-    std::sort(mappings.begin(), mappings.end(), [](const PrefixMapping& a, const PrefixMapping& b) {
-        return a.hostPrefix.size() > b.hostPrefix.size();
-    });
-
-    for (const auto& m : mappings) {
-        if (matchesPathPrefix(p, m.hostPrefix)) {
-            const std::string rel = p.substr(m.hostPrefix.size());
-            return m.guestPrefix + rel;
-        }
-    }
-
-    return p;
+    const std::pair<std::string, std::string>* best = nullptr;
+    for (const auto& m : mappings)
+        if (!m.first.empty() && !m.second.empty() && matchesPathPrefix(norm, m.first) &&
+            (!best || m.first.size() > best->first.size()))
+            best = &m;
+    return best ? best->second + norm.substr(best->first.size()) : hostPath;
 }
 
 std::string Process::getenv(const std::string& name) const {
