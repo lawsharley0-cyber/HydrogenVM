@@ -425,25 +425,8 @@ struct SaveEditorDashboardView: View {
                 }
             }
 
-            if discovered.isEmpty {
-                ContentUnavailableView(
-                    "No Save Files Found Yet",
-                    systemImage: "tray",
-                    description: Text("Launch \(app.title) first so it creates its save files, preferences, or databases in Documents and Library.")
-                )
-            } else {
-                ForEach(DiscoveredSaveFile.Category.allCases, id: \.rawValue) { cat in
-                    let group = filteredFiles.filter { $0.category == cat }
-                    if !group.isEmpty {
-                        Section(cat.rawValue) {
-                            ForEach(group) { entry in
-                                SaveEditorDashboardRow(entry: entry) {
-                                    editingFile = entry.item
-                                }
-                            }
-                        }
-                    }
-                }
+            SaveEditorDashboardFileGroups(title: app.title, discovered: discovered, filteredFiles: filteredFiles) {
+                editingFile = $0
             }
         }
         .navigationTitle("\(app.title) — Save Editor")
@@ -2575,6 +2558,44 @@ private struct SaveEditorDashboardRow: View {
                     Text(ByteCountFormatter.string(fromByteCount: entry.item.size, countStyle: .file))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+private struct SaveEditorDashboardSection: View {
+    let title: String
+    let group: [DiscoveredSaveFile]
+    let onSelect: (FileItem) -> Void
+    var body: some View {
+        Section(title) {
+            ForEach(group) { entry in
+                SaveEditorDashboardRow(entry: entry) {
+                    onSelect(entry.item)
+                }
+            }
+        }
+    }
+}
+
+private struct SaveEditorDashboardFileGroups: View {
+    let title: String
+    let discovered: [DiscoveredSaveFile]
+    let filteredFiles: [DiscoveredSaveFile]
+    let onSelect: (FileItem) -> Void
+    var body: some View {
+        if discovered.isEmpty {
+            ContentUnavailableView(
+                "No Save Files Found Yet",
+                systemImage: "tray",
+                description: Text("Launch \(title) first so it creates its save files, preferences, or databases in Documents and Library.")
+            )
+        } else {
+            ForEach(DiscoveredSaveFile.Category.allCases, id: \.rawValue) { cat in
+                let group = filteredFiles.filter { $0.category == cat }
+                if !group.isEmpty {
+                    SaveEditorDashboardSection(title: cat.rawValue, group: group, onSelect: onSelect)
                 }
             }
         }

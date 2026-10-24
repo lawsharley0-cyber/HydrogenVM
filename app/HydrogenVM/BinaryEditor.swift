@@ -3,6 +3,15 @@ import UniformTypeIdentifiers
 
 // MARK: - Binary / Hex Editor with Value Inspector & Cheat Scanner
 
+@MainActor
+final class ScannerSession: ObservableObject {
+    static let shared = ScannerSession()
+    var url: URL?
+    var matches: [BinarySearchMatch] = []
+    @Published var searchQuery = ""
+    @Published var searchType: BinaryEditorView.SearchValueType = .int32LE
+}
+
 struct BinarySearchMatch: Identifiable {
     let offset: Int
     let preview: String
@@ -20,9 +29,7 @@ struct BinaryEditorView: View {
 
     // Value Search / Cheat Scanner
     @State private var showingScanner = false
-    @State private var searchQuery = ""
-    @State private var searchType: SearchValueType = .int32LE
-    @State private var searchMatches: [BinarySearchMatch] = []
+    @StateObject private var scanner = ScannerSession.shared
     @State private var replaceValueText = ""
     @State private var isNextScan = false
 
@@ -78,12 +85,21 @@ struct BinaryEditorView: View {
             }
 
             // Hex Rows
-            let shown = min(data.count, maxDisplayBytes)
-            let rowCount = (shown + bytesPerRow - 1) / bytesPerRow
+            // Instead of showing the entire file or clamping to 128KB, we show a sliding window
+            // centered around the selected offset to allow inspecting anywhere in large files.
+            let windowSize = 4096 // 4KB window (256 rows)
+            let halfWindow = windowSize / 2
+            let windowStart = max(0, selectedOffset - halfWindow) / bytesPerRow * bytesPerRow
+            let windowEnd = min(data.count, windowStart + windowSize)
+            let rowCount = (windowEnd - windowStart + bytesPerRow - 1) / bytesPerRow
+
             List {
+                if windowStart > 0 {
+                    Text("... \(windowStart) bytes preceding ...").foregroundStyle(.secondary).font(.caption2).listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10))
+                }
                 ForEach(0..<rowCount, id: \.self) { row in
-                    let base = row * bytesPerRow
-                    let end = min(base + bytesPerRow, shown)
+                    let base = windowStart + row * bytesPerRow
+                    let end = min(base + bytesPerRow, windowEnd)
                     HexRow(
                         base: base,
                         slice: data[base..<end],
@@ -93,6 +109,9 @@ struct BinaryEditorView: View {
                         document.markChanged()
                     }
                     .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
+                }
+                if windowEnd < data.count {
+                    Text("... \(data.count - windowEnd) bytes following ...").foregroundStyle(.secondary).font(.caption2).listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10))
                 }
             }
             .listStyle(.plain)
@@ -115,17 +134,17 @@ struct BinaryEditorView: View {
             NavigationStack {
                 Form {
                     Section("Search Game Value (Coins, Gold, Stats, String)") {
-                        Picker("Data Type", selection: $searchType) {
+                        Picker("Data Type", selection: $scanner.searchType) {
                             ForEach(SearchValueType.allCases) { t in
                                 Text(t.rawValue).tag(t)
                             }
                         }
                         HStack {
-                            TextField("Value to find (e.g. 500 or player name)", text: $searchQuery)
+                            TextField("Value to find (e.g. 500 or player name)", text: $scanner.searchQuery)
                                 .font(.system(.body, design: .monospaced))
                                 .autocorrectionDisabled()
                                 .textInputAutocapitalization(.never)
-                            if searchMatches.isEmpty {
+                            if scanner.matches.isEmpty {
                                 Button("New Scan") {
                                     runBinarySearch(isNextScan: false)
                                 }
@@ -143,8 +162,8 @@ struct BinaryEditorView: View {
                         }
                     }
 
-                    if !searchMatches.isEmpty {
-                        Section("Batch Modify All \(searchMatches.count) Matches") {
+                    if !scanner.matches.isEmpty {
+                        Section("Batch Modify All \(scanner.matches.count) Matches") {
                             HStack {
                                 TextField("New value", text: $replaceValueText)
                                     .font(.system(.body, design: .monospaced))
@@ -155,8 +174,8 @@ struct BinaryEditorView: View {
                             }
                         }
 
-                        Section("Matches (\(searchMatches.count)) — Tap to Jump") {
-                            ForEach(searchMatches) { m in
+                        Section("Matches (\(scanner.matches.count)) — Tap to Jump") {
+                            ForEach(scanner.matches) { m in
                                 Button {
                                     selectedOffset = m.offset
                                     showingScanner = false
@@ -188,6 +207,11 @@ struct BinaryEditorView: View {
             Text(error ?? "")
         }
         .onAppear {
+            if scanner.url != url {
+                scanner.url = url
+                scanner.matches = []
+                scanner.searchQuery = ""
+            }
             guard !loaded else { return }
             loaded = true
             do {
@@ -312,13 +336,13 @@ struct BinaryEditorView: View {
     }
 
     private func runBinarySearch(isNextScan: Bool = false) {
-        guard let needle = encodePattern(query: searchQuery, type: searchType), !needle.isEmpty else {
-            searchMatches = []
+        guard let needle = encodePattern(query: scanner.searchQuery, type: scanner.searchType), !needle.isEmpty else {
+            scanner.matches = []
             return
         }
         var found: [BinarySearchMatch] = []
         if isNextScan {
-            for m in searchMatches {
+            for m in scanner.matches {
                 guard m.offset + needle.count <= data.count else { continue }
                 if data[m.offset..<(m.offset + needle.count)] == needle {
                     found.append(m)
@@ -335,12 +359,12 @@ struct BinaryEditorView: View {
                 searchRange = (r.lowerBound + 1)..<data.endIndex
             }
         }
-        searchMatches = found
+        scanner.matches = found
     }
 
     private func replaceAllMatches() {
-        guard let replacement = encodePattern(query: replaceValueText, type: searchType) else { return }
-        for m in searchMatches {
+        guard let replacement = encodePattern(query: replaceValueText, type: scanner.searchType) else { return }
+        for m in scanner.matches {
             guard m.offset + replacement.count <= data.count else { continue }
             data.replaceSubrange(m.offset..<(m.offset + replacement.count), with: replacement)
         }
