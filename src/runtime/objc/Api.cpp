@@ -290,7 +290,7 @@ IMP c_replaceMethod(Ctx& x, Class c, SEL s, IMP imp, GuestPtr types) {
     if (!ci) return 0;
     auto it = ci->methods.find(s);
     const IMP old = it == ci->methods.end() ? 0 : it->second;
-    rt(x).addMethod(c, s, imp, types ? x.proc.readCString(types) : "v@:");
+    rt(x).addMethod(c, s, imp, types ? x.proc.readCString(types) : "v@:", true);
     return old;
 }
 uint32_t c_copyMethodList(Ctx& x, Class c, GuestPtr outCount) {

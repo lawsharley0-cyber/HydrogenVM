@@ -1436,6 +1436,69 @@ int runFullSubsystemTests() {
     }
 
     {
+        // Issue #71: NSMethodSignature and NSInvocation lookup for replaced methods, protocols, class methods, and forwarding targets
+        auto sigCls = r.getClass("NSMethodSignature");
+        auto invCls = r.getClass("NSInvocation");
+        bool sigOk = true;
+
+        // 1. Swizzled / replaced method signature
+        auto swizCls = r.defineClass("HVMSwizClass", "NSObject");
+        swizCls.method("origMethod", [](Ctx& x) { x.cpu.r[0] = 0; }, "v@:");
+        const auto swizInst = r.createInstance(swizCls.cls());
+        const auto replaceFn = proc.registerHostFunction("hvm_test_repl", [](Ctx& x) { x.cpu.r[0] = 0; });
+        const auto replTypesAddr = proc.allocCString("v@:i");
+        const auto swizSel = r.sel("origMethod");
+        const auto replAddr = proc.lookupSymbol("_class_replaceMethod");
+        if (replAddr) proc.callGuest(cpu, *replAddr, {swizCls.cls(), swizSel, replaceFn, replTypesAddr});
+        const auto swizSig = ObjC::id(r.send(cpu, swizInst, "methodSignatureForSelector:", {swizSel}));
+        const auto swizInv = (swizSig && sigCls && invCls) ? ObjC::id(r.send(cpu, invCls, "invocationWithMethodSignature:", {swizSig})) : 0;
+        bool b1 = swizSig != 0 && swizInv != 0 && uint32_t(r.send(cpu, swizSig, "numberOfArguments")) == 3;
+
+        // 2. Protocol method signature lookup
+        const uint32_t protoMem = proc.allocStatic(28);
+        const uint32_t protoName = proc.allocCString("HVMTestSigProtocol");
+        const uint32_t pListMem = proc.allocStatic(12);
+        const uint32_t pSelName = proc.allocCString("protoMethod:");
+        const uint32_t pTypeEnc = proc.allocCString("v@:i");
+        proc.mem().write<uint32_t>(pListMem, 1); // count = 1
+        proc.mem().write<uint32_t>(pListMem + 4, pSelName);
+        proc.mem().write<uint32_t>(pListMem + 8, pTypeEnc);
+        proc.mem().write<uint32_t>(protoMem + 4, protoName);
+        proc.mem().write<uint32_t>(protoMem + 12, pListMem); // required instance methods at +12
+
+        auto protoCls = r.defineClass("HVMProtoClass", "NSObject");
+        const auto addProtoAddr = proc.lookupSymbol("_class_addProtocol");
+        if (addProtoAddr) proc.callGuest(cpu, *addProtoAddr, {protoCls.cls(), protoMem});
+        const auto protoInst = r.createInstance(protoCls.cls());
+        const auto protoSel = r.sel("protoMethod:");
+        const auto protoSig = ObjC::id(r.send(cpu, protoInst, "methodSignatureForSelector:", {protoSel}));
+        const auto protoInv = (protoSig && invCls) ? ObjC::id(r.send(cpu, invCls, "invocationWithMethodSignature:", {protoSig})) : 0;
+        bool b2 = protoSig != 0 && protoInv != 0 && uint32_t(r.send(cpu, protoSig, "numberOfArguments")) == 3;
+
+        // 3. Forwarding target method signature lookup
+        auto targetCls = r.defineClass("HVMForwardTarget", "NSObject");
+        targetCls.method("targetMethod:", [](Ctx& x) { x.cpu.r[0] = 0; }, "v@:@");
+        const auto realTarget = r.createInstance(targetCls.cls());
+
+        auto fwdCls = r.defineClass("HVMForwarder", "NSObject");
+        fwdCls.method("forwardingTargetForSelector:", [realTarget](Ctx& x) { x.cpu.r[0] = realTarget; }, "@@::");
+        const auto fwdInst = r.createInstance(fwdCls.cls());
+        const auto targetSel = r.sel("targetMethod:");
+        const auto fwdSig = ObjC::id(r.send(cpu, fwdInst, "methodSignatureForSelector:", {targetSel}));
+        const auto fwdInv = (fwdSig && invCls) ? ObjC::id(r.send(cpu, invCls, "invocationWithMethodSignature:", {fwdSig})) : 0;
+        bool b3 = fwdSig != 0 && fwdInv != 0 && uint32_t(r.send(cpu, fwdSig, "numberOfArguments")) == 3;
+
+        sigOk = b1 && b2 && b3;
+
+        r.release(cpu, swizInst);
+        r.release(cpu, protoInst);
+        r.release(cpu, realTarget);
+        r.release(cpu, fwdInst);
+
+        check(sigOk, "Method signature and NSInvocation lookup supports replaced methods, protocols, and forwarding targets");
+    }
+
+    {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
         const uint32_t out = proc.heap().allocZeroed(32);
         auto refs = [&](uint32_t port) { return uint32_t(call("_mach_port_get_refs", {0x103, port, 0, out})) == 0 ? proc.mem().read<uint32_t>(out) : 0; };

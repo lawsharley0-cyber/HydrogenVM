@@ -294,15 +294,75 @@ IMP Runtime::lookupForSend(Class cls, SEL s) {
 
 bool Runtime::respondsTo(id obj, SEL s) { return obj && lookup(classOf(obj), s) != 0; }
 
+namespace {
+std::string findProtocolMethodType(Process& proc, const Runtime& rt, uint32_t proto, SEL s, bool isMeta, std::unordered_set<uint32_t>& visited) {
+    if (!proto || !visited.insert(proto).second) return {};
+    auto& m = proc.mem();
+    const std::string sname = rt.selName(s);
+    auto checkList = [&](uint32_t list) -> std::string {
+        if (!list) return {};
+        const uint32_t n = m.read<uint32_t>(list);
+        for (uint32_t i = 0; i < n && i < 65536u; ++i) {
+            const uint32_t selPtr = m.read<uint32_t>(list + 4 + i * 8);
+            if (!selPtr) continue;
+            const std::string name = proc.readCString(selPtr, 512);
+            if (name == sname) {
+                const uint32_t typePtr = m.read<uint32_t>(list + 8 + i * 8);
+                return typePtr ? proc.readCString(typePtr, 512) : "v@:";
+            }
+        }
+        return {};
+    };
+
+    const uint32_t offset1 = isMeta ? 16 : 12;
+    const uint32_t offset2 = isMeta ? 24 : 20;
+    std::string enc = checkList(m.read<uint32_t>(proto + offset1));
+    if (!enc.empty()) return enc;
+    enc = checkList(m.read<uint32_t>(proto + offset2));
+    if (!enc.empty()) return enc;
+
+    const uint32_t list = m.read<uint32_t>(proto + 8);
+    const uint32_t n = list ? m.read<uint32_t>(list) : 0;
+    for (uint32_t i = 0; i < n && i < 65536u; ++i) {
+        std::string subEnc = findProtocolMethodType(proc, rt, m.read<uint32_t>(list + 4 + i * 4), s, isMeta, visited);
+        if (!subEnc.empty()) return subEnc;
+    }
+    return {};
+}
+} // namespace
+
 std::string Runtime::methodTypes(Class cls, SEL s) {
+    bool hasMethod = false;
     for (Class c = cls; c; c = superclass(c)) {
         const ClassInfo* k = info(c);
         if (!k) break;
         if (k->methods.count(s)) {
+            hasMethod = true;
             auto t = k->types.find(s);
-            return t == k->types.end() ? std::string() : t->second;
+            if (t != k->types.end() && !t->second.empty()) return t->second;
         }
     }
+
+    const bool meta = isMeta(cls);
+    std::unordered_set<uint32_t> visited;
+    for (Class c = cls; c; c = superclass(c)) {
+        const ClassInfo* k = info(c);
+        if (!k) break;
+        for (uint32_t p : k->protocols) {
+            std::string t = findProtocolMethodType(proc_, *this, p, s, meta, visited);
+            if (!t.empty()) return t;
+        }
+        if (meta && k->instanceClass) {
+            if (const ClassInfo* ik = info(k->instanceClass)) {
+                for (uint32_t p : ik->protocols) {
+                    std::string t = findProtocolMethodType(proc_, *this, p, s, true, visited);
+                    if (!t.empty()) return t;
+                }
+            }
+        }
+    }
+
+    if (hasMethod) return "v@:";
     return {};
 }
 
