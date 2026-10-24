@@ -70,6 +70,12 @@ public:
     // of returning to LR. Registers are passed through unchanged.
     static void hleJump(Cpu& c, uint32_t target) { c.r[kTmp3] = target; }
 
+    // Called when guest code faults inside runToExit (a call into the guest). If it
+    // returns true it has redirected `cpu` (a guest signal handler ran and may
+    // have changed the registers) and execution continues; false reports the fault.
+    using FaultHook = std::function<bool(Cpu&, Exit)>;
+    void setFaultHook(FaultHook h) { faultHook_ = std::move(h); }
+
     // Run guest code on `cpu` starting at cpu.r[15] (cpu.thumb selects state)
     // until something exits or `budget` guest instructions have retired.
     Exit run(Cpu& cpu, int64_t budget = INT64_MAX);
@@ -129,6 +135,7 @@ public:
     Stats stats() const { std::lock_guard<std::mutex> lk(mu_); return stats_; }
 
 private:
+    FaultHook faultHook_;
     void park(Cpu& c);
     std::mutex suspendMu_;
     std::condition_variable suspendCv_;

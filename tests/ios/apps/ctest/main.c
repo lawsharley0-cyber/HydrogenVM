@@ -5,6 +5,7 @@
 #include <string.h>
 #include <math.h>
 #include <setjmp.h>
+#include <stdint.h>
 #include <pthread.h>
 #include <ctype.h>
 #include <errno.h>
@@ -42,6 +43,31 @@ static int once_count;
 static void once_fn(void) { once_count++; }
 
 static void bye(void) { printf("atexit handler ran\n"); }
+
+
+// Darwin ARM signal ABI (the test SDK has no <signal.h>).
+#define SIGSEGV 11
+#define SA_SIGINFO 0x40
+typedef struct { int si_signo, si_errno, si_code, si_pid; unsigned si_uid; int si_status; void *si_addr; int pad[9]; } siginfo_t;
+struct sigaction { void (*sa_sigaction)(int, siginfo_t *, void *); unsigned sa_mask; int sa_flags; };
+int sigaction(int, const struct sigaction *, struct sigaction *);
+struct darwin_mcontext { unsigned exc[3]; unsigned r[13], sp, lr, pc, cpsr; };
+typedef struct { int onstack; unsigned sigmask; void *ss_sp; unsigned ss_size; int ss_flags; void *link; unsigned mcsize; struct darwin_mcontext *uc_mcontext; } ucontext_t;
+
+// A SIGSEGV handler that redirects the faulting thread (how Mono raises NullReferenceException).
+static jmp_buf segv_jb;
+static volatile int segv_hits;
+static volatile uintptr_t segv_addr;
+static void segv_recovered(void) { longjmp(segv_jb, 7); }
+static void on_segv(int sig, siginfo_t *si, void *ctx) {
+    (void)sig;
+    segv_hits++;
+    segv_addr = (uintptr_t)si->si_addr;
+    ucontext_t *uc = (ucontext_t *)ctx;
+    uintptr_t target = (uintptr_t)segv_recovered;
+    uc->uc_mcontext->pc = target & ~(uintptr_t)1;
+    if (target & 1) uc->uc_mcontext->cpsr |= 0x20; else uc->uc_mcontext->cpsr &= ~0x20u;
+}
 
 int main(int argc, char **argv) {
     printf("hello from %s, argc=%d ctor=%d\n", "HydrogenVM", argc, ctor_ran);
@@ -109,6 +135,18 @@ int main(int argc, char **argv) {
     int r = setjmp(jb);
     if (r == 0) { dive(0); printf("unreachable\n"); }
     else printf("longjmp returned %d at depth %d\n", r, depth);
+
+    // guest signal delivery for a bad memory access
+    struct sigaction sa, old;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = on_segv;
+    sa.sa_flags = SA_SIGINFO;
+    sigaction(SIGSEGV, &sa, &old);
+    int sr = setjmp(segv_jb);
+    if (sr == 0) { volatile int *np = (volatile int *)(uintptr_t)16; printf("read %d?!\n", *np); }
+    sigaction(SIGSEGV, &old, NULL);
+    printf("segv handler: ret=%d hits=%d addr=%lu\n", sr, segv_hits, (unsigned long)segv_addr);
+    if (sr != 7 || segv_hits != 1 || segv_addr != 16) return 9;
 
     // math (host libm on both sides)
     printf("math: %.6f %.6f %.6f %.6f %.6f %.6f\n", sin(1.0), cos(2.0), sqrt(2.0), pow(2.5, 3.3), atan2(1.0, -2.0), exp(1.5));

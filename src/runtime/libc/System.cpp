@@ -318,8 +318,12 @@ int32_t d_image_slide(Ctx& x, uint32_t i) { return i == 0 ? int32_t(x.proc.image
 void d_register_add_image(Ctx& x, GuestPtr fn) { x.proc.callGuest(x.cpu, fn, {x.proc.image().headerAddr, x.proc.image().slide}); }
 void d_register_remove_image(Ctx&, GuestPtr) {}
 int32_t d_version(Ctx&, GuestPtr) { return -1; }
-uint32_t d_dlopen(Ctx& x, GuestPtr path, int32_t) {
-    const std::string p = path ? x.proc.readCString(path) : "";
+uint32_t d_dlopen(Ctx& x, GuestPtr path, int32_t mode) {
+    // Like dyld: a NULL path returns the magic RTLD_DEFAULT (-2), or RTLD_MAIN_ONLY (-5)
+    // with RTLD_FIRST. Unity's Mono only consults its registered P/Invoke symbols
+    // (mono_dl_register_symbol) when the handle is RTLD_DEFAULT.
+    if (!path) return (mode & 0x100) ? 0xFFFFFFFBu : 0xFFFFFFFEu;
+    const std::string p = x.proc.readCString(path);
     x.proc.logf(LogLevel::Debug, "dlopen(%s)", p.c_str());
     return 0x7E000000u | (uint32_t(std::hash<std::string>{}(p)) & 0xFFF0);   // fake handle; dlsym searches everything
 }
@@ -665,8 +669,100 @@ int32_t m_ok2(Ctx&, GuestPtr, uint32_t) { return 0; }
 
 // --------------------------------------------------------------- signals ---
 
-uint32_t g_signal(Ctx&, int32_t, GuestPtr) { return 0; }
-int32_t g_sigaction(Ctx& x, int32_t, GuestPtr, GuestPtr old) { if (old) std::memset(x.mem.host(old), 0, 12); return 0; }
+// Guest signal handlers. Only faults are delivered: when guest code faults on a
+// memory access and the app installed a SIGSEGV/SIGBUS handler (Mono does, to turn
+// null dereferences in managed code into NullReferenceException), the handler runs
+// on the faulting thread with a Darwin ARM siginfo/ucontext, and execution resumes
+// from the registers it leaves in the context.
+struct GuestSignals {
+    explicit GuestSignals(Process&) {}
+    struct Act { uint32_t handler = 0, mask = 0, flags = 0; };
+    std::mutex mu;
+    Act acts[32];
+};
+GuestSignals::Act signalAction(Process& p, int sig) {
+    auto& s = p.service<GuestSignals>();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return sig > 0 && sig < 32 ? s.acts[sig] : GuestSignals::Act{};
+}
+// struct sigaction (Darwin user): handler, sa_mask, sa_flags (12 bytes).
+int32_t g_sigaction(Ctx& x, int32_t sig, GuestPtr act, GuestPtr old) {
+    if (sig <= 0 || sig >= 32) { setErrno(x, 22); return -1; }
+    auto& s = x.proc.service<GuestSignals>();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (old) {
+        x.mem.write<uint32_t>(old, s.acts[sig].handler);
+        x.mem.write<uint32_t>(old + 4, s.acts[sig].mask);
+        x.mem.write<uint32_t>(old + 8, s.acts[sig].flags);
+    }
+    if (act) s.acts[sig] = {x.mem.read<uint32_t>(act), x.mem.read<uint32_t>(act + 4), x.mem.read<uint32_t>(act + 8)};
+    return 0;
+}
+uint32_t g_signal(Ctx& x, int32_t sig, GuestPtr handler) {
+    if (sig <= 0 || sig >= 32) { setErrno(x, 22); return 0xFFFFFFFFu; }
+    auto& s = x.proc.service<GuestSignals>();
+    std::lock_guard<std::mutex> lk(s.mu);
+    const uint32_t prev = s.acts[sig].handler;
+    s.acts[sig] = {handler, 0, 0};
+    return prev;
+}
+// Runs the app's SIGSEGV (or SIGBUS) handler for a fault on `c`; true when the
+// handler returned and the thread continues from the context it left.
+bool deliverGuestFault(Process& p, CPU::Cpu& c) {
+    thread_local int depth = 0;
+    thread_local uint32_t lastPc = 0, lastAddr = 0, repeats = 0;
+    int sig = 11;
+    GuestSignals::Act a = signalAction(p, 11);
+    if (a.handler <= 1) { sig = 10; a = signalAction(p, 10); }
+    if (a.handler <= 1 || depth > 0) return false;
+    const uint32_t addr = c.exit_info, pc = c.r[CPU::kPC];
+    if (pc == lastPc && addr == lastAddr) { if (++repeats > 8) return false; }   // the handler isn't fixing it
+    else { lastPc = pc; lastAddr = addr; repeats = 0; }
+    auto& m = p.mem();
+    // Frame below the red zone: mcontext (340), ucontext (32), siginfo (64).
+    const uint32_t mc = (c.r[CPU::kSP] - 128 - 340) & ~15u;
+    const uint32_t uc = (mc - 32) & ~15u;
+    const uint32_t si = (uc - 64) & ~15u;
+    const uint32_t sp = (si - 16) & ~15u;
+    std::memset(m.host(si), 0, mc + 340 - si);
+    // siginfo: signo, errno, code (SEGV_MAPERR / BUS_ADRERR), pid, uid, status, addr.
+    m.write<uint32_t>(si + 0, uint32_t(sig));
+    m.write<uint32_t>(si + 8, sig == 11 ? 1u : 2u);
+    m.write<uint32_t>(si + 12, 1234);
+    m.write<uint32_t>(si + 16, 501);
+    m.write<uint32_t>(si + 24, addr);
+    // ucontext: onstack, sigmask, stack{sp,size,flags}, link, mcsize, mcontext.
+    m.write<uint32_t>(uc + 24, 340);
+    m.write<uint32_t>(uc + 28, mc);
+    // mcontext: exception state {exception, fsr, far}, thread state {r0-r12, sp, lr, pc, cpsr}, VFP {d0-d31, fpscr}.
+    m.write<uint32_t>(mc + 8, addr);
+    for (int i = 0; i < 16; ++i) m.write<uint32_t>(mc + 12 + 4 * i, c.r[i]);
+    m.write<uint32_t>(mc + 12 + 64, c.cpsr());
+    std::memcpy(m.host(mc + 80), c.d, 256);
+    m.write<uint32_t>(mc + 80 + 256, c.fpscr);
+    p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x (pc 0x%08x)", sig, addr, pc);
+    const uint32_t savedSp = c.r[CPU::kSP];
+    c.r[CPU::kSP] = sp;
+    ++depth;
+    try {
+        p.engine().callGuest(c, a.handler, {uint32_t(sig), si, uc});
+    } catch (...) {
+        --depth;
+        c.r[CPU::kSP] = savedSp;
+        return false;
+    }
+    --depth;
+    for (int i = 0; i < 16; ++i) c.r[i] = m.read<uint32_t>(mc + 12 + 4 * i);
+    const uint32_t cpsr = m.read<uint32_t>(mc + 12 + 64);
+    c.setApsrFlags(cpsr);
+    c.thumb = ((cpsr >> 5) & 1) | (c.r[CPU::kPC] & 1);
+    c.r[CPU::kPC] &= ~1u;
+    std::memcpy(c.d, m.host(mc + 80), 256);
+    c.fpscr = m.read<uint32_t>(mc + 80 + 256);
+    c.exit = CPU::Exit::None;
+    c.exit_info = 0;
+    return true;
+}
 int32_t g_raise(Ctx& x, int32_t sig) {
     flushGuestStdio(x.proc);
     throw std::runtime_error("the app raised signal " + std::to_string(sig) + (sig == 6 ? " (SIGABRT)" : ""));
@@ -929,6 +1025,7 @@ void registerLibcSystem(Process& p) {
     p.def<&m_ok2>("_mlock");
     p.def<&m_ok2>("_munlock");
     p.def<&g_signal>("_signal");
+    p.engine().setFaultHook([&p](CPU::Cpu& c, CPU::Exit) { return deliverGuestFault(p, c); });
     p.def<&g_sigaction>("_sigaction");
     p.def<&g_raise>("_raise");
     p.def<&g_kill>("_kill");

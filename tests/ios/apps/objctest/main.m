@@ -222,6 +222,9 @@ int main(int argc, char **argv) {
         CHECK("forwardingTargetForSelector", strcmp([(Dog *)f name], "overridden dog") == 0);
         Ivar iv = class_getInstanceVariable([Animal class], "legs");
         CHECK("ivar lookup", iv && strcmp(ivar_getName(iv), "legs") == 0 && ivar_getOffset(iv) >= 4);
+        void *ivOut = (void *)0x1234;
+        CHECK("object_getInstanceVariable clears the value when missing",
+              object_getInstanceVariable(a, "__noSuchIvar", &ivOut) == NULL && ivOut == NULL);
         unsigned nprops = 0;
         objc_property_t *props = class_copyPropertyList([Animal class], &nprops);
         CHECK("property list", nprops == 5 && props && strcmp(property_getName(props[0]), "age") == 0);
