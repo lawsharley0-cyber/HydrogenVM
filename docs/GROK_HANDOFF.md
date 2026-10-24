@@ -119,16 +119,17 @@ Implemented directly and verified with the real games:
 
 Jules sessions for #140 (16888253082826464357) and #141 may still open PRs. Close them as superseded, or merge only a part that is genuinely additional (for example a same-frame touch test). Rebase it first, then rerun the gates.
 
-### T3. Mega Jump has no music or sound on the device (owner report, unresolved)
-Linux can't decode its `.m4a` music without ffmpeg, so `nonSilentFrames: 0` there is expected for the music. The owner's batch report showed **Zombie objects ON**. Ask him to turn the toggle (`hvm.zombies` in the library) off and to send the run log.
+### T3. Mega Jump has no sound on the device (owner report)
+On Linux the SFX work. Tap 60,442@15 (decline OpenFeint), then 160,430@22 (PLAY). Measure with `--audio-fd` on a datagram socketpair and `--report`: nonSilentFrames is about 200k. The music is .m4a, which needs AudioToolbox, so it is silent on Linux without ffmpeg.
 
-If it's still silent with zombies off:
-- Diff the audio-related commits between his last good build and `9abf12d`: `5c3c1aa` (microphone; it changes the AVAudioSession category only while recording), `7957e25` (AudioFile keeps mono files mono).
-- Check that SFX play: CocosDenshion uses OpenAL with `ExtAudioFileRead` into `alBufferData`. Trigger an action with `--tap` and check `alSourcePlay` in `--trace`.
-- Mono AIFF files now stay mono, so check that ExtAudioFile's client-format conversion still gives OpenAL the channel count it asks for (`kExtAudioFileProperty_ClientDataFormat`).
+Most likely cause on the device: the Explore phase toggled the game's own music and speaker buttons, and that setting was saved in the real home. `c29ed49` now runs batch tests in a throwaway copy of the home (`BatchTest.prepareTestHome`). Ask the owner to check those two buttons. If it's still silent, get a run log and look for `AudioSession`/`AVAudioPlayer`/`OpenAL` warnings.
 
-### T4. Minion Rush: white screen after launch
-It no longer crashes. Run `--gpu --run-for 180` and check whether frames are presented (`GPU: presented frame` lines with `HVM_GL_DEBUG=1`). Look at what the main thread is doing: `--trace` tail, and whether it's waiting on a semaphore or condition variable. Also look at the `GLSL shader N: macro redefinition at line 22` warnings: a shader that fails to compile could leave the screen white.
+### T4. Minion Rush: white screen
+The game draws and presents (436 `presentRenderbuffer:` calls in 75 s), but `HVM_DUMP_VIEWS=1` shows the window holds only its white root UIView: the `EAGLView` it created is never added to any view. Find out what normally adds it:
+- `AppController initDisplay` / `showWelcomeScreen` / FreemiumIGP; disassemble them (`otool -arch armv7 -ov` gives the IMPs).
+- Possibly a callback we never send, such as `viewDidAppear:` on EAGLViewController, a notification, or a network or IGP completion.
+
+Dismiss the "No Internet connection" alert with `--tap 160,327@65`.
 
 ### T5. Goat Simulator (UE3, #125)
 It's slow under the interpreter. Run `--run-for 300 --gpu`. The device crash was a NULL inside `TSparseArray<...FES2FrameBuffer...>` (a GL framebuffer map, called from `UOnlineSuppliedUIGameCenter`/`UInAppMessageIPhone`), possibly a GameCenter/UI-thread race. The 12 missing `glBeginQuery`/`glGenQueries` (EXT occlusion query) functions could make it take a different path. Implement them in the software renderer and in `tools/hostgl_spec.txt` honestly (queries report "any samples passed" = 1).
