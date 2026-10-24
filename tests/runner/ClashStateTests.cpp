@@ -223,6 +223,12 @@ int main(int argc, char** argv) {
         }
         ClashFixtures f8(bundle, 18000007, 1);
         auto s8 = f8.sector(profile);
+        const auto npcName=std::search(s8.begin(),s8.end(),f8.trainerName.begin(),f8.trainerName.end());
+        if(npcName==s8.end() || npcName-s8.begin()<10) return 1;
+        const auto bot=inspectClashAvatar(Bytes(npcName-10,s8.end()));
+        if(bot.arena!=1 || bot.trophies!=50 || f8.npcExpLevel!=2) {
+            std::fprintf(stderr,"FAIL Arena bot must use bundled NPC8 trophies, experience and active arena\n");return 1;
+        }
         // LogicGameMode::decode 0xd7a80 requires delimiter 12 after avatars,
         // independently of whether tutorial data follows. Removing the tutorial
         // must clear its reference, not the stream delimiter.

@@ -179,6 +179,14 @@ struct ClashOffline::Impl {
         ::unlink((path.string()+".tmp").c_str());
         profile=load(path);
         process.logf(LogLevel::Info,"Offline Clash: loaded saved progress wins=%d losses=%d",profile.npcWins,profile.npcLosses);
+        if(!profile.nativeAvatar.empty()) {
+            const auto native=inspectClashAvatar(profile.nativeAvatar);
+            if(profile.trophies!=native.trophies || profile.arenaLevel!=native.arena) {
+                auto next=profile;next.trophies=native.trophies;next.arenaLevel=native.arena;
+                save(path,next);profile=std::move(next);
+                process.log(LogLevel::Info,"Offline Clash: reconciled metadata with the saved native score/arena");
+            }
+        }
         // Confirm crypto availability before starting any guest connection.
         Cipher check;
         const auto resDir = std::filesystem::path(p.config().bundlePath) / "res";
@@ -231,7 +239,6 @@ struct ClashOffline::Impl {
                 }
             }
             if(rewardAvatar && process.image().entry) {
-                process.mem().write<int32_t>(rewardAvatar+0x34, next.trophies);
                 next.nativeAvatar=encodeNative(0,rewardAvatar).first;
             }
             save(path,next);profile=next;process.logf(LogLevel::Info,"Offline Clash: native win and chest reward committed (trophies=%d, arena=%d)",next.trophies,next.arenaLevel);
@@ -268,14 +275,12 @@ struct ClashOffline::Impl {
         if(count==previous)return;
         if(count!=previous+1 || count>1000)throw std::runtime_error("Offline Clash: unexpected native NPC counter transition");
         auto next=profile;(wins?next.npcWins:next.npcLosses)=count;
+        // Original battleEnded calls updateScores before either counter setter.
+        // Persist that result; do not invent rating deltas or overwrite avatars.
+        next.trophies=mem.read<int32_t>(avatar+0x34);
+        if(next.trophies<0 || next.trophies>100000)throw std::runtime_error("Offline Clash: invalid native battle score");
         if(profile.npcWins >= 7) {
-            if(wins) {
-                next.trophies += 30;
-                if(csvEngine) next.arenaLevel = csvEngine->getArenaForTrophies(next.trophies, next.arenaLevel);
-            } else {
-                next.trophies = std::max<int32_t>(0, next.trophies - 20);
-                if(csvEngine) next.arenaLevel = csvEngine->getArenaForTrophies(next.trophies, next.arenaLevel);
-            }
+            if(csvEngine)next.arenaLevel=csvEngine->getArenaForTrophies(next.trophies,next.arenaLevel);
         } else if(next.npcWins >= 7 && next.arenaLevel == 0) {
             next.arenaLevel = 1;
         }

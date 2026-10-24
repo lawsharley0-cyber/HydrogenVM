@@ -139,16 +139,25 @@ Bytes replaceClashHomeChests(const Bytes& bytes,const std::array<int32_t,4>& che
     avatarOffset=avatarOffset-view.chestEnd+view.chestOffset+w.data.size()-(view.chestCounterEnd-8)+counter.size();return result;
 }
 namespace {
-void avatar(Writer& w,const ClashProfile& profile,bool npc,const std::string& trainer="Trainer Earl") {
+void avatar(Writer& w,const ClashProfile& profile,bool npc,const std::string& trainer="Trainer Earl",int npcArena=0,int npcScore=0,int npcLevel=1) {
     for(int i=0;i<3;++i){w.v(npc?-1:0);w.v(npc?0:1);}
     w.s(npc?trainer:"Offline Player");w.b(false);w.v(0);
-    w.ref(54000000 + (npc ? 0 : profile.arenaLevel));
-    w.v(npc ? 0 : profile.trophies);
+    w.ref(54000000 + (npc ? npcArena : profile.arenaLevel));
+    w.v(npc ? npcScore : profile.trophies);
     w.b(false);
     w.v(6);w.v(2);w.ref(5000001);w.v(100);w.ref(5000005);w.v(100);w.zeros(5);
-    w.v(100);w.v(100);w.v(0);w.v(1);w.v(0);w.b(false);
+    w.v(100);w.v(100);w.v(0);w.v(npc?npcLevel:1);w.v(0);w.b(false);
     w.zeros(4);w.v(npc?0:profile.npcWins);w.v(npc?0:profile.npcLosses);w.b(false);
 }
+}
+ClashAvatarView inspectClashAvatar(const Bytes& bytes) {
+    Cursor r{bytes};for(int i=0;i<6;++i)r.v();
+    uint32_t length=0;for(int i=0;i<4;++i)length=(length<<8)|r.byte();
+    if(length>bytes.size()-r.at)throw std::runtime_error("Offline Clash: invalid native avatar name");
+    r.at+=length;r.b();r.v();const auto arena=r.ref(),score=r.v();
+    if(arena<54000000 || arena>54000020 || score<0 || score>100000)
+        throw std::runtime_error("Offline Clash: invalid native avatar score/arena");
+    return {arena-54000000,score};
 }
 void clashVint(Bytes& out,int32_t value) {
     const uint64_t magnitude=value<0?uint64_t(-int64_t(value)):uint64_t(value);
@@ -180,6 +189,8 @@ ClashFixtures::ClashFixtures(const std::string& bundle,int32_t npcId,int32_t are
     if(npc==npcs.end())throw std::runtime_error("Offline Clash: unsupported training mission");
     const int32_t expLvl = number((*npc)["ExpLevel"]);
     if(expLvl<1 || expLvl>13)throw std::runtime_error("Offline Clash: unsupported npc exp level");
+    npcExpLevel=expLvl;
+    npcTrophies=(*npc)["Trophies"].empty()?0:number((*npc)["Trophies"]);
     seed=(*npc)["Seed"].empty()?2:number((*npc)["Seed"]);
     npcMana=(*npc)["StartingMana"].empty()?5:number((*npc)["StartingMana"]);
     int locationIndex=0;bool foundLocation=false;std::string locationFile;
@@ -274,7 +285,7 @@ Bytes ClashFixtures::sector(const ClashProfile& p) const {
     w.b(true);deck(w,npcDeck);w.b(true);deck(w,player);
     for(int owner=0;owner<2;++owner)for(int i=0;i<6;++i)if(towers[i].king && towers[i].owner==owner)w.ref(6000000+i);
     for(int owner=0;owner<2;++owner){w.v(2);for(int i=0;i<6;++i)if(!towers[i].king && towers[i].owner==owner)w.ref(6000000+i);}
-    w.zeros(6);avatar(w,p,true,trainerName);
+    w.zeros(6);avatar(w,p,true,trainerName,arena-54000000,npcTrophies,npcExpLevel);
     if(p.nativeAvatar.empty())avatar(w,p,false);else {w.booleanIndex=-1;w.data.insert(w.data.end(),p.nativeAvatar.begin(),p.nativeAvatar.end());}
     if(arena-54000000 > 0 || tutorial == 0) {
         // 12 is the LogicGameMode full-update delimiter (decoder 0xd7a80),

@@ -31,6 +31,51 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Native rating calculation and additional owner observations
+
+The owner now explicitly authorizes continuing through core progression into
+the full bug-fix phase. Newly reported: health bars do not shrink when damaged;
+Princess Tower occupants are absent; surrounding trees may be missing. Preserve
+these alongside intermittent sound, King cannon movement and text alignment.
+They are not resolved by a native win or a passing unit suite.
+
+The trophy blocker below was reproduced and corrected at its source. Native
+LogicGameMode::updateScores (0xd85c4) skips rating changes when either avatar's
+arena equals the starting Training Camp. Our arena-sector bot was incorrectly
+encoded in that arena with zero trophies and level 1. The sector now supplies
+the active arena and original NPC row's Trophies/ExpLevel. NPC8 is 50 trophies,
+level 2. The observer reads the native score after updateScores instead of
+adding experimental +30/-20 deltas; the obsolete fallback live-score write is
+removed. On load, metadata is reconciled to the persisted native score/arena,
+preserving the native avatar and all other progress, so the old metadata-only
+30 is not treated as an earned native score.
+
+`native-elo/run-20261024-133357-e85349` completed another Arena 1 win against
+Trainer Jonas, this time 2 crowns to 1 at time limit. Native score became 34,
+the original home displayed 34, and metadata also stored 34. The run exited
+cleanly after 339.67 seconds. Two further clean 30-second launches in
+`elo-relaunch` retained native and metadata score 34. Observer-only tests now
+explicitly supply scores 34 and 3 and test capture, not a made-up rating
+formula; both fail against the previous fixed-delta implementation and pass
+after. The pinned NPC8 fixture checks original score/arena/level. Runtime 247
+and Test Lab 14 still pass. Native bot/tower level scaling, cost/crown/free-chest
+accounting and higher arenas remain unverified; this is not completion of all
+offline systems or the reported presentation bugs.
+
+Reference work: the pinned `res/locations/goblin_arena.csv` contains
+`goblin_tree1` through `goblin_tree4` placements. Thus tree definitions really
+exist in this build; whether each should be visible depends on camera/viewport
+and client decoration loading. Do not add modern trees or edit assets by guess.
+The buildings table references PrincessB on PrincessTower. Official contemporary
+footage is [Gameplay First Look](https://www.youtube.com/watch?v=x6aQ67jk58I),
+embedded in the [January 4 launch report](https://toucharcade.com/2016/01/04/supercell-clash-royale-soft-launch-moba-ccg/).
+Its exact executable version has not been verified; it is a period reference,
+not a pixel-perfect oracle for 2.1306.1. Video fetching was throttled. Use the
+pinned CSV, original symbols and a verified reference frame before claiming
+visual parity. Native Character::updateHealthBar computes a frame index from
+current/max HP at 0x9f03a..0x9f056; investigate the resulting movie-clip state
+and rendering rather than replacing the damage logic.
+
 ### October 24 training graduation and name-dialog blockers
 
 **Latest core result:** the graduated player also completed a native three-crown

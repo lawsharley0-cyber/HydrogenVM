@@ -136,20 +136,22 @@ int main() {
         auto postCamp = Plist::parseFile(saved.string());
         check(postCamp->get("npcWins")->i == 7 && postCamp->get("arenaLevel")->i == 1 && postCamp->get("trophies")->i == 0, "training camp graduation advances to Arena 1");
 
-        // Win 8 in Arena 1 awards +30 trophies
+        // Transport/capture oracle only: a native-computed score is supplied
+        // explicitly. The real client, not this observer test, must test ELO.
+        process.mem().write<int32_t>(avatar+0x34,34);
         cpu.r[0] = avatar; cpu.r[1] = 8; cpu.exit = Hydrogen::CPU::Exit::None;
         process.engine().notifyEntry(cpu, 0x9ae94);
         process.engine().notifyEntry(cpu, 0x14e74);
         process.mem().write<int32_t>(reward + 0x10, 19000000); cpu.r[0] = reward;
         process.engine().notifyEntry(cpu, 0x14e7c);
         auto pvpWin = Plist::parseFile(saved.string());
-        check(pvpWin->get("npcWins")->i == 8 && pvpWin->get("trophies")->i == 30 && pvpWin->get("arenaLevel")->i == 1, "Arena 1 battle victory awards +30 trophies");
+        check(pvpWin->get("npcWins")->i == 8 && pvpWin->get("trophies")->i == 34 && pvpWin->get("arenaLevel")->i == 1, "battle metadata captures native score without a fixed win formula");
 
-        // Loss in Arena 1 subtracts 20 trophies
+        process.mem().write<int32_t>(avatar+0x34,3);
         cpu.r[0] = avatar; cpu.r[1] = 1; cpu.r[Hydrogen::CPU::kLR] = 0x14ce7; cpu.exit = Hydrogen::CPU::Exit::None;
         process.engine().notifyEntry(cpu, 0x9aea4);
         auto pvpLoss = Plist::parseFile(saved.string());
-        check(pvpLoss->get("npcLosses")->i == 1 && pvpLoss->get("trophies")->i == 10, "Arena 1 defeat subtracts 20 trophies");
+        check(pvpLoss->get("npcLosses")->i == 1 && pvpLoss->get("trophies")->i == 3, "battle metadata captures native loss score without a fixed loss formula");
 
         // Native LogicClientHome::isClaimingReward (0x12580c) reads +0xb4.
         // A checkpoint during this transaction cannot safely be replayed on

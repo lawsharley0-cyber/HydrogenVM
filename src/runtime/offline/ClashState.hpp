@@ -23,6 +23,7 @@ struct ClashFixtures {
     std::vector<Card> playerDeck,npcDeck;
     std::vector<Tower> towers;
     int32_t seed=0,npcMana=0,damageTypes=0,freeChestTicks=0;
+    int32_t npcTrophies=0,npcExpLevel=1;
     int32_t mission=18000000,location=15000000,arena=54000000,tutorial=48000000,tutorialWait=3000;
     std::string trainerName="Trainer Earl";
     explicit ClashFixtures(const std::string& bundle,int32_t npc=18000000,int32_t arenaLevel=0);
@@ -39,6 +40,8 @@ struct ClashHomeView {
     std::vector<ClashFixtures::Card> deck;
 };
 ClashHomeView inspectClashHome(const Bytes&);
+struct ClashAvatarView { int32_t arena=0,trophies=0; };
+ClashAvatarView inspectClashAvatar(const Bytes&);
 struct ClashHomeCommand {
     int32_t type=0, argument=0;
     bool flag=false;
