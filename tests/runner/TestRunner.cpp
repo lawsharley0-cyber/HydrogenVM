@@ -2572,9 +2572,26 @@ int runFullSubsystemTests() {
         const int32_t readBytes = int32_t(call("__ZNSt12__basic_fileIcE6xsgetnEPci", {bfile, readBuf, 32}));
         const std::string readStr = proc.readCString(readBuf);
         call("__ZNSt12__basic_fileIcED1Ev", {bfile});
+
+        const uint32_t ifstreamObj = proc.heap().allocZeroed(520);
+        const uint32_t ifstreamVtt = proc.lookupSymbol("__ZTTSt14basic_ifstreamIcSt11char_traitsIcEE").value();
+        call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEEC2EPKcSt13_Ios_Openmode", {ifstreamObj, ifstreamVtt, cpath, 8});
+        const uint32_t ifstreamReadBuf = proc.heap().allocZeroed(32);
+        const uint32_t readCount = call("__ZNSi4readEPci", {ifstreamObj, ifstreamReadBuf, 17});
+        const std::string ifstreamReadStr = proc.readCString(ifstreamReadBuf);
+        call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEED1Ev", {ifstreamObj});
         std::filesystem::remove(tmpPath);
-        check(opened != 0 && isOpen && fd >= 0 && written == 17 && closed && readBytes == 17 && readStr == "Hello basic_file!",
-              "libstdc++ __basic_file<char> open, write, read, close, fd");
+        check(opened != 0 && isOpen && fd >= 0 && written == 17 && closed && readBytes == 17 && readStr == "Hello basic_file!" &&
+              readCount == ifstreamObj && ifstreamReadStr == "Hello basic_file!",
+              "libstdc++ __basic_file<char> and inline-constructed basic_ifstream<char> via C2+VTT");
+
+        // std::bad_alloc
+        const uint32_t badAllocObj = proc.heap().allocZeroed(32);
+        proc.mem().write<uint32_t>(badAllocObj, proc.lookupSymbol("__ZTVSt9bad_alloc").value() + 8);
+        const uint32_t baWhat = call("__ZNKSt9bad_alloc4whatEv", {badAllocObj});
+        const std::string baWhatStr = proc.readCString(baWhat);
+        call("__ZNSt9bad_allocD1Ev", {badAllocObj});
+        check(baWhatStr == "std::bad_alloc", "std::bad_alloc::what() returns std::bad_alloc");
     }
 
     // #31: independent ARMv7 API-family oracles (metadata is laid out by the public ABI).

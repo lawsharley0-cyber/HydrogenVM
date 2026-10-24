@@ -103,6 +103,14 @@ int32_t t_mktime(Ctx& x, GuestPtr in) {
     return int32_t(r);
 }
 int32_t t_timegm(Ctx& x, GuestPtr in) { std::tm t = loadTm(x, in); return int32_t(::timegm(&t)); }
+uint32_t t_strptime(Ctx& x, GuestPtr s, GuestPtr fmt, GuestPtr tm) {
+    std::tm t = loadTm(x, tm);
+    const std::string s_str = x.proc.readCString(s);
+    const char* r = ::strptime(s_str.c_str(), x.proc.readCString(fmt).c_str(), &t);
+    if (!r) return 0;
+    storeTm(x, tm, t);
+    return s + uint32_t(r - s_str.c_str());
+}
 uint32_t t_strftime(Ctx& x, GuestPtr buf, uint32_t max, GuestPtr fmt, GuestPtr tmp) {
     std::tm t = loadTm(x, tmp);
     std::string out(max ? max : 1, '\0');
@@ -140,6 +148,7 @@ void registerLibcTime(Process& p) {
     p.def<&t_gmtime_r>("_gmtime_r");
     p.def<&t_mktime>("_mktime");
     p.def<&t_timegm>("_timegm");
+    p.def<&t_strptime>("_strptime");
     p.def<&t_strftime>("_strftime");
     p.def<&t_difftime>("_difftime");
     p.def<&t_ctime>("_ctime");

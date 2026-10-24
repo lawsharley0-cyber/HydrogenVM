@@ -76,12 +76,17 @@ uint32_t state(Ctx& x, uint32_t obj) { return x.mem.read<uint32_t>(obj + kVbase 
 void setState(Ctx& x, uint32_t obj, uint32_t st) { x.mem.write<uint32_t>(obj + kVbase + kStateOff, st); }
 void addState(Ctx& x, uint32_t obj, uint32_t bits) { setState(x, obj, state(x, obj) | bits); }
 
-void construct(Ctx& x, uint32_t obj, Kind k) {
+void construct(Ctx& x, uint32_t obj, Kind k, uint32_t vtt) {
     Streams& s = S(x);
     // Clear our part of the object: header, ios_base area (136 bytes).
     for (uint32_t i = 0; i < kVbase + 136; i += 4) x.mem.write<uint32_t>(obj + i, 0);
-    x.mem.write<uint32_t>(obj, k == Kind::In ? s.vtIn : k == Kind::Out ? s.vtOut : s.vtIo);
-    if (k == Kind::InOut) x.mem.write<uint32_t>(obj + 8, s.vtIoOstream);
+    if (vtt) {
+        x.mem.write<uint32_t>(obj, x.mem.read<uint32_t>(vtt));
+        if (k == Kind::InOut) x.mem.write<uint32_t>(obj + 8, x.mem.read<uint32_t>(vtt + 12));
+    } else {
+        x.mem.write<uint32_t>(obj, k == Kind::In ? s.vtIn : k == Kind::Out ? s.vtOut : s.vtIo);
+        if (k == Kind::InOut) x.mem.write<uint32_t>(obj + 8, s.vtIoOstream);
+    }
     x.mem.write<uint32_t>(obj + kVbase + 4, 6);     // precision
     x.mem.write<uint32_t>(obj + kVbase + 12, 0x1002); // flags: skipws | dec
     x.mem.write<uint32_t>(obj + kVbase + 120, obj + filebufOffset(k)); // _M_streambuf
@@ -162,8 +167,10 @@ bool closeFileObj(Ctx& x, uint32_t obj) {
 void close(Ctx& x, uint32_t obj) { closeFileObj(x, obj); }
 
 // Constructors / destructors / open / close for the three stream types and basic_filebuf.
-template <Kind K> void st_ctor(Ctx& x, GuestPtr self) { construct(x, self, K); }
-template <Kind K> void st_ctorOpen(Ctx& x, GuestPtr self, GuestPtr path, uint32_t mode) { construct(x, self, K); open(x, self, path, mode); }
+template <Kind K> void st_ctor(Ctx& x, GuestPtr self) { construct(x, self, K, 0); }
+template <Kind K> void st_ctor2(Ctx& x, GuestPtr self, GuestPtr vtt) { construct(x, self, K, vtt); }
+template <Kind K> void st_ctorOpen(Ctx& x, GuestPtr self, GuestPtr path, uint32_t mode) { construct(x, self, K, 0); open(x, self, path, mode); }
+template <Kind K> void st_ctorOpen2(Ctx& x, GuestPtr self, GuestPtr vtt, GuestPtr path, uint32_t mode) { construct(x, self, K, vtt); open(x, self, path, mode); }
 void st_dtor(Ctx& x, GuestPtr self) { destroy(x, self); }
 void st_open(Ctx& x, GuestPtr self, GuestPtr path, uint32_t mode) { open(x, objectFor(x, self, 0), path, mode); }
 void st_close(Ctx& x, GuestPtr self) { close(x, objectFor(x, self, 0)); }
@@ -476,22 +483,38 @@ void registerLibStdcxx(Process& p) {
     s.vtIo = s.vtIn;
     s.vtIoOstream = vtable(kVbase - 8, -8);
 
+    const uint32_t vtIos64 = vtable(0, -64);
+    auto vtt = [&](const std::string& name, std::initializer_list<uint32_t> e) {
+        const uint32_t a = p.defineDataBlock(name, uint32_t(e.size()) * 4);
+        uint32_t i = 0;
+        for (uint32_t v : e) p.mem().write<uint32_t>(a + 4 * i++, v);
+    };
     const char* in = "St14basic_ifstreamIcSt11char_traitsIcEE";
     const char* out = "St14basic_ofstreamIcSt11char_traitsIcEE";
     const char* io = "St13basic_fstreamIcSt11char_traitsIcEE";
     const char* fb = "St13basic_filebufIcSt11char_traitsIcEE";
+    vtt(std::string("__ZTT") + in, {s.vtIn, s.vtIn, vtIos64, vtIos64});
+    vtt(std::string("__ZTT") + out, {s.vtOut, s.vtOut, vtIos64, vtIos64});
+    vtt(std::string("__ZTT") + io, {s.vtIo, s.vtIo, vtIos64, s.vtIoOstream, vtIos64, vtIos64, s.vtIoOstream, vtIos64});
+    p.defineData(std::string("__ZTV") + in, s.vtIn - 16);
+    p.defineData(std::string("__ZTV") + out, s.vtOut - 16);
+    p.defineData(std::string("__ZTV") + io, s.vtIo - 16);
+
     auto sym = [](const char* cls, const char* rest) { return std::string("__ZN") + cls + rest; };
-    for (const char* v : {"C1Ev", "C2Ev"}) {
-        p.def<&st_ctor<Kind::In>>(sym(in, v));
-        p.def<&st_ctor<Kind::Out>>(sym(out, v));
-        p.def<&st_ctor<Kind::InOut>>(sym(io, v));
-        p.def<&fb_ctor>(sym(fb, v));
-    }
-    for (const char* v : {"C1EPKcSt13_Ios_Openmode", "C2EPKcSt13_Ios_Openmode"}) {
-        p.def<&st_ctorOpen<Kind::In>>(sym(in, v));
-        p.def<&st_ctorOpen<Kind::Out>>(sym(out, v));
-        p.def<&st_ctorOpen<Kind::InOut>>(sym(io, v));
-    }
+    p.def<&st_ctor<Kind::In>>(sym(in, "C1Ev"));
+    p.def<&st_ctor2<Kind::In>>(sym(in, "C2Ev"));
+    p.def<&st_ctor<Kind::Out>>(sym(out, "C1Ev"));
+    p.def<&st_ctor2<Kind::Out>>(sym(out, "C2Ev"));
+    p.def<&st_ctor<Kind::InOut>>(sym(io, "C1Ev"));
+    p.def<&st_ctor2<Kind::InOut>>(sym(io, "C2Ev"));
+    for (const char* v : {"C1Ev", "C2Ev"}) p.def<&fb_ctor>(sym(fb, v));
+
+    p.def<&st_ctorOpen<Kind::In>>(sym(in, "C1EPKcSt13_Ios_Openmode"));
+    p.def<&st_ctorOpen2<Kind::In>>(sym(in, "C2EPKcSt13_Ios_Openmode"));
+    p.def<&st_ctorOpen<Kind::Out>>(sym(out, "C1EPKcSt13_Ios_Openmode"));
+    p.def<&st_ctorOpen2<Kind::Out>>(sym(out, "C2EPKcSt13_Ios_Openmode"));
+    p.def<&st_ctorOpen<Kind::InOut>>(sym(io, "C1EPKcSt13_Ios_Openmode"));
+    p.def<&st_ctorOpen2<Kind::InOut>>(sym(io, "C2EPKcSt13_Ios_Openmode"));
     for (const char* cls : {in, out, io}) {
         for (const char* v : {"D0Ev", "D1Ev", "D2Ev"}) p.def<&st_dtor>(sym(cls, v));
         p.def<&st_open>(sym(cls, "4openEPKcSt13_Ios_Openmode"));

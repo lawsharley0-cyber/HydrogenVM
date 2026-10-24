@@ -1114,9 +1114,10 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
                           "NSLocalizedRecoverySuggestionErrorKey", "NSUnderlyingErrorKey", "NSFilePathErrorKey",
                           "NSStringEncodingErrorKey", "NSURLErrorKey", "NSErrorFailingURLStringKey", "NSURLErrorFailingURLErrorKey",
                           "NSURLErrorFailingURLStringErrorKey", "NSHelpAnchorErrorKey", "NSLocalizedRecoveryOptionsErrorKey",
-                          "NSRecoveryAttempterErrorKey"}) {
+                          "NSRecoveryAttempterErrorKey", "kCFErrorDomainOSStatus"}) {
         // The string values match Apple's: the constant name, except for the error keys.
         std::string v = n;
+        if (v == "kCFErrorDomainOSStatus") v = "NSOSStatusErrorDomain";
         if (v == "NSLocalizedDescriptionKey") v = "NSLocalizedDescription";
         else if (v == "NSLocalizedFailureReasonErrorKey") v = "NSLocalizedFailureReason";
         else if (v == "NSLocalizedRecoverySuggestionErrorKey") v = "NSLocalizedRecoverySuggestion";
