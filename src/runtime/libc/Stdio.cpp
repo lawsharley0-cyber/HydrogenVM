@@ -153,6 +153,8 @@ uint32_t f_fdopen(Ctx& x, int32_t fd, GuestPtr mode) {
     if (!f) { setErrno(x, errno); return 0; }
     return newFile(x, f);
 }
+uint32_t f_popen(Ctx& x, GuestPtr, GuestPtr) { setErrno(x, 78 /* ENOSYS */); return 0; }
+int32_t f_pclose(Ctx& x, GuestPtr) { setErrno(x, 10 /* ECHILD */); return -1; }
 uint32_t f_freopen(Ctx& x, GuestPtr path, GuestPtr mode, GuestPtr fp) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
@@ -522,6 +524,8 @@ void registerLibcStdio(Process& p) {
     p.def<&f_perror>("_perror");
     p.def<&f_fopen>("_fopen");
     p.def<&f_fdopen>("_fdopen");
+    p.def<&f_popen>("_popen");
+    p.def<&f_pclose>("_pclose");
     p.def<&f_freopen>("_freopen");
     p.def<&f_fclose>("_fclose");
     p.def<&f_fread>("_fread");

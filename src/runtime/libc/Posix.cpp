@@ -128,6 +128,7 @@ int32_t p_statvfs(Ctx& x, GuestPtr, GuestPtr st) {
     for (uint32_t i = 0; i < 11; ++i) x.mem.write<uint32_t>(st + i * 4, v[i]);
     return 0;
 }
+uint32_t p_alarm(Ctx&, uint32_t) { return 0; }
 
 // Locale: everything is "C" / UTF-8.
 struct LocaleData {
@@ -221,6 +222,7 @@ void registerLibcPosix(Process& p) {
     p.def<&m_semTimedWait>("_semaphore_timedwait");
     p.def<&p_statfs>("_statfs");
     p.def<&p_statvfs>("_statvfs");
+    p.def<&p_alarm>("_alarm");
     p.def<&p_setlocale>("_setlocale");
     p.def<&p_localeconv>("_localeconv");
     p.def<&p_nl_langinfo>("_nl_langinfo");
