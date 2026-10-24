@@ -482,10 +482,11 @@ final class BatchTestRunner {
             let durationSeconds = Double(self.options.secondsPerApp)
             let deadline = Date().addingTimeInterval(durationSeconds)
 
-            var initialLogs: [(String, HVMLogLevel)] = []
-            var explorePhase: ExplorePhase? = nil
-            if self.options.exploreEnabled {
-                explorePhase = ExplorePhase(session: s, options: self.options, bundleId: target.app.info.bundleIdentifier) { [weak self] in self?.lastCapturedFrame }
+            // A let, so the log closure below can capture it under strict concurrency.
+            let explorePhase: ExplorePhase? = self.options.exploreEnabled
+                ? ExplorePhase(session: s, options: self.options, bundleId: target.app.info.bundleIdentifier) { [weak self] in self?.lastCapturedFrame }
+                : nil
+            if explorePhase != nil {
 
                 let originalOnLog = s.onLog
                 s.onLog = { [weak self] line, level in
@@ -494,11 +495,7 @@ final class BatchTestRunner {
                         self.keepLog(line)
                         if line.contains("GPU: presented frame") { self.gpuSampleLines.append(line) }
 
-                        if let ep = explorePhase {
-                            ep.recordLogLine(line, level: level)
-                        } else {
-                            initialLogs.append((line, level))
-                        }
+                        explorePhase?.recordLogLine(line, level: level)
                     }
                 }
 
@@ -511,7 +508,6 @@ final class BatchTestRunner {
                     let exploreDeadline = Date().addingTimeInterval(exploreDuration)
 
                     if let ep = explorePhase {
-                        ep.seedKnownProblems(from: initialLogs)
                         self.progressText = "Exploring \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
                         await ep.run(deadline: exploreDeadline, exitBox: exitBox)
                     }

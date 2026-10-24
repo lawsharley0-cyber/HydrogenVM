@@ -46,6 +46,8 @@ final class ExplorePhase {
     var actions: [ExploreAction] = []
     var newProblems: [ExploreProblem] = []
     private var knownProblemHashes = Set<String>()
+    /// Problems logged before exploring starts belong to the launch, not to an action.
+    private var exploring = false
     var visitedFrameHashes = Set<String>()
 
     let startTime: Date
@@ -58,9 +60,11 @@ final class ExplorePhase {
         self.currentFrameProvider = currentFrameProvider
         self.startTime = Date()
 
-        var hasher = Hasher()
-        hasher.combine(bundleId)
-        self.seed = UInt64(bitPattern: Int64(hasher.finalize()))
+        // FNV-1a: stable across launches (Hasher is randomly seeded per process),
+        // so a run can be repeated with the same actions.
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in bundleId.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        self.seed = h
     }
 
     func seedKnownProblems(from logs: [(String, HVMLogLevel)]) {
@@ -76,6 +80,7 @@ final class ExplorePhase {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if let rank = ConsoleReport.rank(text, level), rank > 0 || rank == 0 {
             let key = ConsoleReport.normalized(text)
+            if !exploring { knownProblemHashes.insert(key); return }
             if !knownProblemHashes.contains(key) {
                 knownProblemHashes.insert(key)
                 newProblems.append(ExploreProblem(problemText: String(text.prefix(600)), triggeringActionIndex: actions.isEmpty ? nil : actions.count - 1))
@@ -134,6 +139,7 @@ final class ExplorePhase {
     }
 
     func run(deadline: Date, exitBox: ExitBox) async {
+        exploring = true
         var rng = DeterministicRNG(seed: self.seed)
 
         _ = captureFrameHash()

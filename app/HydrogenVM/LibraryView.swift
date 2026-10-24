@@ -75,7 +75,8 @@ final class LibraryStore {
             var message: String?
             do {
                 let info = try HVMEngine.importIPA(staged.path(percentEncoded: false), intoDirectory: root)
-                let keepIpa = UserDefaults.standard.bool(forKey: "keepIpaForReinstall")
+                // @AppStorage defaults to on but writes nothing until toggled, so absent means on.
+                let keepIpa = UserDefaults.standard.object(forKey: "keepIpaForReinstall") as? Bool ?? true
                 if keepIpa {
                     let bundleId = info.bundleIdentifier
                     if let sha256 = staged.sha256 {
