@@ -1,43 +1,24 @@
-# HydrogenVM report — 7ae221a
+# HydrogenVM report — a9f2c22
 
-2026-10-24T00:44:09+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-24T00:50:01+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 6.17.0-1022-azure)
 
-**All tests passed.**
+**1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 217.6s |
-| cpu | 15 | 0 | 0 | 0.7s |
-| ios | 6 | 0 | 0 | 2.0s |
-| bench | 5 | 0 | 0 | 24.2s |
-
-## Speed
-
-CoreMark **1743.9** iterations/s (583.9 guest MIPS)
-
-| Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
-|---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **121.1%** | 727 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **90.8%** | 727 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **72.7%** | 581 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.3%** | 498 MHz |
-
-Raw interpreter speed (CPU test programs): ctests_thumb 464 MIPS, ctests_arm 522 MIPS, ftests_vfp_thumb_softfp 437 MIPS, ftests_neon_thumb 363 MIPS
-
-| App | Wall | Frames | Avg frame | Max frame | Slow frames |
-|---|---:|---:|---:|---:|---:|
-| CTest | 0.03s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.03s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.65s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.02s | 61 | 0.45 ms | 7.46 ms | 0 |
+| build | 0 | 1 | 0 | 161.7s |
 
 ## Problems (29)
 
-### Below speed goal (1)
+### Failures (1)
 
-- **bench / coremark**: 38.3% of iPhone 5 single-core speed (goal: 100%)
+- **build / ninja**
+
+  ```
+  /home/runner/work/HydrogenVM/HydrogenVM/tests/runner/TestRunner.cpp:1809:131: error: non-constant-expression cannot be narrowed from type 'uint32_t' (aka 'unsigned int') to 'float' in initializer list [-Wc++11-narrowing]
+  /home/runner/work/HydrogenVM/HydrogenVM/tests/runner/TestRunner.cpp:1809:149: error: non-constant-expression cannot be narrowed from type 'uint32_t' (aka 'unsigned int') to 'float' in initializer list [-Wc++11-narrowing]
+  2 errors generated.
+  ```
 
 ### Warnings (28)
 
