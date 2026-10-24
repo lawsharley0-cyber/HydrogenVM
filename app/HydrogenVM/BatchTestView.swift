@@ -263,6 +263,24 @@ struct BatchTestView: View {
                     }, set: {
                         runner.options.resetSandbox = $0
                     }))
+
+                    Toggle("Explore games automatically", isOn: Binding(get: {
+                        runner.options.exploreEnabled
+                    }, set: {
+                        runner.options.exploreEnabled = $0
+                    }))
+
+                    if runner.options.exploreEnabled {
+                        Picker("Explore Duration", selection: Binding(get: {
+                            runner.options.exploreTime
+                        }, set: {
+                            runner.options.exploreTime = $0
+                        })) {
+                            Text("30 s").tag(30)
+                            Text("60 s").tag(60)
+                            Text("120 s").tag(120)
+                        }
+                    }
                 }
 
                 Section {

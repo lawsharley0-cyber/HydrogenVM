@@ -17,6 +17,15 @@ def rank(documents):
         perf = row.get('perf') or {}
         crash = bool(row.get('crashed') or row.get('exceptionKind') or row.get('crashReport') or row.get('loadError'))
         signal = (row.get('frame') or {}).get('signal')
+
+        if row.get('explore'):
+            for problem in row['explore'].get('newProblems', []):
+                prob_summary = problem.get('problemText', '').split('\n')[0]
+                prob_sig = 'prob-' + hashlib.sha1(prob_summary.encode()).hexdigest()[:12]
+                pgroup = groups.setdefault(prob_sig, {'signature': prob_sig, 'apps': set(), 'severity': 1, 'summary': prob_summary})
+                pgroup['apps'].add(app)
+                pgroup['severity'] = max(pgroup['severity'], 1)
+
         if not crash and signal not in ('all-black', 'all-white', 'no-frames'):
             return
         severity = (2 if perf.get('framesPresented', 0) > 0 else 3) if crash else 1
