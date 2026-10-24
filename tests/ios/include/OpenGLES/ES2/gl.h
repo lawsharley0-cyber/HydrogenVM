@@ -148,3 +148,4 @@ void glGetProgramInfoLog(GLuint program, GLsizei bufsize, GLsizei *length, GLcha
 GLenum glGetError(void);
 void glActiveTexture(GLenum texture);
 void glGenerateMipmap(GLenum target);
+void glGetIntegerv(GLenum pname, GLint *params);

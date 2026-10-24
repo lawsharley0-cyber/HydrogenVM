@@ -1070,6 +1070,14 @@ static TLResult *runCaseI(void) {
 
         // Draw full-viewport quad
         glViewport(0, 0, FBO_W, FBO_H);
+        GLint readFormat = 0, readType = 0;
+        glGetIntegerv(0x8B9B /*GL_IMPLEMENTATION_COLOR_READ_FORMAT*/, &readFormat);
+        glGetIntegerv(0x8B9A /*GL_IMPLEMENTATION_COLOR_READ_TYPE*/, &readType);
+        if (readFormat != 0x1908 || readType != 0x1401) {
+            subDiag[[NSString stringWithUTF8String:tc->label]] = [NSString stringWithFormat:@"Bad read format/type: 0x%04x 0x%04x", readFormat, readType];
+            allOk = NO;
+        }
+
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
