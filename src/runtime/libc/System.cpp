@@ -17,6 +17,9 @@
 #include <mutex>
 #include <random>
 #include <sys/stat.h>
+#include <iconv.h>
+#include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <unistd.h>
 
@@ -98,24 +101,104 @@ int32_t s_syscall(Ctx& x, int32_t num, VarArgs) {
 }
 int32_t s_getppid(Ctx&) { return 1; }
 uint32_t s_getuid(Ctx&) { return 501; }
+// Darwin 32-bit struct passwd (40 bytes): name, passwd, uid, gid, change, class,
+// gecos, dir, shell, expire. The one user is "mobile" (501), home = the app's home.
+constexpr uint32_t kPasswdSize = 40;
 GuestPtr s_getpwuid(Ctx& x, uint32_t) {
     static const char key = 0;
     uint32_t& addr = x.proc.processSlot(&key);
     if (!addr) {
-        addr = x.proc.allocStatic(32);
+        addr = x.proc.allocStatic(kPasswdSize);
         const uint32_t name = x.proc.internCString("mobile");
-        const uint32_t dir  = x.proc.internCString("/var/mobile");
+        const uint32_t empty = x.proc.internCString("");
+        const uint32_t gecos = x.proc.internCString("Mobile User");
+        const uint32_t dir  = x.proc.internCString(x.proc.guestHomePath());
         const uint32_t sh   = x.proc.internCString("/bin/sh");
-        x.mem.write<uint32_t>(addr + 0, name); // pw_name
-        x.mem.write<uint32_t>(addr + 4, name); // pw_passwd
-        x.mem.write<uint32_t>(addr + 8, 501);  // pw_uid
-        x.mem.write<uint32_t>(addr + 12, 501); // pw_gid
-        x.mem.write<uint32_t>(addr + 16, 0);   // pw_change
-        x.mem.write<uint32_t>(addr + 20, name);// pw_class
-        x.mem.write<uint32_t>(addr + 24, dir); // pw_dir
-        x.mem.write<uint32_t>(addr + 28, sh);  // pw_shell
+        x.mem.write<uint32_t>(addr + 0, name);  // pw_name
+        x.mem.write<uint32_t>(addr + 4, empty); // pw_passwd
+        x.mem.write<uint32_t>(addr + 8, 501);   // pw_uid
+        x.mem.write<uint32_t>(addr + 12, 501);  // pw_gid
+        x.mem.write<uint32_t>(addr + 16, 0);    // pw_change
+        x.mem.write<uint32_t>(addr + 20, empty);// pw_class
+        x.mem.write<uint32_t>(addr + 24, gecos);// pw_gecos
+        x.mem.write<uint32_t>(addr + 28, dir);  // pw_dir
+        x.mem.write<uint32_t>(addr + 32, sh);   // pw_shell
+        x.mem.write<uint32_t>(addr + 36, 0);    // pw_expire
     }
     return addr;
+}
+GuestPtr s_getpwnam(Ctx& x, GuestPtr name) {
+    return name && x.proc.readCString(name) == "mobile" ? s_getpwuid(x, 501) : 0;
+}
+// getpw*_r(key, struct passwd* pwd, char* buf, size_t len, struct passwd** result):
+// the strings stay in process-lifetime storage, so only the struct is copied.
+int32_t pwCopy(Ctx& x, bool found, GuestPtr pwd, GuestPtr result) {
+    if (result) x.mem.write<uint32_t>(result, 0);
+    if (!found) return 0;   // no such user: 0 with *result = NULL
+    if (!pwd) return 22;    // EINVAL
+    x.mem.copyIn(pwd, x.mem.host(s_getpwuid(x, 501)), kPasswdSize);
+    if (result) x.mem.write<uint32_t>(result, pwd);
+    return 0;
+}
+int32_t s_getpwuid_r(Ctx& x, uint32_t uid, GuestPtr pwd, GuestPtr, uint32_t, GuestPtr result) {
+    return pwCopy(x, uid == 501, pwd, result);
+}
+int32_t s_getpwnam_r(Ctx& x, GuestPtr name, GuestPtr pwd, GuestPtr, uint32_t, GuestPtr result) {
+    return pwCopy(x, name && x.proc.readCString(name) == "mobile", pwd, result);
+}
+
+// iconv, forwarded to the host's iconv. Guest handles index a per-process table.
+struct Iconvs {
+    explicit Iconvs(Process&) {}
+    ~Iconvs() { for (auto& [h, cd] : open) iconv_close(cd); }
+    std::mutex mu;
+    std::unordered_map<uint32_t, iconv_t> open;
+    uint32_t next = 1;
+};
+uint32_t s_iconv_open(Ctx& x, GuestPtr to, GuestPtr from) {
+    const iconv_t cd = iconv_open(x.proc.readCString(to).c_str(), x.proc.readCString(from).c_str());
+    if (cd == iconv_t(-1)) { setErrno(x, darwinErrno(errno)); return 0xFFFFFFFFu; }
+    auto& t = x.proc.service<Iconvs>();
+    std::lock_guard<std::mutex> lk(t.mu);
+    const uint32_t h = t.next++;
+    t.open[h] = cd;
+    return h;
+}
+int32_t s_iconv_close(Ctx& x, uint32_t h) {
+    auto& t = x.proc.service<Iconvs>();
+    std::lock_guard<std::mutex> lk(t.mu);
+    auto it = t.open.find(h);
+    if (it == t.open.end()) { setErrno(x, 9 /* EBADF */); return -1; }
+    iconv_close(it->second);
+    t.open.erase(it);
+    return 0;
+}
+// size_t iconv(cd, char** inbuf, size_t* inleft, char** outbuf, size_t* outleft)
+uint32_t s_iconv(Ctx& x, uint32_t h, GuestPtr inbuf, GuestPtr inleft, GuestPtr outbuf, GuestPtr outleft) {
+    iconv_t cd;
+    {
+        auto& t = x.proc.service<Iconvs>();
+        std::lock_guard<std::mutex> lk(t.mu);
+        auto it = t.open.find(h);
+        if (it == t.open.end()) { setErrno(x, 9 /* EBADF */); return 0xFFFFFFFFu; }
+        cd = it->second;
+    }
+    const uint32_t inPtr = inbuf ? x.mem.read<uint32_t>(inbuf) : 0;
+    const uint32_t outPtr = outbuf ? x.mem.read<uint32_t>(outbuf) : 0;
+    size_t inN = inleft ? x.mem.read<uint32_t>(inleft) : 0;
+    size_t outN = outleft ? x.mem.read<uint32_t>(outleft) : 0;
+    char* in = inPtr ? reinterpret_cast<char*>(x.mem.host(inPtr)) : nullptr;
+    char* out = outPtr ? reinterpret_cast<char*>(x.mem.host(outPtr)) : nullptr;
+    char* in0 = in;
+    char* out0 = out;
+    const size_t r = iconv(cd, in ? &in : nullptr, in ? &inN : nullptr, out ? &out : nullptr, out ? &outN : nullptr);
+    const int err = errno;
+    if (inbuf && in) x.mem.write<uint32_t>(inbuf, inPtr + uint32_t(in - in0));
+    if (outbuf && out) x.mem.write<uint32_t>(outbuf, outPtr + uint32_t(out - out0));
+    if (inleft && in) x.mem.write<uint32_t>(inleft, uint32_t(inN));
+    if (outleft && out) x.mem.write<uint32_t>(outleft, uint32_t(outN));
+    if (r == size_t(-1)) { setErrno(x, darwinErrno(err)); return 0xFFFFFFFFu; }
+    return uint32_t(r);
 }
 GuestPtr s_basename(Ctx& x, GuestPtr p) {
     if (!p) return x.proc.internCString(".");
@@ -817,6 +900,12 @@ void registerLibcSystem(Process& p) {
     p.def<&s_getuid>("_getgid");
     p.def<&s_getuid>("_getegid");
     p.def<&s_getpwuid>("_getpwuid");
+    p.def<&s_getpwnam>("_getpwnam");
+    p.def<&s_getpwuid_r>("_getpwuid_r");
+    p.def<&s_getpwnam_r>("_getpwnam_r");
+    for (const char* n : {"_iconv_open", "_libiconv_open"}) p.def<&s_iconv_open>(n);
+    for (const char* n : {"_iconv", "_libiconv"}) p.def<&s_iconv>(n);
+    for (const char* n : {"_iconv_close", "_libiconv_close"}) p.def<&s_iconv_close>(n);
     p.def<&s_basename>("_basename");
     p.def<&s_ioctl>("_ioctl");
     p.def<&s_zero>("_tcgetattr");

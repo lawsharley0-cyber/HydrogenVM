@@ -3105,6 +3105,30 @@ int runFullSubsystemTests() {
             proc.heap().free(buf);
         }
 
+        // iconv forwarded to the host, and the getpw*_r family.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t cd = call("_iconv_open", {proc.allocCString("UTF-16LE"), proc.allocCString("UTF-8")});
+            const std::string text = "h\xc3\xa9llo";   // "héllo"
+            const uint32_t in = proc.allocCString(text), out = proc.heap().allocZeroed(64), ptrs = proc.heap().allocZeroed(16);
+            proc.mem().write<uint32_t>(ptrs + 0, in);
+            proc.mem().write<uint32_t>(ptrs + 4, uint32_t(text.size()));
+            proc.mem().write<uint32_t>(ptrs + 8, out);
+            proc.mem().write<uint32_t>(ptrs + 12, 64);
+            const uint32_t r = call("_iconv", {cd, ptrs, ptrs + 4, ptrs + 8, ptrs + 12});
+            const bool conv = cd != 0xFFFFFFFFu && r == 0 && proc.mem().read<uint32_t>(ptrs + 4) == 0 &&
+                              proc.mem().read<uint32_t>(ptrs + 12) == 64 - 10 &&
+                              proc.mem().read<uint32_t>(ptrs + 8) == out + 10 &&
+                              proc.mem().read<uint16_t>(out + 2) == 0x00E9;
+            const bool closed = call("_iconv_close", {cd}) == 0;
+            const uint32_t pwd = proc.heap().allocZeroed(40), res = proc.heap().allocZeroed(4);
+            const bool pwOk = call("_getpwnam_r", {proc.allocCString("mobile"), pwd, 0, 0, res}) == 0 &&
+                              proc.mem().read<uint32_t>(res) == pwd && proc.mem().read<uint32_t>(pwd + 8) == 501 &&
+                              proc.readCString(proc.mem().read<uint32_t>(pwd + 28)) == proc.guestHomePath();
+            const bool pwMissing = call("_getpwnam_r", {proc.allocCString("root"), pwd, 0, 0, res}) == 0 && proc.mem().read<uint32_t>(res) == 0;
+            check(conv && closed && pwOk && pwMissing, "iconv converts UTF-8 to UTF-16LE through the host and advances the guest pointers; getpwnam_r finds only mobile");
+        }
+
         // CFURLCreateAbsoluteURLWithBytes resolves against the base URL.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
