@@ -277,9 +277,9 @@ int32_t e_putenv(Ctx& x, GuestPtr s) {
 }
 uint32_t e_realpath(Ctx& x, GuestPtr path, GuestPtr resolved) {
     std::error_code ec;
-    const auto p = std::filesystem::weakly_canonical(x.proc.readCString(path), ec);
+    const auto p = std::filesystem::weakly_canonical(x.proc.hostPath(x.proc.readCString(path)), ec);
     if (ec) { setErrno(x, ENOENT); return 0; }
-    const std::string s = p.string();
+    const std::string s = x.proc.guestPath(p.string());
     if (!resolved) return x.proc.allocCString(s);
     x.mem.copyIn(resolved, s.c_str(), std::min<size_t>(s.size() + 1, 1024));
     return resolved;
@@ -295,7 +295,7 @@ int32_t e_mkstemp(Ctx& x, GuestPtr tmpl) {
     for (int tries = 0; tries < 100; ++tries) {
         const std::string original = x.proc.readCString(tmpl);
         e_mktemp(x, tmpl);
-        const std::string p = x.proc.readCString(tmpl);
+        const std::string p = x.proc.hostPath(x.proc.readCString(tmpl));
         const int fd = ::open(p.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
         if (fd >= 0) return fd;
         x.mem.copyIn(tmpl, original.c_str(), original.size());

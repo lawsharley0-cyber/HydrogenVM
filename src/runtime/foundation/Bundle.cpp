@@ -350,13 +350,13 @@ id url_description(Ctx& x, id self, SEL) {
 uint32_t url_fsRep(Ctx& x, id self, SEL) { return id(rt(x).send(x.cpu, makeString(x, filePath(x, self)), "fileSystemRepresentation")); }
 bool url_reachable(Ctx& x, id self, SEL, GuestPtr err) {
     std::error_code ec;
-    if (fs::exists(filePath(x, self), ec)) return true;
+    if (fs::exists(x.proc.hostPath(filePath(x, self)), ec)) return true;
     ErrorOut::posix(x, err, ENOENT, filePath(x, self));
     return false;
 }
 bool url_setResourceValue(Ctx&, id, SEL, id, id, GuestPtr) { return true; }
 bool url_getResourceValue(Ctx& x, id self, SEL, GuestPtr out, id key, GuestPtr err) {
-    const std::string k = utf8(x, key), p = filePath(x, self);
+    const std::string k = utf8(x, key), p = x.proc.hostPath(filePath(x, self));
     std::error_code ec;
     id v = 0;
     if (k == "NSURLIsDirectoryKey") v = makeBool(x, fs::is_directory(p, ec));
@@ -488,8 +488,8 @@ std::string resourcePathFor(Ctx& x, id bundle, id name, id type, id dir, id loc 
 }
 
 id b_main(Ctx& x, id, SEL) { return mainBundle(x); }
-id b_withPath(Ctx& x, id, SEL, id path) { mainBundle(x); return path ? bundleFor(x, utf8(x, path)) : 0; }
-id b_withURL(Ctx& x, id, SEL, id url) { mainBundle(x); return url ? bundleFor(x, filePath(x, url)) : 0; }
+id b_withPath(Ctx& x, id, SEL, id path) { mainBundle(x); return path ? bundleFor(x, x.proc.hostPath(utf8(x, path))) : 0; }
+id b_withURL(Ctx& x, id, SEL, id url) { mainBundle(x); return url ? bundleFor(x, x.proc.hostPath(filePath(x, url))) : 0; }
 id b_initWithPath(Ctx& x, id self, SEL, id path) { rt(x).disposeInstance(x.cpu, self); return rt(x).retain(x.cpu, b_withPath(x, 0, 0, path)); }
 id b_forClass(Ctx& x, id, SEL, Class) { return mainBundle(x); }
 id b_withIdentifier(Ctx& x, id, SEL, id ident) {
@@ -499,17 +499,17 @@ id b_withIdentifier(Ctx& x, id, SEL, id ident) {
 }
 id b_allBundles(Ctx& x, id, SEL) { return makeArray(x, {mainBundle(x)}); }
 id b_allFrameworks(Ctx& x, id, SEL) { return makeArray(x, {}); }
-id b_bundlePath(Ctx& x, id self, SEL) { return makeString(x, bd(x, self)->path); }
-id b_resourcePath(Ctx& x, id self, SEL) { return makeString(x, bd(x, self)->path); }
+id b_bundlePath(Ctx& x, id self, SEL) { return makeString(x, x.proc.guestPath(bd(x, self)->path)); }
+id b_resourcePath(Ctx& x, id self, SEL) { return makeString(x, x.proc.guestPath(bd(x, self)->path)); }
 id b_executablePath(Ctx& x, id self, SEL) {
     BundleData* d = bd(x, self);
-    if (d->isMain) return makeString(x, x.proc.executablePath());
+    if (d->isMain) return makeString(x, x.proc.guestExecutablePath());
     const std::string e = d->info->getString("CFBundleExecutable");
-    return e.empty() ? 0 : makeString(x, (fs::path(d->path) / e).string());
+    return e.empty() ? 0 : makeString(x, x.proc.guestPath((fs::path(d->path) / e).string()));
 }
 id b_privateFrameworksPath(Ctx& x, id self, SEL) { return makeString(x, bd(x, self)->path + "/Frameworks"); }
 id b_builtInPlugInsPath(Ctx& x, id self, SEL) { return makeString(x, bd(x, self)->path + "/PlugIns"); }
-id b_bundleURL(Ctx& x, id self, SEL) { return newURL(x, fileURLString(bd(x, self)->path, true), 0); }
+id b_bundleURL(Ctx& x, id self, SEL) { return newURL(x, fileURLString(x.proc.guestPath(bd(x, self)->path), true), 0); }
 id b_executableURL(Ctx& x, id self, SEL s) { const id p = b_executablePath(x, self, s); return p ? newURL(x, fileURLString(utf8(x, p), false), 0) : 0; }
 id b_identifier(Ctx& x, id self, SEL) { const std::string v = bd(x, self)->info->getString("CFBundleIdentifier"); return v.empty() ? 0 : makeString(x, v); }
 id b_infoDictionary(Ctx& x, id self, SEL) {
@@ -530,20 +530,20 @@ id b_objectForInfoKey(Ctx& x, id self, SEL, id key) {
 id b_localizedInfo(Ctx& x, id self, SEL) { return b_infoDictionary(x, self, 0); }
 id b_pathForResource(Ctx& x, id self, SEL, id name, id type) {
     const std::string p = resourcePathFor(x, self, name, type, 0);
-    return p.empty() ? 0 : makeString(x, p);
+    return p.empty() ? 0 : makeString(x, x.proc.guestPath(p));
 }
 id b_pathForResourceDir(Ctx& x, id self, SEL, id name, id type, id dir) {
     const std::string p = resourcePathFor(x, self, name, type, dir);
-    return p.empty() ? 0 : makeString(x, p);
+    return p.empty() ? 0 : makeString(x, x.proc.guestPath(p));
 }
 id b_pathForResourceDirLoc(Ctx& x, id self, SEL, id name, id type, id dir, id loc) {
     const std::string p = resourcePathFor(x, self, name, type, dir, loc);
-    return p.empty() ? 0 : makeString(x, p);
+    return p.empty() ? 0 : makeString(x, x.proc.guestPath(p));
 }
 id bc_pathForResourceInDir(Ctx& x, id, SEL, id name, id type, id dirPath) {
     std::string n = name ? utf8(x, name) : "", t = type ? utf8(x, type) : "";
-    const std::string p = findResource(x, utf8(x, dirPath), n, t, "");
-    return p.empty() ? 0 : makeString(x, p);
+    const std::string p = findResource(x, x.proc.hostPath(utf8(x, dirPath)), n, t, "");
+    return p.empty() ? 0 : makeString(x, x.proc.guestPath(p));
 }
 id b_pathsForResources(Ctx& x, id self, SEL, id type, id dir) {
     BundleData* d = bd(x, self);
@@ -555,17 +555,17 @@ id b_pathsForResources(Ctx& x, id self, SEL, id type, id dir) {
     for (const fs::path& dd : {root, root / (B(x).language + ".lproj")}) {
         if (!fs::is_directory(dd, ec)) continue;
         for (auto& e : fs::directory_iterator(dd, ec))
-            if (t.empty() || e.path().extension() == "." + t) out.push_back(makeString(x, e.path().string()));
+            if (t.empty() || e.path().extension() == "." + t) out.push_back(makeString(x, x.proc.guestPath(e.path().string())));
     }
     return makeArray(x, out);
 }
 id b_urlForResource(Ctx& x, id self, SEL, id name, id ext) {
     const std::string p = resourcePathFor(x, self, name, ext, 0);
-    return p.empty() ? 0 : newURL(x, fileURLString(p, isDirPath(p)), 0);
+    return p.empty() ? 0 : newURL(x, fileURLString(x.proc.guestPath(p), isDirPath(p)), 0);
 }
 id b_urlForResourceDir(Ctx& x, id self, SEL, id name, id ext, id dir) {
     const std::string p = resourcePathFor(x, self, name, ext, dir);
-    return p.empty() ? 0 : newURL(x, fileURLString(p, isDirPath(p)), 0);
+    return p.empty() ? 0 : newURL(x, fileURLString(x.proc.guestPath(p), isDirPath(p)), 0);
 }
 id b_urlsForResources(Ctx& x, id self, SEL s, id ext, id dir) {
     std::vector<id> out;
@@ -654,7 +654,7 @@ std::vector<std::string> searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool e
         default: return {};
     }
     std::vector<std::string> paths;
-    if (mask & 1) paths.push_back((expand ? x.proc.homePath() : std::string("~")) + "/" + rel);
+    if (mask & 1) paths.push_back((expand ? x.proc.guestHomePath() : std::string("~")) + "/" + rel);
     // There is no shared guest filesystem yet. Local-domain locations have a
     // separate per-process home-backed root, rather than exposing host /Library.
     // Personal folders (Documents, Desktop, etc.) do not have a local domain.
@@ -667,7 +667,7 @@ std::vector<std::string> searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool e
         dir == kNSDocumentationDirectory || dir == kNSInputMethodsDirectory ||
         dir == kNSPreferencePanesDirectory;
     if ((mask & 2) && localDirectory)
-        paths.push_back(x.proc.homePath() + "/LocalDomain/" + rel);
+        paths.push_back(x.proc.guestHomePath() + "/LocalDomain/" + rel);
     return paths;
 }
 id f_searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool expand) {
@@ -678,9 +678,9 @@ id f_searchPaths(Ctx& x, uint32_t dir, uint32_t mask, bool expand) {
                     dir, mask, unsigned(expand), out.size());
     return makeArray(x, out);
 }
-id f_homeDirectory(Ctx& x) { return makeString(x, x.proc.homePath()); }
-id f_homeDirectoryForUser(Ctx& x, id) { return makeString(x, x.proc.homePath()); }
-id f_temporaryDirectory(Ctx& x) { return makeString(x, x.proc.homePath() + "/tmp/"); }
+id f_homeDirectory(Ctx& x) { return makeString(x, x.proc.guestHomePath()); }
+id f_homeDirectoryForUser(Ctx& x, id) { return makeString(x, x.proc.guestHomePath()); }
+id f_temporaryDirectory(Ctx& x) { return makeString(x, x.proc.guestHomePath() + "/tmp/"); }
 id f_openStepRoot(Ctx& x) { return makeString(x, "/"); }
 
 // ----------------------------------------------------------- NSFileManager ---
@@ -691,7 +691,7 @@ id fm_default(Ctx& x, id, SEL) {
     return b.defaultManager;
 }
 id fm_init(Ctx&, id self, SEL) { return self; }
-std::string P(Ctx& x, id path) { return path ? utf8(x, path) : std::string(); }
+std::string P(Ctx& x, id path) { return path ? x.proc.hostPath(utf8(x, path)) : std::string(); }
 bool fm_exists(Ctx& x, id, SEL, id path) { struct stat st; return path && ::stat(P(x, path).c_str(), &st) == 0; }
 bool fm_existsDir(Ctx& x, id, SEL, id path, GuestPtr isDir) {
     struct stat st;
@@ -885,7 +885,7 @@ bool fm_deletable(Ctx& x, id, SEL, id p) {
     const std::string parent = fs::path(P(x, p)).parent_path().string();
     return ::access(parent.empty() ? "." : parent.c_str(), W_OK) == 0;
 }
-id fm_currentDir(Ctx& x, id, SEL) { std::error_code ec; return makeString(x, fs::current_path(ec).string()); }
+id fm_currentDir(Ctx& x, id, SEL) { std::error_code ec; return makeString(x, x.proc.guestPath(fs::current_path(ec).string())); }
 bool fm_changeDir(Ctx& x, id, SEL, id p) { return ::chdir(P(x, p).c_str()) == 0; }
 id fm_urlsForDirectory(Ctx& x, id, SEL, uint32_t dir, uint32_t mask) {
     std::vector<id> out;
@@ -931,14 +931,14 @@ id fm_enumerator(Ctx& x, id, SEL, id path) {
     return autoreleased(x, e);
 }
 id fm_enumeratorURL(Ctx& x, id self, SEL s, id url, id, uint32_t, uint32_t) {
-    const std::string p = filePath(x, url);
+    const std::string p = filePath(x, url), hp = x.proc.hostPath(p);
     std::error_code ec;
-    if (!fs::is_directory(p, ec)) return 0;
+    if (!fs::is_directory(hp, ec)) return 0;
     auto h = std::make_unique<DirEnumData>();
-    h->root = p;
+    h->root = p;   // URLs handed back keep the guest's form of the path
     h->isURL = true;
-    for (auto it = fs::recursive_directory_iterator(p, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
-        h->items.push_back(fs::relative(it->path(), p, ec).string());
+    for (auto it = fs::recursive_directory_iterator(hp, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+        h->items.push_back(fs::relative(it->path(), hp, ec).string());
     std::sort(h->items.begin(), h->items.end());
     const id e = rt(x).createInstance(B(x).dirEnum);
     rt(x).setHost(e, std::move(h));
@@ -1047,7 +1047,7 @@ id fh_writing(Ctx& x, id, SEL, id p) {
 }
 id fh_updating(Ctx& x, id, SEL, id p) { return newHandle(x, std::fopen(P(x, p).c_str(), "r+b"), -1); }
 id fh_readingURL(Ctx& x, id, SEL, id u, GuestPtr err) {
-    const std::string p = filePath(x, u);
+    const std::string p = x.proc.hostPath(filePath(x, u));
     FILE* f = std::fopen(p.c_str(), "rb");
     if (!f) { ErrorOut::posix(x, err, errno, p); return 0; }
     return newHandle(x, f, -1);
@@ -1118,10 +1118,10 @@ int32_t fh_fd(Ctx& x, id self, SEL) { FileHandleData* d = fhd(x, self); return d
 
 uint32_t cfb_main(Ctx& x) { return mainBundle(x); }
 uint32_t cfb_withIdentifier(Ctx& x, id ident) { return b_withIdentifier(x, 0, 0, ident); }
-uint32_t cfb_create(Ctx& x, uint32_t, id url) { mainBundle(x); return rt(x).retain(x.cpu, bundleFor(x, filePath(x, url))); }
+uint32_t cfb_create(Ctx& x, uint32_t, id url) { mainBundle(x); return rt(x).retain(x.cpu, bundleFor(x, x.proc.hostPath(filePath(x, url)))); }
 uint32_t cfb_copyResourceURL(Ctx& x, id bundle, id name, id type, id dir) {
     const std::string p = resourcePathFor(x, bundle, name, type, dir);
-    return p.empty() ? 0 : newURL(x, fileURLString(p, isDirPath(p)), 0, true);
+    return p.empty() ? 0 : newURL(x, fileURLString(x.proc.guestPath(p), isDirPath(p)), 0, true);
 }
 uint32_t cfb_copyResourceURLsOfType(Ctx& x, id bundle, id type, id dir) {
     return rt(x).retain(x.cpu, b_urlsForResources(x, bundle, 0, type, dir));
@@ -1139,7 +1139,7 @@ uint32_t cfb_copyLocalizations(Ctx& x, id b) { return rt(x).retain(x.cpu, b_loca
 uint32_t cfb_copyPreferredLocalizations(Ctx& x, id) { return rt(x).retain(x.cpu, b_preferredLocalizations(x, 0, 0)); }
 uint32_t cfb_copyInfoDictForURL(Ctx& x, id url) {
     try {
-        auto v = Plist::parseFile(filePath(x, url) + "/Info.plist");
+        auto v = Plist::parseFile(x.proc.hostPath(filePath(x, url)) + "/Info.plist");
         return v ? rt(x).retain(x.cpu, plistToObject(x, *v)) : 0;
     } catch (const std::exception&) { return 0; }
 }
@@ -1194,7 +1194,7 @@ std::string bundleResource(Ctx& x, const std::string& name, const std::string& t
     return findResource(x, x.proc.bundlePath(), name, type, subdir);
 }
 id makeFileURL(Ctx& x, const std::string& path, bool isDir) { return newURL(x, fileURLString(path, isDir), 0); }
-std::string urlFilePath(Ctx& x, id url) { return filePath(x, url); }
+std::string urlFilePath(Ctx& x, id url) { return x.proc.hostPath(filePath(x, url)); }
 std::string urlString(Ctx& x, id url) { return absoluteString(x, url); }
 bool isURL(Ctx& x, id obj) { return ud(x, obj) != nullptr; }
 id localizedString(Ctx& x, id key, id value, id table) { return localized(x, mainBundle(x), key, value, table); }

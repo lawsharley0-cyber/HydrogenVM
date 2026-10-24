@@ -128,7 +128,7 @@ bool openFileObj(Ctx& x, uint32_t obj, GuestPtr path, uint32_t mode) {
     else if (m == (kIn | kOut)) fm = "r+b";
     else if (m == (kIn | kOut | kTrunc)) fm = "w+b";
     else if (m == (kIn | kOut | kApp) || m == (kIn | kApp)) fm = "a+b";
-    std::FILE* f = (fm && path) ? std::fopen(x.proc.readCString(path).c_str(), fm) : nullptr;
+    std::FILE* f = (fm && path) ? std::fopen(x.proc.hostPath(x.proc.readCString(path)).c_str(), fm) : nullptr;
     if (f && (mode & kAte)) std::fseek(f, 0, SEEK_END);
     if (!f) {
         if (k != Kind::FileBuf) addState(x, obj, kFailbit);
@@ -251,7 +251,7 @@ uint32_t bfile_open(Ctx& x, GuestPtr self, GuestPtr path, uint32_t mode, int32_t
     else if (m == (kIn | kOut)) fm = "r+b";
     else if (m == (kIn | kOut | kTrunc)) fm = "w+b";
     else if (m == (kIn | kOut | kApp) || m == (kIn | kApp)) fm = "a+b";
-    std::FILE* f = (fm && path) ? std::fopen(x.proc.readCString(path).c_str(), fm) : nullptr;
+    std::FILE* f = (fm && path) ? std::fopen(x.proc.hostPath(x.proc.readCString(path)).c_str(), fm) : nullptr;
     if (f && (mode & kAte)) std::fseek(f, 0, SEEK_END);
     if (!f) return 0;
     {

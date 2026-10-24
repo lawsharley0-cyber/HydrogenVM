@@ -238,7 +238,7 @@ id xml_initWithData(Ctx& x, id self, SEL, id data) {
 id xml_initWithURL(Ctx& x, id self, SEL, id url) {
     XmlParser& p = XP(x, self);
     const id path = url ? id(R(x).send(x.cpu, url, "path")) : 0;
-    std::ifstream f(path ? utf8(x, path) : std::string(), std::ios::binary);
+    std::ifstream f(path ? x.proc.hostPath(utf8(x, path)) : std::string(), std::ios::binary);
     if (!f) { R(x).release(x.cpu, self); return 0; }   // remote URLs: offline
     p.data.assign(std::istreambuf_iterator<char>(f), {});
     return self;

@@ -117,7 +117,7 @@ id ai_initWithArrayCopy(Ctx& x, id self, SEL, id other, bool copyItems) {
 }
 id ai_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
     try {
-        auto v = Plist::parseFile(utf8(x, path));
+        auto v = Plist::parseFile(x.proc.hostPath(utf8(x, path)));
         if (v->type != Plist::Value::Type::Array) { releaseObj(x, self); return 0; }
         const bool m = ad(x, self) && ad(x, self)->isMutable;
         const id parsed = plistToObject(x, *v, m);
@@ -356,7 +356,7 @@ id a_valueForKey(Ctx& x, id self, SEL, id key) {
 bool a_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     auto v = objectToPlist(x, self);
     if (!v) return false;
-    try { Plist::writeXmlFile(*v, utf8(x, path)); return true; } catch (...) { return false; }
+    try { Plist::writeXmlFile(*v, x.proc.hostPath(utf8(x, path))); return true; } catch (...) { return false; }
 }
 
 // mutation
@@ -632,7 +632,7 @@ id di_initWithDictionary(Ctx& x, id self, SEL, id other) { dictAssign(x, self, e
 id di_initWithDictionaryCopy(Ctx& x, id self, SEL s, id other, bool) { return di_initWithDictionary(x, self, s, other); }
 id di_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
     try {
-        auto v = Plist::parseFile(utf8(x, path));
+        auto v = Plist::parseFile(x.proc.hostPath(utf8(x, path)));
         if (v->type != Plist::Value::Type::Dict) { releaseObj(x, self); return 0; }
         const bool m = dd(x, self) && dd(x, self)->isMutable;
         dictAssign(x, self, entriesOf(x, plistToObject(x, *v, m)));
@@ -728,7 +728,7 @@ id d_mutableCopy(Ctx& x, id self, SEL s) { return d_mutableCopyWithZone(x, self,
 bool d_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     auto v = objectToPlist(x, self);
     if (!v) return false;
-    try { Plist::writeXmlFile(*v, utf8(x, path)); return true; } catch (...) { return false; }
+    try { Plist::writeXmlFile(*v, x.proc.hostPath(utf8(x, path))); return true; } catch (...) { return false; }
 }
 id d_keysSortedByValueUsingSelector(Ctx& x, id self, SEL, SEL s) {
     auto e = entriesOf(x, self);

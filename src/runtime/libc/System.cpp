@@ -40,7 +40,7 @@ void s_stack_chk_fail(Ctx& x) {
     throw std::runtime_error("stack buffer overflow detected (__stack_chk_fail) in " + x.proc.describeAddress(x.cpu.r[CPU::kLR]));
 }
 int32_t s_NSGetExecutablePath(Ctx& x, GuestPtr buf, GuestPtr sizep) {
-    const std::string& p = x.proc.executablePath();
+    const std::string& p = x.proc.guestExecutablePath();
     const uint32_t size = x.mem.read<uint32_t>(sizep);
     if (size < p.size() + 1) { x.mem.write<uint32_t>(sizep, uint32_t(p.size() + 1)); return -1; }
     x.mem.copyIn(buf, p.c_str(), p.size() + 1);
@@ -230,7 +230,7 @@ int32_t s_uname(Ctx& x, GuestPtr u) {
 
 uint32_t d_image_count(Ctx&) { return 1; }
 uint32_t d_image_header(Ctx& x, uint32_t i) { return i == 0 ? x.proc.image().headerAddr : 0; }
-uint32_t d_image_name(Ctx& x, uint32_t i) { return i == 0 ? x.proc.internCString(x.proc.executablePath()) : 0; }
+uint32_t d_image_name(Ctx& x, uint32_t i) { return i == 0 ? x.proc.internCString(x.proc.guestExecutablePath()) : 0; }
 int32_t d_image_slide(Ctx& x, uint32_t i) { return i == 0 ? int32_t(x.proc.image().slide) : 0; }
 void d_register_add_image(Ctx& x, GuestPtr fn) { x.proc.callGuest(x.cpu, fn, {x.proc.image().headerAddr, x.proc.image().slide}); }
 void d_register_remove_image(Ctx&, GuestPtr) {}
@@ -267,7 +267,7 @@ uint32_t d_dlerror(Ctx&) { return 0; }
 int32_t d_dladdr(Ctx& x, GuestPtr addr, GuestPtr info) {
     const auto& img = x.proc.image();
     if (addr < img.lowAddr || addr >= img.highAddr) return 0;
-    x.mem.write<uint32_t>(info, x.proc.internCString(x.proc.executablePath()));
+    x.mem.write<uint32_t>(info, x.proc.internCString(x.proc.guestExecutablePath()));
     x.mem.write<uint32_t>(info + 4, img.headerAddr);
     const std::string sym = img.symbolicate(addr & ~1u);
     const std::string name = sym.substr(0, sym.find(" + "));
@@ -308,16 +308,17 @@ int hostOpenFlags(uint32_t f) {
 }
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
-    const std::string p = x.proc.readCString(path);
-    const int fd = ::open(p.c_str(), hostOpenFlags(flags), mode & 0777);
+    const std::string gp = x.proc.readCString(path);
+    const std::string hp = x.proc.hostPath(gp);
+    const int fd = ::open(hp.c_str(), hostOpenFlags(flags), mode & 0777);
     if (fd < 0) {
-        x.proc.recordFileOpen(p, "open", errno, -1, 0, false);
+        x.proc.recordFileOpen(gp, "open", errno, -1, 0, false);
         return failD<int32_t>(x);
     }
     int64_t sz = -1;
     struct stat st;
     if (::fstat(fd, &st) == 0) sz = st.st_size;
-    const uint64_t h = x.proc.recordFileOpen(p, "open", 0, sz, 0, true);
+    const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
     ofs.tracks[fd] = {h, 0};
@@ -467,13 +468,13 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
 }
 int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    if (::stat(x.proc.readCString(path).c_str(), &st) < 0) return failD<int32_t>(x);
+    if (::stat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
 int32_t f_lstat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    if (::lstat(x.proc.readCString(path).c_str(), &st) < 0) return failD<int32_t>(x);
+    if (::lstat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
@@ -484,15 +485,15 @@ int32_t f_fstat(Ctx& x, int32_t fd, GuestPtr out) {
     storeStat(x, out, st);
     return 0;
 }
-int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.readCString(path).c_str(), mode) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.readCString(path).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_chdir(Ctx& x, GuestPtr path) { return ::chdir(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_chdir(Ctx& x, GuestPtr path) { return ::chdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
 uint32_t f_getcwd(Ctx& x, GuestPtr buf, uint32_t size) {
     char tmp[4096];
     if (!::getcwd(tmp, sizeof tmp)) return failD<uint32_t>(x, 0);
-    const std::string s = tmp;
+    const std::string s = x.proc.guestPath(tmp);
     if (!buf) return x.proc.allocCString(s);
     if (size < s.size() + 1) { setErrno(x, ERANGE); return 0; }
     x.mem.copyIn(buf, s.c_str(), s.size() + 1);
@@ -508,7 +509,7 @@ struct Dirs {
     std::unordered_map<uint32_t, D> open;
 };
 uint32_t f_opendir(Ctx& x, GuestPtr path) {
-    DIR* d = ::opendir(x.proc.readCString(path).c_str());
+    DIR* d = ::opendir(x.proc.hostPath(x.proc.readCString(path)).c_str());
     if (!d) return failD<uint32_t>(x, 0);
     const uint32_t h = x.proc.heap().allocZeroed(64);
     const uint32_t entry = x.proc.heap().allocZeroed(1048);

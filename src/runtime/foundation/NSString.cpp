@@ -220,7 +220,7 @@ bool readFileText(const std::string& path, std::string& out) {
 }
 id i_initWithContentsOfFile(Ctx& x, id self, SEL, id path, uint32_t enc, GuestPtr err) {
     std::string raw;
-    if (!readFileText(utf8(x, path), raw)) { if (err) x.mem.write<uint32_t>(err, 0); rt(x).release(x.cpu, self); return 0; }
+    if (!readFileText(x.proc.hostPath(utf8(x, path)), raw)) { if (err) x.mem.write<uint32_t>(err, 0); rt(x).release(x.cpu, self); return 0; }
     uint32_t e = enc;
     if (raw.size() >= 2 && ((uint8_t(raw[0]) == 0xFF && uint8_t(raw[1]) == 0xFE) || (uint8_t(raw[0]) == 0xFE && uint8_t(raw[1]) == 0xFF))) e = kNSUnicode;
     bool ok = true;
@@ -565,12 +565,12 @@ id s_pathComponents(Ctx& x, id self, SEL) {
 bool s_isAbsolutePath(Ctx& x, id self, SEL) { const std::string p = pathOf(x, self); return !p.empty() && (p[0] == '/' || p[0] == '~'); }
 id s_expandingTilde(Ctx& x, id self, SEL) {
     std::string p = pathOf(x, self);
-    if (!p.empty() && p[0] == '~') p = x.proc.homePath() + p.substr(1);
+    if (!p.empty() && p[0] == '~') p = x.proc.guestHomePath() + p.substr(1);
     return makeString(x, p);
 }
 id s_standardizing(Ctx& x, id self, SEL) {
     std::string p = pathOf(x, self);
-    if (!p.empty() && p[0] == '~') p = x.proc.homePath() + p.substr(1);
+    if (!p.empty() && p[0] == '~') p = x.proc.guestHomePath() + p.substr(1);
     return makeString(x, trimSlash(fsys::path(p).lexically_normal().string()));
 }
 uint32_t s_fileSystemRepresentation(Ctx& x, id self, SEL) { return utf8Pointer(x, s_expandingTilde(x, self, 0)); }
@@ -583,7 +583,7 @@ bool s_getFileSystemRepresentation(Ctx& x, id self, SEL, GuestPtr buf, uint32_t 
 bool s_writeToFileEnc(Ctx& x, id self, SEL, id path, bool, uint32_t enc, GuestPtr err) {
     bool ok = true;
     const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
-    std::ofstream out(utf8(x, path), std::ios::binary | std::ios::trunc);
+    std::ofstream out(x.proc.hostPath(utf8(x, path)), std::ios::binary | std::ios::trunc);
     if (!ok || !out) { if (err) x.mem.write<uint32_t>(err, 0); return false; }
     out.write(b.data(), std::streamsize(b.size()));
     return bool(out);

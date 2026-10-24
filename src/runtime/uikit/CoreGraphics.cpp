@@ -239,7 +239,7 @@ uint32_t dp_createWithCFData(Ctx& x, id data) {
     return newProvider(x, std::move(h));
 }
 uint32_t dp_createWithFilename(Ctx& x, GuestPtr name) {
-    std::ifstream in(x.proc.readCString(name), std::ios::binary);
+    std::ifstream in(x.proc.hostPath(x.proc.readCString(name)), std::ios::binary);
     if (!in) return 0;
     auto h = std::make_unique<ProviderData>();
     h->bytes.assign(std::istreambuf_iterator<char>(in), {});

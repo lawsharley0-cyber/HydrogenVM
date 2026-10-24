@@ -302,6 +302,13 @@ public:
     const std::string& homePath() const { return homePath_; }
     const std::string& executablePath() const { return executablePath_; }
 
+    const std::string& guestHomePath() const { return guestHomePath_; }
+    const std::string& guestBundlePath() const { return guestBundlePath_; }
+    const std::string& guestExecutablePath() const { return guestExecutablePath_; }
+
+    std::string hostPath(const std::string& guestPath) const;
+    std::string guestPath(const std::string& hostPath) const;
+
     // ---- logging / diagnostics
     void log(LogLevel lvl, const std::string& msg) const;
     void logf(LogLevel lvl, const char* fmt, ...) const __attribute__((format(printf, 3, 4)));
@@ -347,6 +354,7 @@ private:
     Loader::Image image_;
     Plist::ValuePtr infoPlist_;
     std::string homePath_, executablePath_;
+    std::string guestHomePath_, guestBundlePath_, guestExecutablePath_;
 
     std::unordered_map<std::string, uint32_t> symbols_;
     std::vector<std::function<uint32_t(const std::string&)>> missingResolvers_;

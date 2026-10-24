@@ -157,7 +157,8 @@ gzFile gz(Ctx& x, uint32_t h) {
     return it == g.files.end() ? nullptr : it->second;
 }
 uint32_t z_gzopen(Ctx& x, GuestPtr path, GuestPtr mode) {
-    gzFile f = gzopen(x.proc.readCString(path).c_str(), x.proc.readCString(mode).c_str());
+    const std::string hostP = x.proc.hostPath(x.proc.readCString(path));
+    gzFile f = gzopen(hostP.c_str(), x.proc.readCString(mode).c_str());
     if (!f) return 0;
     auto& g = x.proc.service<GzFiles>();
     std::lock_guard<std::mutex> lk(g.mu);

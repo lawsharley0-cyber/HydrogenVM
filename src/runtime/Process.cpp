@@ -116,6 +116,18 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     for (const char* d : {"Documents", "Library", "Library/Caches", "Library/Preferences", "tmp"})
         fs::create_directories(fs::path(homePath_) / d, ec);
 
+    const auto digest = hvmDigest(1, homePath_);
+    char uuidBuf[37];
+    std::snprintf(uuidBuf, sizeof(uuidBuf),
+                  "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                  digest[0], digest[1], digest[2], digest[3],
+                  digest[4], digest[5], digest[6], digest[7],
+                  digest[8], digest[9], digest[10], digest[11],
+                  digest[12], digest[13], digest[14], digest[15]);
+    guestHomePath_ = std::string("/var/mobile/Applications/") + uuidBuf;
+    const std::string bundleName = fs::path(cfg_.bundlePath).filename().string();
+    guestBundlePath_ = guestHomePath_ + "/" + (bundleName.empty() ? "App.app" : bundleName);
+
     mainThreadOwner_ = std::make_unique<GuestThread>(*this);
     mainThread_ = mainThreadOwner_.get();
     mainThread_->id = nextThreadId_++;
@@ -220,6 +232,7 @@ void Process::load() {
     std::string exe = infoPlist_ ? infoPlist_->getString("CFBundleExecutable") : "";
     if (exe.empty()) exe = fs::path(cfg_.bundlePath).stem().string();
     executablePath_ = (fs::path(cfg_.bundlePath) / exe).string();
+    guestExecutablePath_ = guestBundlePath_ + "/" + exe;
 
     const auto file = Loader::readFile(executablePath_);
     unsigned char digest[32];
@@ -467,13 +480,13 @@ std::string Process::readCString(uint32_t addr, size_t max) const {
 }
 
 void Process::setupEnvironment() {
-    const std::string tmp = (fs::path(homePath_) / "tmp").string() + "/";
+    const std::string guestTmp = guestHomePath_ + "/tmp/";
     env_ = {
-        {"HOME", homePath_}, {"CFFIXED_USER_HOME", homePath_}, {"TMPDIR", tmp},
+        {"HOME", guestHomePath_}, {"CFFIXED_USER_HOME", guestHomePath_}, {"TMPDIR", guestTmp},
         {"PATH", "/usr/bin:/bin:/usr/sbin:/sbin"}, {"USER", "mobile"}, {"LOGNAME", "mobile"},
         {"SHELL", "/bin/sh"}, {"__CF_USER_TEXT_ENCODING", "0x1F5:0:0"},
     };
-    std::vector<std::string> args{executablePath_};
+    std::vector<std::string> args{guestExecutablePath_.empty() ? executablePath_ : guestExecutablePath_};
     for (auto& a : cfg_.extraArgs) args.push_back(a);
     argc_ = uint32_t(args.size());
     argv_ = allocStatic(uint32_t(args.size() + 1) * 4);
@@ -487,8 +500,93 @@ void Process::setupEnvironment() {
     }
     mem_->write<uint32_t>(envp_ + uint32_t(env_.size()) * 4, 0);
     apple_ = allocStatic(8);
-    mem_->write<uint32_t>(apple_, internCString(executablePath_));
+    mem_->write<uint32_t>(apple_, internCString(guestExecutablePath_.empty() ? executablePath_ : guestExecutablePath_));
     mem_->write<uint32_t>(apple_ + 4, 0);
+}
+
+namespace {
+bool matchesPathPrefix(const std::string& path, const std::string& prefix) {
+    if (prefix.empty() || path.rfind(prefix, 0) != 0) return false;
+    if (path.size() == prefix.size()) return true;
+    if (prefix.back() == '/') return true;
+    return path[prefix.size()] == '/';
+}
+}
+
+std::string Process::hostPath(const std::string& guestPath) const {
+    if (guestPath.empty()) return {};
+
+    std::string p = guestPath;
+
+    if (p == "~") {
+        p = guestHomePath_;
+    } else if (p.rfind("~/", 0) == 0) {
+        p = guestHomePath_ + p.substr(1);
+    }
+
+    std::string norm = p;
+    if (norm.rfind("/private/var/", 0) == 0) {
+        norm = norm.substr(8);
+    }
+
+    if (!bundlePath().empty() && matchesPathPrefix(norm, bundlePath())) return p;
+    if (!homePath_.empty() && matchesPathPrefix(norm, homePath_)) return p;
+
+    if (!guestBundlePath_.empty() && matchesPathPrefix(norm, guestBundlePath_)) {
+        const std::string rel = norm.substr(guestBundlePath_.size());
+        return bundlePath() + rel;
+    }
+    if (!guestHomePath_.empty() && matchesPathPrefix(norm, guestHomePath_)) {
+        const std::string rel = norm.substr(guestHomePath_.size());
+        return homePath_ + rel;
+    }
+    if (matchesPathPrefix(norm, "/tmp")) {
+        const std::string rel = norm.substr(4);
+        return (fs::path(homePath_) / "tmp").string() + rel;
+    }
+    if (matchesPathPrefix(norm, "/var/tmp")) {
+        const std::string rel = norm.substr(8);
+        return (fs::path(homePath_) / "tmp").string() + rel;
+    }
+
+    return p;
+}
+
+std::string Process::guestPath(const std::string& hostPath) const {
+    if (hostPath.empty()) return {};
+
+    std::string p = hostPath;
+
+    if (p.rfind("/var/mobile/Applications", 0) == 0 ||
+        p.rfind("/private/var/mobile/Applications", 0) == 0) {
+        if (p.rfind("/private/var/", 0) == 0) return p.substr(8);
+        return p;
+    }
+
+    const std::string hostTmp = (fs::path(homePath_) / "tmp").string();
+
+    struct PrefixMapping {
+        std::string hostPrefix;
+        std::string guestPrefix;
+    };
+
+    std::vector<PrefixMapping> mappings;
+    if (!bundlePath().empty()) mappings.push_back({bundlePath(), guestBundlePath_});
+    if (!homePath_.empty()) mappings.push_back({homePath_, guestHomePath_});
+    if (!hostTmp.empty()) mappings.push_back({hostTmp, guestHomePath_ + "/tmp"});
+
+    std::sort(mappings.begin(), mappings.end(), [](const PrefixMapping& a, const PrefixMapping& b) {
+        return a.hostPrefix.size() > b.hostPrefix.size();
+    });
+
+    for (const auto& m : mappings) {
+        if (matchesPathPrefix(p, m.hostPrefix)) {
+            const std::string rel = p.substr(m.hostPrefix.size());
+            return m.guestPrefix + rel;
+        }
+    }
+
+    return p;
 }
 
 std::string Process::getenv(const std::string& name) const {

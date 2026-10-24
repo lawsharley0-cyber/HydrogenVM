@@ -51,7 +51,8 @@ uint32_t keep(Ctx& x, Stmt& s, uint32_t g) { s.buffers.push_back(g); return g; }
 
 int32_t openDb(Ctx& x, const std::string& path, GuestPtr out, int flags, bool v2) {
     sqlite3* db = nullptr;
-    const int rc = v2 ? sqlite3_open_v2(path.c_str(), &db, flags, nullptr) : sqlite3_open(path.c_str(), &db);
+    const std::string hostP = x.proc.hostPath(path);
+    const int rc = v2 ? sqlite3_open_v2(hostP.c_str(), &db, flags, nullptr) : sqlite3_open(hostP.c_str(), &db);
     const uint32_t h = x.proc.heap().allocZeroed(16);
     {
         std::lock_guard<std::mutex> lk(Q(x).mu);

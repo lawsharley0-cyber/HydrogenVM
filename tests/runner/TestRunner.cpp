@@ -1690,8 +1690,8 @@ int runFullSubsystemTests() {
         const auto user = paths(13, 1, 1);
         const auto local = paths(13, 2, 1);
         const auto all = paths(13, 0xFFFF, 1);
-        const std::string userPath = cfg.homePath + "/Library/Caches";
-        const std::string localPath = cfg.homePath + "/LocalDomain/Library/Caches";
+        const std::string userPath = proc.guestHomePath() + "/Library/Caches";
+        const std::string localPath = proc.guestHomePath() + "/LocalDomain/Library/Caches";
         check(user.size() == 1 && Foundation::utf8(cx, user[0]) == userPath,
               "user-domain cache search keeps the app's existing cache path");
         check(local.size() == 1 && Foundation::utf8(cx, local[0]) == localPath,
@@ -3455,7 +3455,7 @@ int runFullSubsystemTests() {
             return empty && plus && blank;
         });
         run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
-            const std::string root = proc.homePath() + "/tmp/";
+            const std::string root = proc.guestHomePath() + "/tmp/";
             std::vector<std::string> names;
             for (int i = 0; i < 6; ++i) {
                 const uint32_t buf = proc.heap().allocZeroed(1024);
@@ -3481,7 +3481,7 @@ int runFullSubsystemTests() {
             return ok;
         });
         run("tmpnam(NULL) reuses one guest static buffer", [&] {
-            const std::string root = proc.homePath() + "/tmp/";
+            const std::string root = proc.guestHomePath() + "/tmp/";
             const uint32_t p1 = call("_tmpnam", {0});
             const std::string s1 = proc.readCString(p1);
             const uint32_t p2 = call("_tmpnam", {0});
@@ -3864,6 +3864,56 @@ int runFullSubsystemTests() {
         check(saved && queued == 0 && timers == 0 && frames == 0,
               "Termination finishes save work and suppresses collected/late queue, timer and frame callbacks");
     }
+
+    // Path mapping tests (Issue #80: short iOS guest paths and boundaries)
+    {
+        std::string longHome = "/tmp/hydrogenvm_test_long_home_directory_path_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890";
+        std::string longBundle = longHome + "/TestApp.app";
+        ProcessConfig pathCfg;
+        pathCfg.homePath = longHome;
+        pathCfg.bundlePath = longBundle;
+        Process pathProc(pathCfg);
+
+        // 1. Check guest home path format (/var/mobile/Applications/<UUID>)
+        std::string gHome = pathProc.guestHomePath();
+        std::string gBundle = pathProc.guestBundlePath();
+        bool validGHome = gHome.rfind("/var/mobile/Applications/", 0) == 0 && gHome.size() == 61;
+        bool validGBundle = gBundle == gHome + "/TestApp.app";
+
+        // 2. Test hostPath and guestPath mapping
+        std::string hDoc = pathProc.hostPath(gHome + "/Documents/save.dat");
+        std::string hBundleRes = pathProc.hostPath(gBundle + "/data/level1.bin");
+        std::string hTmp = pathProc.hostPath("/tmp/scratch.tmp");
+        std::string hTilde = pathProc.hostPath("~/Library/Preferences");
+
+        bool hostMapOk = (hDoc == longHome + "/Documents/save.dat") &&
+                          (hBundleRes == longBundle + "/data/level1.bin") &&
+                          (hTmp == longHome + "/tmp/scratch.tmp") &&
+                          (hTilde == longHome + "/Library/Preferences");
+
+        // 3. Round-trip testing (300-character guest path round-trip)
+        std::string longSubpath = "/Documents/";
+        while (longSubpath.size() < 250) longSubpath += "sub_dir_123456789/";
+        longSubpath += "file.txt";
+        std::string g300 = gHome + longSubpath; // 24 + 36 + ~250 = ~310 chars
+        std::string h300 = pathProc.hostPath(g300);
+        std::string back300 = pathProc.guestPath(h300);
+
+        bool roundTripOk = (g300.size() >= 300) && (back300 == g300);
+
+        // 4. Double-mapping prevention
+        std::string doubleHost = pathProc.hostPath(hDoc);
+        std::string doubleGuest = pathProc.guestPath(gHome + "/Documents/save.dat");
+        bool noDoubleMap = (doubleHost == hDoc) && (doubleGuest == gHome + "/Documents/save.dat");
+
+        // 5. Virtual guest paths map bidirectionally to host paths
+        bool envOk = (pathProc.hostPath(gHome) == longHome) &&
+                     (pathProc.guestPath(longHome) == gHome);
+
+        check(validGHome && validGBundle && hostMapOk && roundTripOk && noDoubleMap && envOk,
+              "Process::hostPath and guestPath perform 300-char round trips with virtual short paths and no double mapping");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

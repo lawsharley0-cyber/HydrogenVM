@@ -19,7 +19,7 @@ void setErr(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoA
 // ssize_t readlink(const char* path, char* buf, size_t size)
 int32_t p_readlink(Ctx& x, GuestPtr path, GuestPtr buf, uint32_t size) {
     char tmp[4096];
-    const ssize_t n = ::readlink(x.proc.readCString(path).c_str(), tmp, std::min<size_t>(size, sizeof tmp));
+    const ssize_t n = ::readlink(x.proc.hostPath(x.proc.readCString(path)).c_str(), tmp, std::min<size_t>(size, sizeof tmp));
     if (n < 0) { setErr(x, errno == ENOENT ? 2 : errno == EINVAL ? 22 : errno == EACCES ? 13 : 22); return -1; }
     x.mem.copyIn(buf, tmp, size_t(n));
     return int32_t(n);
