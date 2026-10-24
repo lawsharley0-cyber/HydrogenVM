@@ -312,8 +312,12 @@ void UIRectFill(CGRect r);
 @interface UIBarButtonItem : UIBarItem
 - (instancetype)initWithTitle:(NSString *)title style:(NSInteger)style target:(id)target action:(SEL)action;
 - (instancetype)initWithBarButtonSystemItem:(NSInteger)systemItem target:(id)target action:(SEL)action;
+- (instancetype)initWithCustomView:(UIView *)customView;
+@property(strong) UIView *customView;
 @property(weak) id target;
 @property SEL action;
+- (void)addTarget:(id)target action:(SEL)action forControlEvents:(NSUInteger)controlEvents;
+- (void)removeTarget:(id)target action:(SEL)action forControlEvents:(NSUInteger)controlEvents;
 @end
 
 @interface UITabBarItem : UIBarItem

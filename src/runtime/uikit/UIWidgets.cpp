@@ -800,11 +800,35 @@ void bi_setTitle(Ctx& x, id self, SEL, id t) { setRetained(x, BID(x, self).title
 id bi_image(Ctx& x, id self, SEL) { return BID(x, self).image; }
 void bi_setImage(Ctx& x, id self, SEL, id img) { setRetained(x, BID(x, self).image, img); }
 id bi_customView(Ctx& x, id self, SEL) { return BID(x, self).customView; }
-void bi_setCustomView(Ctx& x, id self, SEL, id v) { setRetained(x, BID(x, self).customView, v); }
+void bi_setCustomView(Ctx& x, id self, SEL, id v) {
+    BarItemData& d = BID(x, self);
+    setRetained(x, d.customView, v);
+    if (v && d.target && d.action && rt(x).respondsTo(v, rt(x).sel("addTarget:action:forControlEvents:"))) {
+        rt(x).send(x.cpu, v, "addTarget:action:forControlEvents:", {d.target, d.action, 1u << 6 /* UIControlEventTouchUpInside */});
+    }
+}
 id bi_target(Ctx& x, id self, SEL) { return BID(x, self).target; }
 void bi_setTarget(Ctx& x, id self, SEL, id t) { BID(x, self).target = t; }
 SEL bi_action(Ctx& x, id self, SEL) { return BID(x, self).action; }
 void bi_setAction(Ctx& x, id self, SEL, SEL a) { BID(x, self).action = a; }
+void bi_addTarget(Ctx& x, id self, SEL, id target, SEL action, uint32_t events) {
+    BarItemData& d = BID(x, self);
+    d.target = target;
+    d.action = action;
+    if (d.customView && rt(x).respondsTo(d.customView, rt(x).sel("addTarget:action:forControlEvents:"))) {
+        rt(x).send(x.cpu, d.customView, "addTarget:action:forControlEvents:", {target, action, events});
+    }
+}
+void bi_removeTarget(Ctx& x, id self, SEL, id target, SEL action, uint32_t events) {
+    BarItemData& d = BID(x, self);
+    if (d.customView && rt(x).respondsTo(d.customView, rt(x).sel("removeTarget:action:forControlEvents:"))) {
+        rt(x).send(x.cpu, d.customView, "removeTarget:action:forControlEvents:", {target, action, events});
+    }
+    if ((!target || d.target == target) && (!action || d.action == action)) {
+        d.target = 0;
+        d.action = 0;
+    }
+}
 int32_t bi_style(Ctx& x, id self, SEL) { return BID(x, self).style; }
 void bi_setStyle(Ctx& x, id self, SEL, int32_t s) { BID(x, self).style = s; }
 float bi_width(Ctx& x, id self, SEL) { return BID(x, self).width; }
@@ -1997,6 +2021,8 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
        .m<&bi_customView>("customView").m<&bi_setCustomView>("setCustomView:", "v@:@")
        .m<&bi_target>("target").m<&bi_setTarget>("setTarget:", "v@:@")
        .m<&bi_action>("action", ":@:").m<&bi_setAction>("setAction:", "v@::")
+       .m<&bi_addTarget>("addTarget:action:forControlEvents:", "v@:@:I")
+       .m<&bi_removeTarget>("removeTarget:action:forControlEvents:", "v@:@:I")
        .m<&bi_style>("style", "i@:").m<&bi_setStyle>("setStyle:", "v@:i")
        .m<&bi_width>("width", "f@:").m<&bi_setWidth>("setWidth:", "v@:f")
        .m<&bi_tintColor>("tintColor").m<&bi_setTintColor>("setTintColor:", "v@:@");
