@@ -461,10 +461,10 @@ struct RunView: View {
         .preferredColorScheme(.dark)
         .persistentSystemOverlays(.hidden)
         .onAppear {
-            OrientationLock.shared.lock(hostMask(for: effectiveOrientation))
+            OrientationLock.shared.lock(hostMask(for: effectiveOrientation), preferring: effectiveOrientation.mask)
             model.start(keepGoing: keepGoing)
         }
-        .onChange(of: effectiveOrientation) { _, orientation in OrientationLock.shared.lock(hostMask(for: orientation)) }
+        .onChange(of: effectiveOrientation) { _, orientation in OrientationLock.shared.lock(hostMask(for: orientation), preferring: orientation.mask) }
         .onChange(of: model.finished) { _, done in
             if done {
                 OrientationLock.shared.lock(.all)
