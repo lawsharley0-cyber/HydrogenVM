@@ -2,6 +2,8 @@
 
 HydrogenVM is a JIT-less ARMv7 user-mode emulator. Guest code is decoded into `Op` records and executed by ahead-of-time C++ handlers. No guest code is written into executable host memory. One process owns a 4 GB `GuestArena`, an `Engine`, guest threads that are host threads, and a symbol table that binds Mach-O imports to host functions. Frameworks are a guest Objective-C runtime in C++. The UI is composited in software. The phone shell is SwiftUI under `app/`. The desktop CLI is `hvm`.
 
+**Handing over? Read [docs/GROK_HANDOFF.md](docs/GROK_HANDOFF.md) first** (current state, open tasks, how to test).
+
 **Start with [docs/dev-system/MASTER_PLAN.md](docs/dev-system/MASTER_PLAN.md)**: the current phase order, the per-app plan and the agent split. The comparable-project research behind it is [docs/research/COMPARABLE_PROJECTS.md](docs/research/COMPARABLE_PROJECTS.md). Read only the docs your ticket names.
 
 This file is the working agreement for a coding agent. It does not change the emulator. The detail is in `docs/dev-system/`:
