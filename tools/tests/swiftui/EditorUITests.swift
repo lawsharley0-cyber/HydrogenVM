@@ -6,9 +6,11 @@ final class EditorUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        XCUIDevice.shared.orientation = .portrait
-        app = XCUIApplication()
-        app.launch()
+        MainActor.assumeIsolated {
+            XCUIDevice.shared.orientation = .portrait
+            app = XCUIApplication()
+            app.launch()
+        }
     }
 
     func openNestedJSON() {

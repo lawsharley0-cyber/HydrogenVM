@@ -9,6 +9,21 @@ struct InstalledApp {
     var info: HarnessAppInfo { HarnessAppInfo(bundlePath: bundleDir.path) }
 }
 
+class HVMCrashJournal {
+    static func installSignalHandlers() {}
+    static func openSignalFile(_ path: String) {}
+    static func closeSignalFile() {}
+    static func availableMemory() -> UInt64 { return 1024 * 1024 * 1024 }
+}
+
+class HVMSession {
+    static var emulatorCommit: String { "harness" }
+}
+
+class HVMEngine {
+    static func decodeImageAtPath(_ path: String) -> CGImage? { return nil }
+}
+
 @main
 struct EditorHarness: App {
     var body: some Scene { WindowGroup { HarnessHome() } }
