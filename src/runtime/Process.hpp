@@ -40,6 +40,8 @@ struct ProcessConfig {
     bool stopOnMissingFunction = true; // false: log and return 0
     bool traceCalls = false;           // log every HLE call (very slow, for debugging)
     bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
+    bool offlineClash = false;        // pinned client only: session-owned local NPC service
+    std::map<uint16_t,uint16_t> loopbackPortOverrides; // explicit localhost-only service routing
     std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1
     std::string systemVersion = "6.1"; // reported by UIDevice / sysctl
     std::string deviceModel = "iPhone5,2";

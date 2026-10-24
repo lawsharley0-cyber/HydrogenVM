@@ -32,10 +32,11 @@ def main():
     parser.add_argument('--launches', type=int, choices=(1,2), default=2)
     parser.add_argument('--capture-audio', action='store_true')
     parser.add_argument('--gpu', action='store_true', help='Use the shared host GLES backend')
+    parser.add_argument('--embedded', action='store_true', help='Use the phone-capable in-process service, without a Python peer')
     parser.add_argument('--npc-fixture',action='store_true',help='Also supply the experimental first-NPC sector (not progression verification)')
     parser.add_argument('--live-controls',action='store_true',help='Publish launch-N.rgba and read touch commands from launch-N.input.txt')
     args = parser.parse_args()
-    maximum=1800 if args.npc_fixture else 300
+    maximum=1800 if args.npc_fixture or args.embedded else 300
     if not 30 <= args.seconds <= maximum:
         parser.error(f'Use an observation interval between 30 and {maximum} seconds')
     with args.ipa.open('rb') as source:
@@ -63,9 +64,11 @@ def main():
     if args.npc_fixture:command.append('--npc-fixture')
     evidence = []
     with (session/'peer.log').open('w') as log:
-        peer = subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT)
+        peer = None if args.embedded else subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT)
         try:
             for _ in range(100):
+                if peer is None:
+                    break
                 if peer.poll() is not None:
                     raise RuntimeError('Peer failed: '+(session/'peer.log').read_text())
                 if '"event": "listening"' in (session/'peer.log').read_text():
@@ -76,6 +79,7 @@ def main():
             for launch in range(1,args.launches+1):
                 stem = session/f'launch-{launch}'
                 controls=['--gpu'] if args.gpu else []
+                if args.embedded:controls.append('--offline-clash')
                 if args.live_controls:
                     input_path=session/f'launch-{launch}.input.txt';input_path.touch()
                     controls+=['--frame-file',str(stem.with_suffix('.rgba')),'--input-file',str(input_path)]
@@ -123,18 +127,21 @@ def main():
                 item = {'launch':launch,'exitCode':run.returncode,'seconds':round(time.monotonic()-began,2),
                         'nativeHomeAccepted':'Loaded own home from server' in text,
                         'nativeTutorialVoiceLoaded':'Start loading: sfx/king_tut_first_vo_01.wav' in text,
+                        'nativeNpcSupplied':'Offline Clash: native Npc1 sector supplied' in text,
+                        'nativeOfflineServiceStarted':'Offline Clash: phone-local' in text,
                         'crashed':report.get('crashed',True),'errors':report.get('errors',[]),
                         'audio':report.get('audio'),'audioCaptureErrors':audio_errors}
                 evidence.append(item);print(json.dumps(item),flush=True)
                 if run.returncode or not item['nativeHomeAccepted'] or item['crashed'] or item['errors'] or audio_errors:
                     break
         finally:
-            if peer.poll() is None:
+            if peer is not None and peer.poll() is None:
                 peer.send_signal(signal.SIGINT)
-            peer.wait(timeout=5)
+            if peer is not None:peer.wait(timeout=5)
             events = json.loads((session/'protocol-events.json').read_text())['events'] if (session/'protocol-events.json').exists() else []
             summary = {'scope':'Initial-home/NPC initialization diagnostics; battle completion and progression are not verified.',
                        'npcFixtureEnabled':args.npc_fixture,
+                       'embeddedService':args.embedded,
                        'npcFixturesSent':sum(e['event']=='npc_fixture_sent' for e in events),
                        'ipaSha256':PINNED_SHA256,'launches':evidence,
                        'loginKinds':[e['fresh'] for e in events if e['event']=='login'],
@@ -145,10 +152,11 @@ def main():
             summary['savedHomeSha256'] = hashlib.sha256(saved_home.read_bytes()).hexdigest() if saved_home.exists() else None
             (session/'verification.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(f'Diagnostics: {session}',flush=True)
-    valid = len(evidence) == args.launches and len(summary['npcRequests']) >= args.launches
-    valid &= len(summary['loginKinds']) == args.launches
-    if args.npc_fixture:valid &= summary['npcFixturesSent']>=args.launches
-    if args.launches == 2:
+    valid = len(evidence) == args.launches
+    if not args.embedded:
+        valid &= len(summary['npcRequests']) >= args.launches and len(summary['loginKinds']) == args.launches
+    if args.npc_fixture and not args.embedded:valid &= summary['npcFixturesSent']>=args.launches
+    if args.launches == 2 and not args.embedded:
         valid &= summary['loginKinds'][-1:] == [False]
     for result in evidence:
         audio = result['audio'] or {}
@@ -157,6 +165,7 @@ def main():
                   audio.get('enabled', False) and audio.get('nonSilentFrames', 0) > 0 and
                   audio.get('transportError', -1) == 0)
         if args.npc_fixture:valid &= result['nativeTutorialVoiceLoaded']
+        if args.embedded:valid &= result['nativeOfflineServiceStarted']
     return 0 if valid else 1
 
 

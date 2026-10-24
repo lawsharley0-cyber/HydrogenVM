@@ -1,5 +1,28 @@
 # Offline continuation — October 23, 2026
 
+## Owner report — October 24: defer presentation fixes, continue core systems
+
+The owner reports intermittent/incomplete audio, incorrect King cannon
+animation, absent Princess Tower princesses, and text that is not centered in
+some UI. These are **user-reported observations**, not yet isolated to a runtime
+commit or reproduced against an original-client visual baseline. The target is
+the owner's iPhone running client 2.1306.1. The owner explicitly prioritizes
+core offline systems and important correctness work before these polish fixes.
+
+Keep these issues in the investigation queue. Do not equate non-silent PCM,
+sample-exact codec tests, a rendered tower, or a green shader test with correct
+continuous playback, animation or UI alignment. Future reproduction should
+record the exact host build, scene/input, audio queue/transport timing, and
+matching original-client appearance. Separate missing scene state from
+rendering/animation defects before changing either. Do not mask the issues by
+removing effects, entities, audio or assertions.
+
+Gemini also changed the local offline backend and chest/progression tools.
+The later milestone notes below describe that implementation's reported tests;
+they still need independent real-client validation and integration with current
+main. In particular, synthetic matchmaking/trophy tests do not prove a complete
+arena battle, real rewards, or correct phone playback.
+
 Current owner-directed continuation is `codex/clash-offline-continuation`, based
 on main `fdfee6f`. This supersedes the older README/TODO snapshot where it
 describes missing host AAC or an unintegrated NPC peer. The owner reports the
@@ -7,6 +30,47 @@ current **iPhone** build renders the pinned 2.1306.1 startup at 60 FPS, with
 music, then reaches connection retry. That report is not a local FPS measurement.
 
 ## Reproduced on the new Linux/WSL build
+
+### October 24: command validation and incomplete chest transaction
+
+Reviewed Gemini's local changes without replacing them. Native getters and
+decode functions establish StartExploring=502 (0x10f7c8/0x10f7ec),
+StartRewardClaim=503 (0x73540/0x73564), FuseSpells=504 (0x18f08/0x18f28),
+SpeedUpExploring=506 (0x17a40/0x17a6c), StartMatchmake=537
+(0xbbf20/0xbbf4c). Matchmake includes a VInt and packed boolean after the common
+four-VInt command base; it is not complete at the command ID.
+
+The old handler started a battle from a truncated matchmaking message. A new
+encrypted socket test fails before the fix and passes after: complete bounded
+turn parsing now precedes dispatch, verifies the account and -1 debug trailer,
+and rejects unknown/truncated commands without replying or losing RC4 alignment.
+Literal decoder-derived vectors cover chest commands, wrong IDs/executors,
+invalid references, truncation at every byte and trailing data.
+
+Real-client run `core-oct24/run-20261024-001903-e7f70a` lasted 227.78 seconds,
+exit 0, no crash/errors. Original home shows 1/7 and earned chest OPEN.
+Tapping the chest logs `Simulation of command 503 failed, error code 4`.
+Native execute at 0x7357c returns 4 when chest+0x18 is already claimed; that flag
+was previously mislabeled `coOpen` in our snapshot view. Native setClaimed
+(0xf1a60) sets it and marks the home `isClaimingReward` at +0xb4. This is not
+completed collection: the separate server-side LogicClaimRewardCommand is 213
+(0x8283c). Reward delivery, inventory/wallet changes and atomic completion are
+the next blocker. Do not reset the claimed bit or mint substitute rewards to
+conceal this failure.
+
+Checkpoint capture now waits while the original home isClaimingReward getter
+(0x12580c) is true, retaining the previous complete checkpoint. A focused
+observer test fails before this guard and passes after. Older half-claimed saves
+remain an explicit recovery task; the guard does not repair them. Gemini's
+fixed trophy formulas and guest trophy writes remain experimental and require
+native/server-contract review before claiming faithful arena progression.
+
+Post-change Linux checks: 234 runtime checks and 12 Test Lab cases pass;
+26 Python Clash tests and the C++ state/socket suites pass. The captured real
+run delivered 10,016,768 audio frames, 9,185,101 non-silent, zero dropped blocks
+or transport errors. This is not verification of continuous sound on iPhone.
+Local full logs, screenshots and private saves remain outside Git under
+`/var/tmp/hvm-offline-20261023/evidence/`.
 
 - Unmodified pinned IPA, same SHA-256 as the README; shared GPU backend enabled.
 - 234 runtime checks pass. Baseline Test Lab: 12 passed, none failed/skipped.
@@ -100,3 +164,38 @@ Do not copy its addresses or initial state into this client.
 `39da88c20896edff7dade7a4ee2b39771b067d45`, is another research reference;
 no code or game assets have been copied from it. The earlier Magich03/CR-1.2.3
 opaque sector remains unsuitable as a pinned-client fixture.
+
+## Progression & Chest Cycle Milestone — October 23, 2026
+
+- Implemented `ClashCsvEngine` in C++ (`src/runtime/offline/ClashCsv.hpp`, `ClashCsv.cpp`)
+  and Python (`tools/clash_chests.py`).
+- Resolved Supercell CSV inheritance across `treasure_chests.csv` (`BaseChest`) and
+  handled multi-line continuation records in `chest_order.csv`.
+- Mapped all 6 Newbie chests and the 240-chest `MainCycle` rotation with live arena
+  reward multipliers (`arenas.csv`).
+- Verified all 7 Training Camp missions (`Npc1` through `Npc7`: Trainer Earl, Trainer
+  Fikova, Trainer Mike, Trainer Klaus, Trainer Teemu, Trainer Tim, Trainer Boris)
+  against the unmodified app bundle.
+- Integrated `chestCycleIndex` into `ClashProfile` and atomic Plist save persistence.
+- Verified test suite: all 24 Python unit tests and all C++ test runners pass.
+
+## Arena 1, Trophy Progression & PvP Milestone — October 24, 2026
+
+- **Trophy Progression & Arena Promotion/Demotion:**
+  - Added `trophies` and `arenaLevel` tracking to `ClashProfile` and atomic Plist serialization.
+  - Implemented authentic promotion/demotion logic in `ClashCsvEngine::getArenaForTrophies()` using `arenas.csv` `TrophyLimit` and `DemoteTrophyLimit` (Arena 1 -> Arena 2 at 400 trophies, demote at 350, floor at Arena 1).
+  - On Arena match victory: player receives +30 trophies and arena-scaled victory chests.
+  - On Arena match defeat: player loses 20 trophies (bounded by 0 floor).
+  - Synchronized guest avatar score at `avatar+0x34` during reward commits so in-memory native avatar serialization reflects updated trophy counts.
+- **Matchmaking & Bot Deck Engine:**
+  - Parameterized `ClashFixtures` to support all 20 NPCs (`Npc1` through `Npc20`) and full level ranges (ExpLevel 1-13).
+  - Resolved dynamic map location lookup from `arenas.csv` `PvpLocation` (Goblin Stadium `locations/goblin_arena.csv`, Bone Pit `locations/bone_arena.csv`, Barbarian Bowl `locations/barbarian_arena.csv`).
+  - Added `findBestNpcForTrophies()` to match the player against appropriate bot trainers (`Npc8` through `Npc20`) based on live trophy count.
+  - Turn command 537 (`LogicStartMatchmakeCommand`) automatically loads the appropriate PvP arena sector and bot opponent.
+  - Enabled non-tutorial sector mode for Arena 1+ (suppresses training finger guides).
+- **Turn Command Decoding:**
+  - Added command dispatching in `14102 EndClientTurnMessage` for 503 (`LogicStartExploringCommand`), 504 (`LogicFuseSpellsCommand`), and 505 (`LogicSpeedUpExploringCommand`).
+- **Comprehensive Verification:**
+  - `hvm_clash_state_tests`: verified VInts, CSV tables, chest inheritance, cycle rotation, drop calculations, arena thresholds, NPC matchmaking, and all 7 Training Camp NPCs plus Npc8 Arena 1 Goblin Stadium loading.
+  - `hvm_clash_tests`: 14/14 tests pass, including login, sector delivery, matchmaking turn command, training camp graduation to Arena 1, +30 trophy win awards, -20 trophy defeat deductions, and relaunch persistence.
+  - `test_clash_*.py`: 26/26 tests pass in 1.08s.

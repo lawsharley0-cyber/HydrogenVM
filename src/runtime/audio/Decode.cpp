@@ -9,6 +9,7 @@
 
 namespace Hydrogen::Runtime::Audio {
 bool decodeHostContainer(DecodedAudio&, const uint8_t*, size_t);
+bool decodeMsAdpcm(DecodedAudio&, const uint8_t*, size_t);
 namespace {
 
 
@@ -274,6 +275,11 @@ DecodedAudio decodeKnown(const uint8_t* data, size_t n) {
         }
         out.sampleRate = int(sr);
         out.channels = int(numCh);
+        if(audioFmt==2) {
+            DecodedAudio decoded;
+            if(decodeMsAdpcm(decoded,data,n))return decoded;
+            return DecodedAudio{};
+        }
         if (audioFmt == 0x11) {
             if (pcmPtr && bitsPerSample == 4 && imaWavToStereo(out, pcmPtr, pcmBytes,
                     numCh, blockBytes, samplesPerBlock, factFrames)) return out;

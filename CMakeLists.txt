@@ -68,6 +68,13 @@ target_link_libraries(hvm_decodecheck PRIVATE hvm_core)
 add_executable(hvm_heap_tests tests/runner/HeapTests.cpp)
 target_link_libraries(hvm_heap_tests PRIVATE hvm_core)
 
+add_executable(hvm_entry_tests tests/runner/EntryObserverTests.cpp)
+target_link_libraries(hvm_entry_tests PRIVATE hvm_core)
+add_executable(hvm_clash_tests tests/runner/ClashOfflineTests.cpp)
+target_link_libraries(hvm_clash_tests PRIVATE hvm_core)
+add_executable(hvm_clash_state_tests tests/runner/ClashStateTests.cpp)
+target_link_libraries(hvm_clash_state_tests PRIVATE hvm_core)
+
 add_executable(hvm_machodump tests/runner/MachODump.cpp)
 target_link_libraries(hvm_machodump PRIVATE hvm_core)
 

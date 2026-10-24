@@ -28,7 +28,7 @@ namespace {
 
 void setErrno(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, uint32_t(e)); }
 constexpr int kEBADF = 9, kEINVAL = 22, kENETDOWN = 50, kEAFNOSUPPORT = 47, kENOSPC = 28, kEMFILE = 24;
-constexpr int kAF_INET = 2, kAF_INET6 = 30, kAF_LINK = 18;
+constexpr int kAF_UNIX = 1, kAF_INET = 2, kAF_INET6 = 30, kAF_LINK = 18;
 
 int32_t failWith(Ctx& x, int e) { setErrno(x, e); return -1; }
 
@@ -88,7 +88,21 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
     host.sin_len = sizeof host;
 #endif
     x.mem.copyOut(&host.sin_port, addr + 2, 2); x.mem.copyOut(&host.sin_addr, addr + 4, 4);
-    if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) return failWith(x, 51);
+    char ipBuf[INET_ADDRSTRLEN]{};
+    inet_ntop(AF_INET, &host.sin_addr, ipBuf, sizeof(ipBuf));
+    uint16_t origPort = ntohs(host.sin_port);
+    x.proc.logf(LogLevel::Info, "guest connect fd=%d to %s:%d", fd, ipBuf, origPort);
+    if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) {
+        x.proc.logf(LogLevel::Warning, "connect rejected: non-loopback %s:%d", ipBuf, origPort);
+        return failWith(x, 51);
+    }
+    if(host.sin_addr.s_addr==htonl(INADDR_LOOPBACK)) {
+        auto mapped=x.proc.config().loopbackPortOverrides.find(ntohs(host.sin_port));
+        if(mapped!=x.proc.config().loopbackPortOverrides.end()) {
+            x.proc.logf(LogLevel::Info, "port override %d -> %d", origPort, mapped->second);
+            host.sin_port=htons(mapped->second);
+        }
+    }
     int flags = ::fcntl(fd, F_GETFL);
     if (flags < 0) return hostFailure(x);
     bool blocking = !(flags & O_NONBLOCK);
@@ -101,6 +115,7 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
         r = saved ? -1 : 0;
     }
     if (blocking) ::fcntl(fd, F_SETFL, flags);
+    x.proc.logf(LogLevel::Info, "guest connect fd=%d finished r=%d saved_errno=%d", fd, r, saved);
     errno = saved;
     return r < 0 ? hostFailure(x) : 0;
 }
@@ -119,6 +134,7 @@ int hostMsgFlags(uint32_t flags, bool receive) {
 }
 int32_t n_send(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
     if (!owns(x, fd)) return failWith(x, kEBADF);
+    x.proc.logf(LogLevel::Info, "guest send fd=%d n=%u flags=%u", fd, n, flags);
     int hostFlags = hostMsgFlags(flags, false);
     if (hostFlags < 0) return failWith(x, 45);
     if (n > INT32_MAX || !span(x, buf, n, Memory::kProtRead)) return failWith(x, 14);
@@ -190,6 +206,7 @@ int32_t n_getaddrinfo(Ctx& x, GuestPtr node, GuestPtr service, GuestPtr hints, G
     x.mem.write<uint32_t>(res, 0);
     if (!x.proc.config().loopbackNetwork) return 8;
     std::string name = node ? x.proc.readCString(node, 256) : "";
+    x.proc.logf(LogLevel::Info, "getaddrinfo node=%s", name.c_str());
     in_addr ip{};
     bool alias = std::find(x.proc.config().loopbackAliases.begin(), x.proc.config().loopbackAliases.end(), name) != x.proc.config().loopbackAliases.end();
     if (name == "localhost" || alias) ip.s_addr = htonl(INADDR_LOOPBACK);
@@ -234,7 +251,31 @@ void n_freeaddrinfo(Ctx& x, GuestPtr addr) {
     state.allocations.erase(it);
 }
 int32_t n_unsupportedSocket(Ctx& x, int32_t fd) { return failWith(x, owns(x, fd) ? 45 : kEBADF); }
-int32_t n_socketpair(Ctx& x, int32_t, int32_t, int32_t, GuestPtr) { return failWith(x, kENETDOWN); }
+int32_t n_socketpair(Ctx& x, int32_t domain, int32_t type, int32_t protocol, GuestPtr sv) {
+    if (domain != kAF_UNIX) return failWith(x, kEAFNOSUPPORT);
+    int cleanType = type & ~0x80000000u;
+    if (cleanType != SOCK_STREAM && cleanType != SOCK_DGRAM) return failWith(x, 43);
+    if (!span(x, sv, 8, Memory::kProtWrite)) return failWith(x, 14);
+    int fds[2]{-1, -1};
+    if (::socketpair(AF_UNIX, cleanType, protocol, fds) < 0) return hostFailure(x);
+    ::fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    ::fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+#ifdef SO_NOSIGPIPE
+    int one = 1;
+    ::setsockopt(fds[0], SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+    ::setsockopt(fds[1], SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+    auto& state = x.proc.service<SocketState>();
+    {
+        std::lock_guard lock(state.mu);
+        state.fds.insert(fds[0]);
+        state.fds.insert(fds[1]);
+    }
+    x.mem.write<int32_t>(sv, fds[0]);
+    x.mem.write<int32_t>(sv + 4, fds[1]);
+    x.proc.logf(LogLevel::Info, "guest socketpair -> %d, %d", fds[0], fds[1]);
+    return 0;
+}
 int32_t n_zero(Ctx&) { return 0; }
 uint32_t n_gaiStrerror(Ctx& x, int32_t e) {
     static const char sKey = 0; uint32_t& s = x.proc.processSlot(&sKey);
@@ -432,6 +473,7 @@ bool isNetworkSocket(Process& p, int fd) {
 int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
 int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
 int closeNetworkSocket(Process& p, int fd) {
+    p.logf(LogLevel::Info, "guest closeNetworkSocket fd=%d", fd);
     auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu);
     if (!s.fds.erase(fd)) return -2;
     return ::close(fd);

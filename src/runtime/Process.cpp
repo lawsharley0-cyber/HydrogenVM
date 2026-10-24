@@ -2,6 +2,7 @@
 #include "libc/Unwind.hpp"
 #include <sstream>
 #include "audio/Audio.hpp"
+#include "offline/ClashOffline.hpp"
 #include "loader/ElfLoader.hpp"
 #include <cstdarg>
 #include <cstdio>
@@ -234,6 +235,8 @@ void Process::load() {
     std::ostringstream hash;
     for (auto b : digest) hash << std::hex << std::setw(2) << std::setfill('0') << unsigned(b);
     executableHash_ = hash.str();
+    if(cfg_.offlineClash && executableHash_ != "3519d7954cb3dc16b9d7746cc5dbd2521d0209eea2bbc163f6ab7cdfa5e52397")
+        throw std::runtime_error("Offline Clash requires the unchanged pinned 2.1306.1 executable");
     image_ = Loader::loadMachO(*mem_, file, executablePath_);
     logf(LogLevel::Info, "Loaded %s: %s, %zu imports, %zu initializers, entry %s",
          exe.c_str(), image_.cpuSubtype == Loader::kCpuArmV7S ? "armv7s" : image_.cpuSubtype == Loader::kCpuArmV6 ? "armv6" : "armv7",
@@ -242,6 +245,13 @@ void Process::load() {
     setupEnvironment();
     setupMainThread();
     bindImports();
+    if(cfg_.offlineClash) {
+        auto& offline=service<Offline::ClashOffline>();
+        cfg_.loopbackNetwork=true;
+        cfg_.loopbackAliases.push_back("game.clashroyaleapp.com");
+        cfg_.loopbackPortOverrides[9339]=offline.port();
+        onExit([&offline]{offline.stop();});
+    }
 
     // Old (pre-dyld-info) binaries call through __DATA,__dyld.
     if (const auto* s = image_.findSection("__DATA", "__dyld"); s && s->size >= 8) {

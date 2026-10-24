@@ -67,9 +67,14 @@ jobs:
       - name: Build current engine
         run: |
           cmake -S . -B build-clash -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-clash --target hvm hvm_tests hvm_machodump --parallel 2
+          cmake --build build-clash --target hvm hvm_tests hvm_machodump hvm_entry_tests hvm_clash_tests hvm_clash_state_tests --parallel 2
       - name: Runtime regression checks
         run: build-clash/hvm_tests fulltest
+      - name: Embedded offline state, connection and observer checks
+        run: |
+          build-clash/hvm_entry_tests
+          build-clash/hvm_clash_tests
+          build-clash/hvm_clash_state_tests
       - name: Synthetic host AAC comparison
         run: python3 tools/test_m4a_audio.py --hvm-tests build-clash/hvm_tests --out clash-report/m4a.json
       - name: Compare pinned IMA WAV audio with independent decoder
