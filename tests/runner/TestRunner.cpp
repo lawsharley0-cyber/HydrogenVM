@@ -2536,7 +2536,9 @@ int runFullSubsystemTests() {
             call("__ZNSsC1EPKcRKSaIcE", {t, cstr("abcdef"), 0});
             call("__ZNSs7replaceEmmPKc", {t, 1, 2, cstr("XYZ")});
             const bool replaced = str(t) == "aXYZdef";
-            const uint32_t rb = call("__ZNSs6rbeginEv", {t});
+            const uint32_t sret = proc.heap().allocZeroed(4);
+            call("__ZNSs6rbeginEv", {sret, t});
+            const uint32_t rb = m.read<uint32_t>(sret);
             const bool rbeginOk = rb == m.read<uint32_t>(t) + 7;
             // _M_set_length_and_sharable on a private rep: length 3, terminator, refcount 0.
             const uint32_t rep = m.read<uint32_t>(t) - 12;

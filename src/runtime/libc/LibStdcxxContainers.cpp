@@ -855,7 +855,12 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&q_begin>("__ZNSs5beginEv");
     p.def<&q_end>("__ZNSs3endEv");
     // Out-of-line copies of members libstdc++ normally inlines (Army of Darkness Defense).
-    p.def<+[](Ctx& x, GuestPtr self) { m_leakHard(x, self); const uint32_t d = x.mem.read<uint32_t>(self); return d + len(x, d); }>("__ZNSs6rbeginEv");
+    p.def<+[](Ctx& x, GuestPtr sret, GuestPtr self) {
+        m_leakHard(x, self);
+        const uint32_t d = x.mem.read<uint32_t>(self);
+        x.mem.write<uint32_t>(sret, d + len(x, d));
+        return sret;
+    }>("__ZNSs6rbeginEv");
     p.def<+[](Ctx& x, GuestPtr self) { set(x, self, std::string()); }>("__ZNSs5clearEv");
     p.def<+[](Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr s) {
         return m_replace(x, self, pos, n, s, s ? uint32_t(x.proc.readCString(s).size()) : 0);
