@@ -209,6 +209,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r);
 void registerNib(Process& p, ObjC::Runtime& r);
 void registerGestures(Process& p, ObjC::Runtime& r);
 void registerPlatformStubs(Process& p, ObjC::Runtime& r);
+void registerAVWriter(Process& p, ObjC::Runtime& r);
 void registerOpenGLES(Process& p, ObjC::Runtime& r);
 void registerUIWidgets(Process& p, ObjC::Runtime& r);
 void registerGameKit(Process& p, ObjC::Runtime& r);

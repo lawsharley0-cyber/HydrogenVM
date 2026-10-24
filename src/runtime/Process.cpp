@@ -74,7 +74,7 @@ bool looksLikeData(const std::string& s) {
          ends("AttributeName") || ends("Identity") || ends("Callbacks") || ends("CallBacks") || ends("Preset") ||
          starts("_AVCaptureSessionPreset") || starts("_AVMediaType") || starts("_AVLayerVideoGravity") ||
          starts("_AVAudioSession") || starts("_AVAssetExportPreset") || starts("_AVFileType") ||
-         starts("_UIActivityType") || starts("_UITransitionContext") || starts("_UIFontTextStyle") ||
+         starts("_AVVideo") || starts("_AVMetadata") || starts("_UIActivityType") || starts("_UITransitionContext") || starts("_UIFontTextStyle") ||
          starts("_ADBannerContentSizeIdentifier") || starts("_SLServiceType") ||
          starts("_ACAccountTypeIdentifier") || starts("_SKStoreProductParameter")))
         return true;

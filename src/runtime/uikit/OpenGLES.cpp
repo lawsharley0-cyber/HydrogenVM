@@ -2266,6 +2266,40 @@ void gl_vertexAttrib4fv(Ctx& x, uint32_t idx, GuestPtr v) {
         c->genericAttrib[idx] = {x.mem.read<float>(v), x.mem.read<float>(v + 4), x.mem.read<float>(v + 8), x.mem.read<float>(v + 12)};
 }
 
+// glGetVertexAttrib*: state of one attribute array (or its current generic value).
+bool vertexAttribState(Ctx& x, uint32_t idx, uint32_t pname, float out[4], int& n) {
+    ContextData* c = currentCtx(x);
+    if (!c) return false;
+    if (idx >= 16) { c->lastError = GL_INVALID_VALUE; return false; }
+    const ArrayPointer& a = c->attribPtr[idx];
+    n = 1;
+    switch (pname) {
+    case 0x8622: out[0] = a.enabled; break;          // GL_VERTEX_ATTRIB_ARRAY_ENABLED
+    case 0x8623: out[0] = float(a.size); break;      // ..._SIZE
+    case 0x8624: out[0] = float(a.stride); break;    // ..._STRIDE
+    case 0x8625: out[0] = float(a.type); break;      // ..._TYPE
+    case 0x886A: out[0] = a.normalized; break;       // ..._NORMALIZED
+    case 0x889F: out[0] = float(a.buffer); break;    // ..._BUFFER_BINDING
+    case 0x8626: n = 4; for (int i = 0; i < 4; ++i) out[i] = c->genericAttrib[idx][i]; break;   // GL_CURRENT_VERTEX_ATTRIB
+    default: c->lastError = GL_INVALID_ENUM; return false;
+    }
+    return true;
+}
+void gl_getVertexAttribfv(Ctx& x, uint32_t idx, uint32_t pname, GuestPtr out) {
+    float v[4]; int n = 0;
+    if (out && vertexAttribState(x, idx, pname, v, n)) for (int i = 0; i < n; ++i) x.mem.write<float>(out + 4 * i, v[i]);
+}
+void gl_getVertexAttribiv(Ctx& x, uint32_t idx, uint32_t pname, GuestPtr out) {
+    float v[4]; int n = 0;
+    if (out && vertexAttribState(x, idx, pname, v, n)) for (int i = 0; i < n; ++i) x.mem.write<int32_t>(out + 4 * i, int32_t(v[i]));
+}
+void gl_getVertexAttribPointerv(Ctx& x, uint32_t idx, uint32_t pname, GuestPtr out) {
+    ContextData* c = currentCtx(x);
+    if (!c || !out) return;
+    if (idx >= 16 || pname != 0x8645) { c->lastError = idx >= 16 ? GL_INVALID_VALUE : GL_INVALID_ENUM; return; }   // GL_VERTEX_ATTRIB_ARRAY_POINTER
+    x.mem.write<uint32_t>(out, c->attribPtr[idx].ptr);
+}
+
 UniformValue* progUniform(Ctx& x, int32_t loc) {
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
@@ -3509,6 +3543,9 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_vertexAttrib3f>("_glVertexAttrib3f");
     p.def<&gl_vertexAttrib4f>("_glVertexAttrib4f");
     p.def<&gl_vertexAttrib4fv>("_glVertexAttrib4fv");
+    p.def<&gl_getVertexAttribfv>("_glGetVertexAttribfv");
+    p.def<&gl_getVertexAttribiv>("_glGetVertexAttribiv");
+    p.def<&gl_getVertexAttribPointerv>("_glGetVertexAttribPointerv");
     p.def<&gl_uniform1i>("_glUniform1i");
     p.def<&gl_uniform2i>("_glUniform2i");
     p.def<&gl_uniform3i>("_glUniform3i");

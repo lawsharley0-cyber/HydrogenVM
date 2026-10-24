@@ -270,7 +270,13 @@ id construct(Ctx& x, id cls, F init, A... a) {
     return obj ? autoreleased(x, obj) : 0;
 }
 id c_string(Ctx& x, id self, SEL) { return construct(x, self, i_init); }
-id c_stringWithString(Ctx& x, id self, SEL, id o) { return construct(x, self, i_initWithString, o); }
+id c_stringWithString(Ctx& x, id self, SEL, id o) {
+    // Like Foundation, an immutable copy of a constant string is the constant itself,
+    // so apps that over-release it (The Sandbox) get away with it as on iOS.
+    auto& st = S(x);
+    if ((self == st.nsString || self == st.cfString) && o && rt(x).classOf(o) == st.constString) return o;
+    return construct(x, self, i_initWithString, o);
+}
 id c_stringWithUTF8String(Ctx& x, id self, SEL, GuestPtr c) { return construct(x, self, i_initWithUTF8String, c); }
 id c_stringWithCString(Ctx& x, id self, SEL, GuestPtr c, uint32_t e) { return construct(x, self, i_initWithCString, c, e); }
 id c_stringWithCStringDefault(Ctx& x, id self, SEL, GuestPtr c) { return construct(x, self, i_initWithCStringDefault, c); }

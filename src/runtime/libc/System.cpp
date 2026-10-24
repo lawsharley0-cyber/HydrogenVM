@@ -295,6 +295,34 @@ int32_t s_sysctl(Ctx& x, GuestPtr mib, uint32_t n, GuestPtr oldp, GuestPtr oldle
             std::vector<uint8_t> zeros(492, 0);
             return writeSysctl(x, oldp, oldlenp, zeros.data(), uint32_t(zeros.size()));
         }
+    } else if (a == 4 && b == 17 && n >= 6 && x.mem.read<uint32_t>(mib + 12) == 18 && x.mem.read<uint32_t>(mib + 16) == 3) {
+        // CTL_NET / AF_ROUTE / 0 / AF_LINK / NET_RT_IFLIST / index: one if_msghdr (112 bytes on
+        // 32-bit Darwin) followed by the interface's sockaddr_dl. en0 has the MAC address iOS 7+
+        // reports to apps (02:00:00:00:00:00); lo0 has none.
+        const uint32_t index = x.mem.read<uint32_t>(mib + 20);
+        if (index != 1 && index != 2) { setErrno(x, ENXIO); return -1; }
+        const bool en0 = index == 2;
+        uint8_t msg[112 + 20] = {};
+        const uint16_t len = sizeof msg;
+        std::memcpy(msg, &len, 2);
+        msg[2] = 5;                     // RTM_VERSION
+        msg[3] = 0xe;                   // RTM_IFINFO
+        const uint32_t addrs = 0x10, flags = en0 ? 0x8863 : 0x8049;   // RTA_IFP; UP|BROADCAST|RUNNING|SIMPLEX|MULTICAST or loopback
+        std::memcpy(msg + 4, &addrs, 4);
+        std::memcpy(msg + 8, &flags, 4);
+        const uint16_t idx = uint16_t(index);
+        std::memcpy(msg + 12, &idx, 2);
+        msg[16] = en0 ? 6 : 24;          // ifi_type: IFT_ETHER / IFT_LOOP
+        msg[19] = en0 ? 6 : 0;           // ifi_addrlen
+        uint8_t* sdl = msg + 112;
+        sdl[0] = 20; sdl[1] = 18;        // sdl_len, AF_LINK
+        std::memcpy(sdl + 2, &idx, 2);
+        sdl[4] = msg[16];                // sdl_type
+        sdl[5] = 3;                      // sdl_nlen
+        sdl[6] = en0 ? 6 : 0;            // sdl_alen
+        std::memcpy(sdl + 8, en0 ? "en0" : "lo0", 3);
+        if (en0) sdl[11] = 0x02;         // 02:00:00:00:00:00
+        return writeSysctl(x, oldp, oldlenp, msg, sizeof msg);
     }
     setErrno(x, ENOENT);
     return -1;

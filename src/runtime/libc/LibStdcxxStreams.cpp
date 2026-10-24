@@ -1015,9 +1015,32 @@ void registerLibStdcxxStreams(Process& p) {
     vtt(std::string("__ZTT") + OSS, {s.vtOss, s.vtOss, s.vtIos44, s.vtIos44});
     vtt(std::string("__ZTT") + ISS, {s.vtIss, s.vtIss, s.vtIos48, s.vtIos48});
     vtt(std::string("__ZTT") + SS_, {s.vtSs, s.vtSs, s.vtIos52, s.vtSsOut, s.vtIos52, s.vtIos52, s.vtSsOut, s.vtIos52});
-    p.defineData(std::string("__ZTV") + OSS, s.vtOss - 16);
-    p.defineData(std::string("__ZTV") + ISS, s.vtIss - 16);
-    p.defineData(std::string("__ZTV") + SS_, s.vtSs - 16);
+    // The vtables apps link against (__ZTV...) have GCC's layout, because inline
+    // constructor code stores __ZTV+12 (primary), __ZTV+32 (stringstream's ostream
+    // part) and the basic_ios address point itself. Each address point has the
+    // virtual-base offset at -12 and offset-to-top at -8, like the ones above.
+    auto gccVtable = [&](const std::string& name, std::initializer_list<std::pair<int32_t, int32_t>> parts, int32_t iosOff) {
+        // parts: {vbase offset, offset to top} for the primary and non-virtual secondary vtables.
+        const uint32_t size = uint32_t(parts.size()) * 20 + 24;
+        const uint32_t a = p.defineDataBlock(name, size);
+        uint32_t o = 0;
+        for (const auto& [vbase, top] : parts) {
+            p.mem().write<uint32_t>(a + o, uint32_t(vbase));
+            p.mem().write<uint32_t>(a + o + 4, uint32_t(top));
+            p.mem().write<uint32_t>(a + o + 12, anyD1);
+            p.mem().write<uint32_t>(a + o + 16, anyD0);
+            o += 20;
+        }
+        // basic_ios (virtual base): two vcall offsets, offset to top, typeinfo, D1/D0 thunks.
+        p.mem().write<uint32_t>(a + o, uint32_t(-iosOff));
+        p.mem().write<uint32_t>(a + o + 4, uint32_t(-iosOff));
+        p.mem().write<uint32_t>(a + o + 8, uint32_t(-iosOff));
+        p.mem().write<uint32_t>(a + o + 16, tD1);
+        p.mem().write<uint32_t>(a + o + 20, tD0);
+    };
+    gccVtable(std::string("__ZTV") + OSS, {{44, 0}}, 44);
+    gccVtable(std::string("__ZTV") + ISS, {{48, 0}}, 48);
+    gccVtable(std::string("__ZTV") + SS_, {{52, 0}, {44, -8}}, 52);
 
     auto reg = [&](const char* cls, auto ctor, auto ctor2, auto ctorStr, auto ctorStr2, auto dtor, auto dtorDel) {
         auto n = [&](const char* r) { return std::string("__ZN") + cls + r; };
