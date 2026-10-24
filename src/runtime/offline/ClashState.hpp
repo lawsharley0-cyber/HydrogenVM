@@ -12,6 +12,9 @@ struct ClashProfile {
     int32_t trophies=0, arenaLevel=0;
     std::array<int32_t,4> chests{};
     Bytes nativeHome,nativeAvatar;
+    Bytes pendingReward; // immutable native command; replay only against its pre-claim checkpoint
+    int32_t pendingRewardSlot=-1;
+    int32_t rewardSerial=0;
     size_t avatarOffset=0;
 };
 struct ClashFixtures {
@@ -27,7 +30,7 @@ struct ClashFixtures {
     Bytes sector(const ClashProfile&) const;
 };
 struct ClashHomeView {
-    struct Chest {int32_t data=0;bool unlocked=false,coOpen=false,isNew=true,hasTimer=false;std::array<int32_t,3> timer{};int32_t value8=0,source=0,valueC=-1;};
+    struct Chest {int32_t data=0;bool unlocked=false,claimed=false,isNew=true,hasTimer=false;std::array<int32_t,3> timer{};int32_t value8=0,source=0,valueC=-1;};
     size_t chestOffset=0,chestEnd=0;
     std::array<int32_t,4> chests{};
     std::array<Chest,4> states{};

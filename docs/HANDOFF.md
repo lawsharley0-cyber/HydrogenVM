@@ -7,13 +7,19 @@ The owner explicitly prioritizes core offline Clash functionality. Draft
 `codex/clash-offline-continuation`, checkpoints the embedded backend and local
 Gemini work. Read [current evidence](clash-royale/PROGRESS.md) first. Native NPC
 victory and saved 1/7 progress were reproduced on Linux, not on a newly signed
-iPhone build. Chest collection remains blocked: StartRewardClaim=503 marks the
-chest claimed, but delivery of LogicClaimRewardCommand=213 is still missing.
-Capture now retains the previous checkpoint while isClaimingReward is true;
-older half-claimed saves need explicit recovery research, not flag resets.
+iPhone build. The next phase now verifies a complete chest transaction: native
+randomization/command encoding, delivery of 213 in 24111, collection animation,
+116 gold, Knight/Arrows counts 2, chest removal and two clean relaunches without
+duplicate rewards. A durable journal protects the pre-claim checkpoint. Older
+half-claimed saves without a journal still need recovery, not flag resets.
 
-Next: integrate current main without losing local work, implement and verify the
-reward transaction, then collect/relaunch and continue native NPC battles. Review
+Main `93d05af` is integrated. A plain stat/fstat ABI regression from main was
+corrected using Apple's iPhone ABI: 64-bit inodes, st_size at byte 60; new TL-H v2
+fails before the fix and passes after. Check this independently before changing
+stat for another app; unsuffixed iPhone symbols do not imply legacy Mac ABI.
+
+Next: card upgrade and further native NPC wins, multiple chest IDs/slots, actual
+interruption during reward delivery, then full training and arena progression. Review
 experimental trophy formulas/guest trophy writes before treating arena coverage
 as faithful. Intermittent sound, King cannon motion, absent princesses and UI
 alignment are deferred owner reports, not resolved issues. No assets/private

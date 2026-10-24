@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
+#include <algorithm>
 using namespace Hydrogen::Runtime;
 using namespace Hydrogen::Runtime::Offline;
 namespace fs=std::filesystem;
@@ -17,6 +18,28 @@ struct ClientCipher {
     ClientCipher(){std::string key="fhsd6f86f67rt8fw78fw789we78r9789wer6renonce";if(HostCrypto::create(0,4,0,(const uint8_t*)key.data(),key.size(),nullptr,&c))throw std::runtime_error("RC4 unavailable");apply(Bytes(key.begin(),key.end()));}
     ~ClientCipher(){HostCrypto::release(c);}
     Bytes apply(const Bytes& in){Bytes out(in.size()+32);size_t n=0;if(HostCrypto::update(c,in.data(),in.size(),out.data(),out.size(),&n))throw std::runtime_error("cipher update");out.resize(n);return out;}
+};
+struct SocketPeer {
+    int fd=-1;ClientCipher outgoing,incoming;
+    explicit SocketPeer(uint16_t port) {
+        fd=::socket(AF_INET,SOCK_STREAM,0);timeval timeout{3,0};::setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof timeout);
+        sockaddr_in address{};address.sin_family=AF_INET;address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);address.sin_port=htons(port);
+#if defined(__APPLE__)
+        address.sin_len=sizeof address;
+#endif
+        if(::connect(fd,(sockaddr*)&address,sizeof address))throw std::runtime_error("journal client connect failed");
+    }
+    ~SocketPeer(){if(fd>=0)::close(fd);}
+    void send(uint16_t kind,const Bytes& body) {
+        auto encrypted=outgoing.apply(body);Bytes packet{uint8_t(kind>>8),uint8_t(kind),uint8_t(body.size()>>16),uint8_t(body.size()>>8),uint8_t(body.size()),0,0};
+        packet.insert(packet.end(),encrypted.begin(),encrypted.end());
+        if(::send(fd,packet.data(),packet.size(),0)!=ssize_t(packet.size()))throw std::runtime_error("journal client send failed");
+    }
+    std::pair<uint16_t,Bytes> receive() {
+        auto read=[&](uint8_t* data,size_t size){size_t n=0;while(n<size){auto got=::recv(fd,data+n,size-n,0);if(got<=0)throw std::runtime_error("journal client receive failed");n+=size_t(got);}};
+        uint8_t h[7];read(h,7);Bytes body(size_t(h[2])<<16|size_t(h[3])<<8|h[4]);read(body.data(),body.size());
+        return {uint16_t(uint16_t(h[0])<<8|h[1]),incoming.apply(body)};
+    }
 };
 int main() {
     if(!HostCrypto::available()){std::puts("SKIP host crypto unavailable");return 77;}
@@ -120,6 +143,50 @@ int main() {
         check(Plist::parseFile(saved.string())->get("npcWins")->i==8,"native counter survives service relaunch");
         bool locked=false;try{Process other(cfg);ClashOffline duplicate(other);}catch(const std::exception&){locked=true;}
         check(locked,"duplicate save session rejected");service.stop();
+    }
+    {
+        // A synthetic pre-claim checkpoint exercises journal recovery/transport;
+        // the client reward contents are verified separately in real-client runs.
+        ClashProfile p;p.npcWins=8;p.npcLosses=1;p.chests[0]=19000000;
+        auto home=ClashFixtures(cfg.bundlePath).home(p);
+        const std::string marker="Offline Player";
+        auto name=std::search(home.begin(),home.end(),marker.begin(),marker.end());
+        if(name==home.end())throw std::runtime_error("fixture avatar not found");
+        auto stored=Plist::parseFile(saved.string());
+        stored->set("nativeHome",Plist::Value::makeData(std::string(home.begin(),home.end())));
+        stored->set("avatarOffset",Plist::Value::makeInt(name-home.begin()-10));
+        const Bytes pending{0x95,3,0,0,1,0x7f,0x7f,0x7f,0,0};
+        stored->set("pendingReward",Plist::Value::makeData(std::string(pending.begin(),pending.end())));
+        stored->set("pendingRewardSlot",Plist::Value::makeInt(1));
+        auto chests=Plist::Value::makeArray();for(auto chest:p.chests)chests->array.push_back(Plist::Value::makeInt(chest));stored->set("chests",chests);
+        std::ofstream(saved)<<Plist::toXml(*stored);
+        for(int launch=0;launch<2;++launch) {
+            Process process(cfg);ClashOffline service(process);SocketPeer client(service.port());
+            Bytes login;clashInt(login,0);clashInt(login,0);clashInt(login,-1);for(int n:{2,0,1306})clashVint(login,n);
+            client.send(10101,login);
+            check(client.receive().first==20104 && client.receive().first==24101 &&
+                  client.receive()==std::pair<uint16_t,Bytes>{24111,pending},"relaunch delivers the identical journaled reward after home");
+            client.send(10108,{});check(client.receive()==std::pair<uint16_t,Bytes>{20108,{}},"pending reward is delivered once per connection");
+        }
+        stored->set("pendingRewardSlot",Plist::Value::makeInt(0));std::ofstream(saved)<<Plist::toXml(*stored);
+        bool rejected=false;try{Process process(cfg);ClashOffline service(process);}catch(const std::runtime_error&){rejected=true;}
+        check(rejected,"incomplete reward journal is rejected without resetting progress");
+    }
+    {
+        // The real NPC battle can omit its log. Banking must follow its
+        // qualified win, not depend on the optional log's chest getter.
+        put("csv_logic/arenas.csv","Name,Arena,ChestRewardMultiplier\nString,int,int\nTrainingCamp,0,100\n");
+        put("csv_logic/treasure_chests.csv","Name,MinGold,MaxGold\nString,int,int\nFixtureChest,16,16\n");
+        put("csv_logic/chest_order.csv","Name,Chest\nString,String\nNewbie1,FixtureChest\n");
+        cfg.homePath=(root/"csv-home").string();
+        Process process(cfg);ClashOffline service(process);
+        auto avatar=process.heap().allocZeroed(256);process.mem().write<int32_t>(avatar+0x14,1);
+        Hydrogen::CPU::Cpu cpu;cpu.r[0]=avatar;cpu.r[1]=1;cpu.r[Hydrogen::CPU::kLR]=0x14c7d;
+        process.engine().notifyEntry(cpu,0x9ae94);process.engine().notifyEntry(cpu,0x9ae94);
+        const auto state=Plist::parseFile((fs::path(cfg.homePath)/"Library/Application Support/HydrogenVM/ClashOffline.plist").string());
+        check(cpu.exit==Hydrogen::CPU::Exit::None && state->get("npcWins")->i==1 && state->get("lastRewardedWin")->i==1 &&
+              state->get("chestCycleIndex")->i==1 && state->get("chests")->array[0]->i==19000000 && state->get("chests")->array[1]->i==0,
+              "native win without battle log banks the CSV chest exactly once");
     }
     fs::remove_all(root);return failed?1:0;
 }

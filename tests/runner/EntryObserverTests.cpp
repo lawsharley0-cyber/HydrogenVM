@@ -13,10 +13,13 @@ int main() {
     memory.copyIn(0x1000,caller,sizeof caller); memory.copyIn(0x1100,callee,sizeof callee);
     CPU::Engine engine(memory);
     std::vector<uint32_t> observed;
+    std::vector<uint32_t> returned;
     engine.observeEntry(0x1100,[&](uint32_t pc,const CPU::Cpu& cpu) {if(pc==0x1100) observed.push_back(cpu.r[0]);});
+    engine.observeEntry(0x1010,[&](uint32_t,const CPU::Cpu& cpu){returned.push_back(cpu.r[0]);});
     CPU::Cpu cpu; cpu.r[CPU::kSP]=0x8000;cpu.r[0]=123;cpu.nzcv=3;
     check(engine.callGuest(cpu,0x1000,{})==35 && cpu.r[0]==123 && cpu.nzcv==3 &&
         observed==std::vector<uint32_t>({0,7,14,21,28}),"cached direct calls preserve guest registers/flags");
+    check(returned==std::vector<uint32_t>({7,14,21,28,35}),"return continuations observe each original call result");
     bool late=false;
     try {engine.observeEntry(0x1000,[](uint32_t,const CPU::Cpu&){});} catch(const std::logic_error&) {late=true;}
     check(late,"late observer configuration rejected");

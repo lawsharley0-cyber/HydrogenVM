@@ -2,16 +2,19 @@
 
 ## Current continuation — October 24, 2026
 
-Work continues on `codex/clash-offline-continuation`, based on main `fdfee6f`.
+Work continues on `codex/clash-offline-continuation`, now integrated with main
+`93d05af`.
 See [current evidence and blockers](clash-royale/PROGRESS.md). The historical
 October 20 notes below are retained for decoder evidence, not current status.
 An unmodified client completed one native NPC victory against the embedded C++
 backend and relaunched showing earned 1/7 training progress. Full offline
-progression is **not yet verified**. The backend still needs the native reward
-delivery transaction: a saved chest can show OPEN while command 503 fails with
-error 4 because it was marked claimed before the reward arrived. New captures
-retain the previous checkpoint while native `isClaimingReward()` is true;
-this does not repair older half-claimed saves or deliver missing rewards.
+progression is **not yet verified**. Chest reward delivery now uses the original
+native randomizer and command encoder: the earned chest was unlocked, opened,
+collected, and removed. Gold increased from 100 to 116 and Knight/Arrows counts
+increased from 1 to 2. Two relaunches retained the completed reward without
+another grant. A durable journal retains the pre-claim checkpoint until native
+command 213 finishes. Older half-claimed saves without a journal still need
+separate recovery; full training, multi-chest handling and arenas remain open.
 
 The owner reports intermittent audio, incorrect King cannon animation, missing
 Princess Tower princesses and uncentered text on iPhone. Preserve those reports

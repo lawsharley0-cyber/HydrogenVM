@@ -107,7 +107,7 @@ ClashHomeView inspectClashHome(const Bytes& bytes) {
     for(int i=0;i<count;++i)r.card();r.v();const int selected=r.v();const int slots=r.v();
     if(selected<0 || selected>=decks || slots!=4)throw std::runtime_error("Offline Clash: invalid native home selection");
     ClashHomeView view;view.deck=all[selected];view.chestOffset=r.at;
-    for(int i=0;i<4;++i)if(r.b()) {auto& c=view.states[i];c.data=r.ref();view.chests[i]=c.data;c.unlocked=r.b();c.coOpen=r.b();c.isNew=r.b();c.hasTimer=r.b();if(c.hasTimer)for(auto& n:c.timer)n=r.v();c.value8=r.v();c.source=r.v();c.valueC=r.v();}
+    for(int i=0;i<4;++i)if(r.b()) {auto& c=view.states[i];c.data=r.ref();view.chests[i]=c.data;c.unlocked=r.b();c.claimed=r.b();c.isNew=r.b();c.hasTimer=r.b();if(c.hasTimer)for(auto& n:c.timer)n=r.v();c.value8=r.v();c.source=r.v();c.valueC=r.v();}
     view.chestEnd=r.at;return view;
 }
 Bytes replaceClashHomeChests(const Bytes& bytes,const std::array<int32_t,4>& chests,size_t& avatarOffset) {
@@ -115,7 +115,7 @@ Bytes replaceClashHomeChests(const Bytes& bytes,const std::array<int32_t,4>& che
     if(avatarOffset<view.chestEnd)throw std::runtime_error("Offline Clash: avatar overlaps the chest list");
     // Preserve native timer/unlock state when the slot is unchanged. This path
     // only appends newly earned rewards to empty slots, never rewrites a chest.
-    Writer w;for(size_t i=0;i<4;++i){auto c=view.states[i];const auto chest=chests[i];w.b(chest!=0);if(chest){if(c.data!=chest){if(c.data)throw std::runtime_error("Offline Clash: cannot replace an occupied native chest slot");c=ClashHomeView::Chest{};c.data=chest;}w.ref(c.data);w.b(c.unlocked);w.b(c.coOpen);w.b(c.isNew);w.b(c.hasTimer);if(c.hasTimer)for(auto n:c.timer)w.v(n);w.v(c.value8);w.v(c.source);w.v(c.valueC);}}
+    Writer w;for(size_t i=0;i<4;++i){auto c=view.states[i];const auto chest=chests[i];w.b(chest!=0);if(chest){if(c.data!=chest){if(c.data)throw std::runtime_error("Offline Clash: cannot replace an occupied native chest slot");c=ClashHomeView::Chest{};c.data=chest;}w.ref(c.data);w.b(c.unlocked);w.b(c.claimed);w.b(c.isNew);w.b(c.hasTimer);if(c.hasTimer)for(auto n:c.timer)w.v(n);w.v(c.value8);w.v(c.source);w.v(c.valueC);}}
     Bytes result(bytes.begin(),bytes.begin()+view.chestOffset);result.insert(result.end(),w.data.begin(),w.data.end());result.insert(result.end(),bytes.begin()+view.chestEnd,bytes.end());
     avatarOffset=avatarOffset-view.chestEnd+view.chestOffset+w.data.size();return result;
 }

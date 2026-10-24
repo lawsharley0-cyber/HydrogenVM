@@ -31,6 +31,71 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### October 24 next phase: complete earned-chest transaction and persistence
+
+Merged current main `93d05af` without conflicts, preserving local work. The
+merged baseline initially passed 244 runtime checks and 13 Test Lab cases but
+the real client regressed at font loading. A native trace found an opened font
+with length zero: plain `_fstat` had been changed to the legacy Mac layout.
+Apple XNU [cdefs.h](https://github.com/apple-oss-distributions/xnu/blob/xnu-3789.1.32/bsd/sys/cdefs.h)
+sets `__DARWIN_ONLY_64_BIT_INO_T=1` for iPhoneOS and omits the `$INODE64` suffix;
+[stat.h](https://github.com/apple-oss-distributions/xnu/blob/xnu-3789.1.32/bsd/sys/stat.h)
+defines the corresponding structure. ARMv7 uses a 108-byte structure with size
+at offset 60. Restored that ABI for plain stat/lstat/fstat, removed unused legacy
+writers, and corrected the earlier unit oracle that assumed the Mac layout.
+New TL-H v2 writes a known 1024-byte file, reads raw fstat bytes and verifies
+the 108-byte boundary. It fails before and passes after; no font/URL workaround
+or assertion suppression was needed. Survivalcraft's reported issues still need
+their own real-app investigation, not a return to the wrong iPhone ABI.
+
+Fresh native run `reward-fixed-stat/run-20261024-012658-945b2c` completed a
+three-crown win, 414.09 seconds, clean exit. It exposed an additional accounting
+gap: no battle log was generated, so observing only the log's reward getter
+missed the earned chest. NPC reward banking now follows the *bundled chest
+order* after the qualified original win counter transition, exactly once. This
+is the offline backend's reward policy, not proof of the historical server's
+implementation. One recorded but unbanked native win can finish that transaction
+on restart; GoHome and a result-screen preview alone still cannot award a win.
+Post-setter continuations also preserve the original avatar after the native
+counter/arena update, before GoHome can substitute an earlier home snapshot.
+This is needed for subsequent wins; NPC 2+ still needs real-client validation.
+
+The original LogicRewardRandomizer exists at 0x132f98. The adapter mirrors the
+original LogicProgressSimulator::openChest construction sequence at
+0x8f2b4..0x8f318, creating temporary native objects, calling the original reward
+randomizer, and using the original command encoder 0x6d8c4. No manual drop
+formula, live-guest field overwrite or game-byte patch supplies the reward.
+The peer sends AvailableServerCommandMessage 24111 containing native command
+213. A format-4 save journals its immutable bytes, source slot and serial against
+the complete pre-claim home *before* delivery. A session sends each serial once;
+a reconnect replays it against the pre-claim checkpoint. Only a completed native
+collection (claim flag cleared and source chest removed) commits the new home
+and avatar and clears the journal. Older half-claimed saves without a journal
+are not silently reset or re-randomized. The snapshot flag previously named
+`coOpen` is now correctly named `claimed`.
+
+Real run `reward-collect/run-20261024-013540-ee0032` unlocked Newbie1 for the
+original 15 seconds, opened and collected it through the original animation.
+Gold changed 100 -> 116; Knight and Arrows counts changed 1 -> 2; all chest
+slots became empty and the reward journal cleared. Runtime 207.66 seconds,
+exit 0, no crash/errors; 9,132,032 audio frames, 8,830,321 non-silent, zero
+transport errors or dropped blocks. Sound continuity on iPhone remains unverified.
+
+`reward-relaunch/run-20261024-013900-3c552c` then ran two 45-second launches,
+both clean. Home retained 116 gold and 1/7 training, cards retained their earned
+counts, chest stayed removed, journal stayed empty, and native avatar SHA-256
+was unchanged. Socket tests independently check journal replay after two backend
+restarts, once-per-session delivery/heartbeat alignment and corrupt-journal
+rejection. These tests do not yet cover interrupting the real app mid-collection.
+
+Post-integration checks: 244 runtime checks, 13 Test Lab cases, 26 Python Clash
+tests, C++ socket/state/observer suites. Angry Birds, Art of Glow and Tiny Tower
+each completed an 8-second startup smoke without reported crashes; this does not
+resolve the owner's device reports. New limits to verify next: card upgrades,
+NPC 2 onward, multi-chest IDs/slots, real interrupted-claim recovery, graduation
+and arena rules. Apple compilation/device tests and deferred presentation defects
+remain open. All game captures, logs, saves and commercial assets stay outside Git.
+
 ### October 24: command validation and incomplete chest transaction
 
 Reviewed Gemini's local changes without replacing them. Native getters and
