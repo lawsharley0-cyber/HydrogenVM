@@ -12,6 +12,7 @@ namespace Hydrogen::CPU {
 
 Block* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
 void   hvmCallHle(Cpu* c, uint32_t index)  { c->engine->callHle(c, index); }
+void   hvmObserveEntry(Cpu* c, uint32_t address) { c->engine->notifyEntry(*c, address); }
 
 #ifdef HVM_PROFILE_PAIRS
 }  // namespace Hydrogen::CPU
@@ -261,6 +262,13 @@ uint32_t Engine::registerHle(std::string name, HleFn fn) {
     return Memory::GuestArena::kHleBase + idx * 4;
 }
 
+void Engine::observeEntry(uint32_t address, EntryObserver observer) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (!blocks_.empty()) throw std::logic_error("Entry observers must be configured before execution");
+    if (!observer || isHleAddress(address & ~1u)) throw std::invalid_argument("Entry observer requires guest code and a callback");
+    entryObservers_[address & ~1u] = std::move(observer);
+}
+
 namespace {
 thread_local std::string t_hostError;
 thread_local FaultSnapshot t_fault;
@@ -277,6 +285,20 @@ void Engine::captureFault(const Cpu& c, Exit e) {
 }
 const std::string& Engine::lastHostError() { return t_hostError; }
 void Engine::setLastHostError(std::string s) { t_hostError = std::move(s); }
+void Engine::notifyEntry(Cpu& cpu, uint32_t address) noexcept {
+    try {
+        auto found = entryObservers_.find(address);
+        if (found != entryObservers_.end()) found->second(address, cpu);
+    } catch (const std::exception& error) {
+        cpu.exit = Exit::HostError;
+        cpu.r[kPC] = address;
+        t_hostError = std::string("Entry observer: ") + error.what();
+    } catch (...) {
+        cpu.exit = Exit::HostError;
+        cpu.r[kPC] = address;
+        t_hostError = "Entry observer: unknown exception";
+    }
+}
 
 void Engine::callHle(Cpu* c, uint32_t index) {
     c->in_guest.store(false, std::memory_order_release);
@@ -367,6 +389,11 @@ std::unique_ptr<Block> Engine::decodeBlock(uint32_t key) {
     }
     if (key & 1) decodeThumbBlock(*b, pc);
     else decodeArmBlock(*b, pc & ~3u);
+    if (entryObservers_.count(pc)) {
+        Op probe{};
+        probe.fn = &H_ObserveEntry; probe.pc = pc; probe.imm = pc;
+        b->ops.insert(b->ops.begin(), probe);
+    }
     return b;
 }
 

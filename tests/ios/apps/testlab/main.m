@@ -38,6 +38,8 @@
 extern FILE *popen(const char *, const char *);
 extern int pclose(FILE *);
 extern unsigned int alarm(unsigned int);
+extern int fstat(int, void *);
+extern int fileno(FILE *);
 #include <time.h>
 #import <OpenGLES/EAGL.h>
 #include <OpenGLES/ES2/gl.h>
@@ -73,11 +75,11 @@ static const char *kAppBuild        = "1";
 static const int kVersionA = 1;
 static const int kVersionB = 1;
 static const int kVersionC = 1;
-static const int kVersionD = 1;
+static const int kVersionD = 2;
 static const int kVersionE = 1;
 static const int kVersionF = 1;
 static const int kVersionG = 1;
-static const int kVersionH = 1;
+static const int kVersionH = 2;
 static const int kVersionI = 1;
 static const int kVersionJ = 1;
 static const int kVersionK = 1;
@@ -459,6 +461,31 @@ static TLResult *runCaseC(void) {
     return r;
 }
 
+// Original Microsoft ADPCM vector: predictor 0 uses coefficients (256,0),
+// delta 16, history (0,0), nibbles (1,2). Independently expected samples are
+// (0,0,16,48); mono is duplicated to stereo by HydrogenVM's AudioFile facade.
+extern int32_t AudioFileOpenURL(NSURL *,uint8_t,uint32_t,uint32_t *);
+extern int32_t AudioFileReadBytes(uint32_t,uint8_t,int64_t,uint32_t *,void *);
+extern int32_t AudioFileClose(uint32_t);
+static void ms16(uint8_t *b,int *p,uint16_t n){b[(*p)++]=n;b[(*p)++]=n>>8;}
+static void ms32(uint8_t *b,int *p,uint32_t n){for(int i=0;i<4;i++)b[(*p)++]=n>>(8*i);}
+static BOOL verifyMicrosoftAdpcm(void) {
+    uint8_t data[128]={0};int p=0;
+    memcpy(data+p,"RIFF",4);p+=4;ms32(data,&p,90);memcpy(data+p,"WAVEfmt ",8);p+=8;
+    ms32(data,&p,50);ms16(data,&p,2);ms16(data,&p,1);ms32(data,&p,22050);ms32(data,&p,44100);
+    ms16(data,&p,8);ms16(data,&p,4);ms16(data,&p,32);ms16(data,&p,4);ms16(data,&p,7);
+    const int16_t coefficients[14]={256,0,512,-256,0,0,192,64,240,0,460,-208,392,-232};
+    for(int i=0;i<14;i++)ms16(data,&p,(uint16_t)coefficients[i]);
+    memcpy(data+p,"fact",4);p+=4;ms32(data,&p,4);ms32(data,&p,4);
+    memcpy(data+p,"data",4);p+=4;ms32(data,&p,8);data[p++]=0;ms16(data,&p,16);ms16(data,&p,0);ms16(data,&p,0);data[p++]=0x12;
+    NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/ms-adpcm-vector.wav"];
+    if(![[NSData dataWithBytes:data length:p] writeToFile:path atomically:YES])return NO;
+    uint32_t file=0;if(AudioFileOpenURL([NSURL fileURLWithPath:path],1,0,&file)!=0)return NO;
+    int16_t actual[8]={0};const int16_t expected[8]={0,0,0,0,16,16,48,48};uint32_t bytes=sizeof actual;
+    int32_t status=AudioFileReadBytes(file,0,0,&bytes,actual);AudioFileClose(file);
+    return status==0 && bytes==sizeof actual && memcmp(actual,expected,sizeof actual)==0;
+}
+
 // ─────────────────────────── Case D — audio ──────────────────────────────────
 
 // Reads tone.wav from the bundle, parses the PCM WAV header, and verifies:
@@ -575,12 +602,14 @@ static TLResult *runCaseD(void) {
     BOOL countOk    = (sampleCount >= kExpectedSamples - kSampleTolerance)
                    && (sampleCount <= kExpectedSamples + kSampleTolerance);
     BOOL energyOk   = hasEnergy;
-    BOOL allOk = rateOk && chOk && countOk && energyOk;
+    BOOL msAdpcmOk = verifyMicrosoftAdpcm();
+    r.diagnostics[@"microsoftAdpcmVector"] = @(msAdpcmOk);
+    BOOL allOk = rateOk && chOk && countOk && energyOk && msAdpcmOk;
 
     r.status = allOk ? @"passed" : @"failed";
     if (!allOk) {
-        r.reason = [NSString stringWithFormat:@"rate=%d ch=%d count=%d energy=%d",
-                    rateOk, chOk, countOk, energyOk];
+        r.reason = [NSString stringWithFormat:@"rate=%d ch=%d count=%d energy=%d microsoftADPCM=%d",
+                    rateOk, chOk, countOk, energyOk, msAdpcmOk];
     }
 
     clearCheckpoint();
@@ -881,6 +910,18 @@ static TLResult *runCaseH(void) {
     NSData *readData = [NSData dataWithContentsOfFile:testFile];
     BOOL contentOk = [readData isEqualToData:data];
 
+    // iPhoneOS has only the 64-bit-inode stat ABI even under the unsuffixed
+    // fstat symbol (Apple XNU cdefs.h / stat.h). ARMv7 st_size is at byte 60.
+    // This raw buffer deliberately avoids inheriting a host struct layout.
+    uint32_t statWords[29];memset(statWords,0xa5,sizeof(statWords));
+    FILE *statFile=fopen([testFile UTF8String],"rb");
+    int statResult=statFile?fstat(fileno(statFile),statWords):-1;
+    uint64_t nativeSize=0;memcpy(&nativeSize,(uint8_t *)statWords+60,8);
+    BOOL nativeStatOk=statResult==0 && nativeSize==sizeof(buffer) &&
+        statWords[27]==0xa5a5a5a5 && statWords[28]==0xa5a5a5a5;
+    if(statFile)fclose(statFile);
+    r.diagnostics[@"nativeFstatLayout"] = @(nativeStatOk);
+
     // 6. Clean up
     NSString *topTestDir = [documentsDir() stringByAppendingPathComponent:@"testlab_fs_dir"];
     BOOL removed = [fm removeItemAtPath:topTestDir error:&err];
@@ -905,11 +946,11 @@ static TLResult *runCaseH(void) {
     unsigned int al = alarm(5);
     BOOL alarmOk = (al == 0);
 
-    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, gone=1, posixOk=1";
-    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, gone=%d, posixOk=%d",
-                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, gone, (popenOk && pcloseOk && alarmOk)];
+    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, nativeStatOk=1, gone=1, posixOk=1";
+    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, nativeStatOk=%d, gone=%d, posixOk=%d",
+                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, nativeStatOk, gone, (popenOk && pcloseOk && alarmOk)];
 
-    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && removed && gone && popenOk && pcloseOk && alarmOk) {
+    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && nativeStatOk && removed && gone && popenOk && pcloseOk && alarmOk) {
         r.status = @"passed";
     } else {
         r.status = @"failed";

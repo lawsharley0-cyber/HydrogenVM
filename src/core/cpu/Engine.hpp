@@ -58,6 +58,11 @@ public:
     // `fn` may call hleJump() to continue somewhere other than LR, set
     // `cpu.exit` to stop, or throw (reported as Exit::HostError).
     uint32_t registerHle(std::string name, HleFn fn);
+    // Read-only basic-block entry probes for local diagnostics. Configure before
+    // decoding/running any code; cached links must not be changed under runners.
+    using EntryObserver = std::function<void(uint32_t, const Cpu&)>;
+    void observeEntry(uint32_t address, EntryObserver observer);
+    void notifyEntry(Cpu& cpu, uint32_t address) noexcept;
     const std::string& hleName(uint32_t index) const { return hle_[index].name; }
     const HleFn& hleFunction(uint32_t index) const { return hle_[index].fn; }
     bool isHleAddress(uint32_t addr) const {
@@ -141,6 +146,7 @@ private:
 
     Memory::GuestArena& mem_;
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blocks_;
+    std::unordered_map<uint32_t, EntryObserver> entryObservers_;
     std::atomic<uint64_t> gen_{0};       // bumped by flushCache; invalidates per-Cpu caches
     mutable std::mutex mu_;
 

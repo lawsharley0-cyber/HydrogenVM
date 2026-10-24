@@ -1,5 +1,17 @@
 # Backlog
 
+## Active owner-directed Clash continuation (2026-10-23)
+
+The owner's explicit request resumes offline Clash development despite the
+master plan's earlier recommendation to park it. Group C owner:
+`codex/clash-offline-continuation`. Restore the pinned NPC sector, native VInt
+codec and desktop/headless loopback integration on current main, preserve GPU
+rendering and audio, then verify native tutorial completion, one NPC win and
+earned-state relaunch. Unsupported read-only turn metadata must be reported
+without disconnecting an otherwise valid session. No turn replay or invented
+checksum acknowledgments. Initial arena rendering is not battle completion.
+Reproduction evidence and remaining blockers belong in `docs/clash-royale/`.
+
 Priorities follow the 2026-10-21 audit of `main` at `07fabbb`. Scope added on top of that audit: Clash Royale past the 65% load, and performance items discovered while improving frame time. Those discovered items are listed under B-105 and are not a blank check to rewrite the rasterizer early.
 
 Score is `impact * severity / complexity`.

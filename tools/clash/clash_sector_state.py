@@ -7,8 +7,8 @@ This initializes a battle; it does not implement turn authority or rewards/saves
 
 Ported from the October 21, 2026 handoff into ``tools/clash/``. CSV rows are
 read from the caller's pinned IPA at runtime. This file embeds no client
-bytes, tokens, or save data. The protocol probe does not call this module
-until ``--npc-fixture`` is ported (see ``docs/clash-royale/TODO.md``).
+bytes, tokens, or save data. The protocol peer calls this module only with
+the explicit ``--npc-fixture`` option.
 """
 import sys
 from pathlib import Path

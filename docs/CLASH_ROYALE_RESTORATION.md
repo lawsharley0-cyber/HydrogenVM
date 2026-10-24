@@ -1,6 +1,26 @@
 # Clash Royale solo restoration investigation
 
-Date: 2026-10-20. Work branch: `gemini-merge`.
+## Current continuation — October 24, 2026
+
+Work continues on `codex/clash-offline-continuation`, now integrated with main
+`93d05af`.
+See [current evidence and blockers](clash-royale/PROGRESS.md). The historical
+October 20 notes below are retained for decoder evidence, not current status.
+An unmodified client completed one native NPC victory against the embedded C++
+backend and relaunched showing earned 1/7 training progress. Full offline
+progression is **not yet verified**. Chest reward delivery now uses the original
+native randomizer and command encoder: the earned chest was unlocked, opened,
+collected, and removed. Gold increased from 100 to 116 and Knight/Arrows counts
+increased from 1 to 2. Two relaunches retained the completed reward without
+another grant. A durable journal retains the pre-claim checkpoint until native
+command 213 finishes. Older half-claimed saves without a journal still need
+separate recovery; full training, multi-chest handling and arenas remain open.
+
+The owner reports intermittent audio, incorrect King cannon animation, missing
+Princess Tower princesses and uncentered text on iPhone. Preserve those reports
+for subsequent presentation work; core offline correctness remains the priority.
+
+Historical date: 2026-10-20. Historical work branch: `gemini-merge`.
 
 ## Latest: native home acceptance and first NPC request (2026-10-20)
 

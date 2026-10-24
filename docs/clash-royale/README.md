@@ -1,5 +1,10 @@
 # Clash Royale on main
 
+**Latest continuation:** read [PROGRESS.md](PROGRESS.md) first. October 23 work
+on current main reaches a native three-crown NPC victory. Phone-local service,
+return-home processing and earned persistence remain open; the historical gap
+table below is not the current implementation inventory.
+
 Cold-start plan for the pinned Clash Royale client. Another agent should read this file, then [`TODO.md`](TODO.md), before editing code. This is the current plan against `main`. `docs/CLASH_ROYALE_RESTORATION.md`, `docs/HANDOFF.md`, and `docs/LOCAL_TESTING.md` are earlier snapshots written while the integration branch was `gemini-merge`. Where they disagree with this directory, follow this directory.
 
 Tags used below:

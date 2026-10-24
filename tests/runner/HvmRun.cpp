@@ -8,6 +8,7 @@
 #include "runtime/Process.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "AudioOutput.hpp"
+#include "EntryTrace.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -111,6 +112,7 @@ int hvmRunMain(int argc, char** argv) {
             if (!cfg.hostGL) { std::fprintf(stderr, "--gpu: no host OpenGL ES (%s)\n", why.c_str()); return 2; }
         }
         else if (!std::strcmp(argv[i], "--loopback-network")) cfg.loopbackNetwork = true;
+        else if (!std::strcmp(argv[i], "--offline-clash")) cfg.offlineClash = true;
         else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--quiet")) quiet = true;
         else if (!std::strcmp(argv[i], "--")) { for (++i; i < argc; ++i) cfg.extraArgs.push_back(argv[i]); }
@@ -180,7 +182,9 @@ int hvmRunMain(int argc, char** argv) {
     auto runOnce = [&](int launch) -> int {
         if (launches > 1 && !quiet) std::fprintf(stderr, "[hvm] ---- launch %d of %d ----\n", launch, launches);
         const auto wallStart = std::chrono::steady_clock::now();
+        EntryTrace entryTrace;
         Runtime::Process proc(cfg);
+        entryTrace.attach(proc);
         DesktopAudioOutput audio;
         std::string loadError;
         auto writeReport = [&](int status) {

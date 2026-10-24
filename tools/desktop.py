@@ -105,7 +105,13 @@ def main():
     parser.add_argument('--tap', help='Schedule one touch through the live input bridge: X,Y@seconds')
     parser.add_argument('--mute', action='store_true', help='Disable the guest mixer output')
     parser.add_argument('--capture-audio', action='store_true', help='Save delivered audio as session/audio.wav')
+    parser.add_argument('--loopback-network',action='store_true',help='Allow guest TCP only to loopback for a local peer')
+    parser.add_argument('--gpu',action='store_true',help='Use the shared host GLES backend')
+    parser.add_argument('--offline-clash',action='store_true',help='Use the session-owned offline service for the pinned Clash client')
+    parser.add_argument('--loopback-alias',action='append',default=[],help='Resolve this guest hostname to loopback (requires --loopback-network)')
     args = parser.parse_args()
+    if args.loopback_alias and not args.loopback_network:
+        parser.error('--loopback-alias requires --loopback-network')
     with args.ipa.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     if args.pinned_clash and digest != PINNED_CLASH_SHA256:
@@ -159,6 +165,10 @@ def main():
             command = [str(args.hvm.resolve()), 'run', str(bundle), '--home', str(container),
                        '--frame-file', str(frame), '--input-file', str(controls),
                        '--screenshot', str(session / 'final.png'), '--report', str(session / 'report.json')]
+            if args.loopback_network:command.append('--loopback-network')
+            if args.gpu:command.append('--gpu')
+            if args.offline_clash:command.append('--offline-clash')
+            for hostname in args.loopback_alias:command+=['--loopback-alias',hostname]
             audio = DesktopAudio(args.mute, session / 'audio.wav' if args.capture_audio else None)
             inherited = ()
             if audio.writer:

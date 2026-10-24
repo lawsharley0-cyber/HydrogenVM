@@ -113,7 +113,7 @@ def encode_home(state, account):
     for _ in range(8):
         w.vint(0)  # home+2c..48
     w.vint(0)  # pages opened, home+4c
-    w.vint(0)  # last shown level up
+    w.vint(avatar['expLevel'])  # initial snapshot already includes this level; no pending level-up
     w.reference(0)  # home+100
     for _ in range(3):
         w.vint(-1)  # home+c0,c4,c8 constructor defaults
