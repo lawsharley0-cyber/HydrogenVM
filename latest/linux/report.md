@@ -1,124 +1,43 @@
-# HydrogenVM report — 9fff483
+# HydrogenVM report — 462ca72
 
-2026-10-24T06:32:10+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-24T06:44:30+00:00 · INTEL(R) XEON(R) PLATINUM 8573C (x86_64, Linux 6.17.0-1022-azure)
 
-**1 test(s) failed.**
+**All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 213.8s |
-| cpu | 15 | 0 | 0 | 0.7s |
-| ios | 5 | 1 | 0 | 1.3s |
-| bench | 5 | 0 | 0 | 24.4s |
+| build | 1 | 0 | 0 | 172.8s |
+| cpu | 15 | 0 | 0 | 0.6s |
+| ios | 6 | 0 | 0 | 2.0s |
+| bench | 5 | 0 | 0 | 19.6s |
 
 ## Speed
 
-CoreMark **1722.8** iterations/s (577.7 guest MIPS)
+CoreMark **2156.1** iterations/s (722.3 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **119.6%** | 718 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.7%** | 718 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.8%** | 574 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.9%** | 492 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **149.7%** | 898 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **112.3%** | 898 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **89.8%** | 719 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **47.4%** | 616 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 467 MIPS, ctests_arm 512 MIPS, ftests_vfp_thumb_softfp 446 MIPS, ftests_neon_thumb 390 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 464 MIPS, ctests_arm 494 MIPS, ftests_vfp_thumb_softfp 521 MIPS, ftests_neon_thumb 436 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTest | 0.03s | 0 | 0.00 ms | 0.00 ms | 0 |
 | CTestLegacy | 0.03s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.02s | 61 | 0.42 ms | 7.20 ms | 0 |
+| ObjCTest | 0.01s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 0.64s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.02s | 61 | 0.39 ms | 6.93 ms | 0 |
 
-## Problems (33)
-
-### Failures (1)
-
-- **ios / FoundationTest**
-
-  ```
-  exit 70 (want 0); expected line missing
-  ok fileExistsAtPath:isDirectory:
-  ok contentsOfDirectoryAtPath
-  ok attributesOfItemAtPath
-  ok remove missing file error
-  ok array plist file round trip
-  ok NSURL scheme
-  ok NSURL host
-  ok NSURL port
-  ok NSURL path
-  ok NSURL query
-  ok NSURL lastPathComponent
-  ok fileURLWithPath
-  ok file URL path
-  ok URLForResource
-  ok registerDefaults
-  ok NSUserDefaults values
-  ok NSUserDefaults synchronize
-  ok defaults persisted to plist
-  ok NSTemporaryDirectory
-  ok CFStringCreateWithCString (bridged)
-  ok CFStringAppend / GetCString
-  ok CFStringFind
-  ok CFStringCompare
-  ok CFStringCreateWithFormat
-  ok CFNumber
-  --- stderr ---
-  [hvm:error] Crash: bad memory access at 0xffff625c (inside missing data symbol __kCFNumberNaN)
-    pc [HydrogenVM] CFNumberGetValue
-    lr 0x00010e51 FoundationTest+52816 _main + 0x7980
-    r0  ffff625c  r1  0000000d  r2  befffc48  r3  00000070
-    r4  ffffffff  r5  00000001  r6  ffffffff  r7  beffffb8
-    r8  0001925c  r9  befff474  r10 00019154  r11 00019258
-    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d54
-    backtrace:
-      [HydrogenVM] CFNumberGetValue
-      0x00010e51 FoundationTest+52816 _main + 0x7980
-      [HydrogenVM] _hvm_return_to_host
-  ```
-
-### Crashes (1)
-
-- **ios / FoundationTest**
-
-  ```
-  Crash: bad memory access at 0xffff625c (inside missing data symbol __kCFNumberNaN)
-    pc [HydrogenVM] CFNumberGetValue
-    lr 0x00010e51 FoundationTest+52816 _main + 0x7980
-    r0  ffff625c  r1  0000000d  r2  befffc48  r3  00000070
-    r4  ffffffff  r5  00000001  r6  ffffffff  r7  beffffb8
-    r8  0001925c  r9  befff474  r10 00019154  r11 00019258
-    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d54
-    backtrace:
-      [HydrogenVM] CFNumberGetValue
-      0x00010e51 FoundationTest+52816 _main + 0x7980
-      [HydrogenVM] _hvm_return_to_host
-  ```
-
-### Runtime errors (1)
-
-- **ios / FoundationTest**
-
-  ```
-  Crash: bad memory access at 0xffff625c (inside missing data symbol __kCFNumberNaN)
-    pc [HydrogenVM] CFNumberGetValue
-    lr 0x00010e51 FoundationTest+52816 _main + 0x7980
-    r0  ffff625c  r1  0000000d  r2  befffc48  r3  00000070
-    r4  ffffffff  r5  00000001  r6  ffffffff  r7  beffffb8
-    r8  0001925c  r9  befff474  r10 00019154  r11 00019258
-    r12 0001809c  r13 befff2c0  r14 00010e51  r15 ffff2d54
-    backtrace:
-      [HydrogenVM] CFNumberGetValue
-      0x00010e51 FoundationTest+52816 _main + 0x7980
-      [HydrogenVM] _hvm_return_to_host
-  ```
+## Problems (30)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 37.9% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 47.4% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
