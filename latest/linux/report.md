@@ -1,43 +1,23 @@
-# HydrogenVM report — 01b1164
+# HydrogenVM report — 0d13b23
 
-2026-10-24T18:59:51+00:00 · INTEL(R) XEON(R) PLATINUM 8573C (x86_64, Linux 6.17.0-1022-azure)
+2026-10-24T19:07:19+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
 
-**All tests passed.**
+**1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 170.0s |
-| cpu | 15 | 0 | 0 | 0.6s |
-| ios | 6 | 0 | 0 | 2.0s |
-| bench | 5 | 0 | 0 | 19.5s |
-
-## Speed
-
-CoreMark **2171.9** iterations/s (727.6 guest MIPS)
-
-| Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
-|---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **150.8%** | 905 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **113.1%** | 905 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **90.5%** | 724 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **47.7%** | 621 MHz |
-
-Raw interpreter speed (CPU test programs): ctests_thumb 476 MIPS, ctests_arm 490 MIPS, ftests_vfp_thumb_softfp 542 MIPS, ftests_neon_thumb 488 MIPS
-
-| App | Wall | Frames | Avg frame | Max frame | Slow frames |
-|---|---:|---:|---:|---:|---:|
-| CTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.64s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.02s | 61 | 0.42 ms | 6.88 ms | 0 |
+| build | 0 | 1 | 0 | 224.6s |
 
 ## Problems (30)
 
-### Below speed goal (1)
+### Failures (1)
 
-- **bench / coremark**: 47.7% of iPhone 5 single-core speed (goal: 100%)
+- **build / ninja**
+
+  ```
+  /home/runner/work/HydrogenVM/HydrogenVM/tests/runner/ClashStateTests.cpp:226:28: error: no matching function for call to 'search'
+  1 error generated.
+  ```
 
 ### Warnings (29)
 
