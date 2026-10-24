@@ -128,6 +128,8 @@ void registerStartupMach(Process& p) {
     p.def<&message>("_mach_msg");
     p.def<&exceptionPorts>("_task_swap_exception_ports");
     p.def<&exceptionPorts>("_thread_swap_exception_ports");
+    p.def<&exceptionPorts>("_task_set_exception_ports");
+    p.def<&exceptionPorts>("_thread_set_exception_ports");
     p.def<&map>("_vm_map");
     p.def<&protect>("_vm_protect");
 }
