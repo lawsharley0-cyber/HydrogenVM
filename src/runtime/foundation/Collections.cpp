@@ -362,15 +362,17 @@ bool a_writeToFile(Ctx& x, id self, SEL, id path, bool) {
 // mutation
 void m_addObject(Ctx& x, id self, SEL, id o) {
     if (!o) throw ObjC::ObjCError("*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil");
+    id retained = retainObj(x, o);
     auto& d = mut(x, self);
-    d.items.push_back(retainObj(x, o));
+    d.items.push_back(retained);
     bump(x, d.mutationCell);
 }
 void m_insertObject(Ctx& x, id self, SEL, id o, uint32_t i) {
     if (!o) throw ObjC::ObjCError("*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil");
+    id retained = retainObj(x, o);
     auto& d = mut(x, self);
     if (i > d.items.size()) rangeError("insertObject:atIndex:", i, d.items.size());
-    d.items.insert(d.items.begin() + i, retainObj(x, o));
+    d.items.insert(d.items.begin() + i, retained);
     bump(x, d.mutationCell);
 }
 void m_removeObjectAtIndex(Ctx& x, id self, SEL, uint32_t i) {
@@ -495,10 +497,11 @@ void m_replaceObjectsAtIndexesWithObjects(Ctx& x, id self, SEL, id indexSet, id 
 }
 void m_replaceObject(Ctx& x, id self, SEL, uint32_t i, id o) {
     if (!o) throw ObjC::ObjCError("*** -[__NSArrayM replaceObjectAtIndex:withObject:]: object cannot be nil");
+    id retained = retainObj(x, o);
     auto& d = mut(x, self);
     if (i >= d.items.size()) rangeError("replaceObjectAtIndex:withObject:", i, d.items.size());
     const id old = d.items[i];
-    d.items[i] = retainObj(x, o);
+    d.items[i] = retained;
     bump(x, d.mutationCell);
     releaseObj(x, old);
 }
@@ -511,6 +514,7 @@ void m_exchange(Ctx& x, id self, SEL, uint32_t a, uint32_t b) {
     auto& d = mut(x, self);
     if (a >= d.items.size() || b >= d.items.size()) rangeError("exchangeObjectAtIndex:withObjectAtIndex:", std::max(a, b), d.items.size());
     std::swap(d.items[a], d.items[b]);
+    bump(x, d.mutationCell);
 }
 void m_addObjectsFromArray(Ctx& x, id self, SEL s, id other) { for (id o : itemsOf(x, other)) m_addObject(x, self, s, o); }
 void m_setArray(Ctx& x, id self, SEL s, id other) {
