@@ -186,9 +186,19 @@ int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outB
     x.mem.write<uint32_t>(outBuf, hdr);
     return 0;
 }
+// Same buffer with room for packet descriptions (16-byte AudioStreamPacketDescription each).
+int32_t aq_allocateBufferWithPacketDescriptions(Ctx& x, uint32_t qid, uint32_t byteSize, uint32_t descs, GuestPtr outBuf) {
+    const int32_t r = aq_allocateBuffer(x, qid, byteSize, outBuf);
+    if (r != 0 || !descs) return r;
+    const uint32_t hdr = x.mem.read<uint32_t>(outBuf);
+    x.mem.write<uint32_t>(hdr + 16, descs);
+    x.mem.write<uint32_t>(hdr + 20, x.proc.heap().allocZeroed(descs * 16));
+    return 0;
+}
 int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
     auto& st = ATS(x);
     if (st.queues.count(qid) && buf) {
+        if (const uint32_t pd = x.mem.read<uint32_t>(buf + 20)) x.proc.heap().free(pd);
         auto& v = st.queues[qid].buffers;
         v.erase(std::remove_if(v.begin(), v.end(), [&](const auto& b) { return b.guestAddr == buf; }), v.end());
         x.proc.heap().free(buf);
@@ -1259,6 +1269,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aq_newOutput>("_AudioQueueNewOutput");
     p.def<&aq_newInput>("_AudioQueueNewInput");
     p.def<&aq_allocateBuffer>("_AudioQueueAllocateBuffer");
+    p.def<&aq_allocateBufferWithPacketDescriptions>("_AudioQueueAllocateBufferWithPacketDescriptions");
     p.def<&aq_freeBuffer>("_AudioQueueFreeBuffer");
     p.def<&aq_enqueueBuffer>("_AudioQueueEnqueueBuffer");
     p.defineFunction("_AudioQueueEnqueueBufferWithParameters", aq_enqueueWithParams);

@@ -78,6 +78,8 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
     var frame: BatchFrameInfo
     var keepGoing: Bool
     var logs: String
+    /// The last files the game opened (path, result, size, bytes read), JSON, from the crash bundle.
+    var fileHistory: String? = nil
 
     init(bundleId: String, name: String, version: String, minOS: String, mode: String, crashed: Bool, exitCode: Int, summary: String, signature: String? = nil, exceptionKind: String? = nil, crashReport: String? = nil, perf: BatchPerf = BatchPerf(), frame: BatchFrameInfo = BatchFrameInfo(), keepGoing: Bool = true, logs: String = "") {
         self.bundleId = bundleId
@@ -246,6 +248,8 @@ final class BatchTestRunner {
     @ObservationIgnored private var fpsTimer: Timer?
     @ObservationIgnored private var lastCapturedFrame: CGImage?
     @ObservationIgnored private var gpuSampleLines: [String] = []
+    @ObservationIgnored private var lastP95: Double = 0
+    @ObservationIgnored private var lastTotalPresented: UInt64 = 0
 
     static var reportsDir: URL {
         URL.documentsDirectory.appending(path: "TestReports", directoryHint: .isDirectory)
@@ -369,6 +373,8 @@ final class BatchTestRunner {
         currentFrame = nil
         lastCapturedFrame = nil
         gpuSampleLines = []
+        lastP95 = 0
+        lastTotalPresented = 0
         frameCount = 0
         lastPresentedFrames = 0
         progressText = "Testing \(currentIndex + 1)/\(targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
@@ -420,6 +426,9 @@ final class BatchTestRunner {
                 self.currentFPS = presented >= self.lastPresentedFrames ? max(Int(presented - self.lastPresentedFrames), self.frameCount) : self.frameCount
                 self.lastPresentedFrames = presented
                 self.frameCount = 0
+                // Kept from the running session: once it stops, its counters are gone.
+                self.lastP95 = s.frameTimeP95Milliseconds
+                if presented > 0 { self.lastTotalPresented = presented }
             }
         }
 
@@ -436,9 +445,18 @@ final class BatchTestRunner {
 
             if !exitBox.exited && self.status == .running {
                 self.activeSession?.stopGracefully()
-                let gracefulDeadline = Date().addingTimeInterval(2.0)
+                let gracefulDeadline = Date().addingTimeInterval(4.0)
                 while Date() < gracefulDeadline && !exitBox.exited {
                     try? await Task.sleep(for: .milliseconds(100))
+                }
+                // A game that ignores the close request is stopped, so the next one
+                // can have the memory (only one 4 GB guest arena fits on iOS).
+                if !exitBox.exited {
+                    self.activeSession?.stop()
+                    let hardDeadline = Date().addingTimeInterval(4.0)
+                    while Date() < hardDeadline && !exitBox.exited {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
                 }
             }
 
@@ -447,9 +465,8 @@ final class BatchTestRunner {
 
             guard self.status == .running else { return }
 
-            let session = self.activeSession
-            let presented = session?.framesPresented ?? 0
-            let p95Ms = session?.frameTimeP95Milliseconds ?? 0
+            let presented = self.lastTotalPresented
+            let p95Ms = self.lastP95
             let capturedCrash = exitBox.crash
             let exitStatusCode = exitBox.code
             let isCrashed = capturedCrash != nil || (exitBox.exited && exitStatusCode != 0)
@@ -503,14 +520,20 @@ final class BatchTestRunner {
                 logs: logExcerpt
             )
 
-            self.results.append(appResult)
+            var finished = appResult
+            if isCrashed, let bundle = self.activeSession?.crashBundle, let data = bundle.data(using: .utf8),
+               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let files = json["fileHistory"],
+               let filesData = try? JSONSerialization.data(withJSONObject: files) {
+                finished.fileHistory = String(decoding: filesData, as: UTF8.self)
+            }
+            self.results.append(finished)
             self.currentIndex += 1
             self.activeSession = nil
 
             self.savePendingSession()
 
-            // Short pause before next game
-            try? await Task.sleep(for: .milliseconds(500))
+            // Let the finished game's threads and memory go before the next one starts.
+            try? await Task.sleep(for: .milliseconds(1500))
             self.runNextTarget()
         }
     }
@@ -552,6 +575,8 @@ final class BatchTestRunner {
                 "logs": r.logs
             ]
             if let crash = r.crashReport { dict["crashReport"] = crash }
+            if let files = r.fileHistory, let data = files.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) { dict["fileHistory"] = parsed }
             if let ex = r.exceptionKind { dict["exceptionKind"] = ex }
             return dict
         }

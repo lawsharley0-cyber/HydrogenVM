@@ -5,6 +5,8 @@
 #include "runtime/graphics/Pvrtc.hpp"
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+#include <thread>
 #include <cstring>
 #include <atomic>
 #include <cstdio>
@@ -62,6 +64,9 @@ struct State {
     uint32_t lastGuestContext = 0;
     std::unordered_map<std::string, uint32_t> strings;
     std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
+    std::atomic<int> presents{0};                                                  // direct presents so far
+    std::atomic<bool> toldReadback{false};
+    std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -981,10 +986,11 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     layer = d.layer;
     width = d.width;
     height = d.height;
-    static std::atomic<int> presents{0};
-    const int n = presents + 1;
+    // Per process: a later session in the same app (Test All Games) starts at frame 1 again.
+    const int n = st.presents + 1;
     std::string probe;
-    if ((n == 1 || n == 60 || n == 600) && hc->fn.glReadPixels) {
+    const bool sample = n == 1 || n == 30 || n == 60 || n == 120 || n == 300 || n == 600 || (n > 600 && n % 1800 == 0);
+    if (sample && hc->fn.glReadPixels) {
         // Diagnostic: sample the frame before it goes to the display, so a blank
         // screen can be told apart from a frame the GPU really rendered black.
         uint64_t sum[3] = {}, lit = 0;
@@ -998,15 +1004,25 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
         probe = " (average rgb " + std::to_string(sum[0] / 64) + "," + std::to_string(sum[1] / 64) + "," +
                 std::to_string(sum[2] / 64) + ", " + std::to_string(lit) + "/64 samples lit)";
     }
+    // Pace direct presents to the 60 Hz display. Apple's driver blocks a game that
+    // presents faster; here such a game (Angry Birds renders in a tight loop)
+    // would spin at thousands of frames a second and burn the battery.
+    {
+        using Clock = std::chrono::steady_clock;
+        const auto now = Clock::now();
+        const auto minGap = std::chrono::microseconds(16400);
+        if (st.lastPresent.time_since_epoch().count() && now - st.lastPresent < minGap)
+            std::this_thread::sleep_for(minGap - (now - st.lastPresent));
+        st.lastPresent = Clock::now();
+    }
     if (st.platform->presentDirect(hc->handle, d.layer)) {
         direct = true;
-        ++presents;
+        ++st.presents;
         if (!probe.empty()) p.log(LogLevel::Info, "GPU: presented frame " + std::to_string(n) + " directly" + probe);
         return true;
     }
     {
-        static std::atomic<bool> told{false};
-        if (!told.exchange(true)) p.log(LogLevel::Warning, "GPU: direct present unavailable; reading frames back");
+        if (!st.toldReadback.exchange(true)) p.log(LogLevel::Warning, "GPU: direct present unavailable; reading frames back");
     }
 
     // Read the drawable back for the software compositor.

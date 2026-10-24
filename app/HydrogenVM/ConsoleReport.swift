@@ -18,7 +18,7 @@ struct ConsoleReport {
 
     /// The line that best names what went wrong.
     var headline: String? {
-        guard let best = problems.min(by: { ($0.rank, $0.order) < ($1.rank, $1.order) }) else { return nil }
+        guard let best = problems.min(by: { ($0.rank, $0.order) < ($1.rank, $1.order) }), best.rank <= 2 else { return nil }
         var t = best.text
         for prefix in ["[hvm:error] ", "[hvm:warn] ", "[hvm] "] where t.hasPrefix(prefix) { t.removeFirst(prefix.count) }
         if t.hasPrefix("Stopped: ") { t.removeFirst("Stopped: ".count) }
@@ -81,7 +81,9 @@ struct ConsoleReport {
         if ignored.contains(where: { t.contains($0) }) { return nil }
         if stopWords.contains(where: { t.contains($0) }) { return 0 }
         switch level {
-        case .error, .stderr: return 1
+        // The emulator's own errors and warnings. Game output (NSLog goes to
+        // stderr) is judged by its words, like stdout.
+        case .error: return 1
         case .warning: return 2
         default: break
         }
