@@ -39,6 +39,7 @@ target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB SQLite::SQLite3 Threads::Thread
 # Apple hosts; FFmpeg (M4A) and OpenSSL (CCCrypt) elsewhere, both optional.
 if(APPLE)
   target_link_libraries(hvm_core PUBLIC "-framework AudioToolbox")
+  target_link_libraries(hvm_core PUBLIC iconv)   # iconv lives in libiconv on Apple
 else()
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)

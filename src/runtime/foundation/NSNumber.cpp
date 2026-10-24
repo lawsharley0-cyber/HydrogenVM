@@ -1,4 +1,5 @@
 // HydrogenVM — NSValue, NSNumber, CFBoolean.
+#include <limits>
 #include "Foundation.hpp"
 #include <cmath>
 
@@ -286,6 +287,21 @@ void registerNumbers(Process& p, ObjC::Runtime& r) {
     st.no = makeB(false);
     p.mem().write<uint32_t>(p.defineDataBlock("_kCFBooleanTrue", 4), st.yes);
     p.mem().write<uint32_t>(p.defineDataBlock("_kCFBooleanFalse", 4), st.no);
+
+    // The CFNumber constants for NaN and the infinities.
+    auto makeD = [&](double v) {
+        const id n = r.createInstance(cfn.cls());
+        auto d = std::make_unique<NumberData>();
+        d->type = 'd'; d->d = v;
+        r.setHost(n, std::move(d));
+        r.makeImmortal(n);
+        return n;
+    };
+    p.mem().write<uint32_t>(p.defineDataBlock("_kCFNumberNaN", 4), makeD(std::numeric_limits<double>::quiet_NaN()));
+    p.mem().write<uint32_t>(p.defineDataBlock("_kCFNumberNegativeInfinity", 4), makeD(-std::numeric_limits<double>::infinity()));
+    p.mem().write<uint32_t>(p.defineDataBlock("_kCFNumberPositiveInfinity", 4), makeD(std::numeric_limits<double>::infinity()));
+    // NSObject's isa ivar is at offset 0 (OBJC_IVAR_$_NSObject.isa holds the offset).
+    p.mem().write<uint32_t>(p.defineDataBlock("_OBJC_IVAR_$_NSObject.isa", 4), 0);
 }
 
 } // namespace Hydrogen::Runtime::Foundation

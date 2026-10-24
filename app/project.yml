@@ -45,6 +45,7 @@ targets:
     dependencies:
       - sdk: libz.tbd
       - sdk: libsqlite3.tbd
+      - sdk: libiconv.tbd                          # iconv forwarded to the host (System.cpp)
       - sdk: CoreText.framework
       - sdk: ImageIO.framework
       - sdk: CoreMotion.framework

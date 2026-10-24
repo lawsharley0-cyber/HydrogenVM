@@ -1,4 +1,5 @@
 #include "ObjC.hpp"
+#include <cstdlib>
 #include <algorithm>
 #include <thread>
 
@@ -63,6 +64,9 @@ Runtime::Runtime(Process& p) : proc_(p) {
     selCopy = sel("copy"); selDescription = sel("description"); selRetainCount = sel("retainCount");
     selForwardingTarget = sel("forwardingTargetForSelector:"); selDoesNotRecognize = sel("doesNotRecognizeSelector:");
     selRespondsTo = sel("respondsToSelector:"); selIsEqual = sel("isEqual:"); selHash = sel("hash");
+    const char* z = std::getenv("HVM_ZOMBIES");
+    zombiesEnabled_ = p.config().enableZombies || (z && *z && *z != '0');
+    if (zombiesEnabled_) p.log(LogLevel::Info, "Zombie objects on: freed Objective-C objects are kept and named when messaged");
 }
 
 SEL Runtime::sel(const std::string& name) {
@@ -395,6 +399,15 @@ IMP Runtime::unrecognized(id self, SEL s) {
 
 void Runtime::unrecognizedFatal(id self, SEL s) {
     const Class cls = classOf(self);
+    if (!cls && zombiesEnabled_) {
+        std::lock_guard<std::mutex> lk(zombieMu_);
+        if (auto z = zombies_.find(self); z != zombies_.end()) {
+            char buf[48];
+            std::snprintf(buf, sizeof buf, "0x%x", self);
+            throw ObjCError("-[" + z->second.first + " " + selName(s) + "]: message sent to deallocated instance " + buf +
+                            "\n  it was freed by:\n" + z->second.second);
+        }
+    }
     const ClassInfo* ci = info(cls);
     const bool meta = ci && ci->isMeta;
     const std::string sig = std::string(meta ? "+[" : "-[") + className(cls) + " " + selName(s) + "]";
@@ -507,8 +520,14 @@ void Runtime::disposeInstance(CPU::Cpu& c, id obj) {
         std::lock_guard<std::mutex> lk(syncMu_);
         syncLocks_.erase(obj);
     }
-    proc_.mem().write<uint32_t>(obj, 0);
-    proc_.heap().free(obj);
+    if (zombiesEnabled_) {
+        std::lock_guard<std::mutex> lk(zombieMu_);
+        zombies_[obj] = {className(classOf(obj)), proc_.backtrace(c)};
+        proc_.mem().write<uint32_t>(obj, 0);   // kept allocated: never reused
+    } else {
+        proc_.mem().write<uint32_t>(obj, 0);
+        proc_.heap().free(obj);
+    }
 }
 
 // ------------------------------------------------------------ retain/release ---

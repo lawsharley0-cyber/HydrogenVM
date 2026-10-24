@@ -142,6 +142,7 @@ struct AppIcon: View {
 
 struct LibraryView: View {
     @AppStorage("keepIpaForReinstall") private var keepIpaForReinstall = true
+    @AppStorage("hvm.zombies") private var zombies = false
     @State private var store = LibraryStore()
     @State private var pickingFile = false
     @State private var running: InstalledApp?
@@ -199,6 +200,7 @@ struct LibraryView: View {
                         Divider()
                         Toggle("Continue past missing functions", isOn: $keepGoing)
                         Toggle("Keep .ipa for reinstall", isOn: $keepIpaForReinstall)
+                        Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
