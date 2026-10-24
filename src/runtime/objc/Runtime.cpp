@@ -465,6 +465,13 @@ id Runtime::createInstance(Class cls, uint32_t extraBytes) {
     const id obj = proc_.heap().allocZeroed(std::max<uint32_t>(size, 4));
     if (!obj) throw ObjCError("out of guest memory allocating " + className(cls));
     proc_.mem().write<uint32_t>(obj, cls);
+    if (zombiesEnabled_) {
+        // Where each object was made, so a message to it after it's freed can
+        // point at the API that returned it (an over-release usually starts there).
+        std::string site = proc_.backtrace(proc_.currentThread().cpu, 8);
+        std::lock_guard<std::mutex> lk(zombieMu_);
+        allocSites_[obj] = std::move(site);
+    }
     // C++ ivar constructors, superclass first.
     std::vector<Class> chain;
     for (Class k = cls; k; k = superclass(k)) { const ClassInfo* ki = info(k); if (!ki) break; if (ki->hasCxxConstruct) chain.push_back(k); }
@@ -522,7 +529,12 @@ void Runtime::disposeInstance(CPU::Cpu& c, id obj) {
     }
     if (zombiesEnabled_) {
         std::lock_guard<std::mutex> lk(zombieMu_);
-        zombies_[obj] = {className(classOf(obj)), proc_.backtrace(c)};
+        std::string trace = proc_.backtrace(c);
+        if (auto a = allocSites_.find(obj); a != allocSites_.end()) {
+            trace += "\n  it was allocated by:\n" + a->second;
+            allocSites_.erase(a);
+        }
+        zombies_[obj] = {className(classOf(obj)), std::move(trace)};
         proc_.mem().write<uint32_t>(obj, 0);   // kept allocated: never reused
     } else {
         proc_.mem().write<uint32_t>(obj, 0);

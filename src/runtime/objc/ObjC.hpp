@@ -263,7 +263,8 @@ private:
     // backtrace of the release that freed them; a later message names them.
     bool zombiesEnabled_ = false;
     std::mutex zombieMu_;
-    std::unordered_map<id, std::pair<std::string, std::string>> zombies_;   // class, backtrace
+    std::unordered_map<id, std::pair<std::string, std::string>> zombies_;   // class, "freed by" + "allocated by"
+    std::unordered_map<id, std::string> allocSites_;                        // live objects' creation backtraces
 };
 
 Runtime& rt(Process& p);
