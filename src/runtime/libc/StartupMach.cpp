@@ -87,6 +87,14 @@ int32_t message(Ctx& x, GuestPtr buffer, uint32_t options, uint32_t sendSize, ui
         ipc.cv.wait_for(lock, std::chrono::milliseconds(10));
     }
 }
+// task/thread_set_exception_ports(target, mask, port, behavior, flavor): five
+// arguments and no out-parameters (the swap variants also return the old ports).
+int32_t setExceptionPorts(Ctx& x, uint32_t target, uint32_t, uint32_t port, int32_t, int32_t) {
+    if (!task(x, target) && !(target >= 0x1000 && hasMachSendRight(x.proc, target) && x.proc.findThreadById(target - 0x1000))) return 4;
+    if (port && !hasMachSendRight(x.proc, port)) return 15;
+    x.proc.reportMissing("Mach exception delivery (unavailable; setup accepted)");
+    return 0;
+}
 int32_t exceptionPorts(Ctx& x, uint32_t target, uint32_t, uint32_t port, int32_t, int32_t,
                        GuestPtr, GuestPtr count, GuestPtr, GuestPtr, GuestPtr) {
     if (!task(x, target) && !(target >= 0x1000 && hasMachSendRight(x.proc, target) && x.proc.findThreadById(target - 0x1000))) return 4;
@@ -128,8 +136,8 @@ void registerStartupMach(Process& p) {
     p.def<&message>("_mach_msg");
     p.def<&exceptionPorts>("_task_swap_exception_ports");
     p.def<&exceptionPorts>("_thread_swap_exception_ports");
-    p.def<&exceptionPorts>("_task_set_exception_ports");
-    p.def<&exceptionPorts>("_thread_set_exception_ports");
+    p.def<&setExceptionPorts>("_task_set_exception_ports");
+    p.def<&setExceptionPorts>("_thread_set_exception_ports");
     p.def<&map>("_vm_map");
     p.def<&protect>("_vm_protect");
 }
