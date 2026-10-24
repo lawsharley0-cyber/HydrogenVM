@@ -71,6 +71,7 @@ static const char *kAppBuild        = "1";
 #define CASE_K  @"TL-K"
 #define CASE_L  @"TL-L"
 #define CASE_M  @"TL-M"
+#define CASE_N  @"TL-N"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -1455,6 +1456,45 @@ TLResult* runCaseM(void) {
     return r;
 }
 
+// TL-N: caret offsets, using our CC0 font's independent 600/1000-em advance.
+#include <dlfcn.h>
+#include "../../../runner/TestFont.hpp"
+static TLResult *runCaseN(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_N version:1];
+    writeCheckpoint(CASE_N);
+    void *(*dataCreate)(void *, const void *, int) = dlsym(RTLD_DEFAULT, "CFDataCreate");
+    void *(*providerCreate)(void *) = dlsym(RTLD_DEFAULT, "CGDataProviderCreateWithCFData");
+    void *(*fontCreate)(void *) = dlsym(RTLD_DEFAULT, "CGFontCreateWithDataProvider");
+    void *(*ctCreate)(void *, float, void *, void *) = dlsym(RTLD_DEFAULT, "CTFontCreateWithGraphicsFont");
+    void *(*attrCreate)(void *, void *, void *) = dlsym(RTLD_DEFAULT, "CFAttributedStringCreate");
+    void *(*setterCreate)(void *) = dlsym(RTLD_DEFAULT, "CTTypesetterCreateWithAttributedString");
+    typedef struct { int location, length; } Range;
+    void *(*lineCreate)(void *, Range) = dlsym(RTLD_DEFAULT, "CTTypesetterCreateLine");
+    float (*offset)(void *, int, float *) = dlsym(RTLD_DEFAULT, "CTLineGetOffsetForStringIndex");
+    void (*release)(void *) = dlsym(RTLD_DEFAULT, "CFRelease");
+    if (!offset || !dataCreate || !providerCreate || !fontCreate || !ctCreate || !attrCreate || !setterCreate || !lineCreate || !release) {
+        r.status = @"failed"; r.reason = @"Missing CoreText caret or font API"; return r;
+    }
+    void *data = dataCreate(0, kTestFont, sizeof kTestFont);
+    void *provider = providerCreate(data), *cg = fontCreate(provider);
+    void *font = ctCreate(cg, 20, 0, 0);
+    NSDictionary *attrs = @{ @"kCTFontAttributeName": (__bridge id)font };
+    void *attributed = attrCreate(0, (__bridge void *)@"AAAA", (__bridge void *)attrs);
+    void *setter = setterCreate(attributed), *line = lineCreate(setter, (Range){1,2});
+    float secondary = -99;
+    float middle = offset(line, 2, &secondary);
+    float start = offset(line, 1, 0), end = offset(line, 3, 0);
+    void *empty = lineCreate(setter, (Range){4,0});
+    float emptyOffset = offset(empty, 4, 0);
+    r.expected = @{ @"start": @0, @"middle": @12, @"secondary": @12, @"end": @24, @"empty": @0 };
+    r.actual = @{ @"start": @(start), @"middle": @(middle), @"secondary": @(secondary), @"end": @(end), @"empty": @(emptyOffset) };
+    r.status = [r.actual isEqual:r.expected] ? @"passed" : @"failed";
+    if (![r.status isEqualToString:@"passed"]) r.reason = @"Caret offsets differ from the original font's design units";
+    release(empty); release(line); release(setter); release(attributed);
+    release(font); release(cg); release(provider); release(data);
+    clearCheckpoint(); return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1464,7 +1504,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1495,6 +1535,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseJ()];
         } else if ([cid isEqualToString:CASE_K]) {
             [results addObject:runCaseK()];
+        } else if ([cid isEqualToString:CASE_N]) {
+            [results addObject:runCaseN()];
         }
     }
     return results;
@@ -1521,6 +1563,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_J]) return runCaseJ();
     if ([caseId isEqualToString:CASE_K]) return runCaseK();
     if ([caseId isEqualToString:CASE_M]) return runCaseM();
+    if ([caseId isEqualToString:CASE_N]) return runCaseN();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];

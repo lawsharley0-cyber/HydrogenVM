@@ -31,6 +31,116 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### October 24 training graduation and name-dialog blockers
+
+The same earned player reached all seven training wins without editing the
+IPA/assets or saved counters. `training-resume/run-20261024-130720-a6dbd1`
+won against NPC6/Trainer Tim and atomically saved 6/7, then stopped with exit
+70 at missing CTLineGetOffsetForStringIndex while rendering the native name
+dialog. The win and both separate chests survived that failure. This is a real
+runtime blocker, not an intentional fault test. The earlier `training-finish`
+process ended with its WSL host and has no completed summary; its final frame
+was an unfinished NPC6 battle. Do not count that run as a clean pass or win.
+
+The shared CoreText API now returns actual laid-out glyph positions in source
+string coordinates and writes the optional 32-bit CGFloat secondary offset.
+Apple's documented single-caret behavior is the reference:
+[CTLineGetOffsetForStringIndex](https://developer.apple.com/documentation/coretext/ctlinegetoffsetforstringindex(_:_:_:)).
+TL-N uses our CC0 font and hand-derived 600/1000-em advances: a substring at
+size 20 has offsets 0/12/24, equal primary/secondary caret, and empty-line 0.
+It fails before and passes after. Existing complex shaping limitations remain.
+
+The next normal client request is ChangeAvatarNameMessage 10212 (BE String and
+user flag, decoder 0x7ce7c). The backend supplies native command 201 in 24111:
+name, state, user flag, server ID and base command metadata, derived from
+0x122958/0x130f18/0x639a0. The original command sets the name and notifies the
+dialog; native snapshots persist it. A failure before snapshot simply offers
+the initial dialog again. Already-user-named avatars are rejected because paid
+renaming is not implemented. No direct live-avatar write or fake turn ack.
+
+`training-graduation/run-20261024-131511-b3002b` then completed the native name
+dialog, collected both remaining chests (gold 144 -> 157 -> 170), and defeated
+NPC7/Trainer Boris by three crowns in TrainingCamp. Native home transitioned
+to Goblin Stadium / Arena 1 with 0 trophies and a new 3-hour Arena 1 chest.
+The native seven-win avatar and reward committed together. The run exited
+cleanly after 268.74 seconds; 11,601,066 non-silent audio frames, no transport
+errors/dropped blocks. This does not resolve the owner's audible glitches.
+Two further 30-second launches in
+`graduation-relaunch/run-20261024-131950-487d23` exited cleanly with no errors.
+The derived avatar SHA/deck/chests/counter summary was byte-identical before
+and after those launches; the Arena 1 home remained accessible.
+
+Validation: 247 runtime checks, 14 Test Lab cases, C++ offline/state tests,
+26 Python protocol/home tests, and 8-second Angry Birds/Tiny Tower/Art of Glow
+smokes. Short Linux smokes do not resolve the owner's device crash reports.
+Next core work is a real Arena 1 battle/reward and correct trophy transaction,
+NPC/tower level scaling, collection/deck swaps and later arenas. The older
+Gemini milestone below describes experimental formulas and synthetic coverage;
+it is not proof of authentic arena progression. Overall bugs stay deferred.
+
+### October 24 functionality pass: upgrades, later NPCs and interrupted collection
+
+The owner explicitly defers overall bug/performance/presentation fixes to the
+final stage. This pass stays on core progression. Main `462ca72` was integrated
+without replacing unrelated work. The merged runtime passes 246 checks and all
+13 Test Lab cases; this remains Linux/WSL evidence, not a new iPhone build.
+
+The native Knight upgrade completed through command 504: 116 -> 111 gold,
+0 -> 4 XP, displayed level 1 -> 2, two required cards consumed, and original
+stats updated (715 HP). Its native deck/avatar snapshot survived relaunch
+unchanged. Bomber and Arrows later upgraded through the same original UI to
+level 2, each costing 5 gold and granting 4 XP. No upgrade prices, stats, game
+code or assets were patched. Rewarded Musketeer and Mini P.E.K.K.A. were added
+by the native client, filling all eight deck slots.
+
+Native three-crown wins were observed against NPC2/Trainer Fikova, NPC3/Trainer
+Mike, NPC4/Trainer Klaus, and NPC5/Trainer Teemu. Home progressed through 5/7,
+with original timer/double-elixir/NPC deployments and upgraded player cards.
+Key runs: `progression/run-20261024-015138-cab068` (upgrade, 217.78 seconds,
+clean); `npc2/run-20261024-015959-ba375d` (359.11 seconds, clean);
+`npc3/run-20261024-020604-b70318` (win then intentional fault test, below);
+`npc4/run-20261024-021819-a73fad` (644.09 seconds, clean);
+`training-finish/run-20261024-022857-1ede4f` (subsequent training, see later notes).
+
+Two new core fixes:
+
+- Native addChest at 0x124bf0 increments home+0xbc and stores the result in
+  chest+8. Our injected rewards had all used ID 0. Added rewards now advance
+  that serialized counter and preserve existing IDs/timers. Commands 502/503/506
+  use a chest ID, not a 0..3 slot index. Tests fail before and pass after for
+  distinct identities, slot reuse, larger IDs and a VInt counter-width change
+  preserving the native avatar boundary. The real client held two chests with
+  IDs 1 and 2, unlocked them independently, and collected ID 2 without touching
+  ID 1. The first chest's countdown also completed during an NPC battle.
+- Real win/loss metadata is held until the post-setter native avatar capture
+  commits counters, reward and updated avatar together, preventing a new win
+  from being persisted alongside an older avatar. NPC3 and later exercise this
+  path. Also corrected the seventh training mission: the pinned Npc7 row says
+  TrainingCamp; the handler must not force Arena 1 before graduation. A socket
+  regression fails before and passes after this routing change.
+
+Real interruption test: while collecting the second chest, an external watcher
+identified the exact owned test process by its report-path argument and sent
+SIGKILL after a 35-byte native reward was durably journaled (serial 1, slot 2
+in the on-disk one-based field). This is why the NPC3 probe reports exit -9 and
+`crashed=true`; it is deliberate fault injection, not a spontaneous runtime
+crash. A private backup was taken but was **not restored**. Relaunch loaded the
+actual journal, delivered its original reward, increased gold 111 -> 124,
+removed only the second chest and cleared the journal. The first chest (ID 1)
+remained unlocked and unclaimed. `reward-recovery/run-20261024-021438-b32519`
+then exited cleanly after 96.39 seconds. Two further 30-second launches in
+`recovery-stability/run-20261024-021611-5b0aec` retained identical deck,
+avatar, chest and reward state, with no repeated grant. Collecting ID 1 later
+granted its original 16 gold and unlocked Musketeer.
+
+Code checkpoint: `d514e7d`. The diagnostic probe now recognizes later native
+NPC IDs rather than matching only the literal Npc1 log. Historical NPC2/NPC3
+summary booleans predate that diagnostic correction; their native logs and
+observed victories provide the actual mission evidence. Older half-claimed
+saves without a journal, legacy duplicate-ID saves, full arena progression and
+device validation remain distinct work. Deferred sound/animation/princess/text
+issues remain open; clean audio transport is not proof they are resolved.
+
 ### October 24 next phase: complete earned-chest transaction and persistence
 
 Merged current main `93d05af` without conflicts, preserving local work. The

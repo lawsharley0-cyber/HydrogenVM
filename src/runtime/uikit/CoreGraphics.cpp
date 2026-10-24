@@ -1226,6 +1226,21 @@ double text_bounds(Ctx& x, id text, GuestPtr ascent, GuestPtr descent, GuestPtr 
     if (leading) x.mem.write<float>(leading, d ? d->leading : 0);
     return d ? d->width : 0;
 }
+float text_offset(Ctx& x, id text, int32_t index, GuestPtr secondary) {
+    auto* d = hd<TextData>(x, text);
+    // The existing layout supports one horizontal LTR glyph per UTF-16 unit.
+    // Use its actual positions, with indices relative to the source string,
+    // rather than estimating a fixed character width. Complex shaping is
+    // rejected by text_line before a line can reach this API.
+    float offset = 0;
+    if (d && !d->positions.empty()) {
+        const int64_t local = int64_t(index) - d->start;
+        if (local >= int64_t(d->positions.size())) offset = d->width;
+        else if (local > 0) offset = d->positions[size_t(local)].x;
+    }
+    if (secondary) x.mem.write<float>(secondary, offset);
+    return offset;
+}
 uint32_t text_runs(Ctx& x, id text) {
     auto* d = hd<TextData>(x, text);
     if (!d) return 0;
@@ -1738,6 +1753,7 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&text_line>("_CTTypesetterCreateLine");
     p.def<&text_wholeLine>("_CTLineCreateWithAttributedString");
     p.def<&text_bounds>("_CTLineGetTypographicBounds");
+    p.def<&text_offset>("_CTLineGetOffsetForStringIndex");
     p.def<&text_range>("_CTLineGetStringRange");
     p.def<&text_runs>("_CTLineGetGlyphRuns");
     p.def<&text_draw>("_CTLineDraw");

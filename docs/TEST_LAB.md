@@ -326,6 +326,15 @@ case should produce the same `actual` values.
 
 ### Oracle rule
 
+TL-N exercises CoreText caret offsets through ARMv7 soft-float calls. It uses
+the repository's original CC0 geometric font (`tests/runner/TestFont.hpp`),
+whose A advance is 600 design units at 1000 units/em. At size 20, a two-A line
+starting at source index 1 has offsets 0, 12 and 24 at indices 1, 2 and 3;
+the optional secondary offset is also 12. An empty line returns 0. This case
+failed before `CTLineGetOffsetForStringIndex` was implemented and passed after.
+Run with `--case TL-N` or the host runner's full suite. It does not cover bidi,
+ligatures or complex shaping, which the existing layout does not support.
+
 A test is only as good as its expected value. Two of the original five cases
 were wrong the first time they ran (TL-B's constant, TL-C's probe pixels) — the
 emulator was right and the *test* was wrong. Therefore:

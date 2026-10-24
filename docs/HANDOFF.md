@@ -5,23 +5,25 @@
 The owner explicitly prioritizes core offline Clash functionality. Draft
 [PR #138](https://github.com/lawsharley0-cyber/HydrogenVM/pull/138), branch
 `codex/clash-offline-continuation`, checkpoints the embedded backend and local
-Gemini work. Read [current evidence](clash-royale/PROGRESS.md) first. Native NPC
-victory and saved 1/7 progress were reproduced on Linux, not on a newly signed
-iPhone build. The next phase now verifies a complete chest transaction: native
-randomization/command encoding, delivery of 213 in 24111, collection animation,
-116 gold, Knight/Arrows counts 2, chest removal and two clean relaunches without
-duplicate rewards. A durable journal protects the pre-claim checkpoint. Older
-half-claimed saves without a journal still need recovery, not flag resets.
+Gemini work. Read [current evidence](clash-royale/PROGRESS.md) first. All seven
+native training wins and the normal Arena 1 home transition were reproduced on
+Linux. Knight, Bomber and Arrows upgrades, a full eight-card deck, distinct
+chest identities, and actual interrupted-reward recovery are verified. The
+native name dialog before NPC7 now completes using command 201. Returning home
+after NPC6 exposed missing CTLineGetOffsetForStringIndex; the shared runtime
+implementation uses actual glyph positions, with a failing-before/passing-after
+TL-N guest test. This is not a newly signed iPhone/device validation.
 
-Main `93d05af` is integrated. A plain stat/fstat ABI regression from main was
+Main `462ca72` is integrated (`7957e25` fetched later). A plain stat/fstat ABI regression from main was
 corrected using Apple's iPhone ABI: 64-bit inodes, st_size at byte 60; new TL-H v2
 fails before the fix and passes after. Check this independently before changing
 stat for another app; unsuffixed iPhone symbols do not imply legacy Mac ABI.
 
-Next: card upgrade and further native NPC wins, multiple chest IDs/slots, actual
-interruption during reward delivery, then full training and arena progression. Review
+Next: real Arena 1 matchmaking/battle/reward, faithful trophy transactions,
+bot/tower level scaling, card collection/deck swaps and further arenas. Review
 experimental trophy formulas/guest trophy writes before treating arena coverage
-as faithful. Intermittent sound, King cannon motion, absent princesses and UI
+as faithful. Paid renames and old half-claimed/duplicate-ID saves need separate
+work; do not reset flags or progress. Intermittent sound, King cannon motion, absent princesses and UI
 alignment are deferred owner reports, not resolved issues. No assets/private
 saves are in the PR. Do not merge the draft or equate its unit tests with a
 complete playable game.

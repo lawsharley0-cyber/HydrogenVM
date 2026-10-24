@@ -421,6 +421,28 @@ struct ClashOffline::Impl {
             } else if(kind==10108 && body.empty()) {
                 send(20108,0,{});
             } else if(!loggedIn)throw std::runtime_error("Offline Clash: login required");
+            else if(kind==10212) {
+                // ChangeAvatarNameMessage::decode 0x7ce7c: bounded String, bool.
+                const auto name=r.string();const auto byUser=r.byte();
+                if(name.empty() || name.size()>60 || byUser!=1 || r.pos!=body.size() ||
+                   std::any_of(name.begin(),name.end(),[](unsigned char ch){return ch<32 || ch==127;}))
+                    throw std::runtime_error("Offline Clash: invalid initial name request");
+                const auto state=snapshot();
+                if(!state.nativeAvatar.empty()) {
+                    Reader avatar{state.nativeAvatar};for(int i=0;i<6;++i)avatar.v();avatar.string();
+                    if(avatar.byte()&1)throw std::runtime_error("Offline Clash: paid name changes are not implemented");
+                }
+                // Native LogicChangeAvatarNameCommand 201 (0x122958): String,
+                // change state, user flag, then server ID and command metadata.
+                // The native command sets the name/flag and notifies the UI;
+                // normal native home snapshots persist the completed change.
+                // Until captured, relaunch offers the initial dialog again.
+                Bytes command;clashVint(command,201);clashString(command,name);
+                clashVint(command,0);command.push_back(1);
+                for(int n:{0,-1,-1,0,1})clashVint(command,n);
+                send(24111,0,command);
+                process.log(LogLevel::Info,"Offline Clash: initial name command supplied");
+            }
             else if(kind==14104) {
                 const int32_t table=r.v(),id=r.v();auto state=snapshot();
                 if(table!=18 || id<0 || id>6)throw std::runtime_error("Offline Clash: mission does not match the supported training progress");

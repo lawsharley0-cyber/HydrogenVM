@@ -1673,6 +1673,12 @@ int runFullSubsystemTests() {
               call("_CFGetRetainCount", {line}) == 1 && call("_CTRunGetGlyphCount", {items[0]}) == 3 &&
               proc.mem().read<uint16_t>(copies) == 2 && std::bit_cast<double>(metrics) == 36,
               "CoreText line breaking and owned glyph runs preserve custom metrics after source release");
+        const uint32_t caret = proc.heap().allocZeroed(4);
+        const float offset = std::bit_cast<float>(call("_CTLineGetOffsetForStringIndex", {line,2,caret}));
+        check(offset == 24 && proc.mem().read<float>(caret) == 24 &&
+              std::bit_cast<float>(call("_CTLineGetOffsetForStringIndex", {line,3,0})) == 36,
+              "CoreText caret offsets use actual glyph advances and optional float secondary offset");
+        proc.heap().free(caret);
         call("_CFRelease", {line});
         call("_CGContextRelease", {bitmap}); call("_CFRelease", {family}); call("_CFRelease", {copy});
         call("_CFRelease", {desc}); call("_CFRelease", {ct});
