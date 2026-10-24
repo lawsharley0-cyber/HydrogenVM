@@ -2658,7 +2658,7 @@ int runFullSubsystemTests() {
             call("_CFRelease", {copy}); call("_CFRelease", {original});
         }
         check(bitvectors, "startup CF bit vectors use MSB-first bits and mutable copies own their storage");
-        bool mach = bound({"_mach_port_allocate", "_mach_port_insert_right", "_mach_msg", "_task_swap_exception_ports", "_thread_swap_exception_ports", "_vm_map", "_vm_protect"});
+        bool mach = bound({"_mach_port_allocate", "_mach_port_insert_right", "_mach_msg", "_task_swap_exception_ports", "_thread_swap_exception_ports", "_task_set_exception_ports", "_thread_set_exception_ports", "_vm_map", "_vm_protect"});
         if (mach) {
             mach = call("_mach_port_allocate", {0x103, 1, scratch + 256}) == 0;
             const auto port = proc.mem().read<uint32_t>(scratch + 256);
@@ -2671,6 +2671,7 @@ int runFullSubsystemTests() {
             mach &= call("_vm_map", {0x103, scratch + 260, 4096, 4095, 1, 0, 0, 0, 0, 3, 7, 0}) == 0;
             const auto address = proc.mem().read<uint32_t>(scratch + 260);
             mach &= address && !(address & 4095) && call("_vm_protect", {0x103, address, 4096, 0, 1}) == 0 && proc.mem().protAt(address) == Memory::kProtRead;
+            mach &= proc.lookupSymbol("_NDR_record").has_value();
             call("_vm_protect", {0x103, address, 4096, 0, 3}); call("_vm_deallocate", {0x103, address, 4096});
             call("_mach_port_destroy", {0x103, port});
         }

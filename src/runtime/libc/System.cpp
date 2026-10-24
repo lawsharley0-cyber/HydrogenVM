@@ -913,6 +913,7 @@ void registerLibcSystem(Process& p) {
     p.defineData("_vm_page_size", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4096); return c; }());
     p.defineData("_vm_page_mask", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4095); return c; }());
     p.defineData("_vm_page_shift", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 12); return c; }());
+    p.defineData("_NDR_record", [&] { const uint32_t c = p.allocStatic(8); p.mem().write<uint64_t>(c, 0); return c; }());
 }
 
 } // namespace Hydrogen::Runtime
