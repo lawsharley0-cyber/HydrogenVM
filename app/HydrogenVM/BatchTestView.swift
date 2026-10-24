@@ -258,7 +258,7 @@ struct BatchTestView: View {
                         runner.options.keepGoing = $0
                     }))
 
-                    Toggle("Reset app sandbox before test", isOn: Binding(get: {
+                    Toggle("Start each game with empty data", isOn: Binding(get: {
                         runner.options.resetSandbox
                     }, set: {
                         runner.options.resetSandbox = $0

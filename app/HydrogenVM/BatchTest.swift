@@ -425,11 +425,11 @@ final class BatchTestRunner {
 
         UIApplication.shared.isIdleTimerDisabled = true
 
-        if options.resetSandbox {
-            resetAppData(target.app)
-        }
+        // Each run gets a throwaway copy of the app's data, so the Explore phase's taps
+        // (sound/music toggles, settings, progress) never change the player's own saves.
+        let testHome = Self.prepareTestHome(for: target.app, fresh: options.resetSandbox)
 
-        let s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: target.app.homeURL.path(percentEncoded: false))
+        let s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: testHome.path(percentEncoded: false))
         s.keepGoing = options.keepGoing
         s.useGPU = target.useGPU
         activeSession = s
@@ -608,6 +608,7 @@ final class BatchTestRunner {
             self.results.append(finished)
             self.currentIndex += 1
             self.activeSession = nil
+            try? FileManager.default.removeItem(at: testHome)
 
             self.savePendingSession()
 
@@ -624,10 +625,23 @@ final class BatchTestRunner {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
-    private func resetAppData(_ app: InstalledApp) {
+    static let testHomesDir = FileManager.default.temporaryDirectory.appending(path: "BatchTestHomes", directoryHint: .isDirectory)
+
+    /// A scratch home for one test run: a copy of the app's Documents and Library
+    /// (or empty ones when `fresh`). The app's real data is never written by a test.
+    static func prepareTestHome(for app: InstalledApp, fresh: Bool) -> URL {
+        let fm = FileManager.default
+        let home = testHomesDir.appending(path: app.info.bundleIdentifier, directoryHint: .isDirectory)
+        try? fm.removeItem(at: home)
+        try? fm.createDirectory(at: home, withIntermediateDirectories: true)
         for sub in ["Documents", "Library", "tmp"] {
-            try? FileManager.default.removeItem(at: app.homeURL.appending(path: sub))
+            let src = app.homeURL.appending(path: sub), dst = home.appending(path: sub)
+            if !fresh, sub != "tmp", fm.fileExists(atPath: src.path(percentEncoded: false)) {
+                if (try? fm.copyItem(at: src, to: dst)) != nil { continue }
+            }
+            try? fm.createDirectory(at: dst, withIntermediateDirectories: true)
         }
+        return home
     }
 
     func buildCompatReportJSON() -> [String: Any] {
