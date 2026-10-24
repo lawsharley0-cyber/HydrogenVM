@@ -52,6 +52,8 @@ struct FileEditorControls: ViewModifier {
     @State private var showingBackups = false
     @State private var showSavedBanner = false
     @State private var showingRunningWarning = false
+    /// Warn once per editor session, not on every save.
+    @State private var warnedAboutRunning = false
 
     private func commit() -> Bool { document.saveChanges() }
 
@@ -88,7 +90,7 @@ struct FileEditorControls: ViewModifier {
                         Button("Revert", role: .destructive) { showingRevert = true }
                             .disabled(!document.dirty)
                     }
-                    Button { showingRunningWarning = true } label: {
+                    Button { if warnedAboutRunning { _ = commit() } else { showingRunningWarning = true } } label: {
                         Label("Save Changes", systemImage: "square.and.arrow.down.fill")
                             .frame(maxWidth: .infinity, minHeight: 34)
                     }
@@ -127,7 +129,7 @@ struct FileEditorControls: ViewModifier {
                 Button("Cancel", role: .cancel) {}
             }
             .alert("Game May Be Running", isPresented: $showingRunningWarning) {
-                Button("Save Anyway") { _ = commit() }
+                Button("Save Anyway") { warnedAboutRunning = true; _ = commit() }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Edits made with the game running take effect on its next launch. If the game is still running in memory, it may overwrite these save edits with its own RAM state upon exit.")
