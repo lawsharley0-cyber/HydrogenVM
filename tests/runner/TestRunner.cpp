@@ -1115,6 +1115,43 @@ int runFullSubsystemTests() {
         auto error = [](Process& p) { return p.mem().read<int32_t>(p.mainThread().errnoAddr); };
         check(call(offline, "_socket", {2,1,0}) == -1 && error(offline) == 50,
               "BSD network remains disabled by default");
+        {
+            // Loopback-only UDP works offline: bind is forced to 127.0.0.1, broadcasts come
+            // back to the device, other destinations are unreachable.
+            Process& up = offline; auto& um = up.mem();
+            const uint32_t b = up.heap().allocZeroed(256);
+            auto sa = [&](uint32_t at, uint32_t ip, uint16_t port) {
+                um.write<uint8_t>(at, 16); um.write<uint8_t>(at + 1, 2);
+                um.write<uint16_t>(at + 2, htons(port)); um.write<uint32_t>(at + 4, htonl(ip));
+            };
+            const int a = call(up, "_socket", {2, 2, 0}), c = call(up, "_socket", {2, 2, 17});
+            sa(b, 0, 0);   // INADDR_ANY, any port
+            bool ok = a >= 0 && c >= 0 && call(up, "_bind", {uint32_t(a), b, 16}) == 0;
+            um.write<uint32_t>(b + 20, 16);
+            ok = ok && call(up, "_getsockname", {uint32_t(a), b + 32, b + 20}) == 0 && um.read<uint8_t>(b + 33) == 2 &&
+                 um.read<uint32_t>(b + 36) == htonl(INADDR_LOOPBACK);
+            const uint16_t port = ntohs(um.read<uint16_t>(b + 34));
+            um.write<uint32_t>(b + 100, 1);
+            ok = ok && call(up, "_setsockopt", {uint32_t(c), 0xffff, 0x20, b + 100, 4}) == 0;   // SO_BROADCAST
+            um.copyIn(b + 120, "hi", 2);
+            sa(b + 48, 0x7F000001, port);
+            sa(b + 64, 0xFFFFFFFF, port);
+            sa(b + 80, 0x08080808, port);
+            const bool sent = call(up, "_sendto", {uint32_t(c), b + 120, 2, 0, b + 48, 16}) == 2 &&
+                              call(up, "_sendto", {uint32_t(c), b + 120, 2, 0, b + 64, 16}) == 2;
+            const bool refused = call(up, "_sendto", {uint32_t(c), b + 120, 2, 0, b + 80, 16}) == -1 && error(up) == 51;
+            um.write<uint32_t>(b + 160 + uint32_t(a / 32) * 4, 1u << (a % 32));
+            um.write<uint32_t>(b + 200, 1);
+            const bool readable = call(up, "_select", {uint32_t(a + 1), b + 160, 0, 0, b + 200}) == 1;
+            um.write<uint32_t>(b + 20, 16);
+            const bool got1 = call(up, "_recvfrom", {uint32_t(a), b + 130, 16, 0, b + 32, b + 20}) == 2 &&
+                              std::memcmp(um.host(b + 130), "hi", 2) == 0 && um.read<uint32_t>(b + 36) == htonl(INADDR_LOOPBACK);
+            const bool got2 = call(up, "_recvfrom", {uint32_t(a), b + 130, 16, 0, 0, 0}) == 2;
+            const bool empty = call(up, "_recvfrom", {uint32_t(a), b + 130, 16, 128, 0, 0}) == -1 && error(up) == 35;
+            const bool closed = call(up, "_close", {uint32_t(a)}) == 0 && call(up, "_close", {uint32_t(c)}) == 0;
+            check(ok && sent && refused && readable && got1 && got2 && empty && closed,
+                  "Offline UDP stays on loopback: bind to 127.0.0.1, broadcast comes back, other hosts are ENETUNREACH, select/recvfrom/EAGAIN work");
+        }
         int listener = ::socket(AF_INET, SOCK_STREAM, 0);
         sockaddr_in local{}; local.sin_family = AF_INET; local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 #ifdef __APPLE__
@@ -3229,6 +3266,24 @@ int runFullSubsystemTests() {
                        {Foundation::makeData(cx, junk, 4)});
             } catch (const std::exception&) { junkThrows = true; }
             check(!threw && empty && junkThrows, "NSKeyedUnarchiver with nil data decodes nothing; junk data still raises");
+        }
+
+        // UIRoundedRectButton (nib class for rounded-rect buttons) and a local GKAchievement.
+        {
+            const ObjC::Class rr = r.getClass("UIRoundedRectButton");
+            const ObjC::id b = rr ? ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rr, r.selAlloc)), "initWithFrame:", {0, 0, 0x42c80000, 0x42200000})) : 0;
+            const bool button = b && (r.send(cpu, b, "isKindOfClass:", {r.getClass("UIButton")}) & 0xFF) && uint32_t(r.send(cpu, b, "buttonType")) == 1;
+            const ObjC::id a = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("GKAchievement"), r.selAlloc)), "initWithIdentifier:",
+                                               {Foundation::makeString(cx, "ach.one")}));
+            const double fifty = 50.0, hundred = 100.0; uint64_t f, h; std::memcpy(&f, &fifty, 8); std::memcpy(&h, &hundred, 8);
+            r.send(cpu, a, "setPercentComplete:", {uint32_t(f), uint32_t(f >> 32)});
+            const uint64_t got = r.send(cpu, a, "percentComplete");
+            double pc; std::memcpy(&pc, &got, 8);
+            const bool half = pc == 50.0 && !(r.send(cpu, a, "isCompleted") & 0xFF);
+            r.send(cpu, a, "setPercentComplete:", {uint32_t(h), uint32_t(h >> 32)});
+            const bool done = (r.send(cpu, a, "isCompleted") & 0xFF) &&
+                              Foundation::utf8(cx, ObjC::id(r.send(cpu, a, "identifier"))) == "ach.one";
+            check(button && half && done, "UIRoundedRectButton is a rounded-rect UIButton; GKAchievement keeps identifier and percentComplete");
         }
 
         // CFURLCreateAbsoluteURLWithBytes resolves against the base URL.

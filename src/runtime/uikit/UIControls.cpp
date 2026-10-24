@@ -481,6 +481,10 @@ id b_withType(Ctx& x, id self, SEL, int32_t type) {
     defaultLook(x, b, type);
     return autoreleased(x, b);
 }
+// UIRoundedRectButton: the private class iOS nibs archive for rounded-rect buttons
+// (UIButtonTypeRoundedRect); its archive may omit UIButtonType.
+id rr_initWithCoder(Ctx& x, id self, SEL s, id coder);
+id rr_initWithFrame(Ctx& x, id self, SEL s, CGRect f);
 id b_initWithFrame(Ctx& x, id self, SEL s, CGRect f) {
     const id me = id(rt(x).sendSuper(x.cpu, self, ui(x).control, s, {fbits(f.origin.x), fbits(f.origin.y), fbits(f.size.width), fbits(f.size.height)}));
     if (me) { BD(x, me); CD(x, me).hAlign = 0; viewData(x, me).needsLayout = true; }
@@ -518,6 +522,17 @@ id b_initWithCoder(Ctx& x, id self, SEL s, id coder) {
     insets("UITitleEdgeInsets", d.titleInsets);
     insets("UIImageEdgeInsets", d.imageInsets);
     viewData(x, me).needsLayout = true;
+    return me;
+}
+id rr_initWithCoder(Ctx& x, id self, SEL s, id coder) {
+    const bool typed = has(x, coder, "UIButtonType");
+    const id me = b_initWithCoder(x, self, s, coder);
+    if (me && !typed) { defaultLook(x, me, 1); BD(x, me).type = 1; }
+    return me;
+}
+id rr_initWithFrame(Ctx& x, id self, SEL s, CGRect f) {
+    const id me = b_initWithFrame(x, self, s, f);
+    if (me) { defaultLook(x, me, 1); BD(x, me).type = 1; }
     return me;
 }
 void b_dealloc(Ctx& x, id self, SEL s) {
@@ -979,6 +994,8 @@ void registerUIControls(Process& p, ObjC::Runtime& r) {
 
     ObjC::ClassBuilder btn = r.defineClass("UIButton", "UIControl");
     u.button = btn.cls();
+    r.defineClass("UIRoundedRectButton", "UIButton")
+        .m<&rr_initWithCoder>("initWithCoder:").m<&rr_initWithFrame>("initWithFrame:", "@@:{CGRect={CGPoint=ff}{CGSize=ff}}");
     btn.cm<&b_withType>("buttonWithType:");
     btn.m<&b_initWithFrame>("initWithFrame:", "@@:" + R).m<&b_initWithCoder>("initWithCoder:").m<&b_dealloc>("dealloc", "v@:")
        .m<&b_setTitle>("setTitle:forState:", "v@:@I").m<&b_setTitleColor>("setTitleColor:forState:", "v@:@I")

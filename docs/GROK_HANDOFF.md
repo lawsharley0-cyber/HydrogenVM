@@ -110,27 +110,14 @@ Local results (Linux, 40 s):
 
 ## 4. Open tasks, in priority order, with how to finish each
 
-### T1. Merge Jules #140 when its PR appears
-Session `16888253082826464357` at jules.google.com. Jules is driven through the browser: answer its questions, tell it not to ask again, and forbid `.patch`, `.orig`, `plan.md` and scratch files. Scope:
-- Mega Jump background/foreground: no double CADisplayLink/NSTimer registration. Legacy apps (`DTSDKName`/`MinimumOSVersion` < 4.0, or `UIApplicationExitsOnSuspend`) get only willResignActive/didBecomeActive. A fulltest counts the callbacks.
-- `UIRoundedRectButton` as a UIButton subclass with buttonType 1.
-- A tap that begins and ends in one frame delivers touchesBegan, then touchesEnded, with the same UITouch.
-- GKAchievement as a local object (identifier, percentComplete, completed, showsCompletionBanner; report/load/reset callbacks with nil error).
-- It was told **not** to touch Net.cpp or the Swift files. The archiver nil fix is already on main, so its archiver change must rebase onto `ku_initForReading`.
+### T1/T2. #140 and #141: done on main (commit after `910dc70`)
+Implemented directly and verified with the real games:
+- Loopback-only UDP: `Net.cpp` (`n_bind`/`n_sendto`/`n_recvfrom`/`n_getsockname`, `udpDestination`), `ioctl` FIONBIO/FIONREAD in `System.cpp`. Minecraft PE: Start Game reaches the world, and Join Game shows "Scanning for WiFi Games".
+- `UIRoundedRectButton` (`UIControls.cpp`). Talking Larry's YouTube form shows Cancel / Upload.
+- GKAchievement keeps identifier, percentComplete and completed (`GameKit.cpp`). Game Center still reports not signed in.
+- Legacy lifecycle (`UIApplication.cpp` `legacyLifecycle`): `DTSDKName` < 4 or `UIApplicationExitsOnSuspend` get only resign/become active. Mega Jump is SDK 3.0.
 
-**Review:** read the whole diff (`gh api repos/.../pulls/N/files`) and reject stray files and broad rewrites. Run the three gates. Then check the games:
-- Talking Larry: `--tap 30,30@12 --tap 30,30@22 --tap 160,288@30`. The YouTube form must show its buttons.
-- Mega Jump: `--lifecycle` background/foreground. No scheduler exception.
-- Tiny Tower: no GK errors.
-
-Merge with a merge commit, close the PR and #140, then do a `[mac]` push.
-
-### T2. Merge Jules #141: loopback-only UDP (Minecraft PE)
-This is a new Jules session ("Fix #141: Implement Loopback-only UDP..."). Root cause (traced): tapping into a world starts RakNet's local server over UDP on 127.0.0.1. `socket()` refuses UDP, so the game later indexes `array[-1]` (bad access at 0xfffffff8, pc +471576). The issue body has the spec:
-- bind is forced to 127.0.0.1; broadcast is rewritten to 127.0.0.1; any other destination returns ENETUNREACH.
-- TCP is unchanged, still behind `loopbackNetwork`.
-
-**Security review is the priority:** the socket must never bind a non-loopback address or send off the machine. Verify with `--tap 133,360@20 --run-for 60`: no crash, and it reaches the world.
+Jules sessions for #140 (16888253082826464357) and #141 may still open PRs. Close them as superseded, or merge only a part that is genuinely additional (for example a same-frame touch test). Rebase it first, then rerun the gates.
 
 ### T3. Mega Jump has no music or sound on the device (owner report, unresolved)
 Linux can't decode its `.m4a` music without ffmpeg, so `nonSilentFrames: 0` there is expected for the music. The owner's batch report showed **Zombie objects ON**. Ask him to turn the toggle (`hvm.zombies` in the library) off and to send the run log.
