@@ -117,7 +117,7 @@ id ai_initWithArrayCopy(Ctx& x, id self, SEL, id other, bool copyItems) {
 }
 id ai_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
     try {
-        auto v = Plist::parseFile(utf8(x, path));
+        auto v = Plist::parseFile(x.proc.hostPath(utf8(x, path)));
         if (v->type != Plist::Value::Type::Array) { releaseObj(x, self); return 0; }
         const bool m = ad(x, self) && ad(x, self)->isMutable;
         const id parsed = plistToObject(x, *v, m);
@@ -356,21 +356,23 @@ id a_valueForKey(Ctx& x, id self, SEL, id key) {
 bool a_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     auto v = objectToPlist(x, self);
     if (!v) return false;
-    try { Plist::writeXmlFile(*v, utf8(x, path)); return true; } catch (...) { return false; }
+    try { Plist::writeXmlFile(*v, x.proc.hostPath(utf8(x, path))); return true; } catch (...) { return false; }
 }
 
 // mutation
 void m_addObject(Ctx& x, id self, SEL, id o) {
     if (!o) throw ObjC::ObjCError("*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil");
+    id retained = retainObj(x, o);
     auto& d = mut(x, self);
-    d.items.push_back(retainObj(x, o));
+    d.items.push_back(retained);
     bump(x, d.mutationCell);
 }
 void m_insertObject(Ctx& x, id self, SEL, id o, uint32_t i) {
     if (!o) throw ObjC::ObjCError("*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil");
+    id retained = retainObj(x, o);
     auto& d = mut(x, self);
     if (i > d.items.size()) rangeError("insertObject:atIndex:", i, d.items.size());
-    d.items.insert(d.items.begin() + i, retainObj(x, o));
+    d.items.insert(d.items.begin() + i, retained);
     bump(x, d.mutationCell);
 }
 void m_removeObjectAtIndex(Ctx& x, id self, SEL, uint32_t i) {
@@ -495,10 +497,11 @@ void m_replaceObjectsAtIndexesWithObjects(Ctx& x, id self, SEL, id indexSet, id 
 }
 void m_replaceObject(Ctx& x, id self, SEL, uint32_t i, id o) {
     if (!o) throw ObjC::ObjCError("*** -[__NSArrayM replaceObjectAtIndex:withObject:]: object cannot be nil");
+    id retained = retainObj(x, o);
     auto& d = mut(x, self);
     if (i >= d.items.size()) rangeError("replaceObjectAtIndex:withObject:", i, d.items.size());
     const id old = d.items[i];
-    d.items[i] = retainObj(x, o);
+    d.items[i] = retained;
     bump(x, d.mutationCell);
     releaseObj(x, old);
 }
@@ -511,6 +514,7 @@ void m_exchange(Ctx& x, id self, SEL, uint32_t a, uint32_t b) {
     auto& d = mut(x, self);
     if (a >= d.items.size() || b >= d.items.size()) rangeError("exchangeObjectAtIndex:withObjectAtIndex:", std::max(a, b), d.items.size());
     std::swap(d.items[a], d.items[b]);
+    bump(x, d.mutationCell);
 }
 void m_addObjectsFromArray(Ctx& x, id self, SEL s, id other) { for (id o : itemsOf(x, other)) m_addObject(x, self, s, o); }
 void m_setArray(Ctx& x, id self, SEL s, id other) {
@@ -632,7 +636,7 @@ id di_initWithDictionary(Ctx& x, id self, SEL, id other) { dictAssign(x, self, e
 id di_initWithDictionaryCopy(Ctx& x, id self, SEL s, id other, bool) { return di_initWithDictionary(x, self, s, other); }
 id di_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
     try {
-        auto v = Plist::parseFile(utf8(x, path));
+        auto v = Plist::parseFile(x.proc.hostPath(utf8(x, path)));
         if (v->type != Plist::Value::Type::Dict) { releaseObj(x, self); return 0; }
         const bool m = dd(x, self) && dd(x, self)->isMutable;
         dictAssign(x, self, entriesOf(x, plistToObject(x, *v, m)));
@@ -728,7 +732,7 @@ id d_mutableCopy(Ctx& x, id self, SEL s) { return d_mutableCopyWithZone(x, self,
 bool d_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     auto v = objectToPlist(x, self);
     if (!v) return false;
-    try { Plist::writeXmlFile(*v, utf8(x, path)); return true; } catch (...) { return false; }
+    try { Plist::writeXmlFile(*v, x.proc.hostPath(utf8(x, path))); return true; } catch (...) { return false; }
 }
 id d_keysSortedByValueUsingSelector(Ctx& x, id self, SEL, SEL s) {
     auto e = entriesOf(x, self);

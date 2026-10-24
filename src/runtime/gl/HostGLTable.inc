@@ -251,6 +251,9 @@ HOSTGL_FN(glPushGroupMarkerEXT, void, (int32_t, const char*))
 HOSTGL_FN(glPopGroupMarkerEXT, void, (void))
 HOSTGL_FN(glInsertEventMarkerEXT, void, (int32_t, const char*))
 HOSTGL_FN(glCopyTextureLevelsAPPLE, void, (uint32_t, uint32_t, int32_t, int32_t))
+HOSTGL_FN(glDrawBuffers, void, (int32_t, const void*))
+HOSTGL_FN(glDrawBuffersEXT, void, (int32_t, const void*))
+HOSTGL_FN(glReadBuffer, void, (uint32_t))
 #endif
 
 #ifdef HOSTGL_WRAPPERS
@@ -1555,6 +1558,24 @@ void hg_glCopyTextureLevelsAPPLE(Ctx& x, uint32_t a_dst, uint32_t a_src, int32_t
     hc->fn.glCopyTextureLevelsAPPLE(a_dst, a_src, a_srcBase, a_count);
     if (hgDebug) hgAfter(x, hc, "glCopyTextureLevelsAPPLE", [&] { return hgArgs(a_dst, a_src, a_srcBase, a_count); });
 }
+void hg_glDrawBuffers(Ctx& x, int32_t a_n, GuestPtr a_bufs) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glDrawBuffers) { hgMissing(x, hc, "glDrawBuffers"); return; }
+    hc->fn.glDrawBuffers(a_n, HG_PTR(x, a_bufs));
+    if (hgDebug) hgAfter(x, hc, "glDrawBuffers", [&] { return hgArgs(a_n, a_bufs); });
+}
+void hg_glDrawBuffersEXT(Ctx& x, int32_t a_n, GuestPtr a_bufs) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glDrawBuffersEXT) { hgMissing(x, hc, "glDrawBuffersEXT"); return; }
+    hc->fn.glDrawBuffersEXT(a_n, HG_PTR(x, a_bufs));
+    if (hgDebug) hgAfter(x, hc, "glDrawBuffersEXT", [&] { return hgArgs(a_n, a_bufs); });
+}
+void hg_glReadBuffer(Ctx& x, uint32_t a_src) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glReadBuffer) { hgMissing(x, hc, "glReadBuffer"); return; }
+    hc->fn.glReadBuffer(a_src);
+    if (hgDebug) hgAfter(x, hc, "glReadBuffer", [&] { return hgArgs(a_src); });
+}
 #endif
 
 #ifdef HOSTGL_REGISTER
@@ -1808,4 +1829,7 @@ HOSTGL_REG(glPushGroupMarkerEXT)
 HOSTGL_REG(glPopGroupMarkerEXT)
 HOSTGL_REG(glInsertEventMarkerEXT)
 HOSTGL_REG(glCopyTextureLevelsAPPLE)
+HOSTGL_REG(glDrawBuffers)
+HOSTGL_REG(glDrawBuffersEXT)
+HOSTGL_REG(glReadBuffer)
 #endif

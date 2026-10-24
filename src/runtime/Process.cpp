@@ -112,10 +112,27 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     staticTop_ = kStaticBase;
     staticEnd_ = kStaticBase + (1u << 20);
 
-    homePath_ = cfg_.homePath.empty() ? fs::path(cfg_.bundlePath).parent_path().string() : cfg_.homePath;
+    // The app passes directory URLs' paths, which end in '/'. Path mapping joins
+    // prefixes with the rest of a path, so keep both without a trailing slash
+    // (a trailing slash here turned ".../Documents" into "<UUID>Documents").
+    auto trimSlash = [](std::string s) { while (s.size() > 1 && s.back() == '/') s.pop_back(); return s; };
+    cfg_.bundlePath = trimSlash(cfg_.bundlePath);
+    homePath_ = trimSlash(cfg_.homePath.empty() ? fs::path(cfg_.bundlePath).parent_path().string() : cfg_.homePath);
     std::error_code ec;
     for (const char* d : {"Documents", "Library", "Library/Caches", "Library/Preferences", "tmp"})
         fs::create_directories(fs::path(homePath_) / d, ec);
+
+    const auto digest = hvmDigest(1, homePath_);
+    char uuidBuf[37];
+    std::snprintf(uuidBuf, sizeof(uuidBuf),
+                  "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                  digest[0], digest[1], digest[2], digest[3],
+                  digest[4], digest[5], digest[6], digest[7],
+                  digest[8], digest[9], digest[10], digest[11],
+                  digest[12], digest[13], digest[14], digest[15]);
+    guestHomePath_ = std::string("/var/mobile/Applications/") + uuidBuf;
+    const std::string bundleName = fs::path(cfg_.bundlePath).filename().string();
+    guestBundlePath_ = guestHomePath_ + "/" + (bundleName.empty() ? "App.app" : bundleName);
 
     mainThreadOwner_ = std::make_unique<GuestThread>(*this);
     mainThread_ = mainThreadOwner_.get();
@@ -221,6 +238,7 @@ void Process::load() {
     std::string exe = infoPlist_ ? infoPlist_->getString("CFBundleExecutable") : "";
     if (exe.empty()) exe = fs::path(cfg_.bundlePath).stem().string();
     executablePath_ = (fs::path(cfg_.bundlePath) / exe).string();
+    guestExecutablePath_ = guestBundlePath_ + "/" + exe;
 
     const auto file = Loader::readFile(executablePath_);
     unsigned char digest[32];
@@ -477,13 +495,13 @@ std::string Process::readCString(uint32_t addr, size_t max) const {
 }
 
 void Process::setupEnvironment() {
-    const std::string tmp = (fs::path(homePath_) / "tmp").string() + "/";
+    const std::string guestTmp = guestHomePath_ + "/tmp/";
     env_ = {
-        {"HOME", homePath_}, {"CFFIXED_USER_HOME", homePath_}, {"TMPDIR", tmp},
+        {"HOME", guestHomePath_}, {"CFFIXED_USER_HOME", guestHomePath_}, {"TMPDIR", guestTmp},
         {"PATH", "/usr/bin:/bin:/usr/sbin:/sbin"}, {"USER", "mobile"}, {"LOGNAME", "mobile"},
         {"SHELL", "/bin/sh"}, {"__CF_USER_TEXT_ENCODING", "0x1F5:0:0"},
     };
-    std::vector<std::string> args{executablePath_};
+    std::vector<std::string> args{guestExecutablePath_.empty() ? executablePath_ : guestExecutablePath_};
     for (auto& a : cfg_.extraArgs) args.push_back(a);
     argc_ = uint32_t(args.size());
     argv_ = allocStatic(uint32_t(args.size() + 1) * 4);
@@ -497,8 +515,53 @@ void Process::setupEnvironment() {
     }
     mem_->write<uint32_t>(envp_ + uint32_t(env_.size()) * 4, 0);
     apple_ = allocStatic(8);
-    mem_->write<uint32_t>(apple_, internCString(executablePath_));
+    mem_->write<uint32_t>(apple_, internCString(guestExecutablePath_.empty() ? executablePath_ : guestExecutablePath_));
     mem_->write<uint32_t>(apple_ + 4, 0);
+}
+
+namespace {
+bool matchesPathPrefix(const std::string& path, const std::string& prefix) {
+    if (prefix.empty() || path.compare(0, prefix.size(), prefix) != 0) return false;
+    return path.size() == prefix.size() || path[prefix.size()] == '/';
+}
+// iOS reaches the same files as /var/... and /private/var/...; compare in the
+// /var form so either spelling of a host or guest path matches.
+std::string canonVar(const std::string& p) { return p.compare(0, 13, "/private/var/") == 0 ? p.substr(8) : p; }
+} // namespace
+
+std::string Process::hostPath(const std::string& guestPath) const {
+    if (guestPath.empty()) return {};
+    std::string p = guestPath;
+    if (p == "~") p = guestHomePath_;
+    else if (p.compare(0, 2, "~/") == 0) p = guestHomePath_ + p.substr(1);
+    const std::string norm = canonVar(p);
+    // Already a host path: leave it alone.
+    if (matchesPathPrefix(norm, canonVar(bundlePath())) || matchesPathPrefix(norm, canonVar(homePath_))) return p;
+    // Guest paths, most specific first (the bundle sits inside the home).
+    if (matchesPathPrefix(norm, guestBundlePath_)) return bundlePath() + norm.substr(guestBundlePath_.size());
+    if (matchesPathPrefix(norm, guestHomePath_)) return homePath_ + norm.substr(guestHomePath_.size());
+    const std::string hostTmp = homePath_ + "/tmp";
+    if (matchesPathPrefix(norm, "/tmp")) return hostTmp + norm.substr(4);
+    if (matchesPathPrefix(norm, "/var/tmp")) return hostTmp + norm.substr(8);
+    return p;
+}
+
+std::string Process::guestPath(const std::string& hostPath) const {
+    if (hostPath.empty()) return {};
+    const std::string norm = canonVar(hostPath);
+    if (matchesPathPrefix(norm, "/var/mobile/Applications")) return norm;
+    // Longest host prefix first: the bundle, its home's tmp, then the home.
+    const std::pair<std::string, std::string> mappings[] = {
+        {canonVar(bundlePath()), guestBundlePath_},
+        {canonVar(homePath_ + "/tmp"), guestHomePath_ + "/tmp"},
+        {canonVar(homePath_), guestHomePath_},
+    };
+    const std::pair<std::string, std::string>* best = nullptr;
+    for (const auto& m : mappings)
+        if (!m.first.empty() && !m.second.empty() && matchesPathPrefix(norm, m.first) &&
+            (!best || m.first.size() > best->first.size()))
+            best = &m;
+    return best ? best->second + norm.substr(best->first.size()) : hostPath;
 }
 
 std::string Process::getenv(const std::string& name) const {
@@ -961,6 +1024,52 @@ std::string Process::crashBundle() {
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count();
     out << "],\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
     return out.str();
+}
+
+// ------------------------------------------------------------- microphone ---
+
+void Process::pushMicrophone(const float* mono, size_t frames, double rate) {
+    if (!mono || !frames || !(rate > 0)) return;
+    std::lock_guard<std::mutex> lk(micMu_);
+    micRate_ = rate;
+    mic_.insert(mic_.end(), mono, mono + frames);
+    // Keep at most a second: a recording queue that fell behind starts from "now".
+    const size_t cap = size_t(rate);
+    if (mic_.size() > cap) { mic_.erase(mic_.begin(), mic_.begin() + std::ptrdiff_t(mic_.size() - cap)); micPos_ = 0; }
+}
+
+void Process::pullMicrophone(float* out, size_t frames, double rate) {
+    std::lock_guard<std::mutex> lk(micMu_);
+    const double step = rate > 0 ? micRate_ / rate : 1;
+    for (size_t i = 0; i < frames; ++i) {
+        const size_t at = size_t(micPos_);
+        if (at + 1 < mic_.size()) {
+            const double t = micPos_ - double(at);
+            out[i] = float(mic_[at] * (1 - t) + mic_[at + 1] * t);
+            micPos_ += step;
+        } else {
+            out[i] = 0;   // not captured (yet): silence
+        }
+    }
+    const size_t used = std::min(mic_.size(), size_t(micPos_));
+    mic_.erase(mic_.begin(), mic_.begin() + std::ptrdiff_t(used));
+    micPos_ -= double(used);
+}
+
+void Process::microphoneUser(bool start) {
+    bool notify = false, on = false;
+    {
+        std::lock_guard<std::mutex> lk(micMu_);
+        const int before = micUsers_;
+        micUsers_ = std::max(0, micUsers_ + (start ? 1 : -1));
+        notify = (before == 0) != (micUsers_ == 0);
+        on = micUsers_ > 0;
+        if (notify && !on) { mic_.clear(); micPos_ = 0; }
+    }
+    if (notify) {
+        log(LogLevel::Info, on ? "Microphone: the app started recording" : "Microphone: recording stopped");
+        if (cfg_.microphone) cfg_.microphone(on);
+    }
 }
 
 // ------------------------------------------------------------ diagnostics ---

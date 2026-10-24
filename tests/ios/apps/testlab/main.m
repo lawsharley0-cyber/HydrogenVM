@@ -29,8 +29,15 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#include <stdio.h>
+#include <errno.h>
+#include <unistd.h>
 #import <QuartzCore/QuartzCore.h>
 #include <pthread.h>
+
+extern FILE *popen(const char *, const char *);
+extern int pclose(FILE *);
+extern unsigned int alarm(unsigned int);
 #include <time.h>
 #import <OpenGLES/EAGL.h>
 #include <OpenGLES/ES2/gl.h>
@@ -61,6 +68,7 @@ static const char *kAppBuild        = "1";
 #define CASE_J  @"TL-J"
 #define CASE_K  @"TL-K"
 #define CASE_L  @"TL-L"
+#define CASE_M  @"TL-M"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -914,15 +922,25 @@ static TLResult *runCaseH(void) {
     r.diagnostics[@"removed"] = @(removed);
     r.diagnostics[@"gone"] = @(gone);
 
-    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, gone=1";
-    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, gone=%d",
-                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, gone];
+    // 7. Check POSIX missing imports (popen, pclose, alarm)
+    errno = 0;
+    FILE *pf = popen("ls", "r");
+    BOOL popenOk = (pf == NULL && errno == 78 /* ENOSYS */);
+    errno = 0;
+    int pc = pclose((FILE*)0x1234);
+    BOOL pcloseOk = (pc == -1 && errno == 10 /* ECHILD */);
+    unsigned int al = alarm(5);
+    BOOL alarmOk = (al == 0);
 
-    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && removed && gone) {
+    r.expected = @"dirCreated=1, written=1, dirExists=1, fileExists=1, sizeOk=1, contentOk=1, gone=1, posixOk=1";
+    r.actual = [NSString stringWithFormat:@"dirCreated=%d, written=%d, dirExists=%d, fileExists=%d, sizeOk=%d, contentOk=%d, gone=%d, posixOk=%d",
+                dirCreated, fileWritten, dirExists, fileExists, sizeOk, contentOk, gone, (popenOk && pcloseOk && alarmOk)];
+
+    if (dirCreated && fileWritten && dirExists && fileExists && sizeOk && contentOk && removed && gone && popenOk && pcloseOk && alarmOk) {
         r.status = @"passed";
     } else {
         r.status = @"failed";
-        r.reason = @"File system sandbox operation failed";
+        r.reason = [NSString stringWithFormat:@"FS failed or POSIX failed (popen=%d, pclose=%d, alarm=%d)", popenOk, pcloseOk, alarmOk];
     }
 
     clearCheckpoint();
@@ -1096,6 +1114,14 @@ static TLResult *runCaseI(void) {
 
         // Draw full-viewport quad
         glViewport(0, 0, FBO_W, FBO_H);
+        GLint readFormat = 0, readType = 0;
+        glGetIntegerv(0x8B9B /*GL_IMPLEMENTATION_COLOR_READ_FORMAT*/, &readFormat);
+        glGetIntegerv(0x8B9A /*GL_IMPLEMENTATION_COLOR_READ_TYPE*/, &readType);
+        if (readFormat != 0x1908 || readType != 0x1401) {
+            subDiag[[NSString stringWithUTF8String:tc->label]] = [NSString stringWithFormat:@"Bad read format/type: 0x%04x 0x%04x", readFormat, readType];
+            allOk = NO;
+        }
+
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1369,6 +1395,52 @@ static TLResult *runCaseK(void) {
 // ─────────────────────────── run all cases ───────────────────────────────────
 
 // A unique run ID for this launch.
+
+// TL-M: insertion-sort bounds bug
+TLResult* runCaseM(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_M version:1];
+
+    // 1. Test replaceObject
+    NSMutableArray *arr1 = [NSMutableArray arrayWithObjects:@3, @1, @4, nil];
+    for (int i = 1; i < (int)[arr1 count]; i++) {
+        id obj = [arr1 objectAtIndex:i]; // ARC retains
+        int j = i;
+        while (j > 0 && [[arr1 objectAtIndex:j - 1] compare:obj] == NSOrderedDescending) {
+            [arr1 replaceObjectAtIndex:j withObject:[arr1 objectAtIndex:j - 1]];
+            j--;
+        }
+        [arr1 replaceObjectAtIndex:j withObject:obj];
+    }
+
+    // 2. Test exchangeObject
+    NSMutableArray *arr2 = [NSMutableArray arrayWithObjects:@3, @1, @4, nil];
+    for (int i = 1; i < (int)[arr2 count]; i++) {
+        int j = i;
+        while (j > 0 && [[arr2 objectAtIndex:j - 1] compare:[arr2 objectAtIndex:j]] == NSOrderedDescending) {
+            [arr2 exchangeObjectAtIndex:j withObjectAtIndex:j - 1];
+            j--;
+        }
+    }
+
+    // 3. Test removeObject/insertObject
+    NSMutableArray *arr3 = [NSMutableArray arrayWithObjects:@3, @1, @4, nil];
+    for (int i = 1; i < (int)[arr3 count]; i++) {
+        id obj = [arr3 objectAtIndex:i]; // ARC retains
+        [arr3 removeObjectAtIndex:i];
+        int j = i;
+        while (j > 0 && [[arr3 objectAtIndex:j - 1] compare:obj] == NSOrderedDescending) {
+            j--;
+        }
+        [arr3 insertObject:obj atIndex:j];
+    }
+
+    r.actual = @{ @"arr1": arr1, @"arr2": arr2, @"arr3": arr3 };
+    r.expected = @{ @"arr1": @[@1, @3, @4], @"arr2": @[@1, @3, @4], @"arr3": @[@1, @3, @4] };
+    r.status = [r.actual isEqual:r.expected] ? @"passed" : @"failed";
+    writeCheckpoint(CASE_M);
+    return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1378,7 +1450,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1434,6 +1506,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_I]) return runCaseI();
     if ([caseId isEqualToString:CASE_J]) return runCaseJ();
     if ([caseId isEqualToString:CASE_K]) return runCaseK();
+    if ([caseId isEqualToString:CASE_M]) return runCaseM();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1466,8 +1539,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1482,6 +1555,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_I version:kVersionI],
         [[TLResult alloc] initWithId:CASE_J version:kVersionJ],
         [[TLResult alloc] initWithId:CASE_K version:kVersionK],
+        [[TLResult alloc] initWithId:CASE_M version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1541,7 +1615,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

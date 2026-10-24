@@ -293,6 +293,10 @@ uint32_t q_findFirstNotOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, ui
     const size_t r = value(x, self).find_first_not_of(bytes(x, s, n), pos);
     return r == std::string::npos ? kNpos : uint32_t(r);
 }
+uint32_t q_findFirstNotOfChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
+    const size_t r = value(x, self).find_first_not_of(char(c), pos);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
 uint32_t q_findLastNotOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) {
     const size_t r = value(x, self).find_last_not_of(bytes(x, s, n), pos == kNpos ? std::string::npos : pos);
     return r == std::string::npos ? kNpos : uint32_t(r);
@@ -855,7 +859,12 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&q_begin>("__ZNSs5beginEv");
     p.def<&q_end>("__ZNSs3endEv");
     // Out-of-line copies of members libstdc++ normally inlines (Army of Darkness Defense).
-    p.def<+[](Ctx& x, GuestPtr self) { m_leakHard(x, self); const uint32_t d = x.mem.read<uint32_t>(self); return d + len(x, d); }>("__ZNSs6rbeginEv");
+    p.def<+[](Ctx& x, GuestPtr sret, GuestPtr self) {
+        m_leakHard(x, self);
+        const uint32_t d = x.mem.read<uint32_t>(self);
+        x.mem.write<uint32_t>(sret, d + len(x, d));
+        return sret;
+    }>("__ZNSs6rbeginEv");
     p.def<+[](Ctx& x, GuestPtr self) { set(x, self, std::string()); }>("__ZNSs5clearEv");
     p.def<+[](Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr s) {
         return m_replace(x, self, pos, n, s, s ? uint32_t(x.proc.readCString(s).size()) : 0);
@@ -879,6 +888,7 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&q_findFirstOfBuf>("__ZNKSs13find_first_ofEPKcmm");
     p.def<&q_findLastOfBuf>("__ZNKSs12find_last_ofEPKcmm");
     p.def<&q_findFirstNotOfBuf>("__ZNKSs17find_first_not_ofEPKcmm");
+    p.def<&q_findFirstNotOfChar>("__ZNKSs17find_first_not_ofEcm");
     p.def<&q_findLastNotOfBuf>("__ZNKSs16find_last_not_ofEPKcmm");
     p.def<&q_compareC>("__ZNKSs7compareEPKc");
     p.def<&q_compareStr>("__ZNKSs7compareERKSs");
@@ -976,6 +986,7 @@ void registerLibStdcxxContainers(Process& p) {
     const uint32_t vtExc = p.defineDataBlock("__ZTVSt9exception", 32);
     const uint32_t vtRt  = p.defineDataBlock("__ZTVSt13runtime_error", 32);
     const uint32_t vtLg  = p.defineDataBlock("__ZTVSt11logic_error", 32);
+    const uint32_t vtBadAlloc = p.defineDataBlock("__ZTVSt9bad_alloc", 32);
     const uint32_t fnExcD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9exceptionD1Ev");
     p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9exceptionD2Ev");
     const uint32_t fnExcD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt9exceptionD0Ev");
@@ -1025,6 +1036,14 @@ void registerLibStdcxxContainers(Process& p) {
     p.mem().write<uint32_t>(vtLg + 8, fnLgD1);
     p.mem().write<uint32_t>(vtLg + 12, fnLgD0);
     p.mem().write<uint32_t>(vtLg + 16, fnLgWhat);
+
+    const uint32_t fnBadAllocD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9bad_allocD1Ev");
+    p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9bad_allocD2Ev");
+    const uint32_t fnBadAllocD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt9bad_allocD0Ev");
+    const uint32_t fnBadAllocWhat = p.def<+[](Ctx& x, uint32_t) -> uint32_t { return x.proc.internCString("std::bad_alloc"); }>("__ZNKSt9bad_alloc4whatEv");
+    p.mem().write<uint32_t>(vtBadAlloc + 8, fnBadAllocD1);
+    p.mem().write<uint32_t>(vtBadAlloc + 12, fnBadAllocD0);
+    p.mem().write<uint32_t>(vtBadAlloc + 16, fnBadAllocWhat);
 }
 
 } // namespace Hydrogen::Runtime

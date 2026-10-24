@@ -715,6 +715,12 @@ id ctx_current(Ctx& x, id, SEL) {
     std::lock_guard<std::mutex> lk(st.mu);
     auto it = st.currentByThread.find(tid);
     if (it != st.currentByThread.end()) return it->second;
+    // On the GPU path the answer must be this thread's own: engines check
+    // `if ([EAGLContext currentContext] != ctx) [EAGLContext setCurrentContext:ctx];`
+    // on their render thread, and reporting another thread's context made them
+    // skip that call, so their GL went to a stand-in context whose framebuffers
+    // they never created (Army of Darkness: black screen, incomplete framebuffer).
+    if (HostGL::enabled(x.proc)) return 0;
     if (!st.currentByThread.empty()) return st.currentByThread.begin()->second;
     return st.lastActiveContext;
 }

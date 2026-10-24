@@ -50,6 +50,15 @@ struct EmulatorScreen: UIViewRepresentable {
         private struct Finger { let id: Int; var point: CGPoint }
         private var fingers: [ObjectIdentifier: Finger] = [:]
 
+        @objc private func deviceTurned(_ note: Notification) {
+            setNeedsLayout()
+            // The scene's interface orientation updates during the rotation animation.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(350))
+                self?.setNeedsLayout()
+            }
+        }
+
         @objc private func glGeometryChanged(_ note: Notification) {
             guard let gl = glLayer, (note.object as AnyObject?) === gl else { return }
             setNeedsLayout()
@@ -62,6 +71,11 @@ struct EmulatorScreen: UIViewRepresentable {
             clipsToBounds = true
             layer.addSublayer(picture)
             picture.addSublayer(overlay)
+            // A 180° turn between the two landscapes doesn't change the view's size, so
+            // layout isn't triggered by it; re-lay out when the device turns.
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            NotificationCenter.default.addObserver(self, selector: #selector(deviceTurned(_:)),
+                                                   name: UIDevice.orientationDidChangeNotification, object: nil)
             // Selector observers are removed automatically when the view goes away.
             NotificationCenter.default.addObserver(self, selector: #selector(glGeometryChanged(_:)),
                                                    name: Notification.Name("HVMGLLayerGeometryDidChange"),
@@ -101,6 +115,9 @@ struct EmulatorScreen: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
+            // The picture's turns depend only on the guest's orientation: the window
+            // already turns with the phone between the two landscapes, so the
+            // picture stays upright without changing them.
             let next = PlayerGeometry(container: bounds.size, guest: guestSize, pixels: pixelSize,
                                       orientation: orientation, mode: mode,
                                       displayScale: window?.screen.scale ?? traitCollection.displayScale)

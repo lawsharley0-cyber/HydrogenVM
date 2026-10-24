@@ -308,6 +308,19 @@ struct SaveEditorDashboardView: View {
     @State private var statusMessage: String?
     @State private var newSnapshotLabel = ""
     @State private var showingSnapshotPrompt = false
+    @AppStorage("saveEditor.recentFiles") private var recentFilesData = Data()
+
+    private var recentFiles: [URL] {
+        get {
+            guard let array = try? JSONDecoder().decode([URL].self, from: recentFilesData) else { return [] }
+            return array
+        }
+        nonmutating set {
+            if let data = try? JSONEncoder().encode(Array(newValue.prefix(10))) {
+                recentFilesData = data
+            }
+        }
+    }
 
     private var backupsDir: URL {
         app.dataDir.appending(path: "SaveBackups")
@@ -322,117 +335,132 @@ struct SaveEditorDashboardView: View {
         }
     }
 
+    @ViewBuilder private var statusSection: some View {
+        if let msg = statusMessage {
+            Section {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text(msg).font(.subheadline)
+                    Spacer()
+                    Button("Dismiss") { statusMessage = nil }.font(.caption)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var snapshotSection: some View {
+        // Snapshot Backup & Restore Section
+        Section {
+            Button {
+                newSnapshotLabel = "Snapshot \(snapshots.count + 1)"
+                showingSnapshotPrompt = true
+            } label: {
+                Label("Create Save Snapshot Backup", systemImage: "camera.on.rectangle.fill")
+                    .fontWeight(.medium)
+            }
+
+            if snapshots.isEmpty {
+                Text("No snapshots yet. Create a snapshot before modifying save files so you can restore in one tap.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(snapshots) { snap in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(snap.name).font(.subheadline.weight(.medium))
+                            Text(snap.created.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Restore") {
+                            restoreSnapshot(snap)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) {
+                            deleteSnapshot(snap)
+                        }
+                        Button("Zip Export") {
+                            exportZipSnapshot(snap)
+                        }
+                        .tint(.blue)
+                    }
+                }
+            }
+        } header: {
+            Text("Save State Snapshots (Documents + Library)")
+        }
+    }
+
+    @ViewBuilder private var closeGameNote: some View {
+        Section {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle.fill").foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Important: Close the game before saving edits").font(.caption.weight(.semibold))
+                    Text("If the game is still running in memory, it may overwrite save edits with RAM state upon exit.").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var recentSection: some View {
+        // Discovered Save Files by Category
+        if !recentFiles.isEmpty && searchText.isEmpty {
+            Section("Recent Files") {
+                ForEach(recentFiles, id: \.self) { url in
+                    Button {
+                        let item = FileItem(url: url, isDirectory: false, size: 0, modified: nil)
+                        editingFile = item
+                    } label: {
+                        HStack {
+                            Image(systemName: "clock.fill")
+                                .foregroundStyle(.tint)
+                            Text(url.lastPathComponent)
+                            Spacer()
+                            Text(url.deletingLastPathComponent().lastPathComponent)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var filesSection: some View {
+        if discovered.isEmpty {
+            ContentUnavailableView(
+                "No Save Files Found Yet",
+                systemImage: "tray",
+                description: Text("Launch \(app.title) first so it creates its save files, preferences, or databases in Documents and Library.")
+            )
+        } else {
+            ForEach(DiscoveredSaveFile.Category.allCases, id: \.rawValue) { cat in
+                let group = filteredFiles.filter { $0.category == cat }
+                if !group.isEmpty {
+                    Section(cat.rawValue) {
+                        ForEach(group) { entry in
+                            Button { editingFile = entry.item } label: { SaveFileRow(entry: entry) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The list is split into sections so each stays small enough for the
+    // Swift type checker (one combined body timed out on the Mac build).
     var body: some View {
         List {
-            if let msg = statusMessage {
-                Section {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        Text(msg).font(.subheadline)
-                        Spacer()
-                        Button("Dismiss") { statusMessage = nil }.font(.caption)
-                    }
-                }
-            }
-
-            // Snapshot Backup & Restore Section
-            Section {
-                Button {
-                    newSnapshotLabel = "Snapshot \(snapshots.count + 1)"
-                    showingSnapshotPrompt = true
-                } label: {
-                    Label("Create Save Snapshot Backup", systemImage: "camera.on.rectangle.fill")
-                        .fontWeight(.medium)
-                }
-
-                if snapshots.isEmpty {
-                    Text("No snapshots yet. Create a snapshot before modifying save files so you can restore in one tap.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(snapshots) { snap in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(snap.name).font(.subheadline.weight(.medium))
-                                Text(snap.created.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Restore") {
-                                restoreSnapshot(snap)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                        }
-                        .swipeActions {
-                            Button("Delete", role: .destructive) {
-                                deleteSnapshot(snap)
-                            }
-                        }
-                    }
-                }
-            } header: {
-                Text("Save State Snapshots (Documents + Library)")
-            }
-
-            Section {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "info.circle.fill").foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Important: Close the game before saving edits").font(.caption.weight(.semibold))
-                        Text("If the game is still running in memory, it may overwrite save edits with RAM state upon exit.").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            // Discovered Save Files by Category
-            if discovered.isEmpty {
-                ContentUnavailableView(
-                    "No Save Files Found Yet",
-                    systemImage: "tray",
-                    description: Text("Launch \(app.title) first so it creates its save files, preferences, or databases in Documents and Library.")
-                )
-            } else {
-                ForEach(DiscoveredSaveFile.Category.allCases, id: \.rawValue) { cat in
-                    let group = filteredFiles.filter { $0.category == cat }
-                    if !group.isEmpty {
-                        Section(cat.rawValue) {
-                            ForEach(group) { entry in
-                                Button { editingFile = entry.item } label: {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: entry.kind.symbol)
-                                            .font(.title3)
-                                            .foregroundStyle(.tint)
-                                            .frame(width: 28)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(entry.item.name)
-                                                .font(.body.weight(.medium))
-                                                .lineLimit(1)
-                                            Text(entry.relativePath)
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                        Spacer()
-                                        VStack(alignment: .trailing, spacing: 2) {
-                                            Text(entry.kind.badgeLabel)
-                                                .font(.caption2.weight(.semibold))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(.tint.opacity(0.15), in: Capsule())
-                                                .foregroundStyle(.tint)
-                                            Text(ByteCountFormatter.string(fromByteCount: entry.item.size, countStyle: .file))
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            statusSection
+            snapshotSection
+            closeGameNote
+            recentSection
+            filesSection
         }
         .navigationTitle("\(app.title) — Save Editor")
         .searchable(text: $searchText, prompt: "Search saves, plists, databases…")
@@ -452,6 +480,14 @@ struct SaveEditorDashboardView: View {
             TextField("Label", text: $newSnapshotLabel)
             Button("Create") { createSnapshot(label: newSnapshotLabel) }
             Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: editingFile) { _, newItem in
+            if let url = newItem?.url {
+                var recents = recentFiles
+                recents.removeAll { $0 == url }
+                recents.insert(url, at: 0)
+                recentFiles = recents
+            }
         }
         .onAppear { scanSandbox() }
     }
@@ -549,6 +585,16 @@ struct SaveEditorDashboardView: View {
     private func deleteSnapshot(_ snap: SaveSnapshot) {
         do { try FileManager.default.removeItem(at: snap.url); loadSnapshots() }
         catch { statusMessage = "Delete error: \(error.localizedDescription)" }
+    }
+
+    private func exportZipSnapshot(_ snap: SaveSnapshot) {
+        let dest = backupsDir.appendingPathComponent("\(snap.name).zip")
+        do {
+            try SaveSnapshotStore.exportZip(snapshot: snap.url, destination: dest)
+            statusMessage = "Exported zip to \(dest.lastPathComponent)"
+        } catch {
+            statusMessage = "Export error: \(error.localizedDescription)"
+        }
     }
 }
 
@@ -2514,443 +2560,40 @@ private struct NestedDataInspectorView: View {
 
 }
 
-// MARK: - Binary / Hex Editor with Value Inspector & Cheat Scanner
 
-struct BinarySearchMatch: Identifiable {
-    let offset: Int
-    let preview: String
-    var id: Int { offset }
-}
 
-struct BinaryEditorView: View {
-    let url: URL
-    @State private var data = Data()
-    @State private var compression: SaveCompressionFormat = .none
-    @State private var selectedOffset: Int = 0
-    @Environment(FileEditorSession.self) private var document
-    @State private var loaded = false
-    @State private var error: String?
-
-    // Value Search / Cheat Scanner
-    @State private var showingScanner = false
-    @State private var searchQuery = ""
-    @State private var searchType: SearchValueType = .int32LE
-    @State private var searchMatches: [BinarySearchMatch] = []
-    @State private var replaceValueText = ""
-
-    enum SearchValueType: String, CaseIterable, Identifiable {
-        case int32LE = "Int32 (LE)"
-        case uint32LE = "UInt32 (LE)"
-        case int16LE = "Int16 (LE)"
-        case int64LE = "Int64 (LE)"
-        case float32LE = "Float32 (LE)"
-        case float64LE = "Double (LE)"
-        case ascii = "ASCII / UTF-8"
-        case utf16LE = "UTF-16 (LE)"
-        case hex = "Hex Bytes"
-        var id: String { rawValue }
-    }
-
-    private let bytesPerRow = 16
-    private let maxDisplayBytes = 131_072 // 128 KB window
+/// One row of the save editor's file list (kept separate so the list body stays
+/// small enough for the Swift type checker).
+private struct SaveFileRow: View {
+    let entry: DiscoveredSaveFile
 
     var body: some View {
-        VStack(spacing: 0) {
-            if compression != .none {
-                HStack {
-                    Image(systemName: "archivebox.fill")
-                    Text("Decompressed \(compression.rawValue) (\(data.count) bytes) — will re-compress on save")
-                    Spacer()
-                }
-                .font(.caption)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.orange.opacity(0.15))
+        HStack(spacing: 12) {
+            Image(systemName: entry.kind.symbol)
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.item.name)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(entry.relativePath)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-
-            // Interactive Multi-Type Value Inspector Bar at `selectedOffset`
-            if !data.isEmpty && selectedOffset < data.count {
-                BinaryValueInspectorBar(data: $data, offset: $selectedOffset, totalCount: data.count) {
-                    document.markChanged()
-                }
-                Divider()
-            }
-
-            // Hex Rows
-            let shown = min(data.count, maxDisplayBytes)
-            let rowCount = (shown + bytesPerRow - 1) / bytesPerRow
-            List {
-                ForEach(0..<rowCount, id: \.self) { row in
-                    let base = row * bytesPerRow
-                    let end = min(base + bytesPerRow, shown)
-                    HexRow(
-                        base: base,
-                        slice: data[base..<end],
-                        selectedOffset: $selectedOffset
-                    ) { offset, byte in
-                        data[offset] = byte
-                        document.markChanged()
-                    }
-                    .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
-                }
-            }
-            .listStyle(.plain)
-            .font(.system(.caption, design: .monospaced))
-        }
-        .navigationTitle(url.lastPathComponent)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 18) {
-                Button {
-                    showingScanner = true
-                } label: {
-                    Label("Value Scanner", systemImage: "magnifyingglass.circle")
-                }
-                ShareLink(item: url)
-                Spacer()
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(entry.kind.badgeLabel)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.tint)
+                Text(ByteCountFormatter.string(fromByteCount: entry.item.size, countStyle: .file))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
-        .modifier(FileEditorRegistration(save: save))
-        .sheet(isPresented: $showingScanner) {
-            NavigationStack {
-                Form {
-                    Section("Search Game Value (Coins, Gold, Stats, String)") {
-                        Picker("Data Type", selection: $searchType) {
-                            ForEach(SearchValueType.allCases) { t in
-                                Text(t.rawValue).tag(t)
-                            }
-                        }
-                        HStack {
-                            TextField("Value to find (e.g. 500 or player name)", text: $searchQuery)
-                                .font(.system(.body, design: .monospaced))
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.never)
-                            Button("Scan") {
-                                runBinarySearch()
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                    }
-
-                    if !searchMatches.isEmpty {
-                        Section("Batch Modify All \(searchMatches.count) Matches") {
-                            HStack {
-                                TextField("New value", text: $replaceValueText)
-                                    .font(.system(.body, design: .monospaced))
-                                Button("Replace All") {
-                                    replaceAllMatches()
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        }
-
-                        Section("Matches (\(searchMatches.count)) — Tap to Jump") {
-                            ForEach(searchMatches) { m in
-                                Button {
-                                    selectedOffset = m.offset
-                                    showingScanner = false
-                                } label: {
-                                    HStack {
-                                        Text(String(format: "0x%06X (%d)", m.offset, m.offset))
-                                            .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                                        Spacer()
-                                        Text(m.preview)
-                                            .font(.system(.caption, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                .navigationTitle("Binary Cheat / Value Scanner")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { showingScanner = false }
-                    }
-                }
-            }
-        }
-        .alert("Save Failed", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK", role: .cancel) { error = nil }
-        } message: {
-            Text(error ?? "")
-        }
-        .onAppear {
-            guard !loaded else { return }
-            loaded = true
-            do {
-                let (payload, fmt) = try SaveCompressionFormat.decode(document.store.load())
-                data = payload
-                compression = fmt
-                document.dirty = false
-                document.ready = true
-            } catch { self.error = error.localizedDescription }
-        }
-    }
-
-    private func save() -> Bool {
-        do {
-            let out = try SaveCompressionFormat.encode(data, format: compression)
-            try document.commit(out)
-            return true
-        } catch {
-            document.saveError = error.localizedDescription
-            return false
-        }
-    }
-
-    private func encodePattern(query: String, type: SearchValueType) -> Data? {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        switch type {
-        case .int32LE:
-            guard let v = Int32(q) else { return nil }
-            var le = v.littleEndian
-            return Data(bytes: &le, count: 4)
-        case .uint32LE:
-            guard let v = UInt32(q) else { return nil }
-            var le = v.littleEndian
-            return Data(bytes: &le, count: 4)
-        case .int16LE:
-            guard let v = Int16(q) else { return nil }
-            var le = v.littleEndian
-            return Data(bytes: &le, count: 2)
-        case .int64LE:
-            guard let v = Int64(q) else { return nil }
-            var le = v.littleEndian
-            return Data(bytes: &le, count: 8)
-        case .float32LE:
-            guard let v = Float(q) else { return nil }
-            var bits = v.bitPattern.littleEndian
-            return Data(bytes: &bits, count: 4)
-        case .float64LE:
-            guard let v = Double(q) else { return nil }
-            var bits = v.bitPattern.littleEndian
-            return Data(bytes: &bits, count: 8)
-        case .ascii:
-            return q.data(using: .utf8)
-        case .utf16LE:
-            return q.data(using: .utf16LittleEndian)
-        case .hex:
-            let clean = q.replacingOccurrences(of: " ", with: "")
-            guard clean.count >= 2 && clean.count % 2 == 0 else { return nil }
-            var bytes = Data()
-            var idx = clean.startIndex
-            while idx < clean.endIndex {
-                let next = clean.index(idx, offsetBy: 2)
-                guard let b = UInt8(clean[idx..<next], radix: 16) else { return nil }
-                bytes.append(b)
-                idx = next
-            }
-            return bytes
-        }
-    }
-
-    private func runBinarySearch() {
-        guard let needle = encodePattern(query: searchQuery, type: searchType), !needle.isEmpty else {
-            searchMatches = []
-            return
-        }
-        var found: [BinarySearchMatch] = []
-        var searchRange = data.startIndex..<data.endIndex
-        while let r = data.range(of: needle, options: [], in: searchRange) {
-            let off = r.lowerBound
-            let ctxEnd = min(data.endIndex, off + 8)
-            let hexPreview = data[off..<ctxEnd].map { String(format: "%02X", $0) }.joined(separator: " ")
-            found.append(BinarySearchMatch(offset: off, preview: hexPreview))
-            if found.count >= 250 { break }
-            searchRange = (r.lowerBound + 1)..<data.endIndex
-        }
-        searchMatches = found
-    }
-
-    private func replaceAllMatches() {
-        guard let replacement = encodePattern(query: replaceValueText, type: searchType) else { return }
-        for m in searchMatches {
-            guard m.offset + replacement.count <= data.count else { continue }
-            data.replaceSubrange(m.offset..<(m.offset + replacement.count), with: replacement)
-        }
-        document.markChanged()
-        runBinarySearch()
-    }
-}
-
-private struct BinaryValueInspectorBar: View {
-    @Binding var data: Data
-    @Binding var offset: Int
-    let totalCount: Int
-    let onMutate: () -> Void
-
-    @State private var editingType: String?
-    @State private var editValueString = ""
-
-    private func readLE<T: FixedWidthInteger>(_ type: T.Type) -> T? {
-        let size = MemoryLayout<T>.size
-        guard offset >= 0, offset + size <= data.count else { return nil }
-        var val: T = 0
-        _ = withUnsafeMutableBytes(of: &val) { dst in
-            data.copyBytes(to: dst, from: offset..<(offset + size))
-        }
-        return T(littleEndian: val)
-    }
-
-    private func writeLE<T: FixedWidthInteger>(_ val: T) {
-        let size = MemoryLayout<T>.size
-        guard offset >= 0, offset + size <= data.count else { return }
-        var le = val.littleEndian
-        let bytes = withUnsafeBytes(of: &le) { Data($0) }
-        data.replaceSubrange(offset..<(offset + size), with: bytes)
-        onMutate()
-    }
-
-    private var float32Val: Float? {
-        guard let bits = readLE(UInt32.self) else { return nil }
-        return Float(bitPattern: bits)
-    }
-
-    private var float64Val: Double? {
-        guard let bits = readLE(UInt64.self) else { return nil }
-        return Double(bitPattern: bits)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(String(format: "Offset: 0x%06X (%d)", offset, offset))
-                    .font(.caption.monospaced().weight(.bold))
-                Spacer()
-                Stepper("", value: $offset, in: 0...max(0, totalCount - 1))
-                    .labelsHidden()
-                    .controlSize(.mini)
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    if let v = readLE(UInt8.self) {
-                        inspectorChip(label: "UInt8", value: "\(v)") {
-                            if let nv = UInt8($0) { writeLE(nv) }
-                        }
-                    }
-                    if let v = readLE(Int16.self) {
-                        inspectorChip(label: "Int16", value: "\(v)") {
-                            if let nv = Int16($0) { writeLE(nv) }
-                        }
-                    }
-                    if let v = readLE(Int32.self) {
-                        inspectorChip(label: "Int32", value: "\(v)") {
-                            if let nv = Int32($0) { writeLE(nv) }
-                        }
-                    }
-                    if let v = readLE(UInt32.self) {
-                        inspectorChip(label: "UInt32", value: "\(v)") {
-                            if let nv = UInt32($0) { writeLE(nv) }
-                        }
-                    }
-                    if let v = readLE(Int64.self) {
-                        inspectorChip(label: "Int64", value: "\(v)") {
-                            if let nv = Int64($0) { writeLE(nv) }
-                        }
-                    }
-                    if let f = float32Val {
-                        inspectorChip(label: "Float32", value: String(format: "%.4g", f)) {
-                            if let nv = Float($0) { writeLE(nv.bitPattern) }
-                        }
-                    }
-                    if let d = float64Val {
-                        inspectorChip(label: "Double", value: String(format: "%.6g", d)) {
-                            if let nv = Double($0) { writeLE(nv.bitPattern) }
-                        }
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.secondary.opacity(0.08))
-    }
-
-    @ViewBuilder
-    private func inspectorChip(label: String, value: String, commit: @escaping (String) -> Void) -> some View {
-        Button {
-            editValueString = value
-            editingType = label
-        } label: {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label).font(.system(size: 9, weight: .semibold, design: .monospaced)).foregroundStyle(.secondary)
-                Text(value).font(.system(.caption, design: .monospaced).weight(.medium)).foregroundStyle(.primary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.background, in: RoundedRectangle(cornerRadius: 6))
-        }
-        .alert("Edit \(label) at 0x\(String(format: "%X", offset))",
-               isPresented: Binding(get: { editingType == label }, set: { if !$0 { editingType = nil } })) {
-            TextField(label, text: $editValueString)
-                .keyboardType(.numbersAndPunctuation)
-            Button("Write") { commit(editValueString); editingType = nil }
-            Button("Cancel", role: .cancel) { editingType = nil }
-        }
-    }
-}
-
-private struct HexRow: View {
-    let base: Int
-    let slice: Data.SubSequence
-    @Binding var selectedOffset: Int
-    let onEdit: (Int, UInt8) -> Void
-
-    @State private var editingOffset: Int?
-    @State private var hexInput = ""
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(String(format: "%06X", base))
-                .foregroundStyle(.secondary)
-            HStack(spacing: 4) {
-                ForEach(0..<16, id: \.self) { i in
-                    let idx = slice.startIndex + i
-                    if idx < slice.endIndex {
-                        let b = slice[idx]
-                        Text(String(format: "%02X", b))
-                            .padding(.horizontal, 2)
-                            .background(selectedOffset == idx ? Color.accentColor.opacity(0.3) : Color.clear,
-                                        in: RoundedRectangle(cornerRadius: 3))
-                            .onTapGesture {
-                                selectedOffset = idx
-                            }
-                            .onLongPressGesture {
-                                selectedOffset = idx
-                                hexInput = String(format: "%02X", b)
-                                editingOffset = idx
-                            }
-                    } else {
-                        Text("  ")
-                    }
-                }
-            }
-            Spacer(minLength: 4)
-            Text(asciiColumn)
-                .foregroundStyle(.secondary)
-        }
-        .alert("Edit Byte", isPresented: Binding(get: { editingOffset != nil },
-                                                 set: { if !$0 { editingOffset = nil } })) {
-            TextField("Hex (00–FF)", text: $hexInput)
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-            Button("OK") {
-                if let off = editingOffset,
-                   let v = UInt8(hexInput.trimmingCharacters(in: .whitespaces), radix: 16) {
-                    onEdit(off, v)
-                }
-                editingOffset = nil
-            }
-            Button("Cancel", role: .cancel) { editingOffset = nil }
-        } message: {
-            if let off = editingOffset {
-                Text(String(format: "Offset 0x%06X", off))
-            }
-        }
-    }
-
-    private var asciiColumn: String {
-        String(slice.map { (0x20...0x7E).contains($0) ? Character(UnicodeScalar($0)) : "." })
     }
 }

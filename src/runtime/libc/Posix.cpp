@@ -19,7 +19,7 @@ void setErr(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoA
 // ssize_t readlink(const char* path, char* buf, size_t size)
 int32_t p_readlink(Ctx& x, GuestPtr path, GuestPtr buf, uint32_t size) {
     char tmp[4096];
-    const ssize_t n = ::readlink(x.proc.readCString(path).c_str(), tmp, std::min<size_t>(size, sizeof tmp));
+    const ssize_t n = ::readlink(x.proc.hostPath(x.proc.readCString(path)).c_str(), tmp, std::min<size_t>(size, sizeof tmp));
     if (n < 0) { setErr(x, errno == ENOENT ? 2 : errno == EINVAL ? 22 : errno == EACCES ? 13 : 22); return -1; }
     x.mem.copyIn(buf, tmp, size_t(n));
     return int32_t(n);
@@ -95,7 +95,10 @@ int32_t semWait(Ctx& x, uint32_t id, double timeout) {
     const auto deadline = timeout < 0 ? clock::time_point::max() : clock::now() + std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(timeout));
     std::unique_lock<std::mutex> lk(sem->mu);
     while (sem->count <= 0) {
-        if (x.proc.stopping()) return KERN_ABORTED;
+        // Stopping: end the thread like the pthread waits do. Returning KERN_ABORTED
+        // made Unity log "Failed to wait on a semaphore (errno:14)" in a loop, which
+        // filled the session's log and hid the real error.
+        if (x.proc.stopping()) throw ProcessExit(0, "stopping");
         if (clock::now() >= deadline) return KERN_OPERATION_TIMED_OUT;
         sem->cv.wait_until(lk, std::min(deadline, clock::now() + std::chrono::milliseconds(50)));
     }
@@ -125,6 +128,7 @@ int32_t p_statvfs(Ctx& x, GuestPtr, GuestPtr st) {
     for (uint32_t i = 0; i < 11; ++i) x.mem.write<uint32_t>(st + i * 4, v[i]);
     return 0;
 }
+uint32_t p_alarm(Ctx&, uint32_t) { return 0; }
 
 // Locale: everything is "C" / UTF-8.
 struct LocaleData {
@@ -218,6 +222,7 @@ void registerLibcPosix(Process& p) {
     p.def<&m_semTimedWait>("_semaphore_timedwait");
     p.def<&p_statfs>("_statfs");
     p.def<&p_statvfs>("_statvfs");
+    p.def<&p_alarm>("_alarm");
     p.def<&p_setlocale>("_setlocale");
     p.def<&p_localeconv>("_localeconv");
     p.def<&p_nl_langinfo>("_nl_langinfo");

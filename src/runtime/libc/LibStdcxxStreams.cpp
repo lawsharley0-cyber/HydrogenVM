@@ -352,6 +352,14 @@ void initStringbuf(Ctx& x, uint32_t sb, uint32_t mode, const std::string& init) 
     b.mode = mode;
     b.p = (mode & (mAte | mApp)) ? uint32_t(init.size()) : 0;
 }
+// void basic_stringbuf::_M_stringbuf_init(ios_base::openmode) — the tail of the
+// inline basic_stringbuf constructors compiled into the app (Minion Rush): the
+// app has already built the streambuf base and the string at +36 (empty, or the
+// initial contents); adopt the object as one of ours with those contents.
+void sb_initMode(Ctx& x, GuestPtr sb, uint32_t mode) {
+    const std::string init = guestStringValue(x, sb + 36);
+    initStringbuf(x, sb, mode, init);
+}
 void dropStringbuf(Ctx& x, uint32_t sb) { std::lock_guard<std::mutex> lk(St(x).mu); St(x).bufs.erase(sb); }
 
 void sb_str(Ctx& x) {   // string stringbuf::str() const — sret in r0, this in r1
@@ -946,6 +954,7 @@ void registerLibStdcxxStreams(Process& p) {
         {sD1f, sD0f, bImbue, sSetbufF, sSeekoffF, sSeekposF, bSync, sShowF, sXsgetnF, sUnderF, sUflowF, sPbackF, sXsputnF, sOverF});
     p.defineFunction(std::string("__ZNK") + SB + "3strEv", sb_str);
     p.def<&sb_setStr>(sbn("3strERKSs"));
+    p.def<&sb_initMode>(sbn("17_M_stringbuf_initESt13_Ios_Openmode"));
 
     // Stream vtables: [vcall offset][vbase offset][offset to top][typeinfo][D1][D0]; vptr = +16.
     auto streamVtable = [&](const std::string& name, int32_t vbase, int32_t top, uint32_t d1, uint32_t d0) {

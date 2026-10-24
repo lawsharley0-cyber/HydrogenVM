@@ -75,7 +75,7 @@ id di_initWithBytesNoCopy(Ctx& x, id self, SEL, GuestPtr p, uint32_t n, bool fre
 id di_initWithBytesNoCopy2(Ctx& x, id self, SEL s, GuestPtr p, uint32_t n) { return di_initWithBytesNoCopy(x, self, s, p, n, true); }
 id di_initWithData(Ctx& x, id self, SEL, id other) { const auto b = bytesOf(x, other); assign(x, self, b.data(), uint32_t(b.size())); return self; }
 id di_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
-    const std::string p = utf8(x, path);
+    const std::string p = x.proc.hostPath(utf8(x, path));
     int64_t sz = -1;
     struct stat st;
     if (::stat(p.c_str(), &st) == 0) sz = st.st_size;
@@ -136,7 +136,7 @@ bool d_isEqualToData(Ctx& x, id self, SEL, id o) { return o == self || (o && byt
 uint32_t d_hash(Ctx& x, id self, SEL) { DataData* d = dd(x, self); return d ? d->len : 0; }
 bool d_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     const auto b = bytesOf(x, self);
-    const std::string p = utf8(x, path), tmp = p + ".hvmtmp";
+    const std::string p = x.proc.hostPath(utf8(x, path)), tmp = p + ".hvmtmp";
     { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); if (!out) return false; out.write(reinterpret_cast<const char*>(b.data()), std::streamsize(b.size())); if (!out) return false; }
     return std::rename(tmp.c_str(), p.c_str()) == 0;
 }

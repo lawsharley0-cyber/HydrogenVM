@@ -401,6 +401,14 @@ struct RunView: View {
         overrideOrientation ?? model.orientation
     }
 
+    /// The orientations the phone may take while this game plays. A landscape game
+    /// follows the phone into either landscape (the player turns the picture over,
+    /// like a game that autorotates); a choice made with the rotate button is kept.
+    private func hostMask(for orientation: GuestOrientation) -> UIInterfaceOrientationMask {
+        if overrideOrientation == nil, orientation.landscape { return .landscape }
+        return orientation.mask
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
@@ -431,6 +439,9 @@ struct RunView: View {
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
             }
+            // The whole display, not the safe area: the picture is centred on the
+            // physical screen (the notch and home indicator only take the letterbox).
+            .ignoresSafeArea()
 
             // Bottom Log overlay if toggled
             if showLog {
@@ -450,10 +461,10 @@ struct RunView: View {
         .preferredColorScheme(.dark)
         .persistentSystemOverlays(.hidden)
         .onAppear {
-            OrientationLock.shared.lock(effectiveOrientation.mask)
+            OrientationLock.shared.lock(hostMask(for: effectiveOrientation), preferring: effectiveOrientation.mask)
             model.start(keepGoing: keepGoing)
         }
-        .onChange(of: effectiveOrientation) { _, orientation in OrientationLock.shared.lock(orientation.mask) }
+        .onChange(of: effectiveOrientation) { _, orientation in OrientationLock.shared.lock(hostMask(for: orientation), preferring: orientation.mask) }
         .onChange(of: model.finished) { _, done in
             if done {
                 OrientationLock.shared.lock(.all)

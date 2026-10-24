@@ -60,4 +60,25 @@ enum SaveSnapshotStore {
             throw installError
         }
     }
+    /// Export the whole snapshot folder as a zip file.
+    static func exportZip(snapshot: URL, destination: URL) throws {
+        let coordinator = NSFileCoordinator()
+        var coordinateError: NSError?
+        var zipError: Error?
+
+        coordinator.coordinate(readingItemAt: snapshot, options: .forUploading, error: &coordinateError) { url in
+            do {
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.copyItem(at: url, to: destination)
+            } catch {
+                zipError = error
+            }
+        }
+
+        if let error = zipError ?? coordinateError {
+            throw error
+        }
+    }
 }

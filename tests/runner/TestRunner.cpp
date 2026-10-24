@@ -1690,8 +1690,8 @@ int runFullSubsystemTests() {
         const auto user = paths(13, 1, 1);
         const auto local = paths(13, 2, 1);
         const auto all = paths(13, 0xFFFF, 1);
-        const std::string userPath = cfg.homePath + "/Library/Caches";
-        const std::string localPath = cfg.homePath + "/LocalDomain/Library/Caches";
+        const std::string userPath = proc.guestHomePath() + "/Library/Caches";
+        const std::string localPath = proc.guestHomePath() + "/LocalDomain/Library/Caches";
         check(user.size() == 1 && Foundation::utf8(cx, user[0]) == userPath,
               "user-domain cache search keeps the app's existing cache path");
         check(local.size() == 1 && Foundation::utf8(cx, local[0]) == localPath,
@@ -1794,6 +1794,28 @@ int runFullSubsystemTests() {
         check(top == childVC && navOfChild == nav, "UINavigationController pushViewController & navigationController property");
         const ObjC::id popped = ObjC::id(r.send(cpu, nav, "popViewControllerAnimated:", {0}));
         check(popped == childVC && ObjC::id(r.send(cpu, nav, "topViewController")) == rootVC, "UINavigationController popViewControllerAnimated");
+
+        // UIBarButtonItem addTarget:action:forControlEvents: and customView forwarding test
+        const ObjC::Class bbiCls = r.getClass("UIBarButtonItem");
+        const ObjC::id item = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, bbiCls, r.selAlloc)), "initWithTitle:style:target:action:",
+                                               {Foundation::makeString(cx, "Action"), 0, 0, 0}));
+        const ObjC::SEL act = r.sel("btnTapped:");
+        r.send(cpu, item, "addTarget:action:forControlEvents:", {rootVC, act, 1u << 6 /* UIControlEventTouchUpInside */});
+        const ObjC::id t1 = ObjC::id(r.send(cpu, item, "target"));
+        const ObjC::SEL a1 = ObjC::SEL(r.send(cpu, item, "action"));
+        check(t1 == rootVC && a1 == act, "UIBarButtonItem addTarget:action:forControlEvents: sets target and action");
+
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id customBtn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 40.0f, 40.0f});
+        r.send(cpu, item, "setCustomView:", {customBtn});
+        const ObjC::id btnAllTargets = ObjC::id(r.send(cpu, customBtn, "allTargets"));
+        const auto targetsList = Foundation::setItems(cx, btnAllTargets);
+        check(std::find(targetsList.begin(), targetsList.end(), rootVC) != targetsList.end(), "UIBarButtonItem setCustomView forwards existing target/action to customView");
+
+        r.send(cpu, item, "removeTarget:action:forControlEvents:", {rootVC, act, 1u << 6});
+        const ObjC::id t2 = ObjC::id(r.send(cpu, item, "target"));
+        const ObjC::SEL a2 = ObjC::SEL(r.send(cpu, item, "action"));
+        check(t2 == 0 && a2 == 0, "UIBarButtonItem removeTarget:action:forControlEvents: clears target and action");
     }
 
     // 2d. UITabBarController, UITabBar, UITabBarItem
@@ -2514,7 +2536,9 @@ int runFullSubsystemTests() {
             call("__ZNSsC1EPKcRKSaIcE", {t, cstr("abcdef"), 0});
             call("__ZNSs7replaceEmmPKc", {t, 1, 2, cstr("XYZ")});
             const bool replaced = str(t) == "aXYZdef";
-            const uint32_t rb = call("__ZNSs6rbeginEv", {t});
+            const uint32_t sret = proc.heap().allocZeroed(4);
+            call("__ZNSs6rbeginEv", {sret, t});
+            const uint32_t rb = m.read<uint32_t>(sret);
             const bool rbeginOk = rb == m.read<uint32_t>(t) + 7;
             // _M_set_length_and_sharable on a private rep: length 3, terminator, refcount 0.
             const uint32_t rep = m.read<uint32_t>(t) - 12;
@@ -2548,9 +2572,26 @@ int runFullSubsystemTests() {
         const int32_t readBytes = int32_t(call("__ZNSt12__basic_fileIcE6xsgetnEPci", {bfile, readBuf, 32}));
         const std::string readStr = proc.readCString(readBuf);
         call("__ZNSt12__basic_fileIcED1Ev", {bfile});
+
+        const uint32_t ifstreamObj = proc.heap().allocZeroed(520);
+        const uint32_t ifstreamVtt = proc.lookupSymbol("__ZTTSt14basic_ifstreamIcSt11char_traitsIcEE").value();
+        call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEEC2EPKcSt13_Ios_Openmode", {ifstreamObj, ifstreamVtt, cpath, 8});
+        const uint32_t ifstreamReadBuf = proc.heap().allocZeroed(32);
+        const uint32_t readCount = call("__ZNSi4readEPci", {ifstreamObj, ifstreamReadBuf, 17});
+        const std::string ifstreamReadStr = proc.readCString(ifstreamReadBuf);
+        call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEED1Ev", {ifstreamObj});
         std::filesystem::remove(tmpPath);
-        check(opened != 0 && isOpen && fd >= 0 && written == 17 && closed && readBytes == 17 && readStr == "Hello basic_file!",
-              "libstdc++ __basic_file<char> open, write, read, close, fd");
+        check(opened != 0 && isOpen && fd >= 0 && written == 17 && closed && readBytes == 17 && readStr == "Hello basic_file!" &&
+              readCount == ifstreamObj && ifstreamReadStr == "Hello basic_file!",
+              "libstdc++ __basic_file<char> and inline-constructed basic_ifstream<char> via C2+VTT");
+
+        // std::bad_alloc
+        const uint32_t badAllocObj = proc.heap().allocZeroed(32);
+        proc.mem().write<uint32_t>(badAllocObj, proc.lookupSymbol("__ZTVSt9bad_alloc").value() + 8);
+        const uint32_t baWhat = call("__ZNKSt9bad_alloc4whatEv", {badAllocObj});
+        const std::string baWhatStr = proc.readCString(baWhat);
+        call("__ZNSt9bad_allocD1Ev", {badAllocObj});
+        check(baWhatStr == "std::bad_alloc", "std::bad_alloc::what() returns std::bad_alloc");
     }
 
     // #31: independent ARMv7 API-family oracles (metadata is laid out by the public ABI).
@@ -2601,8 +2642,10 @@ int runFullSubsystemTests() {
             proc.mem().write<uint32_t>(parent + 4, proc.internCString("Parent31"));
             proc.mem().write<uint32_t>(child + 4, proc.internCString("Child31"));
             proc.mem().write<uint32_t>(child + 8, list); proc.mem().write<uint32_t>(list, 1); proc.mem().write<uint32_t>(list + 4, parent);
-            proc.mem().write<uint32_t>(child + 12, methods); proc.mem().write<uint32_t>(methods, 1);
-            proc.mem().write<uint32_t>(methods + 4, proc.internCString("method31")); proc.mem().write<uint32_t>(methods + 8, proc.internCString("v@:"));
+            // method_list_t: entsize 12, count 1, then { name, types, imp }.
+            proc.mem().write<uint32_t>(child + 12, methods); proc.mem().write<uint32_t>(methods, 12); proc.mem().write<uint32_t>(methods + 4, 1);
+            proc.mem().write<uint32_t>(methods + 8, proc.internCString("method31")); proc.mem().write<uint32_t>(methods + 12, proc.internCString("v@:"));
+            proc.mem().write<uint32_t>(methods + 16, 0);
             const auto copied = call("_protocol_copyProtocolList", {child, scratch + 208});
             const auto descriptions = call("_protocol_copyMethodDescriptionList", {child, 1, 1, scratch + 212});
             protocols = call("_protocol_conformsToProtocol", {child, parent}) && !call("_protocol_conformsToProtocol", {parent, child}) &&
@@ -2610,8 +2653,17 @@ int runFullSubsystemTests() {
                 proc.mem().read<uint32_t>(scratch + 212) == 1 && proc.mem().read<uint32_t>(descriptions) == r.sel("method31") &&
                 proc.readCString(proc.mem().read<uint32_t>(descriptions + 4)) == "v@:";
             proc.heap().free(copied); proc.heap().free(descriptions);
+            if (protocols && bound({"_protocol_getMethodDescription"})) {
+                const uint32_t desc = proc.heap().allocZeroed(8);
+                call("_protocol_getMethodDescription", {desc, child, r.sel("method31"), 1, 1});
+                const bool found = proc.mem().read<uint32_t>(desc) == r.sel("method31") &&
+                                   proc.readCString(proc.mem().read<uint32_t>(desc + 4)) == "v@:";
+                call("_protocol_getMethodDescription", {desc, child, r.sel("nothing31"), 1, 1});
+                protocols = found && proc.mem().read<uint32_t>(desc) == 0 && proc.mem().read<uint32_t>(desc + 4) == 0;
+                proc.heap().free(desc);
+            } else protocols = false;
         }
-        check(protocols, "startup protocol metadata preserves adoption, method selectors, types and owned lists");
+        check(protocols, "startup protocol metadata preserves adoption, method selectors, types and owned lists; protocol_getMethodDescription finds them");
         bool bitvectors = bound({"_CFBitVectorCreate", "_CFBitVectorCreateMutableCopy", "_CFBitVectorGetBitAtIndex", "_CFBitVectorSetBitAtIndex"});
         if (bitvectors) {
             proc.mem().write<uint8_t>(scratch + 224, 0xa5);
@@ -2623,7 +2675,7 @@ int runFullSubsystemTests() {
             call("_CFRelease", {copy}); call("_CFRelease", {original});
         }
         check(bitvectors, "startup CF bit vectors use MSB-first bits and mutable copies own their storage");
-        bool mach = bound({"_mach_port_allocate", "_mach_port_insert_right", "_mach_msg", "_task_swap_exception_ports", "_thread_swap_exception_ports", "_vm_map", "_vm_protect"});
+        bool mach = bound({"_mach_port_allocate", "_mach_port_insert_right", "_mach_msg", "_task_swap_exception_ports", "_thread_swap_exception_ports", "_task_set_exception_ports", "_thread_set_exception_ports", "_vm_map", "_vm_protect"});
         if (mach) {
             mach = call("_mach_port_allocate", {0x103, 1, scratch + 256}) == 0;
             const auto port = proc.mem().read<uint32_t>(scratch + 256);
@@ -2636,6 +2688,7 @@ int runFullSubsystemTests() {
             mach &= call("_vm_map", {0x103, scratch + 260, 4096, 4095, 1, 0, 0, 0, 0, 3, 7, 0}) == 0;
             const auto address = proc.mem().read<uint32_t>(scratch + 260);
             mach &= address && !(address & 4095) && call("_vm_protect", {0x103, address, 4096, 0, 1}) == 0 && proc.mem().protAt(address) == Memory::kProtRead;
+            mach &= proc.lookupSymbol("_NDR_record").has_value();
             call("_vm_protect", {0x103, address, 4096, 0, 3}); call("_vm_deallocate", {0x103, address, 4096});
             call("_mach_port_destroy", {0x103, port});
         }
@@ -3030,6 +3083,55 @@ int runFullSubsystemTests() {
             proc.heap().free(strRet2);
         }
 
+        // stat layouts: plain _stat/_fstat are the legacy 96-byte struct (size at 48);
+        // the $INODE64 variants are 108 bytes (size at 60). Guard bytes past 96 stay intact.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const std::string file = proc.homePath() + "/Documents/hvm_stat_layout.bin";
+            { std::ofstream o(file, std::ios::binary); o << std::string(1234, 'x'); }
+            const uint32_t path = proc.allocCString(file);
+            const uint32_t buf = proc.heap().allocZeroed(128);
+            for (uint32_t i = 96; i < 128; i += 4) proc.mem().write<uint32_t>(buf + i, 0xA5A5A5A5);
+            const uint32_t r1 = call("_stat", {path, buf});
+            const bool legacy = r1 == 0 && proc.mem().read<uint64_t>(buf + 48) == 1234 &&
+                                (proc.mem().read<uint16_t>(buf + 8) & 0170000) == 0100000 &&
+                                proc.mem().read<uint32_t>(buf + 96) == 0xA5A5A5A5 && proc.mem().read<uint32_t>(buf + 104) == 0xA5A5A5A5;
+            std::memset(proc.mem().host(buf), 0, 128);
+            const uint32_t r2 = call("_stat$INODE64", {path, buf});
+            const bool wide = r2 == 0 && proc.mem().read<uint64_t>(buf + 60) == 1234 &&
+                              (proc.mem().read<uint16_t>(buf + 4) & 0170000) == 0100000;
+            if (!(legacy && wide)) std::printf("    r1=%u r2=%u legacy=%d wide=%d s48=%llu s60=%llu\n", r1, r2, legacy, wide, (unsigned long long)proc.mem().read<uint64_t>(buf + 48), (unsigned long long)proc.mem().read<uint64_t>(buf + 60));
+            check(legacy && wide, "stat: plain symbols fill the legacy 96-byte struct, $INODE64 the 108-byte one");
+            proc.heap().free(buf);
+        }
+
+        // CFURLCreateAbsoluteURLWithBytes resolves against the base URL.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const ObjC::id base = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:isDirectory:", {Foundation::makeString(cx, "/sounds/sfx"), 1}));
+            const uint32_t bytes = proc.allocCString("hit.caf");
+            const ObjC::id url = ObjC::id(call("_CFURLCreateAbsoluteURLWithBytes", {0, bytes, 7, 0x08000100, base, 0}));
+            const std::string abs = url ? Foundation::utf8(cx, ObjC::id(r.send(cpu, url, "absoluteString"))) : "";
+            if (abs != "file:///sounds/sfx/hit.caf") std::printf("    got %s\n", abs.c_str());
+            check(abs == "file:///sounds/sfx/hit.caf", "CFURLCreateAbsoluteURLWithBytes resolves the bytes against the base URL");
+        }
+
+        // A stringbuf built by the app's inline constructor, finished by _M_stringbuf_init.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t sb = proc.heap().allocZeroed(40);
+            const uint32_t alloc = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {sb + 36, proc.allocCString("abc"), alloc});
+            call("__ZNSt15basic_stringbufIcSt11char_traitsIcESaIcEE17_M_stringbuf_initESt13_Ios_Openmode", {sb, 16u | 2u});
+            const uint32_t vt = proc.mem().read<uint32_t>(sb);
+            const uint32_t xsputn = proc.mem().read<uint32_t>(vt + 12 * 4);
+            proc.callGuest(cpu, xsputn, {sb, proc.allocCString("def"), 3});
+            const uint32_t strRet = proc.heap().allocZeroed(4);
+            call("__ZNKSt15basic_stringbufIcSt11char_traitsIcESaIcEE3strEv", {strRet, sb});
+            check(proc.readCString(proc.mem().read<uint32_t>(strRet)) == "abcdef",
+                  "std::stringbuf from an inline constructor: _M_stringbuf_init keeps the initial text and appends (ate)");
+        }
+
         // NSCalendar / NSDateComponents: compose, break down, add, difference.
         {
             const ObjC::id calendar = ObjC::id(r.send(cpu, r.getClass("NSCalendar"), "currentCalendar"));
@@ -3076,6 +3178,45 @@ int runFullSubsystemTests() {
             const bool end = uint32_t(r.send(cpu, sc, "isAtEnd")) & 0xFF;
             check(a && i == 42 && b && c && d == 3.5 && e && h == 31 && f && rest == "rest of it" && end,
                   "NSScanner int / case-insensitive string / double / hex / scanUpToString");
+        }
+
+        // AudioQueue recording: microphone samples reach the input callback in the queue's format.
+        {
+            auto callAT = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            int calls = 0;
+            uint32_t gotBytes = 0, gotPackets = 0;
+            int16_t firstSample = 0;
+            const auto cb = proc.registerHostFunction("hvm_test_aq_input", [&](Ctx& cx) {
+                ++calls;
+                const uint32_t buf = cx.cpu.r[2];
+                gotBytes = cx.mem.read<uint32_t>(buf + 8);
+                gotPackets = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
+                firstSample = cx.mem.read<int16_t>(cx.mem.read<uint32_t>(buf + 4));
+            });
+            const uint32_t fmt = proc.heap().allocZeroed(40), out = proc.heap().allocZeroed(8);
+            proc.mem().write<double>(fmt, 8000.0);
+            proc.mem().write<uint32_t>(fmt + 8, 0x6C70636D);   // lpcm
+            proc.mem().write<uint32_t>(fmt + 12, 0x0C);         // signed integer, packed
+            proc.mem().write<uint32_t>(fmt + 16, 2);            // bytes per packet
+            proc.mem().write<uint32_t>(fmt + 20, 1);
+            proc.mem().write<uint32_t>(fmt + 24, 2);            // bytes per frame
+            proc.mem().write<uint32_t>(fmt + 28, 1);            // mono
+            proc.mem().write<uint32_t>(fmt + 32, 16);
+            const uint32_t st1 = callAT("_AudioQueueNewInput", {fmt, cb, 0, 0, 0, 0, out});
+            const uint32_t aq = proc.mem().read<uint32_t>(out);
+            callAT("_AudioQueueAllocateBuffer", {aq, 1600, out + 4});   // 800 frames = 0.1 s
+            const uint32_t buf = proc.mem().read<uint32_t>(out + 4);
+            callAT("_AudioQueueEnqueueBuffer", {aq, buf, 0, 0});
+            std::vector<float> tone(9600, 0.5f);                          // 0.2 s at 48 kHz
+            proc.pushMicrophone(tone.data(), tone.size(), 48000);
+            callAT("_AudioQueueStart", {aq, 0});
+            auto& loop = Foundation::mainRunLoop(proc);
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (calls == 0 && std::chrono::steady_clock::now() < until) loop.runOnce(cpu, 0.02);
+            callAT("_AudioQueueStop", {aq, 1});
+            callAT("_AudioQueueDispose", {aq, 1});
+            check(st1 == 0 && calls == 1 && gotBytes == 1600 && gotPackets == 800 && std::abs(firstSample - 16384) < 64,
+                  "AudioQueue recording fills buffers with microphone audio at the queue's rate and format");
         }
 
         // NSThread -isExecuting / -isFinished across start and the end of the thread's work (Jetpack, #75).
@@ -3394,7 +3535,7 @@ int runFullSubsystemTests() {
             return empty && plus && blank;
         });
         run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
-            const std::string root = proc.homePath() + "/tmp/";
+            const std::string root = proc.guestHomePath() + "/tmp/";
             std::vector<std::string> names;
             for (int i = 0; i < 6; ++i) {
                 const uint32_t buf = proc.heap().allocZeroed(1024);
@@ -3420,7 +3561,7 @@ int runFullSubsystemTests() {
             return ok;
         });
         run("tmpnam(NULL) reuses one guest static buffer", [&] {
-            const std::string root = proc.homePath() + "/tmp/";
+            const std::string root = proc.guestHomePath() + "/tmp/";
             const uint32_t p1 = call("_tmpnam", {0});
             const std::string s1 = proc.readCString(p1);
             const uint32_t p2 = call("_tmpnam", {0});
@@ -3803,6 +3944,78 @@ int runFullSubsystemTests() {
         check(saved && queued == 0 && timers == 0 && frames == 0,
               "Termination finishes save work and suppresses collected/late queue, timer and frame callbacks");
     }
+
+    // Path mapping tests (Issue #80: short iOS guest paths and boundaries)
+    {
+        std::string longHome = "/tmp/hydrogenvm_test_long_home_directory_path_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890_1234567890";
+        std::string longBundle = longHome + "/TestApp.app";
+        ProcessConfig pathCfg;
+        pathCfg.homePath = longHome;
+        pathCfg.bundlePath = longBundle;
+        Process pathProc(pathCfg);
+
+        // 1. Check guest home path format (/var/mobile/Applications/<UUID>)
+        std::string gHome = pathProc.guestHomePath();
+        std::string gBundle = pathProc.guestBundlePath();
+        bool validGHome = gHome.rfind("/var/mobile/Applications/", 0) == 0 && gHome.size() == 61;
+        bool validGBundle = gBundle == gHome + "/TestApp.app";
+
+        // 2. Test hostPath and guestPath mapping
+        std::string hDoc = pathProc.hostPath(gHome + "/Documents/save.dat");
+        std::string hBundleRes = pathProc.hostPath(gBundle + "/data/level1.bin");
+        std::string hTmp = pathProc.hostPath("/tmp/scratch.tmp");
+        std::string hTilde = pathProc.hostPath("~/Library/Preferences");
+
+        bool hostMapOk = (hDoc == longHome + "/Documents/save.dat") &&
+                          (hBundleRes == longBundle + "/data/level1.bin") &&
+                          (hTmp == longHome + "/tmp/scratch.tmp") &&
+                          (hTilde == longHome + "/Library/Preferences");
+
+        // 3. Round-trip testing (300-character guest path round-trip)
+        std::string longSubpath = "/Documents/";
+        while (longSubpath.size() < 250) longSubpath += "sub_dir_123456789/";
+        longSubpath += "file.txt";
+        std::string g300 = gHome + longSubpath; // 24 + 36 + ~250 = ~310 chars
+        std::string h300 = pathProc.hostPath(g300);
+        std::string back300 = pathProc.guestPath(h300);
+
+        bool roundTripOk = (g300.size() >= 300) && (back300 == g300);
+
+        // 4. Double-mapping prevention
+        std::string doubleHost = pathProc.hostPath(hDoc);
+        std::string doubleGuest = pathProc.guestPath(gHome + "/Documents/save.dat");
+        bool noDoubleMap = (doubleHost == hDoc) && (doubleGuest == gHome + "/Documents/save.dat");
+
+        // 5. Virtual guest paths map bidirectionally to host paths
+        bool envOk = (pathProc.hostPath(gHome) == longHome) &&
+                     (pathProc.guestPath(longHome) == gHome);
+
+        check(validGHome && validGBundle && hostMapOk && roundTripOk && noDoubleMap && envOk,
+              "Process::hostPath and guestPath perform 300-char round trips with virtual short paths and no double mapping");
+    }
+
+    // The iPhone app passes directory URL paths: trailing '/', and /private/var
+    // spellings mixed with /var. Joins must keep their '/' (device regression:
+    // ".../<UUID>AngryBirds.app/data/...").
+    {
+        std::error_code ec;
+        const std::string root = "/tmp/hvm_paths_slash/private/var/mobile/Containers/X/Documents/Apps/com.test.app";
+        std::filesystem::create_directories(root + "/Game.app", ec);
+        ProcessConfig c;
+        c.homePath = root + "/";
+        c.bundlePath = root + "/Game.app/";
+        Process pp(c);
+        const std::string gh = pp.guestHomePath(), gb = pp.guestBundlePath();
+        bool ok = gb == gh + "/Game.app" && pp.bundlePath() == root + "/Game.app" && pp.homePath() == root;
+        ok &= pp.guestPath(root + "/Game.app/data/a.png") == gb + "/data/a.png";
+        ok &= pp.guestPath(root + "/Documents/s.dat") == gh + "/Documents/s.dat";
+        ok &= pp.hostPath(gb + "/data/a.png") == root + "/Game.app/data/a.png";
+        ok &= pp.hostPath(gh + "/Documents/s.dat") == root + "/Documents/s.dat";
+        ok &= pp.hostPath("/private" + gh + "/Documents/s.dat") == root + "/Documents/s.dat";
+        if (!ok) std::printf("    gh=%s gb=%s g(res)=%s\n", gh.c_str(), gb.c_str(), pp.guestPath(root + "/Game.app/data/a.png").c_str());
+        check(ok, "Path mapping keeps '/' when the app passes paths with a trailing slash, and accepts /private/var spellings");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

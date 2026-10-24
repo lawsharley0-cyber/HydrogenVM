@@ -31,6 +31,8 @@ constexpr uint32_t kRenderbufferWidth = 0x8D42, kRenderbufferHeight = 0x8D43;
 constexpr uint32_t kFbAttachmentObjectType = 0x8CD0, kFbAttachmentObjectName = 0x8CD1;
 constexpr uint32_t kColorBufferBit = 0x4000, kNearest = 0x2600;
 constexpr uint32_t kNumCompressedTextureFormats = 0x86A2, kCompressedTextureFormats = 0x86A3;
+constexpr uint32_t kImplementationColorReadType = 0x8B9A;
+constexpr uint32_t kImplementationColorReadFormat = 0x8B9B;
 constexpr uint32_t kMaxTextureSize = 0x0D33;
 constexpr uint32_t kVertexArrayPointer = 0x808E, kNormalArrayPointer = 0x808F, kColorArrayPointer = 0x8090,
                    kTexCoordArrayPointer = 0x8092, kPointSizeArrayPointer = 0x898C;
@@ -390,6 +392,15 @@ void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
     }
     hc->fn.glGetIntegerv(pname, out);
     if (pname == kMaxTextureSize) *out = std::min(*out, 4096);   // what iOS devices of this era report
+    if (pname == 0x8DF9 /*GL_NUM_SHADER_BINARY_FORMATS*/) *out = 0;
+    // iPhone 5-era limits, never above what the host can actually do.
+    if (pname == 0x8D57 /*GL_MAX_SAMPLES_APPLE*/) *out = std::min(*out, 4);
+    if (pname == 0x851C /*GL_MAX_CUBE_MAP_TEXTURE_SIZE*/) *out = std::min(*out, 4096);
+    if (pname == 0x8B4C /*GL_MAX_VERTEX_ATTRIBS*/) *out = std::min(*out, 16);
+    if (pname == 0x8872 /*GL_MAX_TEXTURE_IMAGE_UNITS*/) *out = std::min(*out, 8);
+
+    if (pname == kImplementationColorReadType) *out = kUnsignedByte;
+    if (pname == kImplementationColorReadFormat) *out = kRgba;
 }
 
 static bool hostHasPvrtc(HostContext* hc) {

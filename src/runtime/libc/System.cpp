@@ -40,7 +40,7 @@ void s_stack_chk_fail(Ctx& x) {
     throw std::runtime_error("stack buffer overflow detected (__stack_chk_fail) in " + x.proc.describeAddress(x.cpu.r[CPU::kLR]));
 }
 int32_t s_NSGetExecutablePath(Ctx& x, GuestPtr buf, GuestPtr sizep) {
-    const std::string& p = x.proc.executablePath();
+    const std::string& p = x.proc.guestExecutablePath();
     const uint32_t size = x.mem.read<uint32_t>(sizep);
     if (size < p.size() + 1) { x.mem.write<uint32_t>(sizep, uint32_t(p.size() + 1)); return -1; }
     x.mem.copyIn(buf, p.c_str(), p.size() + 1);
@@ -230,7 +230,7 @@ int32_t s_uname(Ctx& x, GuestPtr u) {
 
 uint32_t d_image_count(Ctx&) { return 1; }
 uint32_t d_image_header(Ctx& x, uint32_t i) { return i == 0 ? x.proc.image().headerAddr : 0; }
-uint32_t d_image_name(Ctx& x, uint32_t i) { return i == 0 ? x.proc.internCString(x.proc.executablePath()) : 0; }
+uint32_t d_image_name(Ctx& x, uint32_t i) { return i == 0 ? x.proc.internCString(x.proc.guestExecutablePath()) : 0; }
 int32_t d_image_slide(Ctx& x, uint32_t i) { return i == 0 ? int32_t(x.proc.image().slide) : 0; }
 void d_register_add_image(Ctx& x, GuestPtr fn) { x.proc.callGuest(x.cpu, fn, {x.proc.image().headerAddr, x.proc.image().slide}); }
 void d_register_remove_image(Ctx&, GuestPtr) {}
@@ -243,6 +243,10 @@ uint32_t d_dlopen(Ctx& x, GuestPtr path, int32_t) {
 uint32_t d_dlsym(Ctx& x, uint32_t, GuestPtr name) {
     const std::string n = "_" + x.proc.readCString(name);
     if (auto a = x.proc.lookupSymbol(n)) return *a;
+    // The app's own exported functions (Unity/Mono P/Invoke into plugins linked
+    // into the executable, e.g. "InitEveryplay"); symbolsByAddr keeps one name per
+    // address and misses aliases.
+    if (auto it = x.proc.image().exports.find(n); it != x.proc.image().exports.end()) return it->second;
     for (const auto& [addr, sym] : x.proc.image().symbolsByAddr)
         if (sym == n) return addr;
     x.proc.logf(LogLevel::Warning, "dlsym: %s not found", n.c_str() + 1);
@@ -267,7 +271,7 @@ uint32_t d_dlerror(Ctx&) { return 0; }
 int32_t d_dladdr(Ctx& x, GuestPtr addr, GuestPtr info) {
     const auto& img = x.proc.image();
     if (addr < img.lowAddr || addr >= img.highAddr) return 0;
-    x.mem.write<uint32_t>(info, x.proc.internCString(x.proc.executablePath()));
+    x.mem.write<uint32_t>(info, x.proc.internCString(x.proc.guestExecutablePath()));
     x.mem.write<uint32_t>(info + 4, img.headerAddr);
     const std::string sym = img.symbolicate(addr & ~1u);
     const std::string name = sym.substr(0, sym.find(" + "));
@@ -308,16 +312,17 @@ int hostOpenFlags(uint32_t f) {
 }
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
-    const std::string p = x.proc.readCString(path);
-    const int fd = ::open(p.c_str(), hostOpenFlags(flags), mode & 0777);
+    const std::string gp = x.proc.readCString(path);
+    const std::string hp = x.proc.hostPath(gp);
+    const int fd = ::open(hp.c_str(), hostOpenFlags(flags), mode & 0777);
     if (fd < 0) {
-        x.proc.recordFileOpen(p, "open", errno, -1, 0, false);
+        x.proc.recordFileOpen(gp, "open", errno, -1, 0, false);
         return failD<int32_t>(x);
     }
     int64_t sz = -1;
     struct stat st;
     if (::fstat(fd, &st) == 0) sz = st.st_size;
-    const uint64_t h = x.proc.recordFileOpen(p, "open", 0, sz, 0, true);
+    const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
     ofs.tracks[fd] = {h, 0};
@@ -465,15 +470,58 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
     x.mem.write<int64_t>(out + 68, int64_t(st.st_blocks));
     x.mem.write<int32_t>(out + 76, int32_t(st.st_blksize));
 }
+// Legacy struct stat (32-bit ino_t), what the plain _stat/_lstat/_fstat symbols
+// fill on armv7 iOS: 96 bytes, st_size at 48. Writing the 108-byte $INODE64
+// layout there put the size at 60 (apps read 0) and ran 12 bytes past the
+// caller's buffer (Survivalcraft/Mono: "Could not load Manifest asset!").
+void storeStatLegacy(Ctx& x, GuestPtr out, const struct stat& st) {
+    uint8_t wide[108];
+    const GuestPtr tmp = x.proc.heap().alloc(108);
+    storeStat(x, tmp, st);
+    std::memcpy(wide, x.mem.host(tmp), 108);
+    x.proc.heap().free(tmp);
+    auto rd32 = [&](uint32_t o) { uint32_t v; std::memcpy(&v, wide + o, 4); return v; };
+    std::memset(x.mem.host(out), 0, 96);
+    x.mem.write<uint32_t>(out + 0, rd32(0));                       // st_dev
+    x.mem.write<uint32_t>(out + 4, uint32_t(st.st_ino));           // st_ino (32-bit)
+    x.mem.write<uint16_t>(out + 8, uint16_t(rd32(4) & 0xffff));    // st_mode
+    x.mem.write<uint16_t>(out + 10, uint16_t(rd32(4) >> 16));      // st_nlink
+    x.mem.write<uint32_t>(out + 12, rd32(16));                     // st_uid
+    x.mem.write<uint32_t>(out + 16, rd32(20));                     // st_gid
+    x.mem.write<uint32_t>(out + 20, rd32(24));                     // st_rdev
+    std::memcpy(x.mem.host(out + 24), wide + 28, 24);              // atime, mtime, ctime
+    std::memcpy(x.mem.host(out + 48), wide + 60, 8);               // st_size
+    std::memcpy(x.mem.host(out + 56), wide + 68, 8);               // st_blocks
+    x.mem.write<uint32_t>(out + 64, rd32(76));                     // st_blksize
+}
+int32_t f_statLegacy(Ctx& x, GuestPtr path, GuestPtr out) {
+    struct stat st;
+    if (::stat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
+    storeStatLegacy(x, out, st);
+    return 0;
+}
+int32_t f_lstatLegacy(Ctx& x, GuestPtr path, GuestPtr out) {
+    struct stat st;
+    if (::lstat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
+    storeStatLegacy(x, out, st);
+    return 0;
+}
+int32_t f_fstatLegacy(Ctx& x, int32_t fd, GuestPtr out) {
+    struct stat st;
+    if (fd <= 2) { std::memset(&st, 0, sizeof st); st.st_mode = S_IFCHR | 0666; storeStatLegacy(x, out, st); return 0; }
+    if (::fstat(fd, &st) < 0) return failD<int32_t>(x);
+    storeStatLegacy(x, out, st);
+    return 0;
+}
 int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    if (::stat(x.proc.readCString(path).c_str(), &st) < 0) return failD<int32_t>(x);
+    if (::stat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
 int32_t f_lstat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    if (::lstat(x.proc.readCString(path).c_str(), &st) < 0) return failD<int32_t>(x);
+    if (::lstat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
@@ -484,15 +532,15 @@ int32_t f_fstat(Ctx& x, int32_t fd, GuestPtr out) {
     storeStat(x, out, st);
     return 0;
 }
-int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.readCString(path).c_str(), mode) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.readCString(path).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_chdir(Ctx& x, GuestPtr path) { return ::chdir(x.proc.readCString(path).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+int32_t f_chdir(Ctx& x, GuestPtr path) { return ::chdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
 uint32_t f_getcwd(Ctx& x, GuestPtr buf, uint32_t size) {
     char tmp[4096];
     if (!::getcwd(tmp, sizeof tmp)) return failD<uint32_t>(x, 0);
-    const std::string s = tmp;
+    const std::string s = x.proc.guestPath(tmp);
     if (!buf) return x.proc.allocCString(s);
     if (size < s.size() + 1) { setErrno(x, ERANGE); return 0; }
     x.mem.copyIn(buf, s.c_str(), s.size() + 1);
@@ -500,6 +548,7 @@ uint32_t f_getcwd(Ctx& x, GuestPtr buf, uint32_t size) {
 }
 int32_t f_chmod(Ctx&, GuestPtr, uint32_t) { return 0; }
 int32_t f_utimes(Ctx&, GuestPtr, GuestPtr) { return 0; }
+int32_t f_utime(Ctx&, GuestPtr, GuestPtr) { return 0; }
 
 struct Dirs {
     explicit Dirs(Process&) {}
@@ -508,7 +557,7 @@ struct Dirs {
     std::unordered_map<uint32_t, D> open;
 };
 uint32_t f_opendir(Ctx& x, GuestPtr path) {
-    DIR* d = ::opendir(x.proc.readCString(path).c_str());
+    DIR* d = ::opendir(x.proc.hostPath(x.proc.readCString(path)).c_str());
     if (!d) return failD<uint32_t>(x, 0);
     const uint32_t h = x.proc.heap().allocZeroed(64);
     const uint32_t entry = x.proc.heap().allocZeroed(1048);
@@ -808,9 +857,12 @@ void registerLibcSystem(Process& p) {
     p.def<&f_fsync>("_fsync");
     p.def<&f_ftruncate>("_ftruncate");
     p.def<&f_dup>("_dup");
-    for (const char* n : {"_stat", "_stat$INODE64", "_stat64"}) p.def<&f_stat>(n);
-    for (const char* n : {"_lstat", "_lstat$INODE64", "_lstat64"}) p.def<&f_lstat>(n);
-    for (const char* n : {"_fstat", "_fstat$INODE64", "_fstat64"}) p.def<&f_fstat>(n);
+    for (const char* n : {"_stat$INODE64", "_stat64"}) p.def<&f_stat>(n);
+    for (const char* n : {"_lstat$INODE64", "_lstat64"}) p.def<&f_lstat>(n);
+    for (const char* n : {"_fstat$INODE64", "_fstat64"}) p.def<&f_fstat>(n);
+    p.def<&f_statLegacy>("_stat");
+    p.def<&f_lstatLegacy>("_lstat");
+    p.def<&f_fstatLegacy>("_fstat");
     p.def<&f_access>("_access");
     p.def<&f_mkdir>("_mkdir");
     p.def<&f_rmdir>("_rmdir");
@@ -819,6 +871,7 @@ void registerLibcSystem(Process& p) {
     p.def<&f_getcwd>("_getcwd");
     p.def<&f_chmod>("_chmod");
     p.def<&f_utimes>("_utimes");
+    p.def<&f_utime>("_utime");
     for (const char* n : {"_opendir", "_opendir$INODE64", "_opendir$INODE64$UNIX2003", "_opendir$UNIX2003"}) p.def<&f_opendir>(n);
     for (const char* n : {"_readdir", "_readdir$INODE64"}) p.def<&f_readdir>(n);
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
@@ -866,6 +919,7 @@ void registerLibcSystem(Process& p) {
     p.defineData("_vm_page_size", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4096); return c; }());
     p.defineData("_vm_page_mask", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 4095); return c; }());
     p.defineData("_vm_page_shift", [&] { const uint32_t c = p.allocStatic(4); p.mem().write<uint32_t>(c, 12); return c; }());
+    p.defineData("_NDR_record", [&] { const uint32_t c = p.allocStatic(8); p.mem().write<uint64_t>(c, 0); return c; }());
 }
 
 } // namespace Hydrogen::Runtime

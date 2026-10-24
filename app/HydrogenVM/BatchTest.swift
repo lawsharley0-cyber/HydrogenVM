@@ -23,12 +23,16 @@ struct BatchTestOptions: Codable, Sendable {
     var rendererMode: BatchRendererMode = .both
     var keepGoing: Bool = true
     var resetSandbox: Bool = false
+    var exploreEnabled: Bool = true
+    var exploreTime: Int = 30
 
-    init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false) {
+    init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false, exploreEnabled: Bool = true, exploreTime: Int = 30) {
         self.secondsPerApp = secondsPerApp
         self.rendererMode = rendererMode
         self.keepGoing = keepGoing
         self.resetSandbox = resetSandbox
+        self.exploreEnabled = exploreEnabled
+        self.exploreTime = exploreTime
     }
 }
 
@@ -80,8 +84,9 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
     var logs: String
     /// The last files the game opened (path, result, size, bytes read), JSON, from the crash bundle.
     var fileHistory: String? = nil
+    var explore: ExploreResult?
 
-    init(bundleId: String, name: String, version: String, minOS: String, mode: String, crashed: Bool, exitCode: Int, summary: String, signature: String? = nil, exceptionKind: String? = nil, crashReport: String? = nil, perf: BatchPerf = BatchPerf(), frame: BatchFrameInfo = BatchFrameInfo(), keepGoing: Bool = true, logs: String = "") {
+    init(bundleId: String, name: String, version: String, minOS: String, mode: String, crashed: Bool, exitCode: Int, summary: String, signature: String? = nil, exceptionKind: String? = nil, crashReport: String? = nil, perf: BatchPerf = BatchPerf(), frame: BatchFrameInfo = BatchFrameInfo(), keepGoing: Bool = true, logs: String = "", explore: ExploreResult? = nil) {
         self.bundleId = bundleId
         self.name = name
         self.version = version
@@ -97,6 +102,7 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
         self.frame = frame
         self.keepGoing = keepGoing
         self.logs = logs
+        self.explore = explore
     }
 }
 
@@ -239,6 +245,40 @@ final class BatchTestRunner {
     private(set) var currentFrame: CGImage?
     private(set) var currentFPS: Int = 0
     private(set) var currentLogs: [String] = []
+    /// The first lines of the session (loading, missing classes): the tail alone
+    /// loses them when an app floods the log while it stops.
+    private var headLogs: [String] = []
+    var lastLog: String? { currentLogs.last ?? headLogs.last }
+    private var logLineCount = 0
+    private var lastLogLine = ""
+    private var lastLogRepeats = 0
+
+    private func keepLog(_ raw: String) {
+        let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty else { return }
+        if line == lastLogLine {
+            lastLogRepeats += 1
+            let folded = "\(lastLogRepeats + 1)× " + line
+            if let i = currentLogs.indices.last { currentLogs[i] = folded } else if let i = headLogs.indices.last { headLogs[i] = folded }
+            return
+        }
+        lastLogLine = line
+        lastLogRepeats = 0
+        logLineCount += 1
+        if headLogs.count < 60 { headLogs.append(line); return }
+        currentLogs.append(line)
+        if currentLogs.count > 500 { currentLogs.removeFirst() }
+    }
+
+    /// The session's first 60 lines and its last 120, repeats folded.
+    private func makeLogExcerpt() -> String {
+        let tail = Array(currentLogs.suffix(120))
+        let skipped = logLineCount - headLogs.count - tail.count
+        var lines = headLogs
+        if skipped > 0 { lines.append("… \(skipped) lines …") }
+        lines += tail
+        return lines.joined(separator: "\n")
+    }
     private(set) var progressText: String = ""
 
     @ObservationIgnored private var activeSession: HVMSession?
@@ -370,6 +410,10 @@ final class BatchTestRunner {
         currentApp = target.app
         currentModeName = target.modeName
         currentLogs = []
+        headLogs = []
+        logLineCount = 0
+        lastLogLine = ""
+        lastLogRepeats = 0
         currentFrame = nil
         lastCapturedFrame = nil
         gpuSampleLines = []
@@ -405,8 +449,7 @@ final class BatchTestRunner {
         s.onLog = { [weak self] line, _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.currentLogs.append(line)
-                if self.currentLogs.count > 500 { self.currentLogs.removeFirst() }
+                self.keepLog(line)
                 if line.contains("GPU: presented frame") { self.gpuSampleLines.append(line) }
             }
         }
@@ -439,8 +482,43 @@ final class BatchTestRunner {
             let durationSeconds = Double(self.options.secondsPerApp)
             let deadline = Date().addingTimeInterval(durationSeconds)
 
-            while Date() < deadline && !exitBox.exited && self.status == .running {
-                try? await Task.sleep(for: .milliseconds(250))
+            // A let, so the log closure below can capture it under strict concurrency.
+            let explorePhase: ExplorePhase? = self.options.exploreEnabled
+                ? ExplorePhase(session: s, options: self.options, bundleId: target.app.info.bundleIdentifier) { [weak self] in self?.lastCapturedFrame }
+                : nil
+            if explorePhase != nil {
+
+                let originalOnLog = s.onLog
+                s.onLog = { [weak self] line, level in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.keepLog(line)
+                        if line.contains("GPU: presented frame") { self.gpuSampleLines.append(line) }
+
+                        explorePhase?.recordLogLine(line, level: level)
+                    }
+                }
+
+                while Date() < deadline && !exitBox.exited && self.status == .running {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+
+                if !exitBox.exited && self.status == .running {
+                    let exploreDuration = Double(self.options.exploreTime)
+                    let exploreDeadline = Date().addingTimeInterval(exploreDuration)
+
+                    if let ep = explorePhase {
+                        self.progressText = "Exploring \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
+                        await ep.run(deadline: exploreDeadline, exitBox: exitBox)
+                    }
+                }
+
+                s.onLog = originalOnLog
+
+            } else {
+                while Date() < deadline && !exitBox.exited && self.status == .running {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
             }
 
             if !exitBox.exited && self.status == .running {
@@ -500,7 +578,7 @@ final class BatchTestRunner {
                 signatureText = "ok"
             }
 
-            let logExcerpt = self.currentLogs.suffix(100).joined(separator: "\n")
+            let logExcerpt = self.makeLogExcerpt()
 
             let appResult = BatchAppResult(
                 bundleId: target.app.info.bundleIdentifier,
@@ -517,7 +595,8 @@ final class BatchTestRunner {
                 perf: BatchPerf(framesPresented: Int(presented), fps: self.currentFPS, frameTimeP95Ms: p95Ms),
                 frame: BatchFrameInfo(signal: frameSig.rawValue, thumbnailPath: thumbRelPath),
                 keepGoing: self.options.keepGoing,
-                logs: logExcerpt
+                logs: logExcerpt,
+                explore: explorePhase?.buildResult(crashed: isCrashed)
             )
 
             var finished = appResult
@@ -578,6 +657,13 @@ final class BatchTestRunner {
             if let files = r.fileHistory, let data = files.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: data) { dict["fileHistory"] = parsed }
             if let ex = r.exceptionKind { dict["exceptionKind"] = ex }
+
+            if let explore = r.explore {
+                if let expData = try? JSONEncoder().encode(explore),
+                   let expParsed = try? JSONSerialization.jsonObject(with: expData) {
+                    dict["explore"] = expParsed
+                }
+            }
             return dict
         }
 
@@ -613,11 +699,21 @@ final class BatchTestRunner {
         let wrongSignal = results.filter { !$0.crashed && $0.frame.signal != "ok" }.count
         let passed = total - crashed - wrongSignal
 
+        let explored = results.filter { $0.explore?.enabled == true }.count
+        let exploreCrashed = results.filter { $0.explore?.enabled == true && $0.explore?.crashed == true }.count
+        let exploreProblems = results.reduce(0) { $0 + ($1.explore?.newProblems.count ?? 0) }
+
         md += "### Summary\n\n"
         md += "- **Total Tests Run:** \(total)\n"
         md += "- **Passed:** \(passed)\n"
         md += "- **Crashed:** \(crashed)\n"
-        md += "- **Wrong Output:** \(wrongSignal)\n\n"
+        md += "- **Wrong Output:** \(wrongSignal)\n"
+        if explored > 0 {
+            md += "- **Explored:** \(explored)\n"
+            md += "- **Explore Crashes:** \(exploreCrashed)\n"
+            md += "- **Explore Problems Discovered:** \(exploreProblems)\n"
+        }
+        md += "\n"
 
         md += "### App Results\n\n"
         md += "| App | Mode | Status | FPS | P95 (ms) | Signal | Summary |\n"

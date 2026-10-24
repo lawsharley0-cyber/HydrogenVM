@@ -210,7 +210,7 @@ uint32_t cfs_createWithBytes(Ctx& x, uint32_t, GuestPtr bytes, int32_t n, uint32
 }
 uint32_t cfs_createWithFile(Ctx& x, uint32_t, id url) {
     const id path = url ? id(R(x).send(x.cpu, url, "path")) : 0;
-    std::ifstream f(path ? utf8(x, path) : std::string(), std::ios::binary);
+    std::ifstream f(path ? x.proc.hostPath(utf8(x, path)) : std::string(), std::ios::binary);
     if (!f) return 0;
     return newStream(x, Stream::Memory, true, std::vector<uint8_t>(std::istreambuf_iterator<char>(f), {}));
 }
@@ -253,7 +253,7 @@ int32_t cfs_write(Ctx& x, id s, GuestPtr buf, int32_t n) { return streamWrite(x,
 // NSStream methods
 id ns_inputWithData(Ctx& x, id, SEL, id data) { return autoreleased(x, newStream(x, Stream::Memory, true, dataBytes(x, data))); }
 id ns_inputWithFile(Ctx& x, id, SEL, id path) {
-    std::ifstream f(path ? utf8(x, path) : std::string(), std::ios::binary);
+    std::ifstream f(path ? x.proc.hostPath(utf8(x, path)) : std::string(), std::ios::binary);
     if (!f) return 0;
     return autoreleased(x, newStream(x, Stream::Memory, true, std::vector<uint8_t>(std::istreambuf_iterator<char>(f), {})));
 }

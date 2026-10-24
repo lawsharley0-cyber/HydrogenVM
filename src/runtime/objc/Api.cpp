@@ -205,19 +205,62 @@ bool p_conforms(Ctx& x, uint32_t protocol, uint32_t other) {
     }
     return false;
 }
-uint32_t p_copyMethods(Ctx& x, uint32_t protocol, bool required, bool instance, GuestPtr count) {
+// A protocol's method list is a method_list_t: { uint32 entsizeAndFlags;
+// uint32 count; method_t[count] } with method_t { const char* name; const char*
+// types; IMP imp } (12 bytes; imp is 0). Returns the (name, types) pairs.
+std::vector<std::pair<uint32_t, uint32_t>> protocolMethods(Ctx& x, uint32_t protocol, bool required, bool instance) {
+    std::vector<std::pair<uint32_t, uint32_t>> out;
+    if (!protocol) return out;
     const uint32_t offset = 12 + (required ? 0 : 8) + (instance ? 0 : 4);
-    const uint32_t list = protocol ? x.mem.read<uint32_t>(protocol + offset) : 0;
-    const uint32_t n = list ? x.mem.read<uint32_t>(list) : 0;
-    if (n > 65536) { if (count) x.mem.write<uint32_t>(count, 0); return 0; }
+    const uint32_t list = x.mem.read<uint32_t>(protocol + offset);
+    if (!list) return out;
+    const uint32_t entsize = x.mem.read<uint32_t>(list) & ~3u;
+    const uint32_t n = x.mem.read<uint32_t>(list + 4);
+    if (entsize < 12 || entsize > 64 || n > 65536) return out;
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t e = list + 8 + i * entsize;
+        out.emplace_back(x.mem.read<uint32_t>(e), x.mem.read<uint32_t>(e + 4));
+    }
+    return out;
+}
+uint32_t p_copyMethods(Ctx& x, uint32_t protocol, bool required, bool instance, GuestPtr count) {
+    const auto methods = protocolMethods(x, protocol, required, instance);
+    const uint32_t n = uint32_t(methods.size());
     if (count) x.mem.write<uint32_t>(count, n);
     if (!n) return 0;
     const uint32_t result = x.proc.heap().allocZeroed((n + 1) * 8);
     for (uint32_t i = 0; i < n; ++i) {
-        x.mem.write<uint32_t>(result + i * 8, rt(x).selFromString(x.mem.read<uint32_t>(list + 4 + i * 8)));
-        x.mem.write<uint32_t>(result + i * 8 + 4, x.mem.read<uint32_t>(list + 8 + i * 8));
+        x.mem.write<uint32_t>(result + i * 8, rt(x).selFromString(methods[i].first));
+        x.mem.write<uint32_t>(result + i * 8 + 4, methods[i].second);
     }
     return result;
+}
+// struct objc_method_description protocol_getMethodDescription(Protocol*, SEL, BOOL required, BOOL instance):
+// the 8-byte struct comes back through the hidden result pointer in r0; the
+// protocol's own list is searched, then the protocols it adopts. {0, 0} if absent.
+void p_getMethodDescription(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], protocol = x.cpu.r[1];
+    const SEL want = SEL(x.cpu.r[2]);
+    const bool required = (x.cpu.r[3] & 0xff) != 0;
+    const bool instance = (x.mem.read<uint32_t>(x.cpu.r[13]) & 0xff) != 0;
+    uint32_t name = 0, types = 0;
+    std::unordered_set<uint32_t> seen;
+    std::vector<uint32_t> todo{protocol};
+    while (!todo.empty() && !name) {
+        const uint32_t p = todo.back();
+        todo.pop_back();
+        if (!p || !seen.insert(p).second) continue;
+        for (const auto& [n, t] : protocolMethods(x, p, required, instance))
+            if (n && rt(x).selFromString(n) == want) { name = want; types = t; break; }
+        const uint32_t list = x.mem.read<uint32_t>(p + 8);
+        const uint32_t count = list ? x.mem.read<uint32_t>(list) : 0;
+        for (uint32_t i = 0; i < count && i < 4096; ++i) todo.push_back(x.mem.read<uint32_t>(list + 4 + i * 4));
+    }
+    if (ret) {
+        x.mem.write<uint32_t>(ret, name);
+        x.mem.write<uint32_t>(ret + 4, types);
+    }
+    x.cpu.r[0] = ret;
 }
 
 // Method objects: guest method_t {SEL name; char *types; IMP imp} per (class, selector).
@@ -527,6 +570,7 @@ void registerObjCApi(Process& p, Runtime& r) {
     p.def<&p_conforms>("_protocol_conformsToProtocol");
     p.def<&p_copyProtocols>("_protocol_copyProtocolList");
     p.def<&p_copyMethods>("_protocol_copyMethodDescriptionList");
+    p.defineFunction("_protocol_getMethodDescription", p_getMethodDescription);
     p.def<&c_getInstanceMethod>("_class_getInstanceMethod");
     p.def<&c_getClassMethod>("_class_getClassMethod");
     p.def<&m_getName>("_method_getName");
