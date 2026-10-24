@@ -1,2 +1,0 @@
-app/device-build.log:error: Multiple commands produce '/Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/Release-iphoneos/HydrogenVM.app/README.txt'
-app/device-build.log:warning: duplicate output file '/Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/Release-iphoneos/HydrogenVM.app/README.txt' on task: CpResource /Users/runner/work/HydrogenVM/HydrogenVM/app/xbuild/Release-iphoneos/HydrogenVM.app/README.txt /Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/README.txt (in target 'HydrogenVM' from project 'HydrogenVM')
