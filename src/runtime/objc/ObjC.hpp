@@ -257,6 +257,12 @@ private:
 
     std::vector<std::pair<Class, bool>> pendingLoads_;   // (class, isCategoryOwner)
     std::vector<uint32_t> pendingCategoryLoads_;
+
+    bool zombiesEnabled_ = false;
+    Class zombieClass_ = 0;
+    std::mutex zombieMu_;
+    std::unordered_map<id, std::string> zombieClassNames_;
+    std::unordered_map<id, std::string> zombieBacktraces_;
 };
 
 Runtime& rt(Process& p);

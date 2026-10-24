@@ -3,6 +3,11 @@
 #import <Foundation/Foundation.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
+extern const void *_kCFNumberNaN;
+extern const void *_kCFNumberNegativeInfinity;
+extern const void *_kCFNumberPositiveInfinity;
+
 
 static int failures = 0, checks = 0;
 #define CHECK(cond, what) do { ++checks; if (cond) printf("ok %s\n", what); else { ++failures; printf("FAIL %s (line %d)\n", what, __LINE__); } } while (0)
@@ -359,6 +364,11 @@ static void testCoreFoundation(void) {
     int v = 77, out = 0;
     CFNumberRef num = CFNumberCreate(NULL, kCFNumberIntType, &v);
     CHECK(CFNumberGetValue(num, kCFNumberSInt32Type, &out) && out == 77 && [(__bridge NSNumber *)num intValue] == 77, "CFNumber");
+
+    double out_d;
+    CHECK(CFNumberGetValue((CFNumberRef)&_kCFNumberNaN, kCFNumberDoubleType, &out_d) && (out_d != out_d), "kCFNumberNaN");
+    CHECK(CFNumberGetValue((CFNumberRef)&_kCFNumberNegativeInfinity, kCFNumberDoubleType, &out_d) && out_d < -1e300, "kCFNumberNegativeInfinity");
+    CHECK(CFNumberGetValue((CFNumberRef)&_kCFNumberPositiveInfinity, kCFNumberDoubleType, &out_d) && out_d > 1e300, "kCFNumberPositiveInfinity");
     CHECK(CFBooleanGetValue(kCFBooleanTrue) && (__bridge id)kCFBooleanTrue == (id)@YES, "kCFBooleanTrue is @YES");
     const void *vals[] = {s, num};
     CFArrayRef arr = CFArrayCreate(NULL, vals, 2, &kCFTypeArrayCallBacks);

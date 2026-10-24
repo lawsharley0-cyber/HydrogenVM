@@ -507,8 +507,15 @@ void Runtime::disposeInstance(CPU::Cpu& c, id obj) {
         std::lock_guard<std::mutex> lk(syncMu_);
         syncLocks_.erase(obj);
     }
-    proc_.mem().write<uint32_t>(obj, 0);
-    proc_.heap().free(obj);
+    if (zombiesEnabled_) {
+        std::lock_guard<std::mutex> lk(zombieMu_);
+        zombieClassNames_[obj] = className(classOf(obj));
+        zombieBacktraces_[obj] = proc_.backtrace(c);
+        proc_.mem().write<uint32_t>(obj, zombieClass_);
+    } else {
+        proc_.mem().write<uint32_t>(obj, 0);
+        proc_.heap().free(obj);
+    }
 }
 
 // ------------------------------------------------------------ retain/release ---

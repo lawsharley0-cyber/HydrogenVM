@@ -38,6 +38,7 @@ struct ProcessConfig {
     std::vector<std::string> extraArgs;
     std::function<void(LogLevel, const std::string&)> log;   // called from any thread
     bool stopOnMissingFunction = true; // false: log and return 0
+    bool enableZombies = false;
     bool traceCalls = false;           // log every HLE call (very slow, for debugging)
     bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
     std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1
