@@ -315,7 +315,7 @@ struct SaveEditorDashboardView: View {
             guard let array = try? JSONDecoder().decode([URL].self, from: recentFilesData) else { return [] }
             return array
         }
-        set {
+        nonmutating set {
             if let data = try? JSONEncoder().encode(Array(newValue.prefix(10))) {
                 recentFilesData = data
             }
@@ -335,114 +335,132 @@ struct SaveEditorDashboardView: View {
         }
     }
 
+    @ViewBuilder private var statusSection: some View {
+        if let msg = statusMessage {
+            Section {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text(msg).font(.subheadline)
+                    Spacer()
+                    Button("Dismiss") { statusMessage = nil }.font(.caption)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var snapshotSection: some View {
+        // Snapshot Backup & Restore Section
+        Section {
+            Button {
+                newSnapshotLabel = "Snapshot \(snapshots.count + 1)"
+                showingSnapshotPrompt = true
+            } label: {
+                Label("Create Save Snapshot Backup", systemImage: "camera.on.rectangle.fill")
+                    .fontWeight(.medium)
+            }
+
+            if snapshots.isEmpty {
+                Text("No snapshots yet. Create a snapshot before modifying save files so you can restore in one tap.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(snapshots) { snap in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(snap.name).font(.subheadline.weight(.medium))
+                            Text(snap.created.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Restore") {
+                            restoreSnapshot(snap)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) {
+                            deleteSnapshot(snap)
+                        }
+                        Button("Zip Export") {
+                            exportZipSnapshot(snap)
+                        }
+                        .tint(.blue)
+                    }
+                }
+            }
+        } header: {
+            Text("Save State Snapshots (Documents + Library)")
+        }
+    }
+
+    @ViewBuilder private var closeGameNote: some View {
+        Section {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle.fill").foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Important: Close the game before saving edits").font(.caption.weight(.semibold))
+                    Text("If the game is still running in memory, it may overwrite save edits with RAM state upon exit.").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var recentSection: some View {
+        // Discovered Save Files by Category
+        if !recentFiles.isEmpty && searchText.isEmpty {
+            Section("Recent Files") {
+                ForEach(recentFiles, id: \.self) { url in
+                    Button {
+                        let item = FileItem(url: url, isDirectory: false, size: 0, modified: nil)
+                        editingFile = item
+                    } label: {
+                        HStack {
+                            Image(systemName: "clock.fill")
+                                .foregroundStyle(.tint)
+                            Text(url.lastPathComponent)
+                            Spacer()
+                            Text(url.deletingLastPathComponent().lastPathComponent)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var filesSection: some View {
+        if discovered.isEmpty {
+            ContentUnavailableView(
+                "No Save Files Found Yet",
+                systemImage: "tray",
+                description: Text("Launch \(app.title) first so it creates its save files, preferences, or databases in Documents and Library.")
+            )
+        } else {
+            ForEach(DiscoveredSaveFile.Category.allCases, id: \.rawValue) { cat in
+                let group = filteredFiles.filter { $0.category == cat }
+                if !group.isEmpty {
+                    Section(cat.rawValue) {
+                        ForEach(group) { entry in
+                            Button { editingFile = entry.item } label: { SaveFileRow(entry: entry) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The list is split into sections so each stays small enough for the
+    // Swift type checker (one combined body timed out on the Mac build).
     var body: some View {
         List {
-            if let msg = statusMessage {
-                Section {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        Text(msg).font(.subheadline)
-                        Spacer()
-                        Button("Dismiss") { statusMessage = nil }.font(.caption)
-                    }
-                }
-            }
-
-            // Snapshot Backup & Restore Section
-            Section {
-                Button {
-                    newSnapshotLabel = "Snapshot \(snapshots.count + 1)"
-                    showingSnapshotPrompt = true
-                } label: {
-                    Label("Create Save Snapshot Backup", systemImage: "camera.on.rectangle.fill")
-                        .fontWeight(.medium)
-                }
-
-                if snapshots.isEmpty {
-                    Text("No snapshots yet. Create a snapshot before modifying save files so you can restore in one tap.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(snapshots) { snap in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(snap.name).font(.subheadline.weight(.medium))
-                                Text(snap.created.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Restore") {
-                                restoreSnapshot(snap)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                        }
-                        .swipeActions {
-                            Button("Delete", role: .destructive) {
-                                deleteSnapshot(snap)
-                            }
-                            Button("Zip Export") {
-                                exportZipSnapshot(snap)
-                            }
-                            .tint(.blue)
-                        }
-                    }
-                }
-            } header: {
-                Text("Save State Snapshots (Documents + Library)")
-            }
-
-            Section {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "info.circle.fill").foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Important: Close the game before saving edits").font(.caption.weight(.semibold))
-                        Text("If the game is still running in memory, it may overwrite save edits with RAM state upon exit.").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            // Discovered Save Files by Category
-            if !recentFiles.isEmpty && searchText.isEmpty {
-                Section("Recent Files") {
-                    ForEach(recentFiles, id: \.self) { url in
-                        Button {
-                            let item = FileItem(url: url, isDirectory: false, size: 0, modified: nil)
-                            editingFile = item
-                        } label: {
-                            HStack {
-                                Image(systemName: "clock.fill")
-                                    .foregroundStyle(.tint)
-                                Text(url.lastPathComponent)
-                                Spacer()
-                                Text(url.deletingLastPathComponent().lastPathComponent)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if discovered.isEmpty {
-                ContentUnavailableView(
-                    "No Save Files Found Yet",
-                    systemImage: "tray",
-                    description: Text("Launch \(app.title) first so it creates its save files, preferences, or databases in Documents and Library.")
-                )
-            } else {
-                ForEach(DiscoveredSaveFile.Category.allCases, id: \.rawValue) { cat in
-                    let group = filteredFiles.filter { $0.category == cat }
-                    if !group.isEmpty {
-                        Section(cat.rawValue) {
-                            ForEach(group) { entry in
-                                Button { editingFile = entry.item } label: { SaveFileRow(entry: entry) }
-                            }
-                        }
-                    }
-                }
-            }
+            statusSection
+            snapshotSection
+            closeGameNote
+            recentSection
+            filesSection
         }
         .navigationTitle("\(app.title) — Save Editor")
         .searchable(text: $searchText, prompt: "Search saves, plists, databases…")
