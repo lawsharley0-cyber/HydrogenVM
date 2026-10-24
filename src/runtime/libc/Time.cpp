@@ -50,9 +50,8 @@ int32_t t_gettimeofday(Ctx& x, GuestPtr tv, GuestPtr tz) {
     return 0;
 }
 uint32_t t_clock(Ctx&) { return uint32_t(std::clock() * (1000000.0 / CLOCKS_PER_SEC)); }
-uint64_t t_mach_absolute_time(Ctx& x) {
-    const auto elapsed = Clock::now() - x.proc.perf().origin;
-    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+uint64_t t_mach_absolute_time(Ctx&) {
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count());
 }
 int32_t t_mach_timebase_info(Ctx& x, GuestPtr info) {
     x.mem.write<uint32_t>(info, 1);       // mach_absolute_time() is in nanoseconds here

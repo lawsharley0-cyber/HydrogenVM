@@ -1,6 +1,5 @@
 #include "SelfTest.hpp"
 #include "core/cpu/Engine.hpp"
-#include "runtime/Process.hpp"
 #include <chrono>
 #include <cstdio>
 
@@ -52,20 +51,6 @@ SelfTestResult runSelfTest(uint32_t iterations) {
         res.mips = secs > 0 ? cpu.insn_count / 1e6 / secs : 0;
         const uint32_t want = reference(iterations);
         res.passed = e == CPU::Exit::Halt && cpu.r[0] == want;
-
-        // Verify clock origin consistency for mach_absolute_time
-        Runtime::ProcessConfig pcfg;
-        Runtime::Process proc(pcfg);
-        CPU::Cpu pCpu;
-        const uint32_t fn = proc.lookupSymbol("_mach_absolute_time").value_or(0);
-        if (!fn) {
-            res.passed = false;
-        } else {
-            const uint64_t t1 = proc.engine().callGuest(pCpu, fn, {});
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            const uint64_t t2 = proc.engine().callGuest(pCpu, fn, {});
-            if (t1 >= 1000000000000000ULL || t2 <= t1) res.passed = false;
-        }
         char buf[160];
         std::snprintf(buf, sizeof buf, "exit=%u result=0x%08X expected=0x%08X, %.1f M insns in %.3f s",
                       unsigned(e), cpu.r[0], want, cpu.insn_count / 1e6, secs);

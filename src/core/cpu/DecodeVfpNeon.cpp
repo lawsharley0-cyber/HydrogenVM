@@ -48,7 +48,7 @@ R vfpDataProcessing(BlockBuilder& bb, uint32_t insn) {
     const bool op6 = bit(insn, 6);
     switch (opc1) {
         case 0: op6 ? emitVfp3<kVMls>(bb, dp, d, n, m) : emitVfp3<kVMla>(bb, dp, d, n, m); return R::Continue;
-        case 1: op6 ? emitVfp3<kVNMla>(bb, dp, d, n, m) : emitVfp3<kVNMls>(bb, dp, d, n, m); return R::Continue;
+        case 1: op6 ? emitVfp3<kVNMls>(bb, dp, d, n, m) : emitVfp3<kVNMla>(bb, dp, d, n, m); return R::Continue;
         case 2: op6 ? emitVfp3<kVNMul>(bb, dp, d, n, m) : emitVfp3<kVMul>(bb, dp, d, n, m); return R::Continue;
         case 3: op6 ? emitVfp3<kVSub>(bb, dp, d, n, m) : emitVfp3<kVAdd>(bb, dp, d, n, m); return R::Continue;
         case 4: if (op6) break; emitVfp3<kVDiv>(bb, dp, d, n, m); return R::Continue;

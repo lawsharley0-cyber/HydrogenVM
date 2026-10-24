@@ -29,10 +29,10 @@ vfp_nmul_family:
     vmov.f32 s2, #1.0
     vmov.f32 s4, #1.0
     vmov.f32 s5, #10.0
-    vnmul.f32 s3, s0, s1
-    vnmla.f32 s2, s0, s1
-    vnmls.f32 s4, s0, s1
-    vmls.f32 s5, s0, s1
+    vnmul.f32 s3, s0, s1            @ -(2*3) = -6.0 (0xC0C00000)
+    vnmla.f32 s2, s0, s1            @ -1.0 - (2*3) = -7.0 (0xC0E00000)
+    vnmls.f32 s4, s0, s1            @ -1.0 + (2*3) = 5.0 (0x40A00000)
+    vmls.f32 s5, s0, s1             @ 10.0 - (2*3) = 4.0 (0x40800000)
     vmov    r0, s3
     vmov    r1, s2
     vmov    r2, s4
