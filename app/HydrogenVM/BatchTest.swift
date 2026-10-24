@@ -239,6 +239,40 @@ final class BatchTestRunner {
     private(set) var currentFrame: CGImage?
     private(set) var currentFPS: Int = 0
     private(set) var currentLogs: [String] = []
+    /// The first lines of the session (loading, missing classes): the tail alone
+    /// loses them when an app floods the log while it stops.
+    private var headLogs: [String] = []
+    var lastLog: String? { currentLogs.last ?? headLogs.last }
+    private var logLineCount = 0
+    private var lastLogLine = ""
+    private var lastLogRepeats = 0
+
+    private func keepLog(_ raw: String) {
+        let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty else { return }
+        if line == lastLogLine {
+            lastLogRepeats += 1
+            let folded = "\(lastLogRepeats + 1)× " + line
+            if let i = currentLogs.indices.last { currentLogs[i] = folded } else if let i = headLogs.indices.last { headLogs[i] = folded }
+            return
+        }
+        lastLogLine = line
+        lastLogRepeats = 0
+        logLineCount += 1
+        if headLogs.count < 60 { headLogs.append(line); return }
+        currentLogs.append(line)
+        if currentLogs.count > 500 { currentLogs.removeFirst() }
+    }
+
+    /// The session's first 60 lines and its last 120, repeats folded.
+    private func makeLogExcerpt() -> String {
+        let tail = Array(currentLogs.suffix(120))
+        let skipped = logLineCount - headLogs.count - tail.count
+        var lines = headLogs
+        if skipped > 0 { lines.append("… \(skipped) lines …") }
+        lines += tail
+        return lines.joined(separator: "\n")
+    }
     private(set) var progressText: String = ""
 
     @ObservationIgnored private var activeSession: HVMSession?
@@ -370,6 +404,10 @@ final class BatchTestRunner {
         currentApp = target.app
         currentModeName = target.modeName
         currentLogs = []
+        headLogs = []
+        logLineCount = 0
+        lastLogLine = ""
+        lastLogRepeats = 0
         currentFrame = nil
         lastCapturedFrame = nil
         gpuSampleLines = []
@@ -405,8 +443,7 @@ final class BatchTestRunner {
         s.onLog = { [weak self] line, _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.currentLogs.append(line)
-                if self.currentLogs.count > 500 { self.currentLogs.removeFirst() }
+                self.keepLog(line)
                 if line.contains("GPU: presented frame") { self.gpuSampleLines.append(line) }
             }
         }
@@ -500,7 +537,7 @@ final class BatchTestRunner {
                 signatureText = "ok"
             }
 
-            let logExcerpt = self.currentLogs.suffix(100).joined(separator: "\n")
+            let logExcerpt = self.makeLogExcerpt()
 
             let appResult = BatchAppResult(
                 bundleId: target.app.info.bundleIdentifier,

@@ -2623,8 +2623,10 @@ int runFullSubsystemTests() {
             proc.mem().write<uint32_t>(parent + 4, proc.internCString("Parent31"));
             proc.mem().write<uint32_t>(child + 4, proc.internCString("Child31"));
             proc.mem().write<uint32_t>(child + 8, list); proc.mem().write<uint32_t>(list, 1); proc.mem().write<uint32_t>(list + 4, parent);
-            proc.mem().write<uint32_t>(child + 12, methods); proc.mem().write<uint32_t>(methods, 1);
-            proc.mem().write<uint32_t>(methods + 4, proc.internCString("method31")); proc.mem().write<uint32_t>(methods + 8, proc.internCString("v@:"));
+            // method_list_t: entsize 12, count 1, then { name, types, imp }.
+            proc.mem().write<uint32_t>(child + 12, methods); proc.mem().write<uint32_t>(methods, 12); proc.mem().write<uint32_t>(methods + 4, 1);
+            proc.mem().write<uint32_t>(methods + 8, proc.internCString("method31")); proc.mem().write<uint32_t>(methods + 12, proc.internCString("v@:"));
+            proc.mem().write<uint32_t>(methods + 16, 0);
             const auto copied = call("_protocol_copyProtocolList", {child, scratch + 208});
             const auto descriptions = call("_protocol_copyMethodDescriptionList", {child, 1, 1, scratch + 212});
             protocols = call("_protocol_conformsToProtocol", {child, parent}) && !call("_protocol_conformsToProtocol", {parent, child}) &&
@@ -2632,8 +2634,17 @@ int runFullSubsystemTests() {
                 proc.mem().read<uint32_t>(scratch + 212) == 1 && proc.mem().read<uint32_t>(descriptions) == r.sel("method31") &&
                 proc.readCString(proc.mem().read<uint32_t>(descriptions + 4)) == "v@:";
             proc.heap().free(copied); proc.heap().free(descriptions);
+            if (protocols && bound({"_protocol_getMethodDescription"})) {
+                const uint32_t desc = proc.heap().allocZeroed(8);
+                call("_protocol_getMethodDescription", {desc, child, r.sel("method31"), 1, 1});
+                const bool found = proc.mem().read<uint32_t>(desc) == r.sel("method31") &&
+                                   proc.readCString(proc.mem().read<uint32_t>(desc + 4)) == "v@:";
+                call("_protocol_getMethodDescription", {desc, child, r.sel("nothing31"), 1, 1});
+                protocols = found && proc.mem().read<uint32_t>(desc) == 0 && proc.mem().read<uint32_t>(desc + 4) == 0;
+                proc.heap().free(desc);
+            } else protocols = false;
         }
-        check(protocols, "startup protocol metadata preserves adoption, method selectors, types and owned lists");
+        check(protocols, "startup protocol metadata preserves adoption, method selectors, types and owned lists; protocol_getMethodDescription finds them");
         bool bitvectors = bound({"_CFBitVectorCreate", "_CFBitVectorCreateMutableCopy", "_CFBitVectorGetBitAtIndex", "_CFBitVectorSetBitAtIndex"});
         if (bitvectors) {
             proc.mem().write<uint8_t>(scratch + 224, 0xa5);
@@ -3050,6 +3061,33 @@ int runFullSubsystemTests() {
             check(v == "score=-42 0xff     7" && v2 == v, "std::ostringstream formatting (int, hex+showbase, width) and str()");
             proc.heap().free(strRet);
             proc.heap().free(strRet2);
+        }
+
+        // CFURLCreateAbsoluteURLWithBytes resolves against the base URL.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const ObjC::id base = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:isDirectory:", {Foundation::makeString(cx, "/sounds/sfx"), 1}));
+            const uint32_t bytes = proc.allocCString("hit.caf");
+            const ObjC::id url = ObjC::id(call("_CFURLCreateAbsoluteURLWithBytes", {0, bytes, 7, 0x08000100, base, 0}));
+            const std::string abs = url ? Foundation::utf8(cx, ObjC::id(r.send(cpu, url, "absoluteString"))) : "";
+            if (abs != "file:///sounds/sfx/hit.caf") std::printf("    got %s\n", abs.c_str());
+            check(abs == "file:///sounds/sfx/hit.caf", "CFURLCreateAbsoluteURLWithBytes resolves the bytes against the base URL");
+        }
+
+        // A stringbuf built by the app's inline constructor, finished by _M_stringbuf_init.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t sb = proc.heap().allocZeroed(40);
+            const uint32_t alloc = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {sb + 36, proc.allocCString("abc"), alloc});
+            call("__ZNSt15basic_stringbufIcSt11char_traitsIcESaIcEE17_M_stringbuf_initESt13_Ios_Openmode", {sb, 16u | 2u});
+            const uint32_t vt = proc.mem().read<uint32_t>(sb);
+            const uint32_t xsputn = proc.mem().read<uint32_t>(vt + 12 * 4);
+            proc.callGuest(cpu, xsputn, {sb, proc.allocCString("def"), 3});
+            const uint32_t strRet = proc.heap().allocZeroed(4);
+            call("__ZNKSt15basic_stringbufIcSt11char_traitsIcESaIcEE3strEv", {strRet, sb});
+            check(proc.readCString(proc.mem().read<uint32_t>(strRet)) == "abcdef",
+                  "std::stringbuf from an inline constructor: _M_stringbuf_init keeps the initial text and appends (ate)");
         }
 
         // NSCalendar / NSDateComponents: compose, break down, add, difference.

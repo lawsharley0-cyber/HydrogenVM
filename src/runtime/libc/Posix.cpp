@@ -95,7 +95,10 @@ int32_t semWait(Ctx& x, uint32_t id, double timeout) {
     const auto deadline = timeout < 0 ? clock::time_point::max() : clock::now() + std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(timeout));
     std::unique_lock<std::mutex> lk(sem->mu);
     while (sem->count <= 0) {
-        if (x.proc.stopping()) return KERN_ABORTED;
+        // Stopping: end the thread like the pthread waits do. Returning KERN_ABORTED
+        // made Unity log "Failed to wait on a semaphore (errno:14)" in a loop, which
+        // filled the session's log and hid the real error.
+        if (x.proc.stopping()) throw ProcessExit(0, "stopping");
         if (clock::now() >= deadline) return KERN_OPERATION_TIMED_OUT;
         sem->cv.wait_until(lk, std::min(deadline, clock::now() + std::chrono::milliseconds(50)));
     }

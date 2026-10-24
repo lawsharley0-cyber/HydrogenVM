@@ -137,7 +137,7 @@ struct BatchTestView: View {
                             .font(.callout.monospacedDigit().weight(.bold))
                             .foregroundStyle(runner.currentFPS >= 30 ? .green : .yellow)
 
-                        if let lastLine = runner.currentLogs.last {
+                        if let lastLine = runner.lastLog {
                             Text(lastLine)
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(.secondary)

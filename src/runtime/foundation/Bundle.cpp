@@ -1158,6 +1158,15 @@ uint32_t cfu_createWithString(Ctx& x, uint32_t, id str, id base) {
 uint32_t cfu_createWithBytes(Ctx& x, uint32_t, GuestPtr p, int32_t n, uint32_t, id base) {
     return newURL(x, std::string(reinterpret_cast<const char*>(x.mem.host(p)), uint32_t(n)), base, true);
 }
+// CFURLCreateAbsoluteURLWithBytes(alloc, bytes, length, encoding, baseURL, useCompatibilityMode):
+// the URL resolved against its base (Army of Darkness opens its sounds this way).
+uint32_t cfu_createAbsoluteWithBytes(Ctx& x, uint32_t, GuestPtr p, int32_t n, uint32_t, id base, uint32_t) {
+    if (!p || n < 0) return 0;
+    const std::string s(reinterpret_cast<const char*>(x.mem.host(p)), uint32_t(n));
+    if (!base) return newURL(x, s, 0, true);
+    const id relative = newURL(x, s, base);
+    return newURL(x, absoluteString(x, relative), 0, true);
+}
 bool cfu_getFsRep(Ctx& x, id url, bool, GuestPtr buf, int32_t max) {
     const std::string p = filePath(x, url);
     if (int32_t(p.size()) + 1 > max) return false;
@@ -1354,6 +1363,7 @@ void registerBundle(Process& p, ObjC::Runtime& r) {
     p.def<&cfu_createFromFsRep>("_CFURLCreateFromFileSystemRepresentation");
     p.def<&cfu_createWithString>("_CFURLCreateWithString");
     p.def<&cfu_createWithBytes>("_CFURLCreateWithBytes");
+    p.def<&cfu_createAbsoluteWithBytes>("_CFURLCreateAbsoluteURLWithBytes");
     p.def<&cfu_getFsRep>("_CFURLGetFileSystemRepresentation");
     p.def<&cfu_copyFsPath>("_CFURLCopyFileSystemPath");
     p.def<&cfu_getString>("_CFURLGetString");
