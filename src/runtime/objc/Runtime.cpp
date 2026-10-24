@@ -55,6 +55,10 @@ ClassBuilder& ClassBuilder::alias(const std::string& sel, const std::string& exi
 // ------------------------------------------------------------ runtime ---
 
 Runtime::Runtime(Process& p) : proc_(p) {
+    zombiesEnabled_ = p.config().enableZombies || std::getenv("HVM_ZOMBIES");
+    if (zombiesEnabled_) {
+        zombieClass_ = allocClassPair("__HVMZombie", 0, 0, true);
+    }
     emptyCache = p.defineDataBlock("__objc_empty_cache", 16);
     p.defineDataBlock("__objc_empty_vtable", 16);
     selAlloc = sel("alloc"); selInit = sel("init"); selDealloc = sel("dealloc"); selRetain = sel("retain");
@@ -395,6 +399,17 @@ IMP Runtime::unrecognized(id self, SEL s) {
 
 void Runtime::unrecognizedFatal(id self, SEL s) {
     const Class cls = classOf(self);
+    if (zombiesEnabled_ && cls == zombieClass_) {
+        std::string origClass, bt;
+        {
+            std::lock_guard<std::mutex> lk(zombieMu_);
+            origClass = zombieClassNames_[self];
+            bt = zombieBacktraces_[self];
+        }
+        char buf[128];
+        std::snprintf(buf, sizeof buf, "-[%s %s]: message sent to deallocated instance 0x%x", origClass.c_str(), selName(s).c_str(), self);
+        throw ObjCError(std::string(buf) + "\n" + bt);
+    }
     const ClassInfo* ci = info(cls);
     const bool meta = ci && ci->isMeta;
     const std::string sig = std::string(meta ? "+[" : "-[") + className(cls) + " " + selName(s) + "]";
