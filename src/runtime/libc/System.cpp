@@ -243,6 +243,10 @@ uint32_t d_dlopen(Ctx& x, GuestPtr path, int32_t) {
 uint32_t d_dlsym(Ctx& x, uint32_t, GuestPtr name) {
     const std::string n = "_" + x.proc.readCString(name);
     if (auto a = x.proc.lookupSymbol(n)) return *a;
+    // The app's own exported functions (Unity/Mono P/Invoke into plugins linked
+    // into the executable, e.g. "InitEveryplay"); symbolsByAddr keeps one name per
+    // address and misses aliases.
+    if (auto it = x.proc.image().exports.find(n); it != x.proc.image().exports.end()) return it->second;
     for (const auto& [addr, sym] : x.proc.image().symbolsByAddr)
         if (sym == n) return addr;
     x.proc.logf(LogLevel::Warning, "dlsym: %s not found", n.c_str() + 1);
