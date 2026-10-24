@@ -186,9 +186,19 @@ int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outB
     x.mem.write<uint32_t>(outBuf, hdr);
     return 0;
 }
+// Same buffer with room for packet descriptions (16-byte AudioStreamPacketDescription each).
+int32_t aq_allocateBufferWithPacketDescriptions(Ctx& x, uint32_t qid, uint32_t byteSize, uint32_t descs, GuestPtr outBuf) {
+    const int32_t r = aq_allocateBuffer(x, qid, byteSize, outBuf);
+    if (r != 0 || !descs) return r;
+    const uint32_t hdr = x.mem.read<uint32_t>(outBuf);
+    x.mem.write<uint32_t>(hdr + 16, descs);
+    x.mem.write<uint32_t>(hdr + 20, x.proc.heap().allocZeroed(descs * 16));
+    return 0;
+}
 int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
     auto& st = ATS(x);
     if (st.queues.count(qid) && buf) {
+        if (const uint32_t pd = x.mem.read<uint32_t>(buf + 20)) x.proc.heap().free(pd);
         auto& v = st.queues[qid].buffers;
         v.erase(std::remove_if(v.begin(), v.end(), [&](const auto& b) { return b.guestAddr == buf; }), v.end());
         x.proc.heap().free(buf);
@@ -685,6 +695,19 @@ int32_t aug_nodeInfo(Ctx& x, uint32_t, int32_t node, GuestPtr outDesc, GuestPtr 
 int32_t aug_isRunning(Ctx& x, uint32_t, GuestPtr outRunning) { if (outRunning) x.mem.write<uint8_t>(outRunning, 1); return 0; }
 int32_t aug_update(Ctx& x, uint32_t, GuestPtr outUpdated) { if (outUpdated) x.mem.write<uint8_t>(outUpdated, 1); return 0; }
 
+// ============================================================= AudioFormat ===
+// No encoder/decoder catalogue: every property reports kAudioFormatUnsupportedPropertyError,
+// which apps treat as "not available" (Talking Bacteria checks for an AAC encoder).
+constexpr int32_t kAudioFormatUnsupportedProperty = 0x70726F70;   // 'prop'
+int32_t afmt_getPropertyInfo(Ctx& x, uint32_t, uint32_t, GuestPtr, GuestPtr outSize) {
+    if (outSize) x.mem.write<uint32_t>(outSize, 0);
+    return kAudioFormatUnsupportedProperty;
+}
+int32_t afmt_getProperty(Ctx& x, uint32_t, uint32_t, GuestPtr, GuestPtr ioSize, GuestPtr) {
+    if (ioSize) x.mem.write<uint32_t>(ioSize, 0);
+    return kAudioFormatUnsupportedProperty;
+}
+
 // =========================================================== AVAudioSession ===
 
 id avs_shared(Ctx& x, id self, SEL) {
@@ -701,6 +724,11 @@ void avs_setDelegate(Ctx&, id, SEL, id) {}
 double avs_rate(Ctx&, id, SEL) { return 44100; }
 float avs_volume(Ctx&, id, SEL) { return 1; }
 bool avs_yesDoubleErr(Ctx&, id, SEL, double, GuestPtr) { return true; }
+id avs_mode(Ctx& x, id, SEL) { return makeString(x, "AVAudioSessionModeDefault"); }
+uint32_t avs_zero(Ctx&, id, SEL) { return 0; }
+uint32_t avs_two(Ctx&, id, SEL) { return 2; }
+double avs_ioDuration(Ctx&, id, SEL) { return 0.0058; }   // 256 frames at 44.1 kHz
+id avs_emptyArray(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
 
 // ============================================================ AVAudioPlayer ===
 
@@ -1241,6 +1269,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aq_newOutput>("_AudioQueueNewOutput");
     p.def<&aq_newInput>("_AudioQueueNewInput");
     p.def<&aq_allocateBuffer>("_AudioQueueAllocateBuffer");
+    p.def<&aq_allocateBufferWithPacketDescriptions>("_AudioQueueAllocateBufferWithPacketDescriptions");
     p.def<&aq_freeBuffer>("_AudioQueueFreeBuffer");
     p.def<&aq_enqueueBuffer>("_AudioQueueEnqueueBuffer");
     p.defineFunction("_AudioQueueEnqueueBufferWithParameters", aq_enqueueWithParams);
@@ -1264,6 +1293,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     // AudioFile & AudioUnit
     p.def<&af_openURL>("_AudioFileOpenURL");
     p.def<&af_getPropertyInfo>("_AudioFileGetPropertyInfo");
+    p.def<&afmt_getPropertyInfo>("_AudioFormatGetPropertyInfo");
+    p.def<&afmt_getProperty>("_AudioFormatGetProperty");
     p.def<&af_getProperty>("_AudioFileGetProperty");
     p.def<&af_readBytes>("_AudioFileReadBytes");
     p.defineFunction("_AudioFileOpenWithCallbacks", af_openWithCallbacks);
@@ -1378,7 +1409,13 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
        .m<&avs_no>("secondaryAudioShouldBeSilencedHint", "c@:").m<&avs_setDelegate>("setDelegate:", "v@:@")
        .m<&avs_rate>("sampleRate", "d@:").m<&avs_rate>("currentHardwareSampleRate", "d@:").m<&avs_rate>("preferredSampleRate", "d@:")
        .m<&avs_yesDoubleErr>("setPreferredSampleRate:error:", "c@:d^@").m<&avs_yesDoubleErr>("setPreferredHardwareSampleRate:error:", "c@:d^@")
-       .m<&avs_yesDoubleErr>("setPreferredIOBufferDuration:error:", "c@:d^@").m<&avs_volume>("outputVolume", "f@:");
+       .m<&avs_yesDoubleErr>("setPreferredIOBufferDuration:error:", "c@:d^@").m<&avs_volume>("outputVolume", "f@:")
+       // Read-only state (Hungry Shark Evolution asks for -mode at startup).
+       .m<&avs_mode>("mode").m<&avs_zero>("categoryOptions", "I@:").m<&avs_no>("isInputAvailable", "c@:")
+       .m<&avs_no>("inputIsAvailable", "c@:").m<&avs_two>("outputNumberOfChannels", "i@:").m<&avs_zero>("inputNumberOfChannels", "i@:")
+       .m<&avs_ioDuration>("IOBufferDuration", "d@:").m<&avs_ioDuration>("preferredIOBufferDuration", "d@:")
+       .m<&avs_ioDuration>("outputLatency", "d@:").m<&avs_ioDuration>("inputLatency", "d@:")
+       .m<&avs_emptyArray>("availableInputs");
     for (const char* n : {"AVAudioSessionCategoryAmbient", "AVAudioSessionCategorySoloAmbient", "AVAudioSessionCategoryPlayback",
                           "AVAudioSessionCategoryRecord", "AVAudioSessionCategoryPlayAndRecord", "AVAudioSessionModeDefault",
                           "AVAudioSessionInterruptionNotification", "AVAudioSessionRouteChangeNotification"}) {

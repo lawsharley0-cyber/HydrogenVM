@@ -1310,6 +1310,46 @@ int runFullSubsystemTests() {
             r.release(cpu,copy);r.release(cpu,style);
         }
         check(support,"Paragraph styles copy independent properties; NSURLCredential snapshots password");
+        bool indexSetArrays = false;
+        {
+            const uint32_t a0 = Foundation::makeString(cx, "A"), a1 = Foundation::makeString(cx, "B"),
+                           a2 = Foundation::makeString(cx, "C"), a3 = Foundation::makeString(cx, "D"),
+                           a4 = Foundation::makeString(cx, "E");
+            const uint32_t arr = Foundation::makeArray(cx, {a0, a1, a2, a3, a4});
+            const uint32_t is13 = Foundation::makeIndexSet(cx, {1, 3});
+            const uint32_t sub = call(arr, "objectsAtIndexes:", {is13});
+            bool subOk = Foundation::arrayItems(cx, sub) == std::vector<id>{a1, a3};
+
+            bool oobSub = false;
+            try { const uint32_t badIS = Foundation::makeIndexSet(cx, {1, 5}); call(arr, "objectsAtIndexes:", {badIS}); }
+            catch (const std::exception& e) { oobSub = std::string(e.what()).find("beyond bounds") != std::string::npos; }
+
+            const uint32_t marr = Foundation::makeArray(cx, {a0, a1, a2, a3, a4}, true, true);
+            call(marr, "removeObjectsAtIndexes:", {is13});
+            bool remOk = Foundation::arrayItems(cx, marr) == std::vector<id>{a0, a2, a4};
+
+            const uint32_t xObj = Foundation::makeString(cx, "X"), yObj = Foundation::makeString(cx, "Y");
+            const uint32_t insArr = Foundation::makeArray(cx, {a0, a1}, true, true);
+            const uint32_t insItems = Foundation::makeArray(cx, {xObj, yObj});
+            call(insArr, "insertObjects:atIndexes:", {insItems, is13});
+            bool insOk = Foundation::arrayItems(cx, insArr) == std::vector<id>{a0, xObj, a1, yObj};
+
+            bool mismatchIns = false;
+            try { const uint32_t oneItem = Foundation::makeArray(cx, {xObj}); call(insArr, "insertObjects:atIndexes:", {oneItem, is13}); }
+            catch (const std::exception& e) { mismatchIns = std::string(e.what()).find("differs from count") != std::string::npos; }
+
+            const uint32_t replArr = Foundation::makeArray(cx, {a0, a1, a2, a3}, true, true);
+            call(replArr, "replaceObjectsAtIndexes:withObjects:", {is13, insItems});
+            bool replOk = Foundation::arrayItems(cx, replArr) == std::vector<id>{a0, xObj, a2, yObj};
+
+            bool oobRepl = false;
+            try { const uint32_t oobIS = Foundation::makeIndexSet(cx, {1, 10}); call(replArr, "replaceObjectsAtIndexes:withObjects:", {oobIS, insItems}); }
+            catch (const std::exception& e) { oobRepl = std::string(e.what()).find("beyond bounds") != std::string::npos; }
+
+            r.release(cpu, marr); r.release(cpu, insArr); r.release(cpu, replArr);
+            indexSetArrays = subOk && oobSub && remOk && insOk && mismatchIns && replOk && oobRepl;
+        }
+        check(indexSetArrays, "NSArray / NSMutableArray index set operations (objectsAtIndexes, remove, insert, replace, bounds)");
         bool geometry=false;
         if(r.getClass("UIBezierPath")) {
             const auto f=[](float v){return std::bit_cast<uint32_t>(v);};
@@ -1857,6 +1897,35 @@ int runFullSubsystemTests() {
             int32_t(callGL("_glGetAttribLocation", {pipeline,proc.allocCString("absent")})) == -1;
         check(diagnostics, "GLES2 exposes compile/link errors, bounded info logs and unknown locations");
 
+        // GL_MAX_VARYING_VECTORS agrees with the linker and gl_MaxVaryingVectors (#14):
+        // N vec4 varyings link, N + 1 do not.
+        {
+            callGL("_glGetIntegerv", {0x8DFC /* GL_MAX_VARYING_VECTORS */, idsAddr + 36});
+            const int32_t maxVaryings = int32_t(proc.mem().read<uint32_t>(idsAddr + 36));
+            auto linksWith = [&](int n) {
+                std::string decl, vbody = "gl_Position = a;", fbody = "vec4 s = vec4(0.0);";
+                for (int i = 0; i < n; ++i) {
+                    decl += "varying vec4 v" + std::to_string(i) + ";";
+                    vbody += "v" + std::to_string(i) + " = a;";
+                    fbody += "s += v" + std::to_string(i) + ";";
+                }
+                const std::string vsrc = "attribute vec4 a;" + decl + "void main(){" + vbody + "}";
+                const std::string fsrc = "precision mediump float;" + decl + "void main(){" + fbody + "gl_FragColor = s;}";
+                const uint32_t v = uint32_t(callGL("_glCreateShader", {0x8B31})), f = uint32_t(callGL("_glCreateShader", {0x8B30}));
+                proc.mem().write<uint32_t>(idsAddr + 48, proc.allocCString(vsrc.c_str()));
+                proc.mem().write<uint32_t>(idsAddr + 52, proc.allocCString(fsrc.c_str()));
+                callGL("_glShaderSource", {v, 1, idsAddr + 48, 0}); callGL("_glCompileShader", {v});
+                callGL("_glShaderSource", {f, 1, idsAddr + 52, 0}); callGL("_glCompileShader", {f});
+                const uint32_t pr = uint32_t(callGL("_glCreateProgram", {}));
+                callGL("_glAttachShader", {pr, v}); callGL("_glAttachShader", {pr, f});
+                callGL("_glLinkProgram", {pr});
+                callGL("_glGetProgramiv", {pr, 0x8B82 /* GL_LINK_STATUS */, idsAddr + 36});
+                return proc.mem().read<uint32_t>(idsAddr + 36) != 0;
+            };
+            check(maxVaryings == 8 && linksWith(maxVaryings) && !linksWith(maxVaryings + 1),
+                  "GL_MAX_VARYING_VECTORS (8) matches the linker: 8 vec4 varyings link, 9 do not");
+        }
+
         // Struct leaves and array elements are real uniform locations. The count==1
         // uniforms above keep the locations this draw already checked.
         uint32_t structVs = shader(0x8B31,
@@ -2372,6 +2441,27 @@ int runFullSubsystemTests() {
         for (uint32_t s : {a, b, c, sub}) call("__ZNSsD1Ev", {s});
         check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap, resize, emptyRep");
 
+        // Out-of-line members some games import (Army of Darkness Defense).
+        {
+            const uint32_t t = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {t, cstr("abcdef"), 0});
+            call("__ZNSs7replaceEmmPKc", {t, 1, 2, cstr("XYZ")});
+            const bool replaced = str(t) == "aXYZdef";
+            const uint32_t rb = call("__ZNSs6rbeginEv", {t});
+            const bool rbeginOk = rb == m.read<uint32_t>(t) + 7;
+            // _M_set_length_and_sharable on a private rep: length 3, terminator, refcount 0.
+            const uint32_t rep = m.read<uint32_t>(t) - 12;
+            call("__ZNSs4_Rep26_M_set_length_and_sharableEm", {rep, 3});
+            const bool setLen = str(t) == "aXY" && m.read<uint8_t>(rep + 12 + 3) == 0 && m.read<uint32_t>(rep + 8) == 0;
+            call("__ZNSs5clearEv", {t});
+            const bool cleared = str(t).empty();
+            const uint32_t hider = proc.heap().allocZeroed(4);
+            call("__ZNSs12_Alloc_hiderC1EPcRKSaIcE", {hider, 0x1234, 0});
+            call("__ZNSsD1Ev", {t});
+            check(replaced && rbeginOk && setLen && cleared && m.read<uint32_t>(hider) == 0x1234,
+                  "std::string out-of-line members: replace(pos,n,const char*), rbegin, _M_set_length_and_sharable, clear, _Alloc_hider");
+        }
+
         // libstdc++ __basic_file<char> tests
         const uint32_t bfile = proc.heap().allocZeroed(16);
         call("__ZNSt12__basic_fileIcEC1EP15__gthread_mutex", {bfile, 0});
@@ -2873,6 +2963,22 @@ int runFullSubsystemTests() {
             proc.heap().free(strRet2);
         }
 
+        // basic_stringbuf _M_stringbuf_init and _M_sync
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t sb = proc.heap().allocZeroed(40);
+            call("__ZNSt15basic_stringbufIcSt11char_traitsIcESaIcEE17_M_stringbuf_initESt13_Ios_Openmode", {sb, 16 /* out */});
+            const uint32_t pbase = proc.heap().alloc(32);
+            proc.mem().copyIn(pbase, "stringbuf sync test", 19);
+            call("__ZNSt15basic_stringbufIcSt11char_traitsIcESaIcEE7_M_syncEPcS1_S1_", {sb, pbase, pbase + 19, pbase + 32});
+            const uint32_t strRet = proc.heap().allocZeroed(4);
+            call("__ZNKSt15basic_stringbufIcSt11char_traitsIcESaIcEE3strEv", {strRet, sb});
+            const std::string got = proc.readCString(proc.mem().read<uint32_t>(strRet));
+            call("__ZNSt15basic_stringbufIcSt11char_traitsIcESaIcEED1Ev", {sb});
+            check(got == "stringbuf sync test", "std::basic_stringbuf _M_stringbuf_init and _M_sync");
+            proc.heap().free(strRet);
+        }
+
         // NSCalendar / NSDateComponents: compose, break down, add, difference.
         {
             const ObjC::id calendar = ObjC::id(r.send(cpu, r.getClass("NSCalendar"), "currentCalendar"));
@@ -3270,6 +3376,73 @@ int runFullSubsystemTests() {
             const std::string s2 = proc.readCString(p2);
             return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
                    !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
+        });
+        run("file open ring tracks guest opens across fopen, open, NSData, and NSFileHandle with live updates and rollover", [&] {
+            namespace fs = std::filesystem;
+            const std::string testDir = proc.homePath() + "/tmp/file_ring_test/";
+            std::error_code ec;
+            fs::create_directories(testDir, ec);
+            const std::string filePath = testDir + "sample.bin";
+            {
+                std::ofstream out(filePath, std::ios::binary);
+                out << "1234567890";
+            }
+            const uint32_t pathPtr = proc.allocCString(filePath);
+            const uint32_t modePtr = proc.allocCString("rb");
+
+            // 1. fopen (read 3 bytes, leave open)
+            const uint32_t fp = call("_fopen", {pathPtr, modePtr});
+            if (fp) {
+                const uint32_t buf = proc.heap().allocZeroed(16);
+                call("_fread", {buf, 1, 3, fp});
+            }
+
+            // Check live visibility before close
+            bool sawLiveOpen = false;
+            for (const auto& rec : proc.fileRing()) {
+                if (rec.path == filePath && rec.api == "fopen" && rec.isOpen && rec.bytesRead == 3) sawLiveOpen = true;
+            }
+
+            if (fp) call("_fclose", {fp});
+
+            // 2. open
+            const int32_t fd = int32_t(call("_open", {pathPtr, 0}));
+            if (fd >= 0) {
+                const uint32_t buf = proc.heap().allocZeroed(16);
+                call("_read", {uint32_t(fd), buf, 4});
+                call("_close", {uint32_t(fd)});
+            }
+
+            // 3. NSData
+            const auto nsPath = Foundation::makeString(cx, filePath);
+            const auto nsData = ObjC::id(r.send(cpu, r.getClass("NSData"), "dataWithContentsOfFile:", {nsPath}));
+
+            // 4. NSFileHandle
+            const auto handle = ObjC::id(r.send(cpu, r.getClass("NSFileHandle"), "fileHandleForReadingAtPath:", {nsPath}));
+            if (handle) {
+                r.send(cpu, handle, "readDataOfLength:", {5});
+                r.send(cpu, handle, "closeFile");
+            }
+
+            bool sawFopen = false, sawOpen = false, sawNSData = false, sawHandle = false;
+            for (const auto& rec : proc.fileRing()) {
+                if (rec.path == filePath) {
+                    if (rec.api == "fopen" && rec.size == 10 && rec.bytesRead == 3 && !rec.isOpen) sawFopen = true;
+                    if (rec.api == "open" && rec.size == 10 && rec.bytesRead == 4 && !rec.isOpen) sawOpen = true;
+                    if (rec.api == "NSData" && rec.size == 10 && rec.bytesRead == 10) sawNSData = true;
+                    if (rec.api == "NSFileHandle" && rec.size == 10 && rec.bytesRead == 5 && !rec.isOpen) sawHandle = true;
+                }
+            }
+
+            // 5. Test 32-entry rollover
+            for (int i = 0; i < 40; ++i) {
+                const std::string dummyPath = testDir + "dummy_" + std::to_string(i) + ".txt";
+                proc.recordFileOpen(dummyPath, "test", 0, 10, 0, false);
+            }
+            const auto history = proc.fileRing();
+            fs::remove_all(testDir, ec);
+
+            return sawLiveOpen && sawFopen && sawOpen && sawNSData && sawHandle && history.size() == 32;
         });
         run("pmatch slots past re_nsub are -1", [&] {
             auto [rc, re] = compile("(a)", REG_EXTENDED);

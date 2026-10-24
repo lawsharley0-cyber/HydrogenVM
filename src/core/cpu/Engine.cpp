@@ -4,6 +4,7 @@
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
+#include <unistd.h>   // write() in the host-fault diagnostics
 
 namespace Hydrogen::CPU {
 
@@ -46,6 +47,7 @@ void hvmProfilePair(Handler a, Handler b) {
 // siglongjmp. All IR handlers are tail calls, so there are no C++ frames with
 // destructors between the fault and run() to skip.
 
+
 namespace {
 
 struct FaultScope {
@@ -58,12 +60,160 @@ thread_local FaultScope* t_scope = nullptr;
 struct sigaction g_oldSegv, g_oldBus;
 std::once_flag g_installOnce;
 
+// ------------------------------------ preallocated thread & log tracking ---
+
+constexpr size_t kMaxCpus = 128;
+static std::atomic<Cpu*> g_activeCpus[kMaxCpus]{};
+
+void registerCpu(Cpu* c) {
+    for (size_t i = 0; i < kMaxCpus; ++i) {
+        Cpu* expected = nullptr;
+        if (g_activeCpus[i].compare_exchange_strong(expected, c, std::memory_order_acq_rel)) {
+            return;
+        }
+    }
+}
+
+void unregisterCpu(Cpu* c) {
+    for (size_t i = 0; i < kMaxCpus; ++i) {
+        Cpu* expected = c;
+        if (g_activeCpus[i].compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+            return;
+        }
+    }
+}
+
+constexpr size_t kLogRingCap = 200;
+constexpr size_t kLogLineCap = 256;
+
+struct LogRingBuffer {
+    char lines[kLogRingCap][kLogLineCap];
+    size_t lengths[kLogRingCap];
+    std::atomic<uint64_t> writeIdx{0};
+};
+
+static LogRingBuffer g_logRing;
+
+void recordLogLineAsyncSafeImpl(const char* data, size_t len) {
+    const uint64_t idx = g_logRing.writeIdx.fetch_add(1, std::memory_order_relaxed);
+    const size_t slot = idx % kLogRingCap;
+    const size_t copyLen = len < (kLogLineCap - 1) ? len : (kLogLineCap - 1);
+    std::memcpy(g_logRing.lines[slot], data, copyLen);
+    g_logRing.lines[slot][copyLen] = '\0';
+    g_logRing.lengths[slot] = copyLen;
+}
+
+// Async-signal-safe I/O primitives using raw write(STDERR_FILENO).
+static std::atomic<int> g_faultFd{STDERR_FILENO};
+static void safeWrite(const char* str, size_t len) {
+    const int fd = g_faultFd.load(std::memory_order_relaxed);
+    while (len > 0) {
+        ssize_t r = ::write(fd, str, len);
+        if (r <= 0) break;
+        str += r;
+        len -= r;
+    }
+}
+
+static void safeWriteStr(const char* str) {
+    if (!str) return;
+    safeWrite(str, std::strlen(str));
+}
+
+static void safeWriteHex(uint64_t val, int width = 8) {
+    static const char hexChars[] = "0123456789abcdef";
+    char buf[32];
+    int pos = sizeof(buf);
+    buf[--pos] = '\0';
+    if (val == 0) {
+        buf[--pos] = '0';
+    } else {
+        while (val > 0 && pos > 0) {
+            buf[--pos] = hexChars[val & 0xF];
+            val >>= 4;
+        }
+    }
+    while ((sizeof(buf) - 1 - pos) < (size_t)width && pos > 0) {
+        buf[--pos] = '0';
+    }
+    safeWriteStr(buf + pos);
+}
+
+static void safeWriteDec(uint64_t val) {
+    char buf[32];
+    int pos = sizeof(buf);
+    buf[--pos] = '\0';
+    if (val == 0) {
+        buf[--pos] = '0';
+    } else {
+        while (val > 0 && pos > 0) {
+            buf[--pos] = '0' + (val % 10);
+            val /= 10;
+        }
+    }
+    safeWriteStr(buf + pos);
+}
+
+static std::atomic<bool> g_faultDiagnosticActive{false};
+
 void faultHandler(int sig, siginfo_t* si, void* uctx) {
     FaultScope* s = t_scope;
     if (s && s->arena->containsHost(si->si_addr)) {
         s->addr = s->arena->guestAddr(si->si_addr);
         siglongjmp(s->jb, 1);
     }
+
+    // Host SIGSEGV/SIGBUS fault: print async-signal-safe diagnostic report.
+    if (!g_faultDiagnosticActive.exchange(true, std::memory_order_acq_rel)) {
+        safeWriteStr("\n=== HVM HOST FAULT DIAGNOSTICS ===\nSignal: ");
+        safeWriteStr(sig == SIGSEGV ? "SIGSEGV (Segmentation Fault)" : sig == SIGBUS ? "SIGBUS (Bus Error)" : "OTHER");
+        safeWriteStr("\nHost Fault Address (si_addr): 0x");
+        safeWriteHex(reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr), 16);
+
+        if (s && s->arena) {
+            if (s->arena->containsHost(si->si_addr)) {
+                safeWriteStr("\nGuest Arena Offset: 0x");
+                safeWriteHex(s->arena->guestAddr(si->si_addr), 8);
+            } else {
+                safeWriteStr("\nGuest Arena Base: 0x");
+                safeWriteHex(reinterpret_cast<uintptr_t>(s->arena->base()), 16);
+                safeWriteStr(" (fault address outside guest arena)");
+            }
+        }
+        safeWriteStr("\n\n--- Guest Threads State ---\n");
+
+        for (size_t i = 0; i < kMaxCpus; ++i) {
+            Cpu* c = g_activeCpus[i].load(std::memory_order_relaxed);
+            if (!c) continue;
+            safeWriteStr("Thread slot #");
+            safeWriteDec(i);
+            safeWriteStr(": PC=0x");
+            safeWriteHex(c->r[kPC], 8);
+            safeWriteStr(" LR=0x");
+            safeWriteHex(c->r[kLR], 8);
+            safeWriteStr(" block_pc=0x");
+            safeWriteHex(c->block_pc, 8);
+            safeWriteStr(" in_guest=");
+            safeWriteStr(c->in_guest.load(std::memory_order_relaxed) ? "true" : "false");
+            safeWriteStr(" current_hle=0x");
+            safeWriteHex(c->current_hle.load(std::memory_order_relaxed), 8);
+            safeWriteStr("\n");
+        }
+
+        safeWriteStr("\n--- Recent Logs (last 200) ---\n");
+        const uint64_t totalWritten = g_logRing.writeIdx.load(std::memory_order_relaxed);
+        const uint64_t count = totalWritten < kLogRingCap ? totalWritten : kLogRingCap;
+        const uint64_t startIdx = totalWritten > count ? (totalWritten - count) : 0;
+        for (uint64_t i = startIdx; i < totalWritten; ++i) {
+            const size_t slot = i % kLogRingCap;
+            if (g_logRing.lengths[slot] > 0) {
+                safeWrite(g_logRing.lines[slot], g_logRing.lengths[slot]);
+                safeWriteStr("\n");
+            }
+        }
+        safeWriteStr("=== END HOST FAULT DIAGNOSTICS ===\n\n");
+    }
+
     // Not ours: chain to the previous handler (or default).
     struct sigaction& old = sig == SIGBUS ? g_oldBus : g_oldSegv;
     if (old.sa_flags & SA_SIGINFO) { if (old.sa_sigaction) { old.sa_sigaction(sig, si, uctx); return; } }
@@ -85,6 +235,14 @@ void installFaultHandler() {
 }
 
 } // namespace
+
+Cpu::Cpu() { registerCpu(this); }
+Cpu::~Cpu() { unregisterCpu(this); }
+
+void Engine::recordLogLineAsyncSafe(const char* data, size_t len) {
+    recordLogLineAsyncSafeImpl(data, len);
+}
+void Engine::setFaultReportFd(int fd) { g_faultFd.store(fd >= 0 ? fd : STDERR_FILENO, std::memory_order_relaxed); }
 
 // ---------------------------------------------------------------- engine ---
 

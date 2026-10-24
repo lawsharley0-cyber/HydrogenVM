@@ -370,6 +370,27 @@ void sb_setStr(Ctx& x, GuestPtr sb, GuestPtr str) {
     const std::string v = guestStringValue(x, str);
     withBuf(x, sb, [&](Buf& b) { b.s = v; b.g = 0; b.p = (b.mode & (mAte | mApp)) ? uint32_t(v.size()) : 0; return 0; });
 }
+void sb_stringbufInit(Ctx& x, GuestPtr sb, uint32_t mode) {
+    initStringbuf(x, sb, mode, "");
+}
+void sb_msync(Ctx& x, GuestPtr sb, GuestPtr pbase, GuestPtr pptr, GuestPtr epptr) {
+    if (!ours(x, sb)) return;
+    if (pptr > pbase) {
+        const uint32_t n = pptr - pbase;
+        std::string add(n, '\0');
+        std::memcpy(add.data(), x.mem.host(pbase), n);
+        withBuf(x, sb, [&](Buf& b) {
+            b.s.append(add);
+            for (unsigned char ch : add) b.ws.push_back(char32_t(ch));
+            b.p = uint32_t(b.s.size());
+            return 0;
+        });
+    }
+}
+void sb_pbump(Ctx& x, GuestPtr sb, GuestPtr pb, GuestPtr epptr, int32_t o) {
+    if (!ours(x, sb)) return;
+    wr(x, sb + 20, pb + uint32_t(o)); // pptr = pb + o
+}
 void oss_str(Ctx& x) {
     const uint32_t ret = x.cpu.r[0], oss = x.cpu.r[1];
     const uint32_t sb = oss + 4;
@@ -946,6 +967,9 @@ void registerLibStdcxxStreams(Process& p) {
         {sD1f, sD0f, bImbue, sSetbufF, sSeekoffF, sSeekposF, bSync, sShowF, sXsgetnF, sUnderF, sUflowF, sPbackF, sXsputnF, sOverF});
     p.defineFunction(std::string("__ZNK") + SB + "3strEv", sb_str);
     p.def<&sb_setStr>(sbn("3strERKSs"));
+    p.def<&sb_stringbufInit>(sbn("17_M_stringbuf_initESt13_Ios_Openmode"));
+    p.def<&sb_msync>(sbn("7_M_syncEPcS1_S1_"));
+    p.def<&sb_pbump>(sbn("8_M_pbumpEPcS1_i"));
 
     // Stream vtables: [vcall offset][vbase offset][offset to top][typeinfo][D1][D0]; vptr = +16.
     auto streamVtable = [&](const std::string& name, int32_t vbase, int32_t top, uint32_t d1, uint32_t d0) {

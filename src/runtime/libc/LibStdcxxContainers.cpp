@@ -325,6 +325,25 @@ uint32_t r_refcopy(Ctx& x, GuestPtr rep) {
     return rep + kHdr;
 }
 uint32_t r_refdata(Ctx& x, GuestPtr rep) { return rep ? rep + kHdr : 0; }
+// _Rep::_M_set_length_and_sharable(n): inline in libstdc++, out of line in some
+// builds (Army of Darkness Defense). The shared empty rep is never written.
+template <uint32_t CharSize> void r_setLengthAndSharable(Ctx& x, GuestPtr rep, uint32_t n) {
+    if (!rep) return;
+    const uint32_t empty = CharSize == 1 ? emptyData(x) - kHdr : emptyWData(x) - kHdr;
+    if (rep == empty) return;
+    x.mem.write<uint32_t>(rep + 8, 0);   // sharable
+    x.mem.write<uint32_t>(rep, n);       // length
+    if (CharSize == 1) x.mem.write<uint8_t>(rep + kHdr + n, 0);
+    else x.mem.write<uint32_t>(rep + kHdr + n * 4, 0);
+}
+template <uint32_t CharSize> void r_setSharable(Ctx& x, GuestPtr rep) {
+    const uint32_t empty = CharSize == 1 ? emptyData(x) - kHdr : emptyWData(x) - kHdr;
+    if (rep && rep != empty) x.mem.write<uint32_t>(rep + 8, 0);
+}
+template <uint32_t CharSize> void r_setLeaked(Ctx& x, GuestPtr rep) {
+    const uint32_t empty = CharSize == 1 ? emptyData(x) - kHdr : emptyWData(x) - kHdr;
+    if (rep && rep != empty) x.mem.write<uint32_t>(rep + 8, 0xFFFFFFFFu);
+}
 uint32_t r_emptyRep(Ctx& x) { return x.proc.service<Strings>().emptyRep; }
 
 // --------------------------------------------------------------- std::wstring
@@ -835,6 +854,14 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&q_endConst>("__ZNKSs3endEv");
     p.def<&q_begin>("__ZNSs5beginEv");
     p.def<&q_end>("__ZNSs3endEv");
+    // Out-of-line copies of members libstdc++ normally inlines (Army of Darkness Defense).
+    p.def<+[](Ctx& x, GuestPtr self) { m_leakHard(x, self); const uint32_t d = x.mem.read<uint32_t>(self); return d + len(x, d); }>("__ZNSs6rbeginEv");
+    p.def<+[](Ctx& x, GuestPtr self) { set(x, self, std::string()); }>("__ZNSs5clearEv");
+    p.def<+[](Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr s) {
+        return m_replace(x, self, pos, n, s, s ? uint32_t(x.proc.readCString(s).size()) : 0);
+    }>("__ZNSs7replaceEmmPKc");
+    for (const char* n : {"__ZNSs12_Alloc_hiderC1EPcRKSaIcE", "__ZNSs12_Alloc_hiderC2EPcRKSaIcE"})
+        p.def<+[](Ctx& x, GuestPtr self, GuestPtr data, GuestPtr) { x.mem.write<uint32_t>(self, data); return self; }>(n);
     p.def<&q_atConst>("__ZNKSsixEm");
     p.def<&q_at>("__ZNSsixEm");
     p.def<&q_atConst>("__ZNKSs2atEm");
@@ -863,6 +890,9 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&r_destroy>("__ZNSs4_Rep10_M_destroyERKSaIcE");
     p.def<&r_refcopy>("__ZNSs4_Rep10_M_refcopyEv");
     p.def<&r_refdata>("__ZNSs4_Rep10_M_refdataEv");
+    p.def<&r_setLengthAndSharable<1>>("__ZNSs4_Rep26_M_set_length_and_sharableEm");
+    p.def<&r_setSharable<1>>("__ZNSs4_Rep13_M_set_sharableEv");
+    p.def<&r_setLeaked<1>>("__ZNSs4_Rep13_M_set_leakedEv");
     p.def<&r_emptyRep>("__ZNSs4_Rep12_S_empty_repEv");
 
     // std::wstring
@@ -925,6 +955,9 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&wr_destroy>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep10_M_destroyERKS1_");
     p.def<&r_refcopy>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep10_M_refcopyEv");
     p.def<&r_refdata>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep10_M_refdataEv");
+    p.def<&r_setLengthAndSharable<4>>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep26_M_set_length_and_sharableEm");
+    p.def<&r_setSharable<4>>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep13_M_set_sharableEv");
+    p.def<&r_setLeaked<4>>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep13_M_set_leakedEv");
     p.def<&wr_emptyRep>("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep12_S_empty_repEv");
 
     p.def<&l_hook>("__ZNSt15_List_node_base4hookEPS_");
@@ -975,7 +1008,11 @@ void registerLibStdcxxContainers(Process& p) {
         const uint32_t vp = vtRt + 8;
         p.defineFunction(s, [strExcCtor, vp](Ctx& x) { x.cpu.r[0] = strExcCtor(vp)(x, x.cpu.r[0], x.cpu.r[1]); });
     }
-    for (const char* s : {"__ZNSt11logic_errorC1ERKSs", "__ZNSt11logic_errorC2ERKSs"}) {
+    for (const char* s : {"__ZNSt11logic_errorC1ERKSs", "__ZNSt11logic_errorC2ERKSs",
+                          // length_error etc. share logic_error's layout; their own type info isn't modelled.
+                          "__ZNSt12length_errorC1ERKSs", "__ZNSt12length_errorC2ERKSs",
+                          "__ZNSt12out_of_rangeC1ERKSs", "__ZNSt12out_of_rangeC2ERKSs",
+                          "__ZNSt16invalid_argumentC1ERKSs", "__ZNSt16invalid_argumentC2ERKSs"}) {
         const uint32_t vp = vtLg + 8;
         p.defineFunction(s, [strExcCtor, vp](Ctx& x) { x.cpu.r[0] = strExcCtor(vp)(x, x.cpu.r[0], x.cpu.r[1]); });
     }

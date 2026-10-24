@@ -144,6 +144,89 @@ static void testNumbersAndCollections(void) {
     NSIndexSet *is = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(2, 3)];
     CHECK([is count] == 3 && [is firstIndex] == 2 && [is lastIndex] == 4 && ![is containsIndex:5], "NSIndexSet");
 
+    NSArray *orig = @[@"A", @"B", @"C", @"D", @"E"];
+    NSMutableIndexSet *is13 = [NSMutableIndexSet indexSet];
+    [is13 addIndex:1];
+    [is13 addIndex:3];
+
+    NSArray *sub = [orig objectsAtIndexes:is13];
+    CHECK_STR([sub componentsJoinedByString:@","], "B,D", "NSArray objectsAtIndexes:");
+
+    BOOL caughtOOB = NO;
+    @try {
+        NSMutableIndexSet *badIS = [NSMutableIndexSet indexSetWithIndex:10];
+        (void)[orig objectsAtIndexes:badIS];
+    } @catch (NSException *e) {
+        caughtOOB = [e.name isEqualToString:@"NSRangeException"];
+    }
+    CHECK(caughtOOB, "objectsAtIndexes: out-of-bounds raises NSRangeException");
+
+    NSMutableArray *maIndex = [orig mutableCopy];
+    [maIndex removeObjectsAtIndexes:is13];
+    CHECK_STR([maIndex componentsJoinedByString:@","], "A,C,E", "NSMutableArray removeObjectsAtIndexes:");
+
+    caughtOOB = NO;
+    @try {
+        [maIndex removeObjectsAtIndexes:[NSIndexSet indexSetWithIndex:10]];
+    } @catch (NSException *e) {
+        caughtOOB = [e.name isEqualToString:@"NSRangeException"];
+    }
+    CHECK(caughtOOB, "removeObjectsAtIndexes: out-of-bounds raises NSRangeException");
+
+    NSMutableArray *maIns = [@[@"A", @"B"] mutableCopy];
+    [maIns insertObjects:@[@"X", @"Y"] atIndexes:is13];
+    CHECK_STR([maIns componentsJoinedByString:@","], "A,X,B,Y", "NSMutableArray insertObjects:atIndexes:");
+
+    BOOL caughtMismatch = NO;
+    @try {
+        [maIns insertObjects:@[@"X"] atIndexes:is13];
+    } @catch (NSException *e) {
+        caughtMismatch = YES;
+    }
+    CHECK(caughtMismatch, "insertObjects:atIndexes: count mismatch raises exception");
+
+    caughtOOB = NO;
+    @try {
+        [maIns insertObjects:@[@"X"] atIndexes:[NSIndexSet indexSetWithIndex:100]];
+    } @catch (NSException *e) {
+        caughtOOB = [e.name isEqualToString:@"NSRangeException"];
+    }
+    CHECK(caughtOOB, "insertObjects:atIndexes: out-of-bounds raises NSRangeException");
+
+    NSMutableArray *maRepl = [@[@"A", @"B", @"C", @"D"] mutableCopy];
+    [maRepl replaceObjectsAtIndexes:is13 withObjects:@[@"X", @"Y"]];
+    CHECK_STR([maRepl componentsJoinedByString:@","], "A,X,C,Y", "NSMutableArray replaceObjectsAtIndexes:withObjects:");
+
+    caughtMismatch = NO;
+    @try {
+        [maRepl replaceObjectsAtIndexes:is13 withObjects:@[@"X"]];
+    } @catch (NSException *e) {
+        caughtMismatch = YES;
+    }
+    CHECK(caughtMismatch, "replaceObjectsAtIndexes:withObjects: count mismatch raises exception");
+
+    caughtOOB = NO;
+    @try {
+        [maRepl replaceObjectsAtIndexes:[NSIndexSet indexSetWithIndex:10] withObjects:@[@"X"]];
+    } @catch (NSException *e) {
+        caughtOOB = [e.name isEqualToString:@"NSRangeException"];
+    }
+    CHECK(caughtOOB, "replaceObjectsAtIndexes:withObjects: out-of-bounds raises NSRangeException");
+
+    NSArray *words = @[@"apple", @"pear", @"fig", @"banana"];
+    NSIndexSet *passed = [words indexesOfObjectsPassingTest:^BOOL(NSString *obj, NSUInteger idx, BOOL *stop) {
+        return obj.length > 4;
+    }];
+    CHECK([passed count] == 2 && [passed containsIndex:0] && [passed containsIndex:3], "indexesOfObjectsPassingTest:");
+
+    __block NSUInteger stopCount = 0;
+    NSIndexSet *stopped = [words indexesOfObjectsPassingTest:^BOOL(NSString *obj, NSUInteger idx, BOOL *stop) {
+        stopCount++;
+        if (idx == 1) *stop = YES;
+        return obj.length >= 4;
+    }];
+    CHECK(stopCount == 2 && [stopped count] == 2 && [stopped containsIndex:0] && [stopped containsIndex:1], "indexesOfObjectsPassingTest: stop block");
+
     NSString *desc = [@[@1, @"two"] description];
     CHECK([desc rangeOfString:@"two"].location != NSNotFound, "array description");
     NSMutableData *data = [NSMutableData dataWithLength:2];
@@ -206,6 +289,27 @@ static void testFilesAndBundle(void) {
     NSError *err = nil;
     CHECK([@"level=3" writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:&err], "writeToFile");
     CHECK_STR([NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:NULL], "level=3", "stringWithContentsOfFile");
+
+    NSURL *fileURL = [NSURL fileURLWithPath:file];
+    CHECK_STR([NSString stringWithContentsOfURL:fileURL encoding:NSUTF8StringEncoding error:NULL], "level=3", "stringWithContentsOfURL:encoding:error:");
+    CHECK_STR([NSString stringWithContentsOfURL:fileURL], "level=3", "stringWithContentsOfURL:");
+    CHECK_STR([[NSString alloc] initWithContentsOfURL:fileURL encoding:NSUTF8StringEncoding error:NULL], "level=3", "initWithContentsOfURL:encoding:error:");
+    NSStringEncoding usedEnc = 0;
+    CHECK_STR([[NSString alloc] initWithContentsOfURL:fileURL usedEncoding:&usedEnc error:NULL], "level=3", "initWithContentsOfURL:usedEncoding:error:");
+    CHECK(usedEnc == NSUTF8StringEncoding, "initWithContentsOfURL:usedEncoding:error: sets usedEnc");
+    CHECK_STR([[NSString alloc] initWithContentsOfURL:fileURL], "level=3", "initWithContentsOfURL:");
+
+    NSURL *missingURL = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:@"missing.txt"]];
+    CHECK([NSString stringWithContentsOfURL:missingURL encoding:NSUTF8StringEncoding error:NULL] == nil, "stringWithContentsOfURL missing file returns nil");
+    CHECK([[NSString alloc] initWithContentsOfURL:missingURL encoding:NSUTF8StringEncoding error:NULL] == nil, "initWithContentsOfURL missing file returns nil");
+
+    NSURL *remoteURL = [NSURL URLWithString:@"https://example.com/test.txt"];
+    CHECK([NSString stringWithContentsOfURL:remoteURL encoding:NSUTF8StringEncoding error:NULL] == nil, "stringWithContentsOfURL remote URL returns nil");
+    CHECK([[NSString alloc] initWithContentsOfURL:remoteURL] == nil, "initWithContentsOfURL remote URL returns nil");
+
+    CHECK([NSString stringWithContentsOfURL:nil encoding:NSUTF8StringEncoding error:NULL] == nil, "stringWithContentsOfURL nil returns nil");
+    CHECK([[NSString alloc] initWithContentsOfURL:nil] == nil, "initWithContentsOfURL nil returns nil");
+
     BOOL isDir = NO;
     CHECK([fm fileExistsAtPath:dir isDirectory:&isDir] && isDir, "fileExistsAtPath:isDirectory:");
     CHECK(([[fm contentsOfDirectoryAtPath:dir error:NULL] isEqualToArray:@[@"state.txt"]]), "contentsOfDirectoryAtPath");

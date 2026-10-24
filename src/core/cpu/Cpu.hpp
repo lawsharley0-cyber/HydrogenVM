@@ -87,6 +87,8 @@ inline constexpr size_t kFastSize = 1u << 14;
 inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (kFastSize - 1); }
 
 struct alignas(64) Cpu {
+    Cpu();
+    ~Cpu();
     uint32_t r[kNumRegs] = {};
     uint32_t nzcv  = 0;        // N Z C V in bits 31..28
     uint32_t q     = 0;        // sticky saturation flag (APSR.Q), 0/1

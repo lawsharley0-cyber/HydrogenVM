@@ -218,11 +218,27 @@ void bfile_dtor(Ctx& x, GuestPtr self) {
     }
 }
 
-bool bfile_isOpen(Ctx& x, GuestPtr self) {
+// A __basic_file the game reaches through inline code inside a stream or
+// filebuf that HydrogenVM constructed (std::ifstream f(path); f.is_open()):
+// its address is inside that object, so use the object's file.
+std::FILE* hleFileAround(Ctx& x, GuestPtr self) {
     Streams& s = S(x);
     std::lock_guard<std::mutex> lk(s.mu);
-    auto it = s.basicFiles.find(self);
-    return it != s.basicFiles.end() && it->second != nullptr;
+    std::FILE* best = nullptr;
+    uint32_t bestObj = 0;
+    for (const auto& [obj, st] : s.objects)
+        if (self >= obj && self < obj + 0x200 && obj >= bestObj) { bestObj = obj; best = st.f; }
+    return bestObj ? best : nullptr;
+}
+
+bool bfile_isOpen(Ctx& x, GuestPtr self) {
+    {
+        Streams& s = S(x);
+        std::lock_guard<std::mutex> lk(s.mu);
+        auto it = s.basicFiles.find(self);
+        if (it != s.basicFiles.end()) return it->second != nullptr;
+    }
+    return hleFileAround(x, self) != nullptr;
 }
 
 uint32_t bfile_open(Ctx& x, GuestPtr self, GuestPtr path, uint32_t mode, int32_t prot) {

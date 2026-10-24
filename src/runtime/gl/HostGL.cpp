@@ -5,6 +5,8 @@
 #include "runtime/graphics/Pvrtc.hpp"
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+#include <thread>
 #include <cstring>
 #include <atomic>
 #include <cstdio>
@@ -62,6 +64,9 @@ struct State {
     uint32_t lastGuestContext = 0;
     std::unordered_map<std::string, uint32_t> strings;
     std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
+    std::atomic<int> presents{0};                                                  // direct presents so far
+    std::atomic<bool> toldReadback{false};
+    std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -145,9 +150,38 @@ void loadFns(Platform& pf, HostContext& hc) {
     }
 }
 
+std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestContext, uint32_t sharegroup, bool worker);
+
+// iOS lets one EAGLContext be current on several threads (the app serializes
+// its use; loader threads do this). EGL refuses a context that is current on
+// another thread, and the calls on this thread would then go nowhere. In that
+// case this thread gets its own context in the same share group (textures,
+// buffers and programs are shared; framebuffers and vertex arrays are not).
+HostContext* threadClone(Process& p, HostContext* hc) {
+    State& st = S(p);
+    const uint64_t k = key2(p.currentThread().id, hc->guestSharegroup);
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        auto it = st.workers.find(k);
+        if (it != st.workers.end()) return it->second.get();
+    }
+    auto made = makeContext(p, hc->api, hc->guestContext, hc->guestSharegroup, true);
+    if (!made) return nullptr;
+    p.log(LogLevel::Info, "GPU: thread " + std::to_string(p.currentThread().id) +
+                              " made a context current that is in use on another thread; gave it a shared context");
+    HostContext* raw = made.get();
+    std::lock_guard<std::mutex> lk(st.mu);
+    st.workers[k] = std::move(made);
+    return raw;
+}
+
 void bind(Process& p, HostContext* hc) {
-    if (hc) S(p).platform->makeCurrent(hc->handle);
-    else if (S(p).platform) S(p).platform->makeCurrent(nullptr);
+    State& st = S(p);
+    if (hc && !st.platform->makeCurrent(hc->handle) && !hc->implicitWorker) {
+        if (HostContext* clone = threadClone(p, hc); clone && st.platform->makeCurrent(clone->handle)) hc = clone;
+    } else if (!hc && st.platform) {
+        st.platform->makeCurrent(nullptr);
+    }
     tls.proc = &p;
     tls.ctx = hc;
     tls.software = false;
@@ -276,6 +310,7 @@ template <typename... A> std::string hgArgs(A... a) {
     ((s += s.empty() ? "" : ", ", hgArg(s, a)), ...);
     return s;
 }
+static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname);
 template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* name, F args) {
     if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, std::string("GL ") + name + "(" + args() + ")");
     if (!hc->fn.glGetError) return;
@@ -283,9 +318,21 @@ template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* n
     if (!e) return;
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 200)
-        x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }());
+        x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }() +
+                                          (e == 0x0506 && hc->fn.glCheckFramebufferStatus ? [&] {
+                                              // Say why the framebuffer is incomplete.
+                                              char b[64];
+                                              std::snprintf(b, sizeof b, " (framebuffer %d status 0x%04x)", hgGetIntFwd(hc, 0x8CA6),
+                                                            hc->fn.glCheckFramebufferStatus(0x8D40));
+                                              return std::string(b);
+                                          }() : std::string()));
 }
 
+static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname) {
+    int32_t v[4] = {};
+    if (hc && hc->fn.glGetIntegerv) hc->fn.glGetIntegerv(pname, v);
+    return v[0];
+}
 static int32_t hgGetInt(HostContext* hc, uint32_t pname) {
     int32_t v[4] = {};
     if (hc && hc->fn.glGetIntegerv) hc->fn.glGetIntegerv(pname, v);
@@ -500,7 +547,10 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
         int32_t size = 0;
         hc->fn.glGetBufferParameteriv(target, kBufferSize, &size);
         length = size - offset;
-        if (length <= 0) return 0;
+        if (length <= 0) {
+            if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, "GL map target " + std::to_string(target) + ": buffer size " + std::to_string(size));
+            return 0;
+        }
     }
     void* host = nullptr;
     if (hc->fn.glMapBufferRange) host = hc->fn.glMapBufferRange(target, offset, length, access & ~uint32_t(0x8 /*INVALIDATE_BUFFER*/));
@@ -513,6 +563,9 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
     if (host && (access & kMapReadBit)) std::memcpy(x.mem.host(m.guest), host, size_t(length));
     else if (host && !(access & (0x4 | 0x8))) std::memcpy(x.mem.host(m.guest), host, size_t(length));   // keep contents unless invalidated
     hc->mapped[target] = m;
+    if (hgDebugLevel >= 2)
+        x.proc.log(LogLevel::Debug, "GL map target " + std::to_string(target) + " +" + std::to_string(offset) + " len " +
+                                        std::to_string(length) + (host ? "" : " (driver gave no mapping)"));
     return m.guest;
 }
 
@@ -572,6 +625,23 @@ void hg_glGetBufferPointervOES(Ctx& x, uint32_t target, uint32_t pname, GuestPtr
 }
 
 // ------------------------------------------------------------- multisample ---
+
+// ------------------------------------------------------------- attachments ---
+// Apple's drivers accept a detach written as (target, attachment, 0, 0); the ES
+// spec wants GL_RENDERBUFFER as the third argument even then, and other drivers
+// reject it, leaving the old attachment in place.
+void hg_glFramebufferRenderbuffer(Ctx& x, uint32_t target, uint32_t attachment, uint32_t rbtarget, uint32_t renderbuffer) {
+    HG_BEGIN(glFramebufferRenderbuffer)
+    if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
+    hc->fn.glFramebufferRenderbuffer(target, attachment, rbtarget, renderbuffer);
+    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+}
+void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t target, uint32_t attachment, uint32_t rbtarget, uint32_t renderbuffer) {
+    HG_BEGIN(glFramebufferRenderbufferOES)
+    if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
+    hc->fn.glFramebufferRenderbufferOES(target, attachment, rbtarget, renderbuffer);
+    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+}
 
 void hg_glResolveMultisampleFramebufferAPPLE(Ctx& x) {
     HostContext* hc = hgCurrent(x);
@@ -829,7 +899,12 @@ void contextMakeCurrent(Process& p, uint32_t guestContext) {
         if (it != st.contexts.end()) hc = it->second.get();
         if (hc) st.lastGuestContext = guestContext;
     }
-    if (tls.proc == &p && tls.ctx == hc && hc) return;
+    if (hgDebugLevel >= 2)
+        p.log(LogLevel::Debug, "GL setCurrentContext guest " + std::to_string(guestContext) + " on thread " +
+                                   std::to_string(p.currentThread().id) + (hc ? "" : " (no host context)"));
+    if (tls.proc == &p && hc && tls.ctx &&
+        (tls.ctx == hc || (tls.ctx->implicitWorker && tls.ctx->guestContext == guestContext)))
+        return;   // already current here (or this thread's shared stand-in for it)
     bind(p, hc);
     // A guest context without a host context (its API isn't available on this
     // driver) renders in software; GL calls on this thread go to that path.
@@ -911,10 +986,11 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     layer = d.layer;
     width = d.width;
     height = d.height;
-    static std::atomic<int> presents{0};
-    const int n = presents + 1;
+    // Per process: a later session in the same app (Test All Games) starts at frame 1 again.
+    const int n = st.presents + 1;
     std::string probe;
-    if ((n == 1 || n == 60 || n == 600) && hc->fn.glReadPixels) {
+    const bool sample = n == 1 || n == 30 || n == 60 || n == 120 || n == 300 || n == 600 || (n > 600 && n % 1800 == 0);
+    if (sample && hc->fn.glReadPixels) {
         // Diagnostic: sample the frame before it goes to the display, so a blank
         // screen can be told apart from a frame the GPU really rendered black.
         uint64_t sum[3] = {}, lit = 0;
@@ -928,15 +1004,25 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
         probe = " (average rgb " + std::to_string(sum[0] / 64) + "," + std::to_string(sum[1] / 64) + "," +
                 std::to_string(sum[2] / 64) + ", " + std::to_string(lit) + "/64 samples lit)";
     }
+    // Pace direct presents to the 60 Hz display. Apple's driver blocks a game that
+    // presents faster; here such a game (Angry Birds renders in a tight loop)
+    // would spin at thousands of frames a second and burn the battery.
+    {
+        using Clock = std::chrono::steady_clock;
+        const auto now = Clock::now();
+        const auto minGap = std::chrono::microseconds(16400);
+        if (st.lastPresent.time_since_epoch().count() && now - st.lastPresent < minGap)
+            std::this_thread::sleep_for(minGap - (now - st.lastPresent));
+        st.lastPresent = Clock::now();
+    }
     if (st.platform->presentDirect(hc->handle, d.layer)) {
         direct = true;
-        ++presents;
+        ++st.presents;
         if (!probe.empty()) p.log(LogLevel::Info, "GPU: presented frame " + std::to_string(n) + " directly" + probe);
         return true;
     }
     {
-        static std::atomic<bool> told{false};
-        if (!told.exchange(true)) p.log(LogLevel::Warning, "GPU: direct present unavailable; reading frames back");
+        if (!st.toldReadback.exchange(true)) p.log(LogLevel::Warning, "GPU: direct present unavailable; reading frames back");
     }
 
     // Read the drawable back for the software compositor.
