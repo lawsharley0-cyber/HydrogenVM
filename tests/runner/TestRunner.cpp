@@ -3110,6 +3110,22 @@ int runFullSubsystemTests() {
                   "HVM_ZOMBIES names the class of a freed object that is messaged");
         }
 
+        // A virtual call through a vtable nothing provides names the class and slot.
+        {
+            const uint32_t vt = proc.makeMissingStub("__ZTV13HvmNoSuchType");
+            const uint32_t slot3 = proc.mem().read<uint32_t>(vt + 8 + 3 * 4);
+            std::string msg;
+            try { proc.callGuest(cpu, slot3, {0}); } catch (const std::exception& e) { msg = e.what(); }
+            const uint32_t vtt = proc.makeMissingStub("__ZTT13HvmNoSuchType");
+            const uint32_t vptr = proc.mem().read<uint32_t>(vtt);
+            std::string msg2;
+            try { proc.callGuest(cpu, proc.mem().read<uint32_t>(vptr), {0}); } catch (const std::exception& e) { msg2 = e.what(); }
+            check(msg.find("virtual function #3 of vtable for HvmNoSuchType") != std::string::npos &&
+                  msg2.find("virtual function #0 of VTT for HvmNoSuchType") != std::string::npos &&
+                  proc.mem().read<uint32_t>(vptr - 12) == 0,
+                  "Missing vtables and VTTs report the class and slot of a virtual call instead of jumping to 0");
+        }
+
         // iconv forwarded to the host, and the getpw*_r family.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };

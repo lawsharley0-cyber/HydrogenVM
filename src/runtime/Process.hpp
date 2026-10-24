@@ -337,11 +337,12 @@ public:
     std::string getenv(const std::string& name) const;
     uint32_t getenvAddr(const std::string& name) const;   // guest pointer or 0
     void setenv(const std::string& name, const std::string& value);
+    // The stand-in bound to an import nothing provides (public for tests).
+    uint32_t makeMissingStub(const std::string& name);
 
 private:
     void bindImports();
     uint32_t resolveImport(const Loader::BindRecord& b);
-    uint32_t makeMissingStub(const std::string& name);
     void setupMainThread();
     void setupEnvironment();
     void initThreadState(GuestThread& t, uint32_t stackSize);
