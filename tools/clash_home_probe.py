@@ -31,9 +31,13 @@ def main():
     parser.add_argument('--seconds', type=float, default=90)
     parser.add_argument('--launches', type=int, choices=(1,2), default=2)
     parser.add_argument('--capture-audio', action='store_true')
+    parser.add_argument('--gpu', action='store_true', help='Use the shared host GLES backend')
+    parser.add_argument('--npc-fixture',action='store_true',help='Also supply the experimental first-NPC sector (not progression verification)')
+    parser.add_argument('--live-controls',action='store_true',help='Publish launch-N.rgba and read touch commands from launch-N.input.txt')
     args = parser.parse_args()
-    if not 30 <= args.seconds <= 300:
-        parser.error('Use a startup observation interval between 30 and 300 seconds')
+    maximum=1800 if args.npc_fixture else 300
+    if not 30 <= args.seconds <= maximum:
+        parser.error(f'Use an observation interval between 30 and {maximum} seconds')
     with args.ipa.open('rb') as source:
         if hashlib.file_digest(source,'sha256').hexdigest() != PINNED_SHA256:
             parser.error('Pinned client checksum mismatch')
@@ -56,6 +60,7 @@ def main():
                '--out',str(session),'--login-ok','--state',str(args.out/'identity.json'),
                '--home-client',str(args.ipa.resolve()),'--game-state',str(args.out/'home-state.json'),
                '--seconds',str(min(3600,args.seconds*args.launches+120))]
+    if args.npc_fixture:command.append('--npc-fixture')
     evidence = []
     with (session/'peer.log').open('w') as log:
         peer = subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT)
@@ -70,6 +75,10 @@ def main():
                 raise RuntimeError('Peer did not initialize')
             for launch in range(1,args.launches+1):
                 stem = session/f'launch-{launch}'
+                controls=['--gpu'] if args.gpu else []
+                if args.live_controls:
+                    input_path=session/f'launch-{launch}.input.txt';input_path.touch()
+                    controls+=['--frame-file',str(stem.with_suffix('.rgba')),'--input-file',str(input_path)]
                 reader,writer = socket.socketpair(socket.AF_UNIX,socket.SOCK_DGRAM)
                 if sys.platform == 'darwin':
                     # Default macOS datagram buffers cannot hold an 8192-byte block.
@@ -105,7 +114,7 @@ def main():
                         run = subprocess.run([binary,'run',str(bundle.resolve()),'--home',str(container.resolve()),
                             '--loopback-network','--loopback-alias','game.clashroyaleapp.com',
                             '--run-for',str(args.seconds),'--graceful','--audio-fd',str(writer.fileno()),
-                            '--screenshot',str(stem.with_suffix('.png')),'--report',str(stem.with_suffix('.json'))],
+                            '--screenshot',str(stem.with_suffix('.png')),'--report',str(stem.with_suffix('.json')),*controls],
                             pass_fds=(writer.fileno(),),stdout=client_log,stderr=client_log,timeout=args.seconds+20)
                 finally:
                     done.set();thread.join(timeout=2);reader.close();writer.close()
@@ -113,6 +122,7 @@ def main():
                 text = stem.with_suffix('.log').read_text(errors='replace')
                 item = {'launch':launch,'exitCode':run.returncode,'seconds':round(time.monotonic()-began,2),
                         'nativeHomeAccepted':'Loaded own home from server' in text,
+                        'nativeTutorialVoiceLoaded':'Start loading: sfx/king_tut_first_vo_01.wav' in text,
                         'crashed':report.get('crashed',True),'errors':report.get('errors',[]),
                         'audio':report.get('audio'),'audioCaptureErrors':audio_errors}
                 evidence.append(item);print(json.dumps(item),flush=True)
@@ -123,7 +133,9 @@ def main():
                 peer.send_signal(signal.SIGINT)
             peer.wait(timeout=5)
             events = json.loads((session/'protocol-events.json').read_text())['events'] if (session/'protocol-events.json').exists() else []
-            summary = {'scope':'Initial-home/NPC-request diagnostics only; no playable battle or progression.',
+            summary = {'scope':'Initial-home/NPC initialization diagnostics; battle completion and progression are not verified.',
+                       'npcFixtureEnabled':args.npc_fixture,
+                       'npcFixturesSent':sum(e['event']=='npc_fixture_sent' for e in events),
                        'ipaSha256':PINNED_SHA256,'launches':evidence,
                        'loginKinds':[e['fresh'] for e in events if e['event']=='login'],
                        'npcRequests':[e['npc'] for e in events if e['event']=='npc_requested']}
@@ -135,6 +147,7 @@ def main():
     print(f'Diagnostics: {session}',flush=True)
     valid = len(evidence) == args.launches and len(summary['npcRequests']) >= args.launches
     valid &= len(summary['loginKinds']) == args.launches
+    if args.npc_fixture:valid &= summary['npcFixturesSent']>=args.launches
     if args.launches == 2:
         valid &= summary['loginKinds'][-1:] == [False]
     for result in evidence:
@@ -143,6 +156,7 @@ def main():
                   not result['crashed'] and not result['errors'] and not result['audioCaptureErrors'] and
                   audio.get('enabled', False) and audio.get('nonSilentFrames', 0) > 0 and
                   audio.get('transportError', -1) == 0)
+        if args.npc_fixture:valid &= result['nativeTutorialVoiceLoaded']
     return 0 if valid else 1
 
 

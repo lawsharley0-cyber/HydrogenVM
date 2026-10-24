@@ -2,11 +2,15 @@ name: Clash Royale investigation
 
 on:
   push:
-    branches: [gemini-merge]
+    branches: [main]
     paths:
       - '.github/workflows/clash-royale.yml'
       - 'tools/clash_royale_probe.py'
       - 'tools/clash_protocol_probe.py'
+      - 'tools/clash/**'
+      - 'tools/clash_home_probe.py'
+      - 'tools/clash_home_state.py'
+      - 'tools/clash_wire.py'
       - 'tools/test_clash_protocol_probe.py'
       - 'tools/desktop.py'
       - 'tools/local_test.sh'
@@ -56,8 +60,7 @@ jobs:
         run: |
           python3 -m py_compile tools/clash_royale_probe.py tools/desktop.py tools/desktop_audio.py tools/test_ima_wav_corpus.py
           python3 -m py_compile tools/clash_wire.py tools/clash_home_state.py tools/clash_home_probe.py
-          python3 tools/test_clash_protocol_probe.py
-          python3 tools/test_clash_home_state.py
+          python3 -m unittest discover -s tools -p 'test_clash_*.py'
           bash -n tools/local_test.sh
       - name: Inspect pinned client and inventory assets
         run: python3 tools/clash_royale_probe.py --out clash-report
@@ -73,6 +76,8 @@ jobs:
         run: python3 tools/test_ima_wav_corpus.py clash-report/unpacked --hvm-tests build-clash/hvm_tests --out clash-report/ima-wav-comparison.json --require-count 107
       - name: Verify initial home and NPC request across two local launches
         run: python3 tools/clash_home_probe.py --hvm build-clash/hvm --ipa clash-report/client.ipa --out clash-home --seconds 90 --launches 2
+      - name: Verify native first-NPC initialization (not battle completion)
+        run: python3 tools/clash_home_probe.py --hvm build-clash/hvm --ipa clash-report/client.ipa --out clash-npc --results clash-report/npc --seconds 180 --launches 1 --npc-fixture --capture-audio
       - name: Trace Clash Royale startup
         run: |
           set +e

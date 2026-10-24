@@ -10,8 +10,8 @@ source_root=$root
 state=${HVM_LOCAL_STATE:-/var/tmp/hvm-local}
 python=/var/tmp/hvm-local-python/bin/python
 mkdir -p "$out" "$state"
-case "$mode" in play|app|check|scan|regress|trace|home) ;; *) echo 'Mode must be play, app, check, scan, regress, trace or home' >&2; exit 2 ;; esac
-if [[ "$mode" == play || "$mode" == app || "$mode" == trace || "$mode" == home ]]; then
+case "$mode" in play|app|check|scan|regress|trace|home|battle) ;; *) echo 'Mode must be play, app, check, scan, regress, trace, home or battle' >&2; exit 2 ;; esac
+if [[ "$mode" == play || "$mode" == app || "$mode" == trace || "$mode" == home || "$mode" == battle ]]; then
     exec 9>"$state/session.lock"
     flock -n 9 || { echo 'A local session is already using this sandbox. Close it first.' >&2; exit 2; }
 fi
@@ -47,10 +47,12 @@ cmake -S "$source_root" -B "$build" -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAK
 cmake --build "$build" --target hvm hvm_tests hvm_machodump --parallel 4 2>&1 | tee "$out/build.log"
 flock -u 8
 case "$mode" in
-    play|app)
+    play|app|battle)
         if [[ ! -x "$python" ]]; then python3 -m venv /var/tmp/hvm-local-python; fi
         if ! "$python" -c 'import pygame' >/dev/null 2>&1; then "$python" -m pip install pygame==2.6.1; fi
-        if [[ "$mode" == play ]]; then
+        if [[ "$mode" == battle ]]; then
+            "$python" "$root/tools/clash/clash_desktop.py" --hvm "$build/hvm" --ipa "$client" --home "$state/battle" --out "$out"
+        elif [[ "$mode" == play ]]; then
             "$python" "$root/tools/desktop.py" --hvm "$build/hvm" --ipa "$client" --home "$state/home" --out "$out" --pinned-clash
         else
             "$python" "$root/tools/desktop.py" --hvm "$build/hvm" --ipa "$client" --home "$state/apps" --out "$out" --versioned-home
