@@ -1699,7 +1699,7 @@ int runFullSubsystemTests() {
         check(t1 == rootVC && a1 == act, "UIBarButtonItem addTarget:action:forControlEvents: sets target and action");
 
         const ObjC::Class btnCls = r.getClass("UIButton");
-        const ObjC::id customBtn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0, 0, UIKit::fbits(40), UIKit::fbits(40)});
+        const ObjC::id customBtn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 40.0f, 40.0f});
         r.send(cpu, item, "setCustomView:", {customBtn});
         const ObjC::id btnAllTargets = ObjC::id(r.send(cpu, customBtn, "allTargets"));
         const auto targetsList = Foundation::setItems(cx, btnAllTargets);
