@@ -277,7 +277,9 @@ Bytes ClashFixtures::sector(const ClashProfile& p) const {
     w.zeros(6);avatar(w,p,true,trainerName);
     if(p.nativeAvatar.empty())avatar(w,p,false);else {w.booleanIndex=-1;w.data.insert(w.data.end(),p.nativeAvatar.begin(),p.nativeAvatar.end());}
     if(arena-54000000 > 0 || tutorial == 0) {
-        w.v(0);w.ref(0);w.v(0);w.ref(0);w.zeros(2);
+        // 12 is the LogicGameMode full-update delimiter (decoder 0xd7a80),
+        // not a tutorial flag. Only the following tutorial reference is null.
+        w.v(12);w.ref(0);w.v(0);w.ref(0);w.zeros(2);
     } else {
         w.v(12);w.ref(tutorial);w.v(tutorialWait);w.ref(0);w.zeros(2);
     }

@@ -223,6 +223,14 @@ int main(int argc, char** argv) {
         }
         ClashFixtures f8(bundle, 18000007, 1);
         auto s8 = f8.sector(profile);
+        // LogicGameMode::decode 0xd7a80 requires delimiter 12 after avatars,
+        // independently of whether tutorial data follows. Removing the tutorial
+        // must clear its reference, not the stream delimiter.
+        const Bytes arenaTrailer{12,0,0,0,0,0};
+        if(s8.size()<arenaTrailer.size() ||
+           !std::equal(arenaTrailer.begin(),arenaTrailer.end(),s8.end()-arenaTrailer.size())) {
+            std::fprintf(stderr,"FAIL Arena sector must retain native full-update delimiter 12\n");return 1;
+        }
         std::printf("Npc8 Arena 1 (%s): sector=%zu towers=%zu npcDeck=%zu\n",
                     f8.trainerName.c_str(), s8.size(), f8.towers.size(), f8.npcDeck.size());
         if (argc >= 3) {

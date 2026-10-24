@@ -19,7 +19,10 @@ increased from 1 to 2. Two relaunches retained the completed reward without
 another grant. A durable journal retains the pre-claim checkpoint until native
 command 213 finishes. Older half-claimed saves without a journal still need
 separate recovery. Legacy duplicate-ID saves also need explicit migration.
-Real arena battles/trophies, level scaling and collection/deck changes remain open.
+The first Arena 1 bot battle now completes after correcting its sector trailer.
+Trophy synchronization is still blocked: win metadata is 30 but the native
+avatar remains 0. Battle cost/reward/crown accounting, level scaling and
+collection/deck changes remain open.
 
 The owner reports intermittent audio, incorrect King cannon animation, missing
 Princess Tower princesses and uncentered text on iPhone. Preserve those reports

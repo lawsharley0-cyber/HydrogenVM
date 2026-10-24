@@ -19,7 +19,13 @@ corrected using Apple's iPhone ABI: 64-bit inodes, st_size at byte 60; new TL-H 
 fails before the fix and passes after. Check this independently before changing
 stat for another app; unsuffixed iPhone symbols do not imply legacy Mac ABI.
 
-Next: real Arena 1 matchmaking/battle/reward, faithful trophy transactions,
+The first Arena 1 native NPC win now completes after retaining the required
+sector delimiter 12. Its metadata says 30 trophies but the native avatar says 0;
+this is the exact next blocker, not verified trophy progression. A short-int
+name-command error from `33d82ad` is corrected and its exact state is repaired
+using the original command, with no direct save edit.
+
+Next: faithful trophy transactions, battle cost/reward/crown accounting,
 bot/tower level scaling, card collection/deck swaps and further arenas. Review
 experimental trophy formulas/guest trophy writes before treating arena coverage
 as faithful. Paid renames and old half-claimed/duplicate-ID saves need separate

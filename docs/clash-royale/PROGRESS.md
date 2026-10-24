@@ -33,6 +33,38 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ### October 24 training graduation and name-dialog blockers
 
+**Latest core result:** the graduated player also completed a native three-crown
+Arena 1 win against NPC8/Trainer Jonas. `arena-one-fixed/run-20261024-132350-b0cf84`
+exited cleanly after 241.19 seconds. The preceding `arena-one` run stopped at
+the client's genuine "Full update stream is corrupted!" diagnostic: the
+inherited non-tutorial sector writer replaced required marker 12 with 0.
+Native LogicGameMode::decode at 0xd7a80 compares that field to 12 regardless of
+tutorial presence. The writer now retains 12 and clears only the tutorial
+reference. A pinned-client fixture test fails before and passes after; the
+actual Arena 1 battle then loads/deploys/finishes normally.
+
+**Still blocking faithful arena progression:** after this eighth win metadata
+has 30 trophies but the native serialized avatar still has 0. Existing +30/-20
+formulas and CSV routing are experimental; their synthetic tests do not prove
+native score synchronization. Next work must deliver and persist a legitimate
+native/server score update, verify battle cost/rewards/crown accounting and
+relaunch, then validate levels and more arenas. Do not fix this by silently
+writing live guest trophy fields or count the metadata as earned UI trophies.
+
+Saved-state inspection also caught an error in checkpoint `33d82ad`'s new name
+command: its change-state uses a fixed BE int (decoder slot 0x48), whereas the
+avatar snapshot uses VInt. The initial one-byte encoding happened to close the
+dialog but produced state 0x1007f. The command and literal oracle are corrected.
+On login only that exact malformed state is repaired by replaying command 201
+with the same existing name and proper integer width; no private save is edited
+and paid renames remain unsupported. Verify the native saved state is 0, not
+merely that the dialog closes. No other name states are reset.
+`name-int-recovery/run-20261024-132831-49e9ac` verified this on the actual
+eight-win saved player: the first launch reapplied the native command, saved
+nameState 0 with the same name, and exited cleanly; the second launch exited
+cleanly without another repair. Wins remained 8 and arena remained 54000001.
+The final build again passes 247 runtime checks and all 14 Test Lab cases.
+
 The same earned player reached all seven training wins without editing the
 IPA/assets or saved counters. `training-resume/run-20261024-130720-a6dbd1`
 won against NPC6/Trainer Tim and atomically saved 6/7, then stopped with exit

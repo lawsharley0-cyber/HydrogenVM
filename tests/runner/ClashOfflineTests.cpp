@@ -100,8 +100,9 @@ int main() {
         send(10101,login);check(receive().first==20104 && receive().first==24101,"embedded encrypted login and home");
         Bytes name;clashString(name,"Solo");name.push_back(1);send(10212,name);
         // Independently decoded command 201: VInt c9=89 03, BE String length,
-        // name-change-state 0, user=true, server ID 0, ticks -1/-1, account 0/1.
-        const Bytes expectedName{0x89,3,0,0,0,4,'S','o','l','o',0,1,0,0x7f,0x7f,0,1};
+        // fixed BE name-change-state 0, user=true, server ID 0, ticks -1/-1,
+        // account 0/1. Command decoder 0x1229d4 uses readInt, not readVInt.
+        const Bytes expectedName{0x89,3,0,0,0,4,'S','o','l','o',0,0,0,0,1,0,0x7f,0x7f,0,1};
         check(receive()==std::pair<uint16_t,Bytes>{24111,expectedName},"initial name request emits the pinned native name command schema");
         send(14104,{18,0});check(receive().first==21903,"embedded first-NPC sector");
         // Literal native command envelope: a truncated 537 must not start a battle.

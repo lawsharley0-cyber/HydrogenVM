@@ -54,6 +54,14 @@ struct Reader {
     }
     std::string string(){int32_t n=integer();if(n==-1)return {};if(n<0 || size_t(n)>bytes.size()-pos)throw std::runtime_error("Offline Clash: bad string");std::string s(bytes.begin()+pos,bytes.begin()+pos+n);pos+=n;return s;}
 };
+Bytes initialNameCommand(const std::string& name) {
+    Bytes command;clashVint(command,201);clashString(command,name);
+    // Command decoder slot 0x48 is readInt; avatar snapshots use VInt for
+    // this field, but LogicChangeAvatarNameCommand uses a fixed BE int.
+    clashInt(command,0);command.push_back(1);
+    for(int n:{0,-1,-1,0,1})clashVint(command,n);
+    return command;
+}
 Bytes loginReply(const ClashProfile& p) {
     Bytes w;for(int i=0;i<2;++i){clashInt(w,0);clashInt(w,1);}
     for(auto& s:{p.token,std::string(),std::string()})clashString(w,s);
@@ -418,6 +426,18 @@ struct ClashOffline::Impl {
                 auto state=snapshot();if(!(high==0 && low==0) && !(high==0 && low==1 && token==state.token))throw std::runtime_error("Offline Clash: identity mismatch");
                 {std::lock_guard lock(mutex);requestedChestId=-1;}
                 loggedIn=true;send(20104,1,loginReply(state));send(24101,0,fixtures.home(state));
+                if(!state.nativeAvatar.empty()) {
+                    Reader avatar{state.nativeAvatar};for(int i=0;i<6;++i)avatar.v();const auto name=avatar.string();
+                    const bool named=avatar.byte()&1;const auto changeState=avatar.v();
+                    // Repair only the exact state produced by checkpoint 33d82ad's
+                    // short integer: 00 01 00 7f. Reapply the SAME initial name
+                    // through the original native command, without changing saves
+                    // or allowing a paid rename. A snapshot ends this replay.
+                    if(named && changeState==0x1007f) {
+                        send(24111,0,initialNameCommand(name));
+                        process.log(LogLevel::Info,"Offline Clash: correcting initial-name command integer width");
+                    }
+                }
             } else if(kind==10108 && body.empty()) {
                 send(20108,0,{});
             } else if(!loggedIn)throw std::runtime_error("Offline Clash: login required");
@@ -437,10 +457,7 @@ struct ClashOffline::Impl {
                 // The native command sets the name/flag and notifies the UI;
                 // normal native home snapshots persist the completed change.
                 // Until captured, relaunch offers the initial dialog again.
-                Bytes command;clashVint(command,201);clashString(command,name);
-                clashVint(command,0);command.push_back(1);
-                for(int n:{0,-1,-1,0,1})clashVint(command,n);
-                send(24111,0,command);
+                send(24111,0,initialNameCommand(name));
                 process.log(LogLevel::Info,"Offline Clash: initial name command supplied");
             }
             else if(kind==14104) {
