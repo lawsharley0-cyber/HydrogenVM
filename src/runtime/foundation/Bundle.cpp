@@ -204,7 +204,7 @@ bool validURLString(const std::string& s) {
     return true;
 }
 
-id url_initFile(Ctx& x, id self, SEL, id path) { const std::string p = utf8(x, path); initURL(x, self, fileURLString(p, isDirPath(p)), 0); return self; }
+id url_initFile(Ctx& x, id self, SEL, id path) { const std::string p = utf8(x, path); initURL(x, self, fileURLString(p, isDirPath(x.proc.hostPath(p))), 0); return self; }
 id url_initFileDir(Ctx& x, id self, SEL, id path, bool dir) { initURL(x, self, fileURLString(utf8(x, path), dir), 0); return self; }
 id url_initString(Ctx& x, id self, SEL, id str) {
     if (!str) { rt(x).release(x.cpu, self); return 0; }
