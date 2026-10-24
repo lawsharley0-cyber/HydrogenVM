@@ -1,0 +1,35 @@
+{
+  "host": {
+    "os": "Linux 6.17.0-1022-azure",
+    "arch": "x86_64",
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "commit": "457a85f",
+    "date": "2026-10-24T01:58:33+00:00"
+  },
+  "seconds": 38.9,
+  "ok": false,
+  "suites": {
+    "build": {
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "seconds": 38.91675853729248,
+      "tests": [
+        {
+          "name": "engine",
+          "result": "fail",
+          "seconds": 38.917
+        }
+      ]
+    }
+  },
+  "speed": {},
+  "problems": [
+    {
+      "suite": "build",
+      "test": "ninja",
+      "severity": "fail",
+      "message": "/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/Process.cpp:242:19: error: redefinition of 'digest' with a different type: 'unsigned char[32]' vs 'const std::vector<uint8_t>' (aka 'const vector<unsigned char>')\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/Process.cpp:246:5: error: no matching function for call to 'SHA256'\n2 errors generated."
+    }
+  ]
+}
