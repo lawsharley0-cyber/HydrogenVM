@@ -329,6 +329,11 @@ int32_t aq_getParam(Ctx& x, uint32_t qid, uint32_t, GuestPtr outVal) {
     return 0;
 }
 
+
+int32_t aq_offlineRender(Ctx& x, uint32_t qid, GuestPtr outTimestamp, GuestPtr outBuffer, uint32_t numFrames) {
+    return -50;
+}
+
 // AudioFile & AudioUnit stubs
 int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile) {
     if (!urlRef || !outFile) return -50;
@@ -1289,6 +1294,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aq_dispose>("_AudioQueueDispose");
     p.def<&aq_setParam>("_AudioQueueSetParameter");
     p.def<&aq_getParam>("_AudioQueueGetParameter");
+    p.def<&aq_offlineRender>("_AudioQueueOfflineRender");
 
     // AudioFile & AudioUnit
     p.def<&af_openURL>("_AudioFileOpenURL");

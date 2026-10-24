@@ -266,3 +266,5 @@ v glVertexAttribDivisorEXT(U index, U divisor)
 !v glPopGroupMarkerEXT()
 !v glInsertEventMarkerEXT(S length, cs marker)
 v glCopyTextureLevelsAPPLE(U dst, U src, I srcBase, S count)
+v glDrawBuffers(S n, p bufs) [es3]
+v glReadBuffer(E src) [es3]
