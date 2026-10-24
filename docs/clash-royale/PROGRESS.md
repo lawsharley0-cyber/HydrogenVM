@@ -31,6 +31,57 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Tower initialization, shrinking health bars, occupants and original scenery
+
+Corrected native tower level/HP serialization using exp_levels and the pinned
+global growth percentages (King 8%, Princess 9%). Original getScaledValue uses
+an integer accumulated percentage; NPC WizardHpMultiplier applies once to both
+tower types with ceiling division. An old King-only adjustment was removed to
+avoid applying it twice. NPC8 now displays level 2 and 1526-HP Princess Towers
+(King 2592); the synthetic tests also check one 40% multiplier on each NPC tower.
+`scaling-real/run-20261024-141236-938b3e` completed a deliberate unplayed loss,
+saved the native loss count, and exited cleanly after 322.52 seconds. Native
+score remained 34: no invented loss deduction was applied.
+
+The zero-filled buff fixture was a real core/combat error. Constructor
+LogicCharacterBuffComponent C2 (0xf10c, especially 0xf164..0xf184) sets +0x34
+(damage percentage) and +0x44 (size percentage) to 100. Supplying zero makes
+calculateSize (0xff40) clamp to 1%. The original getMaxHitpoints (0x21428)
+then computes only 1% of base HP. EntryTrace showed current/max 1526/15 and
+an invalid negative animation index. The client was not rendering a correct
+state; replacing the health-bar drawing would have hidden the real bug.
+
+Both C++ and legacy Python sector writers now encode neutral percentages.
+A literal packet regression fails before and passes after. All four Princess
+Tower occupants render again. `health-fixed` trace shows size 100, current/max
+1363/1526, 99 total frame intervals, quotient 88 and therefore native fill frame
+11. The bar visibly shrinks; no damage, health or animation assertion is hidden.
+King cannon motion still needs an exact-scene reference/device check. These
+initialization fixes change tower combat; earlier victories establish the old
+progression path, not correct combat balance in the corrected state.
+
+Trees really are in this build. LogicBattle::addDecos (0x15a44) creates the
+original CSV decorations before decoding the full sector. Our six-tower-only
+reference list caused LogicGameObjectManager::decode to delete those omitted
+objects. The packet now retains data type 42 references, native type-0 object
+IDs 1000000+i and its ID counter in original row order. LogicDeco::decode is
+empty, so native row positions are retained. No assets or scenery coordinates
+are changed. `deco-real/run-20261024-143701-91a907` now visibly includes trees,
+rocks, fences and arena-edge scenery, with tower occupants; it exited cleanly
+after 305.4 seconds. A synthetic tree regression checks retained identities.
+
+Runtime 247, Test Lab 14, C++ state/socket checks and Python protocol/home/chest
+tests pass locally. These are Linux/WSL observations. Audible continuity,
+text alignment, all-arena gameplay and newly signed phone validation remain
+open; PCM activity is not proof of audio quality.
+
+Reference correction: the first-look video linked below is uploaded by verified
+Chief Pat, not Supercell's own channel. Browser inspection reached its Royal
+Arena footage at about 2:23. It is a contemporary creator gameplay reference,
+not verified exact-2.1306.1 footage or a Goblin Stadium pixel oracle. The pinned
+CSV/resources and original native initialization are the authoritative source
+for the restored objects in the local build.
+
 ### Native rating calculation and additional owner observations
 
 The owner now explicitly authorizes continuing through core progression into

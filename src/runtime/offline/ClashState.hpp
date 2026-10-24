@@ -22,13 +22,17 @@ struct ClashFixtures {
     struct Tower { int32_t data,owner,x,y,hp; bool king; };
     std::vector<Card> playerDeck,npcDeck;
     std::vector<Tower> towers;
+    std::vector<int32_t> decoData; // native addDecos order; existing object IDs 1,000,000+i
     int32_t seed=0,npcMana=0,damageTypes=0,freeChestTicks=0;
     int32_t npcTrophies=0,npcExpLevel=1;
+    int32_t npcTowerHpPercent=100,kingHpGrowth=0,towerHpGrowth=0;
+    std::array<int32_t,13> kingLevels{},towerLevels{};
     int32_t mission=18000000,location=15000000,arena=54000000,tutorial=48000000,tutorialWait=3000;
     std::string trainerName="Trainer Earl";
     explicit ClashFixtures(const std::string& bundle,int32_t npc=18000000,int32_t arenaLevel=0);
     Bytes home(const ClashProfile&) const;
     Bytes sector(const ClashProfile&) const;
+    std::pair<int32_t,int32_t> towerStats(const Tower&,int32_t expLevel) const;
 };
 struct ClashHomeView {
     struct Chest {int32_t data=0;bool unlocked=false,claimed=false,isNew=true,hasTimer=false;std::array<int32_t,3> timer{};int32_t value8=0,source=0,valueC=-1;};
@@ -40,7 +44,7 @@ struct ClashHomeView {
     std::vector<ClashFixtures::Card> deck;
 };
 ClashHomeView inspectClashHome(const Bytes&);
-struct ClashAvatarView { int32_t arena=0,trophies=0; };
+struct ClashAvatarView { int32_t arena=0,trophies=0,expLevel=1; };
 ClashAvatarView inspectClashAvatar(const Bytes&);
 struct ClashHomeCommand {
     int32_t type=0, argument=0;

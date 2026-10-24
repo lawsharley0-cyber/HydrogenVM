@@ -20,13 +20,19 @@ another grant. A durable journal retains the pre-claim checkpoint until native
 command 213 finishes. Older half-claimed saves without a journal still need
 separate recovery. Legacy duplicate-ID saves also need explicit migration.
 The first Arena 1 bot battle now completes after correcting its sector trailer.
-Trophy synchronization is still blocked: win metadata is 30 but the native
-avatar remains 0. Battle cost/reward/crown accounting, level scaling and
-collection/deck changes remain open.
+Native ELO now produces and persists a visible 34-trophy result. Tower level/HP
+scaling uses original CSV values. Correct neutral buff values restore tower
+occupants and shrinking health bars. Retaining native decoration identities
+restores the original trees, fences and other arena-edge scenery. The unchanged
+client supplies all rendering; no assets or assertions were altered.
+Battle cost/reward/crown/free-chest accounting, collection/deck changes and
+later-arena qualification remain open. Earlier wins used incorrect tower
+initialization and do not establish correct combat balance after these fixes.
 
 The owner reports intermittent audio, incorrect King cannon animation, missing
 Princess Tower princesses and uncentered text on iPhone. Preserve those reports
-for subsequent presentation work; core offline correctness remains the priority.
+for remaining presentation work. The owner now requests continuing through all
+stages, including bug fixes. Local visual fixes still require phone validation.
 
 Historical date: 2026-10-20. Historical work branch: `gemini-merge`.
 

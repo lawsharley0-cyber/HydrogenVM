@@ -1,4 +1,5 @@
 #include "runtime/offline/ClashState.hpp"
+#include <algorithm>
 #include "runtime/offline/ClashCsv.hpp"
 #include <cassert>
 #include <cstdio>
@@ -223,6 +224,21 @@ int main(int argc, char** argv) {
         }
         ClashFixtures f8(bundle, 18000007, 1);
         auto s8 = f8.sector(profile);
+        // Original buff constructor at 0xf164 sets damage and size to 100%,
+        // not zero. VInt 100 is a4 01. One packed zero flag byte precedes
+        // the six fields. All six tower components must have neutral values.
+        const Bytes neutralBuffTail{0,0xa4,1,0,0,0,0xa4,1,0};
+        int neutralCount=0;auto scan=s8.begin();
+        while((scan=std::search(scan,s8.end(),neutralBuffTail.begin(),neutralBuffTail.end()))!=s8.end()){++neutralCount;scan+=neutralBuffTail.size();}
+        if(neutralCount!=6){std::fprintf(stderr,"FAIL six towers require neutral damage/size buff percentages\n");return 1;}
+        for(const auto& tower:f8.towers) {
+            const auto [level,hp]=f8.towerStats(tower,2);
+            // Pinned globals: King +8%, Princess +9%. exp_levels row 2
+            // selects level index 1. Original bases are 2400 and 1400.
+            if(level!=1 || hp!=(tower.king?2592:1526)) {
+                std::fprintf(stderr,"FAIL original level-2 tower stats\n");return 1;
+            }
+        }
         const auto npcName=std::search(s8.begin(),s8.end(),f8.trainerName.begin(),f8.trainerName.end());
         if(npcName==s8.end() || npcName-s8.begin()<10) return 1;
         const auto bot=inspectClashAvatar(Bytes(npcName-10,s8.end()));

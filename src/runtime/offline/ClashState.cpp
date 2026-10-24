@@ -157,7 +157,15 @@ ClashAvatarView inspectClashAvatar(const Bytes& bytes) {
     r.at+=length;r.b();r.v();const auto arena=r.ref(),score=r.v();
     if(arena<54000000 || arena>54000020 || score<0 || score>100000)
         throw std::runtime_error("Offline Clash: invalid native avatar score/arena");
-    return {arena-54000000,score};
+    r.b();const auto slots=r.v();
+    if(slots<0 || slots>16)throw std::runtime_error("Offline Clash: invalid avatar resource slots");
+    for(int i=0;i<slots;++i) {
+        const auto count=r.v();if(count<0 || count>128)throw std::runtime_error("Offline Clash: invalid avatar resource count");
+        for(int j=0;j<count;++j){r.ref();r.v();}
+    }
+    r.v();r.v();r.v();const auto level=r.v();
+    if(level<1 || level>13)throw std::runtime_error("Offline Clash: invalid avatar experience level");
+    return {arena-54000000,score,level};
 }
 void clashVint(Bytes& out,int32_t value) {
     const uint64_t magnitude=value<0?uint64_t(-int64_t(value)):uint64_t(value);
@@ -191,6 +199,18 @@ ClashFixtures::ClashFixtures(const std::string& bundle,int32_t npcId,int32_t are
     if(expLvl<1 || expLvl>13)throw std::runtime_error("Offline Clash: unsupported npc exp level");
     npcExpLevel=expLvl;
     npcTrophies=(*npc)["Trophies"].empty()?0:number((*npc)["Trophies"]);
+    if(!(*npc)["WizardHpMultiplier"].empty())npcTowerHpPercent=number((*npc)["WizardHpMultiplier"]);
+    if(!npcTowerHpPercent)npcTowerHpPercent=100; // LogicNpcData::createReferences 0x100416
+    if(std::filesystem::exists(res/"csv_logic/exp_levels.csv")) {
+        for(auto& row:table(res,"exp_levels"))if(!row["Name"].empty()) {
+            const auto level=number(row["Name"]);
+            if(level>=1 && level<=13){kingLevels[level-1]=number(row["SummonerLevel"])-1;towerLevels[level-1]=number(row["TowerLevel"])-1;}
+        }
+        for(auto& row:table(res,"globals")) {
+            if(row["Name"]=="HITPOINT_INCREASE_PERCENT_PER_KING_LEVEL")kingHpGrowth=number(row["NumberValue"]);
+            if(row["Name"]=="HITPOINT_INCREASE_PERCENT_PER_TOWER_LEVEL")towerHpGrowth=number(row["NumberValue"]);
+        }
+    }
     seed=(*npc)["Seed"].empty()?2:number((*npc)["Seed"]);
     npcMana=(*npc)["StartingMana"].empty()?5:number((*npc)["StartingMana"]);
     int locationIndex=0;bool foundLocation=false;std::string locationFile;
@@ -233,15 +253,18 @@ ClashFixtures::ClashFixtures(const std::string& bundle,int32_t npcId,int32_t are
         const auto id=35000000+index++;
         if(r["Name"]=="KingTower" || r["Name"]=="PrincessTower")buildings[r["Name"]]={id,number(r["Hitpoints"])};
     }
+    std::map<std::string,int32_t> decos;index=0;
+    if(std::filesystem::exists(res/"csv_logic/decos.csv"))
+        for(auto& row:table(res,"decos"))if(!row["Name"].empty())decos[row["Name"]]=42000000+index++;
     bool objects=false;std::string group;
     for(auto& r:csv(read(res/locationFile))) {
         if(!r.empty() && r[0]=="Objects"){objects=true;continue;}
         if(!objects || r.size()<4)continue;
         if(!r[1].empty())group=r[1];
-        if(group!="KingTower" && group!="PrincessTower")continue;
         if(r[2].empty() || r[2].find_first_not_of("-0123456789")!=std::string::npos)continue;
+        if(auto deco=decos.find(group);deco!=decos.end()){decoData.push_back(deco->second);continue;}
+        if(group!="KingTower" && group!="PrincessTower")continue;
         int32_t x=number(r[2]),y=number(r[3]);auto [data,hp]=buildings.at(group);const int owner=y<32?0:1;
-        if(group=="KingTower" && owner==0 && !(*npc)["WizardHpMultiplier"].empty())hp=hp*number((*npc)["WizardHpMultiplier"])/100;
         towers.push_back({data,owner,x*500,y*500,hp,group=="KingTower"});
     }
     for(auto& r:table(res,"damage_types"))if(!r["Name"].empty())++damageTypes;
@@ -264,15 +287,35 @@ Bytes ClashFixtures::home(const ClashProfile& p) const {
     w.zeros(9);w.v(1);w.ref(0);w.v(-1);w.v(-1);w.v(-1);w.timer();w.v(0);w.timer();w.timer();w.zeros(6);w.v(0);w.s("");w.v(0);
     avatar(w,p,false);w.v(0);return w.data;
 }
+std::pair<int32_t,int32_t> ClashFixtures::towerStats(const Tower& t,int32_t expLevel) const {
+    if(expLevel<1 || expLevel>13)throw std::runtime_error("Offline Clash: tower experience level outside supported range");
+    const auto level=(t.king?kingLevels:towerLevels)[expLevel-1],growth=t.king?kingHpGrowth:towerHpGrowth;
+    if(level<0 || level>12 || (expLevel>1 && (!level || growth<=0 || growth>100)))
+        throw std::runtime_error("Offline Clash: missing tower scaling data");
+    // Native getScaledValue 0x74ee8: accumulate an integer percentage at
+    // each level, then scale the original design value. NPC multiplier uses
+    // ceil division in LogicCharacter::setLevelIndex, 0x12d330..0x12d35e.
+    int64_t percent=100;for(int i=0;i<level;++i)percent=percent*(100+growth)/100;
+    int64_t hp=int64_t(t.hp)*percent/100;
+    if(t.owner==0)hp=(hp*npcTowerHpPercent+99)/100;
+    if(hp<1 || hp>INT32_MAX)throw std::runtime_error("Offline Clash: invalid scaled tower hitpoints");
+    return {level,int32_t(hp)};
+}
 Bytes ClashFixtures::sector(const ClashProfile& p) const {
     const auto player=p.nativeHome.empty()?playerDeck:inspectClashHome(p.nativeHome).deck;
+    const auto playerLevel=p.nativeAvatar.empty()?1:inspectClashAvatar(p.nativeAvatar).expLevel;
     Writer w;w.v(0);w.v(0);w.v(11);w.v(0);w.i(seed);w.v(0);
     w.ref(location);w.ref(mission);w.ref(arena);w.v(-1);w.v(0);w.v(0);w.v(1);
     w.zeros(10);w.v(1);w.zeros(2);for(int i=0;i<6;++i)w.b(false);
-    w.zeros(5);w.v(6);w.v(6);
-    for(auto& t:towers)w.ref(t.data);for(int i=0;i<6;++i)w.ref(6000000+i);
+    // setLocation/addDecos already created these static objects from the CSV.
+    // A full update's ID list must retain them, or Manager::decode deletes them.
+    // LogicDeco::decode is empty; their original row/positions remain native.
+    w.v(int(decoData.size()));w.zeros(4);w.v(6);w.v(int(decoData.size())+6);
+    for(auto data:decoData)w.ref(data);for(auto& t:towers)w.ref(t.data);
+    for(int i=0;i<int(decoData.size());++i)w.ref(1000000+i);
+    for(int i=0;i<6;++i)w.ref(6000000+i);
     for(auto& t:towers) {
-        w.v(0);w.b(false);w.b(false);w.v(t.owner);w.v(13);w.v(t.x);w.v(t.y);w.v(0);w.zeros(2);
+        w.v(towerStats(t,t.owner==0?npcExpLevel:playerLevel).first);w.b(false);w.b(false);w.v(t.owner);w.v(13);w.v(t.x);w.v(t.y);w.v(0);w.zeros(2);
         w.v(0);w.v(100);w.zeros(10);
         if(t.king){const auto& cards=t.owner==0?npcDeck:player;const int hand=std::min<int>(4,cards.size());
             w.b(true);w.v(hand);for(int i=0;i<4;++i)w.v(i<hand?i:-1);
@@ -280,8 +323,14 @@ Bytes ClashFixtures::sector(const ClashProfile& p) const {
             w.v(0);w.v(-1);w.zeros(2);w.v(0);w.v(t.owner==1?5:npcMana);w.zeros(2);}
     }
     for(auto& t:towers){(void)t;w.b(false);w.b(false);w.zeros(7);w.ref(0);}
-    for(auto& t:towers){w.v(t.hp);w.v(t.hp);w.v(0);}
-    for(auto& t:towers){(void)t;w.zeros(5+damageTypes);for(int i=0;i<damageTypes;++i)w.b(false);w.zeros(6);}
+    for(auto& t:towers){const auto hp=towerStats(t,t.owner==0?npcExpLevel:playerLevel).second;w.v(hp);w.v(hp);w.v(0);}
+    for(auto& t:towers){
+        (void)t;w.zeros(5+damageTypes);for(int i=0;i<damageTypes;++i)w.b(false);
+        // Original LogicCharacterBuffComponent constructor: +0x34 damage and
+        // +0x44 size are neutral 100%, not zero. Zero size clamps to 1% and
+        // corrupts max-HP ratios and tower occupants; zero damage disables fire.
+        w.v(100);w.zeros(3);w.v(100);w.v(0);
+    }
     w.b(true);deck(w,npcDeck);w.b(true);deck(w,player);
     for(int owner=0;owner<2;++owner)for(int i=0;i<6;++i)if(towers[i].king && towers[i].owner==owner)w.ref(6000000+i);
     for(int owner=0;owner<2;++owner){w.v(2);for(int i=0;i<6;++i)if(!towers[i].king && towers[i].owner==owner)w.ref(6000000+i);}

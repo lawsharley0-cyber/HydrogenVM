@@ -19,18 +19,28 @@ corrected using Apple's iPhone ABI: 64-bit inodes, st_size at byte 60; new TL-H 
 fails before the fix and passes after. Check this independently before changing
 stat for another app; unsuffixed iPhone symbols do not imply legacy Mac ABI.
 
-The first Arena 1 native NPC win now completes after retaining the required
-sector delimiter 12. Its metadata says 30 trophies but the native avatar says 0;
-this is the exact next blocker, not verified trophy progression. A short-int
+The first Arena 1 native NPC win completes after retaining sector delimiter 12.
+Native ELO is now used: the bot receives its CSV score and active arena, and a
+later real win produced 34 trophies in both native avatar and visible home,
+retained across two relaunches. Fixed +30/-20 guesses and the old live-score
+write were removed. A short-int
 name-command error from `33d82ad` is corrected and its exact state is repaired
 using the original command, with no direct save edit.
 
-Next: faithful trophy transactions, battle cost/reward/crown accounting,
-bot/tower level scaling, card collection/deck swaps and further arenas. Review
-experimental trophy formulas/guest trophy writes before treating arena coverage
-as faithful. Paid renames and old half-claimed/duplicate-ID saves need separate
-work; do not reset flags or progress. Intermittent sound, King cannon motion, absent princesses and UI
-alignment are deferred owner reports, not resolved issues. No assets/private
+Further local fixes restore original tower scaling and neutral buff percentages:
+damage/size must be 100%, not 0. The incorrect 1% size caused invalid maximum HP,
+stuck health-bar frames and missing tower occupants. Four occupants now render,
+and a damaged 1363/1526-HP tower selects the correct 11/99 animation frame.
+The full sector now retains static decoration IDs instead of deleting native
+CSV-created objects: original trees, rocks, fences and arena edges render again.
+Earlier wins exercised the old tower initialization and do not prove current
+balance. All this still needs phone validation.
+
+Next: battle cost/reward/crown/free-chest accounting, card collection/deck swaps,
+actual later-arena coverage and the remaining sound/cannon/text reports. The
+owner explicitly requests continuing through the bug-fix phase, not stopping
+at intermediate milestones. Paid renames and old half-claimed/duplicate-ID saves
+need separate work; do not reset flags or progress. No assets/private
 saves are in the PR. Do not merge the draft or equate its unit tests with a
 complete playable game.
 

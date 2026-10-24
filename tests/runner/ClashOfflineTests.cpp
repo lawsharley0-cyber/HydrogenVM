@@ -57,9 +57,22 @@ int main() {
     put("csv_logic/buildings.csv","Name,Hitpoints\nString,int\nKingTower,100\nPrincessTower,100\n");
     put("csv_logic/damage_types.csv","Name\nString\nA\nB\nC\nD\nE\n");
     put("locations/training_arena.csv","Objects,,,\n,KingTower,10,5\n,PrincessTower,5,5\n,,15,5\n,KingTower,10,50\n,PrincessTower,5,50\n,,15,50\n");
+    put("csv_logic/decos.csv","Name,FileName\nString,String\nTestTree,sc/test.sc\n");
+    {std::ofstream file(root/"app/res/locations/training_arena.csv",std::ios::app);file<<",TestTree,-1000,1200\n";}
     int failed=0;auto check=[&](bool pass,const char* text){std::printf("%s %s\n",pass?"ok":"FAIL",text);failed+=!pass;};
     const fs::path saved=root/"home/Library/Application Support/HydrogenVM/ClashOffline.plist";
     ProcessConfig cfg;cfg.bundlePath=(root/"app").string();cfg.homePath=(root/"home").string();
+    {
+        ClashFixtures fixture(cfg.bundlePath);const auto sector=fixture.sector({});
+        // addDecos gives type-0 objects IDs 1,000,000+i, before type-5 towers.
+        // The decoder's reference list must retain those existing objects.
+        const Bytes ids{1,0,6,0,6,1,6,2,6,3,6,4,6,5};
+        check(fixture.decoData==std::vector<int32_t>{42000000} &&
+              std::search(sector.begin(),sector.end(),ids.begin(),ids.end())!=sector.end(),
+              "full update retains native static decoration identities before tower IDs");
+        for(const auto& tower:fixture.towers)
+            check(fixture.towerStats(tower,1).second==(tower.owner==0?40:100),"NPC tower HP multiplier applies once to both tower types");
+    }
     {
         // Native addChest (0x124bf0) increments home+0xbc and stores that ID
         // in chest+8. A slot number is not a chest identity.
