@@ -95,6 +95,24 @@ void v_dealloc(Ctx& x, id self, SEL) {
     rt(x).disposeInstance(x.cpu, self);
 }
 id v_layer(Ctx& x, id self, SEL) { return viewLayer(x, self); }
+// -[UIView recursiveDescription] (UIKit's debugging aid): one line per view, indented.
+void describeTree(Ctx& x, id v, int depth, std::string& out) {
+    if (!v || depth > 64) return;
+    const ViewData& d = V(x, v);
+    const LayerData& l = layerData(x, viewLayer(x, v));
+    char line[320];
+    std::snprintf(line, sizeof line, "%*s<%s: 0x%x; frame = (%g %g; %g %g)%s%s; alpha = %g; bg = (%.2f %.2f %.2f %.2f)%s>\n",
+                  depth * 3, "", rt(x).objectClassName(v).c_str(), v, l.position.x - l.bounds.w / 2, l.position.y - l.bounds.h / 2,
+                  l.bounds.w, l.bounds.h, l.hidden ? "; hidden" : "", l.opaque ? "; opaque" : "", l.opacity,
+                  l.background.r, l.background.g, l.background.b, l.background.a, l.contents ? "; contents" : "");
+    out += line;
+    for (id sub : d.subviews) describeTree(x, sub, depth + 1, out);
+}
+id v_recursiveDescription(Ctx& x, id self, SEL) {
+    std::string out;
+    describeTree(x, self, 0, out);
+    return makeString(x, out);
+}
 
 // ---- geometry
 void autoresize(Ctx& x, id view, G::Size oldSuper, G::Size newSuper) {
@@ -924,6 +942,17 @@ bool sendBool(Ctx& x, id self, const char* sel, std::initializer_list<uint32_t> 
 }
 
 void registerUIView(Process& p, ObjC::Runtime& r) {
+    // HVM_DUMP_VIEWS=1: print the key window's view tree when the app stops.
+    if (const char* e = std::getenv("HVM_DUMP_VIEWS"); e && *e == '1') {
+        Process* pp = &p;
+        p.onExit([pp] {
+            CPU::Cpu cpu{};
+            Ctx x{*pp, cpu, pp->mem()};
+            std::string out;
+            for (id w : {ui(x).keyWindow}) describeTree(x, w, 0, out);
+            std::fprintf(stderr, "[hvm] view tree:\n%s", out.c_str());
+        });
+    }
     auto& u = ui(p);
     const std::string R = kR, P = kP, S = kS, T = kT;
     ObjC::ClassBuilder resp = r.defineClass("UIResponder", "NSObject");
@@ -970,7 +999,7 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
         .cm<&vc_ignoreBool>("setAnimationBeginsFromCurrentState:", "v@:c").cm<&vc_setTransition>("setAnimationTransition:forView:cache:", "v@:i@c")
         .cm<&vc_setEnabled>("setAnimationsEnabled:", "v@:c").cm<&vc_enabled>("areAnimationsEnabled", "c@:")
         .cm<&vc_withoutAnimation>("performWithoutAnimation:", "v@:@?");
-    view.m<&v_init>("init").m<&v_initWithFrame>("initWithFrame:", "@@:" + R).m<&v_dealloc>("dealloc", "v@:").m<&v_layer>("layer")
+    view.m<&v_init>("init").m<&v_initWithFrame>("initWithFrame:", "@@:" + R).m<&v_dealloc>("dealloc", "v@:").m<&v_layer>("layer").m<&v_recursiveDescription>("recursiveDescription")
         .m<&v_frame>("frame", R + "@:").m<&v_setFrame>("setFrame:", "v@:" + R).m<&v_bounds>("bounds", R + "@:")
         .m<&v_setBounds>("setBounds:", "v@:" + R).m<&v_center>("center", P + "@:").m<&v_setCenter>("setCenter:", "v@:" + P)
         .m<&v_transform>("transform", T + "@:").m<&v_setTransform>("setTransform:", "v@:" + T)
