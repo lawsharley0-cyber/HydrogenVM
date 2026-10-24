@@ -490,7 +490,7 @@ id ka_archivedData(Ctx& x, id, SEL, id root) {
 bool ka_archiveToFile(Ctx& x, id self, SEL s, id root, id path) {
     const id d = ka_archivedData(x, self, s, root);
     const auto b = dataBytes(x, d);
-    std::ofstream out(utf8(x, path), std::ios::binary | std::ios::trunc);
+    std::ofstream out(x.proc.hostPath(utf8(x, path)), std::ios::binary | std::ios::trunc);
     out.write(reinterpret_cast<const char*>(b.data()), std::streamsize(b.size()));
     return bool(out);
 }
@@ -660,7 +660,7 @@ id ku_unarchiveData(Ctx& x, id, SEL, id data) {
     return autoreleased(x, root);
 }
 id ku_unarchiveFile(Ctx& x, id self, SEL s, id path) {
-    std::ifstream in(utf8(x, path), std::ios::binary);
+    std::ifstream in(x.proc.hostPath(utf8(x, path)), std::ios::binary);
     if (!in) return 0;
     std::vector<uint8_t> b((std::istreambuf_iterator<char>(in)), {});
     return ku_unarchiveData(x, self, s, makeData(x, b.data(), uint32_t(b.size())));

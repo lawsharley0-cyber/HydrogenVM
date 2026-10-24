@@ -117,7 +117,7 @@ id ai_initWithArrayCopy(Ctx& x, id self, SEL, id other, bool copyItems) {
 }
 id ai_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
     try {
-        auto v = Plist::parseFile(utf8(x, path));
+        auto v = Plist::parseFile(x.proc.hostPath(utf8(x, path)));
         if (v->type != Plist::Value::Type::Array) { releaseObj(x, self); return 0; }
         const bool m = ad(x, self) && ad(x, self)->isMutable;
         const id parsed = plistToObject(x, *v, m);
@@ -271,6 +271,34 @@ uint32_t a_indexOfObjectPassingTest(Ctx& x, id self, SEL, id block) {
     x.proc.heap().free(stop);
     return found;
 }
+id a_objectsAtIndexes(Ctx& x, id self, SEL, id indexSet) {
+    if (!indexSet) throw ObjC::ObjCError("*** -[NSArray objectsAtIndexes:]: index set cannot be nil");
+    const auto indices = indexSetIndices(x, indexSet);
+    const auto v = itemsOf(x, self);
+    std::vector<id> result;
+    result.reserve(indices.size());
+    for (uint32_t idx : indices) {
+        if (idx >= v.size()) rangeError("objectsAtIndexes:", idx, v.size());
+        result.push_back(v[idx]);
+    }
+    return makeArray(x, result);
+}
+id a_indexesOfObjectsPassingTest(Ctx& x, id self, SEL, id block) {
+    if (!block) throw ObjC::ObjCError("*** -[NSArray indexesOfObjectsPassingTest:]: block cannot be nil");
+    auto v = itemsOf(x, self);
+    const uint32_t stop = x.proc.heap().allocZeroed(4);
+    const uint32_t invoke = x.mem.read<uint32_t>(block + 12);
+    std::set<uint32_t> matching;
+    for (size_t i = 0; i < v.size(); ++i) {
+        uint32_t res = uint32_t(x.proc.callGuest(x.cpu, invoke, {block, v[i], uint32_t(i), stop}));
+        if (res & 0xFF) {
+            matching.insert(uint32_t(i));
+        }
+        if (x.mem.read<uint8_t>(stop)) break;
+    }
+    x.proc.heap().free(stop);
+    return makeIndexSet(x, matching);
+}
 
 // sorting (stable merge sort with a guest comparator)
 template <typename Cmp>
@@ -328,7 +356,7 @@ id a_valueForKey(Ctx& x, id self, SEL, id key) {
 bool a_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     auto v = objectToPlist(x, self);
     if (!v) return false;
-    try { Plist::writeXmlFile(*v, utf8(x, path)); return true; } catch (...) { return false; }
+    try { Plist::writeXmlFile(*v, x.proc.hostPath(utf8(x, path))); return true; } catch (...) { return false; }
 }
 
 // mutation
@@ -387,6 +415,84 @@ void m_removeObjectsInRange(Ctx& x, id self, SEL, uint32_t loc, uint32_t len) {
     for (id r : removed) releaseObj(x, r);
 }
 void m_removeObjectsInArray(Ctx& x, id self, SEL s, id other) { for (id o : itemsOf(x, other)) m_removeObject(x, self, s, o); }
+void m_removeObjectsAtIndexes(Ctx& x, id self, SEL, id indexSet) {
+    if (!indexSet) throw ObjC::ObjCError("*** -[NSMutableArray removeObjectsAtIndexes:]: index set cannot be nil");
+    auto& d = mut(x, self);
+    const auto indices = indexSetIndices(x, indexSet);
+    if (indices.empty()) return;
+
+    for (uint32_t idx : indices) {
+        if (idx >= d.items.size()) rangeError("removeObjectsAtIndexes:", idx, d.items.size());
+    }
+
+    std::vector<id> removed;
+    removed.reserve(indices.size());
+    for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+        const uint32_t idx = *it;
+        removed.push_back(d.items[idx]);
+        d.items.erase(d.items.begin() + idx);
+    }
+    bump(x, d.mutationCell);
+    for (id r : removed) releaseObj(x, r);
+}
+void m_insertObjectsAtIndexes(Ctx& x, id self, SEL, id objects, id indexSet) {
+    if (!objects) throw ObjC::ObjCError("*** -[NSMutableArray insertObjects:atIndexes:]: objects cannot be nil");
+    if (!indexSet) throw ObjC::ObjCError("*** -[NSMutableArray insertObjects:atIndexes:]: index set cannot be nil");
+    auto& d = mut(x, self);
+    const auto objs = itemsOf(x, objects);
+    const auto indices = indexSetIndices(x, indexSet);
+    if (objs.size() != indices.size()) {
+        throw ObjC::ObjCError("*** -[NSMutableArray insertObjects:atIndexes:]: count of array (" +
+                              std::to_string(objs.size()) + ") differs from count of index set (" +
+                              std::to_string(indices.size()) + ")");
+    }
+    if (indices.empty()) return;
+
+    const size_t origSize = d.items.size();
+    for (size_t k = 0; k < indices.size(); ++k) {
+        if (indices[k] > origSize + k) {
+            rangeError("insertObjects:atIndexes:", indices[k], origSize + k + 1);
+        }
+    }
+
+    for (id o : objs) {
+        if (!o) throw ObjC::ObjCError("*** -[NSMutableArray insertObjects:atIndexes:]: attempt to insert nil object");
+        retainObj(x, o);
+    }
+
+    for (size_t k = 0; k < indices.size(); ++k) {
+        d.items.insert(d.items.begin() + indices[k], objs[k]);
+    }
+    bump(x, d.mutationCell);
+}
+void m_replaceObjectsAtIndexesWithObjects(Ctx& x, id self, SEL, id indexSet, id objects) {
+    if (!indexSet) throw ObjC::ObjCError("*** -[NSMutableArray replaceObjectsAtIndexes:withObjects:]: index set cannot be nil");
+    if (!objects) throw ObjC::ObjCError("*** -[NSMutableArray replaceObjectsAtIndexes:withObjects:]: objects cannot be nil");
+    auto& d = mut(x, self);
+    const auto indices = indexSetIndices(x, indexSet);
+    const auto objs = itemsOf(x, objects);
+    if (indices.size() != objs.size()) {
+        throw ObjC::ObjCError("*** -[NSMutableArray replaceObjectsAtIndexes:withObjects:]: count of index set (" +
+                              std::to_string(indices.size()) + ") differs from count of array (" +
+                              std::to_string(objs.size()) + ")");
+    }
+    if (indices.empty()) return;
+
+    for (uint32_t idx : indices) {
+        if (idx >= d.items.size()) rangeError("replaceObjectsAtIndexes:withObjects:", idx, d.items.size());
+    }
+
+    std::vector<id> oldObjs;
+    oldObjs.reserve(indices.size());
+    for (size_t k = 0; k < indices.size(); ++k) {
+        id o = objs[k];
+        if (!o) throw ObjC::ObjCError("*** -[NSMutableArray replaceObjectsAtIndexes:withObjects:]: attempt to insert nil object");
+        oldObjs.push_back(d.items[indices[k]]);
+        d.items[indices[k]] = retainObj(x, o);
+    }
+    bump(x, d.mutationCell);
+    for (id old : oldObjs) releaseObj(x, old);
+}
 void m_replaceObject(Ctx& x, id self, SEL, uint32_t i, id o) {
     if (!o) throw ObjC::ObjCError("*** -[__NSArrayM replaceObjectAtIndex:withObject:]: object cannot be nil");
     auto& d = mut(x, self);
@@ -526,7 +632,7 @@ id di_initWithDictionary(Ctx& x, id self, SEL, id other) { dictAssign(x, self, e
 id di_initWithDictionaryCopy(Ctx& x, id self, SEL s, id other, bool) { return di_initWithDictionary(x, self, s, other); }
 id di_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
     try {
-        auto v = Plist::parseFile(utf8(x, path));
+        auto v = Plist::parseFile(x.proc.hostPath(utf8(x, path)));
         if (v->type != Plist::Value::Type::Dict) { releaseObj(x, self); return 0; }
         const bool m = dd(x, self) && dd(x, self)->isMutable;
         dictAssign(x, self, entriesOf(x, plistToObject(x, *v, m)));
@@ -622,7 +728,7 @@ id d_mutableCopy(Ctx& x, id self, SEL s) { return d_mutableCopyWithZone(x, self,
 bool d_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     auto v = objectToPlist(x, self);
     if (!v) return false;
-    try { Plist::writeXmlFile(*v, utf8(x, path)); return true; } catch (...) { return false; }
+    try { Plist::writeXmlFile(*v, x.proc.hostPath(utf8(x, path))); return true; } catch (...) { return false; }
 }
 id d_keysSortedByValueUsingSelector(Ctx& x, id self, SEL, SEL s) {
     auto e = entriesOf(x, self);
@@ -1035,6 +1141,8 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&a_objectEnumerator>("objectEnumerator").m<&a_reverseObjectEnumerator>("reverseObjectEnumerator")
       .m<&a_enumerateUsingBlock>("enumerateObjectsUsingBlock:", "v@:@?").m<&a_enumerateWithOptions>("enumerateObjectsWithOptions:usingBlock:")
       .m<&a_indexOfObjectPassingTest>("indexOfObjectPassingTest:")
+      .m<&a_objectsAtIndexes>("objectsAtIndexes:")
+      .m<&a_indexesOfObjectsPassingTest>("indexesOfObjectsPassingTest:")
       .m<&a_sortedUsingSelector>("sortedArrayUsingSelector:").m<&a_sortedUsingFunction>("sortedArrayUsingFunction:context:")
       .m<&a_sortedUsingComparator>("sortedArrayUsingComparator:").m<&a_sortedUsingDescriptors>("sortedArrayUsingDescriptors:")
       .m<&a_valueForKey>("valueForKey:")
@@ -1045,7 +1153,11 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
        .m<&m_removeObjectAtIndex>("removeObjectAtIndex:", "v@:I").m<&m_removeLastObject>("removeLastObject", "v@:")
        .m<&m_removeAllObjects>("removeAllObjects", "v@:").m<&m_removeObject>("removeObject:", "v@:@")
        .m<&m_removeObjectIdenticalTo>("removeObjectIdenticalTo:", "v@:@").m<&m_removeObjectsInRange>("removeObjectsInRange:")
-       .m<&m_removeObjectsInArray>("removeObjectsInArray:").m<&m_replaceObject>("replaceObjectAtIndex:withObject:")
+       .m<&m_removeObjectsInArray>("removeObjectsInArray:")
+       .m<&m_removeObjectsAtIndexes>("removeObjectsAtIndexes:")
+       .m<&m_insertObjectsAtIndexes>("insertObjects:atIndexes:")
+       .m<&m_replaceObjectsAtIndexesWithObjects>("replaceObjectsAtIndexes:withObjects:")
+       .m<&m_replaceObject>("replaceObjectAtIndex:withObject:")
        .m<&m_setObjectAtIndexedSubscript>("setObject:atIndexedSubscript:").m<&m_exchange>("exchangeObjectAtIndex:withObjectAtIndex:")
        .m<&m_addObjectsFromArray>("addObjectsFromArray:").m<&m_setArray>("setArray:")
        .m<&m_sortUsingSelector>("sortUsingSelector:").m<&m_sortUsingFunction>("sortUsingFunction:context:")

@@ -157,7 +157,8 @@ gzFile gz(Ctx& x, uint32_t h) {
     return it == g.files.end() ? nullptr : it->second;
 }
 uint32_t z_gzopen(Ctx& x, GuestPtr path, GuestPtr mode) {
-    gzFile f = gzopen(x.proc.readCString(path).c_str(), x.proc.readCString(mode).c_str());
+    const std::string hostP = x.proc.hostPath(x.proc.readCString(path));
+    gzFile f = gzopen(hostP.c_str(), x.proc.readCString(mode).c_str());
     if (!f) return 0;
     auto& g = x.proc.service<GzFiles>();
     std::lock_guard<std::mutex> lk(g.mu);
@@ -199,6 +200,17 @@ void registerZlib(Process& p) {
     p.def<&z_compress2>("_compress2");
     p.def<&z_compressBound>("_compressBound");
     p.def<&z_crc32>("_crc32");
+    // get_crc_table(): zlib's 256-entry table, copied into guest memory once.
+    p.def<+[](Ctx& x) {
+        static const char key = 0;
+        uint32_t& table = x.proc.processSlot(&key);
+        if (!table) {
+            table = x.proc.heap().alloc(256 * 4);
+            const auto* host = get_crc_table();
+            for (int i = 0; i < 256; ++i) x.mem.write<uint32_t>(table + i * 4, uint32_t(host[i]));
+        }
+        return table;
+    }>("_get_crc_table");
     p.def<&z_adler32>("_adler32");
     p.def<&z_version>("_zlibVersion");
     p.def<&z_gzopen>("_gzopen");

@@ -2,6 +2,8 @@
 // -bytes / -mutableBytes can hand guest code a real pointer.
 #include "Foundation.hpp"
 #include <fstream>
+#include <sys/stat.h>
+#include <cerrno>
 
 namespace Hydrogen::Runtime::Foundation {
 namespace {
@@ -73,9 +75,18 @@ id di_initWithBytesNoCopy(Ctx& x, id self, SEL, GuestPtr p, uint32_t n, bool fre
 id di_initWithBytesNoCopy2(Ctx& x, id self, SEL s, GuestPtr p, uint32_t n) { return di_initWithBytesNoCopy(x, self, s, p, n, true); }
 id di_initWithData(Ctx& x, id self, SEL, id other) { const auto b = bytesOf(x, other); assign(x, self, b.data(), uint32_t(b.size())); return self; }
 id di_initWithContentsOfFile(Ctx& x, id self, SEL, id path) {
-    std::ifstream in(utf8(x, path), std::ios::binary);
-    if (!in) { rt(x).release(x.cpu, self); return 0; }
+    const std::string p = x.proc.hostPath(utf8(x, path));
+    int64_t sz = -1;
+    struct stat st;
+    if (::stat(p.c_str(), &st) == 0) sz = st.st_size;
+    std::ifstream in(p, std::ios::binary);
+    if (!in) {
+        x.proc.recordFileOpen(p, "NSData", errno ? errno : ENOENT, sz, 0);
+        rt(x).release(x.cpu, self);
+        return 0;
+    }
     std::vector<uint8_t> b((std::istreambuf_iterator<char>(in)), {});
+    x.proc.recordFileOpen(p, "NSData", 0, sz, int64_t(b.size()));
     assign(x, self, b.data(), uint32_t(b.size()));
     return self;
 }

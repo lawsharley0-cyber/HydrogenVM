@@ -182,6 +182,21 @@ public:
     // Guest instructions retired by every thread so far (approximate while running).
     uint64_t guestInstructions();
 
+    // ---- guest file open history ring (~32 entries)
+    struct FileRecord {
+        uint64_t handle = 0;
+        std::string path;
+        std::string api;
+        int hostResult = 0;
+        int64_t size = -1;
+        int64_t bytesRead = 0;
+        bool isOpen = true;
+    };
+    uint64_t recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead = 0, bool isOpen = true);
+    void updateFileRead(uint64_t handle, int64_t bytesRead);
+    void recordFileClose(uint64_t handle);
+    std::vector<FileRecord> fileRing() const;
+
     // ---- results
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
@@ -277,6 +292,13 @@ public:
     const std::string& homePath() const { return homePath_; }
     const std::string& executablePath() const { return executablePath_; }
 
+    const std::string& guestHomePath() const { return guestHomePath_; }
+    const std::string& guestBundlePath() const { return guestBundlePath_; }
+    const std::string& guestExecutablePath() const { return guestExecutablePath_; }
+
+    std::string hostPath(const std::string& guestPath) const;
+    std::string guestPath(const std::string& hostPath) const;
+
     // ---- logging / diagnostics
     void log(LogLevel lvl, const std::string& msg) const;
     void logf(LogLevel lvl, const char* fmt, ...) const __attribute__((format(printf, 3, 4)));
@@ -322,6 +344,7 @@ private:
     Loader::Image image_;
     Plist::ValuePtr infoPlist_;
     std::string homePath_, executablePath_;
+    std::string guestHomePath_, guestBundlePath_, guestExecutablePath_;
 
     std::unordered_map<std::string, uint32_t> symbols_;
     std::vector<std::function<uint32_t(const std::string&)>> missingResolvers_;
@@ -375,6 +398,9 @@ private:
     std::array<uint32_t, 16> crashRegisters_{};
     mutable std::mutex logRingMu_;
     mutable std::deque<std::string> logRing_;
+    mutable std::mutex fileRingMu_;
+    mutable std::deque<FileRecord> fileRing_;
+    uint64_t nextFileHandle_ = 0;
     void captureCrash(const CPU::Cpu& c, const std::string& kind, const std::string& detail);
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;

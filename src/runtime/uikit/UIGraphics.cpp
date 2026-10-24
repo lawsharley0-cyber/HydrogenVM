@@ -309,7 +309,7 @@ id imgc_named(Ctx& x, id self, SEL, id nameObj) {
 }
 id imgc_file(Ctx& x, id self, SEL, id pathObj) {
     if (!pathObj) return 0;
-    const std::string rawPath = utf8(x, pathObj);
+    const std::string rawPath = x.proc.hostPath(utf8(x, pathObj));
     std::string path = retinaVariant(rawPath, ui(x).scale);
     auto img = loadFile(x, path);
     if (!img) {

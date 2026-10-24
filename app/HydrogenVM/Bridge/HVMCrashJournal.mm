@@ -1,4 +1,5 @@
 #import "HVMEngine.h"
+#include "core/cpu/Engine.hpp"
 #include <signal.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -6,6 +7,7 @@
 
 namespace {
 volatile sig_atomic_t signalFD = -1;
+int hostFaultFD = -1;   // Engine writes host-fault diagnostics (log tail, guest threads) here
 void hostFailure(int signal) {
     // No Foundation, allocation, locks, backtrace, or guest state in signal context.
     // The shell has already persisted a bounded session snapshot alongside this file.
@@ -32,11 +34,20 @@ void hostFailure(int signal) {
 + (void)openSignalFile:(NSString *)path {
     [self closeSignalFile];
     signalFD = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    // Beside it, "<name>.hostfault.txt" (pending.signal.json -> pending.hostfault.txt)
+    // receives the emulator's own diagnostics when the host process faults.
+    NSString *faultPath = [[path stringByDeletingPathExtension] stringByDeletingPathExtension];
+    faultPath = [faultPath stringByAppendingString:@".hostfault.txt"];
+    hostFaultFD = open(faultPath.fileSystemRepresentation, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (hostFaultFD >= 0) Hydrogen::CPU::Engine::setFaultReportFd(hostFaultFD);
 }
 + (void)closeSignalFile {
     const int fd = signalFD;
     signalFD = -1;
     if (fd >= 0) close(fd);
+    Hydrogen::CPU::Engine::setFaultReportFd(-1);
+    if (hostFaultFD >= 0) close(hostFaultFD);
+    hostFaultFD = -1;
 }
 + (uint64_t)availableMemory { return os_proc_available_memory(); }
 @end

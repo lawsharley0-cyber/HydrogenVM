@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace Hydrogen::Runtime {
@@ -21,7 +22,7 @@ struct Stdio {
     explicit Stdio(Process& p) : proc(p) {}
     Process& proc;
     std::mutex mu;
-    struct File { std::FILE* f = nullptr; int stream = 0; /*1 stdout 2 stderr*/ std::string pending; int unget = -1; bool eof = false; };
+    struct File { std::FILE* f = nullptr; int stream = 0; /*1 stdout 2 stderr*/ std::string pending; int unget = -1; bool eof = false; uint64_t fileHandle = 0; int64_t bytesRead = 0; };
     std::unordered_map<uint32_t, File> files;
     uint32_t sF = 0;   // __sF[3]
 
@@ -131,10 +132,18 @@ void f_perror(Ctx& x, GuestPtr s) {
 // ----------------------------------------------------------------- files ---
 
 uint32_t f_fopen(Ctx& x, GuestPtr path, GuestPtr mode) {
-    const std::string p = x.proc.readCString(path), m = x.proc.readCString(mode);
+    const std::string p = x.proc.hostPath(x.proc.readCString(path)), m = x.proc.readCString(mode);
     std::FILE* f = std::fopen(p.c_str(), m.c_str());
-    if (!f) { setErrno(x, errno); return 0; }
-    return newFile(x, f);
+    if (!f) { x.proc.recordFileOpen(p, "fopen", errno, -1, 0, false); setErrno(x, errno); return 0; }
+    int64_t sz = -1;
+    struct stat st;
+    if (::fstat(fileno(f), &st) == 0) sz = st.st_size;
+    const uint64_t h = x.proc.recordFileOpen(p, "fopen", 0, sz, 0, true);
+    const uint32_t fp = newFile(x, f);
+    std::lock_guard<std::mutex> lk(S(x).mu);
+    auto* sf = S(x).get(fp);
+    if (sf) { sf->fileHandle = h; sf->bytesRead = 0; }
+    return fp;
 }
 uint32_t f_fdopen(Ctx& x, int32_t fd, GuestPtr mode) {
     // Host stdio would bypass interruptible socket IO and transfer close
@@ -149,7 +158,7 @@ uint32_t f_freopen(Ctx& x, GuestPtr path, GuestPtr mode, GuestPtr fp) {
     auto* f = S(x).get(fp);
     if (!f) return 0;
     if (f->stream) return fp;   // redirecting stdout/stderr: keep logging
-    std::FILE* nf = std::freopen(x.proc.readCString(path).c_str(), x.proc.readCString(mode).c_str(), f->f);
+    std::FILE* nf = std::freopen(x.proc.hostPath(x.proc.readCString(path)).c_str(), x.proc.readCString(mode).c_str(), f->f);
     if (!nf) { setErrno(x, errno); return 0; }
     f->f = nf;
     return fp;
@@ -159,6 +168,7 @@ int32_t f_fclose(Ctx& x, GuestPtr fp) {
     auto* f = S(x).get(fp);
     if (!f) return -1;
     if (f->stream) { S(x).flush(*f); return 0; }
+    if (f->f) x.proc.recordFileClose(f->fileHandle);
     const int r = f->f ? std::fclose(f->f) : 0;
     S(x).files.erase(fp);
     lk.unlock();
@@ -174,6 +184,8 @@ uint32_t f_fread(Ctx& x, GuestPtr ptr, uint32_t size, uint32_t n, GuestPtr fp) {
     if (f->unget >= 0) { dst[got++] = char(f->unget); f->unget = -1; }
     got += std::fread(dst + got, 1, total - got, f->f);
     if (got < total) f->eof = std::feof(f->f);
+    f->bytesRead += got;
+    x.proc.updateFileRead(f->fileHandle, f->bytesRead);
     return uint32_t(got / size);
 }
 int32_t f_fgetc(Ctx& x, GuestPtr fp) {
@@ -264,8 +276,8 @@ int32_t f_fileno(Ctx& x, GuestPtr fp) {
 }
 int32_t f_setvbuf(Ctx&, GuestPtr, GuestPtr, int32_t, uint32_t) { return 0; }
 void f_setbuf(Ctx&, GuestPtr, GuestPtr) {}
-int32_t f_remove(Ctx& x, GuestPtr path) { const int r = std::remove(x.proc.readCString(path).c_str()); if (r) setErrno(x, errno); return r; }
-int32_t f_rename(Ctx& x, GuestPtr a, GuestPtr b) { const int r = std::rename(x.proc.readCString(a).c_str(), x.proc.readCString(b).c_str()); if (r) setErrno(x, errno); return r; }
+int32_t f_remove(Ctx& x, GuestPtr path) { const int r = std::remove(x.proc.hostPath(x.proc.readCString(path)).c_str()); if (r) setErrno(x, errno); return r; }
+int32_t f_rename(Ctx& x, GuestPtr a, GuestPtr b) { const int r = std::rename(x.proc.hostPath(x.proc.readCString(a)).c_str(), x.proc.hostPath(x.proc.readCString(b)).c_str()); if (r) setErrno(x, errno); return r; }
 uint32_t f_tmpfile(Ctx& x) { std::FILE* f = std::tmpfile(); return f ? newFile(x, f) : 0; }
 
 // ----------------------------------------------------------------- scanf ---
@@ -440,26 +452,30 @@ uint32_t f_tmpnam(Ctx& x, GuestPtr s) {
     std::lock_guard<std::mutex> lk(st.mu);
     // Darwin TMP_MAX (Apple Libc stdio.h, same value as FreeBSD) is 308915776.
     // Keep drawing names until one is absent, up to that many attempts.
-    std::string chosen;
+    std::string chosenHost;
+    std::string chosenGuest;
     constexpr uint32_t kTmpMax = 308915776u;
-    for (uint32_t n = 0; n < kTmpMax && chosen.empty(); ++n) {
+    for (uint32_t n = 0; n < kTmpMax && chosenHost.empty(); ++n) {
         const uint32_t seq = ++st.seq;
         char leaf[64];
         std::snprintf(leaf, sizeof leaf, "tmpnam.%u.%u", uint32_t(::getpid()), seq);
         const fs::path path = dir / leaf;
-        if (!fs::exists(path, ec)) chosen = path.string();
+        if (!fs::exists(path, ec)) {
+            chosenHost = path.string();
+            chosenGuest = x.proc.guestPath(chosenHost);
+        }
     }
-    if (chosen.empty()) {
+    if (chosenGuest.empty()) {
         if (x.proc.currentThread().errnoAddr) x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, 17); // Darwin EEXIST
         return 0;
     }
-    if (chosen.size() >= 1024) chosen.resize(1023);
+    if (chosenGuest.size() >= 1024) chosenGuest.resize(1023);
     GuestPtr dest = s;
     if (!dest) {
         if (!st.staticBuf) st.staticBuf = x.proc.allocStatic(1024);
         dest = st.staticBuf;
     }
-    x.mem.copyIn(dest, chosen.c_str(), chosen.size() + 1);
+    x.mem.copyIn(dest, chosenGuest.c_str(), chosenGuest.size() + 1);
     return dest;
 }
 

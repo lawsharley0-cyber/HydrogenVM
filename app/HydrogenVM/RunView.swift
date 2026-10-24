@@ -112,8 +112,9 @@ final class RunModel {
         guard session == nil else { return }
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
         s.keepGoing = keepGoing
-        // GPU rendering unless the player turned it off (Settings: "softwareRenderer").
-        s.useGPU = !UserDefaults.standard.bool(forKey: "softwareRenderer")
+        // GPU rendering unless the player turned it off for this game (or, from
+        // older builds, for every game).
+        s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
         // The bridge delivers every callback on the main queue.
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
@@ -203,6 +204,14 @@ final class RunModel {
                 self.syncOrientation()
             }
         }
+    }
+
+    /// Per-game renderer choice; key "softwareRenderer.<bundle id>".
+    nonisolated static func softwareRenderingKey(_ bundleID: String) -> String { "softwareRenderer.\(bundleID)" }
+    nonisolated static func softwareRendering(for bundleID: String) -> Bool {
+        let d = UserDefaults.standard
+        if d.object(forKey: softwareRenderingKey(bundleID)) != nil { return d.bool(forKey: softwareRenderingKey(bundleID)) }
+        return d.bool(forKey: "softwareRenderer")
     }
 
     private func syncOrientation() {
@@ -376,14 +385,16 @@ struct RunView: View {
     @State private var overrideOrientation: GuestOrientation?
     @AppStorage("player.scaleMode") private var scaleSetting = PlayerScaleMode.fit.rawValue
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
-    /// Read by the session at start (RunModel.start): GPU rendering unless this is on.
-    @AppStorage("softwareRenderer") private var softwareRenderer = false
+    /// Read by the session at start (RunModel.start): GPU rendering unless this is on. Per game.
+    @AppStorage private var softwareRenderer: Bool
     @Environment(\.dismiss) private var dismiss
 
     init(app: InstalledApp, keepGoing: Bool) {
         self.app = app
         self.keepGoing = keepGoing
         _model = State(initialValue: RunModel(app: app))
+        _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: app.info.bundleIdentifier),
+                                       RunModel.softwareRenderingKey(app.info.bundleIdentifier))
     }
 
     private var effectiveOrientation: GuestOrientation {
@@ -597,7 +608,7 @@ struct RunView: View {
                         .pickerStyle(.segmented)
 
                         Toggle(isOn: Binding(get: { !softwareRenderer }, set: { softwareRenderer = !$0 })) {
-                            Text("GPU rendering (takes effect next launch)")
+                            Text("GPU rendering for this game (next launch)")
                                 .font(.caption)
                         }
                         .accessibilityIdentifier("player-gpu-rendering")

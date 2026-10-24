@@ -12,6 +12,7 @@
 #if !defined(__APPLE__)
 #include <dlfcn.h>
 #include <initializer_list>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -114,7 +115,14 @@ public:
         return egl_.makeCurrent(dpy_, nullptr, nullptr, c->ctx) != 0;
     }
 
-    void* proc(void*, const char* name) override { return egl_.getProcAddress(name); }
+    void* proc(void*, const char* name) override {
+        // eglGetProcAddress hands out a stub for any name, so a missing Apple
+        // extension would look present and do nothing. Mesa has none of the
+        // APPLE entry points; HostGL then falls back to the ES 3 equivalents.
+        const size_t n = std::strlen(name);
+        if (n > 5 && std::strcmp(name + n - 5, "APPLE") == 0) return nullptr;
+        return egl_.getProcAddress(name);
+    }
 
 private:
     EGLContext create(EGLenum api, EGLint renderable, std::initializer_list<EGLint> attrs, EGLContext share) {
