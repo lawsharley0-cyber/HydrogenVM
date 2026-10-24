@@ -82,12 +82,12 @@ std::vector<ClashHomeCommand> decodeClashHomeTurn(const Bytes& bytes) {
         ClashHomeCommand c;c.type=r.v();
         // Native getCommandType: StartExploring 0x10f7c8 and
         // SpeedUpExploring 0x17a40. Payloads follow their native decode methods.
-        if(c.type!=502 && c.type!=503 && c.type!=504 && c.type!=506 && c.type!=537)
+        if(c.type!=502 && c.type!=503 && c.type!=504 && c.type!=506 && c.type!=518 && c.type!=537)
             throw std::runtime_error("Offline Clash: unsupported turn command "+std::to_string(c.type));
         r.v();r.v(); // LogicCommand::decode (0x639a0): given tick, sequence
         const int32_t high=r.v(),low=r.v();
         if(high!=0 || low!=1)throw std::runtime_error("Offline Clash: home command executor mismatch");
-        c.argument=c.type==504?r.ref():r.v();
+        if(c.type!=518)c.argument=c.type==504?r.ref():r.v(); // 518 has only LogicCommand metadata
         if(c.type==506 || c.type==537)c.flag=r.b();
         if((c.type==502 || c.type==503 || c.type==506) && c.argument<0)
             throw std::runtime_error("Offline Clash: invalid chest ID");
@@ -111,7 +111,14 @@ ClashHomeView inspectClashHome(const Bytes& bytes) {
     if(selected<0 || selected>=decks || slots!=4)throw std::runtime_error("Offline Clash: invalid native home selection");
     view.deck=all[selected];view.chestOffset=r.at;
     for(int i=0;i<4;++i)if(r.b()) {auto& c=view.states[i];c.data=r.ref();view.chests[i]=c.data;c.unlocked=r.b();c.claimed=r.b();c.isNew=r.b();c.hasTimer=r.b();if(c.hasTimer)for(auto& n:c.timer)n=r.v();c.value8=r.v();c.source=r.v();c.valueC=r.v();}
-    view.chestEnd=r.at;return view;
+    view.chestEnd=r.at;
+    for(int i=0;i<6;++i)r.v(); // original free/crown timers at home+0x60/+0x98
+    auto extraChest=[&](ClashHomeView::Chest& c) {
+        if(!r.b())return;
+        c.data=r.ref();c.unlocked=r.b();c.claimed=r.b();c.isNew=r.b();c.hasTimer=r.b();
+        if(c.hasTimer)for(auto& n:c.timer)n=r.v();c.value8=r.v();c.source=r.v();c.valueC=r.v();
+    };
+    extraChest(view.freeChest);extraChest(view.crownChest);return view;
 }
 Bytes replaceClashHomeChests(const Bytes& bytes,const std::array<int32_t,4>& chests,size_t& avatarOffset) {
     auto view=inspectClashHome(bytes);if(view.chests==chests)return bytes;

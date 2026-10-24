@@ -84,6 +84,7 @@ void save(const std::filesystem::path& path,const ClashProfile& p) {
     value->set("avatarOffset",Plist::Value::makeInt(p.avatarOffset));
     value->set("pendingReward",Plist::Value::makeData(std::string(p.pendingReward.begin(),p.pendingReward.end())));
     value->set("pendingRewardSlot",Plist::Value::makeInt(p.pendingRewardSlot+1));
+    value->set("pendingRewardKind",Plist::Value::makeInt(p.pendingRewardKind));
     value->set("rewardSerial",Plist::Value::makeInt(p.rewardSerial));
     value->set("clientExecutableSHA256",Plist::Value::makeString("3519d7954cb3dc16b9d7746cc5dbd2521d0209eea2bbc163f6ab7cdfa5e52397"));
     auto text=Plist::toXml(*value);std::filesystem::create_directories(path.parent_path());
@@ -133,13 +134,17 @@ ClashProfile load(const std::filesystem::path& path) {
             if(!pending || pending->type!=Plist::Value::Type::Data || pending->s.size()>65536)
                 throw std::runtime_error("Offline Clash: invalid reward journal");
             p.pendingReward=Bytes(pending->s.begin(),pending->s.end());p.pendingRewardSlot=integer("pendingRewardSlot",4)-1;
-            if(p.pendingReward.empty()!=(p.pendingRewardSlot<0) || (!p.pendingReward.empty() && p.nativeHome.empty()))
+            p.pendingRewardKind=value->get("pendingRewardKind")?integer("pendingRewardKind",2):(p.pendingReward.empty()?0:1);
+            if((p.pendingReward.empty() && (p.pendingRewardSlot!=-1 || p.pendingRewardKind!=0)) ||
+               (!p.pendingReward.empty() && (p.nativeHome.empty() || p.pendingRewardKind==0 ||
+                (p.pendingRewardKind==1 && p.pendingRewardSlot<0) || (p.pendingRewardKind==2 && p.pendingRewardSlot!=-1))))
                 throw std::runtime_error("Offline Clash: incomplete reward journal");
             if(value->get("rewardSerial"))p.rewardSerial=integer("rewardSerial",1000000);
             if(!p.pendingReward.empty()) {
                 Reader command{p.pendingReward};
                 const auto before=inspectClashHome(p.nativeHome);
-                if(command.v()!=213 || !before.chests[p.pendingRewardSlot] || before.states[p.pendingRewardSlot].claimed)
+                const auto source=p.pendingRewardKind==1?before.states[p.pendingRewardSlot]:before.freeChest;
+                if(command.v()!=213 || !source.data || source.claimed)
                     throw std::runtime_error("Offline Clash: reward journal has no complete source chest");
             }
         }
@@ -164,6 +169,8 @@ struct ClashOffline::Impl {
     int listener=-1,lockFile=-1;uint16_t boundPort=0;std::thread worker;bool rewardForPlayer=false;
     uint32_t rewardAvatar=0,pendingBattleAvatar=0,scratch=0,stream=0;CPU::Cpu snapshotCpu;
     int32_t requestedChestId=-1;
+    uint32_t observedRewardCommand=0;
+    bool pendingRewardApplied=false;
     std::chrono::steady_clock::time_point lastSnapshot{};
     explicit Impl(Process& p):process(p),fixtures(p.config().bundlePath),
         path(std::filesystem::path(p.config().homePath)/"Library/Application Support/HydrogenVM/ClashOffline.plist") {
@@ -244,6 +251,19 @@ struct ClashOffline::Impl {
             save(path,next);profile=next;process.logf(LogLevel::Info,"Offline Clash: native win and chest reward committed (trophies=%d, arena=%d)",next.trophies,next.arenaLevel);
         });
         process.engine().observeEntry(0x92f08,[this](uint32_t,const CPU::Cpu& cpu){captureHome(cpu);});
+        process.engine().observeEntry(0x8203c,[this](uint32_t,const CPU::Cpu& cpu){
+            std::lock_guard lock(mutex);
+            observedRewardCommand=profile.pendingRewardKind==2 && !profile.pendingReward.empty() &&
+                process.mem().read<int32_t>(cpu.r[0]+0x24)==2?cpu.r[0]:0;
+        });
+        process.engine().observeEntry(0x8275e,[this](uint32_t,const CPU::Cpu& cpu){
+            std::lock_guard lock(mutex);
+            if(observedRewardCommand && cpu.r[4]==0 && profile.pendingRewardKind==2) {
+                pendingRewardApplied=true;
+                process.log(LogLevel::Info,"Offline Clash: native free-chest reward executed successfully");
+            }
+            observedRewardCommand=0;
+        });
         process.log(LogLevel::Info,"Offline Clash: phone-local first-NPC service started; earned rewards/chests remain experimental");
         worker=std::thread([this]{serve();});
         setup.ready=true;
@@ -318,7 +338,7 @@ struct ClashOffline::Impl {
         save(path,next);profile=std::move(next);pendingBattleAvatar=0;
         process.log(LogLevel::Info,"Offline Clash: native battle avatar and earned progress committed together");
     }
-    Bytes encodeNativeReward(uint32_t home,uint32_t chest,int32_t chestId) {
+    Bytes encodeNativeReward(uint32_t home,uint32_t chest,int32_t chestId,int32_t source=1) {
         if(!scratch){scratch=process.heap().allocZeroed(256*1024);stream=process.heap().allocZeroed(64);}
         snapshotCpu.r[CPU::kSP]=scratch+256*1024;
         // Mirror LogicProgressSimulator::openChest (0x8f2b4..0x8f318), using
@@ -330,7 +350,7 @@ struct ClashOffline::Impl {
             {randomizer,chest,uint32_t(profile.created)^uint32_t(profile.chestCycleIndex),home}));
         process.callGuest(snapshotCpu,0x81fed,{command});
         process.callGuest(snapshotCpu,0x829c1,{command,uint32_t(chestId)});
-        process.callGuest(snapshotCpu,0x829c5,{command,1}); // standard slotted chest
+        process.callGuest(snapshotCpu,0x829c5,{command,uint32_t(source)});
         process.callGuest(snapshotCpu,0x82841,{command,reward});
         process.callGuest(snapshotCpu,0x192a71,{stream,65536});
         process.callGuest(snapshotCpu,0x6d8c5,{stream,command});
@@ -357,6 +377,18 @@ struct ClashOffline::Impl {
         // Only a newly received, validated claim can generate a reward. Older
         // half-claimed saves without a journal remain a recovery task.
         if(mem.read<uint8_t>(home+0xb4)) {
+            if(requestedChestId==-2 && profile.pendingReward.empty() && !profile.nativeHome.empty() && process.image().entry) {
+                const auto before=inspectClashHome(profile.nativeHome);
+                const auto chest=mem.read<uint32_t>(home+0x78); // getFreeChest 0x126434
+                if(!chest || !before.freeChest.data || before.freeChest.claimed || !mem.read<uint8_t>(chest+0x18))
+                    throw std::runtime_error("Offline Clash: free reward has no complete pre-claim checkpoint");
+                auto next=profile;
+                if(next.rewardSerial>=1000000)throw std::runtime_error("Offline Clash: reward serial exhausted");
+                ++next.rewardSerial;next.pendingReward=encodeNativeReward(home,chest,0,2);
+                next.pendingRewardSlot=-1;next.pendingRewardKind=2;pendingRewardApplied=false;
+                save(path,next);profile=std::move(next);requestedChestId=-1;
+                process.log(LogLevel::Info,"Offline Clash: native free-chest reward journaled before delivery");
+            }
             if(requestedChestId>=0 && profile.pendingReward.empty() && !profile.nativeHome.empty() && process.image().entry) {
                 const auto count=mem.read<int32_t>(home+0x58);
                 const auto list=mem.read<uint32_t>(home+0x50);
@@ -369,20 +401,21 @@ struct ClashOffline::Impl {
                         throw std::runtime_error("Offline Clash: reward has no complete pre-claim checkpoint");
                     auto next=profile;
                     if(next.rewardSerial>=1000000)throw std::runtime_error("Offline Clash: reward serial exhausted");
-                    ++next.rewardSerial;next.pendingReward=encodeNativeReward(home,chest,requestedChestId);next.pendingRewardSlot=i;
+                    ++next.rewardSerial;next.pendingReward=encodeNativeReward(home,chest,requestedChestId);next.pendingRewardSlot=i;next.pendingRewardKind=1;
                     save(path,next);profile=std::move(next);requestedChestId=-1;
                     process.log(LogLevel::Info,"Offline Clash: native chest reward journaled before delivery");break;
                 }
             }
             return;
         }
+        if(profile.pendingRewardKind==2 && !pendingRewardApplied)return;
         auto [bytes,offset]=encodeNative(home,avatar);
         if(bytes==profile.nativeHome)return;
         const auto view=inspectClashHome(bytes);
-        if(!profile.pendingReward.empty() && view.chests[profile.pendingRewardSlot])return;
+        if(profile.pendingRewardKind==1 && view.chests[profile.pendingRewardSlot])return;
         auto next=profile;next.nativeHome=bytes;next.avatarOffset=offset;
         if(!next.pendingReward.empty()) {
-            next.pendingReward.clear();next.pendingRewardSlot=-1;
+            next.pendingReward.clear();next.pendingRewardSlot=-1;next.pendingRewardKind=0;pendingRewardApplied=false;
             process.log(LogLevel::Info,"Offline Clash: native chest collection completed; checkpoint committed");
         }
         next.nativeAvatar=Bytes(bytes.begin()+offset,bytes.end()-1);next.chests=view.chests;
@@ -507,6 +540,9 @@ struct ClashOffline::Impl {
                             process.logf(LogLevel::Info,"Offline Clash: StartRewardClaim chest %d received", command.argument);
                         } else if(cmdType==504) {
                             process.logf(LogLevel::Info,"Offline Clash: FuseSpells spell %d", command.argument);
+                        } else if(cmdType==518) {
+                            {std::lock_guard lock(mutex);requestedChestId=-2;}
+                            process.log(LogLevel::Info,"Offline Clash: native free-chest collection requested");
                         } else if(cmdType==506) {
                             process.logf(LogLevel::Info,"Offline Clash: SpeedUpExploring chest %d (claim=%d)", command.argument, command.flag);
                         }

@@ -63,6 +63,16 @@ int main() {
     const fs::path saved=root/"home/Library/Application Support/HydrogenVM/ClashOffline.plist";
     ProcessConfig cfg;cfg.bundlePath=(root/"app").string();cfg.homePath=(root/"home").string();
     {
+        // CollectFreeChest::decode 0x9992c delegates to LogicCommand only;
+        // there is no chest-ID payload after the account ID.
+        Bytes turn;for(int n:{10,1234,1,518,-1,-1,0,1})clashVint(turn,n);
+        clashInt(turn,-1);bool accepted=false;
+        try{const auto commands=decodeClashHomeTurn(turn);accepted=commands.size()==1 && commands[0].type==518;}catch(const std::runtime_error&){}
+        check(accepted,"free-chest turn command accepts its native metadata-only schema");
+        turn.pop_back();bool rejected=false;try{decodeClashHomeTurn(turn);}catch(const std::runtime_error&){rejected=true;}
+        check(rejected,"truncated free-chest turn is rejected before requesting a reward");
+    }
+    {
         ClashFixtures fixture(cfg.bundlePath);const auto sector=fixture.sector({});
         // addDecos gives type-0 objects IDs 1,000,000+i, before type-5 towers.
         // The decoder's reference list must retain those existing objects.
@@ -205,6 +215,7 @@ int main() {
         const Bytes pending{0x95,3,0,1,1,0x7f,0x7f,0x7f,0,0};
         stored->set("pendingReward",Plist::Value::makeData(std::string(pending.begin(),pending.end())));
         stored->set("pendingRewardSlot",Plist::Value::makeInt(1));
+        stored->set("pendingRewardKind",Plist::Value::makeInt(1));
         auto chests=Plist::Value::makeArray();for(auto chest:p.chests)chests->array.push_back(Plist::Value::makeInt(chest));stored->set("chests",chests);
         std::ofstream(saved)<<Plist::toXml(*stored);
         for(int launch=0;launch<2;++launch) {
@@ -218,6 +229,38 @@ int main() {
         stored->set("pendingRewardSlot",Plist::Value::makeInt(0));std::ofstream(saved)<<Plist::toXml(*stored);
         bool rejected=false;try{Process process(cfg);ClashOffline service(process);}catch(const std::runtime_error&){rejected=true;}
         check(rejected,"incomplete reward journal is rejected without resetting progress");
+    }
+    {
+        // Independent source-2 checkpoint layout: two timers follow slotted
+        // chests, then free-chest presence + LogicChest fields, then crown.
+        auto home=ClashFixtures(cfg.bundlePath).home({});
+        Bytes timers;for(int n:{288000,0,-1,0,0,-1})clashVint(timers,n);
+        const auto at=inspectClashHome(home).chestEnd+timers.size();
+        if(home.at(at)!=0)throw std::runtime_error("unexpected synthetic extra chest flags");
+        Bytes free{1,19,0,4,0,0,0x7f,0}; // present, ref, new/unclaimed flags, IDs, crown absent
+        home.erase(home.begin()+at);home.insert(home.begin()+at,free.begin(),free.end());
+        auto stored=Plist::parseFile(saved.string());
+        stored->set("nativeHome",Plist::Value::makeData(std::string(home.begin(),home.end())));
+        stored->set("nativeAvatar",Plist::Value::makeData(""));
+        const std::string marker="Offline Player";auto name=std::search(home.begin(),home.end(),marker.begin(),marker.end());
+        stored->set("avatarOffset",Plist::Value::makeInt(name-home.begin()-10));
+        // This placeholder envelope tests journal persistence/transport only;
+        // actual native randomization/execution is exercised in the real app.
+        const Bytes pending{0x95,3,0,2,1,0x7f,0x7f,0x7f,0,0};
+        stored->set("pendingReward",Plist::Value::makeData(std::string(pending.begin(),pending.end())));
+        stored->set("pendingRewardSlot",Plist::Value::makeInt(0));stored->set("pendingRewardKind",Plist::Value::makeInt(2));
+        std::ofstream(saved)<<Plist::toXml(*stored);
+        for(int launch=0;launch<2;++launch) {
+            Process process(cfg);ClashOffline service(process);SocketPeer client(service.port());
+            Bytes login;clashInt(login,0);clashInt(login,0);clashInt(login,-1);for(int n:{2,0,1306})clashVint(login,n);
+            client.send(10101,login);client.receive();client.receive();
+            check(client.receive()==std::pair<uint16_t,Bytes>{24111,pending},"free reward journal replays immutable bytes from an unclaimed checkpoint");
+            client.send(10108,{});check(client.receive()==std::pair<uint16_t,Bytes>{20108,{}},"free reward is sent once per connection");
+        }
+        home.at(at+3)|=2;
+        stored->set("nativeHome",Plist::Value::makeData(std::string(home.begin(),home.end())));std::ofstream(saved)<<Plist::toXml(*stored);
+        bool rejected=false;try{Process process(cfg);ClashOffline service(process);}catch(const std::runtime_error&){rejected=true;}
+        check(rejected,"free journal rejects an already-claimed source checkpoint");
     }
     {
         // The real NPC battle can omit its log. Banking must follow its

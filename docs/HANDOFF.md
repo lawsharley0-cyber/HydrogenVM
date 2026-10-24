@@ -36,8 +36,14 @@ CSV-created objects: original trees, rocks, fences and arena edges render again.
 Earlier wins exercised the old tower initialization and do not prove current
 balance. All this still needs phone validation.
 
-Next: battle cost/reward/crown/free-chest accounting, card collection/deck swaps,
-actual later-arena coverage and the remaining sound/cannon/text reports. The
+Native free-chest collection now grants gold, gems and Goblins, survives an
+actual interrupted journal/relaunch, and does not grant again on two relaunches.
+A Goblins-for-Arrows deck swap also persists. All six bundled arena scenes and
+attacking bots load in isolated synthetic profiles; earned later-arena promotion
+and wins remain unverified. See PROGRESS for exact runs and their limits.
+
+Next: battle cost/crown accounting, corrected-combat victories, long Silver
+unlocks, earned later-arena coverage and the remaining sound/cannon/text reports. The
 owner explicitly requests continuing through the bug-fix phase, not stopping
 at intermediate milestones. Paid renames and old half-claimed/duplicate-ID saves
 need separate work; do not reset flags or progress. No assets/private

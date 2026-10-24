@@ -93,6 +93,7 @@ These are planned follow-ups, not separate roles. B-103 is merged in PR #4; acti
 | B-106b | Each later message, recorded in the restoration doc before the code changes | Planned, filled in as the probe shows them |
 | B-106c | Two-launch native probe inside the harness when the IPA is in the fixture root | Planned. Today the manifest entry is optional and skips. Absence is not a pass |
 | B-106d | 107-file IMA corpus vs libsndfile | Planned, needs the unpacked client and libsndfile. Not run by the default harness |
+| B-106e | Native free-chest command 518 and reward journaling | Reproduced in `free-observed`: original UI enters collection, backend reports unsupported 518/538 and has no reward to deliver. Preserve pre-claim native state, use original source-2 reward command, verify actual collection and interrupted replay. |
 
 ## No-parallel groups
 

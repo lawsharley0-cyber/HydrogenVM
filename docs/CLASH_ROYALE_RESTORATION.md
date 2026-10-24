@@ -25,8 +25,11 @@ scaling uses original CSV values. Correct neutral buff values restore tower
 occupants and shrinking health bars. Retaining native decoration identities
 restores the original trees, fences and other arena-edge scenery. The unchanged
 client supplies all rendering; no assets or assertions were altered.
-Battle cost/reward/crown/free-chest accounting, collection/deck changes and
-later-arena qualification remain open. Earlier wins used incorrect tower
+Native free-chest rewards and a Goblins-for-Arrows deck swap now persist;
+interrupted free reward recovery was exercised without restoring a backup.
+All six arena scenes load attacking bots in isolated synthetic fixtures, which
+do not establish earned later-arena progression. Battle costs, crown accounting,
+long Silver unlocks and earned later-arena qualification remain open. Earlier wins used incorrect tower
 initialization and do not establish correct combat balance after these fixes.
 
 The owner reports intermittent audio, incorrect King cannon animation, missing

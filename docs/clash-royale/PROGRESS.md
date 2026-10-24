@@ -31,6 +31,47 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Native free chest, deck swap and all six arena scenes
+
+CollectFreeChest is command 518, whose decoder has only base command metadata.
+It now requests the original native randomizer/213 encoder with source 2. The
+durable journal distinguishes standard-slot and free rewards, retains the
+pre-claim home, and clears only after the native reward execute succeeds and
+the resulting home is captured. Older format-4 standard journals remain readable.
+No timer-only home change can prematurely acknowledge a pending free reward.
+
+`free-fixed/run-20261024-150207-6c299f` exited cleanly after 478.71 seconds.
+The original reward gave 22 gold, 2 gems and Goblins (gold 170 to 192, gems
+100 to 102). Goblins were then swapped into the deck in place of Arrows using
+the original UI. Two clean 30-second launches in `free-player-persistence`
+retained identical derived deck, collection, chest and avatar state.
+
+An isolated pre-claim fixture was killed only after its actual 46-byte source-2
+reward was durably journaled (`free-fault-v2/run-20261024-151443-97c5a0`,
+intentional SIGKILL, not a spontaneous crash). `free-fault-recovery/run-20261024-151630-43d188`
+replayed that journal from the same save without restoring a backup, completed
+the native reward, and exited cleanly after 124.11 seconds. Two further clean
+30-second launches retained the collection/deck and cleared journal, with no
+duplicate grant. Native avatar bytes changed during those later launches;
+do not describe the entire native checkpoint as byte-identical. The first
+interruption attempt used an already-claimed fixture and timed out without a
+kill; it is not recovery evidence. Journal transport unit tests do not validate
+reward contents; the actual client runs above do.
+
+`arena-layout-fixtures-v4/evidence-1` through `evidence-6` each loaded a native
+battle scene and an attacking native NPC, with clean approximately 90-second
+exits and no reported errors. This covers all six bundled arena locations,
+including their original decorations and tower occupants. These are explicitly
+synthetic arena/trophy fixtures isolated from the earned player: they do not
+prove earned promotions, later-arena wins, rewards or balance. Earlier 45-second
+attempts stopped at home/notices and do not count as battle-scene passes.
+
+After the free-chest changes: runtime 247/247, Test Lab 14/14, and C++ offline
+socket/state suites pass. Pending core work includes arena match costs, crown
+accounting, long-duration Silver unlocks, corrected-combat victories and earned
+later-arena progression. Client echoes 500/525/538 still need schema-qualified
+handling; their rejection is logged, never a blanket successful acknowledgement.
+
 ### Tower initialization, shrinking health bars, occupants and original scenery
 
 Corrected native tower level/HP serialization using exp_levels and the pinned
