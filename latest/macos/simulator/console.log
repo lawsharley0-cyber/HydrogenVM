@@ -80,73 +80,34 @@ ok NSStringFromCGRect / CGRectFromString
 
 ok NSValue CGRect
 
-nib Panel.nib: 1 top-level objects
-ok Panel nib: top-level view
+nib "Panel" not found in the app bundle
+Stopped: -[NSBundle loadNibNamed:owner:options:]: Could not load NIB in bundle: 'Panel'
+  pc [HydrogenVM] objc_msgSend
+  lr 0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+  r0  100003a0  r1  0e018fec  r2  00010204  r3  10010100
+  r4  100003a0  r5  10010100  r6  10000200  r7  beffff68
+  r8  0000f1d6  r9  00000000  r10 00010204  r11 00000000
+  r12 000100e0  r13 befffbc0  r14 0000c251  r15 ffff0c7c
+  backtrace:
+    [HydrogenVM] objc_msgSend
+    0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+    0x0000e1f7 UIKitTest+41462 -[AppDelegate application:didFinishLaunchingWithOptions:] + 0x1e2
+    [HydrogenVM] _hvm_return_to_host
+    [HydrogenVM] _hvm_return_to_host
 
-ok Panel nib: outlet + label text
+[hvm-exit] status=-1 crash:
+Stopped: -[NSBundle loadNibNamed:owner:options:]: Could not load NIB in bundle: 'Panel'
+  pc [HydrogenVM] objc_msgSend
+  lr 0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+  r0  100003a0  r1  0e018fec  r2  00010204  r3  10010100
+  r4  100003a0  r5  10010100  r6  10000200  r7  beffff68
+  r8  0000f1d6  r9  00000000  r10 00010204  r11 00000000
+  r12 000100e0  r13 befffbc0  r14 0000c251  r15 ffff0c7c
+  backtrace:
+    [HydrogenVM] objc_msgSend
+    0x0000c251 UIKitTest+33360 -[AppDelegate runSynchronousChecks] + 0x2260
+    0x0000e1f7 UIKitTest+41462 -[AppDelegate application:didFinishLaunchingWithOptions:] + 0x1e2
+    [HydrogenVM] _hvm_return_to_host
+    [HydrogenVM] _hvm_return_to_host
 
-ok Panel nib: action connection + button title
-
-nib PanelKeyed.nib: 1 top-level objects
-ok PanelKeyed nib: top-level view
-
-ok PanelKeyed nib: outlet + label text
-
-ok PanelKeyed nib: action connection + button title
-
-ok UIButton target/action
-
-ok UIButton currentTitle
-
-ok animation block applies immediately
-
-ok beginAnimations/commitAnimations apply
-
-ok UIScrollView contentOffset updates bounds.origin
-
-ok UITableViewCell textLabel & reuseIdentifier
-
-ok UINavigationController push & hierarchy
-
-ok UINavigationController pop
-
-ok UITabBarController selection
-
-ok UITextField editing & first responder
-
-ok UISwitch, UISlider, UISegmentedControl
-
-ok EAGLContext creation & setCurrentContext
-
-[gpu] GL layer (64.0, 64.0)
-[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
-[gpu] GL layer removed
-GPU: drawable 64x64 for renderbuffer 1 (platform layer)
-ok EAGLContext renderbufferStorage:fromDrawable:
-
-ok glCheckFramebufferStatus complete
-
-GPU: presented frame 1 directly (average rgb 255,0,0, 64/64 samples lit)
-ok OpenGL ES clear, glReadPixels & presentRenderbuffer
-
-[autotap] 70.0,350.0
-[autotap] 230.0,350.0
-ok drawRect: was called by the compositor
-
-ok CADisplayLink fires at frame rate
-
-ok animation completions fire
-
-ok touch delivery to a plain view (hvm --tap)
-
-ok touch location in view coordinates
-
-ok UITapGestureRecognizer
-
-66 checks, 0 failures
-
-ALL CHECKS PASSED
-
-App exited with code 0
-[hvm-exit] status=0
-com.lfull.HydrogenVM: 21672
+com.lfull.HydrogenVM: 21371
