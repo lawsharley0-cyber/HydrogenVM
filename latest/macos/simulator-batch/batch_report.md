@@ -1,9 +1,9 @@
 # HydrogenVM — Test All Games Report
 
-**Date:** 2026-10-25T01:53:38Z  
+**Date:** 2026-10-25T03:37:38Z  
 **Device:** iPhone, iOS 26.5  
-**Emulator Commit:** `fcdba4278ebb`  
-**Options:** 5s/app · Renderer Both (Software & GPU) · KeepGoing true · Explore 30s · Relaunch true
+**Emulator Commit:** `a92eb843ab38`  
+**Options:** 5s/app · Renderer Both (Software & GPU) · KeepGoing true
 
 ### Summary
 
@@ -11,8 +11,6 @@
 - **Passed:** 0
 - **Crashed:** 2
 - **Wrong Output:** 0
-- **Music heard:** 0 · **Sound effects heard:** 0
-- **Games with a failed check:** 2
 - **Explored:** 2
 - **Explore Crashes:** 2
 - **Explore Problems Discovered:** 2
@@ -22,60 +20,5 @@
 | App | Mode | Status | FPS | P95 (ms) | Signal | Summary |
 |---|---|---|---:|---:|---|---|
 | UIKitTest (`com.hydrogenvm.test.uikittest`) | SOFTWARE | ❌ Crashed | 4 | 0.0 | `ok` | Crashed (status 1) |
-| UIKitTest (`com.hydrogenvm.test.uikittest`) | GPU | ❌ Crashed | 6 | 0.0 | `ok` | Crashed (status 1) |
-
-### Checklist
-
-| Check | ✅ | ⚠️ | ❌ | ➖ |
-|---|---:|---:|---:|---:|
-| Launches | 0 | 0 | 2 | 0 |
-| Shows a picture | 2 | 0 | 0 | 0 |
-| Game view on screen | 0 | 0 | 2 | 0 |
-| Audio output | 2 | 0 | 0 | 0 |
-| Music | 0 | 2 | 0 | 0 |
-| Sound effects | 0 | 2 | 0 | 0 |
-| Responds to touch | 0 | 0 | 2 | 0 |
-| Background & resume | 0 | 0 | 0 | 2 |
-| Closes cleanly | 0 | 0 | 0 | 2 |
-| Relaunch | 0 | 0 | 0 | 2 |
-| Missing APIs | 2 | 0 | 0 | 0 |
-| Handled faults | 2 | 0 | 0 | 0 |
-| Speed | 0 | 0 | 0 | 2 |
-
-| App | Mode | Launches | Shows a picture | Game view on screen | Audio output | Music | Sound effects | Responds to touch | Background & resume | Closes cleanly | Relaunch | Missing APIs | Handled faults | Speed |
-|---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| UIKitTest | SOFTWARE | ❌ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | ➖ | ➖ | ➖ | ✅ | ✅ | ➖ |
-| UIKitTest | GPU | ❌ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | ➖ | ➖ | ➖ | ✅ | ✅ | ➖ |
-
-#### UIKitTest (SOFTWARE)
-
-- ❌ **Launches:** Crashed (status 1)
-- ✅ **Shows a picture:** 5 frames drawn
-- ❌ **Game view on screen:** 1 frames went to a view that isn't in the window
-- ✅ **Audio output:** Mixer ran for 5.5 s, peak 0.00
-- ⚠️ **Music:** No music heard. It may be off in the game's settings, or this screen has none
-- ⚠️ **Sound effects:** No sound effects, even after taps
-- ❌ **Responds to touch:** Crashed while tapping around
-- ➖ **Background & resume:** The game stopped before this step
-- ➖ **Closes cleanly:** The game had already stopped
-- ➖ **Relaunch:** Skipped because the first run didn't finish cleanly
-- ✅ **Missing APIs:** None reported
-- ✅ **Handled faults:** None
-- ➖ **Speed:** No frames to time
-
-#### UIKitTest (GPU)
-
-- ❌ **Launches:** Crashed (status 1)
-- ✅ **Shows a picture:** 8 frames drawn
-- ❌ **Game view on screen:** 1 frames went to a view that isn't in the window
-- ✅ **Audio output:** Mixer ran for 5.9 s, peak 0.00
-- ⚠️ **Music:** No music heard. It may be off in the game's settings, or this screen has none
-- ⚠️ **Sound effects:** No sound effects, even after taps
-- ❌ **Responds to touch:** Crashed while tapping around
-- ➖ **Background & resume:** The game stopped before this step
-- ➖ **Closes cleanly:** The game had already stopped
-- ➖ **Relaunch:** Skipped because the first run didn't finish cleanly
-- ✅ **Missing APIs:** None reported
-- ✅ **Handled faults:** None
-- ➖ **Speed:** No frames to time
+| UIKitTest (`com.hydrogenvm.test.uikittest`) | GPU | ❌ Crashed | 6 | 0.1 | `ok` | Crashed (status 1) |
 

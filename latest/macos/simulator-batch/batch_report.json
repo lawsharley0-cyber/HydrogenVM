@@ -5,10 +5,7 @@
   },
   "kind" : "hvm-compat-report",
   "options" : {
-    "explore" : true,
-    "exploreSeconds" : 30,
     "keepGoing" : true,
-    "relaunch" : true,
     "renderer" : "both",
     "seconds" : 5
   },
@@ -17,88 +14,7 @@
       "apps" : [
         {
           "bundleId" : "com.hydrogenvm.test.uikittest",
-          "checks" : [
-            {
-              "detail" : "Crashed (status 1)",
-              "name" : "Launches",
-              "status" : "fail"
-            },
-            {
-              "detail" : "5 frames drawn",
-              "name" : "Shows a picture",
-              "status" : "pass"
-            },
-            {
-              "detail" : "1 frames went to a view that isn't in the window",
-              "name" : "Game view on screen",
-              "status" : "fail"
-            },
-            {
-              "detail" : "Mixer ran for 5.5 s, peak 0.00",
-              "name" : "Audio output",
-              "status" : "pass"
-            },
-            {
-              "detail" : "No music heard. It may be off in the game's settings, or this screen has none",
-              "name" : "Music",
-              "status" : "warn"
-            },
-            {
-              "detail" : "No sound effects, even after taps",
-              "name" : "Sound effects",
-              "status" : "warn"
-            },
-            {
-              "detail" : "Crashed while tapping around",
-              "name" : "Responds to touch",
-              "status" : "fail"
-            },
-            {
-              "detail" : "The game stopped before this step",
-              "name" : "Background & resume",
-              "status" : "skip"
-            },
-            {
-              "detail" : "The game had already stopped",
-              "name" : "Closes cleanly",
-              "status" : "skip"
-            },
-            {
-              "detail" : "Skipped because the first run didn't finish cleanly",
-              "name" : "Relaunch",
-              "status" : "skip"
-            },
-            {
-              "detail" : "None reported",
-              "name" : "Missing APIs",
-              "status" : "pass"
-            },
-            {
-              "detail" : "None",
-              "name" : "Handled faults",
-              "status" : "pass"
-            },
-            {
-              "detail" : "No frames to time",
-              "name" : "Speed",
-              "status" : "skip"
-            }
-          ],
           "crashed" : true,
-          "diagnostics" : {
-            "audibleFrames" : 0,
-            "audioFramesRendered" : 244608,
-            "audioPeak" : 0,
-            "effectFrames" : 0,
-            "effectVoices" : 0,
-            "faultsToApp" : 0,
-            "framesPresented" : 5,
-            "missingCount" : 0,
-            "musicFrames" : 0,
-            "musicVoices" : 0,
-            "offscreenPresents" : 1,
-            "timeToFirstFrameMs" : 490.44612499999999
-          },
           "exceptionKind" : "crash",
           "exitCode" : 1,
           "explore" : {
@@ -106,25 +22,24 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.1661990880966187
+                "timeOffset" : 5.2430529594421387
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.4765950441360474
+                "timeOffset" : 5.5584499835968018
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.7887780666351318
+                "timeOffset" : 5.8678330183029175
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.0973280668258667
+                "timeOffset" : 6.1740779876708984
               }
             ],
-            "backgroundTested" : false,
             "crashed" : true,
             "enabled" : true,
             "newProblems" : [
@@ -137,22 +52,22 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.1661990880966187
+                "timeOffset" : 5.2430529594421387
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.4765950441360474
+                "timeOffset" : 5.5584499835968018
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.7887780666351318
+                "timeOffset" : 5.8678330183029175
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.0973280668258667
+                "timeOffset" : 6.1740779876708984
               }
             ],
             "screensVisited" : 1,
@@ -168,7 +83,7 @@
           "perf" : {
             "fps" : 4,
             "framesPresented" : 5,
-            "frameTimeP95Ms" : 0.046592000000000001
+            "frameTimeP95Ms" : 0.047104
           },
           "renderer" : "software",
           "signature" : "exit-1",
@@ -177,88 +92,7 @@
         },
         {
           "bundleId" : "com.hydrogenvm.test.uikittest",
-          "checks" : [
-            {
-              "detail" : "Crashed (status 1)",
-              "name" : "Launches",
-              "status" : "fail"
-            },
-            {
-              "detail" : "8 frames drawn",
-              "name" : "Shows a picture",
-              "status" : "pass"
-            },
-            {
-              "detail" : "1 frames went to a view that isn't in the window",
-              "name" : "Game view on screen",
-              "status" : "fail"
-            },
-            {
-              "detail" : "Mixer ran for 5.9 s, peak 0.00",
-              "name" : "Audio output",
-              "status" : "pass"
-            },
-            {
-              "detail" : "No music heard. It may be off in the game's settings, or this screen has none",
-              "name" : "Music",
-              "status" : "warn"
-            },
-            {
-              "detail" : "No sound effects, even after taps",
-              "name" : "Sound effects",
-              "status" : "warn"
-            },
-            {
-              "detail" : "Crashed while tapping around",
-              "name" : "Responds to touch",
-              "status" : "fail"
-            },
-            {
-              "detail" : "The game stopped before this step",
-              "name" : "Background & resume",
-              "status" : "skip"
-            },
-            {
-              "detail" : "The game had already stopped",
-              "name" : "Closes cleanly",
-              "status" : "skip"
-            },
-            {
-              "detail" : "Skipped because the first run didn't finish cleanly",
-              "name" : "Relaunch",
-              "status" : "skip"
-            },
-            {
-              "detail" : "None reported",
-              "name" : "Missing APIs",
-              "status" : "pass"
-            },
-            {
-              "detail" : "None",
-              "name" : "Handled faults",
-              "status" : "pass"
-            },
-            {
-              "detail" : "No frames to time",
-              "name" : "Speed",
-              "status" : "skip"
-            }
-          ],
           "crashed" : true,
-          "diagnostics" : {
-            "audibleFrames" : 0,
-            "audioFramesRendered" : 261543,
-            "audioPeak" : 0,
-            "effectFrames" : 0,
-            "effectVoices" : 0,
-            "faultsToApp" : 0,
-            "framesPresented" : 8,
-            "missingCount" : 0,
-            "musicFrames" : 0,
-            "musicVoices" : 0,
-            "offscreenPresents" : 1,
-            "timeToFirstFrameMs" : 24.152041000000001
-          },
           "exceptionKind" : "crash",
           "exitCode" : 1,
           "explore" : {
@@ -266,25 +100,24 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2150560617446899
+                "timeOffset" : 5.1991269588470459
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5209289789199829
+                "timeOffset" : 5.5030319690704346
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8361309766769409
+                "timeOffset" : 5.8193340301513672
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.145779013633728
+                "timeOffset" : 6.1269029378890991
               }
             ],
-            "backgroundTested" : false,
             "crashed" : true,
             "enabled" : true,
             "newProblems" : [
@@ -297,22 +130,22 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2150560617446899
+                "timeOffset" : 5.1991269588470459
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5209289789199829
+                "timeOffset" : 5.5030319690704346
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8361309766769409
+                "timeOffset" : 5.8193340301513672
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.145779013633728
+                "timeOffset" : 6.1269029378890991
               }
             ],
             "screensVisited" : 1,
@@ -328,7 +161,7 @@
           "perf" : {
             "fps" : 6,
             "framesPresented" : 8,
-            "frameTimeP95Ms" : 0.035839999999999997
+            "frameTimeP95Ms" : 0.059392
           },
           "renderer" : "gpu",
           "signature" : "exit-1",
@@ -338,5 +171,5 @@
       ]
     }
   },
-  "timestamp" : "2026-10-25T01:53:38Z"
+  "timestamp" : "2026-10-25T03:37:38Z"
 }
