@@ -334,5 +334,33 @@ int main() {
         decoded.resize(size);
         check(valid && decoded==expected,"seventh training mission keeps its bundled location and training arena");
     }
+    {
+        put("csv_logic/arenas.csv","Name,Arena,ChestRewardMultiplier,MatchCost,PvpLocation\nString,int,int,int,String\nTrainingCamp,0,100,0,FirstMatch\nArena1,1,100,1,PvP_goblin\n");
+        put("csv_logic/locations.csv","Name,FileName\nString,String\nFirstMatch,locations/training_arena.csv\nPvP_goblin,locations/training_arena.csv\n");
+        std::string npcs="Name,Location,PredefinedDeck,Seed,StartingMana,WizardHpMultiplier,ExpLevel,Trophies\nString,String,String,int,int,int,int,int\n";
+        for(int i=1;i<=8;++i)npcs+="Npc"+std::to_string(i)+",FirstMatch,BasicDeck1,2,1,100,1,"+(i==8?std::string("50"):std::string("0"))+"\n";
+        put("csv_logic/npcs.csv",npcs);cfg.homePath=(root/"match-cost").string();
+        {Process process(cfg);ClashOffline service(process);}
+        const auto path=fs::path(cfg.homePath)/"Library/Application Support/HydrogenVM/ClashOffline.plist";
+        auto stored=Plist::parseFile(path.string());ClashProfile p;p.npcWins=p.lastRewardedWin=7;p.arenaLevel=1;
+        const auto home=ClashFixtures(cfg.bundlePath).home(p);const std::string marker="Offline Player";
+        const auto name=std::search(home.begin(),home.end(),marker.begin(),marker.end());
+        const Bytes avatar(name-10,home.end()-1);
+        stored->set("npcWins",Plist::Value::makeInt(7));stored->set("lastRewardedWin",Plist::Value::makeInt(7));
+        stored->set("arenaLevel",Plist::Value::makeInt(1));stored->set("nativeAvatar",Plist::Value::makeData(std::string(avatar.begin(),avatar.end())));
+        std::ofstream(path)<<Plist::toXml(*stored);
+        auto gold=[&](){const auto saved=Plist::parseFile(path.string());const auto& data=saved->get("nativeAvatar")->s;return inspectClashAvatar(Bytes(data.begin(),data.end())).gold;};
+        for(int launch=0;launch<2;++launch) {
+            Process process(cfg);ClashOffline service(process);SocketPeer client(service.port());
+            Bytes login;clashInt(login,0);clashInt(login,0);clashInt(login,-1);for(int n:{2,0,1306})clashVint(login,n);
+            client.send(10101,login);client.receive();client.receive();
+            check(gold()==100-launch,"login/relaunch does not repeat an arena entry charge");
+            Bytes turn;for(int n:{10,0,1,537,-1,-1,0,1,0})clashVint(turn,n);turn.push_back(0);clashInt(turn,-1);
+            client.send(14102,turn);check(client.receive().first==21903 && gold()==99-launch,"validated arena sector commits its CSV entry fee before delivery");
+            client.send(14102,turn);client.send(10108,{});
+            check(client.receive().first==20108 && gold()==99-launch,"duplicate pending matchmaking neither sends another sector nor charges again");
+            client.send(14101,{0});check(client.receive().first==24101 && gold()==99-launch,"returning home retains the committed entry fee");
+        }
+    }
     fs::remove_all(root);return failed?1:0;
 }

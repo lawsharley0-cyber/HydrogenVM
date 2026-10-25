@@ -40,6 +40,20 @@ int main(int argc, char** argv) {
         Bytes expected=head;expected.insert(expected.end(),expectedResources.begin(),expectedResources.end());
         expected.insert(expected.end(),tail.begin(),tail.end());
         const auto actual=withClashBattleProgress(initial,10,3);
+        Bytes charged=head;const Bytes chargedResources{2,5,1,0xa3,1,5,5,0xa3,1};
+        charged.insert(charged.end(),chargedResources.begin(),chargedResources.end());charged.insert(charged.end(),tail.begin(),tail.end());
+        if(withClashMatchCost(initial,1)!=charged || withClashMatchCost(initial,0)!=initial ||
+           inspectClashAvatar(charged).gold!=99 || inspectClashAvatar(charged).freeGold!=99) {
+            std::fprintf(stderr,"FAIL native arena entry cost literal\n");return 1;
+        }
+        bool insufficient=false;try{withClashMatchCost(initial,101);}catch(const std::runtime_error&){insufficient=true;}
+        Bytes partlyPaid=head;const Bytes mixedResources{2,5,1,0xa4,1,5,5,40};
+        partlyPaid.insert(partlyPaid.end(),mixedResources.begin(),mixedResources.end());partlyPaid.insert(partlyPaid.end(),tail.begin(),tail.end());
+        const auto mixed=inspectClashAvatar(withClashMatchCost(partlyPaid,1));
+        if(!insufficient || mixed.gold!=99 || mixed.freeGold!=40) {
+            std::fprintf(stderr,"FAIL insufficient/mixed native match gold policy\n");return 1;
+        }
+        std::puts("ok native Gold/FreeGold match cost, mixed balances and insufficient balance rejection");
         if(actual!=expected || withClashBattleProgress(actual,10)!=actual ||
            inspectClashAvatar(actual).chestCycleIndex!=10 || inspectClashAvatar(actual).pendingCrowns!=3) {
             std::fprintf(stderr,"FAIL earned avatar ledger literal/preservation vector\n");return 1;
@@ -96,12 +110,12 @@ int main(int argc, char** argv) {
     };
 
     put("csv_logic/arenas.csv",
-        "Name,Arena,ChestRewardMultiplier,TrophyLimit,DemoteTrophyLimit,PvpLocation\n"
-        "String,int,int,int,int,String\n"
-        "TrainingCamp,0,100,0,0,TrainingCamp\n"
-        "Arena1,1,100,0,0,PvP_goblin\n"
-        "Arena2,2,135,400,350,PvP_bone\n"
-        "Arena3,3,160,800,750,PvP_barbarian\n");
+        "Name,Arena,ChestRewardMultiplier,TrophyLimit,DemoteTrophyLimit,PvpLocation,MatchCost\n"
+        "String,int,int,int,int,String,int\n"
+        "TrainingCamp,0,100,0,0,TrainingCamp,0\n"
+        "Arena1,1,100,0,0,PvP_goblin,1\n"
+        "Arena2,2,135,400,350,PvP_bone,2\n"
+        "Arena3,3,160,800,750,PvP_barbarian,3\n");
 
     put("csv_logic/npcs.csv",
         "Name,Location,PredefinedDeck,Trophies,ExpLevel,TID\n"
@@ -160,6 +174,10 @@ int main(int argc, char** argv) {
 
     try {
         ClashCsvEngine csv(root);
+        if(csv.findArenaByLevel(0)->matchCost!=0 || csv.findArenaByLevel(1)->matchCost!=1 ||
+           csv.findArenaByLevel(2)->matchCost!=2 || csv.findArenaByLevel(3)->matchCost!=3) {
+            std::fprintf(stderr,"FAIL bundled arena match cost selection\n");return 1;
+        }
 
         // Check arena
         auto* arena1 = csv.findArena("Arena1");

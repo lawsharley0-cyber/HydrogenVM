@@ -50,11 +50,12 @@ struct ClashHomeView {
 };
 ClashHomeView inspectClashHome(const Bytes&);
 Bytes unlockedClashRewardCheckpoint(const Bytes&,int32_t slot,int32_t chestId);
-struct ClashAvatarView { int32_t arena=0,trophies=0,expLevel=1,chestCycleIndex=0,pendingCrowns=0; };
+struct ClashAvatarView { int32_t arena=0,trophies=0,expLevel=1,chestCycleIndex=0,pendingCrowns=0,gold=0,freeGold=0; };
 ClashAvatarView inspectClashAvatar(const Bytes&);
 // Apply earned offline ledger values to the serialized native avatar. Retain
 // all unknown fields; no live guest objects, historical crowns or rewards are fabricated.
 Bytes withClashBattleProgress(const Bytes&,int32_t chestCycleIndex,int32_t earnedCrowns=0);
+Bytes withClashMatchCost(const Bytes&,int32_t cost);
 int32_t clashElapsedHomeSeconds(int64_t savedAt,int64_t now);
 struct ClashHomeCommand {
     int32_t type=0, argument=0;

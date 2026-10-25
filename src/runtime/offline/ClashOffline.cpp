@@ -183,6 +183,7 @@ struct ClashOffline::Impl {
     int32_t homeClockTick=0;
     int64_t homeClockEpoch=0;
     bool awaitingHomeDecode=false;
+    bool battleSectorPending=false;
     uint32_t observedRewardCommand=0;
     bool pendingRewardApplied=false;
     std::chrono::steady_clock::time_point lastSnapshot{};
@@ -303,6 +304,7 @@ struct ClashOffline::Impl {
             }
         });
         process.engine().observeEntry(0x92f08,[this](uint32_t,const CPU::Cpu& cpu){captureHome(cpu);});
+        process.engine().observeEntry(0xbbe9c,[this](uint32_t,const CPU::Cpu& cpu){captureLogicHome(cpu.r[1]);});
         process.engine().observeEntry(0x8203c,[this](uint32_t,const CPU::Cpu& cpu){
             std::lock_guard lock(mutex);
             observedRewardCommand=profile.pendingRewardKind==2 && !profile.pendingReward.empty() &&
@@ -442,8 +444,13 @@ struct ClashOffline::Impl {
         lastSnapshot=now;auto& mem=process.mem();const uint32_t uiMode=cpu.r[0];
         if(mem.read<int32_t>(uiMode+0x28)!=0)return;
         const auto logic=mem.read<uint32_t>(uiMode+0x54);if(!logic)return;
+        captureLogicHome(logic);
+    }
+    void captureLogicHome(uint32_t logic) {
+        auto& mem=process.mem();
         const auto home=mem.read<uint32_t>(logic+0x30),avatar=mem.read<uint32_t>(logic+0x34);if(!home || !avatar)return;
         std::lock_guard lock(mutex);
+        if(battleSectorPending)return; // old home must not undo the committed entry fee
         if(awaitingHomeDecode || (deliveredHome && deliveredHome!=home))return;
         if(homeClockLogic!=logic)return;
         const auto tick=mem.read<int32_t>(logic+0x38);
@@ -549,7 +556,7 @@ struct ClashOffline::Impl {
             packet.insert(packet.end(),encrypted.begin(),encrypted.end());if(!transfer(fd,packet.data(),packet.size(),true))throw std::runtime_error("Offline Clash: disconnected while sending");
         };
         auto sendHome=[&](const ClashProfile& state) {
-            {std::lock_guard lock(mutex);deliveredHomeEpoch=state.homeSavedAt;awaitingHomeDecode=true;deliveredHome=0;homeClockLogic=0;}
+            {std::lock_guard lock(mutex);deliveredHomeEpoch=state.homeSavedAt;awaitingHomeDecode=true;deliveredHome=0;homeClockLogic=0;battleSectorPending=false;}
             send(24101,0,fixtures.home(state));
         };
         process.logf(LogLevel::Info, "Offline Clash session started fd=%d", fd);
@@ -633,7 +640,26 @@ struct ClashOffline::Impl {
                                 missionId = csvEngine ? csvEngine->findBestNpcForTrophies(state.trophies) : 18000007;
                             }
                             ClashFixtures pvpMatch(process.config().bundlePath, missionId, arenaLevel);
-                            send(21903, 1, compressed(pvpMatch.sector(state)));
+                            Bytes sector;
+                            {
+                                std::lock_guard lock(mutex);
+                                if(battleSectorPending) {
+                                    process.log(LogLevel::Info,"Offline Clash: duplicate pending matchmaking request ignored; no second charge");
+                                    continue;
+                                }
+                                auto next=profile;
+                                const auto* arena=csvEngine?csvEngine->findArenaByLevel(arenaLevel):nullptr;
+                                if(arenaLevel>0 && (!arena || next.nativeAvatar.empty() || !next.pendingReward.empty()))
+                                    throw std::runtime_error("Offline Clash: arena entry has no complete native checkpoint");
+                                const auto cost=arenaLevel>0?arena->matchCost:0;
+                                if(cost)next.nativeAvatar=withClashMatchCost(next.nativeAvatar,cost);
+                                // Validate and encode the actual sector before committing the cost.
+                                sector=compressed(pvpMatch.sector(next));
+                                if(cost){save(path,next);profile=std::move(next);}
+                                battleSectorPending=true;
+                                process.logf(LogLevel::Info,"Offline Clash: arena entry committed (cost=%d gold); abandoned matches retain their cost",cost);
+                            }
+                            send(21903, 1, sector);
                             process.logf(LogLevel::Info,"Offline Clash: matchmaking sector supplied for battle (Arena %d, bot %d)", arenaLevel, missionId);
                             break;
                         } else if(cmdType==502) {

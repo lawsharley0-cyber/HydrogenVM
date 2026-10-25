@@ -62,7 +62,14 @@ recovery comparisons differ by less than one second. Old untimestamped saves
 start prospectively. Original opposing tower directions replace zero vectors;
 initial facing is corrected locally, while cannon motion/device appearance remain open.
 
-Next: battle cost/reward-display accounting, full crown collection, long Silver
+Arena entry now uses each CSV match cost and original Gold/FreeGold policy,
+committed before sector delivery with duplicate/old-home guards. The real
+Arena 1 test spent 204 to 203 gold, retained across two relaunches; the test
+deliberately abandoned the battle and retains that fee without a fake result.
+Apple checkpoint a92eb84 (before entry fees) compiled and packaged an unsigned
+iOS device IPA; see PROGRESS/CI 40157432144. It has no phone validation.
+
+Next: victory reward-display comparison, full crown collection, long Silver
 unlocks, earned later-arena coverage and the remaining sound/cannon/text reports. The
 owner explicitly requests continuing through the bug-fix phase, not stopping
 at intermediate milestones. Paid renames and old half-claimed/duplicate-ID saves

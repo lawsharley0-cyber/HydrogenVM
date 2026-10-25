@@ -191,17 +191,19 @@ ClashAvatarView inspectClashAvatar(const Bytes& bytes) {
         throw std::runtime_error("Offline Clash: invalid native avatar score/arena");
     r.b();const auto slots=r.v();
     if(slots<0 || slots>16)throw std::runtime_error("Offline Clash: invalid avatar resource slots");
-    int32_t chestCycle=0,pendingCrowns=0;
+    int32_t chestCycle=0,pendingCrowns=0,gold=0,freeGold=0;
     for(int i=0;i<slots;++i) {
         const auto count=r.v();if(count<0 || count>128)throw std::runtime_error("Offline Clash: invalid avatar resource count");
         for(int j=0;j<count;++j){const auto data=r.ref(),value=r.v();
             if(i==0 && data==5000002)chestCycle=value;
             if(i==0 && data==5000004)pendingCrowns=value;
+            if(i==0 && data==5000001)gold=value;
+            if(i==0 && data==5000005)freeGold=value;
         }
     }
     r.v();r.v();r.v();const auto level=r.v();
     if(level<1 || level>13)throw std::runtime_error("Offline Clash: invalid avatar experience level");
-    return {arena-54000000,score,level,chestCycle,pendingCrowns};
+    return {arena-54000000,score,level,chestCycle,pendingCrowns,gold,freeGold};
 }
 int32_t clashElapsedHomeSeconds(int64_t savedAt,int64_t now) {
     if(savedAt<=0 || now<=savedAt)return 0;
@@ -209,11 +211,8 @@ int32_t clashElapsedHomeSeconds(int64_t savedAt,int64_t now) {
     // seconds-to-ticks multiplication and don't invent pre-migration elapsed time.
     return int32_t(std::min<int64_t>(now-savedAt,30*24*60*60));
 }
-Bytes withClashBattleProgress(const Bytes& bytes,int32_t chestCycle,int32_t crowns) {
-    const auto view=inspectClashAvatar(bytes);
-    if(view.chestCycleIndex<0 || chestCycle<0 || chestCycle<view.chestCycleIndex || chestCycle>1000000 || crowns<0 || crowns>3 ||
-       view.pendingCrowns<0 || view.pendingCrowns>3 || view.pendingCrowns>3-crowns)
-        throw std::runtime_error("Offline Clash: inconsistent earned avatar ledger");
+namespace {
+Bytes editAvatarResources(const Bytes& bytes,const std::vector<std::pair<int32_t,int32_t>>& changes) {
     Cursor r{bytes};for(int i=0;i<6;++i)r.v();
     uint32_t length=0;for(int i=0;i<4;++i)length=(length<<8)|r.byte();r.at+=length;
     r.b();r.v();r.ref();r.v();r.b();
@@ -229,10 +228,30 @@ Bytes withClashBattleProgress(const Bytes& bytes,int32_t chestCycle,int32_t crow
         for(auto& resource:resources)if(resource.first==data){resource.second=value;return;}
         if(value)resources.emplace_back(data,value);
     };
-    set(5000002,chestCycle);if(crowns)set(5000004,view.pendingCrowns+crowns);
+    for(auto [data,value]:changes)set(data,value);
     Writer w;w.v(int(resources.size()));for(auto [data,value]:resources){w.ref(data);w.v(value);}
     Bytes result(bytes.begin(),bytes.begin()+begin);result.insert(result.end(),w.data.begin(),w.data.end());
     result.insert(result.end(),bytes.begin()+r.at,bytes.end());return result;
+}
+}
+Bytes withClashBattleProgress(const Bytes& bytes,int32_t chestCycle,int32_t crowns) {
+    const auto view=inspectClashAvatar(bytes);
+    if(view.chestCycleIndex<0 || chestCycle<0 || chestCycle<view.chestCycleIndex || chestCycle>1000000 || crowns<0 || crowns>3 ||
+       view.pendingCrowns<0 || view.pendingCrowns>3 || view.pendingCrowns>3-crowns)
+        throw std::runtime_error("Offline Clash: inconsistent earned avatar ledger");
+    std::vector<std::pair<int32_t,int32_t>> changes{{5000002,chestCycle}};
+    if(crowns)changes.emplace_back(5000004,view.pendingCrowns+crowns);
+    return editAvatarResources(bytes,changes);
+}
+Bytes withClashMatchCost(const Bytes& bytes,int32_t cost) {
+    const auto view=inspectClashAvatar(bytes);
+    if(cost<0 || view.gold<cost || view.freeGold<0 || view.freeGold>view.gold)
+        throw std::runtime_error("Offline Clash: invalid/insufficient match gold");
+    if(!cost)return bytes;
+    // Original commodityCountChangeHelper, negative Gold change:
+    // 0x9a6d4..0x9a728 changes Gold and clamps FreeGold to the new total.
+    const auto gold=view.gold-cost;
+    return editAvatarResources(bytes,{{5000001,gold},{5000005,std::min(view.freeGold,gold)}});
 }
 void clashVint(Bytes& out,int32_t value) {
     const uint64_t magnitude=value<0?uint64_t(-int64_t(value)):uint64_t(value);

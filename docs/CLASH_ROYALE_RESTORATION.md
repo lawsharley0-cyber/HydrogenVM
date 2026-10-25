@@ -46,8 +46,12 @@ PROGRESS for exact evidence and failed attempts. Measured elapsed home time now
 uses the original native API, including across closure and interrupted reward
 recovery; timestamps account for native ticks/loading pauses. Long Silver
 completion still needs qualification. Opposing native facing vectors also
-replace zero vectors, correcting initial tower facing locally. Match costs,
-full crown collection and cannon motion/device validation remain open.
+replace zero vectors, correcting initial tower facing locally. Arena match
+costs now debit original Gold/FreeGold values before sector delivery; a real
+204-to-203 Arena 1 debit survives two relaunches. Full crown collection, victory
+reward-label comparison and cannon motion/device validation remain open.
+Apple checkpoint a92eb84 compiled/packaged an unsigned device IPA, before the
+entry-fee change; successful packaging is not device gameplay validation.
 
 The owner reports intermittent audio, incorrect King cannon animation, missing
 Princess Tower princesses and uncentered text on iPhone. Preserve those reports

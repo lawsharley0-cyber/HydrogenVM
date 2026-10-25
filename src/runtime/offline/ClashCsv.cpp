@@ -120,7 +120,10 @@ void ClashCsvEngine::loadArenas(const std::filesystem::path& resDir) {
         int32_t trophyLimit = r.count("TrophyLimit") ? parseInt(r.at("TrophyLimit"), 0) : 0;
         int32_t demoteLimit = r.count("DemoteTrophyLimit") ? parseInt(r.at("DemoteTrophyLimit"), 0) : 0;
         std::string pvpLoc = r.count("PvpLocation") ? r.at("PvpLocation") : "";
-        ArenaData data{name, arenaNum, mult, trophyLimit, demoteLimit, pvpLoc};
+        const int32_t matchCost=r.count("MatchCost")?parseInt(r.at("MatchCost"),-1):(arenaNum? -1:0);
+        if(matchCost<0 || matchCost>500000 || (arenaNum>0 && matchCost==0))
+            throw std::runtime_error("Offline Clash: missing/invalid arena match cost");
+        ArenaData data{name, arenaNum, mult, trophyLimit, demoteLimit, pvpLoc,matchCost};
         arenas_[name] = data;
         arenaByLevel_[arenaNum] = name;
     }

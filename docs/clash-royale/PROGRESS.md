@@ -31,6 +31,43 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Arena entry fees and current Apple build
+
+The bundled arena MatchCost values are now required and read from CSV (Training
+Camp 0; arenas 1..6 cost 1..6). Native StartMatchmake 537 does not itself deduct
+gold. The service validates/encodes the actual sector first, then atomically
+commits its native avatar Gold debit before delivery. FreeGold follows original
+commodityCountChangeHelper (0x9a6d4..0x9a728): min(previous FreeGold, new Gold).
+Other resource slots/unknown fields are retained. Insufficient/invalid balances
+reject without modifying a save. No invented currency or checksum ack is sent.
+
+At native 537 execute entry (0xbbe9c), the current native home is flushed before
+the worker prepares the match, including recent upgrades/deck changes. Once a
+sector is pending, old home snapshots cannot undo its committed fee; duplicate
+pending requests neither charge again nor send another sector. GoHome/login
+restore the normal capture path. A started but abandoned battle retains its
+entry cost, with no fabricated win/loss/crowns.
+
+Socket regressions compiled against the previous service fail its fee/dedup/
+relaunch assertions; the new service passes them. Literal native resource tests
+cover fully free and mixed Gold balances, zero training cost and insufficient
+funds. `cost-real/run-20261024-223211-27f5f3` accepted an actual Arena 1 sector
+and deducted gold 204 to 203. It was deliberately stopped before a result;
+this is not another completed battle. Two clean `cost-relaunch` launches retain
+203 gold, 87 gems and unchanged battle/crown progress. Runtime 252, Test Lab 14
+and the C++ offline state/socket suites pass locally.
+
+Apple checkpoint **a92eb843ab38bdc6a16f1aa7268ee72fdb348470** (before this fee
+patch) built an unsigned ARM64 iOS device IPA in
+[CI run 40157432144](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/40157432144).
+The archive/manifest were downloaded and locally reverified; IPA SHA256 is
+`e85d0443c4ca9cfbc0dfa18a344643a4ce5d984337a49847c6d33ad368f6a8ae`,
+bundle `com.lfull.HydrogenVM`, minimum iOS 26.0. It is unsigned and **not device
+tested**. The build includes crown/paid-reward, facing and clock changes, but
+not the entry-fee change above. Simulator results are recorded separately when
+complete. A successful package check does not verify phone playability, sound
+or cannon motion. No game IPA/assets/private saves are bundled in this patch.
+
 ### Measured elapsed home time, including interrupted rewards
 
 Complete native home checkpoints now retain a 64-bit `homeSavedAt` timestamp.

@@ -37,6 +37,7 @@ struct ArenaData {
     int32_t trophyLimit = 0;
     int32_t demoteTrophyLimit = 0;
     std::string pvpLocation;
+    int32_t matchCost = 0;
 };
 
 struct NpcData {
