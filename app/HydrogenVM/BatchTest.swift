@@ -472,57 +472,76 @@ final class BatchTestRunner {
         // (sound/music toggles, settings, progress) never change the player's own saves.
         let testHome = Self.prepareTestHome(for: target.app, fresh: options.resetSandbox)
 
-        let s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: testHome.path(percentEncoded: false))
-        s.keepGoing = options.keepGoing
-        s.useGPU = target.useGPU
-        activeSession = s
-
-        let exitBox = ExitBox()
-
-        // The bridge delivers every callback on the main queue (see RunModel).
-        s.onFrame = { [weak self] img in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.currentFrame = img
-                self.lastCapturedFrame = img
-                self.frameCount += 1
-            }
-        }
-
-        s.onLog = { [weak self] line, _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.keepLog(line)
-                if line.contains("GPU: presented frame") { self.gpuSampleLines.append(line) }
-            }
-        }
-
-        s.onExit = { code, crash in
-            MainActor.assumeIsolated {
-                exitBox.exited = true
-                exitBox.code = code
-                exitBox.crash = crash
-            }
-        }
-
-        fpsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let s = self.activeSession else { return }
-                let presented = s.framesPresented
-                self.currentFPS = presented >= self.lastPresentedFrames ? max(Int(presented - self.lastPresentedFrames), self.frameCount) : self.frameCount
-                self.lastPresentedFrames = presented
-                self.frameCount = 0
-                // Kept from the running session: once it stops, its counters are gone.
-                self.lastP95 = s.frameTimeP95Milliseconds
-                if presented > 0 { self.lastTotalPresented = presented }
-                if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
-            }
-        }
-
-        s.start()
-
         currentTestTask = Task { @MainActor [weak self] in
             guard let self else { return }
+
+            var s: HVMSession!
+            var exitBox: ExitBox!
+            var startRetries = 0
+
+            while startRetries < 5 {
+                exitBox = ExitBox()
+                s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: testHome.path(percentEncoded: false))
+                s.keepGoing = self.options.keepGoing
+                s.useGPU = target.useGPU
+                self.activeSession = s
+
+                // The bridge delivers every callback on the main queue (see RunModel).
+                s.onFrame = { [weak self] img in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.currentFrame = img
+                        self.lastCapturedFrame = img
+                        self.frameCount += 1
+                    }
+                }
+
+                s.onLog = { [weak self] line, _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.keepLog(line)
+                        if line.contains("GPU: presented frame") { self.gpuSampleLines.append(line) }
+                    }
+                }
+
+                s.onExit = { code, crash in
+                    MainActor.assumeIsolated {
+                        exitBox.exited = true
+                        exitBox.code = code
+                        exitBox.crash = crash
+                    }
+                }
+
+                self.fpsTimer?.invalidate()
+                self.fpsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let s = self.activeSession else { return }
+                        let presented = s.framesPresented
+                        self.currentFPS = presented >= self.lastPresentedFrames ? max(Int(presented - self.lastPresentedFrames), self.frameCount) : self.frameCount
+                        self.lastPresentedFrames = presented
+                        self.frameCount = 0
+                        // Kept from the running session: once it stops, its counters are gone.
+                        self.lastP95 = s.frameTimeP95Milliseconds
+                        if presented > 0 { self.lastTotalPresented = presented }
+                        if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
+                    }
+                }
+
+                s.start()
+
+                try? await Task.sleep(for: .milliseconds(1500))
+                if exitBox.exited, let crash = exitBox.crash, crash.contains("failed to reserve") {
+                    startRetries += 1
+                    s.stop()
+                    self.activeSession = nil
+                    try? await Task.sleep(for: .milliseconds(3000))
+                    continue
+                } else {
+                    break
+                }
+            }
+
+            guard self.status == .running else { return }
             let durationSeconds = Double(self.options.secondsPerApp)
             let deadline = Date().addingTimeInterval(durationSeconds)
 
@@ -582,12 +601,14 @@ final class BatchTestRunner {
                 // can have the memory (only one 4 GB guest arena fits on iOS).
                 if !exitBox.exited {
                     self.activeSession?.stop()
-                    let hardDeadline = Date().addingTimeInterval(4.0)
+                    let hardDeadline = Date().addingTimeInterval(8.0)
                     while Date() < hardDeadline && !exitBox.exited {
                         try? await Task.sleep(for: .milliseconds(100))
                     }
                 }
             }
+            
+            let hardStopped = closedGracefully == false && !exitedOnItsOwn
 
             self.fpsTimer?.invalidate()
             self.fpsTimer = nil
@@ -634,7 +655,7 @@ final class BatchTestRunner {
 
             // Second launch on the data the first run left behind.
             var relaunch: (crashed: Bool, frames: Int, summary: String?)? = nil
-            if self.options.relaunchEnabled && !isCrashed && exitBox.exited && self.status == .running {
+            if self.options.relaunchEnabled && !isCrashed && exitBox.exited && !hardStopped && self.status == .running {
                 self.progressText = "Relaunching \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
                 self.activeSession = nil
                 try? await Task.sleep(for: .milliseconds(1500))
@@ -707,28 +728,46 @@ final class BatchTestRunner {
 
     /// Starts the game again on `home` for `relaunchTime` seconds and reports what happened.
     private func relaunch(target: BatchTarget, home: URL) async -> (crashed: Bool, frames: Int, summary: String?) {
-        let s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
-        s.keepGoing = options.keepGoing
-        s.useGPU = target.useGPU
-        activeSession = s
-        let box = ExitBox()
-        s.onFrame = { [weak self] img in
-            MainActor.assumeIsolated {
-                box.frames += 1
-                self?.currentFrame = img
+        var s: HVMSession!
+        var box: ExitBox!
+        var startRetries = 0
+        
+        while startRetries < 5 {
+            box = ExitBox()
+            s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
+            s.keepGoing = options.keepGoing
+            s.useGPU = target.useGPU
+            activeSession = s
+            s.onFrame = { [weak self] img in
+                MainActor.assumeIsolated {
+                    box.frames += 1
+                    self?.currentFrame = img
+                }
+            }
+            s.onLog = { [weak self] line, _ in
+                MainActor.assumeIsolated { self?.keepLog(line) }
+            }
+            s.onExit = { code, crash in
+                MainActor.assumeIsolated {
+                    box.exited = true
+                    box.code = code
+                    box.crash = crash
+                }
+            }
+            s.start()
+            
+            try? await Task.sleep(for: .milliseconds(1500))
+            if box.exited, let crash = box.crash, crash.contains("failed to reserve") {
+                startRetries += 1
+                s.stop()
+                activeSession = nil
+                try? await Task.sleep(for: .milliseconds(3000))
+                continue
+            } else {
+                break
             }
         }
-        s.onLog = { [weak self] line, _ in
-            MainActor.assumeIsolated { self?.keepLog(line) }
-        }
-        s.onExit = { code, crash in
-            MainActor.assumeIsolated {
-                box.exited = true
-                box.code = code
-                box.crash = crash
-            }
-        }
-        s.start()
+
         let deadline = Date().addingTimeInterval(Double(options.relaunchTime))
         var presented = 0
         while Date() < deadline && !box.exited && status == .running {
@@ -741,7 +780,7 @@ final class BatchTestRunner {
             while Date() < graceful && !box.exited { try? await Task.sleep(for: .milliseconds(100)) }
             if !box.exited {
                 s.stop()
-                let hard = Date().addingTimeInterval(4.0)
+                let hard = Date().addingTimeInterval(8.0)
                 while Date() < hard && !box.exited { try? await Task.sleep(for: .milliseconds(100)) }
             }
         }
