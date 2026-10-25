@@ -2,11 +2,11 @@ GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
 Loaded AngryBirds: armv6, 578 imports, 10 initializers, entry 0x00004320 AngryBirds+13088 start
 Objective-C: 2 classes, 0 categories, 54 selector refs
 Screen: 320x480 @2x, landscape, status bar hidden
-Created Throwable( "Failed to open /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/bundleIndex.idx" )
+Created Throwable( "Failed to open /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/bundleIndex.idx" )
 
 Can't find bundle, using files directly...
 
-Created Throwable( "Failed to open /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/Documents/highscores.lua" )
+Created Throwable( "Failed to open /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/Documents/highscores.lua" )
 
 
 
@@ -14,20 +14,17 @@ Unable to load highscores!
 
 
 
-Created Throwable( "Failed to open /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/Documents/settings.lua" )
+Created Throwable( "Failed to open /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/Documents/settings.lua" )
 
 [gpu] GL layer (320.0, 480.0)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (268.0, 402.0) gl (320.0, 480.0) super true
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/SPLASHES.png: 481x831 B8G8R8 (as 512x1024 B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/SPLASHES.png: 481x831 B8G8R8 (as 512x1024 B8G8R8)
 
 GPU: drawable 320x480 for renderbuffer 1 (platform layer)
 GPU: presented frame 1 directly (average rgb 159,139,49, 64/64 samples lit)
 GPU: drawable 320x480 placed at [0.003125 0 0 0.002083 0 0] of the screen
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -57,7 +54,6 @@ GPU: presented frame 60 directly (average rgb 159,139,49, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 GPU: presented frame 120 directly (average rgb 251,241,241, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -73,54 +69,52 @@ GPU: presented frame 120 directly (average rgb 251,241,241, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME.pvr: 992x935 R4G4B4A4 (as 1024x1024 R4G4B4A4)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME.pvr: 992x935 R4G4B4A4 (as 1024x1024 R4G4B4A4)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME_1.pvr: 866x1005 R4G4B4A4 (as 1024x1024 R4G4B4A4)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME_1.pvr: 866x1005 R4G4B4A4 (as 1024x1024 R4G4B4A4)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME_2.pvr: 1024x1024 RGB_PVRTC_GL_4BPP (as 1024x1024 RGB_PVRTC_GL_4BPP)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME_2.pvr: 1024x1024 RGB_PVRTC_GL_4BPP (as 1024x1024 RGB_PVRTC_GL_4BPP)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME_3.pvr: 480x242 R4G4B4A4 (as 512x256 R4G4B4A4)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME_3.pvr: 480x242 R4G4B4A4 (as 512x256 R4G4B4A4)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME_4.pvr: 480x193 R4G4B4A4 (as 512x256 R4G4B4A4)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME_4.pvr: 480x193 R4G4B4A4 (as 512x256 R4G4B4A4)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME_5.pvr: 480x168 R4G4B4A4 (as 512x256 R4G4B4A4)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME_5.pvr: 480x168 R4G4B4A4 (as 512x256 R4G4B4A4)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME_6.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME_6.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME_7.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME_7.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/INGAME_8.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/INGAME_8.pvr: 256x256 RGB_PVRTC_GL_4BPP (as 256x256 RGB_PVRTC_GL_4BPP)
 
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/MENU.png: 1011x511 A8B8G8R8 (as 1024x512 A8B8G8R8)
-
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/MENU_1.png: 1014x658 A8B8G8R8 (as 1024x1024 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/MENU.png: 1011x511 A8B8G8R8 (as 1024x512 A8B8G8R8)
 
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/MENU_2.png: 511x276 A8B8G8R8 (as 512x512 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/MENU_1.png: 1014x658 A8B8G8R8 (as 1024x1024 A8B8G8R8)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/TUTORIALS.png: 798x412 A8B8G8R8 (as 1024x512 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/MENU_2.png: 511x276 A8B8G8R8 (as 512x512 A8B8G8R8)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/TUTORIALS_1.png: 459x206 A8B8G8R8 (as 512x256 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/TUTORIALS.png: 798x412 A8B8G8R8 (as 1024x512 A8B8G8R8)
 
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/LEVELSELECTION.png: 511x972 A8B8G8R8 (as 512x1024 A8B8G8R8)
-
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/CUTSCENES.png: 996x441 A8B8G8R8 (as 1024x512 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/TUTORIALS_1.png: 459x206 A8B8G8R8 (as 512x256 A8B8G8R8)
 
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/LEVELSELECTION.png: 511x972 A8B8G8R8 (as 512x1024 A8B8G8R8)
+
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/CUTSCENES.png: 996x441 A8B8G8R8 (as 1024x512 A8B8G8R8)
+
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/CUTSCENES_1.png: 996x960 A8B8G8R8 (as 1024x1024 A8B8G8R8)
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/CUTSCENES_1.png: 996x960 A8B8G8R8 (as 1024x1024 A8B8G8R8)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/FONT_BASIC.png: 1024x42 A8B8G8R8 (as 1024x64 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/FONT_BASIC.png: 1024x42 A8B8G8R8 (as 1024x64 A8B8G8R8)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/FONT_MENU.png: 1024x112 A8B8G8R8 (as 1024x128 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/FONT_MENU.png: 1024x112 A8B8G8R8 (as 1024x128 A8B8G8R8)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/FONT_SCORE.png: 1008x61 A8B8G8R8 (as 1024x64 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/FONT_SCORE.png: 1008x61 A8B8G8R8 (as 1024x64 A8B8G8R8)
 
-Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/AngryBirds.app/data/FONT_BIG_NUMBERS.png: 754x50 A8B8G8R8 (as 1024x64 A8B8G8R8)
+Loading image /var/mobile/Applications/030BFDE3-1334-B033-195A-FFEA9082F68C/AngryBirds.app/data/FONT_BIG_NUMBERS.png: 754x50 A8B8G8R8 (as 1024x64 A8B8G8R8)
 
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -147,12 +141,12 @@ Loading image /var/mobile/Applications/E1610F4F-FAA0-0BFB-F770-C82CF00B3249/Angr
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+GPU: presented frame 300 directly (average rgb 151,188,154, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-GPU: presented frame 300 directly (average rgb 151,189,155, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -221,6 +215,7 @@ GPU: presented frame 300 directly (average rgb 151,189,155, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+GPU: presented frame 600 directly (average rgb 150,188,154, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -241,7 +236,6 @@ GPU: presented frame 300 directly (average rgb 151,189,155, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-GPU: presented frame 600 directly (average rgb 155,191,156, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -536,6 +530,7 @@ GPU: presented frame 600 directly (average rgb 155,191,156, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+GPU: presented frame 1800 directly (average rgb 159,189,154, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -610,7 +605,6 @@ GPU: presented frame 600 directly (average rgb 155,191,156, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-GPU: presented frame 1800 directly (average rgb 160,196,157, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -986,6 +980,7 @@ GPU: presented frame 1800 directly (average rgb 160,196,157, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+GPU: presented frame 3600 directly (average rgb 146,186,153, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -1180,7 +1175,6 @@ GPU: presented frame 1800 directly (average rgb 160,196,157, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-GPU: presented frame 3600 directly (average rgb 158,193,157, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -1391,6 +1385,7 @@ GPU: presented frame 3600 directly (average rgb 158,193,157, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+GPU: presented frame 5400 directly (average rgb 151,188,154, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -1637,115 +1632,4 @@ GPU: presented frame 3600 directly (average rgb 158,193,157, 64/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-GPU: presented frame 5400 directly (average rgb 157,189,153, 64/64 samples lit)
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-com.lfull.HydrogenVM: 24719
+com.lfull.HydrogenVM: 31092
