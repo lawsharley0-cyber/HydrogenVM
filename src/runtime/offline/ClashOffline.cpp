@@ -168,7 +168,10 @@ struct ClashOffline::Impl {
     std::mutex mutex,connectionMutex;std::atomic<bool> stopping{false};int active=-1;
     int listener=-1,lockFile=-1;uint16_t boundPort=0;std::thread worker;bool rewardForPlayer=false;
     uint32_t rewardAvatar=0,pendingBattleAvatar=0,scratch=0,stream=0;CPU::Cpu snapshotCpu;
+    uint32_t endingBattle=0;
+    bool pendingArenaBattle=false;
     int32_t requestedChestId=-1;
+    bool requestedPaidClaim=false;
     uint32_t observedRewardCommand=0;
     bool pendingRewardApplied=false;
     std::chrono::steady_clock::time_point lastSnapshot{};
@@ -194,6 +197,13 @@ struct ClashOffline::Impl {
                 process.log(LogLevel::Info,"Offline Clash: reconciled metadata with the saved native score/arena");
             }
         }
+        if(profile.pendingReward.empty() && !profile.nativeAvatar.empty()) {
+            const auto corrected=withClashBattleProgress(profile.nativeAvatar,profile.chestCycleIndex);
+            if(corrected!=profile.nativeAvatar) {
+                auto next=profile;next.nativeAvatar=corrected;save(path,next);profile=std::move(next);
+                process.log(LogLevel::Info,"Offline Clash: reconciled native chest index with earned cycle; no historical crowns inferred");
+            }
+        }
         // Confirm crypto availability before starting any guest connection.
         Cipher check;
         const auto resDir = std::filesystem::path(p.config().bundlePath) / "res";
@@ -214,6 +224,9 @@ struct ClashOffline::Impl {
         socklen_t length=sizeof address;
         if(::bind(listener,reinterpret_cast<sockaddr*>(&address),length)!=0 || ::listen(listener,1)!=0 || ::getsockname(listener,reinterpret_cast<sockaddr*>(&address),&length)!=0){::close(listener);listener=-1;throw std::runtime_error("Offline Clash: localhost listener failed");}
         boundPort=ntohs(address.sin_port);
+        process.engine().observeEntry(0x1499c,[this](uint32_t,const CPU::Cpu& cpu){
+            std::lock_guard lock(mutex);endingBattle=cpu.r[0];
+        });
         process.engine().observeEntry(0x9ae94,[this](uint32_t,const CPU::Cpu& cpu){observeCount(cpu,true);});
         process.engine().observeEntry(0x9aea4,[this](uint32_t,const CPU::Cpu& cpu){observeCount(cpu,false);});
         // Native post-setter continuations: win after refreshArena, loss after
@@ -281,6 +294,7 @@ struct ClashOffline::Impl {
             *slot=chest->globalId;++next.chestCycleIndex;
         }
         next.lastRewardedWin=next.npcWins;
+        if(!next.nativeAvatar.empty())next.nativeAvatar=withClashBattleProgress(next.nativeAvatar,next.chestCycleIndex);
         process.log(LogLevel::Info,"Offline Clash: earned NPC chest banked from bundled chest order");
     }
     void observeCount(const CPU::Cpu& cpu,bool wins) {
@@ -309,6 +323,7 @@ struct ClashOffline::Impl {
         // native avatar and counters/reward together. Saving just the counters
         // here could leave an older avatar after interruption.
         if(!process.image().entry && (!wins || next.lastRewardedWin==next.npcWins))save(path,next);
+        pendingArenaBattle=profile.npcWins>=7;
         profile=next;pendingBattleAvatar=avatar;
         process.logf(LogLevel::Info,"Offline Clash: native NPC %s observed (%d, trophies=%d, arena=%d)%s",
             wins?"win":"loss",count,next.trophies,next.arenaLevel,process.image().entry?"; awaiting native avatar commit":"; metadata test transaction");
@@ -335,7 +350,23 @@ struct ClashOffline::Impl {
            mem.read<int32_t>(avatar+0x9c)!=profile.npcWins || mem.read<int32_t>(avatar+0xa0)!=profile.npcLosses)
             throw std::runtime_error("Offline Clash: native battle avatar did not complete its counter transition");
         auto next=profile;next.nativeAvatar=encodeNative(0,avatar).first;
+        int32_t crowns=0;
+        if(pendingArenaBattle) {
+            if(!endingBattle)throw std::runtime_error("Offline Clash: arena result has no native battle");
+            const auto account=mem.read<uint32_t>(endingBattle+0x10);
+            if(!account || mem.read<int32_t>(account)!=0 || mem.read<int32_t>(account+4)!=1)
+                throw std::runtime_error("Offline Clash: arena crown owner mismatch");
+            // Original LogicSummoner::getStars, also used by battleEnded.
+            // NPC mode skips transferring them; the offline arena ledger must
+            // carry the actual result into home.updateStarsFromAvatar.
+            crowns=int32_t(process.callGuest(snapshotCpu,0x10f3fd,
+                {mem.read<uint32_t>(endingBattle+0x38),mem.read<uint32_t>(endingBattle+0x34)}));
+            if(crowns<0 || crowns>3)throw std::runtime_error("Offline Clash: invalid native arena crowns");
+        }
+        next.nativeAvatar=withClashBattleProgress(next.nativeAvatar,next.chestCycleIndex,crowns);
         save(path,next);profile=std::move(next);pendingBattleAvatar=0;
+        if(pendingArenaBattle)process.logf(LogLevel::Info,"Offline Clash: %d actual native arena crowns committed for home transfer",crowns);
+        pendingArenaBattle=false;endingBattle=0;
         process.log(LogLevel::Info,"Offline Clash: native battle avatar and earned progress committed together");
     }
     Bytes encodeNativeReward(uint32_t home,uint32_t chest,int32_t chestId,int32_t source=1) {
@@ -401,8 +432,14 @@ struct ClashOffline::Impl {
                         throw std::runtime_error("Offline Clash: reward has no complete pre-claim checkpoint");
                     auto next=profile;
                     if(next.rewardSerial>=1000000)throw std::runtime_error("Offline Clash: reward serial exhausted");
+                    if(requestedPaidClaim) {
+                        auto [checkpoint,offset]=encodeNative(home,avatar);
+                        next.nativeHome=unlockedClashRewardCheckpoint(checkpoint,i,requestedChestId);
+                        next.avatarOffset=offset;
+                        next.nativeAvatar=Bytes(checkpoint.begin()+offset,checkpoint.end()-1);
+                    }
                     ++next.rewardSerial;next.pendingReward=encodeNativeReward(home,chest,requestedChestId);next.pendingRewardSlot=i;next.pendingRewardKind=1;
-                    save(path,next);profile=std::move(next);requestedChestId=-1;
+                    save(path,next);profile=std::move(next);requestedChestId=-1;requestedPaidClaim=false;
                     process.log(LogLevel::Info,"Offline Clash: native chest reward journaled before delivery");break;
                 }
             }
@@ -418,7 +455,7 @@ struct ClashOffline::Impl {
             next.pendingReward.clear();next.pendingRewardSlot=-1;next.pendingRewardKind=0;pendingRewardApplied=false;
             process.log(LogLevel::Info,"Offline Clash: native chest collection completed; checkpoint committed");
         }
-        next.nativeAvatar=Bytes(bytes.begin()+offset,bytes.end()-1);next.chests=view.chests;
+        next.nativeAvatar=withClashBattleProgress(Bytes(bytes.begin()+offset,bytes.end()-1),next.chestCycleIndex);next.chests=view.chests;
         save(path,next);profile=next;
     }
     bool transfer(int fd,uint8_t* data,size_t size,bool write) {
@@ -462,7 +499,7 @@ struct ClashOffline::Impl {
                 const int32_t high=r.integer(),low=r.integer();auto token=r.string();
                 if(r.v()!=2 || r.v()!=0 || r.v()!=1306)throw std::runtime_error("Offline Clash: unsupported wire version");
                 auto state=snapshot();if(!(high==0 && low==0) && !(high==0 && low==1 && token==state.token))throw std::runtime_error("Offline Clash: identity mismatch");
-                {std::lock_guard lock(mutex);requestedChestId=-1;}
+                {std::lock_guard lock(mutex);requestedChestId=-1;requestedPaidClaim=false;}
                 loggedIn=true;send(20104,1,loginReply(state));send(24101,0,fixtures.home(state));
                 if(!state.nativeAvatar.empty()) {
                     Reader avatar{state.nativeAvatar};for(int i=0;i<6;++i)avatar.v();const auto name=avatar.string();
@@ -536,12 +573,12 @@ struct ClashOffline::Impl {
                         } else if(cmdType==503) {
                             // StartRewardClaim only marks the native chest claimed.
                             // It is not proof that the server's 213 reward executed.
-                            {std::lock_guard lock(mutex);requestedChestId=command.argument;}
+                            {std::lock_guard lock(mutex);requestedChestId=command.argument;requestedPaidClaim=false;}
                             process.logf(LogLevel::Info,"Offline Clash: StartRewardClaim chest %d received", command.argument);
                         } else if(cmdType==504) {
                             process.logf(LogLevel::Info,"Offline Clash: FuseSpells spell %d", command.argument);
                         } else if(cmdType==518) {
-                            {std::lock_guard lock(mutex);requestedChestId=-2;}
+                            {std::lock_guard lock(mutex);requestedChestId=-2;requestedPaidClaim=false;}
                             process.log(LogLevel::Info,"Offline Clash: native free-chest collection requested");
                         } else if(cmdType==500 || cmdType==525 || cmdType==538) {
                             // Do not replay locally executed commands or send an
@@ -549,6 +586,7 @@ struct ClashOffline::Impl {
                             // preserves their original native results.
                             process.logf(LogLevel::Info,"Offline Clash: native home echo %d decoded; awaiting native checkpoint",cmdType);
                         } else if(cmdType==506) {
+                            if(command.flag){std::lock_guard lock(mutex);requestedChestId=command.argument;requestedPaidClaim=true;}
                             process.logf(LogLevel::Info,"Offline Clash: SpeedUpExploring chest %d (claim=%d)", command.argument, command.flag);
                         }
                     }

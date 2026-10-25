@@ -31,6 +31,64 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Earned native resource ledger and paid-claim recovery
+
+The native avatar's ChestOrderIndex resource (5000002) was never advanced with
+the host's earned chest cycle. Original getNextWinnerChest therefore predicted
+Newbie1/Wooden while the host cycle had reached Gold. The saved native index is
+now reconciled with the earned cycle, including on each atomic battle commit.
+Unknown avatar fields and other resources are retained. Backward/invalid native
+indices reject without resetting progress. A literal resource packet test checks
+the exact insertion, unchanged tail, idempotence and overflow rejection.
+The native prediction and a future victory label still need real-win comparison;
+the subsequent real-client checks below ended in losses, not victories.
+
+Arena crown credit now uses original LogicSummoner::getStars, called against
+the actual player/opponent summoners at the qualified native result. The
+serialized native StarCount resource (5000004) is committed with that result;
+the original home.updateStarsFromAvatar transfers and clears it. Historical
+crowns are not inferred from wins. Three subsequent actual one-tower losses
+advanced native home crown count to 3, retained across two clean relaunches.
+This exercises loss credit and persistence, not crown-chest collection at 10.
+Native rating decisions, including their small loss deltas, remain unchanged.
+Original home encoding has two free chest pointers (+0x78/+0x7c), followed by
+crown count/cooldown and the actual crown chest (+0x90); parser names/layout
+now reflect that distinction. Newly earned standard chests use native source 1.
+
+`paid-and-crowns/run-20261024-205319-8d1f27` exercises native combined
+SpeedUpExploring/claim 506. No 503 follows that command. The service journals
+the actual post-cost/unlocked pre-grant checkpoint and original source-1 reward
+together. Only the validated current transaction's claim bit is represented as
+pre-grant; this is not a repair of arbitrary old half-claimed saves. Actual
+gems fell 102 to 87, gold rose 192 to 214, cards were collected and the slot
+cleared. The earlier `ledger-real` run stalled at this previously unsupported
+combination and exited with its last complete checkpoint preserved.
+
+Actual paid interruption: `paid-fault-v3/run-20261024-211707-c1e7c2` was
+intentionally killed after a 35-byte reward journal was saved. Its isolated
+save already had gems 72 (down from 87) and pre-grant gold 214. Relaunching the
+same save in `paid-fault-recovery/run-20261024-211823-283760`, without restoring
+a backup, completed the reward: gold 236, gems still 72, slot removed, journal
+cleared. Two 30-second `paid-recovery-relaunch` launches retained identical
+derived avatar/deck/collection state and no duplicate grant. An extra recovery
+tap started a fixture battle; it was stopped before a result. That is not a
+battle-completion result. Earlier fault attempts either had mismatched cloned
+credentials or timed out before the button click; neither is fault evidence.
+
+The earned player upgraded Archers and Goblins to level 2 with native cards/
+gold, reached player level 2 (0/50 XP), and showed original tower HP 2592/1526.
+`ledger-level-win/run-20261024-212046-06bc14` then ended in a loss despite its
+experimental directory name. Native score is 61; gold 204, gems 87, three
+standard chests and crown count 3 remain. Two `ledger-final-relaunch` launches
+exit cleanly and retain those values. Runtime 252, Test Lab 14 and C++ offline
+state/socket suites pass after the final parser/ledger changes.
+
+Remaining: native prediction versus visible victory reward, crown chest at
+10 and its journal, match-cost transactions, elapsed timers while the process
+is closed, earned later-arena progression, legacy recovery and presentation.
+Timers currently advance while running; relaunch observations do not establish
+wall-clock progress during closure. Do not fast-forward the host clock or save.
+
 ### Corrected-combat win, current main and remaining presentation reports
 
 Main `2b60a06` is now integrated. Both sides independently restored the iPhone

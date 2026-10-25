@@ -95,6 +95,8 @@ These are planned follow-ups, not separate roles. B-103 is merged in PR #4; acti
 | B-106d | 107-file IMA corpus vs libsndfile | Planned, needs the unpacked client and libsndfile. Not run by the default harness |
 | B-106e | Native free-chest command 518 and reward journaling | Reproduced in `free-observed`: original UI enters collection, backend reports unsupported 518/538 and has no reward to deliver. Preserve pre-claim native state, use original source-2 reward command, verify actual collection and interrupted replay. |
 | B-106f | Decode native home echoes 500/525/538 | Native deck swap, spell-page list and achievement refresh can share a turn with a requested chest. Decode their exact schemas before dispatching; native checkpoint capture remains authoritative. Unknown/truncated commands must still reject the entire turn. |
+| B-106g | Arena reward ledger/native avatar agreement | Corrected-combat win exposes native ChestOrderIndex left at zero while the host cycle advances; NPC result shows Wooden but earned cycle gives Gold. Native NPC mode also skips StarCount. Persist earned cycle and actual native tower crowns with the battle transaction; let original getNextWinnerChest and home crown transfer use that state. Never infer past crowns from win count. |
+| B-106h | Combined gem speed-up and claim (506) | Actual Silver Open Now spends native gems and enters collection, but no 503 follows. Journal the native post-cost/unlocked pre-grant checkpoint and source-1 reward atomically, preserving the charge on interruption. |
 
 ## No-parallel groups
 

@@ -121,15 +121,29 @@ ClashHomeView inspectClashHome(const Bytes& bytes) {
     for(int i=0;i<count;++i)r.card();r.v();const int selected=r.v();const int slots=r.v();
     if(selected<0 || selected>=decks || slots!=4)throw std::runtime_error("Offline Clash: invalid native home selection");
     view.deck=all[selected];view.chestOffset=r.at;
-    for(int i=0;i<4;++i)if(r.b()) {auto& c=view.states[i];c.data=r.ref();view.chests[i]=c.data;c.unlocked=r.b();c.claimed=r.b();c.isNew=r.b();c.hasTimer=r.b();if(c.hasTimer)for(auto& n:c.timer)n=r.v();c.value8=r.v();c.source=r.v();c.valueC=r.v();}
+    for(int i=0;i<4;++i)if(r.b()) {auto& c=view.states[i];c.data=r.ref();view.chests[i]=c.data;c.flagOffset=r.at;c.unlocked=r.b();c.claimed=r.b();c.isNew=r.b();c.hasTimer=r.b();if(c.hasTimer)for(auto& n:c.timer)n=r.v();c.value8=r.v();c.source=r.v();c.valueC=r.v();}
     view.chestEnd=r.at;
-    for(int i=0;i<6;++i)r.v(); // original free/crown timers at home+0x60/+0x98
+    for(int i=0;i<6;++i)r.v(); // timers at home+0x60/+0x98
     auto extraChest=[&](ClashHomeView::Chest& c) {
         if(!r.b())return;
         c.data=r.ref();c.unlocked=r.b();c.claimed=r.b();c.isNew=r.b();c.hasTimer=r.b();
         if(c.hasTimer)for(auto& n:c.timer)n=r.v();c.value8=r.v();c.source=r.v();c.valueC=r.v();
     };
-    extraChest(view.freeChest);extraChest(view.crownChest);return view;
+    extraChest(view.freeChest);extraChest(view.spareFreeChest); // +0x78/+0x7c
+    view.crownCount=r.v();view.crownCooldown=r.b(); // +0x8c/+0x94
+    for(int i=0;i<3;++i)r.v(); // crown cooldown at +0x80
+    extraChest(view.crownChest);return view; // +0x90
+}
+Bytes unlockedClashRewardCheckpoint(const Bytes& bytes,int32_t slot,int32_t chestId) {
+    const auto view=inspectClashHome(bytes);
+    if(slot<0 || slot>=4)throw std::runtime_error("Offline Clash: invalid paid reward slot");
+    const auto& chest=view.states[slot];
+    if(!chest.data || chest.value8!=chestId || !chest.unlocked || !chest.claimed)
+        throw std::runtime_error("Offline Clash: paid claim did not complete native unlock");
+    // Only the current, validated native speed-up transaction reaches here.
+    // Persist its actual cost/timers and unlocked chest, immediately before the
+    // still-undelivered grant. This is not recovery of arbitrary old claim flags.
+    auto result=bytes;result.at(chest.flagOffset)&=uint8_t(~2u);return result;
 }
 Bytes replaceClashHomeChests(const Bytes& bytes,const std::array<int32_t,4>& chests,size_t& avatarOffset) {
     auto view=inspectClashHome(bytes);if(view.chests==chests)return bytes;
@@ -145,7 +159,7 @@ Bytes replaceClashHomeChests(const Bytes& bytes,const std::array<int32_t,4>& che
         if(c.data!=chest) {
             if(c.data)throw std::runtime_error("Offline Clash: cannot replace an occupied native chest slot");
             if(lastId==INT32_MAX)throw std::runtime_error("Offline Clash: native chest ID exhausted");
-            c=ClashHomeView::Chest{};c.data=chest;c.value8=++lastId;
+            c=ClashHomeView::Chest{};c.data=chest;c.value8=++lastId;c.source=1;
         }
         w.ref(c.data);w.b(c.unlocked);w.b(c.claimed);w.b(c.isNew);w.b(c.hasTimer);
         if(c.hasTimer)for(auto n:c.timer)w.v(n);w.v(c.value8);w.v(c.source);w.v(c.valueC);
@@ -177,13 +191,42 @@ ClashAvatarView inspectClashAvatar(const Bytes& bytes) {
         throw std::runtime_error("Offline Clash: invalid native avatar score/arena");
     r.b();const auto slots=r.v();
     if(slots<0 || slots>16)throw std::runtime_error("Offline Clash: invalid avatar resource slots");
+    int32_t chestCycle=0,pendingCrowns=0;
     for(int i=0;i<slots;++i) {
         const auto count=r.v();if(count<0 || count>128)throw std::runtime_error("Offline Clash: invalid avatar resource count");
-        for(int j=0;j<count;++j){r.ref();r.v();}
+        for(int j=0;j<count;++j){const auto data=r.ref(),value=r.v();
+            if(i==0 && data==5000002)chestCycle=value;
+            if(i==0 && data==5000004)pendingCrowns=value;
+        }
     }
     r.v();r.v();r.v();const auto level=r.v();
     if(level<1 || level>13)throw std::runtime_error("Offline Clash: invalid avatar experience level");
-    return {arena-54000000,score,level};
+    return {arena-54000000,score,level,chestCycle,pendingCrowns};
+}
+Bytes withClashBattleProgress(const Bytes& bytes,int32_t chestCycle,int32_t crowns) {
+    const auto view=inspectClashAvatar(bytes);
+    if(view.chestCycleIndex<0 || chestCycle<0 || chestCycle<view.chestCycleIndex || chestCycle>1000000 || crowns<0 || crowns>3 ||
+       view.pendingCrowns<0 || view.pendingCrowns>3 || view.pendingCrowns>3-crowns)
+        throw std::runtime_error("Offline Clash: inconsistent earned avatar ledger");
+    Cursor r{bytes};for(int i=0;i<6;++i)r.v();
+    uint32_t length=0;for(int i=0;i<4;++i)length=(length<<8)|r.byte();r.at+=length;
+    r.b();r.v();r.ref();r.v();r.b();
+    if(r.v()<1)throw std::runtime_error("Offline Clash: avatar has no resource slot");
+    const auto begin=r.at;const auto count=r.v();std::vector<std::pair<int32_t,int32_t>> resources;
+    for(int i=0;i<count;++i) {
+        const auto data=r.ref(),value=r.v();
+        if(std::any_of(resources.begin(),resources.end(),[&](auto entry){return entry.first==data;}))
+            throw std::runtime_error("Offline Clash: duplicate native resource");
+        resources.emplace_back(data,value);
+    }
+    auto set=[&](int32_t data,int32_t value) {
+        for(auto& resource:resources)if(resource.first==data){resource.second=value;return;}
+        if(value)resources.emplace_back(data,value);
+    };
+    set(5000002,chestCycle);if(crowns)set(5000004,view.pendingCrowns+crowns);
+    Writer w;w.v(int(resources.size()));for(auto [data,value]:resources){w.ref(data);w.v(value);}
+    Bytes result(bytes.begin(),bytes.begin()+begin);result.insert(result.end(),w.data.begin(),w.data.end());
+    result.insert(result.end(),bytes.begin()+r.at,bytes.end());return result;
 }
 void clashVint(Bytes& out,int32_t value) {
     const uint64_t magnitude=value<0?uint64_t(-int64_t(value)):uint64_t(value);
@@ -299,7 +342,7 @@ Bytes ClashFixtures::home(const ClashProfile& p) const {
     w.v(0);w.v(1);w.v(0);w.v(4);
     for(int i=0;i<4;++i) {
         const bool present=p.chests[i]!=0;w.b(present);
-        if(present){w.ref(p.chests[i]);w.b(false);w.b(false);w.b(true);w.b(false);w.v(i+1);w.v(0);w.v(-1);}
+        if(present){w.ref(p.chests[i]);w.b(false);w.b(false);w.b(true);w.b(false);w.v(i+1);w.v(1);w.v(-1);}
     }
     w.timer(freeChestTicks);w.timer();w.b(false);w.b(false);w.v(0);w.b(true);w.timer();w.b(false);w.timer();
     w.zeros(9);w.v(1);w.ref(0);w.v(-1);w.v(-1);w.v(-1);w.timer();w.v(0);w.timer();w.timer();w.zeros(6);w.v(0);w.s("");w.v(0);

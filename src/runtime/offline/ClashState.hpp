@@ -36,18 +36,24 @@ struct ClashFixtures {
     std::pair<int32_t,int32_t> towerStats(const Tower&,int32_t expLevel) const;
 };
 struct ClashHomeView {
-    struct Chest {int32_t data=0;bool unlocked=false,claimed=false,isNew=true,hasTimer=false;std::array<int32_t,3> timer{};int32_t value8=0,source=0,valueC=-1;};
+    struct Chest {int32_t data=0;bool unlocked=false,claimed=false,isNew=true,hasTimer=false;std::array<int32_t,3> timer{};int32_t value8=0,source=0,valueC=-1;size_t flagOffset=0;};
     size_t chestOffset=0,chestEnd=0;
     size_t chestCounterEnd=0;
     int32_t lastChestId=0;
     std::array<int32_t,4> chests{};
     std::array<Chest,4> states{};
-    Chest freeChest{},crownChest{};
+    Chest freeChest{},spareFreeChest{},crownChest{};
+    int32_t crownCount=0;
+    bool crownCooldown=false;
     std::vector<ClashFixtures::Card> deck;
 };
 ClashHomeView inspectClashHome(const Bytes&);
-struct ClashAvatarView { int32_t arena=0,trophies=0,expLevel=1; };
+Bytes unlockedClashRewardCheckpoint(const Bytes&,int32_t slot,int32_t chestId);
+struct ClashAvatarView { int32_t arena=0,trophies=0,expLevel=1,chestCycleIndex=0,pendingCrowns=0; };
 ClashAvatarView inspectClashAvatar(const Bytes&);
+// Apply earned offline ledger values to the serialized native avatar. Retain
+// all unknown fields; no live guest objects, historical crowns or rewards are fabricated.
+Bytes withClashBattleProgress(const Bytes&,int32_t chestCycleIndex,int32_t earnedCrowns=0);
 struct ClashHomeCommand {
     int32_t type=0, argument=0;
     bool flag=false;

@@ -47,7 +47,16 @@ Corrected-combat three-crown victory is now verified, with native score 34 to
 from the saved cycle's Gold Chest, and crowns remain 0/10: native training-style
 NPC battles skip crown credit. This is still a core accounting task.
 
-Next: battle cost/crown/reward-display accounting, long Silver
+Newer accounting work reconciles the native earned chest index and transfers
+actual destroyed-tower crowns through original home logic. Native crown count
+3 persists across two relaunches. Combined gem unlock/claim now journals the
+native deduction with the reward; an actual killed isolated process recovered
+gold 214 to 236 while retaining gems 72, without duplicate grants. The earned
+player reached level 2 through Archers/Goblins upgrades. A new win/reward-label
+comparison and full crown-chest collection are still pending.
+
+Next: battle cost/reward-display accounting, full crown collection, elapsed
+timers across closure, long Silver
 unlocks, earned later-arena coverage and the remaining sound/cannon/text reports. The
 owner explicitly requests continuing through the bug-fix phase, not stopping
 at intermediate milestones. Paid renames and old half-claimed/duplicate-ID saves

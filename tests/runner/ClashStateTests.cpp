@@ -21,6 +21,34 @@ int main(int argc, char** argv) {
     }
     std::puts("ok native VInt literal vectors");
 
+    {
+        // Native resource table IDs: Gold=5:1, FreeGold=5:5,
+        // ChestOrderIndex=5:2, StarCount=5:4. Preserve the entire other tail.
+        Bytes head;for(int n:{0,1,0,1,0,1})clashVint(head,n);clashString(head,"Ledger");
+        for(int n:{0,0,54,1,65,0,6})clashVint(head,n);
+        const Bytes initialResources{2,5,1,0xa4,1,5,5,0xa4,1};
+        Bytes tail{0,0,0,0,0,0xa4,1,0xa4,1,0,1,0,0,0x12,0x34};
+        Bytes initial=head;initial.insert(initial.end(),initialResources.begin(),initialResources.end());
+        initial.insert(initial.end(),tail.begin(),tail.end());
+        const Bytes expectedResources{4,5,1,0xa4,1,5,5,0xa4,1,5,2,10,5,4,3};
+        Bytes expected=head;expected.insert(expected.end(),expectedResources.begin(),expectedResources.end());
+        expected.insert(expected.end(),tail.begin(),tail.end());
+        const auto actual=withClashBattleProgress(initial,10,3);
+        if(actual!=expected || withClashBattleProgress(actual,10)!=actual ||
+           inspectClashAvatar(actual).chestCycleIndex!=10 || inspectClashAvatar(actual).pendingCrowns!=3) {
+            std::fprintf(stderr,"FAIL earned avatar ledger literal/preservation vector\n");return 1;
+        }
+        bool rewind=false,duplicate=false;
+        try{withClashBattleProgress(actual,9);}catch(const std::runtime_error&){rewind=true;}
+        try{withClashBattleProgress(actual,10,1);}catch(const std::runtime_error&){duplicate=true;}
+        auto oversized=expected;const auto starAt=head.size()+expectedResources.size()-1;
+        oversized.erase(oversized.begin()+starAt);Bytes maximum;clashVint(maximum,INT32_MAX);
+        oversized.insert(oversized.begin()+starAt,maximum.begin(),maximum.end());
+        bool overflow=false;try{withClashBattleProgress(oversized,10,1);}catch(const std::runtime_error&){overflow=true;}
+        if(!rewind || !duplicate || !overflow){std::fprintf(stderr,"FAIL inconsistent avatar ledger accepted\n");return 1;}
+        std::puts("ok earned cycle/native crown resource transaction, untouched tail and invalid-transition rejection");
+    }
+
     // Literal wire vectors derived from the pinned native command decoders,
     // not round-tripped through our encoder. Each includes the -1 debug trailer.
     const Bytes chestTurn{10,0,3,

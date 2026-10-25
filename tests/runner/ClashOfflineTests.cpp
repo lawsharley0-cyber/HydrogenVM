@@ -88,7 +88,25 @@ int main() {
         check(rejected,"truncated mixed native turn rejects the whole batch");
     }
     {
-        ClashFixtures fixture(cfg.bundlePath);const auto sector=fixture.sector({});
+        ClashFixtures fixture(cfg.bundlePath);
+        ClashProfile paid;paid.chests[0]=19000000;auto paidHome=fixture.home(paid);
+        auto chest=inspectClashHome(paidHome).states[0];
+        // Native home encoder 0x124dd0..0x124e48: two free chests,
+        // crown count + cooldown flag/timer, then the crown chest itself.
+        Bytes timers;for(int n:{fixture.freeChestTicks,0,-1,0,0,-1})clashVint(timers,n);
+        paidHome.at(inspectClashHome(paidHome).chestEnd+timers.size()+1)=7;
+        const auto homeView=inspectClashHome(paidHome);
+        check(homeView.crownCount==7 && !homeView.spareFreeChest.data && !homeView.crownChest.data,
+            "crown count follows both free chest slots in the original home schema");
+        check(chest.source==1,"new earned chest uses the original arena source");
+        paidHome.at(chest.flagOffset)|=3; // current native unlock/claim completed
+        auto expected=paidHome;expected.at(chest.flagOffset)&=uint8_t(~2u);
+        check(unlockedClashRewardCheckpoint(paidHome,0,chest.value8)==expected,
+            "paid reward checkpoint changes only the current claim bit and preserves post-cost avatar/timers");
+        paidHome.at(chest.flagOffset)&=uint8_t(~1u);
+        bool rejected=false;try{unlockedClashRewardCheckpoint(paidHome,0,chest.value8);}catch(const std::runtime_error&){rejected=true;}
+        check(rejected,"paid reward checkpoint rejects an incomplete native unlock");
+        const auto sector=fixture.sector({});
         // addDecos gives type-0 objects IDs 1,000,000+i, before type-5 towers.
         // The decoder's reference list must retain those existing objects.
         const Bytes ids{1,0,6,0,6,1,6,2,6,3,6,4,6,5};

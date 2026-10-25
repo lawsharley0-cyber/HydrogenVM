@@ -36,6 +36,15 @@ with the saved cycle chest, and native NPC battles skip crown credit. Both
 remain core blockers. Princess orientation and King cannon anchoring also
 remain wrong per the owner's clarified report; visibility is not correctness.
 
+Subsequent ledger work aligns native ChestOrderIndex with the earned cycle and
+records actual native tower crowns. The original home transfers them; native
+crown count 3 survives two relaunches. A future win/reward-label comparison and
+crown-chest collection at 10 remain open. Combined gem unlock/claim has actual
+interrupted-journal recovery: the gem charge persists, reward applies once.
+The earned player also reaches level 2 through original card upgrades. See
+PROGRESS for exact evidence and failed attempts. Match costs and timers during
+process closure still need implementation/validation.
+
 The owner reports intermittent audio, incorrect King cannon animation, missing
 Princess Tower princesses and uncentered text on iPhone. Preserve those reports
 for remaining presentation work. The owner now requests continuing through all
