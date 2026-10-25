@@ -2,6 +2,14 @@
 
 ## Current continuation — October 24, 2026
 
+Latest: native crown collection (523/source 3) now completes normal reveal and
+actual interrupted-journal recovery in isolated component fixtures. Two
+relaunches do not duplicate the reward. These fixtures start with ten crowns;
+earned progression to ten remains unverified, and the earned player retains
+three. See PROGRESS for exact evidence. Princess facing during animation and
+King cannon anchoring remain explicit owner-reported visual bugs; the initial
+native direction fix is not proof of complete animation correctness.
+
 Work continues on `codex/clash-offline-continuation`, now integrated with main
 `2b60a06`.
 See [current evidence and blockers](clash-royale/PROGRESS.md). The historical

@@ -31,6 +31,44 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Crown-chest collection and interrupted source-3 recovery
+
+Original CollectMultiWinChest command 523 has only base command metadata
+(decode/encode 0x88498/0x88494). Its execute at 0x8849c claims the native chest
+at home+0x90, with reward source 3. It is now decoded and served through the
+original reward randomizer/213 encoder. Source-3 journals hold the complete
+pre-claim home until the original extra-reward command returns success; login
+replays immutable bytes, and successful execution clears the journal atomically.
+Matchmaking and standard/free/crown claim entries now flush current native
+home state before execution, including newly available chests that have not
+reached the periodic checkpoint. No claimed flag is broadly reset.
+
+An isolated fixture changes only its initial serialized crown counter from 3
+to 10, allowing the original home logic to create its Crown_Arena1 chest.
+This is a component qualification, **not earned ten-crown progression**; the
+earned player remains at three crowns. Before the fix, `crown-before` stalls
+on unsupported 523. `crown-fault/run-20261024-225327-9a9120` is intentionally
+killed after journaling a real 58-byte source-3 reward. `crown-recovery/run-
+20261024-225452-75a50f` relaunches without restoring a backup: original native
+execution grants 72 gold, 2 gems and cards, clears the journal and starts the
+crown cooldown. Two clean 30-second `crown-relaunch` runs retain gold 275,
+gems 89, reward serial 8, deck/collection and no pending reward. Full avatar
+hashes differ across login; they are not asserted to be byte-identical.
+
+A separate pre-claim fixture exercises normal reveal in `crown-clean/run-
+20261024-225822-f20258`: the original animated chest opens, card reveals finish
+and the home shows 275 gold, 89 gems and the crown cooldown. It exits cleanly
+after 248.35 seconds, without a battle or crash. No earned save is restored or
+modified for either component test. Runtime 252/252, Test Lab 14/14 and both
+C++ offline suites pass. Paid/free recovery remains covered by earlier runs.
+Earned progress to ten, the next victory chest-label comparison, long Silver
+unlock completion, later-arena progression and phone qualification remain open.
+
+The owner's latest visual clarification is retained: Princess Tower occupants
+face the wrong angle in the supplied images, and the King cannon does not stay
+anchored. Initial native facing vectors are corrected locally; that does not
+resolve cannon position during aiming/firing or establish phone visual parity.
+
 ### Arena entry fees and current Apple build
 
 The bundled arena MatchCost values are now required and read from CSV (Training

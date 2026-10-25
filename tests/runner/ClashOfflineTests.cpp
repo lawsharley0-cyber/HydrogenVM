@@ -71,6 +71,9 @@ int main() {
         check(accepted,"free-chest turn command accepts its native metadata-only schema");
         turn.pop_back();bool rejected=false;try{decodeClashHomeTurn(turn);}catch(const std::runtime_error&){rejected=true;}
         check(rejected,"truncated free-chest turn is rejected before requesting a reward");
+        Bytes crownTurn;for(int n:{10,1234,1,523,-1,-1,0,1})clashVint(crownTurn,n);clashInt(crownTurn,-1);
+        const auto crownCommands=decodeClashHomeTurn(crownTurn);
+        check(crownCommands.size()==1 && crownCommands[0].type==523,"crown collection uses its native metadata-only command schema");
     }
     {
         // Native schemas: SwapSpells 0x77a88 (two VInts/two packed bools),
@@ -303,6 +306,38 @@ int main() {
         stored->set("nativeHome",Plist::Value::makeData(std::string(home.begin(),home.end())));std::ofstream(saved)<<Plist::toXml(*stored);
         bool rejected=false;try{Process process(cfg);ClashOffline service(process);}catch(const std::runtime_error&){rejected=true;}
         check(rejected,"free journal rejects an already-claimed source checkpoint");
+    }
+    {
+        auto home=ClashFixtures(cfg.bundlePath).home({});
+        Bytes timers;for(int n:{288000,0,-1,0,0,-1})clashVint(timers,n);
+        // Two absent free chests share a boolean byte, then crown count,
+        // cooldown flag, three timer VInts, and crown presence.
+        const auto at=inspectClashHome(home).chestEnd+timers.size()+6;
+        if(home.at(at)!=0)throw std::runtime_error("unexpected crown fixture layout");
+        const Bytes chest{1,19,0,4,0,0,0x7f}; // present, ref, new/unclaimed, IDs
+        home.erase(home.begin()+at);home.insert(home.begin()+at,chest.begin(),chest.end());
+        auto stored=Plist::parseFile(saved.string());
+        stored->set("nativeHome",Plist::Value::makeData(std::string(home.begin(),home.end())));
+        stored->set("nativeAvatar",Plist::Value::makeData(""));const std::string marker="Offline Player";
+        const auto name=std::search(home.begin(),home.end(),marker.begin(),marker.end());
+        stored->set("avatarOffset",Plist::Value::makeInt(name-home.begin()-10));
+        // Placeholder tests source-3 journal transport only. Actual randomizer
+        // contents/execution are checked in the isolated original-client probe.
+        const Bytes pending{0x95,3,0,3,1,0x7f,0x7f,0x7f,0,0};
+        stored->set("pendingReward",Plist::Value::makeData(std::string(pending.begin(),pending.end())));
+        stored->set("pendingRewardSlot",Plist::Value::makeInt(0));stored->set("pendingRewardKind",Plist::Value::makeInt(3));
+        std::ofstream(saved)<<Plist::toXml(*stored);
+        for(int launch=0;launch<2;++launch) {
+            Process process(cfg);ClashOffline service(process);SocketPeer client(service.port());
+            Bytes login;clashInt(login,0);clashInt(login,0);clashInt(login,-1);for(int n:{2,0,1306})clashVint(login,n);
+            client.send(10101,login);client.receive();client.receive();
+            check(client.receive()==std::pair<uint16_t,Bytes>{24111,pending},"crown journal replays immutable source-3 bytes from its pre-claim checkpoint");
+            client.send(10108,{});check(client.receive()==std::pair<uint16_t,Bytes>{20108,{}},"crown reward is sent once per connection");
+        }
+        home.at(at+3)|=2;stored->set("nativeHome",Plist::Value::makeData(std::string(home.begin(),home.end())));
+        std::ofstream(saved)<<Plist::toXml(*stored);bool rejected=false;
+        try{Process process(cfg);ClashOffline service(process);}catch(const std::runtime_error&){rejected=true;}
+        check(rejected,"crown journal rejects an already-claimed source");
     }
     {
         // The real NPC battle can omit its log. Banking must follow its

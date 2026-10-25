@@ -100,6 +100,7 @@ These are planned follow-ups, not separate roles. B-103 is merged in PR #4; acti
 | B-106i | Original tower facing vectors | Owner reports wrong princess angles and unanchored cannon. Native spawnObject 0x13fe8..0x13ffc sets direction Y +256 for owner 0, -256 otherwise; full sector currently overwrites all six directions with zero. Restore that initialization; independently verify cannon motion afterward. |
 | B-106j | Real elapsed home timers across closure/battles | Timestamp complete native home checkpoints, bind elapsed time to the decoded delivered home, and call original LogicClientHome::fastForward(seconds,-1). Preserve reward journal atomicity; old untimestamped saves start measuring prospectively, without invented historical elapsed time. |
 | B-106k | Native arena match cost | Arena UI shows its CSV cost, but original command 537 does not deduct it. Commit validated sector plus serialized Gold debit before delivery, using native FreeGold=min(previousFreeGold,newGold) semantics. Prevent an old home snapshot or duplicate pending request from undoing/repeating the debit; preserve the cost when a started match is abandoned. |
+| B-106l | Crown-chest command 523/source-3 journal | Original UI creates its chest at ten crowns, but collection stalls on unsupported 523. Add native source-3 randomization/execution/recovery, and flush current source state before claim commands so newly available chests cannot race the periodic checkpoint. Isolated ten-crown fixtures do not prove earned progression to ten. |
 
 ## No-parallel groups
 

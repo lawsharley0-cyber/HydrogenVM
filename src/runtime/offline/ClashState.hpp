@@ -14,7 +14,7 @@ struct ClashProfile {
     Bytes nativeHome,nativeAvatar;
     Bytes pendingReward; // immutable native command; replay only against its pre-claim checkpoint
     int32_t pendingRewardSlot=-1;
-    int32_t pendingRewardKind=0; // 0 none, 1 slotted, 2 native free chest
+    int32_t pendingRewardKind=0; // 0 none, 1 slotted, 2 free, 3 crown chest
     int32_t rewardSerial=0;
     size_t avatarOffset=0;
     int64_t homeSavedAt=0;

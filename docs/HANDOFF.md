@@ -2,6 +2,16 @@
 
 ## Clash continuation — October 24, 2026
 
+Latest continuation adds original crown collection command 523/source 3, with
+native reward execution and durable recovery. An isolated ten-crown starting
+fixture recovers a real killed 58-byte journal without backup restoration;
+72 gold, 2 gems and cards apply once across two relaunches. Normal chest reveal
+also returns cleanly to home. This does not prove earned ten-crown progression:
+the earned player still has three crowns. Read PROGRESS for exact runs and
+remaining gameplay/device gates. The owner's latest report specifically calls
+out wrong princess angles and King cannon movement away from its anchor;
+initial-facing correction alone does not close either phone observation.
+
 The owner explicitly prioritizes core offline Clash functionality. Draft
 [PR #138](https://github.com/lawsharley0-cyber/HydrogenVM/pull/138), branch
 `codex/clash-offline-continuation`, checkpoints the embedded backend and local
