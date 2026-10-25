@@ -169,7 +169,8 @@ def build(source, output, build_dir):
     patches=[]
     for address, symbol in [(0x187484,'_guest_connect'),(0x1872d0,'_guest_send'),
                             (0x187130,'_guest_disconnect'),(0x92f08,'_guest_update'),
-                            (0x9ae94,'_guest_set_npc_wins'),(0x8203c,'_guest_reward_execute')]:
+                            (0x9ae94,'_guest_set_npc_wins'),(0x9aea4,'_guest_set_npc_losses'),
+                            (0x8203c,'_guest_reward_execute')]:
         segment = next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
         at = segment[3]+address-segment[1]
         target = mod['symbols'][symbol]

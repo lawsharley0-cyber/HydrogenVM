@@ -17,7 +17,7 @@ or call HydrogenVM's Clash service. Ordinary emulation/framework/file APIs are
 still required, as for every guest app.
 
 **Prototype, not a complete replacement yet.** Training startup, battle input,
-two earned training victories, chest banking, home persistence, a first native
+three earned training victories, chest banking, home persistence, native
 reward recovery and a paid card upgrade have been reproduced. Selected deck and
 tower level adaptation are implemented. Full training/arenas,
 elapsed closed time, paid/free/crown qualification, name flow,
@@ -150,6 +150,39 @@ Its source archive and all private evidence remain outside Git.
   Both terminate through the original save/close path without an abort:
   `/var/tmp/hvm-guest-v17-relaunch{1,2}`. This does not yet qualify killing a
   process during journal commit or a real phone update/re-import.
+- v18, built from `ee23825`, normally unlocks the second earned 15-second chest,
+  commits a 35-byte journal, executes original command 213, and clears the
+  journal with the granted home. Gold 111→127, gems 100, XP 4, NPC wins 2;
+  the native deck now contains seven cards, including Musketeer (26000014).
+  A 110-second mixer capture records 2,371 blocks, 2,276 non-silent, peak 31,974,
+  no capture errors; run exit 0, no crash/load error. This confirms mixed output
+  during interaction, not isolated music correctness or phone dropout resolution.
+  `/var/tmp/hvm-guest-v18-audio/{report.json,audio.json,mixed.wav,run.log}`.
+- v19 adds the original loss setter store (+0xa0), qualified only at the native
+  battleEnded return address 0x14ce6 and local avatar ID. It commits the original
+  avatar without awarding a chest. An idle Trainer Mike battle naturally reaches
+  the original DRAW screen; it awards no win/chest and is not a defeat test.
+  A real loss invoking the new setter remains unqualified. The next native
+  Trainer Mike attempt uses the seven-card saved deck.
+- That second Trainer Mike attempt earns a real three-crown win: NPC wins 3,
+  native cycle 3, banked chest data 19000003 with ID 3. The same player is
+  retained throughout. The original 600-second probe stops gracefully during
+  unlock; its native timer remains on disk (closed-time advancement is still
+  unported). `/var/tmp/hvm-guest-v19-loss` records both draw and earned win.
+- A separate owned v19 run finishes that unlock, then a private pidfd watcher
+  sends **SIGKILL** only after verifying the atomically renamed checkpoint and
+  pending command checksums. The retained 35-byte journal is source 1 / chest
+  ID 3, Gold 127, wins 3, claimed=false. No backup is restored. The next launch
+  loads it, executes original command 213 once, and commits Gold **141**, gems
+  100, XP 4, wins/cycle 3, no chest or journal. The native deck now has eight
+  earned cards, including Mini P.E.K.K.A (26000018); Bomber count is 2.
+  Evidence `/var/tmp/hvm-guest-v19-journal/interruption.json` and
+  `/var/tmp/hvm-guest-v19-recovery1`.
+- A second clean 35-second launch retains Gold 141, gems 100, XP 4, wins/cycle
+  3, the same eight cards and no chest/journal. No reward executes again. Both
+  recovery reports have exitStatus 0, crashed=false and empty loadError.
+  `/var/tmp/hvm-guest-v19-recovery2`. The private v19 IPA SHA256 is
+  `937e8e5d0c03c176776eac9537b06d6cc73491dca2d33fcb4df599d6d7bd21c3`.
 
 The local mod builder's seven tests use authored Mach-O vectors, independently
 specified signed VInt boundary vectors and a synthetic fixture header,
@@ -165,12 +198,12 @@ guest prototype is proof the reported device 50% failure is resolved.
 
 ## Next work
 
-1. Finish first reward UI and two relaunch checks, then deliberate journal
-   interruption/recovery. Preserve every actual failure and earned save.
-2. Continue qualification of deck swaps/eight earned cards and actual level-up
-   tower stats; synthetic byte comparisons do not substitute for those scenarios.
-3. Qualify NPC2 onward, name flow and all seven earned training wins; persist
-   NPC losses, match costs, actual crowns, arena transition and native ELO.
+1. Preserve the deliberate SIGKILL recovery evidence and earned eight-card
+   player. Do not reset or restore older checkpoints during the next tests.
+2. Qualify an actual eight-card battle, deck swaps and level-up tower stats;
+   synthetic byte comparisons do not substitute for those scenarios.
+3. Qualify NPC4 onward, name flow and all seven earned training wins. Qualify a
+   real loss; port match costs, actual crowns, arena transition and native ELO.
 4. Port arena/bot selection and all six locations, real elapsed timers and the
    remaining native economy/journal paths. Build-time data can reuse the pinned
    CSV research, but runtime logic must stay in the guest IPA.

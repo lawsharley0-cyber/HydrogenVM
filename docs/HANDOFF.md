@@ -7,8 +7,10 @@ ordinary emulator updates without a Clash-specific host service. This explicitly
 authorizes modifying an output copy of the game executable. Read
 [GUEST_MOD_PROGRESS.md](clash-royale/GUEST_MOD_PROGRESS.md) before continuing.
 The new guest-code prototype runs on unmodified main `6884670` with no Clash
-service: native NPC1 victory, chest banking, guest-owned persistence and a first
-aborted-reward recovery are reproduced. It is not fully functional yet. Earlier
+service: three earned training victories, chest banking, guest-owned persistence,
+native card upgrade and aborted-reward recovery are reproduced. A deliberate
+SIGKILL after chest ID 3's durable journal recovers through the original command;
+see the progress document for final no-duplicate checks. It is not fully functional yet. Earlier
 host-backend seven-training/all-arena scene evidence does not qualify the guest
 port. No proprietary/generated binaries, fixtures or player data are in Git.
 

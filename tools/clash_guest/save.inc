@@ -132,6 +132,18 @@ static void capture_current_home(void *ui,int force) {
     committed_wins=(int)FIELD(avatar,0x9c);
 }
 void guest_snapshot(void *ui) {capture_current_home(ui,0);}
+void guest_set_npc_losses(void *avatar,int count) {
+    int previous=(int)FIELD(avatar,0xa0);FIELD(avatar,0xa0)=count;
+    // Original battleEnded calls setNpcLoseCount at 0x14ce2. Only that
+    // transition for the local player is an earned loss; constructor/decoders
+    // still receive the original setter behavior without checkpoint writes.
+    if(((u32)__builtin_return_address(0)&~1u)!=0x14ce6 || !save_initialized || !battle_started ||
+       FIELD(avatar,0x10)!=0 || FIELD(avatar,0x14)!=1)return;
+    if(count==previous)return;
+    if(count!=previous+1)fail("GuestOffline: unexpected native loss transition");
+    serialize_native(0,avatar,1);
+    CALL(API_printf,int,(const char*,int))("GuestOffline: persisted original NPC loss=%d\n",count);
+}
 void guest_set_npc_wins(void *avatar,int count) {
     int previous=(int)FIELD(avatar,0x9c);FIELD(avatar,0x9c)=count;
     if(((u32)__builtin_return_address(0)&~1u)!=0x14c7c || !save_initialized || !battle_started ||

@@ -1,7 +1,7 @@
 /* ARMv7 guest-local experimental transport for the pinned client.
  * Build-time function replacements, not emulator callbacks or runtime JIT.
- * Startup/NPC1 qualification only: economy, durable progression and recovery
- * must be ported before this can replace the mature host backend.
+ * Training prototype: see GUEST_MOD_PROGRESS.md for actual qualifications.
+ * Remaining economy/arena paths must be ported before replacing the host backend.
  */
 #include "generated.h"
 typedef unsigned int u32;

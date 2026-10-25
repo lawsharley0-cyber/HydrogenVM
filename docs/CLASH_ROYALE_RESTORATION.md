@@ -4,8 +4,8 @@
 
 The owner now authorizes a modified guest IPA containing its own offline logic.
 Read [guest mod progress](clash-royale/GUEST_MOD_PROGRESS.md) first. This prototype
-runs on ordinary main `6884670` without a Clash host service. Two earned training
-wins, the first native reward recovery, a paid native card upgrade, and an updated
+runs on ordinary main `6884670` without a Clash host service. Three earned training
+wins, native reward recovery, a paid native card upgrade, and an updated
 deck in the next battle are locally reproduced. It is **not the complete offline
 game**; the earlier seven-training and arena evidence below belongs to the host
 backend, not this guest port. Device behavior remains unverified.
