@@ -145,6 +145,14 @@ The JSON layout is `d['suites']['apps']['apps'][i]` with fields `name`, `crashRe
 
 ---
 
+## 4b. Review status of branches and PRs (2026-10-25)
+- **PR #138** (codex, Clash Royale offline) is a draft and still in progress; its own description says arena trophies are wrong. It also changes the "iPhone stat ABI", which conflicts with the reverted legacy-stat change that broke Unity, Mono and Clash at launch. **Not merged.** Merge only when the owner asks and the PR is no longer a draft. Rebase it first, keep the INODE64 stat layout, then run all gates and the full game sweep.
+- **PR #118** (failed Jules task, Jetpack termination): its changes are already in main. It should be closed as superseded (needs the owner's go-ahead).
+- **Old topic branches**: not merged into main by git, but checked with `git merge-tree`. They are either fully contained or were merged earlier in reviewed or edited form; what's left is superseded code, scratch files or duplicates.
+  - `issue-34` (swaps VNMLA/VNMLS) contradicts the ARM ARM opc1=x01 table, and main passes `tests/asm/vfp_neon.S`, so it was rejected.
+  - `fix-issue-124` was superseded by the zombie implementation.
+- **Jules sessions for #140/#141**: the work is done on main. Stop or archive them, and close any PR they open unless it adds a genuinely new test.
+
 ## 5. Architecture notes that cost time to learn
 
 - **Short guest paths:** apps see `/var/mobile/Applications/<UUID>/...`. Every host file access goes through `Process::hostPath`/`guestPath`. Homes come with a trailing `/`, which is trimmed, and `/private/var` is accepted.
