@@ -872,6 +872,21 @@ id viewLayer(Ctx& x, id view) {
     if (!d.layer) ensureLayer(x, view);
     return viewData(x, view).layer;
 }
+// Whether a layer is part of what the screen shows: its chain of superlayers ends
+// at a visible window's layer, and nothing on the way is hidden or transparent.
+bool layerOnScreen(Ctx& x, id layer) {
+    id root = 0;
+    for (id l = layer; l; l = layerData(x, l).superlayer) {
+        const LayerData& d = layerData(x, l);
+        if (d.hidden || d.opacity <= 0.001f) return false;
+        root = l;
+    }
+    for (id w : ui(x).windows) {
+        const ViewData& wd = viewData(x, w);
+        if (wd.visible && wd.layer == root) return true;
+    }
+    return false;
+}
 id viewWindow(Ctx& x, id view) {
     for (id v = view; v; v = viewData(x, v).superview) if (viewData(x, v).isWindow) return v;
     return 0;

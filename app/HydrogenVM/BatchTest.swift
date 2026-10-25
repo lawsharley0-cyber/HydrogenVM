@@ -25,14 +25,31 @@ struct BatchTestOptions: Codable, Sendable {
     var resetSandbox: Bool = false
     var exploreEnabled: Bool = true
     var exploreTime: Int = 30
+    /// Start the game a second time on the data the first run saved (catches save-file crashes).
+    var relaunchEnabled: Bool = true
+    var relaunchTime: Int = 12
 
-    init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false, exploreEnabled: Bool = true, exploreTime: Int = 30) {
+    init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false, exploreEnabled: Bool = true, exploreTime: Int = 30, relaunchEnabled: Bool = true) {
         self.secondsPerApp = secondsPerApp
         self.rendererMode = rendererMode
         self.keepGoing = keepGoing
         self.resetSandbox = resetSandbox
         self.exploreEnabled = exploreEnabled
         self.exploreTime = exploreTime
+        self.relaunchEnabled = relaunchEnabled
+    }
+
+    // Saved sessions from older builds lack the newer keys.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        secondsPerApp = try c.decodeIfPresent(Int.self, forKey: .secondsPerApp) ?? 10
+        rendererMode = try c.decodeIfPresent(BatchRendererMode.self, forKey: .rendererMode) ?? .both
+        keepGoing = try c.decodeIfPresent(Bool.self, forKey: .keepGoing) ?? true
+        resetSandbox = try c.decodeIfPresent(Bool.self, forKey: .resetSandbox) ?? false
+        exploreEnabled = try c.decodeIfPresent(Bool.self, forKey: .exploreEnabled) ?? true
+        exploreTime = try c.decodeIfPresent(Int.self, forKey: .exploreTime) ?? 30
+        relaunchEnabled = try c.decodeIfPresent(Bool.self, forKey: .relaunchEnabled) ?? true
+        relaunchTime = try c.decodeIfPresent(Int.self, forKey: .relaunchTime) ?? 12
     }
 }
 
@@ -85,6 +102,17 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
     /// The last files the game opened (path, result, size, bytes read), JSON, from the crash bundle.
     var fileHistory: String? = nil
     var explore: ExploreResult?
+    /// The checklist (launch, picture, music, sound effects, touch, resume, close, relaunch…).
+    var checks: [BatchCheck]? = nil
+    /// Last engine counters (audio mixer, off-screen frames, missing APIs).
+    var diagnostics: BatchDiagnostics? = nil
+
+    var worstCheck: BatchCheck.Status? {
+        guard let checks else { return nil }
+        if checks.contains(where: { $0.status == .fail }) { return .fail }
+        if checks.contains(where: { $0.status == .warn }) { return .warn }
+        return .pass
+    }
 
     init(bundleId: String, name: String, version: String, minOS: String, mode: String, crashed: Bool, exitCode: Int, summary: String, signature: String? = nil, exceptionKind: String? = nil, crashReport: String? = nil, perf: BatchPerf = BatchPerf(), frame: BatchFrameInfo = BatchFrameInfo(), keepGoing: Bool = true, logs: String = "", explore: ExploreResult? = nil) {
         self.bundleId = bundleId
@@ -229,6 +257,7 @@ final class ExitBox {
     var exited = false
     var code: NSInteger = -1
     var crash: String?
+    var frames = 0
 }
 
 @Observable
@@ -265,6 +294,13 @@ final class BatchTestRunner {
         lastLogLine = line
         lastLogRepeats = 0
         logLineCount += 1
+        if let r = line.range(of: "Missing: ") {
+            let what = String(line[r.upperBound...])
+            if missingLines.count < 40 && !missingLines.contains(what) { missingLines.append(what) }
+            if what.localizedCaseInsensitiveContains("audio format not supported") || what.localizedCaseInsensitiveContains("can't decode audio") {
+                if audioDecodeFailures.count < 5 { audioDecodeFailures.append(what) }
+            }
+        }
         if headLogs.count < 60 { headLogs.append(line); return }
         currentLogs.append(line)
         if currentLogs.count > 500 { currentLogs.removeFirst() }
@@ -290,6 +326,10 @@ final class BatchTestRunner {
     @ObservationIgnored private var gpuSampleLines: [String] = []
     @ObservationIgnored private var lastP95: Double = 0
     @ObservationIgnored private var lastTotalPresented: UInt64 = 0
+    /// Engine counters, copied every second while the game runs (they vanish when it stops).
+    @ObservationIgnored private var lastDiag: BatchDiagnostics?
+    @ObservationIgnored private var missingLines: [String] = []
+    @ObservationIgnored private var audioDecodeFailures: [String] = []
 
     static var reportsDir: URL {
         URL.documentsDirectory.appending(path: "TestReports", directoryHint: .isDirectory)
@@ -419,6 +459,9 @@ final class BatchTestRunner {
         gpuSampleLines = []
         lastP95 = 0
         lastTotalPresented = 0
+        lastDiag = nil
+        missingLines = []
+        audioDecodeFailures = []
         frameCount = 0
         lastPresentedFrames = 0
         progressText = "Testing \(currentIndex + 1)/\(targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
@@ -472,6 +515,7 @@ final class BatchTestRunner {
                 // Kept from the running session: once it stops, its counters are gone.
                 self.lastP95 = s.frameTimeP95Milliseconds
                 if presented > 0 { self.lastTotalPresented = presented }
+                if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
             }
         }
 
@@ -482,6 +526,7 @@ final class BatchTestRunner {
             let durationSeconds = Double(self.options.secondsPerApp)
             let deadline = Date().addingTimeInterval(durationSeconds)
 
+            var launchDiag: BatchDiagnostics? = nil   // counters at the end of the launch wait
             // A let, so the log closure below can capture it under strict concurrency.
             let explorePhase: ExplorePhase? = self.options.exploreEnabled
                 ? ExplorePhase(session: s, options: self.options, bundleId: target.app.info.bundleIdentifier) { [weak self] in self?.lastCapturedFrame }
@@ -503,6 +548,7 @@ final class BatchTestRunner {
                     try? await Task.sleep(for: .milliseconds(250))
                 }
 
+                launchDiag = self.lastDiag
                 if !exitBox.exited && self.status == .running {
                     let exploreDuration = Double(self.options.exploreTime)
                     let exploreDeadline = Date().addingTimeInterval(exploreDuration)
@@ -519,14 +565,19 @@ final class BatchTestRunner {
                 while Date() < deadline && !exitBox.exited && self.status == .running {
                     try? await Task.sleep(for: .milliseconds(250))
                 }
+                launchDiag = self.lastDiag
             }
 
+            let exitedOnItsOwn = exitBox.exited
+            var closedGracefully: Bool? = nil
             if !exitBox.exited && self.status == .running {
+                if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
                 self.activeSession?.stopGracefully()
                 let gracefulDeadline = Date().addingTimeInterval(4.0)
                 while Date() < gracefulDeadline && !exitBox.exited {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+                closedGracefully = exitBox.exited
                 // A game that ignores the close request is stopped, so the next one
                 // can have the memory (only one 4 GB guest arena fits on iOS).
                 if !exitBox.exited {
@@ -579,6 +630,40 @@ final class BatchTestRunner {
             }
 
             let logExcerpt = self.makeLogExcerpt()
+            let exploreResult = explorePhase?.buildResult(crashed: isCrashed)
+
+            // Second launch on the data the first run left behind.
+            var relaunch: (crashed: Bool, frames: Int, summary: String?)? = nil
+            if self.options.relaunchEnabled && !isCrashed && exitBox.exited && self.status == .running {
+                self.progressText = "Relaunching \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
+                self.activeSession = nil
+                try? await Task.sleep(for: .milliseconds(1500))
+                relaunch = await self.relaunch(target: target, home: testHome)
+            }
+            guard self.status == .running else { return }
+
+            var obs = BatchObservations()
+            obs.crashed = isCrashed
+            obs.crashSummary = isCrashed ? summaryText : nil
+            obs.frameSignal = frameSig.rawValue
+            obs.fps = self.currentFPS
+            obs.launchDiag = launchDiag
+            obs.finalDiag = self.lastDiag
+            obs.exploreEnabled = explorePhase != nil
+            obs.exploreCrashed = exploreResult?.crashed ?? false
+            obs.screensVisited = exploreResult?.screensVisited ?? 0
+            obs.backgroundTested = exploreResult?.backgroundTested ?? false
+            obs.resumeFramesBefore = exploreResult?.resumeFramesBefore
+            obs.resumeFramesAfter = exploreResult?.resumeFramesAfter
+            obs.closedGracefully = closedGracefully
+            obs.exitedOnItsOwn = exitedOnItsOwn && !isCrashed
+            obs.relaunchEnabled = self.options.relaunchEnabled
+            obs.relaunchCrashed = relaunch?.crashed
+            obs.relaunchFrames = relaunch?.frames
+            obs.relaunchSummary = relaunch?.summary
+            obs.missingLines = self.missingLines
+            obs.audioDecodeFailures = self.audioDecodeFailures
+            let checks = BatchCheckBuilder.build(obs)
 
             let appResult = BatchAppResult(
                 bundleId: target.app.info.bundleIdentifier,
@@ -596,10 +681,12 @@ final class BatchTestRunner {
                 frame: BatchFrameInfo(signal: frameSig.rawValue, thumbnailPath: thumbRelPath),
                 keepGoing: self.options.keepGoing,
                 logs: logExcerpt,
-                explore: explorePhase?.buildResult(crashed: isCrashed)
+                explore: exploreResult
             )
 
             var finished = appResult
+            finished.checks = checks
+            finished.diagnostics = self.lastDiag
             if isCrashed, let bundle = self.activeSession?.crashBundle, let data = bundle.data(using: .utf8),
                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let files = json["fileHistory"],
                let filesData = try? JSONSerialization.data(withJSONObject: files) {
@@ -616,6 +703,52 @@ final class BatchTestRunner {
             try? await Task.sleep(for: .milliseconds(1500))
             self.runNextTarget()
         }
+    }
+
+    /// Starts the game again on `home` for `relaunchTime` seconds and reports what happened.
+    private func relaunch(target: BatchTarget, home: URL) async -> (crashed: Bool, frames: Int, summary: String?) {
+        let s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
+        s.keepGoing = options.keepGoing
+        s.useGPU = target.useGPU
+        activeSession = s
+        let box = ExitBox()
+        s.onFrame = { [weak self] img in
+            MainActor.assumeIsolated {
+                box.frames += 1
+                self?.currentFrame = img
+            }
+        }
+        s.onLog = { [weak self] line, _ in
+            MainActor.assumeIsolated { self?.keepLog(line) }
+        }
+        s.onExit = { code, crash in
+            MainActor.assumeIsolated {
+                box.exited = true
+                box.code = code
+                box.crash = crash
+            }
+        }
+        s.start()
+        let deadline = Date().addingTimeInterval(Double(options.relaunchTime))
+        var presented = 0
+        while Date() < deadline && !box.exited && status == .running {
+            try? await Task.sleep(for: .milliseconds(250))
+            presented = max(presented, Int(s.framesPresented))
+        }
+        if !box.exited {
+            s.stopGracefully()
+            let graceful = Date().addingTimeInterval(4.0)
+            while Date() < graceful && !box.exited { try? await Task.sleep(for: .milliseconds(100)) }
+            if !box.exited {
+                s.stop()
+                let hard = Date().addingTimeInterval(4.0)
+                while Date() < hard && !box.exited { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+        }
+        let crashed = box.crash != nil || (box.exited && box.code != 0 && Date() < deadline)
+        let summary = box.crash?.components(separatedBy: "\n").first ?? (crashed ? "Exited with status \(box.code) on the second launch" : nil)
+        activeSession = nil
+        return (crashed, max(presented, box.frames), summary)
     }
 
     private func finishBatch() {
@@ -671,6 +804,10 @@ final class BatchTestRunner {
             if let files = r.fileHistory, let data = files.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: data) { dict["fileHistory"] = parsed }
             if let ex = r.exceptionKind { dict["exceptionKind"] = ex }
+            if let checks = r.checks, let data = try? JSONEncoder().encode(checks),
+               let parsed = try? JSONSerialization.jsonObject(with: data) { dict["checks"] = parsed }
+            if let diag = r.diagnostics, let data = try? JSONEncoder().encode(diag),
+               let parsed = try? JSONSerialization.jsonObject(with: data) { dict["diagnostics"] = parsed }
 
             if let explore = r.explore {
                 if let expData = try? JSONEncoder().encode(explore),
@@ -691,7 +828,10 @@ final class BatchTestRunner {
             "options": [
                 "seconds": options.secondsPerApp,
                 "renderer": options.rendererMode.rawValue,
-                "keepGoing": options.keepGoing
+                "keepGoing": options.keepGoing,
+                "explore": options.exploreEnabled,
+                "exploreSeconds": options.exploreTime,
+                "relaunch": options.relaunchEnabled
             ],
             "suites": [
                 "apps": [
@@ -706,12 +846,15 @@ final class BatchTestRunner {
         md += "**Date:** \(ISO8601DateFormatter().string(from: Date()))  \n"
         md += "**Device:** \(UIDevice.current.model), iOS \(UIDevice.current.systemVersion)  \n"
         md += "**Emulator Commit:** `\(HVMSession.emulatorCommit.prefix(12))`  \n"
-        md += "**Options:** \(options.secondsPerApp)s/app · Renderer \(options.rendererMode.displayName) · KeepGoing \(options.keepGoing)\n\n"
+        md += "**Options:** \(options.secondsPerApp)s/app · Renderer \(options.rendererMode.displayName) · KeepGoing \(options.keepGoing) · Explore \(options.exploreEnabled ? "\(options.exploreTime)s" : "off") · Relaunch \(options.relaunchEnabled)\n\n"
 
         let total = results.count
         let crashed = results.filter(\.crashed).count
         let wrongSignal = results.filter { !$0.crashed && $0.frame.signal != "ok" }.count
         let passed = total - crashed - wrongSignal
+        let withMusic = results.filter { ($0.diagnostics?.musicFrames ?? 0) > 0 }.count
+        let withEffects = results.filter { ($0.diagnostics?.effectFrames ?? 0) > 0 }.count
+        let failedChecks = results.filter { $0.worstCheck == .fail }.count
 
         let explored = results.filter { $0.explore?.enabled == true }.count
         let exploreCrashed = results.filter { $0.explore?.enabled == true && $0.explore?.crashed == true }.count
@@ -722,6 +865,8 @@ final class BatchTestRunner {
         md += "- **Passed:** \(passed)\n"
         md += "- **Crashed:** \(crashed)\n"
         md += "- **Wrong Output:** \(wrongSignal)\n"
+        md += "- **Music heard:** \(withMusic) · **Sound effects heard:** \(withEffects)\n"
+        md += "- **Games with a failed check:** \(failedChecks)\n"
         if explored > 0 {
             md += "- **Explored:** \(explored)\n"
             md += "- **Explore Crashes:** \(exploreCrashed)\n"
@@ -736,6 +881,31 @@ final class BatchTestRunner {
         for r in results {
             let statusBadge = r.crashed ? "❌ Crashed" : (r.frame.signal != "ok" ? "⚠️ Output Error" : "✅ Passed")
             md += "| \(r.name) (`\(r.bundleId)`) | \(r.mode.uppercased()) | \(statusBadge) | \(r.perf.fps) | \(String(format: "%.1f", r.perf.frameTimeP95Ms)) | `\(r.frame.signal)` | \(r.summary.replacingOccurrences(of: "|", with: "\\|")) |\n"
+        }
+
+        // The checklist: one table of all games × checks, then each game's details.
+        let checked = results.filter { $0.checks != nil }
+        if let first = checked.first?.checks {
+            let names = first.map(\.name)
+            md += "\n### Checklist\n\n"
+            md += "| Check | ✅ | ⚠️ | ❌ | ➖ |\n|---|---:|---:|---:|---:|\n"
+            for n in names {
+                let all = checked.compactMap { $0.checks?.first(where: { $0.name == n }) }
+                func k(_ st: BatchCheck.Status) -> Int { all.filter { $0.status == st }.count }
+                md += "| \(n) | \(k(.pass)) | \(k(.warn)) | \(k(.fail)) | \(k(.skip)) |\n"
+            }
+            md += "\n| App | Mode | " + names.joined(separator: " | ") + " |\n"
+            md += "|---|---|" + names.map { _ in ":-:" }.joined(separator: "|") + "|\n"
+            for r in checked {
+                let cells = names.map { n in r.checks?.first(where: { $0.name == n })?.emoji ?? "" }
+                md += "| \(r.name) | \(r.mode.uppercased()) | " + cells.joined(separator: " | ") + " |\n"
+            }
+            for r in checked {
+                md += "\n#### \(r.name) (\(r.mode.uppercased()))\n\n"
+                for c in r.checks ?? [] {
+                    md += "- \(c.emoji) **\(c.name):** \(c.detail.replacingOccurrences(of: "|", with: "\\|"))\n"
+                }
+            }
         }
 
         md += "\n"
@@ -760,6 +930,12 @@ final class BatchTestRunner {
         body += "**Emulator:** `\(HVMSession.emulatorCommit.prefix(12))` · renderer \(result.mode)\n"
         body += "**Performance:** \(result.perf.fps) fps · p95 \(String(format: "%.1f", result.perf.frameTimeP95Ms)) ms · signal `\(result.frame.signal)`\n"
         body += "**Summary:** \(result.summary)\n\n"
+        if let checks = result.checks {
+            for c in checks where c.status != .pass && c.status != .skip {
+                body += "- \(c.emoji) \(c.name): \(c.detail)\n"
+            }
+            body += "\n"
+        }
         body += "```\n"
         body += String(result.logs.suffix(2000))
         body += "\n```\n"

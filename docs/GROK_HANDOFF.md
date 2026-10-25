@@ -31,7 +31,7 @@ cmake --build build -j16                     # builds hvm, hvm_tests, ...
 
 ### The three gates (all must pass)
 ```sh
-./build/hvm_tests fulltest                      # currently 250 passed, 0 failed
+./build/hvm_tests fulltest                      # currently 253 passed, 0 failed
 python3 tools/hvm_testlab.py run                # 13/13 (Test Lab: deterministic guest app, see docs/TEST_LAB.md)
 HVM_LD64=/opt/cctools/bin/arm-apple-darwin11-ld python3 tools/hvm_report.py --out build/report-check
 #   -> build 1/0, cpu 15/0, ios 6/0, bench 5/0; "problems: 1 perf" (CoreMark below the iPhone goal) is normal
@@ -130,6 +130,16 @@ The game draws and presents (436 `presentRenderbuffer:` calls in 75 s), but `HVM
 - Possibly a callback we never send, such as `viewDidAppear:` on EAGLViewController, a notification, or a network or IGP completion.
 
 Dismiss the "No Internet connection" alert with `--tap 160,327@65`.
+
+Newer finding: the game never calls `renderbufferStorage:fromDrawable:`, so its frames never reach a layer at all (the `--report` `display.offscreenPresents` stays 0 because nothing is presented to a drawable). Trace why the EAGLView setup path that would call it is skipped.
+
+### Test All Games checklist (how the owner's batch reports read now)
+Every game gets a checklist (`BatchChecks.swift`, `BatchCheckBuilder.build`): Launches, Shows a picture, Game view on screen, Audio output, Music, Sound effects, Responds to touch, Background & resume, Closes cleanly, Relaunch, Missing APIs, Handled faults, Speed. Each is pass / warn / fail / skip with a one-line detail, in the app, in `latest_batch_report.md` (a checklist table plus per-game lines) and in the JSON (`checks`, `diagnostics`).
+- The numbers come from `HVMSession.diagnostics` (bridge) = `Mixer::stats()` + `Process::Perf` (`offscreenPresents`, `faultsToApp`) + `missingCount()`. The runner copies them every second, because they vanish when the game stops.
+- Music = audible stream / looping / ≥8 s voice; Sound effects = the other audible voices. Audible means peak above 1e-3 at the app's own gain (before the player's volume). "Music: fail" means a `Missing: AVAudioPlayer: audio format not supported` line was logged; a "warn" means nothing was heard (often the game's own music setting).
+- "Game view on screen: fail" means GL frames went to a layer not inside a visible window (`layerOnScreen`).
+- Relaunch starts the game a second time on the data the first run saved (12 s).
+- Headless: `hvm --report` now includes `mixer` and `display` objects; with no `--audio-fd`, a silent sink still runs the mixer so these numbers are real.
 
 ### T5. Goat Simulator (UE3, #125)
 It's slow under the interpreter. Run `--run-for 300 --gpu`. The device crash was a NULL inside `TSparseArray<...FES2FrameBuffer...>` (a GL framebuffer map, called from `UOnlineSuppliedUIGameCenter`/`UInAppMessageIPhone`), possibly a GameCenter/UI-thread race. The 12 missing `glBeginQuery`/`glGenQueries` (EXT occlusion query) functions could make it take a different path. Implement them in the software renderer and in `tools/hostgl_spec.txt` honestly (queries report "any samples passed" = 1).

@@ -147,6 +147,8 @@ public:
     struct Perf {
         std::atomic<uint64_t> frames{0};          // frame hooks run (60 Hz main run loop)
         std::atomic<uint64_t> framesPresented{0}; // frames that changed and were composited
+        std::atomic<uint64_t> offscreenPresents{0}; // GL frames presented to a layer the screen doesn't show
+        std::atomic<uint64_t> faultsToApp{0};     // bad accesses handed to the app's signal handler
         std::atomic<uint64_t> frameNs{0};         // host time inside frame hooks (input, links, layout, display, composite)
         std::atomic<uint64_t> compositeNs{0};     // of which compositing
         std::atomic<uint64_t> maxFrameNs{0};
@@ -314,6 +316,7 @@ public:
     void log(LogLevel lvl, const std::string& msg) const;
     void logf(LogLevel lvl, const char* fmt, ...) const __attribute__((format(printf, 3, 4)));
     void reportMissing(const std::string& what);   // logs once per name
+    size_t missingCount() { std::lock_guard<std::mutex> lk(missingMu_); return missing_.size(); }
     std::string describeAddress(uint32_t addr) const;
     std::string hleFunctionName(uint32_t index) const;
     // The host function currently bound to an exported symbol (null if none / not host code).

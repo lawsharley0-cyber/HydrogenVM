@@ -788,6 +788,7 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
     std::memcpy(m.host(mc + 80), c.d, 256);
     m.write<uint32_t>(mc + 80 + 256, c.fpscr);
     p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x (pc 0x%08x)", sig, addr, pc);
+    p.perf().faultsToApp++;
     // Where the first few happened (Mono raises these routinely, so not every time).
     static std::atomic<int> traced{0};
     if (traced.fetch_add(1) < 3) p.logf(LogLevel::Info, "  fault backtrace:\n%s", p.backtrace(c, 8).c_str());

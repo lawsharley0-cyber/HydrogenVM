@@ -783,6 +783,7 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
         if (!HostGL::presentRenderbuffer(x.proc, self, layer, w, h, pixels, direct)) return false;
         if (!direct) publishFrame(x, layer, pixels.data(), w, h);
         else {
+            if (layer && !layerOnScreen(x, layer)) x.proc.perf().offscreenPresents++;
             // The host shows GL frames itself. The UIKit overlay only needs a new
             // composite when the layer first switches to host presentation (or when
             // UIKit content changes, which marks the composite dirty on its own).
@@ -876,6 +877,7 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
 // Hand a presented frame (straight RGBA, GL bottom-left row order) to the compositor.
 void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, int height) {
     struct Rb { int width, height; const uint8_t* data; id drawableLayer; } rb{width, height, rgbaBottomLeft, layer};
+    if (layer && !layerOnScreen(x, layer)) x.proc.perf().offscreenPresents++;
     auto img = std::make_shared<G::Image>();
     img->width = rb.width;
     img->height = rb.height;

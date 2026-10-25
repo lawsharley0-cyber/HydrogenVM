@@ -152,6 +152,7 @@ void runFrame(Ctx& x, double now);                              // display links
 // ---- views (UIView.cpp)
 ViewData& viewData(Ctx& x, id view);
 id viewLayer(Ctx& x, id view);
+bool layerOnScreen(Ctx& x, id layer);   // in a visible window, not hidden or transparent
 id viewWindow(Ctx& x, id view);
 G::Affine viewToWindow(Ctx& x, id view);                         // view bounds space → window space
 G::Point convertPoint(Ctx& x, G::Point p, id from, id to);       // nil = window (or screen for windows)

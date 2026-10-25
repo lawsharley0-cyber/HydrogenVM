@@ -201,16 +201,33 @@ struct BatchTestView: View {
         let wrongSignal = runner.results.filter { !$0.crashed && $0.frame.signal != "ok" }.count
         let passed = total - crashed - wrongSignal
 
-        return HStack(spacing: 16) {
-            summaryStat(title: "Total", count: total, color: .primary)
-            Divider()
-            summaryStat(title: "Passed", count: passed, color: .green)
-            Divider()
-            summaryStat(title: "Crashed", count: crashed, color: .red)
-            Divider()
-            summaryStat(title: "Signal Err", count: wrongSignal, color: .orange)
+        return VStack(spacing: 6) {
+            HStack(spacing: 16) {
+                summaryStat(title: "Total", count: total, color: .primary)
+                Divider()
+                summaryStat(title: "Passed", count: passed, color: .green)
+                Divider()
+                summaryStat(title: "Crashed", count: crashed, color: .red)
+                Divider()
+                summaryStat(title: "Signal Err", count: wrongSignal, color: .orange)
+            }
+            audioSummary
         }
         .padding(.vertical, 8)
+    }
+
+    /// How many games played music / sound effects, and how many failed a check.
+    private var audioSummary: some View {
+        let music = runner.results.filter { ($0.diagnostics?.musicFrames ?? 0) > 0 }.count
+        let effects = runner.results.filter { ($0.diagnostics?.effectFrames ?? 0) > 0 }.count
+        let failed = runner.results.filter { $0.worstCheck == .fail }.count
+        return HStack(spacing: 12) {
+            Label("\(music) music", systemImage: "music.note")
+            Label("\(effects) sound fx", systemImage: "speaker.wave.2.fill")
+            Label("\(failed) failed a check", systemImage: "checklist")
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
 
     private func summaryStat(title: String, count: Int, color: Color) -> some View {
@@ -281,6 +298,20 @@ struct BatchTestView: View {
                             Text("120 s").tag(120)
                         }
                     }
+
+                    Toggle("Relaunch each game on its saved data", isOn: Binding(get: {
+                        runner.options.relaunchEnabled
+                    }, set: {
+                        runner.options.relaunchEnabled = $0
+                    }))
+                }
+
+                Section {
+                    Label("Launch, picture, game view on screen, audio output, music, sound effects, touch, background & resume, clean close, relaunch, missing APIs, handled faults and speed.", systemImage: "checklist")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Checks run on every game")
                 }
 
                 Section {
@@ -333,8 +364,23 @@ private struct BatchResultRow: View {
             return ("Crashed", .red, "xmark.octagon.fill")
         } else if result.frame.signal != "ok" {
             return ("Output Error (\(result.frame.signal))", .orange, "exclamationmark.triangle.fill")
+        } else if let checks = result.checks {
+            let fails = checks.filter { $0.status == .fail }.count
+            let warns = checks.filter { $0.status == .warn }.count
+            if fails > 0 { return ("\(fails) check\(fails == 1 ? "" : "s") failed", .red, "xmark.circle.fill") }
+            if warns > 0 { return ("Passed · \(warns) warning\(warns == 1 ? "" : "s")", .orange, "checkmark.circle.badge.questionmark") }
+            return ("Passed all checks", .green, "checkmark.circle.fill")
         } else {
             return ("Passed", .green, "checkmark.circle.fill")
+        }
+    }
+
+    static func color(_ st: BatchCheck.Status) -> Color {
+        switch st {
+        case .pass: return .green
+        case .warn: return .orange
+        case .fail: return .red
+        case .skip: return .secondary
         }
     }
 
@@ -384,6 +430,18 @@ private struct BatchResultRow: View {
                             .foregroundStyle(.secondary)
                     }
                     .foregroundStyle(badge.color)
+
+                    if let checks = result.checks {
+                        // One dot per check, so a glance shows which ones failed.
+                        HStack(spacing: 3) {
+                            ForEach(checks) { c in
+                                Image(systemName: c.icon)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Self.color(c.status))
+                                    .accessibilityLabel("\(c.name): \(c.status.rawValue)")
+                            }
+                        }
+                    }
                 }
             }
 
@@ -392,6 +450,25 @@ private struct BatchResultRow: View {
                     Divider()
                     Text("Summary: \(result.summary)")
                         .font(.caption.weight(.medium))
+
+                    if let checks = result.checks {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(checks) { c in
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Image(systemName: c.icon)
+                                        .font(.caption2)
+                                        .foregroundStyle(Self.color(c.status))
+                                    Text(c.name)
+                                        .font(.caption.weight(.semibold))
+                                    Text(c.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
 
                     if !result.logs.isEmpty {
                         Text("Logs Excerpt:")
@@ -405,7 +482,7 @@ private struct BatchResultRow: View {
                             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 6))
                     }
 
-                    if result.crashed || result.frame.signal != "ok" {
+                    if result.crashed || result.frame.signal != "ok" || result.worstCheck == .fail {
                         Button {
                             openURL(runner.consoleIssueURL(for: result))
                         } label: {

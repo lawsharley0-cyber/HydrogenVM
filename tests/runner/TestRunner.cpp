@@ -307,6 +307,29 @@ int runFullSubsystemTests() {
         check(received && stopped, "Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown");
     }
 
+    // Mixer stats (what Test All Games' music / sound-effects checks read): a short one-shot
+    // voice counts as an effect, a looping one as music, a silent one as neither.
+    {
+        Audio::Mixer m;
+        auto loud = std::make_shared<std::vector<int16_t>>(2 * 2048, int16_t(8000));
+        auto quiet = std::make_shared<std::vector<int16_t>>(2 * 2048, int16_t(0));
+        Audio::VoiceParams once, looped; looped.loop = true;
+        m.play(loud, 44100, once);
+        m.play(loud, 44100, looped);
+        m.play(quiet, 44100, once);
+        std::vector<float> l(512), r(512);
+        for (int i = 0; i < 16; i++) m.render(l.data(), r.data(), 512);
+        const auto st = m.stats();
+        const bool ok = st.framesRendered == 16 * 512 && st.effectFrames >= 2048 && st.effectFrames <= 2048 + 512 &&
+                        st.musicFrames == 16 * 512 && st.effectVoices == 1 && st.musicVoices == 1 &&
+                        st.audibleFrames == 16 * 512 && st.peak > 0.2f;
+        if (!ok) std::printf("    mixer stats rendered=%llu audible=%llu music=%llu fx=%llu mv=%u fv=%u peak=%.3f\n",
+                             (unsigned long long)st.framesRendered, (unsigned long long)st.audibleFrames,
+                             (unsigned long long)st.musicFrames, (unsigned long long)st.effectFrames,
+                             st.musicVoices, st.effectVoices, st.peak);
+        check(ok, "Mixer stats tell music (looping) from sound effects (one-shot) and ignore silent voices");
+    }
+
     // Straight-line GLSL semantics: independent names, actual values, honest rejection.
     {
         Shader::Program vertex, fragment;
