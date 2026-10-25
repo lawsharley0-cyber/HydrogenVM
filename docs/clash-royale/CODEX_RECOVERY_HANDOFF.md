@@ -92,6 +92,9 @@ Codex recognized two things:
 2. **Push to PR #138:**
    Push changes to remote branch `origin/codex/clash-offline-continuation` to trigger CI build of updated iOS unsigned device IPA.
 3. **Investigate iPhone 50% Connection Issue on Device:**
-   The client stops at 50% when TCP connect to `game.clashroyaleapp.com:9339` fails. On iOS device:
-   - Check if iOS local loopback / sandbox restrictions require explicit local networking entitlements or if port redirection needs fallback.
+   The owner confirms a PR #138 build stops at 50% / couldn't log in. The failure
+   stage and root cause are not established without matching device logs; do not
+   assume TCP failure or a missing entitlement from the progress percentage.
+   On iOS device:
+   - Inspect backend selection, initialization, routing, handshake and home delivery in order.
    - Verify that the iOS app build of HydrogenVM incorporates the `HydrogenVMOfflineBackend` auto-configuration.

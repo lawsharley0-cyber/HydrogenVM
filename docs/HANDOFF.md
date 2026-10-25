@@ -2,6 +2,14 @@
 
 ## Codex Recovery & Continuation — October 25, 2026
 
+For the owner's importable guest-IPA request, read
+[OFFLINE_IPA.md](clash-royale/OFFLINE_IPA.md). The metadata package reaches the
+original tutorial on a fresh local import without offline CLI flags. It still
+requires the updated emulator. The owner confirms a PR #138 iPhone build gets
+stuck at 50% / couldn't log in; neither packaging nor Linux tests resolve that
+device report. Preserve it and obtain the exact build/log before claiming a
+root cause. CI adds Apple-host offline socket/state and TL-O ABI checks.
+
 See [CODEX_RECOVERY_HANDOFF.md](clash-royale/CODEX_RECOVERY_HANDOFF.md) for the complete recovery report from Codex session `01a15ad7-5c8b-7222-ae87-545437c2d162`.
 Key verified additions:
 - Package-marker auto-configuration (`HydrogenVMOfflineBackend: clash-2.1306.1` in `Info.plist`), allowing modded offline IPAs to be imported directly without CLI flags (`tools/package_clash_offline.py`).

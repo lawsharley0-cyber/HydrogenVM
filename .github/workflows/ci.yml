@@ -44,6 +44,11 @@ jobs:
         run: tools/build_cctools.sh /home/runner/cctools
       - name: Test + performance report
         run: python3 tools/hvm_report.py --out report
+      - name: Offline backend and package checks
+        run: |
+          build/hvm_clash_state_tests > report/clash-state.txt
+          build/hvm_clash_tests > report/clash-offline.txt
+          python3 tools/hvm_testlab.py run --hvm build/hvm --build-dir build --out report/testlab
       - name: Host AAC decoder comparison
         run: python3 tools/test_m4a_audio.py --hvm-tests build/hvm_tests --out report/m4a.json
       - name: Publish report to ci-reports branch
@@ -85,6 +90,11 @@ jobs:
           export PATH="$(brew --prefix lld)/bin:$PATH"
           xcodebuild -version
           python3 tools/hvm_report.py --prebuilt-apps --out report
+      - name: Apple offline backend and ARMv7 math ABI checks
+        run: |
+          build/hvm_clash_state_tests > report/clash-state.txt
+          build/hvm_clash_tests > report/clash-offline.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-math-test -- --run TL-O > report/clash-math-abi.txt
       - name: Generate Xcode project
         working-directory: app
         run: xcodegen
