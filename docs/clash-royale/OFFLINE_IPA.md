@@ -1,5 +1,11 @@
 # Importable offline edition
 
+This page documents the **earlier host-dependent metadata package**. The owner
+now explicitly requests guest-owned offline logic; see
+[GUEST_MOD_PROGRESS.md](GUEST_MOD_PROGRESS.md) for the executable mod prototype,
+ordinary-main tests and remaining work. Do not call this metadata-only package
+a self-contained offline game.
+
 The owner requests a separate Clash IPA imported into HydrogenVM. This is an
 ARMv7 **guest package**, not a native modern-iOS port. HydrogenVM still supplies
 the embedded NPC service and emulation. An older HydrogenVM build cannot gain

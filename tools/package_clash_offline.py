@@ -22,7 +22,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def package(source, output):
+def package(source, output, separate_profile=False):
     source, output = Path(source), Path(output)
     if output.exists():
         raise ValueError("Output already exists; choose a new path")
@@ -50,6 +50,8 @@ def package(source, output):
         if digest(original.read(exe_name)) != EXECUTABLE_SHA256:
             raise ValueError("Wrong client executable")
         info["CFBundleDisplayName"] = "Clash Royale Offline"
+        if separate_profile:
+            info["CFBundleIdentifier"] = "com.hydrogenvm.clashroyale.offline"
         info["HydrogenVMOfflineBackend"] = BACKEND
         info["HydrogenVMOfflinePackageVersion"] = 1
         modified = plistlib.dumps(info, fmt=plistlib.FMT_BINARY)
@@ -79,7 +81,8 @@ def package(source, output):
         "sourceIpaSHA256": SOURCE_SHA256, "executableSHA256": EXECUTABLE_SHA256,
         "backend": BACKEND, "packageVersion": 1, "architecture": "armv7 guest",
         "changedMembers": [info_name], "otherMembersByteIdentical": True,
-        "bundleIdentifier": "com.supercell.scroll", "appVersion": "2.1306.1",
+        "bundleIdentifier": info["CFBundleIdentifier"], "appVersion": "2.1306.1",
+        "separateProfile": separate_profile,
         "requires": "HydrogenVM with package-marker support and the embedded Clash backend",
         "nativeIOSApp": False, "deviceTested": False,
         "note": "Metadata was changed; existing signatures are not valid. Import into HydrogenVM. "
@@ -91,8 +94,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_ipa", type=Path)
     parser.add_argument("output_ipa", type=Path)
+    parser.add_argument("--separate-profile", action="store_true",
+                        help="Create its own emulator library entry and save, keeping original Clash separate")
     args = parser.parse_args()
-    report = package(args.source_ipa, args.output_ipa)
+    report = package(args.source_ipa, args.output_ipa, args.separate_profile)
     manifest = args.output_ipa.with_suffix(".manifest.json")
     with manifest.open("x", encoding="utf-8") as out:
         json.dump(report, out, indent=2)

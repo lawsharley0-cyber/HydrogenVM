@@ -1,5 +1,17 @@
 # HydrogenVM — handoff (2026-10-20)
 
+## Current priority: guest-owned standalone mod
+
+The owner requests the offline backend inside a separate Clash IPA, surviving
+ordinary emulator updates without a Clash-specific host service. This explicitly
+authorizes modifying an output copy of the game executable. Read
+[GUEST_MOD_PROGRESS.md](clash-royale/GUEST_MOD_PROGRESS.md) before continuing.
+The new guest-code prototype runs on unmodified main `6884670` with no Clash
+service: native NPC1 victory, chest banking, guest-owned persistence and a first
+aborted-reward recovery are reproduced. It is not fully functional yet. Earlier
+host-backend seven-training/all-arena scene evidence does not qualify the guest
+port. No proprietary/generated binaries, fixtures or player data are in Git.
+
 ## Codex Recovery & Continuation — October 25, 2026
 
 For the owner's importable guest-IPA request, read

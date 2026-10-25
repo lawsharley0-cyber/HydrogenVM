@@ -32,7 +32,9 @@ jobs:
           sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
-        run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
+        run: |
+          python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
+          python3 -m unittest discover -s tools/tests -p 'test_*clash_guest*.py'
       - name: Cache ld64 (cctools-port)
         id: cctools
         uses: actions/cache@v4

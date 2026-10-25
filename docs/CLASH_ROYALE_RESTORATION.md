@@ -1,5 +1,15 @@
 # Clash Royale solo restoration investigation
 
+## Current architecture — October 25, 2026
+
+The owner now authorizes a modified guest IPA containing its own offline logic.
+Read [guest mod progress](clash-royale/GUEST_MOD_PROGRESS.md) first. This prototype
+runs on ordinary main `6884670` without a Clash host service. Two earned training
+wins, the first native reward recovery, a paid native card upgrade, and an updated
+deck in the next battle are locally reproduced. It is **not the complete offline
+game**; the earlier seven-training and arena evidence below belongs to the host
+backend, not this guest port. Device behavior remains unverified.
+
 ## Current continuation — October 24, 2026
 
 Latest: native crown collection (523/source 3) now completes normal reveal and

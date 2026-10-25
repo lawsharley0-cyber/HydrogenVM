@@ -1,0 +1,166 @@
+/* Guest-native, versioned, atomic home checkpoint. Included in transport.c so
+ * the freestanding payload needs no additional dynamic imports or C++ runtime.
+ * This first stage persists native home/avatar data, not host reward journals.
+ */
+static u8 saved_home[65536];
+static u32 saved_size,avatar_offset;
+static int save_initialized;
+static int committed_wins;
+static char save_path[512],temporary_path[520];
+static u32 s_getenv,s_open,s_read,s_write,s_flush,s_fileno,s_sync,s_close,s_rename,s_error;
+static u32 symbol(const char *name) {
+    u32 value=CALL(API_dlsym,u32,(u32,const char*))(0xfffffffeu,name);
+    if(!value)fail("GuestOffline: required standard file API unavailable");
+    return value;
+}
+static void path_append(char *dest,const char *base,const char *suffix,u32 capacity) {
+    u32 i=0,j=0;
+    while(base[i]) {if(i+1>=capacity)fail("GuestOffline: home path too long");dest[i]=base[i];++i;}
+    while(suffix[j]) {if(i+1>=capacity)fail("GuestOffline: save path too long");dest[i++]=suffix[j++];}
+    dest[i]=0;
+}
+static u32 checksum(const u8 *bytes,u32 size) {
+    u32 value=2166136261u;
+    for(u32 i=0;i<size;++i)value=(value^bytes[i])*16777619u;
+    return value;
+}
+static void write_save(void) {
+    if(saved_size<avatar_offset+8 || saved_size>sizeof saved_home)
+        fail("GuestOffline: invalid native checkpoint extent");
+    u32 header[4]={0x31475243u,saved_size,avatar_offset,checksum(saved_home,saved_size)};
+    void *file=CALL(s_open,void*,(const char*,const char*))(temporary_path,"wb");
+    if(!file)fail("GuestOffline: cannot create checkpoint");
+    int valid=CALL(s_write,u32,(const void*,u32,u32,void*))(header,1,sizeof header,file)==sizeof header;
+    valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(saved_home,1,saved_size,file)==saved_size;
+    if(pending_size) {
+        u32 journal[5]={0x314a5247u,pending_size,(u32)pending_kind,(u32)pending_id,checksum(pending_reward,pending_size)};
+        valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(journal,1,sizeof journal,file)==sizeof journal;
+        valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(pending_reward,1,pending_size,file)==pending_size;
+    }
+    valid=valid && CALL(s_flush,int,(void*))(file)==0;
+    int fd=CALL(s_fileno,int,(void*))(file);
+    valid=valid && fd>=0 && CALL(s_sync,int,(int))(fd)==0;
+    int closed=CALL(s_close,int,(void*))(file);
+    if(!valid || closed!=0)fail("GuestOffline: checkpoint write/flush failed");
+    if(CALL(s_rename,int,(const char*,const char*))(temporary_path,save_path)!=0)
+        fail("GuestOffline: atomic checkpoint replacement failed");
+}
+static void load_guest_home(void) {
+    if(save_initialized)return;
+    s_getenv=symbol("getenv");s_open=symbol("fopen");s_read=symbol("fread");
+    s_write=symbol("fwrite");s_flush=symbol("fflush");s_fileno=symbol("fileno");
+    s_sync=symbol("fsync");s_close=symbol("fclose");s_rename=symbol("rename");s_error=symbol("__error");
+    const char *home=CALL(s_getenv,const char*,(const char*))("HOME");
+    if(!home || !home[0])fail("GuestOffline: guest HOME missing");
+    path_append(save_path,home,"/Documents/ClashGuestOffline-v1.bin",sizeof save_path);
+    path_append(temporary_path,save_path,".tmp",sizeof temporary_path);
+    void *file=CALL(s_open,void*,(const char*,const char*))(save_path,"rb");
+    if(!file) {
+        if(*CALL(s_error,int*,(void))()!=2)fail("GuestOffline: checkpoint cannot be read");
+        saved_size=sizeof initial_home;avatar_offset=INITIAL_AVATAR_OFFSET;
+        for(u32 i=0;i<saved_size;++i)saved_home[i]=initial_home[i];
+        write_save();
+    } else {
+        u32 header[4];u8 tail;
+        if(CALL(s_read,u32,(void*,u32,u32,void*))(header,1,sizeof header,file)!=sizeof header ||
+           header[0]!=0x31475243u || header[1]>sizeof saved_home ||
+           header[2]>header[1] || header[1]-header[2]<8)
+            fail("GuestOffline: invalid checkpoint header; original file retained");
+        saved_size=header[1];avatar_offset=header[2];
+        int valid=CALL(s_read,u32,(void*,u32,u32,void*))(saved_home,1,saved_size,file)==saved_size;
+        u32 extra=CALL(s_read,u32,(void*,u32,u32,void*))(&tail,1,1,file);
+        if(extra) {
+            u32 journal[5];((u8*)journal)[0]=tail;
+            valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))((u8*)journal+1,1,sizeof journal-1,file)==sizeof journal-1;
+            if(!valid || journal[0]!=0x314a5247u || journal[1]<3 || journal[1]>sizeof pending_reward ||
+               journal[2]<1 || journal[2]>3 || (journal[2]>=2 && journal[3]!=0) || journal[3]>1000000)
+                fail("GuestOffline: invalid reward journal; original file retained");
+            pending_size=journal[1];pending_kind=(int)journal[2];pending_id=(int)journal[3];
+            valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))(pending_reward,1,pending_size,file)==pending_size;
+            valid=valid && pending_reward[0]==0x95 && pending_reward[1]==3 && checksum(pending_reward,pending_size)==journal[4];
+        }
+        valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))(&tail,1,1,file)==0;
+        int closed=CALL(s_close,int,(void*))(file);
+        if(!valid || closed!=0 || checksum(saved_home,saved_size)!=header[3])
+            fail("GuestOffline: incomplete checkpoint; original file retained");
+        CALL(API_puts,int,(const char*))("GuestOffline: loaded guest-owned native checkpoint");
+    }
+    save_initialized=1;
+}
+static void serialize_native(void *home,void *avatar,int commit) {
+    u32 stream[16];
+    CALL(0x192a71,void,(void*,u32))(stream,65536);
+    if(home) {
+        CALL(0x124cfd,void,(void*,void*))(home,stream);
+        avatar_offset=CALL(0x192b2d,u32,(void*))(stream);
+    }
+    CALL(0x99e51,void,(void*,void*))(avatar,stream);
+    u32 size=CALL(0x192b2d,u32,(void*))(stream);
+    u8 *data=CALL(0x1936fd,u8*,(void*))(stream);
+    u32 prefix=home?0:avatar_offset;
+    if(!size || prefix>sizeof saved_home-1 || size>sizeof saved_home-prefix-1)
+        fail("GuestOffline: native serializer exceeded checkpoint bound");
+    for(u32 i=0;i<size;++i)saved_home[prefix+i]=data[i];
+    saved_size=prefix+size+1;saved_home[saved_size-1]=0;
+    CALL(0x19370d,void,(void*))(stream);
+    if(commit)write_save();
+}
+static void capture_native(void *home,void *avatar) {serialize_native(home,avatar,1);}
+static void capture_current_home(void *ui,int force) {
+    static int last_tick=-20;
+    if(!save_initialized || battle_started || FIELD(ui,0x28)!=0)return;
+    void *logic=(void*)FIELD(ui,0x54);
+    if(!logic)return;
+    void *home=(void*)FIELD(logic,0x30),*avatar=(void*)FIELD(logic,0x34);
+    if(!home || !avatar)return;
+    if((int)FIELD(avatar,0x9c)<committed_wins)return;
+    if(BYTE(home,0xb4)) {
+        if(!pending_size && requested_kind)prepare_reward(home,avatar);
+        return;
+    }
+    if(pending_size) {
+        if(!reward_applied)return;
+        if(pending_kind==1 && CALL(0x125645,void*,(void*,int))(home,pending_id))return;
+        completed_kind=pending_kind;completed_id=pending_id;
+        pending_size=0;pending_kind=0;pending_id=0;reward_applied=0;
+        force=1;
+        CALL(API_puts,int,(const char*))("GuestOffline: native reward applied; committing completed checkpoint");
+    }
+    int tick=(int)FIELD(logic,0x38);
+    if(!force && tick>=last_tick && (u32)tick-(u32)last_tick<20)return;
+    last_tick=tick;capture_native(home,avatar);
+    committed_wins=(int)FIELD(avatar,0x9c);
+}
+void guest_snapshot(void *ui) {capture_current_home(ui,0);}
+void guest_set_npc_wins(void *avatar,int count) {
+    int previous=(int)FIELD(avatar,0x9c);FIELD(avatar,0x9c)=count;
+    if(((u32)__builtin_return_address(0)&~1u)!=0x14c7c || !save_initialized || !battle_started ||
+       FIELD(avatar,0x10)!=0 || FIELD(avatar,0x14)!=1)return;
+    if(count==previous)return;
+    if(count!=previous+1)fail("GuestOffline: unexpected native win transition");
+    // Work on decoded copies: advancing the live winner index here would make
+    // the victory screen show the following chest rather than this reward.
+    serialize_native(0,avatar,0);
+    void *owner=decode_packet(24101,0,saved_home,saved_size);
+    void *home=(void*)FIELD(owner,0x30),*copy=(void*)FIELD(owner,0x34);
+    if(!home || !copy || FIELD(home,0x58)!=4)fail("GuestOffline: invalid decoded reward home");
+    u32 *slots=(u32*)FIELD(home,0x50);int empty=-1,total=0;
+    for(int i=0;i<4;++i){if(slots[i])++total;else if(empty<0)empty=i;}
+    if(empty>=0) {
+        void *arena=CALL(0x9b4d1,void*,(void*))(copy);
+        void *data=CALL(0x9b3b9,void*,(void*,void*))(copy,arena);
+        if(!data)fail("GuestOffline: original winner-chest selection failed");
+        void *chest=CALL(API_malloc,void*,(u32))(32);
+        if(!chest)fail("GuestOffline: chest allocation failed");
+        CALL(0xf1671,void,(void*,void*))(chest,data);
+        CALL(0xf1ab9,void,(void*,int))(chest,1);
+        CALL(0xf1ac1,void,(void*,int))(chest,1);
+        CALL(0x124bf1,void,(void*,void*,int))(home,chest,empty);
+        CALL(0x9aeb5,void,(void*))(copy);
+        CALL(0x9af3d,void,(void*,int))(copy,total+1);
+        CALL(API_puts,int,(const char*))("GuestOffline: original winner chest banked");
+    }
+    capture_native(home,copy);dispose(owner);
+    committed_wins=count;
+    CALL(API_printf,int,(const char*,int))("GuestOffline: persisted original NPC win=%d\n",count);
+}
