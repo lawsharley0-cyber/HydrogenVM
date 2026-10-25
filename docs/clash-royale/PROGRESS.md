@@ -31,6 +31,60 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Corrected-combat win, current main and remaining presentation reports
+
+Main `2b60a06` is now integrated. Both sides independently restored the iPhone
+108-byte stat ABI; the merge retains the ABI regression check. The mono
+AudioFile fix exposed an obsolete TL-D expectation of duplicated stereo data.
+The independently derived ADPCM samples remain (0,0,16,48); TL-D now checks
+one channel, two bytes/frame, eight returned bytes and an untouched guard.
+It failed before that expectation correction and passes afterward. This is
+not a weakened codec oracle or a claim that intermittent playback is fixed.
+
+Native echo schemas 500 (two VInts/two packed booleans), 525 (bounded spell
+reference list) and 538 (base metadata only) are decoded in full before acting
+on a mixed home turn. Native execution/checkpoint capture remains authoritative;
+there is no duplicate execution or fabricated checksum acknowledgement. A
+mixed echo/518 regression fails before and passes after. Unsupported commands
+and malformed/truncated turns remain rejected.
+
+`corrected-combat/run-20261024-152941-0df8fe` produced a real three-crown
+Arena 1 win against Trainer Jonas with the restored neutral buffs, original
+tower scaling and scenery. Native and metadata trophies rose 34 to 65. The
+process returned home and exited cleanly after 206.13 seconds. Two further
+30-second clean launches (`corrected-win-relaunch`) retained the win/65 score.
+A Silver Chest's original three-hour unlock was started; elapsed completion
+and collection of that long timer remain unverified.
+
+The win exposes two concrete remaining accounting defects: the native NPC
+victory screen labels its reward Wooden Chest, whereas the host's chest cycle
+awarded a Gold Chest; crown progress remains 0/10. LogicBattle::battleEnded
+skips setStarCount when battle type is 1 and its NPC reference is present
+(0x14ece..0x14ef4). Do not fix this by guessing crowns or suppressing the UI.
+Arena bots still use the native training-style NPC battle path; investigate
+its proper PvP/native accounting before claiming authentic arena rewards.
+
+Audio capture contains 205.64 seconds of stereo PCM with zero transport drops.
+That does not establish continuity: analysis of seconds 30..120 finds a longest
+exact-silence run of about 1.03 seconds and 0.283% clipped samples. The original
+battle music decoded independently by ffmpeg contains no exact silence in that
+same source interval. Scene/track timing differs, so this is a lead for tracing
+audio transitions, not proof of an underrun or a speaker/device diagnosis.
+
+The owner clarified that visible princesses face the wrong direction and the
+King cannon does not stay anchored. These remain unresolved orientation/local
+transform defects, alongside intermittent sound and text alignment. Restored
+visibility is not evidence of correct transforms. Compare native animation
+state and period footage, without substituting modern game assets.
+
+Latest gate: runtime 252/252, Test Lab 14/14, C++ offline suites, plus the full
+Linux compatibility harness: zero unit/Python failures, four fixtures run,
+zero crashes/skips and zero baseline regressions. The first harness attempt
+lacked built asm/C guests and the expected `ipas/` fixture directory and failed;
+it is not pass evidence. The subsequent `main-integration-compat-ready` run
+used rebuilt guests and hash-qualified fixtures. Short fixture smokes still do
+not resolve the owner's iPhone app reports or establish Clash progression.
+
 ### Native free chest, deck swap and all six arena scenes
 
 CollectFreeChest is command 518, whose decoder has only base command metadata.

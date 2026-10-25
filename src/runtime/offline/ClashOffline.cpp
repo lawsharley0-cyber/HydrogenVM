@@ -543,6 +543,11 @@ struct ClashOffline::Impl {
                         } else if(cmdType==518) {
                             {std::lock_guard lock(mutex);requestedChestId=-2;}
                             process.log(LogLevel::Info,"Offline Clash: native free-chest collection requested");
+                        } else if(cmdType==500 || cmdType==525 || cmdType==538) {
+                            // Do not replay locally executed commands or send an
+                            // invented checksum acknowledgement. captureHome
+                            // preserves their original native results.
+                            process.logf(LogLevel::Info,"Offline Clash: native home echo %d decoded; awaiting native checkpoint",cmdType);
                         } else if(cmdType==506) {
                             process.logf(LogLevel::Info,"Offline Clash: SpeedUpExploring chest %d (claim=%d)", command.argument, command.flag);
                         }

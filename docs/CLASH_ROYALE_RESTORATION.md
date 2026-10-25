@@ -3,7 +3,7 @@
 ## Current continuation — October 24, 2026
 
 Work continues on `codex/clash-offline-continuation`, now integrated with main
-`462ca72` (later fetched `7957e25`).
+`2b60a06`.
 See [current evidence and blockers](clash-royale/PROGRESS.md). The historical
 October 20 notes below are retained for decoder evidence, not current status.
 An unmodified client completed all seven native training NPCs against the
@@ -30,7 +30,11 @@ interrupted free reward recovery was exercised without restoring a backup.
 All six arena scenes load attacking bots in isolated synthetic fixtures, which
 do not establish earned later-arena progression. Battle costs, crown accounting,
 long Silver unlocks and earned later-arena qualification remain open. Earlier wins used incorrect tower
-initialization and do not establish correct combat balance after these fixes.
+initialization; a subsequent corrected-combat three-crown win raised native
+score 34 to 65 and survived two relaunches. Its reward label still disagrees
+with the saved cycle chest, and native NPC battles skip crown credit. Both
+remain core blockers. Princess orientation and King cannon anchoring also
+remain wrong per the owner's clarified report; visibility is not correctness.
 
 The owner reports intermittent audio, incorrect King cannon animation, missing
 Princess Tower princesses and uncentered text on iPhone. Preserve those reports

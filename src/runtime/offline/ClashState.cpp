@@ -82,13 +82,24 @@ std::vector<ClashHomeCommand> decodeClashHomeTurn(const Bytes& bytes) {
         ClashHomeCommand c;c.type=r.v();
         // Native getCommandType: StartExploring 0x10f7c8 and
         // SpeedUpExploring 0x17a40. Payloads follow their native decode methods.
-        if(c.type!=502 && c.type!=503 && c.type!=504 && c.type!=506 && c.type!=518 && c.type!=537)
+        if(c.type!=500 && c.type!=502 && c.type!=503 && c.type!=504 && c.type!=506 && c.type!=518 && c.type!=525 && c.type!=537 && c.type!=538)
             throw std::runtime_error("Offline Clash: unsupported turn command "+std::to_string(c.type));
         r.v();r.v(); // LogicCommand::decode (0x639a0): given tick, sequence
         const int32_t high=r.v(),low=r.v();
         if(high!=0 || low!=1)throw std::runtime_error("Offline Clash: home command executor mismatch");
-        if(c.type!=518)c.argument=c.type==504?r.ref():r.v(); // 518 has only LogicCommand metadata
-        if(c.type==506 || c.type==537)c.flag=r.b();
+        if(c.type==500) {
+            // LogicSwapSpellsCommand::decode 0x77a88: native execution has
+            // already changed the deck; only qualify this echo's boundaries.
+            r.v();r.v();r.b();r.b();
+        } else if(c.type==525) {
+            // decodeSpellList 0xdc688 asserts count < 200.
+            const auto spells=r.v();
+            if(spells<0 || spells>=200)throw std::runtime_error("Offline Clash: invalid opened spell list");
+            for(int j=0;j<spells;++j)r.ref();
+        } else if(c.type!=518 && c.type!=538) {
+            c.argument=c.type==504?r.ref():r.v();
+            if(c.type==506 || c.type==537)c.flag=r.b();
+        } // CollectFreeChest/RefreshAchievements have only base metadata.
         if((c.type==502 || c.type==503 || c.type==506) && c.argument<0)
             throw std::runtime_error("Offline Clash: invalid chest ID");
         commands.push_back(c);

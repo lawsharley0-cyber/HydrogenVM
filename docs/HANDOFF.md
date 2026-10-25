@@ -14,7 +14,7 @@ after NPC6 exposed missing CTLineGetOffsetForStringIndex; the shared runtime
 implementation uses actual glyph positions, with a failing-before/passing-after
 TL-N guest test. This is not a newly signed iPhone/device validation.
 
-Main `462ca72` is integrated (`7957e25` fetched later). A plain stat/fstat ABI regression from main was
+Main `2b60a06` is integrated. A plain stat/fstat ABI regression from earlier main was
 corrected using Apple's iPhone ABI: 64-bit inodes, st_size at byte 60; new TL-H v2
 fails before the fix and passes after. Check this independently before changing
 stat for another app; unsuffixed iPhone symbols do not imply legacy Mac ABI.
@@ -42,13 +42,21 @@ A Goblins-for-Arrows deck swap also persists. All six bundled arena scenes and
 attacking bots load in isolated synthetic profiles; earned later-arena promotion
 and wins remain unverified. See PROGRESS for exact runs and their limits.
 
-Next: battle cost/crown accounting, corrected-combat victories, long Silver
+Corrected-combat three-crown victory is now verified, with native score 34 to
+65 retained across two relaunches. The victory screen's Wooden Chest differs
+from the saved cycle's Gold Chest, and crowns remain 0/10: native training-style
+NPC battles skip crown credit. This is still a core accounting task.
+
+Next: battle cost/crown/reward-display accounting, long Silver
 unlocks, earned later-arena coverage and the remaining sound/cannon/text reports. The
 owner explicitly requests continuing through the bug-fix phase, not stopping
 at intermediate milestones. Paid renames and old half-claimed/duplicate-ID saves
 need separate work; do not reset flags or progress. No assets/private
 saves are in the PR. Do not merge the draft or equate its unit tests with a
 complete playable game.
+
+Owner clarification: princess orientation is wrong and the King cannon moves
+away from its anchor. Keep both unresolved after restoring their visibility.
 
 ## Current continuation — October 22, 2026
 

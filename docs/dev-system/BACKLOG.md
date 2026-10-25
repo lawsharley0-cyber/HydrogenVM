@@ -94,6 +94,7 @@ These are planned follow-ups, not separate roles. B-103 is merged in PR #4; acti
 | B-106c | Two-launch native probe inside the harness when the IPA is in the fixture root | Planned. Today the manifest entry is optional and skips. Absence is not a pass |
 | B-106d | 107-file IMA corpus vs libsndfile | Planned, needs the unpacked client and libsndfile. Not run by the default harness |
 | B-106e | Native free-chest command 518 and reward journaling | Reproduced in `free-observed`: original UI enters collection, backend reports unsupported 518/538 and has no reward to deliver. Preserve pre-claim native state, use original source-2 reward command, verify actual collection and interrupted replay. |
+| B-106f | Decode native home echoes 500/525/538 | Native deck swap, spell-page list and achievement refresh can share a turn with a requested chest. Decode their exact schemas before dispatching; native checkpoint capture remains authoritative. Unknown/truncated commands must still reject the entire turn. |
 
 ## No-parallel groups
 

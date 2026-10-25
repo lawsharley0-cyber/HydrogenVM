@@ -73,6 +73,21 @@ int main() {
         check(rejected,"truncated free-chest turn is rejected before requesting a reward");
     }
     {
+        // Native schemas: SwapSpells 0x77a88 (two VInts/two packed bools),
+        // SpellPageOpened 0xace4c/0xdc688 (spell list), RefreshAchievements
+        // 0xacdd8 (base only). A later requested chest must survive this batch.
+        Bytes turn;for(int n:{10,1234,4,500,-1,-1,0,1,0,3})clashVint(turn,n);
+        turn.push_back(2); // collection -> deck
+        for(int n:{525,-1,-1,0,1,2,26,0,28,0,538,-1,-1,0,1,518,-1,-1,0,1})clashVint(turn,n);
+        clashInt(turn,-1);
+        bool accepted=false;try{const auto commands=decodeClashHomeTurn(turn);
+            accepted=commands.size()==4 && commands[0].type==500 && commands[1].type==525 &&
+                commands[2].type==538 && commands[3].type==518;}catch(const std::runtime_error&){}
+        check(accepted,"native deck/page/achievement echoes preserve a later free-chest request in the same turn");
+        turn.pop_back();bool rejected=false;try{decodeClashHomeTurn(turn);}catch(const std::runtime_error&){rejected=true;}
+        check(rejected,"truncated mixed native turn rejects the whole batch");
+    }
+    {
         ClashFixtures fixture(cfg.bundlePath);const auto sector=fixture.sector({});
         // addDecos gives type-0 objects IDs 1,000,000+i, before type-5 towers.
         // The decoder's reference list must retain those existing objects.
