@@ -2287,6 +2287,25 @@ bool vertexAttribState(Ctx& x, uint32_t idx, uint32_t pname, float out[4], int& 
     }
     return true;
 }
+// EXT_occlusion_query_boolean
+void gl_genQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
+    if (!currentCtx(x)) return;
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint32_t>(ids + i * 4, i + 1);
+}
+void gl_deleteQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {}
+uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) { return id > 0 ? 1 : 0; }
+void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {}
+void gl_endQueryEXT(Ctx& x, uint32_t target) {}
+void gl_getQueryivEXT(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
+    if (params) x.mem.write<int32_t>(params, 0);
+}
+void gl_getQueryObjectuivEXT(Ctx& x, uint32_t id, uint32_t pname, GuestPtr params) {
+    if (params) x.mem.write<uint32_t>(params, 1);
+}
+
+void gl_drawBuffers(Ctx& x, int32_t n, GuestPtr bufs) {}
+void gl_readBuffer(Ctx& x, uint32_t mode) {}
+
 void gl_getVertexAttribfv(Ctx& x, uint32_t idx, uint32_t pname, GuestPtr out) {
     float v[4]; int n = 0;
     if (out && vertexAttribState(x, idx, pname, v, n)) for (int i = 0; i < n; ++i) x.mem.write<float>(out + 4 * i, v[i]);
@@ -3545,7 +3564,16 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_vertexAttrib3f>("_glVertexAttrib3f");
     p.def<&gl_vertexAttrib4f>("_glVertexAttrib4f");
     p.def<&gl_vertexAttrib4fv>("_glVertexAttrib4fv");
+    p.def<&gl_drawBuffers>("_glDrawBuffers");
+    p.def<&gl_readBuffer>("_glReadBuffer");
     p.def<&gl_getVertexAttribfv>("_glGetVertexAttribfv");
+    p.def<&gl_genQueriesEXT>("_glGenQueriesEXT");
+    p.def<&gl_deleteQueriesEXT>("_glDeleteQueriesEXT");
+    p.def<&gl_isQueryEXT>("_glIsQueryEXT");
+    p.def<&gl_beginQueryEXT>("_glBeginQueryEXT");
+    p.def<&gl_endQueryEXT>("_glEndQueryEXT");
+    p.def<&gl_getQueryivEXT>("_glGetQueryivEXT");
+    p.def<&gl_getQueryObjectuivEXT>("_glGetQueryObjectuivEXT");
     p.def<&gl_getVertexAttribiv>("_glGetVertexAttribiv");
     p.def<&gl_getVertexAttribPointerv>("_glGetVertexAttribPointerv");
     p.def<&gl_uniform1i>("_glUniform1i");

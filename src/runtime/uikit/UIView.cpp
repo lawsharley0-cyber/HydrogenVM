@@ -554,8 +554,10 @@ void setVisible(Ctx& x, id self, bool vis) {
         rt(x).retain(x.cpu, self);   // visible windows are kept alive by the app
         layerData(x, viewLayer(x, self)).hidden = false;
         vcAppearance(x, self, true);
+        if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeVisibleNotification", self);
     } else {
         vcAppearance(x, self, false);
+        if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeHiddenNotification", self);
         rt(x).release(x.cpu, self);
     }
     setNeedsComposite(x);
@@ -648,7 +650,10 @@ void w_setRoot(Ctx& x, id self, SEL, id vc) {
     layoutRootView(x, self, vc);
     if (view) insertSubview(x, self, view, -1);
 }
-void w_becomeKey(Ctx&, id, SEL) {}
+void w_becomeKey(Ctx& x, id self, SEL sel) {
+    if (sel == rt(x).sel("becomeKeyWindow")) Foundation::postNotification(x, "UIWindowDidBecomeKeyNotification", self);
+    else Foundation::postNotification(x, "UIWindowDidResignKeyNotification", self);
+}
 id w_keyWindowClass(Ctx& x, id, SEL) { return ui(x).keyWindow; }
 void w_convertPointToWindow(Ctx& x, GuestPtr ret, id self, SEL, CGPoint p, id to) {
     const G::Point s = layerToSuper(layerData(x, viewLayer(x, self))).apply(CG::toG(p));

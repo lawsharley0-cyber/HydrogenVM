@@ -254,6 +254,13 @@ HOSTGL_FN(glCopyTextureLevelsAPPLE, void, (uint32_t, uint32_t, int32_t, int32_t)
 HOSTGL_FN(glDrawBuffers, void, (int32_t, const void*))
 HOSTGL_FN(glDrawBuffersEXT, void, (int32_t, const void*))
 HOSTGL_FN(glReadBuffer, void, (uint32_t))
+HOSTGL_FN(glGenQueriesEXT, void, (int32_t, void*))
+HOSTGL_FN(glDeleteQueriesEXT, void, (int32_t, const void*))
+HOSTGL_FN(glIsQueryEXT, uint8_t, (uint32_t))
+HOSTGL_FN(glBeginQueryEXT, void, (uint32_t, uint32_t))
+HOSTGL_FN(glEndQueryEXT, void, (uint32_t))
+HOSTGL_FN(glGetQueryivEXT, void, (uint32_t, uint32_t, void*))
+HOSTGL_FN(glGetQueryObjectuivEXT, void, (uint32_t, uint32_t, void*))
 #endif
 
 #ifdef HOSTGL_WRAPPERS
@@ -1576,6 +1583,49 @@ void hg_glReadBuffer(Ctx& x, uint32_t a_src) {
     hc->fn.glReadBuffer(a_src);
     if (hgDebug) hgAfter(x, hc, "glReadBuffer", [&] { return hgArgs(a_src); });
 }
+void hg_glGenQueriesEXT(Ctx& x, int32_t a_n, GuestPtr a_ids) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glGenQueriesEXT) { hgMissing(x, hc, "glGenQueriesEXT"); return; }
+    hc->fn.glGenQueriesEXT(a_n, HG_PTR(x, a_ids));
+    if (hgDebug) hgAfter(x, hc, "glGenQueriesEXT", [&] { return hgArgs(a_n, a_ids); });
+}
+void hg_glDeleteQueriesEXT(Ctx& x, int32_t a_n, GuestPtr a_ids) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glDeleteQueriesEXT) { hgMissing(x, hc, "glDeleteQueriesEXT"); return; }
+    hc->fn.glDeleteQueriesEXT(a_n, HG_PTR(x, a_ids));
+    if (hgDebug) hgAfter(x, hc, "glDeleteQueriesEXT", [&] { return hgArgs(a_n, a_ids); });
+}
+bool hg_glIsQueryEXT(Ctx& x, uint32_t a_id) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glIsQueryEXT) { hgMissing(x, hc, "glIsQueryEXT"); return bool(); }
+    auto r = hc->fn.glIsQueryEXT(a_id);
+    if (hgDebug) hgAfter(x, hc, "glIsQueryEXT", [&] { return hgArgs(a_id); });
+    return r != 0;
+}
+void hg_glBeginQueryEXT(Ctx& x, uint32_t a_target, uint32_t a_id) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glBeginQueryEXT) { hgMissing(x, hc, "glBeginQueryEXT"); return; }
+    hc->fn.glBeginQueryEXT(a_target, a_id);
+    if (hgDebug) hgAfter(x, hc, "glBeginQueryEXT", [&] { return hgArgs(a_target, a_id); });
+}
+void hg_glEndQueryEXT(Ctx& x, uint32_t a_target) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glEndQueryEXT) { hgMissing(x, hc, "glEndQueryEXT"); return; }
+    hc->fn.glEndQueryEXT(a_target);
+    if (hgDebug) hgAfter(x, hc, "glEndQueryEXT", [&] { return hgArgs(a_target); });
+}
+void hg_glGetQueryivEXT(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glGetQueryivEXT) { hgMissing(x, hc, "glGetQueryivEXT"); return; }
+    hc->fn.glGetQueryivEXT(a_target, a_pname, HG_PTR(x, a_params));
+    if (hgDebug) hgAfter(x, hc, "glGetQueryivEXT", [&] { return hgArgs(a_target, a_pname, a_params); });
+}
+void hg_glGetQueryObjectuivEXT(Ctx& x, uint32_t a_id, uint32_t a_pname, GuestPtr a_params) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glGetQueryObjectuivEXT) { hgMissing(x, hc, "glGetQueryObjectuivEXT"); return; }
+    hc->fn.glGetQueryObjectuivEXT(a_id, a_pname, HG_PTR(x, a_params));
+    if (hgDebug) hgAfter(x, hc, "glGetQueryObjectuivEXT", [&] { return hgArgs(a_id, a_pname, a_params); });
+}
 #endif
 
 #ifdef HOSTGL_REGISTER
@@ -1832,4 +1882,11 @@ HOSTGL_REG(glCopyTextureLevelsAPPLE)
 HOSTGL_REG(glDrawBuffers)
 HOSTGL_REG(glDrawBuffersEXT)
 HOSTGL_REG(glReadBuffer)
+HOSTGL_REG(glGenQueriesEXT)
+HOSTGL_REG(glDeleteQueriesEXT)
+HOSTGL_REG(glIsQueryEXT)
+HOSTGL_REG(glBeginQueryEXT)
+HOSTGL_REG(glEndQueryEXT)
+HOSTGL_REG(glGetQueryivEXT)
+HOSTGL_REG(glGetQueryObjectuivEXT)
 #endif
