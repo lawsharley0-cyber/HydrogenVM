@@ -49,13 +49,15 @@ void sincos_f(Ctx& x, float a, GuestPtr s, GuestPtr c) {
     const float sv = std::sin(a), cv = std::cos(a);
     uint32_t b; std::memcpy(&b, &sv, 4); x.mem.write<uint32_t>(s, b); std::memcpy(&b, &cv, 4); x.mem.write<uint32_t>(c, b);
 }
-// 32-bit iOS APCS: struct __sincosf_ret { float __sinval, __cosval; } is 8 bytes, returned in r0:r1.
-uint64_t sincosf_stret(Ctx&, float a) {
+// ARMv7 iOS returns this 8-byte aggregate through the hidden r0 pointer;
+// the float argument is in r1. A uint64_t return has a different ABI.
+void sincosf_stret(Ctx& x, GuestPtr out, float a) {
     const float sv = std::sin(a), cv = std::cos(a);
     uint32_t sb, cb;
     std::memcpy(&sb, &sv, 4);
     std::memcpy(&cb, &cv, 4);
-    return uint64_t(sb) | (uint64_t(cb) << 32);
+    x.mem.write<uint32_t>(out, sb);
+    x.mem.write<uint32_t>(out + 4, cb);
 }
 // struct __sincos_ret { double __sinval, __cosval; } is 16 bytes, returned via sret pointer in r0.
 void sincos_stret(Ctx& x, GuestPtr out, double a) {

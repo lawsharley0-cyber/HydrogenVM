@@ -71,6 +71,16 @@ resolve cannon position during aiming/firing or establish phone visual parity.
 
 ### Arena entry fees and current Apple build
 
+A subsequent real battle in `crown-earned-battle/run-20261024-230319-2955db`
+destroys the enemy King for a three-crown win. The victory screen now says
+**Silver Chest**, matching the actual new slot-0 Silver (19000009); this closes
+the earlier Wooden/Gold disagreement for this observed cycle step. Native
+trophies rise 61 to 90, cycle 10 to 11, wins 10 to 11 and crown progress 3 to 6.
+Entry gold remains charged (203 to 202), with no invented victory currency.
+The unchanged earned profile supplies all of this progress; no counter fixture
+or battle-state edits are used. Later battles/relaunch evidence is recorded
+separately below when complete.
+
 The bundled arena MatchCost values are now required and read from CSV (Training
 Camp 0; arenas 1..6 cost 1..6). Native StartMatchmake 537 does not itself deduct
 gold. The service validates/encodes the actual sector first, then atomically

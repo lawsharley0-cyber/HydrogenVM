@@ -72,6 +72,7 @@ static const char *kAppBuild        = "1";
 #define CASE_L  @"TL-L"
 #define CASE_M  @"TL-M"
 #define CASE_N  @"TL-N"
+#define CASE_O  @"TL-O"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -1504,6 +1505,32 @@ static TLResult *runCaseN(void) {
     clearCheckpoint(); return r;
 }
 
+// TL-O: let Clang generate the real ARMv7 aggregate-return calling convention.
+// Independent oracle: sin(0)=0, cos(0)=1, sin(pi/2)=1, cos(pi/2)=0.
+typedef struct { float sine, cosine; } TLFloatTrig;
+typedef struct { double sine, cosine; } TLDoubleTrig;
+static TLResult *runCaseO(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_O version:1];
+    writeCheckpoint(CASE_O);
+    TLFloatTrig (*sf)(float) = dlsym(RTLD_DEFAULT, "__sincosf_stret");
+    TLDoubleTrig (*sd)(double) = dlsym(RTLD_DEFAULT, "__sincos_stret");
+    if (!sf || !sd) {
+        r.status = @"failed"; r.reason = @"Missing aggregate trigonometry API";
+        clearCheckpoint(); return r;
+    }
+    TLFloatTrig f0 = sf(0), f90 = sf(1.5707963267948966f);
+    TLDoubleTrig d0 = sd(0), d90 = sd(1.5707963267948966);
+    BOOL floats = fabsf(f0.sine) < 0.000001f && fabsf(f0.cosine-1) < 0.000001f &&
+        fabsf(f90.sine-1) < 0.000001f && fabsf(f90.cosine) < 0.000001f;
+    BOOL doubles = fabs(d0.sine) < 0.000000000001 && fabs(d0.cosine-1) < 0.000000000001 &&
+        fabs(d90.sine-1) < 0.000000000001 && fabs(d90.cosine) < 0.000000000001;
+    r.expected = @{ @"floatAggregate": @YES, @"doubleAggregate": @YES };
+    r.actual = @{ @"floatAggregate": @(floats), @"doubleAggregate": @(doubles) };
+    r.status = floats && doubles ? @"passed" : @"failed";
+    if (![r.status isEqualToString:@"passed"]) r.reason = @"ARMv7 struct-return output differs from analytic trigonometry";
+    clearCheckpoint(); return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1513,7 +1540,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1546,6 +1573,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseK()];
         } else if ([cid isEqualToString:CASE_N]) {
             [results addObject:runCaseN()];
+        } else if ([cid isEqualToString:CASE_O]) {
+            [results addObject:runCaseO()];
         }
     }
     return results;
@@ -1573,6 +1602,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_K]) return runCaseK();
     if ([caseId isEqualToString:CASE_M]) return runCaseM();
     if ([caseId isEqualToString:CASE_N]) return runCaseN();
+    if ([caseId isEqualToString:CASE_O]) return runCaseO();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];

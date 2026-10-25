@@ -1,5 +1,13 @@
 # HydrogenVM — handoff (2026-10-20)
 
+## Codex Recovery & Continuation — October 25, 2026
+
+See [CODEX_RECOVERY_HANDOFF.md](clash-royale/CODEX_RECOVERY_HANDOFF.md) for the complete recovery report from Codex session `01a15ad7-5c8b-7222-ae87-545437c2d162`.
+Key verified additions:
+- Package-marker auto-configuration (`HydrogenVMOfflineBackend: clash-2.1306.1` in `Info.plist`), allowing modded offline IPAs to be imported directly without CLI flags (`tools/package_clash_offline.py`).
+- ARMv7 aggregate return ABI fix for `__sincosf_stret` (hidden `r0` pointer) and TestLab regression case `TL-O` (all 15 TestLab cases passing).
+- Offline IPA tested and verified working in `hvm run` without `--offline-clash`.
+
 ## Clash continuation — October 24, 2026
 
 Latest continuation adds original crown collection command 523/source 3, with

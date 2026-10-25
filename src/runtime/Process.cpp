@@ -235,6 +235,13 @@ void Process::waitWhileBackgrounded() {
 void Process::load() {
     const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
     if (fs::exists(plist)) infoPlist_ = Plist::parseFile(plist.string());
+    const auto offlineBackend = infoPlist_ ? infoPlist_->getString("HydrogenVMOfflineBackend") : "";
+    if (!offlineBackend.empty()) {
+        if (offlineBackend != "clash-2.1306.1")
+            throw std::runtime_error("Unsupported HydrogenVMOfflineBackend: " + offlineBackend);
+        cfg_.offlineClash = true;
+        log(LogLevel::Info, "Guest package requests embedded offline backend clash-2.1306.1");
+    }
     std::string exe = infoPlist_ ? infoPlist_->getString("CFBundleExecutable") : "";
     if (exe.empty()) exe = fs::path(cfg_.bundlePath).stem().string();
     executablePath_ = (fs::path(cfg_.bundlePath) / exe).string();

@@ -397,5 +397,24 @@ int main() {
             client.send(14101,{0});check(client.receive().first==24101 && gold()==99-launch,"returning home retains the committed entry fee");
         }
     }
+    {
+        // A packaged guest opts in through shared Process::load, without a CLI
+        // flag or Apple-shell title/version heuristic. Pinning remains mandatory.
+        const auto bundle=root/"packaged-app";fs::create_directories(bundle);
+        auto info=Plist::Value::makeDict();
+        info->set("CFBundleExecutable",Plist::Value::makeString("client"));
+        info->set("HydrogenVMOfflineBackend",Plist::Value::makeString("clash-2.1306.1"));
+        std::ofstream(bundle/"Info.plist")<<Plist::toXml(*info);
+        std::ofstream(bundle/"client")<<"Not the pinned executable";
+        ProcessConfig packaged;packaged.bundlePath=bundle.string();packaged.homePath=(root/"packaged-home").string();
+        Process process(packaged);bool pinned=false;
+        try{process.load();}catch(const std::runtime_error& error){pinned=std::string(error.what()).find("unchanged pinned")!=std::string::npos;}
+        check(process.config().offlineClash && pinned,"guest package activates offline backend without bypassing executable pinning");
+        info->set("HydrogenVMOfflineBackend",Plist::Value::makeString("unsupported-backend"));
+        std::ofstream(bundle/"Info.plist")<<Plist::toXml(*info);
+        Process invalid(packaged);bool rejected=false;
+        try{invalid.load();}catch(const std::runtime_error& error){rejected=std::string(error.what()).find("Unsupported HydrogenVMOfflineBackend")!=std::string::npos;}
+        check(rejected && !invalid.config().offlineClash,"unknown package backends fail explicitly without enabling another service");
+    }
     fs::remove_all(root);return failed?1:0;
 }
