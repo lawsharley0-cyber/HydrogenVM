@@ -203,6 +203,12 @@ ClashAvatarView inspectClashAvatar(const Bytes& bytes) {
     if(level<1 || level>13)throw std::runtime_error("Offline Clash: invalid avatar experience level");
     return {arena-54000000,score,level,chestCycle,pendingCrowns};
 }
+int32_t clashElapsedHomeSeconds(int64_t savedAt,int64_t now) {
+    if(savedAt<=0 || now<=savedAt)return 0;
+    // All bundled home cooldowns fit within 30 days. Bound the original
+    // seconds-to-ticks multiplication and don't invent pre-migration elapsed time.
+    return int32_t(std::min<int64_t>(now-savedAt,30*24*60*60));
+}
 Bytes withClashBattleProgress(const Bytes& bytes,int32_t chestCycle,int32_t crowns) {
     const auto view=inspectClashAvatar(bytes);
     if(view.chestCycleIndex<0 || chestCycle<0 || chestCycle<view.chestCycleIndex || chestCycle>1000000 || crowns<0 || crowns>3 ||

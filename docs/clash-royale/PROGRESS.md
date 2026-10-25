@@ -31,6 +31,47 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Measured elapsed home time, including interrupted rewards
+
+Complete native home checkpoints now retain a 64-bit `homeSavedAt` timestamp.
+Old saves without one start measuring prospectively; no elapsed history is
+inferred from account creation. A delivered timestamp is bound to the actual
+decoded home using removeLogicClientHome (0x1932c), then to its initialized
+LogicGameMode at loadHomeState's continuation (0xd6d40). Original getTick reads
+logic+0x38, at 20 Hz. This prevents applying elapsed time to an old UI home or
+stamping a paused/loading timer as if it had already advanced.
+
+The original home.fastForward(seconds,-1) API (0x125d7c) applies measured time;
+the host clock and serialized timer fields are not edited. Ordinary loads
+advance before loadingFinished/first-tick crown transfer. Pending reward
+journals defer advancement until their original grant succeeds, then the
+grant, elapsed effects and timestamp are saved atomically. Native active ticks
+are included so loading/claim pauses are neither lost nor counted twice.
+Backward clock movement does not rewind timers. Native seconds-to-ticks input
+is bounded at 30 days, beyond the bundled cooldowns, to avoid integer overflow.
+
+Real-time checks use an actual 35-second closed interval and do not modify a
+clock or game save. The initial ordinary check measured 62 native seconds over
+64 checkpoint seconds. A stricter interrupted-reward check then **failed**:
+120 native seconds over 127 seconds. The seven lost seconds led to the native
+tick/epoch accounting correction; its tolerance was not relaxed.
+
+After that correction, `elapsed-clock` measured 62.2 native seconds over 62;
+actual paid interruption/recovery in `elapsed-clock-paid` measured 79.4 over
+79, cleared its 35-byte journal and preserved crown count 1. This was a new
+isolated fixture built from an earlier pre-claim checkpoint before fault
+injection; no backup was restored after that fault. Earlier fixture preparation
+with a missing checkpoint path failed before launching and is not evidence.
+The final load-order adjustment was then checked in `elapsed-final`: 65.6
+native seconds over 65, crown count 3 and battle counters unchanged, both
+launches clean. Full long Silver unlock completion remains unverified.
+
+Runtime 252, Test Lab 14 and C++ state/socket suites pass. Remaining core work:
+match-cost transactions, full crown-chest collection/journaling, future victory
+label comparison, earned later-arena progression and legacy recovery. Clock
+verification does not resolve cannon anchoring, audio continuity, text or
+device performance; an Apple build/device run is still needed.
+
 ### Original opposing tower directions
 
 Native spawnObject (0x13fe8..0x13ffc) initializes direction Y to +256 for

@@ -55,8 +55,14 @@ gold 214 to 236 while retaining gems 72, without duplicate grants. The earned
 player reached level 2 through Archers/Goblins upgrades. A new win/reward-label
 comparison and full crown-chest collection are still pending.
 
-Next: battle cost/reward-display accounting, full crown collection, elapsed
-timers across closure, long Silver
+Measured real elapsed home time is now applied through the original native API,
+with timestamps tied to native ticks and reward completion. An initial seven-
+second recovery shortfall was reproduced and corrected; later ordinary and paid
+recovery comparisons differ by less than one second. Old untimestamped saves
+start prospectively. Original opposing tower directions replace zero vectors;
+initial facing is corrected locally, while cannon motion/device appearance remain open.
+
+Next: battle cost/reward-display accounting, full crown collection, long Silver
 unlocks, earned later-arena coverage and the remaining sound/cannon/text reports. The
 owner explicitly requests continuing through the bug-fix phase, not stopping
 at intermediate milestones. Paid renames and old half-claimed/duplicate-ID saves

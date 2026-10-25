@@ -20,6 +20,12 @@ int main(int argc, char** argv) {
         if (actual != v.bytes) { std::fprintf(stderr, "native VInt mismatch\n"); return 1; }
     }
     std::puts("ok native VInt literal vectors");
+    if(clashElapsedHomeSeconds(100,160)!=60 || clashElapsedHomeSeconds(0,160)!=0 ||
+       clashElapsedHomeSeconds(160,100)!=0 || clashElapsedHomeSeconds(2147483700LL,2147483760LL)!=60 ||
+       clashElapsedHomeSeconds(1,INT64_MAX)!=2592000) {
+        std::fprintf(stderr,"FAIL elapsed home clock bounds/migration\n");return 1;
+    }
+    std::puts("ok measured elapsed seconds, old-save migration, backward clock and native tick bounds");
 
     {
         // Native resource table IDs: Gold=5:1, FreeGold=5:5,

@@ -17,6 +17,7 @@ struct ClashProfile {
     int32_t pendingRewardKind=0; // 0 none, 1 slotted, 2 native free chest
     int32_t rewardSerial=0;
     size_t avatarOffset=0;
+    int64_t homeSavedAt=0;
 };
 struct ClashFixtures {
     struct Card { int32_t data,level,serial,count,timer; };
@@ -54,6 +55,7 @@ ClashAvatarView inspectClashAvatar(const Bytes&);
 // Apply earned offline ledger values to the serialized native avatar. Retain
 // all unknown fields; no live guest objects, historical crowns or rewards are fabricated.
 Bytes withClashBattleProgress(const Bytes&,int32_t chestCycleIndex,int32_t earnedCrowns=0);
+int32_t clashElapsedHomeSeconds(int64_t savedAt,int64_t now);
 struct ClashHomeCommand {
     int32_t type=0, argument=0;
     bool flag=false;

@@ -98,6 +98,7 @@ These are planned follow-ups, not separate roles. B-103 is merged in PR #4; acti
 | B-106g | Arena reward ledger/native avatar agreement | Corrected-combat win exposes native ChestOrderIndex left at zero while the host cycle advances; NPC result shows Wooden but earned cycle gives Gold. Native NPC mode also skips StarCount. Persist earned cycle and actual native tower crowns with the battle transaction; let original getNextWinnerChest and home crown transfer use that state. Never infer past crowns from win count. |
 | B-106h | Combined gem speed-up and claim (506) | Actual Silver Open Now spends native gems and enters collection, but no 503 follows. Journal the native post-cost/unlocked pre-grant checkpoint and source-1 reward atomically, preserving the charge on interruption. |
 | B-106i | Original tower facing vectors | Owner reports wrong princess angles and unanchored cannon. Native spawnObject 0x13fe8..0x13ffc sets direction Y +256 for owner 0, -256 otherwise; full sector currently overwrites all six directions with zero. Restore that initialization; independently verify cannon motion afterward. |
+| B-106j | Real elapsed home timers across closure/battles | Timestamp complete native home checkpoints, bind elapsed time to the decoded delivered home, and call original LogicClientHome::fastForward(seconds,-1). Preserve reward journal atomicity; old untimestamped saves start measuring prospectively, without invented historical elapsed time. |
 
 ## No-parallel groups
 

@@ -42,8 +42,12 @@ crown count 3 survives two relaunches. A future win/reward-label comparison and
 crown-chest collection at 10 remain open. Combined gem unlock/claim has actual
 interrupted-journal recovery: the gem charge persists, reward applies once.
 The earned player also reaches level 2 through original card upgrades. See
-PROGRESS for exact evidence and failed attempts. Match costs and timers during
-process closure still need implementation/validation.
+PROGRESS for exact evidence and failed attempts. Measured elapsed home time now
+uses the original native API, including across closure and interrupted reward
+recovery; timestamps account for native ticks/loading pauses. Long Silver
+completion still needs qualification. Opposing native facing vectors also
+replace zero vectors, correcting initial tower facing locally. Match costs,
+full crown collection and cannon motion/device validation remain open.
 
 The owner reports intermittent audio, incorrect King cannon animation, missing
 Princess Tower princesses and uncentered text on iPhone. Preserve those reports

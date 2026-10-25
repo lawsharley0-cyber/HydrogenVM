@@ -82,6 +82,7 @@ void save(const std::filesystem::path& path,const ClashProfile& p) {
     value->set("nativeHome",Plist::Value::makeData(std::string(p.nativeHome.begin(),p.nativeHome.end())));
     value->set("nativeAvatar",Plist::Value::makeData(std::string(p.nativeAvatar.begin(),p.nativeAvatar.end())));
     value->set("avatarOffset",Plist::Value::makeInt(p.avatarOffset));
+    value->set("homeSavedAt",Plist::Value::makeInt(p.homeSavedAt));
     value->set("pendingReward",Plist::Value::makeData(std::string(p.pendingReward.begin(),p.pendingReward.end())));
     value->set("pendingRewardSlot",Plist::Value::makeInt(p.pendingRewardSlot+1));
     value->set("pendingRewardKind",Plist::Value::makeInt(p.pendingRewardKind));
@@ -105,6 +106,10 @@ ClashProfile load(const std::filesystem::path& path) {
         if(format<1 || value->getString("clientExecutableSHA256")!="3519d7954cb3dc16b9d7746cc5dbd2521d0209eea2bbc163f6ab7cdfa5e52397")throw std::runtime_error("Offline Clash: save/client mismatch");
         p.token=value->getString("token");if(p.token.size()!=48 || p.token.find_first_not_of("0123456789abcdef")!=std::string::npos)throw std::runtime_error("Offline Clash: invalid local identity");
         p.created=integer("created",INT32_MAX);p.npcWins=integer("npcWins",1000);p.npcLosses=integer("npcLosses",1000);
+        if(auto* stamp=value->get("homeSavedAt")) {
+            if(stamp->type!=Plist::Value::Type::Integer || stamp->i<0)throw std::runtime_error("Offline Clash: invalid home timestamp");
+            p.homeSavedAt=stamp->i;
+        }
         if(format>=2) {
             p.lastRewardedWin=integer("lastRewardedWin",p.npcWins);
             auto* cycle=value->get("chestCycleIndex");
@@ -172,6 +177,12 @@ struct ClashOffline::Impl {
     bool pendingArenaBattle=false;
     int32_t requestedChestId=-1;
     bool requestedPaidClaim=false;
+    int64_t deliveredHomeEpoch=0;
+    uint32_t deliveredHome=0;
+    uint32_t homeClockLogic=0;
+    int32_t homeClockTick=0;
+    int64_t homeClockEpoch=0;
+    bool awaitingHomeDecode=false;
     uint32_t observedRewardCommand=0;
     bool pendingRewardApplied=false;
     std::chrono::steady_clock::time_point lastSnapshot{};
@@ -263,6 +274,34 @@ struct ClashOffline::Impl {
             }
             save(path,next);profile=next;process.logf(LogLevel::Info,"Offline Clash: native win and chest reward committed (trophies=%d, arena=%d)",next.trophies,next.arenaLevel);
         });
+        process.engine().observeEntry(0x1932c,[this](uint32_t,const CPU::Cpu& cpu){
+            std::lock_guard lock(mutex);
+            if(!awaitingHomeDecode)return;
+            // OwnHomeDataMessage::removeLogicClientHome: bind elapsed time to
+            // the newly decoded object, never the old UI home awaiting a reply.
+            deliveredHome=process.mem().read<uint32_t>(cpu.r[0]+0x30);
+            if(!deliveredHome)throw std::runtime_error("Offline Clash: delivered home is missing");
+            awaitingHomeDecode=false;
+        });
+        process.engine().observeEntry(0xd6d40,[this](uint32_t,const CPU::Cpu& cpu){
+            std::lock_guard lock(mutex);const auto logic=cpu.r[4];
+            if(!deliveredHome || process.mem().read<uint32_t>(logic+0x30)!=deliveredHome)return;
+            // loadHomeState has associated both decoded objects and completed
+            // its own time initialization. getTick (0xd7754) reads logic+0x38.
+            homeClockLogic=logic;homeClockTick=process.mem().read<int32_t>(logic+0x38);
+            homeClockEpoch=deliveredHomeEpoch?deliveredHomeEpoch:std::time(nullptr);
+            // Match native loadHomeState ordering: elapsed cooldowns precede
+            // loadingFinished/first tick and its pending crown transfer.
+            // A replay journal must instead finish its qualified grant first.
+            const auto wallNow=int64_t(std::time(nullptr));
+            const auto elapsed=clashElapsedHomeSeconds(homeClockEpoch,wallNow);
+            if(profile.pendingReward.empty() && elapsed>0) {
+                prepareSnapshotStack();
+                process.callGuest(snapshotCpu,0x125d7d,{deliveredHome,uint32_t(elapsed),UINT32_MAX});
+                homeClockEpoch=wallNow;
+                process.logf(LogLevel::Info,"Offline Clash: original home timers advanced by %d measured elapsed seconds during load",elapsed);
+            }
+        });
         process.engine().observeEntry(0x92f08,[this](uint32_t,const CPU::Cpu& cpu){captureHome(cpu);});
         process.engine().observeEntry(0x8203c,[this](uint32_t,const CPU::Cpu& cpu){
             std::lock_guard lock(mutex);
@@ -328,9 +367,12 @@ struct ClashOffline::Impl {
         process.logf(LogLevel::Info,"Offline Clash: native NPC %s observed (%d, trophies=%d, arena=%d)%s",
             wins?"win":"loss",count,next.trophies,next.arenaLevel,process.image().entry?"; awaiting native avatar commit":"; metadata test transaction");
     }
-    std::pair<Bytes,size_t> encodeNative(uint32_t home,uint32_t avatar) {
+    void prepareSnapshotStack() {
         if(!scratch){scratch=process.heap().allocZeroed(256*1024);stream=process.heap().allocZeroed(64);}
         snapshotCpu.r[CPU::kSP]=scratch+256*1024;
+    }
+    std::pair<Bytes,size_t> encodeNative(uint32_t home,uint32_t avatar) {
+        prepareSnapshotStack();
         process.callGuest(snapshotCpu,0x192a71,{stream,65536});
         if(home)process.callGuest(snapshotCpu,0x124cfd,{home,stream});
         const size_t offset=uint32_t(process.callGuest(snapshotCpu,0x192b2d,{stream}));
@@ -370,8 +412,7 @@ struct ClashOffline::Impl {
         process.log(LogLevel::Info,"Offline Clash: native battle avatar and earned progress committed together");
     }
     Bytes encodeNativeReward(uint32_t home,uint32_t chest,int32_t chestId,int32_t source=1) {
-        if(!scratch){scratch=process.heap().allocZeroed(256*1024);stream=process.heap().allocZeroed(64);}
-        snapshotCpu.r[CPU::kSP]=scratch+256*1024;
+        prepareSnapshotStack();
         // Mirror LogicProgressSimulator::openChest (0x8f2b4..0x8f318), using
         // the original randomizer and command setters. These are temporary
         // objects owned by the adapter; no live guest state is overwritten.
@@ -403,6 +444,13 @@ struct ClashOffline::Impl {
         const auto logic=mem.read<uint32_t>(uiMode+0x54);if(!logic)return;
         const auto home=mem.read<uint32_t>(logic+0x30),avatar=mem.read<uint32_t>(logic+0x34);if(!home || !avatar)return;
         std::lock_guard lock(mutex);
+        if(awaitingHomeDecode || (deliveredHome && deliveredHome!=home))return;
+        if(homeClockLogic!=logic)return;
+        const auto tick=mem.read<int32_t>(logic+0x38);
+        if(tick<homeClockTick)throw std::runtime_error("Offline Clash: home clock moved backwards");
+        const int64_t nativeSeconds=(int64_t(tick)-homeClockTick)/20;
+        if(homeClockEpoch>INT64_MAX-nativeSeconds)throw std::runtime_error("Offline Clash: home clock overflow");
+        int64_t accountedEpoch=homeClockEpoch+nativeSeconds;
         if(mem.read<int32_t>(avatar+0x10)!=0 || mem.read<int32_t>(avatar+0x14)!=1 ||
             mem.read<int32_t>(avatar+0x9c)!=profile.npcWins || mem.read<int32_t>(avatar+0xa0)!=profile.npcLosses)return;
         // Only a newly received, validated claim can generate a reward. Older
@@ -436,6 +484,7 @@ struct ClashOffline::Impl {
                         auto [checkpoint,offset]=encodeNative(home,avatar);
                         next.nativeHome=unlockedClashRewardCheckpoint(checkpoint,i,requestedChestId);
                         next.avatarOffset=offset;
+                        next.homeSavedAt=accountedEpoch;
                         next.nativeAvatar=Bytes(checkpoint.begin()+offset,checkpoint.end()-1);
                     }
                     ++next.rewardSerial;next.pendingReward=encodeNativeReward(home,chest,requestedChestId);next.pendingRewardSlot=i;next.pendingRewardKind=1;
@@ -447,10 +496,25 @@ struct ClashOffline::Impl {
         }
         if(profile.pendingRewardKind==2 && !pendingRewardApplied)return;
         auto [bytes,offset]=encodeNative(home,avatar);
-        if(bytes==profile.nativeHome)return;
-        const auto view=inspectClashHome(bytes);
+        auto view=inspectClashHome(bytes);
         if(profile.pendingRewardKind==1 && view.chests[profile.pendingRewardSlot])return;
-        auto next=profile;next.nativeHome=bytes;next.avatarOffset=offset;
+        const auto wallNow=int64_t(std::time(nullptr));
+        const auto elapsed=clashElapsedHomeSeconds(accountedEpoch,wallNow);
+        const bool advance=deliveredHome==home && elapsed>0;
+        if(advance) {
+            // Original relative-seconds path. Journal replay must finish before
+            // advancing; completion and elapsed effects are checkpointed together.
+            process.callGuest(snapshotCpu,0x125d7d,{home,uint32_t(elapsed),UINT32_MAX});
+            auto advanced=encodeNative(home,avatar);bytes=std::move(advanced.first);offset=advanced.second;
+            view=inspectClashHome(bytes);
+            process.logf(LogLevel::Info,"Offline Clash: original home timers advanced by %d measured elapsed seconds",elapsed);
+            // Include native active ticks, and preserve any loading/claim pause
+            // as unaccounted time until it can be applied. Never stamp a paused
+            // native timer as though it had already advanced through wall time.
+            accountedEpoch=wallNow;homeClockEpoch=wallNow-nativeSeconds;
+        }
+        if(bytes==profile.nativeHome && profile.homeSavedAt && !advance)return;
+        auto next=profile;next.nativeHome=bytes;next.avatarOffset=offset;next.homeSavedAt=accountedEpoch;
         if(!next.pendingReward.empty()) {
             next.pendingReward.clear();next.pendingRewardSlot=-1;next.pendingRewardKind=0;pendingRewardApplied=false;
             process.log(LogLevel::Info,"Offline Clash: native chest collection completed; checkpoint committed");
@@ -484,6 +548,10 @@ struct ClashOffline::Impl {
             auto encrypted=outgoing.apply(body);Bytes packet{uint8_t(kind>>8),uint8_t(kind),uint8_t(body.size()>>16),uint8_t(body.size()>>8),uint8_t(body.size()),uint8_t(version>>8),uint8_t(version)};
             packet.insert(packet.end(),encrypted.begin(),encrypted.end());if(!transfer(fd,packet.data(),packet.size(),true))throw std::runtime_error("Offline Clash: disconnected while sending");
         };
+        auto sendHome=[&](const ClashProfile& state) {
+            {std::lock_guard lock(mutex);deliveredHomeEpoch=state.homeSavedAt;awaitingHomeDecode=true;deliveredHome=0;homeClockLogic=0;}
+            send(24101,0,fixtures.home(state));
+        };
         process.logf(LogLevel::Info, "Offline Clash session started fd=%d", fd);
         while(!stopping) {
             std::array<uint8_t,7> header{};
@@ -500,7 +568,7 @@ struct ClashOffline::Impl {
                 if(r.v()!=2 || r.v()!=0 || r.v()!=1306)throw std::runtime_error("Offline Clash: unsupported wire version");
                 auto state=snapshot();if(!(high==0 && low==0) && !(high==0 && low==1 && token==state.token))throw std::runtime_error("Offline Clash: identity mismatch");
                 {std::lock_guard lock(mutex);requestedChestId=-1;requestedPaidClaim=false;}
-                loggedIn=true;send(20104,1,loginReply(state));send(24101,0,fixtures.home(state));
+                loggedIn=true;send(20104,1,loginReply(state));sendHome(state);
                 if(!state.nativeAvatar.empty()) {
                     Reader avatar{state.nativeAvatar};for(int i=0;i<6;++i)avatar.v();const auto name=avatar.string();
                     const bool named=avatar.byte()&1;const auto changeState=avatar.v();
@@ -544,7 +612,7 @@ struct ClashOffline::Impl {
                 send(21903,1,compressed(mission.sector(state)));process.logf(LogLevel::Info,"Offline Clash: native Npc%d sector supplied",id+1);
             } else if(kind==14101) {
                 if(body.size()!=1 || body[0]>1)throw std::runtime_error("Offline Clash: unsupported GoHome schema");
-                send(24101,0,fixtures.home(snapshot()));process.log(LogLevel::Info,"Offline Clash: returned home with native NPC counters");
+                sendHome(snapshot());process.log(LogLevel::Info,"Offline Clash: returned home with native NPC counters");
             } else if(kind==14102) {
                 // Client turn commands: handle matchmaking (cmd 537) to supply arena battle
                 std::vector<ClashHomeCommand> commands;
