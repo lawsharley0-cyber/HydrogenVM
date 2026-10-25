@@ -376,7 +376,10 @@ Bytes ClashFixtures::sector(const ClashProfile& p) const {
     for(int i=0;i<int(decoData.size());++i)w.ref(1000000+i);
     for(int i=0;i<6;++i)w.ref(6000000+i);
     for(auto& t:towers) {
-        w.v(towerStats(t,t.owner==0?npcExpLevel:playerLevel).first);w.b(false);w.b(false);w.v(t.owner);w.v(13);w.v(t.x);w.v(t.y);w.v(0);w.zeros(2);
+        w.v(towerStats(t,t.owner==0?npcExpLevel:playerLevel).first);w.b(false);w.b(false);w.v(t.owner);w.v(13);w.v(t.x);w.v(t.y);w.v(0);
+        // Original spawnObject 0x13fe8..0x13ffc initializes opposing normalized
+        // directions. A zero vector makes both sides render the same angle.
+        w.v(0);w.v(t.owner==0?256:-256);
         w.v(0);w.v(100);w.zeros(10);
         if(t.king){const auto& cards=t.owner==0?npcDeck:player;const int hand=std::min<int>(4,cards.size());
             w.b(true);w.v(hand);for(int i=0;i<4;++i)w.v(i<hand?i:-1);

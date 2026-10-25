@@ -31,6 +31,20 @@ music, then reaches connection retry. That report is not a local FPS measurement
 
 ## Reproduced on the new Linux/WSL build
 
+### Original opposing tower directions
+
+Native spawnObject (0x13fe8..0x13ffc) initializes direction Y to +256 for
+owner 0 and -256 otherwise. Our full sector replaced both direction components
+with zero, making opposite sides choose the same render angle. C++ and legacy
+Python writers now retain the original opposing normalized vectors. A literal
+packet regression fails before and passes after (three towers per direction).
+The real client in `facing-real/run-20261024-214023-a89663` displays the
+opposing initial facings and exits cleanly after 111.89 seconds; this short
+scene probe was stopped without a battle result. Original assets and native
+render-angle logic remain unchanged. Cannon anchoring during motion and iPhone
+appearance still require separate validation; initial facing is not that proof.
+Runtime 252, Test Lab 14, C++ offline suites and Python protocol checks pass.
+
 ### Earned native resource ledger and paid-claim recovery
 
 The native avatar's ChestOrderIndex resource (5000002) was never advanced with

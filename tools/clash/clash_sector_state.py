@@ -151,7 +151,7 @@ def encode_sector(template, state, account, npc=18000000):
         w.boolean(False)
         w.boolean(False)  # level index, character flags
         ints(tower['owner'], 13, tower['x'], tower['y'], 0)  # owner, component mask, position, object+30
-        ints(0, 0)  # direction
+        ints(0, 256 if tower['owner'] == 0 else -256)  # original spawnObject facing
         ints(0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # character+5c,6c..94,68,64,58
         if tower['king']:
             # KingTower is LogicSummoner, not just LogicCharacter. Its private

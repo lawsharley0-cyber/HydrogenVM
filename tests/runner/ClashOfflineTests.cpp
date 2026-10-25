@@ -107,6 +107,15 @@ int main() {
         bool rejected=false;try{unlockedClashRewardCheckpoint(paidHome,0,chest.value8);}catch(const std::runtime_error&){rejected=true;}
         check(rejected,"paid reward checkpoint rejects an incomplete native unlock");
         const auto sector=fixture.sector({});
+        auto countSequence=[&](const Bytes& sequence) {
+            size_t count=0;auto at=sector.begin();
+            while((at=std::search(at,sector.end(),sequence.begin(),sequence.end()))!=sector.end()){++count;++at;}
+            return count;
+        };
+        // spawnObject 0x13fe8..0x13ffc: normalized Y direction +/-256,
+        // followed by character +0x5c=0 and +0x6c=100. Signed VInt literals.
+        check(countSequence({0,0x80,4,0,0xa4,1})==3 && countSequence({0,0xc0,0x7c,0,0xa4,1})==3,
+            "three towers on each side retain original opposite facing vectors");
         // addDecos gives type-0 objects IDs 1,000,000+i, before type-5 towers.
         // The decoder's reference list must retain those existing objects.
         const Bytes ids{1,0,6,0,6,1,6,2,6,3,6,4,6,5};
