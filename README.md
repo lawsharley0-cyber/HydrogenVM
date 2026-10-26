@@ -7,6 +7,9 @@ later phase.
 
 ## Clash Royale
 
+Current continuation: [complete agent handoff, October 26](docs/clash-royale/AGENT_HANDOFF_2026-10-26.md).
+It supersedes historical architecture/status statements below for draft PR #138.
+
 Read [`docs/clash-royale/README.md`](docs/clash-royale/README.md) before changing the Clash peer, protocol tools, save path, or modding hooks. The ordered tasks are in [`docs/clash-royale/TODO.md`](docs/clash-royale/TODO.md). `docs/CLASH_ROYALE_RESTORATION.md`, `docs/HANDOFF.md`, and `docs/LOCAL_TESTING.md` are earlier snapshots from `gemini-merge`. If `AGENTS.md` is added later, copy this pointer into it.
 
 **Status:**

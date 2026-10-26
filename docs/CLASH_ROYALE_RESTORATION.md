@@ -1,5 +1,9 @@
 # Clash Royale solo restoration investigation
 
+For another agent taking over, read
+[the complete October 26 handoff](clash-royale/AGENT_HANDOFF_2026-10-26.md):
+architecture, current source/state, exact verification process and future work.
+
 ## Current architecture — October 26, 2026
 
 The owner now authorizes a modified guest IPA containing its own offline logic.

@@ -1,5 +1,14 @@
 # Clash Royale on main
 
+**October 26 continuation:** start with
+[the complete agent handoff](AGENT_HANDOFF_2026-10-26.md). Current work is draft
+PR #138 / `codex/clash-offline-continuation`, source bf8a09c, with guest-owned
+ARMv7 offline code and persistent separate game state. The owner now authorizes
+modifying an output copy of the pinned executable; original input/assets stay
+unchanged. The host-peer architecture and October 22 inventory below are
+historical, not the current feature inventory. HydrogenVM remains an alpha
+engine; shared runtime fixes and regression tests remain part of the work.
+
 **Latest continuation:** read [PROGRESS.md](PROGRESS.md) first. October 23 work
 on current main reaches a native three-crown NPC victory. Phone-local service,
 return-home processing and earned persistence remain open; the historical gap

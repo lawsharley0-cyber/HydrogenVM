@@ -1,5 +1,16 @@
 # HydrogenVM — handoff (2026-10-20)
 
+## Current agent handoff — October 26, 2026
+
+Read [the complete October 26 handoff](clash-royale/AGENT_HANDOFF_2026-10-26.md)
+first. It records the guest-owned standalone goal, alpha emulator architecture,
+exact branch/pins/private state, all qualified progression/clan/mail/request work,
+test and recovery procedures, Apple results, current friendly-command blocker
+and the owner's ordered future work. The current source is bf8a09c on
+`codex/clash-offline-continuation`; the older sections below preserve history.
+The actual earned Silver completed; local mail and unfulfilled card requests
+now persist. Native friendly challenge 534 and donor fulfillment remain open.
+
 ## Current priority: guest-owned standalone mod
 
 Latest audit: seven earned trainers, King 2, nine cards, native name/deck swaps
