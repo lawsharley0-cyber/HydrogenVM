@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "kind": "hvm-testlab-host-report",
-  "generatedAt": "2026-10-26T15:07:45Z",
-  "runId": "20261026T150742Z",
+  "generatedAt": "2026-10-26T15:08:20Z",
+  "runId": "20261026T150817Z",
   "appVersion": "1.0",
   "appBuild": "1",
-  "artifactSha256": "2ae7d65a70ca2ab1a333055b7a34d89e1a516cbbe633669c54485f778a537b89",
+  "artifactSha256": "d5654e44e68c02271d6f12407c564a757d49c6c29aaaa0411db077892a030c45",
   "sandboxMode": "hvm-home",
   "host": {
     "system": "Linux",
@@ -14,21 +14,21 @@
     "python": "3.12.3",
     "pageSize": 4096,
     "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)",
-    "emulatorCommit": "379a8a57b6f90efc62eb6789a875914cee8a5c38",
+    "emulatorCommit": "8c18dc03249e1caf053d60cacf5e4789fed96b3c",
     "emulatorDirty": true
   },
-  "startTime": "2026-10-26T15:07:45Z",
+  "startTime": "2026-10-26T15:08:20Z",
   "cases": [
     {
       "id": "TL-A",
       "version": 1,
       "status": "passed",
-      "durationMs": 92.7,
+      "durationMs": 89.5,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.093,
+        "elapsedSec": 0.089,
         "stdoutTail": "TESTLAB TL-A passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -36,12 +36,12 @@
       "id": "TL-B",
       "version": 1,
       "status": "passed",
-      "durationMs": 134.2,
+      "durationMs": 139.1,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.134,
+        "elapsedSec": 0.139,
         "stdoutTail": "TESTLAB TL-B passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -49,7 +49,7 @@
       "id": "TL-C",
       "version": 1,
       "status": "passed",
-      "durationMs": 89.5,
+      "durationMs": 89.2,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
@@ -62,12 +62,12 @@
       "id": "TL-D",
       "version": 1,
       "status": "passed",
-      "durationMs": 89.6,
+      "durationMs": 88.0,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.09,
+        "elapsedSec": 0.088,
         "stdoutTail": "TESTLAB TL-D passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -75,12 +75,12 @@
       "id": "TL-E",
       "version": 1,
       "status": "passed",
-      "durationMs": 86.1,
+      "durationMs": 88.1,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.086,
+        "elapsedSec": 0.088,
         "stdoutTail": "TESTLAB TL-E passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n",
         "phase1Result": "skipped"
       }
@@ -89,12 +89,12 @@
       "id": "TL-F",
       "version": 1,
       "status": "passed",
-      "durationMs": 90.6,
+      "durationMs": 90.1,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.091,
+        "elapsedSec": 0.09,
         "stdoutTail": "TESTLAB TL-F passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -102,12 +102,12 @@
       "id": "TL-G",
       "version": 1,
       "status": "passed",
-      "durationMs": 87.8,
+      "durationMs": 89.5,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.088,
+        "elapsedSec": 0.09,
         "stdoutTail": "TESTLAB TL-G passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -115,7 +115,7 @@
       "id": "TL-H",
       "version": 1,
       "status": "passed",
-      "durationMs": 87.9,
+      "durationMs": 87.6,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
@@ -128,12 +128,12 @@
       "id": "TL-I",
       "version": 1,
       "status": "passed",
-      "durationMs": 90.1,
+      "durationMs": 88.5,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.09,
+        "elapsedSec": 0.088,
         "stdoutTail": "TESTLAB TL-I passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -141,12 +141,12 @@
       "id": "TL-J",
       "version": 1,
       "status": "passed",
-      "durationMs": 181.0,
+      "durationMs": 227.6,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.181,
+        "elapsedSec": 0.228,
         "stdoutTail": "TESTLAB TL-J passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -154,12 +154,12 @@
       "id": "TL-K",
       "version": 1,
       "status": "passed",
-      "durationMs": 89.3,
+      "durationMs": 86.9,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.089,
+        "elapsedSec": 0.087,
         "stdoutTail": "TESTLAB TL-K passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -167,7 +167,7 @@
       "id": "TL-L",
       "version": 1,
       "status": "passed",
-      "durationMs": 1067.1,
+      "durationMs": 1066.6,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
@@ -181,12 +181,12 @@
       "id": "TL-M",
       "version": 1,
       "status": "passed",
-      "durationMs": 90.6,
+      "durationMs": 89.1,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.091,
+        "elapsedSec": 0.089,
         "stdoutTail": "TESTLAB TL-M passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -194,12 +194,12 @@
       "id": "TL-N",
       "version": 1,
       "status": "passed",
-      "durationMs": 90.6,
+      "durationMs": 87.9,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.091,
+        "elapsedSec": 0.088,
         "stdoutTail": "TESTLAB TL-N passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -207,12 +207,12 @@
       "id": "TL-O",
       "version": 1,
       "status": "passed",
-      "durationMs": 88.0,
+      "durationMs": 88.7,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.088,
+        "elapsedSec": 0.089,
         "stdoutTail": "TESTLAB TL-O passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -220,12 +220,12 @@
       "id": "TL-P",
       "version": 1,
       "status": "passed",
-      "durationMs": 88.4,
+      "durationMs": 90.3,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.088,
+        "elapsedSec": 0.09,
         "stdoutTail": "TESTLAB TL-P passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -233,12 +233,12 @@
       "id": "TL-Q",
       "version": 1,
       "status": "passed",
-      "durationMs": 137.0,
+      "durationMs": 133.7,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
         "hvmExitCode": 0,
-        "elapsedSec": 0.137,
+        "elapsedSec": 0.134,
         "stdoutTail": "TESTLAB TL-Q passed\ntestlab: result written to /var/mobile/Applications/146230E2-1634-233A-0D7A-4E4819D5086A/Documents/testlab_result.json (ok)\n"
       }
     },
@@ -246,7 +246,7 @@
       "id": "TL-R",
       "version": 1,
       "status": "passed",
-      "durationMs": 89.2,
+      "durationMs": 89.4,
       "clockDefinition": "CLOCK_MONOTONIC (host)",
       "checkpointWritten": null,
       "diagnostics": {
