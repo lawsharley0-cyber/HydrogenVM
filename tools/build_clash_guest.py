@@ -75,7 +75,7 @@ def run(command, **kwargs):
     subprocess.run([str(v) for v in command], check=True, **kwargs)
 
 
-def build(source, output, build_dir, profile_saves=False):
+def build(source, output, build_dir, profile_saves=False, probe_donation_actors=False):
     source, output, build_dir = Path(source), Path(output), Path(build_dir)
     if output.exists() or build_dir.exists():
         raise ValueError('Choose new output and build paths; existing data will not be replaced')
@@ -108,7 +108,8 @@ def build(source, output, build_dir, profile_saves=False):
         run([generator, build_dir/'source'/app_root], stdout=header)
     run(['clang', '-target', 'armv7-apple-ios6.0', '-mthumb', '-Oz', '-ffreestanding',
          '-fno-builtin', '-fno-stack-protector', '-fno-pic', '-fno-unwind-tables',
-         '-fno-asynchronous-unwind-tables', *(['-DGUEST_PROFILE_SAVES=1'] if profile_saves else []), '-I'+str(build_dir), '-c',
+         '-fno-asynchronous-unwind-tables', *(['-DGUEST_PROFILE_SAVES=1'] if profile_saves else []),
+         *(['-DGUEST_PROBE_DONATION_ACTORS=1'] if probe_donation_actors else []), '-I'+str(build_dir), '-c',
          ROOT/'tools/clash_guest/transport.c', '-o', build_dir/'transport.o'])
     update_segment=next(s for s in parsed['segments'] if s[1]<=0x92f08<s[1]+s[4])
     update_at=update_segment[3]+0x92f08-update_segment[1]
@@ -260,6 +261,7 @@ def build(source, output, build_dir, profile_saves=False):
                 originalExecutableSHA256=EXECUTABLE_SHA256,
                 modifiedExecutableSHA256=hashlib.sha256(binary).hexdigest(),patches=patches,
                 hostClashBackendRequired=False,networkRequired=False,saveProfiling=profile_saves,
+                donationActorProbe=probe_donation_actors,
                 bundleIdentifier=info['CFBundleIdentifier'],assetsUnchanged=True,
                 trainingMissionsEncoded=7,
                 arenaLevelsEncoded=[1],arenaBotsPerLevel=13,
@@ -276,5 +278,7 @@ if __name__=='__main__':
     parser.add_argument('output_ipa',type=Path)
     parser.add_argument('--build-dir',required=True,type=Path)
     parser.add_argument('--profile-saves',action='store_true',help='Log slow native checkpoint timings without changing persistence behavior')
+    parser.add_argument('--probe-donation-actors',action='store_true',
+                        help='Diagnostic candidate: verify native transfers on independent actors, without granting live-player cards')
     args=parser.parse_args()
-    build(args.source_ipa,args.output_ipa,args.build_dir,args.profile_saves)
+    build(args.source_ipa,args.output_ipa,args.build_dir,args.profile_saves,args.probe_donation_actors)

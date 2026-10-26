@@ -29,6 +29,15 @@ malformed actual-client saves rejected unchanged. See LOCAL_CLANS for exact
 host/package hashes, evidence and limits. No shared runtime source changed;
 donation fulfillment and later owner features remain unfinished.
 
+The opt-in native donor diagnostic now qualifies common/rare 203→211 material
+conservation, original rewards and native home/avatar serialization roundtrips
+on independent synthetic actors. Empty-stock
+203 returns zero without donating, a required guard for the future controller.
+Normal/profile objects exclude the probe; all four ARMv7 flag variants compile
+without new imports in the same 22-test suite. Actual diagnostic exit/audio
+evidence and the remaining persistent member/journal/UI work are recorded in
+[DONATIONS.md](../clash-royale/DONATIONS.md). No production receiver grant exists.
+
 Guest v42 qualifies persistent solo-clan creation/chat/info/settings/search and
 leave/re-create in labeled King-3 component fixtures. Original commands
 209/212/208, 1000-Gold creation, actual native member/leader and atomic GCL1/GCS1

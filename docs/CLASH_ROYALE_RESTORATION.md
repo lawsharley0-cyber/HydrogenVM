@@ -13,6 +13,12 @@ validated atomic migration. Read the newest LOCAL_CLANS section for actual
 combat/result, repeat-return, 22-test and malformed-save evidence. Donation
 fulfillment is the next clan feature; the later ordered work remains open.
 
+The next native component investigation is recorded in
+[DONATIONS.md](clash-royale/DONATIONS.md): original common/rare 203→211 transfers,
+conservation/rewards and empty-stock failure are exercised on independent
+diagnostic actors. This explicitly opt-in probe grants no live player cards;
+production membership, durable donation fulfillment and its UI remain open.
+
 The owner now authorizes a modified guest IPA containing its own offline logic.
 Read [guest mod progress](clash-royale/GUEST_MOD_PROGRESS.md) first. This prototype
 runs without a Clash host service. Seven earned training wins, native reward

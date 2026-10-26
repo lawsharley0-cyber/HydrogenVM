@@ -34,26 +34,26 @@ class GuestCompileTests(unittest.TestCase):
                      '-fno-builtin','-fno-stack-protector','-fno-pic','-fno-unwind-tables',
                      '-fno-asynchronous-unwind-tables','-Werror','-I'+str(directory),'-c',
                      str(ROOT/'tools/clash_guest/transport.c'),'-o',str(directory/'guest.o')]
-            result=subprocess.run(command,capture_output=True,text=True)
-            self.assertEqual(result.returncode,0,result.stderr)
-            # A real ARMv7 Mach-O object, not a host-only build of the C code.
             import struct
-            self.assertEqual(struct.unpack_from('<III',(directory/'guest.o').read_bytes()),
-                             (0xfeedface,12,9))
-            # Profiling must remain freestanding too; no extra native runtime
-            # dependency may creep in through timing/counter arithmetic.
-            result=subprocess.run(command+['-DGUEST_PROFILE_SAVES=1'],capture_output=True,text=True)
-            self.assertEqual(result.returncode,0,result.stderr)
-            if shutil.which('llvm-nm'):
-                # Compiling succeeds even when ARMv7 emits a compiler-runtime
-                # division helper. A freestanding IPA cannot resolve one.
-                result=subprocess.run(['llvm-nm','--undefined-only',str(directory/'guest.o')],
-                                      capture_output=True,text=True)
+            expected_undefined={
+                '_guest_original_battle_ended','_guest_original_reward_execute',
+                '_guest_original_settings_click','_guest_original_mail_execute','_guest_original_request_execute',
+                '_guest_original_challenge_execute'}
+            variants=[[],['-DGUEST_PROFILE_SAVES=1'],['-DGUEST_PROBE_DONATION_ACTORS=1'],
+                      ['-DGUEST_PROFILE_SAVES=1','-DGUEST_PROBE_DONATION_ACTORS=1']]
+            for flags in variants:
+                result=subprocess.run(command+flags,capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
-                self.assertEqual(set(result.stdout.split()),{
-                    '_guest_original_battle_ended','_guest_original_reward_execute',
-                    '_guest_original_settings_click','_guest_original_mail_execute','_guest_original_request_execute',
-                    '_guest_original_challenge_execute'})
+                # Every variant is a real freestanding ARMv7 Mach-O object.
+                self.assertEqual(struct.unpack_from('<III',(directory/'guest.o').read_bytes()),
+                                 (0xfeedface,12,9))
+                self.assertEqual(b'DonationActorProbe:' in (directory/'guest.o').read_bytes(),
+                                 '-DGUEST_PROBE_DONATION_ACTORS=1' in flags)
+                if shutil.which('llvm-nm'):
+                    result=subprocess.run(['llvm-nm','--undefined-only',str(directory/'guest.o')],
+                                          capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertEqual(set(result.stdout.split()),expected_undefined,flags)
 
 
 if __name__=='__main__':unittest.main()

@@ -12,6 +12,12 @@ v64 qualifies the paid Friendly Battle subset with an explicit simulated local
 NPC, native combat/results and durable lifecycle recovery. Donation fulfillment
 is not ported; this is not the completed clans feature or a full-button pass.
 
+Donation investigation now independently exercises original donor 203 and
+receiver 211 on separate native common/rare actors, including an empty-stock
+failure that still returns zero. See [native donation work](DONATIONS.md) for
+the opt-in reproducible diagnostic, original 2016 limits and remaining durable
+member/inventory/journal/UI implementation. Default packages grant no donations.
+
 ## Current component qualification — v42
 
 - Exact host source cbde492, Linux/WSL GPU path. Shared input passes 260/260

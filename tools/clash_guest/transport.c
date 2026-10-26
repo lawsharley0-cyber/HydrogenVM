@@ -41,6 +41,9 @@ static void prepare_reward(void*,void*);
 static void credit_arena_crowns(void*);
 static void friendly_tick(void);
 static void friendly_battle_completed(void*);
+#ifdef GUEST_PROBE_DONATION_ACTORS
+static void donation_actor_probe(void);
+#endif
 
 static void fail(const char *why) {
     CALL(API_puts,int,(const char*))(why);
@@ -152,6 +155,9 @@ int guest_send(void *self,void *message) {
     CALL(API_printf,int,(const char*,int))("GuestOffline: outgoing kind=%d\n",kind);
     if(kind==10101) {
         if(logged_in)fail("GuestOffline: duplicate login");
+#ifdef GUEST_PROBE_DONATION_ACTORS
+        donation_actor_probe();
+#endif
         validate_clan_checkpoint();
         static u8 checked_mail[33024];encode_local_inbox(checked_mail,sizeof checked_mail);
         refresh_saved_arena();
@@ -272,3 +278,6 @@ int guest_send(void *self,void *message) {
     } else fail("GuestOffline: unsupported prototype request; progression is not implemented");
     dispose(message);return 1;
 }
+#ifdef GUEST_PROBE_DONATION_ACTORS
+#include "donation_actor_probe.inc"
+#endif

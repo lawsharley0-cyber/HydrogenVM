@@ -2,6 +2,16 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+October 26 donation continuation (Group C): native common/rare actor transfers
+and empty-stock failure are reproducible with the explicit builder probe.
+Original 203 returns zero on both success and failure; require actual native
+state deltas. Next implement an honest persisted local donor, finite stock,
+same-file two-actor recovery intent, native 211 delivery/echo and DonateStream
+UI. Qualify interruption/corruption/replacement/leave and later upgrades before
+claiming fulfillment. Exact research, limits and diagnostic usage:
+[DONATIONS.md](../clash-royale/DONATIONS.md). No shared runtime change is needed
+by the qualified primitive experiment.
+
 October 26 post-Kimi integration checks (Group C, source 96003cb): verify later
 native Gold transactions/relaunch after a terminal friendly challenge. Current
 GFR1 validation compares every later wallet to historical friendly balances;
