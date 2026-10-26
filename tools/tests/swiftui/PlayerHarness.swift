@@ -2,7 +2,14 @@ import SwiftUI
 import UIKit
 import os
 
-struct HarnessAppInfo { let bundlePath: String }
+struct HarnessAppInfo {
+    let bundlePath: String
+    let bundleIdentifier = "com.lfull.HydrogenVM.SyntheticPlayer"
+    let version = "synthetic"
+}
+// Same layer metadata key as the production Objective-C bridge. This harness
+// delivers authored software frames; it does not qualify a GPU drawable.
+let HVMGLLayerUnitTransformKey = "hvmUnitTransform"
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
 
@@ -25,8 +32,11 @@ final class PlayerProbe {
 /// viewport and geometry are compiled into this synthetic UI fixture.
 @MainActor
 final class HVMSession {
+    static let emulatorCommit = "synthetic-ui-harness"
     var keepGoing = false
+    var useGPU = false
     var onFrame: ((CGImage) -> Void)?
+    var onGLLayer: ((CALayer?) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?
     var onExit: ((Int, String?) -> Void)?
     var onKeyboardState: (([String: NSNumber]) -> Void)?
@@ -34,6 +44,9 @@ final class HVMSession {
     var interfaceOrientation = 1
     var isBackgrounded = false
     var frameTimeP95Milliseconds = 4.2
+    private(set) var framesPresented: UInt64 = 0
+    // No CPU process exists in this fixture and no engine crash is fabricated.
+    let crashBundle: String? = nil
     var outputVolume: Float = 1 { didSet { PlayerProbe.shared.volume = outputVolume } }
     private var activeFingers: Set<UInt> = []
     init(bundlePath: String, homePath: String) { PlayerProbe.shared.session = self }
@@ -53,6 +66,8 @@ final class HVMSession {
             UIColor.yellow.setFill(); context.fill(CGRect(x: 160, y: 240, width: 160, height: 240))
         }
         PlayerProbe.shared.lastOrientation = interfaceOrientation
+        framesPresented += 1
+        onGLLayer?(nil)
         onFrame?(image.cgImage!)
     }
     func stopGracefully() {
