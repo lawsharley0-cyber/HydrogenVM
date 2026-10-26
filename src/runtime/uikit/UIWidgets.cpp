@@ -12,6 +12,11 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#else
+#include <unicode/ubrk.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -1349,7 +1354,7 @@ struct TextFieldData : ObjC::HostObject {
     id background = 0, disabledBackground = 0, leftView = 0, rightView = 0, inputView = 0, inputAccessoryView = 0;
     int32_t alignment = 0, borderStyle = 0, clearButtonMode = 0, leftViewMode = 0, rightViewMode = 0;
     int32_t keyboardType = 0, keyboardAppearance = 0, returnKeyType = 0, autocap = 0, autocorrect = 0;
-    bool clearsOnBegin = false, adjustsFont = false, secure = false, editing = false;
+    bool clearsOnBegin = false, adjustsFont = false, secure = false, editing = false, editable = true, selectable = true;
     float minFontSize = 0;
 };
 TextFieldData& TFD(Ctx& x, id t) { return rt(x).host<TextFieldData>(t); }
@@ -1412,8 +1417,78 @@ void tf_setDelegate(Ctx& x, id self, SEL, id d) { TFD(x, self).delegate = d; }
 bool tf_editing(Ctx& x, id self, SEL) { return TFD(x, self).editing; }
 bool tf_secure(Ctx& x, id self, SEL) { return TFD(x, self).secure; }
 void tf_setSecure(Ctx& x, id self, SEL, bool b) { TFD(x, self).secure = b; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
-// UITextInputTraits and assorted text-view/field setters that only affect the on-screen
-// keyboard (which HydrogenVM doesn't show) or input accessory views: accepted, no effect.
+bool tf_isTextView(Ctx& x,id self) { return rt(x).isKindOf(self,rt(x).getClass("UITextView")); }
+bool tf_hasText(Ctx& x,id self,SEL) { return !Foundation::stringValue(x,TFD(x,self).text).empty(); }
+uint32_t previousTextBoundary(const std::u16string& text) {
+    if(text.empty())return 0;
+#if defined(__APPLE__)
+    CFStringRef string=CFStringCreateWithCharacters(kCFAllocatorDefault,
+        reinterpret_cast<const UniChar*>(text.data()),CFIndex(text.size()));
+    if(!string)throw std::runtime_error("Text input: cannot segment text");
+    const CFRange range=CFStringGetRangeOfComposedCharactersAtIndex(string,CFIndex(text.size()-1));
+    CFRelease(string);return uint32_t(range.location);
+#else
+    UErrorCode error=U_ZERO_ERROR;
+    UBreakIterator* iterator=ubrk_open(UBRK_CHARACTER,"",reinterpret_cast<const UChar*>(text.data()),int32_t(text.size()),&error);
+    if(U_FAILURE(error) || !iterator)throw std::runtime_error("Text input: cannot segment text");
+    const int32_t at=ubrk_preceding(iterator,int32_t(text.size()));ubrk_close(iterator);
+    if(at<0)throw std::runtime_error("Text input: invalid character boundary");
+    return uint32_t(at);
+#endif
+}
+void tf_replaceText(Ctx& x,id self,uint32_t location,uint32_t length,id replacement) {
+    auto& r=rt(x);auto& d=TFD(x,self);
+    if(tf_isTextView(x,self) && !d.editable)return;
+    const std::u16string before=Foundation::stringValue(x,d.text),insert=Foundation::stringValue(x,replacement);
+    if(location>before.size() || length>before.size()-location)
+        throw std::out_of_range("Text input: replacement range exceeds text");
+    if(!length && insert.empty())return;
+    // A delegate/action can detach or release the field. Keep it alive until
+    // this event's autorelease pool drains, and respect delegate-owned edits.
+    autoreleased(x,r.retain(x.cpu,self));
+    const bool multiline=tf_isTextView(x,self);
+    const char* selector=multiline?"textView:shouldChangeTextInRange:replacementText:":
+                                  "textField:shouldChangeCharactersInRange:replacementString:";
+    const id delegate=d.delegate;
+    if(delegate)autoreleased(x,r.retain(x.cpu,delegate));
+    if(delegate && r.respondsTo(delegate,r.sel(selector)) &&
+       !sendBool(x,delegate,selector,{self,location,length,replacement}))return;
+    if(Foundation::stringValue(x,d.text)!=before)return;
+    std::u16string after=before;after.replace(location,length,insert);
+    tf_setText(x,self,0,makeString(x,after));
+    if(multiline) {
+        if(d.delegate && r.respondsTo(d.delegate,r.sel("textViewDidChange:")))
+            r.send(x.cpu,d.delegate,"textViewDidChange:",{self});
+    } else r.send(x.cpu,self,"sendActionsForControlEvents:",{1u<<17});
+    Foundation::postNotification(x,multiline?"UITextViewTextDidChangeNotification":"UITextFieldTextDidChangeNotification",self);
+}
+void tf_insertText(Ctx& x,id self,SEL,id text) {
+    tf_replaceText(x,self,uint32_t(Foundation::stringValue(x,TFD(x,self).text).size()),0,text);
+}
+void tf_deleteBackward(Ctx& x,id self,SEL) {
+    const auto text=Foundation::stringValue(x,TFD(x,self).text);
+    if(text.empty())return;
+    const uint32_t start=previousTextBoundary(text);
+    tf_replaceText(x,self,start,uint32_t(text.size())-start,makeString(x,""));
+}
+int32_t tf_keyboardType(Ctx& x,id self,SEL) { return TFD(x,self).keyboardType; }
+void tf_setKeyboardType(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).keyboardType=n; }
+int32_t tf_returnKeyType(Ctx& x,id self,SEL) { return TFD(x,self).returnKeyType; }
+void tf_setReturnKeyType(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).returnKeyType=n; }
+int32_t tf_keyboardAppearance(Ctx& x,id self,SEL) { return TFD(x,self).keyboardAppearance; }
+void tf_setKeyboardAppearance(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).keyboardAppearance=n; }
+int32_t tf_autocorrection(Ctx& x,id self,SEL) { return TFD(x,self).autocorrect; }
+void tf_setAutocorrection(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).autocorrect=n; }
+int32_t tf_autocapitalization(Ctx& x,id self,SEL) { return TFD(x,self).autocap; }
+void tf_setAutocapitalization(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).autocap=n; }
+bool tf_editable(Ctx& x,id self,SEL) { return TFD(x,self).editable; }
+void tf_setEditable(Ctx& x,id self,SEL,bool n) { TFD(x,self).editable=n; }
+bool tf_selectable(Ctx& x,id self,SEL) { return TFD(x,self).selectable; }
+void tf_setSelectable(Ctx& x,id self,SEL,bool n) { TFD(x,self).selectable=n; }
+bool tf_clearsOnBegin(Ctx& x,id self,SEL) { return TFD(x,self).clearsOnBegin; }
+void tf_setClearsOnBegin(Ctx& x,id self,SEL,bool n) { TFD(x,self).clearsOnBegin=n; }
+// Accessory views and unimplemented input-trait details do not implement
+// insertion/deletion; those follow the real delegate/event path above.
 void tf_ignoreObj(Ctx&, id, SEL, id) {}
 void tf_ignoreInt(Ctx&, id, SEL, int32_t) {}
 void tf_ignoreBool(Ctx&, id, SEL, bool) {}
@@ -1421,12 +1496,14 @@ id tf_nilObj(Ctx&, id, SEL) { return 0; }
 int32_t tf_zeroInt(Ctx&, id, SEL) { return 0; }
 bool tf_trueBool(Ctx&, id, SEL) { return true; }
 bool tf_canBecome(Ctx& x, id self, SEL) {
+    if(tf_isTextView(x,self) && !TFD(x,self).editable)return false;
     const id del = TFD(x, self).delegate;
     if (del && rt(x).respondsTo(del, rt(x).sel("textFieldShouldBeginEditing:")))
         return sendBool(x, del, "textFieldShouldBeginEditing:", {self});
     return true;
 }
 bool tf_become(Ctx& x, id self, SEL s) {
+    if(ui(x).firstResponder==self && TFD(x,self).editing)return true;
     const bool ok = (uint32_t(rt(x).sendSuper(x.cpu, self, ui(x).responder, s)) & 0xFF) != 0;
     if (ok) {
         TextFieldData& d = TFD(x, self);
@@ -2118,16 +2195,18 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
       .m<&tf_borderStyle>("borderStyle", "i@:").m<&tf_setBorderStyle>("setBorderStyle:", "v@:i")
       .m<&tf_delegate>("delegate").m<&tf_setDelegate>("setDelegate:", "v@:@")
       .m<&tf_editing>("isEditing", "c@:")
+      .m<&tf_insertText>("insertText:","v@:@").m<&tf_deleteBackward>("deleteBackward","v@:").m<&tf_hasText>("hasText","c@:")
       .m<&tf_secure>("isSecureTextEntry", "c@:").m<&tf_setSecure>("setSecureTextEntry:", "v@:c")
       .m<&tf_canBecome>("canBecomeFirstResponder", "c@:")
       .m<&tf_become>("becomeFirstResponder", "c@:")
       .m<&tf_resign>("resignFirstResponder", "c@:")
-      .m<&tf_ignoreInt>("setKeyboardType:", "v@:i").m<&tf_zeroInt>("keyboardType", "i@:")
-      .m<&tf_ignoreInt>("setReturnKeyType:", "v@:i").m<&tf_zeroInt>("returnKeyType", "i@:")
-      .m<&tf_ignoreInt>("setKeyboardAppearance:", "v@:i")
-      .m<&tf_ignoreInt>("setAutocorrectionType:", "v@:i").m<&tf_ignoreInt>("setAutocapitalizationType:", "v@:i")
+      .m<&tf_setKeyboardType>("setKeyboardType:", "v@:i").m<&tf_keyboardType>("keyboardType", "i@:")
+      .m<&tf_setReturnKeyType>("setReturnKeyType:", "v@:i").m<&tf_returnKeyType>("returnKeyType", "i@:")
+      .m<&tf_setKeyboardAppearance>("setKeyboardAppearance:", "v@:i").m<&tf_keyboardAppearance>("keyboardAppearance","i@:")
+      .m<&tf_setAutocorrection>("setAutocorrectionType:", "v@:i").m<&tf_autocorrection>("autocorrectionType","i@:")
+      .m<&tf_setAutocapitalization>("setAutocapitalizationType:", "v@:i").m<&tf_autocapitalization>("autocapitalizationType","i@:")
       .m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i").m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c")
-      .m<&tf_ignoreInt>("setClearButtonMode:", "v@:i").m<&tf_ignoreBool>("setClearsOnBeginEditing:", "v@:c")
+      .m<&tf_ignoreInt>("setClearButtonMode:", "v@:i").m<&tf_setClearsOnBegin>("setClearsOnBeginEditing:", "v@:c").m<&tf_clearsOnBegin>("clearsOnBeginEditing","c@:")
       .m<&tf_ignoreInt>("setContentVerticalAlignment:", "v@:i").m<&tf_ignoreInt>("setContentHorizontalAlignment:", "v@:i")
       .m<&tf_ignoreObj>("setInputView:", "v@:@").m<&tf_ignoreObj>("setInputAccessoryView:", "v@:@")
       .m<&tf_nilObj>("inputView").m<&tf_nilObj>("inputAccessoryView")
@@ -2138,6 +2217,7 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder tvText = r.defineClass("UITextView", "UIScrollView");
     tvText.m<&tf_initWithFrame>("initWithFrame:", "@@:" + R).m<&tf_initWithCoder>("initWithCoder:")
           .m<&tf_text>("text").m<&tf_setText>("setText:", "v@:@")
+          .m<&tf_insertText>("insertText:","v@:@").m<&tf_deleteBackward>("deleteBackward","v@:").m<&tf_hasText>("hasText","c@:")
           .m<&tf_font>("font").m<&tf_setFont>("setFont:", "v@:@")
           .m<&tf_textColor>("textColor").m<&tf_setTextColor>("setTextColor:", "v@:@")
           .m<&tf_alignment>("textAlignment", "i@:").m<&tf_setAlignment>("setTextAlignment:", "v@:i")
@@ -2152,8 +2232,8 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
           .m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c").m<&tf_ignoreBool>("setSecureTextEntry:", "v@:c")
           .m<&tf_ignoreObj>("setInputView:", "v@:@").m<&tf_ignoreObj>("setInputAccessoryView:", "v@:@")
           .m<&tf_nilObj>("inputView").m<&tf_nilObj>("inputAccessoryView")
-          .m<&tf_ignoreBool>("setEditable:", "v@:c").m<&tf_trueBool>("isEditable", "c@:")
-          .m<&tf_ignoreBool>("setSelectable:", "v@:c").m<&tf_trueBool>("isSelectable", "c@:")
+          .m<&tf_setEditable>("setEditable:", "v@:c").m<&tf_editable>("isEditable", "c@:")
+          .m<&tf_setSelectable>("setSelectable:", "v@:c").m<&tf_selectable>("isSelectable", "c@:")
           .m<&tf_ignoreInt>("setDataDetectorTypes:", "v@:i").m<&tf_ignoreObj>("setLinkTextAttributes:", "v@:@")
           .m<&tf_ignoreBool>("setAllowsEditingTextAttributes:", "v@:c")
           .m<&tf_drawRect>("drawRect:", "v@:" + R);

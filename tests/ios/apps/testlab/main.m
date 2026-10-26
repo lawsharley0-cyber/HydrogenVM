@@ -75,6 +75,30 @@ static const char *kAppBuild        = "1";
 #define CASE_O  @"TL-O"
 #define CASE_P  @"TL-P"
 #define CASE_Q  @"TL-Q"
+#define CASE_R  @"TL-R"
+
+@interface UITextField (TLKeyInput)
+- (void)insertText:(NSString *)text;
+- (void)deleteBackward;
+- (BOOL)hasText;
+@end
+
+@interface TLInputDelegate : NSObject {
+@public BOOL rejectEdit, rejectEnd;
+@public NSUInteger edits, changes, notifications;
+@public NSRange lastRange;
+}
+- (void)changed:(id)sender;
+- (void)notified:(id)sender;
+@end
+@implementation TLInputDelegate
+- (BOOL)textField:(id)field shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString *)text {
+    (void)field;(void)text;++edits;lastRange=range;return !rejectEdit;
+}
+- (BOOL)textFieldShouldEndEditing:(id)field { (void)field;return !rejectEnd; }
+- (void)changed:(id)sender { (void)sender;++changes; }
+- (void)notified:(id)sender { (void)sender;++notifications; }
+@end
 
 @interface NSLocale : NSObject
 + (NSUInteger)characterDirectionForLanguage:(NSString *)language;
@@ -1580,6 +1604,45 @@ static TLResult *runCaseQ(void) {
     clearCheckpoint();return r;
 }
 
+// UIKeyInput's insert/delete contract, UTF-16 delegate ranges, editing events
+// and focus veto. Literal expectations follow UIKit/NSString semantics, not
+// captured emulator output. An emoji occupies two UTF-16 units.
+static TLResult *runCaseR(void) {
+    TLResult *r=[[TLResult alloc] initWithId:CASE_R version:1];writeCheckpoint(CASE_R);
+    UIWindow *window=[[UIWindow alloc] initWithFrame:CGRectMake(0,0,320,480)];
+    UITextField *field=[[UITextField alloc] initWithFrame:CGRectMake(10,10,200,40)];
+    UITextField *other=[[UITextField alloc] initWithFrame:CGRectMake(10,60,200,40)];
+    TLInputDelegate *delegate=[TLInputDelegate new];field.delegate=delegate;
+    [window addSubview:field];[window addSubview:other];[window makeKeyAndVisible];
+    [field addTarget:delegate action:@selector(changed:) forControlEvents:(1u<<17)];
+    [[NSNotificationCenter defaultCenter] addObserver:delegate selector:@selector(notified:)
+        name:@"UITextFieldTextDidChangeNotification" object:field];
+    field.text=@"A";BOOL focus=[field becomeFirstResponder];
+    [field insertText:@"\U0001F916"];
+    BOOL insertion=[field.text isEqualToString:@"A\U0001F916"] && [field hasText] &&
+        delegate->lastRange.location==1 && delegate->lastRange.length==0;
+    delegate->rejectEdit=YES;[field insertText:@"!"];
+    BOOL veto=[field.text isEqualToString:@"A\U0001F916"] && delegate->changes==1 && delegate->notifications==1;
+    delegate->rejectEdit=NO;[field deleteBackward];
+    BOOL deletion=[field.text isEqualToString:@"A"] && delegate->lastRange.location==1 && delegate->lastRange.length==2;
+    [field deleteBackward];[field deleteBackward];
+    BOOL empty=[field.text isEqualToString:@""] && ![field hasText] && delegate->edits==4 &&
+        delegate->changes==3 && delegate->notifications==3;
+    field.text=@"Set programmatically";
+    BOOL quiet=delegate->changes==3 && delegate->notifications==3;
+    delegate->rejectEnd=YES;
+    BOOL focusVeto=![other becomeFirstResponder] && [field isFirstResponder] && ![other isFirstResponder];
+    delegate->rejectEnd=NO;[field resignFirstResponder];window.hidden=YES;
+    [[NSNotificationCenter defaultCenter] removeObserver:delegate];
+    r.expected=@{@"focus":@YES,@"unicodeInsertion":@YES,@"delegateVeto":@YES,@"unicodeDeletion":@YES,
+        @"emptyDeletionNoEdit":@YES,@"programmaticSetNoEditEvents":@YES,@"focusVeto":@YES};
+    r.actual=@{@"focus":@(focus),@"unicodeInsertion":@(insertion),@"delegateVeto":@(veto),@"unicodeDeletion":@(deletion),
+        @"emptyDeletionNoEdit":@(empty),@"programmaticSetNoEditEvents":@(quiet),@"focusVeto":@(focusVeto)};
+    r.status=focus&&insertion&&veto&&deletion&&empty&&quiet&&focusVeto?@"passed":@"failed";
+    if(![r.status isEqualToString:@"passed"])r.reason=@"UIKeyInput edit, UTF-16 range, event or responder-veto contract differs";
+    clearCheckpoint();return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1589,7 +1652,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1628,6 +1691,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseP()];
         } else if ([cid isEqualToString:CASE_Q]) {
             [results addObject:runCaseQ()];
+        } else if ([cid isEqualToString:CASE_R]) {
+            [results addObject:runCaseR()];
         }
     }
     return results;
@@ -1658,6 +1723,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_O]) return runCaseO();
     if ([caseId isEqualToString:CASE_P]) return runCaseP();
     if ([caseId isEqualToString:CASE_Q]) return runCaseQ();
+    if ([caseId isEqualToString:CASE_R]) return runCaseR();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1690,8 +1756,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M, CASE_R ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"R: Text input" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1707,6 +1773,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_J version:kVersionJ],
         [[TLResult alloc] initWithId:CASE_K version:kVersionK],
         [[TLResult alloc] initWithId:CASE_M version:1],
+        [[TLResult alloc] initWithId:CASE_R version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1766,7 +1833,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_R]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

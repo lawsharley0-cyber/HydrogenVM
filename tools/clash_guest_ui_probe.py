@@ -8,6 +8,7 @@ Use a private QA copy when the plan spends resources or changes progression.
 import argparse
 import hashlib
 import json
+import plistlib
 from pathlib import Path
 import struct
 import subprocess
@@ -71,9 +72,16 @@ def run(args):
              '--report',str(out/'app.json'),'--screenshot',str(out/'final.png'),
              '--input-file',str(inp),'--frame-file',str(frame)]
     if args.gpu:command.append('--gpu')
+    if ipa.is_dir():
+        info_bytes=(ipa/'Info.plist').read_bytes();info=plistlib.loads(info_bytes)
+        executable=info.get('CFBundleExecutable','')
+        if not executable or Path(executable).name!=executable or '\\' in executable:
+            raise ValueError('Invalid app bundle executable name')
+        guest=dict(guestInputKind='app',guestExecutableSHA256=hashlib.sha256((ipa/executable).read_bytes()).hexdigest(),
+                   guestBundleInfoSHA256=hashlib.sha256(info_bytes).hexdigest())
+    else:guest=dict(guestInputKind='ipa',guestIpaSHA256=hashlib.sha256(ipa.read_bytes()).hexdigest())
     result=dict(schemaVersion=1,plan=plan.get('name'),steps=[],error=None,
-                hostBinarySHA256=hashlib.sha256(hvm.read_bytes()).hexdigest(),
-                guestIpaSHA256=hashlib.sha256(ipa.read_bytes()).hexdigest(),command=command,
+                hostBinarySHA256=hashlib.sha256(hvm.read_bytes()).hexdigest(),**guest,command=command,
                 visualReviewRequired=True)
     began=time.monotonic()
     audio=CapturedAudio(out/'mixed.wav',began) if args.capture_audio else None
@@ -148,7 +156,9 @@ def run(args):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
-    for name in ('hvm','ipa','home','plan','out'):p.add_argument('--'+name,required=True)
+    for name in ('hvm','home','plan','out'):p.add_argument('--'+name,required=True)
+    p.add_argument('--ipa','--app',dest='ipa',required=True,
+                   help='IPA: home is the import root. App bundle: home is the exact guest sandbox; bundle is reused without import.')
     p.add_argument('--gpu',action='store_true');p.add_argument('--seconds',type=int,default=300)
     p.add_argument('--capture-audio',action='store_true',help='Record mixed PCM and per-step signal windows (not a quality oracle)')
     p.add_argument('--startup-timeout',type=float,default=90,help='Maximum first-frame wait including IPA import; no automatic retry')

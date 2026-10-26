@@ -43,6 +43,7 @@ signal, and sandboxed persistence.
 | TL-O | ARMv7 math aggregate return | Compiler-generated calls to `__sincosf_stret` and `__sincos_stret`; analytic sine/cosine at zero and pi/2 verify float/double aggregate results. The float case fails before the hidden-result-pointer fix. Automated invocation: `--case TL-O`. This does not itself verify cannon animation. |
 | TL-P | Predicate regular expressions | Full-string alternatives, placeholder/argument-array input, case folding, inline ICU flags, Unicode categories and nil rejection. Triggered by Help/Support's native SDK; fails before `MATCHES` support. Automated invocation: `--case TL-P`. |
 | TL-Q | Language writing direction | ISO language codes: English LTR and Arabic/Hebrew/Persian/Urdu RTL. Fails before `characterDirectionForLanguage:` support. Automated invocation: `--case TL-Q`. Native Apple contract check: `tests/native/FoundationLocale.m`. |
+| TL-R | Text entry | UIKeyInput insert/delete, UTF-16 delegate replacement ranges (two-unit emoji), rejected changes, empty deletion, editing control events/notifications, programmatic setters and first-responder veto. Fails on missing insertText before implementation; native keyboard presentation/IME and external input routing need separate real-app checks. |
 
 ### Checkpoint / interrupted-case protocol
 

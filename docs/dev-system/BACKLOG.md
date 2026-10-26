@@ -52,6 +52,13 @@ stat/cards persist, but displayed Wins is 0 while NPC wins is 9 (seven training,
 two paid arena wins). Qualify native offline arena profile counters separately;
 never label a captured incorrect statistic a functional pass or invent results.
 
+Clans prerequisite (same owner-authorized branch, Groups D/E): source review
+finds no queued host/CLI text input or native keyboard bridge; UITextField/
+UITextView lack UIKeyInput insert/delete methods. Native names/search/chat
+need shared input, delegate veto/UTF-16 ranges, editing notifications, focus
+and lifetime safety. Add minimal TL-R fail-before/pass-after and run pre/post
+fulltest/TestLab; test actual clan fields, with no hardcoded-name workaround.
+
 The owner's explicit request resumes offline Clash development despite the
 master plan's earlier recommendation to park it. Group C owner:
 `codex/clash-offline-continuation`. Restore the pinned NPC sector, native VInt

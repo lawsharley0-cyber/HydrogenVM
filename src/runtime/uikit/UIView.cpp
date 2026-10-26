@@ -27,7 +27,8 @@ bool r_isFirst(Ctx& x, id self, SEL) { return ui(x).firstResponder == self; }
 bool r_become(Ctx& x, id self, SEL) {
     if (!sendBool(x, self, "canBecomeFirstResponder")) return false;
     auto& u = ui(x);
-    if (u.firstResponder && u.firstResponder != self) rt(x).send(x.cpu, u.firstResponder, "resignFirstResponder");
+    if (u.firstResponder && u.firstResponder != self &&
+        !sendBool(x, u.firstResponder, "resignFirstResponder")) return false;
     u.firstResponder = self;
     return true;
 }
