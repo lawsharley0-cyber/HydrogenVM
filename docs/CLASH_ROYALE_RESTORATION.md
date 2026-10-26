@@ -11,13 +11,19 @@ lifecycle. Independent follow-up fixes its terminal-wallet relaunch failure
 after a real native upgrade and separates friendly/chat stream IDs with a
 validated atomic migration. Read the newest LOCAL_CLANS section for actual
 combat/result, repeat-return, 22-test and malformed-save evidence. Donation
-fulfillment is the next clan feature; the later ordered work remains open.
+fulfillment now advances through the persistent donor component below; the
+later ordered work remains open.
 
-The next native component investigation is recorded in
-[DONATIONS.md](clash-royale/DONATIONS.md): original common/rare 203→211 transfers,
-conservation/rewards and empty-stock failure are exercised on independent
-diagnostic actors. This explicitly opt-in probe grants no live player cards;
-production membership, durable donation fulfillment and its UI remain open.
+The post-0be234d continuation in [DONATIONS.md](clash-royale/DONATIONS.md) adds
+an explicitly Local Donor member with finite native inventory and actual
+203→211 transfers to the player: common Arrows1/10 and rare Giant1/1, original
+receipt UI, donor rewards, same-file returns and exhausted-stock0/1. Both actors
+and the request commit synchronously in one atomic checkpoint; deliberate
+pre/post-commit abort recovery and 12 unchanged-file negative cases pass,
+including a reproduced/fixed cross-extension inbox-validation ordering bug.
+The broad suite passes 23 tests. Reciprocal donations, NPC stock replenishment,
+role/kick controls, weekly stats and full device/UI qualification remain open;
+read the exact synthetic-fixture and clock-aging limits before interpreting it.
 
 The owner now authorizes a modified guest IPA containing its own offline logic.
 Read [guest mod progress](clash-royale/GUEST_MOD_PROGRESS.md) first. This prototype

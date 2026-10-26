@@ -1,5 +1,14 @@
 # Offline guest UI audit — October 25, 2026
 
+Latest donation subset after 0be234d: native two-member roster (human leader /
+Local Donor), online1/2, actual NPC profile/name/deck/native lifetime donations;
+common receipt1/10 and rare receipt toast/bar1/1; real replacement request0/1
+when stock is exhausted; actual same-save return and corruption/abort recovery.
+See DONATIONS.md for exact candidate, evidence paths and synthetic time-aging
+limits. Kick/Promote are visible on the NPC profile but still unported; reciprocal
+requests, weekly statistics, stock refill and phone/full-button checks remain
+open. Recorded PCM is signal evidence, not a sound quality/stutter pass.
+
 Post-Kimi 96003cb integration: native friendly combat/result reproduces in a
 clan with existing chat/request history. A subsequent actual Giant upgrade
 reveals a terminal-wallet restart abort; the fix retains the exact upgraded

@@ -39,6 +39,7 @@ static u32 checksum(const u8 *bytes,u32 size) {
 #include "mail_state.inc"
 #include "card_request_state.inc"
 #include "friendly_state.inc"
+#include "donor_state.inc"
 static void write_save(void) {
 #ifdef GUEST_PROFILE_SAVES
     const u32 began=checkpoint_clock_us();
@@ -59,6 +60,7 @@ static void write_save(void) {
     write_local_mail(file,header[3]);
     write_card_request(file,header[3]);
     write_friendly(file,header[3]);
+    write_donor(file,header[3]);
     if(pending_size) {
         u32 journal[5]={0x314a5247u,pending_size,(u32)pending_kind,(u32)pending_id,checksum(pending_reward,pending_size)};
         valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(journal,1,sizeof journal,file)==sizeof journal;
@@ -110,7 +112,7 @@ static void load_guest_home(void) {
             fail("GuestOffline: invalid checkpoint header; original file retained");
         saved_size=header[1];avatar_offset=header[2];
         int valid=CALL(s_read,u32,(void*,u32,u32,void*))(saved_home,1,saved_size,file)==saved_size;
-        int saw_clock=0,saw_journal=0,saw_clan=0,saw_chat=0,saw_mail=0,saw_request=0,saw_friendly=0;
+        int saw_clock=0,saw_journal=0,saw_clan=0,saw_chat=0,saw_mail=0,saw_request=0,saw_friendly=0,saw_donor=0;
         for(;;) {
             u32 tag,extra=CALL(s_read,u32,(void*,u32,u32,void*))(&tag,1,4,file);
             if(!extra)break;
@@ -136,6 +138,9 @@ static void load_guest_home(void) {
             }
             if(tag==0x31524647u && !saw_friendly) {
                 read_friendly(file,header[3]);saw_friendly=1;continue;
+            }
+            if(tag==0x314e4447u && !saw_donor) {
+                read_donor(file,header[3]);saw_donor=1;continue;
             }
             if(tag!=0x314a5247u || saw_journal)
                 fail("GuestOffline: unknown/duplicate checkpoint extension; original file retained");
@@ -213,7 +218,7 @@ static void capture_current_home(void *ui,int force) {
     last_tick=tick;account_home_clock(logic,home,1);capture_native(home,avatar);
     committed_wins=(int)FIELD(avatar,0x9c);
 }
-void guest_snapshot(void *ui) {capture_current_home(ui,0);friendly_tick();}
+void guest_snapshot(void *ui) {capture_current_home(ui,0);friendly_tick();donation_tick();}
 void guest_set_npc_losses(void *avatar,int count) {
     if(friendly_state==2 && battle_started && !arena_battle &&
        FIELD(avatar,0x10)==0 && FIELD(avatar,0x14)==1)return;

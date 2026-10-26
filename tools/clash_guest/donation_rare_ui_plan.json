@@ -1,0 +1,9 @@
+{
+  "name": "Native rare request and finite local NPC fulfillment",
+  "precondition": "King-3 clan, request cooldown actually expired, owned Giant and eligible Local Donor stock. Timer-aged component fixtures must be labeled explicitly.",
+  "steps": [
+    {"id":"R-clan","expected":"Original local clan page","actions":[{"tap":[240,535]}],"settleSeconds":2},
+    {"id":"R-chooser","expected":"Native Arena-1 picker states 10 common or 1 rare","actions":[{"tap":[45,490]}],"settleSeconds":3},
+    {"id":"R-giant","expected":"Original Giant request; eligible stocked local NPC credits exactly one card with native receipt toast and 1/1 bar; exhausted stock must remain 0/1","actions":[{"tap":[196,260]}],"settleSeconds":12}
+  ]
+}

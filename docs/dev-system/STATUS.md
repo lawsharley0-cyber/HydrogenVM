@@ -16,6 +16,19 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Latest scoped Clash continuation — October 26, 2026
 
+Post-0be234d donation component: persistent Local Donor/native profile and finite
+original stock now deliver real common Arrows1/10 and rare Giant1/1 with native
+receipt toast. Both actors/request commit in one fsync/rename; deliberate
+pre/post-commit aborts followed by two same-file returns each produce exactly
+one transfer. An actual replacement Giant request stays0/1 with exhausted stock.
+All 23 guest tests and 12 damaged-client-file rejection/retention cases pass.
+The twelfth reproduces/fixes inbox semantic validation occurring after a
+legacy-clan donor migration write; validation now precedes every migration.
+See [DONATIONS.md](../clash-royale/DONATIONS.md) for exact candidate hashes,
+clock-aged synthetic King-3 fixtures, audio evidence and open boundaries. No
+shared runtime change or new iPhone qualification. Reciprocal donations, NPC
+stock replenishment, role/kick controls and weekly statistics are unfinished.
+
 Post-Kimi integration: 96003cb's friendly lifecycle is independently reproduced
 with the actual native 750-byte result. A real later Giant upgrade (2995→2945,
 two materials, level 2 / XP 6) exposes its terminal-friendly wallet freeze at
@@ -27,16 +40,16 @@ returns retain the upgrade; a new friendly sequence charges once and retains
 2940 after abandonment/return. The broad guest suite passes 22 tests, with nine
 malformed actual-client saves rejected unchanged. See LOCAL_CLANS for exact
 host/package hashes, evidence and limits. No shared runtime source changed;
-donation fulfillment and later owner features remain unfinished.
+remaining clan interactions and later owner features remain unfinished.
 
-The opt-in native donor diagnostic now qualifies common/rare 203→211 material
+The earlier 0be234d opt-in native donor diagnostic qualifies common/rare 203→211 material
 conservation, original rewards and native home/avatar serialization roundtrips
 on independent synthetic actors. Empty-stock
 203 returns zero without donating, a required guard for the future controller.
 Normal/profile objects exclude the probe; all four ARMv7 flag variants compile
 without new imports in the same 22-test suite. Actual diagnostic exit/audio
-evidence and the remaining persistent member/journal/UI work are recorded in
-[DONATIONS.md](../clash-royale/DONATIONS.md). No production receiver grant exists.
+evidence are retained in [DONATIONS.md](../clash-royale/DONATIONS.md); its default
+build has since advanced to the synchronous atomic live-transfer subset above.
 
 Guest v42 qualifies persistent solo-clan creation/chat/info/settings/search and
 leave/re-create in labeled King-3 component fixtures. Original commands

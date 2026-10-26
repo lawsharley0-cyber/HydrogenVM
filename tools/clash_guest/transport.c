@@ -41,6 +41,10 @@ static void prepare_reward(void*,void*);
 static void credit_arena_crowns(void*);
 static void friendly_tick(void);
 static void friendly_battle_completed(void*);
+static void sync_donor(void);
+static void validate_donor(void);
+static void encode_donor_member(void*);
+static void donation_tick(void);
 #ifdef GUEST_PROBE_DONATION_ACTORS
 static void donation_actor_probe(void);
 #endif
@@ -99,10 +103,13 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 }
 #include "reward.inc"
 #include "name.inc"
+#include "native_actor.inc"
 #include "clan.inc"
+#include "donor.inc"
 #include "clan_chat.inc"
 #include "mail.inc"
 #include "card_request.inc"
+#include "donation.inc"
 #include "match.inc"
 #include "friendly.inc"
 static void refresh_saved_arena(void) {
@@ -158,8 +165,13 @@ int guest_send(void *self,void *message) {
 #ifdef GUEST_PROBE_DONATION_ACTORS
         donation_actor_probe();
 #endif
-        validate_clan_checkpoint();
+        validate_donor();
+        validate_donation_record();
+        // Every extension's wire/semantic validation must precede either
+        // friendly-ID migration or seeding a donor into a legacy clan save.
         static u8 checked_mail[33024];encode_local_inbox(checked_mail,sizeof checked_mail);
+        validate_clan_checkpoint();
+        if(clan_status==2 && !donor_size) {sync_donor();write_save();}
         refresh_saved_arena();
         logged_in=1;
         reply(self,20104,1,initial_login,sizeof initial_login);
@@ -234,19 +246,25 @@ int guest_send(void *self,void *message) {
     } else if(kind==10212 && logged_in && !battle_started) {
         change_initial_name(self,message);
     } else if(kind==14113 && logged_in && !battle_started) {
-        // VisitHomeMessage writes a BE LogicLong. This independent profile
-        // only has its own local home; do not invent remote player records.
+        // VisitHomeMessage writes a BE LogicLong. Only the human and actual
+        // persisted local NPC have profiles; no remote records are invented.
         const u8 *data=(const u8*)FIELD(message,8+0x1c);
         int size=CALL(0x198d19,int,(void*))(message);
         if(size!=8)fail("GuestOffline: invalid profile identity extent");
-        for(int i=0;i<8;++i)if(data[i]!=(i==7?1:0))fail("GuestOffline: unavailable remote profile identity");
+        int human=1,npc=donor_size!=0;
+        for(int i=0;i<8;++i) {
+            if(data[i]!=(i==7?1:0))human=0;
+            if(data[i]!=(i==3?3:i==7?1:0))npc=0;
+        }
+        if(!human && !npc)fail("GuestOffline: unavailable remote profile identity");
         capture_current_home(CALL(0x91f7d,void*,(void))(),1);
         // VisitedHomeDataMessage::decode 0x39ca8: VInt, native home,
         // native owner avatar, optional visitor-avatar boolean. The existing
         // checkpoint already ends in that false boolean.
         static u8 profile[65537];profile[0]=0;
-        for(u32 i=0;i<saved_size;++i)profile[1+i]=saved_home[i];
-        reply(self,24113,0,profile,saved_size+1);
+        const u8 *body=human?saved_home:donor_home;u32 extent=human?saved_size:donor_size;
+        for(u32 i=0;i<extent;++i)profile[1+i]=body[i];
+        reply(self,24113,0,profile,extent+1);
     } else if(kind==14101 && logged_in) {
         if(friendly_state==2 && battle_started)abandon_friendly();
         battle_started=0;arena_battle=0;reply(self,24101,0,saved_home,saved_size);

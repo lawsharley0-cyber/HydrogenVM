@@ -2,6 +2,18 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+Donation component (Group C, after 0be234d) now persists an explicitly Local
+Donor through original join command209/create=false and binds its finite native
+inventory to the human checkpoint. Roster/profile, same-save returns,
+settings/leave/re-create and corrupt-file retention are qualified in synthetic
+King-3 fixtures. It includes native NPC-to-human transfers, one synchronous
+two-actor/request atomic commit, real common/rare UI, exhausted stock and
+pre/post-checkpoint abort recovery. See DONATIONS.md for qualified scopes.
+Review also reproduced a legacy-clan migration rewriting a bad inbox before
+semantic rejection; the fix validates inbox before all migrations/refresh
+writes and retains the bad file.
+Reciprocal NPC requests, role/kick controls, supply and weekly stats remain next.
+
 October 26 donation continuation (Group C): native common/rare actor transfers
 and empty-stock failure are reproducible with the explicit builder probe.
 Original 203 returns zero on both success and failure; require actual native

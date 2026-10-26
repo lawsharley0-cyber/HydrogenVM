@@ -32,7 +32,8 @@ static int clan_capture_ready(void *avatar) {
         card_request_size=0;card_request_stamp=0;
         if(friendly_state==1 || friendly_state==2)fail("GuestOffline: clan leave during active friendly challenge");
         friendly_sequence=0;friendly_state=0;friendly_entry_size=0;friendly_result_size=0;
-        CALL(API_puts,int,(const char*))("GuestOffline: original clan leave applied; committing disbanded solo clan");
+        sync_donor();
+        CALL(API_puts,int,(const char*))("GuestOffline: original clan leave applied; committing disbanded local clan");
         return 1;
     }
     if(clan_status==1 && !id) {
@@ -47,6 +48,7 @@ static int clan_capture_ready(void *avatar) {
         if(CALL(0x9ab55,int,(void*))(avatar)!=clan_gold_after)
             fail("GuestOffline: original clan creation charge mismatch");
         clan_status=2;
+        sync_donor();
         CALL(API_puts,int,(const char*))("GuestOffline: original clan creation applied; committing native membership and charge");
     }
     if(clan_status==4) {
@@ -54,6 +56,7 @@ static int clan_capture_ready(void *avatar) {
         void *badge=CALL(0x9ae39,void*,(void*))(avatar);
         if(!badge || CALL(0x7d2e1,int,(void*))(badge)!=16000000+f.badge)return 0;
         clan_status=2;
+        sync_donor();
     }
     return 1;
 }
@@ -92,7 +95,7 @@ static void encode_clan_header(void *stream,void *request,void *avatar) {
     struct ClanFields f=clan_fields(clan_request,clan_request_size);
     u32 header[15]={0},id[2]={1,clan_serial};
     FIELD(header,0)=(u32)id;FIELD(header,4)=FIELD(request,0x30);FIELD(header,8)=FIELD(request,0x38);
-    FIELD(header,0xc)=(u32)f.type;FIELD(header,0x10)=1;
+    FIELD(header,0xc)=(u32)f.type;FIELD(header,0x10)=donor_size?2:1;
     FIELD(header,0x14)=FIELD(avatar,0x34)/2;FIELD(header,0x18)=(u32)f.score;
     FIELD(header,0x34)=FIELD(request,0x3c);
     CALL(0x38221,void,(void*,void*))(header,stream);
@@ -112,7 +115,7 @@ static void clan_data(void *self,void *message) {
     CALL(0x192a71,void,(void*,u32))(stream,4096);
     encode_clan_header(stream,request,avatar);
     CALL(0x192d0d,void,(void*,void*))(stream,(void*)FIELD(request,0x34));
-    CALL(0x193749,void,(void*,int))(stream,1);
+    CALL(0x193749,void,(void*,int))(stream,donor_size?2:1);
     FIELD(member,0x10)=(u32)CALL(0x99e2d,void*,(void*))(avatar);
     FIELD(member,0x14)=FIELD(member,0x10);
     // getName 0x37f00 reads +0x1c. The preceding nullable string is a
@@ -122,6 +125,7 @@ static void clan_data(void *self,void *message) {
     FIELD(member,0x28)=FIELD(avatar,0x34);FIELD(member,0x34)=1;
     FIELD(member,0x48)=(u32)CALL(0x9b4d1,void*,(void*))(avatar);
     CALL(0x37d85,void,(void*,void*))(member,stream);
+    if(donor_size)encode_donor_member(stream);
     reply(self,24301,0,CALL(0x1936fd,const u8*,(void*))(stream),CALL(0x192b2d,u32,(void*))(stream));
     CALL(0x19370d,void,(void*))(stream);dispose(owner);dispose(request);
     send_clan_conversation(self);
@@ -194,7 +198,8 @@ static void search_local_clan(void *self,void *message) {
         owner=decode_packet(24101,0,saved_home,saved_size);avatar=(void*)FIELD(owner,0x34);
         request=decode_packet(14301,0,clan_request,clan_request_size);
         struct ClanFields f=clan_fields(clan_request,clan_request_size);
-        match=minimum<=1 && maximum>=1 && score<=(int)FIELD(avatar,0x34)/2 && (region<0 || region==f.region);
+        int members=donor_size?2:1;
+        match=minimum<=members && maximum>=members && score<=(int)FIELD(avatar,0x34)/2 && (region<0 || region==f.region);
         if(joinable && (f.type!=1 || (int)FIELD(avatar,0x34)<f.score))match=0;
         if(query_size) {
             u32 name_lower[5],query_lower[5];

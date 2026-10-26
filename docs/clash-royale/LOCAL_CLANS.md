@@ -9,14 +9,18 @@ creation, chat, info/settings/search and leave/re-create in synthetic component
 fixtures. v46 adds original local clan mail and its persistent Inbox/cooldown.
 v48 adds actual unfulfilled card requests with original cooldown and recovery.
 v64 qualifies the paid Friendly Battle subset with an explicit simulated local
-NPC, native combat/results and durable lifecycle recovery. Donation fulfillment
-is not ported; this is not the completed clans feature or a full-button pass.
+NPC, native combat/results and durable lifecycle recovery. The post-0be234d
+continuation adds persistent Local Donor membership/profile and finite native
+NPC-to-human common/rare donations. This is not completed clans or a full-button
+pass: reciprocal donations, stock supply, role/kick controls and weekly stats
+remain open.
 
-Donation investigation now independently exercises original donor 203 and
-receiver 211 on separate native common/rare actors, including an empty-stock
-failure that still returns zero. See [native donation work](DONATIONS.md) for
-the opt-in reproducible diagnostic, original 2016 limits and remaining durable
-member/inventory/journal/UI implementation. Default packages grant no donations.
+See [native donation work](DONATIONS.md) for the actual 1/10 common and 1/1 rare
+receipt UI, exhausted 0/1 request, same-save returns, pre/post-checkpoint abort
+recovery, 12 unchanged-file negative cases, 23 tests and GDN1's nine-word
+header. The older opt-in actor diagnostic remains useful, but the default
+guest now includes this synchronous atomic transfer subset. Clan qualification
+is still in synthetic King-3 fixtures, not the earned King-2 player or iPhone.
 
 ## Current component qualification — v42
 

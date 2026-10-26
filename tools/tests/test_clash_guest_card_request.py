@@ -63,6 +63,21 @@ int main(int argc,char **argv) {
             for now, age in [('225', b'\xbd\x01'), ('100', b'\0'), ('99', b'\0')]:
                 result = run(original, now)
                 self.assertEqual((result.returncode,result.stdout), (0,prefix+age+suffix))
+            # Literal original DonationContainer: fixed BE donor (3,1),
+            # one fixed BE card count, matching class-26/index-0 reference.
+            donor=struct.pack('>III',3,1,1)+b'\x1a\0'
+            donated_suffix=b'\0'+struct.pack('>II',10,1)+donor+suffix[9:]
+            donated=prefix+b'\0'+donated_suffix
+            result=run(donated)
+            self.assertEqual((result.returncode,result.stdout),(0,prefix+b'\xbd\x01'+donated_suffix))
+            for word,value in [(0,0),(0,4),(1,2),(2,0),(2,2)]:
+                bad=bytearray(donor);struct.pack_into('>I',bad,word*4,value)
+                vectorsuffix=b'\0'+struct.pack('>II',10,1)+bad+suffix[9:]
+                self.assertEqual(run(prefix+b'\0'+vectorsuffix).returncode,2)
+            mismatched=donated.replace(donor,donor[:-1]+b'\x01',1)
+            self.assertEqual(run(mismatched).returncode,2)
+            for length in range(len(donated)):
+                self.assertEqual(run(donated[:length]).returncode,2)
             vectors = [original[:n] for n in range(len(original))]
             vectors += [original+b'\0', b'\x02'+original[1:], original[:2]+b'\x02'+original[3:],
                         prefix+b'\x01'+suffix, prefix+b'\0\x01'+suffix[1:],

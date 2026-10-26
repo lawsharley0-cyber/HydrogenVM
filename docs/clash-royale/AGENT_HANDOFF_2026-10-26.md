@@ -1,12 +1,26 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+**Latest post-0be234d donor continuation:** read [DONATIONS.md](DONATIONS.md)
+before modifying clans. The default guest now persists an explicitly Local
+Donor/native inventory in GDN1 and synchronously commits actual native203/211
+transfers plus request metadata in the same human checkpoint. Common1/10,
+rare1/1, exhausted0/1, repeated returns, pre/post-checkpoint abort recovery,
+12 unchanged-file negative cases and 23 guest tests pass. Inbox semantic
+validation now precedes all migration writes, with an actual fail-before /
+pass-after reproduction of the old ordering bug. No shared
+runtime edits or phone qualification. These are synthetic King-3 component
+fixtures, with explicitly aged clocks for rare/replacement requests. Next:
+reciprocal donation requests, role/kick controls, real NPC stock supply/weekly
+stats; then authored post-training names, legal decks/native styles and shop.
+Do not downgrade GDN1 saves or replace the preserved earned/failing instances.
+
 **Later continuation supersedes the friendly blocker below:** Kimi's 96003cb
 implements the scoped local-NPC Friendly Battle lifecycle. The subsequent
 integration work fixes a real terminal-wallet restart abort after a native
 upgrade, retains strict active escrow checks and migrates colliding friendly
 stream IDs to namespace 2 / GFR1 version 2. See the newest LOCAL_CLANS section
 for independently played native combat, exact save/negative tests and 22-test
-evidence. Donation fulfillment remains next, then names, deck/styles and shop.
+evidence. Its subsequent donation subset is qualified in the latest banner.
 The detailed handoff below is the preserved earlier source/evidence snapshot.
 
 This is the current continuation entry point. The owner requested this handoff
