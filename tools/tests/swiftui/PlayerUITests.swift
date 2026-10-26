@@ -15,7 +15,7 @@ final class PlayerUITests: XCTestCase {
         let hidden = NSPredicate(format: "exists == false")
         expectation(for: hidden, evaluatedWith: app.keyboards.firstMatch)
         waitForExpectations(timeout: 10)
-        XCTAssertTrue(app.otherElements["player-viewport"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["player-viewport"].exists)
     }
 
     @MainActor
@@ -24,7 +24,7 @@ final class PlayerUITests: XCTestCase {
         app.launchEnvironment["PLAYER_ORIENTATION"] = String(orientation)
         app.launch()
         app.buttons["Open Player"].tap()
-        XCTAssertTrue(app.otherElements["player-viewport"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["player-viewport"].waitForExistence(timeout: 10))
         return app
     }
 
@@ -38,7 +38,7 @@ final class PlayerUITests: XCTestCase {
     @MainActor
     func testPortraitCenterTouchAndPauseResume() {
         let app = open()
-        let screen = app.otherElements["player-viewport"]
+        let screen = app.descendants(matching: .any)["player-viewport"]
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
         app.buttons["player-controls"].tap()
@@ -59,7 +59,7 @@ final class PlayerUITests: XCTestCase {
     @MainActor
     func testBothLandscapeDirectionsAndDisplayModes() {
         let app = open(3)
-        let screen = app.otherElements["player-viewport"]
+        let screen = app.descendants(matching: .any)["player-viewport"]
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
         app.buttons["player-controls"].tap()
@@ -93,7 +93,7 @@ final class PlayerUITests: XCTestCase {
     @MainActor
     func testMultitouchAndRotationCancelsHeldFinger() {
         let app = open()
-        let screen = app.otherElements["player-viewport"]
+        let screen = app.descendants(matching: .any)["player-viewport"]
         screen.pinch(withScale: 1.3, velocity: 1)
         wait(app.staticTexts["probe-max-touches"], label: "2")
         app.buttons["probe-delayed-rotate"].tap()
@@ -103,3 +103,4 @@ final class PlayerUITests: XCTestCase {
         waitForExpectations(timeout: 10)
     }
 }
+
