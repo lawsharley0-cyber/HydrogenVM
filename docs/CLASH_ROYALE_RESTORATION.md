@@ -1,6 +1,6 @@
 # Clash Royale solo restoration investigation
 
-## Current architecture — October 25, 2026
+## Current architecture — October 26, 2026
 
 The owner now authorizes a modified guest IPA containing its own offline logic.
 Read [guest mod progress](clash-royale/GUEST_MOD_PROGRESS.md) first. This prototype
@@ -10,8 +10,12 @@ are locally reproduced. The initial name flow now uses original command 201;
 it needs the shared CoreText caret API present on this branch (ordinary main
 `6884670` stops there). Two real final-trainer defeats persist without win/chest
 grants, followed by an earned seventh victory. v27 preserves the native arena
-refresh and graduates the same save to Arena 1. Arena matchmaking and later
-progression still need their guest port.
+refresh and graduates the same save to Arena 1. v31 completes two actual
+Arena-1 bot victories, original paid entry, 65 earned trophies and matching
+Silver Chest rewards. Its latest battle credits three actual native crowns;
+the original home transfers them to 3/10 once across two clean relaunches.
+Later arenas, draw accounting, closed-time timers and the remaining unlocked
+controls still need implementation/qualification.
 See [UI audit](clash-royale/UI_AUDIT.md) for exact hosts and gaps. This is **not
 the complete offline game**; the older arena battle/economy evidence below
 belongs to the host backend. Device behavior remains unverified.

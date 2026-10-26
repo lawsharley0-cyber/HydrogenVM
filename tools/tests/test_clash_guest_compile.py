@@ -9,6 +9,15 @@ ROOT=Path(__file__).resolve().parents[2]
 
 
 class GuestCompileTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('clang++'),'host C++ compiler unavailable')
+    def test_fixture_exporter_builds_without_game_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result=subprocess.run(['clang++','-std=c++20','-O2','-I'+str(ROOT/'src'),
+                                   str(ROOT/'tools/clash_guest/fixture_export.cpp'),
+                                   str(ROOT/'src/runtime/offline/ClashState.cpp'),'-lz',
+                                   '-o',str(Path(directory)/'fixture-export')],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+
     @unittest.skipUnless(shutil.which('clang'),'ARM cross compiler unavailable')
     def test_freestanding_armv7_payload(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -19,6 +28,7 @@ class GuestCompileTests(unittest.TestCase):
             header+='#define GUEST_MAX_TOWER_LEVEL 12\nstruct GuestTowerPatch {unsigned part,offset,width;int values[12];};\n'
             header+='struct GuestSector {const unsigned char *parts[4];unsigned sizes[4];const struct GuestTowerPatch *patches;unsigned patchCount,lowBits;};\n'
             header+='static const struct GuestSector npc_sectors[7]={0};\n'
+            header+='static const struct GuestSector arena1_sectors[13]={0};\nstatic const int arena1_npc_trophies[13]={0};\n'
             (directory/'generated.h').write_text(header)
             command=['clang','-target','armv7-apple-ios6.0','-mthumb','-Oz','-ffreestanding',
                      '-fno-builtin','-fno-stack-protector','-fno-pic','-fno-unwind-tables',

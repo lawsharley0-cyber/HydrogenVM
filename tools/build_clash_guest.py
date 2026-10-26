@@ -139,6 +139,14 @@ def build(source, output, build_dir, profile_saves=False):
         asm.write('.p2align 2\n.globl _guest_original_settings_click\n.thumb_func\n'
                   '_guest_original_settings_click:\n .byte '+','.join(str(x) for x in settings_prologue)+
                   '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0x94f25\n')
+        battle_segment=next(s for s in parsed['segments'] if s[1]<=0x1499c<s[1]+s[4])
+        battle_at=battle_segment[3]+0x1499c-battle_segment[1]
+        battle_prologue=original[battle_at:battle_at+8]
+        if battle_prologue!=bytes.fromhex('f0b503af2de9000d'):
+            raise ValueError('Unexpected native battle-ended prologue')
+        asm.write('.p2align 2\n.globl _guest_original_battle_ended\n.thumb_func\n'
+                  '_guest_original_battle_ended:\n .byte '+','.join(str(x) for x in battle_prologue)+
+                  '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0x149a5\n')
     run(['clang','-target','armv7-apple-ios6.0','-c',assembly,'-o',build_dir/'update.o'])
     linker = os.environ.get('HVM_LD64') or shutil.which('arm-apple-darwin11-ld')
     if not linker:
@@ -178,7 +186,8 @@ def build(source, output, build_dir, profile_saves=False):
     for address, symbol in [(0x187484,'_guest_connect'),(0x1872d0,'_guest_send'),
                             (0x187130,'_guest_disconnect'),(0x92f08,'_guest_update'),
                             (0x9ae94,'_guest_set_npc_wins'),(0x9aea4,'_guest_set_npc_losses'),
-                            (0x8203c,'_guest_reward_execute'),(0x94f1c,'_guest_settings_click')]:
+                            (0x8203c,'_guest_reward_execute'),(0x94f1c,'_guest_settings_click'),
+                            (0x1499c,'_guest_battle_ended')]:
         segment = next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
         at = segment[3]+address-segment[1]
         target = mod['symbols'][symbol]

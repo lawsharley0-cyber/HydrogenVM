@@ -14,7 +14,17 @@ python3 tools/hvm_compat.py issues build/compat-report/report.json
 
 Copy `summary` and the regression list into the snapshot. Dry-run issues are notes, not filed tickets. Do not commit `build/`.
 
-## Latest scoped Clash continuation — October 25, 2026
+## Latest scoped Clash continuation — October 26, 2026
+
+Guest-only continuation v31 now completes two actual Arena-1 bot victories
+after seven earned trainers. Native ELO reaches 65; paid entry, matching Silver
+chests, cards/King 2 persist. Three actual native crowns transfer once to home
+3/10 across two clean relaunches. Eight guest tests/720 private sector component
+comparisons pass. This adds no runtime special case. Later arenas, draw/partial
+loss crowns, timers, remaining unlocked controls and phone retesting remain;
+see [UI audit](../clash-royale/UI_AUDIT.md). The 5fbaa8d Apple workflow completes
+device/simulator builds and packaging, but still has four continue-on-error
+simulator console probes failing. A green workflow is not a device game pass.
 
 Clean integrated 5fbaa8d includes main 5968d88. The indexed Linux 4 KB
 [gate report](reports/linux-x86_64/20261026T040954Z-5fbaa8d57a17.json) has

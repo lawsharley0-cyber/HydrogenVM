@@ -94,7 +94,7 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 | T-06 | TV tab / replay / locked-training notice | v23 original Arena-1 lock renders; replay recording unimplemented |
 | B-01 | Eight card deployment slots / targeting / invalid placement | Klaus defeated using seven distinct cards from rotating eight-card deck; Prince attempt after victory is not deployment proof; placement failures still pending |
 | B-02 | Battle result OK / draw / loss / return home | Seven earned wins; Boris defeat persists twice without a grant; final Silver label matches chest ID 7; real draw previously grants nothing |
-| LATE-01 | Initial name / training 4–7 / Arena 1 | Native name and all seven wins pass; Arena 1 home/preview renders; new inner controls and matchmaking remain unqualified |
+| LATE-01 | Initial name / training 4–7 / Arena 1 | Native name/seven trainers pass; v29/v31 actual Arena-1 wins, 65 trophies and Silver rewards; three crowns transfer once; unlocked inner controls still pending |
 
 ## Test host and private evidence
 
@@ -252,8 +252,43 @@ confirms the native ISO-language truth table, reports az-Arab=1 diagnostically,
 and passes Apple engine/state/TL-O/P/Q checks plus device/simulator compilation.
 Its green conclusion includes continue-on-error GPU presentation and batch
 console probes that report failures; it is not an all-simulator or device pass.
-The integrated 5fbaa8d Apple build is a separate pending gate. Phone retest,
-all unlocked controls, Arena matchmaking/economy/timers and later arenas remain.
+The integrated 5fbaa8d Apple build also completes (40267946912): native checks,
+device/simulator compilation and unsigned IPA packaging pass. Its simulator
+console probes still report four continue-on-error failures: frame 60/600,
+batch exit marker and landscape frame 60. Green CI is not all-simulator or
+phone qualification. Phone retest, unlocked controls, timers and later arenas
+remain.
+
+## Arena-1 paid matches and durable crowns
+
+v29 native command 537 starts an original Arena-1 bot match. First abandoned
+entry changes Gold 76→75, no result grant. Reopening preserves it. The next
+entry changes 75→74; actual Jonas victory gives ELO 34, total wins 8/losses 2,
+Silver Chest ID 8/data 19000009 and the matching native Silver reward label.
+Private audits: `/var/tmp/hvm-clash-arena1-v29`, `arena1-audit-v29`,
+`arena1-return-v29` (all prefixes `/var/tmp/hvm-clash-`). The first win's crown
+accounting was missing; it is not silently inferred/regranted.
+
+v30's new crown wrapper incorrectly dereferenced an optional null argument.
+Native disassembly at 0xd756c proves the argument is null by design. Its result
+guard aborts before a win is committed, leaving Gold 73/pre-result state safe.
+v31 qualifies battle.account instead; the next actual match pays Gold 73→72,
+wins with three crowns, raises native trophies 34→65, banks Silver ID 9 and
+preserves two losses. Original crown getter reports 3/pending 3. On reopening,
+the original home transfers pending 3→0 and renders 3/10. Second launch keeps
+3/10, 65 trophies, Gold 72, same cards and three unstarted Silver chests, without
+duplicate credit/reward. Checksums valid, no journal, no restore/reset.
+
+Evidence: `/var/tmp/hvm-clash-arena1-crowns-v31` (32 states, clean exit,
+10,725,376 stereo frames, 10,395,905 non-silent, zero drops/transport errors),
+`/var/tmp/hvm-clash-arena1-crowns-return-v31` and `return2-v31` (same prefix).
+Screenshots were reviewed: original victory/Silver label, Gold/trophies and
+native crown 3/10 home/tooltip. PCM peak 1.0 is not a perceptual-quality pass.
+Fresh v31 also starts the original tutorial for 25 seconds and exits cleanly
+(`/var/tmp/hvm-clash-fresh-v31`); it does not reuse the earned player's home.
+Eight guest tests and 720 private sector comparisons pass. Later bot scenes
+are component coverage only, not earned progression; draw/partial-loss crown
+qualification, long timers and all unlocked buttons remain open.
 
 ## Stutter investigation (measurements)
 

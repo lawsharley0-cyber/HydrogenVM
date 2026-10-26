@@ -96,8 +96,8 @@ int main(int argc,char** argv) {
         Bytes body(header[1]);if(!input.read(reinterpret_cast<char*>(body.data()),body.size()))return 6;
         ClashProfile p;p.nativeHome=Bytes(body.begin(),body.begin()+header[2]);
         p.nativeAvatar=Bytes(body.begin()+header[2],body.end()-1);
-        const int mission=std::stoi(argv[3]);if(mission<0 || mission>=7)return 6;
-        const auto expected=ClashFixtures(argv[1],18000000+mission).sector(p);
+        const int mission=std::stoi(argv[3]);if(mission<0 || mission>=20)return 6;
+        const auto expected=ClashFixtures(argv[1],18000000+mission,mission>=7?1:0).sector(p);
         std::ofstream output(argv[4],std::ios::binary);
         return output.write(reinterpret_cast<const char*>(expected.data()),expected.size())?0:6;
     }
@@ -118,8 +118,19 @@ int main(int argc,char** argv) {
     // The pinned 2016 exp_levels.csv contains levels 1..12, not modern level 13.
     std::puts("#define GUEST_MAX_TOWER_LEVEL 12\nstruct GuestTowerPatch {unsigned part,offset,width;int values[12];};");
     for(int i=0;i<7;++i)sectorTemplate("npc_"+std::to_string(i),ClashFixtures(argv[1],18000000+i),p,avatar);
+    std::vector<int> arenaScores;
+    for(int i=7;i<20;++i) {
+        ClashFixtures bot(argv[1],18000000+i,1);
+        sectorTemplate("arena1_npc_"+std::to_string(i),bot,p,avatar);
+        arenaScores.push_back(bot.npcTrophies);
+    }
     std::puts("struct GuestSector {const unsigned char *parts[4];unsigned sizes[4];const struct GuestTowerPatch *patches;unsigned patchCount,lowBits;};");
     std::puts("static const struct GuestSector npc_sectors[]={");
     for(int i=0;i<7;++i)std::printf("{{npc_%d_a,npc_%d_b,npc_%d_c,npc_%d_d},{sizeof npc_%d_a,sizeof npc_%d_b,sizeof npc_%d_c,sizeof npc_%d_d},npc_%d_patches,sizeof npc_%d_patches/sizeof *npc_%d_patches,npc_%d_LOW_BITS},\n",i,i,i,i,i,i,i,i,i,i,i,i);
+    std::puts("};");
+    std::puts("static const struct GuestSector arena1_sectors[]={");
+    for(int i=7;i<20;++i)std::printf("{{arena1_npc_%d_a,arena1_npc_%d_b,arena1_npc_%d_c,arena1_npc_%d_d},{sizeof arena1_npc_%d_a,sizeof arena1_npc_%d_b,sizeof arena1_npc_%d_c,sizeof arena1_npc_%d_d},arena1_npc_%d_patches,sizeof arena1_npc_%d_patches/sizeof *arena1_npc_%d_patches,arena1_npc_%d_LOW_BITS},\n",i,i,i,i,i,i,i,i,i,i,i,i);
+    std::puts("};\nstatic const int arena1_npc_trophies[]={");
+    for(int score:arenaScores)std::printf("%d,",score);
     std::puts("};");
 }

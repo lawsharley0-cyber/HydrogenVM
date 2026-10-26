@@ -8,8 +8,11 @@ refresh using the original native routine; the actual earned save graduates
 to Arena 1. Main 5968d88 is integrated at 5fbaa8d; fulltest 256/256, TestLab
 17/17, complete compatibility gate and full report pass locally. Read
 [UI_AUDIT.md](clash-royale/UI_AUDIT.md) for fresh/returning runs, audio captures,
-Apple simulator warnings, hashes and exact remaining blockers. Arena matches,
-economy/timers, unlocked controls and phone validation remain unfinished.
+Apple simulator warnings, hashes and exact remaining blockers. v31 adds actual
+Arena-1 victories: 65 trophies, three banked Silver chests, native entry fees
+and a 3/10 crown transfer retained across two clean launches. Later arenas,
+draw accounting, closed-time timers, unlocked controls and phone validation
+remain unfinished. Read the newest Arena-1 section before using older blockers.
 
 October 25 UI/crash continuation: read [UI_AUDIT.md](clash-royale/UI_AUDIT.md)
 and the latest section in [GUEST_MOD_PROGRESS.md](clash-royale/GUEST_MOD_PROGRESS.md).

@@ -74,8 +74,7 @@ static void sector_part(struct SectorWriter *w,const struct GuestSector *s,int p
         if(patch.size!=p->width)fail("GuestOffline: tower patch width mismatch");
     }
 }
-static u32 assemble_sector(u8 *bytes,u32 capacity,int mission) {
-    const struct GuestSector *s=&npc_sectors[mission];
+static u32 assemble_sector_template(u8 *bytes,u32 capacity,const struct GuestSector *s) {
     struct SectorWriter w={bytes,0,capacity};
     struct GuestDeck deck=selected_deck();int level=player_level(),hand=deck.count<4?deck.count:4;
     sector_part(&w,s,0,level);sector_byte(&w,1);sector_vint(&w,hand);
@@ -99,4 +98,8 @@ static u32 assemble_sector(u8 *bytes,u32 capacity,int mission) {
     sector_part(&w,s,3,level);
     CALL(API_printf,int,(const char*,int,int))("GuestOffline: native deck cards=%d tower level=%d\n",deck.count,level);
     return w.size;
+}
+static u32 assemble_sector(u8 *bytes,u32 capacity,int mission) {
+    if(mission<0 || mission>=7)fail("GuestOffline: unsupported training sector");
+    return assemble_sector_template(bytes,capacity,&npc_sectors[mission]);
 }

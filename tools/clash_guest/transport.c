@@ -18,7 +18,8 @@ void *memset(void *dest,int value,u32 size) {
     return CALL(API_memset,void*,(void*,int,u32))(dest,value,size);
 }
 static u32 factory[4];
-static int initialized,logged_in,battle_started;
+static int initialized,logged_in,battle_started,arena_battle;
+static void *ending_battle;
 static void *active_messaging;
 static u8 pending_reward[65536];
 static u32 pending_size;
@@ -37,6 +38,7 @@ struct GuestSinCos guest_sincosf(float angle) {
 static void *decode_packet(int,int,const u8*,u32);
 static void dispose(void*);
 static void prepare_reward(void*,void*);
+static void credit_arena_crowns(void*);
 
 static void fail(const char *why) {
     CALL(API_puts,int,(const char*))(why);
@@ -47,14 +49,20 @@ static void fail(const char *why) {
 #include "sector.inc"
 #include "support.inc"
 static void reply(void*,int,int,const u8*,u32);
-static void send_training_sector(void *self,int mission) {
-    static u8 sector[65536],packet[70000];
-    u32 size=assemble_sector(sector,sizeof sector,mission);
-    packet[0]=1;for(int i=0;i<4;++i)packet[1+i]=(u8)(size>>(i*8));
-    u32 compressed=sizeof packet-5;
-    if(CALL(symbol("compress2"),int,(void*,u32*,const void*,u32,int))(packet+5,&compressed,sector,size,6)!=0)
+static u8 sector_packet[70000];
+static u32 prepare_sector_packet(const struct GuestSector *template) {
+    static u8 sector[65536];
+    u32 size=assemble_sector_template(sector,sizeof sector,template);
+    sector_packet[0]=1;for(int i=0;i<4;++i)sector_packet[1+i]=(u8)(size>>(i*8));
+    u32 compressed=sizeof sector_packet-5;
+    if(CALL(symbol("compress2"),int,(void*,u32*,const void*,u32,int))(sector_packet+5,&compressed,sector,size,6)!=0)
         fail("GuestOffline: native sector compression failed");
-    reply(self,21903,1,packet,compressed+5);
+    return compressed+5;
+}
+static void send_training_sector(void *self,int mission) {
+    if(mission<0 || mission>=7)fail("GuestOffline: unsupported training sector");
+    u32 size=prepare_sector_packet(&npc_sectors[mission]);
+    reply(self,21903,1,sector_packet,size);
 }
 static void dispose(void *message) {
     u32 *vtable=(u32 *)FIELD(message,0);
@@ -82,6 +90,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 }
 #include "reward.inc"
 #include "name.inc"
+#include "match.inc"
 static void refresh_saved_arena(void) {
     // Recover already-earned saves captured before the native post-setter
     // continuation. The original routine reads the actual NPC threshold,
@@ -106,7 +115,7 @@ void guest_connect(void *self,void *domain,void *port) {
         if(zero.sine!=0.0f || zero.cosine!=1.0f)fail("GuestOffline: scalar trigonometry unavailable");
         CALL(0x51971,void,(void*,int))(factory,0);initialized=1;
     }
-    logged_in=0;battle_started=0;
+    logged_in=0;battle_started=0;arena_battle=0;ending_battle=0;
     // A disconnected name reply has no resource transaction to recover.
     // Reloaded native avatar state decides whether an initial request is valid.
     initial_name_pending=0;
@@ -176,13 +185,13 @@ int guest_send(void *self,void *message) {
         for(u32 i=0;i<saved_size;++i)profile[1+i]=saved_home[i];
         reply(self,24113,0,profile,saved_size+1);
     } else if(kind==14101 && logged_in) {
-        battle_started=0;reply(self,24101,0,saved_home,saved_size);
+        battle_started=0;arena_battle=0;reply(self,24101,0,saved_home,saved_size);
     } else if(kind==14104 && logged_in && !battle_started) {
         const u8 *data=(const u8*)FIELD(message,8+0x1c);
         int size=CALL(0x198d19,int,(void*))(message);
         if(size!=2 || data[0]!=18 || data[1]>=7)fail("GuestOffline: unsupported training mission");
         capture_current_home(CALL(0x91f7d,void*,(void))(),1);
-        send_training_sector(self,data[1]);battle_started=1;
+        send_training_sector(self,data[1]);battle_started=1;arena_battle=0;
     } else if(kind==10107 && logged_in) {
         // Original ClientCapabilitiesMessage (getMessageType 0xbd10) is
         // one-way metadata and has no server response.
@@ -201,7 +210,7 @@ int guest_send(void *self,void *message) {
         // Native NPC1 simulation executes its own battle commands. No invented
         // checksum acknowledgements or duplicated server-side commands.
     } else if(kind==14102 && logged_in) {
-        consume_home_turn(message);
+        if(consume_home_turn(message))start_arena_match(self);
     } else fail("GuestOffline: unsupported prototype request; progression is not implemented");
     dispose(message);return 1;
 }

@@ -167,7 +167,13 @@ void guest_set_npc_losses(void *avatar,int count) {
        FIELD(avatar,0x10)!=0 || FIELD(avatar,0x14)!=1)return;
     if(count==previous)return;
     if(count!=previous+1)fail("GuestOffline: unexpected native loss transition");
-    serialize_native(0,avatar,1);
+    serialize_native(0,avatar,0);
+    void *owner=decode_packet(24101,0,saved_home,saved_size);
+    void *home=(void*)FIELD(owner,0x30),*copy=(void*)FIELD(owner,0x34);
+    if(!home || !copy)fail("GuestOffline: invalid decoded loss checkpoint");
+    credit_arena_crowns(copy);
+    CALL(0x9b709,void,(void*))(copy);
+    capture_native(home,copy);dispose(owner);
     CALL(API_printf,int,(const char*,int))("GuestOffline: persisted original NPC loss=%d\n",count);
 }
 void guest_set_npc_wins(void *avatar,int count) {
@@ -202,6 +208,7 @@ void guest_set_npc_wins(void *avatar,int count) {
     // the win setter we intercept. The live avatar will still do that, but
     // this saved copy must also run the original CSV/trophy/NPC-count logic.
     // Otherwise the seventh earned win persists Training Camp forever.
+    credit_arena_crowns(copy);
     CALL(0x9b709,void,(void*))(copy);
     capture_native(home,copy);dispose(owner);
     committed_wins=count;

@@ -16,12 +16,12 @@ it does not set `HydrogenVMOfflineBackend`, start a TCP server, use Frida/JIT,
 or call HydrogenVM's Clash service. Ordinary emulation/framework/file APIs are
 still required, as for every guest app.
 
-**Prototype, not a complete replacement yet.** Training startup, battle input,
-three earned training victories, chest banking, home persistence, native
-reward recovery and a paid card upgrade have been reproduced. Selected deck and
-tower level adaptation are implemented. Full training/arenas,
-elapsed closed time, paid/free/crown qualification, name flow,
-intentional interruption tests and device validation remain open.
+**Prototype, not a complete replacement yet.** Seven earned training victories,
+two actual Arena-1 wins, initial name, paid card upgrades/King level 2, native
+deck swaps, chest banking and interrupted native reward recovery are reproduced.
+The latest arena victory credits three native crowns; two relaunches retain
+3/10 without a duplicate. Later arenas, draw accounting, elapsed closed time,
+remaining economy/control qualification and device validation remain open.
 
 ## Reproduction and packaging
 
@@ -52,8 +52,8 @@ ARM64 app or a signed package.
   send and disconnect. Native connected state now represents a local message
   queue. Original factory/decoders create response objects, and original queue
   enqueue delivers them. No blanket network-success stubs or checksum acks.
-- `fixture_export.cpp`: private initial home/login and seven training-sector
-  templates. `sector.inc` inserts the saved selected deck and avatar, rebuilds
+- `fixture_export.cpp`: private initial home/login, seven training-sector and
+  thirteen Arena-1 bot templates. `sector.inc` inserts the saved selected deck and avatar, rebuilds
   native hand/queue indices, and applies original CSV tower level/HP values.
   The pinned client has twelve experience levels. Unique field matches and
   fixed VInt widths are checked at build time; all writes are bounded.
@@ -311,6 +311,55 @@ executable SHA256:
 The bundle/save identities and original assets remain unchanged. No phone test
 or complete-game claim follows from these local results.
 
+## Arena-1 guest battles and crown transfer — October 26
+
+Native command 537 (decode 0xbbf4c) carries base metadata, a selector VInt and
+packed boolean. The actual Battle control sends 0/false. The guest validates
+the complete turn and debug trailer before starting a match; unknown variants
+still fail. Thirteen original non-training NPC templates use the pinned Arena-1
+sector/AI data, selected by nearest original NPC trophy count. The original
+commodity helper charges the arena's native Gold cost and FreeGold clamp on a
+decoded checkpoint copy. Only a fully assembled/compressed sector permits the
+atomic debit; aborted/abandoned matches retain their paid entry, without wins
+or rewards. No host backend is involved.
+
+v29 wins against original Trainer Jonas, raises native ELO 0→34 and banks
+Silver Chest ID 8, whose result label matches. A separate abandoned attempt
+costs one Gold without a grant; reopening charges nothing. The next real v31
+win raises ELO 34→65, wins 8→9 (seven training plus two arena), losses remain
+2 and Silver Chest ID 9 is banked. Gold is 72, gems 100, XP 8/King 2, nine cards;
+IDs 7/8/9 remain unstarted, three-hour Silver chests. No save was reset/restored.
+
+The guest's new battleEnded trampoline preserves the original prologue and
+argument ABI. It supplies the actual battle context to the result checkpoint:
+original LogicSummoner::getStars (0x10f3fc), pending-star getter/setter
+(0x9b080/0x9b0a8), then original home transfer. v30 incorrectly inspected the
+optional avatar argument; native LogicGameMode::battleEnded explicitly passes
+null (0xd756c). Its guard stopped the result before persistence, retaining
+only the already-paid entry. v31 qualifies battle.account and forwards the
+nullable argument unchanged. No assertion was hidden. The actual v31 victory
+reports three crowns; home changes pending 3→0 and displays 3/10. Two clean
+relaunches retain the same Gold/trophies/wins/chests/crown count, no journal.
+The earlier v29 crowns are not inferred or retroactively granted. Loss crown
+copying is implemented but an actual arena defeat with crowns is unqualified;
+draw crown accounting still needs its own original-result path.
+
+Eight authored guest tests pass, including real ARMv7 normal/profiling payload
+compilation and a C++ fixture-exporter build without proprietary data. A private
+component audit compares 720 sectors byte-for-byte to the independent C++
+serializer: 20 bots × 12 tower levels × 1/6/8 cards. These comparisons do not
+claim all bots/levels were played. The actual v31 battle captures 32 states,
+10,725,376 stereo frames, 10,395,905 non-silent frames, no dropped blocks or
+transport errors, and exits cleanly. Peak 1.0 and Linux frame timings do not
+resolve the owner's phone audio/stutter reports.
+
+Private v31 IPA SHA256:
+`dbd502c6789f433727d47aee9c17e8e258ef758ddc728bf2e63ecb152ae58ced`;
+executable SHA256:
+`e8c5a144f35591e959cb90ea1c88c3411e53af3d48e6604b8c3eb297ea418a66`.
+Bundle/save identity and all original assets remain unchanged. See UI_AUDIT
+for exact local paths and Apple limitations. Never deliver v28/v30 diagnostics.
+
 ## Next work
 
 1. Preserve the deliberate SIGKILL recovery evidence and earned eight-card
@@ -318,9 +367,9 @@ or complete-game claim follows from these local results.
 2. Finish the final-package audit and repeat critical relaunch/audio/visual checks.
    Eight-card battles, native Use swaps, earned King 2 stats and a real loss now
    have actual evidence; synthetic byte comparisons remain component tests.
-3. Port Arena-1 matchmaking and entry costs; qualify an actual bot battle and
-   native ELO/crowns before later arenas. Audit the newly unlocked controls and
-   test actual name keyboard editing. Seven wins/graduation now have evidence.
+3. Audit the newly unlocked Arena-1 controls and actual name keyboard editing.
+   Qualify partial-loss/draw crown accounting, earned crown-chest collection
+   and interrupted recovery; first arena wins/ELO/crowns now have evidence.
 4. Port arena/bot selection and all six locations, real elapsed timers and the
    remaining native economy/journal paths. Build-time data can reuse the pinned
    CSV research, but runtime logic must stay in the guest IPA.

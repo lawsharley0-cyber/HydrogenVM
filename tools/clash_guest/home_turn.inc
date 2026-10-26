@@ -25,12 +25,13 @@ static void reward_echo(struct GuestReader *r) {
     if(!valid || used>remaining || remaining-used<4)fail("GuestOffline: unexpected reward echo");
     r->at+=used;r->bits=0;
 }
-static void consume_home_turn(void *message) {
+static int consume_home_turn(void *message) {
     struct GuestReader r={(const u8*)FIELD(message,8+0x1c),
                           CALL(0x198d19,u32,(void*))(message),0,0,0};
     if(turn_vint(&r)<0)fail("GuestOffline: negative home tick");
     turn_vint(&r);int count=turn_vint(&r);
     if(count<0 || count>64)fail("GuestOffline: invalid home command count");
+    int matchmaking=0;
     for(int i=0;i<count;++i) {
         int kind=turn_vint(&r);
         if(kind==213){reward_echo(&r);continue;}
@@ -56,6 +57,15 @@ static void consume_home_turn(void *message) {
             requested_kind=1;requested_id=id;
         } else if(kind==518 || kind==523) {
             requested_kind=kind==518?2:3;requested_id=0;
+        } else if(kind==537) {
+            // Native decode 0xbbf4c reads a VInt and packed boolean.
+            // The actual Arena-1 Battle control sends selector 0, flag false.
+            // Queue nothing until the entire command bundle/trailer validates.
+            int selector=turn_vint(&r),flag=turn_bool(&r);
+            CALL(API_printf,int,(const char*,int,int,u32))(
+                "GuestOffline: arena request selector=%d flag=%d remaining=%u\n",selector,flag,r.size-r.at);
+            if(selector!=0 || flag || matchmaking)fail("GuestOffline: unsupported matchmaking variant");
+            matchmaking=1;
         } else if(kind==539) {
             // LogicPageOpenedCommand::decode 0xd8af8 reads one VInt;
             // execute 0xd8b10 accepts native page IDs 1 through 4.
@@ -74,4 +84,5 @@ static void consume_home_turn(void *message) {
     for(int i=0;i<4;++i)if(turn_byte(&r)!=255)fail("GuestOffline: unsupported home debug trailer");
     if(r.at!=r.size)fail("GuestOffline: trailing home turn data");
     capture_current_home(CALL(0x91f7d,void*,(void))(),1);
+    return matchmaking;
 }
