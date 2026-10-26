@@ -2,6 +2,15 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+October 26 post-Kimi integration checks (Group C, source 96003cb): verify later
+native Gold transactions/relaunch after a terminal friendly challenge. Current
+GFR1 validation compares every later wallet to historical friendly balances;
+only active intent/accepted battle must retain its exact protected wallet.
+Also qualify chat/friendly stream-ID collisions before adding donor actors;
+both currently allocate (0,sequence) independently. Preserve Kimi's verified
+friendly lifecycle and all original economy/bounds checks while fixing these
+cross-feature cases. Donation fulfillment remains the next feature afterwards.
+
 October 25 UI/stability follow-up (same branch, Group C): owner requests a
 clickable-control audit, Settings Help/Support crash fixes, post-upgrade relaunch
 recovery, and measured stutter investigation. Phone v19 report identifies

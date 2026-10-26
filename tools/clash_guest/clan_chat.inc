@@ -3,6 +3,8 @@
 #include "clan_chat_wire.inc"
 #include "card_request_wire.inc"
 #include "friendly_wire.inc"
+#include "friendly_wallet.inc"
+static void friendly_migrate_identity(void);
 static u32 encode_clan_conversation(u8 *output,u32 capacity) {
     struct SectorWriter w={output,0,capacity};
     sector_vint(&w,(int)clan_chat_count+(card_request_size?1:0)+(friendly_sequence?1:0));
@@ -121,12 +123,12 @@ static void validate_clan_checkpoint(void) {
         }
     }
     if(friendly_sequence) {
-        int expected_gold=friendly_state==4?friendly_gold_before:friendly_gold_after;
-        int expected_free=friendly_state==4?friendly_free_before:friendly_free_after;
-        if(clan_status!=2 || CALL(0x9ab55,int,(void*))(avatar)!=expected_gold ||
-           CALL(0x9ab7d,int,(void*))(avatar)!=expected_free)
+        if(!friendly_wallet_valid(friendly_state,(int)clan_status,
+           CALL(0x9ab55,int,(void*))(avatar),CALL(0x9ab7d,int,(void*))(avatar),
+           friendly_gold_before,friendly_gold_after,friendly_free_before,friendly_free_after))
             fail("GuestOffline: saved friendly wallet differs from native avatar");
     }
     dispose(owner);
     static u8 checked[70000];encode_clan_conversation(checked,sizeof checked);
+    friendly_migrate_identity();
 }

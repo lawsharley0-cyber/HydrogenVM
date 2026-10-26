@@ -1,5 +1,14 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+**Later continuation supersedes the friendly blocker below:** Kimi's 96003cb
+implements the scoped local-NPC Friendly Battle lifecycle. The subsequent
+integration work fixes a real terminal-wallet restart abort after a native
+upgrade, retains strict active escrow checks and migrates colliding friendly
+stream IDs to namespace 2 / GFR1 version 2. See the newest LOCAL_CLANS section
+for independently played native combat, exact save/negative tests and 22-test
+evidence. Donation fulfillment remains next, then names, deck/styles and shop.
+The detailed handoff below is the preserved earlier source/evidence snapshot.
+
 This is the current continuation entry point. The owner requested this handoff
 after the clan mail/card-request work. Resume from the pushed source described
 below; do not restart the old login investigation. This document distinguishes

@@ -6,6 +6,13 @@ architecture, current source/state, exact verification process and future work.
 
 ## Current architecture — October 26, 2026
 
+Latest: Kimi's 96003cb adds the scoped persistent local-NPC Friendly Battle
+lifecycle. Independent follow-up fixes its terminal-wallet relaunch failure
+after a real native upgrade and separates friendly/chat stream IDs with a
+validated atomic migration. Read the newest LOCAL_CLANS section for actual
+combat/result, repeat-return, 22-test and malformed-save evidence. Donation
+fulfillment is the next clan feature; the later ordered work remains open.
+
 The owner now authorizes a modified guest IPA containing its own offline logic.
 Read [guest mod progress](clash-royale/GUEST_MOD_PROGRESS.md) first. This prototype
 runs without a Clash host service. Seven earned training wins, native reward

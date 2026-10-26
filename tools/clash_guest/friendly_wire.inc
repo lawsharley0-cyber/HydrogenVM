@@ -3,7 +3,7 @@
 static u32 friendly_entry_wire(struct SectorWriter *w,const u8 *data,u32 size,u32 stamp,u32 now) {
     struct GuestReader r={data,size,0,0,0};int type=turn_vint(&r);
     if(type!=10 && type!=11)fail("GuestOffline: invalid friendly stream type");
-    if(turn_vint(&r)!=0 || (u32)turn_vint(&r)!=friendly_sequence)
+    if((u32)turn_vint(&r)!=friendly_namespace || (u32)turn_vint(&r)!=friendly_sequence)
         fail("GuestOffline: invalid friendly stream identity");
     for(int i=0;i<2;++i)if(turn_vint(&r)!=0 || turn_vint(&r)!=1)
         fail("GuestOffline: invalid friendly stream author/home");

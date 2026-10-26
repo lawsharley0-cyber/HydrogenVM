@@ -3,17 +3,18 @@
  * 5 abandoned after acceptance. Only states 1 and 2 are active. */
 static u8 friendly_entry[2048],friendly_result[32768];
 static u32 friendly_sequence,friendly_state,friendly_stamp,friendly_accepted_stamp;
+static u32 friendly_namespace;
 static u32 friendly_entry_size,friendly_result_size,friendly_echo_crc;
 static int friendly_gold_before,friendly_gold_after,friendly_free_before,friendly_free_after;
 static int friendly_npc_before,friendly_npc_after;
 static void write_friendly(void *file,u32 body_hash) {
     if(!friendly_sequence)return;
-    u32 h[20]={0x31524647u,1,friendly_sequence,friendly_state,friendly_stamp,
+    u32 h[20]={0x31524647u,friendly_namespace?2u:1u,friendly_sequence,friendly_state,friendly_stamp,
         friendly_entry_size,friendly_result_size,(u32)friendly_gold_before,
         (u32)friendly_gold_after,(u32)friendly_free_before,(u32)friendly_free_after,
         (u32)friendly_npc_before,(u32)friendly_npc_after,body_hash,friendly_echo_crc,
         checksum(friendly_entry,friendly_entry_size),checksum(friendly_result,friendly_result_size),
-        friendly_accepted_stamp,0,0};
+        friendly_accepted_stamp,friendly_namespace,0};
     h[19]=checksum((const u8*)h,76);
     if(CALL(s_write,u32,(const void*,u32,u32,void*))(h,1,sizeof h,file)!=sizeof h ||
        CALL(s_write,u32,(const void*,u32,u32,void*))(friendly_entry,1,friendly_entry_size,file)!=friendly_entry_size ||
@@ -23,11 +24,12 @@ static void write_friendly(void *file,u32 body_hash) {
 static void read_friendly(void *file,u32 body_hash) {
     u32 h[20]={0x31524647u};
     if(CALL(s_read,u32,(void*,u32,u32,void*))(h+1,1,76,file)!=76 ||
-       h[19]!=checksum((const u8*)h,76) || h[1]!=1 || !h[2] || h[2]>1000000000 ||
+       h[19]!=checksum((const u8*)h,76) ||
+       (h[1]==1?h[18]!=0:(h[1]!=2 || h[18]!=2)) || !h[2] || h[2]>1000000000 ||
        h[3]<1 || h[3]>5 || !h[4] || h[5]<20 || h[5]>sizeof friendly_entry ||
        h[6]>sizeof friendly_result || ((h[3]==3)!=(h[6]!=0)) || h[13]!=body_hash ||
        h[7]>2000000000u || h[8]>2000000000u || h[9]>h[7] || h[10]>h[8] ||
-       h[7]-h[8]!=5 || h[11]!=5 || h[12]>5 || h[18] ||
+       h[7]-h[8]!=5 || h[11]!=5 || h[12]>5 ||
        (h[3]==4 && h[12]!=5) || (h[3]!=4 && h[3]!=1 && h[12]!=0) ||
        (h[3]==1 && h[12]!=5) || ((h[3]==2 || h[3]==3 || h[3]==5) && !h[17]) ||
        ((h[3]==1 || h[3]==4) && h[17]))
@@ -41,4 +43,5 @@ static void read_friendly(void *file,u32 body_hash) {
     friendly_free_before=(int)h[9];friendly_free_after=(int)h[10];
     friendly_npc_before=(int)h[11];friendly_npc_after=(int)h[12];friendly_echo_crc=h[14];
     friendly_accepted_stamp=h[17];
+    friendly_namespace=h[18];
 }

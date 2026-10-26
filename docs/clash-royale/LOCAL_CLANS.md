@@ -277,6 +277,77 @@ Assets are unchanged. This qualifies one bundled Trainer Boris local-NPC flow
 in a synthetic clan fixture, not multiplayer, donor fulfillment, earned King-3
 progression, phone behavior, or the complete Clans button surface.
 
+## Post-Kimi integration: terminal wallets and stream identities
+
+Kimi's `96003cb80022fc8bc7d80adacd0bf4d1078148d4` is fast-forwarded locally.
+The actual remote branch is `codex/clash-offline-continuation` (the owner's
+message abbreviated its last letter). The broader authored guest glob
+`test_*clash_guest*.py` passes **20** tests on that exact baseline; the prior
+15 count uses the narrower `test_clash_guest_*.py` glob, excluding five builder
+tests. Shared `src/` tree remains identical to clean gated 912a87e.
+
+Independent native combat on a separate synthetic K3 fork of the existing
+clan fixture reproduces Trainer Boris 1 / Offline Player 0 and a 750-byte
+native result without ladder rewards:
+`/var/tmp/hvm-clash-codex-friendly-completion-before`. It retains the actual
+chat/request history, unlike an empty conversation component fixture.
+
+The next actual crash is a cross-feature wallet check. After native friendly
+abandonment (state 5, 3000→2995), a real Giant upgrade spends the original
+50 Gold / two materials, yielding Giant level 2, XP 6 and Gold/FreeGold 2945.
+96003cb's next login incorrectly demands historical 2995 and aborts with
+`saved friendly wallet differs from native avatar`. The rejected save stays
+byte-identical. Evidence:
+`/var/tmp/hvm-clash-codex-friendly-{upgrade-before,wallet-return-before}`.
+The earned source and earned King-2 QA player are untouched.
+
+The fix distinguishes active escrow from historical records. States 1/2 still
+require the exact post-debit Gold/FreeGold and completed membership. Terminal
+states 3/4/5 allow subsequent legitimate native economy actions and pending
+leave/settings journals; historical before/after cost and FreeGold clamp,
+wallet ranges and every header/body/payload guard remain validated. An authored
+regression fails on the extracted original guard before the fix and passes
+afterwards. It covers completed/cancelled/abandoned records, later expenditures/
+rewards, active mismatches, invalid balances and invalid membership/state.
+
+Friendly and chat previously both allocated `(0,sequence)`, allowing equal
+stream IDs. New friendly entries use **(2,sequence)**, separate from chat's
+(0,sequence) and card requests' (1,sequence). GFR1 **version 2** retains its
+80-byte layout, setting word 18 to namespace 2; legacy version 1 requires
+word 18=0. Only after all native/wallet/extension/wire validations pass is a
+legacy challenge/result's one-byte ID namespace changed atomically to 2.
+Amounts, text and native result JSON are retained; no refund/command is replayed.
+Older guests reject the new version, so do not downgrade a migrated instance.
+
+The same failed upgraded save now opens and retains 2945/87, Giant 2/0, XP 6,
+65 trophies, NPC counters 9/2 and crowns 3/10 over two clean returns. Native
+clan frames show the request, authored chat and terminal friendly separately.
+Completed native result history also migrates and renders correctly. Evidence:
+`/var/tmp/hvm-clash-codex-friendly-wallet-return-after{1,2}` and
+`/var/tmp/hvm-clash-codex-friendly-result-history-after1`.
+The final candidate also creates a new namespace-2 sequence 2, charges 2945→2940,
+enters native combat and abandons without refund; its return retains 2940 and
+all other protected progression:
+`/var/tmp/hvm-clash-codex-friendly-{new-identity,new-identity-return}`.
+
+All **22** tests in `test_*clash_guest*.py` pass, including namespace-2 wire/
+storage, byte-preserving idempotent legacy migration and active-wallet guards.
+Nine actual-client malformed-save cases reject unchanged, including a semantic
+active-wallet mismatch and an invalid legacy record that must not be migrated:
+`/var/tmp/hvm-clash-codex-friendly-corruption-rerun/summary.json`.
+The initial negative run overlapped a positive launch's legitimate clock write,
+so its source-equality check failed; the qualifying rerun uses an immutable
+source copy and passes source retention as well as every injected-file check.
+PCM remains nonzero (peak 0.830139), with zero dropped blocks/transport errors;
+this is not a phone audio/stutter qualification.
+
+Private final candidate IPA SHA256:
+`3ff78c95c89436d59d34bc828ac4d71e93193db51d2a36453a5f9cc5dc68f178`;
+executable `d7d17fd195c47cda7fbbf4a9930508c981920715d625fd4189b346147b27dd11`.
+Assets are unchanged. No generic runtime source changed; the clean indexed
+912a87e host gates remain the reused runtime qualification. Donation actors/
+inventory transfers remain the next clan feature, before names/deck/styles/shop.
+
 Reproducible authored plans are `tools/clash_guest/clan_{create,chat,info,edit,search,leave}_ui_plan.json`.
 Run create only against an explicitly labeled King-3 component instance with
 sufficient Gold and no clan; it spends the real original 1000 Gold. Subsequent

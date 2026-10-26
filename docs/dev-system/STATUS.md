@@ -16,6 +16,19 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Latest scoped Clash continuation — October 26, 2026
 
+Post-Kimi integration: 96003cb's friendly lifecycle is independently reproduced
+with the actual native 750-byte result. A real later Giant upgrade (2995→2945,
+two materials, level 2 / XP 6) exposes its terminal-friendly wallet freeze at
+next login. The follow-up preserves strict active escrow checks but permits
+legitimate later economy after completed/cancelled/abandoned bouts. Legacy
+friendly stream IDs migrate atomically to namespace 2 / GFR1 version 2 after
+all validation, separating them from chat and card requests. Two same-save
+returns retain the upgrade; a new friendly sequence charges once and retains
+2940 after abandonment/return. The broad guest suite passes 22 tests, with nine
+malformed actual-client saves rejected unchanged. See LOCAL_CLANS for exact
+host/package hashes, evidence and limits. No shared runtime source changed;
+donation fulfillment and later owner features remain unfinished.
+
 Guest v42 qualifies persistent solo-clan creation/chat/info/settings/search and
 leave/re-create in labeled King-3 component fixtures. Original commands
 209/212/208, 1000-Gold creation, actual native member/leader and atomic GCL1/GCS1

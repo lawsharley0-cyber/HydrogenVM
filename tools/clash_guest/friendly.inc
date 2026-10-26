@@ -2,6 +2,16 @@
  * five-Gold bout escrow, accepts only after a durable pending interval, and uses
  * the original trainer deck/AI. No online player or acceptance is invented. */
 extern int guest_original_challenge_execute(void*,void*,int,int);
+#include "friendly_identity.inc"
+static void friendly_migrate_identity(void) {
+    if(!friendly_sequence || friendly_namespace==2)return;
+    // Called only after every native/extension/wire guard passes. Legacy GFR1
+    // shared (0,sequence) with chat. Normalize its opaque IDs atomically; the
+    // historical debit, entry text and native result stay unchanged.
+    friendly_identity_migration(friendly_entry,friendly_entry_size,friendly_result,friendly_result_size,&friendly_namespace);
+    write_save();
+    CALL(API_puts,int,(const char*))("GuestOffline: migrated validated friendly history to its own stream namespace");
+}
 static void friendly_native_log(void *battle) {
     void *mode=(void*)FIELD(battle,0);
     if(!mode)fail("GuestOffline: friendly native log has no game mode");
@@ -35,7 +45,7 @@ static void friendly_native_log(void *battle) {
 }
 static void friendly_stream_base(u32 *entry,void *avatar) {
     static u32 identity[2];
-    identity[0]=0;identity[1]=friendly_sequence;
+    identity[0]=friendly_namespace;identity[1]=friendly_sequence;
     FIELD(entry,4)=(u32)identity;
     FIELD(entry,8)=(u32)CALL(0x99e2d,void*,(void*))(avatar);
     FIELD(entry,0xc)=FIELD(entry,8);
@@ -83,7 +93,7 @@ int guest_challenge_execute(void *command,void *logic,int mode,int flags) {
     void *gold_data=CALL(0xb8309,void*,(void))();
     if(cost!=5 || !gold_data || gold<cost || free<0 || free>gold)
         fail("GuestOffline: invalid or insufficient friendly challenge balance");
-    ++friendly_sequence;friendly_gold_before=gold;friendly_free_before=free;
+    friendly_namespace=2;++friendly_sequence;friendly_gold_before=gold;friendly_free_before=free;
     CALL(0x9a5ed,int,(void*,int,void*,int,int))(avatar,0,gold_data,-cost,0);
     friendly_gold_after=CALL(0x9ab55,int,(void*))(avatar);
     friendly_free_after=CALL(0x9ab7d,int,(void*))(avatar);

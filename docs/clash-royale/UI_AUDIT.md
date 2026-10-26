@@ -1,5 +1,15 @@
 # Offline guest UI audit — October 25, 2026
 
+Post-Kimi 96003cb integration: native friendly combat/result reproduces in a
+clan with existing chat/request history. A subsequent actual Giant upgrade
+reveals a terminal-wallet restart abort; the fix retains the exact upgraded
+save over repeated returns, keeps active escrow guards, and separates friendly
+stream IDs from chat through validated atomic legacy migration. Nine malformed
+save cases and all 22 broad guest tests pass; see LOCAL_CLANS for exact scopes.
+New native friendly creation/accepted abandonment uses sequence 2 and one
+5-Gold debit (2945→2940). Donation fulfillment, phone behavior and the full
+button/visual/audio audit remain open.
+
 October 26 mail checkpoint: v46 retains the original Clan Leader Message form,
 native validation/12-hour cooldown and local Inbox. Sending, owned forced stop,
 recovery, explicit Inbox selection and row tapping retain exactly one message

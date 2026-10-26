@@ -63,7 +63,7 @@ class GuestFriendlyTests(unittest.TestCase):
 #include <stdio.h>
 #include <stdlib.h>
 typedef unsigned int u32;typedef unsigned char u8;
-static u32 friendly_sequence=7,friendly_state=1,friendly_result[32768],friendly_echo_crc;
+static u32 friendly_sequence=7,friendly_state=1,friendly_namespace,friendly_result[32768],friendly_echo_crc;
 static void fail(const char *why) {fprintf(stderr,"%s\n",why);exit(2);}
 static u32 checksum(const u8 *p,u32 n) {u32 h=2166136261u;while(n--)h=(h^*p++)*16777619u;return h;}
 #include "reader.inc"
@@ -81,12 +81,13 @@ static void sector_vint(struct SectorWriter *w,int value) {
 #include "friendly_wire.inc"
 int main(int argc,char **argv) {
     friendly_state=(u32)atoi(argv[1]);u8 data[4096],out[4100];
+    friendly_namespace=argc>2?(u32)atoi(argv[2]):0;
     u32 size=(u32)fread(data,1,sizeof data,stdin);struct SectorWriter w={out,0,sizeof out};
     friendly_entry_wire(&w,data,size,100,225);fwrite(out,1,w.size,stdout);
 }
 ''')
-            def run(data, state=1):
-                return subprocess.run([str(exe), str(state)], input=data, capture_output=True)
+            def run(data, state=1, namespace=0):
+                return subprocess.run([str(exe), str(state),str(namespace)], input=data, capture_output=True)
             for raw, state in [(entry(), 1), (entry(optional=True), 2), (entry(closed=True), 4),
                                (entry(closed=True), 5), (result(), 3)]:
                 age_at = raw.index(b'\0\0\0', 10)  # only used to derive expected below independently
@@ -97,6 +98,12 @@ int main(int argc,char **argv) {
                 expected = raw[:prefix_length] + vint(125) + raw[prefix_length+1:]
                 completed = run(raw, state)
                 self.assertEqual((completed.returncode, completed.stdout), (0, expected), (state, raw.hex()))
+                distinct = raw[:1]+b'\x02'+raw[2:]
+                distinct_expected = expected[:1]+b'\x02'+expected[2:]
+                completed = run(distinct,state,2)
+                self.assertEqual((completed.returncode,completed.stdout),(0,distinct_expected))
+                self.assertEqual(run(distinct,state,0).returncode,2)
+                self.assertEqual(run(raw,state,2).returncode,2)
                 for n in range(len(raw)):
                     self.assertEqual(run(raw[:n], state).returncode, 2)
                 self.assertEqual(run(raw+b'\0', state).returncode, 2)
@@ -113,7 +120,7 @@ int main(int argc,char **argv) {
 #include <stdio.h>
 #include <stdlib.h>
 typedef unsigned int u32;typedef unsigned char u8;
-static u32 friendly_sequence=7,friendly_state=1,friendly_result[32768],friendly_echo_crc;
+static u32 friendly_sequence=7,friendly_state=1,friendly_namespace,friendly_result[32768],friendly_echo_crc;
 static void fail(const char *why) {fprintf(stderr,"%s\n",why);exit(2);}
 static u32 checksum(const u8 *p,u32 n) {u32 h=2166136261u;while(n--)h=(h^*p++)*16777619u;return h;}
 #include "reader.inc"
@@ -179,6 +186,13 @@ int main(void) {
                 return subprocess.run([str(exe)], input=data, capture_output=True)
             completed = run(expected)
             self.assertEqual((completed.returncode, completed.stdout), (0, expected), completed.stderr)
+            distinct_challenge=challenge[:1]+b'\x02'+challenge[2:]
+            distinct_result=battle_result[:1]+b'\x02'+battle_result[2:]
+            distinct_header=header.copy();distinct_header[1]=2;distinct_header[18]=2
+            distinct_header[15]=fnv(distinct_challenge);distinct_header[16]=fnv(distinct_result)
+            distinct=encode(distinct_header,distinct_challenge,distinct_result)
+            completed=run(distinct)
+            self.assertEqual((completed.returncode,completed.stdout),(0,distinct))
             for n in range(len(expected)):
                 self.assertEqual(run(expected[:n]).returncode, 2)
             for at in range(len(expected)):
@@ -197,6 +211,67 @@ int main(void) {
             pending[16] = fnv(b'');pending[17] = 0
             self.assertEqual(run(encode(pending, challenge, b'')).returncode, 0)
 
+    def test_legacy_identity_migration_preserves_text_and_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            exe = self.compile(Path(temporary),'identity',r'''
+#include <stdio.h>
+#include <stdlib.h>
+typedef unsigned int u32;typedef unsigned char u8;
+static void fail(const char *why) {fprintf(stderr,"%s\n",why);exit(2);}
+#include "friendly_identity.inc"
+int main(int argc,char **argv) {
+    u8 data[4096];u32 n=(u32)fread(data,1,sizeof data,stdin),split=(u32)atoi(argv[1]);
+    u32 space=argc>2?(u32)atoi(argv[2]):0;
+    if(split>n)return 3;
+    int changed=friendly_identity_migration(data,split,data+split,n-split,&space);
+    printf("%u %d\n",space,changed);fwrite(data,1,n,stdout);
+}
+''')
+            first,second=entry(),result()
+            for tail in (b'',second):
+                expected=first[:1]+b'\x02'+first[2:]
+                if tail:expected+=tail[:1]+b'\x02'+tail[2:]
+                run=subprocess.run([str(exe),str(len(first))],input=first+tail,capture_output=True)
+                self.assertEqual((run.returncode,run.stdout),(0,b'2 1\n'+expected))
+                run=subprocess.run([str(exe),str(len(first)),'2'],input=expected,capture_output=True)
+                self.assertEqual((run.returncode,run.stdout),(0,b'2 0\n'+expected))
+            for namespace,bad in [('1',first+second),('0',b'\x09'+first[1:]+second),
+                                  ('0',first+b'\x09'+second[1:]),('0',first[:1]+b'\x01'+first[2:]+second)]:
+                run=subprocess.run([str(exe),str(len(first)),namespace],input=bad,capture_output=True)
+                self.assertEqual(run.returncode,2)
+
+    def test_terminal_friendly_allows_later_native_economy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            exe = self.compile(Path(temporary), 'wallet', r'''
+#include <stdlib.h>
+typedef unsigned int u32;
+#include "friendly_wallet.inc"
+int main(int argc,char **argv) {
+    if(argc==1)return !(friendly_wallet_valid(1,2,95,80,100,95,80,80) &&
+                       !friendly_wallet_valid(1,2,95,79,100,95,80,79));
+    if(argc!=5)return 3;
+    return friendly_wallet_valid((u32)atoi(argv[1]),atoi(argv[2]),atoi(argv[3]),atoi(argv[4]),
+                                 3000,2995,3000,2995)?0:2;
+}
+''')
+            self.assertEqual(subprocess.run([str(exe)]).returncode,0)
+            # Terminal records describe a historical debit/refund. Subsequent
+            # real upgrades, rewards and entry costs must survive relaunch.
+            for state in (3,4,5):
+                for clan in (2,3,4):
+                    for gold in (0,2975,2994,3000,3023):
+                        result = subprocess.run([str(exe),str(state),str(clan),str(gold),str(gold)])
+                        self.assertEqual(result.returncode,0,(state,clan,gold))
+            # An active paid intent still requires its exact protected wallet.
+            for state in (1,2):
+                self.assertEqual(subprocess.run([str(exe),str(state),'2','2995','2995']).returncode,0)
+                for clan,gold,free in [(2,2994,2994),(2,2996,2995),(2,2995,2994),(3,2995,2995),(4,2995,2995)]:
+                    self.assertEqual(subprocess.run([str(exe),str(state),str(clan),str(gold),str(free)]).returncode,2)
+            for state,clan,gold,free in [(0,2,2995,2995),(6,2,2995,2995),(3,0,2995,2995),
+                                        (3,1,2995,2995),(4,2,-1,0),(5,2,50,51),
+                                        (3,2,2000000001,0),(3,2,50,-1)]:
+                self.assertEqual(subprocess.run([str(exe),str(state),str(clan),str(gold),str(free)]).returncode,2)
+
     def test_sector_preserves_accounts_and_changes_only_battle_type(self):
         with tempfile.TemporaryDirectory() as temporary:
             exe = self.compile(Path(temporary), 'sector', r'''
@@ -204,7 +279,7 @@ int main(void) {
 #include <stdlib.h>
 #include <string.h>
 typedef unsigned int u32;typedef unsigned char u8;
-static u32 friendly_sequence=7,friendly_state=1,friendly_result[32768],friendly_echo_crc;
+static u32 friendly_sequence=7,friendly_state=1,friendly_namespace,friendly_result[32768],friendly_echo_crc;
 static void fail(const char *why) {fprintf(stderr,"%s\n",why);exit(2);}
 static u32 checksum(const u8 *p,u32 n) {u32 h=2166136261u;while(n--)h=(h^*p++)*16777619u;return h;}
 #include "reader.inc"
