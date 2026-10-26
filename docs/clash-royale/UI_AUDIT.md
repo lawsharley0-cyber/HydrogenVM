@@ -138,7 +138,47 @@ upgrade screen (King HP 2592, arena tower HP 1526, both damage 54), closes and
 opens the native profile without abort. Further clean launch checks must ensure
 the level-up screen is not repeatedly presented after its native acknowledgment.
 
-## Apple validation correction
+## Subsequent earned training and initial name
+
+The same QA player wins Teemu (fifth) and Tim (sixth). Chest 5 adds 18 Gold
+(92→110), one Archers and one Musketeer; chest 6 later adds 16 Gold (110→126),
+one Knight and one Archers. Wins/cycle 6 persist, nine cards retained. No save
+reset or imported wins. `/var/tmp/hvm-clash-npc5-v23` contains both battles and
+intentionally records a failure on returning from Tim: ordinary main 6884670
+lacks CTLineGetOffsetForStringIndex when the native initial-name field renders.
+That API already exists on this branch. Existing TL-N independently uses the
+authored CC0 font's design-unit caret offsets; it fails on the ordinary host
+and passes in the branch's 17-case suite. This is a generic runtime dependency,
+not a requirement for a Clash-specific backend. The branch also includes the
+MS ADPCM decoder absent from 6884670; do not label these two hosts equivalent.
+
+On the updated runtime, v23 then reproduces a separate guest abort on request
+10212. v25 implements the native initial-name command 201 via 24111, including
+the original fixed BE change-state integer, user flag and server/base metadata.
+The original executor applies it; the echo is accepted only after matching the
+actual persisted native name/flag. Paid renames remain explicitly unsupported.
+`name_ui_plan.json` captures the original dialog, submit and stable home;
+`/var/tmp/hvm-clash-name-after-v25` exits 0, no crash/load error, and logs actual
+native completion/checkpointing. Relaunch retains the chosen default fixture
+name without repeating the dialog. Editing/Unicode keyboard entry still needs
+device testing; CLI currently injects touch, not text.
+
+The player upgrades Musketeer natively (50 Gold, 6 XP), giving Gold 76, XP 8,
+King level 2. Boris's battle in `/var/tmp/hvm-clash-npc7-v25` is an actual
+overtime defeat: original win count stays 6, loss count becomes 1, no chest or
+reward appears, and OK returns to home. Exit 0, no crash/load error after
+540.208 seconds. v26 adds reset of pending initial-name transport bookkeeping
+on reconnect; the saved native named flag remains authoritative. Its relaunch
+retains the loss, Gold 76 and upgraded deck. No fabricated loss or win is used.
+
+v26 private IPA SHA256:
+`1297cdb2bd505c6973fd68cc7180e6a26aed7a22066407b91aa5c7e0b3a01080`;
+executable SHA256:
+`4355d2eceef59644710e90d5b5dff9300b26efe90c2cbce9590ddfd0fd080d91`.
+Same bundle ID/save format and unchanged original assets. Seven authored guest
+tests pass again, including normal/profiling ARMv7 payload compilation.
+
+## Apple validation correction (details)
 
 [CI 40263193112](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/40263193112)
 passes Linux, Apple compilation/fulltest, offline state checks and TL-O/P, then

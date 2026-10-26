@@ -13,6 +13,10 @@ static int turn_vint(struct GuestReader *r) {
     if(first&64)value|=shift<32?~0u<<shift:0x80000000u;
     return (int)value;
 }
+static u32 turn_int(struct GuestReader *r) {
+    u32 value=0;for(int i=0;i<4;++i)value=(value<<8)|turn_byte(r);
+    return value;
+}
 static int turn_bool(struct GuestReader *r) {
     if(!r->bits){r->packed=turn_byte(r);r->bits=8;}
     int value=r->packed&1;r->packed>>=1;--r->bits;return value;

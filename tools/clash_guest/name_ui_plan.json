@@ -1,0 +1,8 @@
+{
+  "name":"Initial native name entry after six earned training victories, default fixture name",
+  "steps":[
+    {"id":"N-dialog","expected":"Original initial-name field renders with caret; six wins and earned chest retained"},
+    {"id":"N-submit","expected":"Native name command applies and popup closes without abort","actions":[{"tap":[160,310]}],"settleSeconds":5},
+    {"id":"N-home","expected":"Named home remains stable with no repeat request","settleSeconds":8}
+  ]
+}

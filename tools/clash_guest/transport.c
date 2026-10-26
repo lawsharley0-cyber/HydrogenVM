@@ -81,6 +81,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
     CALL(API_printf,int,(const char*,int))("GuestOffline: queued response=%d\n",kind);
 }
 #include "reward.inc"
+#include "name.inc"
 void guest_connect(void *self,void *domain,void *port) {
     (void)domain;(void)port;
     load_guest_home();
@@ -91,6 +92,9 @@ void guest_connect(void *self,void *domain,void *port) {
         CALL(0x51971,void,(void*,int))(factory,0);initialized=1;
     }
     logged_in=0;battle_started=0;
+    // A disconnected name reply has no resource transaction to recover.
+    // Reloaded native avatar state decides whether an initial request is valid.
+    initial_name_pending=0;
     BYTE(self,0xe4)=1; // Connection::isConnected; this transport uses a local queue
     BYTE(self,0x108)=1;BYTE(self,0x109)=0;BYTE(self,0x10a)=0;
     CALL(0x187809,void,(void*,void*))(self,(u8*)self+0xe0);
@@ -139,6 +143,8 @@ int guest_send(void *self,void *message) {
         const u8 *data=(const u8*)FIELD(message,8+0x1c);u8 empty[9];
         for(int i=0;i<8;++i)empty[i]=data[i];empty[8]=0;
         reply(self,24413,0,empty,sizeof empty);
+    } else if(kind==10212 && logged_in && !battle_started) {
+        change_initial_name(self,message);
     } else if(kind==14113 && logged_in && !battle_started) {
         // VisitHomeMessage writes a BE LogicLong. This independent profile
         // only has its own local home; do not invent remote player records.

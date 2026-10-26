@@ -12,6 +12,14 @@ remain required. Shared regex/locale fixes pass 253 runtime and 17 TestLab
 checks on Linux; Apple adapter validation is still a CI gate. Stable guest
 bundle/save identity is retained. Never replace the owner's failing phone save.
 
+Later same-day evidence reaches six earned wins, nine cards, five real card
+upgrades and King level 2 in the QA copy. Native initial-name command 201 is now
+ported (v25/v26); a real Boris defeat persists one loss without a reward and
+returns home. Ordinary main 6884670 cannot render the name field because it
+lacks the shared CoreText caret API already on this branch (TL-N). Use the
+updated runtime, with no Clash backend flags or package marker. Seventh win,
+graduation and arena/economy port remain unfinished; see UI_AUDIT.
+
 The owner requests the offline backend inside a separate Clash IPA, surviving
 ordinary emulator updates without a Clash-specific host service. This explicitly
 authorizes modifying an output copy of the game executable. Read

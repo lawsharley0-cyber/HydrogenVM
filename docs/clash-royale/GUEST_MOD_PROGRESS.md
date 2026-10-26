@@ -264,14 +264,33 @@ complete zero-regression baseline diff pass. Next Apple CI must still complete.
 See UI_AUDIT for the primary-source contract rationale; expectations are not
 derived from emulator output.
 
+The same player subsequently wins Teemu and Tim (6/7), collects both native
+rewards and retains nine cards. Tim's return-home exposes ordinary main 6884670's
+missing CoreText caret API at the name field; this branch already implements
+it with independently specified TL-N coverage. On the updated runtime the
+original name dialog renders, but v23 then aborts on guest request 10212.
+v25 supplies original initial-name command 201 and qualifies the actual native
+execution/echo/checkpoint. Relaunch retains the name. v26 clears only pending
+name-transport bookkeeping on reconnect, leaving native saved state authoritative.
+Paid rename and actual keyboard editing remain unqualified. No host Clash
+backend/marker/flags are used; generic framework compatibility is still required.
+
+An earned Musketeer upgrade costs 50 Gold and grants 6 XP (Gold 76, XP 8, King 2).
+A real overtime defeat against Boris persists losses 1, wins 6, no chest/reward,
+and returns home safely. That 540-second run exits 0 with no crash/load error;
+v26 relaunch retains the result. Original earned source save remains at three
+wins; this extended progression is its private QA copy. See UI_AUDIT for hashes,
+source-dependent runtime limitations and exact private evidence paths.
+
 ## Next work
 
 1. Preserve the deliberate SIGKILL recovery evidence and earned eight-card
    player. Do not reset or restore older checkpoints during the next tests.
-2. Qualify an actual eight-card battle, deck swaps and level-up tower stats;
-   synthetic byte comparisons do not substitute for those scenarios.
-3. Qualify NPC4 onward, name flow and all seven earned training wins. Qualify a
-   real loss; port match costs, actual crowns, arena transition and native ELO.
+2. Finish the final-package audit and repeat critical relaunch/audio/visual checks.
+   Eight-card battles, native Use swaps, earned King 2 stats and a real loss now
+   have actual evidence; synthetic byte comparisons remain component tests.
+3. Win the seventh trainer and qualify graduation and unlocked UI; test actual
+   name keyboard editing. Port match costs, crowns, arena transition and native ELO.
 4. Port arena/bot selection and all six locations, real elapsed timers and the
    remaining native economy/journal paths. Build-time data can reuse the pinned
    CSV research, but runtime logic must stay in the guest IPA.
