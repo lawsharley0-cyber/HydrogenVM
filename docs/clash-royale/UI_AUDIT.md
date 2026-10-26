@@ -86,12 +86,14 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 | H-04 | Training progress / Battle | v26 completes seventh earned trainer; v27 native refresh graduates the same save to Arena 1 |
 | H-05 | Four empty chest slots | v23 tapped all four: native empty state, no crash |
 | H-06 | Earned chest info/unlock/paid/open/reveal | v23 fourth earned chest unlocks after native timer, opens/reveals Gold +16, Mini P.E.K.K.A. and Prince; paid path pending |
-| T-01 | Shop tab / available offers / dismiss | v23 original Arena-1 lock renders; offers inaccessible and unqualified |
+| H-07 | Ranking global/local players/clans/Friends/close | v31 aborts on 14403; v32 original empty-list schemas render all four directories, actual own-player Friends row, and close safely |
+| H-08 | Achievements | v32 opens original five-item list: actual Arena1 and nine-card progress; no available claim or scroll/reward qualification |
+| T-01 | Shop tab / available offers / dismiss | v31 unlocks native chest/Gold offers and scrolls safely; daily cards empty/0sec, purchases remain unported |
 | T-02 | Cards tab / all eight card tiles | v23 19-state plan captures native info and closes for all eight |
 | T-03 | Each card's info / upgrade / use / swap / close | Four real upgrades pass (Archers/Bomber/Arrows/Prince); Knight insufficient cards preserves wallet; native Use swaps Mini P.E.K.K.A. for Arrows and retains across two launches |
 | T-04 | Battle tab / arrows | v23 Battle tab returns safely; arena preview covered; progression arrows pending |
-| T-05 | Social tab / locked-training notice | v23 original Arena-1 lock renders; unlocked features unqualified |
-| T-06 | TV tab / replay / locked-training notice | v23 original Arena-1 lock renders; replay recording unimplemented |
+| T-05 | Social tab / locked-training notice | v31 Arena1 now shows original King-level-3 clan gate, not a crash; later unlocked features unqualified |
+| T-06 | TV tab / replay / locked-training notice | v23 locked; v31 unlocked TV renders original empty replay state and returns home safely; recording unimplemented |
 | B-01 | Eight card deployment slots / targeting / invalid placement | Klaus defeated using seven distinct cards from rotating eight-card deck; Prince attempt after victory is not deployment proof; placement failures still pending |
 | B-02 | Battle result OK / draw / loss / return home | Seven earned wins; Boris defeat persists twice without a grant; final Silver label matches chest ID 7; real draw previously grants nothing |
 | LATE-01 | Initial name / training 4–7 / Arena 1 | Native name/seven trainers pass; v29/v31 actual Arena-1 wins, 65 trophies and Silver rewards; three crowns transfer once; unlocked inner controls still pending |
@@ -289,6 +291,34 @@ Fresh v31 also starts the original tutorial for 25 seconds and exits cleanly
 Eight guest tests and 720 private sector comparisons pass. Later bot scenes
 are component coverage only, not earned progression; draw/partial-loss crown
 qualification, long timers and all unlocked buttons remain open.
+
+## Unlocked home controls — v32
+
+`/var/tmp/hvm-clash-arena1-tabs-v31` captures eight states and exits cleanly:
+native Shop chest/Gold offers and scrolling, returning Battle tab, the original
+King-level-3 clan lock, and native empty TV. Shop's empty daily-card region
+incorrectly remains at 0sec; generation and all purchases remain unqualified.
+
+The ranking control independently aborts v31 on read-only request 14403:
+`/var/tmp/hvm-clash-arena1-ranking-v31`. v32 validates the original packed
+local/anchor flags and optional fixed LogicLong extents, and returns native
+VInt-zero lists for 24403/24404 (players) and 24401/24402 (clans). Encoders
+0x132c6c/0x33cd0/0x110294/0xf9d18 establish the response schemas; request
+encoders are 0x7017c/0x1af38/0x11510. There is no online directory or fabricated
+ranking. `/var/tmp/hvm-clash-arena1-controls-v32` captures all four directories,
+Friends' actual own-player row, Close and the original Achievements list;
+seven states, no crash, reviewed screenshots, wallet/crowns unchanged. Friends
+Connect produces the original Facebook error popup safely in a separate run
+(`/var/tmp/hvm-clash-friends-connect-v32`); retry authentication is unavailable
+offline, and this is not a passed login. Native achievements show actual Arena
+1 and nine-card progress, no available claim. Reward claiming remains untested.
+
+v32 passes the same eight authored guest tests. Private IPA SHA256
+`dfca9d72a6b10dd46e9ad546dff93da4fec4f17d4ec2923d8ec5f36ef9878feb`,
+executable SHA256
+`390b02c5b3d8793951f787d62b70e1ec0986a6c4ac3d2ba7d3702588cd32fb82`.
+All assets and the stable guest/save identity remain unchanged. These edits
+touch the guest tools only; engine evidence remains the integrated 5fbaa8d gate.
 
 ## Stutter investigation (measurements)
 

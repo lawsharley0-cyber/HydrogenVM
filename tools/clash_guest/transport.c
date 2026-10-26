@@ -160,6 +160,22 @@ int guest_send(void *self,void *message) {
     } else if(kind==14402 && logged_in) {
         // RoyalTVContentMessage (24405), native VInt entry count: no remote replays.
         const u8 empty=0;reply(self,24405,0,&empty,1);
+    } else if((kind==14401 || kind==14403 || kind==14404) && logged_in && !battle_started) {
+        // Original encoders: alliance 0x11510 has local/anchor booleans;
+        // avatar global/local 0x7017c/0x1af38 have an anchor boolean. Optional
+        // anchors are fixed BE LogicLongs. This independent offline instance
+        // has no online ranking directory, even when an anchor is requested.
+        const u8 *data=(const u8*)FIELD(message,8+0x1c);
+        u32 size=CALL(0x198d19,u32,(void*))(message);
+        if(size<1)fail("GuestOffline: truncated ranking query");
+        u32 mask=kind==14401?3u:1u,anchor=kind==14401?2u:1u;
+        if((data[0]&~mask) || size!=((data[0]&anchor)?9u:1u))
+            fail("GuestOffline: invalid ranking query extent/flags");
+        // All four original response encoders write only a VInt list count:
+        // 0x132c6c, 0x33cd0, 0x110294, 0xf9d18. Zero is an actual empty
+        // list, not a fabricated player, score, or successful online login.
+        int response=kind==14401?((data[0]&1)?24402:24401):kind+10000;
+        const u8 empty=0;reply(self,response,0,&empty,1);
     } else if(kind==14406 && logged_in) {
         // BattleReportStreamMessage (24413) echoes its BE LogicLong home ID,
         // followed by a VInt entry count. Replay recording is not ported yet.

@@ -10,6 +10,13 @@ Record coverage and unavailable/locked scenarios explicitly; local tests do not
 close phone reports. Shared framework fixes, if necessary, also reserve Group D
 and require pre/post Test Lab and fulltest. Preserve the earned/failing saves.
 
+October 26 Arena-1 control audit (Group C): v31's ranking button reproduces
+an abort on unported read-only request 14403. Port the original empty-list
+schemas for global/local player/clan rankings, without fabricated online
+players. Qualify every ranking tab/close against the earned saved player.
+Shop opens but has no daily cards and displays a zero-second refresh timer;
+shop generation/purchases remain a separate unfinished economy feature.
+
 The owner's explicit request resumes offline Clash development despite the
 master plan's earlier recommendation to park it. Group C owner:
 `codex/clash-offline-continuation`. Restore the pinned NPC sector, native VInt
