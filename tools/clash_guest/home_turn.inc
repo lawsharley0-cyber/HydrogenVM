@@ -6,6 +6,7 @@
 static void name_echo(struct GuestReader*);
 static void clan_echo(struct GuestReader*,int);
 static void mail_echo(struct GuestReader*);
+static void request_echo(struct GuestReader*);
 static void reward_echo(struct GuestReader *r) {
     // A successfully executed server command is echoed by the native client.
     // Its executor is the server's (0,0), not the client's (0,1). Decode it
@@ -43,7 +44,8 @@ static int consume_home_turn(void *message) {
         turn_vint(&r);turn_vint(&r);
         int high=turn_vint(&r),low=turn_vint(&r);
         if(high!=0 || low!=1)fail("GuestOffline: home command identity mismatch");
-        if(kind==500){turn_vint(&r);turn_vint(&r);turn_bool(&r);turn_bool(&r);}
+        if(kind==524)request_echo(&r);
+        else if(kind==500){turn_vint(&r);turn_vint(&r);turn_bool(&r);turn_bool(&r);}
         else if(kind==504)turn_reference(&r);
         else if(kind==525) {
             int spells=turn_vint(&r);if(spells<0 || spells>=200)fail("GuestOffline: invalid spell list");

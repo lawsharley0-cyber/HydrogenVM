@@ -1,0 +1,25 @@
+/* Original DonateStreamEntry type 1, no donations invented for a solo clan. */
+static void card_request_entry(struct SectorWriter *w,const u8 *data,u32 size,u32 stamp,u32 now) {
+    struct GuestReader r={data,size,0,0,0};
+    if(turn_vint(&r)!=1 || turn_vint(&r)!=1 || (u32)turn_vint(&r)!=card_request_sequence)
+        fail("GuestOffline: invalid local card request identity");
+    for(int i=0;i<2;++i)if(turn_vint(&r)!=0 || turn_vint(&r)!=1)
+        fail("GuestOffline: invalid local card request author");
+    clan_skip_string(&r,60,1);int level=turn_vint(&r),role=turn_vint(&r);
+    if(level<1 || level>12 || role!=2)fail("GuestOffline: invalid local card request attributes");
+    u32 age_at=r.at;
+    if(turn_vint(&r)!=0)fail("GuestOffline: invalid stored card request age");
+    u32 age_end=r.at;
+    if(turn_bool(&r))fail("GuestOffline: unsupported removed card request");
+    u32 capacity=turn_int(&r),donors=turn_int(&r);
+    if(capacity<1 || capacity>1000 || donors!=0 || turn_vint(&r)!=1)
+        fail("GuestOffline: unsupported local card request capacity/donors/wishlist");
+    int type=turn_vint(&r),index=turn_vint(&r);
+    if((type!=26 && type!=28) || index<0 || index>=200)
+        fail("GuestOffline: invalid local card request spell reference");
+    if(turn_bool(&r))clan_skip_string(&r,1024,0);
+    if(r.at!=r.size || !stamp)fail("GuestOffline: invalid local card request extent");
+    sector_bytes(w,data,age_at);u32 age=now>stamp?now-stamp:0;
+    sector_vint(w,(int)(age>2147483647u?2147483647u:age));
+    sector_bytes(w,data+age_end,size-age_end);
+}

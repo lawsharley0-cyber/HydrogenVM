@@ -7,7 +7,8 @@ playstyles; restore the original daily store. Training names stay original.
 The timer checkpoint is 0c24408/v33. v42 now qualifies persistent solo-clan
 creation, chat, info/settings/search and leave/re-create in synthetic component
 fixtures. v46 adds original local clan mail and its persistent Inbox/cooldown.
-Clan card requests/donations and friendly battles are not ported;
+v48 adds actual unfulfilled card requests with original cooldown and recovery.
+Donation fulfillment and friendly battles are not ported;
 this is not the completed clans feature or a full-button pass.
 
 ## Current component qualification — v42
@@ -86,7 +87,12 @@ test cancels the existing running-game Save warning implicitly, and landscape
 quarter-point touches are attempted with the settings panel still expanded.
 3f6ff51 explicitly confirms Save Anyway and dismisses controls before guest
 touches, retaining the coordinate expectations and adding failure diagnostics.
-The follow-up Apple run 40354244581 remains pending; no full UI-pass claim.
+That run was superseded before execution. Mail-source 358cf91's Apple run
+40355411529 now passes all ten UI tests with zero failures (five editor and
+five player), including keyboard entry and both landscape directions.
+Its persistence and 74 geometry/activity checks, shell and harness compile
+also pass. Verified artifact ZIP SHA256:
+`d46cb16587ceb87d34cf5b991069db0e6c2b7b65c68a03ba5e4d7cfc4b27e82f`.
 No claim of real iPhone keyboard/gameplay qualification follows from compilation.
 
 ## Original clan mail — v46
@@ -142,6 +148,92 @@ not a full clan/game/device release. Authored mail plans are
 Sending needs a local clan leader and an expired native cooldown; do not reset
 an existing timer just to repeat it. See [bot research](BOT_RESEARCH.md) for
 the subsequent stage's reference comparison and original-AI boundaries.
+
+## Original unfulfilled card requests — v48
+
+The actual v46 card-selection control aborts on **524**, not 528. Original
+`LogicRequestSpellsCommand::getCommandType` 0x205fc returns 524; 528 belongs
+to Buy Chest (0x5ab74). The earlier research mapping was incorrect. A pinned
+trampoline at 0x20654 preserves the entire native request execution: membership,
+tutorial, eligibility/material-limit and cooldown checks. Native request size
+comes from the actual arena; this fixture displays **10 common or 1 rare**.
+Original `REQUEST_SPELLS_COOLDOWN_MINUTES` is **480**, with native timer +0x6c.
+The separately parsed timer at +0xcc is not the card-request timer.
+
+After actual success, encode native DonateStreamEntry type 1 (0x11051c),
+including the real author's identity/name/level/role, original arena capacity,
+selected card and message. Its capacity and donor count are **fixed BE u32**;
+the wishlist is VInt length/data references. Donor count is genuinely zero.
+Deliver 24312 and retain it alongside chat on 24311. A private (1,sequence)
+stream-ID namespace avoids collision with chat's (0,sequence). The last actual
+request replaces the previous request, retaining a monotonic sequence. Native
+`canDonateAnything`/`canAddDonation` at 0x1108b0/0x1108fc reject the author's
+own avatar; do not bypass that check to manufacture card fulfillment.
+
+GCR1 stores eight LE words: tag, encoded-entry length, monotonic sequence,
+wall epoch, native-body FNV, entry FNV, native command payload FNV, header FNV
+over 28 bytes; the bounded original entry follows (maximum 2048 bytes). Commit
+with the same native home/cooldown transaction. Leave/disband clears the entry
+and stamp, retaining the sequence. Validate before any loaded-home write.
+No separate request sidecar, donor actor or card/currency reward exists here.
+
+Actual tests on labeled King-3 component fixtures:
+
+- `/var/tmp/hvm-clash-clans-request-select-v46` reproduces unsupported 524.
+  v48 selects Arrows, shows the original **0/10** request and an eight-hour
+  native cooldown, with unchanged Gold 3000/gems 87/deck/card collection.
+- `/var/tmp/hvm-clash-clans-request-return-v48` restores one request, refuses
+  a second during cooldown and refuses self-donation. Its info control opens
+  the original daily-donation limit/reset tooltip. These are not fulfilled
+  donations or evidence a bot has joined the clan.
+- A distinct synthetic sandbox forks the preserved pre-request checkpoint;
+  no existing cooldown is reset. The first interruption attempt remains at
+  the original first-launch notice: no request and no kill, not a pass.
+  After dismissing that notice, `request-interruption-v48b` uses an owned pidfd
+  SIGKILL after a valid GCR1/native-home commit; the exact file remains intact,
+  SHA256 `a4b75de8a829089fa6e4c4a2dd6b45a51dbeb7aeea448535155eaefa012e9d8a`.
+  `/var/tmp/hvm-clash-clans-request-recovery-v48` restores one unfulfilled
+  request and remaining cooldown without resource changes or duplicated entry.
+- Eight actual-client corruption cases reject header/payload, recomputed
+  identity/type/sequence/body binding, duplicate/truncated GCR1 and retain
+  each damaged file unchanged; the source remains untouched:
+  `/var/tmp/hvm-clash-card-request-corruption-v48/summary.json`.
+- All **16** authored guest tests pass, including fixed-width request-wire
+  vectors, age, truncation, no fabricated donors and GCR1 corruption/clearing.
+  Shared C++ is unchanged from the indexed 912a87e gate. Recovery PCM is
+  nonzero (peak 0.830139), with no dropped blocks or transport error.
+
+Private v48 IPA SHA256:
+`f33ad3757c7ac814640c7702c19b90d98fe96ae34cbc0d34577fbb1279a511f9`;
+executable `850d97fc92dba114aa58264c95b6bd1a839bd79087c5de58cb82f210dab73e86`.
+Assets remain byte-identical. Plans: `clan_card_request_{send,return}_ui_plan.json`.
+Actual 8-hour expiry/re-request, a rare request, donor transfers, leave/recreate
+with an active request and phone qualification remain open. Do not report the
+whole Clans feature complete; next implement real local donor/friendly behavior
+before post-training handles, deck/AI variation and original daily-shop work.
+
+v49 preserves request/chat chronology during conversation reconstruction;
+actual chat after a request stays after it on relaunch in
+`/var/tmp/hvm-clash-clans-request-{chat,chat-return}-v49`. Replacing an expired
+request queues original removal notification **24318** for its old fixed BE
+ID before delivering the new entry, matching the durable replacement. The
+eight-hour re-request/removal transition is source-inspected, not yet played.
+All 16 guest tests pass on this source. Private v49 IPA SHA256
+`bb687308c766a5e49a028951467281c95eb376eef930081c7f023b682d669a9f`,
+executable `69ffddfe624e13bb4b4dbd1ab8a6864dd22ae9ed1ae4f3c61317e7cd42fc9324`;
+assets unchanged.
+
+Next actual blocker: Friendly Battle's native form opens, but submitting it
+aborts at the generic home identity guard in
+`/var/tmp/hvm-clash-clans-friendly-submit-v49`. Its original command is **534**
+(`LogicChallengeCommand` type getter 0x62fb4 returns 0x216). Encode 0x62fbc
+writes a boolean/optional message **before** base metadata, so the generic
+base-first parser misreads it. Native execute 0x62ef8 checks the feature,
+wallet and full deck, then invokes challenge/game listeners; the cost getter
+0x63028 reads globals +0x1a8. Do not merely accept the echo: a real persistent
+challenge, native cost transaction, local opponent acceptance, cancel/recovery
+and an actual friendly battle/result path are still required. The existing
+base-only command 538 is a different command and is not this schema.
 
 Reproducible authored plans are `tools/clash_guest/clan_{create,chat,info,edit,search,leave}_ui_plan.json`.
 Run create only against an explicitly labeled King-3 component instance with

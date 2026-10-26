@@ -28,10 +28,12 @@ not published Supercell source code; no such public source is verified here.
   the player's battles or use it to manufacture clan rewards. Native donation
   capacity/cooldown getters remain useful evidence independently.
 - The actual original Arena-1 request picker reports **10 common or 1 rare**.
-  `LogicRequestSpellsCommand` 528 uses base metadata, message string and spell
+  `LogicRequestSpellsCommand` **524** uses base metadata, message string and spell
   list; original execute 0x20654 validates membership/tutorial/cooldown and
   eligibility, then starts/saves the request. This finding does not implement
-  a donor or qualify a received card.
+  a donor or qualify a received card. The actual v46 card-selection trace
+  rejects 524. Its type getter 0x205fc returns 0x20c (524); 528 belongs to
+  LogicBuyChestCommand at 0x5ab74. This corrects the initial research mapping.
 
 Current Arena 1 selection chooses the nearest trophy template among thirteen
 bundled non-training NPCs. It does not yet deliver the requested deck/style

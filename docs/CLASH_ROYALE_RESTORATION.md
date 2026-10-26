@@ -25,6 +25,8 @@ in explicitly synthetic King-3 component fixtures. See
 v46 also restores original local clan mail, a persistent Inbox and the native
 12-hour cooldown. An owned forced-stop trial retains one message and cooldown
 without resource changes; eight damaged-mail checkpoints reject unchanged.
+v48 fixes actual card-selection command 524, retaining an unfulfilled native
+request, its eight-hour cooldown and forced-stop recovery without granting cards.
 Later arenas, draw accounting, remaining clan interactions and other controls
 still need implementation/qualification. The owner's next ordered
 features are local clans, varied post-training opponent names/decks/playstyles,

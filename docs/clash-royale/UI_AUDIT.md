@@ -9,6 +9,22 @@ blocked during cooldown. The row does not expose a new detail/delete action;
 GMA1 trials reject without overwriting the file. See LOCAL_CLANS for exact
 evidence/limits; card requests/donations and friendly battles remain open.
 
+v48 advances the card-request subset: v46's actual 524 abort is reproduced,
+then native card selection, a persistent 0/10 request, eight-hour cooldown,
+blocked repeat/self-donation and daily-donation info tooltip work in labeled
+King-3 fixtures. Owned forced-stop recovery retains one request without card
+or currency grants. Eight GCR1 fault cases reject unchanged; 16 guest tests pass.
+Rare requests, real cooldown expiry, donor fulfillment and friendly battles
+still need qualification/implementation. See LOCAL_CLANS for exact evidence.
+
+v49 retains request-before-chat order across relaunch. Friendly Battle opens
+its native form; submitting actual command 534 still fails at the generic
+base-first identity parser. Its optional message precedes base metadata.
+Do not treat accepting the echo alone as a functioning paid challenge/battle.
+Apple run 40355411529 at 358cf91 passes all ten synthetic UI tests with zero
+failures, including keyboard and landscape input; this is not a phone/game
+playthrough or a complete button audit.
+
 The owner requests every clickable function checked, repeated post-upgrade
 launches, and stutter profiling. This is an active coverage ledger, **not a
 claim of complete or crash-free functionality**. Locked/unreached controls and

@@ -1,21 +1,28 @@
 /* Bounded, persistent local conversation. Native ChatStreamEntry encodes the
  * actual author/name/role and text. No simulated person claims to be online. */
 #include "clan_chat_wire.inc"
+#include "card_request_wire.inc"
 static u32 encode_clan_conversation(u8 *output,u32 capacity) {
     struct SectorWriter w={output,0,capacity};
-    sector_vint(&w,(int)clan_chat_count);
+    sector_vint(&w,(int)clan_chat_count+(card_request_size?1:0));
     struct GuestReader r={clan_chat,clan_chat_size,0,0,0};u32 now=wall_epoch();
+    int request_written=0;
     for(u32 i=0;i<clan_chat_count;++i) {
         u32 stamp=turn_int(&r),size=turn_int(&r);
         if(size<16 || size>1024 || size>r.size-r.at)fail("GuestOffline: invalid conversation record boundary");
+        if(card_request_size && !request_written && stamp>=card_request_stamp) {
+            card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,now);request_written=1;
+        }
         clan_chat_entry(&w,r.data+r.at,size,stamp,now);r.at+=size;
     }
     if(r.at!=r.size)fail("GuestOffline: trailing conversation records");
+    if(card_request_size && !request_written)
+        card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,now);
     return w.size;
 }
 static void send_clan_conversation(void *self) {
     if(clan_status!=2)fail("GuestOffline: conversation requested without completed membership");
-    static u8 output[33024];u32 size=encode_clan_conversation(output,sizeof output);
+    static u8 output[35136];u32 size=encode_clan_conversation(output,sizeof output);
     reply(self,24311,0,output,size);
 }
 static void clan_conversation(void *self,void *message) {
@@ -65,7 +72,7 @@ static void validate_clan_checkpoint(void) {
     if(!avatar)fail("GuestOffline: clan checkpoint has no native avatar");
     void *id=CALL(0x9ae01,void*,(void*))(avatar);
     if(!clan_status) {
-        if(id || clan_chat_size)fail("GuestOffline: clan metadata is missing for native membership/conversation");
+        if(id || clan_chat_size || card_request_size)fail("GuestOffline: clan metadata is missing for native membership/conversation");
         dispose(owner);return;
     }
     struct ClanFields f=clan_fields(clan_request,clan_request_size);
@@ -97,5 +104,5 @@ static void validate_clan_checkpoint(void) {
         }
     }
     dispose(owner);
-    static u8 checked[33024];encode_clan_conversation(checked,sizeof checked);
+    static u8 checked[35136];encode_clan_conversation(checked,sizeof checked);
 }

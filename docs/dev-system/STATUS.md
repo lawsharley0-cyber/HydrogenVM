@@ -24,7 +24,10 @@ double debit; eight corrupted-file trials reject and retain the original file.
 v46 adds original clan mail, persistent native Inbox and the native 12-hour
 cooldown. Owned forced-stop recovery retains one message with no resource
 changes; eight damaged-mail files reject unchanged. Fourteen guest tests pass.
-Requests/donations, friendly battles and real
+v48 fixes actual request command 524 and preserves an unfulfilled 0/10 request,
+eight-hour cooldown and owned forced-stop recovery. Eight additional corrupted
+GCR1 trials reject unchanged; 16 guest tests pass. Donation fulfillment, friendly
+battles and real
 earned King-3/device clan qualification remain open; see
 [local clans](../clash-royale/LOCAL_CLANS.md). The actual earned Silver ID 8
 also finishes naturally, grants +28 Gold/three native cards without gem cost,
@@ -40,7 +43,11 @@ without a keyboard verdict; 379a8a5 separates build/boot/test stages. Run
 40347015755 now passes guest keyboard insertion/deletion/Return. Editor Save
 confirmation and landscape input tests fail; 3f6ff51 fixes the missing explicit
 confirmation and dismisses obstructing controls while retaining coordinates.
-Its Apple follow-up 40354244581 is pending; the full UI suite is not green.
+Its follow-up 40354244581 is superseded/cancelled. Run 40355411529 at mail
+source 358cf91 passes all 10 UI tests with zero failures, plus persistence,
+74 geometry/activity checks and production shell/harness compile.
+CI, Compat, TestLab, ZIP and PCM workflows
+at that source pass. Those workflows are not proof of all guest controls.
 These checks do not establish a fresh real-iPhone game/input/audio pass.
 
 Fresh clean 912a87e Linux gate is indexed at

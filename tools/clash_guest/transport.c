@@ -97,6 +97,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "clan.inc"
 #include "clan_chat.inc"
 #include "mail.inc"
+#include "card_request.inc"
 #include "match.inc"
 static void refresh_saved_arena(void) {
     // Recover already-earned saves captured before the native post-setter
