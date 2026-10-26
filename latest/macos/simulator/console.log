@@ -4,6 +4,7 @@ GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
 [gpu] GL layer removed
 Loaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main
 Objective-C: 5 classes, 0 categories, 168 selector refs
+[teardown] waiting for the guest run to finish
 Screen: 320x480 @2x, portrait, status bar visible
 ok 3.5-inch screen without a 568h launch image
 
@@ -148,5 +149,11 @@ ok UITapGestureRecognizer
 ALL CHECKS PASSED
 
 App exited with code 0
+[teardown] guest run returned status 0
+[teardown] destroying the guest process
+[teardown] guest process destroyed; live arenas 0
+[teardown] stopping host audio
+[teardown] host audio stopped; queueing the exit callback
+[teardown] delivering the exit callback
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 22877
+com.lfull.HydrogenVM: 21470
