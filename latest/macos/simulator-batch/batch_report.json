@@ -29,12 +29,12 @@
               "status" : "pass"
             },
             {
-              "detail" : "Every frame reached the window",
+              "detail" : "1 frames went to a view that isn't in the window",
               "name" : "Game view on screen",
-              "status" : "pass"
+              "status" : "fail"
             },
             {
-              "detail" : "Mixer ran for 5.4 s, peak 0.00",
+              "detail" : "Mixer ran for 5.3 s, peak 0.00",
               "name" : "Audio output",
               "status" : "pass"
             },
@@ -87,7 +87,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 239434,
+            "audioFramesRendered" : 234260,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -96,25 +96,36 @@
             "missingCount" : 0,
             "musicFrames" : 0,
             "musicVoices" : 0,
-            "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 605.18037500000003
+            "offscreenPresents" : 1,
+            "timeToFirstFrameMs" : 697.17404199999999
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
           "explore" : {
             "actions" : [
-
+              {
+                "details" : "grid tap at (26, 216)",
+                "kind" : "tap",
+                "timeOffset" : 5.1892440319061279
+              }
             ],
             "backgroundTested" : false,
             "crashed" : true,
             "enabled" : true,
             "newProblems" : [
-
+              {
+                "problemText" : "66 checks, 3 failures",
+                "triggeringActionIndex" : 0
+              }
             ],
             "reproSteps" : [
-
+              {
+                "details" : "grid tap at (26, 216)",
+                "kind" : "tap",
+                "timeOffset" : 5.1892440319061279
+              }
             ],
-            "screensVisited" : 0,
+            "screensVisited" : 1,
             "seed" : 10888590083490907113
           },
           "frame" : {
@@ -125,9 +136,9 @@
           "logs" : "Loaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main\nObjective-C: 5 classes, 0 categories, 168 selector refs\nScreen: 320x480 @2x, portrait, status bar visible\nok 3.5-inch screen without a 568h launch image\nok applicationFrame below the status bar\nok retina scale\nok keyWindow\nok root view controller view frame\nok viewDidLoad \/ viewWillAppear\nok didMoveToWindow\nok responder chain\nok UIDevice systemVersion\nok convertPoint:toView:nil (window)\nok convertPoint:fromView:nil\nok hitTest finds the child\nok hitTest falls back to the root\nok viewWithTag \/ isDescendantOfView\nok transformed frame\nok identity transform restores frame\nok autoresizing (flexible width + top margin)\nok setNeedsLayout + layoutIfNeeded\nok bringSubviewToFront\nok UIColor components\nok UIColor CGColor\nok UIFont metrics\nok sizeWithFont:\nok sizeWithFont:constrainedToSize: wraps\nok imageNamed: picks @2x\nok CGImage of @2x image\nok imageNamed: missing returns nil\nok CgBI (Xcode-crushed) PNG decodes\nok CgBI channel order\nok UIGraphicsGetImageFromCurrentImageContext\nok UIRectFill pixels\nok drawInRect: pixels (top-left origin)\nok untouched pixels stay clear\nok PNG encode\/decode round trip\nok CGBitmapContext y-up fill\nok CGPathContainsPoint\nok CGRectIntersection\nok NSStringFromCGRect \/ CGRectFromString\nok NSValue CGRect\nnib Panel.nib: 1 top-level objects\nok Panel nib: top-level view\nok Panel nib: outlet + label text\nok Panel nib: action connection + button title\nnib PanelKeyed.nib: 1 top-level objects\nok PanelKeyed nib: top-level view\nok PanelKeyed nib: outlet + label text\nok PanelKeyed nib: action connection + button title\nok UIButton target\/action\nok UIButton currentTitle\nok animation block applies immediately\nok beginAnimations\/commitAnimations apply\nok UIScrollView contentOffset updates bounds.origin\nok UITableViewCell textLabel & reuseIdentifier\nok UINavigationController push & hierarchy\nok UINavigationController pop\nok UITabBarController selection\nok UITextField editing & first responder\nok UISwitch, UISlider, UISegmentedControl\nok EAGLContext creation & setCurrentContext\nok EAGLContext renderbufferStorage:fromDrawable:\nok glCheckFramebufferStatus complete\nok OpenGL ES clear, glReadPixels & presentRenderbuffer\nok drawRect: was called by the compositor\nok CADisplayLink fires at frame rate\nok animation completions fire\nFAIL touch delivery to a plain view (hvm --tap) (line 336)\nFAIL touch location in view coordinates (line 337)\nFAIL UITapGestureRecognizer (line 338)\n66 checks, 3 failures\nApp exited with code 1",
           "name" : "UIKitTest",
           "perf" : {
-            "fps" : 0,
+            "fps" : 2,
             "framesPresented" : 1,
-            "frameTimeP95Ms" : 0.065535999999999997
+            "frameTimeP95Ms" : 0
           },
           "renderer" : "software",
           "signature" : "exit-1",
@@ -148,9 +159,9 @@
               "status" : "pass"
             },
             {
-              "detail" : "Every frame reached the window",
+              "detail" : "1 frames went to a view that isn't in the window",
               "name" : "Game view on screen",
-              "status" : "pass"
+              "status" : "fail"
             },
             {
               "detail" : "Mixer ran for 5.9 s, peak 0.00",
@@ -206,7 +217,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 262013,
+            "audioFramesRendered" : 260602,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -215,8 +226,8 @@
             "missingCount" : 0,
             "musicFrames" : 0,
             "musicVoices" : 0,
-            "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 34.909875
+            "offscreenPresents" : 1,
+            "timeToFirstFrameMs" : 30.702541
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -246,7 +257,7 @@
           "perf" : {
             "fps" : 0,
             "framesPresented" : 2,
-            "frameTimeP95Ms" : 0.048640000000000003
+            "frameTimeP95Ms" : 0.061440000000000002
           },
           "renderer" : "gpu",
           "signature" : "exit-1",
@@ -256,5 +267,5 @@
       ]
     }
   },
-  "timestamp" : "2026-10-26T10:54:50Z"
+  "timestamp" : "2026-10-26T15:37:27Z"
 }
