@@ -8,8 +8,9 @@ The timer checkpoint is 0c24408/v33. v42 now qualifies persistent solo-clan
 creation, chat, info/settings/search and leave/re-create in synthetic component
 fixtures. v46 adds original local clan mail and its persistent Inbox/cooldown.
 v48 adds actual unfulfilled card requests with original cooldown and recovery.
-Donation fulfillment and friendly battles are not ported;
-this is not the completed clans feature or a full-button pass.
+v64 qualifies the paid Friendly Battle subset with an explicit simulated local
+NPC, native combat/results and durable lifecycle recovery. Donation fulfillment
+is not ported; this is not the completed clans feature or a full-button pass.
 
 ## Current component qualification — v42
 
@@ -209,8 +210,8 @@ executable `850d97fc92dba114aa58264c95b6bd1a839bd79087c5de58cb82f210dab73e86`.
 Assets remain byte-identical. Plans: `clan_card_request_{send,return}_ui_plan.json`.
 Actual 8-hour expiry/re-request, a rare request, donor transfers, leave/recreate
 with an active request and phone qualification remain open. Do not report the
-whole Clans feature complete; next implement real local donor/friendly behavior
-before post-training handles, deck/AI variation and original daily-shop work.
+whole Clans feature complete; next implement real local donor behavior before
+post-training handles, deck/AI variation and original daily-shop work.
 
 v49 preserves request/chat chronology during conversation reconstruction;
 actual chat after a request stays after it on relaunch in
@@ -223,8 +224,8 @@ All 16 guest tests pass on this source. Private v49 IPA SHA256
 executable `69ffddfe624e13bb4b4dbd1ab8a6864dd22ae9ed1ae4f3c61317e7cd42fc9324`;
 assets unchanged.
 
-Next actual blocker: Friendly Battle's native form opens, but submitting it
-aborts at the generic home identity guard in
+Historical v49 blocker (superseded by v64 below): Friendly Battle's native form
+opens, but submitting it aborts at the generic home identity guard in
 `/var/tmp/hvm-clash-clans-friendly-submit-v49`. Its original command is **534**
 (`LogicChallengeCommand` type getter 0x62fb4 returns 0x216). Encode 0x62fbc
 writes a boolean/optional message **before** base metadata, so the generic
@@ -234,6 +235,47 @@ wallet and full deck, then invokes challenge/game listeners; the cost getter
 challenge, native cost transaction, local opponent acceptance, cancel/recovery
 and an actual friendly battle/result path are still required. The existing
 base-only command 538 is a different command and is not this schema.
+
+## Friendly Battle component qualification — v64
+
+v64 supersedes the historical v49 blocker above with an explicit **simulated
+local NPC**, not an online player or acceptance. Native command 534 charges the
+original 5 Gold. Atomic GFR1 state 1 is pending, 2 accepted, 3 completed,
+4 cancelled/refunded and 5 abandoned. Only states 1/2 are active; the NPC accepts
+after a durable two-second pending interval. Wire battle type 2 decodes to
+native type 1; the sector regression preserves accounts `(-1,0)` and `(0,1)`
+and changes only that type byte.
+
+Actual-client evidence under `analysis/friendly/`:
+
+- `friendly-pending-capture-v64` saves state 1 at Gold/FreeGold 2995 before
+  acceptance. `friendly-pending-resume-v64` accepts the same sequence without
+  another debit, runs real native combat and emits the client's 750-byte result.
+  Its native JSON and victory frame show Trainer Boris 1, Offline Player 0;
+  `verify-result-v64.json` checks both eight-card decks and protected state.
+- `friendly-cancel-v64` uses the native pending Cancel control before acceptance.
+  State 4 closes the unchanged challenge text, produces no result, and restores
+  both balances to 3000. `friendly-cancel-return-v64` relaunches without another
+  refund or acceptance. Native Gold adjustment is used once; the original
+  FreeGold setter restores its pre-charge value because Gold only clamps it down.
+- `friendly-abandon-observe-v64` demonstrates accepted-state relaunch directly
+  into combat. `friendly-abandon-v64` uses the native X and Return to the main
+  menu Yes confirmation. State 5 closes the entry with no result/refund and
+  retains 2995. Accepted recovery does not debit again.
+- `friendly-return-v64-{1,2}` render the same native clan result without a new
+  battle/result. `verify-result-v64.json` requires identical result bytes and
+  wallet. Trophies remain 65, NPC wins/losses 9/2, crowns 3; chests,
+  deck/collection and reward journal are unchanged.
+- `verify-malformed-v64.json` covers checksum corruption, recomputed-checksum
+  semantic faults, truncation and duplication. All four actual-client launches
+  reject with exit 70 and retain the complete injected save byte-for-byte.
+
+All **15** `test_clash_guest_*.py` tests pass. Private v64 IPA SHA256
+`8c1498fd5104e90f3cf8ed337a9df86034b1559a5b777d70cf61b87661d1b958`;
+executable `f715e8187332b6ed6b23f0a5f2e89aa8cc810e46fedf5d164444cd19ded292a1`.
+Assets are unchanged. This qualifies one bundled Trainer Boris local-NPC flow
+in a synthetic clan fixture, not multiplayer, donor fulfillment, earned King-3
+progression, phone behavior, or the complete Clans button surface.
 
 Reproducible authored plans are `tools/clash_guest/clan_{create,chat,info,edit,search,leave}_ui_plan.json`.
 Run create only against an explicitly labeled King-3 component instance with

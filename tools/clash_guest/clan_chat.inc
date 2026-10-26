@@ -2,27 +2,44 @@
  * actual author/name/role and text. No simulated person claims to be online. */
 #include "clan_chat_wire.inc"
 #include "card_request_wire.inc"
+#include "friendly_wire.inc"
 static u32 encode_clan_conversation(u8 *output,u32 capacity) {
     struct SectorWriter w={output,0,capacity};
-    sector_vint(&w,(int)clan_chat_count+(card_request_size?1:0));
+    sector_vint(&w,(int)clan_chat_count+(card_request_size?1:0)+(friendly_sequence?1:0));
     struct GuestReader r={clan_chat,clan_chat_size,0,0,0};u32 now=wall_epoch();
-    int request_written=0;
+    int request_written=0,friendly_written=0;
     for(u32 i=0;i<clan_chat_count;++i) {
         u32 stamp=turn_int(&r),size=turn_int(&r);
         if(size<16 || size>1024 || size>r.size-r.at)fail("GuestOffline: invalid conversation record boundary");
-        if(card_request_size && !request_written && stamp>=card_request_stamp) {
-            card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,now);request_written=1;
+        while((card_request_size && !request_written && stamp>=card_request_stamp) ||
+              (friendly_sequence && !friendly_written && stamp>=friendly_stamp)) {
+            if(friendly_sequence && !friendly_written && stamp>=friendly_stamp &&
+               (!card_request_size || request_written || friendly_stamp<=card_request_stamp)) {
+                const u8 *data=friendly_state==3?friendly_result:friendly_entry;
+                friendly_entry_wire(&w,data,friendly_state==3?friendly_result_size:friendly_entry_size,friendly_stamp,now);
+                friendly_written=1;
+            } else {
+                card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,now);request_written=1;
+            }
         }
         clan_chat_entry(&w,r.data+r.at,size,stamp,now);r.at+=size;
     }
     if(r.at!=r.size)fail("GuestOffline: trailing conversation records");
-    if(card_request_size && !request_written)
-        card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,now);
+    while((card_request_size && !request_written) || (friendly_sequence && !friendly_written)) {
+        if(friendly_sequence && !friendly_written &&
+           (!card_request_size || request_written || friendly_stamp<=card_request_stamp)) {
+            const u8 *data=friendly_state==3?friendly_result:friendly_entry;
+            friendly_entry_wire(&w,data,friendly_state==3?friendly_result_size:friendly_entry_size,friendly_stamp,now);
+            friendly_written=1;
+        } else {
+            card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,now);request_written=1;
+        }
+    }
     return w.size;
 }
 static void send_clan_conversation(void *self) {
     if(clan_status!=2)fail("GuestOffline: conversation requested without completed membership");
-    static u8 output[35136];u32 size=encode_clan_conversation(output,sizeof output);
+    static u8 output[70000];u32 size=encode_clan_conversation(output,sizeof output);
     reply(self,24311,0,output,size);
 }
 static void clan_conversation(void *self,void *message) {
@@ -72,7 +89,7 @@ static void validate_clan_checkpoint(void) {
     if(!avatar)fail("GuestOffline: clan checkpoint has no native avatar");
     void *id=CALL(0x9ae01,void*,(void*))(avatar);
     if(!clan_status) {
-        if(id || clan_chat_size || card_request_size)fail("GuestOffline: clan metadata is missing for native membership/conversation");
+        if(id || clan_chat_size || card_request_size || friendly_sequence)fail("GuestOffline: clan metadata is missing for native membership/conversation");
         dispose(owner);return;
     }
     struct ClanFields f=clan_fields(clan_request,clan_request_size);
@@ -103,6 +120,13 @@ static void validate_clan_checkpoint(void) {
                 fail("GuestOffline: saved native clan badge differs from metadata");
         }
     }
+    if(friendly_sequence) {
+        int expected_gold=friendly_state==4?friendly_gold_before:friendly_gold_after;
+        int expected_free=friendly_state==4?friendly_free_before:friendly_free_after;
+        if(clan_status!=2 || CALL(0x9ab55,int,(void*))(avatar)!=expected_gold ||
+           CALL(0x9ab7d,int,(void*))(avatar)!=expected_free)
+            fail("GuestOffline: saved friendly wallet differs from native avatar");
+    }
     dispose(owner);
-    static u8 checked[35136];encode_clan_conversation(checked,sizeof checked);
+    static u8 checked[70000];encode_clan_conversation(checked,sizeof checked);
 }

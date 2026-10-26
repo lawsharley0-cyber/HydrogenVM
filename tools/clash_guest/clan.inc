@@ -30,6 +30,8 @@ static int clan_capture_ready(void *avatar) {
         clan_status=0;clan_request_size=0;clan_command_size=0;
         clan_chat_size=0;clan_chat_count=0;clan_chat_sequence=0;
         card_request_size=0;card_request_stamp=0;
+        if(friendly_state==1 || friendly_state==2)fail("GuestOffline: clan leave during active friendly challenge");
+        friendly_sequence=0;friendly_state=0;friendly_entry_size=0;friendly_result_size=0;
         CALL(API_puts,int,(const char*))("GuestOffline: original clan leave applied; committing disbanded solo clan");
         return 1;
     }

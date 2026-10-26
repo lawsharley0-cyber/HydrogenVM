@@ -201,7 +201,9 @@ completion now grants once on the actual earned player (Gold 147/gems 87).
 v46 adds original local clan mail/Inbox/cooldown, with forced-stop recovery
 and eight damaged-checkpoint trials. v48 adds actual unfulfilled card requests,
 native eight-hour cooldown and forced-stop recovery, with eight GCR1 fault
-trials and 16 guest tests. Donor fulfillment/friendly battles remain open;
-mailbox removal UI and real cooldown expiry are unqualified.
+trials. v64 qualifies the local-NPC Friendly Battle subset, including paid
+cancel/refund, recovery, abandonment, native combat/result and malformed-save
+retention; 15 guest tests pass. Donor fulfillment remains open; mailbox removal
+UI and real cooldown expiry are unqualified.
 Post-training names, arena deck/AI variation/research and original daily shop
 remain next in the owner's order. See LOCAL_CLANS for save/version limits.

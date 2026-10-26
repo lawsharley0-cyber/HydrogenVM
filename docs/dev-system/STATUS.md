@@ -26,9 +26,14 @@ cooldown. Owned forced-stop recovery retains one message with no resource
 changes; eight damaged-mail files reject unchanged. Fourteen guest tests pass.
 v48 fixes actual request command 524 and preserves an unfulfilled 0/10 request,
 eight-hour cooldown and owned forced-stop recovery. Eight additional corrupted
-GCR1 trials reject unchanged; 16 guest tests pass. Donation fulfillment, friendly
-battles and real
-earned King-3/device clan qualification remain open; see
+GCR1 trials reject unchanged. v64 qualifies the synthetic local-NPC Friendly
+Battle lifecycle: exact 5-Gold debit, pre-acceptance refund, pending/accepted
+recovery, native abandonment/combat/result and repeated clan-result returns.
+Gold/FreeGold restore to 3000 on cancel; accepted outcomes retain 2995 and do
+not change ladder trophies, NPC counters, crowns, chests, deck/collection or
+reward journal. Four malformed GFR1 client trials reject byte-identical files;
+all 15 guest tests pass. Donation fulfillment and real earned King-3/device
+clan qualification remain open; see
 [local clans](../clash-royale/LOCAL_CLANS.md). The actual earned Silver ID 8
 also finishes naturally, grants +28 Gold/three native cards without gem cost,
 and retains Gold 147/gems 87 across a clean relaunch. Native profile Wins=0

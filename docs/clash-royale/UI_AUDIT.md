@@ -7,7 +7,16 @@ and unchanged resources in a labeled King-3 component fixture. Message is
 blocked during cooldown. The row does not expose a new detail/delete action;
 14418 removal UI and real 12-hour expiry remain unqualified. Eight malformed
 GMA1 trials reject without overwriting the file. See LOCAL_CLANS for exact
-evidence/limits; card requests/donations and friendly battles remain open.
+evidence/limits; donor fulfillment remains open.
+
+v64 qualifies Friendly Battle submission/cancel, pending and accepted relaunch,
+native abandonment, real Trainer Boris combat, native result rendering and two
+completed-state returns in labeled synthetic clan fixtures. The exact 5-Gold
+debit is refunded once only before acceptance; Gold/FreeGold return to 3000.
+Accepted combat and abandonment retain 2995 without trophies, NPC counters,
+crowns, chests, deck/collection or reward-journal changes. Four malformed GFR1
+client trials reject byte-identical files; all 15 guest tests pass. This is a
+simulated local NPC subset, not online multiplayer or a complete Clans audit.
 
 v48 advances the card-request subset: v46's actual 524 abort is reproduced,
 then native card selection, a persistent 0/10 request, eight-hour cooldown,
@@ -117,7 +126,7 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 | T-02 | Cards tab / all eight card tiles | v23 19-state plan captures native info and closes for all eight |
 | T-03 | Each card's info / upgrade / use / swap / close | Four real upgrades pass (Archers/Bomber/Arrows/Prince); Knight insufficient cards preserves wallet; native Use swaps Mini P.E.K.K.A. for Arrows and retains across two launches |
 | T-04 | Battle tab / arrows | v23 Battle tab returns safely; arena preview covered; progression arrows pending |
-| T-05 | Social tab / locked-training notice | Original King-3 gate retained; v42 synthetic component creation/chat/settings/search/leave/re-create pass. Mail, card requests/donations and friendly matches remain unported. |
+| T-05 | Social tab / locked-training notice | Original King-3 gate retained; v42 synthetic creation/chat/settings/search/leave/re-create pass. v46 mail, v48 unfulfilled requests and v64 local-NPC Friendly lifecycle/combat/result pass in synthetic fixtures; donor fulfillment and other-member controls remain open. |
 | T-06 | TV tab / replay / locked-training notice | v23 locked; v31 unlocked TV renders original empty replay state and returns home safely; recording unimplemented |
 | B-01 | Eight card deployment slots / targeting / invalid placement | Klaus defeated using seven distinct cards from rotating eight-card deck; Prince attempt after victory is not deployment proof; placement failures still pending |
 | B-02 | Battle result OK / draw / loss / return home | Seven earned wins; Boris defeat persists twice without a grant; final Silver label matches chest ID 7; real draw previously grants nothing |
@@ -444,8 +453,9 @@ info/settings/search, leave/disband and paid re-create. Synthetic King-3
 fixtures only; the earned player remains King 2. Owned pending-creation
 SIGKILL recovery charges once; eight corrupted-checkpoint trials fail at
 precise guards without changing the damaged file. No assertion is suppressed.
-Mail, card requests/donations, friendly battles, invite/other-member actions and
-full mobile input remain open; this is not a complete Clans button audit.
+Mail, unfulfilled card requests and the simulated local-NPC Friendly subset
+have separate later evidence above. Donor fulfillment, invite/other-member
+actions and full mobile input remain open; this is not a complete Clans audit.
 Native header/member names, class-57 region and local online count were
 corrected against pinned getters/encoders and reviewed frames.
 

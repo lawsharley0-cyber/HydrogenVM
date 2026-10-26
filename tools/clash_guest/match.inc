@@ -42,10 +42,17 @@ static void start_arena_match(void *self) {
 }
 
 extern void guest_original_battle_ended(void*,void*);
+static void friendly_native_log(void *battle);
 void guest_battle_ended(void *battle,void *avatar) {
     // LogicGameMode::battleEnded (0xd756c) explicitly passes null here; the
     // original routine resolves the owner itself. Qualify battle.account,
     // not this optional argument, and forward it unchanged.
+    if(friendly_state==2 && battle_started) {
+        if(ending_battle)fail("GuestOffline: reentrant friendly battle result");
+        friendly_native_log(battle);
+        ending_battle=battle;guest_original_battle_ended(battle,avatar);
+        friendly_battle_completed(battle);ending_battle=0;return;
+    }
     if(!arena_battle || !battle_started) {
         guest_original_battle_ended(battle,avatar);return;
     }

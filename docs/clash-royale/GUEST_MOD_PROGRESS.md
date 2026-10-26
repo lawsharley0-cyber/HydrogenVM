@@ -412,15 +412,34 @@ GCL1/GCS1 extend the same atomic checkpoint. Older guests reject these tags;
 do not downgrade a clan-bearing instance or discard its save to make it launch.
 This internal package is not delivered as the completed offline game.
 
+v64 qualifies a persistent Friendly Battle transaction with an explicit
+simulated local NPC, never an invented online acceptance. Native command 534
+charges 5 Gold; GFR1 stores pending/accepted/completed/cancelled/abandoned
+states. Pending relaunch accepts without a second debit and accepted relaunch
+resumes native combat. Pre-acceptance native cancel restores Gold/FreeGold to
+3000; post-acceptance native abandon retains 2995 and has no result/refund.
+Actual combat produces the client's native type-1 battle log and 750-byte
+result: Trainer Boris 1, Offline Player 0. Two relaunches render the same clan
+result without another battle. Trophies 65, NPC wins/losses 9/2, crowns 3,
+chests, deck/collection and reward journal remain unchanged. Four actual-client
+GFR1 corruption/semantic/truncation/duplication trials reject with byte-identical
+retention. All 15 guest tests pass, including exact account-preserving sector
+mutation. Evidence is under `analysis/friendly/*v64*`; see LOCAL_CLANS.
+Private v64 IPA SHA256
+`8c1498fd5104e90f3cf8ed337a9df86034b1559a5b777d70cf61b87661d1b958`;
+executable `f715e8187332b6ed6b23f0a5f2e89aa8cc810e46fedf5d164444cd19ded292a1`.
+Assets remain unchanged. This local NPC component is not online multiplayer,
+earned King-3 progression, donor fulfillment, or device qualification.
+
 ## Next work
 
 1. Preserve the original phone failure, earned source, actual owned SIGKILL
    evidence and current earned ten-card player. No reset or backup restore.
    Natural Silver collection is now qualified across two clean relaunches;
    battle-result time accounting and native profile Wins still need testing.
-2. Finish local clan mail, card requests/donations, friendly battles and the
-   remaining controls. Keep original native level/Gold/cooldown rules. The
-   qualified solo-clan core is a component milestone, not this feature's end.
+2. Finish local donor fulfillment and the remaining clan controls. Keep
+   original native level/Gold/cooldown rules. The qualified solo-clan and local
+   NPC Friendly Battle cores are component milestones, not this feature's end.
 3. Then implement authored player-handle variation after training, preserving
    the original training names; compare primary bot/simulator projects with
    pinned native AI before varying legal arena decks and actual decision styles.

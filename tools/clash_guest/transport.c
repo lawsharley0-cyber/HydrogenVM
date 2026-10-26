@@ -39,6 +39,8 @@ static void *decode_packet(int,int,const u8*,u32);
 static void dispose(void*);
 static void prepare_reward(void*,void*);
 static void credit_arena_crowns(void*);
+static void friendly_tick(void);
+static void friendly_battle_completed(void*);
 
 static void fail(const char *why) {
     CALL(API_puts,int,(const char*))(why);
@@ -99,6 +101,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "mail.inc"
 #include "card_request.inc"
 #include "match.inc"
+#include "friendly.inc"
 static void refresh_saved_arena(void) {
     // Recover already-earned saves captured before the native post-setter
     // continuation. The original routine reads the actual NPC threshold,
@@ -158,6 +161,7 @@ int guest_send(void *self,void *message) {
         if(pending_size)reply(self,24111,0,pending_reward,pending_size);
         if(clan_status==1 || clan_status==3 || clan_status==4)
             reply(self,24111,0,clan_command,clan_command_size);
+        friendly_resume(self);
     } else if(kind==10108) {
         // Native MessageManager can send this while CSV loading delays login.
         reply(self,20108,0,0,0);
@@ -188,6 +192,8 @@ int guest_send(void *self,void *message) {
         search_local_clan(self,message);
     } else if(kind==14304 && logged_in && !battle_started) {
         clan_conversation(self,message);
+    } else if(kind==14123 && logged_in && !battle_started) {
+        cancel_friendly(self,message);
     } else if(kind==14303 && logged_in && !battle_started) {
         // Original discovery request 0x75ca4 is empty. Native response type
         // getter 0xa1544 is 24304 (not request+10000); its encoder 0xa13a8
@@ -236,6 +242,7 @@ int guest_send(void *self,void *message) {
         for(u32 i=0;i<saved_size;++i)profile[1+i]=saved_home[i];
         reply(self,24113,0,profile,saved_size+1);
     } else if(kind==14101 && logged_in) {
+        if(friendly_state==2 && battle_started)abandon_friendly();
         battle_started=0;arena_battle=0;reply(self,24101,0,saved_home,saved_size);
     } else if(kind==14104 && logged_in && !battle_started) {
         const u8 *data=(const u8*)FIELD(message,8+0x1c);
