@@ -34,13 +34,44 @@ Read this file first, then `AGENTS.md` (working agreement) and `docs/GROK_HANDOF
 ```
 1. Read the newest report in ~/inbox (or the one Lawson names).
 2. Compare it with the previous report; tell Lawson in a short table what got better / worse / stayed.
-3. Pick the highest-priority failure (see §5). Reproduce it headless (§3).
+3. Run the probe sweep (§2b) and pick the top issue; use the device report for device-only problems (§5).
 4. Find the root cause (§4). Group games that share it.
 5. Fix it in the emulator, generally. Add the test. Re-run the game(s).
 6. Run the three gates (§6). All must pass.
 7. Commit; push with [mac] when a meaningful batch is ready (§7). Give Lawson the run link.
 8. Update the status table in this file (§5) and docs/GROK_HANDOFF.md if you learned something lasting.
 ```
+
+## 2b. The probe loop: your main way of finding and fixing bugs
+
+Don't hunt bugs one game at a time. `tools/hvm_probe.py` runs **every game in `~/ipas`**, interacts with each one (taps over a grid of common button spots, swipes, a background/foreground cycle, then a graceful quit), and collects **every** problem: crashes, load errors, hangs, no picture / black / white screens, GL frames drawn off-screen, faults, `Missing:` functions, unimplemented imports, warnings, silence. It then **groups the same problem across games and ranks it**, so a single emulator fix that helps five games comes first.
+
+```sh
+cd ~/HydrogenVM
+python3 tools/hvm_probe.py --modes software,gpu --seconds 60      # full sweep (≈ games × 2 × 75 s; use tmux)
+cat ~/probe/latest/summary.md                                     # read the ranked issue list
+```
+Each run's evidence is in `~/probe/<time>/<bundleId>-<mode>/`: `run.log`, `report.json`, `shot.png`, `script.txt` (the exact actions, so you can replay them with `build/hvm run ... <same args>`).
+
+**The loop (repeat until the stop condition below):**
+1. **Sweep:** `python3 tools/hvm_probe.py --modes software,gpu --baseline ~/probe/latest/summary.json` (the `--baseline` makes the summary list ✅ fixed / 🆕 new / still present against the previous sweep). First sweep: leave out `--baseline`.
+2. **Take the top issue** in `summary.md` (highest severity, then most games). Severity: 100 crash/load error, 90 hang, 80 no picture/black/white, 70 GL off-screen, 60 logged error, 50 faults to the game's handler, 45 didn't finish quitting, 40 missing function, 30 unimplemented import, 20 warning, 10 silent.
+3. **Reproduce it on one game** from the "Games" column: replay the `script.txt` arguments, or `python3 tools/hvm_probe.py --only <bundle or file name> --modes <mode>`. Add `--trace` / `HVM_TRACE_BLOCKS` / `HVM_ZOMBIES=1` as in §4.
+4. **Fix the root cause in the emulator**, generally (rule 5). Add the test (rule 6).
+5. **Re-probe just the affected games** (`--only ...`), confirm the issue is gone from their `summary.md`, and check nothing new appeared.
+6. When you have a batch of fixes (or every ~2–3 fixes): run the **gates** (§6), commit, then the **full sweep with `--baseline`**. Any 🆕 new issue at severity ≥ 45 is a regression from your change: fix or revert it before pushing.
+7. Push with `[mac]` (§7) and give Lawson the link plus the fixed/new/still counts.
+8. Go back to 1.
+
+**Stop condition ("all major bugs fixed"):** a full `--modes software,gpu` sweep has **no issue with severity ≥ 45 in any game**, and Lawson's next device report agrees (no failed checks). Then work down severity 40/30 (missing functions on code paths games actually use), then sound, then speed.
+
+**Rules for the probe:**
+- Never "fix" an issue by weakening the probe, hiding a warning, or making a stub claim success. The probe is the measuring stick; change it only to measure better (and say so in the commit).
+- Run with `--jobs 1` on this 2-CPU VM when timing matters (quit watchdog, hangs, speed); heavier parallelism makes slow games look stuck. Re-run a severity-45 "did not finish quitting" issue alone before acting on it.
+- The probe's taps are blind. When a game needs specific taps to get past a menu (to reach gameplay where the deeper bugs are), add them to `tools/probe_scripts/<bundleId>.txt` as `hvm run` arguments (`--tap X,Y@SECONDS`, `--drag x1,y1,x2,y2@T`). Mega Jump, Survivalcraft and Minion Rush already have one. Minion Rush needs `--seconds 90` (its alert tap is at 65 s). Commit these scripts.
+- Use `--launches 2` now and then: it starts each game a second time on its saved data (save-file bugs).
+- Linux ≠ the phone. Issues that only happen on the device (Lawson's report) still matter; reproduce them with the probe in `--modes gpu` first, and if you can't, say so.
+- First probe finding (2026-10-25, 3 games): Angry Birds, Minecraft PE Lite and Talking Larry all hit "did not finish quitting" after the probe's taps and background/foreground cycle, but quit fine without the taps. That's a shared bug in the quit/lifecycle path: start there.
 
 ## 3. Running a game headless
 
