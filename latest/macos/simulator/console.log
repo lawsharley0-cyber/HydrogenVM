@@ -116,10 +116,10 @@ ok UITextField editing & first responder
 
 ok UISwitch, UISlider, UISegmentedControl
 
-ok EAGLContext creation & setCurrentContext
-
 [gpu] GL layer (64.0, 64.0)
 [gpu] GL layer removed
+ok EAGLContext creation & setCurrentContext
+
 GPU: drawable 64x64 for renderbuffer 1 (platform layer)
 ok EAGLContext renderbufferStorage:fromDrawable:
 
@@ -148,4 +148,4 @@ ALL CHECKS PASSED
 
 App exited with code 0
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 26823
+com.lfull.HydrogenVM: 36772
