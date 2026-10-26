@@ -21,7 +21,10 @@ leave/re-create in labeled King-3 component fixtures. Original commands
 209/212/208, 1000-Gold creation, actual native member/leader and atomic GCL1/GCS1
 storage are retained. An actual owned SIGKILL pending creation recovers without
 double debit; eight corrupted-file trials reject and retain the original file.
-Twelve guest tests pass. Requests/donations, mail/friendly battles and real
+v46 adds original clan mail, persistent native Inbox and the native 12-hour
+cooldown. Owned forced-stop recovery retains one message with no resource
+changes; eight damaged-mail files reject unchanged. Fourteen guest tests pass.
+Requests/donations, friendly battles and real
 earned King-3/device clan qualification remain open; see
 [local clans](../clash-royale/LOCAL_CLANS.md). The actual earned Silver ID 8
 also finishes naturally, grants +28 Gold/three native cards without gem cost,
@@ -33,7 +36,11 @@ TestLab 18/18 and the report/compatibility gate pass; the Apple shell compiles.
 The separate Apple UI harness now compiles but initially queried its UIKeyInput
 viewport as Other although XCTest classifies it as TextView. fa5a955 uses its
 stable identifier across types. Its next run times out after a long cold boot,
-without a keyboard verdict; 379a8a5 separates build/boot/test stages and is pending.
+without a keyboard verdict; 379a8a5 separates build/boot/test stages. Run
+40347015755 now passes guest keyboard insertion/deletion/Return. Editor Save
+confirmation and landscape input tests fail; 3f6ff51 fixes the missing explicit
+confirmation and dismisses obstructing controls while retaining coordinates.
+Its Apple follow-up 40354244581 is pending; the full UI suite is not green.
 These checks do not establish a fresh real-iPhone game/input/audio pass.
 
 Fresh clean 912a87e Linux gate is indexed at

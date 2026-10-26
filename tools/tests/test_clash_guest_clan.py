@@ -105,7 +105,7 @@ int main(int argc,char **argv) {
                 self.assertEqual(run(broken).returncode, 2)
             # Recomputed checksums cannot make impossible lengths/state/wallet
             # valid. A disbanded clan retains its monotonic ID, no payload.
-            for index, value in [(1,0),(2,5),(3,1025),(4,257),(5,2000000001),(6,5001)]:
+            for index, value in [(1,0),(2,5),(3,1025),(4,257),(5,2000000001),(6,5001),(7,0)]:
                 broken = header.copy();broken[index]=value
                 head = struct.pack('<9I', *broken)
                 self.assertEqual(run(head+struct.pack('<I',fnv(head))+request+command).returncode, 2)

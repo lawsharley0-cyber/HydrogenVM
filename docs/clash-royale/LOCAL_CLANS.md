@@ -6,7 +6,8 @@ opponent names only after training; vary legal arena decks and actual bot
 playstyles; restore the original daily store. Training names stay original.
 The timer checkpoint is 0c24408/v33. v42 now qualifies persistent solo-clan
 creation, chat, info/settings/search and leave/re-create in synthetic component
-fixtures. Clan card requests/donations, mail and friendly battles are not ported;
+fixtures. v46 adds original local clan mail and its persistent Inbox/cooldown.
+Clan card requests/donations and friendly battles are not ported;
 this is not the completed clans feature or a full-button pass.
 
 ## Current component qualification — v42
@@ -71,15 +72,76 @@ All extensions share CRG1's existing atomic fsync/rename transaction. This is
 corruption detection, not cryptographic authentication. Older guests reject
 these extensions: do not downgrade an instance after creating a clan.
 
-Apple status: production simulator shell and Linux CI compile/pass; the
+Apple history: production simulator shell and Linux CI compile/pass; the
 isolated UI harness first lacked newer bridge members (fixed 9a49f8c), then
 XCTest classified the new UIKeyInput viewport as TextView instead of Other.
 fa5a955 queries the same stable identifier across element types, retaining all
 coordinate/input assertions. That run then hits the 15-minute combined-step
 timeout after a 6:35 cold simulator boot; it is not an input result. 379a8a5
 separates harness build, checked simulator boot and test-without-building, with
-independent bounded timeouts/logs. Its UI run is pending at this snapshot.
+independent bounded timeouts/logs. Run 40347015755 then executes all ten UI
+tests: guest keyboard insertion/deletion/Return passes, as do portrait controls,
+multitouch/rotation cancellation and stop/inspect. Two tests fail: the editor
+test cancels the existing running-game Save warning implicitly, and landscape
+quarter-point touches are attempted with the settings panel still expanded.
+3f6ff51 explicitly confirms Save Anyway and dismisses controls before guest
+touches, retaining the coordinate expectations and adding failure diagnostics.
+The follow-up Apple run 40354244581 remains pending; no full UI-pass claim.
 No claim of real iPhone keyboard/gameplay qualification follows from compilation.
+
+## Original clan mail — v46
+
+Original LogicSendAllianceMailCommand **533** execute at 0x37144 retains its
+native role/text validation and **43200-second** cooldown. A pinned prologue
+trampoline calls the complete original function; only a successful local
+execution persists the native home and one actual local recipient's mail.
+No online recipient or online-send acknowledgement is invented. The original
+encoder at 0xe3500 writes MailAvatarStreamEntry type 6; 24412 delivers it live,
+14405/24411 restores the Inbox. Original opaque sender metadata stays at its
+constructor's zero. Echo strings precede base metadata and are checked against
+the just-completed command, including native local executor (0,1).
+
+GMA1 shares the existing CRG1 atomic transaction with native home/avatar,
+GRT1 and clan state. Eight LE words: tag, payload length, count, monotonic
+sequence, native-body FNV, payload FNV, last-command-prefix FNV, header FNV
+over 28 bytes. Each record contains BE epoch/length then original encoded
+entry, bounded to 32 entries/32 KiB. Sequence/echo identity survives removal;
+mail survives leaving a clan. Validate the full Inbox before any clock/home
+snapshot can overwrite it. Older guest versions reject this extension.
+
+Qualification uses the explicitly synthetic King-3 clan fixture, Gold 3000,
+gems 87. Actual authored title/body sends through the original Clan Leader
+Message screen. An owned pidfd SIGKILL after a valid atomic commit leaves
+the exact file unchanged; its timer is [864000,864000,43199], the full native
+12 hours. Relaunch restores exactly one message and real relative age, with
+Gold/gems/cards unchanged. Account pre-command paused time before starting
+the fresh timer, rather than subtracting that earlier interval afterwards.
+The native Message control refuses another send during its cooldown. A clean
+v46 relaunch explicitly selects Inbox and retains the message; tapping its
+already displayed row adds no new action or delete control. The 14418/24418
+removal path is implemented with bounded identity checks, but no original UI
+action reaching it has been qualified. Cooldown expiry at 12 real hours and
+mail after leaving/recreating a clan still require actual-client trials.
+
+Evidence: `/var/tmp/hvm-clash-clans-mail-{interruption,recovery,cooldown}-v45`,
+`/var/tmp/hvm-clash-clans-mail-inbox-v46`. Eight actual-client corruption trials
+reject header/payload checksums, recomputed record/type/count/body-binding
+faults and duplicate/truncated GMA1, with each damaged file unchanged and the
+source untouched: `/var/tmp/hvm-clash-mail-corruption-v46/summary.json`.
+All 14 authored guest tests pass (including normal/profiling ARMv7 compile).
+Recovery/cooldown/Inbox PCM stays nonzero, peak 0.830139, droppedBlocks 0 and
+transportError 0; these counters do not establish perceptually flawless audio.
+Shared C++ is unchanged from clean-source 912a87e's indexed report/compat gates.
+
+Private v46 IPA SHA256:
+`444b781b0a874e3a7bedaaeb2d3a92b2887a21da10ed606b1d765d85fd5027b0`;
+executable `a7985f842c3bc5955416dcaa6a99c579afb74194965ba0b8dda588c43efa7acc`.
+Assets are byte-identical to the original; this remains a component candidate,
+not a full clan/game/device release. Authored mail plans are
+`clan_mail_{send,inbox,cooldown}_ui_plan.json` beside the existing clan plans.
+Sending needs a local clan leader and an expired native cooldown; do not reset
+an existing timer just to repeat it. See [bot research](BOT_RESEARCH.md) for
+the subsequent stage's reference comparison and original-AI boundaries.
 
 Reproducible authored plans are `tools/clash_guest/clan_{create,chat,info,edit,search,leave}_ui_plan.json`.
 Run create only against an explicitly labeled King-3 component instance with

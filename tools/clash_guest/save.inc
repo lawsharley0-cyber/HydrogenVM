@@ -36,6 +36,7 @@ static u32 checksum(const u8 *bytes,u32 size) {
 }
 #include "clock.inc"
 #include "clan_state.inc"
+#include "mail_state.inc"
 static void write_save(void) {
 #ifdef GUEST_PROFILE_SAVES
     const u32 began=checkpoint_clock_us();
@@ -53,6 +54,7 @@ static void write_save(void) {
     valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(clock,1,sizeof clock,file)==sizeof clock;
     write_clan(file,header[3]);
     write_clan_chat(file,header[3]);
+    write_local_mail(file,header[3]);
     if(pending_size) {
         u32 journal[5]={0x314a5247u,pending_size,(u32)pending_kind,(u32)pending_id,checksum(pending_reward,pending_size)};
         valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(journal,1,sizeof journal,file)==sizeof journal;
@@ -104,7 +106,7 @@ static void load_guest_home(void) {
             fail("GuestOffline: invalid checkpoint header; original file retained");
         saved_size=header[1];avatar_offset=header[2];
         int valid=CALL(s_read,u32,(void*,u32,u32,void*))(saved_home,1,saved_size,file)==saved_size;
-        int saw_clock=0,saw_journal=0,saw_clan=0,saw_chat=0;
+        int saw_clock=0,saw_journal=0,saw_clan=0,saw_chat=0,saw_mail=0;
         for(;;) {
             u32 tag,extra=CALL(s_read,u32,(void*,u32,u32,void*))(&tag,1,4,file);
             if(!extra)break;
@@ -121,6 +123,9 @@ static void load_guest_home(void) {
             }
             if(tag==0x31534347u && !saw_chat) {
                 read_clan_chat(file,header[3]);saw_chat=1;continue;
+            }
+            if(tag==0x31414d47u && !saw_mail) {
+                read_local_mail(file,header[3]);saw_mail=1;continue;
             }
             if(tag!=0x314a5247u || saw_journal)
                 fail("GuestOffline: unknown/duplicate checkpoint extension; original file retained");

@@ -1,5 +1,14 @@
 # Offline guest UI audit — October 25, 2026
 
+October 26 mail checkpoint: v46 retains the original Clan Leader Message form,
+native validation/12-hour cooldown and local Inbox. Sending, owned forced stop,
+recovery, explicit Inbox selection and row tapping retain exactly one message
+and unchanged resources in a labeled King-3 component fixture. Message is
+blocked during cooldown. The row does not expose a new detail/delete action;
+14418 removal UI and real 12-hour expiry remain unqualified. Eight malformed
+GMA1 trials reject without overwriting the file. See LOCAL_CLANS for exact
+evidence/limits; card requests/donations and friendly battles remain open.
+
 The owner requests every clickable function checked, repeated post-upgrade
 launches, and stutter profiling. This is an active coverage ledger, **not a
 claim of complete or crash-free functionality**. Locked/unreached controls and

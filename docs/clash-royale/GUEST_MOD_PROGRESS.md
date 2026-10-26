@@ -21,8 +21,11 @@ two actual Arena-1 wins, initial name, paid card upgrades/King level 2, native
 deck swaps, chest banking and interrupted native reward recovery are reproduced.
 The latest arena victory credits three native crowns; two relaunches retain
 3/10 without a duplicate. v33 adds measured closed/paused home time and actual
-paid-reward interruption recovery with its atomic clock stamp. Later arenas,
-draw accounting, long timer completion, remaining economy/control qualification
+paid-reward interruption recovery with its atomic clock stamp. The earned Silver
+now completes naturally. v42 adds persistent solo-clan core controls; v46 adds
+native clan mail, durable Inbox/cooldown and forced-stop recovery in labeled
+King-3 component fixtures. See LOCAL_CLANS for the exact scope. Later arenas,
+draw accounting, remaining economy/control qualification
 and device validation remain open. The owner next prioritizes local clans,
 post-training randomized opponent names, varied arena-appropriate bot decks and
 playstyles, and the original daily shop; see BACKLOG's ordered extension.

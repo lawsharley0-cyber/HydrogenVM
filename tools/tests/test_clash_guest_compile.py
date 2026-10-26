@@ -52,7 +52,7 @@ class GuestCompileTests(unittest.TestCase):
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertEqual(set(result.stdout.split()),{
                     '_guest_original_battle_ended','_guest_original_reward_execute',
-                    '_guest_original_settings_click'})
+                    '_guest_original_settings_click','_guest_original_mail_execute'})
 
 
 if __name__=='__main__':unittest.main()

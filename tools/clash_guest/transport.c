@@ -96,6 +96,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "name.inc"
 #include "clan.inc"
 #include "clan_chat.inc"
+#include "mail.inc"
 #include "match.inc"
 static void refresh_saved_arena(void) {
     // Recover already-earned saves captured before the native post-setter
@@ -148,6 +149,7 @@ int guest_send(void *self,void *message) {
     if(kind==10101) {
         if(logged_in)fail("GuestOffline: duplicate login");
         validate_clan_checkpoint();
+        static u8 checked_mail[33024];encode_local_inbox(checked_mail,sizeof checked_mail);
         refresh_saved_arena();
         logged_in=1;
         reply(self,20104,1,initial_login,sizeof initial_login);
@@ -165,8 +167,9 @@ int guest_send(void *self,void *message) {
         u8 empty_list[8]={0,0,0,kind==10513?1:2,0,0,0,0};
         reply(self,20105,0,empty_list,sizeof empty_list);
     } else if(kind==14405 && logged_in) {
-        // AvatarStreamMessage (24411), native decoder 0xf93d0: VInt count.
-        const u8 empty=0;reply(self,24411,0,&empty,1);
+        local_inbox(self,message);
+    } else if(kind==14418 && logged_in && !battle_started) {
+        remove_local_mail(self,message);
     } else if(kind==14402 && logged_in) {
         // RoyalTVContentMessage (24405), native VInt entry count: no remote replays.
         const u8 empty=0;reply(self,24405,0,&empty,1);

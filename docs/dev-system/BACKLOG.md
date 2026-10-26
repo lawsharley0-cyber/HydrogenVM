@@ -198,5 +198,8 @@ chat/edit/search/info/leave/re-create and owned interruption/corruption evidence
 in explicit synthetic King-3 fixtures. The remaining clan controls above still
 need real implementations; do not close this owner feature. Natural Silver
 completion now grants once on the actual earned player (Gold 147/gems 87).
+v46 adds original local clan mail/Inbox/cooldown, with forced-stop recovery
+and eight damaged-checkpoint trials. Card requests/donations and friendly
+battles remain open; mailbox removal UI and real cooldown expiry are unqualified.
 Post-training names, arena deck/AI variation/research and original daily shop
 remain next in the owner's order. See LOCAL_CLANS for save/version limits.

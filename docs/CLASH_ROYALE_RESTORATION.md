@@ -22,6 +22,9 @@ retains the result. v42 adds qualified solo-clan creation, chat, settings,
 search and leave/re-create, including actual interrupted-creation recovery,
 in explicitly synthetic King-3 component fixtures. See
 [local clans](clash-royale/LOCAL_CLANS.md) for exact boundaries and save format.
+v46 also restores original local clan mail, a persistent Inbox and the native
+12-hour cooldown. An owned forced-stop trial retains one message and cooldown
+without resource changes; eight damaged-mail checkpoints reject unchanged.
 Later arenas, draw accounting, remaining clan interactions and other controls
 still need implementation/qualification. The owner's next ordered
 features are local clans, varied post-training opponent names/decks/playstyles,

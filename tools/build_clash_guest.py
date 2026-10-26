@@ -147,6 +147,14 @@ def build(source, output, build_dir, profile_saves=False):
         asm.write('.p2align 2\n.globl _guest_original_battle_ended\n.thumb_func\n'
                   '_guest_original_battle_ended:\n .byte '+','.join(str(x) for x in battle_prologue)+
                   '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0x149a5\n')
+        mail_segment=next(s for s in parsed['segments'] if s[1]<=0x37144<s[1]+s[4])
+        mail_at=mail_segment[3]+0x37144-mail_segment[1]
+        mail_prologue=original[mail_at:mail_at+8]
+        if mail_prologue!=bytes.fromhex('f0b503af4df8048d'):
+            raise ValueError('Unexpected native clan-mail prologue')
+        asm.write('.p2align 2\n.globl _guest_original_mail_execute\n.thumb_func\n'
+                  '_guest_original_mail_execute:\n .byte '+','.join(str(x) for x in mail_prologue)+
+                  '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0x3714d\n')
         clock_segment=next(s for s in parsed['segments'] if s[1]<=0xd6d40<s[1]+s[4])
         clock_at=clock_segment[3]+0xd6d40-clock_segment[1]
         clock_instructions=original[clock_at:clock_at+10]
@@ -200,7 +208,8 @@ def build(source, output, build_dir, profile_saves=False):
                             (0x187130,'_guest_disconnect'),(0x92f08,'_guest_update'),
                             (0x9ae94,'_guest_set_npc_wins'),(0x9aea4,'_guest_set_npc_losses'),
                             (0x8203c,'_guest_reward_execute'),(0x94f1c,'_guest_settings_click'),
-                            (0x1499c,'_guest_battle_ended'),(0xd6d40,'_guest_home_clock_hook')]:
+                            (0x1499c,'_guest_battle_ended'),(0xd6d40,'_guest_home_clock_hook'),
+                            (0x37144,'_guest_mail_execute')]:
         segment = next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
         at = segment[3]+address-segment[1]
         target = mod['symbols'][symbol]
