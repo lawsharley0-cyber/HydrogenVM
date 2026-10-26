@@ -2,6 +2,23 @@ import XCTest
 
 final class PlayerUITests: XCTestCase {
     @MainActor
+    func testGuestKeyboardInsertionDeletionAndReturn() {
+        let app = open()
+        app.buttons["probe-keyboard-open"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        app.typeText("Clans123")
+        wait(app.staticTexts["probe-keyboard-text"], label: "Clans123")
+        app.typeText(XCUIKeyboardKey.delete.rawValue)
+        wait(app.staticTexts["probe-keyboard-text"], label: "Clans12")
+        app.typeText("\n")
+        wait(app.staticTexts["probe-keyboard-returns"], label: "1")
+        let hidden = NSPredicate(format: "exists == false")
+        expectation(for: hidden, evaluatedWith: app.keyboards.firstMatch)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(app.otherElements["player-viewport"].exists)
+    }
+
+    @MainActor
     private func open(_ orientation: Int = 1) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["PLAYER_ORIENTATION"] = String(orientation)

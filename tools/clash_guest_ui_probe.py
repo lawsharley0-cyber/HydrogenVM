@@ -122,6 +122,15 @@ def run(args):
                         x,y,tx,ty=action['drag'];event(0,x,y);pause(.2)
                         for i in range(1,11):event(1,x+(tx-x)*i/10,y+(ty-y)*i/10);pause(.08)
                         event(3,tx,ty);pause(.8)
+                    elif 'text' in action:
+                        value=action['text'].encode('utf-8')
+                        if len(value)>16384:raise ValueError('Text input exceeds bounded event size')
+                        with inp.open('a') as f:f.write('text '+value.hex()+'\n')
+                        pause(.8)
+                    elif 'key' in action:
+                        if action['key'] not in ('backspace','return'):raise ValueError('Unsupported text key')
+                        with inp.open('a') as f:f.write(action['key']+'\n')
+                        pause(.8)
                     else:raise ValueError('Unsupported UI action')
                 pause(step.get('settleSeconds',1.5))
                 image=out/(step['id']+'.png');item['frame']=capture(frame,image)

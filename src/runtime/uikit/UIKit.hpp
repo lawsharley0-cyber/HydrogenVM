@@ -128,6 +128,7 @@ struct UIState {
     // accelerometer
     float accel[3] = {0, 0, -1};
     id firstResponder = 0;
+    KeyboardState hostKeyboard; // protected by inputMu for host input producers
     std::unordered_map<std::string, id> imageCache;   // imageNamed: (retained)
     id ignoringEvents = 0;
     int ignoreCount = 0;
@@ -201,6 +202,8 @@ G::Size getSize(Ctx& x, id self, SEL s, std::initializer_list<uint32_t> args = {
 inline uint32_t fbits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
 inline float bitsf(uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; }
 bool sendBool(Ctx& x, id self, const char* sel, std::initializer_list<uint32_t> args = {});
+void notifyHostKeyboard(Ctx& x);
+void submitTextInput(Ctx& x,id responder);
 
 void registerQuartzCore(Process& p, ObjC::Runtime& r);
 void registerUIGraphics(Process& p, ObjC::Runtime& r);

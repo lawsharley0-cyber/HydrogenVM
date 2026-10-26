@@ -165,6 +165,13 @@ int guest_send(void *self,void *message) {
     } else if(kind==14402 && logged_in) {
         // RoyalTVContentMessage (24405), native VInt entry count: no remote replays.
         const u8 empty=0;reply(self,24405,0,&empty,1);
+    } else if(kind==14303 && logged_in && !battle_started) {
+        // Original discovery request 0x75ca4 is empty. Native response type
+        // getter 0xa1544 is 24304 (not request+10000); its encoder 0xa13a8
+        // writes a VInt header count. Local clan creation is a separate port.
+        if(CALL(0x198d19,u32,(void*))(message)!=0)
+            fail("GuestOffline: invalid clan discovery request");
+        const u8 empty=0;reply(self,24304,0,&empty,1);
     } else if((kind==14401 || kind==14403 || kind==14404) && logged_in && !battle_started) {
         // Original encoders: alliance 0x11510 has local/anchor booleans;
         // avatar global/local 0x7017c/0x1af38 have an anchor boolean. Optional

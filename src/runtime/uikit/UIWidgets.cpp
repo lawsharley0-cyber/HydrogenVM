@@ -1398,6 +1398,7 @@ id tf_text(Ctx& x, id self, SEL) { return TFD(x, self).text ? TFD(x, self).text 
 void tf_setText(Ctx& x, id self, SEL, id t) {
     setRetained(x, TFD(x, self).text, t ? autoreleased(x, id(rt(x).send(x.cpu, t, "copy"))) : makeString(x, ""));
     rt(x).send(x.cpu, self, "setNeedsDisplay");
+    if(ui(x).firstResponder==self)notifyHostKeyboard(x);
 }
 id tf_placeholder(Ctx& x, id self, SEL) { return TFD(x, self).placeholder; }
 void tf_setPlaceholder(Ctx& x, id self, SEL, id p) {
@@ -1416,7 +1417,7 @@ id tf_delegate(Ctx& x, id self, SEL) { return TFD(x, self).delegate; }
 void tf_setDelegate(Ctx& x, id self, SEL, id d) { TFD(x, self).delegate = d; }
 bool tf_editing(Ctx& x, id self, SEL) { return TFD(x, self).editing; }
 bool tf_secure(Ctx& x, id self, SEL) { return TFD(x, self).secure; }
-void tf_setSecure(Ctx& x, id self, SEL, bool b) { TFD(x, self).secure = b; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+void tf_setSecure(Ctx& x, id self, SEL, bool b) { TFD(x, self).secure = b; rt(x).send(x.cpu, self, "setNeedsDisplay");if(ui(x).firstResponder==self)notifyHostKeyboard(x); }
 bool tf_isTextView(Ctx& x,id self) { return rt(x).isKindOf(self,rt(x).getClass("UITextView")); }
 bool tf_hasText(Ctx& x,id self,SEL) { return !Foundation::stringValue(x,TFD(x,self).text).empty(); }
 uint32_t previousTextBoundary(const std::u16string& text) {
@@ -1472,15 +1473,15 @@ void tf_deleteBackward(Ctx& x,id self,SEL) {
     tf_replaceText(x,self,start,uint32_t(text.size())-start,makeString(x,""));
 }
 int32_t tf_keyboardType(Ctx& x,id self,SEL) { return TFD(x,self).keyboardType; }
-void tf_setKeyboardType(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).keyboardType=n; }
+void tf_setKeyboardType(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).keyboardType=n;if(ui(x).firstResponder==self)notifyHostKeyboard(x); }
 int32_t tf_returnKeyType(Ctx& x,id self,SEL) { return TFD(x,self).returnKeyType; }
-void tf_setReturnKeyType(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).returnKeyType=n; }
+void tf_setReturnKeyType(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).returnKeyType=n;if(ui(x).firstResponder==self)notifyHostKeyboard(x); }
 int32_t tf_keyboardAppearance(Ctx& x,id self,SEL) { return TFD(x,self).keyboardAppearance; }
 void tf_setKeyboardAppearance(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).keyboardAppearance=n; }
 int32_t tf_autocorrection(Ctx& x,id self,SEL) { return TFD(x,self).autocorrect; }
-void tf_setAutocorrection(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).autocorrect=n; }
+void tf_setAutocorrection(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).autocorrect=n;if(ui(x).firstResponder==self)notifyHostKeyboard(x); }
 int32_t tf_autocapitalization(Ctx& x,id self,SEL) { return TFD(x,self).autocap; }
-void tf_setAutocapitalization(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).autocap=n; }
+void tf_setAutocapitalization(Ctx& x,id self,SEL,int32_t n) { TFD(x,self).autocap=n;if(ui(x).firstResponder==self)notifyHostKeyboard(x); }
 bool tf_editable(Ctx& x,id self,SEL) { return TFD(x,self).editable; }
 void tf_setEditable(Ctx& x,id self,SEL,bool n) { TFD(x,self).editable=n; }
 bool tf_selectable(Ctx& x,id self,SEL) { return TFD(x,self).selectable; }
@@ -1919,6 +1920,17 @@ void seg_perform(Ctx& x, id self, SEL) {
 
 } // namespace
 
+void submitTextInput(Ctx& x,id responder) {
+    auto& r=rt(x);
+    if(r.isKindOf(responder,r.getClass("UITextField"))) {
+        autoreleased(x,r.retain(x.cpu,responder));
+        const id delegate=TFD(x,responder).delegate;
+        if(delegate && r.respondsTo(delegate,r.sel("textFieldShouldReturn:")) &&
+           !sendBool(x,delegate,"textFieldShouldReturn:",{responder}))return;
+        r.send(x.cpu,responder,"sendActionsForControlEvents:",{1u<<19});
+    } else r.send(x.cpu,responder,"insertText:",{makeString(x,"\n")});
+}
+
 void registerUIWidgets(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
     const std::string R = kR, P = kP, S = kS, E = kE;
@@ -2225,11 +2237,13 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
           .m<&tf_canBecome>("canBecomeFirstResponder", "c@:")
           .m<&tf_become>("becomeFirstResponder", "c@:")
           .m<&tf_resign>("resignFirstResponder", "c@:")
-          .m<&tf_ignoreInt>("setKeyboardType:", "v@:i").m<&tf_zeroInt>("keyboardType", "i@:")
-          .m<&tf_ignoreInt>("setReturnKeyType:", "v@:i").m<&tf_zeroInt>("returnKeyType", "i@:")
-          .m<&tf_ignoreInt>("setKeyboardAppearance:", "v@:i").m<&tf_ignoreInt>("setAutocorrectionType:", "v@:i")
-          .m<&tf_ignoreInt>("setAutocapitalizationType:", "v@:i").m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i")
-          .m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c").m<&tf_ignoreBool>("setSecureTextEntry:", "v@:c")
+          .m<&tf_setKeyboardType>("setKeyboardType:", "v@:i").m<&tf_keyboardType>("keyboardType", "i@:")
+          .m<&tf_setReturnKeyType>("setReturnKeyType:", "v@:i").m<&tf_returnKeyType>("returnKeyType", "i@:")
+          .m<&tf_setKeyboardAppearance>("setKeyboardAppearance:", "v@:i").m<&tf_keyboardAppearance>("keyboardAppearance","i@:")
+          .m<&tf_setAutocorrection>("setAutocorrectionType:", "v@:i").m<&tf_autocorrection>("autocorrectionType","i@:")
+          .m<&tf_setAutocapitalization>("setAutocapitalizationType:", "v@:i").m<&tf_autocapitalization>("autocapitalizationType","i@:")
+          .m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i")
+          .m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c").m<&tf_setSecure>("setSecureTextEntry:", "v@:c").m<&tf_secure>("isSecureTextEntry","c@:")
           .m<&tf_ignoreObj>("setInputView:", "v@:@").m<&tf_ignoreObj>("setInputAccessoryView:", "v@:@")
           .m<&tf_nilObj>("inputView").m<&tf_nilObj>("inputAccessoryView")
           .m<&tf_setEditable>("setEditable:", "v@:c").m<&tf_editable>("isEditable", "c@:")

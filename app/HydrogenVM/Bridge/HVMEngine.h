@@ -56,6 +56,8 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line, HVMLogLevel level);
 /// exitCode is the guest's exit status; crashReport is non-nil when it crashed (or failed to load).
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);
+/// Focus/keyboard traits only; entered text is never included in this callback.
+@property (nonatomic, copy, nullable) void (^onKeyboardState)(NSDictionary<NSString *, NSNumber *> *state);
 /// Emulated screen in points (known once the app has started; 320x480 or 320x568).
 @property (nonatomic, readonly) CGSize screenSize;
 /// Guest UIInterfaceOrientation (1...4). Read live from the guest, so it stays
@@ -96,6 +98,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 - (void)enterForeground;
 /// Touch in emulated-screen points (portrait).
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger;
+/// Queued on the guest main run loop, respecting its current input delegate.
+- (void)insertText:(NSString *)text;
+- (void)deleteBackward;
+- (void)submitTextReturn;
 /// Accelerometer in g, device axes (portrait), like UIAcceleration.
 - (void)setAccelerationX:(double)x y:(double)y z:(double)z;
 @end

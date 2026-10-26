@@ -85,6 +85,21 @@ focus refusal independently of emulator output. UIKeyInput edit support is
 being implemented before the external CLI/native keyboard route; neither this
 partial step nor its compile establishes working clan creation.
 
+bf6dd7f's clean build at `/var/tmp/hvm-keyboard-work` passes fulltest 256/256
+and all 18 TestLab cases, including TL-R. The v34 internal guest adds the
+qualified 14303→24304 empty directory; original Clans/Create forms now render
+in the synthetic fixture without the former discovery abort. Actual creation
+is still unported. Queued CLI text/Backspace/Return, native host UIKeyInput
+routing and stale-focus tests are the next candidate, with Apple validation
+required. Desktop shortcuts move to Ctrl+S/B/F so ordinary name characters
+do not trigger screenshot/background actions.
+
+The Apple UI harness also needs its actual BinaryEditor source and a defined
+crash-journal interface. Its synthetic bridge now uses an actual closable
+FileHandle rather than a successful no-op; that does not test CPU signal
+handlers. A native keyboard-routing UI test is added to the harness. Neither
+fixture nor green UI tests qualify real iPhone guest gameplay.
+
 Input contracts: [UIKeyInput](https://developer.apple.com/documentation/uikit/uikeyinput),
 [replacement delegate](https://developer.apple.com/documentation/uikit/uitextfielddelegate/textfield(_:shouldchangecharactersin:replacementstring:))
 and [editingChanged](https://developer.apple.com/documentation/uikit/uicontrol/event/editingchanged).

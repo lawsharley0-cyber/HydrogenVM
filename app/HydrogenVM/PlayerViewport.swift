@@ -12,6 +12,32 @@ extension GuestOrientation {
     }
 }
 
+struct GuestKeyboardState: Equatable {
+    var revision: UInt64 = 0
+    var focusToken: UInt64 = 0
+    var active = false
+    var hasText = false
+    var secure = false
+    var multiline = false
+    var type = 0
+    var returnKey = 0
+    var capitalization = 0
+    var correction = 0
+
+    init(_ value: [String: NSNumber] = [:]) {
+        revision = value["revision"]?.uint64Value ?? 0
+        focusToken = value["focusToken"]?.uint64Value ?? 0
+        active = value["active"]?.boolValue ?? false
+        hasText = value["hasText"]?.boolValue ?? false
+        secure = value["secure"]?.boolValue ?? false
+        multiline = value["multiline"]?.boolValue ?? false
+        type = value["type"]?.intValue ?? 0
+        returnKey = value["returnKey"]?.intValue ?? 0
+        capitalization = value["capitalization"]?.intValue ?? 0
+        correction = value["correction"]?.intValue ?? 0
+    }
+}
+
 /// Shows the guest's portrait framebuffer upright, undoing its root rotation.
 struct EmulatorScreen: UIViewRepresentable {
     let image: CGImage?
@@ -22,20 +48,78 @@ struct EmulatorScreen: UIViewRepresentable {
     var mode: PlayerScaleMode = .fit
     var filter: PlayerFilter = .linear
     var inputEnabled = true
+    var keyboard = GuestKeyboardState()
+    var onInsertText: (@MainActor (String) -> Void)? = nil
+    var onDeleteBackward: (@MainActor () -> Void)? = nil
+    var onTextReturn: (@MainActor () -> Void)? = nil
     let onTouch: (HVMTouchPhase, CGPoint, Int) -> Void
 
     func makeUIView(context: Context) -> ScreenView { ScreenView() }
 
     func updateUIView(_ view: ScreenView, context: Context) {
         view.onTouch = onTouch
+        view.onInsertText = onInsertText
+        view.onDeleteBackward = onDeleteBackward
+        view.onTextReturn = onTextReturn
         view.configure(image: image, glLayer: glLayer, guest: guestSize, orientation: orientation,
                        mode: mode, filter: filter, enabled: inputEnabled)
+        view.configureKeyboard(keyboard)
     }
 
-    static func dismantleUIView(_ view: ScreenView, coordinator: ()) { view.cancelTouches() }
+    static func dismantleUIView(_ view: ScreenView, coordinator: ()) {
+        view.cancelTouches()
+        view.resignFirstResponder()
+    }
 
-    final class ScreenView: UIView {
+    final class ScreenView: UIView, UIKeyInput {
         var onTouch: ((HVMTouchPhase, CGPoint, Int) -> Void)?
+        var onInsertText: (@MainActor (String) -> Void)?
+        var onDeleteBackward: (@MainActor () -> Void)?
+        var onTextReturn: (@MainActor () -> Void)?
+        private var keyboardState = GuestKeyboardState()
+        private var keyboardAllowed = false
+        var keyboardType: UIKeyboardType = .default
+        var returnKeyType: UIReturnKeyType = .default
+        var autocapitalizationType: UITextAutocapitalizationType = .none
+        var autocorrectionType: UITextAutocorrectionType = .default
+        var isSecureTextEntry = false
+        var hasText: Bool { keyboardState.hasText }
+        override var canBecomeFirstResponder: Bool { enabled && keyboardState.active }
+
+        func insertText(_ text: String) {
+            guard enabled, keyboardState.active else { return }
+            if text == "\n", !keyboardState.multiline { onTextReturn?() }
+            else { onInsertText?(text) }
+        }
+
+        func deleteBackward() {
+            guard enabled, keyboardState.active else { return }
+            onDeleteBackward?()
+        }
+
+        func configureKeyboard(_ state: GuestKeyboardState, attached: Bool = false) {
+            let previous = keyboardState
+            let wasAllowed = keyboardAllowed
+            keyboardState = state
+            keyboardAllowed = enabled && state.active
+            let traitsChanged = previous.type != state.type || previous.returnKey != state.returnKey ||
+                previous.capitalization != state.capitalization || previous.correction != state.correction || previous.secure != state.secure
+            keyboardType = UIKeyboardType(rawValue: state.type) ?? .default
+            returnKeyType = UIReturnKeyType(rawValue: state.returnKey) ?? .default
+            autocapitalizationType = UITextAutocapitalizationType(rawValue: state.capitalization) ?? .none
+            autocorrectionType = UITextAutocorrectionType(rawValue: state.correction) ?? .default
+            isSecureTextEntry = state.secure
+            guard keyboardAllowed, window != nil else {
+                if isFirstResponder { resignFirstResponder() }
+                return
+            }
+            // Re-rendering a frame must not steal focus from Hydrogen's own
+            // inspector or another native control. Activate only on guest
+            // focus, input resume or attachment to the player window.
+            if attached || !wasAllowed || previous.focusToken != state.focusToken {
+                becomeFirstResponder()
+            } else if traitsChanged, isFirstResponder { reloadInputViews() }
+        }
         /// Container scaled and rotated to the viewport: the GL layer (if any)
         /// underneath, the composited UIKit frame on top.
         private let picture = CALayer()
@@ -159,6 +243,7 @@ struct EmulatorScreen: UIViewRepresentable {
         override func didMoveToWindow() {
             super.didMoveToWindow()
             if window == nil { cancelTouches() }
+            configureKeyboard(keyboardState, attached: window != nil)
             setNeedsLayout()
         }
 

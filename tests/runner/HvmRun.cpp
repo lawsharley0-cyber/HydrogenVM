@@ -247,22 +247,47 @@ int hvmRunMain(int argc, char** argv) {
             std::ifstream input;
             if (!inputFile.empty()) input.open(inputFile);
             std::string pendingInput;
+            bool inputOverflow=false;
             auto pumpInput = [&] {
                 if (!input.is_open()) return;
                 input.clear();
                 char ch;
                 while (input.get(ch)) {
                     if (ch != '\n') {
-                        if (pendingInput.size() < 256) pendingInput += ch;
+                        if (pendingInput.size() < 32773) pendingInput += ch;
+                        else inputOverflow=true;
                         continue;
                     }
                     const std::string command = std::move(pendingInput); pendingInput.clear();
+                    if(inputOverflow) {
+                        inputOverflow=false;std::fprintf(stderr,"[hvm:warn] Desktop input exceeds bounded line size\n");continue;
+                    }
                     int phase; float px, py;
                     if (std::sscanf(command.c_str(), "touch %d %f %f", &phase, &px, &py) == 3 &&
                         (phase == 0 || phase == 1 || phase == 3 || phase == 4) && std::isfinite(px) && std::isfinite(py)) {
                         proc.injectTouch(Runtime::TouchPhase(phase), px, py, 1);
                         if (!quiet) std::fprintf(stderr, "[hvm] desktop touch %d %.1f %.1f\n", phase, px, py);
-                    } else if (command == "background") proc.enterBackground();
+                    } else if(command.starts_with("text ")) {
+                        const auto digit=[](char c) {
+                            if(c>='0' && c<='9')return c-'0';
+                            if(c>='a' && c<='f')return c-'a'+10;
+                            if(c>='A' && c<='F')return c-'A'+10;
+                            return -1;
+                        };
+                        const auto hex=command.substr(5);std::string text;
+                        bool valid=hex.size()%2==0 && hex.size()<=32768;
+                        for(size_t i=0;valid && i<hex.size();i+=2) {
+                            const int hi=digit(hex[i]),lo=digit(hex[i+1]);
+                            if(hi<0 || lo<0)valid=false;
+                            else text.push_back(char(hi*16+lo));
+                        }
+                        if(valid) {
+                            if(!quiet)std::fprintf(stderr,"[hvm] desktop text input (%zu bytes)\n",text.size());
+                            proc.injectText(std::move(text)); // never log entered text
+                        } else std::fprintf(stderr,"[hvm:warn] Invalid desktop text encoding\n");
+                    } else if(command=="backspace")proc.injectDeleteBackward();
+                    else if(command=="return")proc.injectTextReturn();
+                    else if (command == "background") proc.enterBackground();
                     else if (command == "foreground") proc.enterForeground();
                     else if (command == "stop") proc.requestGracefulStop();
                     else std::fprintf(stderr, "[hvm:warn] Invalid desktop input command\n");

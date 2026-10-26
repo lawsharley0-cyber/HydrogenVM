@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import os
 
 struct HarnessAppInfo { let bundlePath: String }
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
@@ -15,6 +16,8 @@ final class PlayerProbe {
     var lastOrientation = 1
     var maximumTouches = 0
     var cancellations = 0
+    var keyboardText = ""
+    var keyboardReturns = 0
     weak var session: HVMSession?
 }
 
@@ -26,6 +29,7 @@ final class HVMSession {
     var onFrame: ((CGImage) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?
     var onExit: ((Int, String?) -> Void)?
+    var onKeyboardState: (([String: NSNumber]) -> Void)?
     var screenSize = CGSize(width: 320, height: 480)
     var interfaceOrientation = 1
     var isBackgrounded = false
@@ -76,6 +80,44 @@ final class HVMSession {
         PlayerProbe.shared.touch = "\(phase.rawValue):\(Int(x.rounded())),\(Int(y.rounded())):\(finger)"
     }
     func setAccelerationX(_ x: Double, y: Double, z: Double) {}
+    private func publishKeyboard(active: Bool) {
+        onKeyboardState?(["active": NSNumber(value: active), "hasText": NSNumber(value: !PlayerProbe.shared.keyboardText.isEmpty),
+                          "focusToken": NSNumber(value: active ? 1 : 2), "returnKey": NSNumber(value: UIReturnKeyType.done.rawValue)])
+    }
+    func requestKeyboard() { publishKeyboard(active: true) }
+    func insertText(_ text: String) {
+        PlayerProbe.shared.keyboardText += text
+        publishKeyboard(active: true)
+    }
+    func deleteBackward() {
+        if !PlayerProbe.shared.keyboardText.isEmpty { PlayerProbe.shared.keyboardText.removeLast() }
+        publishKeyboard(active: true)
+    }
+    func submitTextReturn() {
+        PlayerProbe.shared.keyboardReturns += 1
+        publishKeyboard(active: false)
+    }
+}
+
+/// The synthetic UI app has no CPU engine or signal-handler chain. It uses a
+/// real, closable file for the snapshot interface; this does not qualify the
+/// production engine's host-fault handler or simulate a successful crash save.
+@MainActor enum HVMCrashJournal {
+    private static var file: FileHandle?
+    static func openSignalFile(_ path: String) {
+        closeSignalFile()
+        do {
+            let url = URL(fileURLWithPath: path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data().write(to: url)
+            file = try FileHandle(forWritingTo: url)
+        } catch { preconditionFailure("Could not open synthetic journal: \(error)") }
+    }
+    static func closeSignalFile() {
+        do { try file?.close(); file = nil }
+        catch { preconditionFailure("Could not close synthetic journal: \(error)") }
+    }
+    static func availableMemory() -> UInt64 { UInt64(os_proc_available_memory()) }
 }
 
 struct PlayerHarness: View {
@@ -89,6 +131,10 @@ struct PlayerHarness: View {
                     Text(verbatim: String(PlayerProbe.shared.volume)).accessibilityIdentifier("probe-volume")
                     Text("\(PlayerProbe.shared.maximumTouches)").accessibilityIdentifier("probe-max-touches")
                     Text("\(PlayerProbe.shared.cancellations)").accessibilityIdentifier("probe-cancellations")
+                    Text(PlayerProbe.shared.keyboardText).accessibilityIdentifier("probe-keyboard-text")
+                    Text("\(PlayerProbe.shared.keyboardReturns)").accessibilityIdentifier("probe-keyboard-returns")
+                    Button("Open Guest Keyboard") { PlayerProbe.shared.session?.requestKeyboard() }
+                        .accessibilityIdentifier("probe-keyboard-open")
                     Button("Change Guest Orientation") {
                         guard let session = PlayerProbe.shared.session else { return }
                         session.interfaceOrientation = session.interfaceOrientation == 3 ? 4 : 3

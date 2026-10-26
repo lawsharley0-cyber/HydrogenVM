@@ -122,7 +122,7 @@ def main():
     session = args.out / (time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:6])
     session.mkdir(parents=True)
     print(f'Logs, screenshots and report: {session}', flush=True)
-    print('Mouse: touch/drag | S: screenshot | B: background | F: foreground | Esc/close: save and stop', flush=True)
+    print('Mouse: touch/drag | Type in guest fields | Ctrl+S: screenshot | Ctrl+B/F: background/foreground | Esc/close: save and stop', flush=True)
     pygame.display.init()
     pygame.font.init()
     print(f'Display backend: {pygame.display.get_driver()}', flush=True)
@@ -209,14 +209,18 @@ def main():
                         elif event.type == pygame.VIDEORESIZE:
                             window = pygame.display.set_mode((max(160, event.w), max(284, event.h)), pygame.RESIZABLE)
                         elif event.type == pygame.KEYDOWN:
-                            if event.key == pygame.K_s and surface:
+                            if event.key == pygame.K_s and event.mod & pygame.KMOD_CTRL and surface:
                                 path = session / f'screenshot-{time.time_ns()}.png'
                                 pygame.image.save(surface, path)
                                 print(f'Saved {path}', flush=True)
-                            elif event.key == pygame.K_b:
+                            elif event.key == pygame.K_b and event.mod & pygame.KMOD_CTRL:
                                 send('background')
-                            elif event.key == pygame.K_f:
+                            elif event.key == pygame.K_f and event.mod & pygame.KMOD_CTRL:
                                 send('foreground')
+                            elif event.key == pygame.K_BACKSPACE:send('backspace')
+                            elif event.key in (pygame.K_RETURN,pygame.K_KP_ENTER):send('return')
+                        elif event.type == pygame.TEXTINPUT:
+                            send('text '+event.text.encode('utf-8').hex())
                         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and surface and rect.collidepoint(event.pos):
                             pressed = True
                             x, y = point(event.pos, rect, image_size, scale)
@@ -253,7 +257,7 @@ def main():
                         pass
                     code = process.poll()
                     if code is not None:
-                        pygame.display.set_caption(f'HydrogenVM — stopped ({code}); S saves screenshot, Esc closes')
+                        pygame.display.set_caption(f'HydrogenVM — stopped ({code}); Ctrl+S saves screenshot, Esc closes')
                         if closing or args.exit_on_stop:
                             running = False
                     elif stop_sent:
@@ -263,7 +267,7 @@ def main():
                             process.terminate()
                             failed = True
                     else:
-                        pygame.display.set_caption(f'HydrogenVM — {display_name} | S screenshot | B/F background/foreground | Esc save/stop')
+                        pygame.display.set_caption(f'HydrogenVM — {display_name} | Ctrl+S screenshot | Ctrl+B/F background/foreground | Esc save/stop')
                     window.fill((18, 20, 28))
                     if surface:
                         rect = viewport(window.get_size(), surface.get_size())

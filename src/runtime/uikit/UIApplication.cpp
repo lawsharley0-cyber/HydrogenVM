@@ -616,6 +616,30 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
 
 } // namespace
 
+void notifyHostKeyboard(Ctx& x) {
+    auto& st=ui(x);auto& r=rt(x);KeyboardState state;
+    const id responder=st.firstResponder;
+    if(responder && r.respondsTo(responder,r.sel("insertText:")) &&
+       r.respondsTo(responder,r.sel("deleteBackward")) && r.respondsTo(responder,r.sel("hasText"))) {
+        state.responder=responder;state.active=true;state.hasText=sendBool(x,responder,"hasText");
+        state.multiline=r.isKindOf(responder,r.getClass("UITextView"));
+        const auto integer=[&](const char* name) {
+            return r.respondsTo(responder,r.sel(name))?int32_t(r.send(x.cpu,responder,name)):0;
+        };
+        state.type=integer("keyboardType");state.returnKey=integer("returnKeyType");
+        state.capitalization=integer("autocapitalizationType");state.correction=integer("autocorrectionType");
+        state.secure=r.respondsTo(responder,r.sel("isSecureTextEntry")) && sendBool(x,responder,"isSecureTextEntry");
+    }
+    {
+        std::lock_guard<std::mutex> lock(st.inputMu);
+        state.revision=st.hostKeyboard.revision;
+        state.focusToken=st.hostKeyboard.focusToken+(state.responder!=st.hostKeyboard.responder);
+        if(state==st.hostKeyboard)return;
+        ++state.revision;st.hostKeyboard=state;
+    }
+    if(x.proc.config().keyboard)x.proc.config().keyboard(state);
+}
+
 void registerUIApplication(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
     ObjC::ClassBuilder touch = r.defineClass("UITouch", "NSObject");
@@ -722,6 +746,26 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
     p.setAccelerationHandler([&p](float ax, float ay, float az) {
         auto& st = ui(p);
         st.accel[0] = ax; st.accel[1] = ay; st.accel[2] = az;
+    });
+    p.setTextHandler([&p](TextInputKind kind,std::string text) {
+        if(text.size()>16384 || p.stopping())return;
+        uint32_t target;uint64_t focus;
+        {
+            auto& st=ui(p);std::lock_guard<std::mutex> lock(st.inputMu);
+            target=st.hostKeyboard.responder;focus=st.hostKeyboard.focusToken;
+        }
+        if(!target)return;
+        Foundation::mainRunLoop(p).post([&p,kind,target,focus,text=std::move(text)](CPU::Cpu& cpu) {
+            Ctx x{p,cpu,p.mem()};auto& st=ui(x);
+            {
+                std::lock_guard<std::mutex> lock(st.inputMu);
+                if(st.hostKeyboard.responder!=target || st.hostKeyboard.focusToken!=focus)return;
+            }
+            if(st.firstResponder!=target)return;
+            if(kind==TextInputKind::Submit)submitTextInput(x,target);
+            else if(kind==TextInputKind::DeleteBackward)rt(x).send(cpu,target,"deleteBackward");
+            else rt(x).send(cpu,target,"insertText:",{Foundation::makeString(x,text)});
+        });
     });
 }
 

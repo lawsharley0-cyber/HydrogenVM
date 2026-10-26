@@ -32,7 +32,19 @@ enum class LogLevel { Debug, Info, Warning, Error, GuestStdout, GuestStderr };
 
 namespace HostGL { class Platform; }
 
+// Host keyboard state contains traits, never the user's text. Events return
+// through the main run loop and target the focus that existed when queued.
+struct KeyboardState {
+    uint32_t responder = 0;
+    uint64_t revision = 0, focusToken = 0;
+    bool active = false, hasText = false, secure = false, multiline = false;
+    int32_t type = 0, returnKey = 0, capitalization = 0, correction = 0;
+    bool operator==(const KeyboardState&) const = default;
+};
+enum class TextInputKind { Insert, DeleteBackward, Submit };
+
 struct ProcessConfig {
+    std::function<void(const KeyboardState&)> keyboard;
     std::string bundlePath;            // …/Foo.app
     std::string homePath;              // sandbox home (Documents/, Library/, tmp/ live here); default: bundle's parent
     std::vector<std::string> extraArgs;
@@ -330,6 +342,10 @@ public:
     void injectTouch(TouchPhase phase, float x, float y, uint32_t fingerId) { if (touchHandler_) touchHandler_(phase, x, y, fingerId); }
     void setAcceleration(float x, float y, float z) { if (accelHandler_) accelHandler_(x, y, z); }
     void setTouchHandler(std::function<void(TouchPhase, float, float, uint32_t)> h) { touchHandler_ = std::move(h); }
+    void injectText(std::string text) { if(textHandler_) textHandler_(TextInputKind::Insert,std::move(text)); }
+    void injectDeleteBackward() { if(textHandler_) textHandler_(TextInputKind::DeleteBackward,{}); }
+    void injectTextReturn() { if(textHandler_) textHandler_(TextInputKind::Submit,{}); }
+    void setTextHandler(std::function<void(TextInputKind,std::string)> h) { textHandler_=std::move(h); }
     void setAccelerationHandler(std::function<void(float, float, float)> h) { accelHandler_ = std::move(h); }
     // Screen actually used by the app (UIKit picks 3.5" vs 4" from the bundle).
     void setScreenSize(uint32_t w, uint32_t h) { cfg_.screenWidth = w; cfg_.screenHeight = h; }
@@ -425,6 +441,7 @@ private:
     void captureCrash(const CPU::Cpu& c, const std::string& kind, const std::string& detail);
 
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
+    std::function<void(TextInputKind,std::string)> textHandler_;
     std::function<void(float, float, float)> accelHandler_;
 
     // diagnostics

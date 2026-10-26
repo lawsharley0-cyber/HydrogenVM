@@ -24,6 +24,7 @@ final class RunModel {
     private(set) var orientation = GuestOrientation.portrait
     private(set) var activity = PlayerActivity()
     private(set) var frameTimeP95 = 0.0
+    private(set) var keyboard = GuestKeyboardState()
     var volume: Double = 1 { didSet { session?.outputVolume = Float(volume) } }
     var inputEnabled: Bool { running && frame != nil && !closing && activity.acceptsInput }
     @ObservationIgnored private var activityTimer: Timer?
@@ -136,10 +137,17 @@ final class RunModel {
         s.onLog = { [weak self] line, level in
             MainActor.assumeIsolated { self?.append(line, level) }
         }
+        s.onKeyboardState = { [weak self, weak s] value in
+            MainActor.assumeIsolated {
+                guard let self, self.session === s, !self.finished, !self.closing else { return }
+                self.keyboard = GuestKeyboardState(value)
+            }
+        }
         s.onExit = { [weak self] code, crash in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.running = false
+                self.keyboard = GuestKeyboardState()
                 self.closing = false
                 self.cancelActiveTouches()
                 self.stopSensors()
@@ -341,6 +349,21 @@ final class RunModel {
         session?.touch(phase, x: Float(p.x), y: Float(p.y), finger: UInt(finger))
     }
 
+    func insertText(_ text: String) {
+        guard inputEnabled else { return }
+        session?.insertText(text)
+    }
+
+    func deleteBackward() {
+        guard inputEnabled else { return }
+        session?.deleteBackward()
+    }
+
+    func submitTextReturn() {
+        guard inputEnabled else { return }
+        session?.submitTextReturn()
+    }
+
     private func append(_ line: String, _ level: HVMLogLevel) {
         if Self.automation { Self.console(line) }
         var parts = line.split(separator: "\n", omittingEmptySubsequences: false)
@@ -420,7 +443,9 @@ struct RunView: View {
                                    orientation: effectiveOrientation,
                                    mode: PlayerScaleMode(rawValue: scaleSetting) ?? .fit,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
-                                   inputEnabled: model.inputEnabled) { phase, point, finger in
+                                   inputEnabled: model.inputEnabled, keyboard: model.keyboard,
+                                   onInsertText: model.insertText, onDeleteBackward: model.deleteBackward,
+                                   onTextReturn: model.submitTextReturn) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
                     }
                     if model.closing {

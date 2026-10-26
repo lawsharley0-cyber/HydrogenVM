@@ -1935,6 +1935,42 @@ int runFullSubsystemTests() {
               "UISwitch, UISlider, and UISegmentedControl");
     }
 
+    // Host keyboard events are delivered on the guest loop and cannot leak
+    // into a different or already destroyed first responder.
+    {
+        const auto create=[&]() {
+            return UIKit::sendRect(cx,ObjC::id(r.send(cpu,r.getClass("UITextField"),r.selAlloc)),
+                                   r.sel("initWithFrame:"),{0,0,160,30});
+        };
+        const ObjC::id first=create(),second=create();
+        r.send(cpu,first,"becomeFirstResponder");proc.injectText("Discarded old focus");
+        r.send(cpu,second,"becomeFirstResponder");proc.injectText("Beta");
+        Foundation::mainRunLoop(proc).runOnce(cpu,0.0);
+        check(Foundation::utf8(cx,ObjC::id(r.send(cpu,first,"text"))).empty() &&
+              Foundation::utf8(cx,ObjC::id(r.send(cpu,second,"text")))=="Beta",
+              "Queued text follows focus tokens and drops stale-field input");
+        proc.injectDeleteBackward();proc.injectText("\xf0\x9f\xa4\x96");
+        Foundation::mainRunLoop(proc).runOnce(cpu,0.0);
+        const std::string expected="Bet\xf0\x9f\xa4\x96";
+        check(Foundation::utf8(cx,ObjC::id(r.send(cpu,second,"text")))==expected,
+              "Buffered Backspace and UTF-8 insertion preserve Unicode and input order");
+        const uint32_t returns=proc.heap().allocZeroed(4);
+        auto delegateClass=r.defineClass("HVMTextReturnReceiver","NSObject");
+        delegateClass.method("textFieldShouldReturn:",[returns](Runtime::Ctx& context) {
+            context.mem.write<uint32_t>(returns,context.mem.read<uint32_t>(returns)+1);context.cpu.r[0]=0;
+        },"c@:@");
+        const ObjC::id delegate=ObjC::id(r.send(cpu,ObjC::id(r.send(cpu,delegateClass.cls(),r.selAlloc)),"init"));
+        r.send(cpu,second,"setDelegate:",{delegate});proc.injectTextReturn();
+        Foundation::mainRunLoop(proc).runOnce(cpu,0.0);
+        check(proc.mem().read<uint32_t>(returns)==1 && UIKit::ui(proc).firstResponder==second &&
+              Foundation::utf8(cx,ObjC::id(r.send(cpu,second,"text")))==expected,
+              "Return reaches the text delegate without appending a newline or forcing focus away");
+        proc.injectText("Discarded released field");r.send(cpu,second,"resignFirstResponder");
+        r.release(cpu,second);Foundation::mainRunLoop(proc).runOnce(cpu,0.0);
+        check(UIKit::ui(proc).firstResponder==0,"Queued text safely ignores a resigned and released field");
+        r.release(cpu,first);r.release(cpu,delegate);
+    }
+
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
     {
         const ObjC::Class winCls = r.getClass("UIWindow");

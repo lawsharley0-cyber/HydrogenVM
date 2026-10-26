@@ -488,6 +488,16 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             }
         };
         cfg.microphone = [core](bool on) { setMicrophone(core, on); };
+        cfg.keyboard = [weakSelf](const RT::KeyboardState& state) {
+            NSDictionary *value=@{@"revision":@(state.revision),@"focusToken":@(state.focusToken),
+                @"active":@(state.active),@"hasText":@(state.hasText),@"secure":@(state.secure),
+                @"multiline":@(state.multiline),@"type":@(state.type),@"returnKey":@(state.returnKey),
+                @"capitalization":@(state.capitalization),@"correction":@(state.correction)};
+            dispatch_async(dispatch_get_main_queue(), ^{
+                HVMSession *s=weakSelf;
+                if(s && s.onKeyboardState)s.onKeyboardState(value);
+            });
+        };
         cfg.present = [core, weakSelf](const uint8_t *rgba, int w, int h) {
             if (core->framePending.exchange(true)) return;   // the UI hasn't taken the last one: drop
             // Read UIKit only on this guest render thread. Capture metadata with
@@ -670,6 +680,26 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         p = _core->proc;
     }
     if (p) p->injectTouch(RT::TouchPhase(int(phase)), x, y, uint32_t(finger));
+}
+
+- (void)insertText:(NSString *)text {
+    if(!_core->ready)return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lock(_core->mu);p=_core->proc; }
+    NSData *data=[text dataUsingEncoding:NSUTF8StringEncoding];
+    if(p && data)p->injectText(data.length?std::string(static_cast<const char*>(data.bytes),data.length):std::string{});
+}
+- (void)deleteBackward {
+    if(!_core->ready)return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lock(_core->mu);p=_core->proc; }
+    if(p)p->injectDeleteBackward();
+}
+- (void)submitTextReturn {
+    if(!_core->ready)return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lock(_core->mu);p=_core->proc; }
+    if(p)p->injectTextReturn();
 }
 
 - (void)setAccelerationX:(double)x y:(double)y z:(double)z {
