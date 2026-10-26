@@ -56,6 +56,11 @@ final class EditorUITests: XCTestCase {
         let save = app.buttons["save-changes"]
         XCTAssertTrue(save.isEnabled)
         save.tap()
+        let warning = app.alerts["Game May Be Running"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        warning.buttons["Save Anyway"].tap()
+        let saved = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Saved ✓")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
         app.buttons["editor-close"].tap()
         XCTAssertTrue(app.staticTexts["disk-json"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["disk-json"].label, "nested=true")

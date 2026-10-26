@@ -31,8 +31,15 @@ final class PlayerUITests: XCTestCase {
     @MainActor
     private func wait(_ element: XCUIElement, label: String) {
         let predicate = NSPredicate(format: "label == %@", label)
-        expectation(for: predicate, evaluatedWith: element)
-        waitForExpectations(timeout: 10)
+        let expected = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        let result = XCTWaiter.wait(for: [expected], timeout: 10)
+        if result != .completed {
+            let screenshot = XCTAttachment(screenshot: XCUIApplication().screenshot())
+            screenshot.name = "Failed expectation: \(label)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+        XCTAssertEqual(result, .completed, "Expected \(label), observed \(element.debugDescription)")
     }
 
     @MainActor
@@ -64,14 +71,19 @@ final class PlayerUITests: XCTestCase {
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
         app.buttons["player-controls"].tap()
         app.buttons["Stretch"].tap()
+        // Test guest input with the settings panel dismissed: controls are
+        // allowed to consume touches inside their own visible bounds.
+        app.buttons["hud-minimize"].tap()
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.25)).tap()
         // With Stretch the entire container is the display, independent of safe areas.
         wait(app.staticTexts["probe-touch"], label: "3:80,360:0")
         app.buttons["probe-rotate"].tap()
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.25)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:240,120:0")
+        app.buttons["player-controls"].tap()
         app.buttons["Integer Pixels"].tap()
         app.buttons["Nearest Neighbor"].tap()
+        app.buttons["hud-minimize"].tap()
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
