@@ -1,7 +1,6 @@
 GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
 [gpu] GL layer (320.0, 480.0)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 Loaded Tiny Tower: armv7, 11724 imports, 0 initializers, entry 0x000026fc Tiny Tower+5884 start
 Objective-C: 1333 classes, 31 categories, 2506 selector refs
 Screen: 320x480 @2x, portrait, status bar hidden
@@ -11,6 +10,8 @@ GPU: OpenGL ES 1.1 runs on an ES 2 context (fixed function in shaders)
 GPU: drawable 320x480 for renderbuffer 1 (platform layer)
 glViewWidth: 320.000000
 
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 Created dialog layer...
 
 glViewWidth: 320.000000
@@ -48,13 +49,14 @@ Business count for type CREATIVE: 0
 
 (localytics) Object Initialized.  Application's key is: 67955ed4ab97031c133c125-c6a883c0-7bdf-11e0-fc9a-007f58cb3154
 
-(localytics) File Path is: /var/mobile/Applications/4F8A9B6F-81B7-8791-2A11-77E64889BDB3/Documents/localytics/
+(localytics) File Path is: /var/mobile/Applications/4EDB85D3-110A-91E0-B47F-61EF4F0047DA/Documents/localytics/
 
-(localytics) Succesfully opened session. UUID is: F1346BC5-8397-4486-B55B-E4DC78F9C24C
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+(localytics) Succesfully opened session. UUID is: 21C9FEF2-D9D7-4038-ACF1-02DED56C0012
 
-(localytics) Session file is: s_F1346BC5-8397-4486-B55B-E4DC78F9C24C.yml
+(localytics) Session file is: s_21C9FEF2-D9D7-4038-ACF1-02DED56C0012.yml
 
-(localytics) Close session file is: c_F1346BC5-8397-4486-B55B-E4DC78F9C24C.yml
+(localytics) Close session file is: c_21C9FEF2-D9D7-4038-ACF1-02DED56C0012.yml
 
 (localytics uploader) Beginning upload process
 
@@ -64,10 +66,8 @@ applicationDidBecomeActive
 
 USER MUSIC PLAYING: NO
 
-music path:/var/mobile/Applications/4F8A9B6F-81B7-8791-2A11-77E64889BDB3/Tiny Tower.app/song2.mp3
+music path:/var/mobile/Applications/4EDB85D3-110A-91E0-B47F-61EF4F0047DA/Tiny Tower.app/song2.mp3
 
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] GL layer (320.0, 480.0)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -80,14 +80,14 @@ USER MUSIC PLAYING: NO
 mplayer.play
 
 GPU: drawable 320x480 for renderbuffer 1 (platform layer)
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 GPU: presented frame 1 directly (average rgb 97,92,128, 63/64 samples lit)
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 (localytics uploader) Error Uploading.  Code: -1009,  Description: p%
 
 GPU: drawable 320x480 placed at [0.003125 0 0 0.002083 0 0] of the screen
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -302,10 +302,7 @@ GPU: presented frame 300 directly (average rgb 71,65,94, 63/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 GPU: presented frame 600 directly (average rgb 71,65,94, 63/64 samples lit)
-[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
@@ -1558,4 +1555,52 @@ GPU: presented frame 3600 directly (average rgb 71,65,94, 63/64 samples lit)
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
 [gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
-com.lfull.HydrogenVM: 43178
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+[gpu] layout picture (402.0, 603.0) gl (320.0, 480.0) super true
+com.lfull.HydrogenVM: 46032
