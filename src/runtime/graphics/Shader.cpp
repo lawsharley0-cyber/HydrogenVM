@@ -1383,7 +1383,7 @@ struct Compiler {
         const Variable& v = p.variables[index];
         Expression e; e.type = v.type; e.lvalue = !v.readOnly && !v.memory; e.direct = true;
         e.origin = v.memory ? memEncode(v.slot) : v.slot;
-        if (v.name == "gl_FragColor") e.fragTag = 1;
+        if (v.name == "gl_FragColor" || (!p.vertex && v.storage == Storage::Output)) e.fragTag = 1;
         if (v.name == "gl_FragData") e.fragTag = 2;
         if (v.array || v.count != 1) {
             e.needsIndex = true; e.elemCount = v.count;
@@ -2333,6 +2333,12 @@ struct Compiler {
             int user = findUser(name, args);
             const bool derivCall = derivatives && (name == "dFdx" || name == "dFdy" || name == "fwidth");
             if (user >= 0) return callUser(user, std::move(args));
+            if (name == "texture" || name == "textureLod") {
+                if (args.empty()) fail("invalid arguments to " + name);
+                const char* alias = name == "texture" ? (isSamCube(args[0]) ? "textureCube" : "texture2D") :
+                                                          (isSamCube(args[0]) ? "textureCubeLod" : "texture2DLod");
+                return emitBuiltin(alias, args);
+            }
             if (builtinName(name) || derivCall) return emitBuiltin(name, args);
             fail("unknown variable/function " + name);
         }
@@ -2352,7 +2358,8 @@ struct Compiler {
             else if (s == "attribute" || s == "uniform" || s == "varying" || s == "in" || s == "out") {
                 if (q.storageSet) fail("duplicate qualifier");
                 q.storageSet = true;
-                q.storage = (s == "attribute" || (s == "in" && p.vertex)) ? Storage::Attribute : s == "uniform" ? Storage::Uniform : Storage::Varying;
+                q.storage = (s == "attribute" || (s == "in" && p.vertex)) ? Storage::Attribute :
+                            s == "uniform" ? Storage::Uniform : (s == "out" && !p.vertex) ? Storage::Output : Storage::Varying;
                 ++at;
             } else if (precision(s)) { if (q.precisionSet) fail("duplicate qualifier"); q.precisionSet = true; ++at; }
             else break;
@@ -2379,8 +2386,13 @@ struct Compiler {
             if (storage == Storage::Varying && ((t.matrix && !t.isStruct()) || t.sampler || containsSampler(t) || nonFloat(t))) fail("unsupported varying type");
             if (storage == Storage::Attribute && (t.matrix || t.sampler || t.isStruct() || count != 1 || isArray || !p.vertex || t.kind != Kind::Float))
                 fail("unsupported attribute type/stage");
+            // The rasterizer has one fragment colour output. ES 3 shaders may
+            // name it directly, including the common single-element array form.
+            if (storage == Storage::Output && (p.vertex || t != ty(Kind::Float, 4) || count != 1))
+                fail("unsupported fragment output");
             bool ro = q.isConst || storage == Storage::Uniform || storage == Storage::Attribute || (storage == Storage::Varying && !p.vertex);
             auto& v = declare(name, t, storage, count, ro, isArray, q.invariant);
+            if (storage == Storage::Output) v.slot = p.output;
             int slot = v.slot;
             if (take("=")) {
                 if (storage != Storage::Local) fail("unsupported global initializer");

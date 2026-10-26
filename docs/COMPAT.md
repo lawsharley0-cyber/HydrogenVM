@@ -36,6 +36,21 @@ replaced by `hvm_compat.py issues`, schema-checked JSON and explicit report diff
 
 ## Real-app regression log
 
+- **Hungry Shark and Angry Birds / audio (2026-10-26):** RemoteIO output used a
+  main-run-loop timer, so its callback could be starved; it now runs on a guest
+  audio thread with LPCM conversion and mixer ownership/locking. Normal mutexes
+  allow the old-iOS creator-to-worker handoff, and OpenAL `AL_MIN_GAIN` /
+  `AL_MAX_GAIN` have their specified 0 / 1 defaults. Hungry Shark measured 36,864
+  audible/music frames and Angry Birds 983,040 after both previously measured
+  zero. Effects, close and relaunch remain unverified. TL-F/O/Q plus fulltest
+  cover the shared behavior; TL-Q was red before the audio-thread fix.
+- **Minecraft Story Mode 1.1 / GLES (2026-10-26):** added ES 3 named fragment
+  outputs and texture aliases, spec-correct deferred program deletion, and
+  locking for shared program bind/create/delete/draw operations. Each new
+  fulltest regression was red first, including two-thread crash reproductions.
+  A 90 s run rendered the Telltale legal screen and mixed 3,289,088 audible/music
+  frames. Gameplay and reliable process teardown are not yet verified.
+
 - **Clumsy Ninja / EAGL worker affinity (2026-10-26):** `ctx_setCurrent` applied
   the software renderer's one-context-per-thread rejection even after HostGL
   had created a shared worker context. The game was told its successful GPU

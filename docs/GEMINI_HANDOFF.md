@@ -2,6 +2,24 @@
 
 ## Latest continuation — 2026-10-26
 
+- **Audio:** RemoteIO callbacks now run on a guest audio thread every 10 ms, with
+  format conversion and mixer output; normal pthread mutexes support the old-iOS
+  creator/worker handoff. OpenAL gain queries now return the specified defaults.
+  Hungry Shark produced 36,864 audible/music frames and Angry Birds 983,040;
+  neither had audible mixer output before. Sound effects, clean close and
+  relaunch remain unverified. TL-F/O/Q and fulltest cover the fixed behavior.
+- **Minecraft Story Mode 1.1:** GLSL ES 3 named fragment outputs and texture
+  aliases compile, program deletion follows GLES lifetime rules, and shared
+  program state is locked against concurrent bind/create/delete/draw calls.
+  Red-first fulltest cases cover all three bug classes. A 90 s software run
+  rendered the Telltale legal screen and produced 3,289,088 audible/music frames
+  instead of stopping in `glDrawArrays`. This is opening-screen evidence, not
+  playable-game verification; one timed-stop host crash remained timing-dependent.
+- **Still open:** Minion Rush crashes before its EAGL view is installed. Goat
+  Simulator still lacks usable picture/report evidence. Do not call either fixed.
+- **Verified gates:** fulltest 268/0, Test Lab 17/17, report build 1/0, cpu 15/0,
+  ios 6/0, bench 5/0; only known warnings and the CoreMark perf notice remained.
+
 - **Clumsy Ninja EAGL regression:** HostGL no longer applies the software
   renderer's cross-thread affinity rejection after creating a shared worker
   context. TL-N is the permanent guest regression: red before (`workerBound=0`),

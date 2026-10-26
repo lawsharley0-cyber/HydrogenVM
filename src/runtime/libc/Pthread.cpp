@@ -97,7 +97,11 @@ int lockMutex(Ctx& x, GuestMutex& m, bool tryOnly) {
 }
 int unlockMutex(Ctx& x, GuestMutex& m) {
     std::lock_guard<std::mutex> lk(m.m);
-    if (m.owner != tid(x)) return D_EPERM;
+    // Old iOS normal mutexes permit the creator-to-worker handoff used by
+    // audio pump threads: the worker observes EBUSY, then releases the
+    // creator's lock. Error-check/recursive mutexes retain ownership checks.
+    if (m.owner != tid(x) && m.type != kNormal) return D_EPERM;
+    if (!m.owner) return m.type == kNormal ? 0 : D_EPERM;
     if (--m.count == 0) { m.owner = 0; m.cv.notify_one(); }
     return 0;
 }

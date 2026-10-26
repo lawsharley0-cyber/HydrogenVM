@@ -41,6 +41,9 @@ signal, and sandboxed persistence.
 | TL-G | Keychain | `Security.framework` (`SecItemAdd`, `SecItemCopyMatching`, `SecItemDelete`); verifies generic password addition, duplicate key rejection (`errSecDuplicateItem`), query data matching, and removal/not-found verification (`errSecItemNotFound`) |
 | TL-H | File System & Sandbox | `NSFileManager` nested directory creation (`createDirectoryAtPath:withIntermediateDirectories:`), atomic write of 1024-byte payload, file/dir existence and size verification via `attributesOfItemAtPath:`, payload integrity check, and recursive removal |
 | TL-N | EAGL worker binding | Runs with `--gpu`. Main binds an ES2 context, then a pthread binds the same context through HostGL's shared-context path. The independent EAGL API oracle requires both calls to return true and the worker's `currentContext` to equal the object it bound. Proven red on the unfixed runtime (`workerBound=0`) for the Clumsy Ninja affinity regression |
+| TL-O | RemoteIO mixing | Registers a RemoteIO render callback, starts output, and independently requires callback delivery plus non-silent mixer PCM; guards the callback/mixer path used by Angry Birds and Hungry Shark |
+| TL-P | VFP VCMP | Checks ordered/unordered VCMP condition flags against the ARM architecture definition; passed before any runtime change and adds isolated coverage |
+| TL-Q | RemoteIO thread timing | Requires audio callbacks to continue while the main thread sleeps; proven red with the old main-run-loop timer and green with the guest audio thread |
 
 ### Checkpoint / interrupted-case protocol
 

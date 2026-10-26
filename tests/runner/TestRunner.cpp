@@ -14,6 +14,7 @@
 #include "runtime/Abi.hpp"
 #include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -455,6 +456,24 @@ int runFullSubsystemTests() {
                   fails("#version 300\nvoid main() { gl_FragColor = vec4(1.0); }", "unsupported version") &&
                   fails("void main() { gl_FragColor = vec4(1.0); }\n#version 100", "version directive must be first"),
               "GLSL #version 100, and rejection of other versions");
+        {
+            Shader::Program modern;
+            const bool modernOk = modern.compile(
+                "#version 300 es\n#define texture2D texture\n"
+                "out mediump vec4 ttFragOut[1]; in mediump vec2 T0; uniform sampler2D S0;\n"
+                "void main() { ttFragOut[0] = texture2D(S0, T0); }", false);
+            Shader::Values modernValues;
+            modern.initialize(modernValues);
+            if (auto* s = modern.find("S0")) modernValues[s->slot] = 2;
+            if (auto* t = modern.find("T0")) { modernValues[t->slot] = 0.5f; modernValues[t->slot + 1] = 0.25f; }
+            bool modernSampled = false;
+            if (modernOk) modern.execute(modernValues, [](void* context, int unit, float u, float v, float* out) {
+                *static_cast<bool*>(context) = unit == 2 && u == 0.5f && v == 0.25f;
+                out[0] = 0.1f; out[1] = 0.3f; out[2] = 0.5f; out[3] = 0.7f;
+            }, &modernSampled);
+            check(modernOk && modernSampled && near4(&modernValues[modern.output], 0.1f, 0.3f, 0.5f, 0.7f),
+                  "GLSL ES 3 fragment outputs and texture aliases used by Telltale shaders");
+        }
         {
             Shader::Program program;
             const bool ok = program.compile(
@@ -1998,6 +2017,89 @@ int runFullSubsystemTests() {
         const uint8_t aPx = proc.mem().read<uint8_t>(idsAddr + 27);
         check(rPx == 0 && gPx == 255 && bPx == 0 && aPx == 255, "OpenGL ES 2.0 shader + VBO + glDrawArrays rasterizes triangle");
 
+        // OpenGL ES 2.0 §2.10: deletion is deferred while a program is current.
+        // Telltale's render thread draws with programs deleted by another thread.
+        const uint32_t deletedProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {deletedProg, vs});
+        callGL("_glAttachShader", {deletedProg, fs});
+        callGL("_glLinkProgram", {deletedProg});
+        callGL("_glUseProgram", {deletedProg});
+        const int32_t deletedCol = int32_t(callGL("_glGetUniformLocation", {deletedProg, uColName}));
+        callGL("_glUniform4f", {uint32_t(deletedCol), UIKit::fbits(0.0f), UIKit::fbits(1.0f), UIKit::fbits(0.0f), UIKit::fbits(1.0f)});
+        callGL("_glDeleteProgram", {deletedProg});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        callGL("_glGetIntegerv", {0x8B8D /* GL_CURRENT_PROGRAM */, idsAddr + 36});
+        check(proc.mem().read<uint8_t>(idsAddr + 25) == 255 &&
+              proc.mem().read<uint32_t>(idsAddr + 36) == deletedProg &&
+              callGL("_glIsProgram", {deletedProg}) == 0,
+              "GLES2 defers program deletion while the program is current");
+        callGL("_glUseProgram", {prog});
+
+        // Software rendering also supports the old worker-thread fallback to
+        // the last active context; that binding must retain the program too.
+        const uint32_t workerProg = uint32_t(callGL("_glCreateProgram", {}));
+        callGL("_glAttachShader", {workerProg, vs});
+        callGL("_glAttachShader", {workerProg, fs});
+        callGL("_glLinkProgram", {workerProg});
+        callGL("_glUseProgram", {workerProg});
+        const int32_t workerCol = int32_t(callGL("_glGetUniformLocation", {workerProg, uColName}));
+        callGL("_glUniform4f", {uint32_t(workerCol), UIKit::fbits(0.0f), UIKit::fbits(1.0f), UIKit::fbits(0.0f), UIKit::fbits(1.0f)});
+        r.send(cpu, ctxCls, "setCurrentContext:", {0});
+        callGL("_glDeleteProgram", {workerProg});
+        callGL("_glClear", {0x4000});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        check(proc.mem().read<uint8_t>(idsAddr + 25) == 255 && callGL("_glIsProgram", {workerProg}) == 0,
+              "GLES2 worker fallback retains a deleted current program");
+        r.send(cpu, ctxCls, "setCurrentContext:", {glCtx});
+
+        // Telltale's main thread can change the fallback context while its
+        // worker is drawing. A draw must observe one consistent program.
+        std::atomic<bool> stopProgramChanges{false};
+        std::atomic<int> programChanges{0};
+        const auto changeProgram = proc.defineFunction("__gl_program_change_worker", [&](Ctx& workerContext) {
+            while (!stopProgramChanges.load(std::memory_order_relaxed)) {
+                proc.callGuest(workerContext.cpu, *proc.lookupSymbol("_glUseProgram"), {0});
+                programChanges.fetch_add(1, std::memory_order_relaxed);
+                std::this_thread::yield();
+            }
+            workerContext.cpu.r[0] = 0;
+        });
+        const uint32_t programThread = proc.startThread(changeProgram, 0, 64u << 10, false);
+        bool stableDraw = true;
+        for (int iteration = 0; iteration < 30; ++iteration) {
+            callGL("_glUseProgram", {prog});
+            callGL("_glDrawArrays", {4, 0, 3});
+        }
+        stopProgramChanges.store(true, std::memory_order_relaxed);
+        uint32_t programThreadResult = 1;
+        stableDraw &= proc.joinThread(programThread, &programThreadResult) && programThreadResult == 0;
+        check(stableDraw && programChanges.load(std::memory_order_relaxed) > 0,
+              "GLES2 drawing stays consistent during cross-thread program changes");
+
+        std::atomic<bool> stopProgramObjects{false};
+        std::atomic<int> programObjects{0};
+        const auto recyclePrograms = proc.defineFunction("__gl_program_recycle_worker", [&](Ctx& workerContext) {
+            while (!stopProgramObjects.load(std::memory_order_relaxed)) {
+                const uint32_t temporary = uint32_t(proc.callGuest(workerContext.cpu, *proc.lookupSymbol("_glCreateProgram"), {}));
+                proc.callGuest(workerContext.cpu, *proc.lookupSymbol("_glDeleteProgram"), {temporary});
+                programObjects.fetch_add(1, std::memory_order_relaxed);
+            }
+            workerContext.cpu.r[0] = 0;
+        });
+        const uint32_t recycleThread = proc.startThread(recyclePrograms, 0, 64u << 10, false);
+        for (int iteration = 0; iteration < 60; ++iteration) {
+            callGL("_glUseProgram", {prog});
+            callGL("_glDrawArrays", {4, 0, 3});
+        }
+        stopProgramObjects.store(true, std::memory_order_relaxed);
+        uint32_t recycleResult = 1;
+        const bool recycled = proc.joinThread(recycleThread, &recycleResult) && recycleResult == 0;
+        check(recycled && programObjects.load(std::memory_order_relaxed) > 0,
+              "GLES2 program table stays valid when another thread creates and deletes programs");
+
         // End-to-end programmable pipeline: arbitrary names, two varyings,
         // perspective interpolation and a nonzero sampler texture unit.
         auto shader = [&](uint32_t stage, const char* source) {
@@ -2699,6 +2801,26 @@ int runFullSubsystemTests() {
             } else libc = false;
         }
         check(libc, "startup libc exports writev bytes, Darwin signal names and invalid-thread cancellation errors");
+        bool mutexHandoff = bound({"_pthread_mutex_init", "_pthread_mutex_lock", "_pthread_mutex_trylock", "_pthread_mutex_unlock"});
+        if (mutexHandoff) {
+            const uint32_t mutex = scratch + 256, results = scratch + 320;
+            proc.mem().write<uint32_t>(results, 99);
+            proc.mem().write<uint32_t>(results + 4, 99);
+            mutexHandoff = call("_pthread_mutex_init", {mutex, 0}) == 0 && call("_pthread_mutex_lock", {mutex}) == 0;
+            const auto worker = proc.defineFunction("__normal_mutex_handoff", [&](Ctx& workerContext) {
+                const auto busy = proc.callGuest(workerContext.cpu, *proc.lookupSymbol("_pthread_mutex_trylock"), {mutex});
+                const auto released = proc.callGuest(workerContext.cpu, *proc.lookupSymbol("_pthread_mutex_unlock"), {mutex});
+                proc.mem().write<uint32_t>(results, busy);
+                proc.mem().write<uint32_t>(results + 4, released);
+                workerContext.cpu.r[0] = 0;
+            });
+            const auto thread = proc.startThread(worker, 0, 64u << 10, false);
+            uint32_t returned = 1;
+            mutexHandoff &= proc.joinThread(thread, &returned) && returned == 0;
+            mutexHandoff &= proc.mem().read<uint32_t>(results) == 16 && proc.mem().read<uint32_t>(results + 4) == 0;
+            mutexHandoff &= call("_pthread_mutex_trylock", {mutex}) == 0 && call("_pthread_mutex_unlock", {mutex}) == 0;
+        }
+        check(mutexHandoff, "normal pthread mutex supports old-iOS cross-thread handoff while trylock reports busy");
         bool protocols = bound({"_protocol_conformsToProtocol", "_protocol_copyProtocolList", "_protocol_copyMethodDescriptionList"});
         if (protocols) {
             const uint32_t parent = scratch + 96, child = scratch + 128, list = scratch + 160, methods = scratch + 176;
@@ -2834,6 +2956,14 @@ int runFullSubsystemTests() {
         callAL("_alBufferData", {alBuf, 0x1103 /* AL_FORMAT_STEREO16 */, pcmGuest, 1000 * 4, 44100});
         callAL("_alGenSources", {1, alIds + 4});
         const uint32_t alSrc = proc.mem().read<uint32_t>(alIds + 4);
+        callAL("_alGetSourcef", {alSrc, 0x100E /* AL_MAX_GAIN */, alIds + 8});
+        const float defaultMaxGain = proc.mem().read<float>(alIds + 8);
+        callAL("_alSourcef", {alSrc, 0x100D /* AL_MIN_GAIN */, std::bit_cast<uint32_t>(0.25f)});
+        callAL("_alSourcef", {alSrc, 0x100E /* AL_MAX_GAIN */, std::bit_cast<uint32_t>(0.75f)});
+        callAL("_alGetSourcef", {alSrc, 0x100D, alIds + 8});
+        callAL("_alGetSourcef", {alSrc, 0x100E, alIds + 12});
+        check(defaultMaxGain == 1.0f && proc.mem().read<float>(alIds + 8) == 0.25f && proc.mem().read<float>(alIds + 12) == 0.75f,
+              "OpenAL source min/max gain defaults and getter/setter round trip");
         callAL("_alSourcei", {alSrc, 0x1009 /* AL_BUFFER */, alBuf});
         callAL("_alSourcePlay", {alSrc});
         callAL("_alGetSourcei", {alSrc, 0x1010 /* AL_SOURCE_STATE */, alIds + 8});
@@ -2884,6 +3014,38 @@ int runFullSubsystemTests() {
         callAT("_AudioQueueDispose", {qid, 1});
         check(qid != 0 && qbuf != 0 && aqFrames >= 95 && aqFrames <= 100 && cbEarly == 0 && cbRan == 1,
               "AudioQueue buffer playback through the mixer; the callback fires after the buffer has played");
+
+        // RemoteIO output: starting the unit must pull PCM from the app's callback.
+        {
+            std::atomic<int> calls{0};
+            uint32_t gotFrames = 0, gotBytes = 0;
+            bool wrotePcm = false;
+            const auto cb = proc.registerHostFunction("hvm_test_au_output", [&](Ctx& cx) {
+                ++calls;
+                gotFrames = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
+                const uint32_t abl = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP] + 4);
+                if (!abl || cx.mem.read<uint32_t>(abl) != 1) return;
+                const uint32_t data = cx.mem.read<uint32_t>(abl + 12);
+                gotBytes = cx.mem.read<uint32_t>(abl + 8);
+                if (!data || gotBytes < gotFrames * 4) return;
+                for (uint32_t i = 0; i < gotFrames * 2; ++i) cx.mem.write<int16_t>(data + i * 2, 12000);
+                wrotePcm = true;
+            });
+            const uint32_t out = proc.heap().allocZeroed(16), callback = proc.heap().allocZeroed(8);
+            callAT("_AudioComponentInstanceNew", {0, out});
+            const uint32_t unit = proc.mem().read<uint32_t>(out);
+            proc.mem().write<uint32_t>(callback, cb);
+            callAT("_AudioUnitSetProperty", {unit, 23, 1, 0, callback, 8});
+            callAT("_AudioUnitInitialize", {unit});
+            callAT("_AudioOutputUnitStart", {unit});
+            for (int i = 0; i < 100 && !calls; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
+            const size_t auFrames = renderedFrames(1024);
+            callAT("_AudioOutputUnitStop", {unit});
+            callAT("_AudioUnitUninitialize", {unit});
+            callAT("_AudioComponentInstanceDispose", {unit});
+            check(unit != 0 && calls > 0 && wrotePcm && gotFrames > 0 && gotBytes >= gotFrames * 4 && auFrames >= gotFrames,
+                  "AudioOutputUnitStart invokes the render callback and mixes its signed 16-bit stereo PCM");
+        }
 
         // OpenGL ES 1.1 Fixed-Function + 2D Texture + glDrawElements test
         const ObjC::Class ctxCls = r.getClass("EAGLContext");

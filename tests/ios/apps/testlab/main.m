@@ -70,6 +70,9 @@ static const char *kAppBuild        = "1";
 #define CASE_L  @"TL-L"
 #define CASE_M  @"TL-M"
 #define CASE_N  @"TL-N"
+#define CASE_O  @"TL-O"
+#define CASE_P  @"TL-P"
+#define CASE_Q  @"TL-Q"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -679,6 +682,19 @@ typedef struct {
     int *sharedCounter;
 } WorkerContext;
 
+typedef struct {
+    pthread_mutex_t *mutex;
+    int busyResult;
+    int unlockResult;
+} HandoffContext;
+
+static void *handoffWorker(void *arg) {
+    HandoffContext *ctx = (HandoffContext *)arg;
+    ctx->busyResult = pthread_mutex_trylock(ctx->mutex);
+    ctx->unlockResult = pthread_mutex_unlock(ctx->mutex);
+    return NULL;
+}
+
 static void *threadWorker(void *arg) {
     WorkerContext *ctx = (WorkerContext *)arg;
     uint32_t h = 2166136261u;
@@ -703,6 +719,21 @@ static TLResult *runCaseF(void) {
 
     writeCheckpoint(CASE_F);
     r.checkpointWritten = YES;
+
+    pthread_mutex_t handoffMutex;
+    pthread_mutex_init(&handoffMutex, NULL);
+    pthread_mutex_lock(&handoffMutex);
+    HandoffContext handoff = { &handoffMutex, -1, -1 };
+    pthread_t handoffThread;
+    pthread_create(&handoffThread, NULL, handoffWorker, &handoff);
+    pthread_join(handoffThread, NULL);
+    const int relockResult = pthread_mutex_trylock(&handoffMutex);
+    if (relockResult == 0) pthread_mutex_unlock(&handoffMutex);
+    pthread_mutex_destroy(&handoffMutex);
+    const BOOL handoffOk = handoff.busyResult == 16 && handoff.unlockResult == 0 && relockResult == 0;
+    r.diagnostics[@"handoffBusy"] = @(handoff.busyResult);
+    r.diagnostics[@"handoffUnlock"] = @(handoff.unlockResult);
+    r.diagnostics[@"handoffRelock"] = @(relockResult);
 
     pthread_mutex_t mutex;
     pthread_mutex_init(&mutex, NULL);
@@ -743,11 +774,11 @@ static TLResult *runCaseF(void) {
     r.expected = [NSString stringWithFormat:@"hash=0x%08X, counter=%d", kExpectedHash, kExpectedCounter];
     r.actual   = [NSString stringWithFormat:@"hash=0x%08X, counter=%d", ctx.hashResult, sharedCounter];
 
-    if (hashOk && counterOk) {
+    if (hashOk && counterOk && handoffOk) {
         r.status = @"passed";
     } else {
         r.status = @"failed";
-        r.reason = [NSString stringWithFormat:@"Threading mismatch: hashOk=%d, counterOk=%d", hashOk, counterOk];
+        r.reason = [NSString stringWithFormat:@"Threading mismatch: hashOk=%d, counterOk=%d, handoffOk=%d", hashOk, counterOk, handoffOk];
     }
 
     clearCheckpoint();
@@ -1457,6 +1488,145 @@ static TLResult *runCaseN(void) {
     return r;
 }
 
+// TL-O: RemoteIO must pull output samples through AURenderCallback.
+// The independent oracle is AudioUnit's callback contract: after start, the
+// callback receives a positive frame count and a writable AudioBufferList.
+typedef int32_t TLOStatus;
+typedef void *TLOAudioUnit;
+typedef struct { uint32_t type, subType, manufacturer, flags, mask; } TLOComponentDescription;
+typedef struct {
+    double sampleRate;
+    uint32_t formatID, flags, bytesPerPacket, framesPerPacket, bytesPerFrame;
+    uint32_t channels, bits, reserved;
+} TLOStreamFormat;
+typedef struct { uint32_t channels, byteSize; void *data; } TLOAudioBuffer;
+typedef struct { uint32_t count; TLOAudioBuffer buffer; } TLOAudioBufferList;
+typedef struct { TLOStatus (*callback)(void *, uint32_t *, const void *, uint32_t, uint32_t, TLOAudioBufferList *); void *userData; } TLORenderCallback;
+extern void *AudioComponentFindNext(void *, const TLOComponentDescription *);
+extern TLOStatus AudioComponentInstanceNew(void *, TLOAudioUnit *);
+extern TLOStatus AudioComponentInstanceDispose(TLOAudioUnit);
+extern TLOStatus AudioUnitSetProperty(TLOAudioUnit, uint32_t, uint32_t, uint32_t, const void *, uint32_t);
+extern TLOStatus AudioUnitInitialize(TLOAudioUnit);
+extern TLOStatus AudioUnitUninitialize(TLOAudioUnit);
+extern TLOStatus AudioOutputUnitStart(TLOAudioUnit);
+extern TLOStatus AudioOutputUnitStop(TLOAudioUnit);
+
+static int tloCalls;
+static int tloBadArguments;
+static TLOStatus tloRender(void *unused, uint32_t *flags, const void *timestamp,
+                           uint32_t bus, uint32_t frames, TLOAudioBufferList *ioData) {
+    (void)unused; (void)flags; (void)timestamp; (void)bus;
+    if (!ioData || ioData->count != 1 || !frames || !ioData->buffer.data ||
+        ioData->buffer.channels != 2 || ioData->buffer.byteSize < frames * 4) {
+        ++tloBadArguments;
+        return -50;
+    }
+    int16_t *samples = (int16_t *)ioData->buffer.data;
+    for (uint32_t i = 0; i < frames * 2; ++i) samples[i] = 12000;
+    ++tloCalls;
+    return 0;
+}
+
+static TLResult *runCaseO(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_O version:1];
+    writeCheckpoint(CASE_O);
+    r.checkpointWritten = YES;
+    tloCalls = 0;
+    tloBadArguments = 0;
+    TLOComponentDescription desc = { 0x6F757470, 0x72696F63, 0x6170706C, 0, 0 }; // 'outp', 'rioc', 'appl'
+    TLOAudioUnit unit = NULL;
+    TLOStatus created = AudioComponentInstanceNew(AudioComponentFindNext(NULL, &desc), &unit);
+    TLOStreamFormat format = { 44100.0, 0x6C70636D, 0x0C, 4, 1, 4, 2, 16, 0 }; // packed signed-16 stereo LPCM
+    TLOStatus formatStatus = unit ? AudioUnitSetProperty(unit, 8, 1, 0, &format, sizeof(format)) : -1;
+    TLORenderCallback callback = { tloRender, NULL };
+    TLOStatus callbackStatus = unit ? AudioUnitSetProperty(unit, 23, 1, 0, &callback, sizeof(callback)) : -1;
+    TLOStatus initialized = unit ? AudioUnitInitialize(unit) : -1;
+    TLOStatus started = unit ? AudioOutputUnitStart(unit) : -1;
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
+    TLOStatus stopped = unit ? AudioOutputUnitStop(unit) : -1;
+    if (unit) AudioUnitUninitialize(unit);
+    if (unit) AudioComponentInstanceDispose(unit);
+    const BOOL ok = created == 0 && formatStatus == 0 && callbackStatus == 0 && initialized == 0 &&
+                    started == 0 && stopped == 0 && tloCalls > 0 && tloBadArguments == 0;
+    r.expected = @"all statuses=0, renderCallbacks>0, invalidCallbackArguments=0";
+    r.actual = [NSString stringWithFormat:@"create=%d format=%d callback=%d init=%d start=%d stop=%d renderCallbacks=%d invalidCallbackArguments=%d",
+                created, formatStatus, callbackStatus, initialized, started, stopped, tloCalls, tloBadArguments];
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"AudioOutputUnitStart did not pull valid PCM buffers from AURenderCallback";
+    r.diagnostics[@"renderCallbacks"] = @(tloCalls);
+    r.diagnostics[@"invalidCallbackArguments"] = @(tloBadArguments);
+    clearCheckpoint();
+    return r;
+}
+
+// TL-P: a negative single-precision VCMP + VMRS must set integer Z and C.
+// This is the exact register/flag sequence used by Angry Birds' audio output
+// when it replaces a -1.0 sentinel with the configured music volume.
+static uint32_t tlpNegativeCompareEqual(void) {
+    uint32_t result = 0;
+    const float minusOne = -1.0f;
+    __asm__ volatile(
+        "vldr s14, %[value]\n\t"
+        "vldr s2, %[value]\n\t"
+        "vcmp.f32 s14, s2\n\t"
+        "vmrs APSR_nzcv, fpscr\n\t"
+        "it eq\n\t"
+        "moveq %[out], #1\n\t"
+        : [out] "+r" (result)
+        : [value] "m" (minusOne)
+        : "s2", "s14", "cc", "memory");
+    return result;
+}
+
+static TLResult *runCaseP(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_P version:1];
+    writeCheckpoint(CASE_P);
+    r.checkpointWritten = YES;
+    const uint32_t equal = tlpNegativeCompareEqual();
+    r.expected = @1;
+    r.actual = @(equal);
+    r.status = equal == 1 ? @"passed" : @"failed";
+    if (equal != 1) r.reason = @"VCMP of two -1.0 float registers did not set the integer equality flags";
+    r.diagnostics[@"negativeRegistersCompareEqual"] = @(equal);
+    clearCheckpoint();
+    return r;
+}
+
+// TL-Q: RemoteIO is a real-time output service, not main-run-loop work.
+// The callback must continue while the main thread is blocked in usleep.
+static TLResult *runCaseQ(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_Q version:1];
+    writeCheckpoint(CASE_Q);
+    r.checkpointWritten = YES;
+    tloCalls = 0;
+    tloBadArguments = 0;
+    TLOComponentDescription desc = { 0x6F757470, 0x72696F63, 0x6170706C, 0, 0 };
+    TLOAudioUnit unit = NULL;
+    TLOStatus created = AudioComponentInstanceNew(AudioComponentFindNext(NULL, &desc), &unit);
+    TLOStreamFormat format = { 44100.0, 0x6C70636D, 0x0C, 4, 1, 4, 2, 16, 0 };
+    TLOStatus formatStatus = unit ? AudioUnitSetProperty(unit, 8, 1, 0, &format, sizeof(format)) : -1;
+    TLORenderCallback callback = { tloRender, NULL };
+    TLOStatus callbackStatus = unit ? AudioUnitSetProperty(unit, 23, 1, 0, &callback, sizeof(callback)) : -1;
+    TLOStatus initialized = unit ? AudioUnitInitialize(unit) : -1;
+    TLOStatus started = unit ? AudioOutputUnitStart(unit) : -1;
+    usleep(200000);
+    const int callbacksWhileMainBlocked = tloCalls;
+    TLOStatus stopped = unit ? AudioOutputUnitStop(unit) : -1;
+    if (unit) AudioUnitUninitialize(unit);
+    if (unit) AudioComponentInstanceDispose(unit);
+    const BOOL ok = created == 0 && formatStatus == 0 && callbackStatus == 0 && initialized == 0 &&
+                    started == 0 && stopped == 0 && callbacksWhileMainBlocked >= 3 && tloBadArguments == 0;
+    r.expected = @"all statuses=0, callbacksWhileMainBlocked>=3, invalidCallbackArguments=0";
+    r.actual = [NSString stringWithFormat:@"create=%d format=%d callback=%d init=%d start=%d stop=%d callbacksWhileMainBlocked=%d invalidCallbackArguments=%d",
+                created, formatStatus, callbackStatus, initialized, started, stopped, callbacksWhileMainBlocked, tloBadArguments];
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"RemoteIO callbacks stopped when the main thread was blocked";
+    r.diagnostics[@"callbacksWhileMainBlocked"] = @(callbacksWhileMainBlocked);
+    r.diagnostics[@"invalidCallbackArguments"] = @(tloBadArguments);
+    clearCheckpoint();
+    return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1466,7 +1636,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1501,6 +1671,12 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseM()];
         } else if ([cid isEqualToString:CASE_N]) {
             [results addObject:runCaseN()];
+        } else if ([cid isEqualToString:CASE_O]) {
+            [results addObject:runCaseO()];
+        } else if ([cid isEqualToString:CASE_P]) {
+            [results addObject:runCaseP()];
+        } else if ([cid isEqualToString:CASE_Q]) {
+            [results addObject:runCaseQ()];
         }
     }
     return results;
@@ -1528,6 +1704,9 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_K]) return runCaseK();
     if ([caseId isEqualToString:CASE_M]) return runCaseM();
     if ([caseId isEqualToString:CASE_N]) return runCaseN();
+    if ([caseId isEqualToString:CASE_O]) return runCaseO();
+    if ([caseId isEqualToString:CASE_P]) return runCaseP();
+    if ([caseId isEqualToString:CASE_Q]) return runCaseQ();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1560,8 +1739,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1578,6 +1757,9 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_K version:kVersionK],
         [[TLResult alloc] initWithId:CASE_M version:1],
         [[TLResult alloc] initWithId:CASE_N version:1],
+        [[TLResult alloc] initWithId:CASE_O version:1],
+        [[TLResult alloc] initWithId:CASE_P version:1],
+        [[TLResult alloc] initWithId:CASE_Q version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1637,7 +1819,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

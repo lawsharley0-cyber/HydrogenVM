@@ -392,6 +392,7 @@ struct ProgramObject {
     uint32_t id = 0;
     std::vector<uint32_t> shaders;
     bool linked = false;
+    bool pendingDelete = false;
     std::string infoLog;
     std::map<std::string, int> boundAttribLocations;
     std::vector<ShaderVar> attribs;
@@ -411,6 +412,7 @@ struct SharegroupData : ObjC::HostObject {
     std::unordered_map<uint32_t, Renderbuffer> renderbuffers;
     std::unordered_map<uint32_t, Framebuffer> framebuffers;
     std::unordered_map<uint32_t, ShaderObject> shaders;
+    std::mutex programMu; // shared contexts may create, bind and draw concurrently
     std::unordered_map<uint32_t, ProgramObject> programs;
 };
 
@@ -2073,20 +2075,45 @@ void gl_getShaderPrecisionFormat(Ctx& x, uint32_t, uint32_t, GuestPtr range, Gue
 uint32_t gl_createProgram(Ctx& x) {
     auto* sg = currentSg(x, currentCtx(x));
     if (!sg) return 0;
+    std::lock_guard<std::mutex> lk(sg->programMu);
     const uint32_t id = sg->nextProgram++;
     sg->programs[id].id = id;
     return id;
 }
+bool programIsCurrent(Ctx& x, uint32_t prog) {
+    auto& st = GLS(x);
+    std::lock_guard<std::mutex> lk(st.mu);
+    for (const auto& [tid, cid] : st.currentByThread) {
+        (void)tid;
+        const auto* c = rt(x).hostIf<ContextData>(cid);
+        if (c && c->currentProgram == prog) return true;
+    }
+    const auto* fallback = rt(x).hostIf<ContextData>(st.lastActiveContext);
+    return fallback && fallback->currentProgram == prog;
+}
+void collectDeletedProgram(Ctx& x, SharegroupData* sg, uint32_t prog) {
+    if (!sg || !prog) return;
+    auto it = sg->programs.find(prog);
+    if (it != sg->programs.end() && it->second.pendingDelete && !programIsCurrent(x, prog))
+        sg->programs.erase(it);
+}
 void gl_deleteProgram(Ctx& x, uint32_t prog) {
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
-    if (!sg) return;
-    sg->programs.erase(prog);
-    if (c && c->currentProgram == prog) c->currentProgram = 0;
+    if (!sg || !prog) return;
+    std::lock_guard<std::mutex> lk(sg->programMu);
+    auto it = sg->programs.find(prog);
+    if (it == sg->programs.end()) return;
+    // GLES defers deletion until the program is no longer current in any
+    // context. In particular, deleting does not unbind it from this context.
+    it->second.pendingDelete = true;
+    collectDeletedProgram(x, sg, prog);
 }
 bool gl_isProgram(Ctx& x, uint32_t prog) {
     auto* sg = currentSg(x, currentCtx(x));
-    return sg && prog != 0 && sg->programs.count(prog) > 0;
+    if (!sg || !prog) return false;
+    auto it = sg->programs.find(prog);
+    return it != sg->programs.end() && !it->second.pendingDelete;
 }
 void gl_attachShader(Ctx& x, uint32_t prog, uint32_t shader) {
     auto* sg = currentSg(x, currentCtx(x));
@@ -2217,9 +2244,12 @@ void gl_useProgram(Ctx& x, uint32_t prog) {
     auto* c = currentCtx(x);
     auto* sg = currentSg(x, c);
     if (!c || !sg) return;
+    std::lock_guard<std::mutex> lk(sg->programMu);
     auto it = sg->programs.find(prog);
-    if (prog && (it == sg->programs.end() || !it->second.linked)) { c->lastError = GL_INVALID_OPERATION; return; }
+    if (prog && (it == sg->programs.end() || it->second.pendingDelete || !it->second.linked)) { c->lastError = GL_INVALID_OPERATION; return; }
+    const uint32_t previous = c->currentProgram;
     c->currentProgram = prog;
+    if (previous != prog) collectDeletedProgram(x, sg, previous);
 }
 void gl_validateProgram(Ctx&, uint32_t) {}
 void gl_getProgramiv(Ctx& x, uint32_t prog, uint32_t pname, GuestPtr params) {
@@ -2227,7 +2257,8 @@ void gl_getProgramiv(Ctx& x, uint32_t prog, uint32_t pname, GuestPtr params) {
     if (!sg || !params || !sg->programs.count(prog)) return;
     const ProgramObject& p = sg->programs[prog];
     int32_t v = 0;
-    if (pname == GL_LINK_STATUS || pname == GL_VALIDATE_STATUS) v = p.linked ? 1 : 0;
+    if (pname == 0x8B80 /* GL_DELETE_STATUS */) v = p.pendingDelete ? 1 : 0;
+    else if (pname == GL_LINK_STATUS || pname == GL_VALIDATE_STATUS) v = p.linked ? 1 : 0;
     else if (pname == GL_INFO_LOG_LENGTH) v = p.infoLog.empty() ? 0 : int32_t(p.infoLog.size() + 1);
     else if (pname == GL_ATTACHED_SHADERS) v = int32_t(p.shaders.size());
     else if (pname == GL_ACTIVE_ATTRIBUTES) v = int32_t(p.attribs.size());
@@ -3159,6 +3190,7 @@ void drawPrimitives(Ctx& x, uint32_t mode, const std::vector<int>& indices) {
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || indices.empty()) return;
+    std::lock_guard<std::mutex> programLock(sg->programMu);
     ProgramObject* bound = nullptr;
     if (c->api != 1 && c->currentProgram != 0) {
         auto it = sg->programs.find(c->currentProgram);
