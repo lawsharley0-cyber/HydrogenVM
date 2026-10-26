@@ -1,0 +1,6 @@
+native language=en direction=1 expected=1
+native language=ar direction=2 expected=2
+native language=he direction=2 expected=2
+native language=fa direction=2 expected=2
+native language=ur direction=2 expected=2
+native diagnostic az-Arab=1
