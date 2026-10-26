@@ -11,6 +11,8 @@
 // stack, and every other register zero unless INITed.
 #include "core/cpu/Engine.hpp"
 #include "loader/ElfLoader.hpp"
+#include "runtime/Abi.hpp"
+#include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
 #include <chrono>
 #include <cstdio>
@@ -4218,6 +4220,47 @@ int runFullSubsystemTests() {
         ok &= pp.hostPath("/private" + gh + "/Documents/s.dat") == root + "/Documents/s.dat";
         if (!ok) std::printf("    gh=%s gb=%s g(res)=%s\n", gh.c_str(), gb.c_str(), pp.guestPath(root + "/Game.app/data/a.png").c_str());
         check(ok, "Path mapping keeps '/' when the app passes paths with a trailing slash, and accepts /private/var spellings");
+    }
+
+    // Regressions: pthread_from_mach_thread_np, mmap MAP_FIXED, and formatGuest with flags after width
+    {
+        ProcessConfig cfg;
+        const std::string home = "/tmp/hvm_test_fixes_" + std::to_string(getpid());
+        std::error_code ec;
+        std::filesystem::create_directories(home + "/Test.app", ec);
+        cfg.homePath = home;
+        cfg.bundlePath = home + "/Test.app";
+        Process p(cfg);
+        auto& cpu = p.mainThread().cpu;
+        p.mem().map(0xbee00000, 1u << 20, Memory::kProtRW);
+        cpu.r[CPU::kSP] = 0xbef00000 - 256;
+
+        auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
+            auto sym = p.lookupSymbol(name);
+            return sym ? uint32_t(p.callGuest(cpu, *sym, args)) : 0u;
+        };
+
+        // 1. _pthread_from_mach_thread_np
+        const uint32_t thSelf = p.currentThread().self;
+        const uint32_t machPort = p.currentThread().id + 0x1000;
+        const uint32_t mappedTh = call("_pthread_from_mach_thread_np", {machPort});
+        check(mappedTh == thSelf, "_pthread_from_mach_thread_np maps mach port to pthread_t");
+
+        // 2. mmap with MAP_FIXED
+        const uint32_t fixedAddr = 0x25000000;
+        const uint32_t mapped = call("_mmap", {fixedAddr, 0x4000, 3, 0x1012, 0xFFFFFFFFu, 0, 0});
+        check(mapped == fixedAddr, "mmap with MAP_FIXED returns requested guest address");
+
+        // 3. formatGuest with flags after width (e.g. %10#llx)
+        const uint64_t v64 = 0x1000;
+        cpu.r[0] = uint32_t(v64);
+        cpu.r[1] = uint32_t(v64 >> 32);
+        Runtime::ArgReader a(cpu, p.mem(), 0);
+        std::string s = Runtime::formatGuest(p, "%10#llx", a);
+        check(s.find("0x1000") != std::string::npos && s.size() >= 10,
+              "formatGuest correctly parses format specifiers with flags after width (%10#llx)");
+
+        std::filesystem::remove_all(home, ec);
     }
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);

@@ -418,6 +418,39 @@ void s_rangeOfCharacterFromSetOptions(Ctx& x, GuestPtr out, id self, SEL, id set
     }
     writeRange(x, out, {kNotFound, 0});
 }
+void s_rangeOfComposed(Ctx& x, GuestPtr out, id self, SEL, uint32_t idx) {
+    const U16 s = sv(x, self);
+    if (idx >= s.size()) {
+        writeRange(x, out, {kNotFound, 0});
+        return;
+    }
+    uint32_t start = idx;
+    uint32_t len = 1;
+    const char16_t c = s[idx];
+    if (c >= 0xD800 && c <= 0xDBFF && idx + 1 < s.size()) {
+        const char16_t c2 = s[idx + 1];
+        if (c2 >= 0xDC00 && c2 <= 0xDFFF) len = 2;
+    } else if (c >= 0xDC00 && c <= 0xDFFF && idx > 0) {
+        const char16_t c0 = s[idx - 1];
+        if (c0 >= 0xD800 && c0 <= 0xDBFF) { start = idx - 1; len = 2; }
+    }
+    writeRange(x, out, {start, len});
+}
+id s_abbreviateTilde(Ctx&, id self, SEL) { return self; }
+id s_paddingToLength(Ctx& x, id self, SEL, uint32_t newLen, id padStr, uint32_t padIndex) {
+    const U16 v = sv(x, self);
+    if (newLen <= v.size()) return makeString(x, v.substr(0, newLen));
+    const U16 pad = sv(x, padStr);
+    if (pad.empty()) return makeString(x, v);
+    U16 res = v;
+    res.reserve(newLen);
+    size_t p = padIndex % pad.size();
+    while (res.size() < newLen) {
+        res.push_back(pad[p]);
+        p = (p + 1) % pad.size();
+    }
+    return makeString(x, res);
+}
 
 void checkRange(const U16& v, uint32_t loc, uint32_t len, const char* what) {
     if (uint64_t(loc) + len > v.size())
@@ -690,6 +723,7 @@ std::u16string stringValue(Ctx& x, id str) {
     if (!str) return {};
     auto& st = S(x);
     const Class c = rt(x).classOf(str);
+    if (!c) return {};
     if (c == st.constString) return constantValue(x, str);
     if (StringData* d = dataOf(x, str)) return d->s;
     if (rt(x).isSubclass(c, st.nsString)) {
@@ -860,7 +894,9 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_rangeOfString>("rangeOfString:", "{_NSRange=II}@:@").m<&s_rangeOfStringOptions>("rangeOfString:options:")
       .m<&s_rangeOfStringOptionsRange>("rangeOfString:options:range:").m<&s_containsString>("containsString:")
       .m<&s_rangeOfCharacterFromSet>("rangeOfCharacterFromSet:").m<&s_rangeOfCharacterFromSetOptions>("rangeOfCharacterFromSet:options:")
+      .m<&s_rangeOfComposed>("rangeOfComposedCharacterSequenceAtIndex:", "{_NSRange=II}@:I")
       .m<&s_substringFromIndex>("substringFromIndex:").m<&s_substringToIndex>("substringToIndex:").m<&s_substringWithRange>("substringWithRange:")
+      .m<&s_paddingToLength>("stringByPaddingToLength:withString:startingAtIndex:", "@@:I@I")
       .m<&s_appending>("stringByAppendingString:").m<&s_appendingFormat>("stringByAppendingFormat:")
       .m<&s_replacingOccurrences>("stringByReplacingOccurrencesOfString:withString:")
       .m<&s_replacingOccurrencesOptions>("stringByReplacingOccurrencesOfString:withString:options:range:")
@@ -877,7 +913,8 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_lastPathComponent>("lastPathComponent").m<&s_pathExtension>("pathExtension")
       .m<&s_deletingLastPathComponent>("stringByDeletingLastPathComponent").m<&s_deletingPathExtension>("stringByDeletingPathExtension")
       .m<&s_pathComponents>("pathComponents").m<&s_isAbsolutePath>("isAbsolutePath", "c@:")
-      .m<&s_expandingTilde>("stringByExpandingTildeInPath").m<&s_standardizing>("stringByStandardizingPath")
+      .m<&s_expandingTilde>("stringByExpandingTildeInPath").m<&s_abbreviateTilde>("stringByAbbreviatingWithTildeInPath")
+      .m<&s_standardizing>("stringByStandardizingPath")
       .m<&s_standardizing>("stringByResolvingSymlinksInPath")
       .m<&s_fileSystemRepresentation>("fileSystemRepresentation", "r*@:").m<&s_getFileSystemRepresentation>("getFileSystemRepresentation:maxLength:")
       .m<&s_writeToFileEnc>("writeToFile:atomically:encoding:error:").m<&s_writeToFile>("writeToFile:atomically:")

@@ -358,6 +358,7 @@ bool a_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     if (!v) return false;
     try { Plist::writeXmlFile(*v, x.proc.hostPath(utf8(x, path))); return true; } catch (...) { return false; }
 }
+bool a_writeToURL(Ctx& x, id self, SEL s, id url, bool a) { return a_writeToFile(x, self, s, id(rt(x).send(x.cpu, url, "path")), a); }
 
 // mutation
 void m_addObject(Ctx& x, id self, SEL, id o) {
@@ -734,6 +735,7 @@ bool d_writeToFile(Ctx& x, id self, SEL, id path, bool) {
     if (!v) return false;
     try { Plist::writeXmlFile(*v, x.proc.hostPath(utf8(x, path))); return true; } catch (...) { return false; }
 }
+bool d_writeToURL(Ctx& x, id self, SEL s, id url, bool a) { return d_writeToFile(x, self, s, id(rt(x).send(x.cpu, url, "path")), a); }
 id d_keysSortedByValueUsingSelector(Ctx& x, id self, SEL, SEL s) {
     auto e = entriesOf(x, self);
     std::vector<id> keys;
@@ -1060,7 +1062,13 @@ uint32_t objectHash(Ctx& x, id a) {
 }
 std::string describe(Ctx& x, id obj) {
     if (!obj) return "(null)";
+    if (!rt(x).classOf(obj)) {
+        char buf[32]; std::snprintf(buf, sizeof buf, "<invalid 0x%x>", obj); return buf;
+    }
     if (isString(x, obj)) return utf8(x, obj);
+    if (!rt(x).respondsTo(obj, rt(x).selDescription)) {
+        char buf[64]; std::snprintf(buf, sizeof buf, "<%s: 0x%x>", rt(x).objectClassName(obj).c_str(), obj); return buf;
+    }
     const id d = id(rt(x).send(x.cpu, obj, rt(x).selDescription));
     if (!d) return "(null)";
     return isString(x, d) ? utf8(x, d) : "<?>";
@@ -1150,7 +1158,7 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&a_sortedUsingSelector>("sortedArrayUsingSelector:").m<&a_sortedUsingFunction>("sortedArrayUsingFunction:context:")
       .m<&a_sortedUsingComparator>("sortedArrayUsingComparator:").m<&a_sortedUsingDescriptors>("sortedArrayUsingDescriptors:")
       .m<&a_valueForKey>("valueForKey:")
-      .m<&a_writeToFile>("writeToFile:atomically:").m<&a_description>("description");
+      .m<&a_writeToFile>("writeToFile:atomically:").m<&a_writeToURL>("writeToURL:atomically:").m<&a_description>("description");
     nma.cm<&ac_arrayWithCapacity>("arrayWithCapacity:")
        .m<&ai_initWithCapacity>("initWithCapacity:")
        .m<&m_addObject>("addObject:", "v@:@").m<&m_insertObject>("insertObject:atIndex:", "v@:@I")
@@ -1192,7 +1200,7 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&d_enumerateKeysAndObjects>("enumerateKeysAndObjectsUsingBlock:")
       .m<&d_isEqualToDictionary>("isEqualToDictionary:", "c@:@").m<&d_isEqualToDictionary>("isEqual:", "c@:@").m<&d_hash>("hash", "I@:")
       .m<&d_copyWithZone>("copyWithZone:").m<&d_mutableCopyWithZone>("mutableCopyWithZone:").m<&d_copy>("copy").m<&d_mutableCopy>("mutableCopy")
-      .m<&d_writeToFile>("writeToFile:atomically:").m<&d_keysSortedByValueUsingSelector>("keysSortedByValueUsingSelector:")
+      .m<&d_writeToFile>("writeToFile:atomically:").m<&d_writeToURL>("writeToURL:atomically:").m<&d_keysSortedByValueUsingSelector>("keysSortedByValueUsingSelector:")
       .m<&a_description>("description");
     nmd.cm<&dc_dictionaryWithCapacity>("dictionaryWithCapacity:")
        .m<&di_initWithCapacity>("initWithCapacity:")

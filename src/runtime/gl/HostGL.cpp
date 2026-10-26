@@ -15,6 +15,7 @@
 #include <set>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Hydrogen::Runtime::HostGL {
 namespace {
@@ -521,19 +522,63 @@ void hg_glGetVertexAttribPointerv(Ctx& x, uint32_t index, uint32_t pname, GuestP
 void hg_glShaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings, GuestPtr lengths) {
     HG_BEGIN(glShaderSource)
     if (count < 0 || count > 4096) return;
-    std::vector<const char*> ptrs(static_cast<size_t>(count));
+    std::string fullSource;
     for (int32_t i = 0; i < count; ++i) {
         const uint32_t s = x.mem.read<uint32_t>(strings + uint32_t(i) * 4);
-        ptrs[size_t(i)] = s ? reinterpret_cast<const char*>(x.mem.host(s)) : "";
+        const char* p = s ? reinterpret_cast<const char*>(x.mem.host(s)) : "";
+        const int32_t len = lengths ? x.mem.read<int32_t>(lengths + uint32_t(i) * 4) : -1;
+        if (len >= 0) fullSource.append(p, size_t(len));
+        else fullSource.append(p);
     }
-    hc->fn.glShaderSource(shader, count, ptrs.data(), HG_PTR(x, lengths));
+
+    // Mesa and desktop GLSL reject duplicate #define directives without an intervening #undef,
+    // whereas mobile PowerVR/Apple drivers allow redefinitions. Automatically insert #undef.
+    std::string processed;
+    processed.reserve(fullSource.size() + 64);
+    std::unordered_set<std::string> definedMacros;
+    size_t lineStart = 0;
+    while (lineStart < fullSource.size()) {
+        size_t lineEnd = fullSource.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = fullSource.size();
+        std::string_view line(fullSource.data() + lineStart, lineEnd - lineStart);
+        size_t p = 0;
+        while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) ++p;
+        if (p < line.size() && line[p] == '#') {
+            ++p;
+            while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) ++p;
+            if (line.substr(p, 6) == "define") {
+                p += 6;
+                while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) ++p;
+                size_t nameStart = p;
+                while (p < line.size() && (std::isalnum(uint8_t(line[p])) || line[p] == '_')) ++p;
+                if (p > nameStart) {
+                    std::string name(line.substr(nameStart, p - nameStart));
+                    if (definedMacros.count(name)) {
+                        processed += "#undef " + name + "\n";
+                    } else {
+                        definedMacros.insert(name);
+                    }
+                }
+            } else if (line.substr(p, 5) == "undef") {
+                p += 5;
+                while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) ++p;
+                size_t nameStart = p;
+                while (p < line.size() && (std::isalnum(uint8_t(line[p])) || line[p] == '_')) ++p;
+                if (p > nameStart) definedMacros.erase(std::string(line.substr(nameStart, p - nameStart)));
+            }
+        }
+        processed.append(line);
+        if (lineEnd < fullSource.size()) processed += '\n';
+        lineStart = lineEnd + 1;
+    }
+
+    const char* pSrc = processed.c_str();
+    const int32_t pLen = int32_t(processed.size());
+    hc->fn.glShaderSource(shader, 1, &pSrc, &pLen);
     if (const char* dir = std::getenv("HVM_GL_DUMP_SHADERS")) {
         std::string path = std::string(dir) + "/shader-" + std::to_string(shader) + ".glsl";
         if (std::FILE* f = std::fopen(path.c_str(), "wb")) {
-            for (int32_t i = 0; i < count; ++i) {
-                const int32_t len = lengths ? x.mem.read<int32_t>(lengths + uint32_t(i) * 4) : -1;
-                std::fwrite(ptrs[size_t(i)], 1, len >= 0 ? size_t(len) : std::strlen(ptrs[size_t(i)]), f);
-            }
+            std::fwrite(processed.data(), 1, processed.size(), f);
             std::fclose(f);
         }
     }

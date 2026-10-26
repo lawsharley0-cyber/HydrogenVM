@@ -65,6 +65,8 @@ struct LayerData : ObjC::HostObject {
     // The host shows this layer itself (GPU-presented CAEAGLLayer): the compositor
     // leaves its area transparent so the host layer underneath shows through.
     bool hostPresented = false;
+    bool everOnScreen = false;
+    uint32_t pendingOffscreen = 0;
 };
 
 struct ViewData : ObjC::HostObject {
@@ -116,6 +118,7 @@ struct UIState {
     double lastFrame = 0;
     uint64_t frames = 0;
     bool needsComposite = true;
+    bool launched = false;
     // display links
     struct Link { id obj; id target; SEL sel; int interval; bool paused; int counter; };
     std::vector<Link> links;
@@ -131,6 +134,7 @@ struct UIState {
     std::unordered_map<std::string, id> imageCache;   // imageNamed: (retained)
     id ignoringEvents = 0;
     int ignoreCount = 0;
+    std::vector<id> eaglLayers;
 };
 UIState& ui(Process& p);
 inline UIState& ui(Ctx& x) { return ui(x.proc); }

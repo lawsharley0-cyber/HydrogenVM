@@ -129,6 +129,7 @@ public:
     void enterBackground();
     void enterForeground();
     bool backgrounded() const { return backgrounded_.load(); }
+    bool backgroundRequested() const { return backgroundRequested_.load(); }
     bool gracefulStopRequested() const { return gracefulStop_.load(); }
     // UIKit marks this immediately before willTerminate. Keep guest execution
     // available for the delegate/save flush, but suppress automatic callbacks.
@@ -378,7 +379,7 @@ private:
     std::function<void(Lifecycle)> lifecycleHandler_;
     struct Liveness { std::mutex mu; bool alive = true; };
     std::shared_ptr<Liveness> liveness_ = std::make_shared<Liveness>();   // for helper threads that outlive us
-    std::atomic<bool> backgrounded_{false}, gracefulStop_{false}, terminating_{false};
+    std::atomic<bool> backgrounded_{false}, backgroundRequested_{false}, gracefulStop_{false}, terminating_{false};
     std::mutex lifeMu_;
     std::condition_variable lifeCv_;
     std::mutex slotMu_;

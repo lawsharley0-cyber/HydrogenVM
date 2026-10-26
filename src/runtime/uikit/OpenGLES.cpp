@@ -771,6 +771,24 @@ bool ctx_renderbufferStorage(Ctx& x, id self, SEL, uint32_t target, id drawable)
 
 static std::atomic<int> totalDrawCalls{0};
 
+void noteLayerPresented(Ctx& x, id layer) {
+    if (!layer) return;
+    LayerData& ld = layerData(x, layer);
+    auto& u = ui(x);
+    if (std::find(u.eaglLayers.begin(), u.eaglLayers.end(), layer) == u.eaglLayers.end())
+        u.eaglLayers.push_back(layer);
+    if (layerOnScreen(x, layer)) {
+        ld.everOnScreen = true;
+        ld.pendingOffscreen = 0;
+    } else {
+        if (ld.everOnScreen) {
+            x.proc.perf().offscreenPresents++;
+        } else {
+            ld.pendingOffscreen++;
+        }
+    }
+}
+
 void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, int height);
 
 bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
@@ -783,7 +801,7 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
         if (!HostGL::presentRenderbuffer(x.proc, self, layer, w, h, pixels, direct)) return false;
         if (!direct) publishFrame(x, layer, pixels.data(), w, h);
         else {
-            if (layer && !layerOnScreen(x, layer)) x.proc.perf().offscreenPresents++;
+            noteLayerPresented(x, layer);
             // The host shows GL frames itself. The UIKit overlay only needs a new
             // composite when the layer first switches to host presentation (or when
             // UIKit content changes, which marks the composite dirty on its own).
@@ -877,7 +895,7 @@ bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
 // Hand a presented frame (straight RGBA, GL bottom-left row order) to the compositor.
 void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, int height) {
     struct Rb { int width, height; const uint8_t* data; id drawableLayer; } rb{width, height, rgbaBottomLeft, layer};
-    if (layer && !layerOnScreen(x, layer)) x.proc.perf().offscreenPresents++;
+    noteLayerPresented(x, layer);
     auto img = std::make_shared<G::Image>();
     img->width = rb.width;
     img->height = rb.height;
@@ -3568,12 +3586,19 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_readBuffer>("_glReadBuffer");
     p.def<&gl_getVertexAttribfv>("_glGetVertexAttribfv");
     p.def<&gl_genQueriesEXT>("_glGenQueriesEXT");
+    p.def<&gl_genQueriesEXT>("_glGenQueries");
     p.def<&gl_deleteQueriesEXT>("_glDeleteQueriesEXT");
+    p.def<&gl_deleteQueriesEXT>("_glDeleteQueries");
     p.def<&gl_isQueryEXT>("_glIsQueryEXT");
+    p.def<&gl_isQueryEXT>("_glIsQuery");
     p.def<&gl_beginQueryEXT>("_glBeginQueryEXT");
+    p.def<&gl_beginQueryEXT>("_glBeginQuery");
     p.def<&gl_endQueryEXT>("_glEndQueryEXT");
+    p.def<&gl_endQueryEXT>("_glEndQuery");
     p.def<&gl_getQueryivEXT>("_glGetQueryivEXT");
+    p.def<&gl_getQueryivEXT>("_glGetQueryiv");
     p.def<&gl_getQueryObjectuivEXT>("_glGetQueryObjectuivEXT");
+    p.def<&gl_getQueryObjectuivEXT>("_glGetQueryObjectuiv");
     p.def<&gl_getVertexAttribiv>("_glGetVertexAttribiv");
     p.def<&gl_getVertexAttribPointerv>("_glGetVertexAttribPointerv");
     p.def<&gl_uniform1i>("_glUniform1i");
@@ -3609,6 +3634,18 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
 
     // GPU backend: forward the C functions to the host driver (overrides the above).
     if (HostGL::enabled(p)) HostGL::registerFunctions(p);
+
+    p.onExit([&p] {
+        CPU::Cpu cpu{};
+        Ctx x{p, cpu, p.mem()};
+        auto& u = ui(p);
+        for (id l : u.eaglLayers) {
+            LayerData& ld = layerData(x, l);
+            if (!ld.everOnScreen && ld.pendingOffscreen > 0) {
+                p.perf().offscreenPresents += ld.pendingOffscreen;
+            }
+        }
+    });
 }
 
 } // namespace Hydrogen::Runtime::UIKit

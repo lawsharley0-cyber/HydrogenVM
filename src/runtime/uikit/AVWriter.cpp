@@ -119,6 +119,7 @@ struct WriterData : ObjC::HostObject {
 struct InputData : ObjC::HostObject {
     id mediaType = 0, settings = 0;
     bool realTime = false, finished = false;
+    CGAffineTransform transform{1, 0, 0, 1, 0, 0};
 };
 struct AdaptorData : ObjC::HostObject { id input = 0, attributes = 0; };
 
@@ -260,7 +261,16 @@ void registerAVWriter(Process& p, ObjC::Runtime& r) {
     in.method("appendSampleBuffer:", [](Ctx& x) { x.cpu.r[0] = 1; }, "c@:^v");
     in.method("markAsFinished", [](Ctx& x) { if (auto* d = rt(x).hostIf<InputData>(x.cpu.r[0])) d->finished = true; }, "v@:");
     in.method("requestMediaDataWhenReadyOnQueue:usingBlock:", [](Ctx&) {}, "v@:@@?");
-    in.method("setTransform:", [](Ctx&) {}, "v@:{CGAffineTransform=ffffff}");
+    in.method("transform", [](Ctx& x) {
+        auto* d = rt(x).hostIf<InputData>(x.cpu.r[1]);
+        CG::writeStruct(x, x.cpu.r[0], d ? d->transform : CGAffineTransform{1, 0, 0, 1, 0, 0});
+    }, "{CGAffineTransform=ffffff}@:");
+    in.method("setTransform:", [](Ctx& x) {
+        if (auto* d = rt(x).hostIf<InputData>(x.cpu.r[0])) {
+            ArgReader a(x.cpu, x.mem, 2);
+            d->transform = CGAffineTransform{a.get<float>(), a.get<float>(), a.get<float>(), a.get<float>(), a.get<float>(), a.get<float>()};
+        }
+    }, "v@:{CGAffineTransform=ffffff}");
     in.method("setMetadata:", [](Ctx&) {}, "v@:@");
     in.method("setMediaTimeScale:", [](Ctx&) {}, "v@:i");
     in.method("dealloc", [](Ctx& x) {

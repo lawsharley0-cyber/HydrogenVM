@@ -28,12 +28,18 @@ std::string formatGuest(Process& p, const std::string& fmt, ArgReader& args, con
         if (i < fmt.size() && fmt[i] == '%') { out += '%'; ++i; continue; }
 
         // Positional arguments (%1$d) are rare in apps; not supported.
+        // Flags and width can appear in flexible order (e.g. %10#llx in PLCrashReporter).
         std::string flags;
-        while (i < fmt.size() && std::strchr("-+ #0'", fmt[i])) flags += fmt[i++];
         int width = -1, prec = -1;
         bool widthStar = false, precStar = false;
-        if (i < fmt.size() && fmt[i] == '*') { widthStar = true; ++i; }
-        else { while (i < fmt.size() && std::isdigit(uint8_t(fmt[i]))) { width = (width < 0 ? 0 : width) * 10 + (fmt[i] - '0'); ++i; } }
+        while (i < fmt.size()) {
+            if (std::strchr("-+ #0'", fmt[i])) flags += fmt[i++];
+            else if (fmt[i] == '*') { widthStar = true; ++i; }
+            else if (std::isdigit(uint8_t(fmt[i])) && width < 0) {
+                width = 0;
+                while (i < fmt.size() && std::isdigit(uint8_t(fmt[i]))) width = width * 10 + (fmt[i++] - '0');
+            } else break;
+        }
         if (i < fmt.size() && fmt[i] == '.') {
             ++i;
             prec = 0;

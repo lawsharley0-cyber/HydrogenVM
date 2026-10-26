@@ -694,11 +694,30 @@ int32_t f_closedir(Ctx& x, GuestPtr h) {
 
 // ------------------------------------------------------------------ mmap ---
 
-uint32_t m_mmap(Ctx& x, GuestPtr, uint32_t len, int32_t, uint32_t flags, int32_t fd, int64_t off) {
-    const uint32_t align = len >= 65536u ? 65536u : 4096u;
+uint32_t m_mmap(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot, uint32_t flags, int32_t fd, int64_t off) {
+    if (!len) { setErrno(x, EINVAL); return 0xFFFFFFFFu; }
     const uint32_t sz = (len + 4095u) & ~4095u;
+    constexpr uint32_t kMapFixed = 0x0010;
+    if (flags & kMapFixed) {
+        if (!addr || (addr & 4095u) || (uint64_t(addr) + sz > 0xFFFFFFFFull)) {
+            setErrno(x, EINVAL);
+            return 0xFFFFFFFFu;
+        }
+        x.mem.map(addr, sz, Memory::kProtRW);
+        if (!(flags & 0x1000) && fd >= 0) {
+            const ssize_t r = ::pread(fd, x.mem.host(addr), len, off_t(off));
+            if (r < 0) return failD<uint32_t>(x, 0xFFFFFFFFu);
+        } else if (prot != 0) {
+            std::memset(x.mem.host(addr), 0, sz);
+        }
+        return addr;
+    }
+    const uint32_t align = len >= 65536u ? 65536u : 4096u;
     const uint32_t a = x.proc.heap().allocAligned(sz ? sz : 4096u, align);
-    if (!a) { setErrno(x, ENOMEM); return 0xFFFFFFFFu; }
+    if (!a) {
+        setErrno(x, ENOMEM);
+        return 0xFFFFFFFFu;
+    }
     std::memset(x.mem.host(a), 0, sz ? sz : 4096u);
     if (!(flags & 0x1000) && fd >= 0) {   // file mapping: read the contents (private copy)
         const ssize_t r = ::pread(fd, x.mem.host(a), len, off_t(off));

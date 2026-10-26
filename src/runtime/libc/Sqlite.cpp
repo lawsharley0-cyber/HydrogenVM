@@ -328,6 +328,9 @@ void registerSqlite(Process& p) {
     p.def<&q_ok>("_sqlite3_initialize");
     p.def<&q_ok>("_sqlite3_shutdown");
     p.def<&q_ok>("_sqlite3_enable_shared_cache");
+    p.def<&q_ok>("_sqlite3_vfs_register");
+    p.def<&q_ok>("_sqlite3_vfs_unregister");
+    p.def<&q_zero1>("_sqlite3_vfs_find");
 }
 
 } // namespace Hydrogen::Runtime

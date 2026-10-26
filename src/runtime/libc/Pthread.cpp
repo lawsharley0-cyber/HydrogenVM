@@ -353,17 +353,21 @@ int32_t t_pthread_threadid_np(Ctx& x, uint32_t th, GuestPtr outId) {
 // Mach thread control (garbage collectors stop the world with these).
 constexpr int32_t kKernSuccess = 0, kKernInvalidArgument = 4;
 GuestThread* byPort(Ctx& x, uint32_t port) { return port >= 0x1000 && hasMachSendRight(x.proc, port) ? x.proc.findThreadById(port - 0x1000) : nullptr; }
+uint32_t t_pthread_from_mach_thread_np(Ctx& x, uint32_t port) {
+    GuestThread* t = byPort(x, port);
+    return t ? t->self : 0;
+}
 int32_t mt_suspend(Ctx& x, uint32_t port) {
     GuestThread* t = byPort(x, port);
     if (!t) return kKernInvalidArgument;
-    if (t == &x.proc.currentThread()) return kKernSuccess;   // never park ourselves inside a host call
+    if (t == &x.proc.currentThread() || t->finished) return kKernSuccess;   // never park ourselves inside a host call; finished thread is already stopped
     x.proc.engine().suspend(t->cpu);
     return kKernSuccess;
 }
 int32_t mt_resume(Ctx& x, uint32_t port) {
     GuestThread* t = byPort(x, port);
     if (!t) return kKernInvalidArgument;
-    if (t != &x.proc.currentThread()) x.proc.engine().resume(t->cpu);
+    if (t != &x.proc.currentThread() && !t->finished) x.proc.engine().resume(t->cpu);
     return kKernSuccess;
 }
 // thread_get_state(thread, flavor, state, count*): ARM_THREAD_STATE (1) = r0-r12, sp, lr, pc, cpsr;
@@ -556,6 +560,7 @@ void registerLibcPthread(Process& p) {
     p.def<&mt_info>("_thread_info");
     p.def<&mt_taskThreads>("_task_threads");
     p.def<&t_pthread_mach_thread_np>("_pthread_mach_thread_np");
+    p.def<&t_pthread_from_mach_thread_np>("_pthread_from_mach_thread_np");
     p.def<&t_pthread_threadid_np>("_pthread_threadid_np");
     p.def<&t_exit>("_pthread_exit");
     p.def<&oa_add32>("_OSAtomicAdd32");

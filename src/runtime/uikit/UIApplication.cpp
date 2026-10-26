@@ -510,12 +510,22 @@ void installLifecycle(Process& p) {
             }
             // Background: let the app save, then pause it until the host brings it back.
             toBackground(x, *st);
+            if (!pp->backgroundRequested()) {
+                if (!st->legacy) deliverLifecycle(x, "applicationWillEnterForeground:", "UIApplicationWillEnterForegroundNotification");
+                st->background = false;
+                deliverLifecycle(x, "applicationDidBecomeActive:", "UIApplicationDidBecomeActiveNotification");
+                st->active = true;
+                x.proc.log(LogLevel::Info, "The app resumed");
+                return;
+            }
             pp->setBackgrounded(true);
             const uint32_t self = pp->currentThread().id;
             std::vector<GuestThread*> paused;
             for (uint32_t id : pp->liveThreadIds()) {
                 if (id == self) continue;
-                if (GuestThread* t = pp->findThreadById(id)) { pp->engine().suspend(t->cpu); paused.push_back(t); }
+                if (GuestThread* t = pp->findThreadById(id)) {
+                    if (!t->finished) { pp->engine().suspend(t->cpu); paused.push_back(t); }
+                }
             }
             x.proc.log(LogLevel::Info, "The app is paused in the background");
             pp->waitWhileBackgrounded();
@@ -601,6 +611,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         x.proc.log(LogLevel::Warning, "The app finished launching without a key window; making first window key");
         r.send(x.cpu, u.windows.front(), "makeKeyAndVisible");
     }
+    u.launched = true;
 
     // Frame loop: input, display links, layout, drawing, compositing — 60 Hz on the main run loop.
     Process* p = &x.proc;

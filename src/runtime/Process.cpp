@@ -211,11 +211,14 @@ void Process::requestGracefulStop(double timeout) {
     }).detach();
 }
 void Process::enterBackground() {
-    if (stopping() || backgrounded_.load() || !lifecycleHandler_) return;
+    if (stopping() || backgroundRequested_.load() || !lifecycleHandler_) return;
+    backgroundRequested_ = true;
     lifecycleHandler_(Lifecycle::Background);
 }
 void Process::enterForeground() {
     if (stopping() || !lifecycleHandler_) return;
+    backgroundRequested_ = false;
+    setBackgrounded(false);
     lifecycleHandler_(Lifecycle::Foreground);
 }
 void Process::setBackgrounded(bool b) {
@@ -228,7 +231,7 @@ void Process::setBackgrounded(bool b) {
 }
 void Process::waitWhileBackgrounded() {
     std::unique_lock<std::mutex> lk(lifeMu_);
-    lifeCv_.wait(lk, [&] { return !backgrounded_.load() || stopping() || gracefulStop_.load(); });
+    lifeCv_.wait(lk, [&] { return !backgrounded_.load() || !backgroundRequested_.load() || stopping() || gracefulStop_.load(); });
 }
 
 void Process::load() {
@@ -676,7 +679,7 @@ std::vector<uint32_t> Process::liveThreadIds() {
 GuestThread* Process::findThreadById(uint32_t id) {
     if (mainThread_->id == id) return mainThread_;
     std::lock_guard<std::mutex> lk(threadsMu_);
-    for (auto& [k, t] : threads_) if (t->id == id && !t->finished) return t.get();
+    for (auto& [k, t] : threads_) if (t->id == id) return t.get();
     return nullptr;
 }
 
@@ -914,6 +917,11 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     try { flushGuestStdio(*this); } catch (...) {}   // what the app printed before dying is the most useful clue
     std::lock_guard<std::mutex> lk(exitMu_);
     if (crashed_ || exiting_) return;
+    if (terminating_.load()) {
+        log(LogLevel::Info, "The app saved and closed");
+        requestStop();
+        return;
+    }
     crashed_ = true;
     const CPU::FaultSnapshot& f = CPU::Engine::lastFault();
     uint32_t r[16];

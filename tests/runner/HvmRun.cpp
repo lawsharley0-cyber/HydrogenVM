@@ -269,25 +269,34 @@ int hvmRunMain(int argc, char** argv) {
                     pumpInput(); std::this_thread::sleep_for(milliseconds(5));
                 }
             };
-            std::vector<Gesture> gs = gestures;
-            std::sort(gs.begin(), gs.end(), [](const Gesture& a, const Gesture& b) { return a.at < b.at; });
-            for (const Gesture& g : gs) {
-                waitUntil(g.at);
+            struct TimelineEvent {
+                double at;
+                enum Type { Tap, Drag, Life } type;
+                Gesture g;
+                LifeEvent l;
+            };
+            std::vector<TimelineEvent> timeline;
+            for (const auto& g : gestures) timeline.push_back({g.at, g.drag ? TimelineEvent::Drag : TimelineEvent::Tap, g, {}});
+            for (const auto& e : lifeEvents) timeline.push_back({e.at, TimelineEvent::Life, {}, e});
+            std::sort(timeline.begin(), timeline.end(), [](const TimelineEvent& a, const TimelineEvent& b) { return a.at < b.at; });
+            for (const auto& ev : timeline) {
+                waitUntil(ev.at);
                 if (done) return;
-                proc.injectTouch(Runtime::TouchPhase::Began, g.x1, g.y1, 1);
-                if (g.drag) {
+                if (ev.type == TimelineEvent::Tap) {
+                    proc.injectTouch(Runtime::TouchPhase::Began, ev.g.x1, ev.g.y1, 1);
+                    std::this_thread::sleep_for(milliseconds(60));
+                    proc.injectTouch(Runtime::TouchPhase::Ended, ev.g.x2, ev.g.y2, 1);
+                } else if (ev.type == TimelineEvent::Drag) {
+                    proc.injectTouch(Runtime::TouchPhase::Began, ev.g.x1, ev.g.y1, 1);
                     for (int k = 1; k <= 10; ++k) {
                         std::this_thread::sleep_for(milliseconds(16));
-                        proc.injectTouch(Runtime::TouchPhase::Moved, g.x1 + (g.x2 - g.x1) * float(k) / 10, g.y1 + (g.y2 - g.y1) * float(k) / 10, 1);
+                        proc.injectTouch(Runtime::TouchPhase::Moved, ev.g.x1 + (ev.g.x2 - ev.g.x1) * float(k) / 10, ev.g.y1 + (ev.g.y2 - ev.g.y1) * float(k) / 10, 1);
                     }
-                } else std::this_thread::sleep_for(milliseconds(60));
-                proc.injectTouch(Runtime::TouchPhase::Ended, g.x2, g.y2, 1);
-            }
-            for (const LifeEvent& e : lifeEvents) {
-                waitUntil(e.at);
-                if (done) return;
-                if (!quiet) std::fprintf(stderr, "[hvm] lifecycle: %s at %.1f s\n", e.background ? "background" : "foreground", e.at);
-                if (e.background) proc.enterBackground(); else proc.enterForeground();
+                    proc.injectTouch(Runtime::TouchPhase::Ended, ev.g.x2, ev.g.y2, 1);
+                } else if (ev.type == TimelineEvent::Life) {
+                    if (!quiet) std::fprintf(stderr, "[hvm] lifecycle: %s at %.1f s\n", ev.l.background ? "background" : "foreground", ev.l.at);
+                    if (ev.l.background) proc.enterBackground(); else proc.enterForeground();
+                }
             }
             if (runFor > 0) {
                 waitUntil(runFor);
