@@ -34,7 +34,7 @@
               "status" : "pass"
             },
             {
-              "detail" : "Mixer ran for 5.5 s, peak 0.00",
+              "detail" : "Mixer ran for 5.4 s, peak 0.00",
               "name" : "Audio output",
               "status" : "pass"
             },
@@ -87,7 +87,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 242256,
+            "audioFramesRendered" : 239434,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -97,7 +97,7 @@
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 537.301334
+            "timeToFirstFrameMs" : 605.18037500000003
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -127,7 +127,7 @@
           "perf" : {
             "fps" : 0,
             "framesPresented" : 1,
-            "frameTimeP95Ms" : 0.047615999999999999
+            "frameTimeP95Ms" : 0.065535999999999997
           },
           "renderer" : "software",
           "signature" : "exit-1",
@@ -206,7 +206,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 261072,
+            "audioFramesRendered" : 262013,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -216,7 +216,7 @@
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 23.864583
+            "timeToFirstFrameMs" : 34.909875
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -246,7 +246,7 @@
           "perf" : {
             "fps" : 0,
             "framesPresented" : 2,
-            "frameTimeP95Ms" : 0.039424000000000001
+            "frameTimeP95Ms" : 0.048640000000000003
           },
           "renderer" : "gpu",
           "signature" : "exit-1",
@@ -256,5 +256,5 @@
       ]
     }
   },
-  "timestamp" : "2026-10-26T07:13:29Z"
+  "timestamp" : "2026-10-26T10:54:50Z"
 }

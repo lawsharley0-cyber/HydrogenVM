@@ -87,6 +87,9 @@ ok Panel nib: outlet + label text
 
 ok Panel nib: action connection + button title
 
+[gpu] GL layer (64.0, 64.0)
+[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
+[gpu] GL layer removed
 nib PanelKeyed.nib: 1 top-level objects
 ok PanelKeyed nib: top-level view
 
@@ -116,8 +119,6 @@ ok UITextField editing & first responder
 
 ok UISwitch, UISlider, UISegmentedControl
 
-[gpu] GL layer (64.0, 64.0)
-[gpu] GL layer removed
 ok EAGLContext creation & setCurrentContext
 
 GPU: drawable 64x64 for renderbuffer 1 (platform layer)
@@ -148,4 +149,4 @@ ALL CHECKS PASSED
 
 App exited with code 0
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 36772
+com.lfull.HydrogenVM: 22607
