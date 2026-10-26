@@ -459,7 +459,18 @@ void configureScreen(Ctx& x) {
 // ---------------------------------------------------------------- lifecycle ---
 // Delivered on the guest's main thread when the host asks (Process::enterBackground /
 // enterForeground / requestGracefulStop): this is when games save.
-struct Lifecycle { bool active = true, background = false; };
+struct Lifecycle { bool active = true, background = false, legacy = false; };
+// Apps built against an SDK before iOS 4 (or that set UIApplicationExitsOnSuspend)
+// never get didEnterBackground/willEnterForeground on iOS: only resign/become active.
+bool legacyLifecycle(Process& p) {
+    const Plist::Value* info = p.infoPlist();
+    if (!info) return false;
+    if (const Plist::Value* e = info->get("UIApplicationExitsOnSuspend"); e && e->type == Plist::Value::Type::Bool && e->b) return true;
+    const std::string sdk = info->getString("DTSDKName");   // e.g. "iphoneos3.1"
+    size_t i = 0;
+    while (i < sdk.size() && !std::isdigit(uint8_t(sdk[i]))) ++i;
+    return i < sdk.size() && std::atoi(sdk.c_str() + i) < 4;
+}
 void deliverLifecycle(Ctx& x, const char* delegateSel, const char* note) {
     auto& u = ui(x);
     ObjC::Runtime& r = rt(x);
@@ -475,11 +486,13 @@ void persistNow(Ctx& x) {
 }
 void toBackground(Ctx& x, Lifecycle& st) {
     if (st.active) { deliverLifecycle(x, "applicationWillResignActive:", "UIApplicationWillResignActiveNotification"); st.active = false; }
-    if (!st.background) { deliverLifecycle(x, "applicationDidEnterBackground:", "UIApplicationDidEnterBackgroundNotification"); st.background = true; }
+    if (!st.background && !st.legacy) deliverLifecycle(x, "applicationDidEnterBackground:", "UIApplicationDidEnterBackgroundNotification");
+    st.background = true;
     persistNow(x);
 }
 void installLifecycle(Process& p) {
     auto st = std::make_shared<Lifecycle>();
+    st->legacy = legacyLifecycle(p);
     Process* pp = &p;
     p.setLifecycleHandler([pp, st](Process::Lifecycle what) {
         if (what == Process::Lifecycle::Foreground) { pp->setBackgrounded(false); return; }   // wakes the parked main thread
@@ -509,7 +522,7 @@ void installLifecycle(Process& p) {
             for (GuestThread* t : paused) pp->engine().resume(t->cpu);
             pp->setBackgrounded(false);
             if (pp->stopping() || pp->gracefulStopRequested()) return;   // a queued Terminate follows
-            deliverLifecycle(x, "applicationWillEnterForeground:", "UIApplicationWillEnterForegroundNotification");
+            if (!st->legacy) deliverLifecycle(x, "applicationWillEnterForeground:", "UIApplicationWillEnterForegroundNotification");
             st->background = false;
             deliverLifecycle(x, "applicationDidBecomeActive:", "UIApplicationDidBecomeActiveNotification");
             st->active = true;

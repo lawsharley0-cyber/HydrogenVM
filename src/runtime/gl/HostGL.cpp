@@ -179,11 +179,25 @@ HostContext* threadClone(Process& p, HostContext* hc) {
 
 void bind(Process& p, HostContext* hc) {
     State& st = S(p);
+    HostContext* root = hc;
     if (hc && !st.platform->makeCurrent(hc->handle) && !hc->implicitWorker) {
         if (HostContext* clone = threadClone(p, hc); clone && st.platform->makeCurrent(clone->handle)) hc = clone;
     } else if (!hc && st.platform) {
         st.platform->makeCurrent(nullptr);
     }
+    
+    if (hc && hc->implicitWorker && root && !root->implicitWorker) {
+        if (hc->boundFbo != root->boundFbo) {
+            if (hc->fn.glBindFramebuffer) hc->fn.glBindFramebuffer(0x8D40, root->boundFbo);
+            else if (hc->fn.glBindFramebufferOES) hc->fn.glBindFramebufferOES(0x8D40, root->boundFbo);
+            hc->boundFbo = root->boundFbo;
+        }
+        if (hc->currentProgram != root->currentProgram) {
+            if (hc->fn.glUseProgram) hc->fn.glUseProgram(root->currentProgram);
+            hc->currentProgram = root->currentProgram;
+        }
+    }
+    
     tls.proc = &p;
     tls.ctx = hc;
     tls.software = false;
@@ -321,6 +335,7 @@ template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* n
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 200)
         x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }() +
+                                          (hc->implicitWorker ? " [worker]" : " [main]") +
                                           (e == 0x0506 && hc->fn.glCheckFramebufferStatus ? [&] {
                                               // Say why the framebuffer is incomplete.
                                               char b[64];
@@ -1108,6 +1123,55 @@ static void chain(Process& p, const std::string& symbol, void (*host)(Ctx&)) {
     });
 }
 
+void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
+    HostContext* hc = currentHostContext();
+    if (!hc || !hc->fn.glBindFramebuffer) { hgMissing(x, hc, "glBindFramebuffer"); return; }
+    State& st = S(x.proc);
+    std::lock_guard<std::mutex> lk(st.mu);
+    
+    uint32_t screenFbo = 0;
+    if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
+        screenFbo = it->second->readFbo;
+        if (a_framebuffer != 0) it->second->boundFbo = a_framebuffer;
+    }
+    if (a_framebuffer == 0 && screenFbo != 0) a_framebuffer = screenFbo;
+
+    hc->boundFbo = a_framebuffer;
+    hc->fn.glBindFramebuffer(a_target, a_framebuffer);
+    if (hgDebug) hgAfter(x, hc, "glBindFramebuffer", [&] { return hgArgs(a_target, a_framebuffer); });
+}
+
+void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
+    HostContext* hc = currentHostContext();
+    if (!hc || !hc->fn.glBindFramebufferOES) { hgMissing(x, hc, "glBindFramebufferOES"); return; }
+    State& st = S(x.proc);
+    std::lock_guard<std::mutex> lk(st.mu);
+
+    uint32_t screenFbo = 0;
+    if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
+        screenFbo = it->second->readFbo;
+        if (a_framebuffer != 0) it->second->boundFbo = a_framebuffer;
+    }
+    if (a_framebuffer == 0 && screenFbo != 0) a_framebuffer = screenFbo;
+
+    hc->boundFbo = a_framebuffer;
+    hc->fn.glBindFramebufferOES(a_target, a_framebuffer);
+    if (hgDebug) hgAfter(x, hc, "glBindFramebufferOES", [&] { return hgArgs(a_target, a_framebuffer); });
+}
+
+void hg_glUseProgram(Ctx& x, uint32_t a_program) {
+    HostContext* hc = currentHostContext();
+    if (!hc || !hc->fn.glUseProgram) { hgMissing(x, hc, "glUseProgram"); return; }
+    State& st = S(x.proc);
+    std::lock_guard<std::mutex> lk(st.mu);
+    if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
+        it->second->currentProgram = a_program;
+    }
+    hc->currentProgram = a_program;
+    hc->fn.glUseProgram(a_program);
+    if (hgDebug) hgAfter(x, hc, "glUseProgram", [&] { return hgArgs(a_program); });
+}
+
 void registerFunctions(Process& p) {
     ready(p);
     // glGetString stays on the software path: the strings describe the iOS GPU
@@ -1157,4 +1221,13 @@ void registerFunctions(Process& p) {
     p.log(LogLevel::Info, std::string("GPU: OpenGL ES calls go to the host driver (") + S(p).platform->name() + ")");
 }
 
+void setScreenFbo(Process& p, uint32_t guestContext, uint32_t fbo) {
+    State& st = S(p);
+    std::lock_guard<std::mutex> lk(st.mu);
+    if (auto it = st.contexts.find(guestContext); it != st.contexts.end()) {
+        it->second->readFbo = fbo; // repurposing readFbo or we can add screenFbo
+    }
+}
 } // namespace Hydrogen::Runtime::HostGL
+
+

@@ -4,6 +4,9 @@
 // cancels the Game Center sign-in. Games that weak-link GameKit and test
 // NSClassFromString(@"GKLocalPlayer") see no Game Center at all.
 #include "UIKit.hpp"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 
 namespace Hydrogen::Runtime::UIKit {
 namespace {
@@ -95,7 +98,45 @@ void registerGameKit(Process& p, ObjC::Runtime& r) {
 
     ObjC::ClassBuilder ach = r.defineClass("GKAchievement", "NSObject");
     lenient(r, ach.cls());
-    ach.method("initWithIdentifier:", [](Ctx& x) { ret(x, x.cpu.r[0]); }, "@@:@");
+    // A local object holding what the game sets, as on a device that isn't signed in.
+    struct AchievementData : ObjC::HostObject { id identifier = 0; double percent = 0; bool banner = false; };
+    auto AD = [](Ctx& x) -> AchievementData& { return ObjC::rt(x).host<AchievementData>(x.cpu.r[0]); };
+    ach.method("initWithIdentifier:", [AD](Ctx& x) {
+        AchievementData& d = AD(x);
+        auto& r = ObjC::rt(x);
+        if (d.identifier) r.release(x.cpu, d.identifier);
+        d.identifier = x.cpu.r[2] ? id(r.send(x.cpu, x.cpu.r[2], "copy")) : 0;
+        ret(x, x.cpu.r[0]);
+    }, "@@:@");
+    ach.method("identifier", [AD](Ctx& x) { ret(x, AD(x).identifier); }, "@@:");
+    ach.method("setIdentifier:", [AD](Ctx& x) {
+        AchievementData& d = AD(x);
+        auto& r = ObjC::rt(x);
+        const id v = x.cpu.r[2] ? id(r.send(x.cpu, x.cpu.r[2], "copy")) : 0;
+        if (d.identifier) r.release(x.cpu, d.identifier);
+        d.identifier = v;
+    }, "v@:@");
+    ach.method("percentComplete", [AD](Ctx& x) {   // double, returned in r0:r1 (softfp)
+        uint64_t bits; const double v = AD(x).percent; std::memcpy(&bits, &v, 8);
+        x.cpu.r[0] = uint32_t(bits); x.cpu.r[1] = uint32_t(bits >> 32);
+    }, "d@:");
+    ach.method("setPercentComplete:", [AD](Ctx& x) {
+        const uint64_t bits = (uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2];
+        double v; std::memcpy(&v, &bits, 8);
+        AD(x).percent = std::clamp(std::isfinite(v) ? v : 0.0, 0.0, 100.0);
+    }, "v@:d");
+    ach.method("isCompleted", [AD](Ctx& x) { ret(x, AD(x).percent >= 100.0); }, "c@:");
+    ach.method("completed", [AD](Ctx& x) { ret(x, AD(x).percent >= 100.0); }, "c@:");
+    ach.method("isHidden", [](Ctx& x) { ret(x, 0); }, "c@:");
+    ach.method("showsCompletionBanner", [AD](Ctx& x) { ret(x, AD(x).banner); }, "c@:");
+    ach.method("setShowsCompletionBanner:", [AD](Ctx& x) { AD(x).banner = (x.cpu.r[2] & 0xFF) != 0; }, "v@:c");
+    ach.method("lastReportedDate", [](Ctx& x) { ret(x, 0); }, "@@:");
+    ach.method("dealloc", [AD](Ctx& x) {
+        AchievementData& d = AD(x);
+        if (d.identifier) ObjC::rt(x).release(x.cpu, d.identifier);
+        d.identifier = 0;
+        ObjC::rt(x).disposeInstance(x.cpu, x.cpu.r[0]);
+    }, "v@:");
     ach.method("reportAchievementWithCompletionHandler:", [](Ctx& x) { completeLater(x, arg(x, 0), 0, GKErrorNotAuthenticated); }, "v@:@?");
     ach.classMethod("loadAchievementsWithCompletionHandler:", [](Ctx& x) { completeLater(x, arg(x, 0), 1, GKErrorNotAuthenticated); }, "v@:@?");
     ach.classMethod("resetAchievementsWithCompletionHandler:", [](Ctx& x) { completeLater(x, arg(x, 0), 0, GKErrorNotAuthenticated); }, "v@:@?");

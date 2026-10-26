@@ -121,15 +121,27 @@ void Mixer::stopAll() {
 
 void Mixer::setAllPaused(bool paused) { allPaused_.store(paused); }
 
+Mixer::Stats Mixer::stats() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return stats_;
+}
+
 void Mixer::render(float* left, float* right, size_t frames) {
     std::memset(left, 0, frames * sizeof(float));
     std::memset(right, 0, frames * sizeof(float));
     if (allPaused_.load(std::memory_order_relaxed)) return;   // silence; voices don't advance
     std::lock_guard<std::mutex> lk(mu_);
     constexpr float kScale = 1.0f / 32768.0f;
+    constexpr float kAudible = 1.0f / 1000.0f;   // about -60 dBFS
+    bool musicHeard = false, effectHeard = false;
+    float callPeak = 0;
     for (auto it = voices_.begin(); it != voices_.end();) {
         Voice& v = it->second;
         if (v.paused || v.queue.empty()) { ++it; continue; }
+        const bool music = v.stream || v.p.loop ||
+                           double(v.queue.front().pcm->size() / 2) >= 8.0 * double(v.queue.front().rate);
+        const float appGain = std::abs(v.p.gain);   // the app's volume, not the player's
+        int16_t voicePeak = 0;
         const float g = v.p.gain * master_;
         const float pan = std::clamp(v.p.pan, -1.0f, 1.0f);
         const float gl = g * (pan > 0 ? 1.0f - pan : 1.0f) * kScale;
@@ -148,6 +160,7 @@ void Mixer::render(float* left, float* right, size_t frames) {
                 const float t = float(v.pos - double(i0));
                 size_t i1 = i0 + 1;
                 if (i1 >= n) i1 = (!v.stream && v.p.loop) ? 0 : n - 1;
+                voicePeak = std::max<int16_t>(voicePeak, int16_t(std::min(32767, std::abs(int(s[i0 * 2])))));
                 left[i] += (float(s[i0 * 2]) * (1 - t) + float(s[i1 * 2]) * t) * gl;
                 right[i] += (float(s[i0 * 2 + 1]) * (1 - t) + float(s[i1 * 2 + 1]) * t) * gr;
                 v.pos += step;
@@ -160,10 +173,21 @@ void Mixer::render(float* left, float* right, size_t frames) {
                 v.pos = v.queue.empty() ? 0 : carry * double(v.queue.front().rate);
             }
         }
+        const float level = float(voicePeak) * kScale * appGain;
+        if (level > kAudible) {
+            (music ? musicHeard : effectHeard) = true;
+            callPeak = std::max(callPeak, std::min(level, 1.0f));
+            if (!v.heard) { v.heard = true; (music ? stats_.musicVoices : stats_.effectVoices)++; }
+        }
         if (v.queue.empty()) v.done = true;
         if (v.done && v.autoRelease) it = voices_.erase(it);
         else ++it;
     }
+    stats_.framesRendered += frames;
+    if (musicHeard || effectHeard) stats_.audibleFrames += frames;
+    if (musicHeard) stats_.musicFrames += frames;
+    if (effectHeard) stats_.effectFrames += frames;
+    stats_.peak = std::max(stats_.peak, callPeak);
     for (size_t i = 0; i < frames; ++i) {
         left[i] = std::clamp(left[i], -1.0f, 1.0f);
         right[i] = std::clamp(right[i], -1.0f, 1.0f);

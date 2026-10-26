@@ -1,6 +1,7 @@
 // HydrogenVM — process/system interfaces: errno, stack protector, dyld,
 // sysctl/uname, file descriptors and directories, mmap, signals, setjmp,
 // a little of Mach.
+#include <sys/ioctl.h>
 #include <atomic>
 #include "runtime/Process.hpp"
 #include "MachPorts.hpp"
@@ -209,7 +210,24 @@ GuestPtr s_basename(Ctx& x, GuestPtr p) {
     if (slash != std::string::npos) s = s.substr(slash + 1);
     return x.proc.internCString(s.empty() ? "." : s);
 }
-int32_t s_ioctl(Ctx&, int32_t, uint32_t, GuestPtr) { return 0; }
+int32_t s_ioctl(Ctx& x, int32_t fd, uint32_t req, GuestPtr arg) {
+    // Sockets: FIONBIO (non-blocking) and FIONREAD (bytes waiting) matter to network code.
+    if (isNetworkSocket(x.proc, fd) && arg) {
+        if (req == 0x8004667e) {
+            const int flags = ::fcntl(fd, F_GETFL);
+            if (flags < 0) return failD<int32_t>(x);
+            const bool on = x.mem.read<uint32_t>(arg) != 0;
+            return ::fcntl(fd, F_SETFL, on ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK)) < 0 ? failD<int32_t>(x) : 0;
+        }
+        if (req == 0x4004667f) {
+            int n = 0;
+            if (::ioctl(fd, FIONREAD, &n) < 0) return failD<int32_t>(x);
+            x.mem.write<int32_t>(arg, n);
+            return 0;
+        }
+    }
+    return 0;
+}
 int32_t s_zero(Ctx&) { return 0; }
 int32_t s_isatty(Ctx&, int32_t) { return 0; }
 int32_t s_getpagesize(Ctx&) { return 4096; }
@@ -770,6 +788,7 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
     std::memcpy(m.host(mc + 80), c.d, 256);
     m.write<uint32_t>(mc + 80 + 256, c.fpscr);
     p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x (pc 0x%08x)", sig, addr, pc);
+    p.perf().faultsToApp++;
     // Where the first few happened (Mono raises these routinely, so not every time).
     static std::atomic<int> traced{0};
     if (traced.fetch_add(1) < 3) p.logf(LogLevel::Info, "  fault backtrace:\n%s", p.backtrace(c, 8).c_str());

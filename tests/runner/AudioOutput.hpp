@@ -26,8 +26,23 @@ public:
         int type = 0; socklen_t size = sizeof type;
         return fd >= 3 && getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &size) == 0 && type == SOCK_DGRAM;
     }
+    // Without a socket the mixer still plays into nothing at real time, so its
+    // statistics (music / effects heard) are measured headless too.
+    void startSilent(std::shared_ptr<Hydrogen::Runtime::Audio::Mixer> mixer) {
+        worker_ = std::jthread([mixer](std::stop_token stop) {
+            using namespace std::chrono;
+            std::array<float, 2048> left{}, right{};
+            auto next = steady_clock::now();
+            while (!stop.stop_requested()) {
+                mixer->render(left.data(), right.data(), left.size());
+                next += duration_cast<steady_clock::duration>(duration<double>(2048.0 / 44100));
+                if (next < steady_clock::now()) next = steady_clock::now();
+                std::this_thread::sleep_until(next);
+            }
+        });
+    }
     void start(int fd, std::shared_ptr<Hydrogen::Runtime::Audio::Mixer> mixer) {
-        if (fd < 0) return;
+        if (fd < 0) { startSilent(std::move(mixer)); return; }
 #ifdef SO_NOSIGPIPE
         // macOS has no MSG_NOSIGNAL. Without this, a closed consumer raises
         // SIGPIPE and kills the process instead of returning EPIPE.

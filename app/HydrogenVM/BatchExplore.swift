@@ -21,6 +21,10 @@ struct ExploreResult: Codable, Sendable {
     var reproSteps: [ExploreAction]?
     var screensVisited: Int
     var seed: UInt64
+    /// Frames presented just before going to the background and ~2 s after coming back.
+    var backgroundTested: Bool? = nil
+    var resumeFramesBefore: Int? = nil
+    var resumeFramesAfter: Int? = nil
 }
 
 struct DeterministicRNG: RandomNumberGenerator {
@@ -49,6 +53,9 @@ final class ExplorePhase {
     /// Problems logged before exploring starts belong to the launch, not to an action.
     private var exploring = false
     var visitedFrameHashes = Set<String>()
+    var backgroundTested = false
+    var resumeFramesBefore: Int?
+    var resumeFramesAfter: Int?
 
     let startTime: Date
     private var currentFrameProvider: (() -> CGImage?)?
@@ -228,12 +235,15 @@ final class ExplorePhase {
             try? await Task.sleep(for: .milliseconds(500))
 
             recordAction(kind: "lifecycle", details: "enter background")
+            backgroundTested = true
+            resumeFramesBefore = Int(session.framesPresented)
             session.enterBackground()
             try? await Task.sleep(for: .milliseconds(1000))
 
             recordAction(kind: "lifecycle", details: "enter foreground")
             session.enterForeground()
-            try? await Task.sleep(for: .milliseconds(1000))
+            try? await Task.sleep(for: .milliseconds(2000))
+            if !exitBox.exited { resumeFramesAfter = Int(session.framesPresented) }
         }
 
         while Date() < deadline && !exitBox.exited {
@@ -325,7 +335,10 @@ final class ExplorePhase {
             crashed: crashed,
             reproSteps: reproSteps,
             screensVisited: visitedFrameHashes.count,
-            seed: seed
+            seed: seed,
+            backgroundTested: backgroundTested,
+            resumeFramesBefore: resumeFramesBefore,
+            resumeFramesAfter: resumeFramesAfter
         )
     }
 }

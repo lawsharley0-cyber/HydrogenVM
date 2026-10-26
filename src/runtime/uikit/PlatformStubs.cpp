@@ -74,7 +74,13 @@ struct AudioUnitInstance {
     uint32_t id = 0;
     uint32_t renderCallback = 0;
     uint32_t renderUserData = 0;
+    uint32_t desc[5] = {0, 0, 0, 0, 0};
     bool initialized = false, running = false;
+};
+
+struct AUGraphInstance {
+    uint32_t id;
+    std::vector<uint32_t> nodes;
 };
 
 struct AudioToolboxState {
@@ -83,10 +89,12 @@ struct AudioToolboxState {
     uint32_t nextQueueId = 1;
     uint32_t nextFileId = 1;
     uint32_t nextUnitId = 1;
+    uint32_t nextGraphId = 1;
     std::unordered_map<uint32_t, SystemSoundEntry> sounds;
     std::unordered_map<uint32_t, AudioQueueInstance> queues;
     std::unordered_map<uint32_t, AudioFileInstance> files;
     std::unordered_map<uint32_t, AudioUnitInstance> units;
+    std::unordered_map<uint32_t, AUGraphInstance> graphs;
 };
 AudioToolboxState& ATS(Ctx& x) { return x.proc.service<AudioToolboxState>(); }
 
@@ -791,7 +799,32 @@ int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t, uint32_t, Gu
     }
     return 0;
 }
-int32_t au_getProp(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, GuestPtr, GuestPtr) { return 0; }
+int32_t au_getProp(Ctx& x, uint32_t unit, uint32_t prop, uint32_t scope, uint32_t element, GuestPtr outData, GuestPtr ioDataSize) {
+    if (!outData || !ioDataSize) return 0;
+    const uint32_t size = x.mem.read<uint32_t>(ioDataSize);
+    if (prop == 8 /* kAudioUnitProperty_StreamFormat */) {
+        if (size >= 40) {
+            x.mem.write<double>(outData, 44100.0); // mSampleRate
+            x.mem.write<uint32_t>(outData + 8, 0x6c70636d /* 'lpcm' */); // mFormatID
+            x.mem.write<uint32_t>(outData + 12, 0xc /* kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked */); // mFormatFlags
+            x.mem.write<uint32_t>(outData + 16, 4); // mBytesPerPacket
+            x.mem.write<uint32_t>(outData + 20, 1); // mFramesPerPacket
+            x.mem.write<uint32_t>(outData + 24, 4); // mBytesPerFrame
+            x.mem.write<uint32_t>(outData + 28, 2); // mChannelsPerFrame
+            x.mem.write<uint32_t>(outData + 32, 16); // mBitsPerChannel
+            x.mem.write<uint32_t>(outData + 36, 0); // mReserved
+            x.mem.write<uint32_t>(ioDataSize, 40);
+        }
+    } else if (prop == 14 /* kAudioUnitProperty_MaximumFramesPerSlice */) {
+        if (size >= 4) {
+            x.mem.write<uint32_t>(outData, 4096);
+            x.mem.write<uint32_t>(ioDataSize, 4);
+        }
+    } else if (prop == 23 /* kAudioDevicePropertyDeviceName */) {
+        // sometimes checked
+    }
+    return 0;
+}
 int32_t au_setParam(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, float, uint32_t) { return 0; }
 int32_t au_getParam(Ctx& x, uint32_t, uint32_t, uint32_t, uint32_t, GuestPtr out) { if (out) x.mem.write<float>(out, 1.0f); return 0; }
 int32_t au_render(Ctx& x, uint32_t, GuestPtr, GuestPtr, uint32_t, uint32_t nFrames, GuestPtr ioData) {
@@ -805,27 +838,47 @@ int32_t au_render(Ctx& x, uint32_t, GuestPtr, GuestPtr, uint32_t, uint32_t nFram
     }
     return 0;
 }
-int32_t aug_new(Ctx& x, GuestPtr outGraph) { if (outGraph) x.mem.write<uint32_t>(outGraph, ATS(x).nextUnitId++); return 0; }
+int32_t aug_new(Ctx& x, GuestPtr outGraph) {
+    const uint32_t gid = ATS(x).nextGraphId++;
+    ATS(x).graphs[gid].id = gid;
+    if (outGraph) x.mem.write<uint32_t>(outGraph, gid);
+    return 0;
+}
 int32_t aug_ok1(Ctx&, uint32_t) { return 0; }
 int32_t aug_ok2(Ctx&, uint32_t, uint32_t) { return 0; }
 int32_t aug_ok3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t aug_ok4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t aug_ok5(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
-int32_t aug_addNode(Ctx& x, uint32_t, GuestPtr, GuestPtr outNode) {
+int32_t aug_addNode(Ctx& x, uint32_t graph, GuestPtr desc, GuestPtr outNode) {
     const uint32_t uid = ATS(x).nextUnitId++;
     ATS(x).units[uid].id = uid;
+    if (desc) {
+        for (int i = 0; i < 5; ++i) ATS(x).units[uid].desc[i] = x.mem.read<uint32_t>(desc + i * 4);
+    }
+    if (ATS(x).graphs.count(graph)) ATS(x).graphs[graph].nodes.push_back(uid);
     if (outNode) x.mem.write<int32_t>(outNode, int32_t(uid));
     return 0;
 }
 int32_t aug_nodeInfo(Ctx& x, uint32_t, int32_t node, GuestPtr outDesc, GuestPtr outUnit) {
     const uint32_t uid = node > 0 ? uint32_t(node) : ATS(x).nextUnitId++;
     ATS(x).units[uid].id = uid;
-    if (outDesc) std::memset(x.mem.host(outDesc), 0, 20);
+    if (outDesc) {
+        for (int i = 0; i < 5; ++i) x.mem.write<uint32_t>(outDesc + i * 4, ATS(x).units[uid].desc[i]);
+    }
     if (outUnit) x.mem.write<uint32_t>(outUnit, uid);
     return 0;
 }
 int32_t aug_isRunning(Ctx& x, uint32_t, GuestPtr outRunning) { if (outRunning) x.mem.write<uint8_t>(outRunning, 1); return 0; }
 int32_t aug_update(Ctx& x, uint32_t, GuestPtr outUpdated) { if (outUpdated) x.mem.write<uint8_t>(outUpdated, 1); return 0; }
+
+int32_t aug_getIndNode(Ctx& x, uint32_t, uint32_t, GuestPtr outNode) {
+    if (outNode) x.mem.write<int32_t>(outNode, 1);
+    return 0;
+}
+int32_t aug_getNodeCount(Ctx& x, uint32_t, GuestPtr outCount) {
+    if (outCount) x.mem.write<uint32_t>(outCount, 1);
+    return 0;
+}
 
 // ============================================================= AudioFormat ===
 // No encoder/decoder catalogue: every property reports kAudioFormatUnsupportedPropertyError,
@@ -1477,6 +1530,10 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aug_ok5>("_AUGraphConnectNodeInput");
     p.def<&aug_ok3>("_AUGraphDisconnectNodeInput");
     p.def<&aug_ok1>("_AUGraphClearConnections");
+    p.def<&aug_getIndNode>("_AUGraphGetIndNode");
+    p.def<&aug_getNodeCount>("_AUGraphGetNodeCount");
+    p.def<&aug_ok3>("_AudioUnitAddRenderNotify");
+    p.def<&aug_ok3>("_AudioUnitRemoveRenderNotify");
 
     // OpenAL
     p.def<&alc_openDevice>("_alcOpenDevice");

@@ -217,6 +217,15 @@ int hvmRunMain(int argc, char** argv) {
               << ", \"frames\": " << audio.frames << ", \"nonSilentFrames\": " << audio.nonSilentFrames
               << ", \"peak\": " << audio.peak << ", \"droppedBlocks\": " << audio.droppedBlocks
               << ", \"transportError\": " << audio.error << "},\n";
+            {
+                const auto ms = proc.mixer().stats();
+                f << "  \"mixer\": {\"framesRendered\": " << ms.framesRendered << ", \"audibleFrames\": " << ms.audibleFrames
+                  << ", \"musicFrames\": " << ms.musicFrames << ", \"effectFrames\": " << ms.effectFrames
+                  << ", \"musicVoices\": " << ms.musicVoices << ", \"effectVoices\": " << ms.effectVoices
+                  << ", \"peak\": " << ms.peak << "},\n";
+                f << "  \"display\": {\"offscreenPresents\": " << pf.offscreenPresents.load()
+                  << ", \"faultsToApp\": " << pf.faultsToApp.load() << ", \"missingCount\": " << proc.missingCount() << "},\n";
+            }
             f << "  \"perf\": {\n";
             f << Runtime::perfJson(pf, wall, insns, proc.engine().stats().blocks_decoded);
             f << "  }\n}\n";

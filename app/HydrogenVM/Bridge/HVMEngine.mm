@@ -621,6 +621,23 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 #endif
 }
 
+- (NSDictionary<NSString *, NSNumber *> *)diagnostics {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return @{};
+    const auto ms = p->mixer().stats();
+    auto& pf = p->perf();
+    const uint64_t ttff = pf.timeToFirstFrameNs.load();
+    return @{
+        @"audioFramesRendered": @(ms.framesRendered), @"audibleFrames": @(ms.audibleFrames),
+        @"musicFrames": @(ms.musicFrames), @"effectFrames": @(ms.effectFrames),
+        @"musicVoices": @(ms.musicVoices), @"effectVoices": @(ms.effectVoices), @"audioPeak": @(ms.peak),
+        @"offscreenPresents": @(pf.offscreenPresents.load()), @"faultsToApp": @(pf.faultsToApp.load()),
+        @"missingCount": @(p->missingCount()), @"framesPresented": @(pf.framesPresented.load()),
+        @"timeToFirstFrameMs": @(ttff == ~uint64_t{0} ? -1.0 : double(ttff) / 1e6),
+    };
+}
+
 - (uint64_t)framesPresented {
     std::shared_ptr<RT::Process> p;
     { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }

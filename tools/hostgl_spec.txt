@@ -121,7 +121,7 @@ v glDrawTexsOES(I x, I y, I z, I w, I h) [es1]
 v glDrawTexxOES(I x, I y, I z, I w, I h) [es1]
 
 # ---------------- ES 1.1 OES framebuffer / blend / mipmap extensions (desktop: suffix dropped)
-v glBindFramebufferOES(E target, U framebuffer) [es1]
+!v glBindFramebufferOES(E target, U framebuffer) [es1]
 v glBindRenderbufferOES(E target, U renderbuffer) [es1]
 E glCheckFramebufferStatusOES(E target) [es1]
 v glDeleteFramebuffersOES(S n, p framebuffers) [es1]
@@ -143,7 +143,7 @@ v glBlendFuncSeparateOES(E srcRGB, E dstRGB, E srcAlpha, E dstAlpha) [es1]
 # ---------------- ES 2.0 core
 v glAttachShader(U program, U shader) [es2]
 v glBindAttribLocation(U program, U index, cs name) [es2]
-v glBindFramebuffer(E target, U framebuffer)
+!v glBindFramebuffer(E target, U framebuffer)
 v glBindRenderbuffer(E target, U renderbuffer)
 v glBlendColor(F r, F g, F b, F a)
 v glBlendEquation(E mode)
@@ -214,7 +214,7 @@ v glUniform4iv(I location, S count, p value) [es2]
 v glUniformMatrix2fv(I location, S count, B transpose, p value) [es2]
 v glUniformMatrix3fv(I location, S count, B transpose, p value) [es2]
 v glUniformMatrix4fv(I location, S count, B transpose, p value) [es2]
-v glUseProgram(U program) [es2]
+!v glUseProgram(U program) [es2]
 v glValidateProgram(U program) [es2]
 v glVertexAttrib1f(U index, F x) [es2]
 v glVertexAttrib1fv(U index, p v) [es2]
@@ -269,3 +269,11 @@ v glCopyTextureLevelsAPPLE(U dst, U src, I srcBase, S count)
 v glDrawBuffers(S n, p bufs)
 v glDrawBuffersEXT(S n, p bufs)
 v glReadBuffer(E src)
+
+v glGenQueriesEXT(S n, w ids)
+v glDeleteQueriesEXT(S n, p ids)
+B glIsQueryEXT(U id)
+v glBeginQueryEXT(E target, U id)
+v glEndQueryEXT(E target)
+v glGetQueryivEXT(E target, E pname, w params)
+v glGetQueryObjectuivEXT(U id, E pname, w params)

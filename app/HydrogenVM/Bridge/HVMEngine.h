@@ -69,6 +69,13 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly) double frameTimeP95Milliseconds;
 /// Frames shown so far (software composites and GPU presents).
 @property (nonatomic, readonly) uint64_t framesPresented;
+/// Test counters while the game runs (empty before it starts and after it ends):
+/// audioFramesRendered, audibleFrames, musicFrames, effectFrames, musicVoices,
+/// effectVoices, audioPeak (0...1, the game's own volume, before outputVolume),
+/// offscreenPresents (GL frames drawn to a layer the screen doesn't show),
+/// faultsToApp (bad accesses handed to the game's signal handler),
+/// missingCount (distinct missing functions/APIs called), timeToFirstFrameMs.
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *diagnostics;
 /// Host output gain, 0...1. Does not change guest audio source gains.
 @property (nonatomic) float outputVolume;
 @property (nonatomic, readonly, getter=isRunning) BOOL running;

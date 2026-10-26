@@ -6,13 +6,20 @@
 // conversion helpers (inet_*) are real, and select()/poll() work on the file
 // descriptors that do exist (files, pipes) and as sleeps.
 // An explicit ProcessConfig capability permits outbound IPv4 TCP on loopback.
-// No external DNS, external connects, listeners or UDP are enabled by it.
+// No external DNS, external connects or listeners are enabled by it.
+//
+// IPv4 UDP is always available, but only inside the device: a phone with no
+// network still has lo0, and games run their local multiplayer server over it
+// (Minecraft PE's RakNet). Sockets are bound to 127.0.0.1 whatever address the
+// app asks for, broadcasts go to 127.0.0.1, and any other destination fails
+// with ENETUNREACH, so nothing can leave the machine.
 #include "runtime/Process.hpp"
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <algorithm>
+#include <atomic>
 #include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
@@ -42,7 +49,8 @@ struct SocketState {
     explicit SocketState(Process& p) { p.onExit([this] { clear(); }); }
     std::mutex mu;
     std::set<int> fds;
-    void clear() { std::lock_guard lock(mu); for (int fd : fds) { ::shutdown(fd, SHUT_RDWR); ::close(fd); } fds.clear(); }
+    std::set<int> udp;   // subset of fds: loopback-only datagram sockets
+    void clear() { std::lock_guard lock(mu); for (int fd : fds) { ::shutdown(fd, SHUT_RDWR); ::close(fd); } fds.clear(); udp.clear(); }
     ~SocketState() { clear(); }
 };
 bool owns(Ctx& x, int fd) { return isNetworkSocket(x.proc, fd); }
@@ -64,7 +72,16 @@ bool span(Ctx& x, GuestPtr ptr, uint32_t n, uint8_t prot) {
         if ((x.mem.protAt(uint32_t(a)) & prot) != prot) return false;
     return true;
 }
+bool isUdp(Ctx& x, int fd) { auto& s = x.proc.service<SocketState>(); std::lock_guard lock(s.mu); return s.udp.count(fd) != 0; }
 int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
+    if (family == kAF_INET && type == SOCK_DGRAM && (protocol == 0 || protocol == IPPROTO_UDP)) {
+        int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (fd < 0) return hostFailure(x);
+        ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+        auto& state = x.proc.service<SocketState>();
+        std::lock_guard lock(state.mu); state.fds.insert(fd); state.udp.insert(fd);
+        return fd;
+    }
     if (!x.proc.config().loopbackNetwork) return failWith(x, kENETDOWN);
     if (family != kAF_INET) return failWith(x, kEAFNOSUPPORT);
     if (type != SOCK_STREAM || (protocol != 0 && protocol != IPPROTO_TCP)) return failWith(x, 43);
@@ -79,6 +96,90 @@ int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
     std::lock_guard lock(state.mu); state.fds.insert(fd);
     return fd;
 }
+// Darwin sockaddr_in: len, family, port (network order), address.
+bool readSockaddr(Ctx& x, GuestPtr addr, uint32_t len, sockaddr_in& out) {
+    if (!addr || len < 8 || !span(x, addr, 8, Memory::kProtRead)) return false;
+    out = sockaddr_in{}; out.sin_family = AF_INET;
+#ifdef __APPLE__
+    out.sin_len = sizeof out;
+#endif
+    x.mem.copyOut(&out.sin_port, addr + 2, 2); x.mem.copyOut(&out.sin_addr, addr + 4, 4);
+    return x.mem.read<uint8_t>(addr + 1) == kAF_INET;
+}
+void writeSockaddr(Ctx& x, GuestPtr addr, GuestPtr lenp, const sockaddr_in& in) {
+    if (!addr || !lenp || !span(x, lenp, 4, Memory::kProtRW)) return;
+    uint8_t d[16] = {16, uint8_t(kAF_INET)};
+    std::memcpy(d + 2, &in.sin_port, 2); std::memcpy(d + 4, &in.sin_addr, 4);
+    const uint32_t cap = x.mem.read<uint32_t>(lenp);
+    if (span(x, addr, std::min<uint32_t>(cap, 16), Memory::kProtWrite)) x.mem.copyIn(addr, d, std::min<uint32_t>(cap, 16));
+    x.mem.write<uint32_t>(lenp, 16);
+}
+// Where a datagram may go: loopback as is; broadcasts and "this host" (0.0.0.0)
+// to 127.0.0.1. Anything else would leave the device.
+bool udpDestination(Ctx& x, sockaddr_in& a) {
+    const uint32_t ip = ntohl(a.sin_addr.s_addr);
+    if ((ip >> 24) == 127) return true;
+    if (ip == 0 || ip == 0xFFFFFFFFu || (ip & 0xFF) == 0xFF) { a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); return true; }
+    static std::atomic<bool> told{false};
+    if (!told.exchange(true)) {
+        char b[INET_ADDRSTRLEN] = "";
+        inet_ntop(AF_INET, &a.sin_addr, b, sizeof b);
+        x.proc.logf(LogLevel::Info, "UDP to %s refused: only the device's own loopback is reachable offline", b);
+    }
+    return false;
+}
+int32_t n_bind(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    if (!isUdp(x, fd)) return failWith(x, 45);
+    sockaddr_in a{};
+    if (!readSockaddr(x, addr, len, a)) return failWith(x, kEINVAL);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // never listen beyond the device
+    return ::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) < 0 ? hostFailure(x) : 0;
+}
+int32_t n_getsockname(Ctx& x, int32_t fd, GuestPtr addr, GuestPtr lenp) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    sockaddr_in a{}; socklen_t n = sizeof a;
+    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&a), &n) < 0) return hostFailure(x);
+    writeSockaddr(x, addr, lenp, a);
+    return 0;
+}
+int32_t n_getpeername(Ctx& x, int32_t fd, GuestPtr addr, GuestPtr lenp) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    sockaddr_in a{}; socklen_t n = sizeof a;
+    if (::getpeername(fd, reinterpret_cast<sockaddr*>(&a), &n) < 0) return hostFailure(x);
+    writeSockaddr(x, addr, lenp, a);
+    return 0;
+}
+int32_t n_send(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags);
+int32_t n_sendto(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags, GuestPtr addr, uint32_t alen) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    if (!addr) return n_send(x, fd, buf, n, flags);
+    if (!isUdp(x, fd)) return failWith(x, 56);   // EISCONN: a TCP socket ignores the address
+    sockaddr_in a{};
+    if (!readSockaddr(x, addr, alen, a)) return failWith(x, kEINVAL);
+    if (!udpDestination(x, a)) return failWith(x, 51);
+    if (n > 65507 || !span(x, buf, n, Memory::kProtRead)) return failWith(x, n > 65507 ? 40 : 14);   // EMSGSIZE / EFAULT
+    int hostFlags = 0;
+#ifdef MSG_NOSIGNAL
+    hostFlags |= MSG_NOSIGNAL;
+#endif
+    const ssize_t out = ::sendto(fd, x.mem.host(buf), n, hostFlags, reinterpret_cast<sockaddr*>(&a), sizeof a);
+    return out < 0 ? hostFailure(x) : int32_t(out);
+}
+int32_t n_recvfrom(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags, GuestPtr addr, GuestPtr lenp) {
+    if (!owns(x, fd)) return failWith(x, kEBADF);
+    if ((flags & ~(2u | 128u)) != 0) return failWith(x, 45);   // MSG_PEEK, MSG_DONTWAIT
+    if (n > INT32_MAX || !span(x, buf, n, Memory::kProtWrite)) return failWith(x, 14);
+    const bool nonblocking = (flags & 128) || (::fcntl(fd, F_GETFL) & O_NONBLOCK);
+    const int hostFlags = (flags & 2) ? MSG_PEEK : 0;
+    for (;;) {
+        sockaddr_in a{}; socklen_t alen = sizeof a;
+        const ssize_t got = ::recvfrom(fd, x.mem.host(buf), n, hostFlags | MSG_DONTWAIT, reinterpret_cast<sockaddr*>(&a), &alen);
+        if (got >= 0) { writeSockaddr(x, addr, lenp, a); return int32_t(got); }
+        if (errno != EAGAIN || nonblocking) return hostFailure(x);
+        if (!waitSocket(x, fd, POLLIN)) return -1;
+    }
+}
 int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
     if (!owns(x, fd)) return failWith(x, kEBADF);
     if (len < 16 || !span(x, addr, 16, Memory::kProtRead)) return failWith(x, kEINVAL);
@@ -88,6 +189,12 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
     host.sin_len = sizeof host;
 #endif
     x.mem.copyOut(&host.sin_port, addr + 2, 2); x.mem.copyOut(&host.sin_addr, addr + 4, 4);
+    // Preserve main's UDP destination policy separately from the local TCP
+    // transport and its explicit port overrides.
+    if (isUdp(x, fd)) {
+        if (!udpDestination(x, host)) return failWith(x, 51);
+        return ::connect(fd, reinterpret_cast<sockaddr*>(&host), sizeof host) < 0 ? hostFailure(x) : 0;
+    }
     char ipBuf[INET_ADDRSTRLEN]{};
     inet_ntop(AF_INET, &host.sin_addr, ipBuf, sizeof(ipBuf));
     uint16_t origPort = ntohs(host.sin_port);
@@ -172,7 +279,16 @@ int32_t n_setsockopt(Ctx& x, int32_t fd, int32_t level, int32_t opt, GuestPtr va
     if (!owns(x, fd)) return failWith(x, kEBADF);
     if (len != 4 || !span(x, value, 4, Memory::kProtRead)) return failWith(x, kEINVAL);
     int v = x.mem.read<int32_t>(value), hostLevel = SOL_SOCKET, hostOpt;
+    if (level == 0 && isUdp(x, fd)) return 0;   // IPPROTO_IP (TTL, TOS, multicast): nothing to change on loopback
     if (level == 6 && opt == 1) { hostLevel = IPPROTO_TCP; hostOpt = TCP_NODELAY; }
+    else if (level == 0xffff && opt == 0x20) hostOpt = SO_BROADCAST;
+    else if (level == 0xffff && opt == 0x200) {
+#ifdef SO_REUSEPORT
+        hostOpt = SO_REUSEPORT;
+#else
+        return 0;
+#endif
+    }
     else if (level != 0xffff) return failWith(x, 42);
     else if (opt == 4) hostOpt = SO_REUSEADDR;
     else if (opt == 8) hostOpt = SO_KEEPALIVE;
@@ -482,12 +598,15 @@ int closeNetworkSocket(Process& p, int fd) {
     p.logf(LogLevel::Info, "guest closeNetworkSocket fd=%d", fd);
     auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu);
     if (!s.fds.erase(fd)) return -2;
+    s.udp.erase(fd);
     return ::close(fd);
 }
 void duplicateNetworkSocket(Process& p, int from, int to) {
     auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu);
-    bool owned = s.fds.count(from) != 0;
-    s.fds.erase(to); if (owned) s.fds.insert(to);
+    bool owned = s.fds.count(from) != 0, udp = s.udp.count(from) != 0;
+    s.fds.erase(to); s.udp.erase(to);
+    if (owned) s.fds.insert(to);
+    if (udp) s.udp.insert(to);
 }
 
 void registerLibcNet(Process& p) {
@@ -496,8 +615,9 @@ void registerLibcNet(Process& p) {
     p.service<SocketState>();
     p.def<&n_connect>("_connect"); p.def<&n_send>("_send"); p.def<&n_recv>("_recv");
     p.def<&n_shutdown>("_shutdown"); p.def<&n_getsockopt>("_getsockopt"); p.def<&n_setsockopt>("_setsockopt");
-    for (const char* f : {"_bind", "_listen", "_accept", "_sendto", "_sendmsg", "_recvfrom",
-                          "_recvmsg", "_getpeername", "_getsockname", "_sendfile"})
+    p.def<&n_bind>("_bind"); p.def<&n_sendto>("_sendto"); p.def<&n_recvfrom>("_recvfrom");
+    p.def<&n_getsockname>("_getsockname"); p.def<&n_getpeername>("_getpeername");
+    for (const char* f : {"_listen", "_accept", "_sendmsg", "_recvmsg", "_sendfile"})
         p.def<&n_unsupportedSocket>(f);
     p.def<&n_getaddrinfo>("_getaddrinfo");
     p.def<&n_freeaddrinfo>("_freeaddrinfo");

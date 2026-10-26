@@ -44,6 +44,8 @@ struct HostContext {
     bool desktop = false;    // ES 1.1 guest on a desktop compatibility context
     bool implicitWorker = false;
     uint32_t guestContext = 0, guestSharegroup = 0;
+    uint32_t boundFbo = 0;
+    uint32_t currentProgram = 0;
     Fns fn;
     uint32_t readFbo = 0;    // scratch FBO for read-backs
     std::unordered_map<uint32_t, MappedBuffer> mapped;   // key: target

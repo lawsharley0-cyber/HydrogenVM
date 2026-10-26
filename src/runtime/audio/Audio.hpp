@@ -68,13 +68,23 @@ public:
     // Mixes `frames` frames at kRate into separate left/right channels.
     void render(float* left, float* right, size_t frames);
 
+    // What the app actually made audible (before the player's own volume), for
+    // tests. Music = streams, looping voices and sounds of 8 s or more; effects =
+    // the rest. A voice counts once, the first time it is heard.
+    struct Stats {
+        uint64_t framesRendered = 0, audibleFrames = 0, musicFrames = 0, effectFrames = 0;
+        uint32_t musicVoices = 0, effectVoices = 0;
+        float peak = 0;
+    };
+    Stats stats() const;
+
 private:
     struct Buffer { Pcm pcm; int rate; uint64_t tag; };
     struct Voice {
         std::deque<Buffer> queue;
         double pos = 0;   // in frames of the front buffer
         VoiceParams p;
-        bool paused = false, stream = false, autoRelease = false, done = false;
+        bool paused = false, stream = false, autoRelease = false, done = false, heard = false;
         std::vector<uint64_t> processed;
     };
     mutable std::mutex mu_;
@@ -82,6 +92,7 @@ private:
     uint32_t next_ = 1;
     float master_ = 1.0f;
     std::atomic<bool> allPaused_{false};
+    Stats stats_;   // guarded by mu_
 };
 
 } // namespace Hydrogen::Runtime::Audio
