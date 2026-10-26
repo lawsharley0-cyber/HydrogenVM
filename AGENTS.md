@@ -31,7 +31,7 @@ Read [docs/TEST_LAB.md](docs/TEST_LAB.md), especially "Agent guide": what each c
 
 ## Build and test
 
-Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `libssl-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set.
+Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `libssl-dev`, `libicu-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set. ICU supplies Unicode predicate regular expressions on Linux; Apple hosts use native Foundation.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release

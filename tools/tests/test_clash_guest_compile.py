@@ -30,6 +30,10 @@ class GuestCompileTests(unittest.TestCase):
             import struct
             self.assertEqual(struct.unpack_from('<III',(directory/'guest.o').read_bytes()),
                              (0xfeedface,12,9))
+            # Profiling must remain freestanding too; no extra native runtime
+            # dependency may creep in through timing/counter arithmetic.
+            result=subprocess.run(command+['-DGUEST_PROFILE_SAVES=1'],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
 
 
 if __name__=='__main__':unittest.main()

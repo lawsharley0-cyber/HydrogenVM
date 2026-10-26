@@ -175,7 +175,9 @@ Its source archive and all private evidence remain outside Git.
   ID 3, Gold 127, wins 3, claimed=false. No backup is restored. The next launch
   loads it, executes original command 213 once, and commits Gold **141**, gems
   100, XP 4, wins/cycle 3, no chest or journal. The native deck now has eight
-  earned cards, including Mini P.E.K.K.A (26000018); Bomber count is 2.
+  earned cards, including Prince (26000018); Bomber count is 2. The earlier
+  Mini P.E.K.K.A label was a documentation error, corrected by inspecting the
+  original pinned card-info screen during the UI audit; no card data changed.
   Evidence `/var/tmp/hvm-guest-v19-journal/interruption.json` and
   `/var/tmp/hvm-guest-v19-recovery1`.
 - A second clean 35-second launch retains Gold 141, gems 100, XP 4, wins/cycle
@@ -195,6 +197,54 @@ Its downloaded unsigned ARM64 device IPA was locally reverified (SHA256
 `f9d106516d815d68aba2ced0a92e8bb1ed1b2d151e01e615b9096bb96e099a47`, minimum
 iOS 26.0). It remains untested on the owner's phone; neither that build nor the
 guest prototype is proof the reported device 50% failure is resolved.
+
+## October 25: phone abort diagnosis and interactive audit
+
+The owner's phone v19 report exactly identifies missing native home command
+516 after a king-level-up sound. The new guest accepts its base-only wire
+schema and retains original execution to update last-shown level. A synthetic
+level-2 QA copy reproduces v19's abort and v20 reaches home for 35 seconds.
+The phone's failing save is not reset; matching device re-import is pending.
+
+v23 also adds local offline help/account/backup/legal notices in the original
+InfoPopup and serves the local profile through native 14113/24113 messages.
+It runs on ordinary, unmodified main 6884670 without a host Clash service.
+Its private IPA SHA256 is
+`4264518926857d2e9aa1b891072936506c18cbc87e56cb761b90c5319f813a8b`;
+executable SHA256 is
+`5a9aeb1fd4a7378a667c41648d4f1bb4327d525cf842e58a2c071072c3bb297a`.
+Bundle identity and CRG1/GRJ1 persistence stay stable; original assets are
+byte-verified unchanged. It remains an ARMv7 emulator guest, not a native app
+for modern iOS. Do not commit or distribute proprietary fixtures in Git.
+
+An isolated copy of the three-win earned player now passes all eight card-info
+screens and closes, a blocked Knight upgrade without spending, and three real
+Archers/Bomber/Arrows upgrades. Gold 141→126, XP 4→16, all three reach level 2.
+Profile stats/deck, scrolling, arena preview and resource tooltips render.
+Shop/Social/TV are still natively Arena-1 locked; their inner controls have not
+been tested. Audio PCM confirms independent music/SFX mute and restore with
+zero dropped mixer blocks in that check, not full battle perceptual quality.
+The complete scenario ledger, known gaps, commands and performance measurements
+are in [UI_AUDIT.md](UI_AUDIT.md); machine captures are not automatic visual passes.
+
+The support SDK independently exposed missing shared NSPredicate MATCHES and
+NSLocale character direction. Linux now uses ICU; Apple uses native Foundation
+and CoreFoundation. Minimal TL-P/Q cases fail before and pass after. Final
+Linux fulltest: 253/253, TestLab: 17/17. Complete compatibility baseline diff:
+zero regressions; three legacy apps start without crashing, original optional
+Clash fixture skipped in that gate (separately exercised above). An additional
+two-launch smoke of each legacy app exits cleanly. Its apps-only report cannot
+be compared to a whole-suite baseline: that preliminary diff flags omitted
+unit suites, not a measured runtime regression. Apple compile/tests remain CI
+gates. The new guest facade also avoids the SDK's unimplemented Auto Layout;
+this change does not claim a general Auto Layout implementation.
+
+Synchronous checkpoint I/O is being measured, not disabled. An optional
+`--profile-saves` build logs checkpoint I/O duration without weakening fsync,
+journal or rename behavior. Local software-rendering/tracing timings cannot
+establish the owner's phone hitch cause. Newest fetched main is 5968d88 and
+includes a separate GPU/AUGraph fix f78a63a; these current runs use the explicitly
+identified 6884670 ordinary host, not that newer integration head.
 
 ## Next work
 

@@ -59,7 +59,12 @@ static void consume_home_turn(void *message) {
             // execute 0xd8b10 accepts native page IDs 1 through 4.
             int page=turn_vint(&r);
             if(page<1 || page>4)fail("GuestOffline: invalid opened page");
-        } else if(kind!=538) {
+        } else if(kind==516 || kind==538) {
+            // LogicUpdateLastShownLevelUpCommand (516), encode/decode
+            // 0x1109bc/0x1109c0 tail-call LogicCommand with no extra payload.
+            // Its original execute 0x1109c4 updates lastShownLevelUp; retain
+            // that native home state instead of aborting on the next launch.
+        } else {
             CALL(API_printf,int,(const char*,int))("GuestOffline: unported home command=%d\n",kind);
             fail("GuestOffline: reward/matchmaking command requires guest implementation");
         }

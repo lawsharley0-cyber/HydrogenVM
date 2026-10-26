@@ -2,6 +2,14 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+October 25 UI/stability follow-up (same branch, Group C): owner requests a
+clickable-control audit, Settings Help/Support crash fixes, post-upgrade relaunch
+recovery, and measured stutter investigation. Phone v19 report identifies
+unsupported native command 516 after king level-up, host 6884670, 16 KB pages.
+Record coverage and unavailable/locked scenarios explicitly; local tests do not
+close phone reports. Shared framework fixes, if necessary, also reserve Group D
+and require pre/post Test Lab and fulltest. Preserve the earned/failing saves.
+
 The owner's explicit request resumes offline Clash development despite the
 master plan's earlier recommendation to park it. Group C owner:
 `codex/clash-offline-continuation`. Restore the pinned NPC sector, native VInt

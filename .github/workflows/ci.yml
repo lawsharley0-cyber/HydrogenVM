@@ -29,7 +29,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev libicu-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
         run: |
@@ -97,6 +97,8 @@ jobs:
           build/hvm_clash_state_tests > report/clash-state.txt
           build/hvm_clash_tests > report/clash-offline.txt
           build/hvm run build/ios/TestLab.app --home build/apple-math-test -- --run TL-O > report/clash-math-abi.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-predicate-test -- --run TL-P > report/clash-predicate.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-language-test -- --run TL-Q > report/clash-language.txt
       - name: Generate Xcode project
         working-directory: app
         run: xcodegen

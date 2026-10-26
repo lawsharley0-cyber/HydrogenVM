@@ -42,7 +42,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq clang lld llvm cmake ninja-build \
-            zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 g++ libstdc++-14-dev
+            zlib1g-dev libssl-dev libsqlite3-dev libicu-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 g++ libstdc++-14-dev
           clang++ --version | head -1
 
       - name: Schema unit tests

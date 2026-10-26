@@ -1,5 +1,6 @@
 // Cocoa data-model classes used by Unity. Unsupported predicate syntax raises explicitly.
 #include "Foundation.hpp"
+#include "HostPredicateRegex.hpp"
 #include "runtime/libc/Format.hpp"
 #include <algorithm>
 #include <cctype>
@@ -26,23 +27,37 @@ int compare(Ctx& x, id a, id b) {
     const int32_t result = int32_t(send(x, a, "compare:", {b}));
     return (result > 0) - (result < 0);
 }
-struct Predicate : ObjC::HostObject { std::string key, operation; id rhs = 0; bool constant = false, result = false; };
+struct Predicate : ObjC::HostObject { std::string key, operation; id rhs = 0; bool constant = false, result = false; std::shared_ptr<const HostPredicateRegex> expression; };
 void predicate_free(Ctx& x, id self, SEL) { auto& d = rt(x).host<Predicate>(self); if (d.rhs) rt(x).release(x.cpu, d.rhs); d.rhs = 0; rt(x).disposeInstance(x.cpu, self); }
 id predicate_value(Ctx& x, Class cls, SEL, bool value) { const id object = rt(x).createInstance(cls); auto& d = rt(x).host<Predicate>(object); d.constant = true; d.result = value; return autoreleased(x, object); }
 template <class Next> id parse(Ctx& x, Class cls, id format, Next next) {
     const std::string text = utf8(x, format);
     if (text == "TRUEPREDICATE" || text == "FALSEPREDICATE") return predicate_value(x, cls, 0, text == "TRUEPREDICATE");
-    static const std::regex expression(R"(^\s*(SELF|%K|[A-Za-z_][A-Za-z_0-9.]*)\s*(==|!=|>=|<=|>|<)\s*(%@|%[difu]|nil|NULL|YES|NO|true|false|[-+]?[0-9]+(?:\.[0-9]+)?|'[^']*'|"[^"]*")\s*$)");
+    static const std::regex expression(R"(^\s*(SELF|%K|[A-Za-z_][A-Za-z_0-9.]*)\s*(==|!=|>=|<=|>|<|MATCHES(?:\[c\])?)\s*(%@|%[difu]|nil|NULL|YES|NO|true|false|[-+]?[0-9]+(?:\.[0-9]+)?|'[^']*'|"[^"]*")\s*$)",std::regex::icase);
     std::smatch match;
     if (!std::regex_match(text, match, expression)) throw ObjC::ObjCError("unsupported NSPredicate format: " + text);
     const id object = rt(x).createInstance(cls); auto& d = rt(x).host<Predicate>(object);
     d.key = match[1] == "%K" ? utf8(x, next('@')) : match[1].str(); d.operation = match[2];
+    if(d.key.size()==4) { auto keyword=d.key;for(auto& c:keyword)c=char(std::toupper(static_cast<unsigned char>(c)));if(keyword=="SELF")d.key=keyword; }
+    for(auto& c:d.operation)c=char(std::toupper(static_cast<unsigned char>(c)));
     const std::string rhs = match[3];
+    auto keyword=rhs;for(auto& c:keyword)c=char(std::toupper(static_cast<unsigned char>(c)));
     if (rhs[0] == '%') d.rhs = next(rhs[1]);
     else if (rhs[0] == '\'' || rhs[0] == '"') d.rhs = makeString(x, rhs.substr(1, rhs.size() - 2));
-    else if (rhs == "YES" || rhs == "true" || rhs == "NO" || rhs == "false") d.rhs = makeBool(x, rhs == "YES" || rhs == "true");
-    else if (rhs != "nil" && rhs != "NULL") d.rhs = makeNumberDouble(x, std::stod(rhs));
+    else if (keyword == "YES" || keyword == "TRUE" || keyword == "NO" || keyword == "FALSE") d.rhs = makeBool(x, keyword == "YES" || keyword == "TRUE");
+    else if (keyword != "NIL" && keyword != "NULL") d.rhs = makeNumberDouble(x, std::stod(rhs));
     if (d.rhs) rt(x).retain(x.cpu, d.rhs);
+    if(d.operation.starts_with("MATCHES")) {
+        // Full ICU matching: SDK validation uses inline (?i) and Unicode
+        // categories. ASCII substitution or regex_search would weaken checks.
+        try {
+            if(!isString(x,d.rhs))throw ObjC::ObjCError("MATCHES requires an NSString pattern");
+            d.expression=compilePredicateRegex(utf8(x,d.rhs),d.operation=="MATCHES[C]");
+        } catch(const std::invalid_argument&) {
+            rt(x).release(x.cpu,object);
+            throw ObjC::ObjCError("invalid or unsupported MATCHES regular expression");
+        } catch(...) {rt(x).release(x.cpu,object);throw;}
+    }
     return autoreleased(x, object);
 }
 id predicate_format(Ctx& x, Class cls, SEL, id format, VarArgs args) {
@@ -59,6 +74,7 @@ id predicate_array(Ctx& x, Class cls, SEL, id format, id arguments) {
 bool evaluate(Ctx& x, id self, SEL, id object) {
     auto& d = rt(x).host<Predicate>(self); if (d.constant) return d.result;
     const id lhs = value(x, object, d.key);
+    if(d.operation.starts_with("MATCHES"))return isString(x,lhs) && d.expression->matches(utf8(x,lhs));
     if (d.operation == "==") return objectsEqual(x, lhs, d.rhs); if (d.operation == "!=") return !objectsEqual(x, lhs, d.rhs);
     const int order = compare(x, lhs, d.rhs);
     if (d.operation == "<") return order < 0; if (d.operation == ">") return order > 0;

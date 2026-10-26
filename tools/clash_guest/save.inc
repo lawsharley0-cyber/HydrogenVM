@@ -8,6 +8,16 @@ static int save_initialized;
 static int committed_wins;
 static char save_path[512],temporary_path[520];
 static u32 s_getenv,s_open,s_read,s_write,s_flush,s_fileno,s_sync,s_close,s_rename,s_error;
+#ifdef GUEST_PROFILE_SAVES
+static u32 s_profile_clock;
+static u32 checkpoint_calls,checkpoint_total_us,checkpoint_max_us;
+static u32 checkpoint_clock_us(void) {
+    u32 timeval[2];
+    if(CALL(s_profile_clock,int,(void*,void*))(timeval,0)!=0)
+        fail("GuestOffline: checkpoint profiling clock failed");
+    return timeval[0]*1000000u+timeval[1]; // wrap-safe elapsed intervals below 71 minutes
+}
+#endif
 static u32 symbol(const char *name) {
     u32 value=CALL(API_dlsym,u32,(u32,const char*))(0xfffffffeu,name);
     if(!value)fail("GuestOffline: required standard file API unavailable");
@@ -25,6 +35,9 @@ static u32 checksum(const u8 *bytes,u32 size) {
     return value;
 }
 static void write_save(void) {
+#ifdef GUEST_PROFILE_SAVES
+    const u32 began=checkpoint_clock_us();
+#endif
     if(saved_size<avatar_offset+8 || saved_size>sizeof saved_home)
         fail("GuestOffline: invalid native checkpoint extent");
     u32 header[4]={0x31475243u,saved_size,avatar_offset,checksum(saved_home,saved_size)};
@@ -44,12 +57,25 @@ static void write_save(void) {
     if(!valid || closed!=0)fail("GuestOffline: checkpoint write/flush failed");
     if(CALL(s_rename,int,(const char*,const char*))(temporary_path,save_path)!=0)
         fail("GuestOffline: atomic checkpoint replacement failed");
+#ifdef GUEST_PROFILE_SAVES
+    const u32 elapsed=checkpoint_clock_us()-began;
+    ++checkpoint_calls;checkpoint_total_us+=elapsed;
+    if(elapsed>checkpoint_max_us)checkpoint_max_us=elapsed;
+    if(elapsed>=4000 || !(checkpoint_calls&31))
+        CALL(API_printf,int,(const char*,u32,u32,u32,u32))(
+            "GuestOffline: checkpoint_us=%u call=%u block_total_us=%u max_us=%u\n",
+            elapsed,checkpoint_calls,checkpoint_total_us,checkpoint_max_us);
+    if(!(checkpoint_calls&31))checkpoint_total_us=0;
+#endif
 }
 static void load_guest_home(void) {
     if(save_initialized)return;
     s_getenv=symbol("getenv");s_open=symbol("fopen");s_read=symbol("fread");
     s_write=symbol("fwrite");s_flush=symbol("fflush");s_fileno=symbol("fileno");
     s_sync=symbol("fsync");s_close=symbol("fclose");s_rename=symbol("rename");s_error=symbol("__error");
+#ifdef GUEST_PROFILE_SAVES
+    s_profile_clock=symbol("gettimeofday");
+#endif
     const char *home=CALL(s_getenv,const char*,(const char*))("HOME");
     if(!home || !home[0])fail("GuestOffline: guest HOME missing");
     path_append(save_path,home,"/Documents/ClashGuestOffline-v1.bin",sizeof save_path);

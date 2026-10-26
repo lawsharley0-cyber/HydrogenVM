@@ -45,6 +45,7 @@ static void fail(const char *why) {
 #include "save.inc"
 #include "home_turn.inc"
 #include "sector.inc"
+#include "support.inc"
 static void reply(void*,int,int,const u8*,u32);
 static void send_training_sector(void *self,int mission) {
     static u8 sector[65536],packet[70000];
@@ -138,6 +139,20 @@ int guest_send(void *self,void *message) {
         const u8 *data=(const u8*)FIELD(message,8+0x1c);u8 empty[9];
         for(int i=0;i<8;++i)empty[i]=data[i];empty[8]=0;
         reply(self,24413,0,empty,sizeof empty);
+    } else if(kind==14113 && logged_in && !battle_started) {
+        // VisitHomeMessage writes a BE LogicLong. This independent profile
+        // only has its own local home; do not invent remote player records.
+        const u8 *data=(const u8*)FIELD(message,8+0x1c);
+        int size=CALL(0x198d19,int,(void*))(message);
+        if(size!=8)fail("GuestOffline: invalid profile identity extent");
+        for(int i=0;i<8;++i)if(data[i]!=(i==7?1:0))fail("GuestOffline: unavailable remote profile identity");
+        capture_current_home(CALL(0x91f7d,void*,(void))(),1);
+        // VisitedHomeDataMessage::decode 0x39ca8: VInt, native home,
+        // native owner avatar, optional visitor-avatar boolean. The existing
+        // checkpoint already ends in that false boolean.
+        static u8 profile[65537];profile[0]=0;
+        for(u32 i=0;i<saved_size;++i)profile[1+i]=saved_home[i];
+        reply(self,24113,0,profile,saved_size+1);
     } else if(kind==14101 && logged_in) {
         battle_started=0;reply(self,24101,0,saved_home,saved_size);
     } else if(kind==14104 && logged_in && !battle_started) {
@@ -147,7 +162,8 @@ int guest_send(void *self,void *message) {
         capture_current_home(CALL(0x91f7d,void*,(void))(),1);
         send_training_sector(self,data[1]);battle_started=1;
     } else if(kind==10107 && logged_in) {
-        // Native client loading-state telemetry has no server response.
+        // Original ClientCapabilitiesMessage (getMessageType 0xbd10) is
+        // one-way metadata and has no server response.
     } else if(kind==12951 && logged_in && battle_started) {
         // BattleScreen::sendBattleEvent sends the opponent-facing UI event
         // separately from the native command stream. An offline opponent has

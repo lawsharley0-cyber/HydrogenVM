@@ -2,6 +2,16 @@
 
 ## Current priority: guest-owned standalone mod
 
+October 25 UI/crash continuation: read [UI_AUDIT.md](clash-royale/UI_AUDIT.md)
+and the latest section in [GUEST_MOD_PROGRESS.md](clash-royale/GUEST_MOD_PROGRESS.md).
+The phone's v19 home abort identifies unported native command 516, now handled
+without bypassing original execution. v23 also fixes local profile and supplies
+offline help/settings notices. Three real upgrades in a private earned-player
+copy pass; repeated final-package launches, later training and device retests
+remain required. Shared regex/locale fixes pass 253 runtime and 17 TestLab
+checks on Linux; Apple adapter validation is still a CI gate. Stable guest
+bundle/save identity is retained. Never replace the owner's failing phone save.
+
 The owner requests the offline backend inside a separate Clash IPA, surviving
 ordinary emulator updates without a Clash-specific host service. This explicitly
 authorizes modifying an output copy of the game executable. Read

@@ -94,6 +94,20 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,"FAIL invalid home turn validation\n");return 1;
     }
     std::puts("ok native home command vectors, truncation, IDs, executor and references");
+    const Bytes levelUp{10,0,1,0x84,8,0,0,0,1,255,255,255,255};
+    const auto levelCommands=decodeClashHomeTurn(levelUp);
+    if(levelCommands.size()!=1 || levelCommands[0].type!=516) {
+        std::fprintf(stderr,"FAIL native level-up bookkeeping command\n");return 1;
+    }
+    for(size_t n=0;n<levelUp.size();++n)if(!rejected(Bytes(levelUp.begin(),levelUp.begin()+n))) {
+        std::fprintf(stderr,"FAIL truncated level-up command accepted\n");return 1;
+    }
+    auto extraLevel=levelUp;extraLevel.push_back(0);
+    auto wrongLevelAccount=levelUp;wrongLevelAccount[8]=2;
+    if(!rejected(extraLevel) || !rejected(wrongLevelAccount)) {
+        std::fprintf(stderr,"FAIL invalid level-up echo accepted\n");return 1;
+    }
+    std::puts("ok native command 516 has only base metadata and preserves strict boundaries");
     const auto claim=decodeClashHomeTurn({10,0,1,0xb7,7,0,0,0,1,0,255,255,255,255});
     if(claim.size()!=1 || claim[0].type!=503 || claim[0].argument!=0) {
         std::fprintf(stderr,"FAIL native StartRewardClaim command\n");return 1;

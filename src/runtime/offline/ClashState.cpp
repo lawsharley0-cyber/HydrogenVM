@@ -82,7 +82,7 @@ std::vector<ClashHomeCommand> decodeClashHomeTurn(const Bytes& bytes) {
         ClashHomeCommand c;c.type=r.v();
         // Native getCommandType: StartExploring 0x10f7c8 and
         // SpeedUpExploring 0x17a40. Payloads follow their native decode methods.
-        if(c.type!=500 && c.type!=502 && c.type!=503 && c.type!=504 && c.type!=506 && c.type!=518 && c.type!=523 && c.type!=525 && c.type!=537 && c.type!=538)
+        if(c.type!=500 && c.type!=502 && c.type!=503 && c.type!=504 && c.type!=506 && c.type!=516 && c.type!=518 && c.type!=523 && c.type!=525 && c.type!=537 && c.type!=538)
             throw std::runtime_error("Offline Clash: unsupported turn command "+std::to_string(c.type));
         r.v();r.v(); // LogicCommand::decode (0x639a0): given tick, sequence
         const int32_t high=r.v(),low=r.v();
@@ -96,10 +96,10 @@ std::vector<ClashHomeCommand> decodeClashHomeTurn(const Bytes& bytes) {
             const auto spells=r.v();
             if(spells<0 || spells>=200)throw std::runtime_error("Offline Clash: invalid opened spell list");
             for(int j=0;j<spells;++j)r.ref();
-        } else if(c.type!=518 && c.type!=523 && c.type!=538) {
+        } else if(c.type!=516 && c.type!=518 && c.type!=523 && c.type!=538) {
             c.argument=c.type==504?r.ref():r.v();
             if(c.type==506 || c.type==537)c.flag=r.b();
-        } // Free/crown collection and achievement refresh have only base metadata.
+        } // Level-up bookkeeping, free/crown collection and achievement refresh have only base metadata.
         if((c.type==502 || c.type==503 || c.type==506) && c.argument<0)
             throw std::runtime_error("Offline Clash: invalid chest ID");
         commands.push_back(c);

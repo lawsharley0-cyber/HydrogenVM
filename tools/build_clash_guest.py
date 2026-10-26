@@ -75,7 +75,7 @@ def run(command, **kwargs):
     subprocess.run([str(v) for v in command], check=True, **kwargs)
 
 
-def build(source, output, build_dir):
+def build(source, output, build_dir, profile_saves=False):
     source, output, build_dir = Path(source), Path(output), Path(build_dir)
     if output.exists() or build_dir.exists():
         raise ValueError('Choose new output and build paths; existing data will not be replaced')
@@ -108,7 +108,7 @@ def build(source, output, build_dir):
         run([generator, build_dir/'source'/app_root], stdout=header)
     run(['clang', '-target', 'armv7-apple-ios6.0', '-mthumb', '-Oz', '-ffreestanding',
          '-fno-builtin', '-fno-stack-protector', '-fno-pic', '-fno-unwind-tables',
-         '-fno-asynchronous-unwind-tables', '-I'+str(build_dir), '-c',
+         '-fno-asynchronous-unwind-tables', *(['-DGUEST_PROFILE_SAVES=1'] if profile_saves else []), '-I'+str(build_dir), '-c',
          ROOT/'tools/clash_guest/transport.c', '-o', build_dir/'transport.o'])
     update_segment=next(s for s in parsed['segments'] if s[1]<=0x92f08<s[1]+s[4])
     update_at=update_segment[3]+0x92f08-update_segment[1]
@@ -131,6 +131,14 @@ def build(source, output, build_dir):
         asm.write('.p2align 2\n.globl _guest_original_reward_execute\n.thumb_func\n'
                   '_guest_original_reward_execute:\n .byte '+','.join(str(x) for x in reward_prologue)+
                   '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0x82045\n')
+        settings_segment=next(s for s in parsed['segments'] if s[1]<=0x94f1c<s[1]+s[4])
+        settings_at=settings_segment[3]+0x94f1c-settings_segment[1]
+        settings_prologue=original[settings_at:settings_at+8]
+        if settings_prologue!=bytes.fromhex('f0b503af2de9000d'):
+            raise ValueError('Unexpected native settings-click prologue')
+        asm.write('.p2align 2\n.globl _guest_original_settings_click\n.thumb_func\n'
+                  '_guest_original_settings_click:\n .byte '+','.join(str(x) for x in settings_prologue)+
+                  '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0x94f25\n')
     run(['clang','-target','armv7-apple-ios6.0','-c',assembly,'-o',build_dir/'update.o'])
     linker = os.environ.get('HVM_LD64') or shutil.which('arm-apple-darwin11-ld')
     if not linker:
@@ -170,7 +178,7 @@ def build(source, output, build_dir):
     for address, symbol in [(0x187484,'_guest_connect'),(0x1872d0,'_guest_send'),
                             (0x187130,'_guest_disconnect'),(0x92f08,'_guest_update'),
                             (0x9ae94,'_guest_set_npc_wins'),(0x9aea4,'_guest_set_npc_losses'),
-                            (0x8203c,'_guest_reward_execute')]:
+                            (0x8203c,'_guest_reward_execute'),(0x94f1c,'_guest_settings_click')]:
         segment = next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
         at = segment[3]+address-segment[1]
         target = mod['symbols'][symbol]
@@ -203,7 +211,7 @@ def build(source, output, build_dir):
     report=dict(prototype=True,sha256=hashlib.sha256(output.read_bytes()).hexdigest(),
                 originalExecutableSHA256=EXECUTABLE_SHA256,
                 modifiedExecutableSHA256=hashlib.sha256(binary).hexdigest(),patches=patches,
-                hostClashBackendRequired=False,networkRequired=False,
+                hostClashBackendRequired=False,networkRequired=False,saveProfiling=profile_saves,
                 bundleIdentifier=info['CFBundleIdentifier'],assetsUnchanged=True,
                 trainingMissionsEncoded=7,
                 limitations=['experimental training prototype; full earned progression unqualified',
@@ -218,5 +226,6 @@ if __name__=='__main__':
     parser.add_argument('source_ipa',type=Path)
     parser.add_argument('output_ipa',type=Path)
     parser.add_argument('--build-dir',required=True,type=Path)
+    parser.add_argument('--profile-saves',action='store_true',help='Log slow native checkpoint timings without changing persistence behavior')
     args=parser.parse_args()
-    build(args.source_ipa,args.output_ipa,args.build_dir)
+    build(args.source_ipa,args.output_ipa,args.build_dir,args.profile_saves)

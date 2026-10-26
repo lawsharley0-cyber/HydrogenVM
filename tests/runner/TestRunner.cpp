@@ -1274,6 +1274,17 @@ int runFullSubsystemTests() {
             predicates=values==std::vector<ObjC::id>{high,high} && call(equal,"evaluateWithObject:",{low}) && !call(equal,"evaluateWithObject:",{high}) && rejected;
         }
         check(predicates,"NSPredicate key comparisons/filtering and explicit unsupported syntax");
+        bool matches=false;
+        try {
+            auto cls=r.getClass("NSPredicate");
+            auto pattern=call(cls,"predicateWithFormat:",{makeString(cx,"SELF MATCHES %@"),makeString(cx,"a|ab")});
+            auto insensitive=call(cls,"predicateWithFormat:argumentArray:",{makeString(cx,"SELF matches[c] %@"),makeArray(cx,{makeString(cx,"cat")})});
+            bool invalid=false;try{call(cls,"predicateWithFormat:",{makeString(cx,"SELF MATCHES %@"),makeString(cx,"[")});}
+            catch(const std::exception& e){invalid=std::string(e.what()).find("MATCHES regular expression")!=std::string::npos;}
+            matches=call(pattern,"evaluateWithObject:",{makeString(cx,"ab")}) && !call(pattern,"evaluateWithObject:",{makeString(cx,"abc")}) &&
+                !call(pattern,"evaluateWithObject:",{0}) && call(insensitive,"evaluateWithObject:",{makeString(cx,"CAT")}) && invalid;
+        }catch(const std::exception&){}
+        check(matches,"NSPredicate MATCHES full-string alternatives, argument-array case folding, nil and invalid pattern");
         bool tables=false;
         if(r.getClass("NSHashTable") && r.getClass("NSMapTable")) {
             auto weak=call(r.getClass("NSHashTable"),"weakObjectsHashTable");

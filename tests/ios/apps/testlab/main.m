@@ -73,6 +73,18 @@ static const char *kAppBuild        = "1";
 #define CASE_M  @"TL-M"
 #define CASE_N  @"TL-N"
 #define CASE_O  @"TL-O"
+#define CASE_P  @"TL-P"
+#define CASE_Q  @"TL-Q"
+
+@interface NSLocale : NSObject
++ (NSUInteger)characterDirectionForLanguage:(NSString *)language;
+@end
+
+@interface NSPredicate : NSObject
++ (NSPredicate *)predicateWithFormat:(NSString *)format, ...;
++ (NSPredicate *)predicateWithFormat:(NSString *)format argumentArray:(NSArray *)arguments;
+- (BOOL)evaluateWithObject:(id)object;
+@end
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -1531,6 +1543,40 @@ static TLResult *runCaseO(void) {
     clearCheckpoint(); return r;
 }
 
+// TL-P: full-string regex predicate, the API reached by Help/Support. Inputs
+// and truth table are authored independently of any emulator output.
+static TLResult *runCaseP(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_P version:1];
+    writeCheckpoint(CASE_P);
+    NSPredicate *domain = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", @"[a-z]+\\.example\\.com"];
+    NSPredicate *either = [NSPredicate predicateWithFormat:@"SELF MATCHES %@" argumentArray:@[@"a|ab"]];
+    NSPredicate *insensitive = [NSPredicate predicateWithFormat:@"SELF MATCHES[c] %@", @"cat"];
+    NSPredicate *unicode = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", @"(?i)[\\p{L}\\p{M}]+"];
+    BOOL valid = [domain evaluateWithObject:@"support.example.com"];
+    BOOL rejects = ![domain evaluateWithObject:@"support.example.com/extra"] &&
+        ![domain evaluateWithObject:@"bad support.example.com"] && ![domain evaluateWithObject:nil];
+    BOOL alternatives = [either evaluateWithObject:@"ab"] && ![either evaluateWithObject:@"abc"];
+    BOOL cases = [insensitive evaluateWithObject:@"CAT"] && [unicode evaluateWithObject:@"Café"] && ![unicode evaluateWithObject:@"123"];
+    r.expected = @{ @"valid": @YES, @"rejects": @YES, @"alternatives": @YES, @"caseInsensitive": @YES };
+    r.actual = @{ @"valid": @(valid), @"rejects": @(rejects), @"alternatives": @(alternatives), @"caseInsensitive": @(cases) };
+    r.status = valid && rejects && alternatives && cases ? @"passed" : @"failed";
+    if (![r.status isEqualToString:@"passed"]) r.reason = @"Regex predicate differs from the authored full-string truth table";
+    clearCheckpoint();return r;
+}
+
+static TLResult *runCaseQ(void) {
+    TLResult *r=[[TLResult alloc] initWithId:CASE_Q version:1];writeCheckpoint(CASE_Q);
+    BOOL ltr=[NSLocale characterDirectionForLanguage:@"en"]==1;
+    BOOL rtl=[NSLocale characterDirectionForLanguage:@"ar"]==2 &&
+        [NSLocale characterDirectionForLanguage:@"he"]==2 && [NSLocale characterDirectionForLanguage:@"fa"]==2;
+    BOOL script=[NSLocale characterDirectionForLanguage:@"az-Arab"]==2;
+    r.expected=@{@"englishLTR":@YES,@"arabicHebrewPersianRTL":@YES,@"arabicScript":@YES};
+    r.actual=@{@"englishLTR":@(ltr),@"arabicHebrewPersianRTL":@(rtl),@"arabicScript":@(script)};
+    r.status=ltr&&rtl&&script?@"passed":@"failed";
+    if(![r.status isEqualToString:@"passed"])r.reason=@"Language direction differs from known writing systems";
+    clearCheckpoint();return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1540,7 +1586,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1575,6 +1621,10 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseN()];
         } else if ([cid isEqualToString:CASE_O]) {
             [results addObject:runCaseO()];
+        } else if ([cid isEqualToString:CASE_P]) {
+            [results addObject:runCaseP()];
+        } else if ([cid isEqualToString:CASE_Q]) {
+            [results addObject:runCaseQ()];
         }
     }
     return results;
@@ -1603,6 +1653,8 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_M]) return runCaseM();
     if ([caseId isEqualToString:CASE_N]) return runCaseN();
     if ([caseId isEqualToString:CASE_O]) return runCaseO();
+    if ([caseId isEqualToString:CASE_P]) return runCaseP();
+    if ([caseId isEqualToString:CASE_Q]) return runCaseQ();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];

@@ -9,6 +9,11 @@
 #include <random>
 #include <thread>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#else
+#include <unicode/uloc.h>
+#endif
 
 namespace Hydrogen::Runtime::Foundation {
 
@@ -911,6 +916,25 @@ id loc_current(Ctx& x, id, SEL) { return singleton(x, M(x).currentLocale, M(x).l
 id loc_identifier(Ctx& x, id, SEL) { return makeString(x, "en_US"); }
 id locc_preferredLanguages(Ctx& x, id, SEL) { return makeArray(x, {makeString(x, "en")}); }
 id locc_available(Ctx& x, id, SEL) { return makeArray(x, {makeString(x, "en_US")}); }
+uint32_t locc_characterDirection(Ctx& x,id,SEL,id language) {
+    const auto code=utf8(x,language);if(code.empty())return 0;
+#if defined(__APPLE__)
+    auto text=::CFStringCreateWithBytes(kCFAllocatorDefault,reinterpret_cast<const UInt8*>(code.data()),code.size(),kCFStringEncodingUTF8,false);
+    if(!text)return 0;
+    const auto direction=::CFLocaleGetLanguageCharacterDirection(text);::CFRelease(text);
+    return uint32_t(direction);
+#else
+    UErrorCode status=U_ZERO_ERROR;
+    const auto direction=uloc_getCharacterOrientation(code.c_str(),&status);
+    if(U_FAILURE(status) || direction==ULOC_LAYOUT_UNKNOWN)return 0;
+    // Some language/script combinations have no localized layout resource.
+    // ICU's likely-script lookup still knows e.g. az-Arab is right-to-left.
+    if(direction==ULOC_LAYOUT_LTR || direction==ULOC_LAYOUT_RTL)
+        return uloc_isRightToLeft(code.c_str())?2:1;
+    // ICU LTR/RTL/TTB/BTT are 0..3; Foundation reserves 0 for unknown.
+    return uint32_t(direction)+1;
+#endif
+}
 id loc_objectForKey(Ctx& x, id, SEL, id key) {
     const std::string k = utf8(x, key);
     if (k == "kCFLocaleCountryCodeKey" || k == "NSLocaleCountryCode") return makeString(x, "US");
@@ -1255,6 +1279,7 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     m.locale = loc.cls();
     loc.cm<&loc_current>("currentLocale").cm<&loc_current>("systemLocale").cm<&loc_current>("autoupdatingCurrentLocale")
        .cm<&locc_preferredLanguages>("preferredLanguages").cm<&locc_available>("availableLocaleIdentifiers")
+       .cm<&locc_characterDirection>("characterDirectionForLanguage:")
        .cm<&locc_withIdentifier>("localeWithLocaleIdentifier:");
     loc.m<&loc_identifier>("localeIdentifier").m<&loc_objectForKey>("objectForKey:").m<&loc_initWithIdentifier>("initWithLocaleIdentifier:")
        .m<&loc_displayName>("displayNameForKey:value:").m<&retainedCopy>("copyWithZone:");
