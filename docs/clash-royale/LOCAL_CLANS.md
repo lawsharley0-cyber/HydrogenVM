@@ -89,6 +89,14 @@ Use the ordinary `clash_guest_ui_probe.py --gpu` path, review every captured
 frame and inspect the persisted result. A clean exit/captured step is not a
 visual pass. Keep the actual earned King-2 player separate.
 
+Final clean-source 912a87e gate: full report build 1/CPU 15/iOS 6/bench 5 all
+pass, TestLab 18/18 and focused heap/entry/state/service suites pass. Full
+compatibility has zero regressions against baseline and previous report, with
+three informational timing deltas and the optional original Clash skip.
+Indexed report: `docs/dev-system/reports/linux-x86_64/20261026T150956Z-912a87e64a33.json`.
+No emulator C++ change is added by this clan-core checkpoint. Current match
+entry also refuses any still-pending clan transaction before another debit.
+
 ## Authoritative client evidence
 
 Pinned executable/IPA hashes and private build instructions are in

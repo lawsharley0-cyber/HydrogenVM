@@ -36,6 +36,16 @@ stable identifier across types. Its next run times out after a long cold boot,
 without a keyboard verdict; 379a8a5 separates build/boot/test stages and is pending.
 These checks do not establish a fresh real-iPhone game/input/audio pass.
 
+Fresh clean 912a87e Linux gate is indexed at
+[20261026T150956Z-912a87e64a33.json](reports/linux-x86_64/20261026T150956Z-912a87e64a33.json):
+summary.ok=true, unitFailed=0, pythonFailed=0, appsResolved=3, appsSkipped=1,
+appsCrashed=0, zero baseline/previous regressions. Three timing deltas are
+informational, not evidence performance is solved. Full report build 1 / CPU 15
+/ iOS 6 / bench 5 passes without skips; TestLab 18/18; focused heap/entry/native
+state/service tests and twelve guest tests pass. Host page size is 4096 bytes.
+The original optional Clash fixture skips; separate modified-game UI/recovery
+and negative tests above supply the actual guest-component evidence.
+
 Guest-only continuation v31 now completes two actual Arena-1 bot victories
 after seven earned trainers. Native ELO reaches 65; paid entry, matching Silver
 chests, cards/King 2 persist. Three actual native crowns transfer once to home
