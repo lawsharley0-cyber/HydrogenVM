@@ -64,7 +64,7 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 
 | ID | Screen / control | Current evidence |
 |---|---|---|
-| BOOT-01 | Fresh tutorial | Earlier guest startup passed; rerun final package |
+| BOOT-01 | Fresh tutorial | v27 fresh import starts original tutorial, 20 s, exit 0/no crash; original assets retained |
 | BOOT-02 | Returning earned player | v19 three wins/eight cards retains save; QA clone opens |
 | BOOT-03 | Post-king-level-up home | v23 earned King level 2 relaunch shows native level-up screen, closes and opens profile without abort; synthetic fixture also survives two final-package launches |
 | BOOT-04 | Re-import/relaunch after upgrades | v23 two clean launches retain four wins, upgraded cards and deck swap; phone still pending |
@@ -83,7 +83,7 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 | H-01 | Profile / clan label | v23 original local profile, deck/stats, scroll and close passed; clan functionality locked |
 | H-02 | Experience, Gold, Gems | v23 all three native tooltips open/dismiss with correct values |
 | H-03 | Arena preview / close / scrolling | v23 native preview opens, scrolls, closes |
-| H-04 | Training progress / Battle | v23 actual fourth trainer Klaus defeated with upgraded eight-card deck; native progress 4/7 |
+| H-04 | Training progress / Battle | v26 completes seventh earned trainer; v27 native refresh graduates the same save to Arena 1 |
 | H-05 | Four empty chest slots | v23 tapped all four: native empty state, no crash |
 | H-06 | Earned chest info/unlock/paid/open/reveal | v23 fourth earned chest unlocks after native timer, opens/reveals Gold +16, Mini P.E.K.K.A. and Prince; paid path pending |
 | T-01 | Shop tab / available offers / dismiss | v23 original Arena-1 lock renders; offers inaccessible and unqualified |
@@ -93,8 +93,8 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 | T-05 | Social tab / locked-training notice | v23 original Arena-1 lock renders; unlocked features unqualified |
 | T-06 | TV tab / replay / locked-training notice | v23 original Arena-1 lock renders; replay recording unimplemented |
 | B-01 | Eight card deployment slots / targeting / invalid placement | Klaus defeated using seven distinct cards from rotating eight-card deck; Prince attempt after victory is not deployment proof; placement failures still pending |
-| B-02 | Battle result OK / draw / loss / return home | Native fourth win, Wooden Chest label, OK/return/claim passed; earlier draw gives nothing; real loss unqualified |
-| LATE-01 | Name flow / training 4–7 / Arena 1 unlocked UI | Pending progression; do not report these controls passed |
+| B-02 | Battle result OK / draw / loss / return home | Seven earned wins; Boris defeat persists twice without a grant; final Silver label matches chest ID 7; real draw previously grants nothing |
+| LATE-01 | Initial name / training 4–7 / Arena 1 | Native name and all seven wins pass; Arena 1 home/preview renders; new inner controls and matchmaking remain unqualified |
 
 ## Test host and private evidence
 
@@ -202,7 +202,60 @@ ID 26000018 and the rendered title identify it. Earlier notes used the wrong
 name; no card data was changed. This client also legitimately shows Musketeer
 at five Elixir; modern balance values are not the reference for this build.
 
-## Stutter investigation
+## Integrated build and final training audit
+
+Main 5968d88 is integrated at 5fbaa8d (only the Net.cpp conflict required manual
+resolution: preserve main's UDP destination policy and the continuation's TCP
+loopback override). The clean WSL source checkout is
+`/var/tmp/hvm-main-integrated/source`, build sibling `build`; its Git commit is
+accurate, unlike the older manually synced mirror. Fulltest 256/256, TestLab
+17/17, native state/service/observer/heap checks, full compatibility and previous
+report comparison pass. Indexed gate:
+`docs/dev-system/reports/linux-x86_64/20261026T040954Z-5fbaa8d57a17.json`.
+Initial fresh-build gate failures were missing standalone ARM test binaries;
+after building them, the complete gate has zero regressions. No expectations
+or baseline were weakened. Full report: build 1/0, CPU 15/0, iOS 6/0, bench 5/0,
+no skips; CoreMark 2365.9 is still below the iPhone-5 goal (a performance limit,
+not a crash). The standalone PCM workflow exposed an omitted MsAdpcm.cpp link
+input; adding it restores all 42 checks in normal and ASan/UBSan builds.
+
+v26's real sustained Boris battle on this runtime captures 31 states and a
+native victory/Silver Chest. Wins 7, losses 2, Gold 76, gems 100, XP 8/King 2,
+nine cards and chest ID 7 persist. The 241.187-second run has no crash/load
+error, 10,627,072 captured stereo frames, 10,227,828 non-silent, zero transport
+errors/dropped blocks. Mixed peak reaches 1.0; signal continuity is not a
+perceptual fidelity or clipping-quality pass. Music/SFX mute/restore also
+repasses on the integrated host. Desktop percentiles remain slower than the
+owner's phone and are not a demonstrated performance improvement.
+
+v26 saves 7/7 but remains at Training Camp. Its next Battle requests mission 7
+(an eighth trainer) and correctly trips the unported mission guard. Original
+battleEnded calls refreshArena at 0x14c7e immediately after the intercepted win
+setter; our early copied snapshot omitted that continuation. v27 invokes the
+original refreshArena (0x9b708) on the saved copy after banking the chest. The
+same native function also repairs already-earned saved state at login, using
+actual CSV NPC thresholds/trophy/demotion rules. No forced arena, score or win.
+The existing earned save now persists arena 54000001, shows Goblin Stadium's
+new-arena preview and original Arena-1 home, with the same Gold/cards/Silver.
+The 180-second v27 run exits 0 without a crash. Fresh v27 startup also passes.
+The new-arena legal alert's Linux fallback text has visible glyph/layout issues;
+its Okay control and preview Close return safely. Keep that visual bug open.
+
+The UI probe now waits for the first frame before its settling delay. A cold
+IPA import previously exceeded the fixed delay, causing the probe to inject
+stop before app startup and produce a false no-frame result. It now has a
+bounded 90-second first-frame timeout, detects early exits, and never retries
+or resets a save. A warm audio recheck and the sustained battle both render.
+
+[Apple CI 40264602540](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/40264602540)
+confirms the native ISO-language truth table, reports az-Arab=1 diagnostically,
+and passes Apple engine/state/TL-O/P/Q checks plus device/simulator compilation.
+Its green conclusion includes continue-on-error GPU presentation and batch
+console probes that report failures; it is not an all-simulator or device pass.
+The integrated 5fbaa8d Apple build is a separate pending gate. Phone retest,
+all unlocked controls, Arena matchmaking/economy/timers and later arenas remain.
+
+## Stutter investigation (measurements)
 
 The phone report had Zombie Objects enabled. That diagnostic deliberately
 retains released objects; measure a normal run separately before attributing

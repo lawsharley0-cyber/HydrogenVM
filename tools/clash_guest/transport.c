@@ -82,6 +82,21 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 }
 #include "reward.inc"
 #include "name.inc"
+static void refresh_saved_arena(void) {
+    // Recover already-earned saves captured before the native post-setter
+    // continuation. The original routine reads the actual NPC threshold,
+    // trophy/demotion rules and arena table; no forced arena or win count.
+    void *owner=decode_packet(24101,0,saved_home,saved_size);
+    void *home=(void*)FIELD(owner,0x30),*avatar=(void*)FIELD(owner,0x34);
+    if(!home || !avatar)fail("GuestOffline: invalid arena-refresh checkpoint");
+    u32 previous=FIELD(avatar,0xac);
+    CALL(0x9b709,void,(void*))(avatar);
+    if(FIELD(avatar,0xac)!=previous) {
+        capture_native(home,avatar);
+        CALL(API_puts,int,(const char*))("GuestOffline: persisted native earned-arena refresh");
+    }
+    dispose(owner);
+}
 void guest_connect(void *self,void *domain,void *port) {
     (void)domain;(void)port;
     load_guest_home();
@@ -116,6 +131,7 @@ int guest_send(void *self,void *message) {
     CALL(API_printf,int,(const char*,int))("GuestOffline: outgoing kind=%d\n",kind);
     if(kind==10101) {
         if(logged_in)fail("GuestOffline: duplicate login");
+        refresh_saved_arena();
         logged_in=1;
         reply(self,20104,1,initial_login,sizeof initial_login);
         reply(self,24101,0,saved_home,saved_size);

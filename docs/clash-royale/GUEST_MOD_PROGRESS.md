@@ -282,6 +282,35 @@ v26 relaunch retains the result. Original earned source save remains at three
 wins; this extended progression is its private QA copy. See UI_AUDIT for hashes,
 source-dependent runtime limitations and exact private evidence paths.
 
+The integrated host 5fbaa8d now includes main 5968d88 and passes 256 runtime
+checks, 17 TestLab cases, the complete zero-regression compatibility gate and
+the full build/CPU/iOS/benchmark report without skips. The source checkout's
+commit is exact; see the indexed JSON linked from UI_AUDIT. Standalone PCM's
+new MsAdpcm.cpp link input restores 42 normal/sanitized checks.
+
+A second real Boris loss persists without a grant. The next v26 battle wins
+normally, reaching seven earned victories and Silver Chest ID 7. A 241-second
+31-state audit captures 10,627,072 stereo frames (zero dropped blocks/transport
+errors), then exits cleanly. Save remains Gold 76, gems 100, XP 8/King 2, nine
+cards, two losses. Mixed peak 1.0 is not a clipping/perceptual-quality pass.
+
+The first seventh-win snapshot misses original battleEnded's refreshArena call
+at 0x14c7e, leaving 7/7 at Training Camp; another Battle requests unsupported
+mission 7. v27 invokes the same original refreshArena on the decoded saved
+copy and at login for already-earned saves. The actual seven-win save now
+persists arena 54000001 and renders native Goblin Stadium/Arena 1 home, without
+changing Gold/cards/Silver/wins. Fresh v27 tutorial and a 180-second graduated
+relaunch both exit cleanly. The native new-arena legal alert has Linux text
+glyph/layout issues still open. Matchmaking 537 and unlocked controls remain
+the next guest implementation/audit stage.
+
+v27 private IPA SHA256:
+`45f55e8b2d18776ecb094a9cdba21d3b97777b5af90aa8e93956979b0b099471`;
+executable SHA256:
+`c8388799e17c8bbe8ba2b88d2379d840aa172ab08cb3d1e4b0f42bb170755821`.
+The bundle/save identities and original assets remain unchanged. No phone test
+or complete-game claim follows from these local results.
+
 ## Next work
 
 1. Preserve the deliberate SIGKILL recovery evidence and earned eight-card
@@ -289,8 +318,9 @@ source-dependent runtime limitations and exact private evidence paths.
 2. Finish the final-package audit and repeat critical relaunch/audio/visual checks.
    Eight-card battles, native Use swaps, earned King 2 stats and a real loss now
    have actual evidence; synthetic byte comparisons remain component tests.
-3. Win the seventh trainer and qualify graduation and unlocked UI; test actual
-   name keyboard editing. Port match costs, crowns, arena transition and native ELO.
+3. Port Arena-1 matchmaking and entry costs; qualify an actual bot battle and
+   native ELO/crowns before later arenas. Audit the newly unlocked controls and
+   test actual name keyboard editing. Seven wins/graduation now have evidence.
 4. Port arena/bot selection and all six locations, real elapsed timers and the
    remaining native economy/journal paths. Build-time data can reuse the pinned
    CSV research, but runtime logic must stay in the guest IPA.

@@ -4,6 +4,18 @@ This hands over the current work on HydrogenVM, a JIT-less 32-bit iOS `.ipa` emu
 
 The owner is Lawson. He tests on an iPhone with the app built by CI. He sends **batch reports** (`latest_batch_report.json` / `.md` from the in-app *Test All Games*) and occasionally run logs. He wants every game in his library to work. Talk to him in plain language, and give him a link to the new `.ipa` whenever a meaningful batch of fixes lands.
 
+October 25 Clash continuation update (scoped to the owner-authorized PR #138
+work): main 5968d88 is integrated into that draft at 5fbaa8d; it is not merged
+into main. The current stat implementation retains the 108-byte INODE64 layout.
+The separate guest IPA contains its own offline transport/persistence, and now
+has seven earned training wins, native name, King 2/deck upgrades and two real
+losses with no reward. v27 uses the original arena refresh to graduate that
+earned save to Arena 1. Arena matchmaking/economy and later arenas still need
+their guest port; earlier host-backend evidence is separate. Read
+[UI_AUDIT.md](clash-royale/UI_AUDIT.md) and GUEST_MOD_PROGRESS for current hashes,
+exact tests, device gaps and startup-helper timing correction. Shared runtime
+compatibility is still required; no Clash-specific host service is used.
+
 ---
 
 ## 1. Ground rules (these are not optional)

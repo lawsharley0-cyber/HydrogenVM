@@ -14,6 +14,28 @@ python3 tools/hvm_compat.py issues build/compat-report/report.json
 
 Copy `summary` and the regression list into the snapshot. Dry-run issues are notes, not filed tickets. Do not commit `build/`.
 
+## Latest scoped Clash continuation — October 25, 2026
+
+Clean integrated 5fbaa8d includes main 5968d88. The indexed Linux 4 KB
+[gate report](reports/linux-x86_64/20261026T040954Z-5fbaa8d57a17.json) has
+summary.ok=true, unitFailed=0, pythonFailed=0, appsResolved=3, appsSkipped=1,
+appsCrashed=0 and zero baseline/previous-report regressions. Original optional
+Clash skips in this gate; the separate modified guest is tested explicitly.
+Fulltest 256/256, TestLab 17/17, focused native state/service/observer/heap tests,
+and full report (build 1, CPU 15, iOS 6, bench 5; no skips/failures) pass.
+CoreMark 2365.9 remains below the original iPhone-5 goal. Three legacy smokes
+do not close the owner's version-specific reports or known black-frame limits.
+
+The standalone guest now has seven earned training wins, King level 2,
+nine cards, native initial name/deck swaps, two real defeats with no grants,
+and native graduation to Arena 1 (v27 repairs the pre-refresh snapshot).
+Actual 241-second final-trainer/audio audit exits cleanly, zero dropped mixer
+blocks, no host Clash service. UI/native APIs, keyboard editing, perceptual
+audio, phone behavior, Arena matches/economy/timers and later arenas still have
+gaps. Read [UI_AUDIT](../clash-royale/UI_AUDIT.md) for exact hosts and evidence.
+No proprietary/generated files or saves are in Git. Main's unrelated updates
+are preserved; the PR remains a draft and is not merged into main.
+
 ## Backlog
 
 Current owner observations: [USER_APP_REPORTS.md](USER_APP_REPORTS.md), UAR-001–013. These are unresolved user reports with unspecified exact host/build/app versions. Investigate startup, world-load and interaction crashes, hangs, black output, missing music and low FPS separately. The historical Linux snapshot below does not supersede them. In particular, exercise Tiny Tower's close/failing-relaunch/next-launch sequence and retain Mega Jump's fast rendering and working effects as a control.

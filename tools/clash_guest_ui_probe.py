@@ -93,6 +93,15 @@ def run(args):
         def event(phase,x,y):
             with inp.open('a') as f:f.write(f'touch {phase} {x} {y}\n')
         try:
+            # IPA import happens before the CLI's Process timer starts. A
+            # cold import can exceed a fixed startup delay; do not inject
+            # touches/stop into an app that has not produced its first frame.
+            deadline=time.monotonic()+args.startup_timeout
+            while not frame.exists():
+                if time.monotonic()>=deadline:raise RuntimeError('Timed out waiting for the first live frame')
+                pause(.05)
+            result['startupFrame']=capture(frame,out/'startup.png')
+            result['firstFrameSeconds']=round(time.monotonic()-began,3)
             pause(args.startup_seconds)
             for step in plan['steps']:
                 item=dict(id=step['id'],expected=step['expected'],status='running',seconds=round(time.monotonic()-began,3))
@@ -142,5 +151,6 @@ if __name__=='__main__':
     for name in ('hvm','ipa','home','plan','out'):p.add_argument('--'+name,required=True)
     p.add_argument('--gpu',action='store_true');p.add_argument('--seconds',type=int,default=300)
     p.add_argument('--capture-audio',action='store_true',help='Record mixed PCM and per-step signal windows (not a quality oracle)')
-    p.add_argument('--startup-seconds',type=float,default=12)
+    p.add_argument('--startup-timeout',type=float,default=90,help='Maximum first-frame wait including IPA import; no automatic retry')
+    p.add_argument('--startup-seconds',type=float,default=12,help='Additional settling time after the first live frame')
     raise SystemExit(run(p.parse_args()))

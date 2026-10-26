@@ -198,6 +198,11 @@ void guest_set_npc_wins(void *avatar,int count) {
         CALL(0x9af3d,void,(void*,int))(copy,total+1);
         CALL(API_puts,int,(const char*))("GuestOffline: original winner chest banked");
     }
+    // Original battleEnded calls refreshArena at 0x14c7e, immediately after
+    // the win setter we intercept. The live avatar will still do that, but
+    // this saved copy must also run the original CSV/trophy/NPC-count logic.
+    // Otherwise the seventh earned win persists Training Camp forever.
+    CALL(0x9b709,void,(void*))(copy);
     capture_native(home,copy);dispose(owner);
     committed_wins=count;
     CALL(API_printf,int,(const char*,int))("GuestOffline: persisted original NPC win=%d\n",count);

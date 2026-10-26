@@ -2,6 +2,15 @@
 
 ## Current priority: guest-owned standalone mod
 
+Latest audit: seven earned trainers, King 2, nine cards, native name/deck swaps
+and two real defeats without grants now persist. v27 repairs the saved arena
+refresh using the original native routine; the actual earned save graduates
+to Arena 1. Main 5968d88 is integrated at 5fbaa8d; fulltest 256/256, TestLab
+17/17, complete compatibility gate and full report pass locally. Read
+[UI_AUDIT.md](clash-royale/UI_AUDIT.md) for fresh/returning runs, audio captures,
+Apple simulator warnings, hashes and exact remaining blockers. Arena matches,
+economy/timers, unlocked controls and phone validation remain unfinished.
+
 October 25 UI/crash continuation: read [UI_AUDIT.md](clash-royale/UI_AUDIT.md)
 and the latest section in [GUEST_MOD_PROGRESS.md](clash-royale/GUEST_MOD_PROGRESS.md).
 The phone's v19 home abort identifies unported native command 516, now handled
