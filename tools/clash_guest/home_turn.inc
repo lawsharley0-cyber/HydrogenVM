@@ -4,6 +4,7 @@
  */
 #include "reader.inc"
 static void name_echo(struct GuestReader*);
+static void clan_echo(struct GuestReader*,int);
 static void reward_echo(struct GuestReader *r) {
     // A successfully executed server command is echoed by the native client.
     // Its executor is the server's (0,0), not the client's (0,1). Decode it
@@ -36,6 +37,7 @@ static int consume_home_turn(void *message) {
         int kind=turn_vint(&r);
         if(kind==213){reward_echo(&r);continue;}
         if(kind==201){name_echo(&r);continue;}
+        if(kind==208 || kind==209 || kind==212){clan_echo(&r,kind);continue;}
         turn_vint(&r);turn_vint(&r);
         int high=turn_vint(&r),low=turn_vint(&r);
         if(high!=0 || low!=1)fail("GuestOffline: home command identity mismatch");

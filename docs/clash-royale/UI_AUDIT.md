@@ -80,7 +80,7 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 | S-10 | Privacy | v22 explicit offline-page notice opens/closes |
 | S-11 | Parents Guide | v22 explicit offline-page notice opens/closes |
 | S-12 | Terms of Service | v22 explicit offline-page notice opens/closes |
-| H-01 | Profile / clan label | v23 original local profile, deck/stats, scroll and close passed; clan functionality locked |
+| H-01 | Profile / clan label | Original own profile/deck/close runs; Wins counter still incorrect. Earned King 2 remains clan-locked; v42 synthetic King 3 qualifies the solo-clan core only (LOCAL_CLANS). |
 | H-02 | Experience, Gold, Gems | v23 all three native tooltips open/dismiss with correct values |
 | H-03 | Arena preview / close / scrolling | v23 native preview opens, scrolls, closes |
 | H-04 | Training progress / Battle | v26 completes seventh earned trainer; v27 native refresh graduates the same save to Arena 1 |
@@ -92,7 +92,7 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 | T-02 | Cards tab / all eight card tiles | v23 19-state plan captures native info and closes for all eight |
 | T-03 | Each card's info / upgrade / use / swap / close | Four real upgrades pass (Archers/Bomber/Arrows/Prince); Knight insufficient cards preserves wallet; native Use swaps Mini P.E.K.K.A. for Arrows and retains across two launches |
 | T-04 | Battle tab / arrows | v23 Battle tab returns safely; arena preview covered; progression arrows pending |
-| T-05 | Social tab / locked-training notice | v31 Arena1 now shows original King-level-3 clan gate, not a crash; later unlocked features unqualified |
+| T-05 | Social tab / locked-training notice | Original King-3 gate retained; v42 synthetic component creation/chat/settings/search/leave/re-create pass. Mail, card requests/donations and friendly matches remain unported. |
 | T-06 | TV tab / replay / locked-training notice | v23 locked; v31 unlocked TV renders original empty replay state and returns home safely; recording unimplemented |
 | B-01 | Eight card deployment slots / targeting / invalid placement | Klaus defeated using seven distinct cards from rotating eight-card deck; Prince attempt after victory is not deployment proof; placement failures still pending |
 | B-02 | Battle result OK / draw / loss / return home | Seven earned wins; Boris defeat persists twice without a grant; final Silver label matches chest ID 7; real draw previously grants nothing |
@@ -410,3 +410,29 @@ and [hitch diagnostics](https://developer.apple.com/documentation/xcode/understa
 support measuring these costs before changing durability or scheduling.
 The host fsync shim currently ignores host errors; disk-fault recovery is not
 qualified by these tests and remains separate runtime work.
+
+## Local clans and natural Silver follow-up — v41/v42
+
+The current qualified subset is documented in [LOCAL_CLANS.md](LOCAL_CLANS.md):
+original creation charge/leader/achievement, persistent actual local chat,
+info/settings/search, leave/disband and paid re-create. Synthetic King-3
+fixtures only; the earned player remains King 2. Owned pending-creation
+SIGKILL recovery charges once; eight corrupted-checkpoint trials fail at
+precise guards without changing the damaged file. No assertion is suppressed.
+Mail, card requests/donations, friendly battles, invite/other-member actions and
+full mobile input remain open; this is not a complete Clans button audit.
+Native header/member names, class-57 region and local online count were
+corrected against pinned getters/encoders and reviewed frames.
+
+The actual earned Silver ID 8 now finishes naturally and grants +28 Gold,
+Archers/Arrows/Goblins +1 each, no gem debit. It removes that chest and clears
+the journal; the same sandbox relaunch retains Gold 147/gems 87/King 2,
+ten cards, trophies 65 and crowns 3/10. Native profile Wins remains incorrect.
+The natural completion is new evidence; battle-time accounting and device
+verification from the v33 open list remain open.
+
+v42 recreation and chat-return capture nonzero PCM, peak 0.830139, zero dropped
+blocks/transport errors. These multi-process Linux runs are functional checks,
+not a phone fidelity/stutter or sustained frame-rate qualification. Phone
+princess/cannon/health/decoration/text/audio reports remain unresolved where
+matching current-version/device evidence is absent.

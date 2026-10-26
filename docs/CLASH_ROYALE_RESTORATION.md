@@ -16,8 +16,14 @@ Silver Chest rewards. Its latest battle credits three actual native crowns;
 the original home transfers them to 3/10 once across two clean relaunches.
 v33 adds original home elapsed-time accounting with an atomic clock stamp;
 real paid-reward interruption recovery and repeated no-duplicate relaunches
-pass. Later arenas, draw accounting, long timer completion and remaining
-controls still need implementation/qualification. The owner's next ordered
+pass. The earned three-hour Silver now completes naturally and grants +28 Gold,
+one Archer, one Arrow and one Goblin without spending gems; clean relaunch
+retains the result. v42 adds qualified solo-clan creation, chat, settings,
+search and leave/re-create, including actual interrupted-creation recovery,
+in explicitly synthetic King-3 component fixtures. See
+[local clans](clash-royale/LOCAL_CLANS.md) for exact boundaries and save format.
+Later arenas, draw accounting, remaining clan interactions and other controls
+still need implementation/qualification. The owner's next ordered
 features are local clans, varied post-training opponent names/decks/playstyles,
 and original daily shop rotation; preserve training names and native rules.
 See [UI audit](clash-royale/UI_AUDIT.md) for exact hosts and gaps. This is **not

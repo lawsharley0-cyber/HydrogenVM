@@ -4,8 +4,90 @@ Owner order, October 26: finish the current timer/recovery/control work, then
 make clan creation/interactions persistent offline; randomize player-style
 opponent names only after training; vary legal arena decks and actual bot
 playstyles; restore the original daily store. Training names stay original.
-The timer checkpoint is 0c24408/v33; this document tracks the next stage and
-does not claim clans are implemented yet.
+The timer checkpoint is 0c24408/v33. v42 now qualifies persistent solo-clan
+creation, chat, info/settings/search and leave/re-create in synthetic component
+fixtures. Clan card requests/donations, mail and friendly battles are not ported;
+this is not the completed clans feature or a full-button pass.
+
+## Current component qualification — v42
+
+- Exact host source cbde492, Linux/WSL GPU path. Shared input passes 260/260
+  fulltest and 18/18 TestLab cases, with TL-R failing before the fix. The full
+  report and zero-regression compatibility report are indexed below. Twelve
+  authored guest tests now include independent reference classes, every-prefix
+  truncation/single-byte storage corruption, invalid sizes/wallet states, chat
+  author/age/boundaries, and freestanding ARMv7 normal/profiling compilation.
+- Actual original command **209** charges 1000 Gold, sets identity/name/badge,
+  leader role 2 and the native clan achievement. Journal contains the pre-charge
+  avatar and immutable command, not a copied post-charge avatar plus another
+  live debit. `GameMode::addCommand` 0x93560..0x93576 assigns executor (0,1)
+  before the native echo; this differs from the transmitted default (0,0).
+- The first actual creation at v36 persisted 5000→4000 before an overly strict
+  echo check aborted. v37/v39 then recover that already-completed save without
+  another charge. The distinct v41 **owned SIGKILL** trial catches a valid
+  pending GCL1 before delivery; relaunch of the same file executes 209 and
+  commits 4000 once. `/var/tmp/hvm-clash-clans-{interruption,recovery}-v41`.
+- Original native clan page/info renders the actual local member, leader role,
+  score and badge. `AllianceMemberEntry::getName` 0x37f00 reads +0x1c; +0x18
+  is a different nullable identity string. Native region data reference is
+  **class 57**, not class 1; header region is +0x34. Earlier component candidates
+  exposed and corrected these schema mistakes; they are not releasable builds.
+- Original chat request 14315 produces native ChatStreamEntry type 2 through
+  its original encoder, commits it before 24312 delivery, and restores via
+  24311. Keep at most 64 entries/32 KiB, with real wall timestamps and computed
+  ages; no fake remote authors. Original online-count 20207 describes the one
+  actual running local member. `/var/tmp/hvm-clash-clans-{chat-v39,recovered-chat-v41,chat-return-v42}`.
+- Settings 14316 stores the actual description/type/badge/requirements/region
+  atomically and delivers original **212** for native badge/UI updates. Actual
+  description and Open→Invite Only survive relaunch. Search 14324 honors native
+  name/region/member/score/joinability filters over only this stored clan;
+  native String lowercasing/contains produce the actual matching 24310 result.
+  `/var/tmp/hvm-clash-clans-{edit-v39,search-v41}`.
+- Leave 14308 journals original **208**. Native membership clears, no Gold is
+  refunded, chat clears when the only member disbands the clan. The serial
+  survives; the next actual creation uses (1,2), charges 4000→3000, and retains
+  the original creation achievement progress. `/var/tmp/hvm-clash-clans-{leave-v41,recreate-v42}`.
+- Eight private corrupted-checkpoint trials reject bad headers/payloads,
+  duplicate/truncated extensions, a wrong immutable command with recomputed
+  checksums, and an out-of-bounds chat record with recomputed checksums. Each
+  aborts at its explicit guard with the damaged file byte-for-byte unchanged;
+  the source fixture remains untouched. `/var/tmp/hvm-clash-clan-corruption-v42`.
+
+These are labeled King-3/Gold-5000 fixtures, not earned King-3 progression or
+iPhone qualifications. No phone save or original earned source is reset.
+Private v42 package: `/var/tmp/hvm-clash-guest-v42.ipa`; no package/assets/save
+is committed or delivered as complete. Pre-purchase controls need separate
+settled steps: a captured frame is not proof a too-early tap reached Create.
+
+Storage: GCL1's ten LE u32 words are tag, monotonic clan serial, operation
+status (0 disbanded / 1 create pending / 2 active / 3 leave pending / 4 settings
+pending), request length, immutable command length, before/after creation Gold,
+native-body FNV, XOR of the two payload FNVs, and header FNV over 36 bytes.
+The bounded original create-request bytes and command follow. GCS1 has seven
+LE words: tag, payload length, entry count, sequence, native-body FNV, payload
+FNV, header FNV over 24 bytes; each payload record has BE epoch/length and the
+native encoded entry. Validate the complete state before refresh/clock writes.
+All extensions share CRG1's existing atomic fsync/rename transaction. This is
+corruption detection, not cryptographic authentication. Older guests reject
+these extensions: do not downgrade an instance after creating a clan.
+
+Apple status: production simulator shell and Linux CI compile/pass; the
+isolated UI harness first lacked newer bridge members (fixed 9a49f8c), then
+XCTest classified the new UIKeyInput viewport as TextView instead of Other.
+fa5a955 queries the same stable identifier across element types, retaining all
+coordinate/input assertions. That run then hits the 15-minute combined-step
+timeout after a 6:35 cold simulator boot; it is not an input result. 379a8a5
+separates harness build, checked simulator boot and test-without-building, with
+independent bounded timeouts/logs. Its UI run is pending at this snapshot.
+No claim of real iPhone keyboard/gameplay qualification follows from compilation.
+
+Reproducible authored plans are `tools/clash_guest/clan_{create,chat,info,edit,search,leave}_ui_plan.json`.
+Run create only against an explicitly labeled King-3 component instance with
+sufficient Gold and no clan; it spends the real original 1000 Gold. Subsequent
+plans need actual completed membership; leave disbands the sole-member clan.
+Use the ordinary `clash_guest_ui_probe.py --gpu` path, review every captured
+frame and inspect the persisted result. A clean exit/captured step is not a
+visual pass. Keep the actual earned King-2 player separate.
 
 ## Authoritative client evidence
 
@@ -65,7 +147,7 @@ describes clan creation/customization generally. It is not evidence for this
 old client's exact level gate, field order, limits or economy. Those come from
 the pinned assets/code and actual UI tests.
 
-## Shared prerequisites and open work
+## Shared prerequisite investigation (before bf6dd7f)
 
 The current emulator marks UITextField/UITextView as editing but has no host
 keyboard bridge or queued CLI text input. It also lacks UIKeyInput insertion

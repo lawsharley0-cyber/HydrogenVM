@@ -378,26 +378,51 @@ executable SHA256:
 Bundle/save identity and all original assets remain unchanged. See UI_AUDIT
 for exact local paths and Apple limitations. Never deliver v28/v30 diagnostics.
 
+## Natural Silver and local clan core — v41/v42
+
+The actual earned Silver ID 8 finishes its original three-hour timer after
+real closed time. Opening it uses native reward command 213, grants +28 Gold
+(119→147), Archers/Arrows/Goblins +1 each, removes only ID 8, retains gems 87,
+and clears the journal. Clean profile/cards/home relaunch retains that result.
+`/var/tmp/hvm-clash-natural-silver-{open,return1}-v41`; compare the preserved
+pre-launch evidence at `/var/tmp/hvm-clash-natural-silver-evidence/before-v41.bin`.
+ID 9 remains unstarted, trophies 65, crowns 3/10, King 2/XP 8, ten cards.
+
+v42 qualifies the local solo-clan core in separate **synthetic King-3** fixtures:
+original 1000-Gold creation/209, leader/member/info, persistent original chat,
+description/type/settings/212, actual local search, leave/208 and paid re-create
+with a new monotonic identity. Actual owned SIGKILL at the pre-charge GCL1
+journal recovers the same file with exactly one charge. Eight private corruption
+cases retain the damaged file at explicit guards, including semantically wrong
+commands/records with recomputed checksums. Twelve authored guest tests pass.
+See [LOCAL_CLANS.md](LOCAL_CLANS.md) for exact schemas/paths and open controls.
+Clans mail, requests/donations and friendly battles remain unported. These
+fixtures are not earned King-3 progression, multiplayer, or device evidence.
+
+Private v42 IPA SHA256:
+`73e72a742852c4975621bf207eb11a91af8f0d843a76b80d735f3ddb1282b726`;
+executable SHA256:
+`7e450c931b645dd0cee76bc01daaaf01ec7b18436ee6b66af79305bd9cf7d55c`.
+Pinned original assets remain byte-identical; bundle/save identity is stable.
+GCL1/GCS1 extend the same atomic checkpoint. Older guests reject these tags;
+do not downgrade a clan-bearing instance or discard its save to make it launch.
+This internal package is not delivered as the completed offline game.
+
 ## Next work
 
-1. Preserve the deliberate SIGKILL recovery evidence and earned eight-card
-   player. Do not reset or restore older checkpoints during the next tests.
-2. Finish the final-package audit and repeat critical relaunch/audio/visual checks.
-   Eight-card battles, native Use swaps, earned King 2 stats and a real loss now
-   have actual evidence; synthetic byte comparisons remain component tests.
-3. Finish the newly unlocked Arena-1 controls and actual name keyboard editing.
-   Qualify partial-loss/draw crown accounting, earned crown-chest collection
-   and interrupted recovery; first arena wins/ELO/crowns now have evidence.
-4. Port arena/bot selection and all six locations, real elapsed timers and the
-   remaining native economy/journal paths. Build-time data can reuse the pinned
-   CSV research, but runtime logic must stay in the guest IPA.
-5. Use an ordinary main device build to qualify login/gameplay/audio/visuals.
-   Keep the original phone reports open until matching scenarios pass.
-
-October 26 owner priority after this current timer/recovery/control stage:
-implement persistent local clan creation/interactions, then post-training
-randomized authored player handles (training names unchanged), varied decks
-limited to each arena's unlocked cards and varied original bot playstyles,
-then original-version daily shop rotation. Research comparable bot projects
-and the pinned native AI; document differences. Do not substitute modern shop
-rules or invented online users. Long Silver completion and phone testing remain.
+1. Preserve the original phone failure, earned source, actual owned SIGKILL
+   evidence and current earned ten-card player. No reset or backup restore.
+   Natural Silver collection is now qualified across two clean relaunches;
+   battle-result time accounting and native profile Wins still need testing.
+2. Finish local clan mail, card requests/donations, friendly battles and the
+   remaining controls. Keep original native level/Gold/cooldown rules. The
+   qualified solo-clan core is a component milestone, not this feature's end.
+3. Then implement authored player-handle variation after training, preserving
+   the original training names; compare primary bot/simulator projects with
+   pinned native AI before varying legal arena decks and actual decision styles.
+4. Restore the original-version daily shop with actual rotation/items/prices
+   and atomic persistent purchases; modern shop features are not this client.
+5. Extend native arena coverage beyond Arena 1, qualify partial-loss/draw crown
+   accounting and earned crown collection, then finish phone visuals/audio/
+   stutter and all button scenarios. Keep original reports open until matching
+   device evidence passes. Do not invent online players, results or IAP success.

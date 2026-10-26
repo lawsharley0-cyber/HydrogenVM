@@ -94,6 +94,8 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 }
 #include "reward.inc"
 #include "name.inc"
+#include "clan.inc"
+#include "clan_chat.inc"
 #include "match.inc"
 static void refresh_saved_arena(void) {
     // Recover already-earned saves captured before the native post-setter
@@ -145,11 +147,14 @@ int guest_send(void *self,void *message) {
     CALL(API_printf,int,(const char*,int))("GuestOffline: outgoing kind=%d\n",kind);
     if(kind==10101) {
         if(logged_in)fail("GuestOffline: duplicate login");
+        validate_clan_checkpoint();
         refresh_saved_arena();
         logged_in=1;
         reply(self,20104,1,initial_login,sizeof initial_login);
         reply(self,24101,0,saved_home,saved_size);
         if(pending_size)reply(self,24111,0,pending_reward,pending_size);
+        if(clan_status==1 || clan_status==3 || clan_status==4)
+            reply(self,24111,0,clan_command,clan_command_size);
     } else if(kind==10108) {
         // Native MessageManager can send this while CSV loading delays login.
         reply(self,20108,0,0,0);
@@ -165,6 +170,20 @@ int guest_send(void *self,void *message) {
     } else if(kind==14402 && logged_in) {
         // RoyalTVContentMessage (24405), native VInt entry count: no remote replays.
         const u8 empty=0;reply(self,24405,0,&empty,1);
+    } else if(kind==14301 && logged_in && !battle_started) {
+        create_clan(self,message);
+    } else if(kind==14302 && logged_in && !battle_started) {
+        clan_data(self,message);
+    } else if(kind==14308 && logged_in && !battle_started) {
+        leave_clan(self,message);
+    } else if(kind==14316 && logged_in && !battle_started) {
+        edit_clan(self,message);
+    } else if(kind==14315 && logged_in && !battle_started) {
+        chat_to_clan(self,message);
+    } else if(kind==14324 && logged_in && !battle_started) {
+        search_local_clan(self,message);
+    } else if(kind==14304 && logged_in && !battle_started) {
+        clan_conversation(self,message);
     } else if(kind==14303 && logged_in && !battle_started) {
         // Original discovery request 0x75ca4 is empty. Native response type
         // getter 0xa1544 is 24304 (not request+10000); its encoder 0xa13a8

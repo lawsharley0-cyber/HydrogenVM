@@ -16,6 +16,26 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Latest scoped Clash continuation — October 26, 2026
 
+Guest v42 qualifies persistent solo-clan creation/chat/info/settings/search and
+leave/re-create in labeled King-3 component fixtures. Original commands
+209/212/208, 1000-Gold creation, actual native member/leader and atomic GCL1/GCS1
+storage are retained. An actual owned SIGKILL pending creation recovers without
+double debit; eight corrupted-file trials reject and retain the original file.
+Twelve guest tests pass. Requests/donations, mail/friendly battles and real
+earned King-3/device clan qualification remain open; see
+[local clans](../clash-royale/LOCAL_CLANS.md). The actual earned Silver ID 8
+also finishes naturally, grants +28 Gold/three native cards without gem cost,
+and retains Gold 147/gems 87 across a clean relaunch. Native profile Wins=0
+versus actual arena NPC victories is still an unresolved counter issue.
+
+Shared keyboard routing is pushed through fa5a955. Full Linux runtime 260/260,
+TestLab 18/18 and the report/compatibility gate pass; the Apple shell compiles.
+The separate Apple UI harness now compiles but initially queried its UIKeyInput
+viewport as Other although XCTest classifies it as TextView. fa5a955 uses its
+stable identifier across types. Its next run times out after a long cold boot,
+without a keyboard verdict; 379a8a5 separates build/boot/test stages and is pending.
+These checks do not establish a fresh real-iPhone game/input/audio pass.
+
 Guest-only continuation v31 now completes two actual Arena-1 bot victories
 after seven earned trainers. Native ELO reaches 65; paid entry, matching Silver
 chests, cards/King 2 persist. Three actual native crowns transfer once to home

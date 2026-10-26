@@ -2,7 +2,8 @@
  * commodity accounting; no invented match acknowledgment or free entry.
  */
 static void start_arena_match(void *self) {
-    if(battle_started || pending_size)fail("GuestOffline: arena entry during an incomplete transaction");
+    if(battle_started || pending_size || clan_status==1 || clan_status==3 || clan_status==4)
+        fail("GuestOffline: arena entry during an incomplete transaction");
     void *owner=decode_packet(24101,0,saved_home,saved_size);
     void *home=(void*)FIELD(owner,0x30),*avatar=(void*)FIELD(owner,0x34);
     if(!home || !avatar || FIELD(avatar,0x9c)<7)fail("GuestOffline: arena entry before earned graduation");

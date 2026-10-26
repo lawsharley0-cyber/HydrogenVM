@@ -192,3 +192,11 @@ Source of truth: [USER_APP_REPORTS.md](USER_APP_REPORTS.md). Preserve its UAR ID
 - B-109 shares Group D with any Foundation or UIKit class change. Regex and `tmpnam` do not, if they stay in libc.
 - A 4 KB-page green harness run does not close B-101.
 - The three in-repo smokes already have unimplemented imports. The diff fails when a **new** load-time import appears. It does not fail on the imports already in the baseline. Whether a brand-new import should fail even the first time it shows up in a longer run is owner question 9 from the audit; the harness treats runtime-only misses as attention, not a hard failure, because a 3 second smoke is not a full playthrough.
+
+October 26 v42 scoped update: the solo-clan core now has actual creation,
+chat/edit/search/info/leave/re-create and owned interruption/corruption evidence
+in explicit synthetic King-3 fixtures. The remaining clan controls above still
+need real implementations; do not close this owner feature. Natural Silver
+completion now grants once on the actual earned player (Gold 147/gems 87).
+Post-training names, arena deck/AI variation/research and original daily shop
+remain next in the owner's order. See LOCAL_CLANS for save/version limits.
