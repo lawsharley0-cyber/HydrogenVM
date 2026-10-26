@@ -711,15 +711,21 @@ void ctx_dealloc(Ctx& x, id self, SEL) {
 bool ctx_setCurrent(Ctx& x, id, SEL, id ctx) {
     auto& st = GLS(x);
     const uint32_t tid = x.proc.currentThread().id;
-    if (HostGL::enabled(x.proc)) HostGL::contextMakeCurrent(x.proc, ctx);
+    const bool host = HostGL::enabled(x.proc);
     std::lock_guard<std::mutex> lk(st.mu);
-    if (ctx) {
+    if (ctx && !host) {
         for (const auto& [t, c] : st.currentByThread) {
             if (t != tid && c == ctx) {
                 x.proc.logf(LogLevel::Warning, "EAGLContext setCurrentContext: fails because ctx 0x%x is in use on thread %u", ctx, t);
                 return false;
             }
         }
+    }
+    // HostGL may give a second thread its own context in the same sharegroup.
+    // Only bind after the software affinity check, and report that successful
+    // shared bind to the guest instead of leaving its thread without a context.
+    if (host) HostGL::contextMakeCurrent(x.proc, ctx);
+    if (ctx) {
         st.currentByThread[tid] = ctx;
         st.lastActiveContext = ctx;
     } else {

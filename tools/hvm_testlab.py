@@ -45,7 +45,7 @@ ROOT = Path(__file__).parent.parent
 TESTLAB_SRC = ROOT / "tests" / "ios" / "apps" / "testlab"
 SCHEMA_MOD  = str(ROOT / "tools" / "testlab_schema")
 
-CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L", "TL-M"]
+CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L", "TL-M", "TL-N"]
 # Wall-clock timeout (seconds) per case process, including hvm startup.
 DEFAULT_TIMEOUT = 30
 # TL-E phase 1 is fast; allow extra for the full two-launch cycle.
@@ -173,6 +173,9 @@ def run_case(
         run_for = cmd.index("--run-for") + 1
         cmd[run_for] = "1"
         cmd.insert(cmd.index("--"), "--graceful")
+    elif case_id == "TL-N":
+        # This real-app regression lives in HostGL's shared-context path.
+        cmd.insert(cmd.index("--"), "--gpu")
 
     try:
         proc = subprocess.run(

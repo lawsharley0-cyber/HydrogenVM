@@ -130,6 +130,15 @@ class TestLifecycleResult(unittest.TestCase):
                     result = run_case("hvm", "TestLab.ipa", "TL-L", home, 10)
                 self.assertEqual(result["status"], expected)
 
+    def test_eagl_affinity_case_uses_host_gpu(self):
+        process = MagicMock(returncode=0, stdout="TESTLAB TL-N passed\n", stderr="")
+        with tempfile.TemporaryDirectory() as home, patch("hvm_testlab.subprocess.run", return_value=process) as run:
+            result = run_case("hvm", "TestLab.ipa", "TL-N", home, 10)
+        self.assertEqual(result["status"], "passed")
+        command = run.call_args.args[0]
+        self.assertIn("--gpu", command)
+        self.assertLess(command.index("--gpu"), command.index("--"))
+
 
 class TestParseCaseOutput(unittest.TestCase):
 

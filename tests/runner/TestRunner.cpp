@@ -203,6 +203,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std::string& s); }
 #include "runtime/libc/HostCrypto.hpp"
 #include "runtime/uikit/UIKit.hpp"
+#include "runtime/gl/HostGL.hpp"
 #include "runtime/foundation/Foundation.hpp"
 #include "runtime/uikit/CoreGraphics.hpp"
 #include "runtime/graphics/TrueType.hpp"
@@ -4261,6 +4262,50 @@ int runFullSubsystemTests() {
               "formatGuest correctly parses format specifiers with flags after width (%10#llx)");
 
         std::filesystem::remove_all(home, ec);
+    }
+
+    const uint32_t arenasBefore = Memory::GuestArena::liveCount();
+    {
+        Memory::GuestArena first, second;
+        check(Memory::GuestArena::liveCount() == arenasBefore + 2,
+              "GuestArena diagnostics count simultaneous live reservations");
+    }
+    check(Memory::GuestArena::liveCount() == arenasBefore,
+          "GuestArena diagnostics count reservations released at destruction");
+
+    // EAGLContext affinity: the software renderer rejects sharing one context
+    // between live threads. The host renderer transparently gives the second
+    // thread a shared host context, so that successful bind must not be reported
+    // to the game as a failure (Clumsy Ninja render-thread regression).
+    struct AffinityPlatform final : HostGL::Platform {
+        const char* name() const override { return "affinity-test"; }
+        void* createContext(int, void*, bool& desktop) override { desktop = false; return new uint8_t(1); }
+        void destroyContext(void* p) override { delete static_cast<uint8_t*>(p); }
+        bool makeCurrent(void*) override { return true; }
+        void* proc(void*, const char*) override { return nullptr; }
+    };
+    for (bool host : {false, true}) {
+        ProcessConfig affinityCfg;
+        affinityCfg.homePath = "/tmp/hvm_eagl_affinity";
+        if (host) affinityCfg.hostGL = std::make_shared<AffinityPlatform>();
+        Process affinity(affinityCfg);
+        auto& ar = ObjC::rt(affinity);
+        auto& acpu = affinity.mainThread().cpu;
+        const ObjC::Class cls = ar.getClass("EAGLContext");
+        const ObjC::id context = ObjC::id(ar.send(acpu, ObjC::id(ar.send(acpu, ObjC::id(cls), ar.selAlloc)), "initWithAPI:", {2}));
+        const uint64_t mainBound = ar.send(acpu, ObjC::id(cls), "setCurrentContext:", {context});
+        const uint32_t workerFn = affinity.defineFunction("test_eagl_affinity", [context](Ctx& x) {
+            auto& runtime = ObjC::rt(x);
+            const ObjC::Class cls = runtime.getClass("EAGLContext");
+            x.cpu.r[0] = uint32_t(runtime.send(x.cpu, ObjC::id(cls), "setCurrentContext:", {context}) & 0xFF);
+        });
+        const uint32_t thread = affinity.startThread(workerFn, 0, 64u << 10, false);
+        uint32_t workerBound = 2;
+        const bool joined = affinity.joinThread(thread, &workerBound);
+        ar.send(acpu, ObjC::id(cls), "setCurrentContext:", {0});
+        check((mainBound & 0xFF) == 1 && joined && workerBound == (host ? 1 : 0), host ?
+              "GPU EAGLContext reports a successful shared-context bind on a second thread" :
+              "software EAGLContext rejects a context already current on another thread");
     }
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);

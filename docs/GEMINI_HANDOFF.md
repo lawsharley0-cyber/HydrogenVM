@@ -1,5 +1,26 @@
 # HydrogenVM: handoff for Gemini CLI (2026-10-25)
 
+## Latest continuation — 2026-10-26
+
+- **Clumsy Ninja EAGL regression:** HostGL no longer applies the software
+  renderer's cross-thread affinity rejection after creating a shared worker
+  context. TL-N is the permanent guest regression: red before (`workerBound=0`),
+  green after. `fulltest` also covers both software rejection and HostGL success.
+- **Real-game evidence:** software showed the loading screen at 10 s with no
+  handled faults. GPU ran 30 s, presented 240 frames, and had no old affinity
+  warnings, but Linux readback captured a black screenshot. Do not call the
+  device's picture or FMOD issue fixed until Lawson's next report confirms it.
+- **Batch teardown:** the latest device symptom was a game that never delivered
+  `onExit`, followed by unrelated games failing to reserve the 4 GB arena.
+  `HVMEngine.mm` now logs each teardown stage and live arena count, and explicitly
+  destroys the process outside `core->mu`. Test All Games reports an
+  `engine-teardown-timeout`, saves a partial report, and stops instead of
+  contaminating later results. The actual shutdown hang is **not fixed**; use
+  the new `[teardown]` lines from the next device report to locate it (B-116).
+- **Verified gates:** `fulltest` 260/0, Test Lab 14/14, `hvm_report.py` build 1/0,
+  cpu 15/0, ios 6/0, bench 5/0; only the known CoreMark perf notice remained.
+  On this Windows/WSL checkout ld64 was built as `build/cctools/bin/arm-apple-darwin11-ld`.
+
 You are taking over engineering on **HydrogenVM**, a JIT-less emulator that runs 32-bit iOS `.ipa` games on modern iPhones. The repo is `lawsharley0-cyber/HydrogenVM`, branch `main`. The owner is **Lawson**. He tests on his iPhone with the `.ipa` that GitHub CI builds, runs the in-app **Test All Games**, and sends you the report. He wants **every game in his library to work reliably**. Talk to him in plain, short language. He is not a C++ developer.
 
 Read this file first, then `AGENTS.md` (working agreement) and `docs/GROK_HANDOFF.md` (older, longer notes: architecture, debugging recipes, history). `docs/TEST_LAB.md` ("Agent guide") when you touch Test Lab. This file wins where they disagree.

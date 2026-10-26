@@ -34,6 +34,19 @@ in `docs/dev-system/BACKLOG.md`. Original backlog observations are preserved.
 The retired `compat.py report`, `results.json`, and `REPORT.md` format are
 replaced by `hvm_compat.py issues`, schema-checked JSON and explicit report diffs.
 
+## Real-app regression log
+
+- **Clumsy Ninja / EAGL worker affinity (2026-10-26):** `ctx_setCurrent` applied
+  the software renderer's one-context-per-thread rejection even after HostGL
+  had created a shared worker context. The game was told its successful GPU
+  bind failed. HostGL now skips only that software affinity rejection and
+  records the successful guest binding; software behavior is unchanged.
+  TL-N failed before the fix (`workerBound=0`) and passes after it, with a
+  matching `fulltest` check. A 10 s software run showed the loading screen
+  without handled faults. A 30 s Linux GPU run presented 240 frames without
+  the old affinity warnings, but its readback screenshot remained black;
+  device visual and FMOD behavior still need the next iPhone report.
+
 `hvm info --linking Some.app --json` loads and binds without executing guest
 initializers. Its references list functions, data, classes and selectors, with
 missing stubs, zero-filled data and placeholder classes distinguished. Selector

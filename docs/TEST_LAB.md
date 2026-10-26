@@ -40,6 +40,7 @@ signal, and sandboxed persistence.
 | TL-F | Threading & Mutex | `pthread_create` spawns a background worker thread computing a 64 KB FNV-1a hash (`0x75389DC5`), while main and worker threads safely increment a shared counter under `pthread_mutex_t` to 20,000, verified via `pthread_join` |
 | TL-G | Keychain | `Security.framework` (`SecItemAdd`, `SecItemCopyMatching`, `SecItemDelete`); verifies generic password addition, duplicate key rejection (`errSecDuplicateItem`), query data matching, and removal/not-found verification (`errSecItemNotFound`) |
 | TL-H | File System & Sandbox | `NSFileManager` nested directory creation (`createDirectoryAtPath:withIntermediateDirectories:`), atomic write of 1024-byte payload, file/dir existence and size verification via `attributesOfItemAtPath:`, payload integrity check, and recursive removal |
+| TL-N | EAGL worker binding | Runs with `--gpu`. Main binds an ES2 context, then a pthread binds the same context through HostGL's shared-context path. The independent EAGL API oracle requires both calls to return true and the worker's `currentContext` to equal the object it bound. Proven red on the unfixed runtime (`workerBound=0`) for the Clumsy Ninja affinity regression |
 
 ### Checkpoint / interrupted-case protocol
 

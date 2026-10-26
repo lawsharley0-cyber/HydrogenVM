@@ -473,7 +473,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.screenWidth = 320;
         cfg.screenHeight = 568;   // UIKit drops to 480 unless the app opts into 4"
         cfg.screenScale = 2;
-        cfg.log = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
+        auto sessionLog = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
             std::lock_guard<std::mutex> lk(core->logMu);
             core->logToFile("", msg);
             if (core->logs.size() < 5000) core->logs.emplace_back(msg, lvl);
@@ -482,6 +482,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ flushLogs(); });
             }
         };
+        cfg.log = sessionLog;
         cfg.microphone = [core](bool on) { setMicrophone(core, on); };
         cfg.present = [core, weakSelf](const uint8_t *rgba, int w, int h) {
             if (core->framePending.exchange(true)) return;   // the UI hasn't taken the last one: drop
@@ -511,8 +512,9 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         };
         int code = -1;
         std::string crash, bundleJSON;
+        std::shared_ptr<RT::Process> proc;
         try {
-            auto proc = std::make_shared<RT::Process>(std::move(cfg));
+            proc = std::make_shared<RT::Process>(std::move(cfg));
             {
                 std::lock_guard<std::mutex> lk(core->mu);
                 core->proc = proc;
@@ -522,22 +524,38 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 proc->load();
                 core->ready = true;
                 if (core->stopRequested) proc->requestStop();
+                sessionLog(RT::LogLevel::Info, "[teardown] waiting for the guest run to finish");
                 code = proc->run();
+                sessionLog(RT::LogLevel::Info, "[teardown] guest run returned status " + std::to_string(code));
                 if (proc->crashed()) {
                     crash = proc->crashReport().empty() ? "The app crashed." : proc->crashReport();
                     bundleJSON = proc->crashBundle();
                 }
             }
             core->ready = false;
-            std::lock_guard<std::mutex> lk(core->mu);
-            core->proc.reset();
+            {
+                std::lock_guard<std::mutex> lk(core->mu);
+                core->proc.reset();
+            }
+            sessionLog(RT::LogLevel::Info, "[teardown] destroying the guest process");
+            proc.reset();
+            sessionLog(RT::LogLevel::Info, "[teardown] guest process destroyed; live arenas " +
+                                            std::to_string(Hydrogen::Memory::GuestArena::liveCount()));
         } catch (const std::exception &e) {
             core->ready = false;
             crash = std::string("Could not start the app: ") + e.what();
-            std::lock_guard<std::mutex> lk(core->mu);
-            core->proc.reset();
+            {
+                std::lock_guard<std::mutex> lk(core->mu);
+                core->proc.reset();
+            }
+            sessionLog(RT::LogLevel::Info, "[teardown] destroying the guest process after an error");
+            proc.reset();
+            sessionLog(RT::LogLevel::Info, "[teardown] guest process destroyed after an error; live arenas " +
+                                            std::to_string(Hydrogen::Memory::GuestArena::liveCount()));
         }
+        sessionLog(RT::LogLevel::Info, "[teardown] stopping host audio");
         stopAudio(core);
+        sessionLog(RT::LogLevel::Info, "[teardown] host audio stopped; queueing the exit callback");
         const bool userStopped = core->stopRequested;
         {
             std::lock_guard<std::mutex> lk(core->logMu);
@@ -545,6 +563,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             if (!crash.empty()) core->logToFile("[crash]\n", crash);
         }
         dispatch_async(dispatch_get_main_queue(), ^{
+            sessionLog(RT::LogLevel::Info, "[teardown] delivering the exit callback");
             flushLogs();
             HVMSession *s = weakSelf;
             if (!s) return;

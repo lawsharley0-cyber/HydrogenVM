@@ -1,5 +1,24 @@
 # HydrogenVM: handoff for Grok Bot (2026-10-24)
 
+## Current continuation — 2026-10-26
+
+This note supersedes the older gate counts and Clumsy Ninja status below.
+`ctx_setCurrent` now distinguishes software thread affinity from HostGL shared
+worker contexts: HostGL binds first-class shared contexts without returning a
+false failure to the guest. TL-N failed on the old code (`workerBound=0`) and
+passes on the fix; fulltest checks both renderers. Gates: fulltest 260/0,
+Test Lab 14/14, report build 1/0, cpu 15/0, ios 6/0, bench 5/0, with only the
+known CoreMark perf notice.
+
+Clumsy Ninja software rendered its loading screen in 10 s. GPU presented 240
+frames in 30 s without the old affinity warnings, but Linux readback was black,
+so device picture and FMOD status remain unverified. For the device batch
+shutdown hang, HVMEngine now records `[teardown]` stages and live arena counts.
+The runner classifies an engine teardown timeout, saves partial results, and
+stops before later games inherit the live arena. This is diagnostics and
+cascade containment, **not** a proven shutdown root-cause fix. B-116 remains
+open until the next device report identifies the missing stage.
+
 This hands over the current work on HydrogenVM, a JIT-less 32-bit iOS `.ipa` emulator that runs on modern iPhones. The repo is `lawsharley0-cyber/HydrogenVM` and the integration branch is `main`. Read `AGENTS.md` (the working agreement) and this file. Open other docs only when a task names them.
 
 The owner is Lawson. He tests on an iPhone with the app built by CI. He sends **batch reports** (`latest_batch_report.json` / `.md` from the in-app *Test All Games*) and occasionally run logs. He wants every game in his library to work. Talk to him in plain language, and give him a link to the new `.ipa` whenever a meaningful batch of fixes lands.

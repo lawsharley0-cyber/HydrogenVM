@@ -79,6 +79,7 @@ struct BatchObservations: Sendable {
     var resumeFramesAfter: Int?
     var backgroundTested = false
     var closedGracefully: Bool?            // nil: the game had already exited
+    var engineTeardownTimedOut = false
     var exitedOnItsOwn = false
     var relaunchEnabled = false
     var relaunchCrashed: Bool?
@@ -177,10 +178,14 @@ enum BatchCheckBuilder {
         }
 
         // 9. Close
-        switch o.closedGracefully {
-        case .some(true): c.append(.init(name: "Closes cleanly", status: .pass, detail: "Quit within 4 s when asked"))
-        case .some(false): c.append(.init(name: "Closes cleanly", status: .warn, detail: "Ignored the quit request and had to be stopped"))
-        case .none: c.append(.init(name: "Closes cleanly", status: .skip, detail: "The game had already stopped"))
+        if o.engineTeardownTimedOut {
+            c.append(.init(name: "Closes cleanly", status: .fail, detail: "The engine stayed alive after the forced stop; the batch stopped to protect later games"))
+        } else {
+            switch o.closedGracefully {
+            case .some(true): c.append(.init(name: "Closes cleanly", status: .pass, detail: "Quit within 4 s when asked"))
+            case .some(false): c.append(.init(name: "Closes cleanly", status: .warn, detail: "Ignored the quit request and had to be stopped"))
+            case .none: c.append(.init(name: "Closes cleanly", status: .skip, detail: "The game had already stopped"))
+            }
         }
 
         // 10. Relaunch with the saved data from the first run

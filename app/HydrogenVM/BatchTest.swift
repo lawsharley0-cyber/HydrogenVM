@@ -609,6 +609,10 @@ final class BatchTestRunner {
             }
             
             let hardStopped = closedGracefully == false && !exitedOnItsOwn
+            let engineTeardownTimedOut = !exitBox.exited && self.status == .running
+            if engineTeardownTimedOut {
+                self.keepLog("[teardown] Engine did not exit after the forced-stop deadline; stopping the batch before another game can reserve memory")
+            }
 
             self.fpsTimer?.invalidate()
             self.fpsTimer = nil
@@ -617,7 +621,9 @@ final class BatchTestRunner {
 
             let presented = self.lastTotalPresented
             let p95Ms = self.lastP95
-            let capturedCrash = exitBox.crash
+            let capturedCrash = exitBox.crash ?? (engineTeardownTimedOut
+                ? "Engine teardown timed out after the forced stop. The batch stopped instead of launching another game into the live guest arena."
+                : nil)
             let exitStatusCode = exitBox.code
             let isCrashed = capturedCrash != nil || (exitBox.exited && exitStatusCode != 0)
 
@@ -641,7 +647,7 @@ final class BatchTestRunner {
             let signatureText: String
             if isCrashed {
                 summaryText = capturedCrash?.components(separatedBy: "\n").first ?? "Crashed (status \(exitStatusCode))"
-                signatureText = capturedCrash != nil ? "crash-fault" : "exit-\(exitStatusCode)"
+                signatureText = engineTeardownTimedOut ? "engine-teardown-timeout" : (capturedCrash != nil ? "crash-fault" : "exit-\(exitStatusCode)")
             } else if frameSig != .ok {
                 summaryText = "Wrong output: \(frameSig.rawValue)"
                 signatureText = "signal-\(frameSig.rawValue)"
@@ -677,6 +683,7 @@ final class BatchTestRunner {
             obs.resumeFramesBefore = exploreResult?.resumeFramesBefore
             obs.resumeFramesAfter = exploreResult?.resumeFramesAfter
             obs.closedGracefully = closedGracefully
+            obs.engineTeardownTimedOut = engineTeardownTimedOut
             obs.exitedOnItsOwn = exitedOnItsOwn && !isCrashed
             obs.relaunchEnabled = self.options.relaunchEnabled
             obs.relaunchCrashed = relaunch?.crashed
@@ -696,7 +703,7 @@ final class BatchTestRunner {
                 exitCode: Int(exitStatusCode),
                 summary: summaryText,
                 signature: signatureText,
-                exceptionKind: isCrashed ? "crash" : nil,
+                exceptionKind: engineTeardownTimedOut ? "engine-teardown-timeout" : (isCrashed ? "crash" : nil),
                 crashReport: capturedCrash,
                 perf: BatchPerf(framesPresented: Int(presented), fps: self.currentFPS, frameTimeP95Ms: p95Ms),
                 frame: BatchFrameInfo(signal: frameSig.rawValue, thumbnailPath: thumbRelPath),
@@ -717,6 +724,17 @@ final class BatchTestRunner {
             self.currentIndex += 1
             self.activeSession = nil
             try? FileManager.default.removeItem(at: testHome)
+
+            if engineTeardownTimedOut {
+                // The old engine still owns its guest arena. Launching the next
+                // game would only produce misleading reservation failures.
+                self.status = .cancelled
+                self.progressText = "Stopped: \(target.app.title) did not finish closing. See its teardown log."
+                self.clearPendingSession()
+                self.saveFinalReports()
+                UIApplication.shared.isIdleTimerDisabled = false
+                return
+            }
 
             self.savePendingSession()
 

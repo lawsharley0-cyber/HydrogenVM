@@ -3,10 +3,18 @@
 #include <unistd.h>
 #include <stdexcept>
 #include <algorithm>
+#include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <thread>
 
 namespace Hydrogen::Memory {
+namespace {
+std::atomic<uint32_t> liveArenas{0};
+}
+
+uint32_t GuestArena::liveCount() noexcept { return liveArenas.load(std::memory_order_relaxed); }
 
 GuestArena::GuestArena() {
     host_page_ = size_t(sysconf(_SC_PAGESIZE));
@@ -20,20 +28,29 @@ GuestArena::GuestArena() {
     // finishing); iOS has room for about one 4 GB reservation, so wait a few
     // seconds for it rather than failing the next launch (Test All Games).
     void* p = MAP_FAILED;
+    int lastError = 0;
     for (int attempt = 0; attempt < 20 && p == MAP_FAILED; ++attempt) {
         if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        errno = 0;
         p = mmap(nullptr, size_t(kArenaSize), PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+        if (p == MAP_FAILED) lastError = errno;
     }
     if (p == MAP_FAILED)
-        throw std::runtime_error("HydrogenVM: failed to reserve 4 GB guest arena "
-                                 "(on iOS, check the extended-virtual-addressing entitlement)");
+        throw std::runtime_error("HydrogenVM: failed to reserve 4 GB guest arena: " +
+                                 std::string(std::strerror(lastError)) + " (errno " + std::to_string(lastError) +
+                                 ", live arenas " + std::to_string(liveCount()) +
+                                 "; on iOS, check the extended-virtual-addressing entitlement)");
     base_ = static_cast<uint8_t*>(p);
     prot_.assign(kGuestPageCount, kProtNone);
     host_committed_.assign(size_t(kArenaSize / host_page_), 0);
+    liveArenas.fetch_add(1, std::memory_order_relaxed);
 }
 
 GuestArena::~GuestArena() {
-    if (base_) munmap(base_, size_t(kArenaSize));
+    if (base_) {
+        munmap(base_, size_t(kArenaSize));
+        liveArenas.fetch_sub(1, std::memory_order_relaxed);
+    }
 }
 
 void GuestArena::commitHostPages(uint64_t first, uint64_t last) {

@@ -69,6 +69,7 @@ static const char *kAppBuild        = "1";
 #define CASE_K  @"TL-K"
 #define CASE_L  @"TL-L"
 #define CASE_M  @"TL-M"
+#define CASE_N  @"TL-N"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -1414,6 +1415,48 @@ TLResult* runCaseM(void) {
     return r;
 }
 
+// TL-N: EAGL binding on a worker while the same context is current on main.
+// The independent oracle is EAGL's API contract: a successful bind returns YES
+// and currentContext on that thread returns the object just bound. The host
+// runner uses the GPU backend, which implements the bind with a shared context.
+static EAGLContext *tlnContext;
+static BOOL tlnBound;
+static BOOL tlnSameContext;
+
+static void *tlnWorker(void *unused) {
+    (void)unused;
+    tlnBound = [EAGLContext setCurrentContext:tlnContext];
+    tlnSameContext = [EAGLContext currentContext] == tlnContext;
+    return NULL;
+}
+
+static TLResult *runCaseN(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_N version:1];
+    writeCheckpoint(CASE_N);
+    r.checkpointWritten = YES;
+    tlnBound = NO;
+    tlnSameContext = NO;
+    tlnContext = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+    const BOOL mainBound = [EAGLContext setCurrentContext:tlnContext];
+    pthread_t worker;
+    const int created = tlnContext ? pthread_create(&worker, NULL, tlnWorker, NULL) : -1;
+    int joined = created;
+    if (created == 0) joined = pthread_join(worker, NULL);
+    const BOOL ok = mainBound && created == 0 && joined == 0 && tlnBound && tlnSameContext;
+    r.expected = @"mainBound=1, workerBound=1, workerCurrentIsBoundContext=1";
+    r.actual = [NSString stringWithFormat:@"mainBound=%d, workerBound=%d, workerCurrentIsBoundContext=%d, pthreadCreate=%d, pthreadJoin=%d",
+                mainBound, tlnBound, tlnSameContext, created, joined];
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"EAGL worker-thread binding did not follow the shared-context contract";
+    r.diagnostics[@"mainBound"] = @(mainBound);
+    r.diagnostics[@"workerBound"] = @(tlnBound);
+    r.diagnostics[@"workerCurrentIsBoundContext"] = @(tlnSameContext);
+    [EAGLContext setCurrentContext:nil];
+    tlnContext = nil;
+    clearCheckpoint();
+    return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1423,7 +1466,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1454,6 +1497,10 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseJ()];
         } else if ([cid isEqualToString:CASE_K]) {
             [results addObject:runCaseK()];
+        } else if ([cid isEqualToString:CASE_M]) {
+            [results addObject:runCaseM()];
+        } else if ([cid isEqualToString:CASE_N]) {
+            [results addObject:runCaseN()];
         }
     }
     return results;
@@ -1480,6 +1527,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_J]) return runCaseJ();
     if ([caseId isEqualToString:CASE_K]) return runCaseK();
     if ([caseId isEqualToString:CASE_M]) return runCaseM();
+    if ([caseId isEqualToString:CASE_N]) return runCaseN();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1512,8 +1560,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1529,6 +1577,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_J version:kVersionJ],
         [[TLResult alloc] initWithId:CASE_K version:kVersionK],
         [[TLResult alloc] initWithId:CASE_M version:1],
+        [[TLResult alloc] initWithId:CASE_N version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1588,7 +1637,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
