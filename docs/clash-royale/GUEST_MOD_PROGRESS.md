@@ -246,6 +246,24 @@ establish the owner's phone hitch cause. Newest fetched main is 5968d88 and
 includes a separate GPU/AUGraph fix f78a63a; these current runs use the explicitly
 identified 6884670 ordinary host, not that newer integration head.
 
+Later in the same audit, the private earned QA player defeats trainer Klaus
+(4/7), banks and unlocks chest ID 4, collects 16 Gold plus Prince/Mini P.E.K.K.A.,
+and swaps Mini P.E.K.K.A. for Arrows using native Use. Two launches retain the
+nine-card collection, upgraded cards, resources and swap with no duplicate
+reward. A further native Prince upgrade costs 50 Gold and grants 6 XP, naturally
+reaching King level 2 (Gold 92, XP 2). Relaunch shows the original King-level-up
+screen; Close returns to home and profile safely. This is actual earned level-up
+evidence in addition to the synthetic fixture, still not phone qualification.
+
+Apple CI 40263193112 passes the engine build/fulltest, state checks and TL-O/P,
+then fails TL-Q's initial nonportable script-tag assertion. The follow-up uses
+the documented ISO language-code contract (English/Arabic/Hebrew/Persian/Urdu),
+removes Linux's likely-script override, and adds an independent native Apple
+truth-table executable. Corrected Linux fulltest 253/253, TestLab 17/17 and the
+complete zero-regression baseline diff pass. Next Apple CI must still complete.
+See UI_AUDIT for the primary-source contract rationale; expectations are not
+derived from emulator output.
+
 ## Next work
 
 1. Preserve the deliberate SIGKILL recovery evidence and earned eight-card

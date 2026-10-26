@@ -42,7 +42,7 @@ signal, and sandboxed persistence.
 | TL-H | File System & Sandbox | `NSFileManager` nested directory creation (`createDirectoryAtPath:withIntermediateDirectories:`), atomic write of 1024-byte payload, file/dir existence and size verification via `attributesOfItemAtPath:`, payload integrity check, and recursive removal |
 | TL-O | ARMv7 math aggregate return | Compiler-generated calls to `__sincosf_stret` and `__sincos_stret`; analytic sine/cosine at zero and pi/2 verify float/double aggregate results. The float case fails before the hidden-result-pointer fix. Automated invocation: `--case TL-O`. This does not itself verify cannon animation. |
 | TL-P | Predicate regular expressions | Full-string alternatives, placeholder/argument-array input, case folding, inline ICU flags, Unicode categories and nil rejection. Triggered by Help/Support's native SDK; fails before `MATCHES` support. Automated invocation: `--case TL-P`. |
-| TL-Q | Language writing direction | Known English LTR and Arabic/Hebrew/Persian RTL, including the Arabic script tag `az-Arab`. Fails before `characterDirectionForLanguage:` support. Automated invocation: `--case TL-Q`. |
+| TL-Q | Language writing direction | ISO language codes: English LTR and Arabic/Hebrew/Persian/Urdu RTL. Fails before `characterDirectionForLanguage:` support. Automated invocation: `--case TL-Q`. Native Apple contract check: `tests/native/FoundationLocale.m`. |
 
 ### Checkpoint / interrupted-case protocol
 

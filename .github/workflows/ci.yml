@@ -94,6 +94,8 @@ jobs:
           python3 tools/hvm_report.py --prebuilt-apps --out report
       - name: Apple offline backend and ARMv7 math ABI checks
         run: |
+          clang -fobjc-arc tests/native/FoundationLocale.m -framework Foundation -o build/native-locale
+          build/native-locale > report/locale-native.txt
           build/hvm_clash_state_tests > report/clash-state.txt
           build/hvm_clash_tests > report/clash-offline.txt
           build/hvm run build/ios/TestLab.app --home build/apple-math-test -- --run TL-O > report/clash-math-abi.txt

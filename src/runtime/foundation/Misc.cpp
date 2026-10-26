@@ -927,10 +927,7 @@ uint32_t locc_characterDirection(Ctx& x,id,SEL,id language) {
     UErrorCode status=U_ZERO_ERROR;
     const auto direction=uloc_getCharacterOrientation(code.c_str(),&status);
     if(U_FAILURE(status) || direction==ULOC_LAYOUT_UNKNOWN)return 0;
-    // Some language/script combinations have no localized layout resource.
-    // ICU's likely-script lookup still knows e.g. az-Arab is right-to-left.
-    if(direction==ULOC_LAYOUT_LTR || direction==ULOC_LAYOUT_RTL)
-        return uloc_isRightToLeft(code.c_str())?2:1;
+    // Match CoreFoundation's ISO-language lookup, not a likely-script guess.
     // ICU LTR/RTL/TTB/BTT are 0..3; Foundation reserves 0 for unknown.
     return uint32_t(direction)+1;
 #endif

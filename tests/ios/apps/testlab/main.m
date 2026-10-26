@@ -1569,10 +1569,13 @@ static TLResult *runCaseQ(void) {
     BOOL ltr=[NSLocale characterDirectionForLanguage:@"en"]==1;
     BOOL rtl=[NSLocale characterDirectionForLanguage:@"ar"]==2 &&
         [NSLocale characterDirectionForLanguage:@"he"]==2 && [NSLocale characterDirectionForLanguage:@"fa"]==2;
-    BOOL script=[NSLocale characterDirectionForLanguage:@"az-Arab"]==2;
-    r.expected=@{@"englishLTR":@YES,@"arabicHebrewPersianRTL":@YES,@"arabicScript":@YES};
-    r.actual=@{@"englishLTR":@(ltr),@"arabicHebrewPersianRTL":@(rtl),@"arabicScript":@(script)};
-    r.status=ltr&&rtl&&script?@"passed":@"failed";
+    // The API contract takes an ISO language code. A BCP-47 script tag is
+    // not a portable oracle: native CF uses ICU locale layout resources,
+    // which can fall back independently of a tag's explicit script.
+    BOOL urdu=[NSLocale characterDirectionForLanguage:@"ur"]==2;
+    r.expected=@{@"englishLTR":@YES,@"arabicHebrewPersianRTL":@YES,@"urduRTL":@YES};
+    r.actual=@{@"englishLTR":@(ltr),@"arabicHebrewPersianRTL":@(rtl),@"urduRTL":@(urdu)};
+    r.status=ltr&&rtl&&urdu?@"passed":@"failed";
     if(![r.status isEqualToString:@"passed"])r.reason=@"Language direction differs from known writing systems";
     clearCheckpoint();return r;
 }
