@@ -862,12 +862,6 @@ void hg_glDrawTexxOES(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_z, int32_t a_w
     hc->fn.glDrawTexxOES(a_x, a_y, a_z, a_w, a_h);
     if (hgDebug) hgAfter(x, hc, "glDrawTexxOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
 }
-void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
-    HostContext* hc = hgCurrent(x);
-    if (!hc || !hc->fn.glBindFramebufferOES) { hgMissing(x, hc, "glBindFramebufferOES"); return; }
-    hc->fn.glBindFramebufferOES(a_target, a_framebuffer);
-    if (hgDebug) hgAfter(x, hc, "glBindFramebufferOES", [&] { return hgArgs(a_target, a_framebuffer); });
-}
 void hg_glBindRenderbufferOES(Ctx& x, uint32_t a_target, uint32_t a_renderbuffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBindRenderbufferOES) { hgMissing(x, hc, "glBindRenderbufferOES"); return; }
@@ -978,12 +972,6 @@ void hg_glBindAttribLocation(Ctx& x, uint32_t a_program, uint32_t a_index, Guest
     if (!hc || !hc->fn.glBindAttribLocation) { hgMissing(x, hc, "glBindAttribLocation"); return; }
     hc->fn.glBindAttribLocation(a_program, a_index, static_cast<const char*>(HG_PTR(x, a_name)));
     if (hgDebug) hgAfter(x, hc, "glBindAttribLocation", [&] { return hgArgs(a_program, a_index, a_name); });
-}
-void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
-    HostContext* hc = hgCurrent(x);
-    if (!hc || !hc->fn.glBindFramebuffer) { hgMissing(x, hc, "glBindFramebuffer"); return; }
-    hc->fn.glBindFramebuffer(a_target, a_framebuffer);
-    if (hgDebug) hgAfter(x, hc, "glBindFramebuffer", [&] { return hgArgs(a_target, a_framebuffer); });
 }
 void hg_glBindRenderbuffer(Ctx& x, uint32_t a_target, uint32_t a_renderbuffer) {
     HostContext* hc = hgCurrent(x);
@@ -1273,122 +1261,154 @@ void hg_glStencilOpSeparate(Ctx& x, uint32_t a_face, uint32_t a_sfail, uint32_t 
 void hg_glUniform1f(Ctx& x, int32_t a_location, float a_v0) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform1f) { hgMissing(x, hc, "glUniform1f"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform1f(a_location, a_v0);
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform1f", [&] { return hgArgs(a_location, a_v0); });
 }
 void hg_glUniform1fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform1fv) { hgMissing(x, hc, "glUniform1fv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform1fv(a_location, a_count, HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform1fv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform1i(Ctx& x, int32_t a_location, int32_t a_v0) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform1i) { hgMissing(x, hc, "glUniform1i"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform1i(a_location, a_v0);
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform1i", [&] { return hgArgs(a_location, a_v0); });
 }
 void hg_glUniform1iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform1iv) { hgMissing(x, hc, "glUniform1iv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform1iv(a_location, a_count, HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform1iv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform2f(Ctx& x, int32_t a_location, float a_v0, float a_v1) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform2f) { hgMissing(x, hc, "glUniform2f"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform2f(a_location, a_v0, a_v1);
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform2f", [&] { return hgArgs(a_location, a_v0, a_v1); });
 }
 void hg_glUniform2fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform2fv) { hgMissing(x, hc, "glUniform2fv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform2fv(a_location, a_count, HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform2fv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform2i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform2i) { hgMissing(x, hc, "glUniform2i"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform2i(a_location, a_v0, a_v1);
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform2i", [&] { return hgArgs(a_location, a_v0, a_v1); });
 }
 void hg_glUniform2iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform2iv) { hgMissing(x, hc, "glUniform2iv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform2iv(a_location, a_count, HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform2iv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform3f(Ctx& x, int32_t a_location, float a_v0, float a_v1, float a_v2) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform3f) { hgMissing(x, hc, "glUniform3f"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform3f(a_location, a_v0, a_v1, a_v2);
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform3f", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2); });
 }
 void hg_glUniform3fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform3fv) { hgMissing(x, hc, "glUniform3fv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform3fv(a_location, a_count, HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform3fv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform3i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1, int32_t a_v2) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform3i) { hgMissing(x, hc, "glUniform3i"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform3i(a_location, a_v0, a_v1, a_v2);
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform3i", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2); });
 }
 void hg_glUniform3iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform3iv) { hgMissing(x, hc, "glUniform3iv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform3iv(a_location, a_count, HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform3iv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform4f(Ctx& x, int32_t a_location, float a_v0, float a_v1, float a_v2, float a_v3) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform4f) { hgMissing(x, hc, "glUniform4f"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform4f(a_location, a_v0, a_v1, a_v2, a_v3);
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform4f", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2, a_v3); });
 }
 void hg_glUniform4fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform4fv) { hgMissing(x, hc, "glUniform4fv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform4fv(a_location, a_count, HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform4fv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform4i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1, int32_t a_v2, int32_t a_v3) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform4i) { hgMissing(x, hc, "glUniform4i"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform4i(a_location, a_v0, a_v1, a_v2, a_v3);
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform4i", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2, a_v3); });
 }
 void hg_glUniform4iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniform4iv) { hgMissing(x, hc, "glUniform4iv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniform4iv(a_location, a_count, HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniform4iv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniformMatrix2fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t a_transpose, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniformMatrix2fv) { hgMissing(x, hc, "glUniformMatrix2fv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniformMatrix2fv(a_location, a_count, uint8_t(a_transpose & 0xFF), HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniformMatrix2fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
 }
 void hg_glUniformMatrix3fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t a_transpose, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniformMatrix3fv) { hgMissing(x, hc, "glUniformMatrix3fv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniformMatrix3fv(a_location, a_count, uint8_t(a_transpose & 0xFF), HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniformMatrix3fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
 }
 void hg_glUniformMatrix4fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t a_transpose, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glUniformMatrix4fv) { hgMissing(x, hc, "glUniformMatrix4fv"); return; }
+    if (hc->currentProgram == 0) return;
     hc->fn.glUniformMatrix4fv(a_location, a_count, uint8_t(a_transpose & 0xFF), HG_PTR(x, a_value));
+    hc->fn.glGetError();
     if (hgDebug) hgAfter(x, hc, "glUniformMatrix4fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
-}
-void hg_glUseProgram(Ctx& x, uint32_t a_program) {
-    HostContext* hc = hgCurrent(x);
-    if (!hc || !hc->fn.glUseProgram) { hgMissing(x, hc, "glUseProgram"); return; }
-    hc->fn.glUseProgram(a_program);
-    if (hgDebug) hgAfter(x, hc, "glUseProgram", [&] { return hgArgs(a_program); });
 }
 void hg_glValidateProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = hgCurrent(x);

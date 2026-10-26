@@ -74,7 +74,13 @@ struct AudioUnitInstance {
     uint32_t id = 0;
     uint32_t renderCallback = 0;
     uint32_t renderUserData = 0;
+    uint32_t desc[5] = {0, 0, 0, 0, 0};
     bool initialized = false, running = false;
+};
+
+struct AUGraphInstance {
+    uint32_t id;
+    std::vector<uint32_t> nodes;
 };
 
 struct AudioToolboxState {
@@ -83,10 +89,12 @@ struct AudioToolboxState {
     uint32_t nextQueueId = 1;
     uint32_t nextFileId = 1;
     uint32_t nextUnitId = 1;
+    uint32_t nextGraphId = 1;
     std::unordered_map<uint32_t, SystemSoundEntry> sounds;
     std::unordered_map<uint32_t, AudioQueueInstance> queues;
     std::unordered_map<uint32_t, AudioFileInstance> files;
     std::unordered_map<uint32_t, AudioUnitInstance> units;
+    std::unordered_map<uint32_t, AUGraphInstance> graphs;
 };
 AudioToolboxState& ATS(Ctx& x) { return x.proc.service<AudioToolboxState>(); }
 
@@ -830,22 +838,33 @@ int32_t au_render(Ctx& x, uint32_t, GuestPtr, GuestPtr, uint32_t, uint32_t nFram
     }
     return 0;
 }
-int32_t aug_new(Ctx& x, GuestPtr outGraph) { if (outGraph) x.mem.write<uint32_t>(outGraph, ATS(x).nextUnitId++); return 0; }
+int32_t aug_new(Ctx& x, GuestPtr outGraph) {
+    const uint32_t gid = ATS(x).nextGraphId++;
+    ATS(x).graphs[gid].id = gid;
+    if (outGraph) x.mem.write<uint32_t>(outGraph, gid);
+    return 0;
+}
 int32_t aug_ok1(Ctx&, uint32_t) { return 0; }
 int32_t aug_ok2(Ctx&, uint32_t, uint32_t) { return 0; }
 int32_t aug_ok3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t aug_ok4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t aug_ok5(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
-int32_t aug_addNode(Ctx& x, uint32_t, GuestPtr, GuestPtr outNode) {
+int32_t aug_addNode(Ctx& x, uint32_t graph, GuestPtr desc, GuestPtr outNode) {
     const uint32_t uid = ATS(x).nextUnitId++;
     ATS(x).units[uid].id = uid;
+    if (desc) {
+        for (int i = 0; i < 5; ++i) ATS(x).units[uid].desc[i] = x.mem.read<uint32_t>(desc + i * 4);
+    }
+    if (ATS(x).graphs.count(graph)) ATS(x).graphs[graph].nodes.push_back(uid);
     if (outNode) x.mem.write<int32_t>(outNode, int32_t(uid));
     return 0;
 }
 int32_t aug_nodeInfo(Ctx& x, uint32_t, int32_t node, GuestPtr outDesc, GuestPtr outUnit) {
     const uint32_t uid = node > 0 ? uint32_t(node) : ATS(x).nextUnitId++;
     ATS(x).units[uid].id = uid;
-    if (outDesc) std::memset(x.mem.host(outDesc), 0, 20);
+    if (outDesc) {
+        for (int i = 0; i < 5; ++i) x.mem.write<uint32_t>(outDesc + i * 4, ATS(x).units[uid].desc[i]);
+    }
     if (outUnit) x.mem.write<uint32_t>(outUnit, uid);
     return 0;
 }

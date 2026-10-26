@@ -75,8 +75,12 @@ def main():
         out.append(f"{rg} hg_{name}(Ctx& x{gargs}) {{")
         out.append(f"    HostContext* hc = hgCurrent(x);")
         out.append(f"    if (!hc || !hc->fn.{name}) {{ hgMissing(x, hc, \"{name}\"); return{' ' + rg + '()' if rg != 'void' else ''}; }}")
+        if name.startswith("glUniform"):
+            out.append(f"    if (hc->currentProgram == 0) return{' ' + rg + '()' if rg != 'void' else ''};")
         if ret == "v":
             out.append(f"    hc->fn.{name}({call});")
+            if name.startswith("glUniform"):
+                out.append(f"    hc->fn.glGetError();")
             out.append(f"    if (hgDebug) hgAfter(x, hc, \"{name}\", [&] {{ return hgArgs({argnames}); }});")
         else:
             out.append(f"    auto r = hc->fn.{name}({call});")
