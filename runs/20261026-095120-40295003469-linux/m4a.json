@@ -1,0 +1,35 @@
+{
+  "cases": [
+    {
+      "name": "synthetic-1ch-22050.m4a",
+      "sha256": "13edb02b0df299a0a948e91432a4bce74ea185de3a26acb7ed7182da683f87ff",
+      "ok": true,
+      "sampleRate": 22050,
+      "channels": 1,
+      "frames": 4096,
+      "maxSampleDifference": 0
+    },
+    {
+      "name": "synthetic-2ch-44100.m4a",
+      "sha256": "7d78f55233545ffc296e07ea6e6976aec4e29f05d394c656c83b5056f39ef604",
+      "ok": true,
+      "sampleRate": 44100,
+      "channels": 2,
+      "frames": 7168,
+      "maxSampleDifference": 0
+    }
+  ],
+  "malformedRejected": 3,
+  "assetsChecked": 0,
+  "skipped": [
+    {
+      "name": "synthetic-1ch-22050.caf",
+      "reason": "[caf @ 0x55f41f6a50c0] muxing codec currently unsupported\n[out#0/caf @ 0x55f41f6a4500] Could not write header (incorrect codec parameters ?): Not yet implemented in FFmpeg, patches welcome\nError while filtering: Not yet implemented in FFmpeg, patches welcome\n[out#0/caf @ 0x55f41f6a4500] Nothing was "
+    },
+    {
+      "name": "synthetic-2ch-44100.caf",
+      "reason": "[caf @ 0x558b664e40c0] muxing codec currently unsupported\n[out#0/caf @ 0x558b664e3500] Could not write header (incorrect codec parameters ?): Not yet implemented in FFmpeg, patches welcome\nError while filtering: Not yet implemented in FFmpeg, patches welcome\n[out#0/caf @ 0x558b664e3500] Nothing was "
+    }
+  ],
+  "ok": true
+}
