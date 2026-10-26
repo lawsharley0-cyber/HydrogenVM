@@ -147,6 +147,19 @@ def build(source, output, build_dir, profile_saves=False):
         asm.write('.p2align 2\n.globl _guest_original_battle_ended\n.thumb_func\n'
                   '_guest_original_battle_ended:\n .byte '+','.join(str(x) for x in battle_prologue)+
                   '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0x149a5\n')
+        clock_segment=next(s for s in parsed['segments'] if s[1]<=0xd6d40<s[1]+s[4])
+        clock_at=clock_segment[3]+0xd6d40-clock_segment[1]
+        clock_instructions=original[clock_at:clock_at+10]
+        if clock_instructions!=bytes.fromhex('41f27a412046c0f23901'):
+            raise ValueError('Unexpected native load-home clock instructions')
+        # The first eight patched bytes overlap a four-byte MOVT. Relocate
+        # all ten PC-independent bytes, then resume at the untouched ADD r1,pc
+        # at its original address so its string reference remains correct.
+        asm.write('.p2align 2\n.globl _guest_home_clock_hook\n.thumb_func\n'
+                  '_guest_home_clock_hook:\n push {r0-r4,lr}\n mov r0,r4\n'
+                  ' bl _guest_home_loaded\n pop.w {r0-r4,lr}\n .byte '+
+                  ','.join(str(x) for x in clock_instructions)+
+                  '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0xd6d4b\n')
     run(['clang','-target','armv7-apple-ios6.0','-c',assembly,'-o',build_dir/'update.o'])
     linker = os.environ.get('HVM_LD64') or shutil.which('arm-apple-darwin11-ld')
     if not linker:
@@ -187,7 +200,7 @@ def build(source, output, build_dir, profile_saves=False):
                             (0x187130,'_guest_disconnect'),(0x92f08,'_guest_update'),
                             (0x9ae94,'_guest_set_npc_wins'),(0x9aea4,'_guest_set_npc_losses'),
                             (0x8203c,'_guest_reward_execute'),(0x94f1c,'_guest_settings_click'),
-                            (0x1499c,'_guest_battle_ended')]:
+                            (0x1499c,'_guest_battle_ended'),(0xd6d40,'_guest_home_clock_hook')]:
         segment = next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
         at = segment[3]+address-segment[1]
         target = mod['symbols'][symbol]
@@ -223,8 +236,9 @@ def build(source, output, build_dir, profile_saves=False):
                 hostClashBackendRequired=False,networkRequired=False,saveProfiling=profile_saves,
                 bundleIdentifier=info['CFBundleIdentifier'],assetsUnchanged=True,
                 trainingMissionsEncoded=7,
-                limitations=['experimental training prototype; full earned progression unqualified',
-                             'arena selection, closed-time accounting and remaining economy paths incomplete',
+                arenaLevelsEncoded=[1],arenaBotsPerLevel=13,
+                limitations=['experimental offline prototype; full earned progression unqualified',
+                             'later arenas, draw accounting and remaining economy paths incomplete',
                              'no device qualification','not a native modern-iOS app'])
     output.with_suffix('.manifest.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))

@@ -83,6 +83,10 @@ static void *decode_packet(int kind,int version,const u8 *bytes,u32 size) {
 }
 static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size) {
     void *message=decode_packet(kind,version,bytes,size);
+    if(kind==24101) {
+        delivered_home=(void*)FIELD(message,0x30);delivered_epoch=saved_epoch;home_clock_logic=0;
+        if(!delivered_home)fail("GuestOffline: home clock reply is missing its home");
+    }
     if(!CALL(0x188705,int,(void*,void*))((u8*)messaging+0x48,&message)) {
         dispose(message);fail("GuestOffline: native receive queue is full");
     }
@@ -116,6 +120,7 @@ void guest_connect(void *self,void *domain,void *port) {
         CALL(0x51971,void,(void*,int))(factory,0);initialized=1;
     }
     logged_in=0;battle_started=0;arena_battle=0;ending_battle=0;
+    delivered_home=0;home_clock_logic=0;
     // A disconnected name reply has no resource transaction to recover.
     // Reloaded native avatar state decides whether an initial request is valid.
     initial_name_pending=0;

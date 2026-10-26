@@ -44,6 +44,15 @@ class GuestCompileTests(unittest.TestCase):
             # dependency may creep in through timing/counter arithmetic.
             result=subprocess.run(command+['-DGUEST_PROFILE_SAVES=1'],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
+            if shutil.which('llvm-nm'):
+                # Compiling succeeds even when ARMv7 emits a compiler-runtime
+                # division helper. A freestanding IPA cannot resolve one.
+                result=subprocess.run(['llvm-nm','--undefined-only',str(directory/'guest.o')],
+                                      capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(set(result.stdout.split()),{
+                    '_guest_original_battle_ended','_guest_original_reward_execute',
+                    '_guest_original_settings_click'})
 
 
 if __name__=='__main__':unittest.main()

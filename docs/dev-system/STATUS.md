@@ -26,6 +26,17 @@ see [UI audit](../clash-royale/UI_AUDIT.md). The 5fbaa8d Apple workflow complete
 device/simulator builds and packaging, but still has four continue-on-error
 simulator console probes failing. A green workflow is not a device game pass.
 
+Guest v33 qualifies measured closed/paused home time, stamp corruption
+rejection and an actual paid Silver interruption/recovery. Gem cost remains
+15 once; native reward applies once. Repeated exact timer comparisons are
+155/99/144/224/59 seconds with no double-counting; nine guest tests pass.
+Actual QA player: Gold 119, gems 87, King 2/XP 8, ten cards, trophies 65,
+crowns 3/10, two Silver chests (one still unlocking), no journal. Long natural
+completion and battle-time accounting remain. Ordered next owner features:
+local clans, post-training opponent name/deck/playstyle variety, daily shop.
+8570b8a CI passes engine/TL/compat/PCM/ZIP; the separate Apple editor UI-test
+target fails to compile missing bridge/editor dependencies (UI_AUDIT details).
+
 Clean integrated 5fbaa8d includes main 5968d88. The indexed Linux 4 KB
 [gate report](reports/linux-x86_64/20261026T040954Z-5fbaa8d57a17.json) has
 summary.ok=true, unitFailed=0, pythonFailed=0, appsResolved=3, appsSkipped=1,

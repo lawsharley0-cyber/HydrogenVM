@@ -17,6 +17,41 @@ players. Qualify every ranking tab/close against the earned saved player.
 Shop opens but has no daily cards and displays a zero-second refresh timer;
 shop generation/purchases remain a separate unfinished economy feature.
 
+Next guest core task (Group C): bind a versioned, checksummed wall-clock stamp
+to the atomic native checkpoint and reward journal. Migrate unstamped CRG1
+without guessing historical elapsed time; use original relative-time APIs,
+subtract already-accounted native ticks, defer pending-reward time effects,
+and reject corrupt metadata without resetting saves. Qualify closed/repeated
+Silver/free timers and interrupted-journal recovery on preserved QA data.
+
+Owner's October 26 ordered extension (continue the current timer/recovery and
+control audit first):
+
+1. Local offline clans: the original Clans tab must allow creating a persistent
+   clan and interacting with it. No invented online players or remote service;
+   distinguish local simulation from actual multiplayer. Inspect the original
+   membership/creation/chat/donation schemas and native King-level gate before
+   defining which interactions the pinned client can support.
+2. Post-training opponent names: research plausible player-handle patterns and
+   randomize names for each arena match; retain all original training names.
+   Use authored synthetic handles, not harvested private player identities.
+3. Arena bots: use cards unlocked at the actual arena and vary decks/playstyle
+   across rounds. Research comparable projects and inspect the pinned original
+   native bot code; compare actual decision behavior rather than label-only
+   difficulty changes. Preserve reproducible seeds/evidence and native combat.
+4. Daily store: research this early 2.1306.1 client's original cards/items,
+   prices, rarity/count/rotation rules, then implement daily local refresh and
+   persistent purchases using actual native economy APIs. Modern store rules
+   are not this archived client's reference. Never invent successful IAPs.
+
+Record research, exact behavior/limits and tests in docs/clash-royale so another
+agent can continue. Original user audio/visual/stutter reports remain open.
+
+Observed during the v33 original profile audit: 65 trophies/three-crown-win
+stat/cards persist, but displayed Wins is 0 while NPC wins is 9 (seven training,
+two paid arena wins). Qualify native offline arena profile counters separately;
+never label a captured incorrect statistic a functional pass or invent results.
+
 The owner's explicit request resumes offline Clash development despite the
 master plan's earlier recommendation to park it. Group C owner:
 `codex/clash-offline-continuation`. Restore the pinned NPC sector, native VInt

@@ -11,8 +11,12 @@ to Arena 1. Main 5968d88 is integrated at 5fbaa8d; fulltest 256/256, TestLab
 Apple simulator warnings, hashes and exact remaining blockers. v31 adds actual
 Arena-1 victories: 65 trophies, three banked Silver chests, native entry fees
 and a 3/10 crown transfer retained across two clean launches. Later arenas,
-draw accounting, closed-time timers, unlocked controls and phone validation
-remain unfinished. Read the newest Arena-1 section before using older blockers.
+draw accounting, unlocked controls and phone validation remain unfinished.
+v33 now qualifies closed-time accounting and paid-reward interruption with
+atomic clock/journal persistence; long Silver completion remains open. Next
+owner order: local clans, post-training varied names, arena-appropriate varied
+bot decks/playstyles, daily original shop. Read the newest audit sections before
+using older blockers.
 
 October 25 UI/crash continuation: read [UI_AUDIT.md](clash-royale/UI_AUDIT.md)
 and the latest section in [GUEST_MOD_PROGRESS.md](clash-royale/GUEST_MOD_PROGRESS.md).

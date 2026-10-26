@@ -34,6 +34,7 @@ static u32 checksum(const u8 *bytes,u32 size) {
     for(u32 i=0;i<size;++i)value=(value^bytes[i])*16777619u;
     return value;
 }
+#include "clock.inc"
 static void write_save(void) {
 #ifdef GUEST_PROFILE_SAVES
     const u32 began=checkpoint_clock_us();
@@ -45,6 +46,10 @@ static void write_save(void) {
     if(!file)fail("GuestOffline: cannot create checkpoint");
     int valid=CALL(s_write,u32,(const void*,u32,u32,void*))(header,1,sizeof header,file)==sizeof header;
     valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(saved_home,1,saved_size,file)==saved_size;
+    u32 clock[4]={0x31545247u,saved_epoch,header[3],0}; // GRT1, 32-bit Unix seconds
+    if(!saved_epoch)fail("GuestOffline: checkpoint has no accounted clock");
+    clock[3]=checksum((const u8*)clock,12);
+    valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(clock,1,sizeof clock,file)==sizeof clock;
     if(pending_size) {
         u32 journal[5]={0x314a5247u,pending_size,(u32)pending_kind,(u32)pending_id,checksum(pending_reward,pending_size)};
         valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(journal,1,sizeof journal,file)==sizeof journal;
@@ -73,6 +78,7 @@ static void load_guest_home(void) {
     s_getenv=symbol("getenv");s_open=symbol("fopen");s_read=symbol("fread");
     s_write=symbol("fwrite");s_flush=symbol("fflush");s_fileno=symbol("fileno");
     s_sync=symbol("fsync");s_close=symbol("fclose");s_rename=symbol("rename");s_error=symbol("__error");
+    s_wall_clock=symbol("gettimeofday");
 #ifdef GUEST_PROFILE_SAVES
     s_profile_clock=symbol("gettimeofday");
 #endif
@@ -85,30 +91,50 @@ static void load_guest_home(void) {
         if(*CALL(s_error,int*,(void))()!=2)fail("GuestOffline: checkpoint cannot be read");
         saved_size=sizeof initial_home;avatar_offset=INITIAL_AVATAR_OFFSET;
         for(u32 i=0;i<saved_size;++i)saved_home[i]=initial_home[i];
+        saved_epoch=wall_epoch();
         write_save();
     } else {
-        u32 header[4];u8 tail;
+        u32 header[4];
         if(CALL(s_read,u32,(void*,u32,u32,void*))(header,1,sizeof header,file)!=sizeof header ||
            header[0]!=0x31475243u || header[1]>sizeof saved_home ||
            header[2]>header[1] || header[1]-header[2]<8)
             fail("GuestOffline: invalid checkpoint header; original file retained");
         saved_size=header[1];avatar_offset=header[2];
         int valid=CALL(s_read,u32,(void*,u32,u32,void*))(saved_home,1,saved_size,file)==saved_size;
-        u32 extra=CALL(s_read,u32,(void*,u32,u32,void*))(&tail,1,1,file);
-        if(extra) {
-            u32 journal[5];((u8*)journal)[0]=tail;
-            valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))((u8*)journal+1,1,sizeof journal-1,file)==sizeof journal-1;
-            if(!valid || journal[0]!=0x314a5247u || journal[1]<3 || journal[1]>sizeof pending_reward ||
+        int saw_clock=0,saw_journal=0;
+        for(;;) {
+            u32 tag,extra=CALL(s_read,u32,(void*,u32,u32,void*))(&tag,1,4,file);
+            if(!extra)break;
+            if(extra!=4)fail("GuestOffline: truncated checkpoint extension; original file retained");
+            if(tag==0x31545247u && !saw_clock) {
+                u32 clock[4]={tag,0,0,0};
+                if(CALL(s_read,u32,(void*,u32,u32,void*))(clock+1,1,12,file)!=12 || !clock[1] ||
+                   clock[2]!=header[3] || clock[3]!=checksum((const u8*)clock,12))
+                    fail("GuestOffline: invalid checkpoint clock; original file retained");
+                saved_epoch=clock[1];saw_clock=1;continue;
+            }
+            if(tag!=0x314a5247u || saw_journal)
+                fail("GuestOffline: unknown/duplicate checkpoint extension; original file retained");
+            u32 journal[5]={tag,0,0,0,0};
+            valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))(journal+1,1,16,file)==16;
+            if(!valid || journal[1]<3 || journal[1]>sizeof pending_reward ||
                journal[2]<1 || journal[2]>3 || (journal[2]>=2 && journal[3]!=0) || journal[3]>1000000)
                 fail("GuestOffline: invalid reward journal; original file retained");
             pending_size=journal[1];pending_kind=(int)journal[2];pending_id=(int)journal[3];
             valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))(pending_reward,1,pending_size,file)==pending_size;
             valid=valid && pending_reward[0]==0x95 && pending_reward[1]==3 && checksum(pending_reward,pending_size)==journal[4];
+            if(!valid)fail("GuestOffline: incomplete reward journal; original file retained");
+            saw_journal=1;
         }
-        valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))(&tail,1,1,file)==0;
         int closed=CALL(s_close,int,(void*))(file);
         if(!valid || closed!=0 || checksum(saved_home,saved_size)!=header[3])
             fail("GuestOffline: incomplete checkpoint; original file retained");
+        if(!saw_clock) {
+            // Old files have no durable wall-time evidence. Start accounting
+            // now; neither filesystem mtime nor historical time is guessed.
+            saved_epoch=wall_epoch();
+            CALL(API_puts,int,(const char*))("GuestOffline: legacy clock starts now; no historical time credited");
+        }
         CALL(API_puts,int,(const char*))("GuestOffline: loaded guest-owned native checkpoint");
     }
     save_initialized=1;
@@ -139,9 +165,13 @@ static void capture_current_home(void *ui,int force) {
     if(!logic)return;
     void *home=(void*)FIELD(logic,0x30),*avatar=(void*)FIELD(logic,0x34);
     if(!home || !avatar)return;
+    if(home_clock_logic!=logic || home!=delivered_home)return;
     if((int)FIELD(avatar,0x9c)<committed_wins)return;
     if(BYTE(home,0xb4)) {
-        if(!pending_size && requested_kind)prepare_reward(home,avatar);
+        if(!pending_size && requested_kind) {
+            account_home_clock(logic,home,0);
+            prepare_reward(home,avatar);
+        }
         return;
     }
     if(pending_size) {
@@ -154,7 +184,7 @@ static void capture_current_home(void *ui,int force) {
     }
     int tick=(int)FIELD(logic,0x38);
     if(!force && tick>=last_tick && (u32)tick-(u32)last_tick<20)return;
-    last_tick=tick;capture_native(home,avatar);
+    last_tick=tick;account_home_clock(logic,home,1);capture_native(home,avatar);
     committed_wins=(int)FIELD(avatar,0x9c);
 }
 void guest_snapshot(void *ui) {capture_current_home(ui,0);}

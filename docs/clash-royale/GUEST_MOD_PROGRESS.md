@@ -20,8 +20,12 @@ still required, as for every guest app.
 two actual Arena-1 wins, initial name, paid card upgrades/King level 2, native
 deck swaps, chest banking and interrupted native reward recovery are reproduced.
 The latest arena victory credits three native crowns; two relaunches retain
-3/10 without a duplicate. Later arenas, draw accounting, elapsed closed time,
-remaining economy/control qualification and device validation remain open.
+3/10 without a duplicate. v33 adds measured closed/paused home time and actual
+paid-reward interruption recovery with its atomic clock stamp. Later arenas,
+draw accounting, long timer completion, remaining economy/control qualification
+and device validation remain open. The owner next prioritizes local clans,
+post-training randomized opponent names, varied arena-appropriate bot decks and
+playstyles, and the original daily shop; see BACKLOG's ordered extension.
 
 ## Reproduction and packaging
 
@@ -65,6 +69,20 @@ ARM64 app or a signed package.
 - Optional journal: five little-endian words after the body: `0x314a5247`,
   command size, source kind, chest ID, FNV-1a command checksum; immutable native
   command bytes follow. Old files without the extension remain readable.
+- v33 adds a GRT1 clock extension before the optional journal: four
+  little-endian words `0x31545247`, accounted 32-bit Unix seconds, body FNV-1a,
+  FNV-1a of the first twelve clock bytes. Body, clock and journal replace in
+  one atomic checkpoint. Old unstamped saves start accounting on migration;
+  historical time is never inferred from filesystem mtime. Older guest builds
+  cannot read this new extension: update forward and retain the instance/save.
+- The pinned loadHomeState callback at 0xd6d40 binds clock accounting to the
+  actual newly delivered home after native fastForwardTime, before
+  loadingFinished. Its ten PC-independent instruction bytes are preserved;
+  the following PC-relative ADD runs at its original address. Native ticks
+  already represent active time, so only the unaccounted wall-time difference
+  goes through original home fastForward (0x125d7c). Pending journals defer that
+  step until their native grant completes. Elapsed credit is bounded to thirty
+  days and never negative; it does not change battle simulation time.
 - Original GameMode update prologue is relocated into an argument-preserving
   thunk; native home snapshots run before the unchanged original function.
   No host Engine observers are used.
@@ -367,7 +385,7 @@ for exact local paths and Apple limitations. Never deliver v28/v30 diagnostics.
 2. Finish the final-package audit and repeat critical relaunch/audio/visual checks.
    Eight-card battles, native Use swaps, earned King 2 stats and a real loss now
    have actual evidence; synthetic byte comparisons remain component tests.
-3. Audit the newly unlocked Arena-1 controls and actual name keyboard editing.
+3. Finish the newly unlocked Arena-1 controls and actual name keyboard editing.
    Qualify partial-loss/draw crown accounting, earned crown-chest collection
    and interrupted recovery; first arena wins/ELO/crowns now have evidence.
 4. Port arena/bot selection and all six locations, real elapsed timers and the
@@ -375,3 +393,11 @@ for exact local paths and Apple limitations. Never deliver v28/v30 diagnostics.
    CSV research, but runtime logic must stay in the guest IPA.
 5. Use an ordinary main device build to qualify login/gameplay/audio/visuals.
    Keep the original phone reports open until matching scenarios pass.
+
+October 26 owner priority after this current timer/recovery/control stage:
+implement persistent local clan creation/interactions, then post-training
+randomized authored player handles (training names unchanged), varied decks
+limited to each arena's unlocked cards and varied original bot playstyles,
+then original-version daily shop rotation. Research comparable bot projects
+and the pinned native AI; document differences. Do not substitute modern shop
+rules or invented online users. Long Silver completion and phone testing remain.

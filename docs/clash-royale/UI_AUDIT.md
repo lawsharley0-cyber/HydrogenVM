@@ -320,6 +320,74 @@ executable SHA256
 All assets and the stable guest/save identity remain unchanged. These edits
 touch the guest tools only; engine evidence remains the integrated 5fbaa8d gate.
 
+## Measured home clock and interrupted paid reward — v33
+
+The actual earned Arena-1 Silver ID 8 starts its original three-hour timer.
+v32's closed/relaunch check advances just 220 native ticks (11 seconds) while
+ignoring the closed interval. v33 migrates that unstamped CRG1 without guessing
+past time, adds checksummed GRT1 beside the immutable journal, and binds its
+clock at original loadHomeState 0xd6d40. Subtracting already-accounted native
+ticks prevents double counting. The original relative fastForward handles the
+measured remaining time; thirty-day cap, rollback-zero and overflow guards stay.
+
+`/var/tmp/hvm-clash-silver-clock-{migrate,return,return2}-v33`: clean launches,
+same earned resources/crowns/trophies/cards. The last two comparisons advance
+the Silver timer by exactly 155 and 99 seconds, matching durable epoch deltas
+with zero error. Separate checksum-flip, truncation and duplicate-clock fixtures
+all reject the bad metadata and retain their original file SHA; no reset.
+`/var/tmp/hvm-clash-clock-corrupt-v33` contains those negative-test reports.
+
+The first free-reward attempt completes normally because the external kill
+watcher exits during the CLI's temporary re-import path gap. It is not counted
+as interruption/recovery evidence. Original reward gives +27 Gold, +2 gems,
+Goblins (26000002) and other native cards: ten cards total, Gold 99/gems 102.
+Native free chest enters its original four-hour cooldown. No backup is restored.
+
+The corrected watcher targets only an exact owned process/report and validates
+body, clock and GRJ1 checksums before SIGKILL. Actual Training-Camp Silver ID 7
+is instant-opened while ID 8 keeps unlocking. Original command charges **15
+gems**, persisting 87, and the 46-byte source-1/chest-7 journal remains after
+the kill. `/var/tmp/hvm-clash-paid-clock-journal-v33/interruption.json` records
+the exact owned interruption. Recovery uses that retained file, never a backup:
+`/var/tmp/hvm-clash-paid-clock-recovery-v33` applies the original grant once,
+Gold 99→119 plus Giant/Bomber/Knight cards, removes ID 7, leaves gems 87 and
+clears the journal atomically. It defers time effects until the grant completes;
+Silver ID 8 and free timer both advance **144 seconds**, exactly their durable
+epoch delta (123 seconds were unaccounted paused/closed time).
+
+`/var/tmp/hvm-clash-paid-clock-return{1,2}-v33` each captures five states,
+profile/cards/home, no crash/load error. Resources/deck/ten cards, 65 trophies,
+three crowns and two remaining Silver chests retain without duplication. Their
+Silver-time deltas equal epoch deltas exactly: **224 seconds**, then **59**.
+Screenshots were reviewed. Profile still shows Wins 0 because native NPC wins
+are separate; offline arena profile bookkeeping is an open presentation/core
+gap, not proof the nine recorded NPC wins were lost. New audio captures have
+zero mixer/transport drops and peak 0.830139; phone fidelity/stutter remain open.
+
+Nine authored guest tests pass, including clock math/native tick boundaries,
+rollback/cap/overflow and actual ARMv7 normal/profiling compilation. An initial
+freestanding link correctly rejects an unwanted __udivsi3 helper; exact UMULL
+constant division removes the dependency, and the compile test now checks the
+undefined-symbol allowlist. No runtime or game assertions were suppressed.
+Private v33 IPA SHA256
+`7cdb79a2ab2ddf4607a09f6b237b7ec033c6b6502ceadeddf70b38f763135b42`,
+executable SHA256
+`75a30630988459351b04cd8eda07c0f9c46aec56517ec7ab43bcf1873ed019bb`.
+All assets/save identity unchanged. GRT1 is a forward save-format extension:
+older guest versions reject it; do not downgrade or delete the instance.
+Fresh v33 also starts the original tutorial for 25 seconds with exit 0/no
+crash, in `/var/tmp/hvm-clash-fresh-v33`; its isolated new save contains GRT1.
+Long natural Silver completion, battle-result time accounting and device
+validation remain open; short exact timer tests do not establish a three-hour
+completion. The owner's next priority after this stage is local clans, then
+post-training names/bot variety and original daily shop research/implementation.
+
+CI correction: 8570b8a's engine, Test Lab, compatibility, PCM and ZIP workflows
+pass. File editor Apple validation 40274420222 fails its synthetic harness
+build: missing HVMCrashJournal and BinaryEditorView dependencies. Product shell
+compilation in that workflow passes. This separate failure is not an all-green
+PR or device claim and must be fixed in its owning Apple test target.
+
 ## Stutter investigation (measurements)
 
 The phone report had Zombie Objects enabled. That diagnostic deliberately
