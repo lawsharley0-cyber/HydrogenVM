@@ -2073,8 +2073,8 @@ int runFullSubsystemTests() {
                 callGL("_glGetProgramiv", {pr, 0x8B82 /* GL_LINK_STATUS */, idsAddr + 36});
                 return proc.mem().read<uint32_t>(idsAddr + 36) != 0;
             };
-            check(maxVaryings == 8 && linksWith(maxVaryings) && !linksWith(maxVaryings + 1),
-                  "GL_MAX_VARYING_VECTORS (8) matches the linker: 8 vec4 varyings link, 9 do not");
+            check(maxVaryings == 16 && linksWith(maxVaryings) && !linksWith(maxVaryings + 1),
+                  "GL_MAX_VARYING_VECTORS (16) matches the linker: 16 vec4 varyings link, 17 do not");
         }
 
         // Struct leaves and array elements are real uniform locations. The count==1

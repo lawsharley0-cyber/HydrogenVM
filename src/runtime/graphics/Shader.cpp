@@ -468,6 +468,7 @@ struct Preprocessor {
                 shown += rest[n].text;
             }
             if (rest.size() == 1 && rest[0].text == "100") { started = true; return; }
+            if (rest.size() == 2 && rest[0].text == "300" && rest[1].text == "es") { started = true; return; }
             fail("unsupported version '" + shown + "'");
         }
         started = true;
@@ -2348,10 +2349,10 @@ struct Compiler {
             auto s = peek();
             if (s == "invariant") { if (q.invariant) fail("duplicate qualifier"); q.invariant = true; ++at; }
             else if (s == "const") { if (q.isConst) fail("duplicate qualifier"); q.isConst = true; ++at; }
-            else if (s == "attribute" || s == "uniform" || s == "varying") {
+            else if (s == "attribute" || s == "uniform" || s == "varying" || s == "in" || s == "out") {
                 if (q.storageSet) fail("duplicate qualifier");
                 q.storageSet = true;
-                q.storage = s == "attribute" ? Storage::Attribute : s == "uniform" ? Storage::Uniform : Storage::Varying;
+                q.storage = (s == "attribute" || (s == "in" && p.vertex)) ? Storage::Attribute : s == "uniform" ? Storage::Uniform : Storage::Varying;
                 ++at;
             } else if (precision(s)) { if (q.precisionSet) fail("duplicate qualifier"); q.precisionSet = true; ++at; }
             else break;
@@ -2407,7 +2408,7 @@ struct Compiler {
     bool isGlobalStart() const {
         auto s = peek();
         return s == "const" || s == "attribute" || s == "uniform" || s == "varying" || s == "invariant" || precision(s) ||
-               s == "struct" || typeName(s) || structs.count(s) > 0;
+               s == "struct" || typeName(s) || structs.count(s) > 0 || s == "in" || s == "out";
     }
     bool looksLikeFunction() const {
         size_t i = at;
@@ -2437,9 +2438,11 @@ struct Compiler {
         if (peek() == "void" && at + 1 < tokens.size() && tokens[at + 1] == ")") { ++at; need(")"); return; }
         do {
             Param param;
+            take("const");
             if (take("inout")) param.qual = 2;
             else if (take("out")) param.qual = 1;
             else if (take("in")) param.qual = 0;
+            take("const");
             if (precision(peek())) ++at;
             param.type = type();
             if (param.type.kind == Kind::Void) fail("void parameter");

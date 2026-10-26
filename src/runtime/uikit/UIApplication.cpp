@@ -673,6 +673,9 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_layoutDirection>("userInterfaceLayoutDirection", "i@:")
        .m<&app_supportedOrientations>("supportedInterfaceOrientationsForWindow:", "I@:@");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
+    
+    r.defineClass("UILocalNotification", "NSObject");
+
     p.mem().write<uint32_t>(p.defineDataBlock("_UIBackgroundTaskInvalid", 4), 0);
     p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalMinimum", 8), 0.0);
     p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalNever", 8), 1e9);
@@ -687,7 +690,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
                           "UIApplicationStatusBarOrientationUserInfoKey", "UIApplicationOpenSettingsURLString",
                           "UIDeviceOrientationDidChangeNotification", "UIDeviceBatteryLevelDidChangeNotification",
                           "UIDeviceBatteryStateDidChangeNotification", "UIDeviceProximityStateDidChangeNotification",
-                          "UIContentSizeCategoryDidChangeNotification", "UITrackingRunLoopMode"}) {
+                          "UIContentSizeCategoryDidChangeNotification", "UITrackingRunLoopMode", "UILocalNotificationDefaultSoundName"}) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         if (!p.mem().read<uint32_t>(cell)) p.mem().write<uint32_t>(cell, Foundation::constString(p, n));
     }

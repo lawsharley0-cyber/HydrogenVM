@@ -424,6 +424,20 @@ struct ArrayPointer {
     uint32_t buffer = 0;    // bound GL_ARRAY_BUFFER at the time of *Pointer call
 };
 
+struct VaoState {
+    uint32_t elementArrayBuffer = 0;
+    ArrayPointer vertexPtr;
+    ArrayPointer colorPtr;
+    ArrayPointer normalPtr;
+    ArrayPointer texCoordPtr[8];
+    ArrayPointer pointSizePtr;
+    ArrayPointer attribPtr[16];
+    
+    VaoState() {
+        for (int i = 0; i < 16; ++i) attribPtr[i] = ArrayPointer();
+    }
+};
+
 struct ContextData : ObjC::HostObject {
     uint32_t api = 2;
     ObjC::id sharegroup = 0;   // retained EAGLSharegroup
@@ -431,7 +445,6 @@ struct ContextData : ObjC::HostObject {
 
     // Bindings
     uint32_t arrayBuffer = 0;
-    uint32_t elementArrayBuffer = 0;
     uint32_t framebuffer = 0;        // draw framebuffer (GL_FRAMEBUFFER / GL_DRAW_FRAMEBUFFER_APPLE)
     uint32_t readFramebuffer = 0;    // GL_READ_FRAMEBUFFER_APPLE (multisample resolve source)
     uint32_t renderbuffer = 0;
@@ -440,6 +453,8 @@ struct ContextData : ObjC::HostObject {
     uint32_t boundTextures[8] = {};
     uint32_t currentProgram = 0;
     uint32_t boundVao = 0;
+    VaoState defaultVao;
+    std::unordered_map<uint32_t, VaoState> vaos;
 
     // Viewport & Scissor
     int viewport[4] = {0, 0, 320, 480};
@@ -485,14 +500,8 @@ struct ContextData : ObjC::HostObject {
     uint32_t texEnvMode[8] = {GL_MODULATE, GL_MODULATE, GL_MODULATE, GL_MODULATE, GL_MODULATE, GL_MODULATE, GL_MODULATE, GL_MODULATE};
 
     // GLES 1.1 Client Arrays
-    ArrayPointer vertexPtr;
-    ArrayPointer colorPtr;
-    ArrayPointer normalPtr;
-    ArrayPointer texCoordPtr[8];
-    ArrayPointer pointSizePtr;
 
     // GLES 2.0 Vertex Attributes (16 slots)
-    ArrayPointer attribPtr[16];
     Vec4 genericAttrib[16];
 
     // Default FBO (0) fallback renderbuffer
@@ -512,6 +521,10 @@ struct ContextData : ObjC::HostObject {
         return modelviewStack;
     }
 };
+
+inline VaoState& currentVao(ContextData* c) {
+    return c->boundVao ? c->vaos[c->boundVao] : c->defaultVao;
+}
 
 struct GLState {
     explicit GLState(Process&) {}
@@ -701,6 +714,12 @@ bool ctx_setCurrent(Ctx& x, id, SEL, id ctx) {
     if (HostGL::enabled(x.proc)) HostGL::contextMakeCurrent(x.proc, ctx);
     std::lock_guard<std::mutex> lk(st.mu);
     if (ctx) {
+        for (const auto& [t, c] : st.currentByThread) {
+            if (t != tid && c == ctx) {
+                x.proc.logf(LogLevel::Warning, "EAGLContext setCurrentContext: fails because ctx 0x%x is in use on thread %u", ctx, t);
+                return false;
+            }
+        }
         st.currentByThread[tid] = ctx;
         st.lastActiveContext = ctx;
     } else {
@@ -1003,11 +1022,11 @@ bool gl_isEnabled(Ctx& x, uint32_t cap) {
         case GL_ALPHA_TEST: return c->alphaTest;
         case GL_STENCIL_TEST: return c->stencilTest;
         case GL_TEXTURE_2D: return c->texture2DEnabled[c->activeTexture & 7];
-        case GL_VERTEX_ARRAY: return c->vertexPtr.enabled;
-        case GL_COLOR_ARRAY: return c->colorPtr.enabled;
-        case GL_NORMAL_ARRAY: return c->normalPtr.enabled;
-        case GL_TEXTURE_COORD_ARRAY: return c->texCoordPtr[c->clientActiveTexture & 7].enabled;
-        case GL_POINT_SIZE_ARRAY_OES: return c->pointSizePtr.enabled;
+        case GL_VERTEX_ARRAY: return currentVao(c).vertexPtr.enabled;
+        case GL_COLOR_ARRAY: return currentVao(c).colorPtr.enabled;
+        case GL_NORMAL_ARRAY: return currentVao(c).normalPtr.enabled;
+        case GL_TEXTURE_COORD_ARRAY: return currentVao(c).texCoordPtr[c->clientActiveTexture & 7].enabled;
+        case GL_POINT_SIZE_ARRAY_OES: return currentVao(c).pointSizePtr.enabled;
         default: return false;
     }
 }
@@ -1129,7 +1148,7 @@ void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
         case GL_MAX_TEXTURE_UNITS: case GL_MAX_TEXTURE_IMAGE_UNITS: case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS: wr(8); break;
         case GL_MAX_VERTEX_ATTRIBS: wr(16); break;
         case GL_MAX_VERTEX_UNIFORM_VECTORS: wr(256); break;
-        case GL_MAX_VARYING_VECTORS: wr(8); break;
+        case GL_MAX_VARYING_VECTORS: wr(16); break;
         case GL_MAX_FRAGMENT_UNIFORM_VECTORS: wr(64); break;
         case GL_SUBPIXEL_BITS: wr(4); break;
         case GL_RED_BITS: case GL_GREEN_BITS: case GL_BLUE_BITS: case GL_ALPHA_BITS: wr(8); break;
@@ -1141,7 +1160,7 @@ void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
         case 0x8CAA: wr(c ? int32_t(c->readFramebuffer) : 0); break;   // GL_READ_FRAMEBUFFER_BINDING_APPLE
         case GL_RENDERBUFFER_BINDING: wr(c ? int32_t(c->renderbuffer) : 0); break;
         case GL_ARRAY_BUFFER_BINDING: wr(c ? int32_t(c->arrayBuffer) : 0); break;
-        case GL_ELEMENT_ARRAY_BUFFER_BINDING: wr(c ? int32_t(c->elementArrayBuffer) : 0); break;
+        case GL_ELEMENT_ARRAY_BUFFER_BINDING: wr(c ? int32_t(currentVao(c).elementArrayBuffer) : 0); break;
         case GL_CURRENT_PROGRAM: wr(c ? int32_t(c->currentProgram) : 0); break;
         case GL_ACTIVE_TEXTURE: wr(c ? int32_t(GL_TEXTURE0 + c->activeTexture) : int32_t(GL_TEXTURE0)); break;
         case GL_UNPACK_ALIGNMENT: wr(c ? c->unpackAlignment : 4); break;
@@ -1462,7 +1481,7 @@ void gl_deleteBuffers(Ctx& x, int32_t n, GuestPtr ids) {
         if (id) {
             sg->buffers.erase(id);
             if (c->arrayBuffer == id) c->arrayBuffer = 0;
-            if (c->elementArrayBuffer == id) c->elementArrayBuffer = 0;
+            if (currentVao(c).elementArrayBuffer == id) currentVao(c).elementArrayBuffer = 0;
         }
     }
 }
@@ -1471,7 +1490,9 @@ void gl_bindBuffer(Ctx& x, uint32_t target, uint32_t buffer) {
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg) return;
     if (target == GL_ARRAY_BUFFER) c->arrayBuffer = buffer;
-    else if (target == GL_ELEMENT_ARRAY_BUFFER) c->elementArrayBuffer = buffer;
+    else if (target == GL_ELEMENT_ARRAY_BUFFER) {
+        currentVao(c).elementArrayBuffer = buffer;
+    }
     if (buffer != 0) sg->buffers[buffer].id = buffer;
 }
 bool gl_isBuffer(Ctx& x, uint32_t buffer) {
@@ -1483,7 +1504,7 @@ void gl_bufferData(Ctx& x, uint32_t target, int32_t size, GuestPtr data, uint32_
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || size < 0) return;
-    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? currentVao(c).elementArrayBuffer : c->arrayBuffer;
     if (!bid) return;
     BufferObject& bo = sg->buffers[bid];
     bo.usage = usage;
@@ -1494,7 +1515,7 @@ void gl_bufferSubData(Ctx& x, uint32_t target, int32_t offset, int32_t size, Gue
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || offset < 0 || size <= 0 || !data) return;
-    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? currentVao(c).elementArrayBuffer : c->arrayBuffer;
     if (!bid) return;
     BufferObject& bo = sg->buffers[bid];
     if (size_t(offset) + size_t(size) > bo.data.size()) bo.data.resize(size_t(offset) + size_t(size));
@@ -1504,7 +1525,7 @@ void gl_getBufferParameteriv(Ctx& x, uint32_t target, uint32_t pname, GuestPtr p
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || !params) return;
-    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? currentVao(c).elementArrayBuffer : c->arrayBuffer;
     if (!bid || !sg->buffers.count(bid)) { x.mem.write<int32_t>(params, 0); return; }
     const BufferObject& bo = sg->buffers[bid];
     if (pname == GL_BUFFER_SIZE) x.mem.write<int32_t>(params, int32_t(bo.data.size()));
@@ -1514,7 +1535,7 @@ GuestPtr gl_mapBufferOES(Ctx& x, uint32_t target, uint32_t) {
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg) return 0;
-    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? currentVao(c).elementArrayBuffer : c->arrayBuffer;
     if (!bid || !sg->buffers.count(bid)) return 0;
     BufferObject& bo = sg->buffers[bid];
     if (bo.data.empty()) bo.data.assign(4096, 0);
@@ -1528,7 +1549,7 @@ GuestPtr gl_mapBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t leng
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || offset < 0 || length < 0) return 0;
-    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? currentVao(c).elementArrayBuffer : c->arrayBuffer;
     if (!bid || !sg->buffers.count(bid)) return 0;
     BufferObject& bo = sg->buffers[bid];
     const size_t needed = size_t(offset) + size_t(length > 0 ? length : 4);
@@ -1547,7 +1568,7 @@ void gl_flushMappedBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t 
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || offset < 0 || length <= 0) return;
-    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? currentVao(c).elementArrayBuffer : c->arrayBuffer;
     if (!bid || !sg->buffers.count(bid)) return;
     BufferObject& bo = sg->buffers[bid];
     if (bo.mappedGuestAddr && size_t(offset) + size_t(length) <= bo.data.size())
@@ -1557,7 +1578,7 @@ bool gl_unmapBufferOES(Ctx& x, uint32_t target) {
     ContextData* c = currentCtx(x);
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg) return false;
-    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? c->elementArrayBuffer : c->arrayBuffer;
+    const uint32_t bid = (target == GL_ELEMENT_ARRAY_BUFFER) ? currentVao(c).elementArrayBuffer : c->arrayBuffer;
     if (!bid || !sg->buffers.count(bid)) return false;
     BufferObject& bo = sg->buffers[bid];
     if (bo.mappedGuestAddr) {
@@ -1930,38 +1951,38 @@ void gl_normal3x(Ctx& x, int32_t nx, int32_t ny, int32_t nz) { gl_normal3f(x, nx
 void gl_enableClientState(Ctx& x, uint32_t array) {
     auto* c = currentCtx(x);
     if (!c) return;
-    if (array == GL_VERTEX_ARRAY) c->vertexPtr.enabled = true;
-    else if (array == GL_COLOR_ARRAY) c->colorPtr.enabled = true;
-    else if (array == GL_NORMAL_ARRAY) c->normalPtr.enabled = true;
-    else if (array == GL_TEXTURE_COORD_ARRAY) c->texCoordPtr[c->clientActiveTexture & 7].enabled = true;
-    else if (array == GL_POINT_SIZE_ARRAY_OES) c->pointSizePtr.enabled = true;
+    if (array == GL_VERTEX_ARRAY) currentVao(c).vertexPtr.enabled = true;
+    else if (array == GL_COLOR_ARRAY) currentVao(c).colorPtr.enabled = true;
+    else if (array == GL_NORMAL_ARRAY) currentVao(c).normalPtr.enabled = true;
+    else if (array == GL_TEXTURE_COORD_ARRAY) currentVao(c).texCoordPtr[c->clientActiveTexture & 7].enabled = true;
+    else if (array == GL_POINT_SIZE_ARRAY_OES) currentVao(c).pointSizePtr.enabled = true;
 }
 void gl_disableClientState(Ctx& x, uint32_t array) {
     auto* c = currentCtx(x);
     if (!c) return;
-    if (array == GL_VERTEX_ARRAY) c->vertexPtr.enabled = false;
-    else if (array == GL_COLOR_ARRAY) c->colorPtr.enabled = false;
-    else if (array == GL_NORMAL_ARRAY) c->normalPtr.enabled = false;
-    else if (array == GL_TEXTURE_COORD_ARRAY) c->texCoordPtr[c->clientActiveTexture & 7].enabled = false;
-    else if (array == GL_POINT_SIZE_ARRAY_OES) c->pointSizePtr.enabled = false;
+    if (array == GL_VERTEX_ARRAY) currentVao(c).vertexPtr.enabled = false;
+    else if (array == GL_COLOR_ARRAY) currentVao(c).colorPtr.enabled = false;
+    else if (array == GL_NORMAL_ARRAY) currentVao(c).normalPtr.enabled = false;
+    else if (array == GL_TEXTURE_COORD_ARRAY) currentVao(c).texCoordPtr[c->clientActiveTexture & 7].enabled = false;
+    else if (array == GL_POINT_SIZE_ARRAY_OES) currentVao(c).pointSizePtr.enabled = false;
 }
 void gl_vertexPointer(Ctx& x, int32_t size, uint32_t type, int32_t stride, GuestPtr ptr) {
-    if (auto* c = currentCtx(x)) { c->vertexPtr = {c->vertexPtr.enabled, size, type, false, stride, ptr, c->arrayBuffer}; }
+    if (auto* c = currentCtx(x)) { currentVao(c).vertexPtr = {currentVao(c).vertexPtr.enabled, size, type, false, stride, ptr, c->arrayBuffer}; }
 }
 void gl_colorPointer(Ctx& x, int32_t size, uint32_t type, int32_t stride, GuestPtr ptr) {
-    if (auto* c = currentCtx(x)) { c->colorPtr = {c->colorPtr.enabled, size, type, type != GL_FLOAT && type != GL_FIXED, stride, ptr, c->arrayBuffer}; }
+    if (auto* c = currentCtx(x)) { currentVao(c).colorPtr = {currentVao(c).colorPtr.enabled, size, type, type != GL_FLOAT && type != GL_FIXED, stride, ptr, c->arrayBuffer}; }
 }
 void gl_texCoordPointer(Ctx& x, int32_t size, uint32_t type, int32_t stride, GuestPtr ptr) {
     if (auto* c = currentCtx(x)) {
-        auto& tp = c->texCoordPtr[c->clientActiveTexture & 7];
+        auto& tp = currentVao(c).texCoordPtr[c->clientActiveTexture & 7];
         tp = {tp.enabled, size, type, false, stride, ptr, c->arrayBuffer};
     }
 }
 void gl_normalPointer(Ctx& x, uint32_t type, int32_t stride, GuestPtr ptr) {
-    if (auto* c = currentCtx(x)) { c->normalPtr = {c->normalPtr.enabled, 3, type, true, stride, ptr, c->arrayBuffer}; }
+    if (auto* c = currentCtx(x)) { currentVao(c).normalPtr = {currentVao(c).normalPtr.enabled, 3, type, true, stride, ptr, c->arrayBuffer}; }
 }
 void gl_pointSizePointerOES(Ctx& x, uint32_t type, int32_t stride, GuestPtr ptr) {
-    if (auto* c = currentCtx(x)) { c->pointSizePtr = {c->pointSizePtr.enabled, 1, type, false, stride, ptr, c->arrayBuffer}; }
+    if (auto* c = currentCtx(x)) { currentVao(c).pointSizePtr = {currentVao(c).pointSizePtr.enabled, 1, type, false, stride, ptr, c->arrayBuffer}; }
 }
 
 // =================================== GLES 2.0 Shaders, Programs & Uniforms ===
@@ -2179,7 +2200,7 @@ void gl_linkProgram(Ctx& x, uint32_t prog) {
         auto* v = p.vertex.find(f.name);
         if (!v || v->storage != Shader::Storage::Varying || v->type != f.type || v->count != f.count) { fail("varying mismatch: " + f.name); return; }
         int width = f.type.width * f.count;
-        if (p.varyingWidth + width > 32) { fail("varying limit exceeded (32 floats)"); return; }
+        if (p.varyingWidth + width > 64) { fail("varying limit exceeded (64 floats)"); return; }
         p.varyings.push_back({v->slot, f.slot, width, p.varyingWidth});
         p.varyingWidth += width;
     }
@@ -2270,11 +2291,11 @@ void gl_getActiveUniform(Ctx& x, uint32_t prog, uint32_t index, int32_t bufSize,
     writeActiveVar(x, v, bufSize, length, size, type, name);
 }
 
-void gl_enableVertexAttribArray(Ctx& x, uint32_t idx) { if (auto* c = currentCtx(x); c && idx < 16) c->attribPtr[idx].enabled = true; }
-void gl_disableVertexAttribArray(Ctx& x, uint32_t idx) { if (auto* c = currentCtx(x); c && idx < 16) c->attribPtr[idx].enabled = false; }
+void gl_enableVertexAttribArray(Ctx& x, uint32_t idx) { if (auto* c = currentCtx(x); c && idx < 16) currentVao(c).attribPtr[idx].enabled = true; }
+void gl_disableVertexAttribArray(Ctx& x, uint32_t idx) { if (auto* c = currentCtx(x); c && idx < 16) currentVao(c).attribPtr[idx].enabled = false; }
 void gl_vertexAttribPointer(Ctx& x, uint32_t idx, int32_t size, uint32_t type, uint32_t normalized, int32_t stride, GuestPtr ptr) {
     if (auto* c = currentCtx(x); c && idx < 16) {
-        c->attribPtr[idx] = {c->attribPtr[idx].enabled, size, type, (normalized & 0xFF) != 0, stride, ptr, c->arrayBuffer};
+        currentVao(c).attribPtr[idx] = {currentVao(c).attribPtr[idx].enabled, size, type, (normalized & 0xFF) != 0, stride, ptr, c->arrayBuffer};
     }
 }
 void gl_vertexAttrib1f(Ctx& x, uint32_t idx, float v0) { if (auto* c = currentCtx(x); c && idx < 16) c->genericAttrib[idx] = {v0, 0, 0, 1}; }
@@ -2291,7 +2312,7 @@ bool vertexAttribState(Ctx& x, uint32_t idx, uint32_t pname, float out[4], int& 
     ContextData* c = currentCtx(x);
     if (!c) return false;
     if (idx >= 16) { c->lastError = GL_INVALID_VALUE; return false; }
-    const ArrayPointer& a = c->attribPtr[idx];
+    const ArrayPointer& a = currentVao(c).attribPtr[idx];
     n = 1;
     switch (pname) {
     case 0x8622: out[0] = a.enabled; break;          // GL_VERTEX_ATTRIB_ARRAY_ENABLED
@@ -2336,7 +2357,7 @@ void gl_getVertexAttribPointerv(Ctx& x, uint32_t idx, uint32_t pname, GuestPtr o
     ContextData* c = currentCtx(x);
     if (!c || !out) return;
     if (idx >= 16 || pname != 0x8645) { c->lastError = idx >= 16 ? GL_INVALID_VALUE : GL_INVALID_ENUM; return; }   // GL_VERTEX_ATTRIB_ARRAY_POINTER
-    x.mem.write<uint32_t>(out, c->attribPtr[idx].ptr);
+    x.mem.write<uint32_t>(out, currentVao(c).attribPtr[idx].ptr);
 }
 
 UniformValue* progUniform(Ctx& x, int32_t loc) {
@@ -2466,7 +2487,7 @@ struct ShadedVertex {
     float screenX = 0, screenY = 0, screenZ = 0;
     Vec4 color{1, 1, 1, 1};
     float u = 0, v = 0;
-    std::array<float, 32> varyings{};
+    std::array<float, 64> varyings{};
     float shaderPointSize = 0;
 };
 
@@ -2633,14 +2654,14 @@ std::optional<Vec4> executeFragment(ContextData& c, SharegroupData& sg, const Sh
 ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx, DrawBudget* budget) {
     ShadedVertex sv;
     if (c.api == 1 || c.currentProgram == 0) {
-        const Vec4 pos = fetchAttribute(x, sg, c.vertexPtr, idx, {0, 0, 0, 1});
-        sv.color = fetchAttribute(x, sg, c.colorPtr, idx, c.currentColor);
-        const Vec4 tc = fetchAttribute(x, sg, c.texCoordPtr[0], idx, c.currentTexCoord[0]);
+        const Vec4 pos = fetchAttribute(x, sg, currentVao(&c).vertexPtr, idx, {0, 0, 0, 1});
+        sv.color = fetchAttribute(x, sg, currentVao(&c).colorPtr, idx, c.currentColor);
+        const Vec4 tc = fetchAttribute(x, sg, currentVao(&c).texCoordPtr[0], idx, c.currentTexCoord[0]);
         const Vec4 tcXformed = c.textureStack.back().apply(tc);
         sv.u = tcXformed.x;
         sv.v = tcXformed.y;
-        if (c.pointSizePtr.enabled) {
-            const Vec4 ps = fetchAttribute(x, sg, c.pointSizePtr, idx, {c.pointSize, 0, 0, 0});
+        if (currentVao(&c).pointSizePtr.enabled) {
+            const Vec4 ps = fetchAttribute(x, sg, currentVao(&c).pointSizePtr, idx, {c.pointSize, 0, 0, 0});
             sv.shaderPointSize = ps.x;
         }
         const Mat4 mvp = c.projectionStack.back() * c.modelviewStack.back();
@@ -2651,7 +2672,7 @@ ShadedVertex shadeVertex(Ctx& x, ContextData& c, SharegroupData& sg, int idx, Dr
         p.vertex.initialize(values);
         loadShaderUniforms(p, p.vertex, p.vertexUniforms, values);
         for (auto& binding : p.vertexInputs) {
-            const auto attr = fetchAttribute(x, sg, c.attribPtr[binding.location], idx, c.genericAttrib[binding.location]);
+            const auto attr = fetchAttribute(x, sg, currentVao(&c).attribPtr[binding.location], idx, c.genericAttrib[binding.location]);
             for (int i = 0; i < binding.width; ++i) values[binding.slot + i] = attr[i];
         }
         fillDepthRange(c, p.vertex, values);
@@ -3239,8 +3260,8 @@ void gl_drawElements(Ctx& x, uint32_t mode, int32_t count, uint32_t type, GuestP
     if (!c || !sg || count <= 0) return;
     const int elemBytes = (type == GL_UNSIGNED_BYTE) ? 1 : (type == GL_UNSIGNED_SHORT) ? 2 : 4;
     const uint8_t* src = nullptr;
-    if (c->elementArrayBuffer != 0) {
-        auto bit = sg->buffers.find(c->elementArrayBuffer);
+    if (currentVao(c).elementArrayBuffer != 0) {
+        auto bit = sg->buffers.find(currentVao(c).elementArrayBuffer);
         if (bit == sg->buffers.end() || size_t(indicesPtr) + size_t(count * elemBytes) > bit->second.data.size()) return;
         src = bit->second.data.data() + size_t(indicesPtr);
     } else {
