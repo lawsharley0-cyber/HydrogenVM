@@ -161,6 +161,26 @@
         "resolveErrors": 0,
         "clusterCount": 2
       }
+    },
+    {
+      "sha": "cbde4922f25a11fd0698dcccf318e1081c9430e9",
+      "short": "cbde4922f25a",
+      "date": "2026-10-26T08:20:00+00:00",
+      "schemaVersion": 1,
+      "platform": "linux-x86_64",
+      "path": "linux-x86_64/20261026T082000Z-cbde4922f25a.json",
+      "summary": {
+        "ok": true,
+        "unitFailed": 0,
+        "pythonFailed": 0,
+        "fuzzStatus": "not-run",
+        "appsResolved": 3,
+        "appsSkipped": 1,
+        "appsCrashed": 0,
+        "appsLaunchFailed": 0,
+        "resolveErrors": 0,
+        "clusterCount": 2
+      }
     }
   ]
 }

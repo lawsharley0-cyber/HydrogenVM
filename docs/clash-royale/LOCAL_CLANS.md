@@ -121,3 +121,16 @@ Later research queue: inspect the original NPC decision code and compare
 several primary bot/simulator projects before selecting style/deck variation;
 verify actual behavior, not just bot labels. Current modern shop documentation
 includes items absent from this 42-card build and must not define its rotation.
+
+cbde492 completes the shared keyboard route. Exact clean Linux build passes
+fulltest 260/260, TestLab 18/18 (TL-R fails on unchanged 5fbaa8d), focused
+heap/entry/native state/service suites, nine guest tests and the full report
+(build 1, CPU 15, iOS 6, bench 5; no skips/failures). Full compatibility has
+zero baseline/previous regressions; its optional original Clash fixture skips,
+so modified-client interaction is qualified separately. Indexed report:
+`docs/dev-system/reports/linux-x86_64/20261026T082000Z-cbde4922f25a.json`.
+The actual original clan-name field accepts UTF-8 text through queued host
+input and enables its Create button in `/var/tmp/hvm-clash-clans-name-input-v34`.
+This is a synthetic King-3 component fixture, not earned clan progression.
+Creation has not been purchased/ported. Apple compilation/keyboard UI tests and
+real iPhone input remain pending; Linux output is not that evidence.

@@ -169,3 +169,16 @@ Local WSL and CI harness self-tests pass: **64 tests**, including eight doctor c
 ### Final Linux source revision
 
 [Final compatibility run](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/39881742977) passed on `d3085f3` (clean PR merge ef383fe348d27251d6d7921ac2eae52c9a10ac17). Exact uploaded report is [20261023T011004Z-ef383fe348d2.json](reports/linux-x86_64/20261023T011004Z-ef383fe348d2.json). All 16 unit/asm/differential configurations pass, including fulltest's **191 passed, 0 failed**. Required Python suites pass; three bundled apps run without recorded crashes and optional Clash remains skipped. Baseline and previous-indexed diffs have zero regressions.
+
+cbde492 completes the shared keyboard route. Exact clean Linux build passes
+fulltest 260/260, TestLab 18/18 (TL-R fails on unchanged 5fbaa8d), focused
+heap/entry/native state/service suites, nine guest tests and the full report
+(build 1, CPU 15, iOS 6, bench 5; no skips/failures). Full compatibility has
+zero baseline/previous regressions; its optional original Clash fixture skips,
+so modified-client interaction is qualified separately. Indexed report:
+`docs/dev-system/reports/linux-x86_64/20261026T082000Z-cbde4922f25a.json`.
+The actual original clan-name field accepts UTF-8 text through queued host
+input and enables its Create button in `/var/tmp/hvm-clash-clans-name-input-v34`.
+This is a synthetic King-3 component fixture, not earned clan progression.
+Creation has not been purchased/ported. Apple compilation/keyboard UI tests and
+real iPhone input remain pending; Linux output is not that evidence.

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "kind": "hvm-compat-report-pointer",
-  "path": "linux-x86_64/20261026T040954Z-5fbaa8d57a17.json",
-  "sha": "5fbaa8d57a176ba61021f957ece673e55d71fd17",
-  "date": "2026-10-26T04:09:54+00:00",
+  "path": "linux-x86_64/20261026T082000Z-cbde4922f25a.json",
+  "sha": "cbde4922f25a11fd0698dcccf318e1081c9430e9",
+  "date": "2026-10-26T08:20:00+00:00",
   "platform": "linux-x86_64",
   "reportSchemaVersion": 1,
   "summary": {
