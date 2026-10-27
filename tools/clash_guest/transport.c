@@ -43,6 +43,7 @@ static void friendly_tick(void);
 static void friendly_battle_completed(void*);
 static void sync_donor(void);
 static void validate_donor(void);
+static void validate_donor_inventory(void);
 static void encode_donor_member(void*);
 static void donation_tick(void);
 #ifdef GUEST_PROBE_DONATION_ACTORS
@@ -168,6 +169,7 @@ int guest_send(void *self,void *message) {
         donation_actor_probe();
 #endif
         validate_donor();
+        validate_donor_inventory();
         validate_donation_record();
         // Every extension's wire/semantic validation must precede either
         // friendly-ID migration or seeding a donor into a legacy clan save.

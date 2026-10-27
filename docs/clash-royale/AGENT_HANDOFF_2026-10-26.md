@@ -1,5 +1,17 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+**Newest after3c07405:** read [DONOR_INVENTORY.md](DONOR_INVENTORY.md) before
+reciprocal donation work. GNI1 conserves native NPC inventory and removes a
+fulfilled-request stock-zero freeze that would abort after replenishment.
+Required-child flags prevent whole-record loss/reseeding; legacy adoption is
+strict and never refills.26 tests, fourteen unchanged-file negatives and
+joined/retired/rare repeat-return migrations pass. Private original211 supply
+reproduces the prior abort and survives in the default guest; it is a component
+fixture, not a player donation. The new file records interrupted-transfer
+checks and exact candidate hashes. Next remains native524 namespace3 NPC
+requests and14310 player Donate, with atomic received-ledger updates. Original
+524 has been proven on a detached NPC without bypassing tutorial/cooldown rules.
+
 **Newest after127ad31:** [CLAN_CONTROLS.md](CLAN_CONTROLS.md) supersedes the
 role/kick blocker below. Original promotion/demotion, one-leader handoff and
 native526 Kick work with atomic recovery and durable retired NPCs. GDN1-v1 is

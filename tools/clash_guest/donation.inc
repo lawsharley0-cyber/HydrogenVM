@@ -17,17 +17,16 @@ static void *donation_find_card(void *home,int global_id) {
     }
     return 0;
 }
+#include "donor_inventory.inc"
 static void validate_donation_record(void) {
     if(!card_request_size)return;
     static u8 checked[2048];struct SectorWriter w={checked,0,sizeof checked};
     struct CardRequestInfo request=card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,card_request_stamp);
     if(!request.donors)return;
     if(!donor_size)fail("GuestOffline: fulfilled request has no persistent donor");
-    void *packet=decode_packet(24101,0,donor_home,donor_size);
-    void *stock=donation_find_card((void*)FIELD(packet,0x30),request.type*1000000+request.index);
-    if(!stock || FIELD(stock,0xc)!=0 || CALL(0x9b861,int,(void*))((void*)FIELD(packet,0x34))<1)
+    struct DonorInventoryRow *row=donor_inventory_row((u32)(request.type*1000000+request.index));
+    if(!row->sent)
         fail("GuestOffline: fulfilled request differs from finite donor inventory/history");
-    dispose(packet);
 }
 static void donation_tick(void) {
     static u32 checked_sequence,checked_epoch;
@@ -90,6 +89,7 @@ static void donation_tick(void) {
     if(result || (int)FIELD(received,0xc)!=before_received+1 ||
        CALL(0x9ab55,int,(void*))(avatar)!=human_gold || CALL(0x9abc5,int,(void*))(avatar)!=human_xp)
         fail("GuestOffline: native receiver inventory/wallet delta mismatch");
+    donor_inventory_sent((u32)(request.type*1000000+request.index),(u32)before_stock);
     u32 stream[16],donor_id[2]={3,1};void *cards[1]={data};
     u32 list[3]={(u32)cards,1,1},container[2]={(u32)list,(u32)donor_id};
     CALL(0x192a71,void,(void*,u32))(stream,256);CALL(0xa944d,void,(void*,void*))(container,stream);

@@ -36,7 +36,8 @@ static void validate_donor(void) {
     dispose(packet);
 }
 static void sync_donor(void) {
-    if(!clan_status) {donor_size=0;donor_offset=0;donor_clan=0;donor_epoch=0;donor_present=0;donor_role=0;return;}
+    if(!clan_status) {donor_size=0;donor_offset=0;donor_clan=0;donor_epoch=0;donor_present=0;donor_role=0;
+        donor_inventory_count=0;donor_inventory_body_hash=0;donor_inventory_loaded=0;return;}
     if(clan_status!=2)return;
     if(donor_size && !donor_present)return; // Durable kick, not an invitation to reseed/rejoin.
     void *request=decode_packet(14301,0,clan_request,clan_request_size);
@@ -78,6 +79,7 @@ static void sync_donor(void) {
         dispose(packet);
     }
     dispose(request);
+    validate_donor_inventory();
 }
 static void encode_donor_member(void *stream) {
     void *packet=decode_packet(24101,0,donor_home,donor_size),*avatar=(void*)FIELD(packet,0x34);

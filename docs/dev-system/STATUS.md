@@ -16,6 +16,17 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Latest scoped Clash continuation — October 26, 2026
 
+Post-3c07405 inventory preparation: native donation history no longer freezes a
+spent card at stock0 forever. GNI1 binds conserved starter inventory to both
+actors; strict legacy adoption and required-child detection prevent silent
+refills.26 guest tests and fourteen byte-identical bad-file rejections pass;
+joined/retired/rare states return twice without economy changes. A private
+native211 replenishment reproduces the prior login abort and returns twice in
+the corrected default guest. See [DONOR_INVENTORY.md](../clash-royale/DONOR_INVENTORY.md)
+for crash-transfer evidence, exact hashes and fixture limitations. No shared
+runtime changes or new iPhone/audio-quality/performance qualification.
+Reciprocal NPC-request/player-Donate UI remains incomplete.
+
 Post-127ad31 roles/removal: actual original Promote/Demote/leadership/Kick now
 persist both actors with exactly one leader and a durable retired-donor state.
 Native526 kick intents validate the whole home turn before mutation. GDN1-v1

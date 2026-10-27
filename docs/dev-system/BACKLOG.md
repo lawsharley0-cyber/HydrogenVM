@@ -2,6 +2,20 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+Post-3c07405 reciprocal donations (Group C): create the actual local NPC's
+request with original524 and native cooldown/eligibility, preserve it beside
+human requests/chat/friendly history with a separate stream namespace, then
+qualify native Donate click14310 and actual203/211 inventory/reward changes.
+Keep both actor snapshots and request/delivery proof atomic; no per-login
+stock refills, duplicate grants or erased failing saves. Retired NPCs must not
+request/receive. Research pinned original code before choosing response schemas.
+
+Inventory prerequisite is implemented in DONOR_INVENTORY.md: conserved six-card
+GNI1 provenance, strict legacy adoption, required-child detection and native
+receive/relaunch regression. Original524 NPC cooldown/eligibility is proven in
+a detached diagnostic only. Durable namespace3 NPC requests and actual14310
+player Donate handling, with received-counter updates, remain to implement.
+
 Post-127ad31 clan controls (Group C): qualify native Promote/Demote/leadership
 handoff and Kick on the actual Local Donor profile. Preserve native rank/rights,
 one leader, both actor snapshots and prior donation proof in one atomic file.

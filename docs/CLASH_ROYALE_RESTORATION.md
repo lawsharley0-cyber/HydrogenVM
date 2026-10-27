@@ -6,6 +6,15 @@ architecture, current source/state, exact verification process and future work.
 
 ## Current architecture — October 26, 2026
 
+Post-3c07405: [NPC inventory provenance](clash-royale/DONOR_INVENTORY.md)
+removes the historical stock-zero freeze that would reject a legitimately
+replenished donor at login. GNI1 conserves all six starter materials, binds both
+native actors and retains sent history; legacy adoption never refills stock.
+26 guest tests, joined/retired/rare migrations and damaged-file retention pass.
+The native receive/relaunch component reproduces the old abort and preserves
+replenished stock in the new guest. Reciprocal NPC-request/player-Donate UI
+remains next; this is not a full Clans or new device qualification.
+
 Newest: [clan controls](clash-royale/CLAN_CONTROLS.md) qualify actual native
 Promote/Demote/leadership and Kick with atomic role/membership recovery, saved
 removal, GDN1-v2 migration and a required-donor flag that rejects whole-child
