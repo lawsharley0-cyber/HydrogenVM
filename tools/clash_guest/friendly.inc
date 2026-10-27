@@ -122,6 +122,7 @@ static u32 prepare_friendly_sector_packet(void) {
     return compressed+5;
 }
 static void deliver_friendly_battle(void *self) {
+    opponent_enabled=0;
     if(friendly_state!=2 || battle_started)fail("GuestOffline: invalid friendly battle delivery");
     u32 size=prepare_friendly_sector_packet();
     // Accepted state and both escrow debits are durable before sector delivery.

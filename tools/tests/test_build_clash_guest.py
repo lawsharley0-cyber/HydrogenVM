@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from build_clash_guest import macho, build
+from build_clash_guest import macho, build, thumb_branch
 
 
 def image(binding=False):
@@ -33,6 +33,15 @@ def image(binding=False):
 
 
 class GuestBuilderTests(unittest.TestCase):
+    def test_four_byte_thumb_getter_branch(self):
+        # Independent LLVM assembler B.W vectors: +4092 and -4100 offsets.
+        self.assertEqual(thumb_branch(0x1000,0x2001),bytes.fromhex('00f0febf'))
+        self.assertEqual(thumb_branch(0x2000,0x1001),bytes.fromhex('fef7febf'))
+        self.assertEqual(thumb_branch(0x1000,0x2001,link=True),bytes.fromhex('00f0feff'))
+        self.assertEqual(thumb_branch(0x2000,0x1001,link=True),bytes.fromhex('fef7feff'))
+        for source,target in [(0x1001,0x2001),(0x1000,0x2000),(0,0x1000005)]:
+            with self.assertRaises(ValueError):thumb_branch(source,target)
+
     def test_indirect_stub_and_thumb_symbol(self):
         parsed=macho(image())
         self.assertEqual(parsed['stubs'],{'_puts':0x800200})

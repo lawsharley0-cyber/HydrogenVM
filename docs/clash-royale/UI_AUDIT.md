@@ -1,5 +1,13 @@
 # Offline guest UI audit — October 25, 2026
 
+October 27 after `b638b88`: actual Arena 1 HUD/result both show the authored
+selected handle. Consecutive paid matches change handle/deck/native reserve
+style across process restart and retain real defeat/entry accounting. A fresh
+sandbox still shows Trainer Earl; the existing local clan conversation returns.
+Read [ARENA_OPPONENTS.md](ARENA_OPPONENTS.md) for 33 tests, private oracle and
+save guards, exact candidate and scope. Captured mixed audio is nonzero; no
+new phone, visual-fidelity, dropout-free audio or performance pass is claimed.
+
 October27 afterd213fdf: persistent labelled offline NPC message → View Profile
 → actual No Clan/Invite → original success toast → roster2/50; rejoin retains
 native inventory, wallets, cooldowns and expected join-achievement progress.

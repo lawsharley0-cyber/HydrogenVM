@@ -6,6 +6,15 @@ architecture, current source/state, exact verification process and future work.
 
 ## Current architecture — October 27, 2026
 
+Newest after `b638b88`: [Arena opponents](clash-royale/ARENA_OPPONENTS.md)
+adds 64 authored post-training handles, six source-validated Arena 1 decks,
+18 native sectors and three bounded native reserve profiles. Real consecutive
+paid matches change name/deck/style across relaunch, with correct battle/result
+labels and original accounting. Trainer Earl and retained clan return pass;
+33 focused tests, 25 private sector oracle cases and two unchanged-file GBO1
+rejections pass. Shared runtime/assets are unchanged. Next: daily shop, later
+arenas/results and the full UI/device/visual/audio/performance queue.
+
 Newest afterd213fdf: [clan community](clash-royale/CLAN_COMMUNITY.md) adds a
 reachable native NPC profile, actual Invite/rejoin on its retained actor, and
 weekly roster/header points. Native invitation/two returns, original donation

@@ -66,16 +66,18 @@ static void fail(const char *why) {
 #include "support.inc"
 static void reply(void*,int,int,const u8*,u32);
 static u8 sector_packet[70000];
-static u32 prepare_sector_packet(const struct GuestSector *template) {
+static u32 prepare_sector_packet_named(const struct GuestSector *template,const char *name,u32 seed) {
     static u8 sector[65536];
-    u32 size=assemble_sector_template(sector,sizeof sector,template);
+    u32 size=assemble_sector_custom(sector,sizeof sector,template,name,seed);
     sector_packet[0]=1;for(int i=0;i<4;++i)sector_packet[1+i]=(u8)(size>>(i*8));
     u32 compressed=sizeof sector_packet-5;
     if(CALL(symbol("compress2"),int,(void*,u32*,const void*,u32,int))(sector_packet+5,&compressed,sector,size,6)!=0)
         fail("GuestOffline: native sector compression failed");
     return compressed+5;
 }
+static u32 prepare_sector_packet(const struct GuestSector *template) {return prepare_sector_packet_named(template,0,0);}
 static void send_training_sector(void *self,int mission) {
+    opponent_enabled=0;
     if(mission<0 || mission>=7)fail("GuestOffline: unsupported training sector");
     u32 size=prepare_sector_packet(&npc_sectors[mission]);
     reply(self,21903,1,sector_packet,size);
@@ -121,6 +123,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "donation.inc"
 #include "npc_request.inc"
 #include "community.inc"
+#include "opponent.inc"
 #include "match.inc"
 #include "friendly.inc"
 static void refresh_saved_arena(void) {
@@ -148,6 +151,7 @@ void guest_connect(void *self,void *domain,void *port) {
         CALL(0x51971,void,(void*,int))(factory,0);initialized=1;
     }
     logged_in=0;battle_started=0;arena_battle=0;ending_battle=0;clan_stream_ready=0;
+    opponent_enabled=0;
     delivered_home=0;home_clock_logic=0;
     // A disconnected name reply has no resource transaction to recover.
     // Reloaded native avatar state decides whether an initial request is valid.
@@ -288,7 +292,7 @@ int guest_send(void *self,void *message) {
         reply(self,24113,0,profile,extent+1);
     } else if(kind==14101 && logged_in) {
         if(friendly_state==2 && battle_started)abandon_friendly();
-        battle_started=0;arena_battle=0;reply(self,24101,0,saved_home,saved_size);
+        battle_started=0;arena_battle=0;opponent_enabled=0;reply(self,24101,0,saved_home,saved_size);
     } else if(kind==14104 && logged_in && !battle_started) {
         const u8 *data=(const u8*)FIELD(message,8+0x1c);
         int size=CALL(0x198d19,int,(void*))(message);

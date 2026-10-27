@@ -1,5 +1,16 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+**October 27 after `b638b88`:** [ARENA_OPPONENTS.md](ARENA_OPPONENTS.md) is
+the newest handoff supplement. 64 authored handles, six CSV-validated Arena 1
+decks/18 sectors, three native reserve styles and original player mana rates
+now vary paid opponents. Native battle/result UI uses the same actual avatar
+name; training and clan identities retain original behavior. GBO1 checkpoints
+variety with the native entry debit. 33 tests, private sector oracle, actual
+consecutive native battles/relaunch, original Trainer Earl, clan return and
+unchanged-file corrupt-save guards pass. Read exact scope/hashes/paths there.
+Shared alpha engine is unchanged; owner visual/audio/stutter issues remain.
+Next: daily shop, later arenas/results, then full UI/device/fidelity audits.
+
 **October27 afterd213fdf:** [CLAN_COMMUNITY.md](CLAN_COMMUNITY.md) adds actual
 native Invite/rejoin with retained stock/cooldowns, a reachable offline NPC
 profile post and weekly roster/header donation points.29 tests, actual two

@@ -2,6 +2,16 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+After `b638b88` (Group C): authored post-training names, source-validated varied
+Arena 1 decks and bounded native AI spending profiles now have actual battle/
+result/return evidence and persisted nonrepetition. 33 focused tests, private
+25-sector oracle, original trainer/clan return and two unchanged-file GBO1
+guards pass; read [ARENA_OPPONENTS.md](../clash-royale/ARENA_OPPONENTS.md).
+Next complete interaction: original daily shop selection/rollover and actual
+purchase/relaunch, then later arena-specific progression/results and full
+UI/device/visual/audio/performance audits. Autonomous NPC supply remains an
+optional extension; no fabricated stock, battle wins or historical scores.
+
 Post-d213fdf invitation/weekly work (Group C): expose a clearly local NPC profile
 through a persistent native chat message, original Invite14322/ack24322 and
 original209/create=false rejoin on the retained actor. Preserve kick/donation

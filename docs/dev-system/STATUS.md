@@ -16,6 +16,17 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Latest scoped Clash continuation — October 27, 2026
 
+Post-`b638b88`: actual paid Arena 1 opponents now have 64 authored handles,
+six legal decks/18 native sectors and native reserve profiles 0/2/4 with original
+player mana regeneration. Battle/result labels agree, original Trainer Earl
+and clan return pass, and consecutive matches retain changed selections and
+native debit/defeat progress across relaunch. 33 guest tests, private 25-sector
+oracle and two unchanged-file malformed GBO1 guards pass. See
+[ARENA_OPPONENTS.md](../clash-royale/ARENA_OPPONENTS.md). No shared runtime or
+asset edits; earlier host qualification remains applicable within its scope.
+Next: original daily shop, later arenas/results and full owner UI/device/visual/
+audio/performance queue. No fresh iPhone or audio-quality/performance verdict.
+
 Post-d213fdf: actual native Invite/rejoin now retains the removed NPC, wallets,
 cards and original cooldowns, with exactly one native join-achievement update.
 New per-clan profile message makes the NPC reachable through original chat UI.

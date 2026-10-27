@@ -34,7 +34,7 @@ static Bytes handBytes(int count) {
     for(int v:{0,-1,0,0,0,5,0,0})clashVint(out,v);
     return out;
 }
-static void sectorTemplate(const std::string& name,const ClashFixtures& f,const ClashProfile& p,const Bytes& avatar) {
+static void sectorTemplate(const std::string& name,const ClashFixtures& f,const ClashProfile& p,const Bytes& avatar,bool opponent=false) {
     const auto sector=f.sector(p),cards=cardBytes(f.playerDeck),hand=handBytes(int(f.playerDeck.size()));
     const size_t avatarAt=unique(sector,avatar),handAt=unique(sector,hand);
     // The NPC card's two final booleans, player-deck-present bit, and eight
@@ -85,8 +85,38 @@ static void sectorTemplate(const std::string& name,const ClashFixtures& f,const 
     }
     std::puts("};");
     std::printf("#define %s_LOW_BITS %uu\n",name.c_str(),sector[deckAt]&7);
+    size_t nameOffset=0,nameSize=0;
+    if(opponent) {
+        Bytes pattern;clashString(pattern,f.trainerName);const auto nameAt=unique(sector,pattern);
+        if(nameAt<deckEnd || nameAt+pattern.size()>avatarAt || sector.size()<8 ||
+           !std::equal(sector.begin(),sector.begin()+4,Bytes{0,0,11,0}.begin()))
+            throw std::runtime_error("Unsupported NPC name/seed layout");
+        nameOffset=nameAt-deckEnd;nameSize=pattern.size();
+    }
+    std::printf("#define %s_NAME_OFFSET %zuu\n#define %s_NAME_SIZE %zuu\n",name.c_str(),nameOffset,name.c_str(),nameSize);
 }
+#ifdef GUEST_BOT_POLICY_GENERATED
+static ClashFixtures opponentFixture(const char *bundle,int variant) {
+    if(variant<0 || variant>=3*GUEST_BOT_DECK_COUNT)throw std::runtime_error("Invalid arena opponent variant");
+    ClashFixtures bot(bundle,18000007+variant/GUEST_BOT_DECK_COUNT,1);
+    if(bot.npcExpLevel!=2)throw std::runtime_error("Unexpected early-arena native tower level");
+    bot.npcDeck.clear();int deck=variant%GUEST_BOT_DECK_COUNT;
+    for(int i=0;i<8;++i)bot.npcDeck.push_back({guest_bot_ids[deck][i],guest_bot_levels[deck][i],0,0,0});
+    bot.trainerName="Guest Opponent";bot.npcMana=5;return bot;
+}
+#endif
 int main(int argc,char** argv) {
+#ifdef GUEST_BOT_POLICY_GENERATED
+    if(argc==7) {
+        std::ifstream input(argv[2],std::ios::binary);uint32_t h[4]{};
+        if(!input.read(reinterpret_cast<char*>(h),sizeof h) || h[0]!=0x31475243 || !h[1] || h[1]>65536 || h[2]>=h[1]-1)return 6;
+        Bytes body(h[1]);if(!input.read(reinterpret_cast<char*>(body.data()),body.size()))return 6;
+        ClashProfile p;p.nativeHome=Bytes(body.begin(),body.begin()+h[2]);p.nativeAvatar=Bytes(body.begin()+h[2],body.end()-1);
+        auto bot=opponentFixture(argv[1],std::stoi(argv[3]));bot.seed=std::stoi(argv[4]);bot.trainerName=argv[5];
+        auto bytes=bot.sector(p);std::ofstream output(argv[6],std::ios::binary);
+        return output.write(reinterpret_cast<const char*>(bytes.data()),bytes.size())?0:6;
+    }
+#endif
     if(argc==5) {
         // Independent C++ sector oracle for a private guest checkpoint. This
         // mode emits no fixture/player data to stdout or the repository.
@@ -102,6 +132,9 @@ int main(int argc,char** argv) {
         return output.write(reinterpret_cast<const char*>(expected.data()),expected.size())?0:6;
     }
     if(argc!=2)return 2;
+#ifndef GUEST_BOT_POLICY_GENERATED
+    throw std::runtime_error("Generate validated opponent policy before exporting game data");
+#endif
     ClashProfile p;p.created=int(std::time(nullptr));p.token="guest-offline-development-identity";
     ClashFixtures f(argv[1]);const auto home=f.home(p);emit("initial_home",home);
     const std::string name="Offline Player";
@@ -119,18 +152,31 @@ int main(int argc,char** argv) {
     std::puts("#define GUEST_MAX_TOWER_LEVEL 12\nstruct GuestTowerPatch {unsigned part,offset,width;int values[12];};");
     for(int i=0;i<7;++i)sectorTemplate("npc_"+std::to_string(i),ClashFixtures(argv[1],18000000+i),p,avatar);
     std::vector<int> arenaScores;
-    for(int i=7;i<20;++i) {
-        ClashFixtures bot(argv[1],18000000+i,1);
-        sectorTemplate("arena1_npc_"+std::to_string(i),bot,p,avatar);
+#ifdef GUEST_BOT_POLICY_GENERATED
+    for(int i=0;i<3*GUEST_BOT_DECK_COUNT;++i) {
+        auto bot=opponentFixture(argv[1],i);
+        sectorTemplate("arena1_bot_"+std::to_string(i),bot,p,avatar,true);
         arenaScores.push_back(bot.npcTrophies);
     }
-    std::puts("struct GuestSector {const unsigned char *parts[4];unsigned sizes[4];const struct GuestTowerPatch *patches;unsigned patchCount,lowBits;};");
+    std::printf("#define GUEST_ARENA_PROFILE_COUNT %d\n",3*GUEST_BOT_DECK_COUNT);
+    std::printf("static const int arena_mana_rates[3]={%d,%d,%d};\n",guest_bot_mana_rates[0],guest_bot_mana_rates[1],guest_bot_mana_rates[2]);
+#endif
+    std::puts("struct GuestSector {const unsigned char *parts[4];unsigned sizes[4];const struct GuestTowerPatch *patches;unsigned patchCount,lowBits,nameOffset,nameSize;};");
     std::puts("static const struct GuestSector npc_sectors[]={");
-    for(int i=0;i<7;++i)std::printf("{{npc_%d_a,npc_%d_b,npc_%d_c,npc_%d_d},{sizeof npc_%d_a,sizeof npc_%d_b,sizeof npc_%d_c,sizeof npc_%d_d},npc_%d_patches,sizeof npc_%d_patches/sizeof *npc_%d_patches,npc_%d_LOW_BITS},\n",i,i,i,i,i,i,i,i,i,i,i,i);
+    for(int i=0;i<7;++i)std::printf("{{npc_%d_a,npc_%d_b,npc_%d_c,npc_%d_d},{sizeof npc_%d_a,sizeof npc_%d_b,sizeof npc_%d_c,sizeof npc_%d_d},npc_%d_patches,sizeof npc_%d_patches/sizeof *npc_%d_patches,npc_%d_LOW_BITS,0,0},\n",i,i,i,i,i,i,i,i,i,i,i,i);
     std::puts("};");
     std::puts("static const struct GuestSector arena1_sectors[]={");
-    for(int i=7;i<20;++i)std::printf("{{arena1_npc_%d_a,arena1_npc_%d_b,arena1_npc_%d_c,arena1_npc_%d_d},{sizeof arena1_npc_%d_a,sizeof arena1_npc_%d_b,sizeof arena1_npc_%d_c,sizeof arena1_npc_%d_d},arena1_npc_%d_patches,sizeof arena1_npc_%d_patches/sizeof *arena1_npc_%d_patches,arena1_npc_%d_LOW_BITS},\n",i,i,i,i,i,i,i,i,i,i,i,i);
+#ifdef GUEST_BOT_POLICY_GENERATED
+    for(int i=0;i<3*GUEST_BOT_DECK_COUNT;++i)std::printf("{{arena1_bot_%d_a,arena1_bot_%d_b,arena1_bot_%d_c,arena1_bot_%d_d},{sizeof arena1_bot_%d_a,sizeof arena1_bot_%d_b,sizeof arena1_bot_%d_c,sizeof arena1_bot_%d_d},arena1_bot_%d_patches,sizeof arena1_bot_%d_patches/sizeof *arena1_bot_%d_patches,arena1_bot_%d_LOW_BITS,arena1_bot_%d_NAME_OFFSET,arena1_bot_%d_NAME_SIZE},\n",i,i,i,i,i,i,i,i,i,i,i,i,i,i);
+#endif
     std::puts("};\nstatic const int arena1_npc_trophies[]={");
     for(int score:arenaScores)std::printf("%d,",score);
     std::puts("};");
+#ifdef GUEST_BOT_POLICY_GENERATED
+    std::puts("static const unsigned arena1_deck_ids[]={");
+    for(int i=0;i<3*GUEST_BOT_DECK_COUNT;++i)std::printf("%d,",i%GUEST_BOT_DECK_COUNT);
+    std::puts("};\nstatic const int arena1_missions[]={");
+    for(int i=0;i<3*GUEST_BOT_DECK_COUNT;++i)std::printf("%d,",18000007+i/GUEST_BOT_DECK_COUNT);
+    std::puts("};");
+#endif
 }

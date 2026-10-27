@@ -17,6 +17,7 @@ import subprocess
 import zipfile
 import copy
 from package_clash_offline import SOURCE_SHA256, EXECUTABLE_SHA256
+from clash_bot_policy import load_policy, export_header
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 0x800000
@@ -74,6 +75,15 @@ def macho(data):
 def run(command, **kwargs):
     subprocess.run([str(v) for v in command], check=True, **kwargs)
 
+def thumb_branch(source, target, link=False):
+    """Four-byte Thumb B.W/BL; preserves adjacent instructions."""
+    if source&1 or not target&1:raise ValueError('Expected Thumb branch addresses')
+    offset=(target&~1)-(source+4)
+    if offset&1 or not -(1<<24)<=offset<(1<<24):raise ValueError('Thumb branch out of range')
+    value=offset&0x1ffffff;s=(value>>24)&1
+    j1=1^((value>>23)&1)^s;j2=1^((value>>22)&1)^s
+    return struct.pack('<HH',0xf000|(s<<10)|((value>>12)&1023),
+                       (0xd000 if link else 0x9000)|(j1<<13)|(j2<<11)|((value>>1)&2047))
 
 def build(source, output, build_dir, profile_saves=False, probe_donation_actors=False):
     source, output, build_dir = Path(source), Path(output), Path(build_dir)
@@ -99,7 +109,10 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
     if max(vm+size for _, vm, size, *_ in parsed['segments']) > BASE:
         raise ValueError('Guest payload address overlaps original image')
     generator = build_dir/'fixture-export'
+    bot_policy=load_policy(build_dir/'source'/app_root)
+    policy_header=build_dir/'opponent-policy.h';policy_header.write_text(export_header(bot_policy))
     run(['clang++', '-std=c++20', '-O2', '-I'+str(ROOT/'src'),
+         '-include',policy_header,
          ROOT/'tools/clash_guest/fixture_export.cpp', ROOT/'src/runtime/offline/ClashState.cpp',
          '-lz', '-o', generator])
     with (build_dir/'generated.h').open('w') as header:
@@ -221,19 +234,42 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
     flags = struct.unpack_from('<I', binary,24)[0]
     struct.pack_into('<I', binary,24,flags & ~0x200000)
     patches=[]
+    for address,expected in [(0x100bfc,'44f28e01c0f23601'),(0x100c10,'44f27e01c0f23601'),
+                             (0x100c24,'44f26e01c0f23601'),(0x100c38,'006d704780b56f46')]:
+        segment=next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
+        at=segment[3]+address-segment[1]
+        if original[at:at+8]!=bytes.fromhex(expected):raise ValueError('Unexpected native AI getter')
     for address, symbol in [(0x187484,'_guest_connect'),(0x1872d0,'_guest_send'),
                             (0x187130,'_guest_disconnect'),(0x92f08,'_guest_update'),
                             (0x9ae94,'_guest_set_npc_wins'),(0x9aea4,'_guest_set_npc_losses'),
                             (0x8203c,'_guest_reward_execute'),(0x94f1c,'_guest_settings_click'),
                             (0x1499c,'_guest_battle_ended'),(0xd6d40,'_guest_home_clock_hook'),
                             (0x37144,'_guest_mail_execute'),(0x20654,'_guest_request_execute'),
-                            (0x62ef8,'_guest_challenge_execute')]:
+                            (0x62ef8,'_guest_challenge_execute'),
+                            (0x100bfc,'_guest_npc_mana'),(0x100c10,'_guest_npc_mana_end'),
+                            (0x100c24,'_guest_npc_mana_overtime')]:
         segment = next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
         at = segment[3]+address-segment[1]
         target = mod['symbols'][symbol]
         if address%4: raise ValueError('Branch literal requires aligned patch address')
         binary[at:at+8] = bytes.fromhex('dff800f0')+struct.pack('<I',target)
         patches.append(dict(address=hex(address),function=symbol,target=hex(target)))
+    for address,symbol,expected in [(0x100c38,'_guest_npc_reserve','006d7047'),
+                                    (0x99e48,'_guest_avatar_set_name','2030f4f0')]:
+        segment=next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
+        at=segment[3]+address-segment[1];target=mod['symbols'][symbol]
+        if original[at:at+4]!=bytes.fromhex(expected):raise ValueError('Unexpected native short getter/setter')
+        binary[at:at+4]=thumb_branch(address,target)
+        patches.append(dict(address=hex(address),function=symbol,target=hex(target),width=4))
+    address=0xc867c;segment=next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
+    at=segment[3]+address-segment[1];target=mod['symbols']['_guest_npc_label']
+    if original[at:at+4]!=thumb_branch(address,0x511a9,link=True):raise ValueError('Unexpected native NPC label call')
+    binary[at:at+4]=thumb_branch(address,target,link=True)
+    patches.append(dict(address=hex(address),function='_guest_npc_label',target=hex(target),width=4,link=True))
+    for address,width in [(0x100c3c,4),(0x99e44,4),(0x99e4c,4),(0xc8680,4)]:
+        segment=next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4])
+        at=segment[3]+address-segment[1]
+        if binary[at:at+width]!=original[at:at+width]:raise ValueError('Adjacent native code changed')
     # This ARM import stub is executable code; the original lazy-binding data
     # remains untouched. LDR pc,[pc,#-4] interworks to the Thumb guest shim.
     trig_stub=parsed['stubs']['___sincosf_stret']
@@ -264,7 +300,8 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
                 donationActorProbe=probe_donation_actors,
                 bundleIdentifier=info['CFBundleIdentifier'],assetsUnchanged=True,
                 trainingMissionsEncoded=7,
-                arenaLevelsEncoded=[1],arenaBotsPerLevel=13,
+                arenaLevelsEncoded=[1],arenaBotsPerLevel=18,
+                opponentDecks=[d['name'] for d in bot_policy['decks']],
                 limitations=['experimental offline prototype; full earned progression unqualified',
                              'later arenas, draw accounting and remaining economy paths incomplete',
                              'no device qualification','not a native modern-iOS app'])

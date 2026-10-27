@@ -2,6 +2,14 @@
 
 ## Current agent handoff — October 26, 2026
 
+October 27 continuation after `b638b88`: read
+[Arena opponents](clash-royale/ARENA_OPPONENTS.md) first for the latest native
+battle name fix, six arena-legal decks, fair mana/three spending profiles,
+GBO1 save format, exact private testing and remaining work. 33 guest tests and
+actual paid battle/relaunch checks pass; no new device/performance/audio-quality
+verdict. Daily shop and later arenas are next. Older source references below
+are historical; the current working branch is `codex/clash-offline-continuation`.
+
 Read [the complete October 26 handoff](clash-royale/AGENT_HANDOFF_2026-10-26.md)
 first. It records the guest-owned standalone goal, alpha emulator architecture,
 exact branch/pins/private state, all qualified progression/clan/mail/request work,

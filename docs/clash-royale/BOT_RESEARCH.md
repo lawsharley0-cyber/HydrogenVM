@@ -1,7 +1,10 @@
 # Opponent and simulation references — October 26, 2026
 
-This is research for the owner's stage after local clans, not an implemented
-policy or a claim all arenas work. The standalone guest must retain the pinned
+October 27 implementation: [ARENA_OPPONENTS.md](ARENA_OPPONENTS.md) records the
+first bounded Arena 1 policy, actual consecutive native fights, 33 tests and
+exact limitations. Broad balance/defensive-response/placement evaluation and
+later arenas remain open. The research below does not claim all arenas work.
+The standalone guest must retain the pinned
 2.1306.1 combat, original training names, arena card unlocks and real outcomes.
 No runtime Python service, Android VM, Java runtime or desktop trainer may
 become a requirement of the shipped ARMv7 guest.
@@ -35,9 +38,11 @@ not published Supercell source code; no such public source is verified here.
   rejects 524. Its type getter 0x205fc returns 0x20c (524); 528 belongs to
   LogicBuyChestCommand at 0x5ab74. This corrects the initial research mapping.
 
-Current Arena 1 selection chooses the nearest trophy template among thirteen
-bundled non-training NPCs. It does not yet deliver the requested deck/style
-variation. Changing a name or seed alone must not be reported as a new style.
+Before this continuation, Arena 1 chose the nearest of thirteen NPC templates.
+The current first scope uses six legal decks across three early King-2 anchors,
+authored handles and native reserve values 0/2/4. It has actual deployments and
+defeats on each profile; it has not completed the broader controlled metrics
+below. Changing a name or seed alone must not be reported as a new style.
 
 ## Primary project comparison
 

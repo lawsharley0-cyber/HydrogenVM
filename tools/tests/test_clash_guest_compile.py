@@ -26,9 +26,9 @@ class GuestCompileTests(unittest.TestCase):
             header+='\n#define INITIAL_AVATAR_OFFSET 0u\n'
             header+='static const unsigned char initial_home[16]={0},initial_login[16]={0};\n'
             header+='#define GUEST_MAX_TOWER_LEVEL 12\nstruct GuestTowerPatch {unsigned part,offset,width;int values[12];};\n'
-            header+='struct GuestSector {const unsigned char *parts[4];unsigned sizes[4];const struct GuestTowerPatch *patches;unsigned patchCount,lowBits;};\n'
+            header+='struct GuestSector {const unsigned char *parts[4];unsigned sizes[4];const struct GuestTowerPatch *patches;unsigned patchCount,lowBits,nameOffset,nameSize;};\n'
             header+='static const struct GuestSector npc_sectors[7]={0};\n'
-            header+='static const struct GuestSector arena1_sectors[13]={0};\nstatic const int arena1_npc_trophies[13]={0};\n'
+            header+='#define GUEST_ARENA_PROFILE_COUNT 18\nstatic const struct GuestSector arena1_sectors[18]={0};\nstatic const int arena1_npc_trophies[18]={0},arena1_missions[18]={0},arena_mana_rates[3]={28000,14000,14000};\nstatic const unsigned arena1_deck_ids[18]={0};\n'
             (directory/'generated.h').write_text(header)
             command=['clang','-target','armv7-apple-ios6.0','-mthumb','-Oz','-ffreestanding',
                      '-fno-builtin','-fno-stack-protector','-fno-pic','-fno-unwind-tables',

@@ -74,7 +74,7 @@ static void sector_part(struct SectorWriter *w,const struct GuestSector *s,int p
         if(patch.size!=p->width)fail("GuestOffline: tower patch width mismatch");
     }
 }
-static u32 assemble_sector_template(u8 *bytes,u32 capacity,const struct GuestSector *s) {
+static u32 assemble_sector_custom(u8 *bytes,u32 capacity,const struct GuestSector *s,const char *name,u32 seed) {
     struct SectorWriter w={bytes,0,capacity};
     struct GuestDeck deck=selected_deck();int level=player_level(),hand=deck.count<4?deck.count:4;
     sector_part(&w,s,0,level);sector_byte(&w,1);sector_vint(&w,hand);
@@ -93,11 +93,30 @@ static u32 assemble_sector_template(u8 *bytes,u32 capacity,const struct GuestSec
         // the home. Only the two card flags belong in the battle deck.
         sector_byte(&w,saved_home[deck.offsets[i]+length-1]&3);
     }
-    sector_part(&w,s,2,level);
+    if(name) {
+        if(s->nameSize<4 || s->nameOffset>s->sizes[2] || s->nameSize>s->sizes[2]-s->nameOffset)
+            fail("GuestOffline: NPC name span exceeds template");
+        u32 original=0;for(int i=0;i<4;++i)original=(original<<8)|s->parts[2][s->nameOffset+i];
+        if(original!=s->nameSize-4)fail("GuestOffline: NPC name span is not a native string");
+        u32 length=0;while(name[length]) {if(length==15)fail("GuestOffline: opponent handle too long");++length;}
+        if(!length)fail("GuestOffline: empty opponent handle");
+        sector_bytes(&w,s->parts[2],s->nameOffset);
+        for(int i=3;i>=0;--i)sector_byte(&w,(u8)(length>>(8*i)));
+        sector_bytes(&w,(const u8*)name,length);
+        sector_bytes(&w,s->parts[2]+s->nameOffset+s->nameSize,s->sizes[2]-s->nameOffset-s->nameSize);
+    } else sector_part(&w,s,2,level);
     sector_bytes(&w,saved_home+avatar_offset,saved_size-avatar_offset-1);
     sector_part(&w,s,3,level);
+    if(name) {
+        if(w.size<8 || bytes[0] || bytes[1] || bytes[2]!=11 || bytes[3] || !seed || seed>0x7fffffffu)
+            fail("GuestOffline: invalid arena battle seed/header");
+        for(int i=0;i<4;++i)bytes[4+i]=(u8)(seed>>(24-8*i));
+    }
     CALL(API_printf,int,(const char*,int,int))("GuestOffline: native deck cards=%d tower level=%d\n",deck.count,level);
     return w.size;
+}
+static u32 assemble_sector_template(u8 *bytes,u32 capacity,const struct GuestSector *s) {
+    return assemble_sector_custom(bytes,capacity,s,0,0);
 }
 static u32 assemble_sector(u8 *bytes,u32 capacity,int mission) {
     if(mission<0 || mission>=7)fail("GuestOffline: unsupported training sector");

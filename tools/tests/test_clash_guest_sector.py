@@ -22,7 +22,7 @@ typedef unsigned char u8;
 static u8 saved_home[1024];
 static u32 saved_size,avatar_offset;
 struct GuestTowerPatch {unsigned part,offset,width;int values[12];};
-struct GuestSector {const u8 *parts[4];unsigned sizes[4];const struct GuestTowerPatch *patches;unsigned patchCount,lowBits;};
+struct GuestSector {const u8 *parts[4];unsigned sizes[4];const struct GuestTowerPatch *patches;unsigned patchCount,lowBits,nameOffset,nameSize;};
 static const struct GuestSector npc_sectors[7]={0};
 #define GUEST_MAX_TOWER_LEVEL 12
 #define CALL(address,result,args) printf
