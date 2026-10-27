@@ -536,6 +536,13 @@ void Runtime::disposeInstance(CPU::Cpu& c, id obj) {
         }
         zombies_[obj] = {className(classOf(obj)), std::move(trace)};
         proc_.mem().write<uint32_t>(obj, 0);   // kept allocated: never reused
+        zombieQueue_.push(obj);
+        if (zombieQueue_.size() > 16384) {
+            id oldest = zombieQueue_.front();
+            zombieQueue_.pop();
+            zombies_.erase(oldest);
+            proc_.heap().free(oldest);
+        }
     } else {
         proc_.mem().write<uint32_t>(obj, 0);
         proc_.heap().free(obj);

@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <typeinfo>
+#include <queue>
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -265,6 +266,7 @@ private:
     std::mutex zombieMu_;
     std::unordered_map<id, std::pair<std::string, std::string>> zombies_;   // class, "freed by" + "allocated by"
     std::unordered_map<id, std::string> allocSites_;                        // live objects' creation backtraces
+    std::queue<id> zombieQueue_;
 };
 
 Runtime& rt(Process& p);

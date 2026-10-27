@@ -3403,6 +3403,21 @@ int runFullSubsystemTests() {
             try { r.send(cpu, o, "description"); } catch (const std::exception& e) { msg = e.what(); }
             check(msg.find("-[NSObject description]: message sent to deallocated instance") != std::string::npos,
                   "HVM_ZOMBIES names the class of a freed object that is messaged");
+
+            // Regression test for bounded zombie queue (16384 limit)
+            const int limit = 16384;
+            const int numObjects = limit + 10;
+            std::vector<ObjC::id> objects;
+            for (int i = 0; i < numObjects; ++i) {
+                objects.push_back(ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSObject"), r.selAlloc)), "init")));
+            }
+            for (int i = 0; i < numObjects; ++i) {
+                r.send(cpu, objects[i], "release");
+            }
+            std::string msg2;
+            try { r.send(cpu, objects[0], "description"); } catch (const std::exception& e) { msg2 = e.what(); }
+            check(msg2.find("unrecognized selector") != std::string::npos || msg2.empty() || msg2.find("message sent to deallocated instance") == std::string::npos,
+                  "HVM_ZOMBIES evicts the oldest objects after exceeding limit");
         }
 
         // A virtual call through a vtable nothing provides names the class and slot.
