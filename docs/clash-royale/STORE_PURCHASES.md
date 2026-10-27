@@ -56,12 +56,12 @@ Existing host qualification is fulltest 260/260, TestLab 18/18 and indexed
 compatibility report `20261026T150956Z-912a87e64a33.json`. Guest-only changes
 here do not constitute a fresh host or 16 KB iPhone qualification.
 
-Build with `tools/build_clash_guest_mod.py` using the pinned fixture described
+Build with `tools/build_clash_guest.py` using the pinned fixture described
 in the restoration document. Run the extracted app with
 `tools/clash_guest_ui_probe.py --hvm <qualified-host> --app <extracted-app>
 --home <isolated-home> --gpu --capture-audio --startup-seconds 12
 --seconds 200 --plan <plan.json> --out <new-report-directory>`.
-Run `python3 -m unittest discover -s tools/tests -p 'test_clash_guest*.py' -v`:
+Run `python3 -m unittest discover -s tools/tests -p '*clash_guest*.py' -v`:
 **37 tests pass**, including original wire schemas, malformed/truncated input,
 canonical source identities and prior all-seven trainer fallback checks.
 

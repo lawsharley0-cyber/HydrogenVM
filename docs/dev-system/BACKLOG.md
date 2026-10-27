@@ -1,5 +1,14 @@
 # Backlog
 
+Newest continuation after `5040611`: [Arena 2 progression](../clash-royale/ARENA_PROGRESSION.md)
+adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
+entry/result/return checks; 38 focused tests and 43 private sector comparisons.
+Boundary trophies are component fixtures, not an earned climb; Arenas 3–6,
+draw/partial-crown accounting and full audits remain open. The owner's new
+[random clan-event request](../clash-royale/CLAN_EVENTS_PLAN.md) is recorded as planned
+multi-bot social work after core arena/results. Training remains original and
+advanced battle-AI refinement remains deferred. No shared src or device pass.
+
 Newest October 27 continuation after `f8505aa`: [STORE_PURCHASES.md](../clash-royale/STORE_PURCHASES.md)
 supersedes the shop chest/currency backlog below. Original Silver/Golden/Magical
 chests and all three Gem-for-Gold packs now have scoped native purchase/reveal/
@@ -15,6 +24,14 @@ stage changes no shared engine code and establishes no new iPhone or audio-
 quality/performance verdict. Earlier chronological evidence follows.
 
 ## Active owner-directed Clash continuation (2026-10-23)
+
+Owner addition October 27: [offline clan events](../clash-royale/CLAN_EVENTS_PLAN.md)
+after the current arena/result stage: occasional bot joins/leaves, conversations,
+friendly challenges and real requests/donations, with separate retained identities,
+finite economies, bounded saved timing and respected kick/leader controls. This
+is planned, not implemented. Current arena task: remove the explicit Arena-1-only
+matchmaking limit using pinned CSV arena/location/unlock/tower data and qualify
+native results across arena boundaries. Keep advanced battle-AI work deferred.
 
 After `45f5a97` (Group C): daily **card** shop now has original offers, native
 purchase/price/limit behavior, durable bought counts and calendar rotation.

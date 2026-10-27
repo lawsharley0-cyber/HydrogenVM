@@ -109,7 +109,7 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
     if max(vm+size for _, vm, size, *_ in parsed['segments']) > BASE:
         raise ValueError('Guest payload address overlaps original image')
     generator = build_dir/'fixture-export'
-    bot_policy=load_policy(build_dir/'source'/app_root)
+    bot_policy=load_policy(build_dir/'source'/app_root,include_arena2=True)
     policy_header=build_dir/'opponent-policy.h';policy_header.write_text(export_header(bot_policy))
     run(['clang++', '-std=c++20', '-O2', '-I'+str(ROOT/'src'),
          '-include',policy_header,
@@ -300,8 +300,9 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
                 donationActorProbe=probe_donation_actors,
                 bundleIdentifier=info['CFBundleIdentifier'],assetsUnchanged=True,
                 trainingMissionsEncoded=7,
-                arenaLevelsEncoded=[1],arenaBotsPerLevel=18,
+                arenaLevelsEncoded=[1,2],arenaBotsPerLevel=18,
                 opponentDecks=[d['name'] for d in bot_policy['decks']],
+                arena2OpponentDecks=[d['name'] for d in bot_policy['arena2Decks']],
                 limitations=['experimental offline prototype; full earned progression unqualified',
                              'later arenas, draw accounting and remaining economy paths incomplete',
                              'no device qualification','not a native modern-iOS app'])

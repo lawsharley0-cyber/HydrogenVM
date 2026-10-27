@@ -9,7 +9,7 @@ import tempfile
 import unittest
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
-from clash_bot_policy import DECKS,load_policy
+from clash_bot_policy import DECKS,ARENA2_DECKS,load_policy
 
 def fnv(raw):
     n=2166136261
@@ -96,17 +96,28 @@ int main(void){
             def table(name,header,rows):
                 with (res/(name+'.csv')).open('w',newline='') as f:csv.writer(f).writerows([header,['string']*len(header),*rows])
             table('arenas',['Name','Arena'],[['TrainingCamp','0'],['Arena1','1'],['Arena2','2']])
-            names=sorted({n for deck in DECKS.values() for n in deck})
+            early={n for deck in DECKS.values() for n in deck}
+            names=sorted(early|{n for deck in ARENA2_DECKS.values() for n in deck})
             groups={'spells_characters':[],'spells_buildings':[],'spells_other':[]}
             for name in names:
-                group='spells_buildings' if name=='GoblinHut' else 'spells_other' if name in ['Fireball','Arrows','GoblinBarrel'] else 'spells_characters'
-                groups[group].append([name,'Arena1','Rare' if name in ['Fireball','Giant'] else 'Common','5'])
+                group='spells_buildings' if name in ['GoblinHut','BombTower','Tombstone'] else 'spells_other' if name in ['Fireball','Arrows','GoblinBarrel'] else 'spells_characters'
+                groups[group].append([name,'Arena1' if name in early else 'Arena2','Rare' if name in ['Fireball','Giant'] else 'Common','5'])
             header=['Name','UnlockArena','Rarity','ManaCost']
             for group,rows in groups.items():table(group,header,rows)
             table('globals',['Name','NumberValue'],[['MAX_MANA','10'],['START_MANA','5'],['MANA_REGEN_MS','28000'],['MANA_REGEN_MS_END','14000'],['MANA_REGEN_MS_OVERTIME','14000']])
             policy=load_policy(bundle)
             self.assertEqual(len(policy['decks']),6)
             self.assertEqual(policy['manaRates'],[28000,14000,14000])
+            later=load_policy(bundle,include_arena2=True)
+            self.assertEqual(len(later['arena2Decks']),6)
+            self.assertEqual(later['decks'],policy['decks'])
+            self.assertTrue(all(any(c['arena']==2 for c in d['cards']) for d in later['arena2Decks']))
+            table('arenas',['Name','Arena'],[['TrainingCamp','0'],['Arena1','1'],['Arena2','2'],['Arena3','3']])
+            wrong=[row.copy() for row in groups['spells_characters']]
+            next(row for row in wrong if row[0]=='Minions')[1]='Arena3'
+            table('spells_characters',header,wrong)
+            with self.assertRaisesRegex(ValueError,'Arena-2 unlocks'):load_policy(bundle,include_arena2=True)
+            table('spells_characters',header,groups['spells_characters'])
             for deck in policy['decks']:
                 self.assertEqual(len({c['id'] for c in deck['cards']}),8)
                 self.assertTrue(all(c['arena']<=1 for c in deck['cards']))
@@ -114,6 +125,36 @@ int main(void){
             with self.assertRaisesRegex(ValueError,'unlocks'):load_policy(bundle)
             table('spells_buildings',header,[['GoblinHut','Arena1','Rare','7']])
             with self.assertRaisesRegex(ValueError,'afford'):load_policy(bundle)
+
+    @unittest.skipUnless(shutil.which('clang'),'C compiler unavailable')
+    def test_arena_filter_survives_promotion_and_demotion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'arena.c';exe=Path(directory)/'arena'
+            path.write_text(r'''
+#include <stdio.h>
+#include <string.h>
+typedef unsigned int u32;
+#include "opponent_math.inc"
+int main(void){
+ int scores[]={450,450,450,450,450,450},arenas[]={1,1,1,2,2,2};
+ unsigned decks[]={0,1,2,0,1,2};struct OpponentHistory h={1,0,0,0,0,0},old;
+ unsigned seen=0;
+ for(int i=0;i<2000;++i){
+  old=h;int arena=i%2+1;
+  if(!opponent_choose_arena(&h,scores,decks,6,450,arenas,arena))return 1;
+  if(arenas[h.variant]!=arena || h.variant>=6)return 2;
+  if(old.serial && (decks[h.variant]==decks[old.variant] || h.name==old.name || h.style==old.style))return 3;
+  seen|=1u<<h.variant;
+ }
+ if(seen!=63)return 4;
+ old=h;
+ if(opponent_choose_arena(&h,scores,decks,6,450,arenas,3)||memcmp(&h,&old,sizeof h))return 5;
+ return 0;
+}
+''')
+            p=subprocess.run(['clang','-std=c11','-O2','-I'+str(ROOT/'tools/clash_guest'),str(path),'-o',str(exe)],capture_output=True,text=True)
+            self.assertEqual(p.returncode,0,p.stderr)
+            self.assertEqual(subprocess.run([str(exe)],capture_output=True).returncode,0)
 
     @unittest.skipUnless(shutil.which('clang'),'C compiler unavailable')
     def test_nonrepeating_choice_and_checkpoint(self):
@@ -126,7 +167,7 @@ int main(void){
 #include <string.h>
 typedef unsigned int u32;typedef unsigned char u8;
 #define CALL(address,result,args) ((result (*)args)(address))
-#define GUEST_ARENA_PROFILE_COUNT 18
+#define GUEST_ARENA_PROFILE_COUNT 36
 static uintptr_t s_read=(uintptr_t)&fread,s_write=(uintptr_t)&fwrite;
 static void fail(const char *why) {fprintf(stderr,"%s\n",why);exit(2);}
 static u32 checksum(const u8 *p,u32 n) {u32 h=2166136261;while(n--)h=(h^*p++)*16777619;return h;}
@@ -161,8 +202,10 @@ int main(int argc,char **argv) {
             p=subprocess.run([str(exe)],capture_output=True);self.assertEqual((p.returncode,p.stdout),(0,raw),p.stderr)
             def run(data):return subprocess.run([str(exe),'read'],input=data,capture_output=True)
             p=run(raw);self.assertEqual((p.returncode,p.stdout),(0,raw))
+            later=bytearray(raw);struct.pack_into('<I',later,16,35);struct.pack_into('<I',later,36,fnv(later[:36]))
+            p=run(later);self.assertEqual((p.returncode,p.stdout),(0,later))
             for n in range(len(raw)):self.assertEqual(run(raw[:n]).returncode,2)
-            for word,value in [(1,2),(2,0),(3,0),(3,1000000001),(4,18),(5,64),(6,3),(7,0),(7,2147483648),(8,0)]:
+            for word,value in [(1,2),(2,0),(3,0),(3,1000000001),(4,36),(5,64),(6,3),(7,0),(7,2147483648),(8,0)]:
                 wrong=bytearray(raw);struct.pack_into('<I',wrong,word*4,value);struct.pack_into('<I',wrong,36,fnv(wrong[:36]))
                 self.assertEqual(run(wrong).returncode,2)
             self.assertEqual(run(raw+b'\0').returncode,2)

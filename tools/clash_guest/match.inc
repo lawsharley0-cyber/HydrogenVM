@@ -1,4 +1,4 @@
-/* First earned arena port. Original CSV sector/AI/towers and actual native
+/* Early-arena port. Original CSV sector/AI/towers and actual native
  * commodity accounting; no invented match acknowledgment or free entry.
  */
 static void start_arena_match(void *self) {
@@ -8,7 +8,8 @@ static void start_arena_match(void *self) {
     void *home=(void*)FIELD(owner,0x30),*avatar=(void*)FIELD(owner,0x34);
     if(!home || !avatar || FIELD(avatar,0x9c)<7)fail("GuestOffline: arena entry before earned graduation");
     void *arena=CALL(0x9b4d1,void*,(void*))(avatar);
-    if(!arena || CALL(0x7d2e1,int,(void*))(arena)!=54000001)
+    int arena_id=arena?CALL(0x7d2e1,int,(void*))(arena):0;
+    if(arena_id!=54000001 && arena_id!=54000002)
         fail("GuestOffline: later arenas require their guest port");
     int score=(int)FIELD(avatar,0x34);
     int cost=CALL(0x123e9d,int,(void*))(arena);
@@ -17,7 +18,7 @@ static void start_arena_match(void *self) {
         fail("GuestOffline: invalid or insufficient arena entry balance");
     struct OpponentHistory next=opponent_history;
     if(!next.rng)next.rng=wall_epoch()^checksum(saved_home,saved_size)^0xa341316cu;
-    if(!opponent_choose(&next,arena1_npc_trophies,arena1_deck_ids,GUEST_ARENA_PROFILE_COUNT,score))
+    if(!opponent_choose_arena(&next,arena1_npc_trophies,arena1_deck_ids,GUEST_ARENA_PROFILE_COUNT,score,arena_profile_arenas,arena_id))
         fail("GuestOffline: no legal varied arena opponent");
     void *gold_data=CALL(0xb8309,void*,(void))();
     if(!gold_data)fail("GuestOffline: missing original Gold resource");
@@ -35,9 +36,9 @@ static void start_arena_match(void *self) {
     write_save();
     reply(self,21903,1,sector_packet,size);battle_started=1;arena_battle=1;
     dispose(owner);
-    CALL(API_printf,int,(const char*,u32,int,u32,u32,const char*,u32,int,int))(
-        "GuestOffline: Arena 1 match=%u bot=%d deck=%u style=%u name=%s seed=%u native entry=%d gold=%d\n",
-        next.serial,arena1_missions[next.variant],arena1_deck_ids[next.variant],next.style,opponent_names[next.name],next.seed,cost,actual);
+    CALL(API_printf,int,(const char*,int,u32,int,u32,u32,const char*,u32,int,int))(
+        "GuestOffline: Arena %d match=%u bot=%d deck=%u style=%u name=%s seed=%u native entry=%d gold=%d\n",
+        arena_id-54000000,next.serial,arena1_missions[next.variant],arena1_deck_ids[next.variant],next.style,opponent_names[next.name],next.seed,cost,actual);
 }
 
 extern void guest_original_battle_ended(void*,void*);

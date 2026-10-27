@@ -6,16 +6,18 @@ static u32 opponent_random(u32 *state) {
 static u32 opponent_remainder(u32 value,u32 divisor) {
     u32 n=0;for(int bit=31;bit>=0;--bit) {n=(n<<1)|((value>>bit)&1u);if(n>=divisor)n-=divisor;}return n;
 }
-static int opponent_choose(struct OpponentHistory *h,const int *scores,const unsigned *decks,u32 count,int score) {
+static int opponent_choose_arena(struct OpponentHistory *h,const int *scores,const unsigned *decks,u32 count,int score,const int *arenas,int arena) {
     if(!count || count>64 || score<0 || score>100000 || h->serial>=1000000000u ||
        (h->serial && (h->variant>=count || h->name>=64 || h->style>=3)))return 0;
     int nearest=100001;u32 eligible[64],size=0;
     for(u32 i=0;i<count;++i) {
         if(scores[i]<0 || scores[i]>100000)return 0;
+        if(arenas && arenas[i]!=arena)continue;
         int delta=score>scores[i]?score-scores[i]:scores[i]-score;
         if(delta<nearest)nearest=delta;
     }
     for(u32 i=0;i<count;++i) {
+        if(arenas && arenas[i]!=arena)continue;
         int delta=score>scores[i]?score-scores[i]:scores[i]-score;
         if(delta<=nearest+100 && (!h->serial || decks[i]!=decks[h->variant]))eligible[size++]=i;
     }
@@ -28,4 +30,7 @@ static int opponent_choose(struct OpponentHistory *h,const int *scores,const uns
     h->variant=variant;h->name=name;h->style=style;
     h->seed=opponent_random(&h->rng)&0x7fffffffu;if(!h->seed)h->seed=1;
     ++h->serial;return 1;
+}
+static int opponent_choose(struct OpponentHistory *h,const int *scores,const unsigned *decks,u32 count,int score) {
+    return opponent_choose_arena(h,scores,decks,count,score,0,0);
 }
