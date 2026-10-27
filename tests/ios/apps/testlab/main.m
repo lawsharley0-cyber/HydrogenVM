@@ -73,6 +73,7 @@ static const char *kAppBuild        = "1";
 #define CASE_O  @"TL-O"
 #define CASE_P  @"TL-P"
 #define CASE_Q  @"TL-Q"
+#define CASE_R  @"TL-R"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -1627,6 +1628,104 @@ static TLResult *runCaseQ(void) {
     return r;
 }
 
+// TL-R: Minion Rush requires depth24, stencil8 and packed depth/stencil
+// before it installs its EAGL view. Verify both format sizes and the GLES
+// stencil pipeline. Green is the independent expected color: the second red
+// draw must be rejected by GL_EQUAL against the value written by the first.
+static TLResult *runCaseR(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_R version:1];
+    writeCheckpoint(CASE_R);
+    r.checkpointWritten = YES;
+    UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 320, 480)];
+    UIViewController *controller = [[UIViewController alloc] init];
+    window.rootViewController = controller;
+    UIView *oldRoot = controller.view;
+    UIView *newRoot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 480)];
+    controller.view = newRoot;
+    const BOOL rootReplaced = newRoot.superview == window && oldRoot.superview == nil;
+    EAGLContext *ctx = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+    const char *extensions = ctx ? (const char *)glGetString(GL_EXTENSIONS) : NULL;
+    GLuint fbo = 0, colorRb = 0, depthRb = 0, stencilRb = 0, packedRb = 0;
+    GLint depthBits = -1, stencilBits = -1, packedDepth = -1, packedStencil = -1;
+    uint8_t pixel[4] = {0, 0, 0, 0};
+    if (ctx && [EAGLContext setCurrentContext:ctx]) {
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glGenRenderbuffers(1, &colorRb);
+        glBindRenderbuffer(GL_RENDERBUFFER, colorRb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8_OES, 64, 64);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRb);
+        glGenRenderbuffers(1, &depthRb);
+        glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24_OES, 64, 64);
+        glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_DEPTH_SIZE, &depthBits);
+        glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_STENCIL_SIZE, &stencilBits);
+        const BOOL depthOk = depthBits == 24 && stencilBits == 0;
+        glGenRenderbuffers(1, &stencilRb);
+        glBindRenderbuffer(GL_RENDERBUFFER, stencilRb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, 64, 64);
+        glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_DEPTH_SIZE, &depthBits);
+        glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_STENCIL_SIZE, &stencilBits);
+        const BOOL stencilOk = depthBits == 0 && stencilBits == 8;
+        glGenRenderbuffers(1, &packedRb);
+        glBindRenderbuffer(GL_RENDERBUFFER, packedRb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8_OES, 64, 64);
+        glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_DEPTH_SIZE, &packedDepth);
+        glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_STENCIL_SIZE, &packedStencil);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, packedRb);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, packedRb);
+        const char *vsSource = "attribute vec4 p; void main(){gl_Position=p;}";
+        const char *fsSource = "uniform vec4 c; void main(){gl_FragColor=c;}";
+        GLuint vs = compileShader(GL_VERTEX_SHADER, vsSource);
+        GLuint fs = compileShader(GL_FRAGMENT_SHADER, fsSource);
+        GLuint program = glCreateProgram();
+        glAttachShader(program, vs);
+        glAttachShader(program, fs);
+        glBindAttribLocation(program, 0, "p");
+        glLinkProgram(program);
+        glUseProgram(program);
+        static const GLfloat vertices[] = {-1,-1, 3,-1, -1,3};
+        GLuint vbo = 0;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (void *)0);
+        glViewport(0, 0, 64, 64);
+        glClearColor(0, 0, 1, 1);
+        glClearStencil(1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(GL_ALWAYS, 3, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        glStencilMask(0x0F);
+        glUniform4f(glGetUniformLocation(program, "c"), 0, 1, 0, 1);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glStencilFunc(GL_EQUAL, 4, 0x0F);
+        glUniform4f(glGetUniformLocation(program, "c"), 1, 0, 0, 1);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+        glDisable(GL_STENCIL_TEST);
+        const BOOL extensionsOk = extensions && strstr(extensions, "GL_OES_depth24") &&
+                                  strstr(extensions, "GL_OES_stencil8") && strstr(extensions, "GL_OES_packed_depth_stencil");
+        const BOOL ok = rootReplaced && depthOk && stencilOk && packedDepth == 24 && packedStencil == 8 && extensionsOk &&
+                        pixel[0] == 0 && pixel[1] == 255 && pixel[2] == 0 && pixel[3] == 255;
+        r.status = ok ? @"passed" : @"failed";
+        if (!ok) r.reason = @"Root view replacement, depth/stencil allocation or stencil behavior differs from UIKit/GLES";
+    } else {
+        r.status = @"failed";
+        r.reason = @"Could not create a GLES 2 context";
+    }
+    r.expected = @"three extensions present; depth=24/0, stencil=0/8, packed=24/8; rejected red draw leaves green";
+    r.actual = [NSString stringWithFormat:@"depth=%d/%d stencil=%d/%d packed=%d/%d pixel=rgba(%u,%u,%u,%u)",
+                depthBits, stencilBits, depthBits, stencilBits, packedDepth, packedStencil,
+                pixel[0], pixel[1], pixel[2], pixel[3]];
+    r.diagnostics[@"packedDepthBits"] = @(packedDepth);
+    r.diagnostics[@"packedStencilBits"] = @(packedStencil);
+    clearCheckpoint();
+    return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1636,7 +1735,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1677,6 +1776,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseP()];
         } else if ([cid isEqualToString:CASE_Q]) {
             [results addObject:runCaseQ()];
+        } else if ([cid isEqualToString:CASE_R]) {
+            [results addObject:runCaseR()];
         }
     }
     return results;
@@ -1707,6 +1808,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_O]) return runCaseO();
     if ([caseId isEqualToString:CASE_P]) return runCaseP();
     if ([caseId isEqualToString:CASE_Q]) return runCaseQ();
+    if ([caseId isEqualToString:CASE_R]) return runCaseR();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1739,8 +1841,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1760,6 +1862,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_O version:1],
         [[TLResult alloc] initWithId:CASE_P version:1],
         [[TLResult alloc] initWithId:CASE_Q version:1],
+        [[TLResult alloc] initWithId:CASE_R version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1819,7 +1922,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

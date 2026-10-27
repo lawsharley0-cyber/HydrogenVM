@@ -2,6 +2,12 @@
 
 ## Latest continuation — 2026-10-26
 
+- **Minion Rush:** missing depth24/stencil8/packed-depth-stencil support stopped
+  EAGL setup, and replacing the root controller's view did not attach it to the
+  window. Both now have red-first fulltest and TL-R coverage. A 100 s local run
+  showed the opening video, presented 130 frames and produced 2,600,960
+  audible/music frames without crashing. Gameplay, close and relaunch are still
+  unverified. Goat Simulator remains unverified.
 - **Audio:** RemoteIO callbacks now run on a guest audio thread every 10 ms, with
   format conversion and mixer output; normal pthread mutexes support the old-iOS
   creator/worker handoff. OpenAL gain queries now return the specified defaults.
@@ -15,9 +21,9 @@
   rendered the Telltale legal screen and produced 3,289,088 audible/music frames
   instead of stopping in `glDrawArrays`. This is opening-screen evidence, not
   playable-game verification; one timed-stop host crash remained timing-dependent.
-- **Still open:** Minion Rush crashes before its EAGL view is installed. Goat
-  Simulator still lacks usable picture/report evidence. Do not call either fixed.
-- **Verified gates:** fulltest 268/0, Test Lab 17/17, report build 1/0, cpu 15/0,
+- **Still open:** Minion Rush gameplay, close and relaunch need verification. Goat
+  Simulator still lacks usable picture/report evidence. Do not call it fixed.
+- **Verified gates:** fulltest 271/0, Test Lab 18/18, report build 1/0, cpu 15/0,
   ios 6/0, bench 5/0; only known warnings and the CoreMark perf notice remained.
 
 - **Clumsy Ninja EAGL regression:** HostGL no longer applies the software

@@ -36,6 +36,16 @@ replaced by `hvm_compat.py issues`, schema-checked JSON and explicit report diff
 
 ## Real-app regression log
 
+- **Minion Rush / depth-stencil and root view (2026-10-26):** the game returned
+  from EAGL setup when `GL_OES_depth24`, `GL_OES_stencil8` or
+  `GL_OES_packed_depth_stencil` was absent. Implement format-correct storage,
+  packed attachments and stencil clear/test/mask/operations, then advertise them.
+  A second bug left a replacement root-controller view outside its window;
+  `UIViewController.setView` now swaps the installed root subview. TL-R and
+  fulltest were red before both fixes. A 100 s run then presented 130 frames,
+  mixed 2,600,960 audible/music frames, and showed the opening video with the
+  `EAGLView` on screen and no crash. Gameplay, effects, close and relaunch remain
+  unverified.
 - **Hungry Shark and Angry Birds / audio (2026-10-26):** RemoteIO output used a
   main-run-loop timer, so its callback could be starved; it now runs on a guest
   audio thread with LPCM conversion and mixer ownership/locking. Normal mutexes

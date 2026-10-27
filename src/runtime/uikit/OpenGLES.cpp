@@ -241,6 +241,14 @@ enum : uint32_t {
     GL_RGB565 = 0x8D62,
     GL_DEPTH_COMPONENT16 = 0x81A5,
     GL_DEPTH_COMPONENT24_OES = 0x81A6,
+    GL_STENCIL_INDEX8 = 0x8D48,
+    GL_DEPTH24_STENCIL8_OES = 0x88F0,
+    GL_INVERT = 0x150A,
+    GL_KEEP = 0x1E00,
+    GL_INCR = 0x1E02,
+    GL_DECR = 0x1E03,
+    GL_INCR_WRAP = 0x8507,
+    GL_DECR_WRAP = 0x8508,
     GL_RGBA8_OES = 0x8058,
     GL_RGB8_OES = 0x8051,
     GL_TEXTURE_CROP_RECT_OES = 0x8B9D,
@@ -484,6 +492,12 @@ struct ContextData : ObjC::HostObject {
     uint32_t blendEqRGB = GL_FUNC_ADD, blendEqAlpha = GL_FUNC_ADD;
     float blendColor[4] = {0, 0, 0, 0};
     uint32_t depthFunc = GL_LESS;
+    struct StencilFace {
+        uint32_t func = GL_ALWAYS;
+        int ref = 0;
+        uint32_t mask = 0xFF, writeMask = 0xFF;
+        uint32_t fail = GL_KEEP, zfail = GL_KEEP, zpass = GL_KEEP;
+    } stencilFront, stencilBack;
     uint32_t cullFaceMode = GL_BACK;
     uint32_t frontFace = GL_CCW;
     uint32_t alphaFunc = GL_ALWAYS;
@@ -515,6 +529,7 @@ struct ContextData : ObjC::HostObject {
         defaultRb.height = 480;
         defaultRb.rgba.assign(320 * 480 * 4, 0);
         defaultRb.depth.assign(320 * 480, 1.0f);
+        defaultRb.stencil.assign(320 * 480, 0);
     }
 
     std::vector<Mat4>& currentMatrixStack() {
@@ -562,10 +577,11 @@ SharegroupData* currentSg(Ctx& x, ContextData* c) {
     return rt(x).hostIf<SharegroupData>(c->sharegroup);
 }
 
-// Obtain the active color and depth target for the current context.
+// Obtain the active color, depth and stencil targets for the current context.
 struct RenderTarget {
     uint8_t* rgba = nullptr;
     float* depth = nullptr;
+    uint8_t* stencil = nullptr;
     int width = 0, height = 0;
     bool isTexture = false;
 };
@@ -576,16 +592,17 @@ RenderTarget activeTarget(Ctx& x, ContextData& c, SharegroupData& sg) {
         if (fit != sg.framebuffers.end()) {
             const Framebuffer& fb = fit->second;
             RenderTarget rtOut{};
+            auto includeSize = [&](const Renderbuffer& rb) {
+                rtOut.width = rtOut.width > 0 ? std::min(rtOut.width, rb.width) : rb.width;
+                rtOut.height = rtOut.height > 0 ? std::min(rtOut.height, rb.height) : rb.height;
+            };
             if (fb.colorAttachmentType == GL_RENDERBUFFER && fb.colorAttachmentId != 0) {
                 auto rbit = sg.renderbuffers.find(fb.colorAttachmentId);
-                if (rbit != sg.renderbuffers.end()) {
+                if (rbit != sg.renderbuffers.end() && !rbit->second.rgba.empty()) {
                     Renderbuffer& rb = rbit->second;
                     rtOut.rgba = rb.rgba.data();
-                    rtOut.width = rb.width;
-                    rtOut.height = rb.height;
-                    // No depth here: a framebuffer without a depth attachment has no depth
-                    // buffer, so depth testing is skipped (as in GL). Using the colour
-                    // renderbuffer's private depth made coplanar 2D sprites z-fight.
+                    includeSize(rb);
+                    // Colour storage is not an implicit depth attachment.
                 }
             } else if (fb.colorAttachmentType == GL_TEXTURE_2D && fb.colorAttachmentId != 0) {
                 auto txit = sg.textures.find(fb.colorAttachmentId);
@@ -597,30 +614,29 @@ RenderTarget activeTarget(Ctx& x, ContextData& c, SharegroupData& sg) {
                     rtOut.isTexture = true;
                 }
             }
-            if (fb.depthAttachmentType == GL_RENDERBUFFER && fb.depthAttachmentId != 0) {
-                auto dbit = sg.renderbuffers.find(fb.depthAttachmentId);
-                if (dbit != sg.renderbuffers.end()) {
-                    Renderbuffer& drb = dbit->second;
-                    if (drb.depth.size() != size_t(drb.width) * size_t(drb.height))
-                        drb.depth.assign(size_t(drb.width) * size_t(drb.height), 1.0f);
-                    rtOut.depth = drb.depth.data();
-                    if (rtOut.width > 0 && drb.width > 0) rtOut.width = std::min(rtOut.width, drb.width);
-                    if (rtOut.height > 0 && drb.height > 0) rtOut.height = std::min(rtOut.height, drb.height);
-                }
-            }
-            if (rtOut.rgba && rtOut.width > 0 && rtOut.height > 0) return rtOut;
+            auto attach = [&](uint32_t type, uint32_t id, bool depth) {
+                if (type != GL_RENDERBUFFER || id == 0) return;
+                auto it = sg.renderbuffers.find(id);
+                if (it == sg.renderbuffers.end()) return;
+                Renderbuffer& rb = it->second;
+                const size_t count = size_t(rb.width) * size_t(rb.height);
+                if (depth && rb.depth.size() == count) rtOut.depth = rb.depth.data();
+                if (rb.stencil.size() == count) rtOut.stencil = rb.stencil.data();
+                if ((depth && rtOut.depth) || rtOut.stencil) includeSize(rb);
+            };
+            attach(fb.depthAttachmentType, fb.depthAttachmentId, true);
+            attach(fb.stencilAttachmentType, fb.stencilAttachmentId, false);
+            if ((rtOut.rgba || rtOut.depth || rtOut.stencil) && rtOut.width > 0 && rtOut.height > 0) return rtOut;
         }
     }
     if (c.renderbuffer != 0) {
         auto rbit = sg.renderbuffers.find(c.renderbuffer);
         if (rbit != sg.renderbuffers.end() && rbit->second.width > 0 && rbit->second.height > 0 && !rbit->second.rgba.empty()) {
             Renderbuffer& rb = rbit->second;
-            if (rb.depth.size() != size_t(rb.width) * size_t(rb.height))
-                rb.depth.assign(size_t(rb.width) * size_t(rb.height), 1.0f);
-            return {rb.rgba.data(), rb.depth.data(), rb.width, rb.height, false};
+            return {rb.rgba.data(), rb.depth.data(), rb.stencil.data(), rb.width, rb.height, false};
         }
     }
-    return {c.defaultRb.rgba.data(), c.defaultRb.depth.data(), c.defaultRb.width, c.defaultRb.height, false};
+    return {c.defaultRb.rgba.data(), c.defaultRb.depth.data(), c.defaultRb.stencil.data(), c.defaultRb.width, c.defaultRb.height, false};
 }
 
 // =========================================================== CAEAGLLayer ===
@@ -778,6 +794,7 @@ bool ctx_renderbufferStorage(Ctx& x, id self, SEL, uint32_t target, id drawable)
         rb.width = rb.height = 0;
         rb.rgba.clear();
         rb.depth.clear();
+        rb.stencil.clear();
         rb.drawableLayer = 0;
         return true;
     }
@@ -999,6 +1016,7 @@ GuestPtr gl_getString(Ctx& x, uint32_t name) {
                 "GL_OES_mapbuffer GL_OES_draw_texture GL_OES_point_sprite "
                 "GL_OES_point_size_array GL_IMG_texture_compression_pvrtc "
                 "GL_APPLE_framebuffer_multisample GL_EXT_discard_framebuffer "
+                "GL_OES_depth24 GL_OES_stencil8 GL_OES_packed_depth_stencil "
                 "GL_OES_standard_derivatives");
         default: return 0;
     }
@@ -1065,7 +1083,7 @@ void gl_clear(Ctx& x, uint32_t mask) {
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg) return;
     RenderTarget rt = activeTarget(x, *c, *sg);
-    if (!rt.rgba || rt.width <= 0 || rt.height <= 0) return;
+    if ((!rt.rgba && !rt.depth && !rt.stencil) || rt.width <= 0 || rt.height <= 0) return;
 
     int x0 = 0, y0 = 0, x1 = rt.width, y1 = rt.height;
     if (c->scissorTest) {
@@ -1076,7 +1094,7 @@ void gl_clear(Ctx& x, uint32_t mask) {
     }
     if (x1 <= x0 || y1 <= y0) return;
 
-    if (mask & GL_COLOR_BUFFER_BIT) {
+    if ((mask & GL_COLOR_BUFFER_BIT) && rt.rgba) {
         const uint8_t cr = uint8_t(c->clearColor[0] * 255.0f + 0.5f);
         const uint8_t cg = uint8_t(c->clearColor[1] * 255.0f + 0.5f);
         const uint8_t cb = uint8_t(c->clearColor[2] * 255.0f + 0.5f);
@@ -1096,6 +1114,58 @@ void gl_clear(Ctx& x, uint32_t mask) {
             float* drow = &rt.depth[size_t(y) * size_t(rt.width)];
             for (int px = x0; px < x1; ++px) drow[px] = c->clearDepth;
         }
+    }
+    if ((mask & GL_STENCIL_BUFFER_BIT) && rt.stencil) {
+        const uint8_t clear = uint8_t(c->clearStencil) & uint8_t(c->stencilFront.writeMask);
+        const uint8_t preserve = uint8_t(~c->stencilFront.writeMask);
+        for (int y = y0; y < y1; ++y) {
+            uint8_t* row = &rt.stencil[size_t(y) * size_t(rt.width)];
+            for (int px = x0; px < x1; ++px) row[px] = clear | (row[px] & preserve);
+        }
+    }
+}
+
+void gl_stencilFunc(Ctx& x, uint32_t func, int32_t ref, uint32_t mask) {
+    if (auto* c = currentCtx(x)) {
+        c->stencilFront.func = c->stencilBack.func = func;
+        c->stencilFront.ref = c->stencilBack.ref = ref;
+        c->stencilFront.mask = c->stencilBack.mask = mask;
+    }
+}
+void gl_stencilFuncSeparate(Ctx& x, uint32_t face, uint32_t func, int32_t ref, uint32_t mask) {
+    if (auto* c = currentCtx(x)) {
+        if (face == GL_FRONT || face == GL_FRONT_AND_BACK) {
+            c->stencilFront.func = func; c->stencilFront.ref = ref; c->stencilFront.mask = mask;
+        }
+        if (face == GL_BACK || face == GL_FRONT_AND_BACK) {
+            c->stencilBack.func = func; c->stencilBack.ref = ref; c->stencilBack.mask = mask;
+        }
+    }
+}
+void gl_stencilOp(Ctx& x, uint32_t fail, uint32_t zfail, uint32_t zpass) {
+    if (auto* c = currentCtx(x)) {
+        c->stencilFront.fail = c->stencilBack.fail = fail;
+        c->stencilFront.zfail = c->stencilBack.zfail = zfail;
+        c->stencilFront.zpass = c->stencilBack.zpass = zpass;
+    }
+}
+void gl_stencilOpSeparate(Ctx& x, uint32_t face, uint32_t fail, uint32_t zfail, uint32_t zpass) {
+    if (auto* c = currentCtx(x)) {
+        if (face == GL_FRONT || face == GL_FRONT_AND_BACK) {
+            c->stencilFront.fail = fail; c->stencilFront.zfail = zfail; c->stencilFront.zpass = zpass;
+        }
+        if (face == GL_BACK || face == GL_FRONT_AND_BACK) {
+            c->stencilBack.fail = fail; c->stencilBack.zfail = zfail; c->stencilBack.zpass = zpass;
+        }
+    }
+}
+void gl_stencilMask(Ctx& x, uint32_t mask) {
+    if (auto* c = currentCtx(x)) c->stencilFront.writeMask = c->stencilBack.writeMask = mask;
+}
+void gl_stencilMaskSeparate(Ctx& x, uint32_t face, uint32_t mask) {
+    if (auto* c = currentCtx(x)) {
+        if (face == GL_FRONT || face == GL_FRONT_AND_BACK) c->stencilFront.writeMask = mask;
+        if (face == GL_BACK || face == GL_FRONT_AND_BACK) c->stencilBack.writeMask = mask;
     }
 }
 
@@ -1144,7 +1214,6 @@ void gl_noop(Ctx&) {}
 void gl_noop1(Ctx&, uint32_t) {}
 void gl_noop2(Ctx&, uint32_t, uint32_t) {}
 void gl_noop3(Ctx&, uint32_t, uint32_t, uint32_t) {}
-void gl_noop4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) {}
 
 void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
     if (!params) return;
@@ -1295,8 +1364,28 @@ void gl_renderbufferStorage(Ctx& x, uint32_t target, uint32_t internalformat, in
     rb.width = width;
     rb.height = height;
     rb.internalFormat = internalformat;
-    rb.rgba.assign(size_t(width) * size_t(height) * 4, 0);
-    rb.depth.assign(size_t(width) * size_t(height), 1.0f);
+    rb.rgba.clear();
+    rb.depth.clear();
+    rb.stencil.clear();
+    const size_t count = size_t(width) * size_t(height);
+    switch (internalformat) {
+        case GL_RGBA4: case GL_RGB5_A1: case GL_RGB565: case GL_RGBA8_OES: case GL_RGB8_OES:
+            rb.rgba.assign(count * 4, 0);
+            break;
+        case GL_DEPTH_COMPONENT16: case GL_DEPTH_COMPONENT24_OES:
+            rb.depth.assign(count, 1.0f);
+            break;
+        case GL_STENCIL_INDEX8:
+            rb.stencil.assign(count, 0);
+            break;
+        case GL_DEPTH24_STENCIL8_OES:
+            rb.depth.assign(count, 1.0f);
+            rb.stencil.assign(count, 0);
+            break;
+        default:
+            c->lastError = GL_INVALID_ENUM;
+            break;
+    }
 }
 void gl_renderbufferStorageMultisample(Ctx& x, uint32_t target, int32_t, uint32_t internalformat, int32_t width, int32_t height) {
     gl_renderbufferStorage(x, target, internalformat, width, height);
@@ -1312,9 +1401,25 @@ void gl_getRenderbufferParameteriv(Ctx& x, uint32_t target, uint32_t pname, Gues
         case GL_RENDERBUFFER_WIDTH: v = rb.width; break;
         case GL_RENDERBUFFER_HEIGHT: v = rb.height; break;
         case GL_RENDERBUFFER_INTERNAL_FORMAT: v = int32_t(rb.internalFormat); break;
-        case GL_RENDERBUFFER_RED_SIZE: case GL_RENDERBUFFER_GREEN_SIZE: case GL_RENDERBUFFER_BLUE_SIZE: case GL_RENDERBUFFER_ALPHA_SIZE: v = 8; break;
-        case GL_RENDERBUFFER_DEPTH_SIZE: v = 24; break;
-        case GL_RENDERBUFFER_STENCIL_SIZE: v = 8; break;
+        case GL_RENDERBUFFER_RED_SIZE:
+        case GL_RENDERBUFFER_GREEN_SIZE:
+        case GL_RENDERBUFFER_BLUE_SIZE:
+            if (rb.rgba.empty()) v = 0;
+            else if (rb.internalFormat == GL_RGB565) v = pname == GL_RENDERBUFFER_GREEN_SIZE ? 6 : 5;
+            else if (rb.internalFormat == GL_RGBA4) v = 4;
+            else if (rb.internalFormat == GL_RGB5_A1) v = 5;
+            else v = 8;
+            break;
+        case GL_RENDERBUFFER_ALPHA_SIZE:
+            v = rb.internalFormat == GL_RGBA8_OES ? 8 : (rb.internalFormat == GL_RGBA4 ? 4 : (rb.internalFormat == GL_RGB5_A1 ? 1 : 0));
+            break;
+        case GL_RENDERBUFFER_DEPTH_SIZE:
+            v = rb.internalFormat == GL_DEPTH_COMPONENT16 ? 16 :
+                (rb.internalFormat == GL_DEPTH_COMPONENT24_OES || rb.internalFormat == GL_DEPTH24_STENCIL8_OES ? 24 : 0);
+            break;
+        case GL_RENDERBUFFER_STENCIL_SIZE:
+            v = rb.internalFormat == GL_STENCIL_INDEX8 || rb.internalFormat == GL_DEPTH24_STENCIL8_OES ? 8 : 0;
+            break;
         default: break;
     }
     x.mem.write<int32_t>(params, v);
@@ -2781,14 +2886,56 @@ inline float applyBlendEquation(uint32_t eq, float s, float sf, float d, float d
     }
 }
 
-void writeFragment(ContextData& c, RenderTarget& rt, int px, int py, float z, Vec4 frag) {
-    if (!rt.rgba || px < 0 || px >= rt.width || py < 0 || py >= rt.height) return;
+bool stencilPass(uint32_t func, uint8_t ref, uint8_t stored) {
+    switch (func) {
+        case GL_NEVER: return false;
+        case GL_LESS: return ref < stored;
+        case GL_EQUAL: return ref == stored;
+        case GL_LEQUAL: return ref <= stored;
+        case GL_GREATER: return ref > stored;
+        case GL_NOTEQUAL: return ref != stored;
+        case GL_GEQUAL: return ref >= stored;
+        case GL_ALWAYS: default: return true;
+    }
+}
+
+uint8_t stencilResult(uint32_t op, uint8_t stored, uint8_t ref) {
+    switch (op) {
+        case GL_ZERO: return 0;
+        case GL_REPLACE: return ref;
+        case GL_INCR: return stored == 255 ? 255 : uint8_t(stored + 1);
+        case GL_DECR: return stored == 0 ? 0 : uint8_t(stored - 1);
+        case GL_INCR_WRAP: return uint8_t(stored + 1);
+        case GL_DECR_WRAP: return uint8_t(stored - 1);
+        case GL_INVERT: return uint8_t(~stored);
+        case GL_KEEP: default: return stored;
+    }
+}
+
+void writeFragment(ContextData& c, RenderTarget& rt, int px, int py, float z, Vec4 frag, bool frontFacing = true) {
+    if ((!rt.rgba && !rt.depth && !rt.stencil) || px < 0 || px >= rt.width || py < 0 || py >= rt.height) return;
     if (c.alphaTest && !depthPass(c.alphaFunc, frag.w, c.alphaRef)) return;
     const size_t idx = size_t(py) * size_t(rt.width) + size_t(px);
-    if (c.depthTest && rt.depth) {
-        if (!depthPass(c.depthFunc, z, rt.depth[idx])) return;
-        if (c.depthMask) rt.depth[idx] = z;
+    const auto& stencil = frontFacing ? c.stencilFront : c.stencilBack;
+    auto applyStencil = [&](uint32_t op) {
+        const uint8_t next = stencilResult(op, rt.stencil[idx], uint8_t(stencil.ref));
+        rt.stencil[idx] = (next & uint8_t(stencil.writeMask)) | (rt.stencil[idx] & uint8_t(~stencil.writeMask));
+    };
+    if (c.stencilTest && rt.stencil) {
+        const uint8_t ref = uint8_t(stencil.ref) & uint8_t(stencil.mask);
+        const uint8_t stored = rt.stencil[idx] & uint8_t(stencil.mask);
+        if (!stencilPass(stencil.func, ref, stored)) {
+            applyStencil(stencil.fail);
+            return;
+        }
     }
+    if (c.depthTest && rt.depth && !depthPass(c.depthFunc, z, rt.depth[idx])) {
+        if (c.stencilTest && rt.stencil) applyStencil(stencil.zfail);
+        return;
+    }
+    if (c.stencilTest && rt.stencil) applyStencil(stencil.zpass);
+    if (c.depthTest && rt.depth && c.depthMask) rt.depth[idx] = z;
+    if (!rt.rgba) return;
     uint8_t* dst = &rt.rgba[idx * 4];
     float outR = frag.x, outG = frag.y, outB = frag.z, outA = frag.w;
     if (c.blend) {
@@ -3044,7 +3191,7 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
                 int active = 0;
                 for (int lane = 0; lane < 4; ++lane) {
                     if (!setupFragment(c, prog, lanes[lane], v0, v1, v2, w0[lane], w1[lane], w2[lane], px[lane], py[lane], z[lane], isFront, 0, 0)) {
-                        if (covered[lane]) writeFragment(c, rt, px[lane], py[lane], z[lane], Vec4{0, 0, 0, 0});
+                        if (covered[lane]) writeFragment(c, rt, px[lane], py[lane], z[lane], Vec4{0, 0, 0, 0}, isFront);
                         covered[lane] = false;
                         continue;
                     }
@@ -3061,7 +3208,7 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
                 for (int lane = 0; lane < 4; ++lane) {
                     if (!covered[lane] || (discarded & (1 << lane))) continue;
                     const float* f = &lanes[lane][prog.fragment.output];
-                    writeFragment(c, rt, px[lane], py[lane], z[lane], Vec4{f[0], f[1], f[2], f[3]});
+                    writeFragment(c, rt, px[lane], py[lane], z[lane], Vec4{f[0], f[1], f[2], f[3]}, isFront);
                 }
             }
         }
@@ -3077,7 +3224,7 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
             const float z = w0 * v0.screenZ + w1 * v1.screenZ + w2 * v2.screenZ;
             if (shaded) {
                 if (auto frag = executeFragment(c, sg, v0, v1, v2, w0, w1, w2, px, py, z, isFront, 0, 0, budget))
-                    writeFragment(c, rt, px, py, z, *frag);
+                    writeFragment(c, rt, px, py, z, *frag, isFront);
                 continue;
             }
             // GLES1 color and UV stay screen-linear after clipping. The clip
@@ -3113,7 +3260,7 @@ void rasterizeTriangle(ContextData& c, SharegroupData& sg, RenderTarget& rt,
                     col = {col.x * tc.x, col.y * tc.y, col.z * tc.z, col.w * tc.w};
                 }
             }
-            writeFragment(c, rt, px, py, z, col);
+            writeFragment(c, rt, px, py, z, col, isFront);
         }
     }
 }
@@ -3459,12 +3606,12 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_noop2>("_glPolygonOffsetx");
     p.def<&gl_noop2>("_glSampleCoverage");
     p.def<&gl_noop2>("_glSampleCoveragex");
-    p.def<&gl_noop3>("_glStencilFunc");
-    p.def<&gl_noop3>("_glStencilOp");
-    p.def<&gl_noop1>("_glStencilMask");
-    p.def<&gl_noop4>("_glStencilFuncSeparate");
-    p.def<&gl_noop4>("_glStencilOpSeparate");
-    p.def<&gl_noop2>("_glStencilMaskSeparate");
+    p.def<&gl_stencilFunc>("_glStencilFunc");
+    p.def<&gl_stencilOp>("_glStencilOp");
+    p.def<&gl_stencilMask>("_glStencilMask");
+    p.def<&gl_stencilFuncSeparate>("_glStencilFuncSeparate");
+    p.def<&gl_stencilOpSeparate>("_glStencilOpSeparate");
+    p.def<&gl_stencilMaskSeparate>("_glStencilMaskSeparate");
     p.def<&gl_getIntegerv>("_glGetIntegerv");
     p.def<&gl_getFloatv>("_glGetFloatv");
     p.def<&gl_getBooleanv>("_glGetBooleanv");

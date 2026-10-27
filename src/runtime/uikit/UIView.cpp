@@ -758,11 +758,18 @@ id vc_view(Ctx& x, id self, SEL) {
 void vc_setView(Ctx& x, id self, SEL, id view) {
     VCData& d = VC(x, self);
     if (d.view == view) return;
-    if (view) rt(x).retain(x.cpu, view);
     const id old = d.view;
+    const id parent = old ? V(x, old).superview : 0;
+    const id rootWindow = parent && V(x, parent).rootViewController == self ? parent : 0;
+    if (rootWindow) rt(x).send(x.cpu, old, "removeFromSuperview");
+    if (view) rt(x).retain(x.cpu, view);
     d.view = view;
     if (old) { V(x, old).viewController = 0; rt(x).release(x.cpu, old); }
     if (view) V(x, view).viewController = self;
+    if (rootWindow && view) {
+        insertSubview(x, rootWindow, view, -1);
+        layoutRootView(x, rootWindow, self);
+    }
 }
 bool vc_isViewLoaded(Ctx& x, id self, SEL) { return VC(x, self).view != 0; }
 void vc_hook(Ctx&, id, SEL) {}

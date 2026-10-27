@@ -2,21 +2,28 @@
 
 ## Current continuation — 2026-10-26
 
+Minion Rush now passes its required depth24/stencil8/packed-depth-stencil setup
+with real renderbuffer and stencil behavior, and root-controller view replacement
+now updates the window. TL-R and fulltest cover both bug classes red-first. A
+100 s run showed the opening video with 130 presented frames, 2,600,960
+audible/music frames and no crash. This is not yet gameplay/close/relaunch proof.
+Goat Simulator still needs usable visual/report evidence.
+
 The audio/graphics batch adds a real RemoteIO guest callback thread, LPCM mixer
 conversion, normal-mutex cross-thread handoff and correct OpenAL gain defaults.
 Hungry Shark and Angry Birds now have measured non-silent music locally; effects,
 clean close and relaunch are not yet proven. TL-O checks RemoteIO mixing, TL-Q
 checks callbacks while the main thread sleeps, and TL-P covers VCMP (which was
-already correct, not a bug fix). The suite has 17 cases.
+already correct, not a bug fix). The suite has 18 cases.
 
 Minecraft Story Mode 1.1 advances past GLSL ES 3 compilation and the former
 `glDrawArrays` exception. Named fragment outputs, ES 3 texture aliases, deferred
 program deletion and shared program-table locking have red-first fulltest
 coverage. A 90 s run showed the Telltale legal screen and played music, but did
 not establish playable gameplay; a timing-dependent host crash after timed stop
-remains open. Minion Rush still crashes before display setup and Goat Simulator
-still has no usable visual/report result. Gates: fulltest 268/0, Test Lab 17/17,
-report build 1/0, cpu 15/0, ios 6/0, bench 5/0.
+remains open. Minion Rush gameplay, close and relaunch still need verification,
+and Goat Simulator still has no usable visual/report result. Gates: fulltest
+271/0, Test Lab 18/18, report build 1/0, cpu 15/0, ios 6/0, bench 5/0.
 
 This note supersedes the older gate counts and Clumsy Ninja status below.
 `ctx_setCurrent` now distinguishes software thread affinity from HostGL shared

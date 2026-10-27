@@ -44,6 +44,7 @@ signal, and sandboxed persistence.
 | TL-O | RemoteIO mixing | Registers a RemoteIO render callback, starts output, and independently requires callback delivery plus non-silent mixer PCM; guards the callback/mixer path used by Angry Birds and Hungry Shark |
 | TL-P | VFP VCMP | Checks ordered/unordered VCMP condition flags against the ARM architecture definition; passed before any runtime change and adds isolated coverage |
 | TL-Q | RemoteIO thread timing | Requires audio callbacks to continue while the main thread sleeps; proven red with the old main-run-loop timer and green with the guest audio thread |
+| TL-R | Depth/stencil & root view | Requires depth24/stencil8/packed renderbuffers with correct bit counts, real stencil reject/write behavior, and replacement of an installed root controller's view; both graphics and root-view checks were red before their fixes for Minion Rush |
 
 ### Checkpoint / interrupted-case protocol
 

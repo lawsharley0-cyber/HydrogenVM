@@ -1900,6 +1900,20 @@ int runFullSubsystemTests() {
         check(t2 == 0 && a2 == 0, "UIBarButtonItem removeTarget:action:forControlEvents: clears target and action");
     }
 
+    // Replacing an installed root controller's view must replace the window's
+    // subview too. Minion Rush installs its EAGL view through this exact path.
+    {
+        const ObjC::id rootWindow = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+        const ObjC::id rootController = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIViewController"), r.selAlloc)), r.selInit));
+        r.send(cpu, rootWindow, "setRootViewController:", {rootController});
+        const ObjC::id oldRootView = ObjC::id(r.send(cpu, rootController, "view"));
+        const ObjC::id newRootView = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIView"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+        r.send(cpu, rootController, "setView:", {newRootView});
+        check(ObjC::id(r.send(cpu, newRootView, "superview")) == rootWindow &&
+                  ObjC::id(r.send(cpu, oldRootView, "superview")) == 0,
+              "UIViewController setView replaces the installed root view in its window");
+    }
+
     // 2d. UITabBarController, UITabBar, UITabBarItem
     {
         const ObjC::Class vcCls = r.getClass("UIViewController");
@@ -2016,6 +2030,62 @@ int runFullSubsystemTests() {
         const uint8_t bPx = proc.mem().read<uint8_t>(idsAddr + 26);
         const uint8_t aPx = proc.mem().read<uint8_t>(idsAddr + 27);
         check(rPx == 0 && gPx == 255 && bPx == 0 && aPx == 255, "OpenGL ES 2.0 shader + VBO + glDrawArrays rasterizes triangle");
+
+        // Minion Rush refuses to install its EAGL view unless all three
+        // depth/stencil extensions are present. The formats and stencil pipeline
+        // must work, not just appear in the extension string.
+        const uint32_t depthExtPtr = uint32_t(callGL("_glGetString", {0x1F03}));
+        std::string extensions;
+        for (uint32_t n = 0; n < 512 && depthExtPtr; ++n) {
+            const char ch = char(proc.mem().read<uint8_t>(depthExtPtr + n));
+            if (!ch) break;
+            extensions.push_back(ch);
+        }
+        callGL("_glGenRenderbuffers", {2, idsAddr + 48});
+        const uint32_t depthRb = proc.mem().read<uint32_t>(idsAddr + 48);
+        const uint32_t stencilRb = proc.mem().read<uint32_t>(idsAddr + 52);
+        callGL("_glBindRenderbuffer", {0x8D41, depthRb});
+        callGL("_glRenderbufferStorage", {0x8D41, 0x81A6, 64, 64});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D54, idsAddr + 36});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D55, idsAddr + 40});
+        const bool depth24 = proc.mem().read<int32_t>(idsAddr + 36) == 24 && proc.mem().read<int32_t>(idsAddr + 40) == 0;
+        callGL("_glBindRenderbuffer", {0x8D41, stencilRb});
+        callGL("_glRenderbufferStorage", {0x8D41, 0x8D48, 64, 64});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D54, idsAddr + 36});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D55, idsAddr + 40});
+        const bool stencil8 = proc.mem().read<int32_t>(idsAddr + 36) == 0 && proc.mem().read<int32_t>(idsAddr + 40) == 8;
+        check(depth24 && stencil8 && extensions.find("GL_OES_depth24") != std::string::npos &&
+                  extensions.find("GL_OES_stencil8") != std::string::npos &&
+                  extensions.find("GL_OES_packed_depth_stencil") != std::string::npos,
+              "GLES advertises and allocates depth24, stencil8 and packed depth/stencil renderbuffers");
+
+        callGL("_glGenRenderbuffers", {1, idsAddr + 56});
+        const uint32_t packedRb = proc.mem().read<uint32_t>(idsAddr + 56);
+        callGL("_glBindRenderbuffer", {0x8D41, packedRb});
+        callGL("_glRenderbufferStorage", {0x8D41, 0x88F0, 64, 64});
+        callGL("_glFramebufferRenderbuffer", {0x8D40, 0x8D00, 0x8D41, packedRb});
+        callGL("_glFramebufferRenderbuffer", {0x8D40, 0x8D20, 0x8D41, packedRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D54, idsAddr + 36});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D55, idsAddr + 40});
+        const bool packedBits = proc.mem().read<int32_t>(idsAddr + 36) == 24 && proc.mem().read<int32_t>(idsAddr + 40) == 8;
+        callGL("_glClearStencil", {1});
+        callGL("_glClear", {0x00000400});
+        callGL("_glEnable", {0x0B90});
+        callGL("_glStencilFunc", {0x0207, 3, 0xFF}); // ALWAYS, reference 3
+        callGL("_glStencilOp", {0x1E00, 0x1E00, 0x1E01}); // KEEP, KEEP, REPLACE
+        callGL("_glStencilMask", {0x0F});
+        callGL("_glUseProgram", {prog});
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glStencilFunc", {0x0202, 3, 0x0F}); // EQUAL, previous write must be 3
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glUniform4f", {uint32_t(uColLoc), UIKit::fbits(1.0f), 0, 0, UIKit::fbits(1.0f)});
+        callGL("_glStencilFunc", {0x0202, 4, 0x0F}); // must reject and preserve green
+        callGL("_glDrawArrays", {4, 0, 3});
+        callGL("_glReadPixels", {32, 16, 1, 1, 0x1908, 0x1401, idsAddr + 24});
+        callGL("_glDisable", {0x0B90});
+        callGL("_glUniform4f", {uint32_t(uColLoc), 0, UIKit::fbits(1.0f), 0, UIKit::fbits(1.0f)});
+        check(packedBits && proc.mem().read<uint8_t>(idsAddr + 24) == 0 && proc.mem().read<uint8_t>(idsAddr + 25) == 255,
+              "GLES packed depth/stencil supports clear, compare, mask and replace operations");
 
         // OpenGL ES 2.0 §2.10: deletion is deferred while a program is current.
         // Telltale's render thread draws with programs deleted by another thread.

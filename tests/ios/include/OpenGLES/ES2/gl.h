@@ -149,3 +149,21 @@ GLenum glGetError(void);
 void glActiveTexture(GLenum texture);
 void glGenerateMipmap(GLenum target);
 void glGetIntegerv(GLenum pname, GLint *params);
+const GLubyte *glGetString(GLenum name);
+void glGetRenderbufferParameteriv(GLenum target, GLenum pname, GLint *params);
+void glClearStencil(GLint s);
+void glStencilFunc(GLenum func, GLint ref, GLuint mask);
+void glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
+void glStencilMask(GLuint mask);
+#define GL_EXTENSIONS 0x1F03
+#define GL_STENCIL_TEST 0x0B90
+#define GL_ALWAYS 0x0207
+#define GL_EQUAL 0x0202
+#define GL_KEEP 0x1E00
+#define GL_REPLACE 0x1E01
+#define GL_STENCIL_ATTACHMENT 0x8D20
+#define GL_RENDERBUFFER_DEPTH_SIZE 0x8D54
+#define GL_RENDERBUFFER_STENCIL_SIZE 0x8D55
+#define GL_DEPTH_COMPONENT24_OES 0x81A6
+#define GL_STENCIL_INDEX8 0x8D48
+#define GL_DEPTH24_STENCIL8_OES 0x88F0
