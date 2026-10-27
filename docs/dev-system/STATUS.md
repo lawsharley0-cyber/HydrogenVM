@@ -16,6 +16,17 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Latest scoped Clash continuation — October 27, 2026
 
+Post-`45f5a97`: original daily card shop now initializes after earned training,
+with native picker, countdown, common/rare/epic prices/limits and persistent
+purchase counts. UI/return tests cover earned-copy common/rare, explicitly
+funded isolated Epic, process-only Sunday/rollover/backward clocks, staged
+exhaustion and three unchanged-file corruptions. 36 tests and all-seven trainer
+AI/sector regressions pass; actual Trainer Earl and clan return remain correct.
+See [DAILY_SHOP.md](../clash-royale/DAILY_SHOP.md). All original training names,
+decks, AI and tutorial behavior are required unchanged. Next: remaining shop
+chest/currency paths, later arenas/results and full audits. Shared source is
+unchanged; no new iPhone, stutter-free or audio-quality qualification.
+
 Post-`b638b88`: actual paid Arena 1 opponents now have 64 authored handles,
 six legal decks/18 native sectors and native reserve profiles 0/2/4 with original
 player mana regeneration. Battle/result labels agree, original Trainer Earl

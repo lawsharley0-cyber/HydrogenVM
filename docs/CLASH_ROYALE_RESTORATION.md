@@ -6,6 +6,18 @@ architecture, current source/state, exact verification process and future work.
 
 ## Current architecture — October 27, 2026
 
+Newest after `45f5a97`: [daily card shop](clash-royale/DAILY_SHOP.md) restores
+the original offers/countdown, native common/rare/epic purchases, prices/limits
+and atomic retained counts. Calendar tests cover native six-card Sunday,
+forward rollover retaining a purchased card/debit and backward-date protection.
+36 focused tests, all-seven trainer AI fallbacks/sector oracle, actual original
+Trainer Earl, existing clan return and three unchanged-file shop guards pass.
+**Preserve all original training names, decks, AI and tutorial behavior**;
+training receives no shop mutation or post-training opponent policy. Next are
+shop chest/currency purchase paths, later arenas/results and full audits.
+Shared runtime/assets are unchanged; no fresh phone/audio-quality/performance
+verdict. See the feature document for funded/clock/limit fixture boundaries.
+
 Newest after `b638b88`: [Arena opponents](clash-royale/ARENA_OPPONENTS.md)
 adds 64 authored post-training handles, six source-validated Arena 1 decks,
 18 native sectors and three bounded native reserve profiles. Real consecutive

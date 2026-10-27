@@ -6,6 +6,8 @@ HydrogenVM is a JIT-less ARMv7 user-mode emulator. Guest code is decoded into `O
 
 **Start with [docs/dev-system/MASTER_PLAN.md](docs/dev-system/MASTER_PLAN.md)**: the current phase order, the per-app plan and the agent split. The comparable-project research behind it is [docs/research/COMPARABLE_PROJECTS.md](docs/research/COMPARABLE_PROJECTS.md). Read only the docs your ticket names.
 
+**Clash owner requirement (2026-10-27): preserve the complete original training section**, including all seven trainers' names, decks, AI behavior and tutorial sequence. Authored opponent handles, deck/spending/mana overrides and daily-shop initialization apply only after earned training. Keep training regressions when extending the offline guest; [DAILY_SHOP.md](docs/clash-royale/DAILY_SHOP.md) records the current all-seven AI/sector checks and actual fresh Trainer Earl test.
+
 This file is the working agreement for a coding agent. It does not change the emulator. The detail is in `docs/dev-system/`:
 
 - [ARCHITECTURE_MAP.md](docs/dev-system/ARCHITECTURE_MAP.md) — roles, files, and groups A–E

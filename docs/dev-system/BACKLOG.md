@@ -2,6 +2,15 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+After `45f5a97` (Group C): daily **card** shop now has original offers, native
+purchase/price/limit behavior, durable bought counts and calendar rotation.
+36 tests and actual UI/return/calendar/limit/guard evidence are scoped in
+[DAILY_SHOP.md](../clash-royale/DAILY_SHOP.md). Preserve all seven original
+training names/decks/AI/tutorials; post-training policies must never alter them.
+Next complete interaction: shop chest/currency offers and native pending-reward
+recovery, then later arenas/results/profile counters and full UI/device/visual/
+audio/performance work. Daily cards do not make every Store button qualified.
+
 After `b638b88` (Group C): authored post-training names, source-validated varied
 Arena 1 decks and bounded native AI spending profiles now have actual battle/
 result/return evidence and persisted nonrepetition. 33 focused tests, private

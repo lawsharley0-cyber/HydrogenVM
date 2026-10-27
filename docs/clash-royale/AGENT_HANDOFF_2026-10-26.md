@@ -1,5 +1,17 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+**October 27 after `45f5a97`:** [DAILY_SHOP.md](DAILY_SHOP.md) supersedes the
+shop backlog below for daily cards: original picker/countdown, native prices,
+daily limits and common/rare/epic purchase retention now have UI/save evidence.
+Calendar fixtures cover original six-card Sunday, actual purchase → new-day
+rotation preserving economy and backward-date protection. 36 focused tests,
+all-seven original trainer AI/sector checks, fresh Trainer Earl, clan return
+and three unchanged-file shop guards pass. Read exact funded/clock/limit scopes,
+candidate hashes and native maps there. No shared engine change or phone pass.
+The owner requires the whole training section unchanged, including names,
+decks, AI and tutorials. Post-training features must stay behind that boundary.
+Next: shop chest/currency purchases, later arenas/results and broad audits.
+
 **October 27 after `b638b88`:** [ARENA_OPPONENTS.md](ARENA_OPPONENTS.md) is
 the newest handoff supplement. 64 authored handles, six CSV-validated Arena 1
 decks/18 sectors, three native reserve styles and original player mana rates

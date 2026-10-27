@@ -1,5 +1,16 @@
 # HydrogenVM: handoff for Grok Bot (2026-10-24)
 
+October 27 Clash-specific continuation after `45f5a97`, on
+`codex/clash-offline-continuation` / draft PR #138: read
+[DAILY_SHOP.md](clash-royale/DAILY_SHOP.md) and the superseding banner in
+[the complete agent handoff](clash-royale/AGENT_HANDOFF_2026-10-26.md).
+Daily card offers/native purchases/retained counts/calendar rotation now have
+scoped UI/save evidence and 36 focused tests. Shop chest/currency paths and
+later arenas/full audits remain open. The owner requires all seven original
+training names, decks, AI and tutorial behavior unchanged; new features stay
+post-training. This guest-only work does not change main's shared alpha engine
+or establish a new phone/audio-quality/performance pass.
+
 This hands over the current work on HydrogenVM, a JIT-less 32-bit iOS `.ipa` emulator that runs on modern iPhones. The repo is `lawsharley0-cyber/HydrogenVM` and the integration branch is `main`. Read `AGENTS.md` (the working agreement) and this file. Open other docs only when a task names them.
 
 The owner is Lawson. He tests on an iPhone with the app built by CI. He sends **batch reports** (`latest_batch_report.json` / `.md` from the in-app *Test All Games*) and occasionally run logs. He wants every game in his library to work. Talk to him in plain language, and give him a link to the new `.ipa` whenever a meaningful batch of fixes lands.

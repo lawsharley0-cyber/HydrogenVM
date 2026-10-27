@@ -249,7 +249,8 @@ static void capture_current_home(void *ui,int force) {
     }
     int tick=(int)FIELD(logic,0x38);
     if(!force && tick>=last_tick && (u32)tick-(u32)last_tick<20)return;
-    last_tick=tick;account_home_clock(logic,home,1);capture_native(home,avatar);
+    last_tick=tick;account_home_clock(logic,home,1);
+    shop_refresh(logic,home,wall_epoch());capture_native(home,avatar);
     committed_wins=(int)FIELD(avatar,0x9c);
 }
 void guest_snapshot(void *ui) {capture_current_home(ui,0);friendly_tick();donation_tick();npc_request_tick();community_tick();}

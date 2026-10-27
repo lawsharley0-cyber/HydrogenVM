@@ -27,7 +27,13 @@ class GuestOpponentPolicyTests(unittest.TestCase):
 #include <stdint.h>
 #include <string.h>
 typedef unsigned int u32;typedef unsigned char u8;
-#define FIELD(p,n) (*(u32*)((u8*)(p)+(n)))
+static u32 field(void *p,u32 n) {
+ if((uintptr_t)p==0x464c98)return 11;
+ if((uintptr_t)p==0x464c9c)return 12;
+ if((uintptr_t)p==0x464ca0)return 13;
+ return *(u32*)((u8*)p+n);
+}
+#define FIELD(p,n) field((void*)(p),n)
 static void fail(const char *why){fprintf(stderr,"%s\n",why);exit(2);}
 #include "opponent_names.inc"
 #include "opponent_math.inc"
@@ -43,12 +49,14 @@ static int global(void *a){return *(int*)a;}
 static void *mode(void){return human;}
 static void *top(void *a){return npc;}
 static void *original_label(void *a){++localized;return "Trainer Earl";}
+static int original_csv(void *row,int column){if((uintptr_t)row!=0x1234)exit(3);return column*1000;}
 static uintptr_t resolve(u32 a){switch(a){
 case 0x18dcf9:return (uintptr_t)construct;case 0x18df31:return (uintptr_t)assign;
 case 0x18db2d:return (uintptr_t)destroy;case 0x18f4bd:return (uintptr_t)length;
 case 0x19c099:return (uintptr_t)cstring;case 0x7d2e1:return (uintptr_t)global;
 case 0x91f7d:return (uintptr_t)mode;case 0x93e8d:return (uintptr_t)top;
-case 0x511a9:return (uintptr_t)original_label;default:return (uintptr_t)printf;}}
+case 0x511a9:return (uintptr_t)original_label;case 0x19120d:return (uintptr_t)original_csv;
+default:return (uintptr_t)printf;}}
 #define CALL(a,result,args) ((result (*)args)resolve(a))
 #define API_printf 0
 #include "opponent.inc"
@@ -66,6 +74,12 @@ int main(void){
  if(guest_npc_label(&data)!=(u8*)npc+32 || strcmp((char*)npc+32,opponent_names[0]))return 3;
  int count=assignments;guest_npc_label(&data);if(assignments!=count)return 3;
  data=18000000;if(strcmp(guest_npc_label(&data),"Trainer Earl")||localized!=2)return 3;
+ // Even a stale paid-mode flag must not alter any of the seven trainers'
+ // original CSV regeneration getters or native reserve fields.
+ for(int i=0;i<7;++i){u32 trainer[21]={0};trainer[0]=18000000+i;trainer[1]=0x1234;trainer[20]=i+1;
+  if(guest_npc_mana(trainer)!=11000 || guest_npc_mana_end(trainer)!=12000 ||
+     guest_npc_mana_overtime(trainer)!=13000 || guest_npc_reserve(trainer)!=i+1)return 3;
+ }
  opponent_enabled=0;guest_avatar_set_name(npc,value);
  if(strcmp((char*)npc+32,value))return 3;
  return 0;

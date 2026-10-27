@@ -52,6 +52,7 @@ static void community_points(int,int);
 static int community_rollover(u32);
 static void encode_donor_member(void*);
 static void donation_tick(void);
+static void shop_refresh(void*,void*,u32);
 #ifdef GUEST_PROBE_DONATION_ACTORS
 static void donation_actor_probe(void);
 #endif
@@ -112,6 +113,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 }
 #include "reward.inc"
 #include "name.inc"
+#include "shop.inc"
 #include "native_actor.inc"
 #include "clan_roles.inc"
 #include "clan.inc"
@@ -180,6 +182,7 @@ int guest_send(void *self,void *message) {
 #ifdef GUEST_PROBE_DONATION_ACTORS
         donation_actor_probe();
 #endif
+        validate_shop_checkpoint();
         validate_donor();
         validate_donor_inventory();
         validate_donation_record();

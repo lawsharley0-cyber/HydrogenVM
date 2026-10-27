@@ -1,5 +1,15 @@
 # Offline guest UI audit — October 25, 2026
 
+October 27 after `45f5a97`: daily card offers, countdown, native common/rare
+purchases and retained increased prices/counts work; isolated funded Epic
+purchase/return also passes. Process-only calendar tests exercise native Sunday
+six-card layout, forward refresh retaining the bought card/debit and backward
+clock protection. Staged exhausted common offer blocks buying; invalid saved
+weekday/counter reject unchanged. 36 tests, all-seven original trainer AI/sector
+checks, actual untouched Trainer Earl and clan return pass. Read
+[DAILY_SHOP.md](DAILY_SHOP.md) for exact candidate and fixture limits. Shop
+chest/currency purchases and broad phone/visual/audio/performance remain open.
+
 October 27 after `b638b88`: actual Arena 1 HUD/result both show the authored
 selected handle. Consecutive paid matches change handle/deck/native reserve
 style across process restart and retain real defeat/entry accounting. A fresh
@@ -175,7 +185,7 @@ Status is scenario-specific: `pending`, `observed`, `passed`, `blocked`, or
 | H-06 | Earned chest info/unlock/paid/open/reveal | v23 fourth earned chest unlocks after native timer, opens/reveals Gold +16, Mini P.E.K.K.A. and Prince; paid path pending |
 | H-07 | Ranking global/local players/clans/Friends/close | v31 aborts on 14403; v32 original empty-list schemas render all four directories, actual own-player Friends row, and close safely |
 | H-08 | Achievements | v32 opens original five-item list: actual Arena1 and nine-card progress; no available claim or scroll/reward qualification |
-| T-01 | Shop tab / available offers / dismiss | v31 unlocks native chest/Gold offers and scrolls safely; daily cards empty/0sec, purchases remain unported |
+| T-01 | Shop tab / available offers / dismiss | Daily card offers/countdown, native common/rare purchases/returns and isolated Epic/calendar/limit cases now pass; see DAILY_SHOP. Shop chest/currency purchases remain unported. |
 | T-02 | Cards tab / all eight card tiles | v23 19-state plan captures native info and closes for all eight |
 | T-03 | Each card's info / upgrade / use / swap / close | Four real upgrades pass (Archers/Bomber/Arrows/Prince); Knight insufficient cards preserves wallet; native Use swaps Mini P.E.K.K.A. for Arrows and retains across two launches |
 | T-04 | Battle tab / arrows | v23 Battle tab returns safely; arena preview covered; progression arrows pending |

@@ -1,5 +1,9 @@
 # Varied offline Arena 1 opponents
 
+Successor: [DAILY_SHOP.md](DAILY_SHOP.md) records the post-`45f5a97` card shop,
+36 tests and reinforced all-seven training preservation. This document retains
+the opponent-stage evidence and its scoped remaining AI/balance work.
+
 October 27, 2026, continuation after `b638b88` on
 `codex/clash-offline-continuation` / draft PR #138. The guest now chooses an
 authored handle, legal deck, native reserve profile and battle seed for each

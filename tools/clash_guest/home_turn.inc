@@ -3,6 +3,7 @@
  * Reward/matchmaking commands remain unsupported until their guest port exists.
  */
 #include "reader.inc"
+#include "shop_wire.inc"
 static void name_echo(struct GuestReader*);
 static void clan_echo(struct GuestReader*,int);
 static void mail_echo(struct GuestReader*);
@@ -55,6 +56,12 @@ static int consume_home_turn(void *message) {
         else if(kind==524)request_echo(&r);
         else if(kind==500){turn_vint(&r);turn_vint(&r);turn_bool(&r);turn_bool(&r);}
         else if(kind==504)turn_reference(&r);
+        else if(kind==530) {
+            // Original BuyCard::decode reads a BE int then a card reference.
+            // Native execute already checked availability/cost/limit and
+            // changed both sold count and inventory. Never execute it twice.
+            shop_card_echo(&r);
+        }
         else if(kind==525) {
             int spells=turn_vint(&r);if(spells<0 || spells>=200)fail("GuestOffline: invalid spell list");
             for(int j=0;j<spells;++j)turn_reference(&r);
@@ -85,7 +92,9 @@ static int consume_home_turn(void *message) {
             // execute 0xd8b10 accepts native page IDs 1 through 4.
             int page=turn_vint(&r);
             if(page<1 || page>4)fail("GuestOffline: invalid opened page");
-        } else if(kind==516 || kind==538) {
+        } else if(kind==516 || kind==538 || kind==532) {
+            // Original ShopOpened has base metadata only. Its native execute
+            // records weekday-seen; capture that state without replay.
             // LogicUpdateLastShownLevelUpCommand (516), encode/decode
             // 0x1109bc/0x1109c0 tail-call LogicCommand with no extra payload.
             // Its original execute 0x1109c4 updates lastShownLevelUp; retain

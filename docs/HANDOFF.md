@@ -2,6 +2,16 @@
 
 ## Current agent handoff — October 26, 2026
 
+October 27 after `45f5a97`: read
+[Daily shop](clash-royale/DAILY_SHOP.md) for current card offers, native
+purchases/limits, calendar policy, exact evidence and remaining Store work.
+36 guest tests and actual card purchase/relaunch/live-rollover checks pass. The
+owner explicitly requires **all seven original training names, decks, AI and
+tutorial sequence to remain unchanged**. Training is excluded from opponent
+variation and shop initialization; all-seven AI/sector checks and actual
+Trainer Earl pass. Next: shop chests/currency, later arenas/results and full
+device/UI/visual/audio/performance audits. No shared runtime edits this stage.
+
 October 27 continuation after `b638b88`: read
 [Arena opponents](clash-royale/ARENA_OPPONENTS.md) first for the latest native
 battle name fix, six arena-legal decks, fair mana/three spending profiles,
