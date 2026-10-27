@@ -1,0 +1,35 @@
+{
+  "host": {
+    "os": "Darwin 25.6.0",
+    "arch": "arm64",
+    "cpu": "Apple M1 (Virtual)",
+    "commit": "f63368e",
+    "date": "2026-10-27T21:05:01+00:00"
+  },
+  "seconds": 20.4,
+  "ok": false,
+  "suites": {
+    "build": {
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "seconds": 20.414024829864502,
+      "tests": [
+        {
+          "name": "engine",
+          "result": "fail",
+          "seconds": 20.414
+        }
+      ]
+    }
+  },
+  "speed": {},
+  "problems": [
+    {
+      "suite": "build",
+      "test": "ninja",
+      "severity": "fail",
+      "message": "/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/MemoryDiagnostics.cpp:24:26: error: 'os_proc_available_memory' is unavailable: not available on macOS\n1 error generated."
+    }
+  ]
+}
