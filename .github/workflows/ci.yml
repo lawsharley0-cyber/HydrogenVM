@@ -27,9 +27,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
+        # 2026-10-26: this step hung for 30+ minutes on a hosted runner while
+        # the same step takes ~30 s normally. Bound the hang with a step
+        # timeout and retry transient apt failures with backoff.
+        timeout-minutes: 15
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev libicu-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3
+          rc=1
+          for i in 1 2 3; do
+            sudo apt-get update -q && rc=0 && break
+            echo "apt-get update attempt $i failed; retrying in 20s"
+            sleep 20
+          done
+          [ "$rc" -eq 0 ]
+          rc=1
+          for i in 1 2 3; do
+            sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev libicu-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 && rc=0 && break
+            echo "apt-get install attempt $i failed; retrying in 20s"
+            sleep 20
+          done
+          [ "$rc" -eq 0 ]
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
         run: |
