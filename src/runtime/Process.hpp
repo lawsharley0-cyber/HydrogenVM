@@ -215,6 +215,9 @@ public:
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
     std::string crashBundle();
+    // Bounded, read-only allocator/host samples. Event must be an internal constant.
+    void recordMemorySample(const char* event);
+    std::string memorySamplesJson() const;
     const std::string& crashSignature() const { return crashSignature_; }
     std::vector<std::string> missingSymbols() const;
     // Imports bound to "missing" stubs at load (functions), in file order — the static gap list.
@@ -427,6 +430,8 @@ private:
     std::function<void(float, float, float)> accelHandler_;
 
     // diagnostics
+    mutable std::mutex memorySamplesMu_;
+    std::deque<std::string> memorySamples_;   // last 10 minutes at the five-second cadence
     Perf perf_;
     mutable std::mutex missingMu_;
     std::set<std::string> missing_;
