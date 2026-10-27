@@ -10,6 +10,8 @@ HydrogenVM is a JIT-less ARMv7 user-mode emulator. Guest code is decoded into `O
 
 This file is the working agreement for a coding agent. It does not change the emulator. The detail is in `docs/dev-system/`:
 
+**Clash owner priority (2026-10-27): defer advanced/main-opponent AI refinement and modern-bot comparisons until all other game features and bug fixes are ready.** Retain existing bounded native opponents while completing store/progression/results and full UI/save/device/visual/audio/performance audits. See [STORE_PURCHASES.md](docs/clash-royale/STORE_PURCHASES.md) for the newest scoped qualification; never change original training as part of these additions.
+
 - [ARCHITECTURE_MAP.md](docs/dev-system/ARCHITECTURE_MAP.md) — roles, files, and groups A–E
 - [IMPLEMENTATION_PLAN.md](docs/dev-system/IMPLEMENTATION_PLAN.md) — operational, planned, and needs-owner
 - [ROADMAP.md](docs/dev-system/ROADMAP.md) — phase order and what may run together

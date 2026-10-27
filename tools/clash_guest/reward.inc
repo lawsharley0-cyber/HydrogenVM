@@ -3,7 +3,33 @@
  */
 static void *claim_chest(void *home,int kind,int id) {
     if(kind==1)return CALL(0x125645,void*,(void*,int))(home,id);
-    return (void*)FIELD(home,kind==2?0x78:0x90);
+    u32 offset=reward_home_offset(kind);
+    if(!offset)fail("GuestOffline: invalid native reward source");
+    return (void*)FIELD(home,offset);
+}
+static void validate_reward_checkpoint(void) {
+    if(!pending_size)return;
+    if(!reward_source_valid((u32)pending_kind,(u32)pending_id) || pending_size<3 ||
+       pending_reward[0]!=0x95 || pending_reward[1]!=3)
+        fail("GuestOffline: invalid pending reward identity; original retained");
+    u32 size=pending_size-2,stream[16],command[11];
+    void *bytes=CALL(API_malloc,void*,(u32))(size);
+    if(!bytes)fail("GuestOffline: pending reward validation allocation failed");
+    for(u32 i=0;i<size;++i)((u8*)bytes)[i]=pending_reward[2+i];
+    CALL(0x192a71,void,(void*,u32))(stream,size);
+    CALL(0x1936d5,void,(void*,void*,u32))(stream,bytes,size);
+    CALL(0x81fed,void,(void*))(command);
+    CALL(0x828ad,void,(void*,void*))(command,stream);
+    int valid=CALL(0x192b45,u32,(void*))(stream)==size &&
+        FIELD(command,0x10)==0 && FIELD(command,0x14)==0 && FIELD(command,0x1c)!=0 &&
+        FIELD(command,0x20)==(u32)pending_id && FIELD(command,0x24)==(u32)pending_kind;
+    CALL(0x82011,void,(void*))(command);CALL(0x19370d,void,(void*))(stream);
+    void *owner=decode_packet(24101,0,saved_home,saved_size);
+    void *home=(void*)FIELD(owner,0x30);
+    void *chest=home?claim_chest(home,pending_kind,pending_id):0;
+    valid=valid && chest && !BYTE(chest,0x18);
+    dispose(owner);
+    if(!valid)fail("GuestOffline: pending reward command/source mismatch; original retained");
 }
 static void prepare_reward(void *home,void *avatar) {
     if(pending_size || !requested_kind || !BYTE(home,0xb4))return;

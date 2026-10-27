@@ -179,6 +179,7 @@ int guest_send(void *self,void *message) {
     CALL(API_printf,int,(const char*,int))("GuestOffline: outgoing kind=%d\n",kind);
     if(kind==10101) {
         if(logged_in)fail("GuestOffline: duplicate login");
+        validate_reward_checkpoint();
 #ifdef GUEST_PROBE_DONATION_ACTORS
         donation_actor_probe();
 #endif

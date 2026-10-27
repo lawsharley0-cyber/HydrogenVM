@@ -34,6 +34,7 @@ static u32 checksum(const u8 *bytes,u32 size) {
     for(u32 i=0;i<size;++i)value=(value^bytes[i])*16777619u;
     return value;
 }
+#include "reward_sources.inc"
 #include "clock.inc"
 #include "clan_state.inc"
 #include "mail_state.inc"
@@ -173,7 +174,7 @@ static void load_guest_home(void) {
             u32 journal[5]={tag,0,0,0,0};
             valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))(journal+1,1,16,file)==16;
             if(!valid || journal[1]<3 || journal[1]>sizeof pending_reward ||
-               journal[2]<1 || journal[2]>3 || (journal[2]>=2 && journal[3]!=0) || journal[3]>1000000)
+               !reward_source_valid(journal[2],journal[3]))
                 fail("GuestOffline: invalid reward journal; original file retained");
             pending_size=journal[1];pending_kind=(int)journal[2];pending_id=(int)journal[3];
             valid=valid && CALL(s_read,u32,(void*,u32,u32,void*))(pending_reward,1,pending_size,file)==pending_size;
@@ -242,6 +243,7 @@ static void capture_current_home(void *ui,int force) {
     if(pending_size) {
         if(!reward_applied)return;
         if(pending_kind==1 && CALL(0x125645,void*,(void*,int))(home,pending_id))return;
+        if(pending_kind==4 && FIELD(home,0x7c))return;
         completed_kind=pending_kind;completed_id=pending_id;
         pending_size=0;pending_kind=0;pending_id=0;reward_applied=0;
         force=1;

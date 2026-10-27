@@ -184,11 +184,9 @@ not a dropout-free, stutter-free or new iPhone performance/audio-quality verdict
 
 ## Next work
 
-Daily **card** purchases are this stage's scope. Shop chest and currency-pack
-purchases still need their guest command/reward paths and full UI/recovery
-verification; this document does not qualify every Store control. Preserve
-native costs, reward generation and pending-intent recovery when adding them.
-Then continue arena-specific progression/bots, native draw/partial results and
-profile counters, full button/device/save-lifecycle audits, original-version
-visual comparison and the owner's princess/cannon/health-bar/scenery/text/audio/
-performance queue. Training stays original throughout those changes.
+The later [STORE_PURCHASES.md](STORE_PURCHASES.md) stage now qualifies original
+shop chests, Gem-for-Gold packs and controlled source-4 reward recovery. Its
+scope excludes offline real-money billing. Continue later-arena progression,
+native results/profile accounting and full device/UI/save/visual/audio/
+performance audits. Advanced opponent AI refinement is deferred by the owner
+until all other features and bug fixes are ready; training stays original.

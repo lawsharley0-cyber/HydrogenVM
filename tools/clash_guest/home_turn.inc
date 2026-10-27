@@ -56,6 +56,15 @@ static int consume_home_turn(void *message) {
         else if(kind==524)request_echo(&r);
         else if(kind==500){turn_vint(&r);turn_vint(&r);turn_bool(&r);turn_bool(&r);}
         else if(kind==504)turn_reference(&r);
+        else if(kind==528) {
+            shop_chest_echo(&r);
+            requested_kind=4;requested_id=0;
+        }
+        else if(kind==529) {
+            // Original BuyResourcePack already debited Gems/credited Gold.
+            // Persist its native result after the complete turn validates.
+            shop_pack_echo(&r);
+        }
         else if(kind==530) {
             // Original BuyCard::decode reads a BE int then a card reference.
             // Native execute already checked availability/cost/limit and
