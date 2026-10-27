@@ -2,6 +2,11 @@
 
 Status: unresolved; diagnostic work, not a confirmed Jetsam fix.
 
+Follow-up: the source-client fixture has now been recovered and hash-verified,
+and guestdev rebuilt from the read-only `29912d9` guest snapshot. Initial
+unavailability below describes the first investigation pass. See the
+[follow-up log](MEMORY_STABILITY_FOLLOWUP.md) for CI findings and new attempts.
+
 ## Evidence and scope
 
 Target: Clash Royale 2.1306.1, `com.hydrogenvm.clashroyale.guestdev`,

@@ -6,8 +6,11 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #if defined(__APPLE__)
+#include <TargetConditionals.h>
 #include <mach/mach.h>
+#if TARGET_OS_IPHONE
 #include <os/proc.h>
+#endif
 #endif
 
 namespace Hydrogen::Runtime {
@@ -21,7 +24,9 @@ HostMemoryStats hostMemoryStats() {
         out.residentBytes = vm.resident_size;
         if (count >= TASK_VM_INFO_REV1_COUNT) out.physicalFootprintBytes = vm.phys_footprint;
     }
+#if TARGET_OS_IPHONE
     out.availableBytes = os_proc_available_memory();
+#endif
 #elif defined(__linux__)
     uint64_t total = 0, resident = 0;
     const long page = sysconf(_SC_PAGESIZE);
