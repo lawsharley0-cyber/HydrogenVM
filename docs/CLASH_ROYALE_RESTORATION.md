@@ -4,7 +4,17 @@ For another agent taking over, read
 [the complete October 26 handoff](clash-royale/AGENT_HANDOFF_2026-10-26.md):
 architecture, current source/state, exact verification process and future work.
 
-## Current architecture — October 26, 2026
+## Current architecture — October 27, 2026
+
+Newest afterd213fdf: [clan community](clash-royale/CLAN_COMMUNITY.md) adds a
+reachable native NPC profile, actual Invite/rejoin on its retained actor, and
+weekly roster/header points. Native invitation/two returns, original donation
+cooldown after rejoin, real roster11/1/clan12, weekly reset without lifetime or
+economic changes, and three unchanged-file guards pass.29 guest tests pass;
+shared runtime remains unchanged. Monday00:00 UTC/weighted weekly scores are
+documented offline policy, not verified retired-server calendar behavior.
+Next are post-training names, arena decks/styles and daily shop; full later
+arena/device/UI/audio/performance qualification remains open.
 
 Latest aftera51c68e: [reciprocal donations](clash-royale/RECIPROCAL_DONATIONS.md)
 now work through the actual UI. Local Donor uses original524/cooldown and a

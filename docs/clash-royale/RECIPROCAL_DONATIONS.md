@@ -1,5 +1,9 @@
 # Playable local NPC requests and player donations
 
+The subsequent [clan community stage](CLAN_COMMUNITY.md) adds native invitation/
+retained rejoin, reachable NPC profile history and weekly donation points.
+The following sections preserve this reciprocal-transfer stage's qualification.
+
 Continuation after `a51c68e` on `codex/clash-offline-continuation`. Local Donor
 now requests an owned starter card through original524. The player can use the
 original green Donate button, receive native Gold/XP and see the native request

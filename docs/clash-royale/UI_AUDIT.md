@@ -1,5 +1,13 @@
 # Offline guest UI audit — October 25, 2026
 
+October27 afterd213fdf: persistent labelled offline NPC message → View Profile
+→ actual No Clan/Invite → original success toast → roster2/50; rejoin retains
+native inventory, wallets, cooldowns and expected join-achievement progress.
+Actual common/rare/NPC transfers display weekly human11/NPC1/clan12; a staged
+prior-week reset displays0 without touching native lifetime/economy.29 tests
+and repeat returns pass. Read CLAN_COMMUNITY.md for exact local-calendar policy,
+candidate and synthetic/clock-aged limits; broad phone/fidelity audits remain.
+
 Latest reciprocal subset aftera51c68e: actual Local Donor request0/10 and green
 Donate, common receipt1/10/native5 Gold/1 XP, native one-card limit while stock
 remains, rare Fireball1/1/native50 Gold/5 XP, and actual spent-Arrows replenishment.

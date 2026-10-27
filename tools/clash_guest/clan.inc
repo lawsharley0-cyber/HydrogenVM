@@ -94,11 +94,13 @@ static void create_clan(void *self,void *message) {
     reply(self,24111,0,clan_command,clan_command_size);
 }
 static void encode_clan_header(void *stream,void *request,void *avatar) {
+    if(community_rollover(wall_epoch()))write_save();
     struct ClanFields f=clan_fields(clan_request,clan_request_size);
     u32 header[15]={0},id[2]={1,clan_serial};
     FIELD(header,0)=(u32)id;FIELD(header,4)=FIELD(request,0x30);FIELD(header,8)=FIELD(request,0x38);
     FIELD(header,0xc)=(u32)f.type;FIELD(header,0x10)=donor_present?2:1;
     FIELD(header,0x14)=FIELD(avatar,0x34)/2;FIELD(header,0x18)=(u32)f.score;
+    FIELD(header,0x2c)=community_human_sent+(donor_present?community_npc_sent:0);
     FIELD(header,0x34)=FIELD(request,0x3c);
     CALL(0x38221,void,(void*,void*))(header,stream);
 }
@@ -125,6 +127,7 @@ static void clan_data(void *self,void *message) {
     FIELD(member,0x1c)=(u32)CALL(0x99e45,void*,(void*))(avatar);
     FIELD(member,0x20)=(u32)CALL(0x9ae41,int,(void*))(avatar);FIELD(member,0x24)=(u32)CALL(0x9abcd,int,(void*))(avatar);
     FIELD(member,0x28)=FIELD(avatar,0x34);FIELD(member,0x34)=1;
+    FIELD(member,0x2c)=community_human_sent;
     FIELD(member,0x48)=(u32)CALL(0x9b4d1,void*,(void*))(avatar);
     CALL(0x37d85,void,(void*,void*))(member,stream);
     if(donor_present)encode_donor_member(stream);

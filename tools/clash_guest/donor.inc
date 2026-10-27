@@ -39,7 +39,9 @@ static void sync_donor(void) {
     if(!clan_status) {donor_size=0;donor_offset=0;donor_clan=0;donor_epoch=0;donor_present=0;donor_role=0;
         donor_inventory_count=0;donor_inventory_body_hash=0;donor_inventory_loaded=0;
         npc_request_size=0;npc_request_sequence=0;npc_request_stamp=0;npc_request_loaded=0;
-        clan_stream_ready=0;return;}
+        community_clan=0;community_size=0;community_stamp=0;community_loaded=0;
+        community_week=0;community_human_sent=0;community_npc_sent=0;
+        community_human_received=0;community_npc_received=0;clan_stream_ready=0;return;}
     if(clan_status!=2)return;
     if(donor_size && !donor_present)return; // Durable kick, not an invitation to reseed/rejoin.
     void *request=decode_packet(14301,0,clan_request,clan_request_size);
@@ -82,6 +84,7 @@ static void sync_donor(void) {
     }
     dispose(request);
     validate_donor_inventory();
+    if(!community_clan)community_initialize();
 }
 static void encode_donor_member(void *stream) {
     void *packet=decode_packet(24101,0,donor_home,donor_size),*avatar=(void*)FIELD(packet,0x34);
@@ -90,6 +93,7 @@ static void encode_donor_member(void *stream) {
     FIELD(member,0x1c)=(u32)CALL(0x99e45,void*,(void*))(avatar);
     FIELD(member,0x20)=(u32)CALL(0x9ae41,int,(void*))(avatar);FIELD(member,0x24)=(u32)CALL(0x9abcd,int,(void*))(avatar);
     FIELD(member,0x28)=FIELD(avatar,0x34);FIELD(member,0x34)=2;
+    FIELD(member,0x2c)=community_npc_sent;
     FIELD(member,0x48)=(u32)CALL(0x9b4d1,void*,(void*))(avatar);
     CALL(0x37d85,void,(void*,void*))(member,stream);dispose(packet);
 }

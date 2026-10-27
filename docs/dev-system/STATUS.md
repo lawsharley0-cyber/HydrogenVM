@@ -14,7 +14,17 @@ python3 tools/hvm_compat.py issues build/compat-report/report.json
 
 Copy `summary` and the regression list into the snapshot. Dry-run issues are notes, not filed tickets. Do not commit `build/`.
 
-## Latest scoped Clash continuation — October 26, 2026
+## Latest scoped Clash continuation — October 27, 2026
+
+Post-d213fdf: actual native Invite/rejoin now retains the removed NPC, wallets,
+cards and original cooldowns, with exactly one native join-achievement update.
+New per-clan profile message makes the NPC reachable through original chat UI.
+Weekly sent/received capacity points persist atomically and display actual
+human11/NPC1/header12 after common/rare/NPC donations. A previous-week fixture
+resets only weekly counts; three damaged files reject unchanged.29 guest tests
+pass. See [CLAN_COMMUNITY.md](../clash-royale/CLAN_COMMUNITY.md) for native UI,
+repeat returns, exact hashes and explicit local MondayUTC policy limits.
+No shared src edits or fresh phone/performance/audio-quality qualification.
 
 Post-a51c68e visible feature: Local Donor requests cards through native524;
 player Donate works with native capacity/arena limits, Gold/XP and inventory.

@@ -2,6 +2,23 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+Post-d213fdf invitation/weekly work (Group C): expose a clearly local NPC profile
+through a persistent native chat message, original Invite14322/ack24322 and
+original209/create=false rejoin on the retained actor. Preserve kick/donation
+cooldowns, stock and original permissions. Track new weighted donation points
+in the native member/header fields with a documented local Monday00:00 UTC
+week (the retired server's exact reset clock is absent from the pinned data).
+Do not assign legacy lifetime donations to invented historical weeks or clear
+lifetime totals. Qualify actual invite/rejoin, common/rare scores and rollover.
+
+Qualified: CLAN_COMMUNITY.md records actual native Invite/rejoin/two returns,
+preserved cooldown and stock, exact native join-achievement+1, real weekly
+roster11/1/header12, reset-only weekly fixture and three unchanged bad saves.
+29 tests pass. NPC supply is already supported through real player donations;
+autonomous earned NPC supply remains an extension. Next owner work: authored
+post-training names, arena-legal varied decks/native AI styles and original shop,
+then later arenas/results and full button/device/visual/audio/performance audits.
+
 Reciprocal donation UI now qualified aftera51c68e (Group C): original524 NPC
 requests/native cooldown,14310 player Donate, original capacity/reward rules,
 common/rare UI, actual spent-Arrows replenishment and repeated returns. GNR1

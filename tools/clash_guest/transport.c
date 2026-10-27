@@ -46,6 +46,10 @@ static void sync_donor(void);
 static void validate_donor(void);
 static void validate_donor_inventory(void);
 static void npc_request_tick(void);
+static void community_initialize(void);
+static void community_tick(void);
+static void community_points(int,int);
+static int community_rollover(u32);
 static void encode_donor_member(void*);
 static void donation_tick(void);
 #ifdef GUEST_PROBE_DONATION_ACTORS
@@ -116,6 +120,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "clan_members.inc"
 #include "donation.inc"
 #include "npc_request.inc"
+#include "community.inc"
 #include "match.inc"
 #include "friendly.inc"
 static void refresh_saved_arena(void) {
@@ -175,11 +180,13 @@ int guest_send(void *self,void *message) {
         validate_donor_inventory();
         validate_donation_record();
         validate_npc_request();
+        validate_community();
         // Every extension's wire/semantic validation must precede either
         // friendly-ID migration or seeding a donor into a legacy clan save.
         static u8 checked_mail[33024];encode_local_inbox(checked_mail,sizeof checked_mail);
         validate_clan_checkpoint();
         if(clan_status==2 && !donor_size) {sync_donor();write_save();}
+        if(clan_status==2 && donor_size && !community_clan) {community_initialize();write_save();}
         refresh_saved_arena();
         logged_in=1;
         reply(self,20104,1,initial_login,sizeof initial_login);
@@ -220,6 +227,8 @@ int guest_send(void *self,void *message) {
         clan_conversation(self,message);
     } else if(kind==14310 && logged_in && !battle_started) {
         donate_to_npc(self,message);
+    } else if(kind==14322 && logged_in && !battle_started) {
+        invite_local_npc(self,message);
     } else if(kind==14123 && logged_in && !battle_started) {
         cancel_friendly(self,message);
     } else if(kind==14303 && logged_in && !battle_started) {

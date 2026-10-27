@@ -107,7 +107,7 @@ int main(int argc,char **argv) {
             self.assertEqual((result.returncode,result.stdout),(0,marked))
             # Inventory provenance requires both children and must retain its
             # parent marker across active/leave/settings transaction writes.
-            for status in [2,3,4,0x402,0x403,0x404]:
+            for status in [2,3,4,0x402,0x403,0x404,0x802,0x803,0x804,0xc02,0xc03,0xc04]:
                 required=header.copy();required[2]=0x300|status
                 head=struct.pack('<9I',*required);marked=head+struct.pack('<I',fnv(head))+request+command
                 result=run(marked)
@@ -123,7 +123,7 @@ int main(int argc,char **argv) {
             # Recomputed checksums cannot make impossible lengths/state/wallet
             # valid. A disbanded clan retains its monotonic ID, no payload.
             for index, value in [(1,0),(2,5),(2,0x100),(2,0x101),(2,0x105),(2,0x202),
-                                 (2,0x300),(2,0x301),(2,0x305),(2,0x402),(2,0x602),(2,0x802),
+                                 (2,0x300),(2,0x301),(2,0x305),(2,0x402),(2,0x602),(2,0x802),(2,0xa02),(2,0x1002),
                                  (3,1025),(4,257),(5,2000000001),(6,5001),(7,0)]:
                 broken = header.copy();broken[index]=value
                 head = struct.pack('<9I', *broken)

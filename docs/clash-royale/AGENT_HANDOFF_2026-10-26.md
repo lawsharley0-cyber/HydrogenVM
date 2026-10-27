@@ -1,5 +1,16 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+**October27 afterd213fdf:** [CLAN_COMMUNITY.md](CLAN_COMMUNITY.md) adds actual
+native Invite/rejoin with retained stock/cooldowns, a reachable offline NPC
+profile post and weekly roster/header donation points.29 tests, actual two
+returns, correct join-achievement delta, roster11/1/clan12, reset-only weekly
+fixture and three unchanged-file rejections pass. GCM1 binds both actors and
+adds required GCL1 bit0x800; do not downgrade saves. Monday00:00UTC/weighted
+points are explicit offline policy; old server schedule/weight is unverified.
+Current next work is authored names after training, legal varied decks/native
+styles and daily shop, then remaining arena/results and full audits. Shared
+alpha engine is unchanged; no new phone/audio-quality/performance pass.
+
 **Newest aftera51c68e:** [RECIPROCAL_DONATIONS.md](RECIPROCAL_DONATIONS.md)
 implements actual NPC request/player Donate UI with original524/203/211 and
 native limits/rewards. Common1/10, rare1/1 and real spent-Arrows replenishment

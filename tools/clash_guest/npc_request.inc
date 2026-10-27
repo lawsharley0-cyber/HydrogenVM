@@ -130,6 +130,7 @@ static void donate_to_npc(void *self,void *message) {
     result=CALL(0x21d1d,int,(void*,void*,int,int))(receive,npc.logic,2,0);CALL(0x21c09,void,(void*))(receive);
     if(result || FIELD(received,0xc)!=old+1)fail("GuestOffline: native NPC receipt delta mismatch");
     ++row->received;
+    community_points(1,CALL(0x755f1,int,(void*))(data));
     u32 stream[16],donor_id[2]={0,1};void *cards[10];u32 count=request.card_count+1;
     if(count>10)fail("GuestOffline: NPC donor list bound exceeded");
     for(u32 i=0;i<count;++i)cards[i]=data;

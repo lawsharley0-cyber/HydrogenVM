@@ -1,6 +1,7 @@
 /* Bounded, persistent local conversation. Native ChatStreamEntry encodes the
  * actual author/name/role and text. No simulated person claims to be online. */
 #include "clan_chat_wire.inc"
+#include "community_wire.inc"
 #include "card_request_wire.inc"
 #include "friendly_wire.inc"
 #include "friendly_wallet.inc"
@@ -13,17 +14,20 @@ static void conversation_pending(struct SectorWriter *w,u32 now,u32 before,u32 *
            (choice<0 || card_request_stamp<stamp)) {choice=1;stamp=card_request_stamp;}
         if(npc_request_size && !(*written&4) && npc_request_stamp<=before &&
            (choice<0 || npc_request_stamp<stamp)) {choice=2;stamp=npc_request_stamp;}
+        if(community_size && !(*written&8) && community_stamp<=before &&
+           (choice<0 || community_stamp<stamp)) {choice=3;stamp=community_stamp;}
         if(choice<0)return;
         if(choice==0)friendly_entry_wire(w,friendly_state==3?friendly_result:friendly_entry,
             friendly_state==3?friendly_result_size:friendly_entry_size,friendly_stamp,now);
         if(choice==1)card_request_entry(w,clan_card_request,card_request_size,card_request_stamp,now);
         if(choice==2)npc_request_entry(w,npc_request,npc_request_size,npc_request_stamp,now,npc_request_sequence);
+        if(choice==3)community_entry_wire(w,community_entry,community_size,community_stamp,now);
         *written|=1u<<choice;
     }
 }
 static u32 encode_clan_conversation(u8 *output,u32 capacity) {
     struct SectorWriter w={output,0,capacity};
-    sector_vint(&w,(int)clan_chat_count+(card_request_size?1:0)+(friendly_sequence?1:0)+(npc_request_size?1:0));
+    sector_vint(&w,(int)clan_chat_count+(card_request_size?1:0)+(friendly_sequence?1:0)+(npc_request_size?1:0)+(community_size?1:0));
     struct GuestReader r={clan_chat,clan_chat_size,0,0,0};u32 now=wall_epoch(),written=0;
     for(u32 i=0;i<clan_chat_count;++i) {
         u32 stamp=turn_int(&r),size=turn_int(&r);

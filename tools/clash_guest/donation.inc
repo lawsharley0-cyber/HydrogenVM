@@ -90,6 +90,7 @@ static void donation_tick(void) {
        CALL(0x9ab55,int,(void*))(avatar)!=human_gold || CALL(0x9abc5,int,(void*))(avatar)!=human_xp)
         fail("GuestOffline: native receiver inventory/wallet delta mismatch");
     donor_inventory_sent((u32)(request.type*1000000+request.index),(u32)before_stock);
+    community_points(0,capacity);
     u32 stream[16],donor_id[2]={3,1};void *cards[1]={data};
     u32 list[3]={(u32)cards,1,1},container[2]={(u32)list,(u32)donor_id};
     CALL(0x192a71,void,(void*,u32))(stream,256);CALL(0xa944d,void,(void*,void*))(container,stream);
