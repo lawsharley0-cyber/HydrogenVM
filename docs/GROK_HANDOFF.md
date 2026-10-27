@@ -9,6 +9,21 @@ now updates the window. TL-R and fulltest cover both bug classes red-first. A
 audible/music frames and no crash. This is not yet gameplay/close/relaunch proof.
 Goat Simulator still needs usable visual/report evidence.
 
+Architecture review (2026-10-26): keep HydrogenVM's JIT-less ARM core; no existing
+project is a drop-in replacement. Upstream touchHLE remains dynarmic/JIT-based and
+upstream GLES1-focused. HyperHLE-Reborn has useful MPL-2.0 GLES2, keyboard and iOS
+shell work, but its iOS build still requires Dynarmic JIT enablement. QEMU-iOS can
+boot stock legacy firmware and is useful as a desktop behaviour oracle, not as the
+sideloaded app core. Reuse behaviour/tests and selectively port MPL-covered code
+only with its notices/source obligations; HydrogenVM currently has no root license,
+so settle that policy before copying. The sustainable route is a private
+whole-library scenario matrix with replayable multitouch/keyboard/mic/lifecycle
+inputs, static+dynamic missing-API ranking, and GL capture/replay against the
+software reference renderer. HostGL/EAGL, crash bundles, triage and Test All Games
+already exist; extend them rather than starting another emulator or scanner. Next
+shared subsystems are legacy orientation/accelerometer coordinates, tracked
+multi-pointer input, real text-input presentation/storage, and audio input/timing.
+
 The audio/graphics batch adds a real RemoteIO guest callback thread, LPCM mixer
 conversion, normal-mutex cross-thread handoff and correct OpenAL gain defaults.
 Hungry Shark and Angry Birds now have measured non-silent music locally; effects,
@@ -84,6 +99,44 @@ The full report **builds and runs the iOS test apps** (CTest, ObjCTest, Foundati
 - Runtime behaviour gets a check in `tests/runner/TestRunner.cpp`, in the `fulltest` block. Follow the existing examples: call HLE symbols with `proc.callGuest(cpu, *proc.lookupSymbol("_name"), {...})`, send ObjC messages with `r.send(cpu, obj, "sel:", {...})` and use `check(cond, "sentence")`. `r.send` returns `uint64_t`, so mask BOOL results with `& 0xFF` and ints with `uint32_t(...)`.
 - Guest-level behaviour gets a check in the iOS test apps under `tests/ios/apps/*/main.{c,m}`. The test SDK headers live in `tests/ios/include` and are minimal. Declare what you need: see the Darwin signal structs in `ctest/main.c` and `object_getInstanceVariable` in `include/objc/runtime.h`.
 - A real-app bug class gets a Test Lab case (`TL-X`), which must fail before the fix (docs/TEST_LAB.md).
+
+### Evidence-first workbench (standing testing instruction)
+
+Follow `docs/research/AUTOMATED_REPAIR_WORKBENCH.md` and implement its stages in
+order. Do not build an autonomous patcher before evidence, replay and independent
+oracles are trustworthy.
+
+- Desktop sweeps and device batches use the shared `hvm-evidence/v1` records.
+  Preserve every attempt; a later retry never erases an earlier failure. Keep
+  private IPAs, captures, saves and rich artifacts out of Git.
+- Triage by typed, stable failure fingerprint and affected distinct games, not
+  raw log volume. Keep import, guest/host crash, hang, behavioral failure and
+  runner/infrastructure failure separate. Allow manual cluster split/merge.
+- Missing APIs get a separate ranking: static reachability, observed calls,
+  proximity to the first divergence, distinct affected games and an honest
+  implementation path. An imported-but-unused symbol is not a crashing call.
+- Counters such as frames, mixer activity and changed pixels are discovery
+  signals, not proof of correct gameplay or audible speaker output. Record
+  `not_run`, `not_applicable`, `inconclusive` and `infrastructure_error`
+  explicitly rather than turning them into passes or game failures.
+- Before repairing, reproduce from a clean recorded initial sandbox with exact
+  build, renderer, scenario, seed and inputs. A retry that passes after a failure
+  is flaky evidence, not a clean pass. Minimize only while preserving the same
+  fingerprint and scenario milestone.
+- Convert the minimized behavior into an independent red-first synthetic test.
+  Automated changes remain candidates until every gate, affected real-game
+  scenarios, positive controls and held-out cases pass and an independent
+  reviewer approves. Never auto-merge or weaken checks to obtain a green result.
+
+New probe sweeps write `evidence/evidence.json`, `evidence/artifact-index.json`
+and `evidence/summary.md`. Convert an existing desktop or uploaded device report
+into a new output directory with isolated Python:
+```sh
+python3 -I tools/hvm_evidence.py --probe-summary ~/probe/latest/summary.json --out build/evidence-probe
+python3 -I tools/hvm_evidence.py --device-report ~/inbox/latest_batch_report.json --out build/evidence-device
+```
+The schema is `tools/hvm_evidence.schema.json`; synthetic contract tests are in
+`tools/tests/test_hvm_evidence.py`. Keep the evidence output private.
 
 ### Run real games locally (the most important check)
 The owner's IPAs are attachments in the conversation. Extract each one into a fixture directory `<fixtures>/apps/<bundleId>/` that holds the `.app` and acts as the home. Names must not end in spaces. Then:

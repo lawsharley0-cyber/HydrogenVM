@@ -87,6 +87,44 @@ Read this file first, then `AGENTS.md` (working agreement) and `docs/GROK_HANDOF
 8. Update the status table in this file (§5) and docs/GROK_HANDOFF.md if you learned something lasting.
 ```
 
+## 2a. Evidence-first workbench (standing testing instruction)
+
+Follow `docs/research/AUTOMATED_REPAIR_WORKBENCH.md` and implement its stages in
+order. Do not build an autonomous patcher before evidence, replay and independent
+oracles are trustworthy.
+
+- Desktop sweeps and device batches use the shared `hvm-evidence/v1` records.
+  Preserve every attempt; a later retry never erases an earlier failure. Keep
+  private IPAs, captures, saves and rich artifacts out of Git.
+- Triage by typed, stable failure fingerprint and affected distinct games, not
+  raw log volume. Keep import, guest/host crash, hang, behavioral failure and
+  runner/infrastructure failure separate. Allow manual cluster split/merge.
+- Missing APIs get a separate ranking: static reachability, observed calls,
+  proximity to the first divergence, distinct affected games and an honest
+  implementation path. An imported-but-unused symbol is not a crashing call.
+- Counters such as frames, mixer activity and changed pixels are discovery
+  signals, not proof of correct gameplay or audible speaker output. Record
+  `not_run`, `not_applicable`, `inconclusive` and `infrastructure_error`
+  explicitly rather than turning them into passes or game failures.
+- Before repairing, reproduce from a clean recorded initial sandbox with exact
+  build, renderer, scenario, seed and inputs. A retry that passes after a failure
+  is flaky evidence, not a clean pass. Minimize only while preserving the same
+  fingerprint and scenario milestone.
+- Convert the minimized behavior into an independent red-first synthetic test.
+  Automated changes remain candidates until every gate, affected real-game
+  scenarios, positive controls and held-out cases pass and an independent
+  reviewer approves. Never auto-merge or weaken checks to obtain a green result.
+
+New probe sweeps write `evidence/evidence.json`, `evidence/artifact-index.json`
+and `evidence/summary.md`. Convert an existing desktop or uploaded device report
+into a new output directory with isolated Python:
+```sh
+python3 -I tools/hvm_evidence.py --probe-summary ~/probe/latest/summary.json --out build/evidence-probe
+python3 -I tools/hvm_evidence.py --device-report ~/inbox/latest_batch_report.json --out build/evidence-device
+```
+The schema is `tools/hvm_evidence.schema.json`; synthetic contract tests are in
+`tools/tests/test_hvm_evidence.py`. Keep the evidence output private.
+
 ## 2b. The probe loop: your main way of finding and fixing bugs
 
 Don't hunt bugs one game at a time. `tools/hvm_probe.py` runs **every game in `~/ipas`**, interacts with each one (taps over a grid of common button spots, swipes, a background/foreground cycle, then a graceful quit), and collects **every** problem: crashes, load errors, hangs, no picture / black / white screens, GL frames drawn off-screen, faults, `Missing:` functions, unimplemented imports, warnings, silence. It then **groups the same problem across games and ranks it**, so a single emulator fix that helps five games comes first.

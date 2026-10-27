@@ -878,6 +878,17 @@ final class BatchTestRunner {
         return [
             "kind": "hvm-compat-report",
             "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "build": [
+                "commit": HVMSession.emulatorCommit,
+                "configuration": "device",
+                "binaryMatch": "verified"
+            ],
+            "host": [
+                "kind": "iphone",
+                "model": UIDevice.current.model,
+                "os": "iOS \(UIDevice.current.systemVersion)",
+                "pageSize": getpagesize()
+            ],
             "device": [
                 "model": UIDevice.current.model,
                 "systemVersion": UIDevice.current.systemVersion

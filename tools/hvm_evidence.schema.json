@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hydrogenvm.local/schemas/hvm-evidence-v1.json",
+  "title": "HydrogenVM compatibility evidence bundle",
+  "type": "object",
+  "required": ["kind", "schema", "runs", "clusters", "missingApis", "artifacts", "provenanceComplete"],
+  "properties": {
+    "kind": {"const": "hvm-evidence-bundle"},
+    "schema": {"const": "hvm-evidence/v1"},
+    "runs": {"type": "array", "items": {"$ref": "#/$defs/run"}},
+    "clusters": {"type": "array", "items": {"$ref": "#/$defs/cluster"}},
+    "missingApis": {"type": "array", "items": {"$ref": "#/$defs/missingApi"}},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "provenanceComplete": {"type": "boolean"},
+    "extensions": {"type": "object"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "fingerprint": {
+      "type": "object",
+      "required": ["id", "version", "outcomeClass", "operation", "stackPrefix", "renderer", "buildSemantics"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "version": {"const": 1},
+        "outcomeClass": {"type": "string"},
+        "operation": {"type": "string"},
+        "stackPrefix": {"type": "string"},
+        "renderer": {"enum": ["software", "gpu", "any"]},
+        "buildSemantics": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "observation": {
+      "type": "object",
+      "required": ["kind", "strength", "status", "detail"],
+      "properties": {
+        "kind": {"type": "string"},
+        "strength": {"enum": ["counter", "derived_oracle", "scenario_milestone", "reference_match", "manual_device_verified", "unknown"]},
+        "status": {"enum": ["pass", "warn", "fail", "skip", "not_run", "not_applicable", "inconclusive", "infrastructure_error"]},
+        "detail": {"type": "string"},
+        "artifacts": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "issue": {
+      "type": "object",
+      "required": ["kind", "severity", "detail", "fingerprint", "confidence"],
+      "properties": {
+        "kind": {"type": "string"},
+        "severity": {"type": "integer", "minimum": 0},
+        "detail": {"type": "string"},
+        "fingerprint": {"$ref": "#/$defs/fingerprint"},
+        "confidence": {"enum": ["discovery_only", "reproduced", "reviewed"]},
+        "manualCluster": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "required": ["runId", "attempt", "source", "build", "host", "app", "scenario", "outcome", "observations", "issues", "artifacts"],
+      "properties": {
+        "runId": {"type": "string", "minLength": 1},
+        "attempt": {"type": "integer", "minimum": 1},
+        "source": {"type": "string"},
+        "build": {
+          "type": "object",
+          "required": ["commit", "dirty", "configuration", "binaryMatch"],
+          "properties": {
+            "commit": {"type": ["string", "null"]},
+            "dirty": {"type": ["boolean", "null"]},
+            "configuration": {"type": "string"},
+            "binaryMatch": {"enum": ["verified", "unverified"]}
+          },
+          "additionalProperties": true
+        },
+        "host": {
+          "type": "object",
+          "required": ["kind", "os", "pageSize"],
+          "properties": {
+            "kind": {"type": "string"},
+            "os": {"type": "string"},
+            "pageSize": {"type": ["integer", "null"], "minimum": 1}
+          },
+          "additionalProperties": true
+        },
+        "app": {
+          "type": "object",
+          "required": ["bundleId", "version", "sha256"],
+          "properties": {
+            "bundleId": {"type": "string"},
+            "version": {"type": ["string", "null"]},
+            "sha256": {"type": ["string", "null"]}
+          },
+          "additionalProperties": true
+        },
+        "scenario": {
+          "type": "object",
+          "required": ["id", "version", "seed", "sandbox", "clock", "traceLoss"],
+          "properties": {
+            "id": {"type": "string"},
+            "version": {"type": ["integer", "string"]},
+            "seed": {"type": ["integer", "string", "null"]},
+            "sandbox": {"type": ["string", "null"]},
+            "clock": {"type": "string"},
+            "traceLoss": {"type": ["integer", "null"], "minimum": 0}
+          },
+          "additionalProperties": true
+        },
+        "outcome": {
+          "type": "object",
+          "required": ["class", "status", "milestone"],
+          "properties": {
+            "class": {"type": "string"},
+            "status": {"enum": ["pass", "warn", "fail", "inconclusive", "infrastructure_error"]},
+            "milestone": {"type": ["string", "null"]}
+          },
+          "additionalProperties": true
+        },
+        "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+        "issues": {"type": "array", "items": {"$ref": "#/$defs/issue"}},
+        "artifacts": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "cluster": {
+      "type": "object",
+      "required": ["clusterId", "fingerprintIds", "outcomeClass", "severity", "affectedApps", "affectedRuns", "reproducibility", "confidence", "manual"],
+      "properties": {
+        "clusterId": {"type": "string"},
+        "fingerprintIds": {"type": "array", "items": {"type": "string"}},
+        "outcomeClass": {"type": "string"},
+        "severity": {"type": "integer"},
+        "affectedApps": {"type": "array", "items": {"type": "string"}},
+        "affectedRuns": {"type": "array", "items": {"type": "string"}},
+        "reproducibility": {"type": "object"},
+        "confidence": {"type": "string"},
+        "manual": {"type": "boolean"},
+        "example": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "missingApi": {
+      "type": "object",
+      "required": ["name", "reachability", "affectedApps", "observedRuns", "observedCalls", "divergenceProximity", "repairCost", "score", "fingerprintIds"],
+      "properties": {
+        "name": {"type": "string"},
+        "reachability": {"type": "string"},
+        "affectedApps": {"type": "array", "items": {"type": "string"}},
+        "observedRuns": {"type": "integer", "minimum": 0},
+        "observedCalls": {"type": ["integer", "null"], "minimum": 0},
+        "divergenceProximity": {"type": ["string", "null"]},
+        "repairCost": {"type": ["string", "null"]},
+        "score": {"type": "integer"},
+        "fingerprintIds": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["id", "path", "size", "sha256", "mediaType", "privacy"],
+      "properties": {
+        "id": {"type": "string"},
+        "path": {"type": "string"},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mediaType": {"type": "string"},
+        "privacy": {"const": "private"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

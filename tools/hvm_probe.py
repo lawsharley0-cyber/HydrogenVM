@@ -14,6 +14,7 @@ grouped by cause and ranked, so one fix that helps many games comes first.
 Output (--out, default ~/probe/<timestamp>, and ~/probe/latest points at it):
   summary.md     ranked issue list + per-game table (read this first)
   summary.json   the same, machine-readable (use as the next --baseline)
+  evidence/      shared hvm-evidence/v1 runs, fingerprints and private artifact index
   <bundleId>-<mode>/  run.log, report.json, shot.png, script.txt
 """
 import argparse
@@ -29,6 +30,10 @@ import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+# Isolated Python (-I) removes the script directory; load only trusted siblings.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hvm_evidence import bundle_from_probe, current_source_provenance, write_bundle  # noqa: E402
+
 HOME = Path.home()
 
 # Severity: higher is worse. Fix from the top.
@@ -41,6 +46,14 @@ def norm(text):
     text = re.sub(r'0x[0-9a-fA-F]{5,}', '0x…', text)
     text = re.sub(r'(?<![\w.])\d{3,}(?![\w.])', 'N', text)
     return text.strip()[:240]
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def png_signal(path):
@@ -190,10 +203,11 @@ def issues_from(rep, log_text, shot, timed_out):
 
 
 def probe_one(args, ipa, mode):
+    ipa_hash = file_sha256(ipa)
     try:
         bid, app, home = import_app(args.hvm, ipa, args.apps)
     except Exception as e:  # noqa: BLE001 - report every failure as an issue
-        return {'bundleId': ipa.stem, 'ipa': ipa.name, 'mode': mode, 'status': 'import-failed',
+        return {'bundleId': ipa.stem, 'ipa': ipa.name, 'sha256': ipa_hash, 'mode': mode, 'status': 'import-failed',
                 'issues': [{'kind': 'load', 'severity': 100, 'key': f'load: {norm(str(e))}', 'text': str(e)}]}
     run_dir = args.out / f'{bid}-{mode}'
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -225,9 +239,11 @@ def probe_one(args, ipa, mode):
     worst = max([i['severity'] for i in issues], default=0)
     status = 'crash' if worst >= 90 else 'broken' if worst >= 70 else 'issues' if worst >= 45 else 'ok'
     perf = (rep or {}).get('perf') or {}
-    return {'bundleId': bid, 'ipa': ipa.name, 'mode': mode, 'status': status, 'exit': code,
+    return {'bundleId': bid, 'ipa': ipa.name, 'sha256': ipa_hash, 'mode': mode, 'status': status, 'exit': code,
             'seconds': round(time.time() - started, 1), 'framesPresented': perf.get('framesPresented', 0),
-            'mixer': (rep or {}).get('mixer'), 'dir': str(run_dir), 'issues': issues}
+            'mixer': (rep or {}).get('mixer'), 'dir': str(run_dir), 'issues': issues,
+            'signature': (rep or {}).get('signature'), 'exceptionKind': (rep or {}).get('exceptionKind'),
+            'launches': args.launches}
 
 
 def main():
@@ -270,8 +286,10 @@ def main():
                                              'example': i['text'], 'runs': [], 'exampleDir': r.get('dir')})
             g['runs'].append(f"{r['bundleId']}({r['mode']})")
     ranked = sorted(groups.values(), key=lambda g: (-g['severity'], -len(g['runs']), g['key']))
+    build, host = current_source_provenance()
     summary = {'kind': 'hvm-probe', 'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'seconds': args.seconds,
-               'modes': modes, 'results': results, 'issues': ranked}
+               'modes': modes, 'launches': args.launches, 'build': build, 'host': host,
+               'results': results, 'issues': ranked}
 
     diff = None
     if args.baseline and args.baseline.exists():
@@ -280,6 +298,7 @@ def main():
         diff = {'fixed': sorted(old - new), 'new': sorted(new - old), 'still': len(old & new)}
         summary['baselineDiff'] = diff
     (args.out / 'summary.json').write_text(json.dumps(summary, indent=1))
+    write_bundle(bundle_from_probe(summary), args.out / 'evidence')
 
     md = [f"# HydrogenVM probe {summary['time']}", '',
           f"{len(results)} runs, {args.seconds}s each, modes {', '.join(modes)}. "
