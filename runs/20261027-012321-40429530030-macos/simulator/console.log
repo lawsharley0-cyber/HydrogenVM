@@ -1,0 +1,158 @@
+GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
+Loaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main
+Objective-C: 5 classes, 0 categories, 168 selector refs
+[teardown] waiting for the guest run to finish
+Screen: 320x480 @2x, portrait, status bar visible
+ok 3.5-inch screen without a 568h launch image
+
+ok applicationFrame below the status bar
+
+ok retina scale
+
+ok keyWindow
+
+ok root view controller view frame
+
+ok viewDidLoad / viewWillAppear
+
+ok didMoveToWindow
+
+ok responder chain
+
+ok UIDevice systemVersion
+
+ok convertPoint:toView:nil (window)
+
+ok convertPoint:fromView:nil
+
+ok hitTest finds the child
+
+ok hitTest falls back to the root
+
+ok viewWithTag / isDescendantOfView
+
+ok transformed frame
+
+ok identity transform restores frame
+
+ok autoresizing (flexible width + top margin)
+
+ok setNeedsLayout + layoutIfNeeded
+
+ok bringSubviewToFront
+
+ok UIColor components
+
+ok UIColor CGColor
+
+ok UIFont metrics
+
+ok sizeWithFont:
+
+ok sizeWithFont:constrainedToSize: wraps
+
+ok imageNamed: picks @2x
+
+ok CGImage of @2x image
+
+ok imageNamed: missing returns nil
+
+ok CgBI (Xcode-crushed) PNG decodes
+
+ok CgBI channel order
+
+ok UIGraphicsGetImageFromCurrentImageContext
+
+ok UIRectFill pixels
+
+ok drawInRect: pixels (top-left origin)
+
+ok untouched pixels stay clear
+
+ok PNG encode/decode round trip
+
+ok CGBitmapContext y-up fill
+
+ok CGPathContainsPoint
+
+ok CGRectIntersection
+
+ok NSStringFromCGRect / CGRectFromString
+
+ok NSValue CGRect
+
+nib Panel.nib: 1 top-level objects
+ok Panel nib: top-level view
+
+ok Panel nib: outlet + label text
+
+ok Panel nib: action connection + button title
+
+nib PanelKeyed.nib: 1 top-level objects
+ok PanelKeyed nib: top-level view
+
+ok PanelKeyed nib: outlet + label text
+
+ok PanelKeyed nib: action connection + button title
+
+ok UIButton target/action
+
+ok UIButton currentTitle
+
+ok animation block applies immediately
+
+ok beginAnimations/commitAnimations apply
+
+ok UIScrollView contentOffset updates bounds.origin
+
+ok UITableViewCell textLabel & reuseIdentifier
+
+ok UINavigationController push & hierarchy
+
+ok UINavigationController pop
+
+ok UITabBarController selection
+
+ok UITextField editing & first responder
+
+ok UISwitch, UISlider, UISegmentedControl
+
+[gpu] GL layer (64.0, 64.0)
+[gpu] GL layer removed
+ok EAGLContext creation & setCurrentContext
+
+GPU: drawable 64x64 for renderbuffer 1 (platform layer)
+ok EAGLContext renderbufferStorage:fromDrawable:
+
+ok glCheckFramebufferStatus complete
+
+GPU: presented frame 1 directly (average rgb 255,0,0, 64/64 samples lit)
+ok OpenGL ES clear, glReadPixels & presentRenderbuffer
+
+[autotap] 70.0,350.0
+[autotap] 230.0,350.0
+ok drawRect: was called by the compositor
+
+ok CADisplayLink fires at frame rate
+
+ok animation completions fire
+
+ok touch delivery to a plain view (hvm --tap)
+
+ok touch location in view coordinates
+
+ok UITapGestureRecognizer
+
+66 checks, 0 failures
+
+ALL CHECKS PASSED
+
+App exited with code 0
+[teardown] guest run returned status 0
+[teardown] destroying the guest process
+[teardown] guest process destroyed; live arenas 0
+[teardown] stopping host audio
+[teardown] host audio stopped; queueing the exit callback
+[teardown] delivering the exit callback
+[hvm-exit] status=0
+com.lfull.HydrogenVM: 16314
