@@ -84,7 +84,8 @@ int main(int argc,char **argv) {
     }
     u32 tag;if(fread(&tag,1,4,stdin)!=4 || tag!=0x314c4347u)return 2;
     read_clan(stdin,0x12345678u);
-    printf("%u %u %d %d %u %u\n",clan_serial,clan_status,clan_gold_before,clan_gold_after,clan_request_size,clan_command_size);
+    if(argc>2) {write_clan(stdout,0x12345678u);return 0;}
+    printf("%u %u %d %d %u %u %u\n",clan_serial,clan_status,clan_gold_before,clan_gold_after,clan_request_size,clan_command_size,clan_expects_donor);
 }
 ''')
             request, command = bytes(range(10)), bytes(range(20, 36))
@@ -97,7 +98,13 @@ int main(int argc,char **argv) {
             def run(data):
                 return subprocess.run([str(exe), 'read'], input=data, capture_output=True)
             result = run(expected)
-            self.assertEqual((result.returncode, result.stdout), (0, b'7 1 5000 4000 10 16\n'))
+            self.assertEqual((result.returncode, result.stdout), (0, b'7 1 5000 4000 10 16 0\n'))
+            required=header.copy();required[2]=0x102
+            head=struct.pack('<9I',*required);marked=head+struct.pack('<I',fnv(head))+request+command
+            result=run(marked)
+            self.assertEqual((result.returncode,result.stdout),(0,b'7 2 5000 4000 10 16 1\n'))
+            result=subprocess.run([str(exe),'read','roundtrip'],input=marked,capture_output=True)
+            self.assertEqual((result.returncode,result.stdout),(0,marked))
             for n in range(len(expected)):
                 self.assertEqual(run(expected[:n]).returncode, 2)
             for at in range(len(expected)):
@@ -105,7 +112,8 @@ int main(int argc,char **argv) {
                 self.assertEqual(run(broken).returncode, 2)
             # Recomputed checksums cannot make impossible lengths/state/wallet
             # valid. A disbanded clan retains its monotonic ID, no payload.
-            for index, value in [(1,0),(2,5),(3,1025),(4,257),(5,2000000001),(6,5001),(7,0)]:
+            for index, value in [(1,0),(2,5),(2,0x100),(2,0x101),(2,0x105),(2,0x202),
+                                 (3,1025),(4,257),(5,2000000001),(6,5001),(7,0)]:
                 broken = header.copy();broken[index]=value
                 head = struct.pack('<9I', *broken)
                 self.assertEqual(run(head+struct.pack('<I',fnv(head))+request+command).returncode, 2)
@@ -140,11 +148,19 @@ int main(int argc,char **argv) {
             prefix = b'\x02\x00\x01\x00\x01\x00\x01'+b'\0\0\0\3Ada'+b'\x03\x02'
             suffix = b'\0'+b'\0\0\0\2Hi'  # not removed, actual text
             original = prefix+b'\0'+suffix
+            # Historical/local author roles retain the original enum, including
+            # co-leader after a real leadership handoff. Invalid enums fail.
             def run(data, now='225'):
                 return subprocess.run([str(exe), now], input=data, capture_output=True)
             for now, age in [('225', b'\xbd\x01'), ('100', b'\0'), ('99', b'\0'), ('163', b'\x3f'), ('164', b'\x80\x01')]:
                 result = run(original, now)
                 self.assertEqual((result.returncode, result.stdout), (0, prefix+age+suffix))
+            for role in [1,3,4]:
+                changed=prefix[:-1]+bytes([role])+b'\0'+suffix
+                self.assertEqual((run(changed).returncode,run(changed).stdout),
+                                 (0,prefix[:-1]+bytes([role])+b'\xbd\x01'+suffix))
+            for role in [0,5]:
+                self.assertEqual(run(prefix[:-1]+bytes([role])+b'\0'+suffix).returncode,2)
             bad_vectors = [original[:n] for n in range(len(original))]
             bad_vectors += [original+b'\0', b'\x01'+original[1:], original[:2]+b'\x02'+original[3:],
                             original[:4]+b'\x02'+original[5:], prefix+b'\x01'+suffix,

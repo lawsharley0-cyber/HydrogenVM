@@ -62,7 +62,7 @@ static void chat_to_clan(void *self,void *message) {
     CALL(0x193749,void,(void*,int))(stream,2);
     FIELD(entry,4)=(u32)identity;FIELD(entry,8)=(u32)CALL(0x99e2d,void*,(void*))(avatar);
     FIELD(entry,0xc)=FIELD(entry,8);FIELD(entry,0x10)=(u32)CALL(0x99e45,void*,(void*))(avatar);
-    FIELD(entry,0x14)=(u32)CALL(0x9abcd,int,(void*))(avatar);FIELD(entry,0x18)=2;
+    FIELD(entry,0x14)=(u32)CALL(0x9abcd,int,(void*))(avatar);FIELD(entry,0x18)=(u32)CALL(0x9ae41,int,(void*))(avatar);
     FIELD(entry,0x24)=FIELD(message,0x30);
     CALL(0x11ca71,void,(void*,void*))(entry,stream);
     u32 length=CALL(0x192b2d,u32,(void*))(stream);
@@ -113,7 +113,8 @@ static void validate_clan_checkpoint(void) {
            clan_gold_before-clan_gold_after!=1000)
             fail("GuestOffline: pending clan journal has no original pre-charge avatar");
     } else {
-        if(!id || FIELD(id,0)!=1 || FIELD(id,4)!=clan_serial || CALL(0x9ae41,int,(void*))(avatar)!=2)
+        if(!id || FIELD(id,0)!=1 || FIELD(id,4)!=clan_serial ||
+           !clan_roles_valid(CALL(0x9ae41,int,(void*))(avatar),(int)donor_present,donor_role))
             fail("GuestOffline: saved native membership differs from clan metadata");
         check_native_clan_name(avatar);
         if(clan_status==2) {

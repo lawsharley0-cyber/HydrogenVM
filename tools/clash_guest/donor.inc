@@ -17,10 +17,11 @@ static void validate_donor(void) {
             fail("GuestOffline: saved local donor account/home identity mismatch");
     }
     void *id=CALL(0x9ae01,void*,(void*))(avatar);
-    if(!id || FIELD(id,0)!=1 || FIELD(id,4)!=donor_clan || CALL(0x9ae41,int,(void*))(avatar)!=1 ||
+    donor_role=CALL(0x9ae41,int,(void*))(avatar);
+    if((donor_present?(!id || FIELD(id,0)!=1 || FIELD(id,4)!=donor_clan || donor_role<1 || donor_role>4):id!=0) ||
        CALL(0x9abcd,int,(void*))(avatar)<3 || CALL(0x9abcd,int,(void*))(avatar)>12)
         fail("GuestOffline: saved local donor membership mismatch");
-    check_native_clan_name(avatar);
+    if(donor_present)check_native_clan_name(avatar);
     void *name=CALL(0x99e45,void*,(void*))(avatar);
     const char expected[]="Local Donor";
     if(!name || CALL(0x18f4bd,u32,(void*))(name)!=sizeof expected-1)
@@ -35,8 +36,9 @@ static void validate_donor(void) {
     dispose(packet);
 }
 static void sync_donor(void) {
-    if(!clan_status) {donor_size=0;donor_offset=0;donor_clan=0;donor_epoch=0;return;}
+    if(!clan_status) {donor_size=0;donor_offset=0;donor_clan=0;donor_epoch=0;donor_present=0;donor_role=0;return;}
     if(clan_status!=2)return;
+    if(donor_size && !donor_present)return; // Durable kick, not an invitation to reseed/rejoin.
     void *request=decode_packet(14301,0,clan_request,clan_request_size);
     if(!donor_size) {
         // An authored NPC starts from the pinned original starter collection,
@@ -66,7 +68,7 @@ static void sync_donor(void) {
         FIELD(command,0x1c)=0;FIELD(command,0x20)=0;FIELD(command,0x24)=0;
         CALL(0xe57a9,void,(void*))(command);
         donor_size=native_actor_encode(a.home,a.avatar,donor_home,sizeof donor_home,&donor_offset);
-        donor_clan=clan_serial;donor_epoch=wall_epoch();native_actor_destroy(a);
+        donor_clan=clan_serial;donor_epoch=wall_epoch();donor_present=1;donor_role=1;native_actor_destroy(a);
         CALL(API_puts,int,(const char*))("GuestOffline: seeded finite Local Donor through original clan join; no player grant");
     } else {
         if(donor_clan!=clan_serial)fail("GuestOffline: local donor belongs to a different clan");
@@ -82,7 +84,7 @@ static void encode_donor_member(void *stream) {
     u32 member[19]={0};
     FIELD(member,0x10)=(u32)CALL(0x99e2d,void*,(void*))(avatar);FIELD(member,0x14)=FIELD(member,0x10);
     FIELD(member,0x1c)=(u32)CALL(0x99e45,void*,(void*))(avatar);
-    FIELD(member,0x20)=1;FIELD(member,0x24)=(u32)CALL(0x9abcd,int,(void*))(avatar);
+    FIELD(member,0x20)=(u32)CALL(0x9ae41,int,(void*))(avatar);FIELD(member,0x24)=(u32)CALL(0x9abcd,int,(void*))(avatar);
     FIELD(member,0x28)=FIELD(avatar,0x34);FIELD(member,0x34)=2;
     FIELD(member,0x48)=(u32)CALL(0x9b4d1,void*,(void*))(avatar);
     CALL(0x37d85,void,(void*,void*))(member,stream);dispose(packet);

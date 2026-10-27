@@ -2,6 +2,21 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+Post-127ad31 clan controls (Group C): qualify native Promote/Demote/leadership
+handoff and Kick on the actual Local Donor profile. Preserve native rank/rights,
+one leader, both actor snapshots and prior donation proof in one atomic file.
+Kicked NPCs need a durable tombstone, not a per-login rejoin/refill. Support
+GDN1-v1 migration only after full validation; keep every malformed file intact.
+Then implement reciprocal finite-stock requests/donations. No shared src edits
+are currently needed; the qualified unchanged runtime remains912a87e.
+
+Qualified follow-up: actual1→3→4→2 and4→3→1, native526 full-turn Kick,
+one-leader handoff, saved retirement/no reseed, Co-leader chat,25 tests,
+16 unchanged-file negatives and four pre/post-commit abort cases pass. Read
+CLAN_CONTROLS.md before touching GDN1-v2/GCL1's required-child marker. Next:
+reciprocal native NPC requests/player donations, explicit invite/rejoin with
+retained stock, real supply/weekly stats; keep the later owner queue unchanged.
+
 Donation component (Group C, after 0be234d) now persists an explicitly Local
 Donor through original join command209/create=false and binds its finite native
 inventory to the human checkpoint. Roster/profile, same-save returns,

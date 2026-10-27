@@ -1,5 +1,13 @@
 # Native donation work — October 26, 2026
 
+Latest post-127ad31 continuation: [native clan controls](CLAN_CONTROLS.md)
+qualifies Promote/Demote/leadership/Kick and persistent removal, with GDN1-v2
+and a required-child flag in GCL1. Twenty-five tests, sixteen unchanged-file
+negative cases and four pre/post-commit abort cases (two returns each) pass.
+Reciprocal donations/supply/invitations/weekly stats remain open. The v1 donor
+format and the role/kick blockers described below are the preserved earlier
+stage; do not downgrade a migrated instance.
+
 Status: the post-0be234d continuation adds a persistent **Local Donor** member
 and actual native NPC-to-player common/rare transfers. Its finite native starter
 inventory, the human inventory and request state commit atomically. This is a

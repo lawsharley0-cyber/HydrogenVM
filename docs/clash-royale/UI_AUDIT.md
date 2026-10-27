@@ -1,5 +1,14 @@
 # Offline guest UI audit — October 25, 2026
 
+Newest role/removal subset after127ad31: actual Member→Elder→Co-leader→Leader
+confirmations, reverse4→3→1 demotions, original Kick and same-save returns work.
+The former human leader becomes Co-leader and sees no Kick/Promote against the
+NPC leader. New chat uses Co-leader while historical posts retain Leader.
+A kicked NPC remains absent (online1/1), with no stock refill or new grant to
+an actual replacement request. Native526 validates the complete turn before
+removal. See CLAN_CONTROLS.md for25 tests,16 negative files and four abort cases.
+Reciprocal donation/invite/supply/weekly UI and full phone/fidelity checks remain.
+
 Latest donation subset after 0be234d: native two-member roster (human leader /
 Local Donor), online1/2, actual NPC profile/name/deck/native lifetime donations;
 common receipt1/10 and rare receipt toast/bar1/1; real replacement request0/1

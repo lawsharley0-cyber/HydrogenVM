@@ -15,7 +15,7 @@ static void clan_chat_entry(struct SectorWriter *w,const u8 *data,u32 size,u32 s
         fail("GuestOffline: conversation author differs from local player");
     clan_skip_string(&r,60,1);
     int level=turn_vint(&r),role=turn_vint(&r);
-    if(level<1 || level>12 || role!=2)fail("GuestOffline: invalid conversation author attributes");
+    if(level<1 || level>12 || role<1 || role>4)fail("GuestOffline: invalid conversation author attributes");
     u32 age_at=r.at;
     if(turn_vint(&r)!=0)fail("GuestOffline: stored conversation age is not relative to its timestamp");
     u32 age_end=r.at;

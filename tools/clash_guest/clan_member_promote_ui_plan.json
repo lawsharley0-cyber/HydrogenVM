@@ -1,0 +1,11 @@
+{
+  "name":"Original local member promotion and confirmation",
+  "precondition":"Human leader; joined Local Donor at Member, Elder or Co-leader. Leader promotion changes both original roles.",
+  "steps":[
+    {"id":"M-clan","expected":"Current native local clan","actions":[{"tap":[240,535]}],"settleSeconds":2},
+    {"id":"M-info","expected":"Native roster shows actual persisted ranks","actions":[{"tap":[218,72]}],"settleSeconds":2},
+    {"id":"M-profile","expected":"Native Local Donor profile and permission-aware controls","actions":[{"tap":[140,325]}],"settleSeconds":2},
+    {"id":"M-promote","expected":"Original promotion confirmation; cancellation changes no rank","actions":[{"tap":[270,205]}],"settleSeconds":2},
+    {"id":"M-confirm","expected":"Confirmed original next-rank promotion; Leader handoff retains exactly one leader","actions":[{"tap":[220,347]}],"settleSeconds":3}
+  ]
+}

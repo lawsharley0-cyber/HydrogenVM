@@ -8,6 +8,8 @@ static void clan_echo(struct GuestReader*,int);
 static void mail_echo(struct GuestReader*);
 static void request_echo(struct GuestReader*);
 static void friendly_echo(struct GuestReader*);
+static u32 kick_intent(struct GuestReader*,u8*,u32);
+static void kick_from_turn(const u8*,u32);
 static void reward_echo(struct GuestReader *r) {
     // A successfully executed server command is echoed by the native client.
     // Its executor is the server's (0,0), not the client's (0,1). Decode it
@@ -35,7 +37,7 @@ static int consume_home_turn(void *message) {
     if(turn_vint(&r)<0)fail("GuestOffline: negative home tick");
     turn_vint(&r);int count=turn_vint(&r);
     if(count<0 || count>64)fail("GuestOffline: invalid home command count");
-    int matchmaking=0;
+    int matchmaking=0;u8 kick[1040];u32 kick_size=0;
     for(int i=0;i<count;++i) {
         int kind=turn_vint(&r);
         if(kind==213){reward_echo(&r);continue;}
@@ -46,7 +48,11 @@ static int consume_home_turn(void *message) {
         turn_vint(&r);turn_vint(&r);
         int high=turn_vint(&r),low=turn_vint(&r);
         if(high!=0 || low!=1)fail("GuestOffline: home command identity mismatch");
-        if(kind==524)request_echo(&r);
+        if(kind==526) {
+            if(kick_size)fail("GuestOffline: duplicate kick in one native home turn");
+            kick_size=kick_intent(&r,kick,sizeof kick);
+        }
+        else if(kind==524)request_echo(&r);
         else if(kind==500){turn_vint(&r);turn_vint(&r);turn_bool(&r);turn_bool(&r);}
         else if(kind==504)turn_reference(&r);
         else if(kind==525) {
@@ -91,6 +97,9 @@ static int consume_home_turn(void *message) {
     }
     for(int i=0;i<4;++i)if(turn_byte(&r)!=255)fail("GuestOffline: unsupported home debug trailer");
     if(r.at!=r.size)fail("GuestOffline: trailing home turn data");
-    capture_current_home(CALL(0x91f7d,void*,(void))(),1);
+    if(kick_size) {
+        if(matchmaking)fail("GuestOffline: kick and matchmaking in the same home turn");
+        kick_from_turn(kick,kick_size);
+    } else capture_current_home(CALL(0x91f7d,void*,(void))(),1);
     return matchmaking;
 }

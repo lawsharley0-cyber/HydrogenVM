@@ -51,7 +51,7 @@ static void friendly_stream_base(u32 *entry,void *avatar) {
     FIELD(entry,0xc)=FIELD(entry,8);
     FIELD(entry,0x10)=(u32)CALL(0x99e45,void*,(void*))(avatar);
     FIELD(entry,0x14)=(u32)CALL(0x9abcd,int,(void*))(avatar);
-    FIELD(entry,0x18)=2;
+    FIELD(entry,0x18)=(u32)CALL(0x9ae41,int,(void*))(avatar);
 }
 static void friendly_encode_entry(void *avatar,void *message,int closed) {
     u32 stream[16],entry[12]={0};

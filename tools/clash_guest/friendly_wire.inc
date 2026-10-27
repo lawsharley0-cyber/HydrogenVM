@@ -8,7 +8,7 @@ static u32 friendly_entry_wire(struct SectorWriter *w,const u8 *data,u32 size,u3
     for(int i=0;i<2;++i)if(turn_vint(&r)!=0 || turn_vint(&r)!=1)
         fail("GuestOffline: invalid friendly stream author/home");
     clan_skip_string(&r,60,1);int level=turn_vint(&r),role=turn_vint(&r);
-    if(level<1 || level>12 || role!=2)fail("GuestOffline: invalid friendly stream attributes");
+    if(level<1 || level>12 || role<1 || role>4)fail("GuestOffline: invalid friendly stream attributes");
     u32 age_at=r.at;if(turn_vint(&r)!=0)fail("GuestOffline: invalid friendly stored age");
     u32 age_end=r.at;if(turn_bool(&r))fail("GuestOffline: removed friendly stream entry");
     if(type==10) {

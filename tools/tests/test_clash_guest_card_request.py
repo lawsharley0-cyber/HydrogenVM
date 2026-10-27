@@ -63,6 +63,10 @@ int main(int argc,char **argv) {
             for now, age in [('225', b'\xbd\x01'), ('100', b'\0'), ('99', b'\0')]:
                 result = run(original, now)
                 self.assertEqual((result.returncode,result.stdout), (0,prefix+age+suffix))
+            co=prefix[:-1]+b'\x04'
+            self.assertEqual((run(co+b'\0'+suffix).returncode,run(co+b'\0'+suffix).stdout),
+                             (0,co+b'\xbd\x01'+suffix))
+            for role in [0,5]:self.assertEqual(run(prefix[:-1]+bytes([role])+b'\0'+suffix).returncode,2)
             # Literal original DonationContainer: fixed BE donor (3,1),
             # one fixed BE card count, matching class-26/index-0 reference.
             donor=struct.pack('>III',3,1,1)+b'\x1a\0'

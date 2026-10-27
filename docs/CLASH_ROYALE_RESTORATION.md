@@ -6,6 +6,14 @@ architecture, current source/state, exact verification process and future work.
 
 ## Current architecture — October 26, 2026
 
+Newest: [clan controls](clash-royale/CLAN_CONTROLS.md) qualify actual native
+Promote/Demote/leadership and Kick with atomic role/membership recovery, saved
+removal, GDN1-v2 migration and a required-donor flag that rejects whole-child
+truncation. All25 guest tests, sixteen damaged-file retention cases and four
+pre/post-commit abort trials pass. Human/NPC economy and earned/failing source
+saves remain intact. Reciprocal NPC requests/player donations are next; this
+does not qualify the full Clans feature or new iPhone gameplay.
+
 Latest: Kimi's 96003cb adds the scoped persistent local-NPC Friendly Battle
 lifecycle. Independent follow-up fixes its terminal-wallet relaunch failure
 after a real native upgrade and separates friendly/chat stream IDs with a

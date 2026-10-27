@@ -32,7 +32,7 @@ static void validate_donation_record(void) {
 static void donation_tick(void) {
     static u32 checked_sequence,checked_epoch;
     if(!logged_in || !active_messaging || !BYTE(active_messaging,0xe4) || battle_started ||
-       clan_status!=2 || !donor_size || !card_request_size || pending_size || initial_name_pending ||
+       clan_status!=2 || !donor_present || !donor_size || !card_request_size || pending_size || initial_name_pending ||
        friendly_state==1 || friendly_state==2)return;
     u32 now=wall_epoch();
     if(now<card_request_stamp || now-card_request_stamp<5 || now-card_request_stamp>=28800)return;

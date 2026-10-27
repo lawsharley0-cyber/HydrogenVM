@@ -1,5 +1,14 @@
 # Local clans and subsequent simulation work
 
+Latest after127ad31: original Promote/Demote/leadership handoff and Kick now
+operate on the actual Local Donor. Native526 is staged until the entire home
+turn validates. Removed actors retain finite stock/history as tombstones and
+cannot rejoin/refill on login. GDN1-v1 migrates to v2, with a GCL1 required-child
+flag preventing whole-record truncation from resembling a legacy save. See
+[CLAN_CONTROLS.md](CLAN_CONTROLS.md) for exact schemas, actual UI/relaunch,
+25 tests, 16 unchanged-file negatives and four interruption cases. Reciprocal
+donations, invitations/supply/weekly stats and full device/UI checks remain open.
+
 Owner order, October 26: finish the current timer/recovery/control work, then
 make clan creation/interactions persistent offline; randomize player-style
 opponent names only after training; vary legal arena decks and actual bot

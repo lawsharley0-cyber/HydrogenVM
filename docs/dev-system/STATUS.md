@@ -16,6 +16,17 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Latest scoped Clash continuation — October 26, 2026
 
+Post-127ad31 roles/removal: actual original Promote/Demote/leadership/Kick now
+persist both actors with exactly one leader and a durable retired-donor state.
+Native526 kick intents validate the whole home turn before mutation. GDN1-v1
+migrates to v2 only after validation; GCL1 now records a required-donor flag so
+whole-record truncation cannot silently seed a new bot. All25 guest tests,
+16 damaged-file rejection/retention cases and four deliberate pre/post-commit
+abort cases with two normal returns each pass. Economy/full card maps retain
+their values. See [CLAN_CONTROLS.md](../clash-royale/CLAN_CONTROLS.md) for exact
+package/engine hashes, synthetic fixture limits and the remaining clan work.
+Shared src remains the qualified912a87e tree; there is no fresh phone verdict.
+
 Post-0be234d donation component: persistent Local Donor/native profile and finite
 original stock now deliver real common Arrows1/10 and rare Giant1/1 with native
 receipt toast. Both actors/request commit in one fsync/rename; deliberate

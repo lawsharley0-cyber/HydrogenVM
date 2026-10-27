@@ -98,6 +98,13 @@ int main(int argc,char **argv) {
                 expected = raw[:prefix_length] + vint(125) + raw[prefix_length+1:]
                 completed = run(raw, state)
                 self.assertEqual((completed.returncode, completed.stdout), (0, expected), (state, raw.hex()))
+                co=bytearray(raw);co[prefix_length-1]=4
+                co_expected=bytearray(expected);co_expected[prefix_length-1]=4
+                completed=run(co,state)
+                self.assertEqual((completed.returncode,completed.stdout),(0,co_expected))
+                for role in [0,5]:
+                    bad=bytearray(raw);bad[prefix_length-1]=role
+                    self.assertEqual(run(bad,state).returncode,2)
                 distinct = raw[:1]+b'\x02'+raw[2:]
                 distinct_expected = expected[:1]+b'\x02'+expected[2:]
                 completed = run(distinct,state,2)

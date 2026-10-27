@@ -104,11 +104,13 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "reward.inc"
 #include "name.inc"
 #include "native_actor.inc"
+#include "clan_roles.inc"
 #include "clan.inc"
 #include "donor.inc"
 #include "clan_chat.inc"
 #include "mail.inc"
 #include "card_request.inc"
+#include "clan_members.inc"
 #include "donation.inc"
 #include "match.inc"
 #include "friendly.inc"
@@ -245,6 +247,8 @@ int guest_send(void *self,void *message) {
         reply(self,24413,0,empty,sizeof empty);
     } else if(kind==10212 && logged_in && !battle_started) {
         change_initial_name(self,message);
+    } else if((kind==14306 || kind==14307) && logged_in && !battle_started) {
+        change_local_member(self,message,kind==14307);
     } else if(kind==14113 && logged_in && !battle_started) {
         // VisitHomeMessage writes a BE LogicLong. Only the human and actual
         // persisted local NPC have profiles; no remote records are invented.

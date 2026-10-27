@@ -55,6 +55,9 @@ static void write_save(void) {
     if(!saved_epoch)fail("GuestOffline: checkpoint has no accounted clock");
     clock[3]=checksum((const u8*)clock,12);
     valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(clock,1,sizeof clock,file)==sizeof clock;
+    // A parent marker distinguishes a migrated donor/tombstone from a legacy
+    // clan with no donor. Removing the entire trailing GDN1 must not reseed it.
+    clan_expects_donor=donor_size!=0;
     write_clan(file,header[3]);
     write_clan_chat(file,header[3]);
     write_local_mail(file,header[3]);
@@ -156,6 +159,8 @@ static void load_guest_home(void) {
             saw_journal=1;
         }
         int closed=CALL(s_close,int,(void*))(file);
+        if(clan_expects_donor && !saw_donor)
+            fail("GuestOffline: required donor record missing; original retained");
         if(saw_chat && (!saw_clan || !clan_status))fail("GuestOffline: conversation has no clan");
         if(!valid || closed!=0 || checksum(saved_home,saved_size)!=header[3])
             fail("GuestOffline: incomplete checkpoint; original file retained");

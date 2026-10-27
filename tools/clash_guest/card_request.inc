@@ -22,7 +22,7 @@ int guest_request_execute(void *command,void *logic,int mode,int flags) {
     CALL(0x192a71,void,(void*,u32))(stream,2048);CALL(0x193749,void,(void*,int))(stream,1);
     FIELD(entry,4)=(u32)identity;FIELD(entry,8)=(u32)CALL(0x99e2d,void*,(void*))(avatar);
     FIELD(entry,0xc)=FIELD(entry,8);FIELD(entry,0x10)=(u32)CALL(0x99e45,void*,(void*))(avatar);
-    FIELD(entry,0x14)=(u32)CALL(0x9abcd,int,(void*))(avatar);FIELD(entry,0x18)=2;
+    FIELD(entry,0x14)=(u32)CALL(0x9abcd,int,(void*))(avatar);FIELD(entry,0x18)=(u32)CALL(0x9ae41,int,(void*))(avatar);
     void *arena=CALL(0x9b4d1,void*,(void*))(avatar);
     FIELD(entry,0x24)=(u32)CALL(0x123ef1,int,(void*))(arena);
     FIELD(entry,0x28)=(u32)empty_donors;FIELD(entry,0x2c)=(u32)((u8*)command+0x1c);

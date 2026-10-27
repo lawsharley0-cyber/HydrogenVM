@@ -1,5 +1,17 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+**Newest after127ad31:** [CLAN_CONTROLS.md](CLAN_CONTROLS.md) supersedes the
+role/kick blocker below. Original promotion/demotion, one-leader handoff and
+native526 Kick work with atomic recovery and durable retired NPCs. GDN1-v1 is
+readable; writes use v2 plus GCL1's required-donor bit. Do not downgrade or erase
+these extensions: deleting a whole required record must fail, not refill a bot.
+25 tests,16 byte-identical negative cases and four pre/post-commit abort cases
+with two normal returns each pass. Unchanged912a87e runtime, no new phone pass.
+Next are reciprocal NPC requests/player donations, invitations/rejoin retaining
+stock, real supply and weekly stats, then the owner's names/decks/styles/shop
+and remaining arenas/UI/audio/visual/performance queue. The remainder of this
+handoff is a historical source snapshot; fetch the latest branch first.
+
 **Latest post-0be234d donor continuation:** read [DONATIONS.md](DONATIONS.md)
 before modifying clans. The default guest now persists an explicitly Local
 Donor/native inventory in GDN1 and synchronously commits actual native203/211

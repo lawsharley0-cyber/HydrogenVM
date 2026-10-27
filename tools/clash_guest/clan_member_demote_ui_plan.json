@@ -1,0 +1,11 @@
+{
+  "name":"Original local member demotion and confirmation",
+  "precondition":"Human leader; joined Local Donor at Elder or Co-leader.",
+  "steps":[
+    {"id":"M-clan","expected":"Current native local clan","actions":[{"tap":[240,535]}],"settleSeconds":2},
+    {"id":"M-info","expected":"Native persisted roster","actions":[{"tap":[218,72]}],"settleSeconds":2},
+    {"id":"M-profile","expected":"Native higher-ranked NPC profile","actions":[{"tap":[140,325]}],"settleSeconds":2},
+    {"id":"M-demote","expected":"Original demotion confirmation","actions":[{"tap":[200,205]}],"settleSeconds":2},
+    {"id":"M-confirm","expected":"Confirmed native demotion with stock/economy unchanged","actions":[{"tap":[220,347]}],"settleSeconds":3}
+  ]
+}
