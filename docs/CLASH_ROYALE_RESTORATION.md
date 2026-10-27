@@ -6,6 +6,15 @@ architecture, current source/state, exact verification process and future work.
 
 ## Current architecture — October 26, 2026
 
+Latest aftera51c68e: [reciprocal donations](clash-royale/RECIPROCAL_DONATIONS.md)
+now work through the actual UI. Local Donor uses original524/cooldown and a
+durable namespace3 request; Donate executes native203/211 with original limits
+and rewards. Common1/10, rare1/1, real spent-Arrows replenishment and repeat
+returns pass. GNR1 binds both actors; Kick retires the request without losing
+supplied stock.27 tests pass; final v2 fixes first-login conversation order.
+Next clan work is invitations/rejoin, further legitimate supply and weekly
+stats; names/decks/styles/shop and later full UI/device/audio/performance remain.
+
 Post-3c07405: [NPC inventory provenance](clash-royale/DONOR_INVENTORY.md)
 removes the historical stock-zero freeze that would reject a legitimately
 replenished donor at login. GNI1 conserves all six starter materials, binds both

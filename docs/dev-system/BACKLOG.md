@@ -2,6 +2,15 @@
 
 ## Active owner-directed Clash continuation (2026-10-23)
 
+Reciprocal donation UI now qualified aftera51c68e (Group C): original524 NPC
+requests/native cooldown,14310 player Donate, original capacity/reward rules,
+common/rare UI, actual spent-Arrows replenishment and repeated returns. GNR1
+and GNI1 commit with both actors; Kick retires requests while retaining stock.
+Read RECIPROCAL_DONATIONS.md for27 tests and exact final-build evidence.
+Next implement explicit local invitation/rejoin with retained NPC inventory,
+further legitimate supply and weekly stats, then the unchanged owner queue of
+post-training names, legal varied decks/styles, daily shop and later audits.
+
 Post-3c07405 reciprocal donations (Group C): create the actual local NPC's
 request with original524 and native cooldown/eligibility, preserve it beside
 human requests/chat/friendly history with a separate stream namespace, then

@@ -48,7 +48,8 @@ static void sector_vint(struct SectorWriter *w,int value) {
 int main(int argc,char **argv) {
     u8 data[4096],out[4100];u32 size=(u32)fread(data,1,sizeof data,stdin);
     struct SectorWriter w={out,0,sizeof out};
-    card_request_entry(&w,data,size,100,argc>1?(u32)atoi(argv[1]):225);
+    if(argc>2)npc_request_entry(&w,data,size,100,(u32)atoi(argv[1]),1);
+    else card_request_entry(&w,data,size,100,argc>1?(u32)atoi(argv[1]):225);
     fwrite(out,1,w.size,stdout);
 }
 ''')
@@ -90,6 +91,56 @@ int main(int argc,char **argv) {
             for data in vectors:
                 with self.subTest(vector=data.hex()):
                     self.assertEqual(run(data).returncode, 2)
+            # Separate NPC namespace3/author(3,1), human donor(0,1).
+            # Parsing multiple donated cards does not grant native eligibility;
+            # production calls original canAddDonation for the actual arena.
+            npc_prefix=b'\x01\x03\x01\x03\x01\x03\x01'+string(b'Local Donor')+b'\x03\x01\0'
+            def npc(data):return subprocess.run([str(exe),'100','npc'],input=data,capture_output=True)
+            for count in [0,1,2,10]:
+                donated=b'' if not count else struct.pack('>III',0,1,count)+b'\x1a\0'*count
+                payload=npc_prefix+b'\0'+struct.pack('>II',10,int(count>0))+donated+b'\x01\x1a\0\0'
+                self.assertEqual((npc(payload).returncode,npc(payload).stdout),(0,payload))
+                self.assertEqual(run(payload).returncode,2)
+            for namespace,author in [(1,3),(3,0),(2,3)]:
+                bad=bytearray(payload);bad[1]=namespace;bad[3]=author
+                self.assertEqual(npc(bad).returncode,2)
+            over=npc_prefix+b'\0'+struct.pack('>IIIII',10,1,0,1,11)+b'\x1a\0'*11+b'\x01\x1a\0\0'
+            self.assertEqual(npc(over).returncode,2)
+
+    def test_npc_request_atomic_binding_and_retirement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            exe=self.compile(Path(temporary),'npc_state',r'''
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+typedef unsigned int u32;typedef unsigned char u8;
+#define CALL(address,result,args) ((result (*)args)(address))
+static uintptr_t s_read=(uintptr_t)&fread,s_write=(uintptr_t)&fwrite;
+static u8 donor_home[]={1,2,3};static u32 donor_size=3;
+static void fail(const char *why) {fprintf(stderr,"%s\n",why);exit(2);}
+static u32 checksum(const u8 *p,u32 n) {u32 h=2166136261u;while(n--)h=(h^*p++)*16777619u;return h;}
+#include "npc_request_state.inc"
+int main(void) {
+    u32 tag;if(fread(&tag,1,4,stdin)!=4 || tag!=0x31524e47u)return 2;
+    read_npc_request(stdin,0x12345678u);
+    if(!npc_request_loaded || npc_request_binding!=checksum(donor_home,donor_size) || fgetc(stdin)!=EOF)return 2;
+    write_npc_request(stdout,0x12345678u);
+}
+''')
+            def pack(payload,**changes):
+                h=[0x31524e47,1,len(payload),7,100 if payload else 0,0x12345678,fnv(b'\1\2\3'),fnv(payload)]
+                for word,value in changes.items():h[int(word)]=value
+                raw=struct.pack('<8I',*h);return raw+struct.pack('<I',fnv(raw))+payload
+            def run(raw):return subprocess.run([str(exe)],input=raw,capture_output=True)
+            for payload in [b'',bytes(range(40))]:
+                raw=pack(payload);result=run(raw)
+                self.assertEqual((result.returncode,result.stdout),(0,raw))
+                for end in [0,4,16,32,35,len(raw)-1]:self.assertEqual(run(raw[:end]).returncode,2)
+                for word,value in [(1,2),(2,2049),(3,0),(3,1000000001),(5,0),(6,0),(7,0)]:
+                    self.assertEqual(run(pack(payload,**{str(word):value})).returncode,2)
+                wrong_stamp=1 if not payload else 0
+                self.assertEqual(run(pack(payload,**{'4':wrong_stamp})).returncode,2)
+                self.assertEqual(run(raw+b'\0').returncode,2)
 
     def test_atomic_request_extension_faults_and_disbanded_state(self):
         with tempfile.TemporaryDirectory() as temporary:

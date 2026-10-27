@@ -1,5 +1,14 @@
 # Offline guest UI audit — October 25, 2026
 
+Latest reciprocal subset aftera51c68e: actual Local Donor request0/10 and green
+Donate, common receipt1/10/native5 Gold/1 XP, native one-card limit while stock
+remains, rare Fireball1/1/native50 Gold/5 XP, and actual spent-Arrows replenishment.
+Repeated returns retain both actors and both request histories. Final v2 fixes
+the pre-snapshot chat-order jump; native Kick removes/retains retirement of the
+NPC request without resetting supplied stock.27 guest tests pass; see
+RECIPROCAL_DONATIONS.md for exact fixture/report scopes. Invitations, further
+legitimate supply/weekly stats and full fidelity/audio/device/performance remain.
+
 Newest role/removal subset after127ad31: actual Member→Elder→Co-leader→Leader
 confirmations, reverse4→3→1 demotions, original Kick and same-save returns work.
 The former human leader becomes Co-leader and sees no Kick/Promote against the

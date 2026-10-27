@@ -1,5 +1,9 @@
 # Persistent local NPC inventory provenance
 
+The subsequent [reciprocal donation implementation](RECIPROCAL_DONATIONS.md)
+now supplies real player-to-NPC UI receipts and replenishment. The remaining
+sections preserve this prerequisite stage's format and regression evidence.
+
 Continuation after `3c07405`, on `codex/clash-offline-continuation`. This prepares
 reciprocal donations without making a spent card permanently unreceivable.
 It does **not** implement the player's Donate button/NPC request conversation,

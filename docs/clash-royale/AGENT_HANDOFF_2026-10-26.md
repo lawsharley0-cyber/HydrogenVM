@@ -1,5 +1,15 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+**Newest aftera51c68e:** [RECIPROCAL_DONATIONS.md](RECIPROCAL_DONATIONS.md)
+implements actual NPC request/player Donate UI with original524/203/211 and
+native limits/rewards. Common1/10, rare1/1 and real spent-Arrows replenishment
+survive returns. GNR1 namespace3 and required GCL1 bit0x400 bind both actors and
+receipt history alongside GNI1; Kick retires the request with stock intact.
+27 tests and final v2 UI/return/two unchanged-file guards/Kick return pass.
+Read its exact hashes, private helpers and explicitly clock-aged fixture limits.
+No shared runtime changes or new device pass. Next: invitations/retained-stock
+rejoin, legitimate additional supply/weekly stats, then names/decks/styles/shop.
+
 **Newest after3c07405:** read [DONOR_INVENTORY.md](DONOR_INVENTORY.md) before
 reciprocal donation work. GNI1 conserves native NPC inventory and removes a
 fulfilled-request stock-zero freeze that would abort after replenishment.

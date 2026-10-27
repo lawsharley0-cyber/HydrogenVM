@@ -5,44 +5,41 @@
 #include "friendly_wire.inc"
 #include "friendly_wallet.inc"
 static void friendly_migrate_identity(void);
+static void conversation_pending(struct SectorWriter *w,u32 now,u32 before,u32 *written) {
+    for(;;) {
+        int choice=-1;u32 stamp=0xffffffffu;
+        if(friendly_sequence && !(*written&1) && friendly_stamp<=before) {choice=0;stamp=friendly_stamp;}
+        if(card_request_size && !(*written&2) && card_request_stamp<=before &&
+           (choice<0 || card_request_stamp<stamp)) {choice=1;stamp=card_request_stamp;}
+        if(npc_request_size && !(*written&4) && npc_request_stamp<=before &&
+           (choice<0 || npc_request_stamp<stamp)) {choice=2;stamp=npc_request_stamp;}
+        if(choice<0)return;
+        if(choice==0)friendly_entry_wire(w,friendly_state==3?friendly_result:friendly_entry,
+            friendly_state==3?friendly_result_size:friendly_entry_size,friendly_stamp,now);
+        if(choice==1)card_request_entry(w,clan_card_request,card_request_size,card_request_stamp,now);
+        if(choice==2)npc_request_entry(w,npc_request,npc_request_size,npc_request_stamp,now,npc_request_sequence);
+        *written|=1u<<choice;
+    }
+}
 static u32 encode_clan_conversation(u8 *output,u32 capacity) {
     struct SectorWriter w={output,0,capacity};
-    sector_vint(&w,(int)clan_chat_count+(card_request_size?1:0)+(friendly_sequence?1:0));
-    struct GuestReader r={clan_chat,clan_chat_size,0,0,0};u32 now=wall_epoch();
-    int request_written=0,friendly_written=0;
+    sector_vint(&w,(int)clan_chat_count+(card_request_size?1:0)+(friendly_sequence?1:0)+(npc_request_size?1:0));
+    struct GuestReader r={clan_chat,clan_chat_size,0,0,0};u32 now=wall_epoch(),written=0;
     for(u32 i=0;i<clan_chat_count;++i) {
         u32 stamp=turn_int(&r),size=turn_int(&r);
         if(size<16 || size>1024 || size>r.size-r.at)fail("GuestOffline: invalid conversation record boundary");
-        while((card_request_size && !request_written && stamp>=card_request_stamp) ||
-              (friendly_sequence && !friendly_written && stamp>=friendly_stamp)) {
-            if(friendly_sequence && !friendly_written && stamp>=friendly_stamp &&
-               (!card_request_size || request_written || friendly_stamp<=card_request_stamp)) {
-                const u8 *data=friendly_state==3?friendly_result:friendly_entry;
-                friendly_entry_wire(&w,data,friendly_state==3?friendly_result_size:friendly_entry_size,friendly_stamp,now);
-                friendly_written=1;
-            } else {
-                card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,now);request_written=1;
-            }
-        }
+        conversation_pending(&w,now,stamp,&written);
         clan_chat_entry(&w,r.data+r.at,size,stamp,now);r.at+=size;
     }
     if(r.at!=r.size)fail("GuestOffline: trailing conversation records");
-    while((card_request_size && !request_written) || (friendly_sequence && !friendly_written)) {
-        if(friendly_sequence && !friendly_written &&
-           (!card_request_size || request_written || friendly_stamp<=card_request_stamp)) {
-            const u8 *data=friendly_state==3?friendly_result:friendly_entry;
-            friendly_entry_wire(&w,data,friendly_state==3?friendly_result_size:friendly_entry_size,friendly_stamp,now);
-            friendly_written=1;
-        } else {
-            card_request_entry(&w,clan_card_request,card_request_size,card_request_stamp,now);request_written=1;
-        }
-    }
+    conversation_pending(&w,now,0xffffffffu,&written);
     return w.size;
 }
 static void send_clan_conversation(void *self) {
     if(clan_status!=2)fail("GuestOffline: conversation requested without completed membership");
     static u8 output[70000];u32 size=encode_clan_conversation(output,sizeof output);
     reply(self,24311,0,output,size);
+    clan_stream_ready=1;
 }
 static void clan_conversation(void *self,void *message) {
     if(CALL(0x198d19,u32,(void*))(message)!=0)fail("GuestOffline: invalid local conversation request");

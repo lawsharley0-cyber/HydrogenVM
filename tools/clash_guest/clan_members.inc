@@ -47,7 +47,7 @@ static void change_local_member(void *self,void *message,int kick) {
         int result=CALL(0x1254d,int,(void*,void*,int,int))(command,npc.logic,2,0);
         FIELD(command,0x1c)=0;CALL(0x1252d,void,(void*))(command);
         if(result || CALL(0x9ae01,void*,(void*))(npc.avatar))fail("GuestOffline: original NPC kick/leave failed");
-        donor_present=0;
+        donor_present=0;npc_request_size=0;npc_request_stamp=0;
     } else {
         native_clan_role(npc.logic,role);
         if(role==2)native_clan_role(logic,4); // Original handoff: previous leader becomes co-leader.
@@ -59,6 +59,10 @@ static void change_local_member(void *self,void *message,int kick) {
     if(now>donor_epoch)donor_epoch=now;
     native_actor_destroy(npc);account_home_clock(logic,home,0);capture_native(home,avatar);
     reply(self,kick?24307:24306,0,data,kick?8:size);
+    if(kick && npc_request_sequence) {
+        u8 removed[8];struct SectorWriter w={removed,0,sizeof removed};
+        clan_int(&w,3);clan_int(&w,npc_request_sequence);reply(self,24318,0,removed,w.size);
+    }
     CALL(API_printf,int,(const char*,int,int,int))("GuestOffline: atomic member control kick=%d role=%d->%d\n",kick,old,kick?0:role);
 }
 #include "clan_member_wire.inc"

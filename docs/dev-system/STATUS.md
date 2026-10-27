@@ -16,6 +16,17 @@ Copy `summary` and the regression list into the snapshot. Dry-run issues are not
 
 ## Latest scoped Clash continuation — October 26, 2026
 
+Post-a51c68e visible feature: Local Donor requests cards through native524;
+player Donate works with native capacity/arena limits, Gold/XP and inventory.
+Actual common1/10, rare1/1 and spent-Arrows replenishment each retain their
+economy/history across returns. GNR1 makes requests/receipts atomic with both
+actors and GNI1.27 tests, two unchanged-file save guards, final first-login
+ordering/donation/return and native Kick/request retirement/return pass. See
+[RECIPROCAL_DONATIONS.md](../clash-royale/RECIPROCAL_DONATIONS.md) for exact
+evidence, NPC-only clock-aged fixture limits and unchanged runtime qualification.
+No fresh iPhone/performance/audio-quality verdict. Next: clan invitations,
+retained-stock rejoin, additional legitimate supply and weekly statistics.
+
 Post-3c07405 inventory preparation: native donation history no longer freezes a
 spent card at stock0 forever. GNI1 binds conserved starter inventory to both
 actors; strict legacy adoption and required-child detection prevent silent
