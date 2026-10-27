@@ -1,0 +1,282 @@
+{
+  "build" : {
+    "binaryMatch" : "verified",
+    "commit" : "b5df8bc5b4dbc391b5d019abb8ac3a5f6ca68cac",
+    "configuration" : "device"
+  },
+  "device" : {
+    "model" : "iPhone",
+    "systemVersion" : "26.5"
+  },
+  "host" : {
+    "kind" : "iphone",
+    "model" : "iPhone",
+    "os" : "iOS 26.5",
+    "pageSize" : 16384
+  },
+  "kind" : "hvm-compat-report",
+  "options" : {
+    "explore" : true,
+    "exploreSeconds" : 30,
+    "keepGoing" : true,
+    "relaunch" : true,
+    "renderer" : "both",
+    "seconds" : 5
+  },
+  "suites" : {
+    "apps" : {
+      "apps" : [
+        {
+          "bundleId" : "com.hydrogenvm.test.uikittest",
+          "checks" : [
+            {
+              "detail" : "Crashed (status 1)",
+              "name" : "Launches",
+              "status" : "fail"
+            },
+            {
+              "detail" : "1 frames drawn",
+              "name" : "Shows a picture",
+              "status" : "pass"
+            },
+            {
+              "detail" : "Every frame reached the window",
+              "name" : "Game view on screen",
+              "status" : "pass"
+            },
+            {
+              "detail" : "Mixer ran for 5.3 s, peak 0.00",
+              "name" : "Audio output",
+              "status" : "pass"
+            },
+            {
+              "detail" : "No music heard. It may be off in the game's settings, or this screen has none",
+              "name" : "Music",
+              "status" : "warn"
+            },
+            {
+              "detail" : "No sound effects, even after taps",
+              "name" : "Sound effects",
+              "status" : "warn"
+            },
+            {
+              "detail" : "Crashed while tapping around",
+              "name" : "Responds to touch",
+              "status" : "fail"
+            },
+            {
+              "detail" : "The game stopped before this step",
+              "name" : "Background & resume",
+              "status" : "skip"
+            },
+            {
+              "detail" : "The game had already stopped",
+              "name" : "Closes cleanly",
+              "status" : "skip"
+            },
+            {
+              "detail" : "Skipped because the first run didn't finish cleanly",
+              "name" : "Relaunch",
+              "status" : "skip"
+            },
+            {
+              "detail" : "None reported",
+              "name" : "Missing APIs",
+              "status" : "pass"
+            },
+            {
+              "detail" : "None",
+              "name" : "Handled faults",
+              "status" : "pass"
+            },
+            {
+              "detail" : "No frames to time",
+              "name" : "Speed",
+              "status" : "skip"
+            }
+          ],
+          "crashed" : true,
+          "diagnostics" : {
+            "audibleFrames" : 0,
+            "audioFramesRendered" : 233789,
+            "audioPeak" : 0,
+            "effectFrames" : 0,
+            "effectVoices" : 0,
+            "faultsToApp" : 0,
+            "framesPresented" : 1,
+            "missingCount" : 0,
+            "musicFrames" : 0,
+            "musicVoices" : 0,
+            "offscreenPresents" : 0,
+            "timeToFirstFrameMs" : 711.61708299999998
+          },
+          "exceptionKind" : "crash",
+          "exitCode" : 1,
+          "explore" : {
+            "actions" : [
+              {
+                "details" : "grid tap at (26, 216)",
+                "kind" : "tap",
+                "timeOffset" : 5.2418109178543091
+              }
+            ],
+            "backgroundTested" : false,
+            "crashed" : true,
+            "enabled" : true,
+            "newProblems" : [
+              {
+                "problemText" : "66 checks, 3 failures",
+                "triggeringActionIndex" : 0
+              }
+            ],
+            "reproSteps" : [
+              {
+                "details" : "grid tap at (26, 216)",
+                "kind" : "tap",
+                "timeOffset" : 5.2418109178543091
+              }
+            ],
+            "screensVisited" : 1,
+            "seed" : 10888590083490907113
+          },
+          "frame" : {
+            "signal" : "ok",
+            "thumbnailPath" : "thumbnails\/com.hydrogenvm.test.uikittest_software.png"
+          },
+          "keepGoing" : true,
+          "logs" : "Loaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main\nObjective-C: 5 classes, 0 categories, 168 selector refs\n[teardown] waiting for the guest run to finish\n[memory] {\"schema\":\"hvm-memory\/v1\",\"event\":\"run-start\",\"elapsedSeconds\":0.640113,\"hostPageBytes\":16384,\"backgrounded\":false,\"residentBytes\":214253568,\"physicalFootprintBytes\":32036992,\"availableBytes\":0,\"lifetimePeakResidentBytes\":214253568,\"guestHeapLiveBytes\":784,\"guestHeapBlockCount\":41,\"guestHeapCommittedBytes\":4194304,\"guestHeapBadFreeCount\":0,\"guestMappedBytes\":6373376,\"guestCommittedHostBytes\":6373376,\"liveArenaCount\":1,\"audioVoiceCount\":0,\"audioQueuedBufferCount\":0,\"audioReferencedPcmBytes\":0,\"audioProcessedTagCount\":0,\"audioProcessedTagCapacityBytes\":0,\"engineDecodedBlockCount\":0,\"engineEmittedOpCount\":0,\"framesPresentedCount\":0,\"glTextureCount\":null,\"glTextureEstimatedBytes\":null,\"glFramebufferCount\":null,\"glRenderbufferCount\":null,\"assetCacheBytes\":null,\"textureCacheBytes\":null,\"audioDecodedCacheBytes\":null,\"checkpointCount\":null,\"checkpointBytes\":null,\"offlinePendingMessageCount\":null,\"offlineQueueBytes\":null}\nScreen: 320x480 @2x, portrait, status bar visible\nok 3.5-inch screen without a 568h launch image\nok applicationFrame below the status bar\nok retina scale\nok keyWindow\nok root view controller view frame\nok viewDidLoad \/ viewWillAppear\nok didMoveToWindow\nok responder chain\nok UIDevice systemVersion\nok convertPoint:toView:nil (window)\nok convertPoint:fromView:nil\nok hitTest finds the child\nok hitTest falls back to the root\nok viewWithTag \/ isDescendantOfView\nok transformed frame\nok identity transform restores frame\nok autoresizing (flexible width + top margin)\nok setNeedsLayout + layoutIfNeeded\nok bringSubviewToFront\nok UIColor components\nok UIColor CGColor\nok UIFont metrics\nok sizeWithFont:\nok sizeWithFont:constrainedToSize: wraps\nok imageNamed: picks @2x\nok CGImage of @2x image\nok imageNamed: missing returns nil\nok CgBI (Xcode-crushed) PNG decodes\nok CgBI channel order\nok UIGraphicsGetImageFromCurrentImageContext\nok UIRectFill pixels\nok drawInRect: pixels (top-left origin)\nok untouched pixels stay clear\nok PNG encode\/decode round trip\nok CGBitmapContext y-up fill\nok CGPathContainsPoint\nok CGRectIntersection\nok NSStringFromCGRect \/ CGRectFromString\nok NSValue CGRect\nnib Panel.nib: 1 top-level objects\nok Panel nib: top-level view\nok Panel nib: outlet + label text\nok Panel nib: action connection + button title\nnib PanelKeyed.nib: 1 top-level objects\nok PanelKeyed nib: top-level view\nok PanelKeyed nib: outlet + label text\nok PanelKeyed nib: action connection + button title\nok UIButton target\/action\nok UIButton currentTitle\nok animation block applies immediately\nok beginAnimations\/commitAnimations apply\nok UIScrollView contentOffset updates bounds.origin\nok UITableViewCell textLabel & reuseIdentifier\nok UINavigationController push & hierarchy\nok UINavigationController pop\nok UITabBarController selection\nok UITextField editing & first responder\nok UISwitch, UISlider, UISegmentedControl\nok EAGLContext creation & setCurrentContext\nok EAGLContext renderbufferStorage:fromDrawable:\nok glCheckFramebufferStatus complete\nok OpenGL ES clear, glReadPixels & presentRenderbuffer\n[memory] {\"schema\":\"hvm-memory\/v1\",\"event\":\"interval\",\"elapsedSeconds\":5.65133,\"hostPageBytes\":16384,\"backgrounded\":false,\"residentBytes\":207896576,\"physicalFootprintBytes\":47225024,\"availableBytes\":0,\"lifetimePeakResidentBytes\":228950016,\"guestHeapLiveBytes\":2000,\"guestHeapBlockCount\":116,\"guestHeapCommittedBytes\":4194304,\"guestHeapBadFreeCount\":0,\"guestMappedBytes\":6373376,\"guestCommittedHostBytes\":6373376,\"liveArenaCount\":1,\"audioVoiceCount\":0,\"audioQueuedBufferCount\":0,\"audioReferencedPcmBytes\":0,\"audioProcessedTagCount\":0,\"audioProcessedTagCapacityBytes\":0,\"engineDecodedBlockCount\":1183,\"engineEmittedOpCount\":6568,\"framesPresentedCount\":1,\"glTextureCount\":null,\"glTextureEstimatedBytes\":null,\"glFramebufferCount\":null,\"glRenderbufferCount\":null,\"assetCacheBytes\":null,\"textureCacheBytes\":null,\"audioDecodedCacheBytes\":null,\"checkpointCount\":null,\"checkpointBytes\":null,\"offlinePendingMessageCount\":null,\"offlineQueueBytes\":null}\nok drawRect: was called by the compositor\nok CADisplayLink fires at frame rate\nok animation completions fire\nFAIL touch delivery to a plain view (hvm --tap) (line 336)\nFAIL touch location in view coordinates (line 337)\nFAIL UITapGestureRecognizer (line 338)\n66 checks, 3 failures\nApp exited with code 1\n[memory] {\"schema\":\"hvm-memory\/v1\",\"event\":\"run-end\",\"elapsedSeconds\":6.84894,\"hostPageBytes\":16384,\"backgrounded\":false,\"residentBytes\":213827584,\"physicalFootprintBytes\":47208640,\"availableBytes\":0,\"lifetimePeakResidentBytes\":228950016,\"guestHeapLiveBytes\":2000,\"guestHeapBlockCount\":116,\"guestHeapCommittedBytes\":4194304,\"guestHeapBadFreeCount\":0,\"guestMappedBytes\":6373376,\"guestCommittedHostBytes\":6373376,\"liveArenaCount\":1,\"audioVoiceCount\":0,\"audioQueuedBufferCount\":0,\"audioReferencedPcmBytes\":0,\"audioProcessedTagCount\":0,\"audioProcessedTagCapacityBytes\":0,\"engineDecodedBlockCount\":1214,\"engineEmittedOpCount\":6798,\"framesPresentedCount\":3,\"glTextureCount\":null,\"glTextureEstimatedBytes\":null,\"glFramebufferCount\":null,\"glRenderbufferCount\":null,\"assetCacheBytes\":null,\"textureCacheBytes\":null,\"audioDecodedCacheBytes\":null,\"checkpointCount\":null,\"checkpointBytes\":null,\"offlinePendingMessageCount\":null,\"offlineQueueBytes\":null}\n[teardown] guest run returned status 1\n[teardown] destroying the guest process\n[teardown] guest process destroyed; live arenas 0\n[teardown] stopping host audio\n[teardown] host audio stopped; queueing the exit callback\n[teardown] delivering the exit callback",
+          "name" : "UIKitTest",
+          "perf" : {
+            "fps" : 2,
+            "framesPresented" : 1,
+            "frameTimeP95Ms" : 0
+          },
+          "renderer" : "software",
+          "signature" : "exit-1",
+          "summary" : "Crashed (status 1)",
+          "version" : "1.0"
+        },
+        {
+          "bundleId" : "com.hydrogenvm.test.uikittest",
+          "checks" : [
+            {
+              "detail" : "Crashed (status 1)",
+              "name" : "Launches",
+              "status" : "fail"
+            },
+            {
+              "detail" : "2 frames drawn",
+              "name" : "Shows a picture",
+              "status" : "pass"
+            },
+            {
+              "detail" : "Every frame reached the window",
+              "name" : "Game view on screen",
+              "status" : "pass"
+            },
+            {
+              "detail" : "Mixer ran for 5.9 s, peak 0.00",
+              "name" : "Audio output",
+              "status" : "pass"
+            },
+            {
+              "detail" : "No music heard. It may be off in the game's settings, or this screen has none",
+              "name" : "Music",
+              "status" : "warn"
+            },
+            {
+              "detail" : "No sound effects, even after taps",
+              "name" : "Sound effects",
+              "status" : "warn"
+            },
+            {
+              "detail" : "Crashed while tapping around",
+              "name" : "Responds to touch",
+              "status" : "fail"
+            },
+            {
+              "detail" : "The game stopped before this step",
+              "name" : "Background & resume",
+              "status" : "skip"
+            },
+            {
+              "detail" : "The game had already stopped",
+              "name" : "Closes cleanly",
+              "status" : "skip"
+            },
+            {
+              "detail" : "Skipped because the first run didn't finish cleanly",
+              "name" : "Relaunch",
+              "status" : "skip"
+            },
+            {
+              "detail" : "None reported",
+              "name" : "Missing APIs",
+              "status" : "pass"
+            },
+            {
+              "detail" : "None",
+              "name" : "Handled faults",
+              "status" : "pass"
+            },
+            {
+              "detail" : "No frames to time",
+              "name" : "Speed",
+              "status" : "skip"
+            }
+          ],
+          "crashed" : true,
+          "diagnostics" : {
+            "audibleFrames" : 0,
+            "audioFramesRendered" : 258250,
+            "audioPeak" : 0,
+            "effectFrames" : 0,
+            "effectVoices" : 0,
+            "faultsToApp" : 0,
+            "framesPresented" : 2,
+            "missingCount" : 0,
+            "musicFrames" : 0,
+            "musicVoices" : 0,
+            "offscreenPresents" : 0,
+            "timeToFirstFrameMs" : 48.207084000000002
+          },
+          "exceptionKind" : "crash",
+          "exitCode" : 1,
+          "explore" : {
+            "actions" : [
+
+            ],
+            "backgroundTested" : false,
+            "crashed" : true,
+            "enabled" : true,
+            "newProblems" : [
+
+            ],
+            "reproSteps" : [
+
+            ],
+            "screensVisited" : 0,
+            "seed" : 10888590083490907113
+          },
+          "frame" : {
+            "signal" : "ok",
+            "thumbnailPath" : "thumbnails\/com.hydrogenvm.test.uikittest_gpu.png"
+          },
+          "keepGoing" : true,
+          "logs" : "GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)\nLoaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main\nObjective-C: 5 classes, 0 categories, 168 selector refs\n[teardown] waiting for the guest run to finish\n[memory] {\"schema\":\"hvm-memory\/v1\",\"event\":\"run-start\",\"elapsedSeconds\":0.0250987,\"hostPageBytes\":16384,\"backgrounded\":false,\"residentBytes\":208715776,\"physicalFootprintBytes\":31135808,\"availableBytes\":0,\"lifetimePeakResidentBytes\":228950016,\"guestHeapLiveBytes\":784,\"guestHeapBlockCount\":41,\"guestHeapCommittedBytes\":4194304,\"guestHeapBadFreeCount\":0,\"guestMappedBytes\":6373376,\"guestCommittedHostBytes\":6373376,\"liveArenaCount\":1,\"audioVoiceCount\":0,\"audioQueuedBufferCount\":0,\"audioReferencedPcmBytes\":0,\"audioProcessedTagCount\":0,\"audioProcessedTagCapacityBytes\":0,\"engineDecodedBlockCount\":0,\"engineEmittedOpCount\":0,\"framesPresentedCount\":0,\"glTextureCount\":null,\"glTextureEstimatedBytes\":null,\"glFramebufferCount\":null,\"glRenderbufferCount\":null,\"assetCacheBytes\":null,\"textureCacheBytes\":null,\"audioDecodedCacheBytes\":null,\"checkpointCount\":null,\"checkpointBytes\":null,\"offlinePendingMessageCount\":null,\"offlineQueueBytes\":null}\nScreen: 320x480 @2x, portrait, status bar visible\nok 3.5-inch screen without a 568h launch image\nok applicationFrame below the status bar\nok retina scale\nok keyWindow\nok root view controller view frame\nok viewDidLoad \/ viewWillAppear\nok didMoveToWindow\nok responder chain\nok UIDevice systemVersion\nok convertPoint:toView:nil (window)\nok convertPoint:fromView:nil\nok hitTest finds the child\nok hitTest falls back to the root\nok viewWithTag \/ isDescendantOfView\nok transformed frame\nok identity transform restores frame\nok autoresizing (flexible width + top margin)\nok setNeedsLayout + layoutIfNeeded\nok bringSubviewToFront\nok UIColor components\nok UIColor CGColor\nok UIFont metrics\nok sizeWithFont:\nok sizeWithFont:constrainedToSize: wraps\nok imageNamed: picks @2x\nok CGImage of @2x image\nok imageNamed: missing returns nil\nok CgBI (Xcode-crushed) PNG decodes\nok CgBI channel order\nok UIGraphicsGetImageFromCurrentImageContext\nok UIRectFill pixels\nok drawInRect: pixels (top-left origin)\nok untouched pixels stay clear\nok PNG encode\/decode round trip\nok CGBitmapContext y-up fill\nok CGPathContainsPoint\nok CGRectIntersection\nok NSStringFromCGRect \/ CGRectFromString\nok NSValue CGRect\nnib Panel.nib: 1 top-level objects\nok Panel nib: top-level view\nok Panel nib: outlet + label text\nok Panel nib: action connection + button title\nnib PanelKeyed.nib: 1 top-level objects\nok PanelKeyed nib: top-level view\nok PanelKeyed nib: outlet + label text\nok PanelKeyed nib: action connection + button title\nok UIButton target\/action\nok UIButton currentTitle\nok animation block applies immediately\nok beginAnimations\/commitAnimations apply\nok UIScrollView contentOffset updates bounds.origin\nok UITableViewCell textLabel & reuseIdentifier\nok UINavigationController push & hierarchy\nok UINavigationController pop\nok UITabBarController selection\nok UITextField editing & first responder\nok UISwitch, UISlider, UISegmentedControl\nok EAGLContext creation & setCurrentContext\nGPU: drawable 64x64 for renderbuffer 1 (platform layer)\nok EAGLContext renderbufferStorage:fromDrawable:\nok glCheckFramebufferStatus complete\nGPU: presented frame 1 directly (average rgb 255,0,0, 64\/64 samples lit)\nok OpenGL ES clear, glReadPixels & presentRenderbuffer\n[memory] {\"schema\":\"hvm-memory\/v1\",\"event\":\"interval\",\"elapsedSeconds\":5.03104,\"hostPageBytes\":16384,\"backgrounded\":false,\"residentBytes\":209338368,\"physicalFootprintBytes\":37263552,\"availableBytes\":0,\"lifetimePeakResidentBytes\":228950016,\"guestHeapLiveBytes\":2000,\"guestHeapBlockCount\":116,\"guestHeapCommittedBytes\":4194304,\"guestHeapBadFreeCount\":0,\"guestMappedBytes\":6373376,\"guestCommittedHostBytes\":6373376,\"liveArenaCount\":1,\"audioVoiceCount\":0,\"audioQueuedBufferCount\":0,\"audioReferencedPcmBytes\":0,\"audioProcessedTagCount\":0,\"audioProcessedTagCapacityBytes\":0,\"engineDecodedBlockCount\":1183,\"engineEmittedOpCount\":6568,\"framesPresentedCount\":2,\"glTextureCount\":null,\"glTextureEstimatedBytes\":null,\"glFramebufferCount\":null,\"glRenderbufferCount\":null,\"assetCacheBytes\":null,\"textureCacheBytes\":null,\"audioDecodedCacheBytes\":null,\"checkpointCount\":null,\"checkpointBytes\":null,\"offlinePendingMessageCount\":null,\"offlineQueueBytes\":null}\nok drawRect: was called by the compositor\nok CADisplayLink fires at frame rate\nok animation completions fire\nFAIL touch delivery to a plain view (hvm --tap) (line 336)\nFAIL touch location in view coordinates (line 337)\nFAIL UITapGestureRecognizer (line 338)\n66 checks, 3 failures\nApp exited with code 1\n[memory] {\"schema\":\"hvm-memory\/v1\",\"event\":\"run-end\",\"elapsedSeconds\":6.22527,\"hostPageBytes\":16384,\"backgrounded\":false,\"residentBytes\":209338368,\"physicalFootprintBytes\":37247168,\"availableBytes\":0,\"lifetimePeakResidentBytes\":228950016,\"guestHeapLiveBytes\":2000,\"guestHeapBlockCount\":116,\"guestHeapCommittedBytes\":4194304,\"guestHeapBadFreeCount\":0,\"guestMappedBytes\":6373376,\"guestCommittedHostBytes\":6373376,\"liveArenaCount\":1,\"audioVoiceCount\":0,\"audioQueuedBufferCount\":0,\"audioReferencedPcmBytes\":0,\"audioProcessedTagCount\":0,\"audioProcessedTagCapacityBytes\":0,\"engineDecodedBlockCount\":1203,\"engineEmittedOpCount\":6776,\"framesPresentedCount\":2,\"glTextureCount\":null,\"glTextureEstimatedBytes\":null,\"glFramebufferCount\":null,\"glRenderbufferCount\":null,\"assetCacheBytes\":null,\"textureCacheBytes\":null,\"audioDecodedCacheBytes\":null,\"checkpointCount\":null,\"checkpointBytes\":null,\"offlinePendingMessageCount\":null,\"offlineQueueBytes\":null}\n[teardown] guest run returned status 1\n[teardown] destroying the guest process\n[teardown] guest process destroyed; live arenas 0\n[teardown] stopping host audio\n[teardown] host audio stopped; queueing the exit callback\n[teardown] delivering the exit callback",
+          "name" : "UIKitTest",
+          "perf" : {
+            "fps" : 0,
+            "framesPresented" : 2,
+            "frameTimeP95Ms" : 0.092160000000000006
+          },
+          "renderer" : "gpu",
+          "signature" : "exit-1",
+          "summary" : "Crashed (status 1)",
+          "version" : "1.0"
+        }
+      ]
+    }
+  },
+  "timestamp" : "2026-10-27T21:57:24Z"
+}
