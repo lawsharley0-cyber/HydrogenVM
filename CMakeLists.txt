@@ -69,6 +69,9 @@ target_link_libraries(hvm_decodecheck PRIVATE hvm_core)
 add_executable(hvm_heap_tests tests/runner/HeapTests.cpp)
 target_link_libraries(hvm_heap_tests PRIVATE hvm_core)
 
+add_executable(hvm_telemetry_tests tests/runner/TelemetryTests.cpp)
+target_link_libraries(hvm_telemetry_tests PRIVATE hvm_core)
+
 add_executable(hvm_machodump tests/runner/MachODump.cpp)
 target_link_libraries(hvm_machodump PRIVATE hvm_core)
 

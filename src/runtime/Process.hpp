@@ -7,6 +7,7 @@
 #include "Heap.hpp"
 #include "loader/MachO.hpp"
 #include "loader/Plist.hpp"
+#include "MemoryTelemetry.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -123,11 +124,12 @@ public:
     //  * enterBackground: resign active -> enter background (game saves), then the guest is
     //    paused: main thread parked, other guest threads suspended, audio silenced.
     //  * enterForeground: resume, then will-enter-foreground -> did-become-active.
-    enum class Lifecycle { Background, Foreground, Terminate };
+    enum class Lifecycle { Background, Foreground, Terminate, MemoryWarning };
     void setLifecycleHandler(std::function<void(Lifecycle)> h) { lifecycleHandler_ = std::move(h); }
     void requestGracefulStop(double timeout = 5.0);
     void enterBackground();
     void enterForeground();
+    void notifyMemoryWarning();
     bool backgrounded() const { return backgrounded_.load(); }
     bool backgroundRequested() const { return backgroundRequested_.load(); }
     bool gracefulStopRequested() const { return gracefulStop_.load(); }
@@ -143,6 +145,9 @@ public:
     Audio::Mixer& mixer() { return *mixer_; }
     std::shared_ptr<Audio::Mixer> mixerPtr() const { return mixer_; }
     bool stopping() const { return engine_->stopRequested(); }
+
+    // ---- memory telemetry
+    MemoryTelemetry& telemetry() { return *telemetry_; }
 
     // ---- performance counters (read any time; reported by `hvm --report`)
     struct Perf {
@@ -354,6 +359,7 @@ private:
     void finishCrash(const CPU::Cpu& c, CPU::Exit e);
 
     ProcessConfig cfg_;
+    std::unique_ptr<MemoryTelemetry> telemetry_;
     std::unique_ptr<Memory::GuestArena> mem_;
     std::unique_ptr<CPU::Engine> engine_;
     std::unique_ptr<Heap> heap_;

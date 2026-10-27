@@ -496,6 +496,13 @@ void installLifecycle(Process& p) {
     Process* pp = &p;
     p.setLifecycleHandler([pp, st](Process::Lifecycle what) {
         if (what == Process::Lifecycle::Foreground) { pp->setBackgrounded(false); return; }   // wakes the parked main thread
+        if (what == Process::Lifecycle::MemoryWarning) {
+            Foundation::mainRunLoop(*pp).post([pp](CPU::Cpu& c) {
+                Ctx x{*pp, c, pp->mem()};
+                if (!pp->stopping()) Foundation::postNotification(x, "UIApplicationDidReceiveMemoryWarningNotification", ui(x).app);
+            });
+            return;
+        }
         Foundation::mainRunLoop(*pp).post([pp, st, what](CPU::Cpu& c) {
             Ctx x{*pp, c, pp->mem()};
             if (pp->stopping()) return;

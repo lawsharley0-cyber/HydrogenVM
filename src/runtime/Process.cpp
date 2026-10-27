@@ -104,6 +104,12 @@ void spawnHostThread(std::function<void()> fn) {
 // ----------------------------------------------------------- lifecycle ---
 
 Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_shared<Audio::Mixer>()) {
+    std::string bundleId = "unknown";
+    if (cfg_.bundlePath.size()) {
+        auto pos = cfg_.bundlePath.find_last_of('/');
+        bundleId = cfg_.bundlePath.substr(pos == std::string::npos ? 0 : pos + 1);
+    }
+    telemetry_ = std::make_unique<MemoryTelemetry>(bundleId, cfg_.homePath + "/telemetry.json");
     mem_ = std::make_unique<Memory::GuestArena>();
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
@@ -157,9 +163,11 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     registerSqlite(*this);
     registerFoundation(*this);
     registerUIKit(*this);
+    telemetry_->start();
 }
 
 Process::~Process() {
+    if (telemetry_) telemetry_->stop();
     {
         std::lock_guard<std::mutex> lk(liveness_->mu);
         liveness_->alive = false;
@@ -220,6 +228,14 @@ void Process::enterForeground() {
     backgroundRequested_ = false;
     setBackgrounded(false);
     lifecycleHandler_(Lifecycle::Foreground);
+}
+
+void Process::notifyMemoryWarning() {
+    if (telemetry_) telemetry_->notifyMemoryWarning();
+    if (lifecycleHandler_) {
+        log(LogLevel::Info, "Process: memory warning received");
+        lifecycleHandler_(Lifecycle::MemoryWarning);
+    }
 }
 void Process::setBackgrounded(bool b) {
     {
@@ -1055,7 +1071,11 @@ std::string Process::crashBundle() {
         }
     }
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count();
-    out << "],\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
+    out << "],\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}";
+    if (telemetry_) {
+        out << ",\"telemetry\":" << telemetry_->reportJson();
+    }
+    out << "}";
     return out.str();
 }
 
