@@ -4244,6 +4244,42 @@ int runFullSubsystemTests() {
         });
     }
 
+    // 2f4. libc++ (std::__1) threading and concurrency
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = proc.lookupSymbol(sym);
+            return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
+        };
+        auto& m = proc.mem();
+        const uint32_t tls_ptr = call("__ZNSt3__119__thread_local_dataEv", {});
+        const uint32_t tls_key = tls_ptr != 0xDEADu ? m.read<uint32_t>(tls_ptr) : 0;
+        bool tls_ok = tls_ptr != 0 && tls_ptr != 0xDEADu && tls_key != 0;
+
+        const uint32_t ts = proc.heap().allocZeroed(16);
+        const uint32_t ts_ret = call("__ZNSt3__115__thread_structC1Ev", {ts});
+        call("__ZNSt3__115__thread_structD1Ev", {ts});
+        bool ts_ok = ts_ret == ts;
+
+        const uint32_t mtx = proc.heap().allocZeroed(16);
+        call("_pthread_mutex_init", {mtx, 0});
+        const uint32_t lock_ret = call("__ZNSt3__15mutex4lockEv", {mtx});
+        const uint32_t unlock_ret = call("__ZNSt3__15mutex6unlockEv", {mtx});
+        bool mtx_ok = lock_ret == 0 && unlock_ret == 0;
+
+        const uint64_t t1 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
+        const uint64_t t2 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
+        bool chrono_ok = t2 >= t1 && t1 > 0;
+
+        const uint32_t dur = proc.heap().allocZeroed(8);
+        m.write<uint64_t>(dur, 1000000); // 1ms
+        const auto sleep_start = std::chrono::steady_clock::now();
+        call("__ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILx1ELx1000000000EEEEE", {dur});
+        const auto sleep_end = std::chrono::steady_clock::now();
+        bool sleep_ok = std::chrono::duration_cast<std::chrono::milliseconds>(sleep_end - sleep_start).count() >= 1;
+
+        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok, "libc++ (std::__1) threading and concurrency");
+    }
+
     // Host-requested shutdown must not become an HLE error. An unrelated
     // exception still remains a failure even if stop was requested concurrently.
     for (bool intentional : {true, false}) {

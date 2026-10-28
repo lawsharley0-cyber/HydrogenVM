@@ -150,6 +150,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     registerObjCRuntime(*this);
     registerUnwinder(*this);
     registerLibStdcxx(*this);
+    registerLibcxx(*this);
     registerLibcPosix(*this);
     registerZlib(*this);
     registerLibcNet(*this);
