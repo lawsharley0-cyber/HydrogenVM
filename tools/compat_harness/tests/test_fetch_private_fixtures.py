@@ -8,10 +8,12 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fetch_private_fixtures import FixtureFetchError, stage  # noqa: E402
+from fetch_private_fixtures import FixtureFetchError, RejectRedirects, stage  # noqa: E402
+from urllib.request import Request
 
 
 NAMES = {
@@ -100,16 +102,68 @@ class PrivateFixtureTests(unittest.TestCase):
                 stage(self.root / "fixtures", "private-folder", "", str(self.manifest))
         request.assert_not_called()
 
+    def test_http_error_is_generic_and_does_not_expose_private_id(self):
+        with patch("fetch_private_fixtures._request", side_effect=HTTPError(
+            "https://private.example/secret-id", 403, "Forbidden", {}, None
+        )):
+            with self.assertRaises(FixtureFetchError) as caught:
+                stage(self.root / "fixtures", "private-folder", "synthetic-token", str(self.manifest))
+        self.assertNotIn("secret-id", str(caught.exception))
+
+    def test_timeout_is_generic(self):
+        with patch("fetch_private_fixtures._request", side_effect=URLError("timed out")):
+            with self.assertRaisesRegex(FixtureFetchError, "listing failed"):
+                stage(self.root / "fixtures", "private-folder", "synthetic-token", str(self.manifest))
+
+    def test_size_limit_rejects_and_cleans_temporary_file(self):
+        with self._serve(), patch("fetch_private_fixtures.MAX_BYTES", 3):
+            with self.assertRaisesRegex(FixtureFetchError, "exceeds allowed size"):
+                stage(self.root / "fixtures", "private-folder", "synthetic-token", str(self.manifest))
+        self.assertEqual(list((self.root / "fixtures" / "ipas").iterdir()), [])
+
+    def test_atomic_publication_does_not_overwrite_racing_file(self):
+        import fetch_private_fixtures as downloader
+        real_link = os.link
+
+        def race_link(src, dest):
+            Path(dest).write_bytes(b"another-writer")
+            return real_link(src, dest)
+
+        with self._serve(), patch.object(downloader.os, "link", side_effect=race_link):
+            with self.assertRaisesRegex(FixtureFetchError, "download failed"):
+                stage(self.root / "fixtures", "private-folder", "synthetic-token", str(self.manifest))
+        self.assertEqual((self.root / "fixtures" / "ipas" / NAMES["angry-birds"]).read_bytes(),
+                         b"another-writer")
+
     def test_symlink_destination_refused(self):
-        fixtures = self.root / "fixtures"
-        fixtures.mkdir()
         outside = self.root / "outside"
         outside.mkdir()
-        (fixtures / "ipas").symlink_to(outside, target_is_directory=True)
+        fixtures = self.root / "fixtures"
+        fixtures.symlink_to(outside, target_is_directory=True)
         with self._serve():
-            with self.assertRaisesRegex(FixtureFetchError, "empty"):
+            with self.assertRaises(FixtureFetchError):
                 stage(fixtures, "private-folder", "synthetic-token", str(self.manifest))
         self.assertEqual(list(outside.iterdir()), [])
+
+    def test_symlinked_ancestor_is_refused(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.root / "linked").symlink_to(outside, target_is_directory=True)
+        with self._serve():
+            with self.assertRaises(FixtureFetchError):
+                stage(self.root / "linked" / "fixtures", "private-folder", "synthetic-token", str(self.manifest))
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_302_to_other_origin_never_transmits_bearer(self):
+        # Model urllib's actual 302 dispatch without opening a real socket.
+        # The standard handler would return a Request retaining Authorization.
+        original = Request("https://www.googleapis.com/drive/v3/files", headers={
+            "Authorization": "Bearer synthetic-token"
+        })
+        forwarded = RejectRedirects().redirect_request(
+            original, None, 302, "Found", {}, "https://attacker.example/leak"
+        )
+        self.assertIsNone(forwarded, "redirect must not create a token-bearing cross-origin request")
 
 
 if __name__ == "__main__":
