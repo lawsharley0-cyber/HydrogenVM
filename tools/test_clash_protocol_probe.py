@@ -3,6 +3,11 @@ import struct
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'clash'))
 
 from clash_protocol_probe import Frames, MAX_PAYLOAD, RC4, Reader, load_profile, login, login_ok, protocol_cipher, string, vint
 
@@ -66,6 +71,170 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(first['account'], [0, 1])
             self.assertEqual(len(first['token']), 48)
 
+
+
+    @unittest.mock.patch('clash_home_state.load_state')
+    @unittest.mock.patch('clash_home_state.encode_home')
+    @unittest.mock.patch('clash_protocol_probe.load_profile')
+    @unittest.mock.patch('clash_sector_state.load_template')
+    def test_probe_unsupported_turn_does_not_disconnect(self, mock_load_template, mock_load_profile, mock_encode_home, mock_load_state):
+        import argparse
+        import json
+        import socket
+        import threading
+        import time
+        from clash_protocol_probe import serve
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            args = argparse.Namespace(
+                out=temp_path,
+                port=0,
+                seconds=1.5,
+                login_ok=True,
+                state=temp_path / 'identity.json',
+                home_client=Path('dummy.ipa'),
+                game_state=temp_path / 'home-state.json',
+                npc_fixture=True
+            )
+            mock_load_profile.return_value = {'format': 1, 'account': [0, 1], 'token': 'token1234', 'created': 1234}
+            mock_load_state.return_value = {'home': {}, 'avatar': {}}
+            mock_encode_home.return_value = b'home'
+            mock_load_template.return_value = {'seed': 1234, 'npcDeck': [], 'towers': [], 'damageTypes': 5}
+
+            s = socket.socket()
+            s.bind(('127.0.0.1', 0))
+            args.port = s.getsockname()[1]
+            s.close()
+
+            t = threading.Thread(target=serve, args=(args,), daemon=True)
+            t.start()
+
+            time.sleep(0.5)
+            client = socket.create_connection(('127.0.0.1', args.port))
+
+            import struct
+            from clash_wire import string, vint, Writer
+            payload = struct.pack('>ii', 0, 1) + string('token1234') + vint(2) + vint(0) + vint(1306)
+
+            outgoing = protocol_cipher()
+            encrypted = outgoing.apply(payload)
+            packet = struct.pack('>H', 10101) + len(encrypted).to_bytes(3, 'big') + struct.pack('>H', 1) + encrypted
+            client.sendall(packet)
+
+            time.sleep(0.2)
+
+            w = Writer()
+            w.vint(100)
+            w.vint(1234)
+            w.vint(1)
+            w.vint(1000)
+            w.vint(0)
+            w.vint(1)
+            w.vint(0)
+            w.vint(1)
+            w.raw(struct.pack('>i', -1))
+
+            payload = bytes(w.data)
+            encrypted = outgoing.apply(payload)
+            packet = struct.pack('>H', 14102) + len(encrypted).to_bytes(3, 'big') + struct.pack('>H', 1) + encrypted
+            client.sendall(packet)
+
+            time.sleep(1.0)
+            client.close()
+            t.join()
+
+            events_file = temp_path / 'protocol-events.json'
+            self.assertTrue(events_file.exists())
+            with open(events_file, 'r') as f:
+                data = json.load(f)
+            event_types = [e['event'] for e in data['events']]
+            self.assertIn('unsupported_turn', event_types)
+            self.assertNotIn('connection_error', event_types)
+
+    @unittest.mock.patch('clash_home_state.load_state')
+    @unittest.mock.patch('clash_home_state.encode_home')
+    @unittest.mock.patch('clash_protocol_probe.load_profile')
+    @unittest.mock.patch('clash_sector_state.load_template')
+    def test_probe_supported_turn_does_not_disconnect(self, mock_load_template, mock_load_profile, mock_encode_home, mock_load_state):
+        import argparse
+        import json
+        import socket
+        import threading
+        import time
+        from clash_protocol_probe import serve
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            args = argparse.Namespace(
+                out=temp_path,
+                port=0,
+                seconds=1.5,
+                login_ok=True,
+                state=temp_path / 'identity.json',
+                home_client=Path('dummy.ipa'),
+                game_state=temp_path / 'home-state.json',
+                npc_fixture=True
+            )
+            mock_load_profile.return_value = {'format': 1, 'account': [0, 1], 'token': 'token1234', 'created': 1234}
+            mock_load_state.return_value = {'home': {}, 'avatar': {}}
+            mock_encode_home.return_value = b'home'
+            mock_load_template.return_value = {'seed': 1234, 'npcDeck': [], 'towers': [], 'damageTypes': 5}
+
+            s = socket.socket()
+            s.bind(('127.0.0.1', 0))
+            args.port = s.getsockname()[1]
+            s.close()
+
+            t = threading.Thread(target=serve, args=(args,), daemon=True)
+            t.start()
+
+            time.sleep(0.5)
+
+            client = socket.create_connection(('127.0.0.1', args.port))
+
+            import struct
+            from clash_wire import string, vint, Writer
+            payload = struct.pack('>ii', 0, 1) + string('token1234') + vint(2) + vint(0) + vint(1306)
+
+            outgoing = protocol_cipher()
+            encrypted = outgoing.apply(payload)
+            packet = struct.pack('>H', 10101) + len(encrypted).to_bytes(3, 'big') + struct.pack('>H', 1) + encrypted
+            client.sendall(packet)
+
+            time.sleep(0.2)
+
+            w = Writer()
+            w.vint(100)
+            w.vint(1234)
+            w.vint(1)
+            w.vint(1)
+            w.vint(0)
+            w.vint(1)
+            w.vint(0)
+            w.vint(1)
+            w.vint(0)
+            w.boolean(False)
+            w.vint(100)
+            w.vint(100)
+            w.raw(struct.pack('>i', -1))
+
+            payload = bytes(w.data)
+            encrypted = outgoing.apply(payload)
+            packet = struct.pack('>H', 14102) + len(encrypted).to_bytes(3, 'big') + struct.pack('>H', 1) + encrypted
+            client.sendall(packet)
+
+            time.sleep(1.0)
+            client.close()
+            t.join()
+
+            events_file = temp_path / 'protocol-events.json'
+            self.assertTrue(events_file.exists())
+            with open(events_file, 'r') as f:
+                data = json.load(f)
+            event_types = [e['event'] for e in data['events']]
+            self.assertIn('client_turn', event_types)
+            self.assertNotIn('connection_error', event_types)
 
 if __name__ == '__main__':
     unittest.main()
