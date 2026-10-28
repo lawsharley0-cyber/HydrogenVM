@@ -1945,7 +1945,8 @@ int runFullSubsystemTests() {
               "UIViewController setView replaces the installed root view in its window");
     }
 
-    // NIB loading fallback tests
+    // NIB loading: ~iphone before the base name, and a real exception when the
+    // file is missing or cannot be decoded. Landscape/Portrait are not modifiers.
     {
         // The standalone fulltest runner has no on-disk app bundle by default.
         // NSBundle needs the directory to exist before mainBundle is queried.
@@ -1954,19 +1955,33 @@ int runFullSubsystemTests() {
         const ObjC::Class bundleCls = r.getClass("NSBundle");
         const ObjC::id bundle = ObjC::id(r.send(cpu, bundleCls, "mainBundle"));
 
-        try {
-            const ObjC::id nibArr = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DefinitelyMissingNibThatDoesntExistLandscape"), 0, 0}));
-            check(nibArr == 0, "loadNibNamed:owner:options: missing NIB returns 0 without throwing");
-        } catch (const ObjC::ObjCError& e) {
-            printf("ObjC Error: %s\n", e.what());
-            check(false, "loadNibNamed:owner:options: threw exception for missing NIB");
-        } catch (const std::exception& e) {
-            printf("Error: %s\n", e.what());
-            check(false, "loadNibNamed:owner:options: threw exception for missing NIB");
-        }
+        // No guest @catch is installed here, so the raised NSException terminates
+        // the host→guest call. The text is the uncaught-exception message.
+        const auto nibFailure = [&](const char* name) -> std::string {
+            try {
+                r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, name), 0, 0});
+                return {};
+            } catch (const CPU::GuestFault& e) {
+                return e.what();
+            } catch (const ObjC::ObjCError& e) {
+                return e.what();
+            } catch (const std::exception& e) {
+                return e.what();
+            }
+        };
+        const auto isNibException = [](const std::string& msg, const char* name) {
+            return msg.find("NSInternalInconsistencyException") != std::string::npos &&
+                   msg.find("Could not load NIB in bundle") != std::string::npos &&
+                   msg.find(name) != std::string::npos;
+        };
+        const std::string missing = nibFailure("DefinitelyMissingNibThatDoesntExist");
+        if (!isNibException(missing, "DefinitelyMissingNibThatDoesntExist"))
+            std::printf("missing NIB raised: %s\n", missing.empty() ? "(returned nil)" : missing.c_str());
+        check(isNibException(missing, "DefinitelyMissingNibThatDoesntExist"),
+              "loadNibNamed:owner:options: missing NIB raises NSInternalInconsistencyException");
 
         // A real, minimal NIBArchive: root -> NSArray -> NSString. This must
-        // decode a known object, unlike malformed-fixture 'nil or throw' tests.
+        // decode a known object. A missing or malformed name raises instead.
         auto nibBytes = [](const std::string& marker) {
             std::vector<uint8_t> b(50, 0);
             const char magic[] = "NIBArchive";
@@ -2018,7 +2033,7 @@ int runFullSubsystemTests() {
         };
         const bool wroteExact = writeNib(exact, nibBytes("exact-object"));
         bool decodedExact = false, decodedIdiom = false, preferredIdiom = false;
-        bool missingRejected = false, malformedRejected = false;
+        bool orientationRejected = false, malformedRejected = false;
         if (wroteExact) {
             decodedExact = loadMarker("HVMNibFixture189") == "exact-object";
             const bool wroteIdiom = writeNib(idiom, nibBytes("idiom-object"));
@@ -2026,21 +2041,32 @@ int runFullSubsystemTests() {
                 preferredIdiom = loadMarker("HVMNibFixture189") == "idiom-object";
                 std::remove(exact.c_str());
                 decodedIdiom = loadMarker("HVMNibFixture189") == "idiom-object";
+                // "Landscape" and "Portrait" are not resource modifiers. With the
+                // idiom file present, those names must still fail to load.
+                const std::string landscape = nibFailure("HVMNibFixture189Landscape");
+                const std::string portrait = nibFailure("HVMNibFixture189Portrait");
+                orientationRejected = isNibException(landscape, "HVMNibFixture189Landscape") &&
+                                      isNibException(portrait, "HVMNibFixture189Portrait");
+                if (!orientationRejected) {
+                    std::printf("landscape NIB raised: %s\nportrait NIB raised: %s\n",
+                                landscape.empty() ? "(returned nil)" : landscape.c_str(),
+                                portrait.empty() ? "(returned nil)" : portrait.c_str());
+                }
             }
-            // Filename words have no implicit resource aliasing semantics.
-            missingRejected = loadMarker("HVMNibFixture189Landscape").empty();
             if (writeNib(malformed, std::vector<uint8_t>{'b', 'a', 'd'})) {
-                try { loadMarker("HVMMalformedNib189"); }
-                catch (const ObjC::ObjCError&) { malformedRejected = true; }
-                catch (const CPU::GuestFault&) { malformedRejected = true; }
+                const std::string bad = nibFailure("HVMMalformedNib189");
+                malformedRejected = isNibException(bad, "HVMMalformedNib189");
+                if (!malformedRejected) std::printf("malformed NIB raised: %s\n", bad.empty() ? "(returned nil)" : bad.c_str());
             }
         }
         std::remove(exact.c_str()); std::remove(idiom.c_str()); std::remove(malformed.c_str());
         if (madeTestBundle) std::filesystem::remove(cx.proc.bundlePath(), bundleEc);
         check(decodedExact && decodedIdiom && preferredIdiom,
               "NSBundle decodes valid exact/~iphone NIBs and prefers idiom-specific resource");
-        check(missingRejected && malformedRejected,
-              "NSBundle keeps missing resources and malformed existing NIBs distinct");
+        check(orientationRejected,
+              "loadNibNamed: does not strip Landscape or Portrait from the nib name");
+        check(malformedRejected,
+              "loadNibNamed: malformed NIB raises NSInternalInconsistencyException");
     }
 
     // UIButton shadow offset getter/setter
