@@ -2963,12 +2963,15 @@ int runFullSubsystemTests() {
         isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_cond_init"), {cv, 0});
 
         std::atomic<bool> waiting{false};
-        const uint32_t waiterFn = isolated.registerHostFunction("waiter", [cv, mu, &waiting](Runtime::Ctx& x) {
+        std::atomic<bool> workerFinished{false};
+        const uint32_t waiterFn = isolated.registerHostFunction("waiter", [cv, mu, &waiting, &workerFinished](Runtime::Ctx& x) {
             x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_lock"), {mu});
             waiting = true;
             try {
                 x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_cond_wait"), {cv, mu});
-            } catch (...) {} // Catch ProcessExit or stopping gracefully
+            } catch (const Runtime::ProcessExit&) {
+            } catch (const CPU::GuestFault&) {} // Catch ProcessExit or stopping gracefully
+            workerFinished = true;
         });
 
         const uint32_t th = isolated.startThread(waiterFn, 0, 16u << 10, false);
@@ -2979,11 +2982,14 @@ int runFullSubsystemTests() {
         isolated.requestStop();
 
         uint32_t retval = 1;
-        bool joined = isolated.joinThread(th, &retval);
+        while (!workerFinished && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5)) std::this_thread::yield();
+        try {
+            isolated.joinThread(th, &retval);
+        } catch (const Runtime::ProcessExit&) {}
         const auto t1 = std::chrono::steady_clock::now();
 
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        check(joined && ms < 5000.0, "pthread condition variable process stop broadcast wakes up and joins immediately");
+        check(workerFinished.load() && ms < 5000.0, "pthread condition variable process stop broadcast wakes up and joins immediately");
     }
 
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
