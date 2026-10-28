@@ -830,7 +830,16 @@ uint32_t rd_allKeys(Ctx& x, id self, SEL) {
     return makeArray(x, keys);
 }
 void rd_setObjectForKey(Ctx& x, id self, SEL, uint32_t v, uint32_t k) {
-    if (rawD(x, self) && rawD(x, self)->mutableDict) d_set(x, self, k, v);
+    RawDict* r = rawD(x, self);
+    if (r && r->mutableDict) {
+        if (r->keyObjects && k) {
+            uint32_t copiedKey = uint32_t(send(x, k, "copy"));
+            d_set(x, self, copiedKey, v);
+            R(x).release(x.cpu, copiedKey);
+            return;
+        }
+        d_set(x, self, k, v);
+    }
     else throw ObjC::ObjCError("mutation of immutable CFDictionary");
 }
 void rd_removeObjectForKey(Ctx& x, id self, SEL, uint32_t k) {
