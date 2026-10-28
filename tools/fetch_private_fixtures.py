@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import tempfile
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from compat_harness.manifest import load_manifest, default_manifest_path
 
@@ -28,8 +28,39 @@ class FixtureFetchError(Exception):
     """A private integration precondition or integrity check failed."""
 
 
+class RejectRedirects(HTTPRedirectHandler):
+    """Reject all 30x responses, including cross-origin bearer-token leaks."""
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
 def _request(url: str, token: str):
-    return urlopen(Request(url, headers={"Authorization": f"Bearer {token}"}), timeout=60)
+    # In urllib's default handler, even cross-origin redirects inherit the
+    # Authorization header. A 30x is an error; we never follow it.
+    return build_opener(RejectRedirects()).open(
+        Request(url, headers={"Authorization": f"Bearer {token}"}), timeout=60
+    )
+
+
+def _new_private_root(root: Path) -> None:
+    """Require a fresh 0700 directory under an already existing parent.
+
+    Trusted CI supplies an isolated, single-writer parent outside checkout.
+    A new private root prevents a second OS user from racing file publication.
+    We also reject symlinks in *every* pre-existing ancestor.
+    """
+    absolute = root.absolute()
+    if root.exists() or root.is_symlink() or not absolute.parent.is_dir():
+        raise FixtureFetchError("fixture root must be a new directory")
+    for ancestor in (absolute, *absolute.parents):
+        if ancestor.is_symlink():
+            raise FixtureFetchError("symlinked fixture-root ancestor is forbidden")
+    try:
+        root.mkdir(mode=0o700)
+        (root / "ipas").mkdir(mode=0o700)
+    except OSError as exc:
+        raise FixtureFetchError("could not create private fixture root") from exc
 
 
 def stage(root: Path, folder_id: str, token: str, manifest_path: str) -> list[str]:
@@ -71,11 +102,7 @@ def stage(root: Path, folder_id: str, token: str, manifest_path: str) -> list[st
     if set(matched) != names:
         raise FixtureFetchError("one or more required private fixtures are unavailable")
 
-    # Refuse preexisting symlinked destination directories or files. The CI
-    # caller should use an empty temporary root outside the checkout.
-    if root.is_symlink() or (root.exists() and not root.is_dir()):
-        raise FixtureFetchError("unsafe fixture destination")
-    root.mkdir(parents=True, exist_ok=True)
+    _new_private_root(root)
     staged = []
     published = []
     try:
@@ -104,7 +131,9 @@ def stage(root: Path, folder_id: str, token: str, manifest_path: str) -> list[st
                           out.write(chunk)
               if digest.hexdigest() != app["sha256"]:
                   raise FixtureFetchError("fixture SHA-256 mismatch; refusing incompatible bytes")
-              os.replace(temporary, dest)
+              # Atomic no-overwrite publication: link() fails if another
+              # same-user writer has installed a file after our check.
+              os.link(temporary, dest)
               published.append(dest)
               staged.append(ident)
           except Exception as exc:
