@@ -222,6 +222,7 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     }
 }
 
+
 void bind(Process& p, HostContext* hc) {
     State& st = S(p);
     HostContext* root = hc;
@@ -333,6 +334,7 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
         }
     }
 }
+
 
 HostContext* currentHostContext() { return tls.ctx; }
 
