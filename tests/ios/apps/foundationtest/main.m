@@ -426,7 +426,9 @@ static void testCoreFoundation(void) {
     CFMutableDictionaryRef cmd = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     NSMutableDictionary *bmd = (__bridge NSMutableDictionary *)cmd;
     [bmd setObject:valObj forKey:copyKey];
-    MyCopyKey *firstKey = bmd.allKeys[0];
+
+    MyCopyKey *firstKey = nil;
+    CFDictionaryGetKeysAndValues(cmd, (const void **)&firstKey, NULL);
     CHECK(firstKey->_copyCount == 1 && firstKey->_retainCount == 1 && valObj->_retainCount == 1, "rd_setObjectForKey copies key, retains key copy and value");
 
     [bmd removeAllObjects];
@@ -435,7 +437,9 @@ static void testCoreFoundation(void) {
     copyKey->_retainCount = 0;
     valObj->_retainCount = 0;
     CFDictionarySetValue(cmd, (__bridge const void *)copyKey, (__bridge const void *)valObj);
-    MyCopyKey *secondKey = bmd.allKeys[0];
+
+    MyCopyKey *secondKey = nil;
+    CFDictionaryGetKeysAndValues(cmd, (const void **)&secondKey, NULL);
     CHECK(secondKey == copyKey && copyKey->_copyCount == 0 && copyKey->_retainCount == 1 && valObj->_retainCount == 1, "CFDictionarySetValue only retains key");
     CFRelease(cmd);
 }
