@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "kind": "hvm-compat-report-pointer",
-  "path": "linux-x86_64/20261028T062454Z-7724594c5c7d.json",
-  "sha": "7724594c5c7d46bd8e48f6eae967c2dfcf0ab7fd",
-  "date": "2026-10-28T06:24:54+00:00",
+  "path": "linux-x86_64/20261023T011004Z-ef383fe348d2.json",
+  "sha": "ef383fe348d27251d6d7921ac2eae52c9a10ac17",
+  "date": "2026-10-23T01:10:04+00:00",
   "platform": "linux-x86_64",
   "reportSchemaVersion": 1,
   "summary": {
@@ -16,6 +16,6 @@
     "appsCrashed": 0,
     "appsLaunchFailed": 0,
     "resolveErrors": 0,
-    "clusterCount": 2
+    "clusterCount": 13
   }
 }

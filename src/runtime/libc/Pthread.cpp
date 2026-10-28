@@ -147,7 +147,6 @@ GuestCond& condFor(Ctx& x, uint32_t addr) {
 
 // deadline: 0 = none, else nanoseconds since the Unix epoch.
 int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
-    if (x.proc.stopping()) return -1;
     t_testcancel(x);
     GuestCond& c = condFor(x, cv);
     GuestMutex& m = mutexFor(x, mu);
@@ -493,16 +492,6 @@ bool spin_try(Ctx& x, GuestPtr p) { int32_t z = 0; return __atomic_compare_excha
 void spin_unlock(Ctx& x, GuestPtr p) { __atomic_store_n(A<int32_t>(x, p), 0, __ATOMIC_RELEASE); }
 
 } // namespace
-
-void pthreadsBroadcastStop(Process& p) {
-    auto& t = p.service<Threads>();
-    std::lock_guard<std::mutex> lk(t.mu);
-    for (auto& [addr, c] : t.conds) {
-        std::lock_guard<std::mutex> clk(c->m);
-        ++c->gen;
-        c->cv.notify_all();
-    }
-}
 
 void registerLibcPthread(Process& p) {
     p.def<&t_cancel>("_pthread_cancel");

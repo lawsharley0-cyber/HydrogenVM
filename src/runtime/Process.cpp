@@ -1,3 +1,4 @@
+// Deferred to overlapping PR owners per memory protocol
 #include "Process.hpp"
 #include "libc/Unwind.hpp"
 #include <sstream>
@@ -181,7 +182,6 @@ Process::~Process() {
 void Process::requestStop() {
     engine_->requestStop();
     mixer_->stopAll();
-    pthreadsBroadcastStop(*this);
     lifeCv_.notify_all();   // a backgrounded main thread is parked in waitWhileBackgrounded()
 }
 
