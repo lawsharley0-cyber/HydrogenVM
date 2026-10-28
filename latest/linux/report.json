@@ -3,22 +3,22 @@
     "os": "Linux 7.0.0-1017-azure",
     "arch": "x86_64",
     "cpu": "AMD EPYC 7763 64-Core Processor",
-    "commit": "ab50f9c",
-    "date": "2026-10-28T18:28:58+00:00"
+    "commit": "67a99a5",
+    "date": "2026-10-28T18:28:43+00:00"
   },
-  "seconds": 189.2,
+  "seconds": 178.1,
   "ok": false,
   "suites": {
     "build": {
       "passed": 0,
       "failed": 1,
       "skipped": 0,
-      "seconds": 189.23032760620117,
+      "seconds": 178.08263897895813,
       "tests": [
         {
           "name": "engine",
           "result": "fail",
-          "seconds": 189.23
+          "seconds": 178.083
         }
       ]
     }
@@ -191,7 +191,7 @@
       "suite": "build",
       "test": "ninja",
       "severity": "fail",
-      "message": "/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1917:15: error: use of undeclared identifier 'sk_allocZero'; did you mean 'allocZero'?\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1917:11: error: no matching member function for call to 'cm'\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1918:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1928:16: error: use of undeclared identifier 'sk_zero_q'\n4 errors generated."
+      "message": "/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1926:15: error: use of undeclared identifier 'sk_allocZero'; did you mean 'allocZero'?\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1926:11: error: no matching member function for call to 'cm'\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1927:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1937:16: error: use of undeclared identifier 'sk_zero_q'\n4 errors generated."
     }
   ]
 }
