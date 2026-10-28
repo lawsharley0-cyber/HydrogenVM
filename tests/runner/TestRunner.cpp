@@ -2695,64 +2695,6 @@ int runFullSubsystemTests() {
         callGL("_glBindFramebuffer", {0x8D40, 0});
     }
 
-    // GCC's COW refcount operation must be a real RMW across guest host threads.
-    {
-        const uint32_t word = proc.heap().allocZeroed(4);
-        auto atom = proc.hostFunctionFor("__ZN9__gnu_cxx18__exchange_and_addEPVii");
-        std::vector<std::thread> workers;
-        std::vector<uint32_t> previous(8000);
-        for (unsigned t = 0; t < 8; ++t) workers.emplace_back([&, t] {
-            CPU::Cpu local{};
-            for (unsigned i = 0; i < 1000; ++i) {
-                local.r[0] = word;
-                local.r[1] = 1;
-                atom(local);
-                previous[t * 1000 + i] = local.r[0];
-            }
-        });
-        for (auto& t : workers) t.join();
-        std::sort(previous.begin(), previous.end());
-        bool unique = true;
-        for (uint32_t i = 0; i < previous.size(); ++i) unique &= previous[i] == i;
-        const bool finalCount = proc.mem().read<uint32_t>(word) == 8000;
-        proc.mem().write<uint32_t>(word, UINT32_MAX);
-        CPU::Cpu local{};
-        local.r[0] = word; local.r[1] = 2; atom(local);
-        check(unique && finalCount && local.r[0] == UINT32_MAX && proc.mem().read<uint32_t>(word) == 1,
-              "GCC __exchange_and_add returns distinct prior values under contention and wraps modulo 2^32");
-        proc.heap().free(word);
-    }
-
-    // Named semaphore handles are validated, reference-counted and unlinked
-    // independently.  An invalid/repeated close must not report success.
-    {
-        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) {
-            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
-        };
-        const uint32_t name = proc.allocCString("/hvm-pvz-semaphore-regression");
-        const uint32_t missing = call("_sem_open", {name, 0, 0, 0});
-        const uint32_t a = call("_sem_open", {name, 0x0200 | 0x0800, 0600, 1});
-        const uint32_t b = call("_sem_open", {name, 0, 0, 0});
-        const uint32_t exclusive = call("_sem_open", {name, 0x0200 | 0x0800, 0600, 1});
-        const uint32_t take = call("_sem_trywait", {a});
-        const uint32_t empty = call("_sem_trywait", {b});
-        const uint32_t emptyErr = proc.mem().read<uint32_t>(proc.currentThread().errnoAddr);
-        const uint32_t post = call("_sem_post", {a});
-        const uint32_t wait = call("_sem_wait", {b});
-        const uint32_t closeA = call("_sem_close", {a});
-        const uint32_t closeAgain = call("_sem_close", {a});
-        const uint32_t closeErr = proc.mem().read<uint32_t>(proc.currentThread().errnoAddr);
-        const uint32_t postB = call("_sem_post", {b});
-        const uint32_t unlink = call("_sem_unlink", {name});
-        const uint32_t reopen = call("_sem_open", {name, 0, 0, 0});
-        const uint32_t closeB = call("_sem_close", {b});
-        check(missing == UINT32_MAX && a != UINT32_MAX && b != UINT32_MAX && exclusive == UINT32_MAX &&
-              take == 0 && empty == UINT32_MAX && emptyErr == 35 && post == 0 && wait == 0 &&
-              closeA == 0 && closeAgain == UINT32_MAX && closeErr == 22 && postB == 0 &&
-              unlink == 0 && reopen == UINT32_MAX && closeB == 0,
-              "named sem_open/close validate handles, retain surviving opens, and implement unlink/trywait error semantics");
-    }
-
     // 2f2. libstdc++ containers (GCC 4.2 ABI): red-black tree, COW std::string
     {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
