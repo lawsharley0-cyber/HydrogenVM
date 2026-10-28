@@ -1511,44 +1511,7 @@ STBTT_DEF int stbtt_FindGlyphIndex(const stbtt_fontinfo *info, int unicode_codep
          return ttUSHORT(data + index_map + 10 + (unicode_codepoint - first)*2);
       return 0;
    } else if (format == 2) {
-      stbtt_uint32 bytes = ttUSHORT(data + index_map + 2);
-      stbtt_uint32 subheader;
-      stbtt_uint16 subHeaderKey;
-      stbtt_uint16 firstCode, entryCount, idRangeOffset;
-      stbtt_int16 idDelta;
-      stbtt_uint8 high_byte, low_byte;
-
-      if (unicode_codepoint > 0xffff) return 0;
-      high_byte = (stbtt_uint8)(unicode_codepoint >> 8);
-      low_byte = (stbtt_uint8)(unicode_codepoint & 0xff);
-
-      if (high_byte == 0) {
-         subHeaderKey = ttUSHORT(data + index_map + 6 + low_byte * 2);
-         if (subHeaderKey != 0) return 0;
-      } else {
-         subHeaderKey = ttUSHORT(data + index_map + 6 + high_byte * 2);
-         if (subHeaderKey == 0) return 0;
-      }
-
-      STBTT_assert(518 + subHeaderKey + 8 <= bytes);
-
-      subheader = index_map + 518 + subHeaderKey;
-      firstCode = ttUSHORT(data + subheader + 0);
-      entryCount = ttUSHORT(data + subheader + 2);
-      idDelta = (stbtt_int16) ttSHORT(data + subheader + 4);
-      idRangeOffset = ttUSHORT(data + subheader + 6);
-
-      if (low_byte >= firstCode && low_byte < firstCode + entryCount) {
-         if (idRangeOffset != 0) {
-            stbtt_uint32 glyphOffset = subheader + 6 + idRangeOffset + (low_byte - firstCode) * 2;
-            if (glyphOffset + 2 <= index_map + bytes) {
-               stbtt_uint16 glyphIndex = ttUSHORT(data + glyphOffset);
-               if (glyphIndex != 0) {
-                  return (stbtt_uint16)(glyphIndex + idDelta);
-               }
-            }
-         }
-      }
+      STBTT_assert(0); // @TODO: high-byte mapping for japanese/chinese/korean
       return 0;
    } else if (format == 4) { // standard mapping for windows fonts: binary search collection of ranges
       stbtt_uint16 segcount = ttUSHORT(data+index_map+6) >> 1;
