@@ -414,9 +414,7 @@ struct ProgramObject {
 };
 
 struct SharegroupData : ObjC::HostObject {
-    uint32_t nextBuffer = 1, nextTexture = 1, nextRenderbuffer = 1, nextFramebuffer = 1, nextShader = 1, nextProgram = 1, nextQuery = 1;
-    std::unordered_set<uint32_t> reservedQueries;
-    std::unordered_set<uint32_t> queryObjects;
+    uint32_t nextBuffer = 1, nextTexture = 1, nextRenderbuffer = 1, nextFramebuffer = 1, nextShader = 1, nextProgram = 1;
     std::unordered_map<uint32_t, BufferObject> buffers;
     std::unordered_map<uint32_t, Texture2D> textures;
     std::unordered_map<uint32_t, Renderbuffer> renderbuffers;
@@ -456,6 +454,9 @@ struct ContextData : ObjC::HostObject {
     uint32_t lastError = GL_NO_ERROR;
 
     // Bindings
+    uint32_t nextQuery = 1;
+    std::unordered_set<uint32_t> reservedQueries;
+    std::unordered_set<uint32_t> queryObjects;
     uint32_t activeQueryAnySamples = 0;
     uint32_t activeQueryAnySamplesConservative = 0;
     uint32_t arrayBuffer = 0;
@@ -2474,35 +2475,33 @@ bool vertexAttribState(Ctx& x, uint32_t idx, uint32_t pname, float out[4], int& 
 }
 // EXT_occlusion_query_boolean
 void gl_genQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
-    SharegroupData* sg = currentSg(x, currentCtx(x));
-    if (!sg) return;
+    ContextData* c = currentCtx(x);
+    if (!c) return;
     for (uint32_t i = 0; i < n; ++i) {
-        const uint32_t id = sg->nextQuery++;
-        sg->reservedQueries.insert(id);
+        const uint32_t id = c->nextQuery++;
+        c->reservedQueries.insert(id);
         x.mem.write<uint32_t>(ids + i * 4, id);
     }
 }
 void gl_deleteQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
     ContextData* c = currentCtx(x);
-    SharegroupData* sg = currentSg(x, c);
-    if (!c || !sg || !ids) return;
+    if (!c || !ids) return;
     for (uint32_t i = 0; i < n; ++i) {
         const uint32_t id = x.mem.read<uint32_t>(ids + i * 4);
-        sg->reservedQueries.erase(id);
-        sg->queryObjects.erase(id);
+        c->reservedQueries.erase(id);
+        c->queryObjects.erase(id);
 
         if (c->activeQueryAnySamples == id) c->activeQueryAnySamples = 0;
         if (c->activeQueryAnySamplesConservative == id) c->activeQueryAnySamplesConservative = 0;
     }
 }
 uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
-    SharegroupData* sg = currentSg(x, currentCtx(x));
-    return (sg && sg->queryObjects.count(id)) ? 1 : 0;
+    ContextData* c = currentCtx(x);
+    return (c && c->queryObjects.count(id)) ? 1 : 0;
 }
 void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {
     ContextData* c = currentCtx(x);
-    SharegroupData* sg = currentSg(x, c);
-    if (!c || !sg || id == 0) return;
+    if (!c || id == 0) return;
 
     if (target != 0x8C2F && target != 0x8D6A) { // GL_ANY_SAMPLES_PASSED_EXT or GL_ANY_SAMPLES_PASSED_CONSERVATIVE_EXT
         c->lastError = GL_INVALID_ENUM;
@@ -2524,13 +2523,13 @@ void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {
     }
 
     // Must be a valid reserved name or an existing object
-    if (!sg->reservedQueries.count(id) && !sg->queryObjects.count(id)) {
+    if (!c->reservedQueries.count(id) && !c->queryObjects.count(id)) {
         c->lastError = GL_INVALID_OPERATION;
         return;
     }
 
-    sg->reservedQueries.erase(id);
-    sg->queryObjects.insert(id);
+    c->reservedQueries.erase(id);
+    c->queryObjects.insert(id);
 
     activeId = id;
 }
@@ -2556,11 +2555,10 @@ void gl_getQueryivEXT(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) 
 }
 void gl_getQueryObjectuivEXT(Ctx& x, uint32_t id, uint32_t pname, GuestPtr params) {
     ContextData* c = currentCtx(x);
-    SharegroupData* sg = currentSg(x, c);
-    if (!c || !sg || !params) return;
+    if (!c || !params) return;
 
     // Must be a query object
-    if (!sg->queryObjects.count(id)) {
+    if (!c->queryObjects.count(id)) {
         c->lastError = GL_INVALID_OPERATION;
         return;
     }

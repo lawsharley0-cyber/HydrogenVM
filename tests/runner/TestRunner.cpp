@@ -2738,6 +2738,17 @@ int runFullSubsystemTests() {
             // call begin again on same target with another ID (should fail)
             callGL("_glBeginQueryEXT", {0x8C2F, q1});
 
+            // Cross-context check
+            const ObjC::id ctx2 = ObjC::id(r.send(cpu, r.getClass("EAGLContext"), r.selAlloc));
+            r.send(cpu, ctx2, "initWithAPI:sharegroup:", {2, uint32_t(r.send(cpu, glCtx, "sharegroup"))});
+            r.send(cpu, r.getClass("EAGLContext"), "setCurrentContext:", {ctx2});
+
+            const bool cross_ctx_q1 = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool cross_ctx_q2 = callGL("_glIsQueryEXT", {q2}) != 0;
+            check(!cross_ctx_q1 && !cross_ctx_q2, "glIsQueryEXT proves query objects are NOT shared between contexts");
+
+            r.send(cpu, r.getClass("EAGLContext"), "setCurrentContext:", {glCtx});
+
             // Delete queries (while q2 is active)
             callGL("_glDeleteQueriesEXT", {2, ids});
 
