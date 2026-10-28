@@ -18,7 +18,7 @@ class TestFailureLogOutput(unittest.TestCase):
         case = {
             "id": "TL-N",
             "status": status,
-            "reason": "Checkpoint detected (exit code 2)" if status == "interrupted" else "",
+            "reason": "Interrupted before guest reported" if status == "interrupted" else "",
             "diagnostics": {"stdoutTail": tail},
         }
         buffer = io.StringIO()
@@ -43,6 +43,24 @@ class TestFailureLogOutput(unittest.TestCase):
         out = self.capture("failed", "")
         self.assertIn("TL-N: failed", out)
         self.assertNotIn("emulator stdout/stderr tail:", out)
+
+    def test_missing_egl_is_classified_as_host_infrastructure(self):
+        case = RUNNER._parse_case_output(
+            "", "TL-N", 0.019, 2, False,
+            "--gpu: no host OpenGL ES (libEGL.so.1 not found)\n",
+        )
+        self.assertEqual(case["status"], "interrupted")
+        self.assertIn("Host OpenGL ES unavailable", case["reason"])
+        self.assertTrue(case["diagnostics"]["hostGraphicsUnavailable"])
+        self.assertNotIn("Checkpoint detected", case["reason"])
+
+    def test_other_exit_two_never_claims_checkpoint_without_evidence(self):
+        case = RUNNER._parse_case_output(
+            "", "TL-N", 0.02, 2, False, "usage: hvm run <app|ipa>\n",
+        )
+        self.assertEqual(case["status"], "interrupted")
+        self.assertIn("code 2", case["reason"])
+        self.assertNotIn("Checkpoint detected", case["reason"])
 
     def test_long_tail_prints_at_most_sixteen_lines(self):
         out = self.capture("interrupted", "\n".join(f"trace {i}" for i in range(40)))
