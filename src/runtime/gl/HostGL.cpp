@@ -335,7 +335,7 @@ template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* n
     if (!e) return;
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 200)
-        x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }() +
+        x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[16]; std::snprintf(b, sizeof(b), "%04x", e); return std::string(b); }() +
                                           (hc->implicitWorker ? " [worker]" : " [main]") +
                                           (e == 0x0506 && hc->fn.glCheckFramebufferStatus ? [&] {
                                               // Say why the framebuffer is incomplete.

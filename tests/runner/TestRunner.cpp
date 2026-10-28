@@ -2683,6 +2683,75 @@ int runFullSubsystemTests() {
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
     }
 
+    // 2f8. OpenAL spatial queries and HVMCFRawDictionary mutators
+    {
+        auto call_tmp = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint64_t {
+            auto addr = proc.lookupSymbol(sym);
+            return proc.callGuest(cpu, *addr, args);
+        };
+        auto cstr2 = [&](const char* s) -> uint32_t { return proc.allocCString(s); };
+
+        const uint32_t dev = uint32_t(call_tmp("_alcOpenDevice", {0}));
+        const uint32_t actx = uint32_t(call_tmp("_alcCreateContext", {dev, 0}));
+        call_tmp("_alcMakeContextCurrent", {actx});
+        const uint32_t alIds = proc.heap().allocZeroed(16);
+        call_tmp("_alGenSources", {1, alIds});
+        const uint32_t alSrc = proc.mem().read<uint32_t>(alIds);
+
+        const uint32_t f = proc.heap().allocZeroed(12);
+        call_tmp("_alGetSource3f", {alSrc, 0x1004 /* AL_POSITION */, f, f+4, f+8});
+        bool okPosDefault = proc.mem().read<float>(f) == 0.0f && proc.mem().read<float>(f+4) == 0.0f && proc.mem().read<float>(f+8) == 0.0f;
+
+        call_tmp("_alSource3f", {alSrc, 0x1004 /* AL_POSITION */, 0x3f800000 /* 1.0f */, 0x40000000 /* 2.0f */, 0x40400000 /* 3.0f */});
+        call_tmp("_alGetSource3f", {alSrc, 0x1004 /* AL_POSITION */, f, f+4, f+8});
+        bool okPosSet = proc.mem().read<float>(f) == 1.0f && proc.mem().read<float>(f+4) == 2.0f && proc.mem().read<float>(f+8) == 3.0f;
+
+        call_tmp("_alSource3f", {alSrc, 0x1006 /* AL_VELOCITY */, 0x40800000 /* 4.0f */, 0x40a00000 /* 5.0f */, 0x40c00000 /* 6.0f */});
+        call_tmp("_alGetSource3f", {alSrc, 0x1006 /* AL_VELOCITY */, f, f+4, f+8});
+        bool okVelSet = proc.mem().read<float>(f) == 4.0f && proc.mem().read<float>(f+4) == 5.0f && proc.mem().read<float>(f+8) == 6.0f;
+
+        call_tmp("_alSource3f", {alSrc, 0x1005 /* AL_DIRECTION */, 0x40e00000 /* 7.0f */, 0x41000000 /* 8.0f */, 0x41100000 /* 9.0f */});
+        call_tmp("_alGetSource3f", {alSrc, 0x1005 /* AL_DIRECTION */, f, f+4, f+8});
+        bool okDirSet = proc.mem().read<float>(f) == 7.0f && proc.mem().read<float>(f+4) == 8.0f && proc.mem().read<float>(f+8) == 9.0f;
+
+        const uint32_t i = proc.heap().allocZeroed(4);
+        call_tmp("_alcGetIntegerv", {dev, 0x1000 /* ALC_MAJOR_VERSION */, 1, i});
+        bool okAlcMajor = proc.mem().read<int32_t>(i) == 1;
+        call_tmp("_alcGetIntegerv", {dev, 0x1002 /* ALC_ATTRIBUTES_SIZE */, 1, i});
+        bool okAlcAttr = proc.mem().read<int32_t>(i) == 0;
+
+        const uint32_t d = uint32_t(call_tmp("_CFDictionaryCreateMutable", {0, 0, 0, 0}));
+        const uint32_t k = cstr2("key"), v = cstr2("value");
+        call_tmp("_objc_msgSend", {d, r.sel("setObject:forKey:"), v, k});
+        uint32_t ret = uint32_t(call_tmp("_objc_msgSend", {d, r.sel("objectForKey:"), k}));
+        bool okDictMut = ret == v;
+
+        call_tmp("_objc_msgSend", {d, r.sel("removeObjectForKey:"), k});
+        uint32_t ret2 = uint32_t(call_tmp("_objc_msgSend", {d, r.sel("objectForKey:"), k}));
+        bool okDictRm = ret2 == 0;
+
+        const uint32_t idict = uint32_t(call_tmp("_CFDictionaryCreate", {0, 0, 0, 0, 0, 0}));
+        call_tmp("_objc_msgSend", {idict, r.sel("setObject:forKey:"), v, k});
+        uint32_t ret3 = uint32_t(call_tmp("_objc_msgSend", {idict, r.sel("objectForKey:"), k}));
+        bool okIDictMut = ret3 == 0;
+
+        call_tmp("_objc_msgSend", {d, r.sel("setObject:forKey:"), v, k});
+        call_tmp("_objc_msgSend", {d, r.sel("removeAllObjects")});
+        uint32_t ret4 = uint32_t(call_tmp("_objc_msgSend", {d, r.sel("objectForKey:"), k}));
+        bool okDictRmAll = ret4 == 0;
+
+        call_tmp("_objc_msgSend", {d, r.sel("setObject:forKey:"), v, k});
+        uint32_t enumerator = uint32_t(call_tmp("_objc_msgSend", {d, r.sel("keyEnumerator")}));
+        uint32_t enumK = uint32_t(call_tmp("_objc_msgSend", {enumerator, r.sel("nextObject")}));
+        bool okEnum = enumK == k;
+
+        uint32_t allK = uint32_t(call_tmp("_objc_msgSend", {d, r.sel("allKeys")}));
+        uint32_t arrCount = uint32_t(call_tmp("_objc_msgSend", {allK, r.sel("count")}));
+        bool okAllK = arrCount == 1;
+
+        check(okPosDefault && okPosSet && okVelSet && okDirSet && okAlcMajor && okAlcAttr && okDictMut && okDictRm && okIDictMut && okDictRmAll && okEnum && okAllK, "OpenAL queries and __HVMCFRawDictionary mutators");
+    }
+
     // 2f2. libstdc++ containers (GCC 4.2 ABI): red-black tree, COW std::string
     {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {

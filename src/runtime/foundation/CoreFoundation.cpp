@@ -23,6 +23,7 @@ struct Allocator : ObjC::HostObject { std::array<uint32_t, 9> context{}; bool nu
 struct RawDict : ObjC::HostObject {
     std::vector<std::pair<uint32_t, uint32_t>> entries;
     bool keyObjects = false, valueObjects = false, keyEqual = false;
+    bool mutableDict = false;
 };
 
 struct CF {
@@ -664,6 +665,8 @@ id newRawDict(Ctx& x, bool keyObj, bool valObj, bool keyEq) {
     h->keyObjects = keyObj;
     h->valueObjects = valObj;
     h->keyEqual = keyEq;
+    h->mutableDict = false;
+
     R(x).setHost(d, std::move(h));
     return d;
 }
@@ -702,7 +705,7 @@ uint32_t d_create(Ctx& x, uint32_t, GuestPtr keys, GuestPtr values, int32_t n, G
 uint32_t d_createMutable(Ctx& x, uint32_t, int32_t, GuestPtr kcb, GuestPtr vcb) {
     const bool ko = objectCallbacks(x, kcb), vo = objectCallbacks(x, vcb);
     if (ko && vo) return makeDict(x, {}, true, true);
-    return newRawDict(x, ko, vo, dictKeyEq(x, kcb));
+    id d = newRawDict(x, ko, vo, dictKeyEq(x, kcb)); rawD(x, d)->mutableDict = true; return d;
 }
 uint32_t d_createCopy(Ctx& x, uint32_t, id d) {
     if (RawDict* r = rawD(x, d)) {
@@ -713,7 +716,11 @@ uint32_t d_createCopy(Ctx& x, uint32_t, id d) {
     return uint32_t(send(x, d, "copy"));
 }
 uint32_t d_createMutableCopy(Ctx& x, uint32_t a, int32_t, id d) {
-    if (rawD(x, d)) return d_createCopy(x, a, d);
+    if (rawD(x, d)) {
+        id res = d_createCopy(x, a, d);
+        rawD(x, res)->mutableDict = true;
+        return res;
+    }
     return uint32_t(send(x, d, "mutableCopy"));
 }
 int32_t d_count(Ctx& x, id d) {
@@ -804,6 +811,29 @@ uint32_t rd_objectForKey(Ctx& x, id self, SEL, uint32_t k) { return d_get(x, sel
 void rd_dealloc(Ctx& x, id self, SEL) {
     if (RawDict* r = rawD(x, self)) rawClear(x, *r);
     R(x).disposeInstance(x.cpu, self);
+}
+
+uint32_t rd_keyEnumerator(Ctx& x, id self, SEL) {
+    std::vector<id> keys;
+    for (auto& [k, v] : entriesOfAny(x, self)) keys.push_back(k);
+    return uint32_t(send(x, makeArray(x, keys), "objectEnumerator"));
+}
+uint32_t rd_allKeys(Ctx& x, id self, SEL) {
+    std::vector<id> keys;
+    for (auto& [k, v] : entriesOfAny(x, self)) keys.push_back(k);
+    return makeArray(x, keys);
+}
+void rd_setObjectForKey(Ctx& x, id self, SEL, uint32_t v, uint32_t k) {
+    if (rawD(x, self) && rawD(x, self)->mutableDict) d_set(x, self, k, v);
+    else x.proc.log(LogLevel::Warning, "Attempted to mutate an immutable dictionary");
+}
+void rd_removeObjectForKey(Ctx& x, id self, SEL, uint32_t k) {
+    if (rawD(x, self) && rawD(x, self)->mutableDict) d_remove(x, self, k);
+    else x.proc.log(LogLevel::Warning, "Attempted to mutate an immutable dictionary");
+}
+void rd_removeAllObjects(Ctx& x, id self, SEL) {
+    if (rawD(x, self) && rawD(x, self)->mutableDict) d_removeAll(x, self);
+    else x.proc.log(LogLevel::Warning, "Attempted to mutate an immutable dictionary");
 }
 
 // --------------------------------------------------------------- CFSet ---
@@ -1305,7 +1335,11 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     // CFDictionary
     ObjC::ClassBuilder rd = r.defineClass("__HVMCFRawDictionary", "NSObject");
     c.rawDict = rd.cls();
-    rd.m<&rd_count>("count", "I@:").m<&rd_objectForKey>("objectForKey:").m<&rd_dealloc>("dealloc", "v@:");
+    rd.m<&rd_count>("count", "I@:").m<&rd_objectForKey>("objectForKey:").m<&rd_dealloc>("dealloc", "v@:")
+      .m<&rd_setObjectForKey>("setObject:forKey:", "v@:@@").m<&rd_removeObjectForKey>("removeObjectForKey:", "v@:@")
+      .m<&rd_removeAllObjects>("removeAllObjects", "v@:")
+      .m<&rd_keyEnumerator>("keyEnumerator", "@@:")
+      .m<&rd_allKeys>("allKeys", "@@:");
     p.def<&d_create>("_CFDictionaryCreate");
     p.def<&d_createMutable>("_CFDictionaryCreateMutable");
     p.def<&d_createCopy>("_CFDictionaryCreateCopy");
