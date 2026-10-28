@@ -229,22 +229,29 @@ int32_t w_iswalpha(Ctx& x, int32_t c) { return c_isalpha(x, c); }
 int32_t w_iswalnum(Ctx& x, int32_t c) { return c_isalnum(x, c); }
 
 
+// Helper function to safely read strings up to a maximum length.
+// Validates page-by-page readable permissions. Throws GuestFault on invalid access.
+// Helper function to safely read strings up to a maximum length.
+// Validates page-by-page readable permissions. Throws GuestFault on invalid access.
 size_t safe_strnlen(Ctx& x, GuestPtr p, size_t max_len) {
     if (max_len == 0) return 0;
 
     size_t len = 0;
     while (len < max_len) {
-        uint32_t addr = p + len;
-        if (!x.mem.validateRange(addr, 1, Memory::kProtRead)) {
-            throw CPU::GuestFault(CPU::Exit::MemFault, addr, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strnlen");
+        uint64_t addr = uint64_t(p) + len;
+        if (addr >= Memory::GuestArena::kArenaSize) {
+             throw CPU::GuestFault(CPU::Exit::MemFault, uint32_t(addr), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strnlen (overflow)");
+        }
+        if (!x.mem.validateRange(uint32_t(addr), 1, Memory::kProtRead)) {
+            throw CPU::GuestFault(CPU::Exit::MemFault, uint32_t(addr), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strnlen");
         }
 
-        uint32_t page_offset = addr & (Memory::GuestArena::kGuestPageSize - 1);
+        uint32_t page_offset = uint32_t(addr) & (Memory::GuestArena::kGuestPageSize - 1);
         uint32_t scan_limit = Memory::GuestArena::kGuestPageSize - page_offset;
         if (scan_limit > max_len - len) scan_limit = max_len - len;
 
-        const void* null_ptr = std::memchr(H(x, addr), 0, scan_limit);
-        if (null_ptr) return len + (static_cast<const char*>(null_ptr) - H(x, addr));
+        const void* null_ptr = std::memchr(H(x, uint32_t(addr)), 0, scan_limit);
+        if (null_ptr) return len + (static_cast<const char*>(null_ptr) - H(x, uint32_t(addr)));
 
         len += scan_limit;
     }
@@ -254,21 +261,21 @@ size_t safe_strnlen(Ctx& x, GuestPtr p, size_t max_len) {
 size_t safe_strlen(Ctx& x, GuestPtr p) {
     size_t len = 0;
     while (true) {
-        uint32_t addr = p + len;
-        if (!x.mem.validateRange(addr, 1, Memory::kProtRead)) {
-            throw CPU::GuestFault(CPU::Exit::MemFault, addr, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strlen");
+        uint64_t addr = uint64_t(p) + len;
+        if (addr >= Memory::GuestArena::kArenaSize) {
+             throw CPU::GuestFault(CPU::Exit::MemFault, uint32_t(addr), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strlen (overflow)");
+        }
+        if (!x.mem.validateRange(uint32_t(addr), 1, Memory::kProtRead)) {
+            throw CPU::GuestFault(CPU::Exit::MemFault, uint32_t(addr), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strlen");
         }
 
-        uint32_t page_offset = addr & (Memory::GuestArena::kGuestPageSize - 1);
+        uint32_t page_offset = uint32_t(addr) & (Memory::GuestArena::kGuestPageSize - 1);
         uint32_t scan_limit = Memory::GuestArena::kGuestPageSize - page_offset;
 
-        const void* null_ptr = std::memchr(H(x, addr), 0, scan_limit);
-        if (null_ptr) return len + (static_cast<const char*>(null_ptr) - H(x, addr));
+        const void* null_ptr = std::memchr(H(x, uint32_t(addr)), 0, scan_limit);
+        if (null_ptr) return len + (static_cast<const char*>(null_ptr) - H(x, uint32_t(addr)));
 
         len += scan_limit;
-        if (p + len < p) {
-             throw CPU::GuestFault(CPU::Exit::MemFault, p + len, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strlen");
-        }
     }
 }
 
@@ -348,16 +355,28 @@ uint32_t s_strncat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t dest
 
 uint32_t s_strlcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
-    if (!x.mem.validateRange(s, n, Memory::kProtRead) || !x.mem.validateRange(d, n, Memory::kProtWrite)) {
-        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcpy_chk");
+    // strlcpy always reads up to n-1 chars, or the NUL byte, from s.
+    // It writes MIN(strlen(s), n-1) chars to d, plus a NUL, assuming n > 0.
+    const size_t sl = safe_strlen(x, s);
+    if (n > 0) {
+        size_t copy_len = std::min<size_t>(sl, n - 1);
+        if (!x.mem.validateRange(d, copy_len + 1, Memory::kProtWrite)) {
+            throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcpy_chk");
+        }
     }
     return s_strlcpy(x, d, s, n);
 }
 
 uint32_t s_strlcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
-    if (!x.mem.validateRange(s, n, Memory::kProtRead) || !x.mem.validateRange(d, n, Memory::kProtWrite)) {
-        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcat_chk");
+    // strlcat needs to read up to n bytes of d to find the NUL, and then read from s.
+    const size_t dl = safe_strnlen(x, d, n);
+    const size_t sl = safe_strlen(x, s);
+    if (dl < n - 1) { // we append if we found NUL before n
+        size_t append_len = std::min<size_t>(sl, n - dl - 1);
+        if (!x.mem.validateRange(d + dl, append_len + 1, Memory::kProtWrite)) {
+             throw CPU::GuestFault(CPU::Exit::MemFault, d + dl, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcat_chk");
+        }
     }
     return s_strlcat(x, d, s, n);
 }
