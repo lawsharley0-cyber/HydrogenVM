@@ -149,7 +149,7 @@ uint32_t Heap::realloc(uint32_t addr, uint32_t size) {
     if (!old) return 0;
     if (size <= old && (old <= kSmallMax || size > old / 2)) return addr;
     const uint32_t n = alloc(size);
-    if (!n) return 0; // The standard POSIX realloc behavior is to return NULL and leave the old block untouched on failure
+    if (!n) return 0;
     std::memcpy(mem_.host(n), mem_.host(addr), std::min(old, size));
     free(addr);
     return n;
