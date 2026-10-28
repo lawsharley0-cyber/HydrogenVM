@@ -1,43 +1,43 @@
-# HydrogenVM report — 18d5f65
+# HydrogenVM report — b45cf5d
 
-2026-10-28T18:41:41+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-28T18:43:43+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 234.9s |
-| cpu | 15 | 0 | 0 | 0.8s |
-| ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 24.8s |
+| build | 1 | 0 | 0 | 133.3s |
+| cpu | 15 | 0 | 0 | 0.5s |
+| ios | 6 | 0 | 0 | 2.1s |
+| bench | 5 | 0 | 0 | 16.3s |
 
 ## Speed
 
-CoreMark **1696.9** iterations/s (568.5 guest MIPS)
+CoreMark **3199.7** iterations/s (1075.7 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **117.8%** | 707 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **88.4%** | 707 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **70.7%** | 566 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.3%** | 485 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **222.2%** | 1333 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **166.7%** | 1333 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **133.3%** | 1067 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **70.3%** | 914 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 443 MIPS, ctests_arm 506 MIPS, ftests_vfp_thumb_softfp 437 MIPS, ftests_neon_thumb 382 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 853 MIPS, ctests_arm 970 MIPS, ftests_vfp_thumb_softfp 922 MIPS, ftests_neon_thumb 849 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTest | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.46 ms | 7.75 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.21 ms | 4.10 ms | 0 |
 
 ## Problems (30)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 37.3% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 70.3% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
