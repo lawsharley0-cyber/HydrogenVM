@@ -11,7 +11,6 @@ import plistlib
 import re
 import subprocess
 import struct
-import urllib.request
 import zipfile
 
 from compat import macho_info
@@ -84,6 +83,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     ipa = Path(args.ipa).resolve() if args.ipa else out / "client.ipa"
     if not args.ipa:
+        import urllib.request
         request = urllib.request.Request(URL, headers={"User-Agent": "HydrogenVM-compat-investigation"})
         with urllib.request.urlopen(request, timeout=120) as response, ipa.open("wb") as target:
             while True:

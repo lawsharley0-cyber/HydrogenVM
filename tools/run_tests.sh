@@ -3,13 +3,13 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 B="$ROOT/build"
-cmake -S "$ROOT" -B "$B" -G Ninja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_BUILD_TYPE=Release >/dev/null || exit 1
+cmake -S "$ROOT" -B "$B" -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release >/dev/null || exit 1
 ninja -C "$B" >/dev/null || { ninja -C "$B"; exit 1; }
 "$ROOT/tools/build_tests.sh" "$B/tests" >/dev/null || exit 1
 rc=0
-"$ROOT/tools/test_app_bundle.sh" || rc=1
 "$B/hvm_tests" selftest || rc=1
 "$B/hvm_tests" fulltest || rc=1
+"$B/hvm_app_bundle_tests" "$B/app-bundle-test-fixtures" || rc=1
 for f in "$ROOT"/tests/asm/*.S; do
   b=$(basename "$f" .S)
   "$B/hvm_tests" asm "$B/tests/$b.elf" "$f" || rc=1
