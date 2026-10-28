@@ -62,9 +62,9 @@ public:
 
     bool    isMapped(uint32_t addr) const noexcept { return prot_[addr >> kGuestPageShift] != kProtNone; }
     uint8_t protAt(uint32_t addr) const noexcept   { return prot_[addr >> kGuestPageShift]; }
-    // Check the complete guest range while holding the mapping lock. Host-page
-    // permissions alone cannot represent a 4 KB guest page on iOS.
-    bool writableRange(uint32_t addr, uint64_t size) const noexcept;
+    // Validate and perform a complete NUL-terminated write under the mapping
+    // lock, so concurrent unmap cannot invalidate the check before the copy.
+    bool copyCStringWritable(uint32_t addr, const char* src, size_t chars) noexcept;
 
     // Find a free, page-aligned range of `size` bytes at or above `hint`.
     // Returns 0 on failure (address 0 is never handed out).

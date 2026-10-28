@@ -96,17 +96,16 @@ int32_t storeFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t objectSize,
     const uint64_t required = bounded ? (n ? std::min<size_t>(s.size(), size_t(n) - 1) + 1 : 0)
                                       : uint64_t(s.size()) + 1;
     if (required) {
-        if (!buf || !x.mem.writableRange(buf, required))
-            throw std::runtime_error("formatted write outside writable guest memory");
-        // Heap pages are shared between many live allocations. Never let a
-        // write run into a neighbouring or previously freed heap block.
-        if (x.proc.heap().owns(buf) && x.proc.heap().allocationRemainder(buf) < required)
-            throw std::runtime_error("formatted write exceeds guest allocation");
+        if (!buf) throw std::runtime_error("null formatted guest destination");
         if (!bounded && required > objectSize)
             throw std::runtime_error("__sprintf_chk object bound exceeded");
+        // Keep allocation and page-map locks through the write. A concurrent
+        // free or unmap must not invalidate a separate bounds-check result.
         const size_t copied = size_t(required - 1);
-        x.mem.copyIn(buf, s.data(), copied);
-        x.mem.write<uint8_t>(buf + uint32_t(copied), 0);
+        const bool safe = x.proc.heap().owns(buf)
+            ? x.proc.heap().copyCStringWithinAllocation(buf, s.data(), copied)
+            : x.mem.copyCStringWritable(buf, s.data(), copied);
+        if (!safe) throw std::runtime_error("formatted write exceeds guest allocation or writable mapping");
     }
     return int32_t(s.size());
 }

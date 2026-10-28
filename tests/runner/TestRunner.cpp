@@ -4666,8 +4666,20 @@ int runFullSubsystemTests() {
         check(!r.first && r.second == 5, "snprintf_chk permits truncation within object bound");
         r = run("___snprintf_chk", {small, 5, 0, 4, shortText});
         check(r.first, "snprintf_chk rejects size exceeding object bound");
+        r = run("___snprintf_chk", {0, 0, 0, 0, shortText});
+        check(!r.first && r.second == 5, "snprintf_chk accepts zero-size destination");
+        r = run("_vsnprintf", {small, 4, shortText, 0});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(small), "123\0", 4) == 0,
+              "vsnprintf truncates and reports untruncated length");
+        r = run("___vsnprintf_chk", {small, 4, 0, 4, shortText, 0});
+        check(!r.first && r.second == 5, "vsnprintf_chk permits bounded truncation");
+        r = run("___vsnprintf_chk", {small, 5, 0, 4, shortText, 0});
+        check(r.first, "vsnprintf_chk rejects size exceeding object bound");
         r = run("___sprintf_chk", {small, 0, 15, exact});
         check(r.first, "sprintf_chk enforces object size including terminator");
+        r = run("___sprintf_chk", {small, 0, 16, exact});
+        check(!r.first && r.second == 15, "sprintf_chk accepts exact compiler object bound");
         r = run("___vsprintf_chk", {small, 0, 15, exact});
         check(r.first, "vsprintf_chk exists and enforces object size");
 
@@ -4678,6 +4690,11 @@ int runFullSubsystemTests() {
         check(!r.first && r.second == 4, "sprintf accepts mapped guest-page exact fit");
         r = run("_sprintf", {edge, shortText});
         check(r.first, "sprintf rejects overflow into unmapped guest page");
+        const uint32_t global = proc.allocStatic(32);
+        r = run("_sprintf", {global, shortText});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(global), "12345\0", 6) == 0,
+              "sprintf permits writable global buffers outside tracked heap");
     }
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);

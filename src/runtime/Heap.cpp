@@ -167,13 +167,14 @@ uint32_t Heap::blockSize(uint32_t addr) const {
     return it == live_.end() ? 0 : it->second;
 }
 
-uint32_t Heap::allocationRemainder(uint32_t addr) const {
+bool Heap::copyCStringWithinAllocation(uint32_t addr, const char* src, size_t chars) {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = liveIntervals_.upper_bound(addr);
-    if (it == liveIntervals_.begin()) return 0;
+    if (it == liveIntervals_.begin()) return false;
     --it;
     const uint64_t end = uint64_t(it->first) + it->second;
-    return uint64_t(addr) < end ? uint32_t(end - addr) : 0;
+    if (uint64_t(addr) >= end || chars + uint64_t(1) > end - addr) return false;
+    return mem_.copyCStringWritable(addr, src, chars);
 }
 
 Heap::Stats Heap::stats() const {

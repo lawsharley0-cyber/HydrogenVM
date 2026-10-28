@@ -118,15 +118,16 @@ void GuestArena::unmap(uint32_t addr, uint32_t size) {
     }
 }
 
-bool GuestArena::writableRange(uint32_t addr, uint64_t size) const noexcept {
-    if (!size) return true;
-    const uint64_t end = uint64_t(addr) + size;
+bool GuestArena::copyCStringWritable(uint32_t addr, const char* src, size_t chars) noexcept {
+    const uint64_t end = uint64_t(addr) + chars + 1;
     if (end > kArenaSize) return false;
     std::lock_guard<std::mutex> lk(mu_);
     for (uint64_t page = uint64_t(addr) >> kGuestPageShift;
          page <= (end - 1) >> kGuestPageShift; ++page) {
         if (!(prot_[page] & kProtWrite)) return false;
     }
+    std::memcpy(base_ + uint64_t(addr), src, chars);
+    base_[uint64_t(addr) + chars] = 0;
     return true;
 }
 
