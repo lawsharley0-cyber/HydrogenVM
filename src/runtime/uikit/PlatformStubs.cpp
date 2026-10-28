@@ -1624,7 +1624,38 @@ id sk_empty(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
 id sk_zero_id(Ctx&, id, SEL) { return 0; }
 char sk_zero_c(Ctx&, id, SEL) { return 0; }
 int32_t sk_zero_i(Ctx&, id, SEL) { return 0; }
-void sk_ignore_i(Ctx&, id, SEL, int32_t) {}
+// A payment request retains its product ID, independently of App Store access.
+struct PaymentData : ObjC::HostObject { id identifier = 0; int32_t quantity = 1; };
+id sk_paymentWithId(Ctx& x, id cls, SEL, id identifier) {
+    if (!identifier) return 0;
+    const id obj = rt(x).createInstance(cls);
+    auto data = std::make_unique<PaymentData>();
+    data->identifier = rt(x).retain(x.cpu, identifier);
+    rt(x).setHost(obj, std::move(data));
+    return autoreleased(x, obj);
+}
+id sk_paymentId(Ctx& x, id self, SEL) {
+    auto* d = rt(x).hostIf<PaymentData>(self);
+    return d ? d->identifier : 0;
+}
+int32_t sk_paymentQuantity(Ctx& x, id self, SEL) {
+    auto* d = rt(x).hostIf<PaymentData>(self);
+    return d ? d->quantity : 1;
+}
+void sk_setPaymentQuantity(Ctx& x, id self, SEL, int32_t q) {
+    if (q < 1 || q > 10) throw ObjC::ObjCError("SKMutablePayment quantity outside 1...10");
+    auto* d = rt(x).hostIf<PaymentData>(self);
+    if (!d) {
+        rt(x).setHost(self, std::make_unique<PaymentData>());
+        d = rt(x).hostIf<PaymentData>(self);
+    }
+    d->quantity = q;
+}
+void sk_paymentDealloc(Ctx& x, id self, SEL) {
+    if (auto* d = rt(x).hostIf<PaymentData>(self))
+        if (d->identifier) rt(x).release(x.cpu, d->identifier);
+    rt(x).disposeInstance(x.cpu, self);
+}
 
 
 // SKProductsRequest: no App Store, so every product id is "invalid" and the
@@ -1886,10 +1917,12 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
        .classMethod("startWirelessControllerDiscoveryWithCompletionHandler:", [](Ctx& x) {
            const id block = x.cpu.r[2];
            if (block) {
+               const uint32_t copied = ObjC::blockCopy(x, block);
                Process* proc = &x.proc;
-               Foundation::mainRunLoop(x.proc).addTimer(0.01, 0, false, [proc, block](CPU::Cpu& c) {
+               Foundation::mainRunLoop(x.proc).addTimer(0.01, 0, false, [proc, copied](CPU::Cpu& c) {
                    Ctx cx{*proc, c, proc->mem()};
-                   ObjC::callBlock(cx, block, {});
+                   ObjC::callBlock(cx, copied);
+                   ObjC::blockRelease(cx, copied);
                });
            }
        }, "v@:@?")
@@ -1918,23 +1951,18 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     skprod.m<&sk_ignoreObj>("setLocalizedTitle:", "v@:@").m<&sk_ignoreObj>("setPrice:", "v@:@").m<&sk_ignoreObj>("setPriceLocale:", "v@:@")
           .m<&sk_zero_id>("localizedTitle", "@@:").m<&sk_zero_id>("price", "@@:").m<&sk_zero_id>("priceLocale", "@@:").m<&sk_zero_id>("productIdentifier", "@@:");
 
-    auto allocZero = [](Ctx& x, id, SEL, id) -> id {
-        const id inst = rt(x).createInstance(x.cpu.r[0]);
-        return autoreleased(x, inst);
-    };
     ObjC::ClassBuilder skpay = r.defineClass("SKPayment", "NSObject");
-    skpay.cm<&sk_allocZero>("paymentWithProductIdentifier:", "@@:@")
-         .m<&sk_ignore_q>("setQuantity:", "v@:q").m<&sk_zero_id>("productIdentifier", "@@:");
+    skpay.cm<&sk_paymentWithId>("paymentWithProductIdentifier:", "@@:@")
+         .m<&sk_paymentQuantity>("quantity", "i@:").m<&sk_paymentId>("productIdentifier", "@@:")
+         .m<&sk_paymentDealloc>("dealloc", "v@:");
 
-    r.defineClass("SKMutablePayment", "SKPayment");
+    r.defineClass("SKMutablePayment", "SKPayment").m<&sk_setPaymentQuantity>("setQuantity:", "v@:i");
 
-
-    auto zeroQ = [](Ctx&, id, SEL) -> int64_t { return 0; };
     ObjC::ClassBuilder sktrans = r.defineClass("SKPaymentTransaction", "NSObject");
     sktrans.m<&sk_zero_id>("transactionIdentifier", "@@:").m<&sk_zero_id>("transactionDate", "@@:")
            .m<&sk_zero_id>("transactionReceipt", "@@:").m<&sk_zero_id>("originalTransaction", "@@:")
            .m<&sk_zero_id>("payment", "@@:").m<&sk_zero_id>("error", "@@:")
-           .m<&sk_zero_q>("transactionState", "q@:");
+           .m<&sk_zero_i>("transactionState", "i@:");
 
 
     // MessageUI
