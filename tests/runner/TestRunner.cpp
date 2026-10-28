@@ -4611,6 +4611,75 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    // PR #167: fixed-size heap objects share writable pages, so a successful
+    // host mapping check alone is not enough to protect adjacent allocations.
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-format-bounds-tests";
+        Process proc(cfg);
+        auto& cpu = proc.mainThread().cpu;
+        const uint32_t stack = proc.heap().allocZeroed(1024);
+        cpu.r[CPU::kSP] = stack + 1024;
+        auto run = [&](const char* name, std::initializer_list<uint32_t> args) {
+            bool fault = false;
+            int32_t result = -1;
+            try {
+                const auto sym = proc.lookupSymbol(name);
+                if (!sym) return std::pair<bool, int32_t>{true, result};
+                result = int32_t(proc.callGuest(cpu, *sym, args));
+            } catch (const CPU::GuestFault&) {
+                fault = true;
+            } catch (const std::exception&) {
+                fault = true;
+            }
+            return std::pair<bool, int32_t>{fault, result};
+        };
+        const uint32_t exact = proc.allocCString("123456789012345");
+        const uint32_t overflow = proc.allocCString("1234567890123456");
+        const uint32_t shortText = proc.allocCString("12345");
+        const uint32_t small = proc.heap().allocZeroed(16);
+        auto r = run("_sprintf", {small, exact});
+        check(!r.first && r.second == 15 && proc.mem().read<uint8_t>(small + 15) == 0,
+              "sprintf accepts exact heap allocation fit");
+        r = run("_sprintf", {small, overflow});
+        check(r.first, "sprintf rejects one-byte heap allocation overflow");
+
+        const uint32_t adjacent = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(adjacent, 0x5a);
+        r = run("_sprintf", {small, overflow});
+        check(r.first && proc.mem().read<uint8_t>(adjacent) == 0x5a,
+              "sprintf cannot corrupt adjacent live allocation");
+
+        const uint32_t inside = proc.heap().allocZeroed(16) + 5;
+        r = run("_sprintf", {inside, proc.allocCString("1234567890")});
+        check(!r.first && r.second == 10, "sprintf accepts interior pointer exact fit");
+        r = run("_sprintf", {inside, proc.allocCString("12345678901")});
+        check(r.first, "sprintf rejects interior pointer overflow");
+
+        r = run("_snprintf", {small, 4, shortText});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(small), "123\0", 4) == 0,
+              "snprintf truncates and reports untruncated length");
+        r = run("_snprintf", {0, 0, shortText});
+        check(!r.first && r.second == 5, "snprintf allows null destination with zero size");
+        r = run("___snprintf_chk", {small, 4, 0, 4, shortText});
+        check(!r.first && r.second == 5, "snprintf_chk permits truncation within object bound");
+        r = run("___snprintf_chk", {small, 5, 0, 4, shortText});
+        check(r.first, "snprintf_chk rejects size exceeding object bound");
+        r = run("___sprintf_chk", {small, 0, 15, exact});
+        check(r.first, "sprintf_chk enforces object size including terminator");
+        r = run("___vsprintf_chk", {small, 0, 15, exact});
+        check(r.first, "vsprintf_chk exists and enforces object size");
+
+        constexpr uint32_t page = 0x23000000;
+        proc.mem().map(page, 4096, Memory::kProtRW);
+        const uint32_t edge = page + 4096 - 5;
+        r = run("_sprintf", {edge, proc.allocCString("1234")});
+        check(!r.first && r.second == 4, "sprintf accepts mapped guest-page exact fit");
+        r = run("_sprintf", {edge, shortText});
+        check(r.first, "sprintf rejects overflow into unmapped guest page");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
