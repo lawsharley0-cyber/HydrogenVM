@@ -1,45 +1,26 @@
-# HydrogenVM report — b5907d4
+# HydrogenVM report — 1a42a2f
 
-2026-10-28T17:03:21+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-28T17:03:30+00:00 · INTEL(R) XEON(R) PLATINUM 8573C (x86_64, Linux 7.0.0-1017-azure)
 
-**All tests passed.**
+**1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 127.1s |
-| cpu | 15 | 0 | 0 | 0.5s |
-| ios | 6 | 0 | 0 | 2.1s |
-| bench | 5 | 0 | 0 | 17.1s |
+| build | 0 | 1 | 0 | 147.3s |
 
-## Speed
+## Problems (28)
 
-CoreMark **3058.6** iterations/s (1024.8 guest MIPS)
+### Failures (1)
 
-| Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
-|---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **212.4%** | 1274 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **159.3%** | 1274 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **127.4%** | 1020 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **67.2%** | 874 MHz |
+- **build / ninja**
 
-Raw interpreter speed (CPU test programs): ctests_thumb 791 MIPS, ctests_arm 881 MIPS, ftests_vfp_thumb_softfp 886 MIPS, ftests_neon_thumb 793 MIPS
+  ```
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1921:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1931:16: error: use of undeclared identifier 'sk_zero_q'
+  2 errors generated.
+  ```
 
-| App | Wall | Frames | Avg frame | Max frame | Slow frames |
-|---|---:|---:|---:|---:|---:|
-| CTest | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.22 ms | 4.14 ms | 0 |
-
-## Problems (30)
-
-### Below speed goal (1)
-
-- **bench / coremark**: 67.2% of iPhone 5 single-core speed (goal: 100%)
-
-### Warnings (29)
+### Warnings (27)
 
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
@@ -68,6 +49,4 @@ Raw interpreter speed (CPU test programs): ctests_thumb 791 MIPS, ctests_arm 881
 - **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]
-- **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 
