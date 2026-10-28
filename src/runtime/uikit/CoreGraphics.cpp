@@ -1217,13 +1217,13 @@ int32_t text_break(Ctx& x, id text, int32_t start, double width) {
     if (size_t(i) == d->string.size()) return i - start;
     return lastSpace >= start ? lastSpace - start + 1 : std::max(i - start, 1);
 }
-double text_offset(Ctx& x, id text, int32_t charIndex, GuestPtr secondaryOffset) {
-    if (secondaryOffset) x.mem.write<float>(secondaryOffset, 0.0);
+float text_offset(Ctx& x, id text, int32_t charIndex, GuestPtr secondaryOffset) {
+    if (secondaryOffset) x.mem.write<float>(secondaryOffset, 0.0f);
     auto* d = hd<TextData>(x, text);
-    if (!d || charIndex < d->start) return 0.0;
+    if (!d || charIndex < d->start) return 0.0f;
     int32_t localIndex = charIndex - d->start;
     if (localIndex > int32_t(d->string.size())) localIndex = int32_t(d->string.size());
-    double offset = 0.0;
+    float offset = 0.0f;
     for (int32_t i = 0; i < localIndex && size_t(i) < d->advances.size(); ++i) {
         offset += d->advances[i];
     }
