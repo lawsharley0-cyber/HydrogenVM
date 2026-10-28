@@ -130,11 +130,29 @@ int runAsm(const std::string& elf, const std::vector<std::string>& sources) {
             }
             std::string err;
             const Check* faultWant = nullptr;
-            for (const auto& ch : t.expect) if (ch.key == "fault") faultWant = &ch;
+            const Check* undefWant = nullptr;
+            for (const auto& ch : t.expect) {
+                if (ch.key == "fault") faultWant = &ch;
+                if (ch.key == "undef") undefWant = &ch;
+            }
             const bool ok = h.call(c, it->second, err);
             if (faultWant) {
                 if (!ok && c.exit == CPU::Exit::MemFault && c.exit_info == faultWant->value) ++pass;
                 else { std::printf("FAIL %-28s expected fault at 0x%X: %s\n", t.name.c_str(), faultWant->value, ok ? "returned normally" : err.c_str()); ++fail; }
+                continue;
+            }
+            if (undefWant) {
+                if (!ok && c.exit == CPU::Exit::Undefined) {
+                    uint32_t raw = c.thumb ? h.mem.read<uint16_t>(c.exit_info) : h.mem.read<uint32_t>(c.exit_info);
+                    if (raw == undefWant->value) {
+                        ++pass;
+                        continue;
+                    }
+                    std::printf("FAIL %-28s expected undef instruction 0x%X, got 0x%X at PC 0x%X\n", t.name.c_str(), undefWant->value, raw, c.exit_info);
+                } else {
+                    std::printf("FAIL %-28s expected undef instruction 0x%X: %s\n", t.name.c_str(), undefWant->value, ok ? "returned normally" : err.c_str());
+                }
+                ++fail;
                 continue;
             }
             if (!ok) { std::printf("FAIL %-28s %s\n", t.name.c_str(), err.c_str()); ++fail; continue; }
