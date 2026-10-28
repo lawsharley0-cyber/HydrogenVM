@@ -456,6 +456,8 @@ struct ContextData : ObjC::HostObject {
     uint32_t lastError = GL_NO_ERROR;
 
     // Bindings
+    uint32_t activeQueryTarget = 0; // The target of the active query
+    uint32_t activeQueryId = 0;
     uint32_t arrayBuffer = 0;
     uint32_t framebuffer = 0;        // draw framebuffer (GL_FRAMEBUFFER / GL_DRAW_FRAMEBUFFER_APPLE)
     uint32_t readFramebuffer = 0;    // GL_READ_FRAMEBUFFER_APPLE (multisample resolve source)
@@ -2481,12 +2483,18 @@ void gl_genQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
     }
 }
 void gl_deleteQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
-    SharegroupData* sg = currentSg(x, currentCtx(x));
-    if (!sg || !ids) return;
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg || !ids) return;
     for (uint32_t i = 0; i < n; ++i) {
         const uint32_t id = x.mem.read<uint32_t>(ids + i * 4);
         sg->reservedQueries.erase(id);
         sg->queryObjects.erase(id);
+
+        if (c->activeQueryId == id) {
+            c->activeQueryId = 0;
+            c->activeQueryTarget = 0;
+        }
     }
 }
 uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
@@ -2494,22 +2502,61 @@ uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
     return (sg && sg->queryObjects.count(id)) ? 1 : 0;
 }
 void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {
-    SharegroupData* sg = currentSg(x, currentCtx(x));
-    if (sg) {
-        sg->reservedQueries.erase(id);
-        sg->queryObjects.insert(id);
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg || id == 0) return;
+
+    // Khronos: error if another query is already active for this target
+    if (c->activeQueryId != 0 && c->activeQueryTarget == target) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
     }
+    // Must be a valid reserved name or an existing object
+    if (!sg->reservedQueries.count(id) && !sg->queryObjects.count(id)) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    sg->reservedQueries.erase(id);
+    sg->queryObjects.insert(id);
+
+    c->activeQueryTarget = target;
+    c->activeQueryId = id;
 }
-void gl_endQueryEXT(Ctx& x, uint32_t target) {}
+void gl_endQueryEXT(Ctx& x, uint32_t target) {
+    ContextData* c = currentCtx(x);
+    if (!c) return;
+
+    if (c->activeQueryId == 0 || c->activeQueryTarget != target) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    c->activeQueryId = 0;
+    c->activeQueryTarget = 0;
+}
 void gl_getQueryivEXT(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
     if (params) x.mem.write<int32_t>(params, 0);
 }
 void gl_getQueryObjectuivEXT(Ctx& x, uint32_t id, uint32_t pname, GuestPtr params) {
-    SharegroupData* sg = currentSg(x, currentCtx(x));
-    if (sg && sg->queryObjects.count(id) && params) {
-        if (pname == 0x8867 || pname == 0x8866) { // GL_QUERY_RESULT_AVAILABLE or GL_QUERY_RESULT
-            x.mem.write<uint32_t>(params, 1);
-        }
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg || !params) return;
+
+    // Must be a query object
+    if (!sg->queryObjects.count(id)) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    // Result not available if currently active
+    if (c->activeQueryId == id) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    if (pname == 0x8867 || pname == 0x8866) { // GL_QUERY_RESULT_AVAILABLE or GL_QUERY_RESULT
+        x.mem.write<uint32_t>(params, 1);
     }
 }
 

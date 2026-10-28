@@ -2703,8 +2703,15 @@ int runFullSubsystemTests() {
             const bool isq3 = callGL("_glIsQueryEXT", {q2 + 1}) != 0;
             check(isq1_post && !isq2_post && !isq3, "glIsQueryEXT is true only after glBeginQueryEXT");
 
-            // Get query object params
+            // Get query object params on active query (should fail/ignore)
             const uint32_t params = proc.heap().allocZeroed(4);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8866, params}); // GL_QUERY_RESULT
+            const uint32_t res_active = proc.mem().read<uint32_t>(params);
+
+            // End query
+            callGL("_glEndQueryEXT", {0x8866});
+
+            // Get query object params after end
             callGL("_glGetQueryObjectuivEXT", {q1, 0x8867, params}); // GL_QUERY_RESULT_AVAILABLE
             const uint32_t avail = proc.mem().read<uint32_t>(params);
             proc.mem().write<uint32_t>(params, 0);
@@ -2714,9 +2721,14 @@ int runFullSubsystemTests() {
             callGL("_glGetQueryObjectuivEXT", {q2, 0x8866, params}); // Should not modify params (unbegun)
             const uint32_t res_unbegun = proc.mem().read<uint32_t>(params);
 
-            check(avail == 1 && res == 1 && res_unbegun == 0, "glGetQueryObjectuivEXT writes 1 for GL_QUERY_RESULT of begun query, ignores unbegun");
+            check(res_active == 0 && avail == 1 && res == 1 && res_unbegun == 0, "glGetQueryObjectuivEXT ignores active and unbegun queries, writes 1 for completed");
 
-            // Delete queries
+            // Duplicate/invalid begin checking
+            callGL("_glBeginQueryEXT", {0x8866, q2}); // valid begin
+            // call begin again on same target with another ID (should fail)
+            callGL("_glBeginQueryEXT", {0x8866, q1});
+
+            // Delete queries (while q2 is active)
             callGL("_glDeleteQueriesEXT", {2, ids});
 
             const bool disq1 = callGL("_glIsQueryEXT", {q1}) != 0;
