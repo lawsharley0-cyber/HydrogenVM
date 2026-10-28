@@ -165,8 +165,8 @@ Process::~Process() {
         liveness_->alive = false;
     }
     requestStop();
-    // Wait (unbounded) for guest threads to exit to prevent use-after-free
-    for (;;) {
+    // Wait (bounded) for guest threads to notice and exit.
+    for (int i = 0; i < 200; ++i) {
         std::shared_ptr<GuestThread> activeThread;
         {
             std::lock_guard<std::mutex> lk(threadsMu_);
@@ -175,8 +175,7 @@ Process::~Process() {
             }
         }
         if (!activeThread) break;
-        std::unique_lock<std::mutex> lk(activeThread->m);
-        activeThread->cv.wait(lk, [&] { return activeThread->finished.load(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (t_thread && &t_thread->proc == this) t_thread = nullptr;
 }
@@ -699,35 +698,44 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
         std::lock_guard<std::mutex> lk(threadsMu_);
         threads_[raw->self] = t;
     }
-    spawnHostThread([this, raw, fn, arg, alive = liveness_, threadRef = std::move(t)] { threadMain(raw, fn, arg); });
-    return raw->self;
-}
-
-void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
-    t_thread = t;
-    CPU::Engine::lastFault() = {};
-    try {
-        t->retval = uint32_t(engine_->callGuest(t->cpu, fn, {arg}));
-    } catch (const CPU::GuestFault& f) {
-        if (!t->pthreadExited && !exiting_ && !stopping()) finishCrash(t->cpu, f.exit);
-    } catch (const std::exception& e) {
-        if (!exiting_ && !stopping()) {
-            std::lock_guard<std::mutex> lk(exitMu_);
-            if (!crashed_) {
-                crashed_ = true;
-                crashReport_ = std::string("HydrogenVM error: ") + e.what();
-                captureCrash(t->cpu, "hle-exception", e.what());
-                log(LogLevel::Error, crashReport_);
-                engine_->requestStop();
+    spawnHostThread([this, raw, fn, arg, alive = liveness_, threadRef = std::move(t)] {
+        {
+            std::lock_guard<std::mutex> lk(alive->mu);
+            if (!alive->alive) {
+                std::lock_guard<std::mutex> tlk(threadRef->m);
+                threadRef->finished = true;
+                threadRef->cv.notify_all();
+                return;
             }
         }
-    }
-    {
-        std::lock_guard<std::mutex> lk(t->m);
-        t->finished = true;
-    }
-    t->cv.notify_all();
-    t_thread = nullptr;
+        t_thread = raw;
+        CPU::Engine::lastFault() = {};
+        try {
+            raw->retval = uint32_t(engine_->callGuest(raw->cpu, fn, {arg}));
+        } catch (const CPU::GuestFault& f) {
+            std::lock_guard<std::mutex> lk(alive->mu);
+            if (alive->alive && !raw->pthreadExited && !exiting_ && !stopping()) finishCrash(raw->cpu, f.exit);
+        } catch (const std::exception& e) {
+            std::lock_guard<std::mutex> alk(alive->mu);
+            if (alive->alive && !exiting_ && !stopping()) {
+                std::lock_guard<std::mutex> lk(exitMu_);
+                if (!crashed_) {
+                    crashed_ = true;
+                    crashReport_ = std::string("HydrogenVM error: ") + e.what();
+                    captureCrash(raw->cpu, "hle-exception", e.what());
+                    log(LogLevel::Error, crashReport_);
+                    engine_->requestStop();
+                }
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lk(threadRef->m);
+            threadRef->finished = true;
+        }
+        threadRef->cv.notify_all();
+        t_thread = nullptr;
+    });
+    return raw->self;
 }
 
 bool Process::joinThread(uint32_t self, uint32_t* retval) {

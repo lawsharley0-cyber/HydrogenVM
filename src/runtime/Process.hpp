@@ -350,7 +350,6 @@ private:
     void setupMainThread();
     void setupEnvironment();
     void initThreadState(GuestThread& t, uint32_t stackSize);
-    void threadMain(GuestThread* t, uint32_t fn, uint32_t arg);
     void finishCrash(const CPU::Cpu& c, CPU::Exit e);
 
     ProcessConfig cfg_;

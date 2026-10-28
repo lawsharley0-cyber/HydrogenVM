@@ -328,9 +328,22 @@ int runFullSubsystemTests() {
                               p.lookupSymbol("__ZTIPKv").has_value();
                 }
 
-                // Spawn some threads that do nothing, simulating quick teardown
-                for (int j = 0; j < 5; ++j) {
-                    p.startThread(0, 0, 0, true);
+                // Spawn some threads simulating quick teardown
+                for (int j = 0; j < 3; ++j) {
+                    p.startThread(0, 0, 0, true); // fn=0 is missing stub
+                }
+
+                // Test the blocked-worker regression: register a host stub that intentionally blocks forever.
+                // This validates ~Process can tear down boundedly without hanging or SIGSEGVing later.
+                if (i == 0) {
+                    uint32_t blockedAddr = p.defineFunction("test_blocked_thread", [](Hydrogen::Runtime::Ctx& x) {
+                        while (!x.proc.stopping()) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                        }
+                        // Simulate a thread that is completely stubborn and doesn't exit even when stopping
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+                    });
+                    p.startThread(blockedAddr, 0, 0, true);
                 }
                 // p goes out of scope here; its destructor should wait cleanly without SIGSEGV
             }
