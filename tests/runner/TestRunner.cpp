@@ -4540,6 +4540,92 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    // Regressions: sprintf, snprintf, and swprintf bounds-checking and overflows.
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm_sprintf_tests";
+        Process p(cfg);
+        auto& cpu = p.mainThread().cpu;
+
+        uint32_t stackRegion = p.heap().allocZeroed(1024);
+        cpu.r[CPU::kSP] = stackRegion + 1024; // Provide a valid, 8-byte aligned stack for varargs
+
+        auto runFormat = [&](const char* fnName, std::initializer_list<uint32_t> args) {
+            bool crashed = false;
+            int32_t result = -1;
+            try {
+                auto optFn = p.lookupSymbol(fnName);
+                if (!optFn) { crashed = true; return std::make_pair(crashed, result); }
+                result = int32_t(p.engine().callGuest(cpu, *optFn, args));
+            } catch (const CPU::GuestFault& f) {
+                if (f.exit == CPU::Exit::HostError) crashed = true;
+            }
+            return std::make_pair(crashed, result);
+        };
+
+        const uint32_t fmt16Exact = p.allocCString("123456789012345"); // 15 + NUL = 16
+        const uint32_t fmt16Overflow = p.allocCString("1234567890123456"); // 16 + NUL = 17
+
+        // Note: The allocator rounds 5 to 16. We test the tracked 16-byte boundary.
+        // This is a known limitation: standard sprintf doesn't see the original requested size.
+        uint32_t buf = p.heap().allocZeroed(5);
+        auto r = runFormat("_sprintf", {buf, fmt16Exact});
+        check(!r.first && r.second == 15, "sprintf heap base exact fit");
+        r = runFormat("_sprintf", {buf, fmt16Overflow});
+        check(r.first, "sprintf heap base one-byte overflow");
+
+        uint32_t buf2 = p.heap().allocZeroed(10); // rounded to 16
+        uint32_t intBuf = buf2 + 5; // remainder is 11
+        const uint32_t fmt11Exact = p.allocCString("1234567890"); // 10 + NUL = 11
+        const uint32_t fmt11Overflow = p.allocCString("12345678901"); // 11 + NUL = 12
+        r = runFormat("_sprintf", {intBuf, fmt11Exact});
+        check(!r.first && r.second == 10, "sprintf heap interior exact fit");
+        r = runFormat("_sprintf", {intBuf, fmt11Overflow});
+        check(r.first, "sprintf heap interior one-byte overflow");
+
+        uint32_t bufA = p.heap().allocZeroed(16);
+        uint32_t bufB = p.heap().allocZeroed(16); // adjacent in small_ lists
+        const uint32_t fmt16 = p.allocCString("1234567890123456");
+        r = runFormat("_sprintf", {bufA, fmt16});
+        check(r.first, "sprintf adjacent heap allocations overflow fails");
+
+        uint32_t unmappedEdge = stackRegion + 1024; // Just past our mapped stack region
+        uint32_t edgeStack = unmappedEdge - 5; // 5 bytes from unmapped
+        const uint32_t fmtExact = p.allocCString("1234");
+        const uint32_t fmtOverflow = p.allocCString("12345");
+
+        r = runFormat("_sprintf", {edgeStack, fmtExact});
+        check(!r.first && r.second == 4, "sprintf writable stack exact fit");
+        r = runFormat("_sprintf", {edgeStack, fmtOverflow});
+        check(r.first, "sprintf writable stack one-byte overflow at mapped boundary");
+
+        uint32_t unmapped = 0x40000000;
+        r = runFormat("_sprintf", {unmapped, fmtExact});
+        check(r.first, "sprintf unmapped pointer fails");
+
+        r = runFormat("___snprintf_chk", {buf, 10, 0, 5, fmtExact});
+        check(!r.first && r.second == 4, "snprintf_chk exact fit with os=5");
+        r = runFormat("___snprintf_chk", {buf, 10, 0, 5, fmtOverflow});
+        check(r.first, "snprintf_chk overflow with os=5");
+
+        r = runFormat("_snprintf", {buf, 0, fmtOverflow});
+        check(!r.first && r.second == 5, "snprintf with n=0 returns would-have-written count");
+
+        r = runFormat("_snprintf", {buf, 3, fmtOverflow});
+        check(!r.first && r.second == 5, "snprintf n>0 truncates and returns untruncated count");
+        check(std::string((char*)p.mem().host(buf)) == "12", "snprintf truncated content correctly");
+
+        uint32_t fmtW = p.allocStatic(40);
+        p.mem().write<uint32_t>(fmtW, '1');
+        p.mem().write<uint32_t>(fmtW + 4, '2');
+        p.mem().write<uint32_t>(fmtW + 8, '3');
+        p.mem().write<uint32_t>(fmtW + 12, '4');
+        p.mem().write<uint32_t>(fmtW + 16, 0); // L"1234" (5 wide chars = 20 bytes)
+        uint32_t bufW = p.heap().allocZeroed(4); // rounded to 16 bytes
+        r = runFormat("_swprintf", {bufW, 10, fmtW}); // writes 20 bytes > 16.
+        check(r.first, "swprintf buffer overflow fails");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

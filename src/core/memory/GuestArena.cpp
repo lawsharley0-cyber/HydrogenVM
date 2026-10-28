@@ -118,6 +118,17 @@ void GuestArena::unmap(uint32_t addr, uint32_t size) {
     }
 }
 
+uint32_t GuestArena::mappedWritableSpan(uint32_t addr) const noexcept {
+    uint64_t g = addr >> kGuestPageShift;
+    if (g >= kGuestPageCount || !(prot_[g] & kProtWrite)) return 0;
+    uint64_t end = (uint64_t(addr) & ~uint64_t(kGuestPageSize - 1)) + kGuestPageSize;
+    for (++g; g < kGuestPageCount; ++g) {
+        if (!(prot_[g] & kProtWrite)) break;
+        end += kGuestPageSize;
+    }
+    return uint32_t(end - addr);
+}
+
 uint32_t GuestArena::findFree(uint32_t size, uint32_t hint) const {
     std::lock_guard<std::mutex> lk(mu_);
     // Allocate at host-page granularity so fresh allocations never share a host
