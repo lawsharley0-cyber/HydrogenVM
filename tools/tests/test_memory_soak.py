@@ -24,6 +24,7 @@ class TestMemorySoak(unittest.TestCase):
             self.assertIn('rss_mb', samples[0])
             self.assertIn('vms_mb', samples[0])
 
+    @patch('hvm_memory_soak.psutil', MagicMock())
     @patch('hvm_memory_soak.subprocess.Popen')
     @patch('hvm_memory_soak.subprocess.run')
     def test_scenario_execution(self, mock_run, mock_popen):
@@ -35,15 +36,15 @@ class TestMemorySoak(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out_dir = Path(d)
             scenario = hvm_memory_soak.ClashRoyaleScenario(Path("hvm"), Path("app.ipa"), out_dir, 10.0)
+            scenario.sample_interval = 0.5
 
             (out_dir / "cr_session").mkdir(parents=True, exist_ok=True)
+            (out_dir / "cr_session" / "protocol-events.json").write_text('{"events": [{"event": "npc_requested", "npc": true}]}')
 
             with patch('hvm_memory_soak.time.sleep'):
                 def side_effect(self, *args, **kwargs):
                     if self.name == "peer.log":
                         return '"event": "listening"'
-                    elif self.name == "protocol-events.json":
-                        return '{"events": [{"event": "npc_requested", "npc": true}]}'
                     return original_read_text(self, *args, **kwargs)
                 original_read_text = Path.read_text
 
@@ -51,22 +52,32 @@ class TestMemorySoak(unittest.TestCase):
                     mock_process.poll.return_value = None
                     scenario.setup()
 
-            (out_dir / "cr_session" / "protocol-events.json").write_text('{"events": [{"event": "npc_requested", "npc": true}]}')
-            status = scenario.execute_cycle(1)
+            def communicate_mock(*args, **kwargs):
+                return ("Loaded own home from server", "")
+            mock_process.communicate.side_effect = communicate_mock
+
+            with patch('pathlib.Path.exists', return_value=True):
+                with patch('pathlib.Path.unlink', return_value=None):
+                    with patch('pathlib.Path.read_text', return_value='{"events": [{"event": "npc_requested", "npc": true}]}'):
+                        status = scenario.execute_cycle(1)
+
             scenario.teardown()
 
             self.assertEqual(status, "unsupported")
-            self.assertIn("cycle_1_launch", scenario.stages_completed)
-            self.assertIn("cycle_1_home", scenario.stages_completed)
-            self.assertIn("cycle_1_npc_request", scenario.stages_completed)
-            self.assertIn("cycle_1_battle_start_unsupported", scenario.stages_completed)
-            self.assertIn("cycle_1_battle_end_unsupported", scenario.stages_completed)
+            self.assertIn("cycle_1_launch", scenario.cycle_stages)
+            self.assertIn("cycle_1_home", scenario.cycle_stages)
+            self.assertIn("cycle_1_npc_request", scenario.cycle_stages)
+            self.assertIn("cycle_1_battle_start_unsupported", scenario.cycle_stages)
+            self.assertIn("cycle_1_battle_end_unsupported", scenario.cycle_stages)
 
-    @patch('hvm_memory_soak.ClashRoyaleScenario.setup')
-    @patch('hvm_memory_soak.ClashRoyaleScenario.execute_cycle')
-    @patch('hvm_memory_soak.ClashRoyaleScenario.teardown')
-    def test_main_loop_unsupported_continues(self, mock_td, mock_exec, mock_su):
-        mock_exec.return_value = "unsupported"
+    @patch('hvm_memory_soak.psutil', MagicMock())
+    @patch('hvm_memory_soak.ClashRoyaleScenario')
+    def test_main_loop_unsupported_continues(self, mock_scen):
+        mock_inst = mock_scen.return_value
+        def mock_exec_c(cycle):
+            mock_inst.cycle_stages = ["cycle_1_start"]
+            return "unsupported"
+        mock_inst.execute_cycle.side_effect = mock_exec_c
 
         with tempfile.TemporaryDirectory() as d:
             sys.argv = ["hvm_memory_soak.py", "--app", "dummy.ipa", "--output", d, "--battles", "3"]
@@ -79,24 +90,24 @@ class TestMemorySoak(unittest.TestCase):
             summary = json.loads((subdirs[0] / "summary.json").read_text())
             self.assertEqual(summary["status"], "UNSUPPORTED/PARTIAL")
             self.assertEqual(summary["attempted_cycles"], 3)
-            self.assertEqual(mock_exec.call_count, 3)
+            self.assertEqual(mock_inst.execute_cycle.call_count, 3)
 
+    @patch('hvm_memory_soak.psutil', MagicMock())
     @patch('hvm_memory_soak.ClashRoyaleScenario.setup')
     @patch('hvm_memory_soak.ClashRoyaleScenario.execute_cycle')
     @patch('hvm_memory_soak.ClashRoyaleScenario.teardown')
     def test_main_loop_memory_budget_exceeded(self, mock_td, mock_exec, mock_su):
-        mock_exec.return_value = "unsupported"
+        def mock_exec_c(cycle):
+            mock_exec.cycle_stages = ["cycle_1_start"]
+            return "unsupported"
+        mock_exec.side_effect = mock_exec_c
 
         class MockTelemetry:
             def get_samples(self):
                 return [{"rss_mb": 500.0, "vms_mb": 600.0, "stage": "running"}]
 
         def mock_exec_cycle(cycle):
-            # Inject mock telemetry into the scenario during execute_cycle
-            import sys
-            scenario = sys.modules['hvm_memory_soak'].ClashRoyaleScenario(Path("hvm"), Path("app.ipa"), Path("out"), 10.0)
-            scenario.telemetry = MockTelemetry()
-            # This is tricky because execute_cycle is mocked, we need to actually set it in the real instance
+            mock_inst.cycle_stages = ["cycle_1_start", "cycle_1_launch"]
             return "unsupported"
 
         mock_exec.side_effect = mock_exec_cycle
@@ -104,7 +115,8 @@ class TestMemorySoak(unittest.TestCase):
         # actually a better way is to mock get_samples since we mock execute_cycle which normally sets it up. But the test just needs samples returned.
         with patch('hvm_memory_soak.ClashRoyaleScenario') as mock_scenario_class:
             mock_inst = mock_scenario_class.return_value
-            mock_inst.execute_cycle.return_value = "unsupported"
+            mock_inst.execute_cycle.side_effect = mock_exec_cycle
+            mock_inst.cycle_stages = []
             mock_telemetry = MagicMock()
             mock_telemetry.get_samples.return_value = [{"rss_mb": 500.0, "vms_mb": 600.0, "stage": "running"}]
             mock_inst.telemetry = mock_telemetry

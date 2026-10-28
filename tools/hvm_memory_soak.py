@@ -94,6 +94,7 @@ class Scenario:
 
     def execute_cycle(self, cycle: int) -> str:
         """Executes one cycle, returns status (e.g. 'ok', 'failed', 'unsupported')"""
+        self.cycle_stages = []
         return "unsupported"
 
     def teardown(self):
@@ -138,13 +139,18 @@ class ClashRoyaleScenario(Scenario):
             raise RuntimeError("Clash Royale offline server did not initialize.")
 
     def execute_cycle(self, cycle: int) -> str:
-        self.stages_completed.append(f"cycle_{cycle}_start")
+        self.cycle_stages = []
+        self.cycle_stages.append(f"cycle_{cycle}_start")
 
         container = self.out_dir / 'game/com.supercell.scroll'
         bundle = container / 'Clash Royale.app'
 
         if not container.exists():
             subprocess.run([str(self.hvm), 'import', str(self.app), str(self.out_dir / 'game')], check=True, stdout=subprocess.DEVNULL)
+
+        events_file = self.session_dir / "protocol-events.json"
+        if events_file.exists():
+            events_file.unlink()
 
         cmd = [
             str(self.hvm), "run", str(bundle),
@@ -156,21 +162,23 @@ class ClashRoyaleScenario(Scenario):
         ]
 
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        self.telemetry = TelemetryAdapter(self.process.pid, 0.5)
+        self.telemetry = TelemetryAdapter(self.process.pid, self.sample_interval)
         self.telemetry.start()
 
         # Wait for process or timeout
         try:
             stdout, _ = self.process.communicate(timeout=self.timeout / 5.0)
-            self.stages_completed.append(f"cycle_{cycle}_launch")
+            self.cycle_stages.append(f"cycle_{cycle}_launch")
         except subprocess.TimeoutExpired:
             self.process.terminate()
             stdout, _ = self.process.communicate()
+            self.cycle_stages.append(f"cycle_{cycle}_timeout")
+            return "failed_timeout"
 
         self.telemetry.stop()
 
         if "Loaded own home from server" in stdout:
-            self.stages_completed.append(f"cycle_{cycle}_home")
+            self.cycle_stages.append(f"cycle_{cycle}_home")
 
         # Check protocol events for NPC request
         events_file = self.session_dir / "protocol-events.json"
@@ -179,14 +187,15 @@ class ClashRoyaleScenario(Scenario):
                 events = json.loads(events_file.read_text())['events']
                 npc_requests = [e['npc'] for e in events if e['event'] == 'npc_requested']
                 if npc_requests:
-                    self.stages_completed.append(f"cycle_{cycle}_npc_request")
+                    self.cycle_stages.append(f"cycle_{cycle}_npc_request")
             except Exception:
                 pass
 
-        self.stages_completed.append(f"cycle_{cycle}_battle_start_unsupported")
-        self.stages_completed.append(f"cycle_{cycle}_battle_end_unsupported")
+        self.cycle_stages.append(f"cycle_{cycle}_battle_start_unsupported")
+        self.cycle_stages.append(f"cycle_{cycle}_battle_end_unsupported")
 
         if self.process.returncode != 0:
+            self.cycle_stages.append(f"cycle_{cycle}_crash")
             return "failed"
 
         return "unsupported" # Because full battle is unsupported
@@ -251,7 +260,12 @@ def main():
     args = parser.parse_args()
 
     if not psutil:
-        logger.warning("psutil is not installed. Host telemetry will not be collected. (pip install psutil)")
+        logger.error("psutil is not installed. Host telemetry cannot be collected. A memory soak test requires telemetry.")
+        return 2
+
+    if args.battles <= 0 or args.timeout <= 0 or args.sample_interval <= 0:
+        logger.error("battles, timeout, and sample-interval must be positive values.")
+        return 2
 
     args.output.mkdir(parents=True, exist_ok=True)
     run_id = f"soak-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
@@ -262,6 +276,8 @@ def main():
 
     if args.scenario == "clash_royale":
         scenario = ClashRoyaleScenario(args.hvm, args.app, session_out, args.timeout)
+        scenario.sample_interval = args.sample_interval
+        scenario.headless = args.headless
     else:
         logger.error(f"Unknown scenario: {args.scenario}")
         return 1
@@ -296,16 +312,23 @@ def main():
                     s['cycle'] = cycle
                 all_samples.extend(samples)
 
-            summary["stages"].extend(scenario.stages_completed)
-            summary["verified_transitions"] += len([s for s in scenario.stages_completed if not s.endswith("_unsupported")])
+            summary["stages"].extend(scenario.cycle_stages)
+            # Count only actual transitions backed by evidence (home, npc_request), not start/launch
+            valid_transitions = [s for s in scenario.cycle_stages if s.endswith("_home") or s.endswith("_npc_request")]
+            summary["verified_transitions"] += len(valid_transitions)
 
             if status == "unsupported":
                 logger.info("Cycle reached unsupported stage (e.g. full battle). Counting cycle as incomplete/unsupported but continuing.")
                 summary["status"] = "UNSUPPORTED/PARTIAL"
                 continue
             elif status == "failed":
-                logger.error("Cycle failed.")
+                logger.error("Cycle failed with a crash.")
                 summary["status"] = "FAIL - GUEST"
+                break
+            elif status == "failed_timeout":
+                logger.error("Cycle failed due to timeout.")
+                summary["status"] = "INCOMPLETE"
+                summary["issues"].append("Timeout exceeded during cycle")
                 break
 
             summary["verified_completed_battles"] += 1
