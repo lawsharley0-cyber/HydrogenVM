@@ -2694,8 +2694,15 @@ int runFullSubsystemTests() {
             const bool isq2_pre = callGL("_glIsQueryEXT", {q2}) != 0;
             check(!isq1_pre && !isq2_pre, "glIsQueryEXT is false for reserved but unbegun query names");
 
-            // Begin query
+            // Invalid target begin checking
             callGL("_glBeginQueryEXT", {0x8866, q1});
+            const uint32_t err1 = callGL("_glGetError", {});
+
+            // Begin query
+            callGL("_glBeginQueryEXT", {0x8C2F, q1});
+            const uint32_t err2 = callGL("_glGetError", {});
+
+            check(err1 == 0x0500 /* GL_INVALID_ENUM */ && err2 == 0, "glBeginQueryEXT only accepts occlusion query targets (GL_ANY_SAMPLES_PASSED_EXT)");
 
             // Check isQuery after begin
             const bool isq1_post = callGL("_glIsQueryEXT", {q1}) != 0;
@@ -2710,7 +2717,7 @@ int runFullSubsystemTests() {
             const uint32_t res_active = proc.mem().read<uint32_t>(params);
 
             // End query
-            callGL("_glEndQueryEXT", {0x8866});
+            callGL("_glEndQueryEXT", {0x8C2F});
 
             // Get query object params after end
             proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
@@ -2727,9 +2734,9 @@ int runFullSubsystemTests() {
             check(res_active == 0xFFFFFFFF && avail == 1 && res == 1 && res_unbegun == 0xFFFFFFFF, "glGetQueryObjectuivEXT ignores active and unbegun queries, writes 1 for completed");
 
             // Duplicate/invalid begin checking
-            callGL("_glBeginQueryEXT", {0x8866, q2}); // valid begin
+            callGL("_glBeginQueryEXT", {0x8C2F, q2}); // valid begin
             // call begin again on same target with another ID (should fail)
-            callGL("_glBeginQueryEXT", {0x8866, q1});
+            callGL("_glBeginQueryEXT", {0x8C2F, q1});
 
             // Delete queries (while q2 is active)
             callGL("_glDeleteQueriesEXT", {2, ids});

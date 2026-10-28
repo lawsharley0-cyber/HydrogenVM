@@ -456,8 +456,8 @@ struct ContextData : ObjC::HostObject {
     uint32_t lastError = GL_NO_ERROR;
 
     // Bindings
-    uint32_t activeQueryTarget = 0; // The target of the active query
-    uint32_t activeQueryId = 0;
+    uint32_t activeQueryAnySamples = 0;
+    uint32_t activeQueryAnySamplesConservative = 0;
     uint32_t arrayBuffer = 0;
     uint32_t framebuffer = 0;        // draw framebuffer (GL_FRAMEBUFFER / GL_DRAW_FRAMEBUFFER_APPLE)
     uint32_t readFramebuffer = 0;    // GL_READ_FRAMEBUFFER_APPLE (multisample resolve source)
@@ -2491,10 +2491,8 @@ void gl_deleteQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
         sg->reservedQueries.erase(id);
         sg->queryObjects.erase(id);
 
-        if (c->activeQueryId == id) {
-            c->activeQueryId = 0;
-            c->activeQueryTarget = 0;
-        }
+        if (c->activeQueryAnySamples == id) c->activeQueryAnySamples = 0;
+        if (c->activeQueryAnySamplesConservative == id) c->activeQueryAnySamplesConservative = 0;
     }
 }
 uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
@@ -2506,11 +2504,25 @@ void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || id == 0) return;
 
+    if (target != 0x8C2F && target != 0x8D6A) { // GL_ANY_SAMPLES_PASSED_EXT or GL_ANY_SAMPLES_PASSED_CONSERVATIVE_EXT
+        c->lastError = GL_INVALID_ENUM;
+        return;
+    }
+
     // Khronos: error if another query is already active for this target
-    if (c->activeQueryId != 0 && c->activeQueryTarget == target) {
+    uint32_t& activeId = (target == 0x8C2F) ? c->activeQueryAnySamples : c->activeQueryAnySamplesConservative;
+    if (activeId != 0) {
         c->lastError = GL_INVALID_OPERATION;
         return;
     }
+
+    // Khronos: error if id is an active query for some other target
+    if ((target == 0x8C2F && c->activeQueryAnySamplesConservative == id) ||
+        (target == 0x8D6A && c->activeQueryAnySamples == id)) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
     // Must be a valid reserved name or an existing object
     if (!sg->reservedQueries.count(id) && !sg->queryObjects.count(id)) {
         c->lastError = GL_INVALID_OPERATION;
@@ -2520,20 +2532,24 @@ void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {
     sg->reservedQueries.erase(id);
     sg->queryObjects.insert(id);
 
-    c->activeQueryTarget = target;
-    c->activeQueryId = id;
+    activeId = id;
 }
 void gl_endQueryEXT(Ctx& x, uint32_t target) {
     ContextData* c = currentCtx(x);
     if (!c) return;
 
-    if (c->activeQueryId == 0 || c->activeQueryTarget != target) {
+    if (target != 0x8C2F && target != 0x8D6A) {
+        c->lastError = GL_INVALID_ENUM;
+        return;
+    }
+
+    uint32_t& activeId = (target == 0x8C2F) ? c->activeQueryAnySamples : c->activeQueryAnySamplesConservative;
+    if (activeId == 0) {
         c->lastError = GL_INVALID_OPERATION;
         return;
     }
 
-    c->activeQueryId = 0;
-    c->activeQueryTarget = 0;
+    activeId = 0;
 }
 void gl_getQueryivEXT(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
     if (params) x.mem.write<int32_t>(params, 0);
@@ -2550,7 +2566,7 @@ void gl_getQueryObjectuivEXT(Ctx& x, uint32_t id, uint32_t pname, GuestPtr param
     }
 
     // Result not available if currently active
-    if (c->activeQueryId == id) {
+    if (c->activeQueryAnySamples == id || c->activeQueryAnySamplesConservative == id) {
         c->lastError = GL_INVALID_OPERATION;
         return;
     }
