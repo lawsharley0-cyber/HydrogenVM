@@ -2,7 +2,6 @@ GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
 Loaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main
 Objective-C: 5 classes, 0 categories, 168 selector refs
 [teardown] waiting for the guest run to finish
-[memory] {"schema":"hvm-memory/v1","event":"run-start","elapsedSeconds":1.63426,"hostPageBytes":16384,"backgrounded":false,"residentBytes":225312768,"physicalFootprintBytes":35100800,"availableBytes":0,"lifetimePeakResidentBytes":225312768,"guestHeapLiveBytes":784,"guestHeapBlockCount":41,"guestHeapCommittedBytes":4194304,"guestHeapBadFreeCount":0,"guestMappedBytes":6373376,"guestCommittedHostBytes":6373376,"liveArenaCount":1,"audioVoiceCount":0,"audioQueuedBufferCount":0,"audioReferencedPcmBytes":0,"audioProcessedTagCount":0,"audioProcessedTagCapacityBytes":0,"engineDecodedBlockCount":0,"engineEmittedOpCount":0,"framesPresentedCount":0,"glTextureCount":null,"glTextureEstimatedBytes":null,"glFramebufferCount":null,"glRenderbufferCount":null,"assetCacheBytes":null,"textureCacheBytes":null,"audioDecodedCacheBytes":null,"checkpointCount":null,"checkpointBytes":null,"offlinePendingMessageCount":null,"offlineQueueBytes":null}
 Screen: 320x480 @2x, portrait, status bar visible
 ok 3.5-inch screen without a 568h launch image
 
@@ -121,6 +120,7 @@ ok UISwitch, UISlider, UISegmentedControl
 ok EAGLContext creation & setCurrentContext
 
 [gpu] GL layer (64.0, 64.0)
+[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
 [gpu] GL layer removed
 GPU: drawable 64x64 for renderbuffer 1 (platform layer)
 ok EAGLContext renderbufferStorage:fromDrawable:
@@ -149,7 +149,6 @@ ok UITapGestureRecognizer
 ALL CHECKS PASSED
 
 App exited with code 0
-[memory] {"schema":"hvm-memory/v1","event":"run-end","elapsedSeconds":2.77335,"hostPageBytes":16384,"backgrounded":false,"residentBytes":242860032,"physicalFootprintBytes":47683840,"availableBytes":0,"lifetimePeakResidentBytes":249856000,"guestHeapLiveBytes":2000,"guestHeapBlockCount":116,"guestHeapCommittedBytes":4194304,"guestHeapBadFreeCount":0,"guestMappedBytes":6373376,"guestCommittedHostBytes":6373376,"liveArenaCount":1,"audioVoiceCount":0,"audioQueuedBufferCount":0,"audioReferencedPcmBytes":0,"audioProcessedTagCount":0,"audioProcessedTagCapacityBytes":0,"engineDecodedBlockCount":1229,"engineEmittedOpCount":6862,"framesPresentedCount":6,"glTextureCount":null,"glTextureEstimatedBytes":null,"glFramebufferCount":null,"glRenderbufferCount":null,"assetCacheBytes":null,"textureCacheBytes":null,"audioDecodedCacheBytes":null,"checkpointCount":null,"checkpointBytes":null,"offlinePendingMessageCount":null,"offlineQueueBytes":null}
 [teardown] guest run returned status 0
 [teardown] destroying the guest process
 [teardown] guest process destroyed; live arenas 0
@@ -157,4 +156,4 @@ App exited with code 0
 [teardown] host audio stopped; queueing the exit callback
 [teardown] delivering the exit callback
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 21566
+com.lfull.HydrogenVM: 21413
