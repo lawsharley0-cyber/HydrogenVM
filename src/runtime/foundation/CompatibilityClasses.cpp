@@ -59,11 +59,9 @@ id predicate_array(Ctx& x, Class cls, SEL, id format, id arguments) {
 bool evaluate(Ctx& x, id self, SEL, id object) {
     auto& d = rt(x).host<Predicate>(self); if (d.constant) return d.result;
     const id lhs = value(x, object, d.key);
-    if (d.operation == "==") return objectsEqual(x, lhs, d.rhs);
-    if (d.operation == "!=") return !objectsEqual(x, lhs, d.rhs);
+    if (d.operation == "==") return objectsEqual(x, lhs, d.rhs); if (d.operation == "!=") return !objectsEqual(x, lhs, d.rhs);
     const int order = compare(x, lhs, d.rhs);
-    if (d.operation == "<") return order < 0;
-    if (d.operation == ">") return order > 0;
+    if (d.operation == "<") return order < 0; if (d.operation == ">") return order > 0;
     return d.operation == "<=" ? order <= 0 : order >= 0;
 }
 id filtered(Ctx& x, id self, SEL, id predicate) { std::vector<id> result; for (id item : arrayItems(x, self)) if (send(x, predicate, "evaluateWithObject:", {item})) result.push_back(item); return makeArray(x, result); }
@@ -134,8 +132,7 @@ id attr_init(Ctx& x, id self, SEL, id string, id attributes) {
     if (!string) throw ObjC::ObjCError("nil attributed string");
     auto text = stringValue(x, string); id snapshot = makeDict(x, attributes ? dictEntries(x, attributes) : std::vector<std::pair<id,id>>{});
     auto& a = rt(x).host<Attributed>(self); attr_clear(x, a); a.text = std::move(text); a.attributes.assign(a.text.size(), snapshot);
-    for (id d : a.attributes) rt(x).retain(x.cpu, d);
-    return self;
+    for (id d : a.attributes) rt(x).retain(x.cpu, d); return self;
 }
 id attr_init_string(Ctx& x, id self, SEL, id string) { return attr_init(x, self, 0, string, 0); }
 id attr_init_attr(Ctx& x, id self, SEL, id other) {
@@ -150,16 +147,14 @@ id attr_attributes(Ctx& x, id self, SEL, uint32_t index, GuestPtr out) {
     uint32_t begin = index, end = index + 1;
     while (begin && objectsEqual(x, a.attributes[begin - 1], a.attributes[index])) --begin;
     while (end < a.text.size() && objectsEqual(x, a.attributes[end], a.attributes[index])) ++end;
-    if (out) writeRange(x, out, {begin, end - begin});
-    return a.attributes[index];
+    if (out) writeRange(x, out, {begin, end - begin}); return a.attributes[index];
 }
 id attr_attribute(Ctx& x, id self, SEL, id name, uint32_t index, GuestPtr out) {
     auto& a = rt(x).host<Attributed>(self); if (index >= a.text.size()) throw ObjC::ObjCError("NSAttributedString index out of bounds");
     id result = dictGet(x, a.attributes[index], name); uint32_t begin = index, end = index + 1;
     while (begin && objectsEqual(x, dictGet(x, a.attributes[begin - 1], name), result)) --begin;
     while (end < a.text.size() && objectsEqual(x, dictGet(x, a.attributes[end], name), result)) ++end;
-    if (out) writeRange(x, out, {begin, end - begin});
-    return result;
+    if (out) writeRange(x, out, {begin, end - begin}); return result;
 }
 void attr_set_attrs(Ctx& x, id self, SEL, id attrs, uint32_t loc, uint32_t len) {
     auto& a = rt(x).host<Attributed>(self); rangeCheck(a, loc, len); id snapshot = makeDict(x, attrs ? dictEntries(x, attrs) : std::vector<std::pair<id,id>>{});
