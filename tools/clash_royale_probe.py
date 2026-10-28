@@ -11,7 +11,6 @@ import plistlib
 import re
 import subprocess
 import struct
-import urllib.request
 import zipfile
 
 from compat import macho_info
