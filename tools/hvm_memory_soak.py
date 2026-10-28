@@ -60,6 +60,8 @@ class TelemetryAdapter:
                             vms += c_info.vms
                         except psutil.NoSuchProcess:
                             pass
+                    # Note: psutil RSS/VMS are host subprocess measurements. Child RSS may double-count shared pages.
+                    # This is NOT the iOS physical footprint, which will be provided by Agent 02's telemetry later.
                     sample = {
                         "timestamp": time.time(),
                         "rss_mb": rss / (1024 * 1024),
@@ -216,7 +218,9 @@ def generate_reports(out_dir: Path, summary: Dict[str, Any], samples: List[Dict[
         f.write(f"**Run ID:** {summary['run_id']}\n")
         f.write(f"**Status:** {summary['status']}\n")
         f.write(f"**App:** {summary['app']}\n")
-        f.write(f"**Completed Cycles:** {summary['completed_cycles']} / {summary['requested_cycles']}\n\n")
+        f.write(f"**Attempted Cycles:** {summary['attempted_cycles']}\n")
+        f.write(f"**Verified Completed Battles:** {summary['verified_completed_battles']} / {summary['requested_battles']}\n")
+        f.write(f"**Verified Transitions:** {summary['verified_transitions']}\n\n")
         f.write(f"## Memory (Host Process)\n")
         if samples:
             peak_rss = max(s['rss_mb'] for s in samples)
@@ -266,8 +270,10 @@ def main():
         "run_id": run_id,
         "app": args.app.name,
         "scenario": args.scenario,
-        "requested_cycles": args.battles,
-        "completed_cycles": 0,
+        "requested_battles": args.battles,
+        "attempted_cycles": 0,
+        "verified_completed_battles": 0,
+        "verified_transitions": 0,
         "status": "INCOMPLETE",
         "stages": [],
         "issues": [],
@@ -280,6 +286,8 @@ def main():
         scenario.setup()
         for cycle in range(1, args.battles + 1):
             logger.info(f"Starting cycle {cycle}/{args.battles}")
+            summary["attempted_cycles"] += 1
+
             status = scenario.execute_cycle(cycle)
 
             if scenario.telemetry:
@@ -289,21 +297,21 @@ def main():
                 all_samples.extend(samples)
 
             summary["stages"].extend(scenario.stages_completed)
+            summary["verified_transitions"] += len([s for s in scenario.stages_completed if not s.endswith("_unsupported")])
 
             if status == "unsupported":
                 logger.info("Cycle reached unsupported stage (e.g. full battle). Counting cycle as incomplete/unsupported but continuing.")
-                summary["status"] = "UNSUPPORTED"
-                summary["completed_cycles"] += 1
+                summary["status"] = "UNSUPPORTED/PARTIAL"
                 continue
             elif status == "failed":
                 logger.error("Cycle failed.")
                 summary["status"] = "FAIL - GUEST"
                 break
 
-            summary["completed_cycles"] += 1
+            summary["verified_completed_battles"] += 1
 
-        if summary["completed_cycles"] == args.battles:
-            if summary["status"] != "UNSUPPORTED":
+        if summary["verified_completed_battles"] == args.battles:
+            if summary["status"] not in ["UNSUPPORTED/PARTIAL", "FAIL - GUEST", "FAIL - HOST", "FAIL - MEMORY_LIMIT"]:
                 summary["status"] = "PASS"
 
     except Exception as e:
@@ -356,9 +364,12 @@ def main():
     generate_reports(session_out, summary, all_samples)
     logger.info(f"Report generated at {session_out}")
 
-    if summary["status"] in ["PASS", "UNSUPPORTED"]:
+    if summary["status"] == "PASS":
         return 0
-    return 1
+    elif summary["status"] == "UNSUPPORTED/PARTIAL":
+        return 3
+    else:
+        return 1
 
 if __name__ == "__main__":
     sys.exit(main())

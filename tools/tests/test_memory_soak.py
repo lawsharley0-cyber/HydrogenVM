@@ -71,14 +71,14 @@ class TestMemorySoak(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             sys.argv = ["hvm_memory_soak.py", "--app", "dummy.ipa", "--output", d, "--battles", "3"]
             rc = hvm_memory_soak.main()
-            self.assertEqual(rc, 0) # UNSUPPORTED returns 0
+            self.assertEqual(rc, 3)
 
             subdirs = list(Path(d).glob("soak-*"))
             self.assertEqual(len(subdirs), 1)
 
             summary = json.loads((subdirs[0] / "summary.json").read_text())
-            self.assertEqual(summary["status"], "UNSUPPORTED")
-            self.assertEqual(summary["completed_cycles"], 3)
+            self.assertEqual(summary["status"], "UNSUPPORTED/PARTIAL")
+            self.assertEqual(summary["attempted_cycles"], 3)
             self.assertEqual(mock_exec.call_count, 3)
 
     @patch('hvm_memory_soak.ClashRoyaleScenario.setup')
