@@ -2829,6 +2829,58 @@ int runFullSubsystemTests() {
         check(baWhatStr == "std::bad_alloc", "std::bad_alloc::what() returns std::bad_alloc");
     }
 
+    // 2f9. POSIX ftime, std::string::copy and SCNetworkReachability
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = proc.lookupSymbol(sym);
+            return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
+        };
+
+        const uint32_t tp = proc.heap().allocZeroed(16);
+        const uint32_t ret = call("_ftime", {tp});
+        check(ret == 0 && proc.mem().read<uint32_t>(tp) > 0 && proc.mem().read<uint16_t>(tp + 4) < 1000,
+              "ftime returns seconds and milliseconds");
+
+        const uint32_t sObj = proc.heap().allocZeroed(4);
+        call("__ZNSsC1EPKcRKSaIcE", {sObj, proc.allocCString("HydrogenVM"), 0}); // string("HydrogenVM")
+        const uint32_t buf = proc.heap().allocZeroed(32);
+        // Copy entire string
+        const uint32_t count1 = call("_ZNKSs4copyEPcmm", {sObj, buf, 10, 0});
+        check(count1 == 10 && std::strncmp((const char*)proc.mem().host(buf), "HydrogenVM", 10) == 0, "string::copy(buf, 10, 0) copies full string");
+        // Partial copy and no null terminator written after copy (ensure buffer byte at 8 is unmodified zero since we allocZeroed)
+        proc.mem().write<uint8_t>(buf + 8, 0x42);
+        const uint32_t count2 = call("_ZNKSs4copyEPcmm", {sObj, buf, 8, 0});
+        check(count2 == 8 && std::strncmp((const char*)proc.mem().host(buf), "Hydrogen", 8) == 0 && proc.mem().read<uint8_t>(buf + 8) == 0x42, "string::copy(buf, 8, 0) partial copy");
+        // Nonzero starting position and exceeding string length
+        const uint32_t count3 = call("_ZNKSs4copyEPcmm", {sObj, buf, 20, 8});
+        check(count3 == 2 && std::strncmp((const char*)proc.mem().host(buf), "VM", 2) == 0, "string::copy(buf, 20, 8) handles pos > 0 and len > remaining");
+        // Zero length copy
+        const uint32_t count4 = call("_ZNKSs4copyEPcmm", {sObj, buf, 0, 0});
+        check(count4 == 0, "string::copy(buf, 0, 0) zero copy");
+        // Invalid pos raises logic error (which throws in host, halting the run context or just halting HLE execution)
+        // (Testing exception from basic_string is covered by other libstdc++ tests or would abort guest; we just skip invoking it invalidly here).
+        call("__ZNSsD1Ev", {sObj});
+
+        // SystemConfiguration Tests
+        const uint32_t ref1 = call("_SCNetworkReachabilityCreateWithName", {0, proc.allocCString("apple.com")});
+        const uint32_t flagsOut = proc.heap().allocZeroed(4);
+        const uint32_t getFlagsOk1 = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
+        check(ref1 != 0 && getFlagsOk1 == 1 && proc.mem().read<uint32_t>(flagsOut) == 2,
+              "SCNetworkReachabilityGetFlags returns success and 0x2 (Reachable)");
+
+        const uint32_t getFlagsOkRepeated = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
+        check(getFlagsOkRepeated == 1, "SCNetworkReachabilityGetFlags repeated queries work");
+
+        const uint32_t getFlagsInvalidRef = call("_SCNetworkReachabilityGetFlags", {0, flagsOut});
+        check(getFlagsInvalidRef == 0, "SCNetworkReachabilityGetFlags handles invalid reference");
+
+        const uint32_t getFlagsNullOut = call("_SCNetworkReachabilityGetFlags", {ref1, 0});
+        check(getFlagsNullOut == 1, "SCNetworkReachabilityGetFlags handles invalid output pointer but succeeds");
+
+        // CFRelease to clean up
+        call("_CFRelease", {ref1});
+    }
+
     // #31: independent ARMv7 API-family oracles (metadata is laid out by the public ABI).
     {
         auto bound = [&](std::initializer_list<const char*> names) { for (auto n : names) if (!proc.lookupSymbol(n)) return false; return true; };

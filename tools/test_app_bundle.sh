@@ -10,16 +10,16 @@ cxx="${CXX:-g++}"
 # Note: we need core cpu/memory sources since MachO pulls in GuestArena and Decoder for patching, etc.
 SOURCES="tests/loader/AppBundleReadTests.cpp src/loader/AppBundle.cpp src/loader/Plist.cpp src/loader/Zip.cpp src/loader/MachO.cpp src/loader/ElfLoader.cpp src/core/memory/GuestArena.cpp"
 
-echo "Building AppBundleTests..."
+echo "Building AppBundleReadTests..."
 "$cxx" -std=c++20 -O2 -g -Wall -Wextra -Isrc -Wno-unused-parameter \
   -ffp-contract=off \
   $SOURCES -lz -o "$out/app-bundle-tests"
-echo "Running AppBundleTests..."
+echo "Running AppBundleReadTests..."
 "$out/app-bundle-tests"
 
-echo "Building AppBundleTests (ASan)..."
+echo "Building AppBundleReadTests (ASan)..."
 "$cxx" -std=c++20 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Isrc -Wno-unused-parameter \
   -ffp-contract=off \
   $SOURCES -lz -o "$out/app-bundle-tests-sanitized"
-echo "Running AppBundleTests (ASan)..."
+echo "Running AppBundleReadTests (ASan)..."
 "$out/app-bundle-tests-sanitized"
