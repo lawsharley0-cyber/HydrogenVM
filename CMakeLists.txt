@@ -63,6 +63,9 @@ target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -fop
 add_executable(hvm_tests tests/runner/TestRunner.cpp)
 target_link_libraries(hvm_tests PRIVATE hvm_core)
 
+add_executable(hvm_app_bundle_tests tests/loader/AppBundleImportTests.cpp)
+target_link_libraries(hvm_app_bundle_tests PRIVATE hvm_core)
+
 add_executable(hvm_decodecheck tests/runner/DecodeCheck.cpp)
 target_link_libraries(hvm_decodecheck PRIVATE hvm_core)
 

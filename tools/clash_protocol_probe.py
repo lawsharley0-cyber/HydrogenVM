@@ -3,8 +3,8 @@
 
 The default captures message metadata only. --login-ok exercises the pinned
 native LoginOk decoder with a local diagnostic identity. --home-client also
-sends a pinned, persisted initial home/avatar fixture. No battle/progression
-engine is implemented yet; this is not playable offline mode.
+sends a pinned, persisted initial home/avatar fixture. --npc-fixture sends
+an initial sector fixture. Turn authority and progression saves are absent.
 """
 import argparse
 import json
@@ -13,7 +13,9 @@ from pathlib import Path
 import secrets
 import socket
 import struct
+import sys
 import time
+import zlib
 from clash_wire import MAX_PAYLOAD, Reader, vint, string
 
 # Public protocol constant also present verbatim in the unmodified pinned IPA.
@@ -106,10 +108,16 @@ def serve(args):
     args.out.mkdir(parents=True, exist_ok=True)
     profile = load_profile(args.state) if args.login_ok else None
     home = None
+    template = None
     if getattr(args, 'home_client', None):
         from clash_home_state import load_state, encode_home
         home_state = load_state(args.home_client, args.game_state, profile['account'])
         home = encode_home(home_state, profile['account'])
+    if getattr(args, 'npc_fixture', False):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / 'clash'))
+        from clash_sector_state import load_template, encode_sector
+        from clash_turns import decode_turn
+        template = load_template(args.home_client)
     events = []
     def event(kind, **details):
         item = {'event': kind, **details}
@@ -166,7 +174,21 @@ def serve(args):
                                     npc = reader.reference()
                                     if reader.offset != len(payload) or npc // 1000000 != 18:
                                         raise ValueError('Invalid start-mission request')
-                                    event('npc_requested', npc=npc, supported=False)
+                                    if npc == 18000000 and template is not None:
+                                        sector = encode_sector(template, home_state, profile['account'])
+                                        compressed = zlib.compress(sector)
+                                        reply = b'\x01' + struct.pack('<I', len(sector)) + compressed
+                                        send(21903, 1, reply)
+                                        event('npc_requested', npc=npc, supported=True)
+                                        event('npc_fixture_sent', size=len(sector), seed=template['seed'])
+                                    else:
+                                        event('npc_requested', npc=npc, supported=False)
+                                elif message == 14102 and template is not None:
+                                    try:
+                                        decode_turn(payload, profile['account'])
+                                        event('client_turn')
+                                    except ValueError as error:
+                                        event('unsupported_turn', reason=str(error))
                     except (ValueError, OSError) as error:
                         event('connection_error', reason=str(error))
                     event('disconnected', incompleteBytes=len(frames.pending))
@@ -174,7 +196,7 @@ def serve(args):
             pass
         finally:
             (args.out / 'protocol-events.json').write_text(json.dumps({
-                'scope': 'Diagnostic login and optional initial home fixture. No battle state or game progression.',
+                'scope': 'Diagnostic login, optional initial home fixture, and optional initial sector fixture. Turn authority and progression saves are absent.',
                 'events': events,
             }, indent=2) + '\n')
 
@@ -188,9 +210,12 @@ def main():
     parser.add_argument('--state', type=Path, help='Local diagnostic identity JSON; required with --login-ok')
     parser.add_argument('--home-client', type=Path, help='Pinned unchanged IPA: send its initial home/avatar fixture')
     parser.add_argument('--game-state', type=Path, help='Persistent initial home/avatar JSON; required with --home-client')
+    parser.add_argument('--npc-fixture', action='store_true')
     args = parser.parse_args()
     if args.login_ok and args.state is None:
         parser.error('--login-ok requires --state')
+    if args.npc_fixture and not args.home_client:
+        parser.error('--npc-fixture requires --home-client')
     if args.home_client and (not args.login_ok or not args.game_state):
         parser.error('--home-client requires --login-ok, --state and --game-state')
     if args.game_state and not args.home_client:
