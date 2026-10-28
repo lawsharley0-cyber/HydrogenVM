@@ -4723,9 +4723,10 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
-    //         // Wide formatting stores 4 bytes per wchar_t. C99 swprintf honours n
-        // (including the NUL), returns -1 when the text does not fit, and
-        // must throw before any store when that span is not writable.
+    // Wide formatting stores 4 bytes per wchar_t. C99 swprintf honours n
+    // (including the NUL), returns -1 when the text does not fit, and
+    // must throw before any store when that span is not writable.
+    {
         struct WideCall { bool failed = false; bool bounds = false; int32_t result = -1; };
         auto wideRun = [&](const char* name, std::initializer_list<uint32_t> args) {
             WideCall out;
