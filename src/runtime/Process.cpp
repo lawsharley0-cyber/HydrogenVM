@@ -229,7 +229,9 @@ void Process::setBackgrounded(bool b) {
     }
     mixer_->setAllPaused(b);
     lifeCv_.notify_all();
-    try { recordMemorySample(b ? "backgrounded" : "foregrounded"); } catch (...) {}
+    if (std::getenv("HVM_MEMORY_DIAG")) {
+        try { recordMemorySample(b ? "backgrounded" : "foregrounded"); } catch (...) {}
+    }
 }
 void Process::waitWhileBackgrounded() {
     std::unique_lock<std::mutex> lk(lifeMu_);
@@ -887,8 +889,10 @@ struct MemorySampler {
 
 int Process::run() {
     std::unique_ptr<MemorySampler> memorySampler;
-    try { memorySampler = std::make_unique<MemorySampler>(*this); }
-    catch (...) { /* best-effort diagnostics, including thread creation */ }
+    if (std::getenv("HVM_MEMORY_DIAG")) {
+        try { memorySampler = std::make_unique<MemorySampler>(*this); }
+        catch (...) { /* best-effort diagnostics, including thread creation */ }
+    }
     std::unique_ptr<GuestSampler> sampler;
     if (const char* prof = std::getenv("HVM_GUEST_PROFILE"); prof && *prof) sampler = std::make_unique<GuestSampler>(*this, prof);
     t_thread = mainThread_;
