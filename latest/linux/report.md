@@ -1,37 +1,36 @@
-# HydrogenVM report — 251540f
+# HydrogenVM report — f0083c6
 
-2026-10-28T23:10:29+00:00 · INTEL(R) XEON(R) PLATINUM 8573C (x86_64, Linux 7.0.0-1017-azure)
+2026-10-28T23:23:09+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 183.1s |
-| cpu | 15 | 0 | 0 | 0.7s |
-| ios | 5 | 1 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 19.6s |
+| build | 1 | 0 | 0 | 159.4s |
+| cpu | 15 | 0 | 0 | 0.6s |
+| ios | 5 | 1 | 0 | 1.4s |
+| bench | 5 | 0 | 0 | 18.5s |
 
 ## Speed
 
-CoreMark **2154.7** iterations/s (722.0 guest MIPS)
+CoreMark **2278.4** iterations/s (762.8 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **149.6%** | 898 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **112.2%** | 898 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **89.8%** | 718 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **47.4%** | 616 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **158.2%** | 949 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **118.7%** | 949 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **94.9%** | 759 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **50.1%** | 651 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 470 MIPS, ctests_arm 488 MIPS, ftests_vfp_thumb_softfp 502 MIPS, ftests_neon_thumb 494 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 581 MIPS, ctests_arm 641 MIPS, ftests_vfp_thumb_softfp 549 MIPS, ftests_neon_thumb 460 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.40 ms | 6.83 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.38 ms | 7.90 ms | 0 |
 
 ## Problems (31)
 
@@ -40,16 +39,27 @@ Raw interpreter speed (CPU test programs): ctests_thumb 470 MIPS, ctests_arm 488
 - **ios / FoundationTest**
 
   ```
-  exit 1 (want 0); expected line missing
-  FAIL rd_setObjectForKey copies key, retains key copy and value (line 430)
-  FAIL CFDictionarySetValue only retains key (line 439)
-  --- stderr ---
-  NSLog works: yes 1
+  build failed:
+  clang -fobjc-arc --target=armv7-apple-ios6.0 -isystem /home/runner/work/HydrogenVM/HydrogenVM/tests/ios/include -O1 -g0 -fno-stack-check -Wno-objc-root-class -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header -mfloat-abi=softfp -mfpu=neon -c main.m -o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/FoundationTest/main.m.o
+  main.m:431:5: error: call to undeclared function 'CFDictionaryGetKeysAndValues'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    431 |     CFDictionaryGetKeysAndValues(cmd, (const void **)&firstKey, NULL);
+        |     ^
+  main.m:431:5: note: did you mean 'CFDictionaryGetValue'?
+  /home/runner/work/HydrogenVM/HydrogenVM/tests/ios/include/CoreFoundation/CoreFoundation.h:86:13: note: 'CFDictionaryGetValue' declared here
+     86 | const void *CFDictionaryGetValue(CFDictionaryRef, const void *);
+        |             ^
+  main.m:431:39: error: cast of an indirect pointer to an Objective-C pointer to 'const void **' is disallowed with ARC
+    431 |     CFDictionaryGetKeysAndValues(cmd, (const void **)&firstKey, NULL);
+        |                                       ^~~~~~~~~~~~~~~~~~~~~~~~
+  main.m:442:39: error: cast of an indirect pointer to an Objective-C pointer to 'const void **' is disallowed with ARC
+    442 |     CFDictionaryGetKeysAndValues(cmd, (const void **)&secondKey, NULL);
+        |                                       ^~~~~~~~~~~~~~~~~~~~~~~~~
+  3 errors generated.
   ```
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 47.4% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 50.1% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
