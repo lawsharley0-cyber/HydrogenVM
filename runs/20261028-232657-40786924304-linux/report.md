@@ -1,28 +1,28 @@
-# HydrogenVM report — 0ccd54b
+# HydrogenVM report — 5e0699e
 
-2026-10-28T15:24:09+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-28T23:23:08+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
-**All tests passed.**
+**1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 197.2s |
+| build | 1 | 0 | 0 | 193.8s |
 | cpu | 15 | 0 | 0 | 0.8s |
-| ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 23.9s |
+| ios | 5 | 1 | 0 | 1.4s |
+| bench | 5 | 0 | 0 | 23.7s |
 
 ## Speed
 
-CoreMark **1765.0** iterations/s (591.1 guest MIPS)
+CoreMark **1782.3** iterations/s (595.9 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **122.6%** | 735 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **91.9%** | 735 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **73.5%** | 588 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.8%** | 504 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **123.8%** | 743 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **92.8%** | 743 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **74.3%** | 594 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **39.2%** | 509 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 444 MIPS, ctests_arm 493 MIPS, ftests_vfp_thumb_softfp 427 MIPS, ftests_neon_thumb 376 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 440 MIPS, ctests_arm 460 MIPS, ftests_vfp_thumb_softfp 422 MIPS, ftests_neon_thumb 358 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -30,14 +30,36 @@ Raw interpreter speed (CPU test programs): ctests_thumb 444 MIPS, ctests_arm 493
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.41 ms | 7.39 ms | 0 |
+| UIKitTest | 1.04s | 61 | 0.44 ms | 8.75 ms | 0 |
 
-## Problems (30)
+## Problems (31)
+
+### Failures (1)
+
+- **ios / FoundationTest**
+
+  ```
+  build failed:
+  clang -fobjc-arc --target=armv7-apple-ios6.0 -isystem /home/runner/work/HydrogenVM/HydrogenVM/tests/ios/include -O1 -g0 -fno-stack-check -Wno-objc-root-class -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header -mfloat-abi=softfp -mfpu=neon -c main.m -o /home/runner/work/HydrogenVM/HydrogenVM/build/ios/_work/FoundationTest/main.m.o
+  main.m:431:5: error: call to undeclared function 'CFDictionaryGetKeysAndValues'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    431 |     CFDictionaryGetKeysAndValues(cmd, (const void **)&firstKey, NULL);
+        |     ^
+  main.m:431:5: note: did you mean 'CFDictionaryGetValue'?
+  /home/runner/work/HydrogenVM/HydrogenVM/tests/ios/include/CoreFoundation/CoreFoundation.h:86:13: note: 'CFDictionaryGetValue' declared here
+     86 | const void *CFDictionaryGetValue(CFDictionaryRef, const void *);
+        |             ^
+  main.m:431:39: error: cast of an indirect pointer to an Objective-C pointer to 'const void **' is disallowed with ARC
+    431 |     CFDictionaryGetKeysAndValues(cmd, (const void **)&firstKey, NULL);
+        |                                       ^~~~~~~~~~~~~~~~~~~~~~~~
+  main.m:442:39: error: cast of an indirect pointer to an Objective-C pointer to 'const void **' is disallowed with ARC
+    442 |     CFDictionaryGetKeysAndValues(cmd, (const void **)&secondKey, NULL);
+        |                                       ^~~~~~~~~~~~~~~~~~~~~~~~~
+  3 errors generated.
+  ```
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 38.8% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 39.2% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
