@@ -1,5 +1,6 @@
 #include "runtime/Process.hpp"
 #include <chrono>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 
@@ -7,14 +8,17 @@ namespace Hydrogen::Runtime {
 
 namespace {
 
+struct ThreadLocalKey {
+    explicit ThreadLocalKey(Process&) {}
+    std::mutex mutex;
+    uint32_t address = 0;
+};
+
 uint32_t tld_get(Ctx& x) {
     auto& proc = x.proc;
-
-    auto addr = proc.lookupSymbol("__hvm_libcxx_tld_key");
-    if (addr) {
-        x.cpu.r[0] = *addr;
-        return *addr;
-    }
+    auto& state = proc.service<ThreadLocalKey>();
+    std::lock_guard lock(state.mutex);
+    if (state.address) return state.address;
 
     // Allocate 4 bytes in static memory to hold the pthread_key_t
     uint32_t key_addr = proc.allocStatic(4);
@@ -29,9 +33,10 @@ uint32_t tld_get(Ctx& x) {
     x.cpu.r[1] = 0; // NULL destructor
 
     key_create_fn(x.cpu); // execute key create
+    if (x.cpu.r[0] != 0) throw std::runtime_error("_pthread_key_create failed");
 
     proc.defineData("__hvm_libcxx_tld_key", key_addr);
-    x.cpu.r[0] = key_addr;
+    state.address = key_addr;
     return key_addr;
 }
 
