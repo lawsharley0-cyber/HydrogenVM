@@ -4496,6 +4496,196 @@ int runFullSubsystemTests() {
         std::filesystem::remove_all(home, ec);
     }
 
+    // Asset I/O uses its own Process, guest stack, and temporary bundle. Expected
+    // bytes and offsets below come directly from the ten-byte host fixture.
+    {
+        namespace fs = std::filesystem;
+        char temp[] = "/tmp/hvm_asset_io_XXXXXX";
+        const char* created = ::mkdtemp(temp);
+        if (!created) throw std::runtime_error("mkdtemp for asset I/O tests failed");
+        const std::string home = created, bundle = home + "/Game.app";
+        fs::create_directories(bundle + "/CookedIPhone");
+        fs::create_directories(bundle + "/fr.lproj");
+        fs::create_directories(bundle + "/Base.lproj");
+        fs::create_directories(bundle + "/Other");
+        fs::create_directories(bundle + "/CookedIPhoneBackup");
+        fs::create_directories(home + "/Game.app-sibling");
+        auto put = [](const std::string& path, const std::string& bytes = "0123456789") {
+            std::ofstream out(path, std::ios::binary); out << bytes;
+            if (!out) throw std::runtime_error("write asset I/O fixture failed");
+        };
+        put(bundle + "/CookedIPhone/Texture.tfc");
+        put(bundle + "/CookedIPhone/Map.xxx");
+        put(bundle + "/Other/Texture.tfc");
+        put(bundle + "/CookedIPhoneBackup/Texture.tfc");
+        put(bundle + "/CookedIPhone/Texture.dat");
+        put(bundle + "/fr.lproj/Word.txt");
+        put(bundle + "/Base.lproj/Word.txt");
+        put(home + "/Game.app-sibling/secret.tfc");
+        fs::create_directory_symlink(home + "/Game.app-sibling", bundle + "/Escape");
+        fs::create_directory_symlink(bundle + "/Other", bundle + "/Inside");
+        {
+            ProcessConfig assetCfg;
+            assetCfg.homePath = home; assetCfg.bundlePath = bundle;
+            Process ap(assetCfg);
+            auto& acpu = ap.mainThread().cpu;
+            ap.mem().map(0xbee00000, 1u << 20, Memory::kProtRW);
+            acpu.r[CPU::kSP] = 0xbef00000 - 256;
+            // A Process without a loaded Mach-O needs explicit guest errno
+            // storage, just like the existing libc fixtures in this suite.
+            ap.mainThread().errnoAddr = ap.heap().allocZeroed(4);
+            Ctx ax{ap, acpu, ap.mem()};
+            auto& ar = ObjC::rt(ap);
+            const auto pool = ar.poolPush();
+            auto call = [&](const char* symbol, std::initializer_list<uint32_t> args) {
+                auto address = ap.lookupSymbol(symbol);
+                if (!address) throw std::runtime_error(std::string("missing test API: ") + symbol);
+                return uint32_t(ap.callGuest(acpu, *address, args));
+            };
+            auto lookup = [&](const std::string& name, const std::string& type = "tfc", const std::string& dir = "CookedIPhone") {
+                return Foundation::bundleResource(ax, name, type, dir);
+            };
+            check(lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc" &&
+                  lookup("Texture.tfc", "") == lookup("Texture") &&
+                  lookup("Texture", ".tfc") == lookup("Texture") &&
+                  lookup("Texture", "tfc", "Other") == bundle + "/Other/Texture.tfc" &&
+                  lookup("Map", "xxx") == bundle + "/CookedIPhone/Map.xxx",
+                  "bundle resource cache distinguishes names, extensions and subdirectories");
+            const auto main = uint32_t(call("_CFBundleGetMainBundle", {}));
+            auto localized = [&](const char* lang) {
+                const auto path = uint32_t(ar.send(acpu, main, "pathForResource:ofType:inDirectory:forLocalization:",
+                    {Foundation::makeString(ax, "Word"), Foundation::makeString(ax, "txt"), 0, Foundation::makeString(ax, lang)}));
+                return ap.hostPath(Foundation::utf8(ax, path));
+            };
+            check(localized("fr") == bundle + "/fr.lproj/Word.txt" &&
+                  localized("Base") == bundle + "/Base.lproj/Word.txt" && localized("fr") == bundle + "/fr.lproj/Word.txt",
+                  "bundle resource cache separates explicit localizations");
+            check(lookup("secret", "tfc", "../Game.app-sibling").empty() &&
+                  lookup("secret", "tfc", home + "/Game.app-sibling").empty() &&
+                  lookup("secret", "tfc", "Escape").empty() &&
+                  lookup("../Game.app-sibling/secret", "tfc", "").empty() &&
+                  lookup(home + "/Game.app-sibling/secret", "tfc", "").empty() &&
+                  lookup("Texture", "tfc", bundle + "/CookedIPhone") == lookup("Texture"),
+                  "bundle lookup rejects traversal, absolute and symlink escapes with component boundaries");
+            check(lookup("Texture", "tfc", "Inside") == bundle + "/Inside/Texture.tfc",
+                  "bundle lookup still permits symlinks targeting resources inside the bundle");
+            // Missing resources must become visible, and a cached fallback must
+            // yield to a newly installed device-specific variant.
+            bool mutations = lookup("New").empty();
+            put(bundle + "/CookedIPhone/New.tfc");
+            mutations &= lookup("New") == bundle + "/CookedIPhone/New.tfc";
+            put(bundle + "/CookedIPhone/Texture~iphone.tfc");
+            mutations &= lookup("Texture") == bundle + "/CookedIPhone/Texture~iphone.tfc";
+            fs::remove(bundle + "/CookedIPhone/Texture~iphone.tfc");
+            mutations &= lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc";
+            put(bundle + "/CookedIPhone/Link.tfc");
+            mutations &= !lookup("Link").empty();
+            fs::remove(bundle + "/CookedIPhone/Link.tfc");
+            fs::create_symlink(home + "/Game.app-sibling/secret.tfc", bundle + "/CookedIPhone/Link.tfc");
+            mutations &= lookup("Link").empty();
+            check(mutations, "bundle cache invalidates additions/removals and rejects a cached file replaced by an escaping symlink");
+            put(home + "/Mutable.tfc");
+            const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
+            auto mutableLookup = [&] {
+                return uint32_t(ar.send(acpu, mutableBundle, "pathForResource:ofType:",
+                    {Foundation::makeString(ax, "Mutable"), Foundation::makeString(ax, "tfc")}));
+            };
+            bool mutableOK = mutableLookup() != 0;
+            fs::remove(home + "/Mutable.tfc");
+            check(mutableOK && !mutableLookup(), "sandbox bundle lookups do not retain stale mutable paths");
+            const auto name = Foundation::makeString(ax, "Texture"), ext = Foundation::makeString(ax, "tfc"), dir = Foundation::makeString(ax, "CookedIPhone");
+            const auto url1 = uint32_t(call("_CFBundleCopyResourceURL", {main, name, ext, dir}));
+            const auto url2 = uint32_t(call("_CFBundleCopyResourceURL", {main, name, ext, dir}));
+            check(url1 && url2 && Foundation::urlFilePath(ax, url1) == Foundation::urlFilePath(ax, url2),
+                  "separate CFBundle Copy results have equivalent resource paths");
+            call("_CFRelease", {url1}); call("_CFRelease", {url2});
+            // A directory full of distinct successful lookups exercises eviction.
+            for (unsigned i = 0; i < 4100; ++i) put(bundle + "/CookedIPhone/evict" + std::to_string(i) + ".tfc");
+            bool bounded = true;
+            for (unsigned i = 0; i < 4100; ++i) bounded &= !lookup("evict" + std::to_string(i)).empty();
+            check(bounded && lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc", "bundle resource lookup remains correct across the 4096-entry cache bound");
+            std::atomic<bool> concurrent{true};
+            std::vector<std::thread> workers;
+            for (unsigned i = 0; i < 4; ++i) workers.emplace_back([&] {
+                CPU::Cpu workerCPU;
+                Ctx workerCtx{ap, workerCPU, ap.mem()};
+                for (unsigned j = 0; j < 100; ++j)
+                    if (Foundation::bundleResource(workerCtx, "texture", "tfc", "CookedIPhone") != bundle + "/CookedIPhone/Texture.tfc") concurrent = false;
+            });
+            for (auto& worker : workers) worker.join();
+            check(concurrent, "bundle resource cache supports simultaneous native lookups and case-insensitive fallback");
+
+            const auto buffer = ap.heap().allocZeroed(256);
+            auto openAsset = [&](const std::string& path, uint32_t flags = 0) {
+                return int32_t(call("_open", {ap.internCString(path), flags, 0600}));
+            };
+            auto seek = [&](int fd, uint64_t off, int whence) {
+                // Apple's ARMv7 ABI packs 64-bit arguments without padding.
+                return int64_t(ap.callGuest(acpu, *ap.lookupSymbol("_lseek"), {uint32_t(fd), uint32_t(off), uint32_t(off >> 32), uint32_t(whence)}));
+            };
+            const auto errnoAddr = uint32_t(call("___error", {}));
+            for (const char* leaf : {"Texture.tfc", "Map.xxx"}) {
+                const auto path = ap.guestBundlePath() + "/CookedIPhone/" + leaf;
+                ap.mem().write<uint32_t>(errnoAddr, 123);
+                int a = openAsset(path), b = openAsset(path);
+                bool ok = a >= 0 && b >= 0 && a != b && ap.mem().read<uint32_t>(errnoAddr) == 123;
+                ok &= call("_read", {uint32_t(a), buffer, 3}) == 3 && ap.readCString(buffer) == "012";
+                ok &= seek(a, 6, SEEK_SET) == 6 && seek(b, 0, SEEK_CUR) == 0;
+                ok &= call("_pread", {uint32_t(a), buffer, 2, 4, 0}) == 2;
+                ok &= std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "45" && seek(a, 0, SEEK_CUR) == 6;
+                ok &= call("_pread", {uint32_t(a), buffer, 1, 0xffffffffu, 0xffffffffu}) == uint32_t(-1) &&
+                      ap.mem().read<uint32_t>(errnoAddr) == 22 && seek(a, 0, SEEK_CUR) == 6;
+                ok &= call("_fstat", {uint32_t(a), buffer}) == 0 && call("_fcntl", {uint32_t(a), 3}) == 0;
+                ok &= call("_close", {uint32_t(a)}) == 0;
+                ok &= call("_read", {uint32_t(a), buffer, 1}) == uint32_t(-1) && ap.mem().read<uint32_t>(errnoAddr) == 9;
+                ok &= call("_read", {uint32_t(b), buffer, 2}) == 2 && std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "01";
+                int c = openAsset(path);
+                ok &= c >= 0 && seek(c, 0, SEEK_CUR) == 0 && seek(b, 0, SEEK_CUR) == 2;
+                call("_close", {uint32_t(b)}); call("_close", {uint32_t(c)});
+                check(ok, leaf[0] == 'T' ? "TFC opens own independent descriptors, offsets, pread, fstat, fcntl and close" : "XXX opens own independent descriptors, offsets, pread, fstat, fcntl and close");
+            }
+            bool errors = openAsset(ap.guestBundlePath() + "/CookedIPhone/missing.tfc") == -1 && ap.mem().read<uint32_t>(errnoAddr) == 2;
+            errors &= call("_read", {0xffffffffu, buffer, 1}) == uint32_t(-1) && ap.mem().read<uint32_t>(errnoAddr) == 9;
+            errors &= seek(-1, 0, SEEK_SET) == -1 && ap.mem().read<uint32_t>(errnoAddr) == 9;
+            check(errors, "asset open/read/lseek failures retain Darwin ENOENT and EBADF");
+            bool ordinary = true;
+            for (const char* relative : {"Other/Texture.tfc", "CookedIPhoneBackup/Texture.tfc", "CookedIPhone/Texture.dat"}) {
+                const int fd = openAsset(ap.guestBundlePath() + "/" + relative);
+                ordinary &= fd >= 0 && call("_read", {uint32_t(fd), buffer, 1}) == 1;
+                call("_close", {uint32_t(fd)});
+            }
+            check(ordinary, "non-UE3 paths and CookedIPhone prefix siblings retain ordinary file behavior");
+            int rw = openAsset(ap.guestBundlePath() + "/CookedIPhone/Map.xxx", 2);
+            check(rw >= 0 && call("_write", {uint32_t(rw), ap.internCString("AB"), 2}) == 2 && seek(rw, 0, SEEK_SET) == 0 &&
+                  call("_read", {uint32_t(rw), buffer, 2}) == 2 && std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "AB",
+                  "writable UE3 asset opens retain normal write/read/seek behavior");
+            call("_close", {uint32_t(rw)});
+            fs::rename(bundle, bundle + ".moved");
+            fs::create_directory_symlink(home + "/Game.app-sibling", bundle);
+            const bool rootEscape = lookup("secret", "tfc", "").empty() && lookup("Texture").empty();
+            fs::remove(bundle);
+            fs::rename(bundle + ".moved", bundle);
+            check(rootEscape && lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc",
+                  "cached installation boundary rejects replacing the entire bundle with an external symlink");
+            ar.poolPop(acpu, pool);
+        }
+        {
+            ProcessConfig lateCfg;
+            lateCfg.homePath = home; lateCfg.bundlePath = home + "/Late.app";
+            Process late(lateCfg);
+            auto& lateCPU = late.mainThread().cpu;
+            late.mem().map(0xbee00000, 1u << 20, Memory::kProtRW);
+            lateCPU.r[CPU::kSP] = 0xbef00000 - 256;
+            const auto mainSymbol = *late.lookupSymbol("_CFBundleGetMainBundle");
+            const bool absent = uint32_t(late.callGuest(lateCPU, mainSymbol, {})) == 0;
+            fs::create_directories(lateCfg.bundlePath);
+            check(absent && uint32_t(late.callGuest(lateCPU, mainSymbol, {})) != 0,
+                  "thread-safe main bundle initialization retries a not-yet-created directory");
+        }
+        std::error_code ec;
+        fs::remove_all(home, ec);
+    }
+
     const uint32_t arenasBefore = Memory::GuestArena::liveCount();
     {
         Memory::GuestArena first, second;
