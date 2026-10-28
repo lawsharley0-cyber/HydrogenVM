@@ -1,37 +1,37 @@
-# HydrogenVM report — d8f302c
+# HydrogenVM report — 961959b
 
-2026-10-28T05:08:26+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-28T19:33:35+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 239.9s |
-| cpu | 15 | 0 | 0 | 0.8s |
+| build | 1 | 0 | 0 | 222.8s |
+| cpu | 15 | 0 | 0 | 0.7s |
 | ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 24.9s |
+| bench | 5 | 0 | 0 | 24.7s |
 
 ## Speed
 
-CoreMark **1697.1** iterations/s (566.4 guest MIPS)
+CoreMark **1698.8** iterations/s (570.7 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **117.9%** | 707 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **88.4%** | 707 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **70.7%** | 566 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **118.0%** | 708 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **88.5%** | 708 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **70.8%** | 566 MHz |
 | iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.3%** | 485 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 438 MIPS, ctests_arm 493 MIPS, ftests_vfp_thumb_softfp 432 MIPS, ftests_neon_thumb 406 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 459 MIPS, ctests_arm 487 MIPS, ftests_vfp_thumb_softfp 442 MIPS, ftests_neon_thumb 403 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.10s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.47 ms | 7.72 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.42 ms | 7.39 ms | 0 |
 
 ## Problems (30)
 
