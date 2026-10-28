@@ -3739,12 +3739,20 @@ int runFullSubsystemTests() {
                 const uint32_t stateSel = r.sel("transactionState");
                 const std::string stateSig = r.getMethodSignature(sktCls, stateSel);
 
-                const ObjC::id pay = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {0}));
-                r.send(cpu, pay, "setQuantity:", {uint32_t(50)});
-                const uint32_t qtySel = r.sel("setQuantity:");
-                const std::string qtySig = r.getMethodSignature(skpCls, qtySel);
+                const ObjC::id prodId = Foundation::makeString(cx, "com.test.product");
+                const ObjC::id pay = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {prodId}));
+                const uint32_t qty1 = uint32_t(r.send(cpu, pay, "quantity"));
+                const ObjC::id pId = ObjC::id(r.send(cpu, pay, "productIdentifier"));
 
-                check(tid == 0 && tdate == 0 && tstate == 0 && stateSig == "i@:" && qtySig == "v@:i", "SKPaymentTransaction and SKPayment properties use 32-bit types (i) and return expected defaults");
+                const ObjC::Class mPayCls = r.getClass("SKMutablePayment");
+                const ObjC::id mPay = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, mPayCls, r.selAlloc)), "init"));
+                r.send(cpu, mPay, "setQuantity:", {uint32_t(50)});
+                const uint32_t qty2 = uint32_t(r.send(cpu, mPay, "quantity"));
+
+                const uint32_t qtySel = r.sel("setQuantity:");
+                const std::string qtySig = r.getMethodSignature(mPayCls, qtySel);
+
+                check(tid == 0 && tdate == 0 && tstate == 0 && stateSig == "i@:" && qtySig == "v@:i" && qty1 == 1 && pId == prodId && qty2 == 50, "SKPaymentTransaction and SKPayment properties use 32-bit types (i), return expected defaults, and preserve state");
             } else {
                 check(false, "SKPaymentTransaction or SKPayment class not found");
             }

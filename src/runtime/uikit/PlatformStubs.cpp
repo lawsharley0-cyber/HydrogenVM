@@ -1625,10 +1625,7 @@ id sk_zero_id(Ctx&, id, SEL) { return 0; }
 char sk_zero_c(Ctx&, id, SEL) { return 0; }
 int32_t sk_zero_i(Ctx&, id, SEL) { return 0; }
 void sk_ignore_i(Ctx&, id, SEL, int32_t) {}
-id sk_allocZero(Ctx& x, id, SEL, id) {
-    const id inst = rt(x).createInstance(x.cpu.r[0]);
-    return autoreleased(x, inst);
-}
+
 
 // SKProductsRequest: no App Store, so every product id is "invalid" and the
 // delegate gets an empty response (not an error — IAP code expects a response).
@@ -1886,7 +1883,16 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     // GameController
     ObjC::ClassBuilder gcc = r.defineClass("GCController", "NSObject");
     gcc.cm<&sk_empty>("controllers", "@@:")
-       .cm<&sk_ignoreObj>("startWirelessControllerDiscoveryWithCompletionHandler:", "v@:@?")
+       .classMethod("startWirelessControllerDiscoveryWithCompletionHandler:", [](Ctx& x) {
+           const id block = x.cpu.r[2];
+           if (block) {
+               Process* proc = &x.proc;
+               Foundation::mainRunLoop(x.proc).addTimer(0.01, 0, false, [proc, block](CPU::Cpu& c) {
+                   Ctx cx{*proc, c, proc->mem()};
+                   ObjC::callBlock(cx, block, {});
+               });
+           }
+       }, "v@:@?")
        .cm<&sk_noop>("stopWirelessControllerDiscovery", "v@:")
        .m<&sk_zero_id>("controllerPausedHandler", "@?@:")
        .m<&sk_ignoreObj>("setControllerPausedHandler:", "v@:@?")
