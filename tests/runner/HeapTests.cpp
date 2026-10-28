@@ -66,33 +66,24 @@ int main() {
         check(before.liveBytes == after.liveBytes && before.liveBlocks == after.liveBlocks,
               "heap allocation/reallocation/deallocation symmetry leaves no leaked bytes");
 
-        // check failed realloc
+        // POSIX: realloc failure leaves the original block allocated.
         uint32_t a = heap.alloc(100);
-        uint32_t large = heap.realloc(a, 0x7FFFFFF0u); // should fail
-        check(large == 0, "oversized realloc fails");
-        check(heap.blockSize(a) == 128 || heap.blockSize(a) == 112 || heap.blockSize(a) == 100 || heap.blockSize(a) > 0, "failed realloc preserves original block");
+        const uint32_t oldSize = heap.blockSize(a);
+        mem.write<uint8_t>(a, 0x5a);
+        mem.write<uint8_t>(a + 99, 0xa5);
+        const auto beforeFail = heap.stats();
+        const uint32_t large = heap.realloc(a, 0x7FFFFFF0u);
+        const auto afterFail = heap.stats();
+        check(a != 0 && large == 0, "oversized realloc fails");
+        check(oldSize >= 100 && heap.blockSize(a) == oldSize, "failed realloc preserves the original block size");
+        check(mem.read<uint8_t>(a) == 0x5a && mem.read<uint8_t>(a + 99) == 0xa5,
+              "failed realloc preserves the original bytes");
+        check(beforeFail.liveBlocks == afterFail.liveBlocks && beforeFail.liveBytes == afterFail.liveBytes &&
+              beforeFail.badFrees == afterFail.badFrees,
+              "failed realloc does not change live heap stats");
         heap.free(a);
-    }
-
-    {
-        for (int cycle = 0; cycle < 5; ++cycle) {
-            Memory::GuestArena mem;
-            Heap heap(mem, 0x10000000, 0x11000000);
-
-            for (int i = 0; i < 100; ++i) {
-                uint32_t a = heap.alloc(100);
-                uint32_t b = heap.allocZeroed(200);
-                uint32_t c = heap.allocAligned(300, 4096);
-
-                uint32_t a2 = heap.realloc(a, 150);
-                uint32_t b2 = heap.realloc(b, 250);
-
-                heap.free(a2);
-                heap.free(b2);
-                heap.free(c);
-            }
-        }
-        check(true, "Repeated gameplay and scene transitions (guest arena init/teardown) do not leak memory locally");
+        check(heap.blockSize(a) == 0 && heap.stats().badFrees == beforeFail.badFrees,
+              "the original block can still be freed after a failed realloc");
     }
 
     const auto home = std::filesystem::temp_directory_path() / ("hvm-heap-tests-" + std::to_string(getpid()));

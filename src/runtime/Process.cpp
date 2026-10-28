@@ -1,5 +1,6 @@
 #include "Process.hpp"
 #include "libc/Unwind.hpp"
+#include "runtime/objc/ObjC.hpp"
 #include <sstream>
 #include "audio/Audio.hpp"
 #include "loader/ElfLoader.hpp"
@@ -721,22 +722,17 @@ void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
     }
 
     if (t->objcState) {
-        void (*popPools)(CPU::Cpu&, uint32_t) = nullptr;
-        if (auto sym = lookupSymbol("_objc_autoreleasePoolPop")) {
-            if (engine_->isHleAddress(*sym & ~1u)) {
-                if (auto func = hostFunctionFor("_objc_autoreleasePoolPop")) {
-                    if (auto popFn = func.target<void(*)(CPU::Cpu&, uint32_t)>()) {
-                        popPools = *popFn;
-                    }
-                }
-            }
+        // hostFunctionFor returns std::function<void(Cpu&)>. Its target is the
+        // HLE adapter, not void(*)(Cpu&, uint32_t), so a target<> cast of
+        // _objc_autoreleasePoolPop is null and never drains. Call the runtime.
+        try {
+            ObjC::rt(*this).drainPools(t->cpu);
+        } catch (const std::exception& e) {
+            log(LogLevel::Warning, std::string("autorelease pool drain on thread exit: ") + e.what());
+        } catch (...) {
+            log(LogLevel::Warning, "autorelease pool drain on thread exit failed");
         }
-
-        if (popPools) {
-            popPools(t->cpu, 1);
-        }
-
-        t->objcStateFree(t->objcState);
+        if (t->objcStateFree) t->objcStateFree(t->objcState);
         t->objcState = nullptr;
     }
     {
