@@ -814,26 +814,32 @@ void rd_dealloc(Ctx& x, id self, SEL) {
 }
 
 uint32_t rd_keyEnumerator(Ctx& x, id self, SEL) {
+    // CF dictionaries with raw-pointer key callbacks are not NSDictionary:
+    // constructing an NSArray would retain arbitrary pointer bits as ObjC ids.
+    if (auto* d = rawD(x, self); d && !d->keyObjects)
+        throw ObjC::ObjCError("raw CFDictionary keys cannot be enumerated as Objective-C objects");
     std::vector<id> keys;
     for (auto& [k, v] : entriesOfAny(x, self)) keys.push_back(k);
     return uint32_t(send(x, makeArray(x, keys), "objectEnumerator"));
 }
 uint32_t rd_allKeys(Ctx& x, id self, SEL) {
+    if (auto* d = rawD(x, self); d && !d->keyObjects)
+        throw ObjC::ObjCError("raw CFDictionary keys cannot be bridged to NSArray");
     std::vector<id> keys;
     for (auto& [k, v] : entriesOfAny(x, self)) keys.push_back(k);
     return makeArray(x, keys);
 }
 void rd_setObjectForKey(Ctx& x, id self, SEL, uint32_t v, uint32_t k) {
     if (rawD(x, self) && rawD(x, self)->mutableDict) d_set(x, self, k, v);
-    else x.proc.log(LogLevel::Warning, "Attempted to mutate an immutable dictionary");
+    else throw ObjC::ObjCError("mutation of immutable CFDictionary");
 }
 void rd_removeObjectForKey(Ctx& x, id self, SEL, uint32_t k) {
     if (rawD(x, self) && rawD(x, self)->mutableDict) d_remove(x, self, k);
-    else x.proc.log(LogLevel::Warning, "Attempted to mutate an immutable dictionary");
+    else throw ObjC::ObjCError("mutation of immutable CFDictionary");
 }
 void rd_removeAllObjects(Ctx& x, id self, SEL) {
     if (rawD(x, self) && rawD(x, self)->mutableDict) d_removeAll(x, self);
-    else x.proc.log(LogLevel::Warning, "Attempted to mutate an immutable dictionary");
+    else throw ObjC::ObjCError("mutation of immutable CFDictionary");
 }
 
 // --------------------------------------------------------------- CFSet ---
