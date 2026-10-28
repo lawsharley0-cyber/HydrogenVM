@@ -1,43 +1,43 @@
-# HydrogenVM report — ac9bd63
+# HydrogenVM report — 716da8c
 
-2026-10-28T05:58:05+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-28T19:48:03+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
-**1 test(s) failed.**
+**All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 0 | 1 | 0 | 137.4s |
+| build | 1 | 0 | 0 | 203.3s |
+| cpu | 15 | 0 | 0 | 0.8s |
+| ios | 6 | 0 | 0 | 2.2s |
+| bench | 5 | 0 | 0 | 23.7s |
+
+## Speed
+
+CoreMark **1784.1** iterations/s (597.0 guest MIPS)
+
+| Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
+|---|---|---:|---:|---:|
+| iPhone 3GS | Cortex-A8 | 1440 | **123.9%** | 743 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **92.9%** | 743 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **74.3%** | 595 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **39.2%** | 510 MHz |
+
+Raw interpreter speed (CPU test programs): ctests_thumb 441 MIPS, ctests_arm 495 MIPS, ftests_vfp_thumb_softfp 433 MIPS, ftests_neon_thumb 390 MIPS
+
+| App | Wall | Frames | Avg frame | Max frame | Slow frames |
+|---|---:|---:|---:|---:|---:|
+| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.42 ms | 7.58 ms | 0 |
 
 ## Problems (30)
 
-### Failures (1)
+### Below speed goal (1)
 
-- **build / ninja**
-
-  ```
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1886:9: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1888:9: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1889:9: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1890:9: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1908:12: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1908:47: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1908:73: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1908:105: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1915:11: error: no matching member function for call to 'cm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1916:11: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1916:46: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1923:13: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1923:55: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1924:13: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1924:52: error: no matching member function for call to 'm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1925:13: error: no matching member function for call to 'm'
-   1925 |            .m(zeroId, "payment", "@@:").m(zeroId, "error", "@@:")
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1925:41: error: no matching member function for call to 'm'
-   1925 |            .m(zeroId, "payment", "@@:").m(zeroId, "error", "@@:")
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1926:13: error: no matching member function for call to 'm'
-   1925 |            .m(zeroId, "payment", "@@:").m(zeroId, "error", "@@:")
-  18 errors generated.
-  ```
+- **bench / coremark**: 39.2% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
