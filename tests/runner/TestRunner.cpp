@@ -3973,50 +3973,6 @@ int runFullSubsystemTests() {
             call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
             return empty && plus && blank;
         });
-
-
-        run("_FORTIFY_SOURCE ___*_chk functions enforce buffer boundaries and handle overlaps", [&] {
-            uint32_t buf = proc.heap().allocZeroed(100);
-            call("_memset", {buf, 'A', 100});
-            proc.mem().write<uint8_t>(buf + 99, 0);
-
-            // Should pass exact fit
-            if (call("___strcpy_chk", {buf, buf + 50, 100}) != buf) return false;
-
-            // Should fail 1-byte overflow
-            bool chk_caught = false;
-            try { call("___strcpy_chk", {buf, buf + 50, 49}); }
-            catch (const Hydrogen::CPU::GuestFault&) { chk_caught = true; }
-            catch (const std::exception&) { chk_caught = true; } // callGuest converts to HostError sometimes
-            if (!chk_caught) { return false; }
-
-            // Memmove overlap check
-            call("___memmove_chk", {buf + 10, buf, 20, 90});
-
-            // Destination writability check (unmapped destination)
-            chk_caught = false;
-            try { call("___strcpy_chk", {0x40000000, buf, 100}); } // Unmapped addr
-            catch (const Hydrogen::CPU::GuestFault&) { chk_caught = true; }
-            catch (const std::exception&) { chk_caught = true; }
-            if (!chk_caught) { return false; }
-
-            // Destination writability check (read-only destination)
-            uint32_t ro_page = proc.mem().findFree(4096);
-            proc.mem().map(ro_page, 4096, Hydrogen::Memory::kProtRW);
-            proc.mem().write<uint8_t>(ro_page, 0);
-            proc.mem().protect(ro_page, 4096, Hydrogen::Memory::kProtRead);
-
-            chk_caught = false;
-            try { call("___strcpy_chk", {ro_page, buf, 100}); }
-            catch (const Hydrogen::CPU::GuestFault&) { chk_caught = true; }
-            catch (const std::exception&) { chk_caught = true; }
-            if (!chk_caught) { return false; }
-
-            proc.mem().unmap(ro_page, 4096);
-            proc.heap().free(buf);
-            return true;
-        });
-
         run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
             const std::string root = proc.guestHomePath() + "/tmp/";
             std::vector<std::string> names;

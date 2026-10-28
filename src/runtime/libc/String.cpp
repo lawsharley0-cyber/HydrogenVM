@@ -369,10 +369,11 @@ uint32_t s_strlcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t dest
 
 uint32_t s_strlcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
+    if (n == 0) return s_strlcat(x, d, s, 0); // No reads/writes on d when n == 0.
     // strlcat needs to read up to n bytes of d to find the NUL, and then read from s.
     const size_t dl = safe_strnlen(x, d, n);
     const size_t sl = safe_strlen(x, s);
-    if (dl < n - 1) { // we append if we found NUL before n
+    if (dl < n) { // We only append if we found NUL before n.
         size_t append_len = std::min<size_t>(sl, n - dl - 1);
         if (!x.mem.validateRange(d + dl, append_len + 1, Memory::kProtWrite)) {
              throw CPU::GuestFault(CPU::Exit::MemFault, d + dl, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcat_chk");
