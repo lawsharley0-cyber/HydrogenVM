@@ -83,11 +83,11 @@ bool looksLikeData(const std::string& s) {
 
 // Host threads for guest threads get a generous stack: nested host↔guest
 // calls (ObjC dispatch from host code, callbacks) recurse on it.
-void spawnHostThread(std::function<void()> fn) {
+pthread_t spawnHostThread(std::function<void()> fn) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 8u << 20);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    // Let the destructor explicitly cancel or detach if needed
     auto* heapFn = new std::function<void()>(std::move(fn));
     pthread_t th;
     const int r = pthread_create(&th, &attr, [](void* p) -> void* {
@@ -97,6 +97,7 @@ void spawnHostThread(std::function<void()> fn) {
     }, heapFn);
     pthread_attr_destroy(&attr);
     if (r != 0) { delete heapFn; throw std::runtime_error("couldn't create host thread"); }
+    return th;
 }
 
 } // namespace
@@ -165,7 +166,7 @@ Process::~Process() {
         liveness_->alive = false;
     }
     requestStop();
-    // Wait (bounded) for guest threads to notice and exit.
+    // Wait (bounded) for guest threads to notice and exit, enforcing cancellation on blocked workers
     for (int i = 0; i < 200; ++i) {
         std::shared_ptr<GuestThread> activeThread;
         {
@@ -175,7 +176,15 @@ Process::~Process() {
             }
         }
         if (!activeThread) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::unique_lock<std::mutex> lk(activeThread->m);
+        if (!activeThread->cv.wait_for(lk, std::chrono::milliseconds(10), [&] { return activeThread->finished.load(); })) {
+            if (i == 199 && activeThread->hostNative) {
+                pthread_cancel(activeThread->hostNative);
+            }
+        }
+    }
+    for (auto& [k, t] : threads_) {
+        if (t->hostNative) pthread_detach(t->hostNative);
     }
     if (t_thread && &t_thread->proc == this) t_thread = nullptr;
 }

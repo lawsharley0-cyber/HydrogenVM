@@ -73,6 +73,7 @@ struct GuestThread {
     uint32_t stackBase = 0, stackSize = 0;
     uint32_t errnoAddr = 0;
     std::unordered_map<uint32_t, uint32_t> tsd;   // pthread keys
+    pthread_t hostNative = 0;
     std::thread host;
     std::atomic<bool> finished{false};
     bool detached = false;
