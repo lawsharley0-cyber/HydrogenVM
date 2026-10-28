@@ -3716,12 +3716,18 @@ int runFullSubsystemTests() {
                   "NSXMLParser elements / attributes / entities / CDATA / self-closing / mismatched-tag error");
         }
         {
-            // GCController controllers returns empty array
+            // GCController controllers returns empty array and completion blocks work
             const ObjC::Class gccCls = r.getClass("GCController");
             if (gccCls) {
                 const ObjC::id arr = ObjC::id(r.send(cpu, gccCls, "controllers"));
                 const uint32_t count = uint32_t(r.send(cpu, arr, "count"));
-                check(count == 0, "GCController controllers returns empty array");
+
+                uint32_t called = 0;
+                const uint32_t bAddr = ObjC::compileBlock(cx, [&](Ctx&) { called = 1; }, "v@?");
+                r.send(cpu, gccCls, "startWirelessControllerDiscoveryWithCompletionHandler:", {bAddr});
+                Foundation::mainRunLoop(proc).runFor(0.05);
+
+                check(count == 0 && called == 1, "GCController controllers returns empty array and triggers discovery block");
             } else {
                 check(false, "GCController class not found");
             }
