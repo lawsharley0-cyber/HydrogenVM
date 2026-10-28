@@ -118,7 +118,24 @@ void ud_setObject(Ctx& x, id, SEL, id value, id key) {
     if (!value) { D(x).set(K(x, key), nullptr); return; }
     PV v = objectToPlist(x, value);
     if (!v) {
-        throw ObjC::ObjCError("Attempt to insert non-property list object " + describe(x, value) + " for key " + K(x, key));
+        if (rt(x).respondsTo(value, rt(x).sel("data"))) {
+            v = objectToPlist(x, id(rt(x).send(x.cpu, value, rt(x).sel("data"))));
+        } else if (rt(x).respondsTo(value, rt(x).sel("archive"))) {
+            v = objectToPlist(x, id(rt(x).send(x.cpu, value, rt(x).sel("archive"))));
+        }
+    }
+    if (!v) {
+        if (isString(x, value)) {
+            v = Plist::Value::makeString(utf8(x, value));
+        } else if (rt(x).respondsTo(value, rt(x).sel("string"))) {
+            v = Plist::Value::makeString(utf8(x, id(rt(x).send(x.cpu, value, rt(x).sel("string")))));
+        } else if (rt(x).respondsTo(value, rt(x).sel("description"))) {
+            v = Plist::Value::makeString(describe(x, value));
+        }
+    }
+    if (!v) {
+        x.proc.logf(LogLevel::Warning, "NSUserDefaults setObject:forKey: ignoring non-plist object %s for key %s", describe(x, value).c_str(), K(x, key).c_str());
+        return;
     }
     D(x).set(K(x, key), v);
     postNotification(x, "NSUserDefaultsDidChangeNotification", ud_standard(x, 0, 0));

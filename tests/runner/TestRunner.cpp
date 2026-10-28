@@ -2683,6 +2683,21 @@ int runFullSubsystemTests() {
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
     }
 
+    // 2f7. NSUserDefaults non-plist object handling
+    {
+        const ObjC::Class nsoCls = r.getClass("NSObject");
+        const ObjC::id nso = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, nsoCls, r.selAlloc)), r.selInit));
+        const ObjC::Class udCls = r.getClass("NSUserDefaults");
+        const ObjC::id ud = ObjC::id(r.send(cpu, udCls, r.sel("standardUserDefaults")));
+        const ObjC::id testKey = Runtime::Foundation::makeString(cx, "testKeyNonPlist");
+        r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)});
+
+        // ensure it was translated to description (fallback)
+        const ObjC::id val = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(testKey)}));
+        const std::string desc = Runtime::Foundation::utf8(cx, val);
+        check(desc.find("NSObject") != std::string::npos, "NSUserDefaults setObject:forKey: fallback on description for non-plist objects");
+    }
+
     // 2f2. libstdc++ containers (GCC 4.2 ABI): red-black tree, COW std::string
     {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
