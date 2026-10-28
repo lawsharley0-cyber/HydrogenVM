@@ -143,8 +143,8 @@ int runAsm(const std::string& elf, const std::vector<std::string>& sources) {
             }
             if (undefWant) {
                 if (!ok && c.exit == CPU::Exit::Undefined) {
-                    uint32_t raw = c.thumb ? h.mem.read<uint16_t>(c.exit_info) : h.mem.read<uint32_t>(c.exit_info);
-                    if (raw == undefWant->value) {
+                    uint32_t raw = c.thumb ? (h.mem.read<uint16_t>(c.exit_info) | (h.mem.read<uint16_t>(c.exit_info + 2) << 16)) : h.mem.read<uint32_t>(c.exit_info);
+                    if (raw == undefWant->value || (c.thumb && (raw & 0xFFFF) == undefWant->value)) {
                         ++pass;
                         continue;
                     }
