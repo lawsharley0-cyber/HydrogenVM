@@ -1,26 +1,43 @@
-# HydrogenVM report — 159796e
+# HydrogenVM report — baf403d
 
-2026-10-28T18:38:38+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-28T18:38:36+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
-**1 test(s) failed.**
+**All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 0 | 1 | 0 | 189.3s |
+| build | 1 | 0 | 0 | 171.6s |
+| cpu | 15 | 0 | 0 | 0.6s |
+| ios | 6 | 0 | 0 | 2.2s |
+| bench | 5 | 0 | 0 | 18.5s |
+
+## Speed
+
+CoreMark **2279.3** iterations/s (764.8 guest MIPS)
+
+| Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
+|---|---|---:|---:|---:|
+| iPhone 3GS | Cortex-A8 | 1440 | **158.3%** | 950 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **118.7%** | 950 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **95.0%** | 760 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **50.1%** | 651 MHz |
+
+Raw interpreter speed (CPU test programs): ctests_thumb 567 MIPS, ctests_arm 596 MIPS, ftests_vfp_thumb_softfp 521 MIPS, ftests_neon_thumb 507 MIPS
+
+| App | Wall | Frames | Avg frame | Max frame | Slow frames |
+|---|---:|---:|---:|---:|---:|
+| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.36 ms | 6.34 ms | 0 |
 
 ## Problems (30)
 
-### Failures (1)
+### Below speed goal (1)
 
-- **build / ninja**
-
-  ```
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1926:15: error: use of undeclared identifier 'sk_allocZero'; did you mean 'allocZero'?
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1926:11: error: no matching member function for call to 'cm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1927:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1937:16: error: use of undeclared identifier 'sk_zero_q'
-  4 errors generated.
-  ```
+- **bench / coremark**: 50.1% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
