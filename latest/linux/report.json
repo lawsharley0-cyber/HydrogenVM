@@ -2,23 +2,23 @@
   "host": {
     "os": "Linux 6.17.0-1022-azure",
     "arch": "x86_64",
-    "cpu": "AMD EPYC 9V74 80-Core Processor",
-    "commit": "ac9bd63",
-    "date": "2026-10-28T05:58:05+00:00"
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "commit": "d450c19",
+    "date": "2026-10-28T05:57:52+00:00"
   },
-  "seconds": 137.4,
+  "seconds": 191.7,
   "ok": false,
   "suites": {
     "build": {
       "passed": 0,
       "failed": 1,
       "skipped": 0,
-      "seconds": 137.41407418251038,
+      "seconds": 191.68840646743774,
       "tests": [
         {
           "name": "engine",
           "result": "fail",
-          "seconds": 137.414
+          "seconds": 191.688
         }
       ]
     }
@@ -186,18 +186,6 @@
       "test": "compiler",
       "severity": "warning",
       "message": "src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]"
-    },
-    {
-      "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
-      "message": "src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]"
-    },
-    {
-      "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
-      "message": "src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]"
     },
     {
       "suite": "build",
