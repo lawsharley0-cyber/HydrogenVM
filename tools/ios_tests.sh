@@ -25,6 +25,7 @@ step "build ExceptionTest";   $BUILD --name ExceptionTest "$APPS/exceptiontest/m
 step "build FoundationTest";  (cd "$APPS/foundationtest" && $BUILD --name FoundationTest --resource config.plist --resource en.lproj main.m >/dev/null) && echo ok || fail=1
 RES="$OUT/_work/uikit-res"
 python3 "$APPS/uikittest/make_resources.py" "$RES"
+step "build AudioLifecycle";  $BUILD --name AudioLifecycle --resource "$APPS/audiolifecycle/tone.wav" "$APPS/audiolifecycle/main.m" >/dev/null && echo ok || fail=1
 step "build UIKitTest";       $BUILD --name UIKitTest --resource "$RES/test.png" --resource "$RES/test@2x.png" --resource "$RES/crushed.png" \
                                 --resource "$RES/Panel.nib" --resource "$RES/PanelKeyed.nib" "$APPS/uikittest/main.m" >/dev/null && echo ok || fail=1
 fi
@@ -45,5 +46,6 @@ run BinPlist 3 "atexit handler ran"
 run ObjCTest 0 "ALL CHECKS PASSED"
 run FoundationTest 0 "ALL CHECKS PASSED"
 run ExceptionTest 0 "ALL CHECKS PASSED"
+run AudioLifecycle 0 "PASS"
 run UIKitTest 0 "ALL CHECKS PASSED" --tap 70,350@0.3 --tap 230,350@0.5 --screenshot "$OUT/UIKitTest.png"
 exit $fail
