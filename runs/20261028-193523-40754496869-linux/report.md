@@ -1,28 +1,28 @@
-# HydrogenVM report — cb9c9fb
+# HydrogenVM report — 88667c2
 
-2026-10-28T04:53:07+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-28T19:32:12+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
-**1 test(s) failed.**
+**All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 221.4s |
-| cpu | 14 | 1 | 0 | 0.7s |
-| ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 24.5s |
+| build | 1 | 0 | 0 | 160.7s |
+| cpu | 15 | 0 | 0 | 0.8s |
+| ios | 6 | 0 | 0 | 2.1s |
+| bench | 5 | 0 | 0 | 18.2s |
 
 ## Speed
 
-CoreMark **1719.0** iterations/s (576.3 guest MIPS)
+CoreMark **2337.2** iterations/s (781.0 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **119.4%** | 716 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.5%** | 716 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.6%** | 573 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.8%** | 491 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **162.3%** | 974 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **121.7%** | 974 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **97.4%** | 779 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **51.4%** | 668 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 471 MIPS, ctests_arm 520 MIPS, ftests_vfp_thumb_softfp 443 MIPS, ftests_neon_thumb 412 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 524 MIPS, ctests_arm 623 MIPS, ftests_vfp_thumb_softfp 503 MIPS, ftests_neon_thumb 490 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -31,17 +31,13 @@ Raw interpreter speed (CPU test programs): ctests_thumb 471 MIPS, ctests_arm 520
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.04s | 61 | 0.43 ms | 7.36 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.36 ms | 6.46 ms | 0 |
 
-## Problems (31)
-
-### Failures (1)
-
-- **cpu / asm/thumb**: FAIL t_undefined_inst             expected undef instruction 0xDE00: breakpoint (info=0x00000000 pc=0x000102C2 thumb insn=0x00000000)
+## Problems (30)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 37.8% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 51.4% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
