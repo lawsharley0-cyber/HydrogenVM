@@ -1,5 +1,6 @@
 #include "SelfTest.hpp"
 #include "core/cpu/Engine.hpp"
+#include "loader/MachO.hpp"
 #include <chrono>
 #include <cstdio>
 
@@ -62,3 +63,64 @@ SelfTestResult runSelfTest(uint32_t iterations) {
 }
 
 } // namespace Hydrogen
+
+namespace {
+bool runMachOProbeTests() {
+    using Bytes = std::vector<uint8_t>;
+    int passed = 0, failed = 0;
+    auto check2 = [&](const std::string& name, const Bytes& file, bool isMachO, bool hasArm32, bool encrypted, uint32_t cpuSubtype, const std::string& errorSnippet = "") {
+        auto pr = Hydrogen::Loader::probeMachO(file);
+        bool ok = true;
+        if (pr.isMachO != isMachO) ok = false;
+        if (pr.hasArm32 != hasArm32) ok = false;
+        if (pr.encrypted != encrypted) ok = false;
+        if (pr.cpuSubtype != cpuSubtype) ok = false;
+        if (!errorSnippet.empty() && pr.error.find(errorSnippet) == std::string::npos) ok = false;
+        else if (errorSnippet.empty() && !pr.error.empty()) ok = false;
+        if (ok) ++passed; else ++failed;
+    };
+
+    check2("empty", {}, false, false, false, 0, "Mach-O: truncated (offset 0)");
+    check2("random_bytes", {1, 2, 3, 4}, false, false, false, 0, "not a Mach-O file");
+
+    auto num32 = [](Bytes& b, uint32_t v) {
+        b.push_back(v & 0xff); b.push_back((v >> 8) & 0xff);
+        b.push_back((v >> 16) & 0xff); b.push_back((v >> 24) & 0xff);
+    };
+    auto num32_be = [](Bytes& b, uint32_t v) {
+        b.push_back((v >> 24) & 0xff); b.push_back((v >> 16) & 0xff);
+        b.push_back((v >> 8) & 0xff); b.push_back(v & 0xff);
+    };
+
+    Bytes simple_armv7;
+    num32(simple_armv7, 0xfeedface); num32(simple_armv7, 12); num32(simple_armv7, 9);
+    num32(simple_armv7, 2); num32(simple_armv7, 0); num32(simple_armv7, 0); num32(simple_armv7, 0);
+    simple_armv7.resize(28, 0);
+    check2("simple_armv7", simple_armv7, true, true, false, 9);
+
+    Bytes simple_x86;
+    num32(simple_x86, 0xfeedface); num32(simple_x86, 7); num32(simple_x86, 3);
+    num32(simple_x86, 2); num32(simple_x86, 0); num32(simple_x86, 0); num32(simple_x86, 0);
+    check2("simple_x86", simple_x86, false, false, false, 0, "not a 32-bit ARM binary");
+
+    Bytes fat_binary;
+    num32_be(fat_binary, 0xcafebabe); num32_be(fat_binary, 2);
+    num32_be(fat_binary, 7); num32_be(fat_binary, 3); num32_be(fat_binary, 4096); num32_be(fat_binary, 28); num32_be(fat_binary, 12);
+    num32_be(fat_binary, 12); num32_be(fat_binary, 9); num32_be(fat_binary, 8192); num32_be(fat_binary, 28); num32_be(fat_binary, 12);
+    fat_binary.resize(8192, 0);
+    Bytes fat_armv7;
+    num32(fat_armv7, 0xfeedface); num32(fat_armv7, 12); num32(fat_armv7, 9);
+    num32(fat_armv7, 2); num32(fat_armv7, 0); num32(fat_armv7, 0); num32(fat_armv7, 0);
+    fat_armv7.resize(28, 0);
+    fat_binary.insert(fat_binary.end(), fat_armv7.begin(), fat_armv7.end());
+    check2("fat_binary_armv7", fat_binary, true, true, false, 9);
+
+    Bytes encrypted_armv7;
+    num32(encrypted_armv7, 0xfeedface); num32(encrypted_armv7, 12); num32(encrypted_armv7, 9);
+    num32(encrypted_armv7, 2); num32(encrypted_armv7, 1); num32(encrypted_armv7, 20); num32(encrypted_armv7, 0);
+    num32(encrypted_armv7, 0x21); num32(encrypted_armv7, 20); num32(encrypted_armv7, 4096); num32(encrypted_armv7, 8192); num32(encrypted_armv7, 1);
+    check2("encrypted_armv7", encrypted_armv7, true, true, true, 9);
+
+    return failed == 0;
+}
+}

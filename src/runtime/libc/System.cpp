@@ -973,18 +973,6 @@ int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint
     return 0;
 }
 int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
-uint32_t sys_ftime(Ctx& x, GuestPtr tp) {
-    if (tp) {
-        const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
-        x.mem.write<uint32_t>(tp + 0, uint32_t(now / 1000));
-        x.mem.write<uint16_t>(tp + 4, uint16_t(now % 1000));
-        x.mem.write<uint16_t>(tp + 6, 0);
-        x.mem.write<uint16_t>(tp + 8, 0);
-    }
-    return 0;
-}
-
 int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1038,7 +1026,6 @@ void registerLibcSystem(Process& p) {
     p.def<&s_getpwnam>("_getpwnam");
     p.def<&s_getpwuid_r>("_getpwuid_r");
     p.def<&s_getpwnam_r>("_getpwnam_r");
-    p.def<&sys_ftime>("_ftime");
     for (const char* n : {"_iconv_open", "_libiconv_open"}) p.def<&s_iconv_open>(n);
     for (const char* n : {"_iconv", "_libiconv"}) p.def<&s_iconv>(n);
     for (const char* n : {"_iconv_close", "_libiconv_close"}) p.def<&s_iconv_close>(n);
