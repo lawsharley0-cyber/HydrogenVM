@@ -95,6 +95,7 @@ static uint32_t getWritableBound(Process& proc, GuestPtr buf, uint32_t maxScan) 
 }
 
 int32_t storeFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t os, const std::string& s) {
+    if (os != 0xFFFFFFFF && n > os) throw std::runtime_error("sprintf_chk buffer overflow");
     if (n && buf) {
         const size_t writeLen = std::min<size_t>(s.size(), n - 1);
         const uint32_t maxScan = uint32_t(writeLen + 1);
@@ -436,6 +437,7 @@ std::string readWString(Ctx& x, GuestPtr ws, size_t maxChars = 65536) {
     return out;
 }
 int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t os, const std::string& s) {
+    if (os != 0xFFFFFFFF && n > os) throw std::runtime_error("swprintf_chk buffer overflow");
     if (!n) return -1;
     if (buf) {
         const size_t writeLen = std::min<size_t>(s.size(), n - 1);

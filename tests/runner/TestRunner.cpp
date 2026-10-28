@@ -4606,9 +4606,9 @@ int runFullSubsystemTests() {
         check(r.first, "sprintf unmapped pointer fails");
 
         r = runFormat("___snprintf_chk", {buf, 10, 0, 5, fmtExact});
-        check(!r.first && r.second == 4, "snprintf_chk exact fit with os=5");
-        r = runFormat("___snprintf_chk", {buf, 10, 0, 5, fmtOverflow});
-        check(r.first, "snprintf_chk overflow with os=5");
+        check(r.first, "snprintf_chk fails immediately when n > os regardless of format string size");
+        r = runFormat("___snprintf_chk", {buf, 4, 0, 5, fmtOverflow}); // n=4, os=5. writeLen=3 (4 chars total). Fits in n=4.
+        check(!r.first && r.second == 5, "snprintf_chk succeeds when n <= os and properly truncates");
 
         r = runFormat("_snprintf", {buf, 0, fmtOverflow});
         check(!r.first && r.second == 5, "snprintf with n=0 returns would-have-written count");
