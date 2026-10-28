@@ -30,6 +30,7 @@ uint32_t Heap::bigAlloc(uint32_t size) {
             size = bsize;
         }
         live_[addr] = size;
+        liveIntervals_[addr] = size;
         return addr;
     }
     if (uint64_t(top_) + size > limit_) return 0;
@@ -37,6 +38,7 @@ uint32_t Heap::bigAlloc(uint32_t size) {
     top_ += size;
     ensureCommitted(top_);
     live_[addr] = size;
+    liveIntervals_[addr] = size;
     return addr;
 }
 
@@ -92,6 +94,7 @@ uint32_t Heap::alloc(uint32_t size) {
         addr = list.back();
         list.pop_back();
         live_[addr] = rounded;
+        liveIntervals_[addr] = rounded;
     } else {
         addr = bigAlloc(rounded);
         if (!addr) return 0;
@@ -122,8 +125,10 @@ uint32_t Heap::allocAligned(uint32_t size, uint32_t align) {
     const uint32_t aligned = (raw + align - 1) & ~(align - 1);
     const uint32_t total = live_[raw];
     live_.erase(raw);
+    liveIntervals_.erase(raw);
     if (aligned > raw) bigFree(raw, aligned - raw);
     live_[aligned] = total - (aligned - raw);
+    liveIntervals_[aligned] = total - (aligned - raw);
     stats_.liveBytes += live_[aligned];
     ++stats_.liveBlocks;
     return aligned;
@@ -136,6 +141,7 @@ void Heap::free(uint32_t addr) {
     if (it == live_.end()) { ++stats_.badFrees; return; }
     const uint32_t size = it->second;
     live_.erase(it);
+    liveIntervals_.erase(addr);
     stats_.liveBytes -= size;
     --stats_.liveBlocks;
     if (size <= kSmallMax) small_[size / kAlign].push_back(addr);
@@ -159,6 +165,28 @@ uint32_t Heap::blockSize(uint32_t addr) const {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = live_.find(addr);
     return it == live_.end() ? 0 : it->second;
+}
+
+bool Heap::copyCStringWithinAllocation(uint32_t addr, const char* src, size_t chars) {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = liveIntervals_.upper_bound(addr);
+    if (it == liveIntervals_.begin()) return false;
+    --it;
+    const uint64_t end = uint64_t(it->first) + it->second;
+    if (uint64_t(addr) >= end || chars + uint64_t(1) > end - addr) return false;
+    return mem_.copyCStringWritable(addr, src, chars);
+}
+
+bool Heap::copyWideWithinAllocation(uint32_t addr, const uint32_t* chars, size_t count) {
+    if (count > (UINT64_MAX / 4) - 1) return false;
+    const uint64_t bytes = (uint64_t(count) + 1) * 4;
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = liveIntervals_.upper_bound(addr);
+    if (it == liveIntervals_.begin()) return false;
+    --it;
+    const uint64_t end = uint64_t(it->first) + it->second;
+    if (uint64_t(addr) >= end || bytes > end - addr) return false;
+    return mem_.copyWideWritable(addr, chars, count);
 }
 
 Heap::Stats Heap::stats() const {

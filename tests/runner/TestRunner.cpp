@@ -4723,6 +4723,178 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    //         // Wide formatting stores 4 bytes per wchar_t. C99 swprintf honours n
+        // (including the NUL), returns -1 when the text does not fit, and
+        // must throw before any store when that span is not writable.
+        struct WideCall { bool failed = false; bool bounds = false; int32_t result = -1; };
+        auto wideRun = [&](const char* name, std::initializer_list<uint32_t> args) {
+            WideCall out;
+            try {
+                const auto sym = proc.lookupSymbol(name);
+                if (!sym) { out.failed = true; return out; }
+                out.result = int32_t(proc.callGuest(cpu, *sym, args));
+            } catch (const CPU::GuestFault& fault) {
+                out.failed = true;
+                out.bounds = fault.exit == CPU::Exit::HostError;
+            } catch (const std::exception&) {
+                out.failed = true;
+                out.bounds = true;
+            }
+            return out;
+        };
+        auto wideLiteral = [&](const char* text) {
+            const size_t n = std::strlen(text);
+            const uint32_t p = proc.heap().allocZeroed(uint32_t((n + 1) * 4));
+            for (size_t i = 0; i < n; ++i)
+                proc.mem().write<uint32_t>(p + uint32_t(i * 4), uint8_t(text[i]));
+            return p;
+        };
+        auto wideEquals = [&](uint32_t addr, const char* text) {
+            const size_t n = std::strlen(text);
+            for (size_t i = 0; i <= n; ++i) {
+                const uint32_t expect = i < n ? uint32_t(uint8_t(text[i])) : 0u;
+                if (proc.mem().read<uint32_t>(addr + uint32_t(i * 4)) != expect) return false;
+            }
+            return true;
+        };
+        auto paint = [&](uint32_t addr, uint32_t bytes, uint8_t value) {
+            for (uint32_t i = 0; i < bytes; ++i) proc.mem().write<uint8_t>(addr + i, value);
+        };
+        auto painted = [&](uint32_t addr, uint32_t bytes, uint8_t value) {
+            for (uint32_t i = 0; i < bytes; ++i)
+                if (proc.mem().read<uint8_t>(addr + i) != value) return false;
+            return true;
+        };
+        const uint32_t wideExact = wideLiteral("123");
+        const uint32_t wideOver = wideLiteral("1234");
+        const uint32_t wideLong = wideLiteral("12345");
+        const uint32_t wideBuf = proc.heap().allocZeroed(16);
+        const uint32_t wideNext = proc.heap().allocZeroed(16);
+        paint(wideNext, 16, 0xa5);
+
+        auto w = wideRun("_swprintf", {wideBuf, 4, wideExact});
+        check(!w.failed && w.result == 3 && wideEquals(wideBuf, "123") && painted(wideNext, 16, 0xa5),
+              "swprintf accepts an exact four-wchar heap fit");
+        w = wideRun("_vswprintf", {wideBuf, 4, wideExact, 0});
+        check(!w.failed && w.result == 3 && wideEquals(wideBuf, "123"),
+              "vswprintf accepts an exact four-wchar heap fit");
+
+        paint(wideBuf, 16, 0xa5);
+        w = wideRun("_swprintf", {wideBuf, 0, wideLong});
+        check(!w.failed && w.result == -1 && painted(wideBuf, 16, 0xa5),
+              "swprintf with n=0 writes nothing and returns -1");
+        w = wideRun("_vswprintf", {0, 0, wideLong, 0});
+        check(!w.failed && w.result == -1, "vswprintf with n=0 accepts a null destination");
+
+        w = wideRun("_swprintf", {wideBuf, 4, wideLong});
+        check(!w.failed && w.result == -1 && wideEquals(wideBuf, "123") && painted(wideNext, 16, 0xa5),
+              "swprintf truncates to n-1 wide characters and returns -1");
+        w = wideRun("_vswprintf", {wideBuf, 4, wideLong, 0});
+        check(!w.failed && w.result == -1 && wideEquals(wideBuf, "123"),
+              "vswprintf truncates to n-1 wide characters and returns -1");
+
+        paint(wideBuf, 16, 0xa5);
+        paint(wideNext, 16, 0xa5);
+        w = wideRun("_swprintf", {wideBuf, 5, wideOver});
+        check(w.failed && w.bounds && painted(wideBuf, 16, 0xa5) && painted(wideNext, 16, 0xa5),
+              "swprintf throws before a wide write can leave its heap allocation");
+        w = wideRun("_vswprintf", {wideBuf, 5, wideOver, 0});
+        check(w.failed && w.bounds && painted(wideBuf, 16, 0xa5) && painted(wideNext, 16, 0xa5),
+              "vswprintf throws before a wide write can leave its heap allocation");
+
+        const uint32_t wideStrE9 = proc.heap().allocZeroed(16);
+        proc.mem().write<uint32_t>(wideStrE9 + 0, 0x41);
+        proc.mem().write<uint32_t>(wideStrE9 + 4, 0xE9);
+        proc.mem().write<uint32_t>(wideStrE9 + 8, 0);
+
+        w = wideRun("_swprintf", {wideBuf, 3, wideLiteral("%C"), 0xE9});
+        check(!w.failed && w.result == 1 && proc.mem().read<uint32_t>(wideBuf + 0) == 0xE9 && proc.mem().read<uint32_t>(wideBuf + 4) == 0,
+              "swprintf %C 0xE9 n=3 returns 1 with dst {0xE9,0}");
+
+        w = wideRun("_swprintf", {wideBuf, 4, wideLiteral("%ls"), wideStrE9});
+        check(!w.failed && w.result == 2 && proc.mem().read<uint32_t>(wideBuf + 0) == 0x41 && proc.mem().read<uint32_t>(wideBuf + 4) == 0xE9 && proc.mem().read<uint32_t>(wideBuf + 8) == 0,
+              "swprintf %ls source {0x41,0xE9,0} n=4 returns 2");
+
+        w = wideRun("_swprintf", {wideBuf, 2, wideLiteral("%C"), 0xE9});
+        check(!w.failed && w.result == 1 && proc.mem().read<uint32_t>(wideBuf + 0) == 0xE9 && proc.mem().read<uint32_t>(wideBuf + 4) == 0,
+              "swprintf %C n=2 returns 1");
+
+        paint(wideBuf, 16, 0xa5);
+        w = wideRun("_swprintf", {wideBuf, 2, wideLiteral("A%C"), 0xE9});
+        check(!w.failed && w.result == -1 && proc.mem().read<uint32_t>(wideBuf + 0) == 0x41 && proc.mem().read<uint32_t>(wideBuf + 4) == 0 && proc.mem().read<uint8_t>(wideBuf + 8) == 0xa5,
+              "swprintf A%C n=2 returns -1 with dst[0]==0x41, dst[1]==0 and a canary unchanged");
+
+        // Set up guest va_list for _vswprintf.
+        const uint32_t apPtr = proc.heap().allocZeroed(16);
+        proc.mem().write<uint32_t>(apPtr + 0, 0xE9);
+        w = wideRun("_vswprintf", {wideBuf, 3, wideLiteral("%C"), apPtr});
+        check(!w.failed && w.result == 1 && proc.mem().read<uint32_t>(wideBuf + 0) == 0xE9 && proc.mem().read<uint32_t>(wideBuf + 4) == 0,
+              "vswprintf %C from a real guest va_list");
+
+        const uint32_t wideInside = proc.heap().allocZeroed(16) + 4;
+        paint(wideInside, 12, 0xa5);
+        w = wideRun("_swprintf", {wideInside, 3, wideLiteral("12")});
+        check(!w.failed && w.result == 2 && wideEquals(wideInside, "12"),
+              "swprintf accepts an interior pointer that fits the remaining allocation");
+        paint(wideInside, 12, 0xa5);
+        w = wideRun("_swprintf", {wideInside, 4, wideExact});
+        check(w.failed && w.bounds && painted(wideInside, 12, 0xa5),
+              "swprintf throws when an interior wide write leaves its allocation");
+
+        constexpr uint32_t widePage = 0x91000000;
+        proc.mem().map(widePage, 4096, Memory::kProtRW);
+        const uint32_t wideEdge = widePage + 4096 - 16;
+        w = wideRun("_swprintf", {wideEdge, 4, wideExact});
+        check(!w.failed && w.result == 3 && wideEquals(wideEdge, "123"),
+              "swprintf accepts a mapped guest-page exact wide fit");
+        paint(wideEdge, 16, 0xa5);
+        w = wideRun("_swprintf", {wideEdge, 5, wideOver});
+        check(w.failed && w.bounds && painted(wideEdge, 16, 0xa5),
+              "swprintf throws before a wide write runs onto an unmapped page");
+        paint(wideEdge, 16, 0xa5);
+        w = wideRun("_vswprintf", {wideEdge, 5, wideOver, 0});
+        check(w.failed && w.bounds && painted(wideEdge, 16, 0xa5),
+              "vswprintf throws before a wide write runs onto an unmapped page");
+
+        const uint32_t wideBig = proc.heap().allocZeroed(64);
+        w = wideRun("___swprintf_chk", {wideBig, 4, 0, 16, wideExact});
+        check(!w.failed && w.result == 3 && wideEquals(wideBig, "123"),
+              "swprintf_chk accepts an exact object-size wide span");
+        paint(wideBig, 64, 0xa5);
+        w = wideRun("___swprintf_chk", {wideBig, 5, 0, 16, wideExact});
+        check(w.failed && w.bounds && painted(wideBig, 64, 0xa5),
+              "swprintf_chk throws when the wchar count exceeds the object size");
+        w = wideRun("___vswprintf_chk", {wideBig, 5, 0, 16, wideExact, 0});
+        check(w.failed && w.bounds && painted(wideBig, 64, 0xa5),
+              "vswprintf_chk throws when the wchar count exceeds the object size");
+        w = wideRun("___swprintf_chk", {wideBuf, 4, 0, 16, wideLong});
+        check(!w.failed && w.result == -1 && wideEquals(wideBuf, "123"),
+              "swprintf_chk truncates inside the object size and returns -1");
+    }
+
+    // Mapping and writes must be serialized: on 16 KB hosts a committed host
+    // page can remain accessible after its 4 KB guest mapping is removed.
+    {
+        Memory::GuestArena arena;
+        constexpr uint32_t page = 0x90000000;
+        arena.map(page, 4096, Memory::kProtRW);
+        std::atomic<int> attempted{0};
+        std::thread writer([&] {
+            for (int i = 0; i < 1000; ++i) {
+                arena.copyCStringWritable(page, "ok", 2);
+                attempted.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+        for (int i = 0; i < 100; ++i) {
+            arena.unmap(page, 4096);
+            arena.map(page, 4096, Memory::kProtRW);
+        }
+        writer.join();
+        arena.unmap(page, 4096);
+        check(attempted.load() == 1000 && !arena.copyCStringWritable(page, "no", 2),
+              "formatted guest-page writes synchronize with concurrent map/unmap");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
