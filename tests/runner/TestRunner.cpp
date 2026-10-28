@@ -2689,11 +2689,19 @@ int runFullSubsystemTests() {
 
             check(q1 > 0 && q2 > q1, "glGenQueriesEXT produces monotonic query ids");
 
-            // Check isQuery
-            const bool isq1 = callGL("_glIsQueryEXT", {q1}) != 0;
-            const bool isq2 = callGL("_glIsQueryEXT", {q2}) != 0;
+            // Check isQuery before begin
+            const bool isq1_pre = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool isq2_pre = callGL("_glIsQueryEXT", {q2}) != 0;
+            check(!isq1_pre && !isq2_pre, "glIsQueryEXT is false for reserved but unbegun query names");
+
+            // Begin query
+            callGL("_glBeginQueryEXT", {0x8866, q1});
+
+            // Check isQuery after begin
+            const bool isq1_post = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool isq2_post = callGL("_glIsQueryEXT", {q2}) != 0;
             const bool isq3 = callGL("_glIsQueryEXT", {q2 + 1}) != 0;
-            check(isq1 && isq2 && !isq3, "glIsQueryEXT confirms generated ids and rejects unknown ones");
+            check(isq1_post && !isq2_post && !isq3, "glIsQueryEXT is true only after glBeginQueryEXT");
 
             // Get query object params
             const uint32_t params = proc.heap().allocZeroed(4);
@@ -2703,7 +2711,10 @@ int runFullSubsystemTests() {
             callGL("_glGetQueryObjectuivEXT", {q1, 0x8866, params}); // GL_QUERY_RESULT
             const uint32_t res = proc.mem().read<uint32_t>(params);
 
-            check(avail == 1 && res == 1, "glGetQueryObjectuivEXT writes 1 for GL_QUERY_RESULT and GL_QUERY_RESULT_AVAILABLE");
+            callGL("_glGetQueryObjectuivEXT", {q2, 0x8866, params}); // Should not modify params (unbegun)
+            const uint32_t res_unbegun = proc.mem().read<uint32_t>(params);
+
+            check(avail == 1 && res == 1 && res_unbegun == 0, "glGetQueryObjectuivEXT writes 1 for GL_QUERY_RESULT of begun query, ignores unbegun");
 
             // Delete queries
             callGL("_glDeleteQueriesEXT", {2, ids});
