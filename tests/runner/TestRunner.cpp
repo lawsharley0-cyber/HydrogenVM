@@ -2950,6 +2950,42 @@ int runFullSubsystemTests() {
         check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
     }
 
+    // 2f13. Pthread condition variable process stop broadcast
+    {
+        ProcessConfig pcfg;
+        pcfg.homePath = "/tmp/hvm_pthreads_stop";
+        Process isolated(pcfg);
+        auto& icpu = isolated.mainThread().cpu;
+
+        const uint32_t cv = isolated.heap().allocZeroed(4);
+        const uint32_t mu = isolated.heap().allocZeroed(4);
+        isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_init"), {mu, 0});
+        isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_cond_init"), {cv, 0});
+
+        std::atomic<bool> waiting{false};
+        const uint32_t waiterFn = isolated.registerHostFunction("waiter", [cv, mu, &waiting](Runtime::Ctx& x) {
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_lock"), {mu});
+            waiting = true;
+            try {
+                x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_cond_wait"), {cv, mu});
+            } catch (...) {} // Catch ProcessExit or stopping gracefully
+        });
+
+        const uint32_t th = isolated.startThread(waiterFn, 0, 16u << 10, false);
+        const auto tStart = std::chrono::steady_clock::now();
+        while (!waiting && std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
+
+        const auto t0 = std::chrono::steady_clock::now();
+        isolated.requestStop();
+
+        uint32_t retval = 1;
+        bool joined = isolated.joinThread(th, &retval);
+        const auto t1 = std::chrono::steady_clock::now();
+
+        const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        check(joined && ms < 5000.0, "pthread condition variable process stop broadcast wakes up and joins immediately");
+    }
+
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)
