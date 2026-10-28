@@ -1755,6 +1755,14 @@ int runFullSubsystemTests() {
               call("_CFGetRetainCount", {line}) == 1 && call("_CTRunGetGlyphCount", {items[0]}) == 3 &&
               proc.mem().read<uint16_t>(copies) == 2 && std::bit_cast<double>(metrics) == 36,
               "CoreText line breaking and owned glyph runs preserve custom metrics after source release");
+        const uint32_t secondary = proc.heap().allocZeroed(12);
+        proc.mem().write<uint32_t>(secondary + 4, 0xA5B6C7D8);
+        const uint32_t offsetBits = uint32_t(call("_CTLineGetOffsetForStringIndex", {line, 2, secondary}));
+        check(std::bit_cast<float>(offsetBits) == 24.0f &&
+              proc.mem().read<float>(secondary) == 24.0f &&
+              proc.mem().read<uint32_t>(secondary + 4) == 0xA5B6C7D8,
+              "CTLine offset uses ARMv7 CGFloat float return and a four-byte secondaryOffset");
+        proc.heap().free(secondary);
         call("_CFRelease", {line});
         call("_CGContextRelease", {bitmap}); call("_CFRelease", {family}); call("_CFRelease", {copy});
         call("_CFRelease", {desc}); call("_CFRelease", {ct});
