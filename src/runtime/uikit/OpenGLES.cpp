@@ -414,7 +414,8 @@ struct ProgramObject {
 };
 
 struct SharegroupData : ObjC::HostObject {
-    uint32_t nextBuffer = 1, nextTexture = 1, nextRenderbuffer = 1, nextFramebuffer = 1, nextShader = 1, nextProgram = 1;
+    uint32_t nextBuffer = 1, nextTexture = 1, nextRenderbuffer = 1, nextFramebuffer = 1, nextShader = 1, nextProgram = 1, nextQuery = 1;
+    std::unordered_set<uint32_t> queries;
     std::unordered_map<uint32_t, BufferObject> buffers;
     std::unordered_map<uint32_t, Texture2D> textures;
     std::unordered_map<uint32_t, Renderbuffer> renderbuffers;
@@ -2470,18 +2471,36 @@ bool vertexAttribState(Ctx& x, uint32_t idx, uint32_t pname, float out[4], int& 
 }
 // EXT_occlusion_query_boolean
 void gl_genQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
-    if (!currentCtx(x)) return;
-    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint32_t>(ids + i * 4, i + 1);
+    SharegroupData* sg = currentSg(x, currentCtx(x));
+    if (!sg) return;
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t id = sg->nextQuery++;
+        sg->queries.insert(id);
+        x.mem.write<uint32_t>(ids + i * 4, id);
+    }
 }
-void gl_deleteQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {}
-uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) { return id > 0 ? 1 : 0; }
+void gl_deleteQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
+    SharegroupData* sg = currentSg(x, currentCtx(x));
+    if (!sg || !ids) return;
+    for (uint32_t i = 0; i < n; ++i) {
+        sg->queries.erase(x.mem.read<uint32_t>(ids + i * 4));
+    }
+}
+uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
+    SharegroupData* sg = currentSg(x, currentCtx(x));
+    return (sg && sg->queries.count(id)) ? 1 : 0;
+}
 void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {}
 void gl_endQueryEXT(Ctx& x, uint32_t target) {}
 void gl_getQueryivEXT(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
     if (params) x.mem.write<int32_t>(params, 0);
 }
 void gl_getQueryObjectuivEXT(Ctx& x, uint32_t id, uint32_t pname, GuestPtr params) {
-    if (params) x.mem.write<uint32_t>(params, 1);
+    if (params) {
+        if (pname == 0x8867 || pname == 0x8866) { // GL_QUERY_RESULT_AVAILABLE or GL_QUERY_RESULT
+            x.mem.write<uint32_t>(params, 1);
+        }
+    }
 }
 
 void gl_drawBuffers(Ctx& x, int32_t n, GuestPtr bufs) {}

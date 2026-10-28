@@ -2678,6 +2678,40 @@ int runFullSubsystemTests() {
                   "GLES2 clips a line whose screen delta exceeds INT_MAX to the framebuffer and still draws the visible pixels");
         }
 
+        // 2f11. OpenGL ES occlusion queries state machine
+        {
+            const uint32_t ids = proc.heap().allocZeroed(8);
+
+            // Gen queries
+            callGL("_glGenQueriesEXT", {2, ids});
+            const uint32_t q1 = proc.mem().read<uint32_t>(ids);
+            const uint32_t q2 = proc.mem().read<uint32_t>(ids + 4);
+
+            check(q1 > 0 && q2 > q1, "glGenQueriesEXT produces monotonic query ids");
+
+            // Check isQuery
+            const bool isq1 = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool isq2 = callGL("_glIsQueryEXT", {q2}) != 0;
+            const bool isq3 = callGL("_glIsQueryEXT", {q2 + 1}) != 0;
+            check(isq1 && isq2 && !isq3, "glIsQueryEXT confirms generated ids and rejects unknown ones");
+
+            // Get query object params
+            const uint32_t params = proc.heap().allocZeroed(4);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8867, params}); // GL_QUERY_RESULT_AVAILABLE
+            const uint32_t avail = proc.mem().read<uint32_t>(params);
+            proc.mem().write<uint32_t>(params, 0);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8866, params}); // GL_QUERY_RESULT
+            const uint32_t res = proc.mem().read<uint32_t>(params);
+
+            check(avail == 1 && res == 1, "glGetQueryObjectuivEXT writes 1 for GL_QUERY_RESULT and GL_QUERY_RESULT_AVAILABLE");
+
+            // Delete queries
+            callGL("_glDeleteQueriesEXT", {2, ids});
+
+            const bool disq1 = callGL("_glIsQueryEXT", {q1}) != 0;
+            check(!disq1, "glDeleteQueriesEXT removes ids from state");
+        }
+
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
