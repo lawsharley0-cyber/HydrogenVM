@@ -177,6 +177,18 @@ bool Heap::copyCStringWithinAllocation(uint32_t addr, const char* src, size_t ch
     return mem_.copyCStringWritable(addr, src, chars);
 }
 
+bool Heap::copyWideWithinAllocation(uint32_t addr, const char* chars, size_t count) {
+    if (count > (UINT64_MAX / 4) - 1) return false;
+    const uint64_t bytes = (uint64_t(count) + 1) * 4;
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = liveIntervals_.upper_bound(addr);
+    if (it == liveIntervals_.begin()) return false;
+    --it;
+    const uint64_t end = uint64_t(it->first) + it->second;
+    if (uint64_t(addr) >= end || bytes > end - addr) return false;
+    return mem_.copyWideWritable(addr, chars, count);
+}
+
 Heap::Stats Heap::stats() const {
     std::lock_guard<std::mutex> lk(mu_);
     return stats_;

@@ -436,19 +436,43 @@ std::string readWString(Ctx& x, GuestPtr ws, size_t maxChars = 65536) {
     }
     return out;
 }
-int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t size, const std::string& s) {
-    if (!size) return -1;
-    if (buf) {
-        const size_t n = std::min<size_t>(s.size(), size - 1);
-        for (size_t i = 0; i < n; ++i) x.mem.write<uint32_t>(buf + uint32_t(i) * 4, uint8_t(s[i]));
-        x.mem.write<uint32_t>(buf + uint32_t(n) * 4, 0);
-    }
-    return s.size() < size ? int32_t(s.size()) : -1;
+// C99 swprintf: `n` counts wchar_t values, including the terminating NUL.
+// n == 0 writes nothing and returns -1. A result that does not fit in n is
+// truncated to n - 1 characters plus NUL and returns -1. Each stored wchar_t
+// is 4 bytes. ___swprintf_chk's object size is the compiler's byte count
+// (__builtin_object_size); n * 4 past that size is rejected before any store.
+// The bytes actually written are checked and copied under one lock, matching
+// the narrow formatted path. A short destination throws; it is not clamped.
+int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t objectSize,
+                           bool checked, const std::string& s) {
+    if (checked && uint64_t(n) * 4 > uint64_t(objectSize))
+        throw std::runtime_error("__swprintf_chk object bound exceeded");
+    if (!n) return -1;
+    if (s.size() > size_t(INT32_MAX)) return -1;
+    const size_t chars = std::min(s.size(), size_t(n) - 1);
+    if (!buf) throw std::runtime_error("null formatted guest destination");
+    const bool safe = x.proc.heap().owns(buf)
+        ? x.proc.heap().copyWideWithinAllocation(buf, s.data(), chars)
+        : x.mem.copyWideWritable(buf, s.data(), chars);
+    if (!safe) throw std::runtime_error("formatted write exceeds guest allocation or writable mapping");
+    return s.size() < size_t(n) ? int32_t(s.size()) : -1;
 }
 int32_t f_wprintf(Ctx& x, GuestPtr fmt, VarArgs va) { return outString(x, S(x).sF + kFileSize, formatGuest(x.proc, readWString(x, fmt), va.args)); }
 int32_t f_fwprintf(Ctx& x, GuestPtr fp, GuestPtr fmt, VarArgs va) { return outString(x, fp, formatGuest(x.proc, readWString(x, fmt), va.args)); }
-int32_t f_swprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VarArgs va) { return storeWideFormatted(x, buf, n, formatGuest(x.proc, readWString(x, fmt), va.args)); }
-int32_t f_vswprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeWideFormatted(x, buf, n, formatGuest(x.proc, readWString(x, fmt), a)); }
+int32_t f_swprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VarArgs va) {
+    return storeWideFormatted(x, buf, n, 0, false, formatGuest(x.proc, readWString(x, fmt), va.args));
+}
+int32_t f_swprintf_chk(Ctx& x, GuestPtr buf, uint32_t n, int32_t, uint32_t os, GuestPtr fmt, VarArgs va) {
+    return storeWideFormatted(x, buf, n, os, true, formatGuest(x.proc, readWString(x, fmt), va.args));
+}
+int32_t f_vswprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VaList ap) {
+    ArgReader a(x.mem, ap.ptr);
+    return storeWideFormatted(x, buf, n, 0, false, formatGuest(x.proc, readWString(x, fmt), a));
+}
+int32_t f_vswprintf_chk(Ctx& x, GuestPtr buf, uint32_t n, int32_t, uint32_t os, GuestPtr fmt, VaList ap) {
+    ArgReader a(x.mem, ap.ptr);
+    return storeWideFormatted(x, buf, n, os, true, formatGuest(x.proc, readWString(x, fmt), a));
+}
 int32_t f_swscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VarArgs va) { StringSource src(readWString(x, s)); return scanGuest(x, src, readWString(x, fmt), va.args); }
 int32_t f_vswscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VaList ap) { StringSource src(readWString(x, s)); ArgReader a(x.mem, ap.ptr); return scanGuest(x, src, readWString(x, fmt), a); }
 
@@ -574,7 +598,9 @@ void registerLibcStdio(Process& p) {
     p.def<&f_wprintf>("_wprintf");
     p.def<&f_fwprintf>("_fwprintf");
     p.def<&f_swprintf>("_swprintf");
+    p.def<&f_swprintf_chk>("___swprintf_chk");
     p.def<&f_vswprintf>("_vswprintf");
+    p.def<&f_vswprintf_chk>("___vswprintf_chk");
     p.def<&f_swscanf>("_swscanf");
     p.def<&f_vswscanf>("_vswscanf");
     p.def<&f_tmpnam>("_tmpnam");
