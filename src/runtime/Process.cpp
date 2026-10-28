@@ -287,7 +287,11 @@ uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) 
             // Let nested guest calls propagate Halt instead of manufacturing
             // HostError("stopping") in Engine::callHle.
             c.exit = CPU::Exit::Halt;
+
+        } catch (const CPU::GuestFault&) {
+            throw; // Let it propagate back to callHle without being caught as a HostError
         } catch (const std::runtime_error& e) {
+
             if (!hostErrorHook_ || !hostErrorHook_(x, e)) throw;
         }
     });

@@ -229,49 +229,136 @@ int32_t w_iswalpha(Ctx& x, int32_t c) { return c_isalpha(x, c); }
 int32_t w_iswalnum(Ctx& x, int32_t c) { return c_isalnum(x, c); }
 
 
-void s_chk_fail(Ctx& x) {
-    throw std::runtime_error("buffer overflow detected (__chk_fail) in " + x.proc.describeAddress(x.cpu.r[CPU::kLR]));
+size_t safe_strnlen(Ctx& x, GuestPtr p, size_t max_len) {
+    if (max_len == 0) return 0;
+
+    size_t len = 0;
+    while (len < max_len) {
+        uint32_t addr = p + len;
+        if (!x.mem.validateRange(addr, 1, Memory::kProtRead)) {
+            throw CPU::GuestFault(CPU::Exit::MemFault, addr, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strnlen");
+        }
+
+        uint32_t page_offset = addr & (Memory::GuestArena::kGuestPageSize - 1);
+        uint32_t scan_limit = Memory::GuestArena::kGuestPageSize - page_offset;
+        if (scan_limit > max_len - len) scan_limit = max_len - len;
+
+        const void* null_ptr = std::memchr(H(x, addr), 0, scan_limit);
+        if (null_ptr) return len + (static_cast<const char*>(null_ptr) - H(x, addr));
+
+        len += scan_limit;
+    }
+    return max_len;
+}
+
+size_t safe_strlen(Ctx& x, GuestPtr p) {
+    size_t len = 0;
+    while (true) {
+        uint32_t addr = p + len;
+        if (!x.mem.validateRange(addr, 1, Memory::kProtRead)) {
+            throw CPU::GuestFault(CPU::Exit::MemFault, addr, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strlen");
+        }
+
+        uint32_t page_offset = addr & (Memory::GuestArena::kGuestPageSize - 1);
+        uint32_t scan_limit = Memory::GuestArena::kGuestPageSize - page_offset;
+
+        const void* null_ptr = std::memchr(H(x, addr), 0, scan_limit);
+        if (null_ptr) return len + (static_cast<const char*>(null_ptr) - H(x, addr));
+
+        len += scan_limit;
+        if (p + len < p) {
+             throw CPU::GuestFault(CPU::Exit::MemFault, p + len, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strlen");
+        }
+    }
+}
+
+[[noreturn]] void s_chk_fail(Ctx& x) {
+    throw CPU::GuestFault(CPU::Exit::MemFault, 0, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "buffer overflow detected (__chk_fail)");
 }
 
 uint32_t s_memcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
+    if (!x.mem.validateRange(s, n, Memory::kProtRead) || !x.mem.validateRange(d, n, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in memcpy_chk");
+    }
     return s_memcpy(x, d, s, n);
 }
+
 uint32_t s_memmove_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
-    return s_memcpy(x, d, s, n); // _memmove maps to s_memcpy in original
+    if (!x.mem.validateRange(s, n, Memory::kProtRead) || !x.mem.validateRange(d, n, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in memmove_chk");
+    }
+    return s_memcpy(x, d, s, n); // s_memcpy uses memmove internally.
 }
+
 uint32_t s_memset_chk(Ctx& x, GuestPtr d, int32_t c, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
+    if (!x.mem.validateRange(d, n, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in memset_chk");
+    }
     return s_memset(x, d, c, n);
 }
+
 uint32_t s_strcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
-    const size_t slen = std::strlen(H(x, s));
+    const size_t slen = safe_strlen(x, s);
     if (slen + 1 > destlen) s_chk_fail(x);
-    return s_strcpy(x, d, s);
+    if (!x.mem.validateRange(d, slen + 1, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strcpy_chk");
+    }
+    std::memmove(H(x, d), H(x, s), slen + 1);
+    return d;
 }
+
 uint32_t s_strncpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
-    return s_strncpy(x, d, s, n);
+    if (!x.mem.validateRange(d, n, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strncpy_chk");
+    }
+    const size_t sl = safe_strnlen(x, s, n);
+    std::memcpy(H(x, d), H(x, s), sl);
+    if (sl < n) std::memset(H(x, d) + sl, 0, n - sl);
+    return d;
 }
+
 uint32_t s_strcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
-    const size_t dl = std::strlen(H(x, d));
-    const size_t sl = std::strlen(H(x, s));
+    const size_t dl = safe_strlen(x, d);
+    if (dl >= destlen) s_chk_fail(x);
+    const size_t sl = safe_strlen(x, s);
     if (dl + sl + 1 > destlen) s_chk_fail(x);
-    return s_strcat(x, d, s);
+    if (!x.mem.validateRange(d + dl, sl + 1, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, d + dl, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strcat_chk");
+    }
+    std::memmove(H(x, d) + dl, H(x, s), sl + 1);
+    return d;
 }
+
 uint32_t s_strncat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
-    const size_t dl = std::strlen(H(x, d));
-    const size_t sl = strnlen(H(x, s), n);
+    const size_t dl = safe_strlen(x, d);
+    if (dl >= destlen) s_chk_fail(x);
+    const size_t sl = safe_strnlen(x, s, n);
     if (dl + sl + 1 > destlen) s_chk_fail(x);
-    return s_strncat(x, d, s, n);
+    if (!x.mem.validateRange(d + dl, sl + 1, Memory::kProtWrite)) {
+         throw CPU::GuestFault(CPU::Exit::MemFault, d + dl, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strncat_chk");
+    }
+    std::memcpy(H(x, d) + dl, H(x, s), sl);
+    H(x, d)[dl + sl] = ' ';
+    return d;
 }
+
 uint32_t s_strlcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
+    if (!x.mem.validateRange(s, n, Memory::kProtRead) || !x.mem.validateRange(d, n, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcpy_chk");
+    }
     return s_strlcpy(x, d, s, n);
 }
+
 uint32_t s_strlcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
     if (n > destlen) s_chk_fail(x);
+    if (!x.mem.validateRange(s, n, Memory::kProtRead) || !x.mem.validateRange(d, n, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, d, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcat_chk");
+    }
     return s_strlcat(x, d, s, n);
 }
 
