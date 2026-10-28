@@ -81,8 +81,7 @@ target_link_libraries(hvm PRIVATE hvm_core)
 add_executable(hvm_bench tests/runner/Bench.cpp)
 target_link_libraries(hvm_bench PRIVATE hvm_core)
 
-add_executable(audio_lifecycle_tests tests/audio/AudioLifecycleTests.cpp src/runtime/audio/Mixer.cpp)
-target_include_directories(audio_lifecycle_tests PRIVATE src)
-if(APPLE)
-    target_link_libraries(audio_lifecycle_tests "-framework AudioToolbox")
-endif()
+# Link the same Mixer object the emulator ships. Compiling Mixer.cpp again
+# here would drift from hvm_core and can violate the one-definition rule.
+add_executable(audio_lifecycle_tests tests/audio/AudioLifecycleTests.cpp)
+target_link_libraries(audio_lifecycle_tests PRIVATE hvm_core)

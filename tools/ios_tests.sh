@@ -25,7 +25,12 @@ step "build ExceptionTest";   $BUILD --name ExceptionTest "$APPS/exceptiontest/m
 step "build FoundationTest";  (cd "$APPS/foundationtest" && $BUILD --name FoundationTest --resource config.plist --resource en.lproj main.m >/dev/null) && echo ok || fail=1
 RES="$OUT/_work/uikit-res"
 python3 "$APPS/uikittest/make_resources.py" "$RES"
-step "build AudioLifecycle";  $BUILD --name AudioLifecycle --resource "$APPS/audiolifecycle/tone.wav" "$APPS/audiolifecycle/main.m" >/dev/null && echo ok || fail=1
+# Original 440 Hz tone. Generated here so the suite does not commit a WAV binary.
+# Basename must be tone.wav: the guest looks up resource name "tone", type "wav".
+TONE="$OUT/_work/audiolifecycle/tone.wav"
+mkdir -p "$(dirname "$TONE")"
+python3 "$APPS/testlab/gen_tone_wav.py" "$TONE" >/dev/null || fail=1
+step "build AudioLifecycle";  $BUILD --name AudioLifecycle --resource "$TONE" "$APPS/audiolifecycle/main.m" >/dev/null && echo ok || fail=1
 step "build UIKitTest";       $BUILD --name UIKitTest --resource "$RES/test.png" --resource "$RES/test@2x.png" --resource "$RES/crushed.png" \
                                 --resource "$RES/Panel.nib" --resource "$RES/PanelKeyed.nib" "$APPS/uikittest/main.m" >/dev/null && echo ok || fail=1
 fi

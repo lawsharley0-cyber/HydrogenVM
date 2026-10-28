@@ -125,6 +125,17 @@ def do_cpu(b):
         record("cpu", name, ok, t, **counts)
 
 
+def do_audio_lifecycle(b):
+    """Host Mixer lifecycle binary. A missing binary or a silent exit is a failure."""
+    binary = os.path.join(b, "audio_lifecycle_tests")
+    rc, out, err, t = run([binary])
+    text = out + err
+    ok = rc == 0 and "All AudioLifecycleTests passed!" in text
+    if not ok:
+        problem("audio", "lifecycle", "fail", (text[-2000:] or f"exit {rc}").strip())
+    record("audio", "lifecycle", ok, t)
+
+
 # -------------------------------------------------------------------- ios ---
 APPS = [
     # name, build args, expected exit, expected line, run args
@@ -133,6 +144,7 @@ APPS = [
     ("BinPlist", ["--binary-plist", "ctest/main.c"], 3, "atexit handler ran", []),
     ("ObjCTest", ["objctest/main.m"], 0, "ALL CHECKS PASSED", []),
     ("FoundationTest", ["@foundationtest", "--resource", "config.plist", "--resource", "en.lproj", "main.m"], 0, "ALL CHECKS PASSED", []),
+    ("AudioLifecycle", ["@audiolifecycle"], 0, "PASS", []),
     ("UIKitTest", ["@uikit"], 0, "ALL CHECKS PASSED", ["--tap", "70,350@0.3", "--tap", "230,350@0.5"]),
 ]
 
@@ -152,6 +164,14 @@ def build_ios_app(name, spec, out):
         for r in ["test.png", "test@2x.png", "crushed.png", "Panel.nib", "PanelKeyed.nib"]:
             spec += ["--resource", os.path.join(res, r)]
         spec.append("uikittest/main.m")
+    elif spec[0] == "@audiolifecycle":
+        # Basename must stay tone.wav; the guest looks up resource "tone" / "wav".
+        tone = os.path.join(out, "_work", "audiolifecycle", "tone.wav")
+        os.makedirs(os.path.dirname(tone), exist_ok=True)
+        rc, o, e, _ = run(["python3", os.path.join(apps, "testlab", "gen_tone_wav.py"), tone])
+        if rc:
+            return rc, o + e
+        spec = ["--resource", tone, "audiolifecycle/main.m"]
     spec = [os.path.join(apps, s) if s.endswith((".c", ".m")) and cwd is None else s for s in spec]
     rc, o, e, _ = run(base + spec, cwd=cwd, timeout=900)
     return rc, o + e
@@ -369,6 +389,7 @@ def main():
     built = True if a.skip_build else do_build(b)
     if built:
         if "cpu" in only: do_cpu(b)
+        if "cpu" in only or "audio" in only: do_audio_lifecycle(b)
         if "ios" in only: do_ios(b, a.prebuilt_apps)
         if "bench" in only: do_bench(b, a.quick, a.prebuilt_apps)
 

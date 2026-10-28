@@ -202,7 +202,10 @@ jobs:
     name: Publish Linux report (trusted main)
     runs-on: ubuntu-24.04
     needs: [linux]
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
+    # always() is required so a failed Linux job still publishes its report.
+    # A cancelled or skipped job has no artifact: publishing it fails the
+    # workflow even though no test ran (concurrency cancel-in-progress).
+    if: ${{ always() && (needs.linux.result == 'success' || needs.linux.result == 'failure') && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
     permissions:
       contents: write
     steps:
@@ -221,7 +224,9 @@ jobs:
     name: Publish macOS report (trusted main)
     runs-on: ubuntu-24.04
     needs: [macos]
-    if: ${{ always() && needs.macos.result != 'skipped' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
+    # Same rule as the Linux publisher: publish a finished report, including
+    # a failed macOS job, and do not run after a cancel or a [mac]-gated skip.
+    if: ${{ always() && (needs.macos.result == 'success' || needs.macos.result == 'failure') && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
     permissions:
       contents: write
     steps:
