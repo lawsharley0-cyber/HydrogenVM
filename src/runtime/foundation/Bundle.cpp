@@ -85,12 +85,14 @@ struct Bundles {
     std::string language;                                                          // chosen .lproj
     std::once_flag mainOnce;
     fs::path installedRoot;  // canonical immutable installation boundary
+    fs::path installedPath;  // lexical installation path, excluding sandbox aliases
     // Host path strings only: never retain guest NSString/CFURL objects here.
     // Process lifetime bounds the cache; mutable bundles outside the installed
     // app are excluded. Directory stamps invalidate changed lookup priorities.
     using ResourceKey = std::array<std::string, 5>;
     struct ResourceEntry {
         std::string path;
+        fs::path boundary;
         std::vector<std::pair<fs::path, fs::file_time_type>> directories;
     };
     std::mutex resourceMu;
@@ -456,7 +458,10 @@ id mainBundle(Ctx& x) {
             std::error_code ec;
             auto root = fs::canonical(x.proc.bundlePath(), ec);
             if (ec) throw Unavailable{};
+            auto path = fs::absolute(x.proc.bundlePath(), ec).lexically_normal();
+            if (ec) throw Unavailable{};
             b.installedRoot = std::move(root);
+            b.installedPath = std::move(path);
             b.language = chooseLanguage(x.proc.bundlePath());
             b.mainBundle = main;
         });
@@ -494,12 +499,31 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
     }
     std::error_code ec;
     auto& b = B(x);
-    const fs::path boundary = initialized && bundle == x.proc.bundlePath() ?
+    const bool mainLookup = initialized && bundle == x.proc.bundlePath();
+    const fs::path boundary = mainLookup ?
                               b.installedRoot : fs::canonical(bundle, ec);
     if (ec) return {};
     const std::string lang = localization.empty() ? (initialized ? b.language : chooseLanguage(bundle)) : localization;
     const Bundles::ResourceKey key{bundle, name, type, subdir, lang};
-    {
+    bool installedLookup = mainLookup;
+    if (initialized && !mainLookup) {
+        const fs::path lexical = fs::absolute(bundle, ec).lexically_normal();
+        if (ec) return {};
+        installedLookup = within(b.installedPath, lexical);
+    }
+    if (installedLookup && !within(b.installedRoot, boundary)) {
+        // An installed nested bundle may have been retargeted into the sandbox.
+        // Enforce the retained installation boundary even on an uncached lookup.
+        std::lock_guard<std::mutex> lk(b.resourceMu);
+        b.resources.erase(key);
+        return {};
+    }
+    // Both lexical and canonical membership are required: a mutable Documents
+    // alias pointing into the app must never enter (or read) this cache.
+    // Nested names are uncached because intermediate directories are not stamped.
+    const bool cacheable = installedLookup && !name.empty() &&
+                           !fs::path(name).has_parent_path() && type.find('/') == std::string::npos;
+    if (cacheable) {
         std::shared_ptr<const Bundles::ResourceEntry> cached;
         {
             std::lock_guard<std::mutex> lk(b.resourceMu);
@@ -507,8 +531,9 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
             if (it != b.resources.end()) cached = it->second;
         }
         if (cached) {
-            bool valid = true;
+            bool valid = cached->boundary == boundary;
             for (const auto& [dir, stamp] : cached->directories) {
+                if (!valid) break;
                 ec.clear();
                 const auto current = fs::last_write_time(dir, ec);
                 if (current != stamp) { valid = false; break; }
@@ -522,11 +547,6 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
     }
     const fs::path root = (subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir)).lexically_normal();
     if (!resourceInside(boundary, root)) return {};
-    const fs::path installed = initialized ? b.installedRoot : fs::canonical(x.proc.bundlePath(), ec);
-    // Nested names still use the normal lookup. Their intermediate directory
-    // mutations are not covered by the search-directory stamps below.
-    const bool cacheable = initialized && !ec && within(installed, boundary) && !name.empty() &&
-                           !fs::path(name).has_parent_path() && type.find('/') == std::string::npos;
     const std::array<fs::path, 5> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
     Bundles::ResourceEntry entry;
     auto found = [&](const fs::path& path) -> std::string {
@@ -534,6 +554,7 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
         const std::string result = path.string();
         if (cacheable) {
             entry.path = result;
+            entry.boundary = boundary;
             std::lock_guard<std::mutex> lk(b.resourceMu);
             // Simple bounded eviction avoids per-hit LRU allocations/mutations.
             if (b.resources.size() >= 4096) b.resources.clear();

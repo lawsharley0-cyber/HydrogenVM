@@ -4622,6 +4622,44 @@ int runFullSubsystemTests() {
             bool mutableOK = mutableLookup() != 0;
             fs::remove(home + "/Mutable.tfc");
             check(mutableOK && !mutableLookup(), "sandbox bundle lookups do not retain stale mutable paths");
+            fs::create_directories(home + "/Documents");
+            fs::create_directories(home + "/Mutable.app/CookedIPhone");
+            fs::create_directories(bundle + "/Nested.app/CookedIPhone");
+            for (const auto& root : {home + "/Mutable.app", bundle + "/Nested.app"}) {
+                put(root + "/CookedIPhone/Texture.tfc");
+                put(root + "/CookedIPhone/Texture~iphone.tfc");
+            }
+            const auto stamp = fs::last_write_time(bundle + "/CookedIPhone");
+            fs::last_write_time(home + "/Mutable.app/CookedIPhone", stamp);
+            fs::last_write_time(bundle + "/Nested.app/CookedIPhone", stamp);
+            auto bundleAt = [&](const std::string& path) {
+                return uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, path)}));
+            };
+            auto aliasResource = [&](uint32_t object) {
+                const auto value = uint32_t(ar.send(acpu, object, "pathForResource:ofType:inDirectory:",
+                    {coldName, coldType, Foundation::makeString(ax, "CookedIPhone")}));
+                return value ? ap.hostPath(Foundation::utf8(ax, value)) : std::string();
+            };
+            const auto outsideAlias = home + "/Documents/Alias.app";
+            fs::create_directory_symlink(bundle, outsideAlias);
+            const auto mutableAlias = bundleAt(outsideAlias);
+            bool aliasOK = aliasResource(mutableAlias) == outsideAlias + "/CookedIPhone/Texture.tfc";
+            fs::remove(outsideAlias);
+            fs::create_directory_symlink(home + "/Mutable.app", outsideAlias);
+            check(aliasOK && aliasResource(mutableAlias) == outsideAlias + "/CookedIPhone/Texture~iphone.tfc",
+                  "mutable sandbox aliases stay uncached after retarget with matching directory timestamps");
+            const auto insideAlias = bundle + "/Alias.bundle";
+            fs::create_directory_symlink(bundle, insideAlias);
+            const auto nestedAlias = bundleAt(insideAlias);
+            aliasOK = aliasResource(nestedAlias) == insideAlias + "/CookedIPhone/Texture.tfc";
+            fs::remove(insideAlias);
+            fs::create_directory_symlink(bundle + "/Nested.app", insideAlias);
+            check(aliasOK && aliasResource(nestedAlias) == insideAlias + "/CookedIPhone/Texture~iphone.tfc",
+                  "cached nested bundle aliases invalidate when their canonical bundle changes");
+            fs::remove(insideAlias);
+            fs::create_directory_symlink(home + "/Mutable.app", insideAlias);
+            check(aliasResource(nestedAlias).empty(),
+                  "nested bundle aliases cannot escape the retained installation boundary on cache miss or hit");
             const auto name = Foundation::makeString(ax, "Texture"), ext = Foundation::makeString(ax, "tfc"), dir = Foundation::makeString(ax, "CookedIPhone");
             const auto url1 = uint32_t(call("_CFBundleCopyResourceURL", {main, name, ext, dir}));
             const auto url2 = uint32_t(call("_CFBundleCopyResourceURL", {main, name, ext, dir}));
