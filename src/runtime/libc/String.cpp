@@ -12,9 +12,17 @@ inline char* H(Ctx& x, GuestPtr p) { return reinterpret_cast<char*>(x.mem.host(p
 inline GuestPtr G(Ctx& x, const void* p) { return p ? x.mem.guestAddr(p) : 0; }
 
 uint32_t s_memcpy(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) { if (n) std::memmove(H(x, d), H(x, s), n); return d; }
-uint32_t s_memcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t len) { if (len < n) throw ProcessExit(134, "___memcpy_chk: buffer overflow"); if (n) std::memmove(H(x, d), H(x, s), n); return d; }
+uint32_t s_memcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t len) {
+    if (len < n || uint64_t(d) + n > Memory::GuestArena::kArenaSize || uint64_t(s) + n > Memory::GuestArena::kArenaSize) throw ProcessExit(134, "___memcpy_chk: buffer overflow");
+    if (n) std::memmove(H(x, d), H(x, s), n);
+    return d;
+}
 uint32_t s_memset(Ctx& x, GuestPtr d, int32_t c, uint32_t n) { if (n) std::memset(H(x, d), c, n); return d; }
-uint32_t s_memset_chk(Ctx& x, GuestPtr d, int32_t c, uint32_t n, uint32_t len) { if (len < n) throw ProcessExit(134, "___memset_chk: buffer overflow"); if (n) std::memset(H(x, d), c, n); return d; }
+uint32_t s_memset_chk(Ctx& x, GuestPtr d, int32_t c, uint32_t n, uint32_t len) {
+    if (len < n || uint64_t(d) + n > Memory::GuestArena::kArenaSize) throw ProcessExit(134, "___memset_chk: buffer overflow");
+    if (n) std::memset(H(x, d), c, n);
+    return d;
+}
 int32_t  s_memcmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) { return n ? std::memcmp(H(x, a), H(x, b), n) : 0; }
 uint32_t s_memchr(Ctx& x, GuestPtr s, int32_t c, uint32_t n) { return n ? G(x, std::memchr(H(x, s), c, n)) : 0; }
 void     s_bzero(Ctx& x, GuestPtr d, uint32_t n) { if (n) std::memset(H(x, d), 0, n); }
@@ -38,9 +46,23 @@ int32_t  s_strcasecmp(Ctx& x, GuestPtr a, GuestPtr b) { return ::strcasecmp(H(x,
 int32_t  s_strncasecmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) { return ::strncasecmp(H(x, a), H(x, b), n); }
 int32_t  s_strcoll(Ctx& x, GuestPtr a, GuestPtr b) { return std::strcmp(H(x, a), H(x, b)); }
 uint32_t s_strcpy(Ctx& x, GuestPtr d, GuestPtr s) { const size_t n = std::strlen(H(x, s)); std::memmove(H(x, d), H(x, s), n + 1); return d; }
-uint32_t s_strcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t len) { const size_t n = std::strlen(H(x, s)); if (len < n + 1) throw ProcessExit(134, "___strcpy_chk: buffer overflow"); std::memmove(H(x, d), H(x, s), n + 1); return d; }
+uint32_t s_strcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t len) {
+    if (uint64_t(s) > Memory::GuestArena::kArenaSize) throw ProcessExit(134, "___strcpy_chk: buffer overflow");
+    const size_t n = strnlen(H(x, s), Memory::GuestArena::kArenaSize - s);
+    if (n == Memory::GuestArena::kArenaSize - s) throw ProcessExit(134, "___strcpy_chk: unterminated source");
+    if (len < n + 1 || uint64_t(d) + n + 1 > Memory::GuestArena::kArenaSize) throw ProcessExit(134, "___strcpy_chk: buffer overflow");
+    std::memmove(H(x, d), H(x, s), n + 1);
+    return d;
+}
 uint32_t s_stpcpy(Ctx& x, GuestPtr d, GuestPtr s) { const size_t n = std::strlen(H(x, s)); std::memmove(H(x, d), H(x, s), n + 1); return d + uint32_t(n); }
-uint32_t s_stpcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t len) { const size_t n = std::strlen(H(x, s)); if (len < n + 1) throw ProcessExit(134, "___stpcpy_chk: buffer overflow"); std::memmove(H(x, d), H(x, s), n + 1); return d + uint32_t(n); }
+uint32_t s_stpcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t len) {
+    if (uint64_t(s) > Memory::GuestArena::kArenaSize) throw ProcessExit(134, "___stpcpy_chk: buffer overflow");
+    const size_t n = strnlen(H(x, s), Memory::GuestArena::kArenaSize - s);
+    if (n == Memory::GuestArena::kArenaSize - s) throw ProcessExit(134, "___stpcpy_chk: unterminated source");
+    if (len < n + 1 || uint64_t(d) + n + 1 > Memory::GuestArena::kArenaSize) throw ProcessExit(134, "___stpcpy_chk: buffer overflow");
+    std::memmove(H(x, d), H(x, s), n + 1);
+    return d + uint32_t(n);
+}
 uint32_t s_strncpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t len_dest) { if (len_dest < n) throw ProcessExit(134, "___strncpy_chk: buffer overflow"); const size_t len = strnlen(H(x, s), n); std::memmove(H(x, d), H(x, s), len); if (len < n) std::memset(H(x, d) + len, 0, n - len); return d; }
 uint32_t s_strncpy(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
     const size_t len = strnlen(H(x, s), n);
@@ -48,9 +70,25 @@ uint32_t s_strncpy(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
     if (len < n) std::memset(H(x, d) + len, 0, n - len);
     return d;
 }
-uint32_t s_strcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t len) { const size_t dl = std::strlen(H(x, d)), sl = std::strlen(H(x, s)); if (len < dl + sl + 1) throw ProcessExit(134, "___strcat_chk: buffer overflow"); std::memmove(H(x, d) + dl, H(x, s), sl + 1); return d; }
+uint32_t s_strcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t len) {
+    const size_t dl = strnlen(H(x, d), len);
+    if (dl >= len) throw ProcessExit(134, "___strcat_chk: unterminated destination");
+    const size_t sl = std::strlen(H(x, s));
+    if (len - dl < sl + 1) throw ProcessExit(134, "___strcat_chk: buffer overflow");
+    if (uint64_t(d) + dl + sl + 1 > Memory::GuestArena::kArenaSize || uint64_t(s) + sl + 1 > Memory::GuestArena::kArenaSize) throw ProcessExit(134, "___strcat_chk: buffer overflow");
+    std::memmove(H(x, d) + dl, H(x, s), sl + 1);
+    return d;
+}
 uint32_t s_strcat(Ctx& x, GuestPtr d, GuestPtr s) { const size_t dl = std::strlen(H(x, d)), sl = std::strlen(H(x, s)); std::memmove(H(x, d) + dl, H(x, s), sl + 1); return d; }
-uint32_t s_strncat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t len) { const size_t dl = std::strlen(H(x, d)), sl = strnlen(H(x, s), n); if (len < dl + sl + 1) throw ProcessExit(134, "___strncat_chk: buffer overflow"); std::memmove(H(x, d) + dl, H(x, s), sl); H(x, d)[dl + sl] = 0; return d; }
+uint32_t s_strncat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t len) {
+    const size_t dl = strnlen(H(x, d), len);
+    if (dl >= len) throw ProcessExit(134, "___strncat_chk: unterminated destination");
+    const size_t sl = strnlen(H(x, s), n);
+    if (len - dl < sl + 1 || uint64_t(d) + dl + sl + 1 > Memory::GuestArena::kArenaSize || uint64_t(s) + sl > Memory::GuestArena::kArenaSize) throw ProcessExit(134, "___strncat_chk: buffer overflow");
+    std::memmove(H(x, d) + dl, H(x, s), sl);
+    H(x, d)[dl + sl] = 0;
+    return d;
+}
 uint32_t s_strncat(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
     const size_t dl = std::strlen(H(x, d)), sl = strnlen(H(x, s), n);
     std::memmove(H(x, d) + dl, H(x, s), sl);
@@ -63,7 +101,15 @@ uint32_t s_strlcpy(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
     if (n) { const size_t c = std::min<size_t>(sl, n - 1); std::memmove(H(x, d), H(x, s), c); H(x, d)[c] = 0; }
     return uint32_t(sl);
 }
-uint32_t s_strlcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t len) { if (len < n) throw ProcessExit(134, "___strlcat_chk: buffer overflow"); const size_t dl = strnlen(H(x, d), n), sl = std::strlen(H(x, s)); if (dl < n) { const size_t c = std::min<size_t>(sl, n - dl - 1); std::memmove(H(x, d) + dl, H(x, s), c); H(x, d)[dl + c] = 0; } return uint32_t(dl + sl); }
+uint32_t s_strlcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t len) {
+    if (len < n) throw ProcessExit(134, "___strlcat_chk: buffer overflow");
+    const size_t dl = strnlen(H(x, d), n), sl = std::strlen(H(x, s));
+    if (dl == n) return uint32_t(n + sl);
+    const size_t c = std::min<size_t>(sl, n - dl - 1);
+    std::memmove(H(x, d) + dl, H(x, s), c);
+    H(x, d)[dl + c] = 0;
+    return uint32_t(dl + sl);
+}
 uint32_t s_strlcat(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
     const size_t dl = strnlen(H(x, d), n), sl = std::strlen(H(x, s));
     if (dl == n) return uint32_t(n + sl);
@@ -276,7 +322,9 @@ static void buildRuneLocale(Process& p) {
     m.write<uint32_t>(*p.lookupSymbol("___mb_cur_max"), 1);
 }
 
+
 void registerLibcString(Process& p) {
+
     p.def<&s_memcpy>("_memcpy");
     p.def<&s_memcpy>("_memmove");
     p.def<&s_memcpy_chk>("___memcpy_chk");
