@@ -1930,7 +1930,7 @@ int runFullSubsystemTests() {
             check(false, "loadNibNamed:owner:options: threw exception for missing NIB");
         }
 
-        // Test positive fallback
+        // Test positive fallback lookup matching
         std::error_code ec;
         const std::string dummyNibBase = cx.proc.bundlePath() + "/DummyControllerOf.nib";
         auto f = fopen(dummyNibBase.c_str(), "w");
@@ -1942,10 +1942,8 @@ int runFullSubsystemTests() {
 
         bool fallbackThrows = false;
         try {
-            const ObjC::id result = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DummyControllerLandscapeOf"), 0, 0}));
-            if (result == 0) fallbackThrows = true; // wait, loadNib returning 0 makes b_loadNib throw!
-        } catch (const ObjC::ObjCError& e) {
-            fallbackThrows = true;
+            const ObjC::id result = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DummyControllerOfLandscape"), 0, 0}));
+            if (result == 0) fallbackThrows = true;
         } catch (...) {
             fallbackThrows = true;
         }

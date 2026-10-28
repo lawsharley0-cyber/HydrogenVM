@@ -391,18 +391,23 @@ std::string nibPath(Ctx& x, const std::string& name, id bundle) {
     if (p.empty()) {
         std::error_code ec;
 
-        std::string baseFallback = base;
-        if (base.find("Landscape") != std::string::npos) {
-            baseFallback = base;
-            baseFallback.erase(baseFallback.find("Landscape"), 9);
-        } else if (base.find("Portrait") != std::string::npos) {
-            baseFallback = base;
-            baseFallback.erase(baseFallback.find("Portrait"), 8);
+        std::vector<std::string> fallbacks;
+        fallbacks.push_back(base + "~iphone.nib");
+        fallbacks.push_back(base + ".nib");
+
+        if (base.size() > 9 && base.substr(base.size() - 9) == "Landscape") {
+            std::string noOrien = base.substr(0, base.size() - 9);
+            fallbacks.push_back(noOrien + "~iphone.nib");
+            fallbacks.push_back(noOrien + ".nib");
+        } else if (base.size() > 8 && base.substr(base.size() - 8) == "Portrait") {
+            std::string noOrien = base.substr(0, base.size() - 8);
+            fallbacks.push_back(noOrien + "~iphone.nib");
+            fallbacks.push_back(noOrien + ".nib");
         }
 
-        for (const std::string& cand : {bundlePath + "/" + base + "~iphone.nib", bundlePath + "/" + base + ".nib",
-                                        bundlePath + "/" + baseFallback + "~iphone.nib", bundlePath + "/" + baseFallback + ".nib"})
-            if (fs::exists(cand, ec)) { p = cand; break; }
+        for (const std::string& cand : fallbacks) {
+            if (fs::exists(bundlePath + "/" + cand, ec)) { p = bundlePath + "/" + cand; break; }
+        }
     }
     if (p.empty()) return {};
     std::error_code ec;

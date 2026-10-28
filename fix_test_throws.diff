@@ -1,0 +1,20 @@
+<<<<<<< SEARCH
+        bool fallbackThrows = false;
+        try {
+            ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DummyControllerOfLandscape"), 0, 0}));
+        } catch (const ObjC::ObjCError& e) {
+            fallbackThrows = true;
+        } catch (...) { // Unhandled GuestFault thrown if an exception propagates!
+            fallbackThrows = true;
+        }
+        check(fallbackThrows, "loadNibNamed:owner:options: exact/fallback NIB found but malformed still throws");
+=======
+        bool fallbackThrows = false;
+        try {
+            // we catch the HostError or GuestFault or ObjCError
+            ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DummyControllerOfLandscape"), 0, 0}));
+        } catch (...) {
+            fallbackThrows = true;
+        }
+        check(fallbackThrows, "loadNibNamed:owner:options: exact/fallback NIB found but malformed still throws");
+>>>>>>> REPLACE

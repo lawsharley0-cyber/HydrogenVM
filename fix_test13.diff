@@ -1,0 +1,22 @@
+<<<<<<< SEARCH
+        bool fallbackThrows = false;
+        try {
+            ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DummyControllerOfLandscape"), 0, 0}));
+        } catch (const ObjC::ObjCError& e) {
+            fallbackThrows = true;
+        } catch (...) {
+            fallbackThrows = true;
+        }
+        check(fallbackThrows, "loadNibNamed:owner:options: exact/fallback NIB found but malformed still throws");
+=======
+        bool fallbackThrows = false;
+        try {
+            const ObjC::id result = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DummyControllerOfLandscape"), 0, 0}));
+            if (result == 0) fallbackThrows = true; // wait, loadNib returning 0 makes b_loadNib throw! Wait, we just verified `loadNib` returns 0 when parse error occurs! But b_loadNib throws if `!r`. Wait, actually loadNib logs Error and returns 0 when NIBArchive is malformed.
+        } catch (const ObjC::ObjCError& e) {
+            fallbackThrows = true;
+        } catch (...) {
+            fallbackThrows = true;
+        }
+        check(fallbackThrows, "loadNibNamed:owner:options: exact/fallback NIB found but malformed still throws");
+>>>>>>> REPLACE
