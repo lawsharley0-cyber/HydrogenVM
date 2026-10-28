@@ -1316,19 +1316,6 @@ static stbtt_uint32 stbtt__find_table(stbtt_uint8 *data, stbtt_uint32 fontstart,
    return 0;
 }
 
-static stbtt_uint32 stbtt__find_table_length(stbtt_uint8 *data, stbtt_uint32 fontstart, const char *tag)
-{
-   stbtt_int32 num_tables = ttUSHORT(data+fontstart+4);
-   stbtt_uint32 tabledir = fontstart + 12;
-   stbtt_int32 i;
-   for (i=0; i < num_tables; ++i) {
-      stbtt_uint32 loc = tabledir + 16*i;
-      if (stbtt_tag(data+loc+0, tag))
-         return ttULONG(data+loc+12);
-   }
-   return 0;
-}
-
 static int stbtt_GetFontOffsetForIndex_internal(unsigned char *font_collection, int index)
 {
    // if it's just a font, there's only one valid index
@@ -1429,7 +1416,7 @@ static int stbtt_InitFont_internal(stbtt_fontinfo *info, unsigned char *data, in
       info->fdselect = stbtt__new_buf(NULL, 0);
 
       // @TODO this should use size from table (not 512MB)
-      info->cff = stbtt__new_buf(data+cff, stbtt__find_table_length(data, fontstart, "CFF "));
+      info->cff = stbtt__new_buf(data+cff, 512*1024*1024);
       b = info->cff;
 
       // read the header
