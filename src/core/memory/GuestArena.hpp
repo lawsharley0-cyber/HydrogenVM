@@ -62,7 +62,7 @@ public:
 
     bool    isMapped(uint32_t addr) const noexcept { return prot_[addr >> kGuestPageShift] != kProtNone; }
     uint8_t protAt(uint32_t addr) const noexcept   { return prot_[addr >> kGuestPageShift]; }
-    uint32_t mappedWritableSpan(uint32_t addr) const noexcept;
+    uint32_t mappedWritableSpan(uint32_t addr, uint32_t maxScan) const noexcept;
 
     // Find a free, page-aligned range of `size` bytes at or above `hint`.
     // Returns 0 on failure (address 0 is never handed out).

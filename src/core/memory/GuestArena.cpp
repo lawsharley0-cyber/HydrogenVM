@@ -118,15 +118,20 @@ void GuestArena::unmap(uint32_t addr, uint32_t size) {
     }
 }
 
-uint32_t GuestArena::mappedWritableSpan(uint32_t addr) const noexcept {
+uint32_t GuestArena::mappedWritableSpan(uint32_t addr, uint32_t maxScan) const noexcept {
+    if (!maxScan) return 0;
+    std::lock_guard<std::mutex> lk(mu_);
     uint64_t g = addr >> kGuestPageShift;
     if (g >= kGuestPageCount || !(prot_[g] & kProtWrite)) return 0;
     uint64_t end = (uint64_t(addr) & ~uint64_t(kGuestPageSize - 1)) + kGuestPageSize;
-    for (++g; g < kGuestPageCount; ++g) {
+    uint64_t scanLimit = uint64_t(addr) + maxScan;
+    if (scanLimit > kArenaSize) scanLimit = kArenaSize;
+    for (++g; g < kGuestPageCount && end < scanLimit; ++g) {
         if (!(prot_[g] & kProtWrite)) break;
         end += kGuestPageSize;
     }
-    return uint32_t(end - addr);
+    uint64_t span = end - addr;
+    return span > maxScan ? maxScan : uint32_t(span);
 }
 
 uint32_t GuestArena::findFree(uint32_t size, uint32_t hint) const {

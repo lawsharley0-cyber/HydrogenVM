@@ -86,9 +86,9 @@ int32_t f_vfprintf(Ctx& x, GuestPtr fp, GuestPtr fmt, VaList ap) {
     ArgReader a(x.mem, ap.ptr);
     return outString(x, fp, formatGuest(x.proc, x.proc.readCString(fmt), a));
 }
-static uint32_t getWritableBound(Process& proc, GuestPtr buf) {
-    if (!buf) return 0;
-    const uint32_t mappedSpan = proc.mem().mappedWritableSpan(buf);
+static uint32_t getWritableBound(Process& proc, GuestPtr buf, uint32_t maxScan) {
+    if (!buf || !maxScan) return 0;
+    const uint32_t mappedSpan = proc.mem().mappedWritableSpan(buf, maxScan);
     if (!mappedSpan) return 0;
     const uint32_t allocRem = proc.heap().allocationRemainder(buf);
     return allocRem ? std::min(mappedSpan, allocRem) : mappedSpan;
@@ -96,10 +96,11 @@ static uint32_t getWritableBound(Process& proc, GuestPtr buf) {
 
 int32_t storeFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t os, const std::string& s) {
     if (n && buf) {
-        const uint32_t bound = getWritableBound(x.proc, buf);
-        const uint32_t totalBound = std::min(bound, os);
         const size_t writeLen = std::min<size_t>(s.size(), n - 1);
-        if (writeLen + 1 > totalBound) {
+        const uint32_t maxScan = uint32_t(writeLen + 1);
+        const uint32_t bound = getWritableBound(x.proc, buf, maxScan);
+        const uint32_t totalBound = std::min(bound, os);
+        if (maxScan > totalBound) {
             throw std::runtime_error("sprintf buffer overflow");
         }
         x.mem.copyIn(buf, s.data(), writeLen);
@@ -437,10 +438,11 @@ std::string readWString(Ctx& x, GuestPtr ws, size_t maxChars = 65536) {
 int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t os, const std::string& s) {
     if (!n) return -1;
     if (buf) {
-        const uint32_t bound = getWritableBound(x.proc, buf);
-        const uint32_t totalBound = std::min(bound, os);
         const size_t writeLen = std::min<size_t>(s.size(), n - 1);
-        if ((writeLen + 1) * 4 > totalBound) {
+        const uint32_t maxScan = uint32_t((writeLen + 1) * 4);
+        const uint32_t bound = getWritableBound(x.proc, buf, maxScan);
+        const uint32_t totalBound = std::min(bound, os);
+        if (maxScan > totalBound) {
             throw std::runtime_error("swprintf buffer overflow");
         }
         for (size_t i = 0; i < writeLen; ++i) x.mem.write<uint32_t>(buf + uint32_t(i) * 4, uint8_t(s[i]));

@@ -4589,7 +4589,9 @@ int runFullSubsystemTests() {
         r = runFormat("_sprintf", {bufA, fmt16});
         check(r.first, "sprintf adjacent heap allocations overflow fails");
 
-        uint32_t unmappedEdge = stackRegion + 1024; // Just past our mapped stack region
+        uint32_t customMap = 0x20000000; // Find a free page and map it explicitly for boundaries
+        p.mem().map(customMap, 4096, Memory::kProtRW);
+        uint32_t unmappedEdge = customMap + 4096; // Just past our mapped stack region
         uint32_t edgeStack = unmappedEdge - 5; // 5 bytes from unmapped
         const uint32_t fmtExact = p.allocCString("1234");
         const uint32_t fmtOverflow = p.allocCString("12345");
