@@ -144,7 +144,7 @@ int runAsm(const std::string& elf, const std::vector<std::string>& sources) {
             if (undefWant) {
                 if (!ok && c.exit == CPU::Exit::Undefined) {
                     uint32_t hw1 = c.thumb ? h.mem.read<uint16_t>(c.exit_info) : 0;
-                    uint32_t raw = c.thumb ? (hw1 | (h.mem.read<uint16_t>(c.exit_info + 2) << 16)) : h.mem.read<uint32_t>(c.exit_info);
+                    uint32_t raw = c.thumb ? (hw1 | (uint32_t(h.mem.read<uint16_t>(c.exit_info + 2)) << 16)) : h.mem.read<uint32_t>(c.exit_info);
                     if (raw == undefWant->value || (c.thumb && hw1 == undefWant->value)) {
                         ++pass;
                         continue;
