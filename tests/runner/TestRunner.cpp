@@ -3727,16 +3727,26 @@ int runFullSubsystemTests() {
             }
         }
         {
-            // SKPaymentTransaction properties
+            // SKPaymentTransaction properties and types
             const ObjC::Class sktCls = r.getClass("SKPaymentTransaction");
-            if (sktCls) {
+            const ObjC::Class skpCls = r.getClass("SKPayment");
+            if (sktCls && skpCls) {
                 const ObjC::id tx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, sktCls, r.selAlloc)), "init"));
                 const ObjC::id tid = ObjC::id(r.send(cpu, tx, "transactionIdentifier"));
                 const ObjC::id tdate = ObjC::id(r.send(cpu, tx, "transactionDate"));
-                const uint64_t tstate = uint64_t(r.send(cpu, tx, "transactionState"));
-                check(tid == 0 && tdate == 0 && tstate == 0, "SKPaymentTransaction properties return correct zero/nil values");
+                const uint32_t tstate = uint32_t(r.send(cpu, tx, "transactionState"));
+
+                const uint32_t stateSel = r.sel("transactionState");
+                const std::string stateSig = r.getMethodSignature(sktCls, stateSel);
+
+                const ObjC::id pay = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {0}));
+                r.send(cpu, pay, "setQuantity:", {uint32_t(50)});
+                const uint32_t qtySel = r.sel("setQuantity:");
+                const std::string qtySig = r.getMethodSignature(skpCls, qtySel);
+
+                check(tid == 0 && tdate == 0 && tstate == 0 && stateSig == "i@:" && qtySig == "v@:i", "SKPaymentTransaction and SKPayment properties use 32-bit types (i) and return expected defaults");
             } else {
-                check(false, "SKPaymentTransaction class not found");
+                check(false, "SKPaymentTransaction or SKPayment class not found");
             }
         }
     }

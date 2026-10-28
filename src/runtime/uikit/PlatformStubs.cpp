@@ -1623,8 +1623,8 @@ void sk_noop(Ctx&, id, SEL) {}
 id sk_empty(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
 id sk_zero_id(Ctx&, id, SEL) { return 0; }
 char sk_zero_c(Ctx&, id, SEL) { return 0; }
-int64_t sk_zero_q(Ctx&, id, SEL) { return 0; }
-void sk_ignore_q(Ctx&, id, SEL, int64_t) {}
+int32_t sk_zero_i(Ctx&, id, SEL) { return 0; }
+void sk_ignore_i(Ctx&, id, SEL, int32_t) {}
 id sk_allocZero(Ctx& x, id, SEL, id) {
     const id inst = rt(x).createInstance(x.cpu.r[0]);
     return autoreleased(x, inst);
