@@ -1,2 +1,0 @@
-TESTLAB TL-Q failed
-  reason: Language direction differs from known writing systems
