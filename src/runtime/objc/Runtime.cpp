@@ -619,6 +619,14 @@ void Runtime::poolPop(CPU::Cpu& c, uint32_t token) {
     }
 }
 
+void Runtime::drainPools(CPU::Cpu& c) {
+    // The first pool pushed on this thread is token 1. Nested pools get 2, 3, ...
+    // Popping 1 walks every mark still on the stack, which is the thread-exit
+    // equivalent of libobjc's TLS destructor. Token 0 is a no-op in poolPop.
+    ThreadState& ts = threadState(proc_);
+    if (!ts.marks.empty()) poolPop(c, 1);
+}
+
 void Runtime::addToPool(id obj) {
     ThreadState& ts = threadState(proc_);
     if (ts.marks.empty()) {

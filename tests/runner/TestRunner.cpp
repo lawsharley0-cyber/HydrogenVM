@@ -3741,6 +3741,44 @@ int runFullSubsystemTests() {
                   "AudioQueue recording fills buffers with microphone audio at the queue's rate and format");
         }
 
+
+        // A guest thread that returns with pools still pushed must release those
+        // objects. NSThread's trampoline pops its own pool before returning, so
+        // this uses a raw guest thread: one object is popped explicitly, and two
+        // more sit in nested pools that only thread exit can drain.
+        {
+            std::atomic<int> deallocs{0};
+            int explicitDeallocs = 0;
+            ObjC::ClassBuilder cls = r.defineClass("HVMThreadExitPool", "NSObject");
+            cls.method("dealloc", [&](Ctx& dx) {
+                deallocs.fetch_add(1);
+                r.disposeInstance(dx.cpu, dx.cpu.r[0]);
+            }, "v@:");
+            auto make = [&](CPU::Cpu& c) {
+                return ObjC::id(r.send(c, ObjC::id(r.send(c, cls.cls(), r.selAlloc)), "init"));
+            };
+            const auto worker = proc.defineFunction("__hvm_test_thread_exit_pool", [&](Ctx& wx) {
+                const uint32_t popped = r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+                r.poolPop(wx.cpu, popped);
+                explicitDeallocs = deallocs.load();
+
+                r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+                r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+            });
+            const uint32_t thread = proc.startThread(worker, 0, 64u << 10, false);
+            uint32_t returned = 0;
+            const bool joined = proc.joinThread(thread, &returned);
+            if (!(joined && explicitDeallocs == 1 && deallocs.load() == 3)) {
+                std::printf("    thread-exit pool: joined=%d explicit=%d deallocs=%d\n",
+                            joined, explicitDeallocs, deallocs.load());
+            }
+            check(joined && explicitDeallocs == 1 && deallocs.load() == 3,
+                  "an object autoreleased on a guest thread is released when the thread exits");
+        }
+
         // NSThread -isExecuting / -isFinished across start and the end of the thread's work (Jetpack, #75).
         {
             std::atomic<bool> release{false}, entered{false};
