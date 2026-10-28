@@ -719,6 +719,26 @@ void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
             }
         }
     }
+
+    if (t->objcState) {
+        void (*popPools)(CPU::Cpu&, uint32_t) = nullptr;
+        if (auto sym = lookupSymbol("_objc_autoreleasePoolPop")) {
+            if (engine_->isHleAddress(*sym & ~1u)) {
+                if (auto func = hostFunctionFor("_objc_autoreleasePoolPop")) {
+                    if (auto popFn = func.target<void(*)(CPU::Cpu&, uint32_t)>()) {
+                        popPools = *popFn;
+                    }
+                }
+            }
+        }
+
+        if (popPools) {
+            popPools(t->cpu, 1);
+        }
+
+        t->objcStateFree(t->objcState);
+        t->objcState = nullptr;
+    }
     {
         std::lock_guard<std::mutex> lk(t->m);
         t->finished = true;

@@ -3658,6 +3658,48 @@ int runFullSubsystemTests() {
                   "AudioQueue recording fills buffers with microphone audio at the queue's rate and format");
         }
 
+
+        // Thread termination drains its autorelease pools
+        {
+            std::atomic<bool> release{false}, entered{false};
+            std::atomic<int> deallocs{0};
+            ObjC::ClassBuilder tgt = r.defineClass("HVMTestAutoreleaseTarget", "NSObject");
+
+            tgt.method("work:", [&](Ctx& cx) {
+                // Manually push a pool
+                uint32_t poolId = r.poolPush();
+                // Create an object, overriding dealloc to track when it dies
+                ObjC::ClassBuilder leakObj = r.defineClass("HVMTestLeakObj", "NSObject");
+                leakObj.method("dealloc", [&](Ctx& cx_d) {
+                    deallocs++;
+                    r.disposeInstance(cx_d.cpu, cx_d.cpu.r[0]);
+                }, "v@:");
+
+                ObjC::id l1 = ObjC::id(r.send(cx.cpu, ObjC::id(r.send(cx.cpu, leakObj.cls(), r.selAlloc)), "init"));
+                r.autorelease(cx.cpu, l1); // added to poolId
+
+                ObjC::id l2 = ObjC::id(r.send(cx.cpu, ObjC::id(r.send(cx.cpu, leakObj.cls(), r.selAlloc)), "init"));
+                r.autorelease(cx.cpu, l2); // added to poolId
+
+                // Do NOT pop the pool, allow the thread to terminate and verify teardown cleans it
+                entered = true;
+                while (!release) { std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+            }, "v@:@");
+
+            const ObjC::id target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, tgt.cls(), r.selAlloc)), "init"));
+            const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
+                                                "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
+
+            r.send(cpu, th, "start");
+            for (int i = 0; i < 400 && !entered; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            release = true;
+
+            auto flag = [&](const char* sel) { return (uint32_t(r.send(cpu, th, sel)) & 0xFF) != 0; };
+            for (int i = 0; i < 400 && !flag("isFinished"); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+            check(deallocs.load() == 2, "Thread termination drains outstanding autoreleased objects");
+        }
+
         // NSThread -isExecuting / -isFinished across start and the end of the thread's work (Jetpack, #75).
         {
             std::atomic<bool> release{false}, entered{false};
