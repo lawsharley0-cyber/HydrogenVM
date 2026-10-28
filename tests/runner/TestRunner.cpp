@@ -4683,7 +4683,10 @@ int runFullSubsystemTests() {
         r = run("___vsprintf_chk", {small, 0, 15, exact});
         check(r.first, "vsprintf_chk exists and enforces object size");
 
-        constexpr uint32_t page = 0x23000000;
+        // The managed heap reserves 0x10000000..0x80000000; use an
+        // independent mapping so this is genuinely a stack/global-style
+        // destination, not an unallocated address within the heap reserve.
+        constexpr uint32_t page = 0x90000000;
         proc.mem().map(page, 4096, Memory::kProtRW);
         const uint32_t edge = page + 4096 - 5;
         r = run("_sprintf", {edge, proc.allocCString("1234")});
@@ -4695,6 +4698,29 @@ int runFullSubsystemTests() {
         check(!r.first && r.second == 5 &&
               std::memcmp(proc.mem().host(global), "12345\0", 6) == 0,
               "sprintf permits writable global buffers outside tracked heap");
+    }
+
+    // Mapping and writes must be serialized: on 16 KB hosts a committed host
+    // page can remain accessible after its 4 KB guest mapping is removed.
+    {
+        Memory::GuestArena arena;
+        constexpr uint32_t page = 0x90000000;
+        arena.map(page, 4096, Memory::kProtRW);
+        std::atomic<int> attempted{0};
+        std::thread writer([&] {
+            for (int i = 0; i < 1000; ++i) {
+                arena.copyCStringWritable(page, "ok", 2);
+                attempted.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+        for (int i = 0; i < 100; ++i) {
+            arena.unmap(page, 4096);
+            arena.map(page, 4096, Memory::kProtRW);
+        }
+        writer.join();
+        arena.unmap(page, 4096);
+        check(attempted.load() == 1000 && !arena.copyCStringWritable(page, "no", 2),
+              "formatted guest-page writes synchronize with concurrent map/unmap");
     }
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
