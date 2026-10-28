@@ -22,6 +22,14 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 
 ## P1
 
+- UAR-002 startup (Group D, `PlatformStubs.cpp`): AVPlayerItem must report
+  Unknown initially and publish readiness after player construction. TL-S fails
+  on the old implementation and passes with the deferred status KVO transition.
+  Goat Simulator 1.0.3 reaches the menu and interactive world on Linux/Mesa;
+  movement, camera and jump respond. Longer gameplay hit a host SIGSEGV outside
+  the guest arena; stability, save/relaunch and physical iPhone remain open.
+  This does not resolve the owner's original device report.
+
 Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
 
 - B-212 / UX-2 (Group E): guest-oriented viewport, display scaling/filtering,
