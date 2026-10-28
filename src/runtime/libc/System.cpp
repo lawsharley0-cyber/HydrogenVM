@@ -3,6 +3,7 @@
 // a little of Mach.
 #include <sys/ioctl.h>
 #include <atomic>
+#include <condition_variable>
 #include "runtime/Process.hpp"
 #include "MachPorts.hpp"
 #include "Network.hpp"
@@ -991,9 +992,86 @@ int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     return 0;
 }
 
-int32_t sys_sem_close(Ctx& x, uint32_t sem) {
-    if (sem == 0 || sem == 0xFFFFFFFFu) { setErrno(x, 22); /* EINVAL */ return -1; }
-    return 0; // successfully "closed" the named semaphore
+// Named POSIX semaphores have opaque handles, not arbitrary guest addresses.
+// Keep names and open handles separate: unlink removes a name, whereas close
+// only releases that handle; another open handle remains usable.
+struct NamedSemaphore {
+    std::mutex mu;
+    std::condition_variable changed;
+    uint32_t value = 0;
+};
+struct NamedSemaphoreTable {
+    explicit NamedSemaphoreTable(Process&) {}
+    std::mutex mu;
+    std::unordered_map<std::string, std::shared_ptr<NamedSemaphore>> names;
+    std::unordered_map<uint32_t, std::shared_ptr<NamedSemaphore>> handles;
+};
+uint32_t sys_sem_open(Ctx& x, GuestPtr name, int32_t flags, uint32_t, uint32_t value) {
+    if (!name) { setErrno(x, EINVAL); return UINT32_MAX; }
+    const std::string key = x.proc.readCString(name);
+    if (key.size() < 2 || key[0] != '/' || key.find('/', 1) != std::string::npos) {
+        setErrno(x, EINVAL); return UINT32_MAX;
+    }
+    constexpr int32_t kDarwinCreate = 0x0200, kDarwinExcl = 0x0800;
+    auto& table = x.proc.service<NamedSemaphoreTable>();
+    std::lock_guard lock(table.mu);
+    auto it = table.names.find(key);
+    if (it == table.names.end()) {
+        if (!(flags & kDarwinCreate)) { setErrno(x, ENOENT); return UINT32_MAX; }
+        auto sem = std::make_shared<NamedSemaphore>();
+        sem->value = value;
+        it = table.names.emplace(key, std::move(sem)).first;
+    } else if ((flags & (kDarwinCreate | kDarwinExcl)) == (kDarwinCreate | kDarwinExcl)) {
+        setErrno(x, EEXIST); return UINT32_MAX;
+    }
+    const uint32_t handle = x.proc.heap().allocZeroed(4);
+    table.handles.emplace(handle, it->second);
+    return handle;
+}
+int32_t sys_sem_close(Ctx& x, uint32_t handle) {
+    auto& table = x.proc.service<NamedSemaphoreTable>();
+    std::lock_guard lock(table.mu);
+    auto it = table.handles.find(handle);
+    if (it == table.handles.end()) { setErrno(x, EINVAL); return -1; }
+    table.handles.erase(it);
+    x.proc.heap().free(handle);
+    return 0;
+}
+int32_t sys_sem_unlink(Ctx& x, GuestPtr name) {
+    if (!name) { setErrno(x, EINVAL); return -1; }
+    auto& table = x.proc.service<NamedSemaphoreTable>();
+    std::lock_guard lock(table.mu);
+    if (!table.names.erase(x.proc.readCString(name))) { setErrno(x, ENOENT); return -1; }
+    return 0;
+}
+std::shared_ptr<NamedSemaphore> openNamed(Ctx& x, uint32_t handle) {
+    auto& table = x.proc.service<NamedSemaphoreTable>();
+    std::lock_guard lock(table.mu);
+    auto it = table.handles.find(handle);
+    return it == table.handles.end() ? nullptr : it->second;
+}
+int32_t sys_sem_post(Ctx& x, uint32_t handle) {
+    auto sem = openNamed(x, handle);
+    if (!sem) { setErrno(x, EINVAL); return -1; }
+    { std::lock_guard lock(sem->mu); if (sem->value == UINT32_MAX) { setErrno(x, darwinErrno(EOVERFLOW)); return -1; } ++sem->value; }
+    sem->changed.notify_one();
+    return 0;
+}
+int32_t sys_sem_trywait(Ctx& x, uint32_t handle) {
+    auto sem = openNamed(x, handle);
+    if (!sem) { setErrno(x, EINVAL); return -1; }
+    std::lock_guard lock(sem->mu);
+    if (!sem->value) { setErrno(x, darwinErrno(EAGAIN)); return -1; }
+    --sem->value;
+    return 0;
+}
+int32_t sys_sem_wait(Ctx& x, uint32_t handle) {
+    auto sem = openNamed(x, handle);
+    if (!sem) { setErrno(x, EINVAL); return -1; }
+    std::unique_lock lock(sem->mu);
+    sem->changed.wait(lock, [&] { return sem->value != 0; });
+    --sem->value;
+    return 0;
 }
 
 } // namespace
@@ -1044,7 +1122,12 @@ void registerLibcSystem(Process& p) {
     p.def<&s_sysconf>("_sysconf");
     p.def<&s_getrlimit>("_getrlimit");
     p.def<&s_ok2>("_setrlimit");
+    p.def<&sys_sem_open>("_sem_open");
     p.def<&sys_sem_close>("_sem_close");
+    p.def<&sys_sem_unlink>("_sem_unlink");
+    p.def<&sys_sem_post>("_sem_post");
+    p.def<&sys_sem_trywait>("_sem_trywait");
+    p.def<&sys_sem_wait>("_sem_wait");
     p.def<&s_getrusage>("_getrusage");
     p.def<&s_sysctl>("_sysctl");
     p.def<&s_sysctlbyname>("_sysctlbyname");
