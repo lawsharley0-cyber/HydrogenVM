@@ -11,12 +11,16 @@ on:
   push:
     branches: [main, codex/test-lab-v1]
     paths:
+      - 'src/**'
+      - 'CMakeLists.txt'
       - 'tests/ios/apps/testlab/**'
       - 'tools/hvm_testlab.py'
       - 'tools/testlab_schema/**'
       - '.github/workflows/testlab.yml'
   pull_request:
     paths:
+      - 'src/**'
+      - 'CMakeLists.txt'
       - 'tests/ios/apps/testlab/**'
       - 'tools/hvm_testlab.py'
       - 'tools/testlab_schema/**'
@@ -114,9 +118,11 @@ jobs:
             --timeout 30
 
       - name: Verify forced-crash bundle
+        if: ${{ always() && hashFiles('build/hvm') != '' }}
         run: python3 tools/test_crash_bundle.py --hvm build/hvm
 
       - name: Validate report schema
+        if: ${{ always() && hashFiles('build/testlab-report-all/testlab_report.json') != '' }}
         run: |
           python3 tools/hvm_testlab.py validate build/testlab-report-all/testlab_report.json
 
