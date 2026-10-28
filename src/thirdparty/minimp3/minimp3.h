@@ -163,6 +163,9 @@ end:
 }
 #elif defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>
+#if !defined(MINIMP3_ONLY_SIMD) && defined(__linux__)
+#include <stdio.h>
+#endif
 #define HAVE_SSE 0
 #define HAVE_SIMD 1
 #define VSTORE vst1q_f32
@@ -177,8 +180,39 @@ end:
 #define VREV(x) vcombine_f32(vget_high_f32(vrev64q_f32(x)), vget_low_f32(vrev64q_f32(x)))
 typedef float32x4_t f4;
 static int have_simd()
-{   /* TODO: detect neon for !MINIMP3_ONLY_SIMD */
+{
+#ifdef MINIMP3_ONLY_SIMD
     return 1;
+#else /* MINIMP3_ONLY_SIMD */
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return 1;
+#elif defined(__linux__)
+    static int g_have_simd;
+    if (g_have_simd)
+        return g_have_simd - 1;
+    g_have_simd = 1;
+    FILE *f = fopen("/proc/self/auxv", "rb");
+    if (f)
+    {
+        unsigned long auxv[2];
+        while (fread(auxv, sizeof(unsigned long), 2, f) == 2)
+        {
+            if (auxv[0] == 16) /* AT_HWCAP */
+            {
+                if (auxv[1] & 4096) /* HWCAP_NEON */
+                    g_have_simd = 2;
+                break;
+            }
+        }
+        fclose(f);
+    }
+    return g_have_simd - 1;
+#elif defined(__APPLE__)
+    return 1;
+#else
+    return 1; /* TODO: detect neon for other platforms */
+#endif
+#endif /* MINIMP3_ONLY_SIMD */
 }
 #else /* SIMD checks... */
 #define HAVE_SSE 0
