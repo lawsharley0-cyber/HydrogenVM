@@ -1916,6 +1916,10 @@ int runFullSubsystemTests() {
 
     // NIB loading fallback tests
     {
+        // The standalone fulltest runner has no on-disk app bundle by default.
+        // NSBundle needs the directory to exist before mainBundle is queried.
+        std::error_code bundleEc;
+        const bool madeTestBundle = std::filesystem::create_directories(cx.proc.bundlePath(), bundleEc);
         const ObjC::Class bundleCls = r.getClass("NSBundle");
         const ObjC::id bundle = ObjC::id(r.send(cpu, bundleCls, "mainBundle"));
 
@@ -1930,26 +1934,82 @@ int runFullSubsystemTests() {
             check(false, "loadNibNamed:owner:options: threw exception for missing NIB");
         }
 
-        // Test positive fallback lookup matching
-        std::error_code ec;
-        const std::string dummyNibBase = cx.proc.bundlePath() + "/DummyControllerOf.nib";
-        auto f = fopen(dummyNibBase.c_str(), "w");
-        if (f) {
-            fprintf(f, "NIBArchive");
-            for (int i = 0; i < 40; ++i) fprintf(f, "0"); // pad to 50 bytes so parseNibArchive tries to read it and fails
-            fclose(f);
+        // A real, minimal NIBArchive: root -> NSArray -> NSString. This must
+        // decode a known object, unlike malformed-fixture 'nil or throw' tests.
+        auto nibBytes = [](const std::string& marker) {
+            std::vector<uint8_t> b(50, 0);
+            const char magic[] = "NIBArchive";
+            std::copy(magic, magic + 10, b.begin());
+            auto u32 = [&](uint32_t n) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(n >> (i * 8))); };
+            auto var = [&](uint32_t n) { b.push_back(uint8_t(n | 0x80)); };
+            auto set32 = [&](size_t off, uint32_t n) {
+                for (int i = 0; i < 4; ++i) b[off + i] = uint8_t(n >> (i * 8));
+            };
+            // The varint writer is enough for this three-object fixture; all
+            // indices and string lengths fit in seven bits.
+            const uint32_t objOff = uint32_t(b.size());
+            for (const auto& obj : {std::array<uint32_t, 3>{0, 0, 1}, {1, 1, 1}, {2, 2, 1}})
+                for (uint32_t n : obj) var(n);
+            const uint32_t keyOff = uint32_t(b.size());
+            for (const std::string key : {"UINibTopLevelObjectsKey", "NS.objects", "NS.string"}) {
+                var(uint32_t(key.size())); b.insert(b.end(), key.begin(), key.end());
+            }
+            const uint32_t valOff = uint32_t(b.size());
+            var(0); b.push_back(10); u32(1);  // root -> NSArray
+            var(1); b.push_back(10); u32(2);  // NSArray -> NSString
+            var(2); b.push_back(8); var(uint32_t(marker.size()));
+            b.insert(b.end(), marker.begin(), marker.end());
+            const uint32_t clsOff = uint32_t(b.size());
+            for (const std::string cls : {"NSObject", "NSArray", "NSString"}) {
+                var(uint32_t(cls.size())); var(0);
+                b.insert(b.end(), cls.begin(), cls.end());
+            }
+            set32(18, 3); set32(22, objOff); set32(26, 3); set32(30, keyOff);
+            set32(34, 3); set32(38, valOff); set32(42, 3); set32(46, clsOff);
+            return b;
+        };
+        auto writeNib = [](const std::string& path, const std::vector<uint8_t>& bytes) {
+            FILE* f = std::fopen(path.c_str(), "wb");
+            if (!f) return false;
+            const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+            return std::fclose(f) == 0 && ok;
+        };
+        const std::string base = cx.proc.bundlePath() + "/HVMNibFixture189";
+        const std::string exact = base + ".nib", idiom = base + "~iphone.nib";
+        const std::string malformed = cx.proc.bundlePath() + "/HVMMalformedNib189.nib";
+        // Previous interrupted test runs may have left these exact fixtures.
+        std::remove(exact.c_str()); std::remove(idiom.c_str()); std::remove(malformed.c_str());
+        const auto loadMarker = [&](const char* name) -> std::string {
+            const ObjC::id loaded = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, name), 0, 0}));
+            if (!loaded || uint32_t(r.send(cpu, loaded, "count")) != 1) return {};
+            const ObjC::id value = ObjC::id(r.send(cpu, loaded, "objectAtIndex:", {0}));
+            return Foundation::utf8(cx, value);
+        };
+        const bool wroteExact = writeNib(exact, nibBytes("exact-object"));
+        bool decodedExact = false, decodedIdiom = false, preferredIdiom = false;
+        bool missingRejected = false, malformedRejected = false;
+        if (wroteExact) {
+            decodedExact = loadMarker("HVMNibFixture189") == "exact-object";
+            const bool wroteIdiom = writeNib(idiom, nibBytes("idiom-object"));
+            if (wroteIdiom) {
+                preferredIdiom = loadMarker("HVMNibFixture189") == "idiom-object";
+                std::remove(exact.c_str());
+                decodedIdiom = loadMarker("HVMNibFixture189") == "idiom-object";
+            }
+            // Filename words have no implicit resource aliasing semantics.
+            missingRejected = loadMarker("HVMNibFixture189Landscape").empty();
+            if (writeNib(malformed, std::vector<uint8_t>{'b', 'a', 'd'})) {
+                try { loadMarker("HVMMalformedNib189"); }
+                catch (const ObjC::ObjCError&) { malformedRejected = true; }
+                catch (const CPU::GuestFault&) { malformedRejected = true; }
+            }
         }
-
-        bool fallbackThrows = false;
-        try {
-            const ObjC::id result = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DummyControllerOfLandscape"), 0, 0}));
-            if (result == 0) fallbackThrows = true;
-        } catch (...) {
-            fallbackThrows = true;
-        }
-        check(fallbackThrows, "loadNibNamed:owner:options: exact/fallback NIB found but malformed still throws");
-
-        remove(dummyNibBase.c_str());
+        std::remove(exact.c_str()); std::remove(idiom.c_str()); std::remove(malformed.c_str());
+        if (madeTestBundle) std::filesystem::remove(cx.proc.bundlePath(), bundleEc);
+        check(decodedExact && decodedIdiom && preferredIdiom,
+              "NSBundle decodes valid exact/~iphone NIBs and prefers idiom-specific resource");
+        check(missingRejected && malformedRejected,
+              "NSBundle keeps missing resources and malformed existing NIBs distinct");
     }
 
     // UIButton shadow offset getter/setter
@@ -1970,6 +2030,14 @@ int runFullSubsystemTests() {
         cx.proc.heap().free(tmp);
 
         check(sOut.width == 2.0f && sOut.height == 3.0f, "UIButton setTitleShadowOffset:/titleShadowOffset preserves custom shadow offset");
+        const ObjC::id titleLabel = ObjC::id(r.send(cpu, btn, "titleLabel"));
+        const uint32_t labelResult = cx.proc.heap().allocZeroed(12);
+        const ObjC::SEL labelSel = r.sel("shadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(titleLabel), labelSel), {labelResult, titleLabel, labelSel});
+        const CG::CGSize labelOffset = CG::readStruct<CG::CGSize>(cx, labelResult);
+        cx.proc.heap().free(labelResult);
+        check(labelOffset.width == 2.0f && labelOffset.height == 3.0f,
+              "UIButton shadow-offset setter propagates ARMv7 CGSize to its UILabel");
     }
 
     // 2d. UITabBarController, UITabBar, UITabBarItem
