@@ -23,6 +23,7 @@ public:
     void     free(uint32_t addr);                  // ignores 0 and unknown pointers (logs via callback)
     uint32_t realloc(uint32_t addr, uint32_t size);
     uint32_t blockSize(uint32_t addr) const;       // malloc_size(); 0 if not a heap block
+    uint32_t allocationRemainder(uint32_t addr) const; // 0 unless inside a live allocation
     bool     owns(uint32_t addr) const { return addr >= base_ && addr < limit_; }
 
     struct Stats { uint64_t liveBytes = 0, liveBlocks = 0, committed = 0, badFrees = 0; };
@@ -46,6 +47,7 @@ private:
     std::map<uint32_t, uint32_t> freeByAddr_;      // big free blocks: addr -> size
     std::multimap<uint32_t, uint32_t> freeBySize_; // size -> addr
     std::unordered_map<uint32_t, uint32_t> live_;  // addr -> usable size (rounded)
+    std::map<uint32_t, uint32_t> liveIntervals_;    // ordered index for interior-pointer bounds
     mutable std::mutex mu_;
     Stats stats_;
 };
