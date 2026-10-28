@@ -1,28 +1,28 @@
-# HydrogenVM report — ed96bf2
+# HydrogenVM report — 2efe292
 
-2026-10-28T01:52:59+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-28T01:54:23+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 221.2s |
+| build | 1 | 0 | 0 | 218.4s |
 | cpu | 15 | 0 | 0 | 0.7s |
 | ios | 6 | 0 | 0 | 2.2s |
 | bench | 5 | 0 | 0 | 24.5s |
 
 ## Speed
 
-CoreMark **1714.6** iterations/s (575.1 guest MIPS)
+CoreMark **1713.5** iterations/s (576.3 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **119.1%** | 714 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.3%** | 714 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.4%** | 572 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **119.0%** | 714 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.2%** | 714 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.4%** | 571 MHz |
 | iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.7%** | 490 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 444 MIPS, ctests_arm 496 MIPS, ftests_vfp_thumb_softfp 454 MIPS, ftests_neon_thumb 362 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 452 MIPS, ctests_arm 493 MIPS, ftests_vfp_thumb_softfp 408 MIPS, ftests_neon_thumb 397 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -31,7 +31,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 444 MIPS, ctests_arm 496
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.42 ms | 7.17 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.41 ms | 7.16 ms | 0 |
 
 ## Problems (30)
 
