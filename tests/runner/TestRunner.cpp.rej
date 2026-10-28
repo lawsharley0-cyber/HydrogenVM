@@ -1,0 +1,17 @@
+--- tests/runner/TestRunner.cpp
++++ tests/runner/TestRunner.cpp
+@@ -142,13 +142,13 @@ int runAsm(const std::string& elf, const std::vector<std::string>& sources) {
+             }
+             if (undefWant) {
+                 if (!ok && c.exit == CPU::Exit::Undefined) {
+-                    uint32_t raw = c.thumb ? (h.mem.read<uint16_t>(c.exit_info) | (uint32_t(h.mem.read<uint16_t>(c.exit_info + 2)) << 16)) : h.mem.read<uint32_t>(c.exit_info);
+-                    if (raw == undefWant->value || (c.thumb && (raw & 0xFFFF) == undefWant->value)) {
++                    uint32_t raw = c.thumb ? (uint32_t(h.mem.read<uint16_t>(c.exit_info)) | (uint32_t(h.mem.read<uint16_t>(c.exit_info + 2)) << 16)) : h.mem.read<uint32_t>(c.exit_info);
++                    if (raw == undefWant->value || (c.thumb && (raw & 0xFFFF) == (undefWant->value & 0xFFFF))) {
+                         ++pass;
+                         continue;
+                     }
+                     std::printf("FAIL %-28s expected undef instruction 0x%X, got 0x%X at PC 0x%X\n", t.name.c_str(), undefWant->value, raw, c.exit_info);
+                 } else {
+                     std::printf("FAIL %-28s expected undef instruction 0x%X: %s\n", t.name.c_str(), undefWant->value, ok ? "returned normally" : err.c_str());
+                 }
