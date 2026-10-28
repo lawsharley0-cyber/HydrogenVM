@@ -1669,15 +1669,6 @@ id skresp_invalid(Ctx& x, id self, SEL) {
 // ------------------------------------------------------------- MessageUI ---
 bool mf_no(Ctx&, id, SEL) { return false; }
 
-// ---------------------------------------------------- SystemConfiguration ---
-uint32_t scr_create(Ctx& x, uint32_t, GuestPtr) { noteOnce(x, "SCNetworkReachability (network reported offline)"); return rt(x).createInstance(rt(x).nsObject); }
-uint32_t scr_createWithAddress(Ctx& x, uint32_t a, GuestPtr p) { return scr_create(x, a, p); }
-uint32_t scr_createPair(Ctx& x, uint32_t a, GuestPtr p, GuestPtr) { return scr_create(x, a, p); }
-bool scr_getFlags(Ctx& x, uint32_t, GuestPtr flags) { if (flags) x.mem.write<uint32_t>(flags, 0); return true; }
-bool scr_setCallback(Ctx&, uint32_t, uint32_t, uint32_t) { return true; }
-bool scr_schedule(Ctx&, uint32_t, uint32_t, uint32_t) { return true; }
-bool scr_setQueue(Ctx&, uint32_t, uint32_t) { return true; }
-
 } // namespace
 
 void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
@@ -1896,16 +1887,6 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         ObjC::ClassBuilder mf = r.defineClass(n, "UIViewController");
         mf.cm<&mf_no>(std::string(n) == "MFMailComposeViewController" ? "canSendMail" : "canSendText", "c@:");
     }
-
-    // SystemConfiguration
-    p.def<&scr_create>("_SCNetworkReachabilityCreateWithName");
-    p.def<&scr_createWithAddress>("_SCNetworkReachabilityCreateWithAddress");
-    p.def<&scr_createPair>("_SCNetworkReachabilityCreateWithAddressPair");
-    p.def<&scr_getFlags>("_SCNetworkReachabilityGetFlags");
-    p.def<&scr_setCallback>("_SCNetworkReachabilitySetCallback");
-    p.def<&scr_schedule>("_SCNetworkReachabilityScheduleWithRunLoop");
-    p.def<&scr_schedule>("_SCNetworkReachabilityUnscheduleFromRunLoop");
-    p.def<&scr_setQueue>("_SCNetworkReachabilitySetDispatchQueue");
 
     // CoreMedia CMTime & AVFoundation Video Player (AVAsset, AVURLAsset, AVPlayerItem, AVPlayer, AVPlayerLayer)
     auto writeCMTime = [](Ctx& x, GuestPtr out, int64_t val, int32_t scale, uint32_t flags = 1) {
