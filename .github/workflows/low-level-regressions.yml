@@ -1,0 +1,30 @@
+name: Low-level regressions
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: low-level-regressions-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  zip-and-pcm:
+    name: ZIP + PCM + Mach-O ASan/UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install compiler and zlib once
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq clang libstdc++-14-dev zlib1g-dev
+      - name: Synthetic PCM decoder ASan/UBSan regression
+        run: tools/test_pcm_decode.sh
+      - name: Synthetic ZIP metadata ASan/UBSan regression
+        if: ${{ always() }}
+        run: tools/test_zip_bounds.sh
+      - name: Synthetic Mach-O probe ASan/UBSan regression
+        if: ${{ always() }}
+        run: tools/test_macho_probe.sh
