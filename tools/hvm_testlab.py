@@ -385,6 +385,15 @@ def _print_result(cr: dict) -> None:
     reason = cr.get("reason", "")
     reason_str = f" — {reason}" if reason else ""
     print(f"  {cr['id']}: {status}{reason_str}", flush=True)
+    # A checkpoint/timeout can otherwise be invisible in CI logs: the
+    # complete bounded tail remains in the JSON artifact, and we surface it
+    # here only for cases needing triage.
+    if status in ("failed", "interrupted"):
+        output_tail = str(cr.get("diagnostics", {}).get("stdoutTail") or "").strip()
+        if output_tail:
+            print("    emulator stdout/stderr tail:", flush=True)
+            for line in output_tail.splitlines()[-16:]:
+                print(f"      {line}", flush=True)
 
 
 # ─────────────────────────── host report ─────────────────────────────────────
