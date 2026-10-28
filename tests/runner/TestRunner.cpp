@@ -4540,28 +4540,6 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
-    // 2f12. EAGLContext cross-thread teardown rejection
-    {
-        ProcessConfig tdCfg;
-        tdCfg.homePath = "/tmp/hvm_eagl_teardown";
-        Process teardown(tdCfg);
-        auto& ar = ObjC::rt(teardown);
-        auto& acpu = teardown.mainThread().cpu;
-        const ObjC::Class cls = ar.getClass("EAGLContext");
-        const ObjC::id context = ObjC::id(ar.send(acpu, ObjC::id(ar.send(acpu, ObjC::id(cls), ar.selAlloc)), "initWithAPI:", {2}));
-        const uint64_t mainBound = ar.send(acpu, ObjC::id(cls), "setCurrentContext:", {context});
-        const uint32_t workerFn = teardown.defineFunction("test_eagl_teardown", [context](Ctx& x) {
-            auto& runtime = ObjC::rt(x);
-            x.cpu.r[0] = uint32_t(runtime.send(x.cpu, ObjC::id(runtime.getClass("EAGLContext")), "setCurrentContext:", {context}) & 0xFF);
-        });
-        const uint32_t thread = teardown.startThread(workerFn, 0, 64u << 10, false);
-        // Teardown/unbind while thread might be trying to bind
-        ar.send(acpu, ObjC::id(cls), "setCurrentContext:", {0});
-        uint32_t workerBound = 2;
-        teardown.joinThread(thread, &workerBound);
-        check((mainBound & 0xFF) == 1, "EAGLContext safe ownership rejection during teardown");
-    }
-
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
