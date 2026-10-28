@@ -690,6 +690,11 @@ id sg_init(Ctx& x, id self, SEL) {
     return self;
 }
 
+void sg_dealloc(Ctx& x, id self, SEL) {
+    if (HostGL::enabled(x.proc)) HostGL::sharegroupDestroy(x.proc, self);
+    rt(x).disposeInstance(x.cpu, self);
+}
+
 id ctx_initWithAPI(Ctx& x, id self, SEL, uint32_t api) {
     return id(rt(x).send(x.cpu, self, "initWithAPI:sharegroup:", {api, 0}));
 }
@@ -3548,7 +3553,8 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     // EAGLSharegroup & EAGLContext
     ObjC::ClassBuilder sg = r.defineClass("EAGLSharegroup", "NSObject");
     st.eaglSharegroup = sg.cls();
-    sg.m<&sg_init>("init");
+    sg.m<&sg_init>("init")
+      .m<&sg_dealloc>("dealloc", "v@:");
 
     ObjC::ClassBuilder ctx = r.defineClass("EAGLContext", "NSObject");
     st.eaglContext = ctx.cls();
