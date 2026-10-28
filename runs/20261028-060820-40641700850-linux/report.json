@@ -1,25 +1,25 @@
 {
   "host": {
-    "os": "Darwin 25.6.0",
-    "arch": "arm64",
-    "cpu": "Apple M1 (Virtual)",
-    "commit": "8f1db01",
-    "date": "2026-10-25T03:49:49+00:00"
+    "os": "Linux 6.17.0-1022-azure",
+    "arch": "x86_64",
+    "cpu": "AMD EPYC 9V45 96-Core Processor",
+    "commit": "f73c846",
+    "date": "2026-10-28T06:05:32+00:00"
   },
-  "seconds": 129.3,
+  "seconds": 167.2,
   "ok": true,
   "suites": {
     "build": {
       "passed": 1,
       "failed": 0,
       "skipped": 0,
-      "seconds": 103.5441198348999,
+      "seconds": 139.2322075366974,
       "tests": [
         {
           "name": "engine",
           "result": "pass",
-          "seconds": 103.544,
-          "warnings": 29
+          "seconds": 139.232,
+          "warnings": 31
         }
       ]
     },
@@ -27,108 +27,108 @@
       "passed": 15,
       "failed": 0,
       "skipped": 0,
-      "seconds": 0.3181779384613037,
+      "seconds": 0.507889986038208,
       "tests": [
         {
           "name": "selftest",
           "result": "pass",
-          "seconds": 0.029
+          "seconds": 0.036
         },
         {
           "name": "asm/arm_alu",
           "result": "pass",
-          "seconds": 0.013,
+          "seconds": 0.023,
           "checks": 40,
           "failedChecks": 0
         },
         {
           "name": "asm/arm_mem",
           "result": "pass",
-          "seconds": 0.014,
+          "seconds": 0.023,
           "checks": 17,
           "failedChecks": 0
         },
         {
           "name": "asm/thumb",
           "result": "pass",
-          "seconds": 0.013,
+          "seconds": 0.022,
           "checks": 30,
           "failedChecks": 0
         },
         {
           "name": "asm/vfp_neon",
           "result": "pass",
-          "seconds": 0.013,
+          "seconds": 0.025,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_arm",
           "result": "pass",
-          "seconds": 0.029,
+          "seconds": 0.041,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_arm_os",
           "result": "pass",
-          "seconds": 0.03,
+          "seconds": 0.038,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb",
           "result": "pass",
-          "seconds": 0.029,
+          "seconds": 0.041,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_os",
           "result": "pass",
-          "seconds": 0.029,
+          "seconds": 0.041,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ctests_thumb_idiv",
           "result": "pass",
-          "seconds": 0.029,
+          "seconds": 0.047,
           "checks": 27,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_arm_hard",
           "result": "pass",
-          "seconds": 0.018,
+          "seconds": 0.032,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.018,
+          "seconds": 0.031,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.018,
+          "seconds": 0.034,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_arm",
           "result": "pass",
-          "seconds": 0.018,
+          "seconds": 0.037,
           "checks": 29,
           "failedChecks": 0
         },
         {
           "name": "c/ftests_neon_thumb_os",
           "result": "pass",
-          "seconds": 0.018,
+          "seconds": 0.036,
           "checks": 29,
           "failedChecks": 0
         }
@@ -138,16 +138,16 @@
       "passed": 6,
       "failed": 0,
       "skipped": 0,
-      "seconds": 2.843043088912964,
+      "seconds": 2.084545135498047,
       "tests": [
         {
           "name": "CTest",
           "result": "pass",
-          "seconds": 0.032,
+          "seconds": 0.081,
           "perf": {
-            "wallSeconds": 0.0185148,
+            "wallSeconds": 0.054261,
             "guestInstructions": 148954,
-            "guestMIPS": 8.04512,
+            "guestMIPS": 2.74514,
             "blocksDecoded": 199,
             "frames": 0,
             "framesPresented": 0,
@@ -164,11 +164,11 @@
         {
           "name": "CTestLegacy",
           "result": "pass",
-          "seconds": 0.028,
+          "seconds": 0.078,
           "perf": {
-            "wallSeconds": 0.0140995,
+            "wallSeconds": 0.0541944,
             "guestInstructions": 132180,
-            "guestMIPS": 9.37477,
+            "guestMIPS": 2.439,
             "blocksDecoded": 205,
             "frames": 0,
             "framesPresented": 0,
@@ -185,11 +185,11 @@
         {
           "name": "BinPlist",
           "result": "pass",
-          "seconds": 0.027,
+          "seconds": 0.078,
           "perf": {
-            "wallSeconds": 0.0136948,
+            "wallSeconds": 0.053768,
             "guestInstructions": 148954,
-            "guestMIPS": 10.8767,
+            "guestMIPS": 2.77031,
             "blocksDecoded": 199,
             "frames": 0,
             "framesPresented": 0,
@@ -206,11 +206,11 @@
         {
           "name": "ObjCTest",
           "result": "pass",
-          "seconds": 0.021,
+          "seconds": 0.082,
           "perf": {
-            "wallSeconds": 0.00738492,
+            "wallSeconds": 0.0565626,
             "guestInstructions": 3632,
-            "guestMIPS": 0.491813,
+            "guestMIPS": 0.0642121,
             "blocksDecoded": 482,
             "frames": 0,
             "framesPresented": 0,
@@ -227,11 +227,11 @@
         {
           "name": "FoundationTest",
           "result": "pass",
-          "seconds": 1.672,
+          "seconds": 0.708,
           "perf": {
-            "wallSeconds": 1.45329,
-            "guestInstructions": 26015,
-            "guestMIPS": 0.0179008,
+            "wallSeconds": 0.660524,
+            "guestInstructions": 26051,
+            "guestMIPS": 0.0394399,
             "blocksDecoded": 1926,
             "frames": 0,
             "framesPresented": 0,
@@ -248,22 +248,22 @@
         {
           "name": "UIKitTest",
           "result": "pass",
-          "seconds": 1.064,
+          "seconds": 1.057,
           "perf": {
-            "wallSeconds": 1.0285,
-            "guestInstructions": 11767,
-            "guestMIPS": 0.0114409,
+            "wallSeconds": 1.0307,
+            "guestInstructions": 11976,
+            "guestMIPS": 0.0116193,
             "blocksDecoded": 1229,
-            "frames": 32,
+            "frames": 61,
             "framesPresented": 5,
-            "avgFrameMs": 2.00645,
-            "avgCompositeMs": 12.222,
-            "maxFrameMs": 16.8136,
-            "slowFrames": 1,
-            "p50FrameMs": 0.027136,
-            "p95FrameMs": 16.5151,
-            "p99FrameMs": 16.7772,
-            "timeToFirstFrameMs": 28.9149
+            "avgFrameMs": 0.257277,
+            "avgCompositeMs": 2.52517,
+            "maxFrameMs": 4.32778,
+            "slowFrames": 0,
+            "p50FrameMs": 0.036352,
+            "p95FrameMs": 2.26099,
+            "p99FrameMs": 4.32538,
+            "timeToFirstFrameMs": 18.702
           }
         }
       ]
@@ -272,88 +272,88 @@
       "passed": 5,
       "failed": 0,
       "skipped": 0,
-      "seconds": 18.299309968948364,
+      "seconds": 17.66191577911377,
       "tests": [
         {
           "name": "mips/ctests_thumb",
           "result": "pass",
-          "seconds": 0.149,
-          "mips": 502.4
+          "seconds": 0.125,
+          "mips": 748.6
         },
         {
           "name": "mips/ctests_arm",
           "result": "pass",
-          "seconds": 0.149,
-          "mips": 548.9
+          "seconds": 0.122,
+          "mips": 808.2
         },
         {
           "name": "mips/ftests_vfp_thumb_softfp",
           "result": "pass",
-          "seconds": 0.052,
-          "mips": 549.9
+          "seconds": 0.05,
+          "mips": 828.8
         },
         {
           "name": "mips/ftests_neon_thumb",
           "result": "pass",
-          "seconds": 0.047,
-          "mips": 555.8
+          "seconds": 0.055,
+          "mips": 640.8
         },
         {
           "name": "coremark",
           "result": "pass",
-          "seconds": 17.902,
-          "score": 2855.7
+          "seconds": 17.31,
+          "score": 2956.4
         }
       ]
     }
   },
   "speed": {
     "interpreterMIPS": {
-      "ctests_thumb": 502.4,
-      "ctests_arm": 548.9,
-      "ftests_vfp_thumb_softfp": 549.9,
-      "ftests_neon_thumb": 555.8
+      "ctests_thumb": 748.6,
+      "ctests_arm": 808.2,
+      "ftests_vfp_thumb_softfp": 828.8,
+      "ftests_neon_thumb": 640.8
     },
     "coremark": {
-      "score": 2855.7,
-      "guestMIPS": 958.8,
+      "score": 2956.4,
+      "guestMIPS": 991.8,
       "quick": false,
       "vsDevices": [
         {
           "device": "iPhone 3GS",
           "cpu": "Cortex-A8",
           "reference": 1440,
-          "percent": 198.3,
-          "effectiveMHz": 1190,
+          "percent": 205.3,
+          "effectiveMHz": 1232,
           "goal": false
         },
         {
           "device": "iPhone 4",
           "cpu": "Apple A4 (Cortex-A8)",
           "reference": 1920,
-          "percent": 148.7,
-          "effectiveMHz": 1190,
+          "percent": 154.0,
+          "effectiveMHz": 1232,
           "goal": false
         },
         {
           "device": "iPhone 4S",
           "cpu": "Apple A5 (Cortex-A9)",
           "reference": 2400,
-          "percent": 119.0,
-          "effectiveMHz": 952,
+          "percent": 123.2,
+          "effectiveMHz": 985,
           "goal": false
         },
         {
           "device": "iPhone 5",
           "cpu": "Apple A6 (Swift)",
           "reference": 4550,
-          "percent": 62.8,
-          "effectiveMHz": 816,
+          "percent": 65.0,
+          "effectiveMHz": 845,
           "goal": true
         }
       ],
       "goalDevice": "iPhone 5",
-      "goalPercent": 62.8
+      "goalPercent": 65.0
     }
   },
   "problems": [
@@ -439,43 +439,43 @@
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
-      "message": "src/runtime/gl/HostGL.cpp:26:47: warning: unused variable 'kDrawFramebuffer' [-Wunused-const-variable]"
+      "message": "src/runtime/gl/HostGL.cpp:27:47: warning: unused variable 'kDrawFramebuffer' [-Wunused-const-variable]"
     },
     {
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
-      "message": "src/runtime/gl/HostGL.cpp:27:54: warning: unused variable 'kDrawFramebufferBinding' [-Wunused-const-variable]"
+      "message": "src/runtime/gl/HostGL.cpp:28:54: warning: unused variable 'kDrawFramebufferBinding' [-Wunused-const-variable]"
     },
     {
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
-      "message": "src/runtime/gl/HostGL.cpp:37:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]"
+      "message": "src/runtime/gl/HostGL.cpp:38:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]"
     },
     {
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
-      "message": "src/runtime/gl/HostGL.cpp:37:50: warning: unused variable 'kNormalArrayPointer' [-Wunused-const-variable]"
+      "message": "src/runtime/gl/HostGL.cpp:38:50: warning: unused variable 'kNormalArrayPointer' [-Wunused-const-variable]"
     },
     {
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
-      "message": "src/runtime/gl/HostGL.cpp:37:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]"
+      "message": "src/runtime/gl/HostGL.cpp:38:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]"
     },
     {
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
-      "message": "src/runtime/gl/HostGL.cpp:38:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]"
+      "message": "src/runtime/gl/HostGL.cpp:39:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]"
     },
     {
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
-      "message": "src/runtime/gl/HostGL.cpp:38:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]"
+      "message": "src/runtime/gl/HostGL.cpp:39:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]"
     },
     {
       "suite": "build",
@@ -523,6 +523,18 @@
       "suite": "build",
       "test": "compiler",
       "severity": "warning",
+      "message": "src/runtime/uikit/PlatformStubs.cpp:1915:10: warning: unused variable 'allocZero' [-Wunused-variable]"
+    },
+    {
+      "suite": "build",
+      "test": "compiler",
+      "severity": "warning",
+      "message": "src/runtime/uikit/PlatformStubs.cpp:1926:10: warning: unused variable 'zeroQ' [-Wunused-variable]"
+    },
+    {
+      "suite": "build",
+      "test": "compiler",
+      "severity": "warning",
       "message": "src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]"
     },
     {
@@ -535,7 +547,7 @@
       "suite": "bench",
       "test": "coremark",
       "severity": "perf",
-      "message": "62.8% of iPhone 5 single-core speed (goal: 100%)"
+      "message": "65.0% of iPhone 5 single-core speed (goal: 100%)"
     }
   ]
 }
