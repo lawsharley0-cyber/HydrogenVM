@@ -4545,6 +4545,35 @@ int runFullSubsystemTests() {
             auto lookup = [&](const std::string& name, const std::string& type = "tfc", const std::string& dir = "CookedIPhone") {
                 return Foundation::bundleResource(ax, name, type, dir);
             };
+            // The class directory API used to bypass main-bundle publication.
+            // Race that cold entry point against the native main-bundle helper.
+            const auto coldName = Foundation::makeString(ax, "Texture");
+            const auto coldType = Foundation::makeString(ax, "tfc");
+            const auto coldDir = Foundation::makeString(ax, bundle + "/CookedIPhone");
+            ap.mem().map(0xbec00000, 0x20000, Memory::kProtRW);
+            std::atomic<unsigned> ready{0};
+            std::atomic<bool> start{false}, coldOK{true};
+            auto coldLookup = [&](bool viaClass) {
+                CPU::Cpu coldCPU;
+                coldCPU.r[CPU::kSP] = (viaClass ? 0xbec10000 : 0xbec20000) - 256;
+                Ctx coldCtx{ap, coldCPU, ap.mem()};
+                const auto coldPool = ar.poolPush();
+                ++ready;
+                while (!start) std::this_thread::yield();
+                std::string result;
+                if (viaClass) {
+                    const auto value = uint32_t(ar.send(coldCPU, ar.getClass("NSBundle"),
+                        "pathForResource:ofType:inDirectory:", {coldName, coldType, coldDir}));
+                    result = ap.hostPath(Foundation::utf8(coldCtx, value));
+                } else result = Foundation::bundleResource(coldCtx, "Texture", "tfc", "CookedIPhone");
+                if (result != bundle + "/CookedIPhone/Texture.tfc") coldOK = false;
+                ar.poolPop(coldCPU, coldPool);
+            };
+            std::thread coldClass(coldLookup, true), coldNative(coldLookup, false);
+            while (ready != 2) std::this_thread::yield();
+            start = true;
+            coldClass.join(); coldNative.join();
+            check(coldOK, "cold class and native bundle lookups synchronize main-bundle publication");
             check(lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc" &&
                   lookup("Texture.tfc", "") == lookup("Texture") &&
                   lookup("Texture", ".tfc") == lookup("Texture") &&

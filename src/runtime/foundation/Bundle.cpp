@@ -483,6 +483,9 @@ bool resourceInside(const fs::path& root, const fs::path& path) {
 // trying the ~iphone device modifier first.
 std::string findResource(Ctx& x, const std::string& bundle, std::string name, std::string type, const std::string& subdir,
                          const std::string& localization = {}) {
+    // Class-level directory lookups can arrive here before any mainBundle API.
+    // Synchronize with its publication before reading shared installation state.
+    const bool initialized = mainBundle(x) != 0;
     if (name.empty() && type.empty()) return {};
     if (!type.empty() && type[0] == '.') type = type.substr(1);
     if (type.empty()) {
@@ -491,10 +494,10 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
     }
     std::error_code ec;
     auto& b = B(x);
-    const fs::path boundary = bundle == x.proc.bundlePath() && !b.installedRoot.empty() ?
+    const fs::path boundary = initialized && bundle == x.proc.bundlePath() ?
                               b.installedRoot : fs::canonical(bundle, ec);
     if (ec) return {};
-    const std::string lang = localization.empty() ? (B(x).language.empty() ? chooseLanguage(bundle) : B(x).language) : localization;
+    const std::string lang = localization.empty() ? (initialized ? b.language : chooseLanguage(bundle)) : localization;
     const Bundles::ResourceKey key{bundle, name, type, subdir, lang};
     {
         std::shared_ptr<const Bundles::ResourceEntry> cached;
@@ -519,10 +522,10 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
     }
     const fs::path root = (subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir)).lexically_normal();
     if (!resourceInside(boundary, root)) return {};
-    const fs::path installed = !b.installedRoot.empty() ? b.installedRoot : fs::canonical(x.proc.bundlePath(), ec);
+    const fs::path installed = initialized ? b.installedRoot : fs::canonical(x.proc.bundlePath(), ec);
     // Nested names still use the normal lookup. Their intermediate directory
     // mutations are not covered by the search-directory stamps below.
-    const bool cacheable = !ec && within(installed, boundary) && !name.empty() &&
+    const bool cacheable = initialized && !ec && within(installed, boundary) && !name.empty() &&
                            !fs::path(name).has_parent_path() && type.find('/') == std::string::npos;
     const std::array<fs::path, 5> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
     Bundles::ResourceEntry entry;
