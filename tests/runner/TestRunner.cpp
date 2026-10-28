@@ -1914,6 +1914,43 @@ int runFullSubsystemTests() {
               "UIViewController setView replaces the installed root view in its window");
     }
 
+    // NIB loading fallback tests
+    {
+        const ObjC::Class bundleCls = r.getClass("NSBundle");
+        const ObjC::id bundle = ObjC::id(r.send(cpu, bundleCls, "mainBundle"));
+
+        try {
+            const ObjC::id nibArr = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DefinitelyMissingNibThatDoesntExistLandscape"), 0, 0}));
+            check(nibArr == 0, "loadNibNamed:owner:options: missing NIB returns 0 without throwing");
+        } catch (const ObjC::ObjCError& e) {
+            printf("ObjC Error: %s\n", e.what());
+            check(false, "loadNibNamed:owner:options: threw exception for missing NIB");
+        } catch (const std::exception& e) {
+            printf("Error: %s\n", e.what());
+            check(false, "loadNibNamed:owner:options: threw exception for missing NIB");
+        }
+    }
+
+    // UIButton shadow offset getter/setter
+    {
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id btn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 100.0f, 100.0f});
+
+        CG::CGSize s{2.0f, 3.0f};
+        const ObjC::SEL sSel = r.sel("setTitleShadowOffset:");
+
+        // setTitleShadowOffset: takes CGSize which is passed in registers on ARMv7
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), sSel), {btn, sSel, std::bit_cast<uint32_t>(s.width), std::bit_cast<uint32_t>(s.height)});
+
+        uint32_t tmp = cx.proc.heap().allocZeroed(16);
+        const ObjC::SEL gSel = r.sel("titleShadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), gSel), {tmp, btn, gSel});
+        CG::CGSize sOut = CG::readStruct<CG::CGSize>(cx, tmp);
+        cx.proc.heap().free(tmp);
+
+        check(sOut.width == 2.0f && sOut.height == 3.0f, "UIButton setTitleShadowOffset:/titleShadowOffset preserves custom shadow offset");
+    }
+
     // 2d. UITabBarController, UITabBar, UITabBarItem
     {
         const ObjC::Class vcCls = r.getClass("UIViewController");

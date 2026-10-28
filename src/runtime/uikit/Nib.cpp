@@ -390,7 +390,18 @@ std::string nibPath(Ctx& x, const std::string& name, id bundle) {
     std::string p = bundlePath == x.proc.bundlePath() ? Foundation::bundleResource(x, base, "nib") : "";
     if (p.empty()) {
         std::error_code ec;
-        for (const std::string& cand : {bundlePath + "/" + base + "~iphone.nib", bundlePath + "/" + base + ".nib"})
+
+        std::string baseFallback = base;
+        if (base.find("Landscape") != std::string::npos) {
+            baseFallback = base;
+            baseFallback.erase(baseFallback.find("Landscape"), 9);
+        } else if (base.find("Portrait") != std::string::npos) {
+            baseFallback = base;
+            baseFallback.erase(baseFallback.find("Portrait"), 8);
+        }
+
+        for (const std::string& cand : {bundlePath + "/" + base + "~iphone.nib", bundlePath + "/" + base + ".nib",
+                                        bundlePath + "/" + baseFallback + "~iphone.nib", bundlePath + "/" + baseFallback + ".nib"})
             if (fs::exists(cand, ec)) { p = cand; break; }
     }
     if (p.empty()) return {};
@@ -509,7 +520,10 @@ id un_instantiate(Ctx& x, id self, SEL, id owner, id options) {
 id b_loadNib(Ctx& x, id self, SEL, id name, id owner, id options) {
     const id externals = options ? Foundation::dictGet(x, options, "UINibExternalObjects") : 0;
     const id r = loadNib(x, name ? utf8(x, name) : "", self, owner, externals);
-    if (!r) throw ObjC::ObjCError("Could not load NIB in bundle: '" + std::string(name ? utf8(x, name) : "") + "'");
+    if (!r) {
+        x.proc.logf(LogLevel::Warning, "nib: missing NIB '%s', returning 0 instead of throwing.", std::string(name ? utf8(x, name) : "").c_str());
+        return 0;
+    }
     return r;
 }
 
