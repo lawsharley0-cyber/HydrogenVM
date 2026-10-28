@@ -3723,9 +3723,16 @@ int runFullSubsystemTests() {
                 const uint32_t count = uint32_t(r.send(cpu, arr, "count"));
 
                 uint32_t called = 0;
-                const uint32_t bAddr = ObjC::compileBlock(cx, [&](Ctx&) { called = 1; }, "v@?");
+                const uint32_t invoke = proc.defineFunction("test_gc_discovery_completion", [&](Ctx&) { called = 1; });
+                const uint32_t desc = proc.heap().allocZeroed(8);
+                proc.mem().write<uint32_t>(desc + 4, 20); // 32-bit Block_descriptor size
+                const uint32_t bAddr = proc.heap().allocZeroed(20);
+                proc.mem().write<uint32_t>(bAddr + 12, invoke);
+                proc.mem().write<uint32_t>(bAddr + 16, desc);
                 r.send(cpu, gccCls, "startWirelessControllerDiscoveryWithCompletionHandler:", {bAddr});
-                Foundation::mainRunLoop(proc).runFor(0.05);
+                proc.heap().free(bAddr); // callback must hold a copied block
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.05);
+                proc.heap().free(desc);
 
                 check(count == 0 && called == 1, "GCController controllers returns empty array and triggers discovery block");
             } else {
@@ -3743,7 +3750,7 @@ int runFullSubsystemTests() {
                 const uint32_t tstate = uint32_t(r.send(cpu, tx, "transactionState"));
 
                 const uint32_t stateSel = r.sel("transactionState");
-                const std::string stateSig = r.getMethodSignature(sktCls, stateSel);
+                const std::string stateSig = r.methodTypes(sktCls, stateSel);
 
                 const ObjC::id prodId = Foundation::makeString(cx, "com.test.product");
                 const ObjC::id pay = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {prodId}));
@@ -3752,13 +3759,20 @@ int runFullSubsystemTests() {
 
                 const ObjC::Class mPayCls = r.getClass("SKMutablePayment");
                 const ObjC::id mPay = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, mPayCls, r.selAlloc)), "init"));
-                r.send(cpu, mPay, "setQuantity:", {uint32_t(50)});
+                r.send(cpu, mPay, "setQuantity:", {uint32_t(3)});
                 const uint32_t qty2 = uint32_t(r.send(cpu, mPay, "quantity"));
+                bool rejectedInvalid = false;
+                try { r.send(cpu, mPay, "setQuantity:", {uint32_t(0)}); }
+                catch (const ObjC::ObjCError&) { rejectedInvalid = true; }
+                catch (const CPU::GuestFault&) { rejectedInvalid = true; }
+                const uint32_t qtyAfterInvalid = uint32_t(r.send(cpu, mPay, "quantity"));
+                const ObjC::id nilPayment = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {0}));
 
                 const uint32_t qtySel = r.sel("setQuantity:");
-                const std::string qtySig = r.getMethodSignature(mPayCls, qtySel);
+                const std::string qtySig = r.methodTypes(mPayCls, qtySel);
 
-                check(tid == 0 && tdate == 0 && tstate == 0 && stateSig == "i@:" && qtySig == "v@:i" && qty1 == 1 && pId == prodId && qty2 == 50, "SKPaymentTransaction and SKPayment properties use 32-bit types (i), return expected defaults, and preserve state");
+                check(tid == 0 && tdate == 0 && tstate == 0 && stateSig == "i@:" && qtySig == "v@:i" && qty1 == 1 && pId == prodId && qty2 == 3 && rejectedInvalid && qtyAfterInvalid == 3 && !nilPayment,
+                      "SKPayment has armv7 NSInteger signatures, retains product ID, defaults quantity to one and rejects invalid quantities");
             } else {
                 check(false, "SKPaymentTransaction or SKPayment class not found");
             }
