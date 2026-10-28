@@ -3730,7 +3730,7 @@ int runFullSubsystemTests() {
             // SKPaymentTransaction properties
             const ObjC::Class sktCls = r.getClass("SKPaymentTransaction");
             if (sktCls) {
-                const ObjC::id tx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, sktCls, "alloc")), "init"));
+                const ObjC::id tx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, sktCls, r.selAlloc)), "init"));
                 const ObjC::id tid = ObjC::id(r.send(cpu, tx, "transactionIdentifier"));
                 const ObjC::id tdate = ObjC::id(r.send(cpu, tx, "transactionDate"));
                 const uint64_t tstate = uint64_t(r.send(cpu, tx, "transactionState"));

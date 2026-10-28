@@ -1621,6 +1621,14 @@ id sk_queue(Ctx& x, id self, SEL) {
 void sk_ignoreObj(Ctx&, id, SEL, id) {}
 void sk_noop(Ctx&, id, SEL) {}
 id sk_empty(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
+id sk_zero_id(Ctx&, id, SEL) { return 0; }
+char sk_zero_c(Ctx&, id, SEL) { return 0; }
+int64_t sk_zero_q(Ctx&, id, SEL) { return 0; }
+void sk_ignore_q(Ctx&, id, SEL, int64_t) {}
+id sk_allocZero(Ctx& x, id, SEL, id) {
+    const id inst = rt(x).createInstance(x.cpu.r[0]);
+    return autoreleased(x, inst);
+}
 
 // SKProductsRequest: no App Store, so every product id is "invalid" and the
 // delegate gets an empty response (not an error — IAP code expects a response).
@@ -1876,18 +1884,15 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
 
 
     // GameController
-    auto zeroId = [](Ctx&, id, SEL) -> id { return 0; };
-    auto zeroC = [](Ctx&, id, SEL) -> char { return 0; };
-    auto ignoreQ = [](Ctx&, id, SEL, int64_t) {};
     ObjC::ClassBuilder gcc = r.defineClass("GCController", "NSObject");
     gcc.cm<&sk_empty>("controllers", "@@:")
        .cm<&sk_ignoreObj>("startWirelessControllerDiscoveryWithCompletionHandler:", "v@:@?")
        .cm<&sk_noop>("stopWirelessControllerDiscovery", "v@:")
-       .m(zeroId, "controllerPausedHandler", "@?@:")
+       .m<&sk_zero_id>("controllerPausedHandler", "@?@:")
        .m<&sk_ignoreObj>("setControllerPausedHandler:", "v@:@?")
-       .m(zeroC, "isAttachedToDevice", "c@:")
-       .m(zeroId, "gamepad", "@@:")
-       .m(zeroId, "extendedGamepad", "@@:");
+       .m<&sk_zero_c>("isAttachedToDevice", "c@:")
+       .m<&sk_zero_id>("gamepad", "@@:")
+       .m<&sk_zero_id>("extendedGamepad", "@@:");
 
 
     // GameKit: see GameKit.cpp
@@ -1905,25 +1910,25 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     skresp.m<&skresp_products>("products").m<&skresp_invalid>("invalidProductIdentifiers");
     ObjC::ClassBuilder skprod = r.defineClass("SKProduct", "NSObject");
     skprod.m<&sk_ignoreObj>("setLocalizedTitle:", "v@:@").m<&sk_ignoreObj>("setPrice:", "v@:@").m<&sk_ignoreObj>("setPriceLocale:", "v@:@")
-          .m(zeroId, "localizedTitle", "@@:").m(zeroId, "price", "@@:").m(zeroId, "priceLocale", "@@:").m(zeroId, "productIdentifier", "@@:");
+          .m<&sk_zero_id>("localizedTitle", "@@:").m<&sk_zero_id>("price", "@@:").m<&sk_zero_id>("priceLocale", "@@:").m<&sk_zero_id>("productIdentifier", "@@:");
 
     auto allocZero = [](Ctx& x, id, SEL, id) -> id {
         const id inst = rt(x).createInstance(x.cpu.r[0]);
         return autoreleased(x, inst);
     };
     ObjC::ClassBuilder skpay = r.defineClass("SKPayment", "NSObject");
-    skpay.cm(allocZero, "paymentWithProductIdentifier:", "@@:@")
-         .m(ignoreQ, "setQuantity:", "v@:q").m(zeroId, "productIdentifier", "@@:");
+    skpay.cm<&sk_allocZero>("paymentWithProductIdentifier:", "@@:@")
+         .m<&sk_ignore_q>("setQuantity:", "v@:q").m<&sk_zero_id>("productIdentifier", "@@:");
 
     r.defineClass("SKMutablePayment", "SKPayment");
 
 
     auto zeroQ = [](Ctx&, id, SEL) -> int64_t { return 0; };
     ObjC::ClassBuilder sktrans = r.defineClass("SKPaymentTransaction", "NSObject");
-    sktrans.m(zeroId, "transactionIdentifier", "@@:").m(zeroId, "transactionDate", "@@:")
-           .m(zeroId, "transactionReceipt", "@@:").m(zeroId, "originalTransaction", "@@:")
-           .m(zeroId, "payment", "@@:").m(zeroId, "error", "@@:")
-           .m(zeroQ, "transactionState", "q@:");
+    sktrans.m<&sk_zero_id>("transactionIdentifier", "@@:").m<&sk_zero_id>("transactionDate", "@@:")
+           .m<&sk_zero_id>("transactionReceipt", "@@:").m<&sk_zero_id>("originalTransaction", "@@:")
+           .m<&sk_zero_id>("payment", "@@:").m<&sk_zero_id>("error", "@@:")
+           .m<&sk_zero_q>("transactionState", "q@:");
 
 
     // MessageUI
