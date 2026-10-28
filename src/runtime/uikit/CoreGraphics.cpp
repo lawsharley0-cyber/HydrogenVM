@@ -1056,8 +1056,8 @@ uint32_t ct_createName(Ctx& x, id name, float size, GuestPtr matrix) {
     rt(x).release(x.cpu, cg);
     return ct;
 }
-uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) { auto* f = hd<FontData>(x, desc); return f ? newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)) : 0; }
-uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) { return newObject(x, S(x).descriptor, std::make_unique<FontData>()); }
+uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) { auto* f = hd<FontData>(x, desc); if(f) { x.proc.reportMissing("CTFontDescriptorCreateCopyWithAttributes dictionary merge logic"); return newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)); } return 0; }
+uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) { x.proc.reportMissing("CTFontDescriptorCreateWithAttributes dictionary processing"); return newObject(x, S(x).descriptor, std::make_unique<FontData>()); }
 uint32_t ct_copyDescriptor(Ctx& x, id font) {
     auto* f = hd<FontData>(x, font);
     return f ? newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)) : 0;
@@ -1217,16 +1217,16 @@ int32_t text_break(Ctx& x, id text, int32_t start, double width) {
     if (size_t(i) == d->string.size()) return i - start;
     return lastSpace >= start ? lastSpace - start + 1 : std::max(i - start, 1);
 }
-double text_offset(Ctx& x, id text, int32_t charIndex, GuestPtr secondaryOffset) {
+float text_offset(Ctx& x, id text, int32_t charIndex, GuestPtr secondaryOffset) {
     auto* d = hd<TextData>(x, text);
     if (!d || charIndex < d->start) return 0.0;
     int32_t localIndex = charIndex - d->start;
     if (localIndex > int32_t(d->string.size())) localIndex = int32_t(d->string.size());
-    double offset = 0.0;
+    float offset = 0.0;
     for (int32_t i = 0; i < localIndex && size_t(i) < d->advances.size(); ++i) {
         offset += d->advances[i];
     }
-    if (secondaryOffset) x.mem.write<double>(secondaryOffset, offset);
+    if (secondaryOffset) x.mem.write<float>(secondaryOffset, offset);
     return offset;
 }
 void text_range(Ctx& x, GuestPtr ret, id text) {
