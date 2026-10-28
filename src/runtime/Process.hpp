@@ -73,7 +73,6 @@ struct GuestThread {
     uint32_t stackBase = 0, stackSize = 0;
     uint32_t errnoAddr = 0;
     std::unordered_map<uint32_t, uint32_t> tsd;   // pthread keys
-    pthread_t hostNative = 0;
     std::thread host;
     std::atomic<bool> finished{false};
     bool detached = false;
@@ -351,6 +350,7 @@ private:
     void setupMainThread();
     void setupEnvironment();
     void initThreadState(GuestThread& t, uint32_t stackSize);
+    void threadMain(GuestThread* t, uint32_t fn, uint32_t arg);
     void finishCrash(const CPU::Cpu& c, CPU::Exit e);
 
     ProcessConfig cfg_;
@@ -372,9 +372,9 @@ private:
     std::vector<std::function<void()>> exitHooks_;
 
     // threads
-    std::shared_ptr<GuestThread> mainThreadOwner_;
+    std::unique_ptr<GuestThread> mainThreadOwner_;
     GuestThread* mainThread_ = nullptr;
-    std::unordered_map<uint32_t, std::shared_ptr<GuestThread>> threads_;
+    std::unordered_map<uint32_t, std::unique_ptr<GuestThread>> threads_;
     std::vector<std::string> unimplementedImports_;
     std::function<void(Lifecycle)> lifecycleHandler_;
     struct Liveness { std::mutex mu; bool alive = true; };

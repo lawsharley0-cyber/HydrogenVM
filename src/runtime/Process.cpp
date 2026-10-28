@@ -83,11 +83,11 @@ bool looksLikeData(const std::string& s) {
 
 // Host threads for guest threads get a generous stack: nested host↔guest
 // calls (ObjC dispatch from host code, callbacks) recurse on it.
-pthread_t spawnHostThread(std::function<void()> fn) {
+void spawnHostThread(std::function<void()> fn) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 8u << 20);
-    // Let the destructor explicitly cancel or detach if needed
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     auto* heapFn = new std::function<void()>(std::move(fn));
     pthread_t th;
     const int r = pthread_create(&th, &attr, [](void* p) -> void* {
@@ -97,7 +97,6 @@ pthread_t spawnHostThread(std::function<void()> fn) {
     }, heapFn);
     pthread_attr_destroy(&attr);
     if (r != 0) { delete heapFn; throw std::runtime_error("couldn't create host thread"); }
-    return th;
 }
 
 } // namespace
@@ -134,7 +133,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     const std::string bundleName = fs::path(cfg_.bundlePath).filename().string();
     guestBundlePath_ = guestHomePath_ + "/" + (bundleName.empty() ? "App.app" : bundleName);
 
-    mainThreadOwner_ = std::make_shared<GuestThread>(*this);
+    mainThreadOwner_ = std::make_unique<GuestThread>(*this);
     mainThread_ = mainThreadOwner_.get();
     mainThread_->id = nextThreadId_++;
     t_thread = mainThread_;
@@ -166,25 +165,15 @@ Process::~Process() {
         liveness_->alive = false;
     }
     requestStop();
-    // Wait (bounded) for guest threads to notice and exit, enforcing cancellation on blocked workers
+    // Wait (bounded) for guest threads to notice.
     for (int i = 0; i < 200; ++i) {
-        std::shared_ptr<GuestThread> activeThread;
+        bool alive = false;
         {
             std::lock_guard<std::mutex> lk(threadsMu_);
-            for (auto& [k, t] : threads_) {
-                if (!t->finished.load()) { activeThread = t; break; }
-            }
+            for (auto& [k, t] : threads_) alive |= !t->finished.load();
         }
-        if (!activeThread) break;
-        std::unique_lock<std::mutex> lk(activeThread->m);
-        if (!activeThread->cv.wait_for(lk, std::chrono::milliseconds(10), [&] { return activeThread->finished.load(); })) {
-            if (i == 199 && activeThread->hostNative) {
-                pthread_cancel(activeThread->hostNative);
-            }
-        }
-    }
-    for (auto& [k, t] : threads_) {
-        if (t->hostNative) pthread_detach(t->hostNative);
+        if (!alive) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (t_thread && &t_thread->proc == this) t_thread = nullptr;
 }
@@ -695,7 +684,7 @@ GuestThread* Process::findThreadById(uint32_t id) {
 }
 
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
-    auto t = std::make_shared<GuestThread>(*this);
+    auto t = std::make_unique<GuestThread>(*this);
     GuestThread* raw = t.get();
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
@@ -705,46 +694,37 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
     raw->detached = detached;
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
-        threads_[raw->self] = t;
+        threads_[raw->self] = std::move(t);
     }
-    spawnHostThread([this, raw, fn, arg, alive = liveness_, threadRef = std::move(t)] {
-        {
-            std::lock_guard<std::mutex> lk(alive->mu);
-            if (!alive->alive) {
-                std::lock_guard<std::mutex> tlk(threadRef->m);
-                threadRef->finished = true;
-                threadRef->cv.notify_all();
-                return;
-            }
-        }
-        t_thread = raw;
-        CPU::Engine::lastFault() = {};
-        try {
-            raw->retval = uint32_t(engine_->callGuest(raw->cpu, fn, {arg}));
-        } catch (const CPU::GuestFault& f) {
-            std::lock_guard<std::mutex> lk(alive->mu);
-            if (alive->alive && !raw->pthreadExited && !exiting_ && !stopping()) finishCrash(raw->cpu, f.exit);
-        } catch (const std::exception& e) {
-            std::lock_guard<std::mutex> alk(alive->mu);
-            if (alive->alive && !exiting_ && !stopping()) {
-                std::lock_guard<std::mutex> lk(exitMu_);
-                if (!crashed_) {
-                    crashed_ = true;
-                    crashReport_ = std::string("HydrogenVM error: ") + e.what();
-                    captureCrash(raw->cpu, "hle-exception", e.what());
-                    log(LogLevel::Error, crashReport_);
-                    engine_->requestStop();
-                }
-            }
-        }
-        {
-            std::lock_guard<std::mutex> lk(threadRef->m);
-            threadRef->finished = true;
-        }
-        threadRef->cv.notify_all();
-        t_thread = nullptr;
-    });
+    spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
     return raw->self;
+}
+
+void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
+    t_thread = t;
+    CPU::Engine::lastFault() = {};
+    try {
+        t->retval = uint32_t(engine_->callGuest(t->cpu, fn, {arg}));
+    } catch (const CPU::GuestFault& f) {
+        if (!t->pthreadExited && !exiting_ && !stopping()) finishCrash(t->cpu, f.exit);
+    } catch (const std::exception& e) {
+        if (!exiting_ && !stopping()) {
+            std::lock_guard<std::mutex> lk(exitMu_);
+            if (!crashed_) {
+                crashed_ = true;
+                crashReport_ = std::string("HydrogenVM error: ") + e.what();
+                captureCrash(t->cpu, "hle-exception", e.what());
+                log(LogLevel::Error, crashReport_);
+                engine_->requestStop();
+            }
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lk(t->m);
+        t->finished = true;
+    }
+    t->cv.notify_all();
+    t_thread = nullptr;
 }
 
 bool Process::joinThread(uint32_t self, uint32_t* retval) {
