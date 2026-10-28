@@ -311,6 +311,35 @@ int runFullSubsystemTests() {
         check(received && stopped, "Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown");
     }
 
+    {
+        bool rtti_ok = false;
+        bool thread_ok = true;
+        try {
+            for (int i = 0; i < 50; ++i) {
+                Hydrogen::Runtime::ProcessConfig cfg;
+                cfg.stopOnMissingFunction = false;
+                Hydrogen::Runtime::Process p(cfg);
+
+                if (i == 0) {
+                    // RTTI resolution check
+                    rtti_ok = p.lookupSymbol("_ZTIPv").has_value() &&
+                              p.lookupSymbol("__ZTIPv").has_value() &&
+                              p.lookupSymbol("_ZTIPKv").has_value() &&
+                              p.lookupSymbol("__ZTIPKv").has_value();
+                }
+
+                // Spawn some threads that do nothing, simulating quick teardown
+                for (int j = 0; j < 5; ++j) {
+                    p.startThread(0, 0, 0, true);
+                }
+                // p goes out of scope here; its destructor should wait cleanly without SIGSEGV
+            }
+        } catch (...) {
+            thread_ok = false;
+        }
+        check(rtti_ok && thread_ok, "C++ RTTI pointer types are registered and rapid detached thread spawn/teardown is safe");
+    }
+
     // Mixer stats (what Test All Games' music / sound-effects checks read): a short one-shot
     // voice counts as an effect, a looping one as music, a silent one as neither.
     {

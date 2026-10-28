@@ -372,9 +372,9 @@ private:
     std::vector<std::function<void()>> exitHooks_;
 
     // threads
-    std::unique_ptr<GuestThread> mainThreadOwner_;
+    std::shared_ptr<GuestThread> mainThreadOwner_;
     GuestThread* mainThread_ = nullptr;
-    std::unordered_map<uint32_t, std::unique_ptr<GuestThread>> threads_;
+    std::unordered_map<uint32_t, std::shared_ptr<GuestThread>> threads_;
     std::vector<std::string> unimplementedImports_;
     std::function<void(Lifecycle)> lifecycleHandler_;
     struct Liveness { std::mutex mu; bool alive = true; };

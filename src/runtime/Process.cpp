@@ -133,7 +133,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     const std::string bundleName = fs::path(cfg_.bundlePath).filename().string();
     guestBundlePath_ = guestHomePath_ + "/" + (bundleName.empty() ? "App.app" : bundleName);
 
-    mainThreadOwner_ = std::make_unique<GuestThread>(*this);
+    mainThreadOwner_ = std::make_shared<GuestThread>(*this);
     mainThread_ = mainThreadOwner_.get();
     mainThread_->id = nextThreadId_++;
     t_thread = mainThread_;
@@ -165,15 +165,18 @@ Process::~Process() {
         liveness_->alive = false;
     }
     requestStop();
-    // Wait (bounded) for guest threads to notice.
-    for (int i = 0; i < 200; ++i) {
-        bool alive = false;
+    // Wait (unbounded) for guest threads to exit to prevent use-after-free
+    for (;;) {
+        std::shared_ptr<GuestThread> activeThread;
         {
             std::lock_guard<std::mutex> lk(threadsMu_);
-            for (auto& [k, t] : threads_) alive |= !t->finished.load();
+            for (auto& [k, t] : threads_) {
+                if (!t->finished.load()) { activeThread = t; break; }
+            }
         }
-        if (!alive) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (!activeThread) break;
+        std::unique_lock<std::mutex> lk(activeThread->m);
+        activeThread->cv.wait(lk, [&] { return activeThread->finished.load(); });
     }
     if (t_thread && &t_thread->proc == this) t_thread = nullptr;
 }
@@ -684,7 +687,7 @@ GuestThread* Process::findThreadById(uint32_t id) {
 }
 
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
-    auto t = std::make_unique<GuestThread>(*this);
+    auto t = std::make_shared<GuestThread>(*this);
     GuestThread* raw = t.get();
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
@@ -694,9 +697,9 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
     raw->detached = detached;
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
-        threads_[raw->self] = std::move(t);
+        threads_[raw->self] = t;
     }
-    spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
+    spawnHostThread([this, raw, fn, arg, alive = liveness_, threadRef = std::move(t)] { threadMain(raw, fn, arg); });
     return raw->self;
 }
 
