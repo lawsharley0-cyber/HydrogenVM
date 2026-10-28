@@ -1445,6 +1445,15 @@ struct Compiler {
         }
         return o;
     }
+    // constValue is float32. int(2147483648.f), int(NaN) and int(inf) are undefined,
+    // so the value has to be a finite integral index in [0, limit) before the cast.
+    int constIndex(float value, int limit) const {
+        const double raw = double(value);
+        const double truncated = std::trunc(raw);
+        if (!std::isfinite(raw) || truncated != raw || truncated < 0.0 || limit < 1 || truncated >= double(limit))
+            fail("array index must be an in-range literal");
+        return int(truncated);
+    }
     Expression doIndex(Expression base) {
         auto idx = expression();
         need("]");
@@ -1452,8 +1461,7 @@ struct Compiler {
         if (!scalar(idx) || idx.type.kind != Kind::Int) fail("index must be a scalar int");
         if (base.needsIndex) {
             if (idx.isConst) {
-                int i = int(idx.constValue);
-                if (i < 0 || i >= base.elemCount) fail("array index must be an in-range literal");
+                const int i = constIndex(idx.constValue, base.elemCount);
                 return takeConst(base, i, base.type, base.elemStride);
             }
             return takeDynamic(base, idx, base.type, base.elemStride, base.elemCount);
@@ -1466,8 +1474,7 @@ struct Compiler {
                 tmp.fragTag = base.fragTag; base = tmp;
             }
             if (idx.isConst) {
-                int i = int(idx.constValue);
-                if (i < 0 || i >= n) fail("array index must be an in-range literal");
+                const int i = constIndex(idx.constValue, n);
                 return takeConst(base, i, col, n);
             }
             return takeDynamic(base, idx, col, n, n);
@@ -1475,8 +1482,7 @@ struct Compiler {
         if (!base.type.isStruct() && !base.type.sampler && base.type.width > 1) {
             Type elem = ty(base.type.kind, 1);
             if (idx.isConst) {
-                int i = int(idx.constValue);
-                if (i < 0 || i >= base.type.width) fail("array index must be an in-range literal");
+                const int i = constIndex(idx.constValue, base.type.width);
                 if (base.direct) return takeConst(base, i, elem, 1);
                 return named(elem, {base.slots[size_t(i)]}, base.lvalue);
             }
