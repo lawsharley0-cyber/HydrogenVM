@@ -2696,6 +2696,16 @@ int runFullSubsystemTests() {
         const ObjC::id val = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(testKey)}));
         const std::string desc = Runtime::Foundation::utf8(cx, val);
         check(desc.find("NSObject") != std::string::npos, "NSUserDefaults setObject:forKey: fallback on description for non-plist objects");
+
+        // synchronize and test round trip for supported type
+        const ObjC::id validKey = Runtime::Foundation::makeString(cx, "testKeyPlist");
+        const ObjC::id validString = Runtime::Foundation::makeString(cx, "validStringValue");
+        r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(validString), uint32_t(validKey)});
+        r.send(cpu, ud, r.sel("synchronize"));
+
+        const ObjC::id validVal = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(validKey)}));
+        const std::string validDesc = Runtime::Foundation::utf8(cx, validVal);
+        check(validDesc == "validStringValue", "NSUserDefaults setObject:forKey: preserves supported types across round-trip");
     }
 
     // 2f2. libstdc++ containers (GCC 4.2 ABI): red-black tree, COW std::string
