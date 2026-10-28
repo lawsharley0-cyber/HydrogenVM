@@ -4277,7 +4277,22 @@ int runFullSubsystemTests() {
         const auto sleep_end = std::chrono::steady_clock::now();
         bool sleep_ok = std::chrono::duration_cast<std::chrono::milliseconds>(sleep_end - sleep_start).count() >= 1;
 
-        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok, "libc++ (std::__1) threading and concurrency");
+        // Thread identity and teardown checks
+        const uint32_t th_obj = proc.heap().allocZeroed(16);
+        const uint32_t worker_th = proc.startThread(proc.defineFunction("hvm_test_std_thread", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
+        m.write<uint32_t>(th_obj, worker_th);
+        const uint32_t detach_ret = call("__ZNSt3__16thread6detachEv", {th_obj});
+        bool detach_ok = m.read<uint32_t>(th_obj) == 0;
+
+        m.write<uint32_t>(th_obj, worker_th);
+        const uint32_t join_ret = call("__ZNSt3__16thread4joinEv", {th_obj});
+        bool join_ok = m.read<uint32_t>(th_obj) == 0;
+
+        m.write<uint32_t>(th_obj, worker_th);
+        call("__ZNSt3__16threadD1Ev", {th_obj});
+        bool dtor_ok = m.read<uint32_t>(th_obj) == worker_th; // Destructor doesn't modify the struct natively besides detaching it
+
+        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && join_ok && dtor_ok, "libc++ (std::__1) threading and concurrency");
     }
 
     // Host-requested shutdown must not become an HLE error. An unrelated
