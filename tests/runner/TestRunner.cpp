@@ -330,6 +330,18 @@ int runFullSubsystemTests() {
         check(received && stopped, "Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown");
     }
 
+    {
+        bool rtti_ok = false;
+        try {
+            Hydrogen::Runtime::ProcessConfig cfg;
+            cfg.stopOnMissingFunction = false;
+            Hydrogen::Runtime::Process p(cfg);
+
+            rtti_ok = p.lookupSymbol("_ZTIPv").has_value() && p.lookupSymbol("__ZTIPv").has_value() && p.lookupSymbol("_ZTIPKv").has_value() && p.lookupSymbol("__ZTIPKv").has_value();
+        } catch (...) {}
+        check(rtti_ok, "C++ RTTI pointer types are successfully registered as missing data symbols");
+    }
+
     // Mixer stats (what Test All Games' music / sound-effects checks read): a short one-shot
     // voice counts as an effect, a looping one as music, a silent one as neither.
     {
