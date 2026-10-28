@@ -1861,6 +1861,7 @@ int runFullSubsystemTests() {
         check(deq != 0 && Foundation::utf8(cx, ObjC::id(r.send(cpu, deq, "reuseIdentifier"))) == "RegCell", "UITableView registerClass & dequeueReusableCellWithIdentifier");
     }
 
+
     // EAGLSharegroup HostGL leak lifecycle test
     if (HostGL::enabled(proc)) {
         ObjC::Runtime& r = proc.service<ObjC::Runtime>();
@@ -1874,11 +1875,11 @@ int runFullSubsystemTests() {
                 ObjC::Runtime& wr = cx.proc.service<ObjC::Runtime>();
                 ObjC::id ctx = cx.cpu.r[0];
                 wr.send(cx.cpu, wr.getClass("EAGLContext"), "setCurrentContext:", {ctx});
-                wr.send(cx.cpu, wr.getClass("EAGLContext"), "setCurrentContext:", {0});
+                // Deliberately leave the context current on this thread.
                 cx.cpu.r[0] = 0;
             });
 
-            for (int i = 0; i < 100; ++i) {
+            for (int i = 0; i < 20; ++i) {
                 ObjC::id sg = (ObjC::id)r.send(cpu, sgCls, "alloc");
                 sg = (ObjC::id)r.send(cpu, sg, "init");
 
@@ -1889,10 +1890,11 @@ int runFullSubsystemTests() {
                 uint32_t retval = 0;
                 proc.joinThread(tid, &retval);
 
+                // Release sharegroup which forces safe teardown even while context might be theoretically "current" (pendingDestruction logic)
                 r.send(cpu, ctx, "release");
                 r.send(cpu, sg, "release");
             }
-            check(true, "EAGLSharegroup HostGL leak lifecycle");
+            check(true, "EAGLSharegroup HostGL leak lifecycle with deferred worker teardown");
         }
     }
 

@@ -69,7 +69,17 @@ struct State {
     std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
     std::atomic<int> presents{0};                                                  // direct presents so far
     std::atomic<bool> toldReadback{false};
-    std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
+    std::chrono::steady_clock::time_point lastPresent{};
+    std::mutex telemetryMu;
+    std::unordered_map<uint32_t, long long> textureBytes;
+    std::atomic<int> activeTextures{0};
+    std::atomic<int> activeBuffers{0};
+    std::atomic<int> activeFramebuffers{0};
+    std::atomic<int> activeRenderbuffers{0};
+    std::atomic<int> activePrograms{0};
+    std::atomic<int> activeShaders{0};
+    std::atomic<long long> estimatedBytes{0};
+                           // for 60 Hz pacing
 
     struct ResourceMetrics {
         std::atomic<int> textures{0};
@@ -1361,6 +1371,12 @@ void setScreenFbo(Process& p, uint32_t guestContext, uint32_t fbo) {
         it->second->readFbo = fbo; // repurposing readFbo or we can add screenFbo
     }
 }
+
+ProvisionalGpuMetrics provisionalMetrics(Process& p) {
+    State& st = S(p);
+    return { st.activeTextures.load(), st.activeBuffers.load(), st.activeFramebuffers.load(), st.activeRenderbuffers.load(), st.activePrograms.load(), st.activeShaders.load(), st.estimatedBytes.load() };
+}
+
 } // namespace Hydrogen::Runtime::HostGL
 
 

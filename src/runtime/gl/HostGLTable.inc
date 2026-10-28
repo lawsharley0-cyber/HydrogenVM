@@ -286,6 +286,7 @@ void hg_glBindBuffer(Ctx& x, uint32_t a_target, uint32_t a_buffer) {
 void hg_glBindTexture(Ctx& x, uint32_t a_target, uint32_t a_texture) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBindTexture) { hgMissing(x, hc, "glBindTexture"); return; }
+    if (a_target == 0x0DE1 /* GL_TEXTURE_2D */) hc->boundTexture2D = a_texture;
     hc->fn.glBindTexture(a_target, a_texture);
     if (hgDebug) hgAfter(x, hc, "glBindTexture", [&] { return hgArgs(a_target, a_texture); });
 }
@@ -358,19 +359,15 @@ void hg_glCullFace(Ctx& x, uint32_t a_mode) {
 void hg_glDeleteBuffers(Ctx& x, int32_t a_n, GuestPtr a_buffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteBuffers) { hgMissing(x, hc, "glDeleteBuffers"); return; }
+    S(x.proc).activeBuffers -= a_n;
     hc->fn.glDeleteBuffers(a_n, HG_PTR(x, a_buffers));
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->buffers -= a_n;
-    }
     if (hgDebug) hgAfter(x, hc, "glDeleteBuffers", [&] { return hgArgs(a_n, a_buffers); });
 }
 void hg_glDeleteTextures(Ctx& x, int32_t a_n, GuestPtr a_textures) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteTextures) { hgMissing(x, hc, "glDeleteTextures"); return; }
+    { std::lock_guard<std::mutex> lock(S(x.proc).telemetryMu); GuestPtr ptr = a_textures; for(int i=0; i<a_n; i++) { uint32_t tex = x.proc.mem().read<uint32_t>(ptr); S(x.proc).estimatedBytes -= S(x.proc).textureBytes[tex]; S(x.proc).textureBytes.erase(tex); ptr += 4; } } S(x.proc).activeTextures -= a_n;
     hc->fn.glDeleteTextures(a_n, HG_PTR(x, a_textures));
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->textures -= a_n;
-    }
     if (hgDebug) hgAfter(x, hc, "glDeleteTextures", [&] { return hgArgs(a_n, a_textures); });
 }
 void hg_glDepthFunc(Ctx& x, uint32_t a_func) {
@@ -436,19 +433,15 @@ void hg_glFrontFace(Ctx& x, uint32_t a_mode) {
 void hg_glGenBuffers(Ctx& x, int32_t a_n, GuestPtr a_buffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenBuffers) { hgMissing(x, hc, "glGenBuffers"); return; }
+    S(x.proc).activeBuffers += a_n;
     hc->fn.glGenBuffers(a_n, HG_PTR(x, a_buffers));
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->buffers += a_n;
-    }
     if (hgDebug) hgAfter(x, hc, "glGenBuffers", [&] { return hgArgs(a_n, a_buffers); });
 }
 void hg_glGenTextures(Ctx& x, int32_t a_n, GuestPtr a_textures) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenTextures) { hgMissing(x, hc, "glGenTextures"); return; }
+    S(x.proc).activeTextures += a_n;
     hc->fn.glGenTextures(a_n, HG_PTR(x, a_textures));
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->textures += a_n;
-    }
     if (hgDebug) hgAfter(x, hc, "glGenTextures", [&] { return hgArgs(a_n, a_textures); });
 }
 void hg_glGetBooleanv(Ctx& x, uint32_t a_pname, GuestPtr a_data) {
@@ -1032,57 +1025,45 @@ uint32_t hg_glCheckFramebufferStatus(Ctx& x, uint32_t a_target) {
 uint32_t hg_glCreateProgram(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCreateProgram) { hgMissing(x, hc, "glCreateProgram"); return uint32_t(); }
+    S(x.proc).activePrograms++;
     auto r = hc->fn.glCreateProgram();
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->programs++;
-    }
     if (hgDebug) hgAfter(x, hc, "glCreateProgram", [&] { return hgArgs(); });
     return r;
 }
 uint32_t hg_glCreateShader(Ctx& x, uint32_t a_type) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCreateShader) { hgMissing(x, hc, "glCreateShader"); return uint32_t(); }
+    S(x.proc).activeShaders++;
     auto r = hc->fn.glCreateShader(a_type);
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->shaders++;
-    }
     if (hgDebug) hgAfter(x, hc, "glCreateShader", [&] { return hgArgs(a_type); });
     return r;
 }
 void hg_glDeleteFramebuffers(Ctx& x, int32_t a_n, GuestPtr a_framebuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteFramebuffers) { hgMissing(x, hc, "glDeleteFramebuffers"); return; }
+    S(x.proc).activeFramebuffers -= a_n;
     hc->fn.glDeleteFramebuffers(a_n, HG_PTR(x, a_framebuffers));
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->framebuffers -= a_n;
-    }
     if (hgDebug) hgAfter(x, hc, "glDeleteFramebuffers", [&] { return hgArgs(a_n, a_framebuffers); });
 }
 void hg_glDeleteProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteProgram) { hgMissing(x, hc, "glDeleteProgram"); return; }
+    S(x.proc).activePrograms--;
     hc->fn.glDeleteProgram(a_program);
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->programs--;
-    }
     if (hgDebug) hgAfter(x, hc, "glDeleteProgram", [&] { return hgArgs(a_program); });
 }
 void hg_glDeleteRenderbuffers(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteRenderbuffers) { hgMissing(x, hc, "glDeleteRenderbuffers"); return; }
+    S(x.proc).activeRenderbuffers -= a_n;
     hc->fn.glDeleteRenderbuffers(a_n, HG_PTR(x, a_renderbuffers));
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->renderbuffers -= a_n;
-    }
     if (hgDebug) hgAfter(x, hc, "glDeleteRenderbuffers", [&] { return hgArgs(a_n, a_renderbuffers); });
 }
 void hg_glDeleteShader(Ctx& x, uint32_t a_shader) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteShader) { hgMissing(x, hc, "glDeleteShader"); return; }
+    S(x.proc).activeShaders--;
     hc->fn.glDeleteShader(a_shader);
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->shaders--;
-    }
     if (hgDebug) hgAfter(x, hc, "glDeleteShader", [&] { return hgArgs(a_shader); });
 }
 void hg_glDetachShader(Ctx& x, uint32_t a_program, uint32_t a_shader) {
@@ -1112,19 +1093,15 @@ void hg_glFramebufferTexture2D(Ctx& x, uint32_t a_target, uint32_t a_attachment,
 void hg_glGenFramebuffers(Ctx& x, int32_t a_n, GuestPtr a_framebuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenFramebuffers) { hgMissing(x, hc, "glGenFramebuffers"); return; }
+    S(x.proc).activeFramebuffers += a_n;
     hc->fn.glGenFramebuffers(a_n, HG_PTR(x, a_framebuffers));
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->framebuffers += a_n;
-    }
     if (hgDebug) hgAfter(x, hc, "glGenFramebuffers", [&] { return hgArgs(a_n, a_framebuffers); });
 }
 void hg_glGenRenderbuffers(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenRenderbuffers) { hgMissing(x, hc, "glGenRenderbuffers"); return; }
+    S(x.proc).activeRenderbuffers += a_n;
     hc->fn.glGenRenderbuffers(a_n, HG_PTR(x, a_renderbuffers));
-    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-        it->second->renderbuffers += a_n;
-    }
     if (hgDebug) hgAfter(x, hc, "glGenRenderbuffers", [&] { return hgArgs(a_n, a_renderbuffers); });
 }
 void hg_glGenerateMipmap(Ctx& x, uint32_t a_target) {

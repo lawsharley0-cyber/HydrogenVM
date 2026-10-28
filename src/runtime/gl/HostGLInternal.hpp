@@ -45,6 +45,8 @@ struct HostContext {
     bool implicitWorker = false;
     uint32_t guestContext = 0, guestSharegroup = 0;
     uint32_t boundFbo = 0;
+    uint32_t boundTexture2D = 0;
+    bool pendingDestruction = false;
     uint32_t currentProgram = 0;
     Fns fn;
     uint32_t readFbo = 0;    // scratch FBO for read-backs

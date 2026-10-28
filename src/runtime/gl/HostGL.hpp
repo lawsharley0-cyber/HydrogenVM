@@ -93,6 +93,13 @@ void layerPlaced(Process& p, uint32_t layer, const float toDevice[6], float boun
 
 void sharegroupDestroy(Process& p, uint32_t guestSharegroup);
 
+
+struct ProvisionalGpuMetrics {
+    int textures, buffers, framebuffers, renderbuffers, programs, shaders;
+    long long estimatedBytes;
+};
+ProvisionalGpuMetrics provisionalMetrics(Process& p);
+
 // Registers the forwarded `_gl*` symbols (overriding the software ones).
 void registerFunctions(Process& p);
 
