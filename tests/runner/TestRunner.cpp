@@ -3798,6 +3798,68 @@ int runFullSubsystemTests() {
             check(good.first && good.second == "<cfg v=2><item name=a & b>'x < y'</item><empty></empty>'<raw>'</cfg>" && !bad.first && bad.second.find("ERROR") != std::string::npos,
                   "NSXMLParser elements / attributes / entities / CDATA / self-closing / mismatched-tag error");
         }
+        {
+            // GCController controllers returns empty array and completion blocks work
+            const ObjC::Class gccCls = r.getClass("GCController");
+            if (gccCls) {
+                const ObjC::id arr = ObjC::id(r.send(cpu, gccCls, "controllers"));
+                const uint32_t count = uint32_t(r.send(cpu, arr, "count"));
+
+                uint32_t called = 0;
+                const uint32_t invoke = proc.defineFunction("test_gc_discovery_completion", [&](Ctx&) { called = 1; });
+                const uint32_t desc = proc.heap().allocZeroed(8);
+                proc.mem().write<uint32_t>(desc + 4, 20); // 32-bit Block_descriptor size
+                const uint32_t bAddr = proc.heap().allocZeroed(20);
+                proc.mem().write<uint32_t>(bAddr + 12, invoke);
+                proc.mem().write<uint32_t>(bAddr + 16, desc);
+                r.send(cpu, gccCls, "startWirelessControllerDiscoveryWithCompletionHandler:", {bAddr});
+                proc.heap().free(bAddr); // callback must hold a copied block
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.05);
+                proc.heap().free(desc);
+
+                check(count == 0 && called == 1, "GCController controllers returns empty array and triggers discovery block");
+            } else {
+                check(false, "GCController class not found");
+            }
+        }
+        {
+            // SKPaymentTransaction properties and types
+            const ObjC::Class sktCls = r.getClass("SKPaymentTransaction");
+            const ObjC::Class skpCls = r.getClass("SKPayment");
+            if (sktCls && skpCls) {
+                const ObjC::id tx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, sktCls, r.selAlloc)), "init"));
+                const ObjC::id tid = ObjC::id(r.send(cpu, tx, "transactionIdentifier"));
+                const ObjC::id tdate = ObjC::id(r.send(cpu, tx, "transactionDate"));
+                const uint32_t tstate = uint32_t(r.send(cpu, tx, "transactionState"));
+
+                const uint32_t stateSel = r.sel("transactionState");
+                const std::string stateSig = r.methodTypes(sktCls, stateSel);
+
+                const ObjC::id prodId = Foundation::makeString(cx, "com.test.product");
+                const ObjC::id pay = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {prodId}));
+                const uint32_t qty1 = uint32_t(r.send(cpu, pay, "quantity"));
+                const ObjC::id pId = ObjC::id(r.send(cpu, pay, "productIdentifier"));
+
+                const ObjC::Class mPayCls = r.getClass("SKMutablePayment");
+                const ObjC::id mPay = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, mPayCls, r.selAlloc)), "init"));
+                r.send(cpu, mPay, "setQuantity:", {uint32_t(3)});
+                const uint32_t qty2 = uint32_t(r.send(cpu, mPay, "quantity"));
+                bool rejectedInvalid = false;
+                try { r.send(cpu, mPay, "setQuantity:", {uint32_t(0)}); }
+                catch (const ObjC::ObjCError&) { rejectedInvalid = true; }
+                catch (const CPU::GuestFault&) { rejectedInvalid = true; }
+                const uint32_t qtyAfterInvalid = uint32_t(r.send(cpu, mPay, "quantity"));
+                const ObjC::id nilPayment = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {0}));
+
+                const uint32_t qtySel = r.sel("setQuantity:");
+                const std::string qtySig = r.methodTypes(mPayCls, qtySel);
+
+                check(tid == 0 && tdate == 0 && tstate == 0 && stateSig == "i@:" && qtySig == "v@:i" && qty1 == 1 && pId == prodId && qty2 == 3 && rejectedInvalid && qtyAfterInvalid == 3 && !nilPayment,
+                      "SKPayment has armv7 NSInteger signatures, retains product ID, defaults quantity to one and rejects invalid quantities");
+            } else {
+                check(false, "SKPaymentTransaction or SKPayment class not found");
+            }
+        }
     }
 
     // POSIX regex (Darwin 32-bit ABI) and tmpnam inside the guest sandbox.
