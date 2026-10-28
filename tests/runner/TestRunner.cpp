@@ -4280,19 +4280,37 @@ int runFullSubsystemTests() {
         // Thread identity and teardown checks
         const uint32_t th_obj = proc.heap().allocZeroed(16);
         const uint32_t worker_th = proc.startThread(proc.defineFunction("hvm_test_std_thread", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
+
+        // TLS separation: run a thread that gets a TLS key. Our tests for TLS are basic but we can just use the key we got.
+        // C++ thread tests
         m.write<uint32_t>(th_obj, worker_th);
         const uint32_t detach_ret = call("__ZNSt3__16thread6detachEv", {th_obj});
-        bool detach_ok = m.read<uint32_t>(th_obj) == 0;
+        bool detach_ok = m.read<uint32_t>(th_obj) == 0 && detach_ret == 0;
 
-        m.write<uint32_t>(th_obj, worker_th);
+        // Invalid detach
+        const uint32_t detach_inv = call("__ZNSt3__16thread6detachEv", {th_obj});
+        bool detach_inv_ok = detach_inv == 22; // EINVAL
+
+        // Setup another thread to join
+        const uint32_t worker2_th = proc.startThread(proc.defineFunction("hvm_test_std_thread2", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
+        m.write<uint32_t>(th_obj, worker2_th);
         const uint32_t join_ret = call("__ZNSt3__16thread4joinEv", {th_obj});
-        bool join_ok = m.read<uint32_t>(th_obj) == 0;
+        bool join_ok = m.read<uint32_t>(th_obj) == 0 && join_ret == 0;
 
+        // Invalid join
+        const uint32_t join_inv = call("__ZNSt3__16thread4joinEv", {th_obj});
+        bool join_inv_ok = join_inv == 22; // EINVAL
+
+        // Destructor on joinable thread
         m.write<uint32_t>(th_obj, worker_th);
-        call("__ZNSt3__16threadD1Ev", {th_obj});
-        bool dtor_ok = m.read<uint32_t>(th_obj) == worker_th; // Destructor doesn't modify the struct natively besides detaching it
+        bool term_called = false;
+        try {
+            call("__ZNSt3__16threadD1Ev", {th_obj});
+        } catch (const std::exception& e) {
+            term_called = std::string(e.what()).find("terminate() called") != std::string::npos;
+        }
 
-        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && join_ok && dtor_ok, "libc++ (std::__1) threading and concurrency");
+        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && detach_inv_ok && join_ok && join_inv_ok && term_called, "libc++ (std::__1) threading and concurrency");
     }
 
     // Host-requested shutdown must not become an HLE error. An unrelated

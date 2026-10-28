@@ -44,20 +44,18 @@ void ts_dtor(Ctx& x, GuestPtr self) {
 
 void t_dtor(Ctx& x, GuestPtr self) {
     // In libc++, destroying a joinable thread calls std::terminate().
-    // For emulator resilience, we deliberately approximate this by detaching
-    // instead of aborting the process. std::thread contains pthread_t at offset 0.
+    // std::thread contains pthread_t at offset 0.
     uint32_t th = x.mem.read<uint32_t>(self);
     if (th != 0) {
-        auto detach_fn = x.proc.hostFunctionFor("_pthread_detach");
-        if (detach_fn) {
-            x.cpu.r[0] = th;
-            detach_fn(x.cpu);
-        }
+        throw std::runtime_error("std::terminate() called");
     }
 }
 
 uint32_t t_join(Ctx& x, GuestPtr self) {
     uint32_t th = x.mem.read<uint32_t>(self);
+    if (th == 0) {
+        return 22; // EINVAL
+    }
     auto join_fn = x.proc.hostFunctionFor("_pthread_join");
     if (join_fn) {
         x.cpu.r[0] = th;
@@ -67,16 +65,22 @@ uint32_t t_join(Ctx& x, GuestPtr self) {
         if (ret == 0) x.mem.write<uint32_t>(self, 0);
         return ret;
     }
-    return 0;
+    return 3; // ESRCH or 38 ENOSYS
 }
 
 void t_detach(Ctx& x, GuestPtr self) {
     uint32_t th = x.mem.read<uint32_t>(self);
+    if (th == 0) {
+        x.cpu.r[0] = 22; // EINVAL
+        return;
+    }
     auto detach_fn = x.proc.hostFunctionFor("_pthread_detach");
     if (detach_fn) {
         x.cpu.r[0] = th;
         detach_fn(x.cpu);
         if (x.cpu.r[0] == 0) x.mem.write<uint32_t>(self, 0);
+    } else {
+        x.cpu.r[0] = 3;
     }
 }
 
