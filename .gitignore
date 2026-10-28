@@ -14,3 +14,7 @@ compat/
 xcuserdata/
 __pycache__/
 *.png
+
+# Game archives are owner-supplied fixtures; do not commit additional IPAs.
+# The three historic tracked archives require a separate CI fixture migration.
+*.ipa

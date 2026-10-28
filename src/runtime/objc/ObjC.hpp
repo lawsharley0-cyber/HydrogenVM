@@ -171,6 +171,10 @@ public:
     void makeImmortal(id obj);
     uint32_t poolPush();
     void poolPop(CPU::Cpu& c, uint32_t token);
+    // Release every autorelease pool still open on the current thread.
+    // poolPush's first token is 1; popping that token releases nested pools too.
+    // Token 0 is not a drain-all sentinel: poolPop ignores it.
+    void drainPools(CPU::Cpu& c);
     void addToPool(id obj);
     // weak references
     id loadWeak(uint32_t slot);

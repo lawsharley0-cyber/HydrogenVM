@@ -69,17 +69,7 @@ struct State {
     std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
     std::atomic<int> presents{0};                                                  // direct presents so far
     std::atomic<bool> toldReadback{false};
-    std::chrono::steady_clock::time_point lastPresent{};
-    std::mutex telemetryMu;
-    std::unordered_map<uint32_t, long long> textureBytes;
-    std::atomic<int> activeTextures{0};
-    std::atomic<int> activeBuffers{0};
-    std::atomic<int> activeFramebuffers{0};
-    std::atomic<int> activeRenderbuffers{0};
-    std::atomic<int> activePrograms{0};
-    std::atomic<int> activeShaders{0};
-    std::atomic<long long> estimatedBytes{0};
-                           // for 60 Hz pacing
+    std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
 
     struct ResourceMetrics {
         std::atomic<int> textures{0};
@@ -91,6 +81,8 @@ struct State {
         std::atomic<long long> estimatedBytes{0};
     };
     std::unordered_map<uint32_t, std::unique_ptr<ResourceMetrics>> telemetry; // guestSharegroup -> metrics
+    std::mutex telemetryMu;
+    std::unordered_map<uint32_t, long long> textureBytes;
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -210,7 +202,8 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
         }
     }
 
-    if (auto it = st.telemetry.find(guestSharegroup); it != st.telemetry.end()) {
+    auto it = st.telemetry.find(guestSharegroup);
+    if (it != st.telemetry.end()) {
         p.logf(LogLevel::Info, "GPU: sharegroup 0x%x destroyed. Live resources before cleanup: %d textures, %d buffers, %d FBOs, %d RBOs, %d programs, %d shaders, estimated %lld bytes",
                guestSharegroup, it->second->textures.load(), it->second->buffers.load(), it->second->framebuffers.load(),
                it->second->renderbuffers.load(), it->second->programs.load(), it->second->shaders.load(),
@@ -231,7 +224,6 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
         }
     }
 }
-
 
 void bind(Process& p, HostContext* hc) {
     State& st = S(p);
@@ -311,40 +303,6 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
 }
 
 } // namespace
-
-void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
-    State& st = S(p);
-    std::lock_guard<std::mutex> lk(st.mu);
-
-    for (const auto& kv : st.contexts) {
-        if (kv.second && kv.second->guestSharegroup == guestSharegroup) {
-            p.logf(LogLevel::Warning, "GPU: sharegroup 0x%x destroyed but context 0x%x still references it", guestSharegroup, kv.first);
-            return;
-        }
-    }
-
-    if (auto it = st.telemetry.find(guestSharegroup); it != st.telemetry.end()) {
-        p.logf(LogLevel::Info, "GPU: sharegroup 0x%x destroyed. Live resources before cleanup: %d textures, %d buffers, %d FBOs, %d RBOs, %d programs, %d shaders, estimated %lld bytes",
-               guestSharegroup, it->second->textures.load(), it->second->buffers.load(), it->second->framebuffers.load(),
-               it->second->renderbuffers.load(), it->second->programs.load(), it->second->shaders.load(),
-               it->second->estimatedBytes.load());
-        st.telemetry.erase(it);
-    }
-
-    st.shareRoot.erase(guestSharegroup);
-
-    for (auto it = st.workers.begin(); it != st.workers.end(); ) {
-        if (uint32_t(it->first) == guestSharegroup) {
-            HostContext* hc = it->second.get();
-            if (tls.proc == &p && tls.ctx == hc) tls.ctx = nullptr;
-            if (hc && hc->handle) st.platform->destroyContext(hc->handle);
-            it = st.workers.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
-
 
 HostContext* currentHostContext() { return tls.ctx; }
 
@@ -1374,7 +1332,18 @@ void setScreenFbo(Process& p, uint32_t guestContext, uint32_t fbo) {
 
 ProvisionalGpuMetrics provisionalMetrics(Process& p) {
     State& st = S(p);
-    return { st.activeTextures.load(), st.activeBuffers.load(), st.activeFramebuffers.load(), st.activeRenderbuffers.load(), st.activePrograms.load(), st.activeShaders.load(), st.estimatedBytes.load() };
+    ProvisionalGpuMetrics m = {0};
+    std::lock_guard<std::mutex> lk(st.mu);
+    for (const auto& [sg, res] : st.telemetry) {
+        m.textures += res->textures.load();
+        m.buffers += res->buffers.load();
+        m.framebuffers += res->framebuffers.load();
+        m.renderbuffers += res->renderbuffers.load();
+        m.programs += res->programs.load();
+        m.shaders += res->shaders.load();
+        m.estimatedBytes += res->estimatedBytes.load();
+    }
+    return m;
 }
 
 } // namespace Hydrogen::Runtime::HostGL

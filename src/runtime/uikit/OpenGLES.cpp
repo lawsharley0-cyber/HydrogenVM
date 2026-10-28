@@ -3553,8 +3553,7 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     // EAGLSharegroup & EAGLContext
     ObjC::ClassBuilder sg = r.defineClass("EAGLSharegroup", "NSObject");
     st.eaglSharegroup = sg.cls();
-    sg.m<&sg_init>("init")
-      .m<&sg_dealloc>("dealloc", "v@:");
+    sg.m<&sg_init>("init");
 
     ObjC::ClassBuilder ctx = r.defineClass("EAGLContext", "NSObject");
     st.eaglContext = ctx.cls();
