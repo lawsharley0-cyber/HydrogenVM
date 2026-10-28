@@ -3416,8 +3416,8 @@ int runFullSubsystemTests() {
             }
             std::string msg2;
             try { r.send(cpu, objects[0], "description"); } catch (const std::exception& e) { msg2 = e.what(); }
-            check(msg2.find("unrecognized selector") != std::string::npos || msg2.empty() || msg2.find("message sent to deallocated instance") == std::string::npos,
-                  "HVM_ZOMBIES evicts the oldest objects after exceeding limit");
+            check(msg2.find("message sent to deallocated instance") == std::string::npos,
+                  "HVM_ZOMBIES evicts metadata for oldest objects, falling back to standard crash");
         }
 
         // A virtual call through a vtable nothing provides names the class and slot.

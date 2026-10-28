@@ -262,6 +262,8 @@ private:
     // HVM_ZOMBIES=1 or ProcessConfig::enableZombies: freed objects keep their
     // memory (so the address isn't reused) and remember their class and the guest
     // backtrace of the release that freed them; a later message names them.
+    // The metadata for zombies is bounded to save host memory, but the guest
+    // memory remains allocated to guarantee use-after-free detection.
     bool zombiesEnabled_ = false;
     std::mutex zombieMu_;
     std::unordered_map<id, std::pair<std::string, std::string>> zombies_;   // class, "freed by" + "allocated by"
