@@ -391,21 +391,10 @@ std::string nibPath(Ctx& x, const std::string& name, id bundle) {
     if (p.empty()) {
         std::error_code ec;
 
-        std::vector<std::string> fallbacks;
-        fallbacks.push_back(base + "~iphone.nib");
-        fallbacks.push_back(base + ".nib");
-
-        if (base.size() > 9 && base.substr(base.size() - 9) == "Landscape") {
-            std::string noOrien = base.substr(0, base.size() - 9);
-            fallbacks.push_back(noOrien + "~iphone.nib");
-            fallbacks.push_back(noOrien + ".nib");
-        } else if (base.size() > 8 && base.substr(base.size() - 8) == "Portrait") {
-            std::string noOrien = base.substr(0, base.size() - 8);
-            fallbacks.push_back(noOrien + "~iphone.nib");
-            fallbacks.push_back(noOrien + ".nib");
-        }
-
-        for (const std::string& cand : fallbacks) {
+        // Only the documented device-idiom modifier is a resource fallback.
+        // Stripping words such as "Landscape" from an arbitrary filename can
+        // unexpectedly load an unrelated NIB from the same bundle.
+        for (const std::string& cand : {base + "~iphone.nib", base + ".nib"}) {
             if (fs::exists(bundlePath + "/" + cand, ec)) { p = bundlePath + "/" + cand; break; }
         }
     }
