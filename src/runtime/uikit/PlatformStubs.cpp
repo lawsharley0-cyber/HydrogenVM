@@ -1360,8 +1360,10 @@ void alc_macMixerRate(Ctx&, double) {}
 double alc_macGetMixerRate(Ctx&) { return 44100.0; }
 void alc_macIntSetter(Ctx&, int32_t) {}
 void alc_getIntegerv(Ctx& x, uint32_t dev, uint32_t param, uint32_t size, GuestPtr data) {
-    if (!dev) { OAL(x).lastAlcError = 0xA001 /* ALC_INVALID_DEVICE */; return; }
+    if (!dev || dev != OAL(x).currentDevice) { OAL(x).lastAlcError = 0xA001 /* ALC_INVALID_DEVICE */; return; }
     if (!data || size < 1) { OAL(x).lastAlcError = 0xA004 /* ALC_INVALID_VALUE */; return; }
+    // The supported OpenAL API is 1.1; no ALC device attribute list is
+    // advertised by this software-only implementation.
     if (param == 0x1000 /* ALC_MAJOR_VERSION */ || param == 0x1001 /* ALC_MINOR_VERSION */) x.mem.write<int32_t>(data, 1);
     else if (param == 0x1002 /* ALC_ATTRIBUTES_SIZE */) x.mem.write<int32_t>(data, 0);
     else OAL(x).lastAlcError = 0xA003 /* ALC_INVALID_ENUM */;
