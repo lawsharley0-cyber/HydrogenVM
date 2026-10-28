@@ -8,10 +8,11 @@ report, and validates it against the schema.
 usage:
     python3 tools/hvm_testlab.py run
         [--build-dir build] [--out build/testlab-report]
-        [--hvm PATH] [--case TL-A] [--all]
+        [--hvm PATH] [--case TL-A]
         [--timeout 30] [--skip-build]
         [--home DIR]
 
+    # Omit --case to execute the complete TL-A through TL-R suite.
     python3 tools/hvm_testlab.py validate REPORT.json
 
 Exit status:
