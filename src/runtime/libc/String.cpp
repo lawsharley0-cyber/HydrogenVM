@@ -11,6 +11,7 @@ namespace {
 inline char* H(Ctx& x, GuestPtr p) { return reinterpret_cast<char*>(x.mem.host(p)); }
 inline GuestPtr G(Ctx& x, const void* p) { return p ? x.mem.guestAddr(p) : 0; }
 
+
 uint32_t s_memcpy(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) { if (n) std::memmove(H(x, d), H(x, s), n); return d; }
 uint32_t s_memset(Ctx& x, GuestPtr d, int32_t c, uint32_t n) { if (n) std::memset(H(x, d), c, n); return d; }
 int32_t  s_memcmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) { return n ? std::memcmp(H(x, a), H(x, b), n) : 0; }
@@ -227,6 +228,53 @@ int32_t w_iswdigit(Ctx& x, int32_t c) { return c_isdigit(x, c); }
 int32_t w_iswalpha(Ctx& x, int32_t c) { return c_isalpha(x, c); }
 int32_t w_iswalnum(Ctx& x, int32_t c) { return c_isalnum(x, c); }
 
+
+void s_chk_fail(Ctx& x) {
+    throw std::runtime_error("buffer overflow detected (__chk_fail) in " + x.proc.describeAddress(x.cpu.r[CPU::kLR]));
+}
+
+uint32_t s_memcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
+    if (n > destlen) s_chk_fail(x);
+    return s_memcpy(x, d, s, n);
+}
+uint32_t s_memmove_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
+    if (n > destlen) s_chk_fail(x);
+    return s_memcpy(x, d, s, n); // _memmove maps to s_memcpy in original
+}
+uint32_t s_memset_chk(Ctx& x, GuestPtr d, int32_t c, uint32_t n, uint32_t destlen) {
+    if (n > destlen) s_chk_fail(x);
+    return s_memset(x, d, c, n);
+}
+uint32_t s_strcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
+    const size_t slen = std::strlen(H(x, s));
+    if (slen + 1 > destlen) s_chk_fail(x);
+    return s_strcpy(x, d, s);
+}
+uint32_t s_strncpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
+    if (n > destlen) s_chk_fail(x);
+    return s_strncpy(x, d, s, n);
+}
+uint32_t s_strcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
+    const size_t dl = std::strlen(H(x, d));
+    const size_t sl = std::strlen(H(x, s));
+    if (dl + sl + 1 > destlen) s_chk_fail(x);
+    return s_strcat(x, d, s);
+}
+uint32_t s_strncat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
+    const size_t dl = std::strlen(H(x, d));
+    const size_t sl = strnlen(H(x, s), n);
+    if (dl + sl + 1 > destlen) s_chk_fail(x);
+    return s_strncat(x, d, s, n);
+}
+uint32_t s_strlcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
+    if (n > destlen) s_chk_fail(x);
+    return s_strlcpy(x, d, s, n);
+}
+uint32_t s_strlcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
+    if (n > destlen) s_chk_fail(x);
+    return s_strlcat(x, d, s, n);
+}
+
 } // namespace
 
 // Darwin's <ctype.h> inlines isalpha() & co. as table lookups into
@@ -270,10 +318,10 @@ static void buildRuneLocale(Process& p) {
 void registerLibcString(Process& p) {
     p.def<&s_memcpy>("_memcpy");
     p.def<&s_memcpy>("_memmove");
-    p.def<&s_memcpy>("___memcpy_chk");
-    p.def<&s_memcpy>("___memmove_chk");
+    p.def<&s_memcpy_chk>("___memcpy_chk");
+    p.def<&s_memmove_chk>("___memmove_chk");
     p.def<&s_memset>("_memset");
-    p.def<&s_memset>("___memset_chk");
+    p.def<&s_memset_chk>("___memset_chk");
     p.def<&s_memcmp>("_memcmp");
     p.def<&s_memcmp>("_bcmp");
     p.def<&s_memchr>("_memchr");
@@ -290,18 +338,18 @@ void registerLibcString(Process& p) {
     p.def<&s_strncasecmp>("_strncasecmp");
     p.def<&s_strcoll>("_strcoll");
     p.def<&s_strcpy>("_strcpy");
-    p.def<&s_strcpy>("___strcpy_chk");
+    p.def<&s_strcpy_chk>("___strcpy_chk");
     p.def<&s_stpcpy>("_stpcpy");
     p.def<&s_strncpy>("_strncpy");
-    p.def<&s_strncpy>("___strncpy_chk");
+    p.def<&s_strncpy_chk>("___strncpy_chk");
     p.def<&s_strcat>("_strcat");
-    p.def<&s_strcat>("___strcat_chk");
+    p.def<&s_strcat_chk>("___strcat_chk");
     p.def<&s_strncat>("_strncat");
-    p.def<&s_strncat>("___strncat_chk");
+    p.def<&s_strncat_chk>("___strncat_chk");
     p.def<&s_strlcpy>("_strlcpy");
-    p.def<&s_strlcpy>("___strlcpy_chk");
+    p.def<&s_strlcpy_chk>("___strlcpy_chk");
     p.def<&s_strlcat>("_strlcat");
-    p.def<&s_strlcat>("___strlcat_chk");
+    p.def<&s_strlcat_chk>("___strlcat_chk");
     p.def<&s_strchr>("_strchr");
     p.def<&s_strchr>("_index");
     p.def<&s_strrchr>("_strrchr");
