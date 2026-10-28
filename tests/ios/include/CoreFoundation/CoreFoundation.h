@@ -112,3 +112,6 @@ Boolean CFURLGetFileSystemRepresentation(CFURLRef, Boolean resolveAgainstBase, u
 CFTypeRef CFPreferencesCopyAppValue(CFStringRef key, CFStringRef appId);
 void CFPreferencesSetAppValue(CFStringRef key, CFTypeRef value, CFStringRef appId);
 extern const CFStringRef kCFPreferencesCurrentApplication;
+
+typedef const struct __CFURL *CFURLRef;
+CFURLRef CFURLCreateWithString(CFAllocatorRef allocator, CFStringRef URLString, CFURLRef baseURL);
