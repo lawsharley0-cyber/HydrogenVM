@@ -809,10 +809,13 @@ uint32_t guestWStringData(Ctx& x, const std::u32string& s) { return wmake(x, s);
 std::u32string guestWStringValue(Ctx& x, GuestPtr self) { return wvalue(x, self); }
 
 uint32_t atomic_exchange_and_add(Ctx& x, uint32_t mem, int32_t val) {
-    if (!mem) return 0;
-    int32_t prev = x.mem.read<int32_t>(mem);
-    x.mem.write<int32_t>(mem, prev + val);
-    return uint32_t(prev);
+    if (!mem || (mem & 3u) || mem > UINT32_MAX - 3u)
+        throw std::runtime_error("__exchange_and_add: invalid guest atomic address");
+    // The guest arena is shared by all guest host threads. GCC's reference
+    // count primitive returns the *old* 32-bit value, with modulo-2^32 math.
+    // Use host atomic RMW on the same backing word, not a read/write pair.
+    auto* word = reinterpret_cast<uint32_t*>(x.mem.host(mem));
+    return __atomic_fetch_add(word, uint32_t(val), __ATOMIC_SEQ_CST);
 }
 
 void registerLibStdcxxContainers(Process& p) {
