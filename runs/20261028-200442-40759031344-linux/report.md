@@ -1,28 +1,28 @@
-# HydrogenVM report — 9a54f86
+# HydrogenVM report — 9906189
 
-2026-10-28T05:57:34+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-28T20:00:15+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 222.6s |
+| build | 1 | 0 | 0 | 215.6s |
 | cpu | 15 | 0 | 0 | 0.7s |
 | ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 24.5s |
+| bench | 5 | 0 | 0 | 24.7s |
 
 ## Speed
 
-CoreMark **1718.3** iterations/s (576.3 guest MIPS)
+CoreMark **1708.7** iterations/s (571.9 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **119.3%** | 716 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.5%** | 716 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.6%** | 573 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.8%** | 491 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **118.7%** | 712 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.0%** | 712 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.2%** | 570 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.6%** | 488 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 456 MIPS, ctests_arm 512 MIPS, ftests_vfp_thumb_softfp 406 MIPS, ftests_neon_thumb 401 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 460 MIPS, ctests_arm 518 MIPS, ftests_vfp_thumb_softfp 278 MIPS, ftests_neon_thumb 401 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -31,13 +31,13 @@ Raw interpreter speed (CPU test programs): ctests_thumb 456 MIPS, ctests_arm 512
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.44 ms | 7.23 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.43 ms | 7.49 ms | 0 |
 
 ## Problems (30)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 37.8% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 37.6% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
