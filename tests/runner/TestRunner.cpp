@@ -3715,6 +3715,30 @@ int runFullSubsystemTests() {
             check(good.first && good.second == "<cfg v=2><item name=a & b>'x < y'</item><empty></empty>'<raw>'</cfg>" && !bad.first && bad.second.find("ERROR") != std::string::npos,
                   "NSXMLParser elements / attributes / entities / CDATA / self-closing / mismatched-tag error");
         }
+        {
+            // GCController controllers returns empty array
+            const ObjC::Class gccCls = r.getClass("GCController");
+            if (gccCls) {
+                const ObjC::id arr = ObjC::id(r.send(cpu, gccCls, "controllers"));
+                const uint32_t count = uint32_t(r.send(cpu, arr, "count"));
+                check(count == 0, "GCController controllers returns empty array");
+            } else {
+                check(false, "GCController class not found");
+            }
+        }
+        {
+            // SKPaymentTransaction properties
+            const ObjC::Class sktCls = r.getClass("SKPaymentTransaction");
+            if (sktCls) {
+                const ObjC::id tx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, sktCls, "alloc")), "init"));
+                const ObjC::id tid = ObjC::id(r.send(cpu, tx, "transactionIdentifier"));
+                const ObjC::id tdate = ObjC::id(r.send(cpu, tx, "transactionDate"));
+                const uint64_t tstate = uint64_t(r.send(cpu, tx, "transactionState"));
+                check(tid == 0 && tdate == 0 && tstate == 0, "SKPaymentTransaction properties return correct zero/nil values");
+            } else {
+                check(false, "SKPaymentTransaction class not found");
+            }
+        }
     }
 
     // POSIX regex (Darwin 32-bit ABI) and tmpnam inside the guest sandbox.

@@ -1874,6 +1874,22 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
       .m<&ap_updateMeters>("updateMeters", "v@:").m<&ap_power>("averagePowerForChannel:", "f@:I").m<&ap_power>("peakPowerForChannel:", "f@:I")
       .m<&ap_channels>("numberOfChannels", "I@:").m<&ap_dealloc>("dealloc", "v@:");
 
+
+    // GameController
+    auto zeroId = [](Ctx&, id, SEL) -> id { return 0; };
+    auto zeroC = [](Ctx&, id, SEL) -> char { return 0; };
+    auto ignoreQ = [](Ctx&, id, SEL, int64_t) {};
+    ObjC::ClassBuilder gcc = r.defineClass("GCController", "NSObject");
+    gcc.cm<&sk_empty>("controllers", "@@:")
+       .cm<&sk_ignoreObj>("startWirelessControllerDiscoveryWithCompletionHandler:", "v@:@?")
+       .cm<&sk_noop>("stopWirelessControllerDiscovery", "v@:")
+       .m(zeroId, "controllerPausedHandler", "@?@:")
+       .m<&sk_ignoreObj>("setControllerPausedHandler:", "v@:@?")
+       .m(zeroC, "isAttachedToDevice", "c@:")
+       .m(zeroId, "gamepad", "@@:")
+       .m(zeroId, "extendedGamepad", "@@:");
+
+
     // GameKit: see GameKit.cpp
 
     // StoreKit
@@ -1887,9 +1903,28 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         .m<&skpr_start>("start", "v@:").m<&skpr_cancel>("cancel", "v@:").m<&skpr_dealloc>("dealloc", "v@:");
     ObjC::ClassBuilder skresp = r.defineClass("SKProductsResponse", "NSObject");
     skresp.m<&skresp_products>("products").m<&skresp_invalid>("invalidProductIdentifiers");
-    r.defineClass("SKProduct", "NSObject");
-    r.defineClass("SKPayment", "NSObject");
+    ObjC::ClassBuilder skprod = r.defineClass("SKProduct", "NSObject");
+    skprod.m<&sk_ignoreObj>("setLocalizedTitle:", "v@:@").m<&sk_ignoreObj>("setPrice:", "v@:@").m<&sk_ignoreObj>("setPriceLocale:", "v@:@")
+          .m(zeroId, "localizedTitle", "@@:").m(zeroId, "price", "@@:").m(zeroId, "priceLocale", "@@:").m(zeroId, "productIdentifier", "@@:");
+
+    auto allocZero = [](Ctx& x, id, SEL, id) -> id {
+        const id inst = rt(x).createInstance(x.cpu.r[0]);
+        return autoreleased(x, inst);
+    };
+    ObjC::ClassBuilder skpay = r.defineClass("SKPayment", "NSObject");
+    skpay.cm(allocZero, "paymentWithProductIdentifier:", "@@:@")
+         .m(ignoreQ, "setQuantity:", "v@:q").m(zeroId, "productIdentifier", "@@:");
+
     r.defineClass("SKMutablePayment", "SKPayment");
+
+
+    auto zeroQ = [](Ctx&, id, SEL) -> int64_t { return 0; };
+    ObjC::ClassBuilder sktrans = r.defineClass("SKPaymentTransaction", "NSObject");
+    sktrans.m(zeroId, "transactionIdentifier", "@@:").m(zeroId, "transactionDate", "@@:")
+           .m(zeroId, "transactionReceipt", "@@:").m(zeroId, "originalTransaction", "@@:")
+           .m(zeroId, "payment", "@@:").m(zeroId, "error", "@@:")
+           .m(zeroQ, "transactionState", "q@:");
+
 
     // MessageUI
     for (const char* n : {"MFMailComposeViewController", "MFMessageComposeViewController"}) {
