@@ -235,6 +235,56 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 
 namespace {
 
+// Independent of HVM_ZOMBIES in the environment: enableZombies is the same
+// switch. Returns false when the 16384-record cap is missing or when an
+// evicted zombie is handed back to the guest heap.
+bool zombieMetadataStaysCapped() {
+    using namespace Hydrogen;
+    using namespace Hydrogen::Runtime;
+    constexpr int kZombieCap = 16384;
+    const std::string named = "-[NSObject description]: message sent to deallocated instance";
+    ProcessConfig zcfg;
+    zcfg.homePath = "/tmp/hvm_zombie_cap";
+    zcfg.bundlePath = "/tmp/hvm_zombie_cap/Z.app";
+    zcfg.enableZombies = true;
+    zcfg.log = [](LogLevel, const std::string&) {};
+    Process zp(zcfg);
+    auto& zr = ObjC::rt(zp);
+    auto& zcpu = zp.mainThread().cpu;
+    zp.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
+    zcpu.r[CPU::kSP] = 0xBF000000u - 256;
+    zcpu.r[7] = 0;
+    auto make = [&]() {
+        return ObjC::id(zr.send(zcpu, ObjC::id(zr.send(zcpu, zr.getClass("NSObject"), zr.selAlloc)), "init"));
+    };
+    auto message = [&](ObjC::id obj) {
+        std::string msg;
+        try { zr.send(zcpu, obj, "description"); } catch (const std::exception& e) { msg = e.what(); }
+        return msg;
+    };
+    std::vector<ObjC::id> objects;
+    objects.reserve(size_t(kZombieCap) + 1);
+    for (int i = 0; i < kZombieCap + 1; ++i) objects.push_back(make());
+    for (int i = 0; i < kZombieCap; ++i) zr.send(zcpu, objects[size_t(i)], "release");
+    const bool held = message(objects[0]).find(named) != std::string::npos;
+    zr.send(zcpu, objects[size_t(kZombieCap)], "release");
+    const std::string evictedMsg = message(objects[0]);
+    const bool evicted = evictedMsg.find("message sent to deallocated instance") == std::string::npos &&
+                         evictedMsg.find("unrecognized selector sent to instance") != std::string::npos;
+    const bool recent = message(objects[1]).find(named) != std::string::npos &&
+                        message(objects[size_t(kZombieCap)]).find(named) != std::string::npos;
+    const ObjC::id oldest = objects[0];
+    zp.mem().write<uint32_t>(oldest, 0x5A5A5A5Au);
+    const ObjC::id fresh = make();
+    const bool kept = zp.heap().blockSize(oldest) != 0 && fresh != oldest &&
+                      zp.mem().read<uint32_t>(oldest) == 0x5A5A5A5Au;
+    if (!(held && evicted && recent && kept)) {
+        std::printf("    zombie cap detail held=%d evicted=%d recent=%d kept=%d\n", held, evicted, recent, kept);
+        std::printf("    evicted message: %.200s\n", evictedMsg.c_str());
+    }
+    return held && evicted && recent && kept;
+}
+
 int runFullSubsystemTests() {
     using namespace Hydrogen;
     using namespace Hydrogen::Runtime;
@@ -3474,22 +3524,13 @@ int runFullSubsystemTests() {
             try { r.send(cpu, o, "description"); } catch (const std::exception& e) { msg = e.what(); }
             check(msg.find("-[NSObject description]: message sent to deallocated instance") != std::string::npos,
                   "HVM_ZOMBIES names the class of a freed object that is messaged");
-
-            // Regression test for bounded zombie queue (16384 limit)
-            const int limit = 16384;
-            const int numObjects = limit + 10;
-            std::vector<ObjC::id> objects;
-            for (int i = 0; i < numObjects; ++i) {
-                objects.push_back(ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSObject"), r.selAlloc)), "init")));
-            }
-            for (int i = 0; i < numObjects; ++i) {
-                r.send(cpu, objects[i], "release");
-            }
-            std::string msg2;
-            try { r.send(cpu, objects[0], "description"); } catch (const std::exception& e) { msg2 = e.what(); }
-            check(msg2.find("message sent to deallocated instance") == std::string::npos,
-                  "HVM_ZOMBIES evicts metadata for oldest objects, falling back to standard crash");
         }
+
+        // Cap is 16384 records in Runtime::disposeInstance. Guest memory of an
+        // evicted zombie stays allocated. Runs without HVM_ZOMBIES set, and
+        // fails if the cap is removed.
+        check(zombieMetadataStaysCapped(),
+              "zombie metadata stops at 16384 records and the evicted object's guest memory stays allocated");
 
         // A virtual call through a vtable nothing provides names the class and slot.
         {
