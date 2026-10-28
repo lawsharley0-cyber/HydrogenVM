@@ -1,28 +1,28 @@
-# HydrogenVM report — 3cc63d7
+# HydrogenVM report — 159796e
 
-2026-10-28T18:37:39+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-28T18:38:38+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 0 | 1 | 0 | 164.8s |
+| build | 0 | 1 | 0 | 189.3s |
 
-## Problems (28)
+## Problems (30)
 
 ### Failures (1)
 
 - **build / ninja**
 
   ```
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1917:15: error: use of undeclared identifier 'sk_allocZero'; did you mean 'allocZero'?
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1917:11: error: no matching member function for call to 'cm'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1918:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1928:16: error: use of undeclared identifier 'sk_zero_q'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1926:15: error: use of undeclared identifier 'sk_allocZero'; did you mean 'allocZero'?
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1926:11: error: no matching member function for call to 'cm'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1927:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1937:16: error: use of undeclared identifier 'sk_zero_q'
   4 errors generated.
   ```
 
-### Warnings (27)
+### Warnings (29)
 
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
@@ -51,4 +51,6 @@
 - **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]
+- **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 
