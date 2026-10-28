@@ -29,32 +29,49 @@ int main() {
     float left[1024];
     float right[1024];
 
-    // Test 1: autoRelease frees voices after playback
+    // Test 1: autoRelease frees voices after playback and weak_ptr expires
     {
-        uint32_t voice = mixer.play(make_dummy_pcm(512), 44100, {}, 0, true);
-        assert_true(mixer.playing(voice), "Voice should be playing");
-        mixer.render(left, right, 512); // Finish playing
-        assert_true(!mixer.playing(voice), "Voice should be stopped after playback");
-        // Verify voice was erased (autoRelease)
-        mixer.render(left, right, 1024);
-        assert_true(!mixer.playing(voice), "Voice should be fully released");
+        std::weak_ptr<const std::vector<int16_t>> weak_pcm;
+        {
+            Pcm pcm = make_dummy_pcm(512);
+            weak_pcm = pcm;
+            uint32_t voice = mixer.play(pcm, 44100, {}, 0, true);
+            assert_true(mixer.playing(voice), "Voice should be playing");
+            mixer.render(left, right, 512); // Finish playing
+            assert_true(!mixer.playing(voice), "Voice should be stopped after playback");
+            mixer.render(left, right, 1024);
+            assert_true(!mixer.playing(voice), "Voice should be fully released");
+        }
+        assert_true(weak_pcm.expired(), "PCM should be deleted after auto-release");
     }
 
     // Test 2: explicit release
     {
-        uint32_t voice = mixer.play(make_dummy_pcm(2048), 44100, {}, 0, false);
-        mixer.render(left, right, 512);
-        assert_true(mixer.playing(voice), "Voice should still be playing");
-        mixer.release(voice);
-        assert_true(!mixer.playing(voice), "Voice should be released");
+        std::weak_ptr<const std::vector<int16_t>> weak_pcm;
+        {
+            Pcm pcm = make_dummy_pcm(2048);
+            weak_pcm = pcm;
+            uint32_t voice = mixer.play(pcm, 44100, {}, 0, false);
+            mixer.render(left, right, 512);
+            assert_true(mixer.playing(voice), "Voice should still be playing");
+            mixer.release(voice);
+            assert_true(!mixer.playing(voice), "Voice should be released");
+        }
+        assert_true(weak_pcm.expired(), "PCM should be deleted after explicit release");
     }
 
     // Test 3: stop clears queue
     {
-        uint32_t voice = mixer.play(make_dummy_pcm(2048), 44100, {}, 0, false);
-        mixer.stop(voice);
-        assert_true(!mixer.playing(voice), "Voice should be stopped");
-        mixer.release(voice);
+        std::weak_ptr<const std::vector<int16_t>> weak_pcm;
+        {
+            Pcm pcm = make_dummy_pcm(2048);
+            weak_pcm = pcm;
+            uint32_t voice = mixer.play(pcm, 44100, {}, 0, false);
+            mixer.stop(voice);
+            assert_true(!mixer.playing(voice), "Voice should be stopped");
+            mixer.release(voice);
+        }
+        assert_true(weak_pcm.expired(), "PCM should be deleted after stop & release");
     }
 
     // Test 4: empty buffers do not crash

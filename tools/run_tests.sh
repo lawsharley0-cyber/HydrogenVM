@@ -20,8 +20,6 @@ for e in ftests_vfp_arm_hard ftests_vfp_thumb_softfp ftests_neon_thumb ftests_ne
   "$B/hvm_tests" c "$B/tests/$e.elf" "$B/tests/expected_ftests.txt" || rc=1
 done
 echo "--- Audio Lifecycle Tests ---"
-if [[ -f "$B/audio_lifecycle_tests" ]]; then
-    "$B/audio_lifecycle_tests" || rc=1
-fi
+"$B/audio_lifecycle_tests" || rc=1
 
 exit $rc
