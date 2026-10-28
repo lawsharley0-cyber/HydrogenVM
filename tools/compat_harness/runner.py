@@ -3,7 +3,6 @@
 The C++ case list matches ``tools/run_tests.sh``. Python cases are the
 packaging and Clash fixture tests that do not need a downloaded client.
 """
-from __future__ import annotations
 
 import datetime
 import json

@@ -6,7 +6,6 @@ Three IPAs already committed on main are grandfathered: the harness will use
 those paths only when legacy mode is on and the bytes match the manifest.
 New ids cannot opt into a repository path.
 """
-from __future__ import annotations
 
 import hashlib
 import os

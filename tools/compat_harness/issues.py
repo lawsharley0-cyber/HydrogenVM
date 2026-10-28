@@ -3,7 +3,6 @@
 Nothing in this module contacts GitHub or any other tracker. ``--write``
 only creates local files.
 """
-from __future__ import annotations
 
 import os
 import re

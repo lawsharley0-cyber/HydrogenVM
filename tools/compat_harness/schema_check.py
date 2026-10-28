@@ -6,7 +6,6 @@ document — type, const, enum, pattern, required, properties, items, and
 Every constraint the report schema states is enforced. Keywords this schema
 does not use (``if``/``then``, ``format``, ``unevaluatedProperties``) are not.
 """
-from __future__ import annotations
 
 import json
 import os

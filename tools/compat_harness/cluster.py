@@ -6,7 +6,6 @@ Clustering reads the harness app record (itself built from ``hvm run
 Group letters are the audit's no-parallel sets. An empty group means the
 change can run beside those sets if it stays inside the listed files.
 """
-from __future__ import annotations
 
 import re
 

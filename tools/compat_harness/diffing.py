@@ -15,7 +15,6 @@ three-second smoke does not execute the same guest path on every machine. A
 baseline row that was skipped is new coverage when the current run is real,
 not a regression.
 """
-from __future__ import annotations
 
 PERF_REL = 0.25
 _BLANK = frozenset({"all-black", "all-white"})

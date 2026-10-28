@@ -5,7 +5,6 @@ byte 0 per row, from ``Graphics::encodePng``. The decoder also accepts filter
 types 1–4 so a corrupt or foreign PNG fails closed instead of being treated
 as a varied frame.
 """
-from __future__ import annotations
 
 import os
 import struct

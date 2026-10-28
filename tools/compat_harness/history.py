@@ -7,7 +7,6 @@ The committed baseline is a separate file. Recording a run does not replace it.
 ``previous`` is the preceding row in the index. A report that is not in the
 index is compared with the last row. An empty index has no previous report.
 """
-from __future__ import annotations
 
 import datetime
 import json

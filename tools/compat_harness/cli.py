@@ -1,5 +1,4 @@
 """Command line for the compatibility harness."""
-from __future__ import annotations
 
 import argparse
 import json
