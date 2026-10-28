@@ -8,7 +8,6 @@ Tests cover:
 - Correct failure/interrupted detection for wrong expected output
 - TL-J baseline ceiling logic
 """
-import json
 import os
 import sys
 import tempfile

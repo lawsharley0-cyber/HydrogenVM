@@ -135,6 +135,10 @@ std::string urlString(Ctx& x, id url);
 bool isURL(Ctx& x, id obj);
 id localizedString(Ctx& x, id key, id value, id table);
 
+// ---- exceptions (Misc.cpp)
+id excc_with(Ctx& x, id self, SEL s, id name, id reason, id userInfo);
+[[noreturn]] void throwException(Ctx& x, id e);
+
 // ---- notifications (Notifications.cpp)
 void postNotification(Ctx& x, id name, id object, id userInfo = 0);
 void postNotification(Ctx& x, const std::string& name, id object, id userInfo = 0);
