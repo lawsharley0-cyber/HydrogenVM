@@ -8,7 +8,7 @@ cxx="${CXX:-g++}"
 
 # The core source files needed by the loader to build and test AppBundle.
 # Note: we need core cpu/memory sources since MachO pulls in GuestArena and Decoder for patching, etc.
-SOURCES="tests/loader/AppBundleTests.cpp src/loader/AppBundle.cpp src/loader/Plist.cpp src/loader/Zip.cpp src/loader/MachO.cpp src/loader/ElfLoader.cpp src/core/memory/GuestArena.cpp"
+SOURCES="tests/loader/AppBundleReadTests.cpp src/loader/AppBundle.cpp src/loader/Plist.cpp src/loader/Zip.cpp src/loader/MachO.cpp src/loader/ElfLoader.cpp src/core/memory/GuestArena.cpp"
 
 echo "Building AppBundleTests..."
 "$cxx" -std=c++20 -O2 -g -Wall -Wextra -Isrc -Wno-unused-parameter \
