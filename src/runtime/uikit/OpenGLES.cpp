@@ -732,10 +732,10 @@ bool ctx_setCurrent(Ctx& x, id, SEL, id ctx) {
     const bool host = HostGL::enabled(x.proc);
     std::lock_guard<std::mutex> lk(st.mu);
     if (ctx && !host) {
-        for (const auto& [t, c] : st.currentByThread) {
-            if (t != tid && c == ctx) {
-                x.proc.logf(LogLevel::Warning, "EAGLContext setCurrentContext: fails because ctx 0x%x is in use on thread %u", ctx, t);
-                return false;
+        for (auto it = st.currentByThread.begin(); it != st.currentByThread.end(); ++it) {
+            if (it->first != tid && it->second == ctx) {
+                st.currentByThread.erase(it);
+                break;
             }
         }
     }
