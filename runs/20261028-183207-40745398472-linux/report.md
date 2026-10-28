@@ -1,45 +1,28 @@
-# HydrogenVM report — d5a165b
+# HydrogenVM report — ab50f9c
 
-2026-10-28T01:19:47+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 6.17.0-1022-azure)
+2026-10-28T18:28:58+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
-**All tests passed.**
+**1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 153.1s |
-| cpu | 15 | 0 | 0 | 0.6s |
-| ios | 6 | 0 | 0 | 2.1s |
-| bench | 5 | 0 | 0 | 18.5s |
+| build | 0 | 1 | 0 | 189.2s |
 
-## Speed
+## Problems (28)
 
-CoreMark **2278.6** iterations/s (762.9 guest MIPS)
+### Failures (1)
 
-| Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
-|---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **158.2%** | 949 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **118.7%** | 949 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **94.9%** | 760 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **50.1%** | 651 MHz |
+- **build / ninja**
 
-Raw interpreter speed (CPU test programs): ctests_thumb 580 MIPS, ctests_arm 634 MIPS, ftests_vfp_thumb_softfp 554 MIPS, ftests_neon_thumb 511 MIPS
+  ```
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1917:15: error: use of undeclared identifier 'sk_allocZero'; did you mean 'allocZero'?
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1917:11: error: no matching member function for call to 'cm'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1918:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1928:16: error: use of undeclared identifier 'sk_zero_q'
+  4 errors generated.
+  ```
 
-| App | Wall | Frames | Avg frame | Max frame | Slow frames |
-|---|---:|---:|---:|---:|---:|
-| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.34 ms | 6.04 ms | 0 |
-
-## Problems (30)
-
-### Below speed goal (1)
-
-- **bench / coremark**: 50.1% of iPhone 5 single-core speed (goal: 100%)
-
-### Warnings (29)
+### Warnings (27)
 
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
@@ -68,6 +51,4 @@ Raw interpreter speed (CPU test programs): ctests_thumb 580 MIPS, ctests_arm 634
 - **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]
-- **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 
