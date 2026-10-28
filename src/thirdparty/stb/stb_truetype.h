@@ -2166,8 +2166,9 @@ static int stbtt__run_charstring(const stbtt_fontinfo *info, int glyph_index, st
          float dx, dy;
          int b1 = stbtt__buf_get8(&b);
          switch (b1) {
-         // @TODO These "flex" implementations ignore the flex-depth and resolution,
-         // and always draw beziers.
+         // These "flex" implementations ignore the flex-depth and resolution,
+         // and always draw beziers. This is intentional, as we do not know the
+         // device resolution at parse time to evaluate the flex depth threshold.
          case 0x22: // hflex
             if (sp < 7) return STBTT__CSERR("hflex stack");
             dx1 = s[0];
