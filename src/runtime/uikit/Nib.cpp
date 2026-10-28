@@ -519,11 +519,13 @@ id un_instantiate(Ctx& x, id self, SEL, id owner, id options) {
 }
 id b_loadNib(Ctx& x, id self, SEL, id name, id owner, id options) {
     const id externals = options ? Foundation::dictGet(x, options, "UINibExternalObjects") : 0;
-    const id r = loadNib(x, name ? utf8(x, name) : "", self, owner, externals);
-    if (!r) {
-        x.proc.logf(LogLevel::Warning, "nib: missing NIB '%s', returning 0 instead of throwing.", std::string(name ? utf8(x, name) : "").c_str());
+    const std::string nameStr = name ? utf8(x, name) : "";
+    if (nibPath(x, nameStr, self).empty()) {
+        x.proc.logf(LogLevel::Warning, "nib: missing NIB '%s', returning 0 instead of throwing.", nameStr.c_str());
         return 0;
     }
+    const id r = loadNib(x, nameStr, self, owner, externals);
+    if (!r) throw ObjC::ObjCError("Could not load NIB in bundle: '" + nameStr + "'");
     return r;
 }
 

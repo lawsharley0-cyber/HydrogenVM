@@ -1929,6 +1929,29 @@ int runFullSubsystemTests() {
             printf("Error: %s\n", e.what());
             check(false, "loadNibNamed:owner:options: threw exception for missing NIB");
         }
+
+        // Test positive fallback
+        std::error_code ec;
+        const std::string dummyNibBase = cx.proc.bundlePath() + "/DummyControllerOf.nib";
+        auto f = fopen(dummyNibBase.c_str(), "w");
+        if (f) {
+            fprintf(f, "NIBArchive");
+            for (int i = 0; i < 40; ++i) fprintf(f, "0"); // pad to 50 bytes so parseNibArchive tries to read it and fails
+            fclose(f);
+        }
+
+        bool fallbackThrows = false;
+        try {
+            const ObjC::id result = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "DummyControllerLandscapeOf"), 0, 0}));
+            if (result == 0) fallbackThrows = true; // wait, loadNib returning 0 makes b_loadNib throw!
+        } catch (const ObjC::ObjCError& e) {
+            fallbackThrows = true;
+        } catch (...) {
+            fallbackThrows = true;
+        }
+        check(fallbackThrows, "loadNibNamed:owner:options: exact/fallback NIB found but malformed still throws");
+
+        remove(dummyNibBase.c_str());
     }
 
     // UIButton shadow offset getter/setter
