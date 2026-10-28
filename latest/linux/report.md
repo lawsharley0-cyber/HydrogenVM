@@ -1,37 +1,37 @@
-# HydrogenVM report — 1b74ec0
+# HydrogenVM report — 97f0c10
 
-2026-10-28T17:35:12+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-28T17:36:10+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 6.17.0-1022-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 157.3s |
+| build | 1 | 0 | 0 | 151.6s |
 | cpu | 15 | 0 | 0 | 0.6s |
 | ios | 6 | 0 | 0 | 2.1s |
-| bench | 5 | 0 | 0 | 18.5s |
+| bench | 5 | 0 | 0 | 18.4s |
 
 ## Speed
 
-CoreMark **2292.7** iterations/s (766.8 guest MIPS)
+CoreMark **2295.2** iterations/s (766.8 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **159.2%** | 955 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **119.4%** | 955 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **95.5%** | 764 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **50.4%** | 655 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **159.4%** | 956 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **119.5%** | 956 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **95.6%** | 765 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **50.4%** | 656 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 584 MIPS, ctests_arm 595 MIPS, ftests_vfp_thumb_softfp 547 MIPS, ftests_neon_thumb 444 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 581 MIPS, ctests_arm 631 MIPS, ftests_vfp_thumb_softfp 502 MIPS, ftests_neon_thumb 506 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
 | CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.34 ms | 6.10 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.34 ms | 5.91 ms | 0 |
 
 ## Problems (30)
 
