@@ -1027,7 +1027,7 @@ id newHandle(Ctx& x, FILE* f, int stdStream) {
 FileHandleData* fhd(Ctx& x, id self) { return rt(x).hostIf<FileHandleData>(self); }
 
 FILE* openCachedFile(Ctx& x, const std::string& path) {
-    auto& c = Hydrogen::Runtime::getAssetCache(x.proc);
+    auto& c = getAssetCache(x.proc);
     if (c.isAsset(path)) {
         std::lock_guard<std::mutex> lk(c.mu);
         auto it = c.entries.find(path);
@@ -1080,7 +1080,7 @@ id fh_reading(Ctx& x, id, SEL, id p) {
     }
     int64_t sz = -1;
     struct stat st;
-    auto& c = Hydrogen::Runtime::getAssetCache(x.proc);
+    auto& c = getAssetCache(x.proc);
     if (c.isAsset(path)) {
         std::lock_guard<std::mutex> lk(c.mu);
         if (c.entries.count(path)) sz = c.entries[path].st.st_size;
