@@ -4975,6 +4975,65 @@ int runFullSubsystemTests() {
         check(!w.failed && w.result == 1 && proc.mem().read<uint32_t>(wideBuf + 0) == 0xE9 && proc.mem().read<uint32_t>(wideBuf + 4) == 0,
               "vswprintf %C from a real guest va_list");
 
+        // UTF-8 decoding tests
+        const uint32_t strValid2 = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(strValid2 + 0, 0xC2); // C2 A2 (cent sign U+00A2)
+        proc.mem().write<uint8_t>(strValid2 + 1, 0xA2);
+        proc.mem().write<uint8_t>(strValid2 + 2, 0);
+        w = wideRun("_swprintf", {wideBuf, 4, proc.allocCString("%s"), strValid2});
+        check(!w.failed && w.result == 1 && proc.mem().read<uint32_t>(wideBuf + 0) == 0xA2, "swprintf %s valid 2-byte UTF-8");
+
+        const uint32_t strValid3 = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(strValid3 + 0, 0xE2); // E2 82 AC (euro sign U+20AC)
+        proc.mem().write<uint8_t>(strValid3 + 1, 0x82);
+        proc.mem().write<uint8_t>(strValid3 + 2, 0xAC);
+        proc.mem().write<uint8_t>(strValid3 + 3, 0);
+        w = wideRun("_swprintf", {wideBuf, 4, proc.allocCString("%s"), strValid3});
+        check(!w.failed && w.result == 1 && proc.mem().read<uint32_t>(wideBuf + 0) == 0x20AC, "swprintf %s valid 3-byte UTF-8");
+
+        const uint32_t strValid4 = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(strValid4 + 0, 0xF0); // F0 90 8D 88 (Gothic letter hwair U+10348)
+        proc.mem().write<uint8_t>(strValid4 + 1, 0x90);
+        proc.mem().write<uint8_t>(strValid4 + 2, 0x8D);
+        proc.mem().write<uint8_t>(strValid4 + 3, 0x88);
+        proc.mem().write<uint8_t>(strValid4 + 4, 0);
+        w = wideRun("_swprintf", {wideBuf, 4, proc.allocCString("%s"), strValid4});
+        check(!w.failed && w.result == 1 && proc.mem().read<uint32_t>(wideBuf + 0) == 0x10348, "swprintf %s valid 4-byte UTF-8");
+
+        // Invalid tests: destination should remain unchanged.
+        paint(wideBuf, 16, 0xa5);
+
+        const uint32_t strBadCont = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(strBadCont + 0, 0xC2); // C2 20 (invalid continuation)
+        proc.mem().write<uint8_t>(strBadCont + 1, 0x20);
+        proc.mem().write<uint8_t>(strBadCont + 2, 0);
+        w = wideRun("_swprintf", {wideBuf, 4, proc.allocCString("%s"), strBadCont});
+        check(w.failed && w.bounds && painted(wideBuf, 16, 0xa5), "swprintf throws on invalid continuation byte");
+
+        const uint32_t strOverlong = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(strOverlong + 0, 0xC0); // C0 80 (overlong NUL)
+        proc.mem().write<uint8_t>(strOverlong + 1, 0x80);
+        proc.mem().write<uint8_t>(strOverlong + 2, 0);
+        w = wideRun("_swprintf", {wideBuf, 4, proc.allocCString("%s"), strOverlong});
+        check(w.failed && w.bounds && painted(wideBuf, 16, 0xa5), "swprintf throws on overlong encoding");
+
+        const uint32_t strSurrogate = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(strSurrogate + 0, 0xED); // ED A0 80 (surrogate D800)
+        proc.mem().write<uint8_t>(strSurrogate + 1, 0xA0);
+        proc.mem().write<uint8_t>(strSurrogate + 2, 0x80);
+        proc.mem().write<uint8_t>(strSurrogate + 3, 0);
+        w = wideRun("_swprintf", {wideBuf, 4, proc.allocCString("%s"), strSurrogate});
+        check(w.failed && w.bounds && painted(wideBuf, 16, 0xa5), "swprintf throws on surrogate");
+
+        const uint32_t strTooLarge = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(strTooLarge + 0, 0xF4); // F4 90 80 80 (U+110000)
+        proc.mem().write<uint8_t>(strTooLarge + 1, 0x90);
+        proc.mem().write<uint8_t>(strTooLarge + 2, 0x80);
+        proc.mem().write<uint8_t>(strTooLarge + 3, 0x80);
+        proc.mem().write<uint8_t>(strTooLarge + 4, 0);
+        w = wideRun("_swprintf", {wideBuf, 4, proc.allocCString("%s"), strTooLarge});
+        check(w.failed && w.bounds && painted(wideBuf, 16, 0xa5), "swprintf throws on value above 0x10FFFF");
+
         const uint32_t wideInside = proc.heap().allocZeroed(16) + 4;
         paint(wideInside, 12, 0xa5);
         w = wideRun("_swprintf", {wideInside, 3, wideLiteral("12")});

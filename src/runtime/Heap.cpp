@@ -31,7 +31,6 @@ uint32_t Heap::bigAlloc(uint32_t size) {
         }
         live_[addr] = size;
         liveIntervals_[addr] = size;
-        liveIntervals_[addr] = size;
         return addr;
     }
     if (uint64_t(top_) + size > limit_) return 0;
@@ -39,7 +38,6 @@ uint32_t Heap::bigAlloc(uint32_t size) {
     top_ += size;
     ensureCommitted(top_);
     live_[addr] = size;
-    liveIntervals_[addr] = size;
     liveIntervals_[addr] = size;
     return addr;
 }
@@ -97,7 +95,6 @@ uint32_t Heap::alloc(uint32_t size) {
         list.pop_back();
         live_[addr] = rounded;
         liveIntervals_[addr] = rounded;
-        liveIntervals_[addr] = rounded;
     } else {
         addr = bigAlloc(rounded);
         if (!addr) return 0;
@@ -129,10 +126,8 @@ uint32_t Heap::allocAligned(uint32_t size, uint32_t align) {
     const uint32_t total = live_[raw];
     live_.erase(raw);
     liveIntervals_.erase(raw);
-    liveIntervals_.erase(raw);
     if (aligned > raw) bigFree(raw, aligned - raw);
     live_[aligned] = total - (aligned - raw);
-    liveIntervals_[aligned] = total - (aligned - raw);
     liveIntervals_[aligned] = total - (aligned - raw);
     stats_.liveBytes += live_[aligned];
     ++stats_.liveBlocks;
@@ -146,6 +141,7 @@ void Heap::free(uint32_t addr) {
     if (it == live_.end()) { ++stats_.badFrees; return; }
     const uint32_t size = it->second;
     live_.erase(it);
+    liveIntervals_.erase(addr);
     stats_.liveBytes -= size;
     --stats_.liveBlocks;
     if (size <= kSmallMax) small_[size / kAlign].push_back(addr);
