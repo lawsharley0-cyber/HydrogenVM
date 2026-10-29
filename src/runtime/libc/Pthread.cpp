@@ -176,10 +176,14 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
             }
         }
     }
+    struct MutexRestorer {
+        GuestMutex& m; int saved; bool locked;
+        ~MutexRestorer() { if (locked) { std::lock_guard<std::mutex> lk(m.m); m.count = saved; } }
+    } restorer{m, saved, false};
     lockMutex(x, m, false);
-    { std::lock_guard<std::mutex> lk(m.m); m.count = saved; }
-    t_testcancel(x); // POSIX requires the mutex to be reacquired before cancellation.
+    restorer.locked = true;
     checkStop(x);
+    t_testcancel(x); // POSIX requires the mutex to be reacquired before cancellation.
     return result;
 }
 
@@ -497,8 +501,9 @@ void spin_unlock(Ctx& x, GuestPtr p) { __atomic_store_n(A<int32_t>(x, p), 0, __A
 
 void pthreadsBroadcastStop(Process& p) {
     auto& t = p.service<Threads>();
-    std::lock_guard<std::mutex> lk(t.mu);
-    for (auto& [addr, c] : t.conds) {
+    std::vector<GuestCond*> conds;
+    { std::lock_guard<std::mutex> lk(t.mu); for (auto& [addr, c] : t.conds) conds.push_back(c.get()); }
+    for (auto* c : conds) {
         std::lock_guard<std::mutex> clk(c->m);
         ++c->gen;
         c->cv.notify_all();

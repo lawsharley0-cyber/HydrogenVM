@@ -2962,32 +2962,33 @@ int runFullSubsystemTests() {
         isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_init"), {mu, 0});
         isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_cond_init"), {cv, 0});
 
-        const uint32_t readyFlag = isolated.heap().allocZeroed(4);
-        std::atomic<bool> workerFinished{false};
-        const uint32_t waiterFn = isolated.registerHostFunction("waiter", [cv, mu, readyFlag, &workerFinished](Runtime::Ctx& x) {
+        std::atomic<int> readyCount{0};
+        std::atomic<int> finishedCount{0};
+        const uint32_t waiterFn = isolated.registerHostFunction("waiter", [cv, mu, &readyCount, &finishedCount](Runtime::Ctx& x) {
             x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_lock"), {mu});
-            x.proc.mem().write<uint32_t>(readyFlag, 1);
+            ++readyCount;
             try {
                 x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_cond_wait"), {cv, mu});
             } catch (const Runtime::ProcessExit&) {
-            } catch (const CPU::GuestFault&) {} // Catch ProcessExit or stopping gracefully
-            workerFinished = true;
+            } catch (const CPU::GuestFault&) {}
+            ++finishedCount;
         });
 
-        isolated.startThread(waiterFn, 0, 16u << 10, false);
+        for (int i = 0; i < 3; ++i) isolated.startThread(waiterFn, 0, 16u << 10, false);
+
         const auto tStart = std::chrono::steady_clock::now();
-        while (isolated.mem().read<uint32_t>(readyFlag) == 0 && std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
+        while (readyCount < 3 && std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
         while (isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_trylock"), {mu}) != 0 && std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
         isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_unlock"), {mu});
 
         const auto t0 = std::chrono::steady_clock::now();
         isolated.requestStop();
 
-        while (!workerFinished && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2)) std::this_thread::yield();
+        while (finishedCount < 3 && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2)) std::this_thread::yield();
         const auto t1 = std::chrono::steady_clock::now();
 
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        check(workerFinished.load() && ms < 45.0, "pthread condition variable process stop broadcast wakes up and joins quickly");
+        check(finishedCount.load() == 3 && ms < 35.0, "pthread condition variable process stop broadcast wakes up and joins quickly");
     }
 
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
