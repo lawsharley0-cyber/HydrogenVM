@@ -2950,6 +2950,42 @@ int runFullSubsystemTests() {
         check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
     }
 
+    // 2f14. Large file chunked read and bundle cache
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = proc.lookupSymbol(sym);
+            return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
+        };
+        std::filesystem::create_directories(proc.hostPath(proc.bundlePath() + "/CookedIPhone"));
+        const std::string file = proc.bundlePath() + "/CookedIPhone/Asset_test.tfc";
+        const uint32_t cfile = proc.allocCString(file.c_str());
+        int fd_write = call("_open", {cfile, 0x202 /* O_CREAT | O_RDWR */, 0666});
+        if (fd_write < 0) {
+            std::printf("Failed to create test asset: %d\n", proc.mem().read<uint32_t>(proc.currentThread().errnoAddr));
+        }
+        const char* content = "0123456789";
+        const uint32_t buf = proc.allocCString(content);
+        call("_write", {uint32_t(fd_write), buf, 10});
+        call("_close", {uint32_t(fd_write)});
+
+        int fd1 = call("_open", {cfile, 0 /* O_RDONLY */, 0});
+        int fd2 = call("_open", {cfile, 0 /* O_RDONLY */, 0});
+
+        const uint32_t readbuf1 = proc.heap().allocZeroed(10);
+        const uint32_t readbuf2 = proc.heap().allocZeroed(10);
+
+        call("_read", {uint32_t(fd1), readbuf1, 3});
+        call("_read", {uint32_t(fd2), readbuf2, 3});
+
+        std::string r1(reinterpret_cast<const char*>(proc.mem().host(readbuf1)), 3);
+        std::string r2(reinterpret_cast<const char*>(proc.mem().host(readbuf2)), 3);
+
+        call("_close", {uint32_t(fd1)});
+        call("_close", {uint32_t(fd2)});
+
+        check(r1 == "012" && r2 == "345", "Large file chunked read and bundle cache shares offset across dups");
+    }
+
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)

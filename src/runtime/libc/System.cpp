@@ -444,18 +444,70 @@ int hostOpenFlags(uint32_t f) {
     if (f & 0x100000) h |= O_DIRECTORY;
     return h | O_CLOEXEC;
 }
+struct AssetCache {
+    explicit AssetCache(Process&) {}
+    std::mutex mu;
+    struct Entry { int fd; struct stat st; };
+    std::unordered_map<std::string, Entry> entries;
+    bool isAsset(const std::string& path) {
+        if (path.find("CookedIPhone") == std::string::npos) return false;
+        if (path.size() < 4) return false;
+        std::string ext = path.substr(path.size() - 4);
+        return ext == ".tfc" || ext == ".xxx";
+    }
+};
+
+AssetCache& assetCache(Process& p) {
+    return p.service<AssetCache>();
+}
+
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
     const std::string gp = x.proc.readCString(path);
     const std::string hp = x.proc.hostPath(gp);
-    const int fd = ::open(hp.c_str(), hostOpenFlags(flags), mode & 0777);
+
+    int fd = -1;
+    bool is_asset = (flags & 3) == 0 && assetCache(x.proc).isAsset(hp);
+    if (is_asset) {
+        auto& c = assetCache(x.proc);
+        std::lock_guard<std::mutex> lk(c.mu);
+        auto it = c.entries.find(hp);
+        if (it != c.entries.end()) {
+            fd = ::dup(it->second.fd);
+        } else {
+            int base_fd = ::open(hp.c_str(), hostOpenFlags(flags), mode & 0777);
+            if (base_fd >= 0) {
+                struct stat st;
+                if (::fstat(base_fd, &st) == 0) {
+#if defined(__linux__) || defined(__APPLE__)
+#ifdef POSIX_FADV_SEQUENTIAL
+                    ::posix_fadvise(base_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+#endif
+#endif
+                    c.entries[hp] = {base_fd, st};
+                    fd = ::dup(base_fd);
+                } else {
+                    fd = base_fd;
+                }
+            }
+        }
+    } else {
+        fd = ::open(hp.c_str(), hostOpenFlags(flags), mode & 0777);
+    }
+
     if (fd < 0) {
         x.proc.recordFileOpen(gp, "open", errno, -1, 0, false);
         return failD<int32_t>(x);
     }
     int64_t sz = -1;
     struct stat st;
-    if (::fstat(fd, &st) == 0) sz = st.st_size;
+    if (is_asset) {
+        auto& c = assetCache(x.proc);
+        std::lock_guard<std::mutex> lk(c.mu);
+        if (c.entries.count(hp)) sz = c.entries[hp].st.st_size;
+    } else if (::fstat(fd, &st) == 0) {
+        sz = st.st_size;
+    }
     const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
@@ -605,14 +657,40 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
     x.mem.write<int32_t>(out + 76, int32_t(st.st_blksize));
 }
 int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
+    const std::string gp = x.proc.readCString(path);
+    const std::string hp = x.proc.hostPath(gp);
     struct stat st;
-    if (::stat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
+
+    if (assetCache(x.proc).isAsset(hp)) {
+        auto& c = assetCache(x.proc);
+        std::lock_guard<std::mutex> lk(c.mu);
+        auto it = c.entries.find(hp);
+        if (it != c.entries.end()) {
+            storeStat(x, out, it->second.st);
+            return 0;
+        }
+    }
+
+    if (::stat(hp.c_str(), &st) < 0) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }
 int32_t f_lstat(Ctx& x, GuestPtr path, GuestPtr out) {
+    const std::string gp = x.proc.readCString(path);
+    const std::string hp = x.proc.hostPath(gp);
     struct stat st;
-    if (::lstat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
+
+    if (assetCache(x.proc).isAsset(hp)) {
+        auto& c = assetCache(x.proc);
+        std::lock_guard<std::mutex> lk(c.mu);
+        auto it = c.entries.find(hp);
+        if (it != c.entries.end()) {
+            storeStat(x, out, it->second.st);
+            return 0;
+        }
+    }
+
+    if (::lstat(hp.c_str(), &st) < 0) return failD<int32_t>(x);
     storeStat(x, out, st);
     return 0;
 }

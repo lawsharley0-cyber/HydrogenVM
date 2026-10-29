@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 namespace fs = std::filesystem;
 
@@ -1023,16 +1024,69 @@ id newHandle(Ctx& x, FILE* f, int stdStream) {
     return autoreleased(x, h);
 }
 FileHandleData* fhd(Ctx& x, id self) { return rt(x).hostIf<FileHandleData>(self); }
+
+struct AssetCache {
+    explicit AssetCache(Process&) {}
+    std::mutex mu;
+    struct Entry { int fd; struct stat st; };
+    std::unordered_map<std::string, Entry> entries;
+    bool isAsset(const std::string& path) {
+        if (path.find("CookedIPhone") == std::string::npos) return false;
+        if (path.size() < 4) return false;
+        std::string ext = path.substr(path.size() - 4);
+        return ext == ".tfc" || ext == ".xxx";
+    }
+};
+
+AssetCache& bundleAssetCache(Process& p) {
+    return p.service<AssetCache>();
+}
+
+FILE* openCachedFile(Ctx& x, const std::string& path) {
+    auto& c = bundleAssetCache(x.proc);
+    if (c.isAsset(path)) {
+        std::lock_guard<std::mutex> lk(c.mu);
+        auto it = c.entries.find(path);
+        if (it != c.entries.end()) {
+            return ::fdopen(::dup(it->second.fd), "rb");
+        } else {
+            int base_fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+            if (base_fd >= 0) {
+                int fd = base_fd;
+                struct stat st;
+                if (::fstat(base_fd, &st) == 0) {
+#if defined(__linux__) || defined(__APPLE__)
+#ifdef POSIX_FADV_SEQUENTIAL
+                    ::posix_fadvise(base_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+#endif
+#endif
+                    c.entries[path] = {base_fd, st};
+                    fd = ::dup(base_fd);
+                }
+                return ::fdopen(fd, "rb");
+            }
+            return nullptr;
+        }
+    }
+    return std::fopen(path.c_str(), "rb");
+}
+
 id fh_reading(Ctx& x, id, SEL, id p) {
     const std::string path = P(x, p);
-    FILE* f = std::fopen(path.c_str(), "rb");
+    FILE* f = openCachedFile(x, path);
     if (!f) {
         x.proc.recordFileOpen(path, "NSFileHandle", errno ? errno : ENOENT, -1, 0, false);
         return 0;
     }
     int64_t sz = -1;
     struct stat st;
-    if (::fstat(fileno(f), &st) == 0) sz = st.st_size;
+    auto& c = bundleAssetCache(x.proc);
+    if (c.isAsset(path)) {
+        std::lock_guard<std::mutex> lk(c.mu);
+        if (c.entries.count(path)) sz = c.entries[path].st.st_size;
+    } else if (::fstat(fileno(f), &st) == 0) {
+        sz = st.st_size;
+    }
     const uint64_t h = x.proc.recordFileOpen(path, "NSFileHandle", 0, sz, 0, true);
     const id handleObj = newHandle(x, f, -1);
     if (FileHandleData* d = fhd(x, handleObj)) {
@@ -1048,7 +1102,7 @@ id fh_writing(Ctx& x, id, SEL, id p) {
 id fh_updating(Ctx& x, id, SEL, id p) { return newHandle(x, std::fopen(P(x, p).c_str(), "r+b"), -1); }
 id fh_readingURL(Ctx& x, id, SEL, id u, GuestPtr err) {
     const std::string p = x.proc.hostPath(filePath(x, u));
-    FILE* f = std::fopen(p.c_str(), "rb");
+    FILE* f = openCachedFile(x, p);
     if (!f) { ErrorOut::posix(x, err, errno, p); return 0; }
     return newHandle(x, f, -1);
 }
