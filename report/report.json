@@ -1,0 +1,35 @@
+{
+  "host": {
+    "os": "Linux 6.8.0",
+    "arch": "x86_64",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "commit": "54d242a",
+    "date": "2026-10-29T15:47:21+00:00"
+  },
+  "seconds": 19.0,
+  "ok": false,
+  "suites": {
+    "build": {
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "seconds": 18.81238603591919,
+      "tests": [
+        {
+          "name": "engine",
+          "result": "fail",
+          "seconds": 18.812
+        }
+      ]
+    }
+  },
+  "speed": {},
+  "problems": [
+    {
+      "suite": "build",
+      "test": "ninja",
+      "severity": "fail",
+      "message": "clang++: error: clang frontend command failed with exit code 139 (use -v to see invocation)\nclang++: error: unable to execute command: Segmentation fault\nclang++: error: clang frontend command failed with exit code 139 (use -v to see invocation)\nclang++: error: unable to execute command: Segmentation fault\nclang++: error: clang frontend command failed with exit code 139 (use -v to see invocation)\nclang++: error: unable to execute command: Segmentation fault\nclang++: error: clang frontend command failed with exit code 139 (use -v to see invocation)\nclang++: error: unable to execute command: Segmentation fault\nclang++: error: clang frontend command failed with exit code 139 (use -v to see invocation)\nclang++: error: unable to execute command: Segmentation fault\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:123:13: error: expected expression\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:123:21: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:123:22: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:123:53: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:123:54: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:37: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:38: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:53: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:54: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:55: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:56: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:57: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:58: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:59: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:136:60: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:138:4: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:138:5: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:138:6: error: source file is not valid UTF-8\n/usr/bin/../lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/string_view:138:7: error: source file is not valid UTF-8\nfatal error: too many errors emitted, stopping now [-ferror-limit=]\nclang++: error: clang frontend command failed with exit code 139 (use -v to see invocation)\nclang++: error: unable to execute command: Segmentation fault"
+    }
+  ]
+}
