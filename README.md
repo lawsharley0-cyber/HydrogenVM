@@ -8,7 +8,7 @@ This is work in progress. Compatibility varies by app and version; reaching a me
 
 The current app requires iOS 26 or later and an arm64 device. Device builds use the extended virtual addressing entitlement for the guest's 4 GB address space.
 
-Unsigned device packages are produced by the [CI workflow](../../actions/workflows/ci.yml). When a macOS build completes packaging, download its **HydrogenVM-device-ipa** artifact. It contains the unsigned IPA and a verification manifest recording the source commit. An unsigned IPA still needs signing through your sideloading tool before installation.
+Unsigned device packages are produced by the [CI workflow](https://github.com/lawsharley0-cyber/HydrogenVM/actions/workflows/ci.yml). When a macOS build completes packaging, download its **HydrogenVM-device-ipa** artifact. It contains the unsigned IPA and a verification manifest recording the source commit. An unsigned IPA still needs signing through your sideloading tool before installation.
 
 Import a compatible app archive from Files, then launch it from the library. Use only app files you are authorized to use; do not add commercial IPAs or game assets to this repository.
 
