@@ -60,19 +60,6 @@ public:
     void unmap(uint32_t addr, uint32_t size);
     void protect(uint32_t addr, uint32_t size, uint8_t prot);
 
-    // Validate that [addr, addr + len) does not overflow the 32-bit address space
-    // and that every page within the span satisfies the `requiredProt` mask.
-    bool validateRange(uint32_t addr, uint32_t len, uint8_t requiredProt) const noexcept {
-        if (len == 0) return true;
-        if (uint64_t(addr) + len > kArenaSize) return false;
-        uint32_t startPage = addr >> kGuestPageShift;
-        uint32_t endPage = (addr + len - 1) >> kGuestPageShift;
-        for (uint32_t i = startPage; i <= endPage; ++i) {
-            if ((prot_[i] & requiredProt) != requiredProt) return false;
-        }
-        return true;
-    }
-
     bool    isMapped(uint32_t addr) const noexcept { return prot_[addr >> kGuestPageShift] != kProtNone; }
     uint8_t protAt(uint32_t addr) const noexcept   { return prot_[addr >> kGuestPageShift]; }
 
