@@ -1,9 +1,51 @@
 import SwiftUI
 import UIKit
+import Darwin
+import os
 
 struct HarnessAppInfo { let bundlePath: String }
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
+
+/// Filesystem portion of the journal bridge for the synthetic player only.
+/// Owns the same two files as production, but has no Engine fault reporter or
+/// signal handlers. This fixture cannot qualify native host-fault capture.
+@MainActor
+enum HVMCrashJournal {
+    private static var signalFD: Int32 = -1
+    private static var hostFaultFD: Int32 = -1
+
+    static func installSignalHandlers() {
+        fatalError("Native signal capture requires the production Engine bridge")
+    }
+
+    static func openSignalFile(_ path: String) {
+        closeSignalFile()
+        signalFD = openJournal(path)
+        let faultPath = ((path as NSString).deletingPathExtension as NSString)
+            .deletingPathExtension + ".hostfault.txt"
+        hostFaultFD = openJournal(faultPath)
+    }
+
+    private static func openJournal(_ path: String) -> Int32 {
+        let fd = path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_TRUNC, mode_t(0o600)) }
+        precondition(fd >= 0, "Harness journal open failed: \(path), errno=\(errno)")
+        return fd
+    }
+
+    static func closeSignalFile() {
+        let descriptors = [signalFD, hostFaultFD]
+        signalFD = -1
+        hostFaultFD = -1
+        for fd in descriptors where fd >= 0 {
+            precondition(Darwin.close(fd) == 0, "Harness journal close failed, errno=\(errno)")
+        }
+    }
+
+    static func availableMemory() -> UInt64 {
+        UInt64(os_proc_available_memory())
+    }
+}
 
 @Observable @MainActor
 final class PlayerProbe {

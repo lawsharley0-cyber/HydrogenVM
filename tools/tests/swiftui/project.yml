@@ -21,6 +21,7 @@ targets:
       - ../../../app/HydrogenVM/PlayerActivity.swift
       - ../../../app/HydrogenVM/PlayerOrientation.swift
       - ../../../app/HydrogenVM/PlayerViewport.swift
+      - ../../../app/HydrogenVM/BinaryEditor.swift
       - ../../../app/HydrogenVM/FileBrowser.swift
       - ../../../app/HydrogenVM/FileEditorSession.swift
       - ../../../app/HydrogenVM/SaveFileStore.swift
