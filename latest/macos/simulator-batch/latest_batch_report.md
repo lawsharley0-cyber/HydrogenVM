@@ -1,8 +1,8 @@
 # HydrogenVM — Test All Games Report
 
-**Date:** 2026-10-28T16:38:19Z  
+**Date:** 2026-10-29T16:39:21Z  
 **Device:** iPhone, iOS 26.5  
-**Emulator Commit:** `ea5f1397c20d`  
+**Emulator Commit:** `54273d4b382b`  
 **Options:** 5s/app · Renderer Both (Software & GPU) · KeepGoing true · Explore 30s · Relaunch true
 
 ### Summary
@@ -15,7 +15,7 @@
 - **Games with a failed check:** 2
 - **Explored:** 2
 - **Explore Crashes:** 2
-- **Explore Problems Discovered:** 0
+- **Explore Problems Discovered:** 1
 
 ### App Results
 
@@ -52,7 +52,7 @@
 - ❌ **Launches:** Crashed (status 1)
 - ✅ **Shows a picture:** 1 frames drawn
 - ✅ **Game view on screen:** Every frame reached the window
-- ✅ **Audio output:** Mixer ran for 5.4 s, peak 0.00
+- ✅ **Audio output:** Mixer ran for 5.2 s, peak 0.00
 - ⚠️ **Music:** No music heard. It may be off in the game's settings, or this screen has none
 - ⚠️ **Sound effects:** No sound effects, even after taps
 - ❌ **Responds to touch:** Crashed while tapping around
@@ -68,7 +68,7 @@
 - ❌ **Launches:** Crashed (status 1)
 - ✅ **Shows a picture:** 2 frames drawn
 - ✅ **Game view on screen:** Every frame reached the window
-- ✅ **Audio output:** Mixer ran for 5.8 s, peak 0.00
+- ✅ **Audio output:** Mixer ran for 5.9 s, peak 0.00
 - ⚠️ **Music:** No music heard. It may be off in the game's settings, or this screen has none
 - ⚠️ **Sound effects:** No sound effects, even after taps
 - ❌ **Responds to touch:** Crashed while tapping around

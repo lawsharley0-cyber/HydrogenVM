@@ -120,7 +120,6 @@ ok UISwitch, UISlider, UISegmentedControl
 ok EAGLContext creation & setCurrentContext
 
 [gpu] GL layer (64.0, 64.0)
-[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
 [gpu] GL layer removed
 GPU: drawable 64x64 for renderbuffer 1 (platform layer)
 ok EAGLContext renderbufferStorage:fromDrawable:
@@ -156,4 +155,4 @@ App exited with code 0
 [teardown] host audio stopped; queueing the exit callback
 [teardown] delivering the exit callback
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 21413
+com.lfull.HydrogenVM: 26760

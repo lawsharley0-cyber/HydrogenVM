@@ -1,7 +1,7 @@
 {
   "build" : {
     "binaryMatch" : "verified",
-    "commit" : "ea5f1397c20d1706385e23710a0937e082c510e6",
+    "commit" : "54273d4b382bb49b2c4fa9b92d5b0faed1bc7874",
     "configuration" : "device"
   },
   "device" : {
@@ -45,7 +45,7 @@
               "status" : "pass"
             },
             {
-              "detail" : "Mixer ran for 5.4 s, peak 0.00",
+              "detail" : "Mixer ran for 5.2 s, peak 0.00",
               "name" : "Audio output",
               "status" : "pass"
             },
@@ -98,7 +98,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 239434,
+            "audioFramesRendered" : 230967,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -108,24 +108,35 @@
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 623.36762499999998
+            "timeToFirstFrameMs" : 798.81212500000004
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
           "explore" : {
             "actions" : [
-
+              {
+                "details" : "grid tap at (26, 216)",
+                "kind" : "tap",
+                "timeOffset" : 5.1675260066986084
+              }
             ],
             "backgroundTested" : false,
             "crashed" : true,
             "enabled" : true,
             "newProblems" : [
-
+              {
+                "problemText" : "66 checks, 3 failures",
+                "triggeringActionIndex" : 0
+              }
             ],
             "reproSteps" : [
-
+              {
+                "details" : "grid tap at (26, 216)",
+                "kind" : "tap",
+                "timeOffset" : 5.1675260066986084
+              }
             ],
-            "screensVisited" : 0,
+            "screensVisited" : 1,
             "seed" : 10888590083490907113
           },
           "frame" : {
@@ -138,7 +149,7 @@
           "perf" : {
             "fps" : 0,
             "framesPresented" : 1,
-            "frameTimeP95Ms" : 0.062976000000000004
+            "frameTimeP95Ms" : 0.072704000000000005
           },
           "renderer" : "software",
           "signature" : "exit-1",
@@ -164,7 +175,7 @@
               "status" : "pass"
             },
             {
-              "detail" : "Mixer ran for 5.8 s, peak 0.00",
+              "detail" : "Mixer ran for 5.9 s, peak 0.00",
               "name" : "Audio output",
               "status" : "pass"
             },
@@ -217,7 +228,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 255428,
+            "audioFramesRendered" : 259661,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -227,7 +238,7 @@
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 43.300666999999997
+            "timeToFirstFrameMs" : 41.227791000000003
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -257,7 +268,7 @@
           "perf" : {
             "fps" : 0,
             "framesPresented" : 2,
-            "frameTimeP95Ms" : 0.069631999999999999
+            "frameTimeP95Ms" : 0.090111999999999998
           },
           "renderer" : "gpu",
           "signature" : "exit-1",
@@ -267,5 +278,5 @@
       ]
     }
   },
-  "timestamp" : "2026-10-28T16:38:19Z"
+  "timestamp" : "2026-10-29T16:39:21Z"
 }
