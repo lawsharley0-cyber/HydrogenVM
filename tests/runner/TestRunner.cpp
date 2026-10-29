@@ -1447,7 +1447,6 @@ int runFullSubsystemTests() {
         check(geometry,"UIBezierPath owns CGPath copies, contains points and returns ARMv7 CGRect bounds");
     }
 
-
     {
         const auto backing = Foundation::makeDict(cx, {}, true, true);
         int reads = 0, writes = 0, removes = 0;
@@ -2950,29 +2949,73 @@ int runFullSubsystemTests() {
         check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
     }
 
-
     // 2f6. NIB loading fallback and button shadow offset
     {
-        // Test 1: NIB fallback / missing NIB
+        // Test 1: NIB fallback
         const ObjC::Class bundleCls = r.getClass("NSBundle");
         const ObjC::id mainBundle = ObjC::id(r.send(cpu, bundleCls, r.sel("mainBundle")));
-        const ObjC::id missingNibStr = Foundation::makeString(cx, "MissingFakeNibThatDoesntExist");
-        const ObjC::id nibRes = ObjC::id(r.send(cpu, mainBundle, r.sel("loadNibNamed:owner:options:"), {missingNibStr, 0, 0}));
-        check(nibRes == 0, "Missing NIB returns nil without throwing an exception");
+
+        // Malformed NIB or missing should throw NSInternalInconsistencyException
+        bool caught = false;
+        try {
+            r.send(cpu, mainBundle, r.sel("loadNibNamed:owner:options:"), {Foundation::makeString(cx, "MissingFakeNibThatDoesntExist"), 0, 0});
+        } catch (const CPU::GuestFault& e) {
+            caught = std::string(e.what()).find("NSInternalInconsistencyException") != std::string::npos;
+        } catch (...) {
+        }
+        check(caught, "Missing NIB throws ObjCError exception matching NSInternalInconsistencyException behavior");
+
+        // Write dummy nibs to sandbox to test fallback
+        auto writeDummyNib = [&](const std::string& name) {
+            const std::string path = proc.bundlePath() + "/" + name + ".nib";
+            std::filesystem::create_directories(path);
+        };
+        writeDummyNib("MainMenu");
+        writeDummyNib("GameLandscapeMenu"); // Not a fallback for GameMenu
+
+        bool fbCaught = false;
+        try {
+            r.send(cpu, mainBundle, r.sel("loadNibNamed:owner:options:"), {Foundation::makeString(cx, "GameMenu"), 0, 0});
+        } catch (const CPU::GuestFault& e) {
+            fbCaught = std::string(e.what()).find("NSInternalInconsistencyException") != std::string::npos;
+        } catch (...) { }
+        check(fbCaught, "Unrelated NIB name with suffix substring does not incorrectly trigger fallback");
+
+        std::error_code ec;
+        std::filesystem::remove_all(proc.bundlePath() + "/MainMenu.nib", ec);
+        std::filesystem::remove_all(proc.bundlePath() + "/GameLandscapeMenu.nib", ec);
+
+        auto writeArchive = [&](const std::string& name) {
+            auto path = proc.bundlePath() + "/" + name + ".nib";
+            FILE* f = fopen(path.c_str(), "wb");
+            fwrite("bplist00", 1, 8, f);
+            fclose(f);
+        };
+        writeArchive("MainMenu");
+
+        bool fbFellback = false;
+        try {
+            r.send(cpu, mainBundle, r.sel("loadNibNamed:owner:options:"), {Foundation::makeString(cx, "MainMenuLandscape"), 0, 0});
+        } catch (const CPU::GuestFault& e) {
+            fbFellback = std::string(e.what()).find("NSInternalInconsistencyException") != std::string::npos;
+        } catch (...) {}
+        check(fbFellback, "NIB loading strips orientation suffix and falls back to base NIB");
+        std::filesystem::remove(proc.bundlePath() + "/MainMenu.nib");
 
         // Test 2: UIButton setTitleShadowOffset:
         const ObjC::Class btnCls = r.getClass("UIButton");
         const ObjC::id btn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 100, 44});
 
-        // Pass struct in arguments
         r.send(cpu, btn, r.sel("setTitleShadowOffset:"), {UIKit::fbits(1.5f), UIKit::fbits(-2.5f)});
 
-        // Get struct
         const Graphics::Size sz = UIKit::getSize(cx, btn, r.sel("titleShadowOffset"), {});
+        const ObjC::id lbl = ObjC::id(r.send(cpu, btn, "titleLabel"));
+        const Graphics::Size lSz = UIKit::getSize(cx, lbl, r.sel("shadowOffset"), {});
 
-        check(sz.w == 1.5f && sz.h == -2.5f, "UIButton setTitleShadowOffset: and titleShadowOffset work and retain the size");
+        check(sz.w == 1.5f && sz.h == -2.5f && lSz.w == 1.5f && lSz.h == -2.5f, "UIButton setTitleShadowOffset: sets its own offset and propagates to titleLabel.shadowOffset");
         r.send(cpu, btn, r.selRelease);
     }
+
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)

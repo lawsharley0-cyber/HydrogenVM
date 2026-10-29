@@ -585,7 +585,7 @@ bool b_adjustsImage(Ctx& x, id self, SEL) { return BD(x, self).adjustsImage; }
 void b_setAdjustsImage(Ctx& x, id self, SEL, bool b) { BD(x, self).adjustsImage = b; }
 bool b_showsTouch(Ctx& x, id self, SEL) { return BD(x, self).showsTouch; }
 void b_setShowsTouch(Ctx& x, id self, SEL, bool b) { BD(x, self).showsTouch = b; }
-void b_setTitleShadowOffset(Ctx& x, id self, SEL, CGSize s) { BD(x, self).titleShadowOffset = s; viewData(x, self).needsLayout = true; }
+void b_setTitleShadowOffset(Ctx& x, id self, SEL, CGSize s) { BD(x, self).titleShadowOffset = s; rt(x).send(x.cpu, ensureTitleLabel(x, self), "setShadowOffset:", {fbits(s.width), fbits(s.height)}); viewData(x, self).needsLayout = true; }
 void b_titleShadowOffset(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, BD(x, self).titleShadowOffset); }
 void b_ignoreBool(Ctx&, id, SEL, bool) {}
 G::Size contentSize(Ctx& x, id self, G::Size& titleSize, G::Size& imageSize_) {
