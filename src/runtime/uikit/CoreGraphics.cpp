@@ -1056,8 +1056,26 @@ uint32_t ct_createName(Ctx& x, id name, float size, GuestPtr matrix) {
     rt(x).release(x.cpu, cg);
     return ct;
 }
-uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) { auto* f = hd<FontData>(x, desc); if(f) { x.proc.reportMissing("CTFontDescriptorCreateCopyWithAttributes dictionary merge logic"); return newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)); } return 0; }
-uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) { x.proc.reportMissing("CTFontDescriptorCreateWithAttributes dictionary processing"); return newObject(x, S(x).descriptor, std::make_unique<FontData>()); }
+uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) {
+    auto* f = hd<FontData>(x, desc);
+    if (!f) return 0;
+    auto h = std::make_unique<FontData>(*f);
+    if (attrs) {
+        for (auto [key, value] : Foundation::dictEntries(x, attrs)) {
+            if (Foundation::utf8(x, key) == "kCTFontNameAttribute") h->name = Foundation::utf8(x, value);
+        }
+    }
+    return newObject(x, S(x).descriptor, std::move(h));
+}
+uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) {
+    auto h = std::make_unique<FontData>();
+    if (attrs) {
+        for (auto [key, value] : Foundation::dictEntries(x, attrs)) {
+            if (Foundation::utf8(x, key) == "kCTFontNameAttribute") h->name = Foundation::utf8(x, value);
+        }
+    }
+    return newObject(x, S(x).descriptor, std::move(h));
+}
 uint32_t ct_copyDescriptor(Ctx& x, id font) {
     auto* f = hd<FontData>(x, font);
     return f ? newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)) : 0;

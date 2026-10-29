@@ -5884,8 +5884,10 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
    int tga_height = stbi__get16le(s);
    int tga_bits_per_pixel = stbi__get8(s);
    int tga_comp, tga_rgb16=0;
-   int tga_inverted = stbi__get8(s);
-   // int tga_alpha_bits = tga_inverted & 15; // the 4 lowest bits - unused (useless?)
+   int tga_descriptor = stbi__get8(s);
+   int tga_x_inverted;
+   int tga_y_inverted;
+   // int tga_alpha_bits = tga_descriptor & 15; // the 4 lowest bits - unused (useless?)
    //   image data
    unsigned char *tga_data;
    unsigned char *tga_palette = NULL;
@@ -5895,8 +5897,6 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
    int RLE_repeating = 0;
    int read_next_pixel = 1;
    STBI_NOTUSED(ri);
-   STBI_NOTUSED(tga_x_origin); // @TODO
-   STBI_NOTUSED(tga_y_origin); // @TODO
 
    if (tga_height > STBI_MAX_DIMENSIONS) return stbi__errpuc("too large","Very large image (corrupt?)");
    if (tga_width > STBI_MAX_DIMENSIONS) return stbi__errpuc("too large","Very large image (corrupt?)");
@@ -5907,7 +5907,8 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
       tga_image_type -= 8;
       tga_is_RLE = 1;
    }
-   tga_inverted = 1 - ((tga_inverted >> 5) & 1);
+   tga_x_inverted = ((tga_descriptor >> 4) & 1);
+   tga_y_inverted = 1 - ((tga_descriptor >> 5) & 1);
 
    //   If I'm paletted, then I'll use the number of bits from the palette
    if ( tga_indexed ) tga_comp = stbi__tga_get_comp(tga_palette_bits, 0, &tga_rgb16);
@@ -5932,9 +5933,21 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
 
    if ( !tga_indexed && !tga_is_RLE && !tga_rgb16 ) {
       for (i=0; i < tga_height; ++i) {
-         int row = tga_inverted ? tga_height -i - 1 : i;
+         int row = tga_y_inverted ? tga_height - i - 1 : i;
          stbi_uc *tga_row = tga_data + row*tga_width*tga_comp;
          stbi__getn(s, tga_row, tga_width * tga_comp);
+         if (tga_x_inverted) {
+            for (j = 0; j*2 < tga_width; j++) {
+               int index1 = j * tga_comp;
+               int index2 = (tga_width - 1 - j) * tga_comp;
+               int k;
+               for (k = 0; k < tga_comp; k++) {
+                  stbi_uc temp = tga_row[index1 + k];
+                  tga_row[index1 + k] = tga_row[index2 + k];
+                  tga_row[index2 + k] = temp;
+               }
+            }
+         }
       }
    } else  {
       //   do I need to load a palette?
@@ -6024,7 +6037,23 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
          --RLE_count;
       }
       //   do I need to invert the image?
-      if ( tga_inverted )
+      if (tga_x_inverted)
+      {
+         for (j = 0; j < tga_height; ++j) {
+            stbi_uc *row = tga_data + (j * tga_width * tga_comp);
+            for (i = 0; i * 2 < tga_width; i++) {
+               stbi_uc *src = row + (i * tga_comp);
+               stbi_uc *dest = row + ((tga_width - 1 - i) * tga_comp);
+               int k;
+               for (k = 0; k < tga_comp; k++) {
+                  stbi_uc temp = src[k];
+                  src[k] = dest[k];
+                  dest[k] = temp;
+               }
+            }
+         }
+      }
+      if (tga_y_inverted)
       {
          for (j = 0; j*2 < tga_height; ++j)
          {
@@ -6068,7 +6097,7 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
    //   Microsoft's C compilers happy... [8^(
    tga_palette_start = tga_palette_len = tga_palette_bits =
          tga_x_origin = tga_y_origin = 0;
-   STBI_NOTUSED(tga_palette_start);
+   STBI_NOTUSED(tga_palette_start); STBI_NOTUSED(tga_x_origin); STBI_NOTUSED(tga_y_origin);
    //   OK, done
    return tga_data;
 }
