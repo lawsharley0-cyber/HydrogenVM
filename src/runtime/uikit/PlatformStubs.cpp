@@ -1642,6 +1642,42 @@ id sk_queue(Ctx& x, id self, SEL) {
 void sk_ignoreObj(Ctx&, id, SEL, id) {}
 void sk_noop(Ctx&, id, SEL) {}
 id sk_empty(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
+id sk_zero_id(Ctx&, id, SEL) { return 0; }
+char sk_zero_c(Ctx&, id, SEL) { return 0; }
+int32_t sk_zero_i(Ctx&, id, SEL) { return 0; }
+// A payment request retains its product ID, independently of App Store access.
+struct PaymentData : ObjC::HostObject { id identifier = 0; int32_t quantity = 1; };
+id sk_paymentWithId(Ctx& x, id cls, SEL, id identifier) {
+    if (!identifier) return 0;
+    const id obj = rt(x).createInstance(cls);
+    auto data = std::make_unique<PaymentData>();
+    data->identifier = rt(x).retain(x.cpu, identifier);
+    rt(x).setHost(obj, std::move(data));
+    return autoreleased(x, obj);
+}
+id sk_paymentId(Ctx& x, id self, SEL) {
+    auto* d = rt(x).hostIf<PaymentData>(self);
+    return d ? d->identifier : 0;
+}
+int32_t sk_paymentQuantity(Ctx& x, id self, SEL) {
+    auto* d = rt(x).hostIf<PaymentData>(self);
+    return d ? d->quantity : 1;
+}
+void sk_setPaymentQuantity(Ctx& x, id self, SEL, int32_t q) {
+    if (q < 1 || q > 10) throw ObjC::ObjCError("SKMutablePayment quantity outside 1...10");
+    auto* d = rt(x).hostIf<PaymentData>(self);
+    if (!d) {
+        rt(x).setHost(self, std::make_unique<PaymentData>());
+        d = rt(x).hostIf<PaymentData>(self);
+    }
+    d->quantity = q;
+}
+void sk_paymentDealloc(Ctx& x, id self, SEL) {
+    if (auto* d = rt(x).hostIf<PaymentData>(self))
+        if (d->identifier) rt(x).release(x.cpu, d->identifier);
+    rt(x).disposeInstance(x.cpu, self);
+}
+
 
 // SKProductsRequest: no App Store, so every product id is "invalid" and the
 // delegate gets an empty response (not an error — IAP code expects a response).
@@ -1689,15 +1725,6 @@ id skresp_invalid(Ctx& x, id self, SEL) {
 
 // ------------------------------------------------------------- MessageUI ---
 bool mf_no(Ctx&, id, SEL) { return false; }
-
-// ---------------------------------------------------- SystemConfiguration ---
-uint32_t scr_create(Ctx& x, uint32_t, GuestPtr) { noteOnce(x, "SCNetworkReachability (network reported offline)"); return rt(x).createInstance(rt(x).nsObject); }
-uint32_t scr_createWithAddress(Ctx& x, uint32_t a, GuestPtr p) { return scr_create(x, a, p); }
-uint32_t scr_createPair(Ctx& x, uint32_t a, GuestPtr p, GuestPtr) { return scr_create(x, a, p); }
-bool scr_getFlags(Ctx& x, uint32_t, GuestPtr flags) { if (flags) x.mem.write<uint32_t>(flags, 0); return true; }
-bool scr_setCallback(Ctx&, uint32_t, uint32_t, uint32_t) { return true; }
-bool scr_schedule(Ctx&, uint32_t, uint32_t, uint32_t) { return true; }
-bool scr_setQueue(Ctx&, uint32_t, uint32_t) { return true; }
 
 } // namespace
 
@@ -1897,6 +1924,30 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
       .m<&ap_updateMeters>("updateMeters", "v@:").m<&ap_power>("averagePowerForChannel:", "f@:I").m<&ap_power>("peakPowerForChannel:", "f@:I")
       .m<&ap_channels>("numberOfChannels", "I@:").m<&ap_dealloc>("dealloc", "v@:");
 
+
+    // GameController
+    ObjC::ClassBuilder gcc = r.defineClass("GCController", "NSObject");
+    gcc.cm<&sk_empty>("controllers", "@@:")
+       .classMethod("startWirelessControllerDiscoveryWithCompletionHandler:", [](Ctx& x) {
+           const id block = x.cpu.r[2];
+           if (block) {
+               const uint32_t copied = ObjC::blockCopy(x, block);
+               Process* proc = &x.proc;
+               Foundation::mainRunLoop(x.proc).addTimer(0.01, 0, false, [proc, copied](CPU::Cpu& c) {
+                   Ctx cx{*proc, c, proc->mem()};
+                   ObjC::callBlock(cx, copied);
+                   ObjC::blockRelease(cx, copied);
+               });
+           }
+       }, "v@:@?")
+       .cm<&sk_noop>("stopWirelessControllerDiscovery", "v@:")
+       .m<&sk_zero_id>("controllerPausedHandler", "@?@:")
+       .m<&sk_ignoreObj>("setControllerPausedHandler:", "v@:@?")
+       .m<&sk_zero_c>("isAttachedToDevice", "c@:")
+       .m<&sk_zero_id>("gamepad", "@@:")
+       .m<&sk_zero_id>("extendedGamepad", "@@:");
+
+
     // GameKit: see GameKit.cpp
 
     // StoreKit
@@ -1910,25 +1961,29 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         .m<&skpr_start>("start", "v@:").m<&skpr_cancel>("cancel", "v@:").m<&skpr_dealloc>("dealloc", "v@:");
     ObjC::ClassBuilder skresp = r.defineClass("SKProductsResponse", "NSObject");
     skresp.m<&skresp_products>("products").m<&skresp_invalid>("invalidProductIdentifiers");
-    r.defineClass("SKProduct", "NSObject");
-    r.defineClass("SKPayment", "NSObject");
-    r.defineClass("SKMutablePayment", "SKPayment");
+    ObjC::ClassBuilder skprod = r.defineClass("SKProduct", "NSObject");
+    skprod.m<&sk_ignoreObj>("setLocalizedTitle:", "v@:@").m<&sk_ignoreObj>("setPrice:", "v@:@").m<&sk_ignoreObj>("setPriceLocale:", "v@:@")
+          .m<&sk_zero_id>("localizedTitle", "@@:").m<&sk_zero_id>("price", "@@:").m<&sk_zero_id>("priceLocale", "@@:").m<&sk_zero_id>("productIdentifier", "@@:");
+
+    ObjC::ClassBuilder skpay = r.defineClass("SKPayment", "NSObject");
+    skpay.cm<&sk_paymentWithId>("paymentWithProductIdentifier:", "@@:@")
+         .m<&sk_paymentQuantity>("quantity", "i@:").m<&sk_paymentId>("productIdentifier", "@@:")
+         .m<&sk_paymentDealloc>("dealloc", "v@:");
+
+    r.defineClass("SKMutablePayment", "SKPayment").m<&sk_setPaymentQuantity>("setQuantity:", "v@:i");
+
+    ObjC::ClassBuilder sktrans = r.defineClass("SKPaymentTransaction", "NSObject");
+    sktrans.m<&sk_zero_id>("transactionIdentifier", "@@:").m<&sk_zero_id>("transactionDate", "@@:")
+           .m<&sk_zero_id>("transactionReceipt", "@@:").m<&sk_zero_id>("originalTransaction", "@@:")
+           .m<&sk_zero_id>("payment", "@@:").m<&sk_zero_id>("error", "@@:")
+           .m<&sk_zero_i>("transactionState", "i@:");
+
 
     // MessageUI
     for (const char* n : {"MFMailComposeViewController", "MFMessageComposeViewController"}) {
         ObjC::ClassBuilder mf = r.defineClass(n, "UIViewController");
         mf.cm<&mf_no>(std::string(n) == "MFMailComposeViewController" ? "canSendMail" : "canSendText", "c@:");
     }
-
-    // SystemConfiguration
-    p.def<&scr_create>("_SCNetworkReachabilityCreateWithName");
-    p.def<&scr_createWithAddress>("_SCNetworkReachabilityCreateWithAddress");
-    p.def<&scr_createPair>("_SCNetworkReachabilityCreateWithAddressPair");
-    p.def<&scr_getFlags>("_SCNetworkReachabilityGetFlags");
-    p.def<&scr_setCallback>("_SCNetworkReachabilitySetCallback");
-    p.def<&scr_schedule>("_SCNetworkReachabilityScheduleWithRunLoop");
-    p.def<&scr_schedule>("_SCNetworkReachabilityUnscheduleFromRunLoop");
-    p.def<&scr_setQueue>("_SCNetworkReachabilitySetDispatchQueue");
 
     // CoreMedia CMTime & AVFoundation Video Player (AVAsset, AVURLAsset, AVPlayerItem, AVPlayer, AVPlayerLayer)
     auto writeCMTime = [](Ctx& x, GuestPtr out, int64_t val, int32_t scale, uint32_t flags = 1) {

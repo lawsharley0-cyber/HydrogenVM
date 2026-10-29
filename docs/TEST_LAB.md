@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · five initial cases · schema version 1.
+Version 1.0 · 18 automated cases (TL-A–TL-R) · schema version 1.
 
 ## Contents
 
@@ -23,8 +23,9 @@ toolchain as the other iOS guests (`tools/ios_build.py`).  When imported into
 HydrogenVM on an iPhone it shows a menu; in automated mode each case runs as a
 separate process with an external timeout.
 
-Five cases cover import integrity, CPU correctness, GLES correctness, audio
-signal, and sandboxed persistence.
+The automated suite now covers 18 case IDs, including import integrity, CPU
+correctness, graphics, audio, persistence, threading, input, and lifecycle.
+TL-L is a host-driven termination check; 17 cases are guest-selectable.
 
 ---
 
@@ -40,6 +41,11 @@ signal, and sandboxed persistence.
 | TL-F | Threading & Mutex | `pthread_create` spawns a background worker thread computing a 64 KB FNV-1a hash (`0x75389DC5`), while main and worker threads safely increment a shared counter under `pthread_mutex_t` to 20,000, verified via `pthread_join` |
 | TL-G | Keychain | `Security.framework` (`SecItemAdd`, `SecItemCopyMatching`, `SecItemDelete`); verifies generic password addition, duplicate key rejection (`errSecDuplicateItem`), query data matching, and removal/not-found verification (`errSecItemNotFound`) |
 | TL-H | File System & Sandbox | `NSFileManager` nested directory creation (`createDirectoryAtPath:withIntermediateDirectories:`), atomic write of 1024-byte payload, file/dir existence and size verification via `attributesOfItemAtPath:`, payload integrity check, and recursive removal |
+| TL-I | Texture formats and NPOT | Offscreen GLES sampling of RGBA, luminance, non-power-of-two textures, and a 2×2 corner-pattern texture |
+| TL-J | Throughput correctness and regression | Fixed 5 M iteration floating-point workload, output hash and headless baseline throughput floor |
+| TL-K | UIKit controls and sorting | UIButton and UISwitch target-action, UISearchBar properties, and NSSortDescriptor sorting |
+| TL-L | Graceful shutdown persistence | Host-driven 1-second graceful termination; verifies a file saved during the guest's termination callback |
+| TL-M | Mutable array insertion sort | Three equivalent sorting approaches exercise replace, exchange, remove, and insert object ownership/indices |
 | TL-N | EAGL worker binding | Runs with `--gpu`. Main binds an ES2 context, then a pthread binds the same context through HostGL's shared-context path. The independent EAGL API oracle requires both calls to return true and the worker's `currentContext` to equal the object it bound. Proven red on the unfixed runtime (`workerBound=0`) for the Clumsy Ninja affinity regression |
 | TL-O | RemoteIO mixing | Registers a RemoteIO render callback, starts output, and independently requires callback delivery plus non-silent mixer PCM; guards the callback/mixer path used by Angry Birds and Hungry Shark |
 | TL-P | VFP VCMP | Checks ordered/unordered VCMP condition flags against the ARM architecture definition; passed before any runtime change and adds isolated coverage |
@@ -65,7 +71,11 @@ owner or the workflow step continues with remaining cases.
 
 Same as the compat harness (see `AGENTS.md`): Clang, `cmake`, `ninja`,
 `python3`, `lld`, `llvm`, `zlib1g-dev`, `libsqlite3-dev`, `uuid-dev`.
-Also needs `ld64` from `tools/build_cctools.sh`.
+Also needs `ld64` from `tools/build_cctools.sh`. On Linux, the
+GPU-backed TL-N requires Mesa's headless EGL/GLES runtime (for example
+Ubuntu packages `libegl1 libgles2 libgl1 libgl1-mesa-dri`). A missing
+`libEGL.so.1` prevents TL-N from starting and is a host dependency failure,
+not evidence of a guest crash.
 
 ```sh
 # Build the engine
@@ -79,7 +89,7 @@ export HVM_LD64=/opt/cctools/bin/arm-apple-darwin11-ld
 # Generate the bundled tone.wav (already committed; only needed if regenerating)
 python3 tests/ios/apps/testlab/gen_tone_wav.py tests/ios/apps/testlab/tone.wav
 
-# Run all five cases and write a report
+# Run all 18 automated cases and write a report
 python3 tools/hvm_testlab.py run \
     --hvm build/hvm \
     --out build/testlab-report
@@ -121,8 +131,8 @@ python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
    *Open in…* from Files, or drop it into the app's Files folder and pull to
    refresh.
 3. Tap `TestLab` in the library to run it.
-4. The menu shows five rows (`A: Import`, `B: CPU`, `C: GLES`, `D: Audio`,
-   `E: Persist`) and their last-known status (pending/passed/failed/interrupted).
+4. The menu shows the 17 guest-selectable cases (TL-A…TL-K and TL-M…TL-R)
+   with their last-known status. TL-L is a host-driven termination test.
 5. Tap a row to run an individual case.  Tap **Run All** to run every case.
 6. Tap **Export JSON** to write `Documents/testlab_result.json` — retrieve it
    via the Files app.
@@ -216,7 +226,7 @@ Reports record `host.pageSize`.
 
 ```
 tests/ios/apps/testlab/
-  main.m          — guest app: menu UI, five cases, checkpoint/result JSON
+  main.m          — guest app: menu UI, 17 selectable cases, checkpoint/result JSON
   gen_tone_wav.py — generates tone.wav (original 440 Hz sine)
   tone.wav        — committed resource (1 s, 44100 Hz, mono, 16-bit PCM)
   empty.dat       — committed zero-length resource (tests stored ZIP entry)
@@ -268,7 +278,7 @@ does not claim phone-equivalent behaviour.
 ## Next milestone
 
 1. **Verify on device** — import `TestLab.ipa` from the CI artifact, run all
-   cases, export JSON, confirm all five pass.
+   guest-selectable cases, export JSON, and inspect each result. TL-L runs only from the host runner.
 2. **TL-E on device** — verify the two-launch persistence path works in the
    real iOS sandbox (NSUserDefaults survives a stop/relaunch cycle).
 3. **TL-C tolerance document** — record the exact pixel values from the device

@@ -130,11 +130,30 @@ int runAsm(const std::string& elf, const std::vector<std::string>& sources) {
             }
             std::string err;
             const Check* faultWant = nullptr;
-            for (const auto& ch : t.expect) if (ch.key == "fault") faultWant = &ch;
+            const Check* undefWant = nullptr;
+            for (const auto& ch : t.expect) {
+                if (ch.key == "fault") faultWant = &ch;
+                if (ch.key == "undef") undefWant = &ch;
+            }
             const bool ok = h.call(c, it->second, err);
             if (faultWant) {
                 if (!ok && c.exit == CPU::Exit::MemFault && c.exit_info == faultWant->value) ++pass;
                 else { std::printf("FAIL %-28s expected fault at 0x%X: %s\n", t.name.c_str(), faultWant->value, ok ? "returned normally" : err.c_str()); ++fail; }
+                continue;
+            }
+            if (undefWant) {
+                if (!ok && c.exit == CPU::Exit::Undefined) {
+                    uint32_t hw1 = c.thumb ? h.mem.read<uint16_t>(c.exit_info) : 0;
+                    uint32_t raw = c.thumb ? (hw1 | (uint32_t(h.mem.read<uint16_t>(c.exit_info + 2)) << 16)) : h.mem.read<uint32_t>(c.exit_info);
+                    if (raw == undefWant->value || (c.thumb && hw1 == undefWant->value)) {
+                        ++pass;
+                        continue;
+                    }
+                    std::printf("FAIL %-28s expected undef instruction 0x%X, got 0x%X at PC 0x%X\n", t.name.c_str(), undefWant->value, raw, c.exit_info);
+                } else {
+                    std::printf("FAIL %-28s expected undef instruction 0x%X: %s\n", t.name.c_str(), undefWant->value, ok ? "returned normally" : err.c_str());
+                }
+                ++fail;
                 continue;
             }
             if (!ok) { std::printf("FAIL %-28s %s\n", t.name.c_str(), err.c_str()); ++fail; continue; }
@@ -215,6 +234,56 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cstring>
 
 namespace {
+
+// Independent of HVM_ZOMBIES in the environment: enableZombies is the same
+// switch. Returns false when the 16384-record cap is missing or when an
+// evicted zombie is handed back to the guest heap.
+bool zombieMetadataStaysCapped() {
+    using namespace Hydrogen;
+    using namespace Hydrogen::Runtime;
+    constexpr int kZombieCap = 16384;
+    const std::string named = "-[NSObject description]: message sent to deallocated instance";
+    ProcessConfig zcfg;
+    zcfg.homePath = "/tmp/hvm_zombie_cap";
+    zcfg.bundlePath = "/tmp/hvm_zombie_cap/Z.app";
+    zcfg.enableZombies = true;
+    zcfg.log = [](LogLevel, const std::string&) {};
+    Process zp(zcfg);
+    auto& zr = ObjC::rt(zp);
+    auto& zcpu = zp.mainThread().cpu;
+    zp.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
+    zcpu.r[CPU::kSP] = 0xBF000000u - 256;
+    zcpu.r[7] = 0;
+    auto make = [&]() {
+        return ObjC::id(zr.send(zcpu, ObjC::id(zr.send(zcpu, zr.getClass("NSObject"), zr.selAlloc)), "init"));
+    };
+    auto message = [&](ObjC::id obj) {
+        std::string msg;
+        try { zr.send(zcpu, obj, "description"); } catch (const std::exception& e) { msg = e.what(); }
+        return msg;
+    };
+    std::vector<ObjC::id> objects;
+    objects.reserve(size_t(kZombieCap) + 1);
+    for (int i = 0; i < kZombieCap + 1; ++i) objects.push_back(make());
+    for (int i = 0; i < kZombieCap; ++i) zr.send(zcpu, objects[size_t(i)], "release");
+    const bool held = message(objects[0]).find(named) != std::string::npos;
+    zr.send(zcpu, objects[size_t(kZombieCap)], "release");
+    const std::string evictedMsg = message(objects[0]);
+    const bool evicted = evictedMsg.find("message sent to deallocated instance") == std::string::npos &&
+                         evictedMsg.find("unrecognized selector sent to instance") != std::string::npos;
+    const bool recent = message(objects[1]).find(named) != std::string::npos &&
+                        message(objects[size_t(kZombieCap)]).find(named) != std::string::npos;
+    const ObjC::id oldest = objects[0];
+    zp.mem().write<uint32_t>(oldest, 0x5A5A5A5Au);
+    const ObjC::id fresh = make();
+    const bool kept = zp.heap().blockSize(oldest) != 0 && fresh != oldest &&
+                      zp.mem().read<uint32_t>(oldest) == 0x5A5A5A5Au;
+    if (!(held && evicted && recent && kept)) {
+        std::printf("    zombie cap detail held=%d evicted=%d recent=%d kept=%d\n", held, evicted, recent, kept);
+        std::printf("    evicted message: %.200s\n", evictedMsg.c_str());
+    }
+    return held && evicted && recent && kept;
+}
 
 int runFullSubsystemTests() {
     using namespace Hydrogen;
@@ -309,6 +378,18 @@ int runFullSubsystemTests() {
                         int(opened), int(received), (unsigned long long)dropped,
                         (unsigned long long)nonsilent, transportError, setupError);
         check(received && stopped, "Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown");
+    }
+
+    {
+        bool rtti_ok = false;
+        try {
+            Hydrogen::Runtime::ProcessConfig cfg;
+            cfg.stopOnMissingFunction = false;
+            Hydrogen::Runtime::Process p(cfg);
+
+            rtti_ok = p.lookupSymbol("_ZTIPv").has_value() && p.lookupSymbol("__ZTIPv").has_value() && p.lookupSymbol("_ZTIPKv").has_value() && p.lookupSymbol("__ZTIPKv").has_value();
+        } catch (...) {}
+        check(rtti_ok, "C++ RTTI pointer types are successfully registered as missing data symbols");
     }
 
     // Mixer stats (what Test All Games' music / sound-effects checks read): a short one-shot
@@ -2960,6 +3041,58 @@ int runFullSubsystemTests() {
         check(baWhatStr == "std::bad_alloc", "std::bad_alloc::what() returns std::bad_alloc");
     }
 
+    // 2f9. POSIX ftime, std::string::copy and SCNetworkReachability
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = proc.lookupSymbol(sym);
+            return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
+        };
+
+        const uint32_t tp = proc.heap().allocZeroed(16);
+        const uint32_t ret = call("_ftime", {tp});
+        check(ret == 0 && proc.mem().read<uint32_t>(tp) > 0 && proc.mem().read<uint16_t>(tp + 4) < 1000,
+              "ftime returns seconds and milliseconds");
+
+        const uint32_t sObj = proc.heap().allocZeroed(4);
+        call("__ZNSsC1EPKcRKSaIcE", {sObj, proc.allocCString("HydrogenVM"), 0}); // string("HydrogenVM")
+        const uint32_t buf = proc.heap().allocZeroed(32);
+        // Copy entire string
+        const uint32_t count1 = call("_ZNKSs4copyEPcmm", {sObj, buf, 10, 0});
+        check(count1 == 10 && std::strncmp((const char*)proc.mem().host(buf), "HydrogenVM", 10) == 0, "string::copy(buf, 10, 0) copies full string");
+        // Partial copy and no null terminator written after copy (ensure buffer byte at 8 is unmodified zero since we allocZeroed)
+        proc.mem().write<uint8_t>(buf + 8, 0x42);
+        const uint32_t count2 = call("_ZNKSs4copyEPcmm", {sObj, buf, 8, 0});
+        check(count2 == 8 && std::strncmp((const char*)proc.mem().host(buf), "Hydrogen", 8) == 0 && proc.mem().read<uint8_t>(buf + 8) == 0x42, "string::copy(buf, 8, 0) partial copy");
+        // Nonzero starting position and exceeding string length
+        const uint32_t count3 = call("_ZNKSs4copyEPcmm", {sObj, buf, 20, 8});
+        check(count3 == 2 && std::strncmp((const char*)proc.mem().host(buf), "VM", 2) == 0, "string::copy(buf, 20, 8) handles pos > 0 and len > remaining");
+        // Zero length copy
+        const uint32_t count4 = call("_ZNKSs4copyEPcmm", {sObj, buf, 0, 0});
+        check(count4 == 0, "string::copy(buf, 0, 0) zero copy");
+        // Invalid pos raises logic error (which throws in host, halting the run context or just halting HLE execution)
+        // (Testing exception from basic_string is covered by other libstdc++ tests or would abort guest; we just skip invoking it invalidly here).
+        call("__ZNSsD1Ev", {sObj});
+
+        // SystemConfiguration Tests
+        const uint32_t ref1 = call("_SCNetworkReachabilityCreateWithName", {0, proc.allocCString("apple.com")});
+        const uint32_t flagsOut = proc.heap().allocZeroed(4);
+        const uint32_t getFlagsOk1 = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
+        check(ref1 != 0 && getFlagsOk1 == 1 && proc.mem().read<uint32_t>(flagsOut) == 2,
+              "SCNetworkReachabilityGetFlags returns success and 0x2 (Reachable)");
+
+        const uint32_t getFlagsOkRepeated = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
+        check(getFlagsOkRepeated == 1, "SCNetworkReachabilityGetFlags repeated queries work");
+
+        const uint32_t getFlagsInvalidRef = call("_SCNetworkReachabilityGetFlags", {0, flagsOut});
+        check(getFlagsInvalidRef == 0, "SCNetworkReachabilityGetFlags handles invalid reference");
+
+        const uint32_t getFlagsNullOut = call("_SCNetworkReachabilityGetFlags", {ref1, 0});
+        check(getFlagsNullOut == 1, "SCNetworkReachabilityGetFlags handles invalid output pointer but succeeds");
+
+        // CFRelease to clean up
+        call("_CFRelease", {ref1});
+    }
+
     // #31: independent ARMv7 API-family oracles (metadata is laid out by the public ABI).
     {
         auto bound = [&](std::initializer_list<const char*> names) { for (auto n : names) if (!proc.lookupSymbol(n)) return false; return true; };
@@ -3536,6 +3669,12 @@ int runFullSubsystemTests() {
                   "HVM_ZOMBIES names the class of a freed object that is messaged");
         }
 
+        // Cap is 16384 records in Runtime::disposeInstance. Guest memory of an
+        // evicted zombie stays allocated. Runs without HVM_ZOMBIES set, and
+        // fails if the cap is removed.
+        check(zombieMetadataStaysCapped(),
+              "zombie metadata stops at 16384 records and the evicted object's guest memory stays allocated");
+
         // A virtual call through a vtable nothing provides names the class and slot.
         {
             const uint32_t vt = proc.makeMissingStub("__ZTV13HvmNoSuchType");
@@ -3789,6 +3928,44 @@ int runFullSubsystemTests() {
                   "AudioQueue recording fills buffers with microphone audio at the queue's rate and format");
         }
 
+
+        // A guest thread that returns with pools still pushed must release those
+        // objects. NSThread's trampoline pops its own pool before returning, so
+        // this uses a raw guest thread: one object is popped explicitly, and two
+        // more sit in nested pools that only thread exit can drain.
+        {
+            std::atomic<int> deallocs{0};
+            int explicitDeallocs = 0;
+            ObjC::ClassBuilder cls = r.defineClass("HVMThreadExitPool", "NSObject");
+            cls.method("dealloc", [&](Ctx& dx) {
+                deallocs.fetch_add(1);
+                r.disposeInstance(dx.cpu, dx.cpu.r[0]);
+            }, "v@:");
+            auto make = [&](CPU::Cpu& c) {
+                return ObjC::id(r.send(c, ObjC::id(r.send(c, cls.cls(), r.selAlloc)), "init"));
+            };
+            const auto worker = proc.defineFunction("__hvm_test_thread_exit_pool", [&](Ctx& wx) {
+                const uint32_t popped = r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+                r.poolPop(wx.cpu, popped);
+                explicitDeallocs = deallocs.load();
+
+                r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+                r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+            });
+            const uint32_t thread = proc.startThread(worker, 0, 64u << 10, false);
+            uint32_t returned = 0;
+            const bool joined = proc.joinThread(thread, &returned);
+            if (!(joined && explicitDeallocs == 1 && deallocs.load() == 3)) {
+                std::printf("    thread-exit pool: joined=%d explicit=%d deallocs=%d\n",
+                            joined, explicitDeallocs, deallocs.load());
+            }
+            check(joined && explicitDeallocs == 1 && deallocs.load() == 3,
+                  "an object autoreleased on a guest thread is released when the thread exits");
+        }
+
         // NSThread -isExecuting / -isFinished across start and the end of the thread's work (Jetpack, #75).
         {
             std::atomic<bool> release{false}, entered{false};
@@ -3845,6 +4022,68 @@ int runFullSubsystemTests() {
             if (good.second != "<cfg v=2><item name=a & b>'x < y'</item><empty></empty>'<raw>'</cfg>") std::printf("    xml events: %s / %s\n", good.second.c_str(), bad.second.c_str());
             check(good.first && good.second == "<cfg v=2><item name=a & b>'x < y'</item><empty></empty>'<raw>'</cfg>" && !bad.first && bad.second.find("ERROR") != std::string::npos,
                   "NSXMLParser elements / attributes / entities / CDATA / self-closing / mismatched-tag error");
+        }
+        {
+            // GCController controllers returns empty array and completion blocks work
+            const ObjC::Class gccCls = r.getClass("GCController");
+            if (gccCls) {
+                const ObjC::id arr = ObjC::id(r.send(cpu, gccCls, "controllers"));
+                const uint32_t count = uint32_t(r.send(cpu, arr, "count"));
+
+                uint32_t called = 0;
+                const uint32_t invoke = proc.defineFunction("test_gc_discovery_completion", [&](Ctx&) { called = 1; });
+                const uint32_t desc = proc.heap().allocZeroed(8);
+                proc.mem().write<uint32_t>(desc + 4, 20); // 32-bit Block_descriptor size
+                const uint32_t bAddr = proc.heap().allocZeroed(20);
+                proc.mem().write<uint32_t>(bAddr + 12, invoke);
+                proc.mem().write<uint32_t>(bAddr + 16, desc);
+                r.send(cpu, gccCls, "startWirelessControllerDiscoveryWithCompletionHandler:", {bAddr});
+                proc.heap().free(bAddr); // callback must hold a copied block
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.05);
+                proc.heap().free(desc);
+
+                check(count == 0 && called == 1, "GCController controllers returns empty array and triggers discovery block");
+            } else {
+                check(false, "GCController class not found");
+            }
+        }
+        {
+            // SKPaymentTransaction properties and types
+            const ObjC::Class sktCls = r.getClass("SKPaymentTransaction");
+            const ObjC::Class skpCls = r.getClass("SKPayment");
+            if (sktCls && skpCls) {
+                const ObjC::id tx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, sktCls, r.selAlloc)), "init"));
+                const ObjC::id tid = ObjC::id(r.send(cpu, tx, "transactionIdentifier"));
+                const ObjC::id tdate = ObjC::id(r.send(cpu, tx, "transactionDate"));
+                const uint32_t tstate = uint32_t(r.send(cpu, tx, "transactionState"));
+
+                const uint32_t stateSel = r.sel("transactionState");
+                const std::string stateSig = r.methodTypes(sktCls, stateSel);
+
+                const ObjC::id prodId = Foundation::makeString(cx, "com.test.product");
+                const ObjC::id pay = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {prodId}));
+                const uint32_t qty1 = uint32_t(r.send(cpu, pay, "quantity"));
+                const ObjC::id pId = ObjC::id(r.send(cpu, pay, "productIdentifier"));
+
+                const ObjC::Class mPayCls = r.getClass("SKMutablePayment");
+                const ObjC::id mPay = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, mPayCls, r.selAlloc)), "init"));
+                r.send(cpu, mPay, "setQuantity:", {uint32_t(3)});
+                const uint32_t qty2 = uint32_t(r.send(cpu, mPay, "quantity"));
+                bool rejectedInvalid = false;
+                try { r.send(cpu, mPay, "setQuantity:", {uint32_t(0)}); }
+                catch (const ObjC::ObjCError&) { rejectedInvalid = true; }
+                catch (const CPU::GuestFault&) { rejectedInvalid = true; }
+                const uint32_t qtyAfterInvalid = uint32_t(r.send(cpu, mPay, "quantity"));
+                const ObjC::id nilPayment = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {0}));
+
+                const uint32_t qtySel = r.sel("setQuantity:");
+                const std::string qtySig = r.methodTypes(mPayCls, qtySel);
+
+                check(tid == 0 && tdate == 0 && tstate == 0 && stateSig == "i@:" && qtySig == "v@:i" && qty1 == 1 && pId == prodId && qty2 == 3 && rejectedInvalid && qtyAfterInvalid == 3 && !nilPayment,
+                      "SKPayment has armv7 NSInteger signatures, retains product ID, defaults quantity to one and rejects invalid quantities");
+            } else {
+                check(false, "SKPaymentTransaction or SKPayment class not found");
+            }
         }
     }
 

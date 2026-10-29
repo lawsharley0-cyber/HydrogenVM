@@ -21,6 +21,26 @@ static void runLoopFor(double seconds) {
 
 // ------------------------------------------------------------------ model ---
 
+@interface MyCopyKey : NSObject <NSCopying> {
+@public
+    int _copyCount;
+    int _retainCount;
+}
+@end
+@implementation MyCopyKey
+- (id)copyWithZone:(NSZone *)zone {
+    MyCopyKey *k = [[MyCopyKey alloc] init];
+    k->_copyCount = _copyCount + 1;
+    return k;
+}
+#if !__has_feature(objc_arc)
+- (id)retain {
+    _retainCount++;
+    return [super retain];
+}
+#endif
+@end
+
 @interface Person : NSObject <NSCoding>
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic) NSInteger age;
@@ -400,6 +420,28 @@ static void testCoreFoundation(void) {
     CHECK(pv && [(__bridge NSString *)pv isEqualToString:@"yes"], "CFPreferences");
     CFRelease(s); CFRelease(ms); CFRelease(fmt); CFRelease(num); CFRelease(arr); CFRelease(raw); CFRelease(dict); CFRelease(rawd);
     CFRelease(uuid); CFRelease(us); CFRelease(cfg); CFRelease(pv);
+
+    MyCopyKey *copyKey = [[MyCopyKey alloc] init];
+    MyCopyKey *valObj = [[MyCopyKey alloc] init];
+    CFMutableDictionaryRef cmd = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    NSMutableDictionary *bmd = (__bridge NSMutableDictionary *)cmd;
+    [bmd setObject:valObj forKey:copyKey];
+
+    MyCopyKey *firstKey = nil;
+    CFDictionaryGetKeysAndValues(cmd, (const void **)&firstKey, NULL);
+    CHECK(firstKey->_copyCount == 1 && firstKey->_retainCount == 1 && valObj->_retainCount == 1, "rd_setObjectForKey copies key, retains key copy and value");
+
+    [bmd removeAllObjects];
+    firstKey = nil;
+    copyKey->_copyCount = 0;
+    copyKey->_retainCount = 0;
+    valObj->_retainCount = 0;
+    CFDictionarySetValue(cmd, (__bridge const void *)copyKey, (__bridge const void *)valObj);
+
+    MyCopyKey *secondKey = nil;
+    CFDictionaryGetKeysAndValues(cmd, (const void **)&secondKey, NULL);
+    CHECK(secondKey == copyKey && copyKey->_copyCount == 0 && copyKey->_retainCount == 1 && valObj->_retainCount == 1, "CFDictionarySetValue only retains key");
+    CFRelease(cmd);
 }
 
 static dispatch_once_t onceToken;
