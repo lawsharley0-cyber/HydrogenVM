@@ -21,6 +21,8 @@ static void runLoopFor(double seconds) {
 
 // ------------------------------------------------------------------ model ---
 
+extern void CFDictionaryGetKeysAndValues(CFDictionaryRef dict, const void **keys, const void **values);
+
 @interface MyCopyKey : NSObject <NSCopying> {
 @public
     int _copyCount;
@@ -427,8 +429,9 @@ static void testCoreFoundation(void) {
     NSMutableDictionary *bmd = (__bridge NSMutableDictionary *)cmd;
     [bmd setObject:valObj forKey:copyKey];
 
-    MyCopyKey *firstKey = nil;
-    CFDictionaryGetKeysAndValues(cmd, (const void **)&firstKey, NULL);
+    const void *firstKeyPtr = NULL;
+    CFDictionaryGetKeysAndValues(cmd, &firstKeyPtr, NULL);
+    MyCopyKey *firstKey = (__bridge MyCopyKey *)firstKeyPtr;
     CHECK(firstKey->_copyCount == 1 && firstKey->_retainCount == 1 && valObj->_retainCount == 1, "rd_setObjectForKey copies key, retains key copy and value");
 
     [bmd removeAllObjects];
@@ -438,8 +441,9 @@ static void testCoreFoundation(void) {
     valObj->_retainCount = 0;
     CFDictionarySetValue(cmd, (__bridge const void *)copyKey, (__bridge const void *)valObj);
 
-    MyCopyKey *secondKey = nil;
-    CFDictionaryGetKeysAndValues(cmd, (const void **)&secondKey, NULL);
+    const void *secondKeyPtr = NULL;
+    CFDictionaryGetKeysAndValues(cmd, &secondKeyPtr, NULL);
+    MyCopyKey *secondKey = (__bridge MyCopyKey *)secondKeyPtr;
     CHECK(secondKey == copyKey && copyKey->_copyCount == 0 && copyKey->_retainCount == 1 && valObj->_retainCount == 1, "CFDictionarySetValue only retains key");
     CFRelease(cmd);
 }
