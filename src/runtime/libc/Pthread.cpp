@@ -147,7 +147,7 @@ GuestCond& condFor(Ctx& x, uint32_t addr) {
 
 // deadline: 0 = none, else nanoseconds since the Unix epoch.
 int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
-    if (x.proc.stopping()) return -1;
+    checkStop(x);
     t_testcancel(x);
     GuestCond& c = condFor(x, cv);
     GuestMutex& m = mutexFor(x, mu);
@@ -166,9 +166,10 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
     {
         std::unique_lock<std::mutex> lk(c.m);
         while (c.gen == gen) {
-            c.cv.wait_for(lk, 50ms);
-            if (c.gen != gen) break;
             if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
+            c.cv.wait_for(lk, 50ms);
+            if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
+            if (c.gen != gen) break;
             if (deadlineNs) {
                 const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                 if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
@@ -178,7 +179,7 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
     lockMutex(x, m, false);
     { std::lock_guard<std::mutex> lk(m.m); m.count = saved; }
     t_testcancel(x); // POSIX requires the mutex to be reacquired before cancellation.
-    if (result < 0) checkStop(x);
+    checkStop(x);
     return result;
 }
 
