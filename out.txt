@@ -271,9 +271,9 @@ Microphone: recording stopped
   ok   pmatch slots past re_nsub are -1
   ok   REG_STARTEND limits the region and reports absolute offsets
   ok   unbounded repeats stay leftmost-longest
-    regex 100k: 78 ms
+    regex 100k: 76 ms
   ok   long inputs of 100k characters stay fast
-    regex (a|aa)*c 100k: 15 ms
+    regex (a|aa)*c 100k: 14 ms
   ok   unanchored (a|aa)*c on 100k a's finishes
   ok   glibc (a*)* backreference splits the run in half
   ok   REG_PEND ends the pattern at re_endp

@@ -361,7 +361,7 @@ uint32_t s_strncat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t dest
          throw CPU::GuestFault(CPU::Exit::MemFault, d + dl, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strncat_chk");
     }
     std::memcpy(H(x, d) + dl, H(x, s), sl);
-    H(x, d)[dl + sl] = ' ';
+    H(x, d)[dl + sl] = '\0';
     return d;
 }
 
