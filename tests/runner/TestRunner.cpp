@@ -2950,6 +2950,29 @@ int runFullSubsystemTests() {
         check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
     }
 
+
+    // 2f6. NIB loading fallback and button shadow offset
+    {
+        // Test 1: NIB fallback / missing NIB
+        const ObjC::Class bundleCls = r.getClass("NSBundle");
+        const ObjC::id mainBundle = ObjC::id(r.send(cpu, bundleCls, r.sel("mainBundle")));
+        const ObjC::id missingNibStr = Foundation::makeString(cx, "MissingFakeNibThatDoesntExist");
+        const ObjC::id nibRes = ObjC::id(r.send(cpu, mainBundle, r.sel("loadNibNamed:owner:options:"), {missingNibStr, 0, 0}));
+        check(nibRes == 0, "Missing NIB returns nil without throwing an exception");
+
+        // Test 2: UIButton setTitleShadowOffset:
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id btn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 100, 44});
+
+        // Pass struct in arguments
+        r.send(cpu, btn, r.sel("setTitleShadowOffset:"), {UIKit::fbits(1.5f), UIKit::fbits(-2.5f)});
+
+        // Get struct
+        const Graphics::Size sz = UIKit::getSize(cx, btn, r.sel("titleShadowOffset"), {});
+
+        check(sz.w == 1.5f && sz.h == -2.5f, "UIButton setTitleShadowOffset: and titleShadowOffset work and retain the size");
+        r.send(cpu, btn, r.selRelease);
+    }
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)

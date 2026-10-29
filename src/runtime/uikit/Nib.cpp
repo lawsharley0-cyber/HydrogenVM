@@ -508,8 +508,22 @@ id un_instantiate(Ctx& x, id self, SEL, id owner, id options) {
 }
 id b_loadNib(Ctx& x, id self, SEL, id name, id owner, id options) {
     const id externals = options ? Foundation::dictGet(x, options, "UINibExternalObjects") : 0;
-    const id r = loadNib(x, name ? utf8(x, name) : "", self, owner, externals);
-    if (!r) throw ObjC::ObjCError("Could not load NIB in bundle: '" + std::string(name ? utf8(x, name) : "") + "'");
+    std::string n = name ? utf8(x, name) : "";
+    id r = loadNib(x, n, self, owner, externals);
+    if (!r && n.find("Landscape") != std::string::npos) {
+        std::string fallback = n;
+        fallback.erase(fallback.find("Landscape"), 9);
+        r = loadNib(x, fallback, self, owner, externals);
+    }
+    if (!r && n.find("Portrait") != std::string::npos) {
+        std::string fallback = n;
+        fallback.erase(fallback.find("Portrait"), 8);
+        r = loadNib(x, fallback, self, owner, externals);
+    }
+    if (!r) {
+        x.proc.logf(LogLevel::Warning, "Could not load NIB in bundle: '%s'", n.c_str());
+        return 0;
+    }
     return r;
 }
 
