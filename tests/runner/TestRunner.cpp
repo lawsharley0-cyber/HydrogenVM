@@ -1996,15 +1996,13 @@ int runFullSubsystemTests() {
         bool threw = false;
         try {
             r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)});
-        } catch (const Process::GuestThrow&) {
+        } catch (const Hydrogen::CPU::GuestFault&) {
             threw = true;
         }
         check(threw, "NSUserDefaults setObject:forKey: raises NSInvalidArgumentException for non-plist objects");
 
         // synchronize and test round trip for supported type
         const ObjC::id validKey = Runtime::Foundation::makeString(cx, "testKeyPlist");
-
-        // create a nested array
         const ObjC::id validString = Runtime::Foundation::makeString(cx, "validStringValue");
         const ObjC::id validArray = Runtime::Foundation::makeArray(cx, {validString});
         const ObjC::id validDict = Runtime::Foundation::makeDict(cx, {{validString, validArray}});
@@ -2013,8 +2011,7 @@ int runFullSubsystemTests() {
 
         const ObjC::id validVal = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(validKey)}));
         const ObjC::id validArrBack = Runtime::Foundation::dictGet(cx, validVal, validString);
-        const ObjC::id validStrBack = Runtime::Foundation::arrayItems(cx, validArrBack)[0];
-        const std::string validDesc = Runtime::Foundation::utf8(cx, validStrBack);
+        const std::string validDesc = Runtime::Foundation::utf8(cx, Runtime::Foundation::arrayItems(cx, validArrBack)[0]);
         check(validDesc == "validStringValue", "NSUserDefaults setObject:forKey: preserves supported types across round-trip");
     }
 

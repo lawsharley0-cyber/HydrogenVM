@@ -118,9 +118,7 @@ void ud_setObject(Ctx& x, id, SEL, id value, id key) {
     if (!value) { D(x).set(K(x, key), nullptr); return; }
     PV v = objectToPlist(x, value);
     if (!v) {
-        const id name = constString(x.proc, "NSInvalidArgumentException");
-        const id reason = makeString(x, "Attempt to insert non-property list object " + describe(x, value) + " for key " + K(x, key));
-        throwException(x, excc_with(x, rt(x).getClass("NSException"), 0, name, reason, 0));
+        throwGuestException(x, "NSInvalidArgumentException", "Attempt to insert non-property list object " + describe(x, value) + " for key " + K(x, key));
     }
     D(x).set(K(x, key), v);
     postNotification(x, "NSUserDefaultsDidChangeNotification", ud_standard(x, 0, 0));
