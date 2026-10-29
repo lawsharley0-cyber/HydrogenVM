@@ -176,7 +176,6 @@ Heap::Stats Heap::stats() const {
     return stats_;
 }
 
-} // namespace Hydrogen::Runtime
 
 Heap::CopyResult Heap::copyCStringWithinAllocation(uint32_t addr, const char* src, size_t chars) {
     std::lock_guard<std::mutex> lk(mu_);
@@ -201,3 +200,5 @@ Heap::CopyResult Heap::copyWideWithinAllocation(uint32_t addr, const uint32_t* c
     if (bytes > end - addr) return CopyResult::BoundsError;
     return mem_.copyWideWritable(addr, chars, count) ? CopyResult::Success : CopyResult::BoundsError;
 }
+
+} // namespace Hydrogen::Runtime
