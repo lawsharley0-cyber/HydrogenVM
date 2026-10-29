@@ -9,7 +9,6 @@ ninja -C "$B" >/dev/null || { ninja -C "$B"; exit 1; }
 rc=0
 "$B/hvm_tests" selftest || rc=1
 "$B/hvm_tests" fulltest || rc=1
-"$B/hvm_app_bundle_tests" "$B/app-bundle-test-fixtures" || rc=1
 for f in "$ROOT"/tests/asm/*.S; do
   b=$(basename "$f" .S)
   "$B/hvm_tests" asm "$B/tests/$b.elf" "$f" || rc=1

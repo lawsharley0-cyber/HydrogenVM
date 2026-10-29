@@ -86,7 +86,16 @@ int main() {
     }
 
     if (test_create_and_dispose(url) != 0) return 1;
-    if (test_repeat_creation_distinct(url, url) != 0) return 1; // Since it's the same content
+    CFStringRef name2 = CFStringCreateWithCString(kCFAllocatorDefault, "tone2", kCFStringEncodingUTF8);
+    CFURLRef url2 = CFBundleCopyResourceURL(mainBundle, name2, ext, NULL);
+    if (url2) {
+        if (test_repeat_creation_distinct(url, url2) != 0) return 1;
+        CFRelease(url2);
+    } else {
+        printf("FAIL: Could not find tone2.wav resource\n");
+        return 1;
+    }
+    CFRelease(name2);
     if (test_repeat_creation_same(url) != 0) return 1;
     if (test_invalid_dispose() != 0) return 1;
 

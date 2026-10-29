@@ -187,25 +187,6 @@ def main():
                     send('stop')
                     stop_sent = time.monotonic()
 
-            def kill_processes():
-                nonlocal failed
-                if process.poll() is None:
-                    stop()
-                    try:
-                        process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-                        failed = True
-
-            def save_state():
-                if surface:
-                    pygame.image.save(surface, session / 'viewer-last.png')
-
-            def close_connections():
-                audio.close(session / 'audio.json')
-                pygame.quit()
-
             try:
                 running = True
                 while running:
@@ -284,9 +265,18 @@ def main():
                     pygame.display.flip()
                     clock.tick(30)
             finally:
-                kill_processes()
-                save_state()
-                close_connections()
+                if process.poll() is None:
+                    stop()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                        failed = True
+                if surface:
+                    pygame.image.save(surface, session / 'viewer-last.png')
+                audio.close(session / 'audio.json')
+                pygame.quit()
     print(f'Received {frame_count} live frames; engine exit {process.returncode}. Results: {session}', flush=True)
     return 1 if failed else process.returncode
 

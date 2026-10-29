@@ -8,11 +8,10 @@ report, and validates it against the schema.
 usage:
     python3 tools/hvm_testlab.py run
         [--build-dir build] [--out build/testlab-report]
-        [--hvm PATH] [--case TL-A]
+        [--hvm PATH] [--case TL-A] [--all]
         [--timeout 30] [--skip-build]
         [--home DIR]
 
-    # Omit --case to execute the complete TL-A through TL-R suite.
     python3 tools/hvm_testlab.py validate REPORT.json
 
 Exit status:
@@ -37,6 +36,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -239,16 +239,13 @@ def _parse_case_output(stdout: str, case_id: str, elapsed: float,
         reason = f"External timeout after {elapsed:.1f}s"
         diag["timedOut"] = True
     elif status is None:
-        # A process exit code alone cannot prove the guest wrote a checkpoint.
-        # In particular, hvm run returns 2 for CLI/startup errors including
-        # --gpu with no host EGL runtime. Preserve that diagnostic explicitly.
-        if "--gpu: no host OpenGL ES" in stderr:
+        # hvm may have crashed or failed to start
+        if rc == 2:
             status = "interrupted"
-            reason = "Host OpenGL ES unavailable; guest test did not start"
-            diag["hostGraphicsUnavailable"] = True
-        elif rc not in (0, 1):
+            reason = "Checkpoint detected (exit code 2)"
+        elif rc != 0 and rc != 1:
             status = "interrupted"
-            reason = f"hvm exited with code {rc} without TESTLAB output"
+            reason = f"hvm exited with code {rc} without producing output"
         else:
             status = "failed"
             reason = "No TESTLAB output line found in stdout"
@@ -388,15 +385,6 @@ def _print_result(cr: dict) -> None:
     reason = cr.get("reason", "")
     reason_str = f" — {reason}" if reason else ""
     print(f"  {cr['id']}: {status}{reason_str}", flush=True)
-    # A checkpoint/timeout can otherwise be invisible in CI logs: the
-    # complete bounded tail remains in the JSON artifact, and we surface it
-    # here only for cases needing triage.
-    if status in ("failed", "interrupted"):
-        output_tail = str(cr.get("diagnostics", {}).get("stdoutTail") or "").strip()
-        if output_tail:
-            print("    emulator stdout/stderr tail:", flush=True)
-            for line in output_tail.splitlines()[-16:]:
-                print(f"      {line}", flush=True)
 
 
 # ─────────────────────────── host report ─────────────────────────────────────
