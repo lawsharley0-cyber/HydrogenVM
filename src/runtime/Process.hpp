@@ -392,7 +392,7 @@ private:
     // static data region
     uint32_t staticTop_ = 0, staticEnd_ = 0;
     std::unordered_map<std::string, uint32_t> interned_;
-    public:
+public:
     std::mutex& staticMu() { return staticMu_; }
 private:
     std::mutex staticMu_;
@@ -448,7 +448,6 @@ void registerLibcSystem(Process& p);
 void registerCxxRuntime(Process& p);
 void registerUnwinder(Process& p);
 void registerLibStdcxx(Process& p);
-void registerLibcxx(Process& p);
 void registerLibcPosix(Process& p);
 void registerZlib(Process& p);
 void registerLibcNet(Process& p);
