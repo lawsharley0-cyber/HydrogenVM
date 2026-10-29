@@ -24,7 +24,6 @@ static void runLoopFor(double seconds) {
 @interface MyCopyKey : NSObject <NSCopying> {
 @public
     int _copyCount;
-    int _retainCount;
 }
 @end
 @implementation MyCopyKey
@@ -33,12 +32,6 @@ static void runLoopFor(double seconds) {
     k->_copyCount = _copyCount + 1;
     return k;
 }
-#if !__has_feature(objc_arc)
-- (id)retain {
-    _retainCount++;
-    return [super retain];
-}
-#endif
 @end
 
 @interface Person : NSObject <NSCoding>
@@ -423,26 +416,30 @@ static void testCoreFoundation(void) {
 
     MyCopyKey *copyKey = [[MyCopyKey alloc] init];
     MyCopyKey *valObj = [[MyCopyKey alloc] init];
+    long initialValRc = CFGetRetainCount((__bridge CFTypeRef)valObj);
     CFMutableDictionaryRef cmd = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     NSMutableDictionary *bmd = (__bridge NSMutableDictionary *)cmd;
+
     [bmd setObject:valObj forKey:copyKey];
 
     const void *rawKeys[1] = {NULL};
     CFDictionaryGetKeysAndValues(cmd, rawKeys, NULL);
-    MyCopyKey *firstKey = (__bridge MyCopyKey *)rawKeys[0];
-    CHECK(firstKey->_copyCount == 1 && firstKey->_retainCount == 1 && valObj->_retainCount == 1, "rd_setObjectForKey copies key, retains key copy and value");
+    long copiedKeyRc = CFGetRetainCount(rawKeys[0]);
+    long afterValRc = CFGetRetainCount((__bridge CFTypeRef)valObj);
+    CHECK(((__bridge MyCopyKey *)rawKeys[0])->_copyCount == 1 && copiedKeyRc == 1 && afterValRc == initialValRc + 1, "rd_setObjectForKey copies key, retains key copy and value");
 
     [bmd removeAllObjects];
-    firstKey = nil;
     copyKey->_copyCount = 0;
-    copyKey->_retainCount = 0;
-    valObj->_retainCount = 0;
+
+    long initialKeyRc = CFGetRetainCount((__bridge CFTypeRef)copyKey);
+    long initialValRc2 = CFGetRetainCount((__bridge CFTypeRef)valObj);
     CFDictionarySetValue(cmd, (__bridge const void *)copyKey, (__bridge const void *)valObj);
 
     const void *rawKeys2[1] = {NULL};
     CFDictionaryGetKeysAndValues(cmd, rawKeys2, NULL);
-    MyCopyKey *secondKey = (__bridge MyCopyKey *)rawKeys2[0];
-    CHECK(secondKey == copyKey && copyKey->_copyCount == 0 && copyKey->_retainCount == 1 && valObj->_retainCount == 1, "CFDictionarySetValue only retains key");
+    long afterKeyRc = CFGetRetainCount((__bridge CFTypeRef)copyKey);
+    long afterValRc2 = CFGetRetainCount((__bridge CFTypeRef)valObj);
+    CHECK(rawKeys2[0] == (__bridge const void *)copyKey && copyKey->_copyCount == 0 && afterKeyRc == initialKeyRc + 1 && afterValRc2 == initialValRc2 + 1, "CFDictionarySetValue only retains key");
     CFRelease(cmd);
 }
 
