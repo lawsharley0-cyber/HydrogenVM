@@ -266,12 +266,12 @@ void safe_read_check(Ctx& x, GuestPtr p, size_t len) {
     if (uint64_t(p) + len > Memory::GuestArena::kArenaSize) {
         throw CPU::GuestFault(CPU::Exit::MemFault, p, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access (overflow)");
     }
-    uint32_t addr = p;
-    uint32_t end = p + len;
+    uint64_t addr = p;
+    uint64_t end = uint64_t(p) + len;
     while (addr < end) {
         (void)x.mem.read<uint8_t>(addr); // read to force fault if unmapped/unreadable
         addr = (addr + Memory::GuestArena::kGuestPageSize) & ~(Memory::GuestArena::kGuestPageSize - 1);
-        if (addr == 0) break;
+        if (addr >= Memory::GuestArena::kArenaSize) break;
     }
     // verify last byte
     (void)x.mem.read<uint8_t>(p + len - 1);
@@ -282,8 +282,8 @@ void safe_write_check(Ctx& x, GuestPtr p, size_t len) {
     if (uint64_t(p) + len > Memory::GuestArena::kArenaSize) {
         throw CPU::GuestFault(CPU::Exit::MemFault, p, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access (overflow)");
     }
-    uint32_t addr = p;
-    uint32_t end = p + len;
+    uint64_t addr = p;
+    uint64_t end = uint64_t(p) + len;
     while (addr < end) {
         // we can't easily check for write without actually writing using the public interface.
         // Let's use protAt to check for write, but we must do it securely.
@@ -291,7 +291,7 @@ void safe_write_check(Ctx& x, GuestPtr p, size_t len) {
             throw CPU::GuestFault(CPU::Exit::MemFault, addr, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory write access");
         }
         addr = (addr + Memory::GuestArena::kGuestPageSize) & ~(Memory::GuestArena::kGuestPageSize - 1);
-        if (addr == 0) break;
+        if (addr >= Memory::GuestArena::kArenaSize) break;
     }
     // verify last byte
     if (!(x.mem.protAt(p + len - 1) & Memory::kProtWrite)) {

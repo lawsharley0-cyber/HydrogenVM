@@ -4091,15 +4091,34 @@ int runFullSubsystemTests() {
             if (call("___strlcat_chk", {dst, src, 50, 0xFFFFFFFF}) != 99) return false;
             call("_free", {src}); call("_free", {dst}); return true;
         });
-        run("_FORTIFY_SOURCE test 32-bit wraparound", [&] {
-
+                run("_FORTIFY_SOURCE test 32-bit wraparound", [&] {
             uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {dst, 'X', 100});
+
             auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
-                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+                bool caught = false;
+                try {
+                    proc.callGuest(cpu, *proc.lookupSymbol(fn), args);
+                } catch (const CPU::GuestFault& e) {
+                    std::string msg = e.what();
+                    caught = (msg.find("invalid guest memory access") != std::string::npos || msg.find("buffer overflow detected") != std::string::npos);
+                } catch (...) {
+                    caught = false;
+                }
+                return caught;
             };
-            // Pass a length that causes `dst + length` to wraparound 32-bit space
-            // E.g. dst is something like 0x40000000. 0xFFFFFFFF + dst will overflow.
-            if (!check_fault("___memcpy_chk", {dst, src, 0xFFFFFF00, 0xFFFFFF00})) return false;
+
+            uint32_t exact_overflow_len = 0xFFFFFFFF - dst + 1; // 2^32 - dst
+
+            if (!check_fault("___memcpy_chk", {dst, src, exact_overflow_len, exact_overflow_len})) {
+                call("_free", {src}); call("_free", {dst}); return false;
+            }
+
+            uint8_t val = proc.mem().read<uint8_t>(dst);
+            if (val != 'X') {
+                call("_free", {src}); call("_free", {dst}); return false;
+            }
+
             call("_free", {src}); call("_free", {dst}); return true;
         });
 
