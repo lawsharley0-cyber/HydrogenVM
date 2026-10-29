@@ -4867,8 +4867,6 @@ int runFullSubsystemTests() {
               std::memcmp(proc.mem().host(global), "12345\0", 6) == 0,
               "sprintf permits writable global buffers outside tracked heap");
 
-
-
         // Wide formatting stores 4 bytes per wchar_t. C99 swprintf honours n
         // (including the NUL), returns -1 when the text does not fit, and
         // must throw before any store when that span is not writable.
@@ -5043,7 +5041,6 @@ int runFullSubsystemTests() {
         check(attempted.load() == 1000 && !arena.copyCStringWritable(page, "no", 2),
               "formatted guest-page writes synchronize with concurrent map/unmap");
     }
-
 
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
