@@ -392,6 +392,9 @@ private:
     // static data region
     uint32_t staticTop_ = 0, staticEnd_ = 0;
     std::unordered_map<std::string, uint32_t> interned_;
+    public:
+    std::mutex& staticMu() { return staticMu_; }
+private:
     std::mutex staticMu_;
 
     // environment

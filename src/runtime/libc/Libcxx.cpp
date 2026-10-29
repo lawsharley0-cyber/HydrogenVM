@@ -17,7 +17,7 @@ uint32_t tld_get(Ctx& x) {
         return *addr;
     }
 
-    std::lock_guard<std::mutex> lk(proc.staticMu_);
+    std::lock_guard<std::mutex> lk(proc.staticMu());
 
     auto addr2 = proc.lookupSymbol("__hvm_libcxx_tld_key");
     if (addr2) {
