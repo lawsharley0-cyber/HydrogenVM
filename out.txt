@@ -1,0 +1,302 @@
+  ok   IMA WAV stereo nibble order, channel groups, predictor reset and fact trimming
+  ok   IMA WAV mono expands to stereo without losing the predictor sample
+  ok   IMA WAV rejects invalid step indices, oversized fact counts and truncated data
+  ok   Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown
+  ok   Mixer stats tell music (looping) from sound effects (one-shot) and ignore silent voices
+  ok   GLSL executes component transforms, column-major matrices, varying arrays and overlapping swizzles
+  ok   GLSL texture sampling honors sampler, channels, dot products and compound assignments
+  ok   GLSL rejects invalid writes, types, indexing, #include and excessive nesting
+  ok   GLSL object-like #define
+  ok   GLSL function-like macros with nested commas
+  ok   GLSL macro rescan, zero-argument macros and empty replacement
+  ok   GLSL #undef, identical redefinition and conflicting redefinition
+  ok   GLSL #if/#elif/#else with defined(), __VERSION__ and integer expressions
+  ok   GLSL #ifdef/#ifndef skip inactive groups, including invalid text
+  ok   GLSL #version 100, and rejection of other versions
+  ok   GLSL ES 3 fragment outputs and texture aliases used by Telltale shaders
+  ok   GLSL #extension enable/warn/disable, and rejection of require
+  ok   GLSL #pragma is ignored and comments hide directives
+  ok   GLSL #line sets __LINE__
+  ok   GLSL #error fires only in the active branch
+  ok   GLSL line continuations splice directives and tokens
+  ok   GLSL empty directive
+  ok   GLSL directives at end of input with no trailing newline
+  ok   GLSL ## token paste
+  ok   GLSL rejects # stringification
+  ok   GLSL directives between the arguments of a call
+  ok   GLSL precision statements, precision-only globals, bare globals and const globals
+  ok   GLSL multiple const declarators with initializers
+  ok   GLSL multiple declarators on one line
+  ok   GLSL qualifiers in every order, and invariant is stored on the variable
+  ok   GLSL struct definitions, struct arrays, member access and anonymous struct uniforms
+  ok   GLSL struct constructors
+  ok   GLSL uniform arrays, varying arrays and matrix array elements
+  ok   GLSL sampler arrays
+  ok   GLSL arrays of struct fields
+  ok   GLSL struct varyings keep a shared layout across stages
+  ok   GLSL #if parses both &&/|| operands and only skips evaluation
+  ok   GLSL #if add and multiply wrap instead of overflowing
+  ok   GLSL #if >> is an arithmetic shift
+  ok   GLSL #if rejects the conditional operator
+  ok   GLSL limits preprocessor, struct, statement, macro and call depth
+  ok   GLSL #line takes a line and an optional source number
+  ok   GLSL macro arguments group parentheses and split on commas in brackets
+  ok   GLSL predefines GL_FRAGMENT_PRECISION_HIGH in both stages
+  ok   GLSL rejects #define and #undef of GL_ names and names containing __
+  ok   GLSL rejects integer literals that do not fit
+  ok   GLSL rejects an exact built-in signature and keeps other overloads
+  ok   GLSL accepts constant-expression array sizes and rejects the rest
+  ok   GLSL quotes a non-constant size's first token and accepts a literal bound of 45
+  ok   GLSL folds constructors, constant builtins and chained consts into array sizes
+  ok   GLSL rejects out-of-range constant sizes and struct layouts that overflow the register file
+  ok   GLSL rejects out-of-range constant indexes, including float32 literals that do not fit in int
+  ok   GLSL #extension : warn warns and still enables a supported extension
+  ok   GLSL shaders that fit keep their instruction count
+  ok   GLSL skinning indexes a 45-element mat4 uniform array without blowing the register file
+  ok   GLSL recycles temps so a long straight-line shader stays inside the register file
+  ok   GLSL spills local arrays that do not fit beside each other in the register file
+  ok   GLSL out-of-range dynamic indexes read element 0 and write nothing
+  ok   GLSL enables dFdx only with GL_OES_standard_derivatives
+  ok   GLSL execute stops when the shared instruction budget is exhausted
+  ok   GLSL rejects optimize and debug pragmas inside functions
+  ok   GLSL accepts #version 100 with a BOM, CRLF, comments and blank lines, and logs other versions
+  ok   GLSL user-defined functions
+  ok   GLSL prototypes, later definitions, and mismatched or duplicate declarations
+  ok   GLSL in parameters are copies and inout/out copy back
+  ok   GLSL rejects direct and mutual recursion
+  ok   GLSL if/else
+  ok   GLSL for and break
+  ok   GLSL while and continue
+  ok   GLSL do-while
+  ok   GLSL for(;;) compiles and break leaves it
+  ok   GLSL discard drops the fragment and is rejected in a vertex shader
+  ok   GLSL && and ?: skip the untaken arm
+  ok   GLSL local declarations can shadow
+  ok   GLSL constructors, vector and matrix operators, and integer division
+  ok   GLSL angle, trigonometric and exponential built-ins
+  ok   GLSL common built-ins
+  ok   GLSL geometric built-ins and matrixCompMult
+  ok   GLSL relational built-ins and implementation constants
+  ok   GLSL gl_FragCoord, gl_FrontFacing, gl_PointCoord and gl_DepthRange
+  ok   GLSL gl_PointSize
+  ok   GLSL gl_FragData aliases the fragment output
+  ok   GLSL dynamic array indexing
+  ok   GLSL texture2DProj, texture2DLod and textureCube
+  ok   BSD network remains disabled by default
+UDP to 8.8.8.8 refused: only the device's own loopback is reachable offline
+  ok   Offline UDP stays on loopback: bind to 127.0.0.1, broadcast comes back, other hosts are ENETUNREACH, select/recvfrom/EAGAIN work
+Loopback resolver refused host: 192.0.2.1
+  ok   loopback resolver emits Darwin addrinfo and rejects external addresses
+  ok   BSD fcntl applies Darwin nonblocking flags and loopback connect reaches a real listener
+  ok   loopback send/select/recv exchanges actual bytes and preserves EAGAIN
+  ok   loopback validates buffers, unsupported stdio wrapping, SO_ERROR and external connect policy
+  ok   ordinary dup/dup2/close preserve socket ownership and live aliases
+  ok   only explicitly configured hostname aliases resolve to loopback
+  ok   process stop interrupts blocking socket read without hanging a guest thread
+  ok   process destruction closes retained loopback socket descriptors
+  ok   CPU selftest continuous with superinstructions (BLX, SUBS+BNE, MOV+ADD)
+  ok   CPU superinstructions (MOVW+MOVT, LDR+ADD, POP {pc}) under 2-insn slices
+  ok   NSSortDescriptor copies key, stable-sorts and reverses comparison
+  ok   NSPredicate key comparisons/filtering and explicit unsupported syntax
+  ok   NSHashTable/NSMapTable retain strong entries and zero weak entries on release
+  ok   NSMutableAttributedString preserves UTF-16 ranges, copied snapshots and mutableString edits
+  ok   Paragraph styles copy independent properties; NSURLCredential snapshots password
+  ok   NSArray / NSMutableArray index set operations (objectsAtIndexes, remove, insert, replace, bounds)
+  ok   UIBezierPath owns CGPath copies, contains points and returns ARMv7 CGRect bounds
+  ok   Dictionary subscript/KVC access dispatches subclass primitives and nil removes entries
+  ok   _class_getIvarLayout symbol exists and returns NULL for NSObject
+  ok   Inherited dictionary allKeys/allValues enumerate subclass primitives without recursion
+  ok   Dictionary subscript assignment retains nil-key validation
+  ok   Immutable regex copies retain compiled patterns across pools and match results retain their expression
+  ok   Method signature and NSInvocation lookup supports replaced methods, protocols, and forwarding targets
+  ok   Mach task send references increment and deallocate symmetrically
+  ok   _syscall(20) returns getpid
+  ok   _syscall(286) returns -1 and ESRCH (3)
+  ok   _syscall(372) returns thread_selfid
+[warn] syscall(999) is not implemented
+  ok   _syscall(unhandled) returns -1 and ENOSYS (78)
+  ok   Mach rejects invalid tasks/names/rights and reference underflow/overflow without mutation
+  ok   Mach thread self acquires references and recreates an exhausted send right
+  ok   task_threads exports owned send rights for the same synthetic threads
+  ok   vm_read_overwrite copies guest memory and rejects unmapped/wrapping ranges
+  ok   Mach memory entries report unsupported capability without exporting a fabricated handle
+  ok   CF mutable character sets and copies own their lifetime across autorelease pool drains
+  ok   CFAllocatorCreate copies the context, retains info and invokes guest allocation callbacks
+  ok   CFData no-copy preserves the original pointer and retains its custom deallocator
+  ok   CFData destruction deallocates borrowed bytes and releases allocator context exactly once
+  ok   CFAllocatorNull refuses allocation while the system default allocates
+  ok   TrueType cmap and metrics use the original font's units per em
+  ok   TrueType loading rejects truncated and invalid font headers
+  ok   CGFontCopyTableForTag and CGFontGet* unscaled design metrics match TrueType tables
+  ok   CGFont/CTFont own custom font bytes across provider release and descriptor copies
+  ok   CoreText glyph mapping and struct-return bounding boxes preserve missing glyphs and geometry
+  ok   CTFontDrawGlyphs rasterizes the custom outline into guest A8 pixels
+  ok   CoreText line breaking and owned glyph runs preserve custom metrics after source release
+  ok   user-domain cache search keeps the app's existing cache path
+  ok   local-domain cache search returns a separate guest-backed directory
+  ok   all-domain cache search returns user then local without duplicates
+  ok   tilde expansion affects user paths but not absolute local-domain paths
+  ok   invalid, unmounted network, and personal local-domain searches stay empty
+  ok   NSFileManager URL directory search agrees with the C path API
+  ok   NSUbiquitousKeyValueStore writes its values to the sandbox
+  ok   NSTimeZone fixed-offset factory supports GMT and signed offsets
+  ok   fixed-offset time zones expose stable GMT names and abbreviations
+  ok   fixed-offset time zones keep their offset and never enter daylight saving
+  ok   named UTC zone is independent of the host's local timezone
+  ok   UIScrollView setContentOffset updates bounds.origin
+  ok   UITableViewCell textLabel, detailTextLabel, and reuseIdentifier
+  ok   UITableView registerClass & dequeueReusableCellWithIdentifier
+  ok   UINavigationController pushViewController & navigationController property
+  ok   UINavigationController popViewControllerAnimated
+  ok   UIBarButtonItem addTarget:action:forControlEvents: sets target and action
+  ok   UIBarButtonItem setCustomView forwards existing target/action to customView
+  ok   UIBarButtonItem removeTarget:action:forControlEvents: clears target and action
+  ok   UIViewController setView replaces the installed root view in its window
+  ok   UITabBarController viewControllers & selectedIndex
+  ok   UITextField text & firstResponder editing lifecycle
+  ok   UISwitch, UISlider, and UISegmentedControl
+  ok   EAGLContext renderbufferStorage:fromDrawable: & FBO complete
+  ok   OpenGL ES 2.0 shader + VBO + glDrawArrays rasterizes triangle
+  ok   GLES advertises and allocates depth24, stencil8 and packed depth/stencil renderbuffers
+  ok   GLES packed depth/stencil supports clear, compare, mask and replace operations
+  ok   GLES2 defers program deletion while the program is current
+  ok   GLES2 worker fallback retains a deleted current program
+  ok   GLES2 drawing stays consistent during cross-thread program changes
+  ok   GLES2 program table stays valid when another thread creates and deletes programs
+  ok   GLES2 rasterizes perspective-correct varyings, multiple colors and texture unit 3
+[warn] GLSL shader 5: unknown variable/function missing near token 10 (';')
+[warn] GLSL program 6: attached shader not compiled
+  ok   GLES2 exposes compile/link errors, bounded info logs and unknown locations
+[warn] GLSL program 8: varying limit exceeded (64 floats)
+  ok   GL_MAX_VARYING_VECTORS (16) matches the linker: 16 vec4 varyings link, 17 do not
+  ok   GLES2 links struct-uniform leaves and array elements to consecutive locations
+  ok   GLES2 transposes mat2/mat3 when requested and reports int, bool and samplerCube types
+  ok   GLES2 dFdx/dFdy/fwidth use 2x2 quads and advertise GL_OES_standard_derivatives
+  ok   GLES2 warns on #extension : warn and draws a uniform vec4 array of size 45
+  ok   GLES2 draws a skinned triangle from uniform mat4 bones[45]
+[warn] GLSL program 14: instruction budget exceeded; draw aborted
+  ok   GLES2 aborts a draw that exceeds the instruction budget and discards its fragments
+  clip inside (32,40)=26,34,195,255
+  ok   GLES2 triangle entirely in front of the near plane keeps its coverage and perspective-correct color
+  clip w<0 (7,32)=0,0,255,255 (4,35)=255,0,0,255
+  ok   GLES2 clips a triangle crossing the camera plane (w<0) instead of mirroring it through the origin
+  clip z<-w (32,36)=0,0,255,255 (33,23)=255,0,0,255
+  ok   GLES2 clips a triangle crossing the near plane (z<-w, w>0) and keeps the visible fragment
+  clip all behind (32,32)=0,0,255,255
+  ok   GLES2 drops a triangle whose vertices are all behind the camera (w<0)
+  clip line (20,32)=0,0,255,255 (36,32)=255,0,0,255
+  ok   GLES2 clips a line crossing the camera plane to the near-plane segment
+  clip points behind=0,0,255,255 near=0,0,255,255 inside=255,0,0,255
+  ok   GLES2 discards points with w<0 or z<-w and still draws a point in front of the near plane
+  clip attrib (38,18)=131,84,40,255 (50,0)=0,0,255,255
+  ok   GLES2 perspective-correct varyings use a different w on each vertex, including the near-plane edge
+  clip guard tri (20,41)=255,0,0,255 (8,13)=0,0,255,255 covered=1983
+  ok   GLES2 keeps a w=1/1.5/through-guard triangle whose clip boundary undershoots 1e-6, and side planes bound it to the viewport
+  clip guard seg (40,34)=255,0,0,255 (0,0)=0,0,255,255
+  ok   GLES2 draws a segment whose clipped endpoint is the float32 guard boundary (~9.54e-7)
+  clip huge line (48,32)=255,0,0,255 (63,32)=255,0,0,255 (0,32)=0,0,255,255
+  ok   GLES2 clips a line whose screen delta exceeds INT_MAX to the framebuffer and still draws the visible pixels
+  ok   CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer
+  ok   std::map red-black tree: 600 random inserts/erases keep order and RB invariants
+  ok   std::string (COW): sharing on copy, append, insert, find, substr, compare, swap, resize, emptyRep
+  ok   std::string out-of-line members: replace(pos,n,const char*), rbegin, _M_set_length_and_sharable, clear, _Alloc_hider
+  ok   libstdc++ __basic_file<char> and inline-constructed basic_ifstream<char> via C2+VTT
+  ok   std::bad_alloc::what() returns std::bad_alloc
+  ok   startup libc exports writev bytes, Darwin signal names and invalid-thread cancellation errors
+  ok   normal pthread mutex supports old-iOS cross-thread handoff while trylock reports busy
+  ok   startup protocol metadata preserves adoption, method selectors, types and owned lists; protocol_getMethodDescription finds them
+  ok   startup CF bit vectors use MSB-first bits and mutable copies own their storage
+  ok   startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions
+  ok   AudioFileOpenURL rejects undecodable audio instead of publishing a successful empty stream
+  ok   AudioFileOpenURL decoded LPCM packets retain sample bytes and packet/byte counts
+  ok   AVAudioPlayer WAV decoding, duration calculation, and mixer output
+  ok   OpenAL source min/max gain defaults and getter/setter round trip
+  ok   OpenAL context, buffer upload, source playback, and mixer output
+  ok   OpenAL source returns to AL_STOPPED when its buffer finishes
+  ok   two OpenAL sources mix; a 22.05 kHz buffer plays at the right speed
+  ok   AudioQueue buffer playback through the mixer; the callback fires after the buffer has played
+  ok   AudioOutputUnitStart invokes the render callback and mixes its signed 16-bit stereo PCM
+  ok   OpenGL ES 1.1 fixed-function ortho + 2D texture + glDrawElements
+  ok   glPointSizePointerOES initial state disabled
+  ok   glEnableClientState enables GL_POINT_SIZE_ARRAY_OES
+  ok   glDisableClientState disables GL_POINT_SIZE_ARRAY_OES
+  clip gles1 front (32,32)=255,0 behind=0,0,255
+  ok   GLES1 frustum clips a triangle behind the camera and still draws one in front of the near plane
+  clip gles1 screen-linear (38,18)=66,169,20
+  ok   GLES1 color after clipping is screen-linear (66,169,20), matching the fixed-function fill
+  ok   CC_MD5 / CC_SHA1 / CC_SHA256 match the reference digests
+  ok   CCCrypt / CCCryptor AES match NIST vectors (CBC, ECB, PKCS7 round trip, buffer and key-size errors)
+  ok   CCHmacInit/Update/Final (SHA-256) matches RFC 4231
+  ok   zlib compress/uncompress and streaming inflate on guest buffers
+  ok   std::ostringstream formatting (int, hex+showbase, width) and str()
+  ok   kCFNumberNaN/±Infinity hold real CFNumbers; OBJC_IVAR_$_NSObject.isa is 0; NSURLProtectionSpaceHTTPProxy is @"http"
+[warn] Missing data symbol vtable for HvmNoSuchType (virtual calls through it report the slot)
+[warn] Missing: virtual function #3 of vtable for HvmNoSuchType
+[warn] Missing data symbol VTT for HvmNoSuchType (virtual calls through it report the slot)
+[warn] Missing: virtual function #0 of VTT for HvmNoSuchType
+  ok   Missing vtables and VTTs report the class and slot of a virtual call instead of jumping to 0
+  ok   iconv converts UTF-8 to UTF-16LE through the host and advances the guest pointers; getpwnam_r finds only mobile
+  ok   CVPixelBuffer has real memory; AVAssetWriter takes inputs and starts writing; dlopen(NULL) returns RTLD_DEFAULT
+  ok   std::filebuf has a vtable whose underflow/uflow read the open file
+  ok   String-stream __ZTV symbols have GCC's address points; stringWithString: of a constant string returns it
+[warn] NSKeyedUnarchiver: not a keyed archive (4 bytes, starts 01020304)
+  ok   NSKeyedUnarchiver with nil data decodes nothing; junk data still raises
+  ok   UIRoundedRectButton is a rounded-rect UIButton; GKAchievement keeps identifier and percentComplete
+  ok   CFURLCreateAbsoluteURLWithBytes resolves the bytes against the base URL
+  ok   std::stringbuf from an inline constructor: _M_stringbuf_init keeps the initial text and appends (ate)
+  ok   NSCalendar compose / components / dateByAdding (leap day) / difference
+  ok   NSScanner int / case-insensitive string / double / hex / scanUpToString
+Microphone: the app started recording
+Microphone: recording stopped
+  ok   AudioQueue recording fills buffers with microphone audio at the queue's rate and format
+  ok   NSThread isExecuting/isFinished follow start and the end of its work
+  ok   NSXMLParser elements / attributes / entities / CDATA / self-closing / mismatched-tag error
+  ok   POSIX BRE dot-star, anchors, and re_nsub
+  ok   POSIX BRE grouping reports the last iteration
+  ok   POSIX BRE bounded interval is greedy
+  ok   POSIX BRE backreferences
+  ok   POSIX ERE alternation is leftmost-longest
+  ok   POSIX ERE subexpression offsets
+  ok   unmatched optional and alternate groups are -1
+  ok   REG_ICASE folds literals and ranges
+  ok   REG_NOSUB keeps re_nsub and does not write pmatch
+  ok   REG_NEWLINE changes dot, anchors, and negated classes
+  ok   regcomp returns POSIX error codes
+  ok   regerror reports Darwin strings and the size including NUL
+  ok   regexec REG_NOMATCH and regfree invalidates the pattern
+  ok   leftmost match may be empty
+  ok   tmpnam names are unique inside the guest sandbox tmp directory
+  ok   tmpnam(NULL) reuses one guest static buffer
+  ok   file open ring tracks guest opens across fopen, open, NSData, and NSFileHandle with live updates and rollover
+  ok   pmatch slots past re_nsub are -1
+  ok   REG_STARTEND limits the region and reports absolute offsets
+  ok   unbounded repeats stay leftmost-longest
+    regex 100k: 78 ms
+  ok   long inputs of 100k characters stay fast
+    regex (a|aa)*c 100k: 15 ms
+  ok   unanchored (a|aa)*c on 100k a's finishes
+  ok   glibc (a*)* backreference splits the run in half
+  ok   REG_PEND ends the pattern at re_endp
+  ok   intentional ProcessExit propagates Halt through HLE calls
+  ok   unexpected errors during shutdown remain HostError failures
+  ok   frame histogram percentiles are 0 with no frames
+  ok   one frame: p50, p95, and p99 share that frame's histogram bucket
+  ok   frame times past the top bucket clamp into that bucket
+  ok   p50 and p95 stay on the common bucket when two samples sit past the top bucket
+  ok   perf report with no frames keeps legacy fields and adds percentiles and time-to-first-frame
+  ok   frame counters keep sum, max, and the 16.7 ms slow threshold; the first present wins
+  ok   two-frame percentiles come from the histogram, not from max or the average
+  ok   perf JSON adds percentile and time-to-first-frame fields without changing legacy ones
+  ok   Termination finishes save work and suppresses collected/late queue, timer and frame callbacks
+  ok   Process::hostPath and guestPath perform 300-char round trips with virtual short paths and no double mapping
+  ok   Path mapping keeps '/' when the app passes paths with a trailing slash, and accepts /private/var spellings
+  ok   _pthread_from_mach_thread_np maps mach port to pthread_t
+  ok   mmap with MAP_FIXED returns requested guest address
+  ok   formatGuest correctly parses format specifiers with flags after width (%10#llx)
+  ok   GuestArena diagnostics count simultaneous live reservations
+  ok   GuestArena diagnostics count reservations released at destruction
+[warn] EAGLContext setCurrentContext: fails because ctx 0x10000210 is in use on thread 1
+  ok   software EAGLContext rejects a context already current on another thread
+GPU: OpenGL ES calls go to the host driver (affinity-test)
+  ok   GPU EAGLContext reports a successful shared-context bind on a second thread
+fulltest: 271 passed, 0 failed

@@ -343,9 +343,10 @@ uint32_t s_strcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
     const size_t dl = safe_strlen(x, d);
     if (dl >= destlen) s_chk_fail(x);
     const size_t sl = safe_strlen(x, s);
-    if (dl + sl + 1 > destlen) s_chk_fail(x);
-    if (!validateRange(x, d + dl, sl + 1, Memory::kProtWrite)) {
-        throw CPU::GuestFault(CPU::Exit::MemFault, d + dl, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strcat_chk");
+    if (uint64_t(dl) + uint64_t(sl) + 1 > destlen) s_chk_fail(x);
+    const uint64_t dest_write_addr = uint64_t(d) + uint64_t(dl);
+    if (dest_write_addr >= Memory::GuestArena::kArenaSize || !validateRange(x, uint32_t(dest_write_addr), sl + 1, Memory::kProtWrite)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, uint32_t(dest_write_addr), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strcat_chk");
     }
     std::memmove(H(x, d) + dl, H(x, s), sl + 1);
     return d;
@@ -386,8 +387,9 @@ uint32_t s_strlcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t dest
     const size_t sl = safe_strlen(x, s);
     if (dl < n) { // We only append if we found NUL before n.
         size_t append_len = std::min<size_t>(sl, n - dl - 1);
-        if (!validateRange(x, d + dl, append_len + 1, Memory::kProtWrite)) {
-             throw CPU::GuestFault(CPU::Exit::MemFault, d + dl, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcat_chk");
+        const uint64_t dest_write_addr = uint64_t(d) + uint64_t(dl);
+        if (dest_write_addr >= Memory::GuestArena::kArenaSize || !validateRange(x, uint32_t(dest_write_addr), append_len + 1, Memory::kProtWrite)) {
+             throw CPU::GuestFault(CPU::Exit::MemFault, uint32_t(dest_write_addr), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in strlcat_chk");
         }
     }
     return s_strlcat(x, d, s, n);
