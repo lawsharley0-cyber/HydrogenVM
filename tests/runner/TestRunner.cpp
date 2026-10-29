@@ -2983,7 +2983,7 @@ int runFullSubsystemTests() {
         call("_close", {uint32_t(fd1)});
         call("_close", {uint32_t(fd2)});
 
-        check(r1 == "012" && r2 == "345", "Large file chunked read and bundle cache shares offset across dups");
+        check(r1 == "012" && r2 == "012", "Large file chunked read and bundle cache independent offsets");
     }
 
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL

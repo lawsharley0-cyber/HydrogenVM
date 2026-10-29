@@ -444,22 +444,6 @@ int hostOpenFlags(uint32_t f) {
     if (f & 0x100000) h |= O_DIRECTORY;
     return h | O_CLOEXEC;
 }
-struct AssetCache {
-    explicit AssetCache(Process&) {}
-    std::mutex mu;
-    struct Entry { int fd; struct stat st; };
-    std::unordered_map<std::string, Entry> entries;
-    bool isAsset(const std::string& path) {
-        if (path.find("CookedIPhone") == std::string::npos) return false;
-        if (path.size() < 4) return false;
-        std::string ext = path.substr(path.size() - 4);
-        return ext == ".tfc" || ext == ".xxx";
-    }
-};
-
-AssetCache& assetCache(Process& p) {
-    return p.service<AssetCache>();
-}
 
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
@@ -467,13 +451,16 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const std::string hp = x.proc.hostPath(gp);
 
     int fd = -1;
-    bool is_asset = (flags & 3) == 0 && assetCache(x.proc).isAsset(hp);
+    bool is_asset = (flags & 3) == 0 && hvm::getAssetCache(x.proc).isAsset(hp);
     if (is_asset) {
-        auto& c = assetCache(x.proc);
+        auto& c = hvm::getAssetCache(x.proc);
         std::lock_guard<std::mutex> lk(c.mu);
         auto it = c.entries.find(hp);
         if (it != c.entries.end()) {
-            fd = ::dup(it->second.fd);
+            int new_fd = ::open(hp.c_str(), O_RDONLY | O_CLOEXEC);
+            if (new_fd >= 0) {
+                fd = new_fd;
+            }
         } else {
             int base_fd = ::open(hp.c_str(), hostOpenFlags(flags), mode & 0777);
             if (base_fd >= 0) {
@@ -485,7 +472,10 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
 #endif
 #endif
                     c.entries[hp] = {base_fd, st};
-                    fd = ::dup(base_fd);
+                    int new_fd = ::open(hp.c_str(), O_RDONLY | O_CLOEXEC);
+                    if (new_fd >= 0) {
+                        fd = new_fd;
+                    }
                 } else {
                     fd = base_fd;
                 }
@@ -502,7 +492,7 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     int64_t sz = -1;
     struct stat st;
     if (is_asset) {
-        auto& c = assetCache(x.proc);
+        auto& c = hvm::getAssetCache(x.proc);
         std::lock_guard<std::mutex> lk(c.mu);
         if (c.entries.count(hp)) sz = c.entries[hp].st.st_size;
     } else if (::fstat(fd, &st) == 0) {
@@ -661,13 +651,18 @@ int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     const std::string hp = x.proc.hostPath(gp);
     struct stat st;
 
-    if (assetCache(x.proc).isAsset(hp)) {
-        auto& c = assetCache(x.proc);
+    if (hvm::getAssetCache(x.proc).isAsset(hp)) {
+        auto& c = hvm::getAssetCache(x.proc);
         std::lock_guard<std::mutex> lk(c.mu);
         auto it = c.entries.find(hp);
         if (it != c.entries.end()) {
-            storeStat(x, out, it->second.st);
-            return 0;
+            if (::stat(hp.c_str(), &st) == 0 && st.st_mtime == it->second.st.st_mtime && !S_ISLNK(st.st_mode)) {
+                 storeStat(x, out, it->second.st);
+                 return 0;
+            } else {
+                 if (it->second.fd >= 0) ::close(it->second.fd);
+                 c.entries.erase(it);
+            }
         }
     }
 
@@ -680,13 +675,18 @@ int32_t f_lstat(Ctx& x, GuestPtr path, GuestPtr out) {
     const std::string hp = x.proc.hostPath(gp);
     struct stat st;
 
-    if (assetCache(x.proc).isAsset(hp)) {
-        auto& c = assetCache(x.proc);
+    if (hvm::getAssetCache(x.proc).isAsset(hp)) {
+        auto& c = hvm::getAssetCache(x.proc);
         std::lock_guard<std::mutex> lk(c.mu);
         auto it = c.entries.find(hp);
         if (it != c.entries.end()) {
-            storeStat(x, out, it->second.st);
-            return 0;
+            if (::stat(hp.c_str(), &st) == 0 && st.st_mtime == it->second.st.st_mtime && !S_ISLNK(st.st_mode)) {
+                 storeStat(x, out, it->second.st);
+                 return 0;
+            } else {
+                 if (it->second.fd >= 0) ::close(it->second.fd);
+                 c.entries.erase(it);
+            }
         }
     }
 

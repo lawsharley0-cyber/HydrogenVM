@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "../AssetCache.hpp"
 #include <fcntl.h>
 
 namespace fs = std::filesystem;
@@ -1025,30 +1026,19 @@ id newHandle(Ctx& x, FILE* f, int stdStream) {
 }
 FileHandleData* fhd(Ctx& x, id self) { return rt(x).hostIf<FileHandleData>(self); }
 
-struct AssetCache {
-    explicit AssetCache(Process&) {}
-    std::mutex mu;
-    struct Entry { int fd; struct stat st; };
-    std::unordered_map<std::string, Entry> entries;
-    bool isAsset(const std::string& path) {
-        if (path.find("CookedIPhone") == std::string::npos) return false;
-        if (path.size() < 4) return false;
-        std::string ext = path.substr(path.size() - 4);
-        return ext == ".tfc" || ext == ".xxx";
-    }
-};
-
-AssetCache& bundleAssetCache(Process& p) {
-    return p.service<AssetCache>();
-}
-
 FILE* openCachedFile(Ctx& x, const std::string& path) {
-    auto& c = bundleAssetCache(x.proc);
+    auto& c = hvm::getAssetCache(x.proc);
     if (c.isAsset(path)) {
         std::lock_guard<std::mutex> lk(c.mu);
         auto it = c.entries.find(path);
         if (it != c.entries.end()) {
-            return ::fdopen(::dup(it->second.fd), "rb");
+            int new_fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+            if (new_fd >= 0) {
+                FILE* f = ::fdopen(new_fd, "rb");
+                if (f) return f;
+                ::close(new_fd);
+            }
+            return nullptr;
         } else {
             int base_fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
             if (base_fd >= 0) {
@@ -1061,9 +1051,19 @@ FILE* openCachedFile(Ctx& x, const std::string& path) {
 #endif
 #endif
                     c.entries[path] = {base_fd, st};
-                    fd = ::dup(base_fd);
+                    int new_fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+                    if (new_fd >= 0) {
+                        fd = new_fd;
+                    }
                 }
-                return ::fdopen(fd, "rb");
+                FILE* f = ::fdopen(fd, "rb");
+                if (f) return f;
+                ::close(fd);
+                if (fd != base_fd) {
+                    // base_fd is in cache, don't close it
+                } else {
+                    ::close(base_fd);
+                }
             }
             return nullptr;
         }
@@ -1080,7 +1080,7 @@ id fh_reading(Ctx& x, id, SEL, id p) {
     }
     int64_t sz = -1;
     struct stat st;
-    auto& c = bundleAssetCache(x.proc);
+    auto& c = hvm::getAssetCache(x.proc);
     if (c.isAsset(path)) {
         std::lock_guard<std::mutex> lk(c.mu);
         if (c.entries.count(path)) sz = c.entries[path].st.st_size;
