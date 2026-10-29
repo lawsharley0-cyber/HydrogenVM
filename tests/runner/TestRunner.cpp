@@ -2045,6 +2045,7 @@ int runFullSubsystemTests() {
         bool guestException = false;
         try { r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)}); }
         catch (const Hydrogen::CPU::GuestFault&) { guestException = true; }
+        catch (const ObjC::ObjCError&) { /* Pre-fix behavior: host exception, not a guest exception. */ }
         check(guestException, "NSUserDefaults setObject:forKey: raises a guest exception for non-plist objects");
         const ObjC::id validKey = Runtime::Foundation::makeString(cx, "testKeyPlist");
         const ObjC::id validString = Runtime::Foundation::makeString(cx, "validStringValue");
