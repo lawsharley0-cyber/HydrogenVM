@@ -4264,7 +4264,30 @@ int runFullSubsystemTests() {
         call("_pthread_mutex_init", {mtx, 0});
         const uint32_t lock_ret = call("__ZNSt3__15mutex4lockEv", {mtx});
         const uint32_t unlock_ret = call("__ZNSt3__15mutex6unlockEv", {mtx});
-        bool mtx_ok = lock_ret == 0 && unlock_ret == 0;
+
+        // Validate ENOSYS fallback for m_lock/m_unlock with a mock proc
+        Process missingProc(cfg);
+        missingProc.defineData("__hvm_noop", 0);
+        missingProc.defineData("__ZNSt3__15mutex4lockEv", 0);
+        missingProc.defineData("__ZNSt3__15mutex6unlockEv", 0);
+        Runtime::registerLibcxx(missingProc);
+
+        auto callMissing = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = missingProc.lookupSymbol(sym);
+            return a ? uint32_t(missingProc.callGuest(missingProc.mainThread().cpu, *a, args)) : 0xDEADu;
+        };
+
+        const uint32_t lock_ret_enosys = callMissing("__ZNSt3__15mutex4lockEv", {mtx});
+        const uint32_t unlock_ret_enosys = callMissing("__ZNSt3__15mutex6unlockEv", {mtx});
+
+        // Verify the mutex is actually held (lock_ret == 0, trylock gives EBUSY 16) and fallback gives ENOSYS (78)
+        const uint32_t trylock_ret = proc.lookupSymbol("_pthread_mutex_trylock") ?
+            proc.callGuest(cpu, *proc.lookupSymbol("_pthread_mutex_trylock"), {mtx}) : 0;
+        bool mtx_ok = lock_ret == 0 && unlock_ret == 0 && lock_ret_enosys == 78 && unlock_ret_enosys == 78 && trylock_ret == 16;
+
+        // verify cond_notify_one fallback
+        const uint32_t cv_ret_enosys = callMissing("__ZNSt3__118condition_variable10notify_oneEv", {mtx});
+        if (cv_ret_enosys != 78) mtx_ok = false;
 
         const uint64_t t1 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
         const uint64_t t2 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
@@ -4280,6 +4303,23 @@ int runFullSubsystemTests() {
         // Thread identity and teardown checks
         const uint32_t th_obj = proc.heap().allocZeroed(16);
         const uint32_t worker_th = proc.startThread(proc.defineFunction("hvm_test_std_thread", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
+
+        // Concurrent tld_get test
+        const uint32_t race_fn = proc.defineFunction("hvm_test_tld_race", [](Ctx& ctx){
+            auto a = ctx.proc.lookupSymbol("__ZNSt3__119__thread_local_dataEv");
+            if (a) ctx.proc.callGuest(ctx.cpu, *a, {});
+            ctx.cpu.r[0] = 0;
+        });
+        const uint32_t r1 = proc.startThread(race_fn, 0, 64u << 10, false);
+        const uint32_t r2 = proc.startThread(race_fn, 0, 64u << 10, false);
+        const uint32_t r3 = proc.startThread(race_fn, 0, 64u << 10, false);
+        const uint32_t r4 = proc.startThread(race_fn, 0, 64u << 10, false);
+
+        const uint32_t join_obj = proc.heap().allocZeroed(16);
+        for (uint32_t th : {r1, r2, r3, r4}) {
+            m.write<uint32_t>(join_obj, th);
+            call("__ZNSt3__16thread4joinEv", {join_obj});
+        }
 
         // TLS separation: run a thread that gets a TLS key. Our tests for TLS are basic but we can just use the key we got.
         // C++ thread tests
@@ -4310,7 +4350,11 @@ int runFullSubsystemTests() {
             term_called = std::string(e.what()).find("terminate() called") != std::string::npos;
         }
 
-        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && detach_inv_ok && join_ok && join_inv_ok && term_called, "libc++ (std::__1) threading and concurrency");
+        // Also check if missing thread symbols give 78
+        bool missing_join_enosys = callMissing("__ZNSt3__16thread4joinEv", {th_obj}) == 78;
+        bool missing_detach_enosys = callMissing("__ZNSt3__16thread6detachEv", {th_obj}) == 78;
+
+        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && detach_inv_ok && join_ok && join_inv_ok && term_called && missing_join_enosys && missing_detach_enosys, "libc++ (std::__1) threading and concurrency");
     }
 
     // Host-requested shutdown must not become an HLE error. An unrelated

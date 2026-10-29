@@ -1,6 +1,7 @@
 #include "runtime/Process.hpp"
 #include <chrono>
 #include <stdexcept>
+#include <mutex>
 #include <thread>
 
 namespace Hydrogen::Runtime {
@@ -14,6 +15,14 @@ uint32_t tld_get(Ctx& x) {
     if (addr) {
         x.cpu.r[0] = *addr;
         return *addr;
+    }
+
+    std::lock_guard<std::mutex> lk(proc.staticMu_);
+
+    auto addr2 = proc.lookupSymbol("__hvm_libcxx_tld_key");
+    if (addr2) {
+        x.cpu.r[0] = *addr2;
+        return *addr2;
     }
 
     // Allocate 4 bytes in static memory to hold the pthread_key_t
@@ -65,7 +74,7 @@ uint32_t t_join(Ctx& x, GuestPtr self) {
         if (ret == 0) x.mem.write<uint32_t>(self, 0);
         return ret;
     }
-    return 3; // ESRCH or 38 ENOSYS
+    return 78; // ENOSYS
 }
 
 void t_detach(Ctx& x, GuestPtr self) {
@@ -80,7 +89,7 @@ void t_detach(Ctx& x, GuestPtr self) {
         detach_fn(x.cpu);
         if (x.cpu.r[0] == 0) x.mem.write<uint32_t>(self, 0);
     } else {
-        x.cpu.r[0] = 3;
+        x.cpu.r[0] = 78; // ENOSYS
     }
 }
 
@@ -91,7 +100,7 @@ uint32_t m_lock(Ctx& x, GuestPtr self) {
         lock_fn(x.cpu);
         return x.cpu.r[0];
     }
-    return 0;
+    return 78; // ENOSYS
 }
 
 uint32_t m_unlock(Ctx& x, GuestPtr self) {
@@ -101,7 +110,7 @@ uint32_t m_unlock(Ctx& x, GuestPtr self) {
         unlock_fn(x.cpu);
         return x.cpu.r[0];
     }
-    return 0;
+    return 78; // ENOSYS
 }
 
 void m_dtor(Ctx& x, GuestPtr self) {
@@ -117,6 +126,8 @@ void cv_notify_one(Ctx& x, GuestPtr self) {
     if (fn) {
         x.cpu.r[0] = self;
         fn(x.cpu);
+    } else {
+        x.cpu.r[0] = 78; // ENOSYS
     }
 }
 
