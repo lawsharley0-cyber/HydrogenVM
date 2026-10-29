@@ -1,12 +1,12 @@
-# HydrogenVM report — bd44c6d
+# HydrogenVM report — dab8990
 
-2026-10-29T15:40:35+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-29T15:50:00+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 0 | 1 | 0 | 153.0s |
+| build | 0 | 1 | 0 | 152.6s |
 
 ## Problems (25)
 
@@ -15,13 +15,13 @@
 - **build / ninja**
 
   ```
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:454:60: error: no member named 'getAssetCache' in namespace 'Hydrogen::Runtime'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:456:38: error: no member named 'getAssetCache' in namespace 'Hydrogen::Runtime'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:495:38: error: no member named 'getAssetCache' in namespace 'Hydrogen::Runtime'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:654:28: error: no member named 'getAssetCache' in namespace 'Hydrogen::Runtime'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:655:38: error: no member named 'getAssetCache' in namespace 'Hydrogen::Runtime'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:678:28: error: no member named 'getAssetCache' in namespace 'Hydrogen::Runtime'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:679:38: error: no member named 'getAssetCache' in namespace 'Hydrogen::Runtime'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:454:41: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:456:19: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:495:19: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:654:9: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:655:19: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:678:9: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:679:19: error: use of undeclared identifier 'getAssetCache'
   7 errors generated.
   ```
 
