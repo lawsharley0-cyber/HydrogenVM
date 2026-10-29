@@ -1447,6 +1447,7 @@ int runFullSubsystemTests() {
         check(geometry,"UIBezierPath owns CGPath copies, contains points and returns ARMv7 CGRect bounds");
     }
 
+
     {
         const auto backing = Foundation::makeDict(cx, {}, true, true);
         int reads = 0, writes = 0, removes = 0;
@@ -2966,34 +2967,37 @@ int runFullSubsystemTests() {
         check(caught, "Missing NIB throws ObjCError exception matching NSInternalInconsistencyException behavior");
 
         // Write dummy nibs to sandbox to test fallback
+        auto writeDummyNib = [&](const std::string& name) {
+            const std::string path = proc.bundlePath() + "/" + name + ".nib";
+            std::filesystem::create_directories(path);
+        };
+        writeDummyNib("MainMenu");
+        writeDummyNib("GameLandscapeMenu"); // Not a fallback for GameMenu
+
+        bool fbCaught = false;
+        try {
+            r.send(cpu, mainBundle, r.sel("loadNibNamed:owner:options:"), {Foundation::makeString(cx, "GameMenu"), 0, 0});
+        } catch (const CPU::GuestFault& e) {
+            fbCaught = std::string(e.what()).find("NSInternalInconsistencyException") != std::string::npos;
+        } catch (...) { }
+        check(fbCaught, "Unrelated NIB name with suffix substring does not incorrectly trigger fallback");
+
+        std::error_code ec;
+        std::filesystem::remove_all(proc.bundlePath() + "/MainMenu.nib", ec);
+        std::filesystem::remove_all(proc.bundlePath() + "/GameLandscapeMenu.nib", ec);
+
         auto writeArchive = [&](const std::string& name) {
             auto path = proc.bundlePath() + "/" + name + ".nib";
             FILE* f = fopen(path.c_str(), "wb");
             fwrite("bplist00", 1, 8, f);
             fclose(f);
         };
-
-        // Test that 'Landscape' inside the name does not trigger a fallback.
-        // We write GameMenu.nib, but try to load GameLandscapeMenu.
-        // Since it doesn't end in Landscape, it shouldn't fall back to GameMenu.
-        writeArchive("GameMenu");
-        bool fbCaught = false;
-        try {
-            r.send(cpu, mainBundle, r.sel("loadNibNamed:owner:options:"), {Foundation::makeString(cx, "GameLandscapeMenu"), 0, 0});
-        } catch (const CPU::GuestFault& e) {
-            fbCaught = std::string(e.what()).find("NSInternalInconsistencyException") != std::string::npos;
-        } catch (...) { }
-        check(fbCaught, "Unrelated NIB name with suffix substring does not incorrectly trigger fallback");
-        std::filesystem::remove(proc.bundlePath() + "/GameMenu.nib");
-
-        // Test valid fallback stripping suffix at the end.
         writeArchive("MainMenu");
+
         bool fbFellback = false;
         try {
             r.send(cpu, mainBundle, r.sel("loadNibNamed:owner:options:"), {Foundation::makeString(cx, "MainMenuLandscape"), 0, 0});
         } catch (const CPU::GuestFault& e) {
-            // It falls back to MainMenu.nib, tries to parse "bplist00", fails with bplist: too small,
-            // and thus still throws NSInternalInconsistencyException.
             fbFellback = std::string(e.what()).find("NSInternalInconsistencyException") != std::string::npos;
         } catch (...) {}
         check(fbFellback, "NIB loading strips orientation suffix and falls back to base NIB");
