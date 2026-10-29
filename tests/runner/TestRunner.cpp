@@ -4310,7 +4310,62 @@ int runFullSubsystemTests() {
             term_called = std::string(e.what()).find("terminate() called") != std::string::npos;
         }
 
-        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && detach_inv_ok && join_ok && join_inv_ok && term_called, "libc++ (std::__1) threading and concurrency");
+        // Test condition variable ownership and wait
+        const uint32_t cv = proc.heap().allocZeroed(16);
+        call("_pthread_cond_init", {cv, 0});
+        // Mutex `mtx` is already initialized. Lock it for CV.
+        call("_pthread_mutex_lock", {mtx});
+        const uint32_t cv_ul = proc.heap().allocZeroed(4); // unique_lock just holds the mutex ptr at offset 0
+        m.write<uint32_t>(cv_ul, mtx);
+
+        std::atomic<bool> cv_woke{false};
+        const uint32_t cv_waiter = proc.defineFunction("hvm_test_cv_wait", [&](Ctx& ctx) {
+            auto a = proc.lookupSymbol("__ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE");
+            if (a) proc.callGuest(ctx.cpu, *a, {cv, cv_ul});
+            cv_woke = true;
+            auto u = proc.lookupSymbol("_pthread_mutex_unlock");
+            if (u) proc.callGuest(ctx.cpu, *u, {mtx}); // unlock after wait
+            ctx.cpu.r[0] = 0;
+        });
+        // We simulate `condition_variable::wait` which blocks. Start a thread.
+        const uint32_t cv_th = proc.startThread(cv_waiter, 0, 64u << 10, false);
+        // Wait a bit, then signal
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        call("__ZNSt3__118condition_variable10notify_oneEv", {cv});
+
+        uint32_t cv_ret;
+        proc.joinThread(cv_th, &cv_ret);
+        bool cv_ok = cv_woke.load();
+        call("_pthread_mutex_unlock", {mtx}); // we must unlock the mutex in main thread too, or we can just let it be
+
+        // Test TLS isolation
+        const uint32_t tls_test_key = m.read<uint32_t>(tls_ptr);
+        std::atomic<uint32_t> th1_val{0}, th2_val{0};
+        const uint32_t tls_worker1 = proc.defineFunction("hvm_test_tls1", [&](Ctx& ctx) {
+            auto set_fn = proc.lookupSymbol("_pthread_setspecific");
+            auto get_fn = proc.lookupSymbol("_pthread_getspecific");
+            if (set_fn) proc.callGuest(ctx.cpu, *set_fn, {tls_test_key, 1234});
+            if (get_fn) th1_val = uint32_t(proc.callGuest(ctx.cpu, *get_fn, {tls_test_key}));
+            ctx.cpu.r[0] = 0;
+        });
+        const uint32_t tls_worker2 = proc.defineFunction("hvm_test_tls2", [&](Ctx& ctx) {
+            auto set_fn = proc.lookupSymbol("_pthread_setspecific");
+            auto get_fn = proc.lookupSymbol("_pthread_getspecific");
+            if (set_fn) proc.callGuest(ctx.cpu, *set_fn, {tls_test_key, 5678});
+            if (get_fn) th2_val = uint32_t(proc.callGuest(ctx.cpu, *get_fn, {tls_test_key}));
+            ctx.cpu.r[0] = 0;
+        });
+        const uint32_t tls_th1 = proc.startThread(tls_worker1, 0, 64u << 10, false);
+        const uint32_t tls_th2 = proc.startThread(tls_worker2, 0, 64u << 10, false);
+        proc.joinThread(tls_th1, nullptr);
+        proc.joinThread(tls_th2, nullptr);
+
+        bool tls_isolation_ok = th1_val.load() == 1234 && th2_val.load() == 5678;
+
+        // Ensure all detached background threads finish before tearing down the process
+        proc.joinThread(worker_th, nullptr);
+
+        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && detach_inv_ok && join_ok && join_inv_ok && term_called && cv_ok && tls_isolation_ok, "libc++ (std::__1) threading and concurrency");
     }
 
     // Host-requested shutdown must not become an HLE error. An unrelated
