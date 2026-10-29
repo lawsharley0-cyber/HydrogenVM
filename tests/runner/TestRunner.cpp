@@ -235,6 +235,56 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 
 namespace {
 
+// Independent of HVM_ZOMBIES in the environment: enableZombies is the same
+// switch. Returns false when the 16384-record cap is missing or when an
+// evicted zombie is handed back to the guest heap.
+bool zombieMetadataStaysCapped() {
+    using namespace Hydrogen;
+    using namespace Hydrogen::Runtime;
+    constexpr int kZombieCap = 16384;
+    const std::string named = "-[NSObject description]: message sent to deallocated instance";
+    ProcessConfig zcfg;
+    zcfg.homePath = "/tmp/hvm_zombie_cap";
+    zcfg.bundlePath = "/tmp/hvm_zombie_cap/Z.app";
+    zcfg.enableZombies = true;
+    zcfg.log = [](LogLevel, const std::string&) {};
+    Process zp(zcfg);
+    auto& zr = ObjC::rt(zp);
+    auto& zcpu = zp.mainThread().cpu;
+    zp.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
+    zcpu.r[CPU::kSP] = 0xBF000000u - 256;
+    zcpu.r[7] = 0;
+    auto make = [&]() {
+        return ObjC::id(zr.send(zcpu, ObjC::id(zr.send(zcpu, zr.getClass("NSObject"), zr.selAlloc)), "init"));
+    };
+    auto message = [&](ObjC::id obj) {
+        std::string msg;
+        try { zr.send(zcpu, obj, "description"); } catch (const std::exception& e) { msg = e.what(); }
+        return msg;
+    };
+    std::vector<ObjC::id> objects;
+    objects.reserve(size_t(kZombieCap) + 1);
+    for (int i = 0; i < kZombieCap + 1; ++i) objects.push_back(make());
+    for (int i = 0; i < kZombieCap; ++i) zr.send(zcpu, objects[size_t(i)], "release");
+    const bool held = message(objects[0]).find(named) != std::string::npos;
+    zr.send(zcpu, objects[size_t(kZombieCap)], "release");
+    const std::string evictedMsg = message(objects[0]);
+    const bool evicted = evictedMsg.find("message sent to deallocated instance") == std::string::npos &&
+                         evictedMsg.find("unrecognized selector sent to instance") != std::string::npos;
+    const bool recent = message(objects[1]).find(named) != std::string::npos &&
+                        message(objects[size_t(kZombieCap)]).find(named) != std::string::npos;
+    const ObjC::id oldest = objects[0];
+    zp.mem().write<uint32_t>(oldest, 0x5A5A5A5Au);
+    const ObjC::id fresh = make();
+    const bool kept = zp.heap().blockSize(oldest) != 0 && fresh != oldest &&
+                      zp.mem().read<uint32_t>(oldest) == 0x5A5A5A5Au;
+    if (!(held && evicted && recent && kept)) {
+        std::printf("    zombie cap detail held=%d evicted=%d recent=%d kept=%d\n", held, evicted, recent, kept);
+        std::printf("    evicted message: %.200s\n", evictedMsg.c_str());
+    }
+    return held && evicted && recent && kept;
+}
+
 int runFullSubsystemTests() {
     using namespace Hydrogen;
     using namespace Hydrogen::Runtime;
@@ -3488,6 +3538,12 @@ int runFullSubsystemTests() {
                   "HVM_ZOMBIES names the class of a freed object that is messaged");
         }
 
+        // Cap is 16384 records in Runtime::disposeInstance. Guest memory of an
+        // evicted zombie stays allocated. Runs without HVM_ZOMBIES set, and
+        // fails if the cap is removed.
+        check(zombieMetadataStaysCapped(),
+              "zombie metadata stops at 16384 records and the evicted object's guest memory stays allocated");
+
         // A virtual call through a vtable nothing provides names the class and slot.
         {
             const uint32_t vt = proc.makeMissingStub("__ZTV13HvmNoSuchType");
@@ -4723,10 +4779,99 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
-    // Wide formatting stores 4 bytes per wchar_t. C99 swprintf honours n
-    // (including the NUL), returns -1 when the text does not fit, and
-    // must throw before any store when that span is not writable.
+    // PR #167: fixed-size heap objects share writable pages, so a successful
+    // host mapping check alone is not enough to protect adjacent allocations.
     {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-format-bounds-tests";
+        Process proc(cfg);
+        auto& cpu = proc.mainThread().cpu;
+        const uint32_t stack = proc.heap().allocZeroed(1024);
+        cpu.r[CPU::kSP] = stack + 1024;
+        auto run = [&](const char* name, std::initializer_list<uint32_t> args) {
+            bool fault = false;
+            int32_t result = -1;
+            try {
+                const auto sym = proc.lookupSymbol(name);
+                if (!sym) return std::pair<bool, int32_t>{true, result};
+                result = int32_t(proc.callGuest(cpu, *sym, args));
+            } catch (const CPU::GuestFault&) {
+                fault = true;
+            } catch (const std::exception&) {
+                fault = true;
+            }
+            return std::pair<bool, int32_t>{fault, result};
+        };
+        const uint32_t exact = proc.allocCString("123456789012345");
+        const uint32_t overflow = proc.allocCString("1234567890123456");
+        const uint32_t shortText = proc.allocCString("12345");
+        const uint32_t small = proc.heap().allocZeroed(16);
+        auto r = run("_sprintf", {small, exact});
+        check(!r.first && r.second == 15 && proc.mem().read<uint8_t>(small + 15) == 0,
+              "sprintf accepts exact heap allocation fit");
+        r = run("_sprintf", {small, overflow});
+        check(r.first, "sprintf rejects one-byte heap allocation overflow");
+
+        const uint32_t adjacent = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(adjacent, 0x5a);
+        r = run("_sprintf", {small, overflow});
+        check(r.first && proc.mem().read<uint8_t>(adjacent) == 0x5a,
+              "sprintf cannot corrupt adjacent live allocation");
+
+        const uint32_t inside = proc.heap().allocZeroed(16) + 5;
+        r = run("_sprintf", {inside, proc.allocCString("1234567890")});
+        check(!r.first && r.second == 10, "sprintf accepts interior pointer exact fit");
+        r = run("_sprintf", {inside, proc.allocCString("12345678901")});
+        check(r.first, "sprintf rejects interior pointer overflow");
+
+        r = run("_snprintf", {small, 4, shortText});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(small), "123\0", 4) == 0,
+              "snprintf truncates and reports untruncated length");
+        r = run("_snprintf", {0, 0, shortText});
+        check(!r.first && r.second == 5, "snprintf allows null destination with zero size");
+        r = run("___snprintf_chk", {small, 4, 0, 4, shortText});
+        check(!r.first && r.second == 5, "snprintf_chk permits truncation within object bound");
+        r = run("___snprintf_chk", {small, 5, 0, 4, shortText});
+        check(r.first, "snprintf_chk rejects size exceeding object bound");
+        r = run("___snprintf_chk", {0, 0, 0, 0, shortText});
+        check(!r.first && r.second == 5, "snprintf_chk accepts zero-size destination");
+        r = run("_vsnprintf", {small, 4, shortText, 0});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(small), "123\0", 4) == 0,
+              "vsnprintf truncates and reports untruncated length");
+        r = run("___vsnprintf_chk", {small, 4, 0, 4, shortText, 0});
+        check(!r.first && r.second == 5, "vsnprintf_chk permits bounded truncation");
+        r = run("___vsnprintf_chk", {small, 5, 0, 4, shortText, 0});
+        check(r.first, "vsnprintf_chk rejects size exceeding object bound");
+        r = run("___sprintf_chk", {small, 0, 15, exact});
+        check(r.first, "sprintf_chk enforces object size including terminator");
+        r = run("___sprintf_chk", {small, 0, 16, exact});
+        check(!r.first && r.second == 15, "sprintf_chk accepts exact compiler object bound");
+        r = run("___vsprintf_chk", {small, 0, 15, exact});
+        check(r.first, "vsprintf_chk exists and enforces object size");
+
+        // The managed heap reserves 0x10000000..0x80000000; use an
+        // independent mapping so this is genuinely a stack/global-style
+        // destination, not an unallocated address within the heap reserve.
+        constexpr uint32_t page = 0x90000000;
+        proc.mem().map(page, 4096, Memory::kProtRW);
+        const uint32_t edge = page + 4096 - 5;
+        r = run("_sprintf", {edge, proc.allocCString("1234")});
+        check(!r.first && r.second == 4, "sprintf accepts mapped guest-page exact fit");
+        r = run("_sprintf", {edge, shortText});
+        check(r.first, "sprintf rejects overflow into unmapped guest page");
+        const uint32_t global = proc.allocStatic(32);
+        r = run("_sprintf", {global, shortText});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(global), "12345\0", 6) == 0,
+              "sprintf permits writable global buffers outside tracked heap");
+
+
+
+        // Wide formatting stores 4 bytes per wchar_t. C99 swprintf honours n
+        // (including the NUL), returns -1 when the text does not fit, and
+        // must throw before any store when that span is not writable.
         struct WideCall { bool failed = false; bool bounds = false; int32_t result = -1; };
         auto wideRun = [&](const char* name, std::initializer_list<uint32_t> args) {
             WideCall out;
@@ -4873,8 +5018,11 @@ int runFullSubsystemTests() {
               "swprintf_chk truncates inside the object size and returns -1");
     }
 
-    // Mapping and writes must be serialized: on 16 KB hosts a committed host
-    // page can remain accessible after its 4 KB guest mapping is removed.
+    // Soak-test for concurrent map/unmap races against formatted writes.
+    // This test is non-deterministic by design to allow natural thread scheduling
+    // to interleave map/unmap with writes, verifying no segfaults occur. It does
+    // not strictly prove the lock prevents all races on every run, but ensures
+    // the system survives concurrent pressure.
     {
         Memory::GuestArena arena;
         constexpr uint32_t page = 0x90000000;
@@ -4895,6 +5043,8 @@ int runFullSubsystemTests() {
         check(attempted.load() == 1000 && !arena.copyCStringWritable(page, "no", 2),
               "formatted guest-page writes synchronize with concurrent map/unmap");
     }
+
+
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;

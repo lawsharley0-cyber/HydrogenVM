@@ -131,7 +131,7 @@ bool GuestArena::copyCStringWritable(uint32_t addr, const char* src, size_t char
     return true;
 }
 
-bool GuestArena::copyWideWritable(uint32_t addr, const uint32_t* chars, size_t count) noexcept {
+bool GuestArena::copyWideWritable(uint32_t addr, const char* chars, size_t count) noexcept {
     if (count > (UINT64_MAX / 4) - 1) return false;
     const uint64_t bytes = (uint64_t(count) + 1) * 4;
     const uint64_t end = uint64_t(addr) + bytes;
@@ -142,7 +142,8 @@ bool GuestArena::copyWideWritable(uint32_t addr, const uint32_t* chars, size_t c
         if (!(prot_[page] & kProtWrite)) return false;
     }
     for (size_t i = 0; i < count; ++i) {
-        std::memcpy(base_ + uint64_t(addr) + i * 4, &chars[i], 4);
+        const uint32_t wc = uint8_t(chars[i]);
+        std::memcpy(base_ + uint64_t(addr) + i * 4, &wc, 4);
     }
     const uint32_t zero = 0;
     std::memcpy(base_ + uint64_t(addr) + count * 4, &zero, 4);

@@ -24,10 +24,10 @@ public:
     uint32_t realloc(uint32_t addr, uint32_t size);
     uint32_t blockSize(uint32_t addr) const;       // malloc_size(); 0 if not a heap block
     bool copyCStringWithinAllocation(uint32_t addr, const char* src, size_t chars);
-    // `count` wide characters stored as 4-byte code units, plus the 4-byte NUL.
-    // The live allocation must contain the whole span, and that check stays held
+    // `count` narrow bytes stored as wchar_t, plus the 4-byte NUL. The live
+    // allocation must contain the whole span, and that check stays held
     // through the mapping lock and the write.
-    bool copyWideWithinAllocation(uint32_t addr, const uint32_t* chars, size_t count);
+    bool copyWideWithinAllocation(uint32_t addr, const char* chars, size_t count);
     bool     owns(uint32_t addr) const { return addr >= base_ && addr < limit_; }
 
     struct Stats { uint64_t liveBytes = 0, liveBlocks = 0, committed = 0, badFrees = 0; };

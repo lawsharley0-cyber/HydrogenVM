@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <typeinfo>
+#include <queue>
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -265,10 +266,13 @@ private:
     // HVM_ZOMBIES=1 or ProcessConfig::enableZombies: freed objects keep their
     // memory (so the address isn't reused) and remember their class and the guest
     // backtrace of the release that freed them; a later message names them.
+    // The metadata for zombies is bounded to save host memory, but the guest
+    // memory remains allocated to guarantee use-after-free detection.
     bool zombiesEnabled_ = false;
     std::mutex zombieMu_;
     std::unordered_map<id, std::pair<std::string, std::string>> zombies_;   // class, "freed by" + "allocated by"
     std::unordered_map<id, std::string> allocSites_;                        // live objects' creation backtraces
+    std::queue<id> zombieQueue_;
 };
 
 Runtime& rt(Process& p);

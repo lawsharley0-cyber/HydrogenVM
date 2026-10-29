@@ -436,41 +436,6 @@ std::string readWString(Ctx& x, GuestPtr ws, size_t maxChars = 65536) {
     }
     return out;
 }
-std::vector<uint32_t> decodeUtf8Wide(const std::string& s) {
-    std::vector<uint32_t> out;
-    size_t i = 0;
-    while (i < s.size()) {
-        uint8_t c = s[i];
-        if (c < 0x80) {
-            out.push_back(c);
-            i++;
-        } else if ((c & 0xE0) == 0xC0) {
-            if (i + 1 >= s.size() || (s[i+1] & 0xC0) != 0x80) throw std::runtime_error("invalid utf8");
-            uint32_t v = ((c & 0x1F) << 6) | (s[i+1] & 0x3F);
-            if (v < 0x80) throw std::runtime_error("overlong utf8");
-            out.push_back(v);
-            i += 2;
-        } else if ((c & 0xF0) == 0xE0) {
-            if (i + 2 >= s.size() || (s[i+1] & 0xC0) != 0x80 || (s[i+2] & 0xC0) != 0x80) throw std::runtime_error("invalid utf8");
-            uint32_t v = ((c & 0x0F) << 12) | ((s[i+1] & 0x3F) << 6) | (s[i+2] & 0x3F);
-            if (v < 0x800) throw std::runtime_error("overlong utf8");
-            if (v >= 0xD800 && v <= 0xDFFF) throw std::runtime_error("surrogate in utf8");
-            out.push_back(v);
-            i += 3;
-        } else if ((c & 0xF8) == 0xF0) {
-            if (i + 3 >= s.size() || (s[i+1] & 0xC0) != 0x80 || (s[i+2] & 0xC0) != 0x80 || (s[i+3] & 0xC0) != 0x80) throw std::runtime_error("invalid utf8");
-            uint32_t v = ((c & 0x07) << 18) | ((s[i+1] & 0x3F) << 12) | ((s[i+2] & 0x3F) << 6) | (s[i+3] & 0x3F);
-            if (v < 0x10000) throw std::runtime_error("overlong utf8");
-            if (v > 0x10FFFF) throw std::runtime_error("utf8 out of range");
-            out.push_back(v);
-            i += 4;
-        } else {
-            throw std::runtime_error("invalid utf8 lead byte");
-        }
-    }
-    return out;
-}
-
 // C99 swprintf: `n` counts wchar_t values, including the terminating NUL.
 // n == 0 writes nothing and returns -1. A result that does not fit in n is
 // truncated to n - 1 characters plus NUL and returns -1. Each stored wchar_t
@@ -483,17 +448,14 @@ int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t objectSize
     if (checked && uint64_t(n) * 4 > uint64_t(objectSize))
         throw std::runtime_error("__swprintf_chk object bound exceeded");
     if (!n) return -1;
-
-    std::vector<uint32_t> wide = decodeUtf8Wide(s);
-    if (wide.size() > size_t(INT32_MAX)) return -1;
-
-    const size_t chars = std::min(wide.size(), size_t(n) - 1);
+    if (s.size() > size_t(INT32_MAX)) return -1;
+    const size_t chars = std::min(s.size(), size_t(n) - 1);
     if (!buf) throw std::runtime_error("null formatted guest destination");
     const bool safe = x.proc.heap().owns(buf)
-        ? x.proc.heap().copyWideWithinAllocation(buf, wide.data(), chars)
-        : x.mem.copyWideWritable(buf, wide.data(), chars);
+        ? x.proc.heap().copyWideWithinAllocation(buf, s.data(), chars)
+        : x.mem.copyWideWritable(buf, s.data(), chars);
     if (!safe) throw std::runtime_error("formatted write exceeds guest allocation or writable mapping");
-    return wide.size() < size_t(n) ? int32_t(wide.size()) : -1;
+    return s.size() < size_t(n) ? int32_t(s.size()) : -1;
 }
 int32_t f_wprintf(Ctx& x, GuestPtr fmt, VarArgs va) { return outString(x, S(x).sF + kFileSize, formatGuest(x.proc, readWString(x, fmt), va.args)); }
 int32_t f_fwprintf(Ctx& x, GuestPtr fp, GuestPtr fmt, VarArgs va) { return outString(x, fp, formatGuest(x.proc, readWString(x, fmt), va.args)); }

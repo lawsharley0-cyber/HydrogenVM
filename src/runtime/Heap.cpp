@@ -177,7 +177,7 @@ bool Heap::copyCStringWithinAllocation(uint32_t addr, const char* src, size_t ch
     return mem_.copyCStringWritable(addr, src, chars);
 }
 
-bool Heap::copyWideWithinAllocation(uint32_t addr, const uint32_t* chars, size_t count) {
+bool Heap::copyWideWithinAllocation(uint32_t addr, const char* chars, size_t count) {
     if (count > (UINT64_MAX / 4) - 1) return false;
     const uint64_t bytes = (uint64_t(count) + 1) * 4;
     std::lock_guard<std::mutex> lk(mu_);
