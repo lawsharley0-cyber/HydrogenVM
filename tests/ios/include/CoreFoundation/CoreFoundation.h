@@ -85,6 +85,7 @@ CFMutableDictionaryRef CFDictionaryCreateMutable(CFAllocatorRef, CFIndex, const 
 CFIndex CFDictionaryGetCount(CFDictionaryRef);
 const void *CFDictionaryGetValue(CFDictionaryRef, const void *);
 Boolean CFDictionaryGetValueIfPresent(CFDictionaryRef, const void *, const void **);
+void CFDictionaryGetKeysAndValues(CFDictionaryRef, const void **, const void **);
 void CFDictionarySetValue(CFMutableDictionaryRef, const void *, const void *);
 void CFDictionaryRemoveValue(CFMutableDictionaryRef, const void *);
 CFDataRef CFDataCreate(CFAllocatorRef, const uint8_t *, CFIndex);
