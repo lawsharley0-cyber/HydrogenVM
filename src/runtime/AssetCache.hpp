@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-namespace hvm {
+namespace Hydrogen::Runtime {
 
 struct AssetCache {
     explicit AssetCache(Process&) {}
@@ -33,4 +33,4 @@ inline AssetCache& getAssetCache(Process& p) {
     return p.service<AssetCache>();
 }
 
-} // namespace hvm
+} // namespace Hydrogen::Runtime
