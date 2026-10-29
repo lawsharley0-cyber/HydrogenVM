@@ -2690,12 +2690,14 @@ int runFullSubsystemTests() {
         const ObjC::Class udCls = r.getClass("NSUserDefaults");
         const ObjC::id ud = ObjC::id(r.send(cpu, udCls, r.sel("standardUserDefaults")));
         const ObjC::id testKey = Runtime::Foundation::makeString(cx, "testKeyNonPlist");
-        r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)});
 
-        // ensure it was translated to description (fallback)
-        const ObjC::id val = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(testKey)}));
-        const std::string desc = Runtime::Foundation::utf8(cx, val);
-        check(desc.find("NSObject") != std::string::npos, "NSUserDefaults setObject:forKey: fallback on description for non-plist objects");
+        bool threw = false;
+        try {
+            r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)});
+        } catch (...) {
+            threw = true;
+        }
+        check(threw, "NSUserDefaults setObject:forKey: raises NSInvalidArgumentException for unsupported arbitrary NSObject types");
 
         // synchronize and test round trip for supported type
         const ObjC::id validKey = Runtime::Foundation::makeString(cx, "testKeyPlist");
