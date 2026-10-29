@@ -3973,6 +3973,115 @@ int runFullSubsystemTests() {
             call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
             return empty && plus && blank;
         });
+
+        run("_FORTIFY_SOURCE test strcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            if (call("___strcpy_chk", {dst, src, 100}) != dst) return false;
+            if (!check_fault("___strcpy_chk", {dst, src, 49})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strncpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            if (call("___strncpy_chk", {dst, src, 50, 100}) != dst) return false;
+            if (!check_fault("___strncpy_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strcat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strcat_chk", {dst, src, 100}) != dst) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strcat_chk", {dst, src, 49})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strncat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strncat_chk", {dst, src, 50, 100}) != dst) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strncat_chk", {dst, src, 150, 50})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            if (call("___memcpy_chk", {dst, src, 50, 100}) != dst) return false;
+            if (!check_fault("___memcpy_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memmove", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            if (call("___memmove_chk", {dst, src, 50, 100}) != dst) return false;
+            if (call("___memmove_chk", {dst + 10, dst, 20, 100}) != dst + 10) return false;
+            if (!check_fault("___memmove_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memset", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            if (call("___memset_chk", {dst, 'X', 50, 100}) != dst) return false;
+            if (!check_fault("___memset_chk", {dst, 'X', 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strlcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            if (call("___strlcpy_chk", {dst, src, 50, 100}) != 99) return false;
+            if (!check_fault("___strlcpy_chk", {dst, src, 50, 20})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strlcat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 50, 100}) != 99) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strlcat_chk", {dst, src, 50, 20})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test 32-bit wraparound", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { call(fn, args); } catch (...) { caught = true; } return caught;
+            };
+            // Pass a length that causes `dst + length` to wraparound 32-bit space
+            // E.g. dst is something like 0x40000000. 0xFFFFFFFF + dst will overflow.
+            if (!check_fault("___memcpy_chk", {dst, src, 0xFFFFFF00, 0xFFFFFF00})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+
         run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
             const std::string root = proc.guestHomePath() + "/tmp/";
             std::vector<std::string> names;
