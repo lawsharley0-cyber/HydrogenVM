@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-TOOLS = Path(__file__).resolve().parents[1]
+TOOLS = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(TOOLS))
 import private_fixture_parity as parity
 

@@ -64,7 +64,6 @@ jobs:
       - name: Existing synthetic downloader and resolver regressions
         run: |
           python3 -m unittest discover -s tools/compat_harness/tests -v
-          python3 -m unittest discover -s tools/tests -p test_private_fixture_parity.py -v
       - name: Use the existing keyless reader identity
         id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
@@ -264,7 +263,6 @@ jobs:
       - name: Existing synthetic downloader and resolver regressions
         run: |
           python3 -m unittest discover -s tools/compat_harness/tests -v
-          python3 -m unittest discover -s tools/tests -p test_private_fixture_parity.py -v
       - name: Use the existing keyless reader identity
         id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
