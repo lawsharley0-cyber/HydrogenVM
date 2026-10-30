@@ -28,9 +28,19 @@ jobs:
       contents: read
       id-token: write
     env:
-      HVM_FIXTURE_ROOT: ${{ runner.temp }}/hvm-private-fixtures-${{ github.run_id }}-${{ github.run_attempt }}
       HVM_ALLOW_LEGACY_IPAS: "0"
     steps:
+      - name: Set private fixture path after runner startup
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / ("hvm-private-fixtures-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])
+          value = str(root)
+          if "\n" in value or "\r" in value:
+              raise SystemExit("ERROR: invalid runner temporary directory")
+          with open(os.environ["GITHUB_ENV"], "a") as out:
+              out.write("HVM_FIXTURE_ROOT=" + value + "\n")
+          PY
       - name: Check out this trusted main commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
