@@ -35,6 +35,7 @@ jobs:
         if: steps.cctools.outputs.cache-hit != 'true'
         run: tools/build_cctools.sh /home/runner/cctools
       - name: Build
+        run: |
           cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
           ninja -C build hvm hvm_tests hvm_decodecheck hvm_heap_tests
       - name: Smoke gates (the agent runs the full set from AGENTS.md; set HVM_LD64=/home/runner/cctools/bin/arm-apple-darwin11-ld for the Test Lab)
