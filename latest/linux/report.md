@@ -1,54 +1,43 @@
-# HydrogenVM report — bb9c93f
+# HydrogenVM report — ff235bd
 
-2026-10-29T16:38:36+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-30T04:29:06+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
-**1 test(s) failed.**
+**All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 219.9s |
-| cpu | 15 | 0 | 0 | 0.7s |
-| ios | 5 | 1 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 24.4s |
+| build | 1 | 0 | 0 | 118.5s |
+| cpu | 15 | 0 | 0 | 0.5s |
+| ios | 6 | 0 | 0 | 2.1s |
+| bench | 5 | 0 | 0 | 21.6s |
 
 ## Speed
 
-CoreMark **1719.3** iterations/s (577.4 guest MIPS)
+CoreMark **3343.0** iterations/s (1123.3 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **119.4%** | 716 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.5%** | 716 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.6%** | 573 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.8%** | 491 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **232.2%** | 1393 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **174.1%** | 1393 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **139.3%** | 1114 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **73.5%** | 955 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 463 MIPS, ctests_arm 517 MIPS, ftests_vfp_thumb_softfp 427 MIPS, ftests_neon_thumb 412 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 862 MIPS, ctests_arm 936 MIPS, ftests_vfp_thumb_softfp 754 MIPS, ftests_neon_thumb 843 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTest | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.46 ms | 7.41 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.25 ms | 5.95 ms | 0 |
 
-## Problems (31)
-
-### Failures (1)
-
-- **ios / FoundationTest**
-
-  ```
-  exit 1 (want 0); expected line missing
-  FAIL CFDictionarySetValue only retains key (line 442)
-  --- stderr ---
-  NSLog works: yes 1
-  ```
+## Problems (30)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 37.8% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 73.5% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
