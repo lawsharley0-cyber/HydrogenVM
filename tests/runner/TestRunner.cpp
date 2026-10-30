@@ -2042,10 +2042,53 @@ int runFullSubsystemTests() {
         const ObjC::Class udCls = r.getClass("NSUserDefaults");
         const ObjC::id ud = ObjC::id(r.send(cpu, udCls, r.sel("standardUserDefaults")));
         const ObjC::id testKey = Runtime::Foundation::makeString(cx, "testKeyNonPlist");
-        bool guestException = false;
-        try { r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)}); }
-        catch (const Hydrogen::CPU::GuestFault&) { guestException = true; }
-        check(guestException, "NSUserDefaults setObject:forKey: raises a guest exception for non-plist objects");
+        const ObjC::id initialVal = Runtime::Foundation::makeString(cx, "initialStoredState");
+
+        // Pre-populate defaults to assert unchanged stored state on rejection
+        r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(initialVal), uint32_t(testKey)});
+        r.send(cpu, ud, r.sel("synchronize"));
+        const ObjC::id stateBefore = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(testKey)}));
+        check(Runtime::Foundation::utf8(cx, stateBefore) == "initialStoredState",
+              "NSUserDefaults stores initial state prior to invalid insertion");
+
+        // Exercise guest exception handling via NSSetUncaughtExceptionHandler
+        ObjC::id caughtExc = 0;
+        std::string caughtName;
+        std::string caughtReason;
+        const auto handlerFn = proc.registerHostFunction("testDefaultsUncaughtHandler", [&](Ctx& hx) {
+            caughtExc = hx.cpu.r[0];
+            if (caughtExc) {
+                const ObjC::id nameId = ObjC::id(r.send(hx.cpu, caughtExc, "name"));
+                const ObjC::id reasonId = ObjC::id(r.send(hx.cpu, caughtExc, "reason"));
+                caughtName = nameId ? Runtime::Foundation::utf8(hx, nameId) : "";
+                caughtReason = reasonId ? Runtime::Foundation::utf8(hx, reasonId) : "";
+            }
+        });
+        const auto setUncaughtSym = proc.lookupSymbol("_NSSetUncaughtExceptionHandler");
+        check(setUncaughtSym.has_value(), "_NSSetUncaughtExceptionHandler is available");
+        proc.callGuest(cpu, *setUncaughtSym, {handlerFn});
+
+        // Attempt invalid insertion: must deliver guest exception rather than crashing with unhandled host fault
+        try {
+            r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)});
+        } catch (const Hydrogen::CPU::GuestFault&) {
+            // Expected unwind when uncaught exception terminates the guest call
+        } catch (const ObjC::ObjCError&) {
+            // In case host error propagates directly
+        }
+
+        // Clean up uncaught handler
+        proc.callGuest(cpu, *setUncaughtSym, {0});
+
+        const ObjC::id stateAfter = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(testKey)}));
+        const std::string stateAfterStr = stateAfter ? Runtime::Foundation::utf8(cx, stateAfter) : "";
+
+        check(caughtExc != 0 && caughtName == "NSInvalidArgumentException" &&
+              caughtReason.find("non-property list object") != std::string::npos &&
+              stateAfterStr == "initialStoredState",
+              "NSUserDefaults setObject:forKey: raises guest NSInvalidArgumentException and preserves stored state on rejection");
+
+        // Verify valid nested plist round-trip
         const ObjC::id validKey = Runtime::Foundation::makeString(cx, "testKeyPlist");
         const ObjC::id validString = Runtime::Foundation::makeString(cx, "validStringValue");
         const ObjC::id validArray = Runtime::Foundation::makeArray(cx, {validString});
