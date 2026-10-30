@@ -3,7 +3,15 @@ import UIKit
 import Darwin
 import os
 
-struct HarnessAppInfo { let bundlePath: String }
+struct HarnessAppInfo {
+    let bundlePath: String
+    // This fixture runs no imported app; reports must identify it as synthetic.
+    let bundleIdentifier = "com.lfull.HydrogenVM.EditorHarness.synthetic-player"
+    let version = "synthetic"
+}
+
+// Same metadata key exported by HostGLEAGL.mm. No GPU layer is produced here.
+let HVMGLLayerUnitTransformKey = "hvmUnitTransform"
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
 
@@ -65,6 +73,14 @@ final class PlayerProbe {
 @MainActor
 final class HVMSession {
     var keepGoing = false
+    // Preserve the production configuration API without claiming GPU coverage:
+    // this fixture always delivers the generated CGImage below.
+    var useGPU = true
+    var onGLLayer: ((CALayer?) -> Void)?
+    private(set) var framesPresented: UInt64 = 0
+    // Native Engine diagnostics and build provenance do not exist in this fixture.
+    var crashBundle: String? { nil }
+    static var emulatorCommit: String { "unknown" }
     var onFrame: ((CGImage) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?
     var onExit: ((Int, String?) -> Void)?
@@ -76,6 +92,8 @@ final class HVMSession {
     private var activeFingers: Set<UInt> = []
     init(bundlePath: String, homePath: String) { PlayerProbe.shared.session = self }
     func start() {
+        onLog?("Synthetic UI fixture: no guest execution or GPU rendering; generated software frames only.", .warning)
+        onGLLayer?(nil)
         interfaceOrientation = Int(ProcessInfo.processInfo.environment["PLAYER_ORIENTATION"] ?? "1") ?? 1
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(100))
@@ -91,6 +109,7 @@ final class HVMSession {
             UIColor.yellow.setFill(); context.fill(CGRect(x: 160, y: 240, width: 160, height: 240))
         }
         PlayerProbe.shared.lastOrientation = interfaceOrientation
+        framesPresented += 1
         onFrame?(image.cgImage!)
     }
     func stopGracefully() {
