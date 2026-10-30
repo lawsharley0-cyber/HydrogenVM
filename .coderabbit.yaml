@@ -1,0 +1,42 @@
+# CodeRabbit: first-pass reviewer for every PR. Copilot (or the owner) fixes what it finds.
+# Docs: https://docs.coderabbit.ai/reference/configuration
+language: en-US
+reviews:
+  profile: assertive
+  request_changes_workflow: true      # blocking review until its comments are resolved
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: true                      # nearly every agent PR here opens as a draft
+    base_branches: ["main"]
+    ignore_title_keywords: ["do not merge", "WIP"]
+  path_filters:
+    - "!**/*.ipa"
+    - "!**/*.zip"
+    - "!docs/reports/**"
+  path_instructions:
+    - path: "src/**"
+      instructions: |
+        Emulator core. Reject: guest-visible stubs that return fake success to hide a missing
+        feature (must log as missing or be genuinely implemented), unchecked guest pointers/lengths,
+        buffer overflows in format/string helpers, FairPlay/DRM decryption, hand-written ciphers
+        (forward to host libraries instead), and behaviour changes with no test.
+    - path: "tests/**"
+      instructions: |
+        Tests must fail before the fix. Flag any weakened, deleted or skipped assertion.
+    - path: "app/**"
+      instructions: |
+        Swift app. Only the macOS CI job compiles it; check for compile errors by reading carefully.
+    - path: ".github/workflows/**"
+      instructions: |
+        Treat as security-sensitive. Flag pull_request_target that checks out or runs PR code,
+        broad permissions, secrets exposure, and unpinned third-party actions.
+    - path: "**/*.{ipa,zip,p12,mobileprovision}"
+      instructions: "Binaries, certificates and signing material must never be committed. Block."
+chat:
+  auto_reply: true
+knowledge_base:
+  opt_out: false
