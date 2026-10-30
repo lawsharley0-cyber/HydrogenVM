@@ -71,8 +71,8 @@ what was NOT run. A card is done only when the *done when* line is true and the 
 ### T4 Support manifest and ledger
 - **Files:** `tools/` only (plus a small `hvm` flag).
 - **Do:** `hvm --dump-support` emits JSON (symbol/class/selector, status, provenance); `tools/census.py <ipa>` lists what an IPA imports versus the manifest; `tools/ledger.py` keys failures by signature across games and tags a failure class. Add `--fast` to `tools/hvm_probe.py`: probe a random sample of games (seeded, so reruns match) and print a summary of at most 40 lines, with details in files and tagged `ERROR:` lines, so agents are not stuck on hour-long full sweeps. Reports stay structured JSON with a final summary object; read the summary, not the exit code alone.
-- **Done when:** census of the three repo-root IPAs reproduces the research numbers (Angry Birds 0 unimplemented symbols).
-- **Needs a runtime:** build only; IPAs for census.
+- **Done when:** (1) `hvm --dump-support` output validates against a committed JSON schema and a unit test checks that it lists a known function, a known class and a known stub with its status; (2) `tools/census.py` on the three repo-root IPAs reproduces the reference numbers in `tools/research_census/README.md` (Angry Birds 0 unimplemented symbols, Art of Glow 88 missing selectors/classes/constants, Tiny Tower 53); (3) `tools/ledger.py` has a unit test grouping two synthetic failures with the same signature into one entry; (4) `hvm_probe.py --fast --seed N` run twice picks the same games and prints at most 40 lines.
+- **Needs a runtime:** parts (1) and (3) do not; parts (2) and (4) need IPAs, so the runner does them (split the card between a coder and the runner, or give it all to the runner).
 
 ### T5 Class campaigns (one PR each)
 - **a** libstdc++ 4.2 ABI conformance guests (string, RB-tree, streams, SJLJ) as Test Lab cases; **b** write down one GL context/thread/FBO model in `docs/` then enforce it; **c** Unity/Mono startup checklist (stat layout, signals, `dlopen(NULL)`, `getpw*`, audio format) as probe checks; **d** glibc property tests for printf/string/memory helpers.

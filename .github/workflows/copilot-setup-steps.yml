@@ -25,11 +25,19 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 libstdc++-14-dev
+      - name: Cache ld64 (cctools-port, needed to build TestLab.ipa)
+        id: cctools
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/cctools
+          key: cctools-${{ runner.os }}-${{ hashFiles('tools/build_cctools.sh') }}
+      - name: Build ld64
+        if: steps.cctools.outputs.cache-hit != 'true'
+        run: tools/build_cctools.sh /home/runner/cctools
       - name: Build
-        run: |
           cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
           ninja -C build hvm hvm_tests hvm_decodecheck hvm_heap_tests
-      - name: Smoke gates (the agent runs the full set from AGENTS.md)
+      - name: Smoke gates (the agent runs the full set from AGENTS.md; set HVM_LD64=/home/runner/cctools/bin/arm-apple-darwin11-ld for the Test Lab)
         run: |
           build/hvm_tests selftest
           build/hvm_tests fulltest
