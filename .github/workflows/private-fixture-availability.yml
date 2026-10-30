@@ -1,0 +1,121 @@
+name: Private fixture availability (trusted main)
+
+# Integrity/retrieval diagnostic only. Gameplay/GPU/simulator parity is a later gate.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-fixture-availability
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # No pull_request/pull_request_target/workflow_run/reusable entry point.
+    if: >-
+      github.repository == 'lawsharley0-cyber/HydrogenVM' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      HVM_FIXTURE_ROOT: ${{ runner.temp }}/hvm-private-fixtures-${{ github.run_id }}-${{ github.run_attempt }}
+      HVM_ALLOW_LEGACY_IPAS: "0"
+    steps:
+      - name: Check out this trusted main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate configuration without printing private IDs
+        env:
+          WIF_PROVIDER: ${{ vars.HVM_WIF_PROVIDER }}
+          READER_ACCOUNT: ${{ vars.HVM_FIXTURE_SERVICE_ACCOUNT }}
+          HVM_DRIVE_FOLDER_ID: ${{ secrets.HVM_DRIVE_FOLDER_ID }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          folder = os.environ["HVM_DRIVE_FOLDER_ID"]
+          if re.fullmatch(r"[A-Za-z0-9_-]{10,}", folder):
+              print("::add-mask::" + folder)
+          checks = {
+              "WIF provider": re.fullmatch(r"projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]+/providers/[A-Za-z0-9_-]+", os.environ["WIF_PROVIDER"]),
+              "reader account": re.fullmatch(r"[A-Za-z0-9_-]+@[A-Za-z0-9_-]+\.iam\.gserviceaccount\.com", os.environ["READER_ACCOUNT"]),
+              "restricted folder": re.fullmatch(r"[A-Za-z0-9_-]{10,}", folder),
+          }
+          if not all(checks.values()):
+              print("ERROR: required private fixture configuration is missing or invalid")
+              sys.exit(1)
+          PY
+      - name: Existing synthetic downloader and resolver regressions
+        run: python3 -m unittest discover -s tools/compat_harness/tests -v
+      - name: Use the existing keyless reader identity
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.HVM_WIF_PROVIDER }}
+          service_account: ${{ vars.HVM_FIXTURE_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/drive.readonly
+          access_token_lifetime: 600s
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Stage all three exact-hash private fixtures
+        id: stage
+        env:
+          HVM_DRIVE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          HVM_DRIVE_FOLDER_ID: ${{ secrets.HVM_DRIVE_FOLDER_ID }}
+        run: python3 tools/fetch_private_fixtures.py --root "$HVM_FIXTURE_ROOT"
+      - name: Independently resolve every required fixture without legacy fallback
+        id: resolve
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, "tools")
+          from compat_harness.manifest import default_manifest_path, load_manifest, resolve_app
+          expected = {"angry-birds", "tiny-tower", "art-of-glow"}
+          required = [a for a in load_manifest(default_manifest_path())["apps"] if not a.get("optional", False)]
+          if {a["id"] for a in required} != expected:
+              raise SystemExit("ERROR: required fixture set changed; review the migration gate")
+          for app in required:
+              result = resolve_app(app, repo=os.getcwd(), fixture_root=os.environ["HVM_FIXTURE_ROOT"], allow_legacy=False)
+              if result["status"] != "resolved" or result["source"] != "fixture-root" or result["actualSha256"] != app["sha256"]:
+                  raise SystemExit("ERROR: required private fixture did not resolve with its expected hash")
+          print("Verified 3/3 required fixtures from fixture-root; legacy fallback disabled")
+          PY
+      - name: Record bounded diagnostic status
+        if: always()
+        env:
+          STAGE_OUTCOME: ${{ steps.stage.outcome }}
+          RESOLVE_OUTCOME: ${{ steps.resolve.outcome }}
+        run: |
+          python3 - <<'PY'
+          import os
+          ok = os.environ["STAGE_OUTCOME"] == "success" and os.environ["RESOLVE_OUTCOME"] == "success"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+              out.write("Private fixture availability: " + ("3/3 verified" if ok else "NOT VERIFIED") + "\n\n")
+              out.write("Commit: " + os.environ["GITHUB_SHA"] + "\n\n")
+              out.write("Legacy fallback: disabled. No private artifacts uploaded.\n\n")
+              out.write("Runtime compatibility, GPU and simulator parity: NOT RUN. This diagnostic does not authorize fixture deletion.\n")
+          PY
+      - name: Remove temporary fixture bytes
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, shutil
+          root = pathlib.Path(os.environ["HVM_FIXTURE_ROOT"])
+          parent = pathlib.Path(os.environ["RUNNER_TEMP"]).resolve()
+          if root.is_symlink() or root.parent.resolve() != parent or not root.name.startswith("hvm-private-fixtures-"):
+              raise SystemExit("ERROR: refusing unexpected fixture cleanup path")
+          if root.exists():
+              shutil.rmtree(root)
+          PY
