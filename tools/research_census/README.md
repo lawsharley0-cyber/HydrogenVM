@@ -8,8 +8,9 @@ and must reproduce these numbers.
 
 ## Method (what T4 must implement)
 
-1. List imported non-ObjC symbols, referenced ObjC classes and selectors from the armv7 slice with
-   `llvm-nm` / `llvm-objdump`. Fail loudly if either command exits non-zero.
+1. List imported non-ObjC symbols, referenced ObjC classes and selectors from the slice declared in the
+   fixture manifest below (armv6 for Angry Birds, armv7 for the others; the tool must support both and
+   select the declared slice) with `llvm-nm` / `llvm-objdump`. Fail loudly if either command exits non-zero.
 2. Ask a host program that constructs a `Process` with no app loaded which symbols, classes and
    selectors are registered. Do not regex `src/`: registration is imperative C++ with computed names.
 3. Track stub classes (`Runtime::stubClass`) separately from implemented classes.
