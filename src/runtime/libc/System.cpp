@@ -4,6 +4,7 @@
 #include <sys/ioctl.h>
 #include <atomic>
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "MachPorts.hpp"
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
@@ -1064,7 +1065,8 @@ void registerLibcSystem(Process& p) {
     p.def<&d_register_remove_image>("__dyld_register_func_for_remove_image");
     p.def<&d_version>("_NSVersionOfRunTimeLibrary");
     p.def<&d_version>("_NSVersionOfLinkTimeLibrary");
-    p.def<&d_dlopen>("_dlopen");
+    supportDef<&d_dlopen>(p, "_dlopen", SupportStatus::Approx,
+        "NULL uses dyld magic handles; named libraries get synthetic handles and are not loaded");
     p.def<&d_dlsym>("_dlsym");
     p.def<&d_dlclose>("_dlclose");
     p.def<&d_dlerror>("_dlerror");
@@ -1102,9 +1104,12 @@ void registerLibcSystem(Process& p) {
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
     p.def<&m_mmap>("_mmap");
     p.def<&m_munmap>("_munmap");
-    p.def<&m_ok3>("_mprotect");
-    p.def<&m_ok3>("_madvise");
-    p.def<&m_ok3>("_msync");
+    supportDef<&m_ok3>(p, "_mprotect", SupportStatus::Stub,
+        "Returns success without changing guest or host page protections");
+    supportDef<&m_ok3>(p, "_madvise", SupportStatus::Stub,
+        "Returns success without applying a memory advice policy");
+    supportDef<&m_ok3>(p, "_msync", SupportStatus::Stub,
+        "Returns success without flushing mapped data to backing storage");
     p.def<&m_ok2>("_mlock");
     p.def<&m_ok2>("_munlock");
     p.def<&g_signal>("_signal");
