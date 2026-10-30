@@ -1,61 +1,70 @@
-# Trusted private fixture availability diagnostic
+# Trusted private fixture pre-removal parity gate
 
-Issue #204 separates retrieval/integrity from real-app runtime parity. The
-`Private fixture availability (trusted main)` workflow checks the former on
-Linux and macOS. It does not replace required compatibility, GPU or simulator
-coverage, change a baseline, or authorize removal of the three root IPAs.
+Issue #204 requires real-app parity before removing root IPAs.
+`.github/workflows/private-fixture-availability.yml` is a manual trusted-main
+gate using the existing restricted Drive source. No existing CI consumer,
+baseline, test assertion, or IPA is changed by this infrastructure PR.
 
-## Existing configuration required
+## Existing configuration
 
-Recover the resources already provisioned for project `hydrogenvm-fixtures`:
+- Repository variable `HVM_WIF_PROVIDER`: existing complete WIF provider resource.
+- Repository variable `HVM_FIXTURE_SERVICE_ACCOUNT`: existing dedicated reader email.
+- Repository secret `HVM_DRIVE_FOLDER_ID`: existing restricted folder containing
+  the three original named fixtures. Do not publish it as a workflow input.
 
-- `HVM_WIF_PROVIDER`: the complete existing provider resource:
-  `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER`.
-- `HVM_FIXTURE_SERVICE_ACCOUNT`: the existing fixture-reader service-account email.
-- `HVM_DRIVE_FOLDER_ID`: the restricted folder containing the three original named IPAs.
-  Store the folder ID only as a repository secret.
+There are no dispatch inputs, JSON keys, stored credentials, or IAM changes.
+The existing provider must independently enforce canonical repository/owner,
+`refs/heads/main`, and trusted event names. The workflow admits only manual
+dispatch on canonical main. These are defense-in-depth guards: someone who
+edits a branch workflow can remove its YAML guard and request GitHub OIDC,
+but the external WIF policy must reject exchange for that branch/ref/event.
+Do not broaden IAM, impersonation, or folder sharing to bypass a failure.
 
-The manual dispatch accepts no credential, resource or ref inputs. The folder ID
-is consumed only from the existing repository secret and masked in logs. Provider
-and account resource strings use the two repository variables above. No credential
-is stored by this workflow and no IAM/API/Drive permission is changed.
+The dedicated reader already needs Viewer access to the restricted folder.
+Auth uses the official commit-pinned Google action, Drive read-only scope,
+a ten-minute OAuth token, no credentials file and no ambient SDK export.
+Only staging receives the access token as a step-scoped environment value.
 
-The existing WIF provider must already restrict repository and owner identity,
-`refs/heads/main`, and trusted event names; the job itself admits only manual
-dispatch on canonical main. Existing service-account impersonation must permit
-the dedicated reader, and that account must already have Viewer access to the
-restricted Drive folder. Failed authentication or missing files fail the job.
-Do not broaden IAM or make the folder public to bypass a failure.
+## Required scenarios
 
-## Run and interpret
+After independent review and merge, dispatch on `main`. Both jobs check out
+the same dispatch SHA and stage/hash-check all three fixtures. The resolver
+must report `fixture-root`; legacy fallback is disabled explicitly.
 
-After independent review and merge, select this workflow on `main` and dispatch
-it with existing configuration. Branch/fork dispatches cannot run the job or
-request its OIDC token. It checks out the dispatch SHA, not an input ref.
-The workflow requests a ten-minute Drive read-only OAuth token through the
-existing keyless identity, without a credentials file or exported ambient SDK
-credentials. Action dependencies are pinned by commit.
+Linux must build the engine and CPU guests, pass heap regressions, run full
+compatibility including `fulltest` against the unchanged baseline using
+`--no-legacy-repo`, and pass every current Test Lab case with the existing
+ARMv7 guest linker. Both existing GPU/software comparison modes run all three
+private fixtures. A missing GPU backend or skipped comparison fails this gate,
+including the existing comparison tool's otherwise successful skip behavior.
 
-Both hosted platforms must stage all three files using the existing fail-closed
-downloader and independently resolve their manifest SHA-256 values with source
-`fixture-root`, with legacy fallback disabled. Missing, mismatched or skipped
-required fixtures fail. An optional Clash fixture is outside this three-file
-availability gate and is not represented as passed.
+macOS depends on Linux. It builds the production unsigned device and simulator
+targets using the existing CI commands. The only transferred executable is the
+repository's synthetic UIKitTest guest, built by its existing packaging helper.
+Required simulator scenarios preserve current CI inputs and markers:
+UIKit `ALL CHECKS PASSED`; Tiny Tower GPU frame 60 with its tap; Angry Birds
+landscape GPU frame 600; Tiny Tower GLES1-on-ES2 frame 60. None is
+`continue-on-error`. Each scenario also requires its captured PNG screenshot.
 
-Private bytes stay outside checkout under the runner temporary directory and
-are deleted in an always-run cleanup step. No fixture, credential, archive,
-screenshot or downloaded game content is cached or uploaded as an artifact.
-Only counts, the checked-out source SHA and explicit coverage limits appear in
-the step summary. Runner destruction is the final cleanup boundary if a job is
-forcibly terminated before its cleanup step.
+Only bounded parity JSON is retained: source commit, page size, fixed scenario
+outcomes, required fixture hashes/source, frame counts/classifications,
+Test Lab count, and simulator screenshot sizes/hashes. No private IPAs,
+extracted assets, screenshots, raw guest logs, credentials or whole run
+directories are uploaded/cached. The synthetic UIKit artifact is separately
+whitelisted and retained for one day. Private work directories are under the
+temporary fixture root and removed in always-run cleanup; simulator guest
+copies are uninstalled. Forced termination relies on hosted-runner destruction.
 
-A successful run proves access and byte identity on those runner platforms.
-It does not execute games or establish compatibility/frame/crash parity.
-Before any removal, separately migrate existing consumers without reducing
-their assertions, preserve the real-app baseline, and demonstrate required
-Linux compatibility/GPU and macOS simulator scenarios against these private
-fixtures. Preserve historical reports and label every unrun scenario NOT RUN.
+A failed/skipped prerequisite or missing evidence produces NOT VERIFIED and
+fails the job. A Linux failure skips the dependent macOS job, so total parity
+is not established. Optional Clash absence is not represented as passed.
+No physical iPhone qualification is claimed. Before deletion, inspect both
+platform summaries and original Actions outcomes, then migrate all existing
+consumers while preserving coverage and historical evidence. Removal remains
+a separate change after parity and the owner's authorization.
 
-Validation of this new workflow: NOT RUN until trusted-main dispatch is possible.
-Existing synthetic tests run in the diagnostic before authentication. No local
-tests/builds or private retrieval were performed while preparing this change.
+Validation of this revision: NOT RUN. No local tests/builds or private retrieval
+were performed. New synthetic evidence-boundary tests and existing retrieval
+tests execute in Actions before authentication. Prior parser failure and its
+runner-environment fix are preserved in commit history; that fix alone does
+not prove this expanded workflow passes.
