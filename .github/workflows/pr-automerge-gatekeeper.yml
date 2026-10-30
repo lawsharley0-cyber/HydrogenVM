@@ -11,12 +11,6 @@ permissions:
   contents: write
   pull-requests: write
 
-# One run per PR at a time, shared by queue and disarm jobs, so a label removal
-# or push can never interleave with a queue request.
-concurrency:
-  group: gatekeeper-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
-
 jobs:
   queue-protected-squash:
     if: >-
@@ -25,6 +19,11 @@ jobs:
       github.actor == 'lawsharley0-cyber'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    concurrency:
+      # Same group on both jobs that actually run, so queue and disarm serialize per PR
+      # without unrelated events (which skip every job) replacing a pending run.
+      group: gatekeeper-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -80,6 +79,11 @@ jobs:
        github.event.label.name == 'safe-to-automerge')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    concurrency:
+      # Same group on both jobs that actually run, so queue and disarm serialize per PR
+      # without unrelated events (which skip every job) replacing a pending run.
+      group: gatekeeper-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
