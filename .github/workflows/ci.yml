@@ -3,7 +3,7 @@ name: CI
 # Linux runs on every push. The macOS job (Apple-toolchain engine build + speed
 # on Apple Silicon, Xcode device/simulator builds, simulator run) costs 10x the
 # Actions minutes on a private repo, so it runs when a commit message contains
-# "[mac]", on manual dispatch, or once a week.
+# "[mac]", on trusted main pushes, manual dispatch, or once a week.
 on:
   push:
   pull_request:
@@ -71,6 +71,7 @@ jobs:
     needs: linux
     if: >-
       github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       contains(github.event.head_commit.message, '[mac]')
     steps:
       - uses: actions/checkout@v4
