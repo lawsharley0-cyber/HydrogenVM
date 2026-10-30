@@ -5,20 +5,23 @@ name: Opt-in PR auto-merge gatekeeper
 # reviewing the failing-first evidence, clean diff, dependencies and exclusions.
 on:
   pull_request_target:
-    types: [labeled, unlabeled, synchronize]
+    types: [labeled, unlabeled, synchronize, closed]
 
-permissions:
-  contents: write
-  pull-requests: write
+# Least privilege: each job declares only what it needs.
+permissions: {}
 
 jobs:
   queue-protected-squash:
     if: >-
       github.event.action == 'labeled' &&
       github.event.label.name == 'safe-to-automerge' &&
-      github.actor == 'lawsharley0-cyber'
+      github.actor == 'lawsharley0-cyber' &&
+      github.triggering_actor == 'lawsharley0-cyber'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
     concurrency:
       # Same group on both jobs that actually run, so queue and disarm serialize per PR
       # without unrelated events (which skip every job) replacing a pending run.
@@ -79,6 +82,9 @@ jobs:
        github.event.label.name == 'safe-to-automerge')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
     concurrency:
       # Same group on both jobs that actually run, so queue and disarm serialize per PR
       # without unrelated events (which skip every job) replacing a pending run.
@@ -103,3 +109,24 @@ jobs:
             exit 1
           fi
           echo "No pending auto-merge for PR #$PR_NUMBER."
+
+  dispatch-main-ci:
+    # Merges made with GITHUB_TOKEN do not trigger push workflows, so start CI on main
+    # explicitly (workflow_dispatch is the one event GITHUB_TOKEN may trigger). The macOS
+    # job and unsigned IPA build run on manual dispatch.
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      contains(github.event.pull_request.labels.*.name, 'safe-to-automerge')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Dispatch CI on main
+        shell: bash
+        run: gh workflow run ci.yml --repo "$GH_REPO" --ref main
