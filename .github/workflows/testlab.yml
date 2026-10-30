@@ -204,6 +204,26 @@ jobs:
             --timeout 30
         continue-on-error: true
 
+      - name: Run Test Lab — TL-K (touch and lifecycle)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-K \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 15
+        continue-on-error: true
+
+      - name: Run Test Lab — TL-L (audio mixer PCM energy)
+        run: |
+          python3 tools/hvm_testlab.py run \
+            --hvm build/hvm \
+            --case TL-L \
+            --out build/testlab-report \
+            --skip-build \
+            --timeout 25
+        continue-on-error: true
+
       - name: Run Test Lab — all cases (integration)
         run: |
           python3 tools/hvm_testlab.py run \

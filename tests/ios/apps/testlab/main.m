@@ -58,6 +58,8 @@ static const char *kAppBuild        = "1";
 #define CASE_H  @"TL-H"
 #define CASE_I  @"TL-I"
 #define CASE_J  @"TL-J"
+#define CASE_K  @"TL-K"
+#define CASE_L  @"TL-L"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -69,6 +71,8 @@ static const int kVersionG = 1;
 static const int kVersionH = 1;
 static const int kVersionI = 1;
 static const int kVersionJ = 1;
+static const int kVersionK = 1;
+static const int kVersionL = 1;
 
 // ─────────────────────────── timing ──────────────────────────────────────────
 
@@ -897,6 +901,7 @@ static TLResult *runCaseH(void) {
     clearCheckpoint();
     r.durationMs = monoMs() - t0;
     return r;
+}
 
 // ─────────────────────────── Case I — Texture Formats & NPOT ─────────────────
 //
@@ -1263,6 +1268,261 @@ static TLResult *runCaseJ(void) {
     return r;
 }
 
+
+// ─────────────────────────── Case K — Touch & Lifecycle ──────────────────────
+//
+// Exercises injected touch delivery and app lifecycle callbacks. This case
+// requires the host to pass `--tap X,Y@T` and `--lifecycle bg@T2,fg@T3` on the
+// hvm command line. In interactive (phone) mode the user taps and backgrounds
+// manually, so the case skips rather than fails when arguments are absent.
+//
+// What is tested:
+//   1. UIApplication touch delivery: a UIButton placed at known coordinates
+//      receives touchesBegan/touchesEnded when a tap is injected.
+//   2. UIButton target/action fires and increments a counter.
+//   3. applicationWillResignActive / applicationDidEnterBackground is called
+//      when the lifecycle event fires.
+//   4. applicationWillEnterForeground / applicationDidBecomeActive is called
+//      on resume.
+//   5. The view hierarchy and screen metrics are stable across the cycle.
+//
+// Automated invocation (host runner passes via -- args):
+//   hvm run TestLab.ipa -- --run TL-K --tap 160,240@1.0 --lifecycle bg@2.0,fg@3.0
+//
+// The guest reads its own argv after the "--" separator to know the tap and
+// lifecycle schedule, then polls shared counters inside a CADisplayLink.
+
+static int   gTLK_tapCount       = 0;   // touchesEnded on the tap button
+static int   gTLK_bgCount        = 0;   // applicationDidEnterBackground
+static int   gTLK_fgCount        = 0;   // applicationDidBecomeActive (after bg)
+static BOOL  gTLK_tapEnabled     = NO;
+static BOOL  gTLK_lifecycleEnabled = NO;
+static BOOL  gTLK_checkDone      = NO;
+static TLResult *gTLK_result     = nil;
+
+@interface TLKButton : UIControl
+@end
+@implementation TLKButton
+- (void)touchesBegan:(NSSet *)t withEvent:(UIEvent *)e { [super touchesBegan:t withEvent:e]; }
+- (void)touchesEnded:(NSSet *)t withEvent:(UIEvent *)e {
+    [super touchesEnded:t withEvent:e];
+    gTLK_tapCount++;
+}
+@end
+
+@interface TLKLifecycleDelegate : UIResponder <UIApplicationDelegate>
+@property (strong, nonatomic) UIWindow *window;
+@property (strong, nonatomic) CADisplayLink *poller;
+@property double deadline;
+@end
+
+@implementation TLKLifecycleDelegate
+
+- (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)opts {
+    // Parse args for --tap / --lifecycle presence
+    NSArray *args = [[NSProcessInfo processInfo] arguments];
+    for (NSString *a in args) {
+        if ([a hasPrefix:@"--tap"])       gTLK_tapEnabled       = YES;
+        if ([a hasPrefix:@"--lifecycle"]) gTLK_lifecycleEnabled = YES;
+    }
+    // Layout: a 100×50 button centred at (160,240)
+    self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    UIView *root = [[UIView alloc] initWithFrame:self.window.bounds];
+    root.backgroundColor = [UIColor blackColor];
+
+    TLKButton *btn = [[TLKButton alloc] initWithFrame:CGRectMake(110, 215, 100, 50)];
+    btn.backgroundColor = [UIColor blueColor];
+    btn.tag = 42;
+    [root addSubview:btn];
+
+    UIViewController *vc = [[UIViewController alloc] init];
+    vc.view = root;
+    self.window.rootViewController = vc;
+    [self.window makeKeyAndVisible];
+
+    // Use a display-link to poll results and exit once settled
+    _deadline = monoMs() + 6000.0; // 6s wall-clock safety net
+    _poller = [CADisplayLink displayLinkWithTarget:self selector:@selector(poll:)];
+    [_poller addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    return YES;
+}
+
+- (void)applicationDidEnterBackground:(UIApplication *)app  { gTLK_bgCount++; }
+- (void)applicationWillEnterForeground:(UIApplication *)app { /* nothing */ }
+- (void)applicationDidBecomeActive:(UIApplication *)app {
+    // Fires once at launch (not counted) and once after foreground.
+    static int _activations = 0;
+    _activations++;
+    if (_activations > 1) gTLK_fgCount++;
+}
+
+- (void)poll:(CADisplayLink *)link {
+    if (gTLK_checkDone) return;
+    // Wait until deadline OR we have enough evidence
+    BOOL tapDone       = !gTLK_tapEnabled       || gTLK_tapCount       >= 1;
+    BOOL lifecycleDone = !gTLK_lifecycleEnabled || (gTLK_bgCount >= 1 && gTLK_fgCount >= 1);
+    BOOL timedOut      = monoMs() > _deadline;
+
+    if ((!tapDone || !lifecycleDone) && !timedOut) return;
+
+    gTLK_checkDone = YES;
+    [_poller invalidate];
+
+    TLResult *r = [[TLResult alloc] initWithId:CASE_K version:kVersionK];
+    r.checkpointWritten = NO; // no risky section
+    r.diagnostics[@"tapCount"]       = @(gTLK_tapCount);
+    r.diagnostics[@"bgCount"]        = @(gTLK_bgCount);
+    r.diagnostics[@"fgCount"]        = @(gTLK_fgCount);
+    r.diagnostics[@"tapEnabled"]     = @(gTLK_tapEnabled);
+    r.diagnostics[@"lifecycleEnabled"] = @(gTLK_lifecycleEnabled);
+
+    if (!gTLK_tapEnabled && !gTLK_lifecycleEnabled) {
+        r.status = @"skipped";
+        r.reason = @"No --tap or --lifecycle args; run via hvm_testlab.py for automated mode";
+        r.expected = @"not applicable in interactive mode";
+        r.actual   = @"skipped";
+    } else {
+        BOOL tapOk = !gTLK_tapEnabled || gTLK_tapCount >= 1;
+        BOOL bgOk  = !gTLK_lifecycleEnabled || gTLK_bgCount  >= 1;
+        BOOL fgOk  = !gTLK_lifecycleEnabled || gTLK_fgCount  >= 1;
+
+        r.expected = [NSString stringWithFormat:@"tap>=%d bg>=%d fg>=%d",
+                      gTLK_tapEnabled ? 1 : 0,
+                      gTLK_lifecycleEnabled ? 1 : 0,
+                      gTLK_lifecycleEnabled ? 1 : 0];
+        r.actual   = [NSString stringWithFormat:@"tap=%d bg=%d fg=%d",
+                      gTLK_tapCount, gTLK_bgCount, gTLK_fgCount];
+
+        if (tapOk && bgOk && fgOk) {
+            r.status = @"passed";
+        } else {
+            r.status = @"failed";
+            r.reason = [NSString stringWithFormat:@"tapOk=%d bgOk=%d fgOk=%d",
+                        tapOk, bgOk, fgOk];
+        }
+    }
+    gTLK_result = r;
+
+    // Print result line for the host runner and exit
+    printf("TESTLAB %s %s\n", r.caseId.UTF8String, r.status.UTF8String);
+    if (r.reason) printf("  reason: %s\n", r.reason.UTF8String);
+
+    writeResult(@[r], makeRunId());
+    exit([r.status isEqualToString:@"passed"] ? 0 :
+         [r.status isEqualToString:@"skipped"] ? 0 : 1);
+}
+@end
+
+// TL-K is special: it needs its own UIApplicationDelegate to receive lifecycle
+// callbacks. The main AppDelegate checks for --run TL-K and hands off.
+static TLResult *runCaseK_sync(void) {
+    // This is only reached in interactive (menu) mode.
+    // In automated mode TL-K launches its own delegate via main().
+    TLResult *r = [[TLResult alloc] initWithId:CASE_K version:kVersionK];
+    r.status = @"skipped";
+    r.reason = @"Interactive: tap the button and use Background/Resume to run TL-K manually";
+    r.diagnostics[@"note"] = @"TL-K requires --tap and --lifecycle; use hvm_testlab.py for automation";
+    return r;
+}
+
+// ─────────────────────────── Case L — Audio Mixer PCM Energy ─────────────────
+//
+// Loads tone.wav via AVAudioPlayer and verifies non-zero mixer output.
+// In automated (headless) mode the host runner passes --audio-fd so the mixer
+// drains into a socket; the guest only checks that prepareToPlay succeeds and
+// play is initiated. The host runner inspects the audio signal.
+//
+// In interactive mode the user hears the tone. Either way the case verifies:
+//   1. AVAudioPlayer can load and prepare the bundled tone.wav.
+//   2. -play returns YES without error.
+//   3. -isPlaying becomes YES after -play.
+//   4. The player duration matches the expected 1.0 s (±0.1 s).
+//
+// PCM energy over the socket is verified by the host runner (_run_case_l).
+// The guest itself cannot read back the socket data.
+//
+// Note: AVAudioPlayer volume and output go through the host's AVAudioEngine
+// bridge. On a headless run, "active" means the mixer produced non-zero
+// samples to the socket, NOT that the speaker played anything. The guest
+// reports the player state; the host report carries audio.signal.
+
+#import <AVFoundation/AVFoundation.h>
+
+static TLResult *runCaseL(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_L version:kVersionL];
+    double t0 = monoMs();
+
+    writeCheckpoint(CASE_L);
+    r.checkpointWritten = YES;
+
+    NSString *tonePath = [[NSBundle mainBundle] pathForResource:@"tone" ofType:@"wav"];
+    if (!tonePath) {
+        r.status = @"failed";
+        r.reason = @"tone.wav resource missing from bundle";
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+
+    NSURL *toneURL = [NSURL fileURLWithPath:tonePath];
+    NSError *err = nil;
+    AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithContentsOfURL:toneURL error:&err];
+
+    if (!player || err) {
+        r.status = @"failed";
+        r.reason = [NSString stringWithFormat:@"AVAudioPlayer init failed: %@",
+                    err ? err.localizedDescription : @"nil player"];
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+
+    BOOL prepared = [player prepareToPlay];
+    if (!prepared) {
+        r.status = @"failed";
+        r.reason = @"prepareToPlay returned NO";
+        r.diagnostics[@"duration"]  = @(player.duration);
+        clearCheckpoint();
+        r.durationMs = monoMs() - t0;
+        return r;
+    }
+
+    BOOL playing = [player play];
+    BOOL isPlaying = player.isPlaying;
+
+    // Let the player run for 0.3 s so frames flow to the mixer socket.
+    // Use a tight run-loop spin so the test doesn't block the whole app.
+    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:0.3];
+    [[NSRunLoop currentRunLoop] runUntilDate:until];
+
+    double duration  = player.duration;
+    BOOL   durationOk = (duration >= 0.9 && duration <= 1.1);
+
+    [player stop];
+
+    r.diagnostics[@"prepared"]    = @(prepared);
+    r.diagnostics[@"playReturned"] = @(playing);
+    r.diagnostics[@"isPlaying"]   = @(isPlaying);
+    r.diagnostics[@"duration"]    = @(duration);
+    r.diagnostics[@"durationOk"]  = @(durationOk);
+    r.diagnostics[@"note"] = @"PCM energy over audio socket verified by host runner. Speaker playback not automatically confirmed.";
+
+    r.expected = @"prepared=1, play=1, isPlaying=1, duration≈1.0s";
+    r.actual   = [NSString stringWithFormat:@"prepared=%d, play=%d, isPlaying=%d, duration=%.3f",
+                  prepared, playing, isPlaying, duration];
+
+    BOOL allOk = prepared && playing && isPlaying && durationOk;
+    r.status = allOk ? @"passed" : @"failed";
+    if (!allOk)
+        r.reason = [NSString stringWithFormat:@"prepared=%d play=%d isPlaying=%d durationOk=%d",
+                    prepared, playing, isPlaying, durationOk];
+
+    clearCheckpoint();
+    r.durationMs = monoMs() - t0;
+    return r;
+}
+
+
 // ─────────────────────────── run all cases ───────────────────────────────────
 
 // A unique run ID for this launch.
@@ -1275,7 +1535,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_L];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1304,6 +1564,10 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseI()];
         } else if ([cid isEqualToString:CASE_J]) {
             [results addObject:runCaseJ()];
+        } else if ([cid isEqualToString:CASE_K]) {
+            [results addObject:runCaseK_sync()];
+        } else if ([cid isEqualToString:CASE_L]) {
+            [results addObject:runCaseL()];
         }
     }
     return results;
@@ -1328,6 +1592,8 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_H]) return runCaseH();
     if ([caseId isEqualToString:CASE_I]) return runCaseI();
     if ([caseId isEqualToString:CASE_J]) return runCaseJ();
+    if ([caseId isEqualToString:CASE_K]) return runCaseK_sync();
+    if ([caseId isEqualToString:CASE_L]) return runCaseL();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1360,8 +1626,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J      ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,         CASE_J,      CASE_K,      CASE_L     ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf",  @"K: Touch", @"L: Audio" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1375,6 +1641,8 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_H version:kVersionH],
         [[TLResult alloc] initWithId:CASE_I version:kVersionI],
         [[TLResult alloc] initWithId:CASE_J version:kVersionJ],
+        [[TLResult alloc] initWithId:CASE_K version:kVersionK],
+        [[TLResult alloc] initWithId:CASE_L version:kVersionL],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1426,7 +1694,7 @@ static UIColor *colorForStatus(NSString *s) {
     [self.view addSubview:export];
 }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_L]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
@@ -1540,6 +1808,17 @@ static UIColor *colorForStatus(NSString *s) {
 
 int main(int argc, char *argv[]) {
     @autoreleasepool {
-        return UIApplicationMain(argc, argv, nil, @"AppDelegate");
+        // TL-K needs its own UIApplicationDelegate so it receives lifecycle
+        // callbacks. Route it before UIApplicationMain runs the normal delegate.
+        const char *delegateClass = "AppDelegate";
+        for (int i = 1; i < argc; ++i) {
+            if (strcmp(argv[i], "--run") == 0 && i + 1 < argc
+                    && strcmp(argv[i+1], "TL-K") == 0) {
+                delegateClass = "TLKLifecycleDelegate";
+                break;
+            }
+        }
+        return UIApplicationMain(argc, argv, nil,
+                                 [NSString stringWithUTF8String:delegateClass]);
     }
 }

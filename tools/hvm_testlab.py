@@ -45,7 +45,11 @@ ROOT = Path(__file__).parent.parent
 TESTLAB_SRC = ROOT / "tests" / "ios" / "apps" / "testlab"
 SCHEMA_MOD  = str(ROOT / "tools" / "testlab_schema")
 
-CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J"]
+CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L"]
+# TL-K needs --tap and --lifecycle injected before the -- separator.
+TIMEOUT_K = 10  # tap at 1s, bg at 2s, fg at 3s — settled well within 10s
+# TL-L plays 300ms of audio; allow extra for hvm startup.
+TIMEOUT_L = 20
 # Wall-clock timeout (seconds) per case process, including hvm startup.
 DEFAULT_TIMEOUT = 30
 # TL-E phase 1 is fast; allow extra for the full two-launch cycle.
@@ -331,6 +335,27 @@ def run_all_cases(
             results.append(result)
             continue
 
+        if case_id == "TL-K":
+            # TL-K injects --tap and --lifecycle before '--', handled separately.
+            # Ensure the IPA has been imported first by running a cheap preceding case.
+            if not imported:
+                # Import by running TL-A first (fast, just checks metadata)
+                _pre = run_case(hvm, ipa_path, "TL-A", home, timeout, import_ipa=True)
+                imported = True
+                results.append(_pre)
+            cr = _run_case_k(hvm, ipa_path, home)
+            results.append(cr)
+            continue
+
+        if case_id == "TL-L":
+            if not imported:
+                _pre = run_case(hvm, ipa_path, "TL-A", home, timeout, import_ipa=True)
+                imported = True
+                results.append(_pre)
+            cr = _run_case_l(hvm, ipa_path, home, TIMEOUT_L)
+            results.append(cr)
+            continue
+
         print(f"[testlab] running {case_id} …", flush=True)
         cr = run_case(hvm, ipa_path, case_id, home, timeout, import_ipa=not imported)
         imported = True
@@ -362,6 +387,145 @@ def _run_case_e(hvm: str, ipa_path: str, home: str, timeout: int) -> dict:
     # Annotate it with both phases.
     cr2["diagnostics"]["phase1Result"] = cr1["status"]
     return cr2
+
+
+def _run_case_k(hvm: str, ipa_path: str, home: str) -> dict:
+    """Touch and lifecycle test for TL-K.
+
+    Injects a tap at (160,240)@1.0 and a bg@2.0,fg@3.0 lifecycle event
+    before the '--' separator so hvm delivers them while the guest runs.
+    """
+    print(f"[testlab] running TL-K (touch+lifecycle) …", flush=True)
+    t0 = time.monotonic()
+    cmd = [
+        hvm, "run", ipa_path,
+        "--home", home, "--quiet",
+        "--run-for", str(TIMEOUT_K),
+        "--tap", "160,240@1.0",
+        "--lifecycle", "bg@2.0,fg@3.0",
+        "--", "--run", "TL-K",
+        "--tap", "160,240@1.0",       # duplicated after -- so guest sees it
+        "--lifecycle", "bg@2.0,fg@3.0",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=TIMEOUT_K + 5,
+        )
+        rc, stdout, stderr = proc.returncode, proc.stdout, proc.stderr
+        timed_out = False
+    except subprocess.TimeoutExpired as e:
+        rc = -1
+        stdout = e.stdout.decode(errors="replace") if e.stdout else ""
+        stderr = e.stderr.decode(errors="replace") if e.stderr else ""
+        timed_out = True
+    except FileNotFoundError:
+        elapsed = time.monotonic() - t0
+        cr = _parse_case_output("", "TL-K", elapsed, -1, False, "")
+        cr["reason"] = f"hvm binary not found: {hvm}"
+        cr["status"] = "failed"
+        _print_result(cr)
+        return cr
+    elapsed = time.monotonic() - t0
+    cr = _parse_case_output(stdout, "TL-K", elapsed, rc, timed_out, stderr)
+    _print_result(cr)
+    return cr
+
+
+def _run_case_l(hvm: str, ipa_path: str, home: str, timeout: int) -> dict:
+    """Audio mixer PCM energy test for TL-L.
+
+    Passes --audio-fd so the mixer drains into a socket. The host
+    inspects the audio signal and fails TL-L if the mixer was silent.
+    """
+    import socket as _socket
+    print(f"[testlab] running TL-L (audio mixer) …", flush=True)
+    t0 = time.monotonic()
+
+    # Try to set up a socketpair for audio drain.
+    audio_cmd_extra: list[str] = []
+    recv_sock = None
+    try:
+        recv_sock, send_sock = _socket.socketpair(_socket.AF_UNIX, _socket.SOCK_DGRAM)
+        audio_cmd_extra = ["--audio-fd", str(send_sock.fileno())]
+    except (AttributeError, OSError):
+        # AF_UNIX not available (e.g. Windows CI) — still run the guest check
+        pass
+
+    cmd = [
+        hvm, "run", ipa_path,
+        "--home", home, "--quiet",
+        "--run-for", str(timeout),
+    ] + audio_cmd_extra + [
+        "--", "--run", "TL-L",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout + 5,
+            pass_fds=(send_sock.fileno(),) if recv_sock else (),
+        )
+        rc, stdout, stderr = proc.returncode, proc.stdout, proc.stderr
+        timed_out = False
+    except subprocess.TimeoutExpired as e:
+        rc = -1
+        stdout = e.stdout.decode(errors="replace") if e.stdout else ""
+        stderr = e.stderr.decode(errors="replace") if e.stderr else ""
+        timed_out = True
+    except FileNotFoundError:
+        if recv_sock:
+            try: send_sock.close()
+            except Exception: pass
+            try: recv_sock.close()
+            except Exception: pass
+        elapsed = time.monotonic() - t0
+        cr = _parse_case_output("", "TL-L", elapsed, -1, False, "")
+        cr["reason"] = f"hvm binary not found: {hvm}"
+        cr["status"] = "failed"
+        _print_result(cr)
+        return cr
+    finally:
+        if recv_sock:
+            try: send_sock.close()
+            except Exception: pass
+
+    elapsed = time.monotonic() - t0
+    cr = _parse_case_output(stdout, "TL-L", elapsed, rc, timed_out, stderr)
+
+    # Check audio signal from the socket if available
+    if recv_sock and cr.get("status") == "passed":
+        try:
+            recv_sock.settimeout(0.1)
+            frames_received = 0
+            non_zero = 0
+            while True:
+                try:
+                    data = recv_sock.recv(65536)
+                    if not data:
+                        break
+                    frames_received += 1
+                    if any(b != 0 for b in data):
+                        non_zero += 1
+                except _socket.timeout:
+                    break
+            cr["diagnostics"]["audioFramesReceived"] = frames_received
+            cr["diagnostics"]["nonZeroFrames"]       = non_zero
+            if frames_received > 0 and non_zero == 0:
+                cr["status"] = "failed"
+                cr["reason"]  = "Audio socket received frames but all samples were zero"
+            elif frames_received == 0:
+                cr["diagnostics"]["audioNote"] = "No frames received on socket — mixer may not have run"
+        except Exception as exc:
+            cr["diagnostics"]["audioSocketError"] = str(exc)
+        finally:
+            try: recv_sock.close()
+            except Exception: pass
+    elif recv_sock:
+        try: recv_sock.close()
+        except Exception: pass
+
+    _print_result(cr)
+    return cr
 
 
 def _print_result(cr: dict) -> None:

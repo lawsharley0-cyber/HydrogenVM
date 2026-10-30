@@ -1,6 +1,6 @@
 # Backlog
 
-Priorities follow the 2026-10-21 audit of `main` at `07fabbb`. Scope added on top of that audit: Clash Royale past the 65% load, and performance items discovered while improving frame time. Those discovered items are listed under B-105 and are not a blank check to rewrite the rasterizer early.
+Priorities follow the 2026-10-21 audit of `main` at `07fabbb`. Scope added on top of that audit: Clash Royale past the 65% load, performance items discovered while improving frame time, and the Test Lab guest IPA milestone added 2026-10-22. Those discovered items are listed under B-105 and are not a blank check to rewrite the rasterizer early.
 
 Score is `impact * severity / complexity`.
 
@@ -18,6 +18,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-002 | Run `fulltest`, the Python protocol tests, and a 3 second smoke of the three in-repo IPAs on `main`. | 5 | 4 | 1 | 20.0 | — | — | Yes, as its own workflow file | Operational. The compat job is green on `6af9976` and runs `fulltest`. Folding the same suites into `hvm_report.py` (default `--only` is still `cpu,ios,bench`) is Planned. macOS CI was not part of that green run |
 | B-003 | Reconcile `docs/ARCHITECTURE.md`, `docs/HANDOFF.md`, and `docs/DEVELOPMENT_AND_RELEASE.md` with the code. Do not delete the shader subset, the missing near clip, or the `CCCrypt` refusal. | 4 | 3 | 1 | 12.0 | — | None | Yes | Planned |
 | B-004 | One Mac compile of current `app/`. `06a7b16` changed the file browser, was marked `[mac]`, and Actions never started. | 4 | 4 | 2 | 8.0 | E | B-001 if no local Mac | Not with another `app/**` edit | Needs owner |
+| B-005 | Test Lab guest IPA (Milestone 1). Five deterministic cases (import/launch, CPU, GLES, audio, persistence), menu UI, durable checkpoint, machine-readable results, automated runner, packaging docs. Files: `tests/ios/apps/testlab/`, `tools/hvm_testlab.py`, `tools/testlab_schema/`, `.github/workflows/testlab.yml`, `docs/TEST_LAB.md`. | 4 | 4 | 2 | 8.0 | Test/regression | None | Yes — does not touch Groups A–E owned files | In progress (branch `codex/test-lab-v1`) |
 
 ## P1
 
