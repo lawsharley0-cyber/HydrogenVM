@@ -4779,6 +4779,74 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    // Call ring: the last-N host calls a guest thread made, kept for crash
+    // bundles and stuck-quit diagnosis (T1/T2). Checked on its own first, then
+    // through the real Engine::callHle hook.
+    {
+        using Diag::CallKind;
+        using Diag::CallRecord;
+        const auto inOrder = [](const std::vector<CallRecord>& v, uint64_t firstSeq) {
+            for (size_t i = 0; i < v.size(); ++i)
+                if (v[i].seq != firstSeq + i || v[i].kind != CallKind::Hle || v[i].id != uint32_t((firstSeq + i) * 7)) return false;
+            return true;
+        };
+        Diag::CallRing<8> small;
+        check(small.last(8).empty() && small.total() == 0, "call ring starts empty");
+        for (uint32_t i = 1; i <= 5; ++i) small.push(CallKind::Hle, i * 7);
+        check(small.total() == 5 && small.last(8).size() == 5 && inOrder(small.last(8), 1),
+              "call ring returns every record, oldest first, before it wraps");
+        for (uint32_t i = 6; i <= 27; ++i) small.push(CallKind::Hle, i * 7);   // 27 pushes into 8 slots
+        const auto lastFull = small.last(8);
+        check(small.total() == 27 && lastFull.size() == 8 && inOrder(lastFull, 20),
+              "call ring filled past capacity returns exactly the last N records in order");
+        check(inOrder(small.last(3), 25) && small.last(3).size() == 3,
+              "call ring last(n) for n below capacity returns the newest n records");
+        check(small.last(1000).size() == 8 && small.last(0).empty(),
+              "call ring caps a request at its capacity");
+
+        // A reader on another thread while the writer wraps the ring many times
+        // must see only whole records in strictly increasing order.
+        Diag::CallRing<64> shared;
+        std::atomic<bool> writing{true};
+        std::thread writer([&] {
+            for (uint32_t i = 1; i <= 400000; ++i) shared.push(CallKind::Hle, i * 7);
+            writing = false;
+        });
+        bool consistent = true;
+        uint64_t reads = 0;
+        while (writing.load()) {
+            const auto snap = shared.last(64);
+            for (size_t i = 0; i < snap.size(); ++i) {
+                if (snap[i].kind != CallKind::Hle || snap[i].id != uint32_t(snap[i].seq * 7) ||
+                    (i > 0 && snap[i].seq <= snap[i - 1].seq)) consistent = false;
+            }
+            ++reads;
+        }
+        writer.join();
+        check(consistent && reads > 0 && shared.total() == 400000 && inOrder(shared.last(64), 400000 - 63),
+              "call ring never returns a torn or reordered record to a concurrent reader");
+
+        ProcessConfig ringCfg;
+        ringCfg.homePath = "/tmp/hvm_call_ring";
+        Process ringProc(ringCfg);
+        auto& ringCpu = ringProc.mainThread().cpu;
+        const uint32_t ringFn = ringProc.defineFunction("test_call_ring_fn", [](Ctx&) {});
+        const uint32_t ringIndex = ringProc.engine().hleIndex(ringFn);
+        const Diag::ThreadCallRing* before = ringCpu.call_ring.load();
+        const uint64_t totalBefore = before ? before->total() : 0;
+        for (int i = 0; i < 300; ++i) ringProc.engine().callHle(&ringCpu, ringIndex);
+        const Diag::ThreadCallRing* ring = ringCpu.call_ring.load();
+        bool hooked = ring && ring->total() == totalBefore + 300;
+        if (hooked) {
+            const auto tail = ring->last(Diag::ThreadCallRing::kCapacity);
+            hooked = tail.size() == Diag::ThreadCallRing::kCapacity;
+            for (size_t i = 0; hooked && i < tail.size(); ++i)
+                hooked = tail[i].kind == CallKind::Hle && tail[i].id == ringIndex &&
+                         tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
+        }
+        check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
