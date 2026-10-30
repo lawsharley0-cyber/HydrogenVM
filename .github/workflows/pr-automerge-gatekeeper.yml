@@ -1,0 +1,68 @@
+name: Opt-in PR auto-merge gatekeeper
+
+# Trusted metadata only: never checkout or run code from a PR here.
+# Opt-in requires the repository owner to apply safe-to-automerge AFTER
+# reviewing the failing-first evidence, clean diff, dependencies and exclusions.
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  queue-protected-squash:
+    if: >-
+      github.event.label.name == 'safe-to-automerge' &&
+      github.actor == 'lawsharley0-cyber'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: gatekeeper-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check immutable exclusions and verified review state
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PR_NUMBER" in
+            118|138|208|210)
+              echo "::error::PR #$PR_NUMBER is excluded from automation."
+              exit 1
+              ;;
+          esac
+          gh api "repos/$GH_REPO" --jq '.allow_auto_merge' | grep -qx true || {
+            echo "::error::GitHub auto-merge must be enabled in repository settings."
+            exit 1
+          }
+          gh pr view "$PR_NUMBER" --repo "$GH_REPO" \
+            --json number,isDraft,headRefOid,baseRefName,reviewDecision,labels \
+            > "$RUNNER_TEMP/pr.json"
+          jq -e --arg sha "$EVENT_HEAD_SHA" '
+            .number != 118 and .number != 138 and
+            .number != 208 and .number != 210 and
+            .isDraft == false and
+            .baseRefName == "main" and
+            .headRefOid == $sha and
+            .reviewDecision == "APPROVED" and
+            ([.labels[].name] | index("safe-to-automerge") != null)
+          ' "$RUNNER_TEMP/pr.json" >/dev/null || {
+            echo "::error::PR must be ready, approved, opt-in labeled, and unchanged."
+            exit 1
+          }
+          echo "Owner opt-in and current review verified for $EVENT_HEAD_SHA."
+      - name: Queue squash merge under main branch protections
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GitHub, not this job, enforces required checks, branch freshness,
+          # independent review, conversation resolution and mergeability.
+          gh pr merge "$PR_NUMBER" --repo "$GH_REPO" --auto --squash \
+            --match-head-commit "$EVENT_HEAD_SHA"
+          echo "Auto-merge requested for PR #$PR_NUMBER at $EVENT_HEAD_SHA."
