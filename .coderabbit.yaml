@@ -1,4 +1,4 @@
-# CodeRabbit: first-pass reviewer for every PR. Copilot (or the owner) fixes what it finds.
+# CodeRabbit: first-pass reviewer and fixer for every PR (use its Autofix on findings). Owner merges via GitHub auto-merge.
 # Docs: https://docs.coderabbit.ai/reference/configuration
 language: en-US
 reviews:
@@ -10,12 +10,11 @@ reviews:
   poem: false
   auto_review:
     enabled: true
+    auto_pause_after_reviewed_commits: 0  # keep reviewing every fix commit
     drafts: true                      # nearly every agent PR here opens as a draft
     base_branches: ["main"]
-    ignore_title_keywords: ["do not merge", "WIP"]
+    ignore_title_keywords: ["do not merge", "[WIP]"]
   path_filters:
-    - "!**/*.ipa"
-    - "!**/*.zip"
     - "!docs/reports/**"
   path_instructions:
     - path: "src/**"
