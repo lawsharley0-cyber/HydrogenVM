@@ -14,6 +14,13 @@ reviews:
     drafts: true                      # nearly every agent PR here opens as a draft
     base_branches: ["main"]
     ignore_title_keywords: ["do not merge", "[WIP]"]
+  pre_merge_checks:
+    custom_checks:
+      - name: "No binaries or signing material"
+        mode: error
+        instructions: |
+          Fail if this PR adds or modifies any file whose name ends in .ipa, .zip, .p12
+          or .mobileprovision, or any certificate, private key or provisioning profile.
   path_filters:
     - "!docs/reports/**"
   path_instructions:
