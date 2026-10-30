@@ -5,7 +5,7 @@ name: Opt-in PR auto-merge gatekeeper
 # reviewing the failing-first evidence, clean diff, dependencies and exclusions.
 on:
   pull_request_target:
-    types: [labeled]
+    types: [labeled, unlabeled, synchronize]
 
 permissions:
   contents: write
@@ -14,6 +14,7 @@ permissions:
 jobs:
   queue-protected-squash:
     if: >-
+      github.event.action == 'labeled' &&
       github.event.label.name == 'safe-to-automerge' &&
       github.actor == 'lawsharley0-cyber'
     runs-on: ubuntu-24.04
@@ -66,3 +67,28 @@ jobs:
           gh pr merge "$PR_NUMBER" --repo "$GH_REPO" --auto --squash \
             --match-head-commit "$EVENT_HEAD_SHA"
           echo "Auto-merge requested for PR #$PR_NUMBER at $EVENT_HEAD_SHA."
+
+  disarm-auto-merge:
+    # A new commit invalidates the owner attestation even if its label remains.
+    # Removing the label also immediately revokes opt-in.
+    if: >-
+      github.event.action == 'synchronize' ||
+      (github.event.action == 'unlabeled' &&
+       github.event.label.name == 'safe-to-automerge')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Revoke stale auto-merge request
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A never-queued PR can return an error. That is harmless.
+          if gh pr merge "$PR_NUMBER" --repo "$GH_REPO" --disable-auto; then
+            echo "Disabled auto-merge for PR #$PR_NUMBER after PR changed."
+          else
+            echo "No pending auto-merge to disable for PR #$PR_NUMBER."
+          fi
