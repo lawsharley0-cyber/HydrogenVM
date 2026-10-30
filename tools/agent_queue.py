@@ -88,7 +88,7 @@ def gh(*args: str, input_: str | None = None) -> str:
 
 
 def repo_slug() -> str:
-    return json.loads(gh("repo", "view", "--json", "nameWithOwner"))["nameWithOwner"]
+    return json.loads(gh("api", "repos/{owner}/{repo}"))["full_name"]
 
 
 def fetch_cards(repo: str):
