@@ -11,6 +11,12 @@ permissions:
   contents: write
   pull-requests: write
 
+# One run per PR at a time, shared by queue and disarm jobs, so a label removal
+# or push can never interleave with a queue request.
+concurrency:
+  group: gatekeeper-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   queue-protected-squash:
     if: >-
@@ -19,9 +25,6 @@ jobs:
       github.actor == 'lawsharley0-cyber'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    concurrency:
-      group: gatekeeper-${{ github.event.pull_request.number }}
-      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -86,9 +89,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # A never-queued PR can return an error. That is harmless.
-          if gh pr merge "$PR_NUMBER" --repo "$GH_REPO" --disable-auto; then
-            echo "Disabled auto-merge for PR #$PR_NUMBER after PR changed."
-          else
-            echo "No pending auto-merge to disable for PR #$PR_NUMBER."
+          # Disable any queued auto-merge. A never-queued PR can return an error,
+          # so confirm no request is still pending before reporting success.
+          gh pr merge "$PR_NUMBER" --repo "$GH_REPO" --disable-auto || true
+          pending=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" \
+            --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [ "$pending" = "true" ]; then
+            echo "::error::Auto-merge is still enabled for PR #$PR_NUMBER."
+            exit 1
           fi
+          echo "No pending auto-merge for PR #$PR_NUMBER."
