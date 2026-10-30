@@ -1,0 +1,20 @@
+{
+  "wip_limit": 3,
+  "agents": {
+    "claude": {
+      "can_run_games": true,
+      "weekly_budget": 4,
+      "prefers": ["T1", "T2", "T7", "T5", "T3"]
+    },
+    "codex": {
+      "can_run_games": true,
+      "weekly_budget": 4,
+      "prefers": ["T3", "T4", "T6", "T8", "T5", "T2"]
+    },
+    "antigravity": {
+      "can_run_games": true,
+      "weekly_budget": 2,
+      "prefers": ["T4", "T5", "T6"]
+    }
+  }
+}

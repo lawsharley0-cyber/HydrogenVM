@@ -97,16 +97,32 @@ Start only after T1-T3 are merged. Write a one-page design first and wait for re
 4. Open as a draft, mark ready once the gates pass and their output is in the PR body. CodeRabbit reviews; Copilot or the author fixes; Lawson adds `safe-to-automerge` (see `.github/copilot-instructions.md`).
 5. Rebase on `main` before asking for review; never merge another agent's branch into yours.
 
-**Which agent for which card.** Reliability here means: ran the gates for real, evidence in the PR, no
-fake stubs, no weakened tests. Historic signal in this repo (from the research): 13 of 36 draft bodies say
-tests were "inferred" or not run, and 10 report clang crashing. Those came from sandboxes that cannot run
-games or `ld64`. So:
+**Which agent for which card (Claude, Codex, Antigravity).** Balance by capacity, not by equal counts. All three
+can run on Lawson's desktop (WSL2) with the IPAs, so game cards are not limited to one tool.
 
-| Needs | Agents that can do it | Notes |
+| Agent | Takes first | Why / limits |
 |---|---|---|
-| Run real games, headless probe, long builds | Gemini CLI on the Google VM; Claude Code on a real machine | VM has 2 CPUs and a small disk: one card at a time |
-| Pure code/tests/tools, no IPA | Copilot coding agent, Codex, Jules, Cursor | Must show the exact test commands and output in the PR; Jules drafts without runs are not accepted |
-| Swift/app work | Only after a macOS CI run proves it compiles (use `[mac]` in the commit subject) | Never claim Swift compiled from Linux |
+| **Claude** | T1 (root cause of the quit bug), T2, T7 design, T5 campaigns, review of risky PRs | Strongest on hard debugging; usage is plentiful as of 2026-10-30 but still a shared pool. Prefer a few focused sessions |
+| **Codex** | T3, T4, T6, T8, T5a/T5d (tests and tooling) | Plus plan: 5-hour windows plus weekly limits, CLI and cloud share one pool; use the cheaper model for routine cards |
+| **Antigravity (`agy`)** | T4 runner parts, T5b/T5c probing, sweeps with Lawson present | Use attended only: headless login and automation terms on personal accounts are unresolved |
+
+Cloud agents (Copilot coding agent, Jules, Cursor) take code-and-test cards that need no IPA. Swift/app
+work only counts after a macOS CI run proves it compiles (`[mac]` in the commit subject).
+
+**The queue.** Cards are GitHub issues labelled `card`, `status:ready|in-progress|blocked|review`, optional
+`needs:game-run` and `hotspot`, with `Depends-on: #N` in the body. Agents pull their own work:
+
+```
+python3 tools/agent_queue.py status
+python3 tools/agent_queue.py next  --agent codex
+python3 tools/agent_queue.py claim 12 --agent codex
+python3 tools/agent_queue.py release 12 --agent codex [--blocked]
+```
+
+`next` skips blocked cards, cards whose dependency is open, hotspot cards while another hotspot card is in
+progress, cards needing a game run for an agent that cannot, and anything past the work limit (3) or the
+agent's weekly budget. Budgets and preferences are in `tools/agent_queue.json`; when an agent runs out, its
+cards stay `ready` and another agent claims them. Change the numbers there as real limits become known.
 
 **Trial before trust.** Give each agent the same small card first (T3 labelling of two known lies, or
 T4 census) and score it:
