@@ -15,6 +15,7 @@
 #include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
 #include <atomic>
+#include <sys/file.h>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -413,6 +414,196 @@ int runFullSubsystemTests() {
                              (unsigned long long)st.musicFrames, (unsigned long long)st.effectFrames,
                              st.musicVoices, st.effectVoices, st.peak);
         check(ok, "Mixer stats tell music (looping) from sound effects (one-shot) and ignore silent voices");
+    }
+
+    // Mixer headroom and stream stitching (#260: audio blown out / buzzing on the device speaker).
+    // Every expected value is analytic, never taken from the mixer: the inputs are int16 sines with an
+    // integer period (441 Hz at 44.1 kHz = 100 frames), so the ideal bus value of every output frame
+    // follows from the input samples, the voice gains and the definition of linear resampling.
+    {
+        constexpr double kTwoPi = 6.283185307179586;
+        auto sine = [&](int frames, double amp, int period) {   // amp in full-scale units, L == R
+            auto pcm = std::make_shared<std::vector<int16_t>>(size_t(frames) * 2);
+            for (int n = 0; n < frames; ++n) {
+                const auto v = int16_t(std::lround(amp * 32767.0 * std::sin(kTwoPi * double(n) / double(period))));
+                (*pcm)[size_t(n) * 2] = v;
+                (*pcm)[size_t(n) * 2 + 1] = v;
+            }
+            return pcm;
+        };
+        auto renderLeft = [&](Audio::Mixer& m, size_t frames) {
+            std::vector<float> out;
+            std::vector<float> l(512), r(512);
+            while (out.size() < frames) {
+                const size_t n = std::min<size_t>(512, frames - out.size());
+                m.render(l.data(), r.data(), n);
+                out.insert(out.end(), l.begin(), l.begin() + long(n));
+            }
+            return out;
+        };
+        struct Fit { double k = 0, residual = 1, peak = 0; int rail = 0; };
+        // Least-squares scale of the ideal waveform onto the output, the relative RMS of what is left
+        // (distortion, so a constant gain reduction costs nothing), peak, and samples sitting on the rail.
+        auto fit = [&](const std::vector<float>& out, const std::vector<double>& ideal, size_t from) {
+            Fit f;
+            double sxy = 0, sxx = 0;
+            for (size_t i = from; i < out.size(); ++i) {
+                sxy += double(out[i]) * ideal[i];
+                sxx += ideal[i] * ideal[i];
+                f.peak = std::max(f.peak, std::fabs(double(out[i])));
+                if (std::fabs(out[i]) >= 1.0f) ++f.rail;
+            }
+            f.k = sxx > 0 ? sxy / sxx : 0;
+            double res = 0, sig = 0;
+            for (size_t i = from; i < out.size(); ++i) {
+                const double e = double(out[i]) - f.k * ideal[i];
+                res += e * e;
+                sig += (f.k * ideal[i]) * (f.k * ideal[i]);
+            }
+            f.residual = sig > 0 ? std::sqrt(res / sig) : 1.0;
+            return f;
+        };
+        constexpr int kLoopFrames = 4400;   // 44 whole periods, so a looping voice stays phase-continuous
+        constexpr size_t kFrames = 16384, kSettle = 8192;
+        constexpr double kMaxResidual = 0.02;   // chosen before measuring: -34 dB distortion
+
+        // 1. Two loud voices at once: 0.7 + 0.7 full scale sums to 1.4. The output must stay a clean
+        //    (scaled) sine instead of being flattened against the rail.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto a = sine(kLoopFrames, 0.7, 100);
+            m.play(a, 44100, loop);
+            m.play(a, 44100, loop);
+            std::vector<double> ideal(kFrames);
+            for (size_t i = 0; i < kFrames; ++i) ideal[i] = 2.0 * double((*a)[(i % kLoopFrames) * 2]) / 32768.0;
+            const Fit f = fit(renderLeft(m, kFrames), ideal, kSettle);
+            const bool ok = f.residual < kMaxResidual && f.rail == 0 && f.k > 0.6;
+            if (!ok) std::printf("    mixer headroom (2 x 0.7 FS): k=%.3f residual=%.4f peak=%.4f railSamples=%d\n", f.k, f.residual, f.peak, f.rail);
+            check(ok, "Mixer keeps two summed loud voices (bus peak 1.4 FS) undistorted instead of hard-clipping them");
+        }
+
+        // 2. One voice with app gain above 1 (OpenAL AL_GAIN may exceed 1): 0.5 FS x 3.0 = 1.5 FS bus.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true; loop.gain = 3.0f;
+            auto a = sine(kLoopFrames, 0.5, 100);
+            m.play(a, 44100, loop);
+            std::vector<double> ideal(kFrames);
+            for (size_t i = 0; i < kFrames; ++i) ideal[i] = 3.0 * double((*a)[(i % kLoopFrames) * 2]) / 32768.0;
+            const Fit f = fit(renderLeft(m, kFrames), ideal, kSettle);
+            const bool ok = f.residual < kMaxResidual && f.rail == 0 && f.k > 0.6;
+            if (!ok) std::printf("    mixer headroom (0.5 FS x gain 3): k=%.3f residual=%.4f peak=%.4f railSamples=%d\n", f.k, f.residual, f.peak, f.rail);
+            check(ok, "Mixer keeps a voice whose gain pushes the bus to 1.5 FS undistorted instead of hard-clipping it");
+        }
+
+        // 3. Transparency: a mix that stays under full scale must pass through unchanged (a limiter
+        //    must not quieten ordinary content). One voice at 0.5 FS, gain 1: output == input / 32768.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto a = sine(kLoopFrames, 0.5, 100);
+            m.play(a, 44100, loop);
+            const std::vector<float> out = renderLeft(m, kFrames);
+            double worst = 0;
+            for (size_t i = 0; i < kFrames; ++i)
+                worst = std::max(worst, std::fabs(double(out[i]) - double((*a)[(i % kLoopFrames) * 2]) / 32768.0));
+            const bool ok = worst < 1e-6;
+            if (!ok) std::printf("    mixer transparency (0.5 FS): worst error %.3g\n", worst);
+            check(ok, "Mixer passes a mix that stays under full scale through bit-for-bit (no level change)");
+        }
+
+        // 3b. Stereo image: the limiter gain is shared by both channels. Two voices with unequal channel
+        //     levels (left bus peak 1.4 FS, right 0.7 FS) must keep their 2:1 ratio. Clamping or limiting
+        //     the channels independently would flatten only the left one and bend the image.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto uneven = std::make_shared<std::vector<int16_t>>(size_t(kLoopFrames) * 2);
+            for (int n = 0; n < kLoopFrames; ++n) {
+                const double w = std::sin(kTwoPi * double(n) / 100.0) * 32767.0;
+                (*uneven)[size_t(n) * 2] = int16_t(std::lround(0.7 * w));
+                (*uneven)[size_t(n) * 2 + 1] = int16_t(std::lround(0.35 * w));
+            }
+            m.play(uneven, 44100, loop);
+            m.play(uneven, 44100, loop);
+            std::vector<float> outL, outR, l(512), r(512);
+            while (outL.size() < kFrames) {
+                m.render(l.data(), r.data(), 512);
+                outL.insert(outL.end(), l.begin(), l.end());
+                outR.insert(outR.end(), r.begin(), r.end());
+            }
+            double worstRatio = 0, peakL = 0;
+            for (size_t i = kSettle; i < kFrames; ++i) {
+                peakL = std::max(peakL, std::fabs(double(outL[i])));
+                if (std::fabs(outL[i]) > 0.05f)   // skip zero crossings, where the ratio is noise
+                    worstRatio = std::max(worstRatio, std::fabs(double(outR[i]) / double(outL[i]) - 0.5));
+            }
+            const bool ok = worstRatio < 0.01 && peakL < 1.0 && peakL > 0.6;
+            if (!ok) std::printf("    mixer stereo image: worst |R/L - 0.5| = %.4f, left peak %.4f\n", worstRatio, peakL);
+            check(ok, "Mixer limits both channels with one shared gain, so unequal channel levels keep their ratio");
+        }
+
+        // 3c. Mirror of 3b: with the dominant channel on the right, the shared gain must still follow it.
+        //     Together with 3b this catches a limiter that looks at only one channel.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto uneven = std::make_shared<std::vector<int16_t>>(size_t(kLoopFrames) * 2);
+            for (int n = 0; n < kLoopFrames; ++n) {
+                const double w = std::sin(kTwoPi * double(n) / 100.0) * 32767.0;
+                (*uneven)[size_t(n) * 2] = int16_t(std::lround(0.35 * w));
+                (*uneven)[size_t(n) * 2 + 1] = int16_t(std::lround(0.7 * w));
+            }
+            m.play(uneven, 44100, loop);
+            m.play(uneven, 44100, loop);
+            std::vector<float> outL, outR, l(512), r(512);
+            while (outL.size() < kFrames) {
+                m.render(l.data(), r.data(), 512);
+                outL.insert(outL.end(), l.begin(), l.end());
+                outR.insert(outR.end(), r.begin(), r.end());
+            }
+            double worstRatio = 0, peakR = 0;
+            for (size_t i = kSettle; i < kFrames; ++i) {
+                peakR = std::max(peakR, std::fabs(double(outR[i])));
+                if (std::fabs(outR[i]) > 0.05f)
+                    worstRatio = std::max(worstRatio, std::fabs(double(outL[i]) / double(outR[i]) - 0.5));
+            }
+            const bool ok = worstRatio < 0.01 && peakR < 1.0 && peakR > 0.6;
+            if (!ok) std::printf("    mixer mirrored stereo image: worst |L/R - 0.5| = %.4f, right peak %.4f\n", worstRatio, peakR);
+            check(ok, "Mixer limits a dominant right channel with the shared gain too (mirror of the left-dominant case)");
+        }
+
+        // 4. Stream stitching: a 22.05 kHz stream of a 441 Hz sine (50-frame period) queued as three
+        //    1000-frame buffers. Output frame j reads source position j/2 of the concatenated stream, so
+        //    the ideal value at an odd j is the mean of source frames j/2 and j/2 + 1, also across a
+        //    buffer boundary. A buffer edge that repeats its last frame instead leaves an error every 1000
+        //    source frames (a periodic click train).
+        {
+            Audio::Mixer m;
+            const uint32_t v = m.createStream({});
+            constexpr int kChunk = 1000, kChunks = 3;
+            auto whole = sine(kChunk * kChunks, 0.5, 50);
+            for (int c = 0; c < kChunks; ++c) {
+                auto part = std::make_shared<std::vector<int16_t>>(whole->begin() + long(c) * kChunk * 2, whole->begin() + long(c + 1) * kChunk * 2);
+                m.enqueue(v, part, 22050, uint64_t(c + 1));
+            }
+            const size_t outFrames = size_t(kChunk) * kChunks * 2 - 2;
+            const std::vector<float> out = renderLeft(m, outFrames);
+            double worst = 0;
+            size_t worstAt = 0;
+            for (size_t j = 0; j < outFrames; ++j) {
+                const size_t k = j / 2;
+                const double s0 = double((*whole)[k * 2]) / 32768.0;
+                const double s1 = double((*whole)[(k + 1) * 2]) / 32768.0;
+                const double ideal = (j & 1) ? 0.5 * (s0 + s1) : s0;
+                const double e = std::fabs(double(out[j]) - ideal);
+                if (e > worst) { worst = e; worstAt = j; }
+            }
+            const bool ok = worst < 1e-4;
+            if (!ok) std::printf("    mixer stream stitching: worst error %.5f FS at output frame %zu\n", worst, worstAt);
+            check(ok, "Mixer interpolates across queued stream buffer boundaries (no click at each buffer edge)");
+        }
     }
 
     // Straight-line GLSL semantics: independent names, actual values, honest rejection.
@@ -4776,6 +4967,263 @@ int runFullSubsystemTests() {
         std::filesystem::remove_all(home, ec);
     }
 
+    // Asset I/O uses its own Process, guest stack, and temporary bundle. Expected
+    // bytes and offsets below come directly from the ten-byte host fixture.
+    {
+        namespace fs = std::filesystem;
+        char temp[] = "/tmp/hvm_asset_io_XXXXXX";
+        const char* created = ::mkdtemp(temp);
+        if (!created) throw std::runtime_error("mkdtemp for asset I/O tests failed");
+        const std::string home = created, bundle = home + "/Game.app";
+        fs::create_directories(bundle + "/CookedIPhone");
+        fs::create_directories(bundle + "/fr.lproj");
+        fs::create_directories(bundle + "/Base.lproj");
+        fs::create_directories(bundle + "/Other");
+        fs::create_directories(bundle + "/CookedIPhoneBackup");
+        fs::create_directories(home + "/Game.app-sibling");
+        auto put = [](const std::string& path, const std::string& bytes = "0123456789") {
+            std::ofstream out(path, std::ios::binary); out << bytes;
+            if (!out) throw std::runtime_error("write asset I/O fixture failed");
+        };
+        put(bundle + "/CookedIPhone/Texture.tfc");
+        put(bundle + "/CookedIPhone/Map.xxx");
+        put(bundle + "/Other/Texture.tfc");
+        put(bundle + "/CookedIPhoneBackup/Texture.tfc");
+        put(bundle + "/CookedIPhone/Texture.dat");
+        put(bundle + "/fr.lproj/Word.txt");
+        put(bundle + "/Base.lproj/Word.txt");
+        put(home + "/Game.app-sibling/secret.tfc");
+        fs::create_directory_symlink(home + "/Game.app-sibling", bundle + "/Escape");
+        fs::create_directory_symlink(bundle + "/Other", bundle + "/Inside");
+        {
+            ProcessConfig assetCfg;
+            assetCfg.homePath = home; assetCfg.bundlePath = bundle;
+            Process ap(assetCfg);
+            auto& acpu = ap.mainThread().cpu;
+            ap.mem().map(0xbee00000, 1u << 20, Memory::kProtRW);
+            acpu.r[CPU::kSP] = 0xbef00000 - 256;
+            // A Process without a loaded Mach-O needs explicit guest errno
+            // storage, just like the existing libc fixtures in this suite.
+            ap.mainThread().errnoAddr = ap.heap().allocZeroed(4);
+            Ctx ax{ap, acpu, ap.mem()};
+            auto& ar = ObjC::rt(ap);
+            const auto pool = ar.poolPush();
+            auto call = [&](const char* symbol, std::initializer_list<uint32_t> args) {
+                auto address = ap.lookupSymbol(symbol);
+                if (!address) throw std::runtime_error(std::string("missing test API: ") + symbol);
+                return uint32_t(ap.callGuest(acpu, *address, args));
+            };
+            auto lookup = [&](const std::string& name, const std::string& type = "tfc", const std::string& dir = "CookedIPhone") {
+                return Foundation::bundleResource(ax, name, type, dir);
+            };
+            // The class directory API used to bypass main-bundle publication.
+            // Race that cold entry point against the native main-bundle helper.
+            const auto coldName = Foundation::makeString(ax, "Texture");
+            const auto coldType = Foundation::makeString(ax, "tfc");
+            const auto coldDir = Foundation::makeString(ax, bundle + "/CookedIPhone");
+            ap.mem().map(0xbec00000, 0x20000, Memory::kProtRW);
+            std::atomic<unsigned> ready{0};
+            std::atomic<bool> start{false}, coldOK{true};
+            auto coldLookup = [&](bool viaClass) {
+                CPU::Cpu coldCPU;
+                coldCPU.r[CPU::kSP] = (viaClass ? 0xbec10000 : 0xbec20000) - 256;
+                Ctx coldCtx{ap, coldCPU, ap.mem()};
+                const auto coldPool = ar.poolPush();
+                ++ready;
+                while (!start) std::this_thread::yield();
+                std::string result;
+                if (viaClass) {
+                    const auto value = uint32_t(ar.send(coldCPU, ar.getClass("NSBundle"),
+                        "pathForResource:ofType:inDirectory:", {coldName, coldType, coldDir}));
+                    result = ap.hostPath(Foundation::utf8(coldCtx, value));
+                } else result = Foundation::bundleResource(coldCtx, "Texture", "tfc", "CookedIPhone");
+                if (result != bundle + "/CookedIPhone/Texture.tfc") coldOK = false;
+                ar.poolPop(coldCPU, coldPool);
+            };
+            std::thread coldClass(coldLookup, true), coldNative(coldLookup, false);
+            while (ready != 2) std::this_thread::yield();
+            start = true;
+            coldClass.join(); coldNative.join();
+            check(coldOK, "cold class and native bundle lookups synchronize main-bundle publication");
+            check(lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc" &&
+                  lookup("Texture.tfc", "") == lookup("Texture") &&
+                  lookup("Texture", ".tfc") == lookup("Texture") &&
+                  lookup("Texture", "tfc", "Other") == bundle + "/Other/Texture.tfc" &&
+                  lookup("Map", "xxx") == bundle + "/CookedIPhone/Map.xxx",
+                  "bundle resource cache distinguishes names, extensions and subdirectories");
+            const auto main = uint32_t(call("_CFBundleGetMainBundle", {}));
+            auto localized = [&](const char* lang) {
+                const auto path = uint32_t(ar.send(acpu, main, "pathForResource:ofType:inDirectory:forLocalization:",
+                    {Foundation::makeString(ax, "Word"), Foundation::makeString(ax, "txt"), 0, Foundation::makeString(ax, lang)}));
+                return ap.hostPath(Foundation::utf8(ax, path));
+            };
+            check(localized("fr") == bundle + "/fr.lproj/Word.txt" &&
+                  localized("Base") == bundle + "/Base.lproj/Word.txt" && localized("fr") == bundle + "/fr.lproj/Word.txt",
+                  "bundle resource cache separates explicit localizations");
+            check(lookup("secret", "tfc", "../Game.app-sibling").empty() &&
+                  lookup("secret", "tfc", home + "/Game.app-sibling").empty() &&
+                  lookup("secret", "tfc", "Escape").empty() &&
+                  lookup("../Game.app-sibling/secret", "tfc", "").empty() &&
+                  lookup(home + "/Game.app-sibling/secret", "tfc", "").empty() &&
+                  lookup("Texture", "tfc", bundle + "/CookedIPhone") == lookup("Texture"),
+                  "bundle lookup rejects traversal, absolute and symlink escapes with component boundaries");
+            check(lookup("Texture", "tfc", "Inside") == bundle + "/Inside/Texture.tfc",
+                  "bundle lookup still permits symlinks targeting resources inside the bundle");
+            // Missing resources must become visible, and a cached fallback must
+            // yield to a newly installed device-specific variant.
+            bool mutations = lookup("New").empty();
+            put(bundle + "/CookedIPhone/New.tfc");
+            mutations &= lookup("New") == bundle + "/CookedIPhone/New.tfc";
+            put(bundle + "/CookedIPhone/Texture~iphone.tfc");
+            mutations &= lookup("Texture") == bundle + "/CookedIPhone/Texture~iphone.tfc";
+            fs::remove(bundle + "/CookedIPhone/Texture~iphone.tfc");
+            mutations &= lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc";
+            put(bundle + "/CookedIPhone/Link.tfc");
+            mutations &= !lookup("Link").empty();
+            fs::remove(bundle + "/CookedIPhone/Link.tfc");
+            fs::create_symlink(home + "/Game.app-sibling/secret.tfc", bundle + "/CookedIPhone/Link.tfc");
+            mutations &= lookup("Link").empty();
+            check(mutations, "bundle cache invalidates additions/removals and rejects a cached file replaced by an escaping symlink");
+            put(home + "/Mutable.tfc");
+            const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
+            auto mutableLookup = [&] {
+                return uint32_t(ar.send(acpu, mutableBundle, "pathForResource:ofType:",
+                    {Foundation::makeString(ax, "Mutable"), Foundation::makeString(ax, "tfc")}));
+            };
+            bool mutableOK = mutableLookup() != 0;
+            fs::remove(home + "/Mutable.tfc");
+            check(mutableOK && !mutableLookup(), "sandbox bundle lookups do not retain stale mutable paths");
+            fs::create_directories(home + "/Documents");
+            fs::create_directories(home + "/Mutable.app/CookedIPhone");
+            fs::create_directories(bundle + "/Nested.app/CookedIPhone");
+            for (const auto& root : {home + "/Mutable.app", bundle + "/Nested.app"}) {
+                put(root + "/CookedIPhone/Texture.tfc");
+                put(root + "/CookedIPhone/Texture~iphone.tfc");
+            }
+            const auto stamp = fs::last_write_time(bundle + "/CookedIPhone");
+            fs::last_write_time(home + "/Mutable.app/CookedIPhone", stamp);
+            fs::last_write_time(bundle + "/Nested.app/CookedIPhone", stamp);
+            auto bundleAt = [&](const std::string& path) {
+                return uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, path)}));
+            };
+            auto aliasResource = [&](uint32_t object) {
+                const auto value = uint32_t(ar.send(acpu, object, "pathForResource:ofType:inDirectory:",
+                    {coldName, coldType, Foundation::makeString(ax, "CookedIPhone")}));
+                return value ? ap.hostPath(Foundation::utf8(ax, value)) : std::string();
+            };
+            const auto outsideAlias = home + "/Documents/Alias.app";
+            fs::create_directory_symlink(bundle, outsideAlias);
+            const auto mutableAlias = bundleAt(outsideAlias);
+            bool aliasOK = aliasResource(mutableAlias) == outsideAlias + "/CookedIPhone/Texture.tfc";
+            fs::remove(outsideAlias);
+            fs::create_directory_symlink(home + "/Mutable.app", outsideAlias);
+            check(aliasOK && aliasResource(mutableAlias) == outsideAlias + "/CookedIPhone/Texture~iphone.tfc",
+                  "mutable sandbox aliases stay uncached after retarget with matching directory timestamps");
+            const auto insideAlias = bundle + "/Alias.bundle";
+            fs::create_directory_symlink(bundle, insideAlias);
+            const auto nestedAlias = bundleAt(insideAlias);
+            aliasOK = aliasResource(nestedAlias) == insideAlias + "/CookedIPhone/Texture.tfc";
+            fs::remove(insideAlias);
+            fs::create_directory_symlink(bundle + "/Nested.app", insideAlias);
+            check(aliasOK && aliasResource(nestedAlias) == insideAlias + "/CookedIPhone/Texture~iphone.tfc",
+                  "cached nested bundle aliases invalidate when their canonical bundle changes");
+            fs::remove(insideAlias);
+            fs::create_directory_symlink(home + "/Mutable.app", insideAlias);
+            check(aliasResource(nestedAlias).empty(),
+                  "nested bundle aliases cannot escape the retained installation boundary on cache miss or hit");
+            const auto name = Foundation::makeString(ax, "Texture"), ext = Foundation::makeString(ax, "tfc"), dir = Foundation::makeString(ax, "CookedIPhone");
+            const auto url1 = uint32_t(call("_CFBundleCopyResourceURL", {main, name, ext, dir}));
+            const auto url2 = uint32_t(call("_CFBundleCopyResourceURL", {main, name, ext, dir}));
+            check(url1 && url2 && Foundation::urlFilePath(ax, url1) == Foundation::urlFilePath(ax, url2),
+                  "separate CFBundle Copy results have equivalent resource paths");
+            call("_CFRelease", {url1}); call("_CFRelease", {url2});
+            // A directory full of distinct successful lookups exercises eviction.
+            for (unsigned i = 0; i < 4100; ++i) put(bundle + "/CookedIPhone/evict" + std::to_string(i) + ".tfc");
+            bool bounded = true;
+            for (unsigned i = 0; i < 4100; ++i) bounded &= !lookup("evict" + std::to_string(i)).empty();
+            check(bounded && lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc", "bundle resource lookup remains correct across the 4096-entry cache bound");
+            std::atomic<bool> concurrent{true};
+            std::vector<std::thread> workers;
+            for (unsigned i = 0; i < 4; ++i) workers.emplace_back([&] {
+                CPU::Cpu workerCPU;
+                Ctx workerCtx{ap, workerCPU, ap.mem()};
+                for (unsigned j = 0; j < 100; ++j)
+                    if (Foundation::bundleResource(workerCtx, "texture", "tfc", "CookedIPhone") != bundle + "/CookedIPhone/Texture.tfc") concurrent = false;
+            });
+            for (auto& worker : workers) worker.join();
+            check(concurrent, "bundle resource cache supports simultaneous native lookups and case-insensitive fallback");
+
+            const auto buffer = ap.heap().allocZeroed(256);
+            auto openAsset = [&](const std::string& path, uint32_t flags = 0) {
+                return int32_t(call("_open", {ap.internCString(path), flags, 0600}));
+            };
+            auto seek = [&](int fd, uint64_t off, int whence) {
+                // Apple's ARMv7 ABI packs 64-bit arguments without padding.
+                return int64_t(ap.callGuest(acpu, *ap.lookupSymbol("_lseek"), {uint32_t(fd), uint32_t(off), uint32_t(off >> 32), uint32_t(whence)}));
+            };
+            const auto errnoAddr = uint32_t(call("___error", {}));
+            for (const char* leaf : {"Texture.tfc", "Map.xxx"}) {
+                const auto path = ap.guestBundlePath() + "/CookedIPhone/" + leaf;
+                ap.mem().write<uint32_t>(errnoAddr, 123);
+                int a = openAsset(path), b = openAsset(path);
+                bool ok = a >= 0 && b >= 0 && a != b && ap.mem().read<uint32_t>(errnoAddr) == 123;
+                ok &= call("_read", {uint32_t(a), buffer, 3}) == 3 && ap.readCString(buffer) == "012";
+                ok &= seek(a, 6, SEEK_SET) == 6 && seek(b, 0, SEEK_CUR) == 0;
+                ok &= call("_pread", {uint32_t(a), buffer, 2, 4, 0}) == 2;
+                ok &= std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "45" && seek(a, 0, SEEK_CUR) == 6;
+                ok &= call("_pread", {uint32_t(a), buffer, 1, 0xffffffffu, 0xffffffffu}) == uint32_t(-1) &&
+                      ap.mem().read<uint32_t>(errnoAddr) == 22 && seek(a, 0, SEEK_CUR) == 6;
+                ok &= call("_fstat", {uint32_t(a), buffer}) == 0 && call("_fcntl", {uint32_t(a), 3}) == 0;
+                ok &= call("_close", {uint32_t(a)}) == 0;
+                ok &= call("_read", {uint32_t(a), buffer, 1}) == uint32_t(-1) && ap.mem().read<uint32_t>(errnoAddr) == 9;
+                ok &= call("_read", {uint32_t(b), buffer, 2}) == 2 && std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "01";
+                int c = openAsset(path);
+                ok &= c >= 0 && seek(c, 0, SEEK_CUR) == 0 && seek(b, 0, SEEK_CUR) == 2;
+                call("_close", {uint32_t(b)}); call("_close", {uint32_t(c)});
+                check(ok, leaf[0] == 'T' ? "TFC opens own independent descriptors, offsets, pread, fstat, fcntl and close" : "XXX opens own independent descriptors, offsets, pread, fstat, fcntl and close");
+            }
+            bool errors = openAsset(ap.guestBundlePath() + "/CookedIPhone/missing.tfc") == -1 && ap.mem().read<uint32_t>(errnoAddr) == 2;
+            errors &= call("_read", {0xffffffffu, buffer, 1}) == uint32_t(-1) && ap.mem().read<uint32_t>(errnoAddr) == 9;
+            errors &= seek(-1, 0, SEEK_SET) == -1 && ap.mem().read<uint32_t>(errnoAddr) == 9;
+            check(errors, "asset open/read/lseek failures retain Darwin ENOENT and EBADF");
+            bool ordinary = true;
+            for (const char* relative : {"Other/Texture.tfc", "CookedIPhoneBackup/Texture.tfc", "CookedIPhone/Texture.dat"}) {
+                const int fd = openAsset(ap.guestBundlePath() + "/" + relative);
+                ordinary &= fd >= 0 && call("_read", {uint32_t(fd), buffer, 1}) == 1;
+                call("_close", {uint32_t(fd)});
+            }
+            check(ordinary, "non-UE3 paths and CookedIPhone prefix siblings retain ordinary file behavior");
+            int rw = openAsset(ap.guestBundlePath() + "/CookedIPhone/Map.xxx", 2);
+            check(rw >= 0 && call("_write", {uint32_t(rw), ap.internCString("AB"), 2}) == 2 && seek(rw, 0, SEEK_SET) == 0 &&
+                  call("_read", {uint32_t(rw), buffer, 2}) == 2 && std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "AB",
+                  "writable UE3 asset opens retain normal write/read/seek behavior");
+            call("_close", {uint32_t(rw)});
+            fs::rename(bundle, bundle + ".moved");
+            fs::create_directory_symlink(home + "/Game.app-sibling", bundle);
+            const bool rootEscape = lookup("secret", "tfc", "").empty() && lookup("Texture").empty();
+            fs::remove(bundle);
+            fs::rename(bundle + ".moved", bundle);
+            check(rootEscape && lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc",
+                  "cached installation boundary rejects replacing the entire bundle with an external symlink");
+            ar.poolPop(acpu, pool);
+        }
+        {
+            ProcessConfig lateCfg;
+            lateCfg.homePath = home; lateCfg.bundlePath = home + "/Late.app";
+            Process late(lateCfg);
+            auto& lateCPU = late.mainThread().cpu;
+            late.mem().map(0xbee00000, 1u << 20, Memory::kProtRW);
+            lateCPU.r[CPU::kSP] = 0xbef00000 - 256;
+            const auto mainSymbol = *late.lookupSymbol("_CFBundleGetMainBundle");
+            const bool absent = uint32_t(late.callGuest(lateCPU, mainSymbol, {})) == 0;
+            fs::create_directories(lateCfg.bundlePath);
+            check(absent && uint32_t(late.callGuest(lateCPU, mainSymbol, {})) != 0,
+                  "thread-safe main bundle initialization retries a not-yet-created directory");
+        }
+        std::error_code ec;
+        fs::remove_all(home, ec);
+    }
+
     const uint32_t arenasBefore = Memory::GuestArena::liveCount();
     {
         Memory::GuestArena first, second;
@@ -4820,11 +5268,260 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    // Call ring: the last-N host calls a guest thread made, kept for crash
+    // bundles and stuck-quit diagnosis (T1/T2). Checked on its own first, then
+    // through the real Engine::callHle hook.
+    {
+        using Diag::CallKind;
+        using Diag::CallRecord;
+        const auto inOrder = [](const std::vector<CallRecord>& v, uint64_t firstSeq) {
+            for (size_t i = 0; i < v.size(); ++i)
+                if (v[i].seq != firstSeq + i || v[i].kind != CallKind::Hle || v[i].id != uint32_t((firstSeq + i) * 7)) return false;
+            return true;
+        };
+        Diag::CallRing<8> small;
+        check(small.last(8).empty() && small.total() == 0, "call ring starts empty");
+        for (uint32_t i = 1; i <= 5; ++i) small.push(CallKind::Hle, i * 7);
+        check(small.total() == 5 && small.last(8).size() == 5 && inOrder(small.last(8), 1),
+              "call ring returns every record, oldest first, before it wraps");
+        for (uint32_t i = 6; i <= 27; ++i) small.push(CallKind::Hle, i * 7);   // 27 pushes into 8 slots
+        const auto lastFull = small.last(8);
+        check(small.total() == 27 && lastFull.size() == 8 && inOrder(lastFull, 20),
+              "call ring filled past capacity returns exactly the last N records in order");
+        check(inOrder(small.last(3), 25) && small.last(3).size() == 3,
+              "call ring last(n) for n below capacity returns the newest n records");
+        check(small.last(1000).size() == 8 && small.last(0).empty(),
+              "call ring caps a request at its capacity");
+
+        // A reader on another thread while the writer wraps the ring many times
+        // must see only whole records in strictly increasing order.
+        Diag::CallRing<64> shared;
+        std::atomic<bool> writing{true};
+        std::thread writer([&] {
+            for (uint32_t i = 1; i <= 400000; ++i) shared.push(CallKind::Hle, i * 7);
+            writing = false;
+        });
+        bool consistent = true;
+        uint64_t reads = 0;
+        while (writing.load()) {
+            const auto snap = shared.last(64);
+            for (size_t i = 0; i < snap.size(); ++i) {
+                if (snap[i].kind != CallKind::Hle || snap[i].id != uint32_t(snap[i].seq * 7) ||
+                    (i > 0 && snap[i].seq <= snap[i - 1].seq)) consistent = false;
+            }
+            ++reads;
+        }
+        writer.join();
+        check(consistent && reads > 0 && shared.total() == 400000 && inOrder(shared.last(64), 400000 - 63),
+              "call ring never returns a torn or reordered record to a concurrent reader");
+
+        ProcessConfig ringCfg;
+        ringCfg.homePath = "/tmp/hvm_call_ring";
+        Process ringProc(ringCfg);
+        auto& ringCpu = ringProc.mainThread().cpu;
+        const uint32_t ringFn = ringProc.defineFunction("test_call_ring_fn", [](Ctx&) {});
+        const uint32_t ringIndex = ringProc.engine().hleIndex(ringFn);
+        const Diag::ThreadCallRing* before = ringCpu.call_ring.load();
+        const uint64_t totalBefore = before ? before->total() : 0;
+        for (int i = 0; i < 300; ++i) ringProc.engine().callHle(&ringCpu, ringIndex);
+        const Diag::ThreadCallRing* ring = ringCpu.call_ring.load();
+        bool hooked = ring && ring->total() == totalBefore + 300;
+        if (hooked) {
+            const auto tail = ring->last(Diag::ThreadCallRing::kCapacity);
+            hooked = tail.size() == Diag::ThreadCallRing::kCapacity;
+            for (size_t i = 0; hooked && i < tail.size(); ++i)
+                hooked = tail[i].kind == CallKind::Hle && tail[i].id == ringIndex &&
+                         tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
+        }
+        check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+    }
+
+    // Teardown diagnostics: a guest thread still running (blocked in the real `read` on
+    // an empty pipe) is named with the host function it is inside and its last calls.
+    {
+        int fds[2];
+        const bool piped = ::pipe(fds) == 0;
+        ProcessConfig diagCfg;
+        diagCfg.homePath = "/tmp/hvm_blocked_threads";
+        Process diagProc(diagCfg);
+        check(diagProc.describeRunningThreads().empty(), "no running guest threads: nothing to describe");
+        std::atomic<bool> readerDone{false};
+        const uint32_t readerFn = diagProc.defineFunction("test_blocked_reader", [&](Ctx& x) {
+            const uint32_t buf = x.proc.heap().allocZeroed(16);
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_read"), {uint32_t(fds[0]), buf, 1});
+            readerDone = true;
+        });
+        if (piped) diagProc.startThread(readerFn, 0, 256u << 10, true);
+        std::string described;
+        for (int i = 0; piped && i < 300; ++i) {
+            described = diagProc.describeRunningThreads();
+            if (described.find("_read") != std::string::npos && described.find("last calls:") != std::string::npos) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        check(piped && described.find("thread ") != std::string::npos && described.find("inside ") != std::string::npos &&
+              described.find("_read") != std::string::npos && described.find("last calls:") != std::string::npos,
+              "describeRunningThreads names a blocked guest thread, the host function it is inside and its last calls");
+        if (piped) {
+            const ssize_t unblocked = ::write(fds[1], "x", 1);   // let the reader finish before the Process is destroyed
+            for (int i = 0; i < 300 && !readerDone.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            check(unblocked == 1 && readerDone.load(), "the blocked reader thread finishes once its pipe has data");
+            for (int i = 0; i < 300 && !diagProc.describeRunningThreads().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            check(diagProc.describeRunningThreads().empty(), "a finished guest thread is no longer described as running");
+            ::close(fds[0]);
+            ::close(fds[1]);
+        }
+    }
+
+    // Blocking host reads and locks must notice a stop request (T1/#234). A guest thread
+    // parked in read() on an empty pipe or in a contended flock() used to ignore
+    // requestStop() forever and outlive the process teardown. Normal behaviour must not change.
+    {
+        using namespace std::chrono;
+        struct Run { bool earlyDone; bool done; double wakeMs; };
+        auto callG = [](Ctx& x, const char* sym, std::initializer_list<uint32_t> a) { return uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol(sym), a)); };
+        // Run `body` on a guest thread. If it finishes within `earlyWaitMs` it was not blocked.
+        // Otherwise request a stop and time how long it takes to leave.
+        auto runCase = [&](std::function<void(Process&, Ctx&)> body, int earlyWaitMs) {
+            ProcessConfig cfg;
+            cfg.homePath = "/tmp/hvm_stop_wake";
+            auto* proc = new Process(cfg);
+            std::atomic<bool> done{false};
+            const uint32_t fn = proc->defineFunction("stop_wake_fn", [&](Ctx& x) { try { body(*proc, x); } catch (...) {} done = true; });
+            proc->startThread(fn, 0, 256u << 10, true);
+            const auto start = steady_clock::now();
+            while (!done.load() && steady_clock::now() - start < milliseconds(earlyWaitMs)) std::this_thread::sleep_for(milliseconds(5));
+            Run r{done.load(), done.load(), 0};
+            if (!r.earlyDone) {
+                const auto t0 = steady_clock::now();
+                proc->requestStop();
+                while (!done.load() && steady_clock::now() - t0 < seconds(3)) std::this_thread::sleep_for(milliseconds(5));
+                r.done = done.load();
+                r.wakeMs = duration<double, std::milli>(steady_clock::now() - t0).count();
+            }
+            if (r.done) delete proc;   // a thread that never left still owns the process: leak it rather than free under it
+            return r;
+        };
+        std::atomic<int32_t> ret{99};
+        const auto readFd = [&](int fd) { return [&ret, fd, callG](Process& p, Ctx& x) { ret = int32_t(callG(x, "_read", {uint32_t(fd), p.heap().allocZeroed(16), 1})); }; };
+
+        int blockingPipe[2]; ::pipe(blockingPipe);
+        const Run readStop = runCase(readFd(blockingPipe[0]), 300);
+        check(!readStop.earlyDone && readStop.done && readStop.wakeMs < 1000, "read() on an empty pipe wakes on a stop request");
+
+        char lockPath[] = "/tmp/hvm_stop_wake_lock_XXXXXX";
+        const int lockFile = ::mkstemp(lockPath);
+        const int heldFd = lockFile, waiterFd = ::open(lockPath, O_RDWR);
+        ::flock(heldFd, LOCK_EX);
+        const auto lockFd = [&](int fd, int op) { return [&ret, fd, op, callG](Process&, Ctx& x) { ret = int32_t(callG(x, "_flock", {uint32_t(fd), uint32_t(op)})); }; };
+        const Run flockStop = runCase(lockFd(waiterFd, 2), 300);
+        check(!flockStop.earlyDone && flockStop.done && flockStop.wakeMs < 1000, "a contended flock() wakes on a stop request");
+
+        // Unchanged behaviour.
+        int dataPipe[2]; ::pipe(dataPipe); (void)!::write(dataPipe[1], "x", 1);
+        ret = 99;
+        Run r = runCase(readFd(dataPipe[0]), 1500);
+        check(r.earlyDone && ret == 1, "read() on a pipe with data still returns it immediately");
+
+        int eofPipe[2]; ::pipe(eofPipe); ::close(eofPipe[1]);
+        ret = 99;
+        r = runCase(readFd(eofPipe[0]), 1500);
+        check(r.earlyDone && ret == 0, "read() at end of file on a pipe still returns 0");
+
+        int nbPipe[2]; ::pipe(nbPipe); ::fcntl(nbPipe[0], F_SETFL, ::fcntl(nbPipe[0], F_GETFL) | O_NONBLOCK);
+        ret = 99;
+        r = runCase(readFd(nbPipe[0]), 1500);
+        check(r.earlyDone && ret == -1, "read() on an empty non-blocking pipe still fails at once instead of waiting");
+
+        const int regFd = ::open(lockPath, O_RDONLY);
+        ret = 99;
+        r = runCase(readFd(regFd), 1500);
+        check(r.earlyDone && ret == 0, "read() on a regular file is unaffected");
+
+        ret = 99;
+        r = runCase(lockFd(waiterFd, 2 | 4), 1500);
+        check(r.earlyDone && ret == -1, "flock() with LOCK_NB on a held lock still fails at once");
+
+        char freePath[] = "/tmp/hvm_stop_wake_free_XXXXXX";
+        const int freeFd = ::mkstemp(freePath);
+        ret = 99;
+        r = runCase(lockFd(freeFd, 2), 1500);
+        check(r.earlyDone && ret == 0, "an uncontended blocking flock() still succeeds at once");
+
+        std::thread releaser([&] { std::this_thread::sleep_for(milliseconds(150)); ::flock(heldFd, LOCK_UN); });
+        ret = 99;
+        r = runCase(lockFd(waiterFd, 2), 3000);
+        releaser.join();
+        check(r.earlyDone && ret == 0, "a blocking flock() still acquires once the holder lets go");
+
+        for (int fd : {blockingPipe[0], blockingPipe[1], dataPipe[0], dataPipe[1], eofPipe[0], nbPipe[0], nbPipe[1], regFd, freeFd, waiterFd, heldFd}) ::close(fd);
+        ::unlink(lockPath);
+        ::unlink(freePath);
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
 
 } // namespace
+
+
+// `hvm_tests stopprobe`: block one guest thread in each blocking primitive, call
+// requestStop(), and time how long the thread takes to leave it. A primitive that
+// never wakes is reported STUCK (exit 1). Not part of fulltest: it is a measurement
+// that names the primitives still ignoring a stop (T1, #234), and it takes a few seconds.
+static int runStopProbe() {
+    using namespace std::chrono;
+    using namespace Hydrogen::Runtime;
+    struct Case { const char* name; std::function<void(Process&, Ctx&)> body; };
+    int pipeFds[2]; ::pipe(pipeFds);
+    int sp[2]; ::socketpair(AF_UNIX, SOCK_STREAM, 0, sp);
+    const char* lockPath = "/tmp/hvm_stopprobe.lock";
+    const int lockHeld = ::open(lockPath, O_CREAT | O_RDWR, 0600); ::flock(lockHeld, LOCK_EX);
+    const int lockWaiter = ::open(lockPath, O_RDWR);
+    auto callG = [](Ctx& x, const char* sym, std::initializer_list<uint32_t> a) { return uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol(sym), a)); };
+    std::vector<Case> cases = {
+        {"usleep(5s)",        [&](Process&, Ctx& x) { callG(x, "_usleep", {5000000}); }},
+        {"sleep(5)",          [&](Process&, Ctx& x) { callG(x, "_sleep", {5}); }},
+        {"nanosleep(5s)",     [&](Process& p, Ctx& x) { const uint32_t ts = p.heap().allocZeroed(16); p.mem().write<uint32_t>(ts, 5); callG(x, "_nanosleep", {ts, 0}); }},
+        {"read(pipe)",        [&](Process& p, Ctx& x) { callG(x, "_read", {uint32_t(pipeFds[0]), p.heap().allocZeroed(16), 1}); }},
+        {"recv(socketpair)",  [&](Process& p, Ctx& x) { callG(x, "_recv", {uint32_t(sp[0]), p.heap().allocZeroed(16), 1, 0}); }},
+        {"poll(pipe,-1)",     [&](Process& p, Ctx& x) { const uint32_t pf = p.heap().allocZeroed(16); p.mem().write<uint32_t>(pf, uint32_t(pipeFds[0])); p.mem().write<uint16_t>(pf + 4, 1); callG(x, "_poll", {pf, 1, 0xFFFFFFFFu}); }},
+        {"select(pipe,NULL)", [&](Process& p, Ctx& x) { const uint32_t set = p.heap().allocZeroed(128); p.mem().write<uint32_t>(set, 1u << pipeFds[0]); callG(x, "_select", {uint32_t(pipeFds[0]) + 1, set, 0, 0, 0}); }},
+        {"dispatch_sem_wait(forever)", [&](Process&, Ctx& x) { const uint32_t sem = callG(x, "_dispatch_semaphore_create", {0}); callG(x, "_dispatch_semaphore_wait", {sem, 0xFFFFFFFFu, 0xFFFFFFFFu}); }},
+        {"mutex self-deadlock", [&](Process& p, Ctx& x) { const uint32_t m = p.heap().allocZeroed(64); callG(x, "_pthread_mutex_init", {m, 0}); callG(x, "_pthread_mutex_lock", {m}); callG(x, "_pthread_mutex_lock", {m}); }},
+        {"pthread_cond_wait", [&](Process& p, Ctx& x) { const uint32_t m = p.heap().allocZeroed(64), c = p.heap().allocZeroed(64); callG(x, "_pthread_mutex_init", {m, 0}); callG(x, "_pthread_cond_init", {c, 0}); callG(x, "_pthread_mutex_lock", {m}); callG(x, "_pthread_cond_wait", {c, m}); }},
+        {"flock(contended)",  [&](Process&, Ctx& x) { callG(x, "_flock", {uint32_t(lockWaiter), 2}); }},
+    };
+    int stuck = 0;
+    for (auto& c : cases) {
+        ProcessConfig cfg; cfg.homePath = "/tmp/hvm_stopprobe";
+        auto* proc = new Process(cfg);
+        std::atomic<bool> done{false}, entered{false};
+        const uint32_t fn = proc->defineFunction("stopprobe_fn", [&](Ctx& x) {
+            entered = true;
+            try { c.body(*proc, x); } catch (...) {}
+            done = true;
+        });
+        proc->startThread(fn, 0, 256u << 10, true);
+        std::this_thread::sleep_for(milliseconds(300));
+        const bool blockedBeforeStop = entered.load() && !done.load();
+        const auto t0 = steady_clock::now();
+        proc->requestStop();
+        while (!done.load() && steady_clock::now() - t0 < seconds(3)) std::this_thread::sleep_for(milliseconds(5));
+        const double ms = duration<double, std::milli>(steady_clock::now() - t0).count();
+        if (!blockedBeforeStop) std::printf("  ?      %-28s returned before stop (did not block)\n", c.name);
+        else if (done.load()) std::printf("  ok     %-28s woke in %.0f ms\n", c.name, ms);
+        else {
+            std::printf("  STUCK  %-28s still blocked 3000 ms after requestStop\n%s", c.name, proc->describeRunningThreads().c_str());
+            ++stuck;
+            continue;
+        }   // leak: a stuck thread still owns the process
+        delete proc;
+    }
+    ::write(pipeFds[1], "x", 1); ::write(sp[1], "x", 1);   // let any stuck threads go before exit
+    std::printf("stopprobe: %d stuck of %zu\n", stuck, cases.size());
+    return stuck ? 1 : 0;
+}
 
 int main(int argc, char** argv) {
     if (argc == 4 && std::string(argv[1]) == "audio-decode") {
@@ -4844,6 +5541,7 @@ int main(int argc, char** argv) {
         std::printf("selftest %s: %s (%.0f MIPS)\n", r.passed ? "passed" : "FAILED", r.detail.c_str(), r.mips);
         return r.passed ? 0 : 1;
     }
+    if (argc == 2 && std::string(argv[1]) == "stopprobe") return runStopProbe();
     if (argc == 2 && std::string(argv[1]) == "fulltest") {
         return runFullSubsystemTests();
     }

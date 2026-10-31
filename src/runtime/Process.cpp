@@ -167,14 +167,22 @@ Process::~Process() {
     }
     requestStop();
     // Wait (bounded) for guest threads to notice.
+    bool alive = false;
     for (int i = 0; i < 200; ++i) {
-        bool alive = false;
+        alive = false;
         {
             std::lock_guard<std::mutex> lk(threadsMu_);
             for (auto& [k, t] : threads_) alive |= !t->finished.load();
         }
         if (!alive) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    // Guest threads are detached host threads, so one that never noticed the stop is still running
+    // while the arena below is released. Say which thread and what it was in, so the next run of
+    // a game that won't quit points at the blocking call instead of at a crash somewhere later.
+    if (alive) {
+        const std::string stuck = describeRunningThreads();
+        if (!stuck.empty()) std::fprintf(stderr, "[hvm:warn] Process teardown: guest threads still running 2 s after stop:\n%s", stuck.c_str());
     }
     if (t_thread && &t_thread->proc == this) t_thread = nullptr;
 }
@@ -670,6 +678,26 @@ uint32_t& Process::threadSlot(const void* key) {
     const uint32_t tid = currentThread().id;
     std::lock_guard<std::mutex> lk(slotMu_);
     return threadSlots_[{key, tid}];
+}
+
+std::string Process::describeRunningThreads() {
+    std::string out;
+    std::lock_guard<std::mutex> lk(threadsMu_);
+    for (auto& [k, t] : threads_) {
+        if (t->finished.load()) continue;
+        const uint32_t hle = t->cpu.current_hle.load(std::memory_order_relaxed);
+        out += "  thread " + std::to_string(t->id) + ": ";
+        out += hle == 0xFFFFFFFFu ? std::string("running guest code") : "inside " + hleFunctionName(hle);
+        if (const Diag::ThreadCallRing* ring = t->cpu.call_ring.load(std::memory_order_acquire)) {
+            const auto tail = ring->last(8);
+            if (!tail.empty()) {
+                out += "; last calls:";
+                for (const auto& r : tail) out += " " + (r.kind == Diag::CallKind::Hle ? hleFunctionName(r.id) : std::string("?"));
+            }
+        }
+        out += "\n";
+    }
+    return out;
 }
 
 std::vector<uint32_t> Process::liveThreadIds() {
