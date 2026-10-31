@@ -1,4 +1,5 @@
 #include "Process.hpp"
+#include "MemoryDiagnostics.hpp"
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
 #include <sstream>
@@ -237,6 +238,9 @@ void Process::setBackgrounded(bool b) {
     }
     mixer_->setAllPaused(b);
     lifeCv_.notify_all();
+    if (memoryDiagEnabled()) {
+        try { recordMemorySample(b ? "backgrounded" : "foregrounded"); } catch (...) {}
+    }
 }
 void Process::waitWhileBackgrounded() {
     std::unique_lock<std::mutex> lk(lifeMu_);
@@ -897,9 +901,42 @@ struct GuestSampler {
         std::fclose(f);
     }
 };
+
+// One bounded sample every five seconds, independent of guest rendering and
+// run-loop progress. Join before Process::run returns; never retain a Process.
+// No GPU calls, guest execution, per-allocation logging or accumulating history.
+struct MemorySampler {
+    Process& p;
+    std::mutex mu;
+    std::condition_variable cv;
+    bool stopped = false;
+    std::thread thread;
+    explicit MemorySampler(Process& proc) : p(proc) {
+        p.recordMemorySample("run-start");
+        thread = std::thread([this] {
+            std::unique_lock<std::mutex> lock(mu);
+            while (!cv.wait_for(lock, std::chrono::seconds(5), [this] { return stopped; })) {
+                lock.unlock();
+                try { p.recordMemorySample("interval"); } catch (...) { /* diagnostics must not stop a game */ }
+                lock.lock();
+            }
+        });
+    }
+    ~MemorySampler() {
+        { std::lock_guard<std::mutex> lock(mu); stopped = true; }
+        cv.notify_one();
+        if (thread.joinable()) thread.join();
+        try { p.recordMemorySample("run-end"); } catch (...) {}
+    }
+};
 } // namespace
 
 int Process::run() {
+    std::unique_ptr<MemorySampler> memorySampler;
+    if (memoryDiagEnabled()) {
+        try { memorySampler = std::make_unique<MemorySampler>(*this); }
+        catch (...) { /* best-effort diagnostics, including thread creation */ }
+    }
     std::unique_ptr<GuestSampler> sampler;
     if (const char* prof = std::getenv("HVM_GUEST_PROFILE"); prof && *prof) sampler = std::make_unique<GuestSampler>(*this, prof);
     t_thread = mainThread_;
@@ -1084,7 +1121,7 @@ std::string Process::crashBundle() {
         std::lock_guard<std::mutex> lk(logRingMu_);
         for (size_t i = 0; i < logRing_.size(); ++i) out << (i ? "," : "") << quote(logRing_[i]);
     }
-    out << "],\"fileHistory\":[";
+    out << "],\"runtimeMemorySamples\":" << memorySamplesJson() << ",\"fileHistory\":[";
     {
         std::lock_guard<std::mutex> lk(fileRingMu_);
         for (size_t i = 0; i < fileRing_.size(); ++i) {
