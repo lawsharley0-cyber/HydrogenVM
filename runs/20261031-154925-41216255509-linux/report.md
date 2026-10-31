@@ -1,19 +1,19 @@
-# HydrogenVM report — 8d239c4
+# HydrogenVM report — b0b61a8
 
-2026-10-28T17:08:43+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-31T15:44:47+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 243.3s |
+| build | 1 | 0 | 0 | 228.8s |
 | cpu | 15 | 0 | 0 | 0.7s |
 | ios | 6 | 0 | 0 | 2.2s |
 | bench | 5 | 0 | 0 | 24.6s |
 
 ## Speed
 
-CoreMark **1716.9** iterations/s (575.1 guest MIPS)
+CoreMark **1716.8** iterations/s (572.9 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
@@ -22,7 +22,7 @@ CoreMark **1716.9** iterations/s (575.1 guest MIPS)
 | iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.5%** | 572 MHz |
 | iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.7%** | 491 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 432 MIPS, ctests_arm 484 MIPS, ftests_vfp_thumb_softfp 388 MIPS, ftests_neon_thumb 404 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 465 MIPS, ctests_arm 489 MIPS, ftests_vfp_thumb_softfp 439 MIPS, ftests_neon_thumb 402 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -31,7 +31,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 432 MIPS, ctests_arm 484
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.67s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.45 ms | 7.52 ms | 0 |
+| UIKitTest | 1.04s | 61 | 0.52 ms | 10.98 ms | 0 |
 
 ## Problems (30)
 
@@ -54,13 +54,13 @@ Raw interpreter speed (CPU test programs): ctests_thumb 432 MIPS, ctests_arm 484
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:80:20: warning: unused variable 'kCurrentProgram' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:81:20: warning: unused variable 'kFramebuffer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:81:43: warning: unused variable 'kRenderbuffer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:27:47: warning: unused variable 'kDrawFramebuffer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:28:54: warning: unused variable 'kDrawFramebufferBinding' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:38:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:38:50: warning: unused variable 'kNormalArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:38:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:39:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:39:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:28:47: warning: unused variable 'kDrawFramebuffer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:29:54: warning: unused variable 'kDrawFramebufferBinding' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:39:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:39:50: warning: unused variable 'kNormalArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:39:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:40:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:40:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxx.cpp:38:40: warning: unused variable 'kBinary' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:51:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:57:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
