@@ -206,6 +206,7 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
+            f << proc.missingApis().reportFields("  ") << ",\n";   // tainted, stubHits, missingApis (T2a)
             f << "  \"unimplementedImports\": " << jsonList(proc.unimplementedImports()) << ",\n";
             f << "  \"warnings\": " << pairs(warnings) << ",\n";
             f << "  \"errors\": " << pairs(errors) << ",\n";
@@ -322,6 +323,11 @@ int hvmRunMain(int argc, char** argv) {
         }
         const int status = timedStop ? 0 : proc.crashed() ? 70 : r;
         if (timedStop && !quiet) std::fprintf(stderr, "[hvm] still running after %.0f s (stopped by --run-for)\n", runFor);
+        // A run that called missing or approximated APIs is not a clean pass, whatever its exit status says.
+        if (proc.tainted())
+            std::fprintf(stderr, "[hvm] %s with %llu stub hits (%zu distinct missing APIs); see \"missingApis\" in the report\n",
+                         status == 0 ? "passed" : "finished", static_cast<unsigned long long>(proc.missingApis().totalHits()),
+                         proc.missingApis().distinct());
         writeReport(status);
         return status;
     };
