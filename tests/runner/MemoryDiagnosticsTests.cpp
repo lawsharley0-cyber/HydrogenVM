@@ -102,6 +102,24 @@ int main(int argc, char** argv) {
 #endif
         std::printf("diagnostic average: %.3f ms/sample (125 samples)\n", elapsed * 1000 / 125);
     }
+    {
+        unsetenv("HVM_MEMORY_DIAG");
+        ProcessConfig cfg;
+        cfg.homePath = home.string(); cfg.bundlePath = (home / "Test.app").string();
+        cfg.log = [](LogLevel, const std::string&) {};
+        auto process = std::make_unique<Process>(cfg);
+        process->setBackgrounded(true); // Should not emit a sample
+        check(process->memorySamplesJson() == "[]", "sampler is disabled without HVM_MEMORY_DIAG");
+    }
+    {
+        setenv("HVM_MEMORY_DIAG", "1", 1);
+        ProcessConfig cfg;
+        cfg.homePath = home.string(); cfg.bundlePath = (home / "Test.app").string();
+        cfg.log = [](LogLevel, const std::string&) {};
+        auto process = std::make_unique<Process>(cfg);
+        process->setBackgrounded(true); // Should emit a sample
+        check(process->memorySamplesJson() != "[]", "sampler is enabled with HVM_MEMORY_DIAG");
+    }
     std::filesystem::remove_all(home);
     std::printf("memory tests: %d passed, %d failed; host page %ld\n", passed, failed, sysconf(_SC_PAGESIZE));
     return failed ? 1 : 0;
