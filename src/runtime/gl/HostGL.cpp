@@ -61,6 +61,7 @@ struct State {
     std::shared_ptr<Platform> platform;
     std::unordered_map<uint32_t, std::unique_ptr<HostContext>> contexts;          // guest EAGLContext -> host
     std::unordered_map<uint64_t, std::unique_ptr<HostContext>> workers;           // (thread, sharegroup) -> implicit
+    uint64_t nextRetireId = 1;
     std::vector<std::unique_ptr<HostContext>> retiredWorkers;                      // destroyed sharegroups; kept alive for tls.ctx users
     std::unordered_map<uint32_t, HostContext*> shareRoot;                          // guest sharegroup -> first host ctx
     std::unordered_map<uint64_t, Drawable> drawables;                              // (sharegroup << 32 | rb) -> drawable
@@ -277,7 +278,7 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     State& st = S(p);
     const uint32_t self = p.currentThread().id;
     const std::vector<uint32_t> live = p.liveThreadIds();   // before st.mu: keeps the lock order simple
-    std::vector<std::pair<HostContext*, uint32_t>> retiredHere;   // (context, owner thread) retired by this call
+    std::vector<std::pair<uint64_t, uint32_t>> retiredHere;   // (retirement id, owner thread) retired by this call
     {
     std::lock_guard<std::mutex> lk(st.mu);
     for (const auto& kv : st.contexts) {
@@ -300,7 +301,8 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
         } else {
             // A live thread may hold it in tls.ctx: keep the object valid and let that thread drop it.
             hc->retired = true;
-            retiredHere.emplace_back(hc.get(), owner);
+            hc->retireId = st.nextRetireId++;
+            retiredHere.emplace_back(hc->retireId, owner);
             st.retiredWorkers.push_back(std::move(hc));
         }
     }
@@ -310,12 +312,14 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     // look again, and free whatever nobody can hold any more.
     const std::vector<uint32_t> liveNow = p.liveThreadIds();
     std::lock_guard<std::mutex> lk(st.mu);
-    for (const auto& [hc, owner] : retiredHere) {
+    for (const auto& [id, owner] : retiredHere) {
         if (std::find(liveNow.begin(), liveNow.end(), owner) != liveNow.end()) continue;
+        // Match by retirement id, not address: a context released by its owner may be followed by a new
+        // allocation at the same address.
         auto it = std::find_if(st.retiredWorkers.begin(), st.retiredWorkers.end(),
-                               [hc](const std::unique_ptr<HostContext>& c) { return c.get() == hc; });
+                               [id](const std::unique_ptr<HostContext>& c) { return c->retireId == id; });
         if (it == st.retiredWorkers.end()) continue;   // the owner already released it
-        if (hc->handle) { st.platform->destroyContext(hc->handle); hc->handle = nullptr; }
+        if ((*it)->handle) { st.platform->destroyContext((*it)->handle); (*it)->handle = nullptr; }
         st.retiredWorkers.erase(it);
     }
 }
