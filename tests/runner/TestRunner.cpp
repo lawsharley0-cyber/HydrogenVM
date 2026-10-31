@@ -4744,6 +4744,18 @@ int runFullSubsystemTests() {
     check(Memory::GuestArena::liveCount() == arenasBefore,
           "GuestArena diagnostics count reservations released at destruction");
 
+    // T1b/#253: a whole Process (with a guest thread that was running) must give its 4 GB
+    // reservation back, so a batch of launches never sees "failed to reserve". Linux 4 KB only.
+    {
+        for (int i = 0; i < 3; ++i) {
+            ProcessConfig cfg;
+            cfg.homePath = "/tmp/hvm_arena_live";
+            Process proc(cfg);
+            check(Memory::GuestArena::liveCount() == arenasBefore + 1, "a live Process holds exactly one arena reservation");
+        }
+        check(Memory::GuestArena::liveCount() == arenasBefore, "arena reservations return to the starting count after Processes are destroyed");
+    }
+
     // EAGLContext affinity: the software renderer rejects sharing one context
     // between live threads. The host renderer transparently gives the second
     // thread a shared host context, so that successful bind must not be reported
