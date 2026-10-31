@@ -1,31 +1,45 @@
-# HydrogenVM report — 6fbdbc9
+# HydrogenVM report — e33c3b2
 
-2026-10-31T03:09:41+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-10-31T03:08:52+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
-**1 test(s) failed.**
+**All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 0 | 1 | 0 | 77.8s |
+| build | 1 | 0 | 0 | 222.7s |
+| cpu | 15 | 0 | 0 | 0.7s |
+| ios | 6 | 0 | 0 | 2.2s |
+| bench | 5 | 0 | 0 | 24.3s |
 
-## Problems (25)
+## Speed
 
-### Failures (1)
+CoreMark **1736.9** iterations/s (581.9 guest MIPS)
 
-- **build / ninja**
+| Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
+|---|---|---:|---:|---:|
+| iPhone 3GS | Cortex-A8 | 1440 | **120.6%** | 724 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **90.5%** | 724 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **72.4%** | 579 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.2%** | 496 MHz |
 
-  ```
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:454:41: error: use of undeclared identifier 'getAssetCache'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:456:19: error: use of undeclared identifier 'getAssetCache'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:495:19: error: use of undeclared identifier 'getAssetCache'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:654:9: error: use of undeclared identifier 'getAssetCache'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:655:19: error: use of undeclared identifier 'getAssetCache'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:678:9: error: use of undeclared identifier 'getAssetCache'
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:679:19: error: use of undeclared identifier 'getAssetCache'
-  7 errors generated.
-  ```
+Raw interpreter speed (CPU test programs): ctests_thumb 442 MIPS, ctests_arm 494 MIPS, ftests_vfp_thumb_softfp 467 MIPS, ftests_neon_thumb 367 MIPS
 
-### Warnings (24)
+| App | Wall | Frames | Avg frame | Max frame | Slow frames |
+|---|---:|---:|---:|---:|---:|
+| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.04s | 61 | 0.48 ms | 10.86 ms | 0 |
+
+## Problems (30)
+
+### Below speed goal (1)
+
+- **bench / coremark**: 38.2% of iPhone 5 single-core speed (goal: 100%)
+
+### Warnings (29)
 
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
@@ -51,4 +65,9 @@
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:51:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:57:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/Posix.cpp:59:64: warning: unused variable 'KERN_ABORTED' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]
+- **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 
