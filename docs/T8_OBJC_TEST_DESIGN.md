@@ -26,10 +26,12 @@ expected values and raw observations. Expected values never come from HVM output
 | ID / upstream topic | Fixture and expected result |
 | --- | --- |
 | TL-S / [sel.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/sel.m) | Register the same name from distinct buffers; both SELs and the compiled selector agree. A different name differs; `sel_getName` round-trips the bytes. Oracle: selector identity/name contract. Exclude private lookup APIs and null-name conventions. |
-| TL-T / [super.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/super.m) | Declare Base : NSObject and Child : Base. Child's superclass is Base; Child's metaclass superclass is Base's metaclass. Class/metaclass flags are false/true. Oracle: declared inheritance graph; exclude private class layouts. |
-| TL-U / [getMethod.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/getMethod.m) | Base instance method returns 13, Child override 23, inherited class method 31; typed IMP calls produce 13/23/31. Missing methods return NULL. Oracle: authored method constants and public lookup rules; no absolute addresses or private forwarding entry points. |
-| TL-V / [addMethod.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/addMethod.m) | Warm dispatch twice. Add Child override (29) over inherited Base value (11): YES; duplicate add: NO. Replace it with 47: prior IMP returned; Child now 47, Base still 11. Repeat dispatch after each mutation. Oracle: hand-derived mutation sequence and known IMP identities. |
-| TL-W / [association.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/association.m) | Retain a counted value through a non-atomic association; release caller ownership. Verify identity and drain getter autoreleases before clearing with nil. Dealloc count: 0 before clear, 1 after clear and owner release. Oracle: explicit ownership ledger; exclude private policies, isa changes and races. |
+| TL-T / [super.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/super.m) | Declare `TLSuperBase : NSObject` and `TLSuperChild : TLSuperBase`. The child's superclass is the base; the child's metaclass superclass is the base's metaclass. Class/metaclass flags are false/true. Oracle: declared inheritance graph; exclude private class layouts. |
+| TL-U / [getMethod.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/getMethod.m) | `TLLookupBase` instance method returns 13, `TLLookupChild` override 23, inherited class method 31; typed IMP calls produce 13/23/31. Missing methods return NULL. Oracle: authored method constants and public lookup rules; no absolute addresses or private forwarding entry points. |
+| TL-V / [addMethod.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/addMethod.m) | Warm dispatch twice. Add a `TLMutateChild` override (29) over the inherited `TLMutateBase` value (11): YES; duplicate add: NO. Replace it with 47: prior IMP returned; `TLMutateChild` now 47, `TLMutateBase` still 11. Repeat dispatch after each mutation. Oracle: hand-derived mutation sequence and known IMP identities. |
+| TL-W / [association.m](https://github.com/apple-oss-distributions/objc4/blob/fb265098298302243cd7eeaa1f63f0ba7786dd9a/test/association.m) | Retain a counted value through a non-atomic association; release caller ownership. Verify identity before clearing with nil. Dealloc count: 0 before clear, 1 after clear and owner release. Oracle: explicit ownership ledger (no getter-autorelease drain); exclude private policies, isa changes and races. |
+
+**Class names.** Each fixture owns uniquely prefixed classes (`TLSuper*`, `TLLookup*`, `TLMutate*`) because all fixtures link into one TestLab app and duplicate `Base`/`Child` definitions would resolve to the wrong class.
 
 **Integration.** Put fixtures in new `tests/ios/apps/testlab/objc_conformance.m`
 and `objc_lifetime_mrc.m`; expose plain C diagnostics to `main.m`'s TLResult,
@@ -38,7 +40,7 @@ checkpoint, automated dispatch and phone menu. The existing builder recognizes
 mode. Review any needed project-authored public declarations in
 `tests/ios/include/objc/`. Update CASE_IDS, runner tests and `docs/TEST_LAB.md`.
 The current schema accepts string IDs; add validation coverage, not a new schema
-version or weaker requirements. Isolate every automated case in its own process.
+version or weaker requirements. Isolate every case run by the host runner (`tools/hvm_testlab.py`) in its own process; the phone's Run All path shares one guest process and is not isolated unless a relaunch protocol is added.
 
 **Acceptance and risks.** Run the new cases against unfixed main first. A passing
 case adds coverage; it does not prove a repair. Any proposed runtime fix needs a
