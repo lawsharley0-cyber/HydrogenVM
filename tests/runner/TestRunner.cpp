@@ -4937,20 +4937,24 @@ int runFullSubsystemTests() {
         // non-owner, and the shim reports both as exceptions with the errno text.
         {
             const uint32_t attr = proc.heap().allocZeroed(16), emtx = proc.heap().allocZeroed(64);
-            call("_pthread_mutexattr_init", {attr});
-            call("_pthread_mutexattr_settype", {attr, 1});   // PTHREAD_MUTEX_ERRORCHECK
-            call("_pthread_mutex_init", {emtx, attr});
+            const bool setupOk = call("_pthread_mutexattr_init", {attr}) == 0 &&
+                                 call("_pthread_mutexattr_settype", {attr, 1}) == 0 &&   // PTHREAD_MUTEX_ERRORCHECK
+                                 call("_pthread_mutex_init", {emtx, attr}) == 0;
             auto throwsFor = [&](const char* sym, const char* needle) {
                 try { call(sym, {emtx}); }
                 catch (const std::exception& e) { return std::string(e.what()).find(needle) != std::string::npos; }
                 return false;
             };
-            const bool unownedUnlock = throwsFor("__ZNSt3__15mutex6unlockEv", "unlock failed");
-            const bool firstLock = call("__ZNSt3__15mutex4lockEv", {emtx}) == 0;
-            const bool relock = throwsFor("__ZNSt3__15mutex4lockEv", "lock failed");
-            call("__ZNSt3__15mutex6unlockEv", {emtx});
+            bool errorPaths = false;
+            if (setupOk) {   // skip the lock paths unless the error-checking mutex really exists
+                const bool unownedUnlock = throwsFor("__ZNSt3__15mutex6unlockEv", "unlock failed");
+                const bool firstLock = call("__ZNSt3__15mutex4lockEv", {emtx}) == 0;
+                const bool relock = firstLock && throwsFor("__ZNSt3__15mutex4lockEv", "lock failed");
+                if (firstLock) call("__ZNSt3__15mutex6unlockEv", {emtx});
+                errorPaths = unownedUnlock && firstLock && relock;
+            }
             call("_pthread_mutex_destroy", {emtx});
-            mtx_ok = mtx_ok && unownedUnlock && firstLock && relock;
+            mtx_ok = mtx_ok && errorPaths;
         }
 
         const uint64_t t1 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
