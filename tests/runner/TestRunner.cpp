@@ -5858,7 +5858,10 @@ int runFullSubsystemTests() {
             }
             void* proc(void*, const char*) override { return nullptr; }
         };
-        for (bool ownerAlive : {false, true}) {
+        // 0: owner exited before teardown; 1: owner then issues GL; 2: owner then exits without GL;
+        // 3: owner then switches to no context (bind).
+        for (int mode = 0; mode < 4; ++mode) {
+            const bool ownerAlive = mode != 0;
             auto platform = std::make_shared<CountingPlatform>();
             ProcessConfig sgCfg;
             sgCfg.homePath = "/tmp/hvm_sharegroup_teardown";
@@ -5872,13 +5875,14 @@ int runFullSubsystemTests() {
                                                       "initWithAPI:sharegroup:", {2, uint32_t(sg)}));
             sr.send(scpu, ObjC::id(ctxCls), "setCurrentContext:", {context});   // main thread owns the root context
             std::atomic<bool> bound{false}, groupGone{false};
-            const uint32_t workerFn = sgProc.defineFunction("test_sharegroup_worker", [&, context](Ctx& x) {
+            const uint32_t workerFn = sgProc.defineFunction("test_sharegroup_worker", [&, context, mode](Ctx& x) {
                 auto& rt = ObjC::rt(x);
                 rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {context});   // gets its own shared context
                 bound = true;
                 if (ownerAlive) {
                     for (int i = 0; i < 1000 && !groupGone.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                    x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glFlush"), {});   // first GL call after the sharegroup died
+                    if (mode == 1) x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glFlush"), {});   // first GL call after the sharegroup died
+                    if (mode == 3) rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {0});
                 }
                 x.cpu.r[0] = 0;
             });
@@ -5893,9 +5897,12 @@ int runFullSubsystemTests() {
             groupGone = true;
             if (ownerAlive) sgProc.joinThread(tid, nullptr);
             const int afterWorker = platform->live.load();
-            check(beforeTeardown == 2 && afterTeardown == (ownerAlive ? 1 : 0) && afterWorker == 0, ownerAlive ?
-                  "sharegroup teardown retires a worker context that a running thread holds; that thread then releases it" :
-                  "sharegroup teardown frees the worker contexts of threads that already exited");
+            const char* names[] = {
+                "sharegroup teardown frees the worker contexts of threads that already exited",
+                "sharegroup teardown retires a worker context a running thread holds; its next GL call releases it",
+                "a thread that exits after sharegroup teardown releases its retired worker context",
+                "unbinding after sharegroup teardown releases the retired worker context"};
+            check(beforeTeardown == 2 && afterTeardown == (ownerAlive ? 1 : 0) && afterWorker == 0, names[mode]);
         }
     }
 

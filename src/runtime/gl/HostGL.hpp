@@ -96,6 +96,9 @@ void layerPlaced(Process& p, uint32_t layer, const float toDevice[6], float boun
 // thread can dereference it) and its native context is destroyed by the owning thread or at teardown.
 void sharegroupDestroy(Process& p, uint32_t guestSharegroup);
 
+// A guest thread is ending: release a retired worker context it still has current.
+void threadExit(Process& p);
+
 // Registers the forwarded `_gl*` symbols (overriding the software ones).
 void registerFunctions(Process& p);
 

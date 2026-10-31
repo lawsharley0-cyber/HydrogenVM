@@ -2,6 +2,7 @@
 #include "MemoryDiagnostics.hpp"
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
+#include "runtime/gl/HostGL.hpp"
 #include <sstream>
 #include "audio/Audio.hpp"
 #include "loader/ElfLoader.hpp"
@@ -768,6 +769,7 @@ void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
         if (t->objcStateFree) t->objcStateFree(t->objcState);
         t->objcState = nullptr;
     }
+    try { HostGL::threadExit(*this); } catch (...) {}   // release a retired GL worker context this thread still holds
     {
         std::lock_guard<std::mutex> lk(t->m);
         t->finished = true;

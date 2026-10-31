@@ -181,8 +181,24 @@ HostContext* threadClone(Process& p, HostContext* hc) {
     return raw;
 }
 
+// The calling thread's current context belongs to a sharegroup that was destroyed: unbind it, destroy its
+// native context and drop the retired object. Only the owning thread has it in tls.ctx, so this is safe.
+void releaseRetiredCurrent(Process& p) {
+    if (tls.proc != &p || !tls.ctx || !tls.ctx->retired.load(std::memory_order_acquire)) return;
+    State& st = S(p);
+    HostContext* gone = tls.ctx;
+    tls.ctx = nullptr;
+    std::lock_guard<std::mutex> lk(st.mu);
+    st.platform->makeCurrent(nullptr);
+    if (gone->handle) { st.platform->destroyContext(gone->handle); gone->handle = nullptr; }
+    st.retiredWorkers.erase(std::remove_if(st.retiredWorkers.begin(), st.retiredWorkers.end(),
+                                           [gone](const std::unique_ptr<HostContext>& c) { return c.get() == gone; }),
+                            st.retiredWorkers.end());
+}
+
 void bind(Process& p, HostContext* hc) {
     State& st = S(p);
+    releaseRetiredCurrent(p);   // never overwrite tls.ctx while it still points at a retired worker
     HostContext* root = hc;
     if (hc && !st.platform->makeCurrent(hc->handle) && !hc->implicitWorker) {
         if (HostContext* clone = threadClone(p, hc); clone && st.platform->makeCurrent(clone->handle)) hc = clone;
@@ -284,21 +300,19 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     }
 }
 
+void threadExit(Process& p) {
+    if (!enabled(p)) return;
+    releaseRetiredCurrent(p);
+}
+
 HostContext* currentHostContext() { return tls.ctx; }
 
 // ------------------------------------------------------------ current context ---
 
 HostContext* hgCurrent(Ctx& x) {
-    if (tls.proc == &x.proc && tls.ctx && tls.ctx->retired.load(std::memory_order_acquire)) {
-        // Its sharegroup died while this thread had it current: release the native context here, on
-        // the owning thread, then fall through to the no-context path below.
-        State& rs = S(x.proc);
-        HostContext* gone = tls.ctx;
-        tls.ctx = nullptr;
-        std::lock_guard<std::mutex> lk(rs.mu);
-        rs.platform->makeCurrent(nullptr);
-        if (gone->handle) { rs.platform->destroyContext(gone->handle); gone->handle = nullptr; }
-    }
+    // Its sharegroup died while this thread had it current: release it here, on the owning thread,
+    // then fall through to the no-context path below.
+    releaseRetiredCurrent(x.proc);
     if (tls.proc == &x.proc && tls.ctx) return tls.ctx;
     if (tls.proc == &x.proc && tls.software) return nullptr;
     // No context on this thread. iOS apps (Cocos2d texture loaders, for one) issue
