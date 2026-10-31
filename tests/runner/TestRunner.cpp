@@ -4641,6 +4641,218 @@ int runFullSubsystemTests() {
             call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
             return empty && plus && blank;
         });
+
+        run("_FORTIFY_SOURCE test strcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___strcpy_chk", {dst, src, 100}) != dst) return false;
+            if (!check_fault("___strcpy_chk", {dst, src, 49})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE rejects unreadable source buffers and checks the overflow guard", [&] {
+            // callGuest reports every host-side fault as "guest call did not return", so the fault is only known
+            // to be caused by the missing read permission if the same call succeeds once the hole is mapped.
+            auto faults = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); }
+                catch (const CPU::GuestFault&) { return true; }
+                catch (...) { return false; }
+                return false;
+            };
+            // Guest pages cannot be made unreadable with protect() (no-permission becomes read-only), so the
+            // source spans a hole: page 0 mapped, page 1 unmapped, page 2 mapped; only 'A' bytes, NUL at the end.
+            // search above the heap range (0x10000000..0x80000000) so heap growth cannot commit the hole
+            const uint32_t src = proc.mem().findFree(12288, 0x80000000u);
+            proc.mem().map(src, 4096, Memory::kProtRW);
+            proc.mem().map(src + 8192, 4096, Memory::kProtRW);
+            for (uint32_t i = 0; i < 4096; ++i) { proc.mem().write<uint8_t>(src + i, 'A'); proc.mem().write<uint8_t>(src + 8192 + i, 'A'); }
+            proc.mem().write<uint8_t>(src + 8192 + 4095, 0);
+            const uint32_t dst = call("_malloc", {9000});
+            call("_memset", {dst, 'X', 9000});
+            auto dstUntouched = [&] { for (uint32_t i = 0; i < 9000; ++i) if (proc.mem().read<uint8_t>(dst + i) != 'X') return false; return true; };
+            bool ok = faults("___strcpy_chk", {dst, src, 9000}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src, 9000, 9000}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src + 4095, 2, 9000}) && dstUntouched();
+            // Same calls succeed once the hole is mapped, so the faults above came from the source permission check.
+            proc.mem().map(src + 4096, 4096, Memory::kProtRW);
+            for (uint32_t i = 0; i < 4096; ++i) proc.mem().write<uint8_t>(src + 4096 + i, 'A');
+            ok = ok && !faults("___memcpy_chk", {dst, src, 9000, 9000}) && proc.mem().read<uint8_t>(dst + 5000) == 'A';
+            proc.mem().write<uint8_t>(src + 4196, 0);         // strlen now 4196: fits dst
+            call("_memset", {dst, 'X', 9000});
+            ok = ok && !faults("___strcpy_chk", {dst, src, 9000}) && proc.mem().read<uint8_t>(dst + 4196) == 0;
+            // dst + n wraps past 2^32: the write-only memset_chk must stop before touching memory.
+            call("_memset", {dst, 'X', 9000});
+            const uint32_t wrapLen = 0xFFFFFFFFu - dst + 1;
+            ok = ok && faults("___memset_chk", {dst, 'Z', wrapLen, wrapLen}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src, 150, 100}) && dstUntouched();
+            proc.mem().unmap(src, 12288);
+            call("_free", {dst});
+            return ok;
+        });
+        run("_FORTIFY_SOURCE strcat/strncat bound the destination scan by destlen", [&] {
+            // Unterminated destination right before an unmapped page: the bounded scan reports the
+            // __chk_fail (info 0); the old unbounded scan walked into the hole and faulted at its address.
+            const uint32_t base = proc.mem().findFree(8192, 0x80000000u);
+            proc.mem().map(base, 4096, Memory::kProtRW);
+            const uint32_t dst = base + 4096 - 16;
+            for (uint32_t i = 0; i < 16; ++i) proc.mem().write<uint8_t>(dst + i, 'D');
+            const uint32_t src = call("_malloc", {8});
+            call("_memset", {src, 'S', 4}); proc.mem().write<uint8_t>(src + 4, 0);
+            auto faultInfo = [&](const char* fn, std::initializer_list<uint32_t> args, uint32_t& info) {
+                try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); }
+                catch (const CPU::GuestFault& e) { info = e.info; return true; }
+                return false;
+            };
+            uint32_t i1 = 0xFFFF, i2 = 0xFFFF;
+            const bool ok = faultInfo("___strcat_chk", {dst, src, 16}, i1) && faultInfo("___strncat_chk", {dst, src, 4, 16}, i2);
+            proc.mem().unmap(base, 4096);
+            call("_free", {src});
+            if (!ok || i1 != 0 || i2 != 0) std::fprintf(stderr, "strcat info %u strncat info %u\n", i1, i2);
+            return ok && i1 == 0 && i2 == 0;
+        });
+        run("_FORTIFY_SOURCE test strncpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___strncpy_chk", {dst, src, 50, 100}) != dst) return false;
+            if (!check_fault("___strncpy_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strcat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strcat_chk", {dst, src, 100}) != dst) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strcat_chk", {dst, src, 49})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strncat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strncat_chk", {dst, src, 50, 100}) != dst) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strncat_chk", {dst, src, 150, 50})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___memcpy_chk", {dst, src, 50, 100}) != dst) return false;
+            if (!check_fault("___memcpy_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memmove", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___memmove_chk", {dst, src, 50, 100}) != dst) return false;
+            if (call("___memmove_chk", {dst + 10, dst, 20, 100}) != dst + 10) return false;
+            if (!check_fault("___memmove_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memset", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___memset_chk", {dst, 'X', 50, 100}) != dst) return false;
+            if (!check_fault("___memset_chk", {dst, 'X', 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strlcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___strlcpy_chk", {dst, src, 50, 100}) != 99) return false;
+            if (!check_fault("___strlcpy_chk", {dst, src, 50, 20})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strlcat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 50, 100}) != 99) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strlcat_chk", {dst, src, 50, 20})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+
+        run("_FORTIFY_SOURCE test strlcat edge cases", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0);
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 0, 100}) != 99) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 1, 100}) != 99) return false; // 1-byte means just read dst NUL, then slen=99, return 99
+
+            // test unmapped dst with n=0
+            if (proc.mem().isMapped(0x40000000)) return false; // precondition: the address really is unmapped
+            if (call("___strlcat_chk", {0x40000000, src, 0, 100}) != 99) return false;
+
+            // test in bounds but destlen == SIZE_MAX sentinel
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 50, 0xFFFFFFFF}) != 99) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+                                run("_FORTIFY_SOURCE test 32-bit wraparound", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {dst, 'X', 100});
+
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false;
+                try {
+                    proc.callGuest(cpu, *proc.lookupSymbol(fn), args);
+                } catch (const CPU::GuestFault& e) {
+                    std::string msg = e.what();
+                    // Any fault is OK for this test as long as it faults and buffer isn't modified
+                    caught = true;
+                } catch (...) {
+                    caught = false;
+                }
+                return caught;
+            };
+
+            uint32_t exact_overflow_len = 0xFFFFFFFF - dst + 1; // 2^32 - dst
+
+            bool ok = true;
+            if (!check_fault("___memcpy_chk", {dst, src, exact_overflow_len, exact_overflow_len})) {
+                ok = false;
+            }
+
+            uint8_t val = proc.mem().read<uint8_t>(dst);
+            if (val != 'X') {
+                ok = false;
+            }
+
+            call("_free", {src}); call("_free", {dst}); return ok;
+        });
+
         run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
             const std::string root = proc.guestHomePath() + "/tmp/";
             std::vector<std::string> names;
