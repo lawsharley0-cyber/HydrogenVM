@@ -5837,6 +5837,75 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    // EAGLSharegroup teardown: the implicit per-thread worker contexts made for a sharegroup are released when
+    // it dies, whether their owning thread already exited or is still running (and may still hold the context).
+    {
+        struct CountingPlatform final : HostGL::Platform {
+            std::atomic<int> live{0};
+            std::mutex mu;
+            std::unordered_map<void*, std::thread::id> owner;
+            const char* name() const override { return "sharegroup-test"; }
+            void* createContext(int, void*, bool& desktop) override { desktop = false; ++live; return new uint8_t(1); }
+            void destroyContext(void* p) override { std::lock_guard<std::mutex> lk(mu); owner.erase(p); --live; delete static_cast<uint8_t*>(p); }
+            bool makeCurrent(void* p) override {
+                std::lock_guard<std::mutex> lk(mu);
+                const auto me = std::this_thread::get_id();
+                if (!p) { for (auto it = owner.begin(); it != owner.end();) it = it->second == me ? owner.erase(it) : std::next(it); return true; }
+                auto it = owner.find(p);
+                if (it != owner.end() && it->second != me) return false;   // EGL: current on another thread
+                owner[p] = me;
+                return true;
+            }
+            void* proc(void*, const char*) override { return nullptr; }
+        };
+        // 0: owner exited before teardown; 1: owner then issues GL; 2: owner then exits without GL;
+        // 3: owner then switches to no context (bind).
+        for (int mode = 0; mode < 4; ++mode) {
+            const bool ownerAlive = mode != 0;
+            auto platform = std::make_shared<CountingPlatform>();
+            ProcessConfig sgCfg;
+            sgCfg.homePath = "/tmp/hvm_sharegroup_teardown";
+            sgCfg.hostGL = platform;
+            Process sgProc(sgCfg);
+            auto& sr = ObjC::rt(sgProc);
+            auto& scpu = sgProc.mainThread().cpu;
+            const ObjC::id sg = ObjC::id(sr.send(scpu, ObjC::id(sr.send(scpu, ObjC::id(sr.getClass("EAGLSharegroup")), sr.selAlloc)), "init"));
+            const ObjC::Class ctxCls = sr.getClass("EAGLContext");
+            const ObjC::id context = ObjC::id(sr.send(scpu, ObjC::id(sr.send(scpu, ObjC::id(ctxCls), sr.selAlloc)),
+                                                      "initWithAPI:sharegroup:", {2, uint32_t(sg)}));
+            sr.send(scpu, ObjC::id(ctxCls), "setCurrentContext:", {context});   // main thread owns the root context
+            std::atomic<bool> bound{false}, groupGone{false};
+            const uint32_t workerFn = sgProc.defineFunction("test_sharegroup_worker", [&, context, mode](Ctx& x) {
+                auto& rt = ObjC::rt(x);
+                rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {context});   // gets its own shared context
+                bound = true;
+                if (ownerAlive) {
+                    for (int i = 0; i < 1000 && !groupGone.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    if (mode == 1) x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glFlush"), {});   // first GL call after the sharegroup died
+                    if (mode == 3) rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {0});
+                }
+                x.cpu.r[0] = 0;
+            });
+            const uint32_t tid = sgProc.startThread(workerFn, 0, 64u << 10, false);
+            for (int i = 0; i < 1000 && !bound.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            if (!ownerAlive) sgProc.joinThread(tid, nullptr);   // the owning thread has exited before teardown
+            const int beforeTeardown = platform->live.load();   // root + the worker's context
+            sr.send(scpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+            sr.send(scpu, context, "release");
+            sr.send(scpu, sg, "release");
+            const int afterTeardown = platform->live.load();
+            groupGone = true;
+            if (ownerAlive) sgProc.joinThread(tid, nullptr);
+            const int afterWorker = platform->live.load();
+            const char* names[] = {
+                "sharegroup teardown frees the worker contexts of threads that already exited",
+                "sharegroup teardown retires a worker context a running thread holds; its next GL call releases it",
+                "a thread that exits after sharegroup teardown releases its retired worker context",
+                "unbinding after sharegroup teardown releases the retired worker context"};
+            check(beforeTeardown == 2 && afterTeardown == (ownerAlive ? 1 : 0) && afterWorker == 0, names[mode]);
+        }
+    }
+
     // PR #167: fixed-size heap objects share writable pages, so a successful
     // host mapping check alone is not enough to protect adjacent allocations.
     {
