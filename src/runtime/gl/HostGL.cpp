@@ -1120,7 +1120,9 @@ FbBindings saveFbBindings(HostContext* hc) {
     FbBindings b;
     b.draw = uint32_t(hgGetInt(hc, kFramebufferBinding));
     b.read = b.draw;
-    if (hc->api >= 3 || hc->desktop) b.read = uint32_t(hgGetInt(hc, kReadFramebufferBinding));   // ES 1/2 have one binding
+    // A native ES 3 / desktop context has separate read and draw bindings even for an ES 2 guest
+    // (APPLE_framebuffer_multisample); glBlitFramebuffer marks that capability. ES 1/2 contexts have one.
+    if (hc->api >= 3 || hc->desktop || hc->fn.glBlitFramebuffer) b.read = uint32_t(hgGetInt(hc, kReadFramebufferBinding));
     b.separate = b.read != b.draw;
     return b;
 }
