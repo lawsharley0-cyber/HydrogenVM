@@ -2426,6 +2426,44 @@ int runFullSubsystemTests() {
               "UISwitch, UISlider, and UISegmentedControl");
     }
 
+    // NSUserDefaults rejects non-property-list values with a guest-visible exception.
+    {
+        const ObjC::Class nsoCls = r.getClass("NSObject");
+        const ObjC::id nso = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, nsoCls, r.selAlloc)), r.selInit));
+        const ObjC::Class udCls = r.getClass("NSUserDefaults");
+        const ObjC::id ud = ObjC::id(r.send(cpu, udCls, r.sel("standardUserDefaults")));
+        const ObjC::id testKey = Runtime::Foundation::makeString(cx, "testKeyNonPlist");
+        // A previous value must survive the rejected write.
+        const ObjC::id initialValue = Runtime::Foundation::makeString(cx, "initialValue");
+        r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(initialValue), uint32_t(testKey)});
+        // No guest @catch is installed in this runner, so the raised NSException terminates the host->guest
+        // call as a GuestFault whose text carries the exception name and reason (as for the NIB tests).
+        bool guestException = false;
+        std::string faultText;
+        try { r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)}); }
+        catch (const Hydrogen::CPU::GuestFault& e) { guestException = true; faultText = e.what(); }
+        catch (const ObjC::ObjCError&) { /* Pre-fix behavior: host exception, not a guest exception. */ }
+        check(guestException, "NSUserDefaults setObject:forKey: raises a guest exception for non-plist objects");
+        check(faultText.find("NSInvalidArgumentException") != std::string::npos &&
+              faultText.find("Attempt to insert non-property list object") != std::string::npos &&
+              faultText.find("testKeyNonPlist") != std::string::npos,
+              "NSUserDefaults rejection carries the exception name, reason and key");
+        const ObjC::id keptValue = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(testKey)}));
+        check(Runtime::Foundation::utf8(cx, keptValue) == "initialValue",
+              "NSUserDefaults keeps the previous value after a rejected write");
+        const ObjC::id validKey = Runtime::Foundation::makeString(cx, "testKeyPlist");
+        const ObjC::id validString = Runtime::Foundation::makeString(cx, "validStringValue");
+        const ObjC::id validArray = Runtime::Foundation::makeArray(cx, {validString});
+        const ObjC::id validDict = Runtime::Foundation::makeDict(cx, {{validString, validArray}});
+        r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(validDict), uint32_t(validKey)});
+        r.send(cpu, ud, r.sel("synchronize"));
+        const ObjC::id validVal = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(validKey)}));
+        const ObjC::id validArrBack = Runtime::Foundation::dictGet(cx, validVal, validString);
+        const auto validItems = Runtime::Foundation::arrayItems(cx, validArrBack);
+        const std::string validDesc = validItems.empty() ? std::string() : Runtime::Foundation::utf8(cx, validItems[0]);
+        check(!validItems.empty() && validDesc == "validStringValue", "NSUserDefaults preserves nested supported plist values across round-trip");
+    }
+
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
     {
         const ObjC::Class winCls = r.getClass("UIWindow");
