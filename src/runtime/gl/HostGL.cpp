@@ -1122,8 +1122,14 @@ FbBindings saveFbBindings(HostContext* hc) {
     b.read = b.draw;
     // A native ES 3 / desktop context has separate read and draw bindings even for an ES 2 guest
     // (APPLE_framebuffer_multisample); glBlitFramebuffer marks that capability. ES 1/2 contexts have one.
-    if (hc->api >= 3 || hc->desktop || hc->fn.glBlitFramebuffer ||
-        hc->fn.glResolveMultisampleFramebufferAPPLE) b.read = uint32_t(hgGetInt(hc, kReadFramebufferBinding));
+    // If EGL fell back to an ES 2 context the query is an unsupported enum and leaves the sentinel untouched:
+    // then there is only the one binding, and restoring through the read/draw targets would be an error.
+    if ((hc->api >= 3 || hc->desktop || hc->fn.glBlitFramebuffer || hc->fn.glResolveMultisampleFramebufferAPPLE) &&
+        hc->fn.glGetIntegerv) {
+        int32_t v[4] = {-1, -1, -1, -1};
+        hc->fn.glGetIntegerv(kReadFramebufferBinding, v);
+        if (v[0] != -1) b.read = uint32_t(v[0]);
+    }
     b.separate = b.read != b.draw;
     return b;
 }
