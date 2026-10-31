@@ -13,7 +13,7 @@
     },
     "antigravity": {
       "can_run_games": true,
-      "weekly_budget": 2,
+      "weekly_budget": 6,
       "prefers": ["T4", "T5", "T6"]
     }
   }
