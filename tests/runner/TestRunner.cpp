@@ -4625,7 +4625,8 @@ int runFullSubsystemTests() {
             };
             // Guest pages cannot be made unreadable with protect() (no-permission becomes read-only), so the
             // source spans a hole: page 0 mapped, page 1 unmapped, page 2 mapped; only 'A' bytes, NUL at the end.
-            const uint32_t src = proc.mem().findFree(12288);
+            // search above the heap range (0x10000000..0x80000000) so heap growth cannot commit the hole
+            const uint32_t src = proc.mem().findFree(12288, 0x80000000u);
             proc.mem().map(src, 4096, Memory::kProtRW);
             proc.mem().map(src + 8192, 4096, Memory::kProtRW);
             for (uint32_t i = 0; i < 4096; ++i) { proc.mem().write<uint8_t>(src + i, 'A'); proc.mem().write<uint8_t>(src + 8192 + i, 'A'); }
@@ -4655,7 +4656,7 @@ int runFullSubsystemTests() {
         run("_FORTIFY_SOURCE strcat/strncat bound the destination scan by destlen", [&] {
             // Unterminated destination right before an unmapped page: the bounded scan reports the
             // __chk_fail (info 0); the old unbounded scan walked into the hole and faulted at its address.
-            const uint32_t base = proc.mem().findFree(8192);
+            const uint32_t base = proc.mem().findFree(8192, 0x80000000u);
             proc.mem().map(base, 4096, Memory::kProtRW);
             const uint32_t dst = base + 4096 - 16;
             for (uint32_t i = 0; i < 16; ++i) proc.mem().write<uint8_t>(dst + i, 'D');
