@@ -1651,10 +1651,14 @@ static TLResult *runCaseR(void) {
     if (ctx && [EAGLContext setCurrentContext:ctx]) {
         glGenFramebuffers(1, &fbo);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        GLenum emptyStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        const BOOL emptyFboOk = (emptyStatus == 0x8CD7);
         glGenRenderbuffers(1, &colorRb);
         glBindRenderbuffer(GL_RENDERBUFFER, colorRb);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8_OES, 64, 64);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRb);
+        GLenum colorStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        const BOOL colorFboOk = (colorStatus == 0x8CD5);
         glGenRenderbuffers(1, &depthRb);
         glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24_OES, 64, 64);
@@ -1709,6 +1713,7 @@ static TLResult *runCaseR(void) {
         const BOOL extensionsOk = extensions && strstr(extensions, "GL_OES_depth24") &&
                                   strstr(extensions, "GL_OES_stencil8") && strstr(extensions, "GL_OES_packed_depth_stencil");
         const BOOL ok = rootReplaced && depthOk && stencilOk && packedDepth == 24 && packedStencil == 8 && extensionsOk &&
+                        emptyFboOk && colorFboOk &&
                         pixel[0] == 0 && pixel[1] == 255 && pixel[2] == 0 && pixel[3] == 255;
         r.status = ok ? @"passed" : @"failed";
         if (!ok) r.reason = @"Root view replacement, depth/stencil allocation or stencil behavior differs from UIKit/GLES";
