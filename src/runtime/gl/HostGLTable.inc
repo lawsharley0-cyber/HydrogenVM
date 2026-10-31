@@ -359,28 +359,14 @@ void hg_glCullFace(Ctx& x, uint32_t a_mode) {
 void hg_glDeleteBuffers(Ctx& x, int32_t a_n, GuestPtr a_buffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteBuffers) { hgMissing(x, hc, "glDeleteBuffers"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->buffers -= a_n;
+    { std::lock_guard<std::mutex> lock(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) { it->second->buffers -= a_n; } }
     hc->fn.glDeleteBuffers(a_n, HG_PTR(x, a_buffers));
     if (hgDebug) hgAfter(x, hc, "glDeleteBuffers", [&] { return hgArgs(a_n, a_buffers); });
 }
 void hg_glDeleteTextures(Ctx& x, int32_t a_n, GuestPtr a_textures) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteTextures) { hgMissing(x, hc, "glDeleteTextures"); return; }
-    if (hc && hc->guestSharegroup != 0) {
-        if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
-            std::lock_guard<std::mutex> lock(S(x.proc).telemetryMu);
-            GuestPtr ptr = a_textures;
-            for(int i=0; i<a_n; i++) {
-                uint32_t tex = x.proc.mem().read<uint32_t>(ptr);
-                if (auto sz = S(x.proc).textureBytes.find(tex); sz != S(x.proc).textureBytes.end()) {
-                    it->second->estimatedBytes -= sz->second;
-                    S(x.proc).textureBytes.erase(sz);
-                }
-                ptr += 4;
-            }
-            it->second->textures -= a_n;
-        }
-    }
+    { std::lock_guard<std::mutex> lock(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) { GuestPtr ptr = a_textures; for(int i=0; i<a_n; i++) { uint32_t tex = x.proc.mem().read<uint32_t>(ptr); it->second->textures--; it->second->estimatedBytes -= S(x.proc).textureBytes[tex]; S(x.proc).textureBytes.erase(tex); ptr += 4; } } }
     hc->fn.glDeleteTextures(a_n, HG_PTR(x, a_textures));
     if (hgDebug) hgAfter(x, hc, "glDeleteTextures", [&] { return hgArgs(a_n, a_textures); });
 }
@@ -447,14 +433,18 @@ void hg_glFrontFace(Ctx& x, uint32_t a_mode) {
 void hg_glGenBuffers(Ctx& x, int32_t a_n, GuestPtr a_buffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenBuffers) { hgMissing(x, hc, "glGenBuffers"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->buffers += a_n;
+    { std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->buffers += a_n;
+    } }
     hc->fn.glGenBuffers(a_n, HG_PTR(x, a_buffers));
     if (hgDebug) hgAfter(x, hc, "glGenBuffers", [&] { return hgArgs(a_n, a_buffers); });
 }
 void hg_glGenTextures(Ctx& x, int32_t a_n, GuestPtr a_textures) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenTextures) { hgMissing(x, hc, "glGenTextures"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->textures += a_n;
+    { std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->textures += a_n;
+    } }
     hc->fn.glGenTextures(a_n, HG_PTR(x, a_textures));
     if (hgDebug) hgAfter(x, hc, "glGenTextures", [&] { return hgArgs(a_n, a_textures); });
 }
@@ -1039,7 +1029,9 @@ uint32_t hg_glCheckFramebufferStatus(Ctx& x, uint32_t a_target) {
 uint32_t hg_glCreateProgram(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCreateProgram) { hgMissing(x, hc, "glCreateProgram"); return uint32_t(); }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->programs++;
+    { std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->programs++;
+    } }
     auto r = hc->fn.glCreateProgram();
     if (hgDebug) hgAfter(x, hc, "glCreateProgram", [&] { return hgArgs(); });
     return r;
@@ -1047,7 +1039,9 @@ uint32_t hg_glCreateProgram(Ctx& x) {
 uint32_t hg_glCreateShader(Ctx& x, uint32_t a_type) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCreateShader) { hgMissing(x, hc, "glCreateShader"); return uint32_t(); }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->shaders++;
+    { std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->shaders++;
+    } }
     auto r = hc->fn.glCreateShader(a_type);
     if (hgDebug) hgAfter(x, hc, "glCreateShader", [&] { return hgArgs(a_type); });
     return r;
@@ -1055,28 +1049,32 @@ uint32_t hg_glCreateShader(Ctx& x, uint32_t a_type) {
 void hg_glDeleteFramebuffers(Ctx& x, int32_t a_n, GuestPtr a_framebuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteFramebuffers) { hgMissing(x, hc, "glDeleteFramebuffers"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->framebuffers -= a_n;
+    { std::lock_guard<std::mutex> lock(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) { it->second->framebuffers -= a_n; } }
     hc->fn.glDeleteFramebuffers(a_n, HG_PTR(x, a_framebuffers));
     if (hgDebug) hgAfter(x, hc, "glDeleteFramebuffers", [&] { return hgArgs(a_n, a_framebuffers); });
 }
 void hg_glDeleteProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteProgram) { hgMissing(x, hc, "glDeleteProgram"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->programs--;
+    { std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->programs--;
+    } }
     hc->fn.glDeleteProgram(a_program);
     if (hgDebug) hgAfter(x, hc, "glDeleteProgram", [&] { return hgArgs(a_program); });
 }
 void hg_glDeleteRenderbuffers(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteRenderbuffers) { hgMissing(x, hc, "glDeleteRenderbuffers"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->renderbuffers -= a_n;
+    { std::lock_guard<std::mutex> lock(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) { it->second->renderbuffers -= a_n; } }
     hc->fn.glDeleteRenderbuffers(a_n, HG_PTR(x, a_renderbuffers));
     if (hgDebug) hgAfter(x, hc, "glDeleteRenderbuffers", [&] { return hgArgs(a_n, a_renderbuffers); });
 }
 void hg_glDeleteShader(Ctx& x, uint32_t a_shader) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteShader) { hgMissing(x, hc, "glDeleteShader"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->shaders--;
+    { std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->shaders--;
+    } }
     hc->fn.glDeleteShader(a_shader);
     if (hgDebug) hgAfter(x, hc, "glDeleteShader", [&] { return hgArgs(a_shader); });
 }
@@ -1107,14 +1105,18 @@ void hg_glFramebufferTexture2D(Ctx& x, uint32_t a_target, uint32_t a_attachment,
 void hg_glGenFramebuffers(Ctx& x, int32_t a_n, GuestPtr a_framebuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenFramebuffers) { hgMissing(x, hc, "glGenFramebuffers"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->framebuffers += a_n;
+    { std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->framebuffers += a_n;
+    } }
     hc->fn.glGenFramebuffers(a_n, HG_PTR(x, a_framebuffers));
     if (hgDebug) hgAfter(x, hc, "glGenFramebuffers", [&] { return hgArgs(a_n, a_framebuffers); });
 }
 void hg_glGenRenderbuffers(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenRenderbuffers) { hgMissing(x, hc, "glGenRenderbuffers"); return; }
-    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->renderbuffers += a_n;
+    { std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->renderbuffers += a_n;
+    } }
     hc->fn.glGenRenderbuffers(a_n, HG_PTR(x, a_renderbuffers));
     if (hgDebug) hgAfter(x, hc, "glGenRenderbuffers", [&] { return hgArgs(a_n, a_renderbuffers); });
 }

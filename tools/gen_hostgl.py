@@ -79,46 +79,35 @@ def main():
             out.append(f"    if (hc->currentProgram == 0) return{' ' + rg + '()' if rg != 'void' else ''};")
 
         if name in ("glGenTextures", "glGenBuffers", "glGenFramebuffers", "glGenRenderbuffers"):
-            if name == "glGenTextures": out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->textures += a_n;")
-            elif name == "glGenBuffers": out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->buffers += a_n;")
-            elif name == "glGenFramebuffers": out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->framebuffers += a_n;")
-            elif name == "glGenRenderbuffers": out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->renderbuffers += a_n;")
+            out.append(f"    {{ std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {{")
+            if name == "glGenTextures": out.append(f"        it->second->textures += a_n;")
+            elif name == "glGenBuffers": out.append(f"        it->second->buffers += a_n;")
+            elif name == "glGenFramebuffers": out.append(f"        it->second->framebuffers += a_n;")
+            elif name == "glGenRenderbuffers": out.append(f"        it->second->renderbuffers += a_n;")
+            out.append(f"    }} }}")
 
         if name in ("glDeleteTextures", "glDeleteBuffers", "glDeleteFramebuffers", "glDeleteRenderbuffers"):
-            if name == "glDeleteTextures":
-                out.append(f"    if (hc && hc->guestSharegroup != 0) {{")
-                out.append(f"        if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {{")
-                out.append(f"            std::lock_guard<std::mutex> lock(S(x.proc).telemetryMu);")
-                out.append(f"            GuestPtr ptr = a_textures;")
-                out.append(f"            for(int i=0; i<a_n; i++) {{")
-                out.append(f"                uint32_t tex = x.proc.mem().read<uint32_t>(ptr);")
-                out.append(f"                if (auto sz = S(x.proc).textureBytes.find(tex); sz != S(x.proc).textureBytes.end()) {{")
-                out.append(f"                    it->second->estimatedBytes -= sz->second;")
-                out.append(f"                    S(x.proc).textureBytes.erase(sz);")
-                out.append(f"                }}")
-                out.append(f"                ptr += 4;")
-                out.append(f"            }}")
-                out.append(f"            it->second->textures -= a_n;")
-                out.append(f"        }}")
-                out.append(f"    }}")
-            elif name == "glDeleteBuffers": out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->buffers -= a_n;")
-            elif name == "glDeleteFramebuffers": out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->framebuffers -= a_n;")
-            elif name == "glDeleteRenderbuffers": out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->renderbuffers -= a_n;")
+            if name == "glDeleteTextures": out.append(f"    {{ std::lock_guard<std::mutex> lock(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {{ GuestPtr ptr = a_textures; for(int i=0; i<a_n; i++) {{ uint32_t tex = x.proc.mem().read<uint32_t>(ptr); it->second->textures--; it->second->estimatedBytes -= S(x.proc).textureBytes[tex]; S(x.proc).textureBytes.erase(tex); ptr += 4; }} }} }}")
+            elif name == "glDeleteBuffers": out.append(f"    {{ std::lock_guard<std::mutex> lock(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {{ it->second->buffers -= a_n; }} }}")
+            elif name == "glDeleteFramebuffers": out.append(f"    {{ std::lock_guard<std::mutex> lock(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {{ it->second->framebuffers -= a_n; }} }}")
+            elif name == "glDeleteRenderbuffers": out.append(f"    {{ std::lock_guard<std::mutex> lock(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {{ it->second->renderbuffers -= a_n; }} }}")
 
-        if name == "glCreateProgram":
-            out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->programs++;")
+        if name in ("glCreateProgram", "glCreateShader"):
+            out.append(f"    {{ std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {{")
+            if name == "glCreateProgram": out.append(f"        it->second->programs++;")
+            elif name == "glCreateShader": out.append(f"        it->second->shaders++;")
+            out.append(f"    }} }}")
 
-        if name == "glDeleteProgram":
-            out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->programs--;")
-
-        if name == "glCreateShader":
-            out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->shaders++;")
-
-        if name == "glDeleteShader":
-            out.append(f"    if (hc && hc->guestSharegroup) if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) it->second->shaders--;")
+        if name in ("glDeleteProgram", "glDeleteShader"):
+            out.append(f"    {{ std::lock_guard<std::mutex> lk(S(x.proc).mu); if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {{")
+            if name == "glDeleteProgram": out.append(f"        it->second->programs--;")
+            elif name == "glDeleteShader": out.append(f"        it->second->shaders--;")
+            out.append(f"    }} }}")
 
         if name == "glBindTexture":
             out.append(f"    if (a_target == 0x0DE1 /* GL_TEXTURE_2D */) hc->boundTexture2D = a_texture;")
+
+
         if ret == "v":
             out.append(f"    hc->fn.{name}({call});")
             if name.startswith("glUniform"):
