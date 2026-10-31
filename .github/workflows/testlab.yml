@@ -60,6 +60,9 @@ jobs:
       - name: Schema unit tests
         run: python3 -m unittest discover -s tools/testlab_schema/tests -v
 
+      - name: Test Lab runner unit tests
+        run: python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
+
       - name: Cache ld64 (cctools-port)
         id: cctools
         uses: actions/cache@v4
@@ -95,7 +98,9 @@ jobs:
             --min-ios 6.0 \
             --resource tests/ios/apps/testlab/tone.wav \
             --resource tests/ios/apps/testlab/empty.dat \
-            tests/ios/apps/testlab/main.m
+            tests/ios/apps/testlab/main.m \
+            tests/ios/apps/testlab/objc_conformance.m \
+            tests/ios/apps/testlab/objc_lifetime_mrc.m
         env:
           HVM_LD64: /home/runner/cctools/bin/arm-apple-darwin11-ld
 
@@ -124,6 +129,11 @@ jobs:
             --out build/testlab-report-all \
             --skip-build \
             --timeout 30
+
+      - name: Verify Objective-C conformance fault detection
+        run: |
+          python3 tools/tests/validate_objc_conformance.py \
+            --build build --ipa build/ios/TestLab.ipa --out build/objc-conformance-faults
 
       - name: Verify forced-crash bundle
         if: ${{ always() && hashFiles('build/hvm') != '' }}
@@ -162,6 +172,7 @@ jobs:
           name: testlab-report
           path: |
             build/testlab-report-all/testlab_report.json
+            build/objc-conformance-faults/report.json
             build/ios/TestLab.ipa
             build/objc-symbolication/verification.json
             build/objc-symbolication/hvm-report.json
