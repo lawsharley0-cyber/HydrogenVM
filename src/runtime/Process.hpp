@@ -285,6 +285,10 @@ public:
     GuestThread* findThread(uint32_t self);
     GuestThread* findThreadById(uint32_t id);
     std::vector<uint32_t> liveThreadIds();   // ids of the main thread and all running threads
+    // One line per guest thread that has not finished: its id, the host function it is
+    // inside (if any) and its last few host calls, oldest first. Empty when none is running.
+    // For teardown diagnostics; safe to call from any thread.
+    std::string describeRunningThreads();
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
     bool joinThread(uint32_t self, uint32_t* retval);
