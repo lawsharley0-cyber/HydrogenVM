@@ -91,6 +91,14 @@ class PickTests(unittest.TestCase):
         got, _ = q.pick("a", cards, set(), {}, CFG)
         self.assertEqual(got["number"], 3)
 
+    def test_plain_hotspot_conflicts_with_every_area(self):
+        cards = [card(1, "T1", "status:in-progress", "hotspot"), card(2, "T2a", "status:ready", "hotspot:process"), card(3, "T4", "status:ready")]
+        got, _ = q.pick("a", cards, set(), {}, CFG)
+        self.assertEqual(got["number"], 3)
+        cards = [card(1, "T1", "status:in-progress", "hotspot:process"), card(2, "T2a", "status:ready", "hotspot"), card(3, "T4", "status:ready")]
+        got, _ = q.pick("a", cards, set(), {}, CFG)
+        self.assertEqual(got["number"], 3)
+
     def test_card_ids_for_game_and_probe_cards(self):
         self.assertEqual(q.card_id({"number": 1, "title": "G3 Goat crash"}), "G3")
         self.assertEqual(q.card_id({"number": 1, "title": "P1 probe sweep"}), "P1")

@@ -42,7 +42,7 @@
     }
   },
   "default": {
-    "can_run_games": true,
+    "can_run_games": false,
     "weekly_budget": 6,
     "prefers": [
       "G1",

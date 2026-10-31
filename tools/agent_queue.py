@@ -71,7 +71,8 @@ def pick(agent: str, open_cards: list[dict], closed_numbers: set[int], used_this
         if "needs:game-run" in lab and not a["can_run_games"]:
             continue
         mine = {l for l in lab if l == "hotspot" or l.startswith("hotspot:")}
-        if mine & taken:
+        # plain `hotspot` conflicts with every hotspot (any area); an area label conflicts only with its own area or plain `hotspot`.
+        if (mine & taken) or ("hotspot" in taken and mine) or ("hotspot" in mine and taken):
             continue
         pref = a["prefers"]
         cid = card_id(c)
