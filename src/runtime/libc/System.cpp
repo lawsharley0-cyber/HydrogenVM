@@ -451,9 +451,9 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const std::string hp = x.proc.hostPath(gp);
 
     int fd = -1;
-    bool is_asset = (flags & 3) == 0 && getAssetCache(x.proc).isAsset(hp);
+    bool is_asset = (flags & 3) == 0 && Hydrogen::Runtime::getAssetCache(x.proc).isAsset(hp);
     if (is_asset) {
-        auto& c = getAssetCache(x.proc);
+        auto& c = Hydrogen::Runtime::getAssetCache(x.proc);
         std::lock_guard<std::mutex> lk(c.mu);
         auto it = c.entries.find(hp);
         if (it != c.entries.end()) {
@@ -492,7 +492,7 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     int64_t sz = -1;
     struct stat st;
     if (is_asset) {
-        auto& c = getAssetCache(x.proc);
+        auto& c = Hydrogen::Runtime::getAssetCache(x.proc);
         std::lock_guard<std::mutex> lk(c.mu);
         if (c.entries.count(hp)) sz = c.entries[hp].st.st_size;
     } else if (::fstat(fd, &st) == 0) {
@@ -651,8 +651,8 @@ int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     const std::string hp = x.proc.hostPath(gp);
     struct stat st;
 
-    if (getAssetCache(x.proc).isAsset(hp)) {
-        auto& c = getAssetCache(x.proc);
+    if (Hydrogen::Runtime::getAssetCache(x.proc).isAsset(hp)) {
+        auto& c = Hydrogen::Runtime::getAssetCache(x.proc);
         std::lock_guard<std::mutex> lk(c.mu);
         auto it = c.entries.find(hp);
         if (it != c.entries.end()) {
@@ -675,8 +675,8 @@ int32_t f_lstat(Ctx& x, GuestPtr path, GuestPtr out) {
     const std::string hp = x.proc.hostPath(gp);
     struct stat st;
 
-    if (getAssetCache(x.proc).isAsset(hp)) {
-        auto& c = getAssetCache(x.proc);
+    if (Hydrogen::Runtime::getAssetCache(x.proc).isAsset(hp)) {
+        auto& c = Hydrogen::Runtime::getAssetCache(x.proc);
         std::lock_guard<std::mutex> lk(c.mu);
         auto it = c.entries.find(hp);
         if (it != c.entries.end()) {
