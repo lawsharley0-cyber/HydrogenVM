@@ -100,8 +100,13 @@ def observation(build, target, folder, args):
     required = {"exitStatus": int, "crashed": bool, "loadError": str, "perf": dict, "audio": dict}
     if not isinstance(report, dict) or any(type(report.get(k)) is not t for k, t in required.items()):
         raise ValueError("missing/invalid hvm report fields")
-    if result.returncode not in (0, 1):
-        raise RuntimeError(f"guest did not load/run (exit {result.returncode}): {report['loadError']}")
+    # `hvm run` exits 70 for a guest crash and 71 for a load failure and writes a report saying so. Those are
+    # measured outcomes to compare; an exit status the report does not back up is a tool problem.
+    code = result.returncode
+    reported = (code in (0, 1) or (code == 70 and report["crashed"]) or (code == 71 and bool(report["loadError"]))) \
+        and (code not in (70, 71) or report["exitStatus"] == code)
+    if not reported:
+        raise RuntimeError(f"guest did not load/run (exit {code}): {report['loadError']}")
     replacements = [(str(folder), "<run>"), (str(target), "<guest>"), (str(hvm), "<hvm>")]
     stable = normalize(report, replacements)
     perf = stable.pop("perf")

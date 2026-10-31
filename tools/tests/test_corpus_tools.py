@@ -237,6 +237,28 @@ sys.exit({exit_status})
         self.assertEqual((self.root / "ab/old/stdout.log").read_text().strip(), "partial out")
         self.assertEqual((self.root / "ab/old/stderr.log").read_text().strip(), "partial err")
 
+    def test_real_crash_and_load_failure_exit_codes_are_measured_differences(self):
+        for code, edit in ((70, ("'crashed':False", "'crashed':True")), (71, ("'loadError':''", "'loadError':'bad image'"))):
+            with self.subTest(exit=code):
+                self.root = Path(self.temp.name) / f"exit{code}"
+                self.root.mkdir()
+                old, new = self.fake_hvm("old"), self.fake_hvm("new", exit_status=code)
+                new.write_text(new.read_text().replace(*edit))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(ab_diff.main(self.ab_args(old, new)), 1)
+                result = json.loads((self.root / "ab/diff.json").read_text())
+                self.assertEqual([o["returncode"] for o in result["observations"]], [0, code])
+
+    def test_exit_code_that_contradicts_its_report_is_still_a_tool_error(self):
+        # 70 means "crashed" and 71 "load error"; a report saying neither is not a measurement.
+        for code in (70, 71, 2):
+            with self.subTest(exit=code):
+                self.root = Path(self.temp.name) / f"bad{code}"
+                self.root.mkdir()
+                hvm = self.fake_hvm("hvm", exit_status=code)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(ab_diff.main(self.ab_args(hvm, hvm)), 2)
+
     def test_valid_load_failure_is_a_measured_difference(self):
         old, new = self.fake_hvm("old"), self.fake_hvm("new", exit_status=1)
         new.write_text(new.read_text().replace("'loadError':''", "'loadError':'unimplemented import'"))
