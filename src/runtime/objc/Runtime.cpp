@@ -901,7 +901,12 @@ void Runtime::attachCategory(uint32_t cat) {
     readMethodList(tmpMeta, m.read<uint32_t>(cat + 12));
     for (auto& [s, imp] : tmp.methods) addMethod(cls, s, imp, tmp.types[s]);
     for (auto& [s, imp] : tmpMeta.methods) {
-        if (s == selLoad) { pendingCategoryLoads_.push_back(cat); continue; }   // category +load is called, not attached
+        if (s == selLoad) {   // category +load is called, not attached; still name its IMP for crash backtraces
+            pendingCategoryLoads_.push_back(cat);
+            const std::string catName = proc_.readCString(m.read<uint32_t>(cat));
+            methodSymbols_->set((uint64_t(cat) << 32) | s, imp, "+[" + info(cls)->name + "(" + catName + ") load]");
+            continue;
+        }
         addMethod(meta, s, imp, tmpMeta.types[s]);
     }
     if (const uint32_t pl = m.read<uint32_t>(cat + 16)) {
