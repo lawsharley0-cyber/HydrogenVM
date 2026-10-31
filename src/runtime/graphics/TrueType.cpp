@@ -11,6 +11,10 @@ struct TrueTypeFont::Impl {
     int units = 0, asc = 0, desc = 0, gap = 0;
     uint32_t traits = 0;
     int underline = 0;
+    // Design-unit OS/2 values (0 when table absent).
+    int capHeight = 0, xHeight = 0;
+    // table tag → {offset, size} in bytes[].
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> tables;
     float scale(float size) const { return size / float(units); }
 };
 TrueTypeFont::TrueTypeFont() : impl(std::make_unique<Impl>()) {}
@@ -33,6 +37,10 @@ std::shared_ptr<TrueTypeFont> TrueTypeFont::load(std::vector<uint8_t> bytes) {
         if (u32(p) == 0x68656164) { if (size < 54) return {}; head = offset; }
         if (u32(p) == 0x6D617870) { if (size < 6) return {}; maxp = offset; }
         if (u32(p) == 0x706F7374) { if (size < 16) return {}; post = offset; }
+    }
+    // Validate OS/2 if present (minimum v0 is 78 bytes; capHeight/xHeight at v2+).
+    if (auto it = tables.find(0x4F532F32); it != tables.end()) {
+        if (it->second.second < 78) return {};
     }
     if (!head || !maxp || u16(head + 18) == 0 || u16(maxp + 4) == 0) return {};
     const auto [hhea,hheaSize] = tables[0x68686561];
@@ -149,6 +157,15 @@ std::shared_ptr<TrueTypeFont> TrueTypeFont::load(std::vector<uint8_t> bytes) {
     f->impl->bytes = std::move(bytes);
     if (!stbtt_InitFont(&f->impl->info, f->impl->bytes.data(), 0)) return {};
     stbtt_GetFontVMetrics(&f->impl->info, &f->impl->asc, &f->impl->desc, &f->impl->gap);
+    // OS/2 table: capHeight (offset 88) and sxHeight (offset 86) present at version ≥ 2.
+    if (auto it = tables.find(0x4F532F32); it != tables.end() && it->second.second >= 90) {
+        const uint32_t os2 = it->second.first;
+        if (u16(os2) >= 2) {   // version field at offset 0
+            f->impl->xHeight   = int(int16_t(u16(os2 + 86)));
+            f->impl->capHeight = int(int16_t(u16(os2 + 88)));
+        }
+    }
+    f->impl->tables = std::move(tables);
     return f;
 }
 std::string TrueTypeFont::name(bool family) const {
@@ -199,5 +216,22 @@ Path TrueTypeFont::outline(int g, float s) const {
     if (path.hasCurrent) path.close();
     stbtt_FreeShape(&impl->info, v);
     return path;
+}
+int TrueTypeFont::unitsPerEm() const { return impl->units; }
+int TrueTypeFont::ascentDesign() const { return impl->asc; }
+int TrueTypeFont::descentDesign() const { return impl->desc; }
+int TrueTypeFont::capHeightDesign() const { return impl->capHeight; }
+int TrueTypeFont::xHeightDesign() const { return impl->xHeight; }
+int TrueTypeFont::glyphAdvanceDesign(int g) const {
+    if (g < 0 || g >= glyphCount()) return 0;
+    int a, b; stbtt_GetGlyphHMetrics(&impl->info, g, &a, &b);
+    return a;
+}
+std::vector<uint8_t> TrueTypeFont::rawTable(uint32_t tag) const {
+    auto it = impl->tables.find(tag);
+    if (it == impl->tables.end()) return {};
+    const uint32_t off = it->second.first, sz = it->second.second;
+    if (off + sz > impl->bytes.size()) return {};
+    return {impl->bytes.begin() + off, impl->bytes.begin() + off + sz};
 }
 }

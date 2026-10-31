@@ -964,6 +964,69 @@ uint32_t font_createWithProvider(Ctx& x, id provider) {
 }
 uint32_t font_copyName(Ctx& x, id f) { FontData* d = hd<FontData>(x, f); return Foundation::makeString(x, d ? d->name : "Helvetica", true); }
 
+// CGFont design-unit metrics (B-109).
+// All return int32 in design units; the CGFont contract is "font units", not points.
+// When the face is absent (name-only font), fall back to sensible defaults scaled
+// to a notional 2048-upem grid so callers that divide by unitsPerEm get ~1.0.
+int32_t font_getUnitsPerEm(Ctx& x, id f) {
+    FontData* d = hd<FontData>(x, f);
+    if (d && d->face) return d->face->unitsPerEm();
+    return 2048;
+}
+int32_t font_getAscent(Ctx& x, id f) {
+    FontData* d = hd<FontData>(x, f);
+    if (d && d->face) return d->face->ascentDesign();
+    return 1638; // ~0.8 × 2048
+}
+int32_t font_getDescent(Ctx& x, id f) {
+    FontData* d = hd<FontData>(x, f);
+    if (d && d->face) return d->face->descentDesign(); // negative in TrueType
+    return -410;  // ~-0.2 × 2048
+}
+int32_t font_getCapHeight(Ctx& x, id f) {
+    FontData* d = hd<FontData>(x, f);
+    if (d && d->face) {
+        const int v = d->face->capHeightDesign();
+        if (v != 0) return v;
+        return d->face->ascentDesign(); // OS/2 absent: use ascent
+    }
+    return 1434; // ~0.7 × 2048
+}
+int32_t font_getXHeight(Ctx& x, id f) {
+    FontData* d = hd<FontData>(x, f);
+    if (d && d->face) {
+        const int v = d->face->xHeightDesign();
+        if (v != 0) return v;
+        return d->face->ascentDesign() / 2; // OS/2 absent: half-ascent heuristic
+    }
+    return 1024;
+}
+// CGFontGetGlyphAdvances(font, glyphs, count, advances)
+// glyphs: uint16[] CGGlyph array; advances: int32[] output.  Returns true if all
+// glyphs were found.
+bool font_getGlyphAdvances(Ctx& x, id f, GuestPtr glyphs, int32_t count, GuestPtr advances) {
+    FontData* d = hd<FontData>(x, f);
+    if (!d || !d->face || count <= 0 || !glyphs || !advances) return false;
+    bool all = true;
+    for (int32_t i = 0; i < count; ++i) {
+        const int g = int(x.mem.read<uint16_t>(glyphs + uint32_t(i) * 2));
+        const int a = d->face->glyphAdvanceDesign(g);
+        x.mem.write<int32_t>(advances + uint32_t(i) * 4, int32_t(a));
+        if (g == 0) all = false;
+    }
+    return all;
+}
+// CGFontCopyTableForTag(font, tag) → CFDataRef (or NULL when absent).
+// tag is the four-byte big-endian OpenType tag passed as a uint32_t.
+uint32_t font_copyTableForTag(Ctx& x, id f, uint32_t tag) {
+    FontData* d = hd<FontData>(x, f);
+    if (!d || !d->face) return 0;
+    const std::vector<uint8_t> data = d->face->rawTable(tag);
+    if (data.empty()) return 0;
+    // Wrap in an NSData/CFData object (owned — caller is responsible for release).
+    return Foundation::makeData(x, data.data(), uint32_t(data.size()), true);
+}
+
 uint32_t ct_createGraphics(Ctx& x, id font, float size, GuestPtr matrix, id) {
     auto* f = hd<FontData>(x, font);
     if (!f || !std::isfinite(size) || size < 0) return 0;
@@ -1570,6 +1633,13 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&font_createWithProvider>("_CGFontCreateWithDataProvider");
     p.def<&font_copyName>("_CGFontCopyFullName");
     p.def<&font_copyName>("_CGFontCopyPostScriptName");
+    p.def<&font_getUnitsPerEm>("_CGFontGetUnitsPerEm");
+    p.def<&font_getAscent>("_CGFontGetAscent");
+    p.def<&font_getDescent>("_CGFontGetDescent");
+    p.def<&font_getCapHeight>("_CGFontGetCapHeight");
+    p.def<&font_getXHeight>("_CGFontGetXHeight");
+    p.def<&font_getGlyphAdvances>("_CGFontGetGlyphAdvances");
+    p.def<&font_copyTableForTag>("_CGFontCopyTableForTag");
     p.def<&ct_createGraphics>("_CTFontCreateWithGraphicsFont");
     p.def<&ct_createName>("_CTFontCreateWithName");
     p.def<&ct_copyDescriptor>("_CTFontCopyFontDescriptor");

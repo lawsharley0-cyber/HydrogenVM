@@ -1219,6 +1219,48 @@ int runFullSubsystemTests() {
         call("_CGContextRelease", {bitmap}); call("_CFRelease", {family}); call("_CFRelease", {copy});
         call("_CFRelease", {desc}); call("_CFRelease", {ct});
     }
+    {
+        // CGFont design-unit metrics and table access (B-109).
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const auto data = Foundation::makeData(cx, kTestFont, sizeof kTestFont, true);
+        const uint32_t provider = call("_CGDataProviderCreateWithCFData", {data});
+        const uint32_t cg = call("_CGFontCreateWithDataProvider", {provider});
+        call("_CGDataProviderRelease", {provider}); call("_CFRelease", {data});
+        // unitsPerEm: kTestFont was generated with 1024 upem in make_test_font.py.
+        const int32_t upem = int32_t(call("_CGFontGetUnitsPerEm", {cg}));
+        check(upem > 0, "CGFontGetUnitsPerEm returns a positive design-unit value for a loaded TrueType font");
+        // ascent and descent: ascent > 0, descent <= 0 (TrueType sign convention).
+        const int32_t ascent  = int32_t(call("_CGFontGetAscent",  {cg}));
+        const int32_t descent = int32_t(call("_CGFontGetDescent", {cg}));
+        check(ascent > 0 && descent <= 0,
+              "CGFontGetAscent is positive and CGFontGetDescent is non-positive in design units");
+        // capHeight and xHeight: non-negative (0 is a valid fallback when OS/2 is absent).
+        const int32_t capH = int32_t(call("_CGFontGetCapHeight", {cg}));
+        const int32_t xH   = int32_t(call("_CGFontGetXHeight",   {cg}));
+        check(capH >= 0 && xH >= 0,
+              "CGFontGetCapHeight and CGFontGetXHeight return non-negative values");
+        // glyph advances: glyph 2 is 'A' in kTestFont; advance must equal glyphAdvanceDesign(2).
+        const uint32_t glyphBuf = proc.heap().allocZeroed(4), advBuf = proc.heap().allocZeroed(4);
+        proc.mem().write<uint16_t>(glyphBuf, 2);
+        call("_CGFontGetGlyphAdvances", {cg, glyphBuf, 1, advBuf});
+        const int32_t gAdv = proc.mem().read<int32_t>(advBuf);
+        proc.heap().free(glyphBuf); proc.heap().free(advBuf);
+        check(gAdv > 0, "CGFontGetGlyphAdvances returns positive advance for a known glyph");
+        // CGFontCopyTableForTag: 'hhea' (0x68686561) must be present in kTestFont.
+        const uint32_t hheaData = call("_CGFontCopyTableForTag", {cg, 0x68686561u});
+        const int32_t hheaLen   = hheaData ? int32_t(call("_CFDataGetLength", {hheaData})) : 0;
+        if (hheaData) call("_CFRelease", {hheaData});
+        check(hheaData && hheaLen >= 36,
+              "CGFontCopyTableForTag returns the raw hhea table as CFData");
+        // A missing tag returns NULL.
+        const uint32_t noTable = call("_CGFontCopyTableForTag", {cg, 0x12345678u});
+        check(noTable == 0, "CGFontCopyTableForTag returns NULL for an absent table tag");
+        // Name-only font: all metrics must still return reasonable values.
+        const uint32_t nameFont = call("_CGFontCreateWithFontName", {Foundation::makeString(cx, "Helvetica", true)});
+        check(int32_t(call("_CGFontGetUnitsPerEm", {nameFont})) > 0,
+              "CGFontGetUnitsPerEm returns a positive fallback for a name-only CGFont");
+        call("_CGFontRelease", {nameFont}); call("_CGFontRelease", {cg});
+    }
 
     // Directory search must distinguish user and local domains. Clash Royale
     // uses NSCachesDirectory (13) with NSLocalDomainMask (2) during startup.

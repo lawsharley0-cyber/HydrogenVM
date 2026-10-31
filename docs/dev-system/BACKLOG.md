@@ -31,9 +31,9 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-105 | Raster and composite cost: SIMD triangles, threaded slices, dirty-rect present, upload-time texture conversion. Plus CPU-side ideas in `docs/PERFORMANCE.md` that are not Group A (those are B-201). | 5 | 3 | 3 | 5.0 | B | B-103 | Not with other B | Planned |
 | B-106 | Clash Royale past 65% load: 21903 sector state, then the next message the pinned client actually sends. Do not invent sector payloads. | 5 | 4 | 3 | 6.67 | C | Pinned IPA hash `29269ede…` | Not with edits to `src/runtime/libc/Net.cpp` | Planned. Fetching the third-party URL is Needs owner |
 | B-107 | Instruction oracle for encodings Clang does not emit. Put `tools/decode_fuzz.py` on a weekly job at the documented sample size. | 3 | 3 | 2 | 4.5 | Shares A if decoders change | None for a pure oracle | Beside B and C | Planned. `--fuzz N` on the harness runs it on demand |
-| B-108 | `regcomp` / `regexec` / `regerror` / `regfree` (Art of Glow). | 3 | 3 | 2 | 4.5 | — if the patch stays in `src/runtime/libc/` | None | Beside D | Planned |
-| B-109 | `CGFontCopyTableForTag` and the `CGFontGet*` queries Tiny Tower hits. `CGFontCopyTableForTag` is not a getter. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | Planned |
-| B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Planned |
+| B-108 | `regcomp` / `regexec` / `regerror` / `regfree` (Art of Glow). | 3 | 3 | 2 | 4.5 | — if the patch stays in `src/runtime/libc/` | None | Beside D | Operational as of `a767928` (PR #5) |
+| B-109 | `CGFontCopyTableForTag` and the `CGFontGet*` queries Tiny Tower hits. `CGFontCopyTableForTag` is not a getter. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | In progress (branch `codex/test-lab-v1`) |
+| B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Operational as of `a767928` (PR #5) |
 | B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | None, but the file is `OpenGLES.cpp` | Not while B-103 is in progress | Planned |
 | B-112 | Stop adding commercial IPAs to git. Hashes plus an external store. | 3 | 4 | 1 | 12.0 | — | Owner picks the store | Yes | Harness side Operational. Removing the three committed files is Needs owner |
 
