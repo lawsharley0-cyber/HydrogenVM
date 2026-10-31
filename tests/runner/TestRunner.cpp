@@ -2027,6 +2027,18 @@ int runFullSubsystemTests() {
               call("_CFGetRetainCount", {line}) == 1 && call("_CTRunGetGlyphCount", {items[0]}) == 3 &&
               proc.mem().read<uint16_t>(copies) == 2 && std::bit_cast<double>(metrics) == 36,
               "CoreText line breaking and owned glyph runs preserve custom metrics after source release");
+        {
+            // CTLineGetOffsetForStringIndex returns a CGFloat (32-bit float in r0) and also stores it through
+            // secondaryOffset; the canary after the four bytes must stay untouched.
+            const uint32_t sec = proc.heap().allocZeroed(8);
+            proc.mem().write<uint32_t>(sec, 0xDEADBEEF);
+            proc.mem().write<uint32_t>(sec + 4, 0xCAFEF00D);
+            const uint32_t ret = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_CTLineGetOffsetForStringIndex"), {line, 2, sec}));
+            check(std::bit_cast<float>(ret) == 24.0f && proc.mem().read<float>(sec) == 24.0f &&
+                  proc.mem().read<uint32_t>(sec + 4) == 0xCAFEF00D,
+                  "CTLineGetOffsetForStringIndex returns the summed advance as a float and writes secondaryOffset");
+            proc.heap().free(sec);
+        }
         call("_CFRelease", {line});
         call("_CGContextRelease", {bitmap}); call("_CFRelease", {family}); call("_CFRelease", {copy});
         call("_CFRelease", {desc}); call("_CFRelease", {ct});
