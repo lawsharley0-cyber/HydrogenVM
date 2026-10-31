@@ -4745,8 +4745,9 @@ int runFullSubsystemTests() {
     check(Memory::GuestArena::liveCount() == arenasBefore,
           "GuestArena diagnostics count reservations released at destruction");
 
-    // T1b/#253: a whole Process (with a guest thread that was running) must give its 4 GB
-    // reservation back, so a batch of launches never sees "failed to reserve". Linux 4 KB only.
+    // T1b/#253: an idle Process (constructed, no guest thread started) must give its 4 GB
+    // reservation back at destruction, so repeated launches never see "failed to reserve".
+    // This does not cover guest-thread shutdown; that is exercised by the teardown/stop-latency tests.
     {
         for (int i = 0; i < 3; ++i) {
             ProcessConfig cfg;
