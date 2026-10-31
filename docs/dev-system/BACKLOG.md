@@ -46,7 +46,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-203 | Android APK / `armeabi-v7a`. ELF load exists; no Android framework. | 2 | 2 | 3 | 1.33 | — | A stable | Independent of UIKit | Needs owner |
 | B-204 | `CCCrypt` (AES/DES). The code returns `kCCUnimplemented` on purpose. Digests and HMAC stay. | 2 | 3 | 2 | 3.0 | — | Policy change | Yes | Needs owner |
 | B-205 | `NSNotificationQueue` coalescing. No in-repo app was shown to hit it. | 1 | 2 | 1 | 2.0 | D | None | Not with other D | Planned |
-| B-206 | Positional `printf` (`%1$d`). | 1 | 2 | 1 | 2.0 | — | None | Yes if `Format.cpp` is free | In progress (branch `codex/test-lab-v1`) |
+| B-206 | Positional `printf` (`%1$d`). | 1 | 2 | 1 | 2.0 | — | None | Yes if `Format.cpp` is free | Operational as of `a9a1258` |
 | B-207 | libstdc++ file-stream virtuals that throw "not supported yet". | 2 | 2 | 2 | 2.0 | Exclusive on `LibStdcxx.cpp` | None | Not with B-202 | Planned |
 | B-208 | `GuestArena::findFree` linear scan. | 2 | 2 | 1 | 4.0 | A if mapping locks change | None | Not with other A | Planned |
 | B-209 | ASan/UBSan and a coverage build. `siglongjmp` fights ASan. | 3 | 2 | 2 | 3.0 | — | B-102's fault-path decision | Not while A is rewriting the fault path | Planned |
