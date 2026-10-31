@@ -4933,6 +4933,25 @@ int runFullSubsystemTests() {
         const uint32_t lock_ret = call("__ZNSt3__15mutex4lockEv", {mtx});
         const uint32_t unlock_ret = call("__ZNSt3__15mutex6unlockEv", {mtx});
         bool mtx_ok = lock_ret == 0 && unlock_ret == 0;
+        // Error paths: an error-checking mutex rejects a second lock by its owner and an unlock by a
+        // non-owner, and the shim reports both as exceptions with the errno text.
+        {
+            const uint32_t attr = proc.heap().allocZeroed(16), emtx = proc.heap().allocZeroed(64);
+            call("_pthread_mutexattr_init", {attr});
+            call("_pthread_mutexattr_settype", {attr, 1});   // PTHREAD_MUTEX_ERRORCHECK
+            call("_pthread_mutex_init", {emtx, attr});
+            auto throwsFor = [&](const char* sym, const char* needle) {
+                try { call(sym, {emtx}); }
+                catch (const std::exception& e) { return std::string(e.what()).find(needle) != std::string::npos; }
+                return false;
+            };
+            const bool unownedUnlock = throwsFor("__ZNSt3__15mutex6unlockEv", "unlock failed");
+            const bool firstLock = call("__ZNSt3__15mutex4lockEv", {emtx}) == 0;
+            const bool relock = throwsFor("__ZNSt3__15mutex4lockEv", "lock failed");
+            call("__ZNSt3__15mutex6unlockEv", {emtx});
+            call("_pthread_mutex_destroy", {emtx});
+            mtx_ok = mtx_ok && unownedUnlock && firstLock && relock;
+        }
 
         const uint64_t t1 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
         const uint64_t t2 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
