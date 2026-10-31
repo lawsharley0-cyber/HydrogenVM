@@ -100,6 +100,15 @@ class TaintedRunListTests(unittest.TestCase):
         self.assertIn("\\r", row)
         self.assertEqual(row.count("|"), 8, row)   # 7 cells, and the name's own '|' is replaced
 
+    def test_backticks_in_api_names_cannot_end_the_code_span(self):
+        # A backtick in a guest-supplied name would close the code span and let the rest render as Markdown.
+        rows = hvm_probe.tainted_runs([run("com.odd.names", report(2, [api("evil`[link](http://x)`name", 2)]))])
+        row = hvm_probe.tainted_md(rows)[-1]
+        cell = row.split(" | ")[5]            # the "Most called" cell
+        self.assertEqual(cell.count("`"), 2, cell)   # only the wrapping pair is left
+        self.assertTrue(cell.startswith("`") and cell.endswith("`"), cell)
+        self.assertIn("evil'[link](http://x)'name", cell)
+
     def test_markdown_says_so_when_nothing_is_tainted(self):
         text = "\n".join(hvm_probe.tainted_md(hvm_probe.tainted_runs([run("com.clean.game", report())])))
         self.assertIn("Tainted runs", text)

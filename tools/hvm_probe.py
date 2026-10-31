@@ -239,8 +239,10 @@ def tainted_md(rows):
         return md + ['No tainted runs.']
     md += ['| Game | Mode | Status | Stub hits | Distinct APIs | Most called | Run folder |', '|---|---|---|---:|---:|---|---|']
     for r in rows:
-        # API names come from the guest and can hold line breaks; one table row must stay one line.
-        top = ', '.join('`' + n.replace('|', '/').replace('\r', '\\r').replace('\n', '\\n') + '`' for n in r['topMissing'])
+        # API names come from the guest: keep a name inside its table cell (no '|'), on one line (no CR/LF)
+        # and inside its code span (no backtick).
+        top = ', '.join('`' + n.replace('`', "'").replace('|', '/').replace('\r', '\\r').replace('\n', '\\n') + '`'
+                        for n in r['topMissing'])
         md.append(f"| {r['bundleId']} | {r['mode']} | {r['status']} | {r['stubHits']} | {r['distinctMissing']} | {top} | `{r.get('dir', '')}` |")
     return md
 
