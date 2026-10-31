@@ -4884,6 +4884,92 @@ int runFullSubsystemTests() {
         }
     }
 
+    // Blocking host reads and locks must notice a stop request (T1/#234). A guest thread
+    // parked in read() on an empty pipe or in a contended flock() used to ignore
+    // requestStop() forever and outlive the process teardown. Normal behaviour must not change.
+    {
+        using namespace std::chrono;
+        struct Run { bool earlyDone; bool done; double wakeMs; };
+        auto callG = [](Ctx& x, const char* sym, std::initializer_list<uint32_t> a) { return uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol(sym), a)); };
+        // Run `body` on a guest thread. If it finishes within `earlyWaitMs` it was not blocked.
+        // Otherwise request a stop and time how long it takes to leave.
+        auto runCase = [&](std::function<void(Process&, Ctx&)> body, int earlyWaitMs) {
+            ProcessConfig cfg;
+            cfg.homePath = "/tmp/hvm_stop_wake";
+            auto* proc = new Process(cfg);
+            std::atomic<bool> done{false};
+            const uint32_t fn = proc->defineFunction("stop_wake_fn", [&](Ctx& x) { try { body(*proc, x); } catch (...) {} done = true; });
+            proc->startThread(fn, 0, 256u << 10, true);
+            const auto start = steady_clock::now();
+            while (!done.load() && steady_clock::now() - start < milliseconds(earlyWaitMs)) std::this_thread::sleep_for(milliseconds(5));
+            Run r{done.load(), done.load(), 0};
+            if (!r.earlyDone) {
+                const auto t0 = steady_clock::now();
+                proc->requestStop();
+                while (!done.load() && steady_clock::now() - t0 < seconds(3)) std::this_thread::sleep_for(milliseconds(5));
+                r.done = done.load();
+                r.wakeMs = duration<double, std::milli>(steady_clock::now() - t0).count();
+            }
+            if (r.done) delete proc;   // a thread that never left still owns the process: leak it rather than free under it
+            return r;
+        };
+        std::atomic<int32_t> ret{99};
+        const auto readFd = [&](int fd) { return [&ret, fd, callG](Process& p, Ctx& x) { ret = int32_t(callG(x, "_read", {uint32_t(fd), p.heap().allocZeroed(16), 1})); }; };
+
+        int blockingPipe[2]; ::pipe(blockingPipe);
+        const Run readStop = runCase(readFd(blockingPipe[0]), 300);
+        check(!readStop.earlyDone && readStop.done && readStop.wakeMs < 1000, "read() on an empty pipe wakes on a stop request");
+
+        char lockPath[] = "/tmp/hvm_stop_wake_lock_XXXXXX";
+        const int lockFile = ::mkstemp(lockPath);
+        const int heldFd = lockFile, waiterFd = ::open(lockPath, O_RDWR);
+        ::flock(heldFd, LOCK_EX);
+        const auto lockFd = [&](int fd, int op) { return [&ret, fd, op, callG](Process&, Ctx& x) { ret = int32_t(callG(x, "_flock", {uint32_t(fd), uint32_t(op)})); }; };
+        const Run flockStop = runCase(lockFd(waiterFd, 2), 300);
+        check(!flockStop.earlyDone && flockStop.done && flockStop.wakeMs < 1000, "a contended flock() wakes on a stop request");
+
+        // Unchanged behaviour.
+        int dataPipe[2]; ::pipe(dataPipe); (void)!::write(dataPipe[1], "x", 1);
+        ret = 99;
+        Run r = runCase(readFd(dataPipe[0]), 1500);
+        check(r.earlyDone && ret == 1, "read() on a pipe with data still returns it immediately");
+
+        int eofPipe[2]; ::pipe(eofPipe); ::close(eofPipe[1]);
+        ret = 99;
+        r = runCase(readFd(eofPipe[0]), 1500);
+        check(r.earlyDone && ret == 0, "read() at end of file on a pipe still returns 0");
+
+        int nbPipe[2]; ::pipe(nbPipe); ::fcntl(nbPipe[0], F_SETFL, ::fcntl(nbPipe[0], F_GETFL) | O_NONBLOCK);
+        ret = 99;
+        r = runCase(readFd(nbPipe[0]), 1500);
+        check(r.earlyDone && ret == -1, "read() on an empty non-blocking pipe still fails at once instead of waiting");
+
+        const int regFd = ::open(lockPath, O_RDONLY);
+        ret = 99;
+        r = runCase(readFd(regFd), 1500);
+        check(r.earlyDone && ret == 0, "read() on a regular file is unaffected");
+
+        ret = 99;
+        r = runCase(lockFd(waiterFd, 2 | 4), 1500);
+        check(r.earlyDone && ret == -1, "flock() with LOCK_NB on a held lock still fails at once");
+
+        char freePath[] = "/tmp/hvm_stop_wake_free_XXXXXX";
+        const int freeFd = ::mkstemp(freePath);
+        ret = 99;
+        r = runCase(lockFd(freeFd, 2), 1500);
+        check(r.earlyDone && ret == 0, "an uncontended blocking flock() still succeeds at once");
+
+        std::thread releaser([&] { std::this_thread::sleep_for(milliseconds(150)); ::flock(heldFd, LOCK_UN); });
+        ret = 99;
+        r = runCase(lockFd(waiterFd, 2), 3000);
+        releaser.join();
+        check(r.earlyDone && ret == 0, "a blocking flock() still acquires once the holder lets go");
+
+        for (int fd : {blockingPipe[0], blockingPipe[1], dataPipe[0], dataPipe[1], eofPipe[0], nbPipe[0], nbPipe[1], regFd, freeFd, waiterFd, heldFd}) ::close(fd);
+        ::unlink(lockPath);
+        ::unlink(freePath);
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
