@@ -390,8 +390,13 @@ std::string nibPath(Ctx& x, const std::string& name, id bundle) {
     std::string p = bundlePath == x.proc.bundlePath() ? Foundation::bundleResource(x, base, "nib") : "";
     if (p.empty()) {
         std::error_code ec;
-        for (const std::string& cand : {bundlePath + "/" + base + "~iphone.nib", bundlePath + "/" + base + ".nib"})
-            if (fs::exists(cand, ec)) { p = cand; break; }
+
+        // Only the documented device-idiom modifier is a resource fallback.
+        // Stripping words such as "Landscape" from an arbitrary filename can
+        // unexpectedly load an unrelated NIB from the same bundle.
+        for (const std::string& cand : {base + "~iphone.nib", base + ".nib"}) {
+            if (fs::exists(bundlePath + "/" + cand, ec)) { p = bundlePath + "/" + cand; break; }
+        }
     }
     if (p.empty()) return {};
     std::error_code ec;
@@ -506,10 +511,31 @@ id un_instantiate(Ctx& x, id self, SEL, id owner, id options) {
     if (!(archive ? parseNibArchive(d.data, *g, err) : parseKeyedNib(d.data, *g, err))) { x.proc.logf(LogLevel::Error, "UINib: %s", err.c_str()); return 0; }
     return loadGraph(x, g, !archive, owner, externals, "(data)");
 }
+// UIKit's format string is "Could not load NIB in bundle: '%@' with name '%@'".
+// The exception is NSInternalInconsistencyException, and a guest @catch receives
+// that object. Returning nil here is not what iOS does.
+[[noreturn]] void raiseNibLoadFailure(Ctx& x, id bundle, const std::string& name) {
+    std::string where = "nil";
+    if (bundle) {
+        if (const id desc = id(rt(x).send(x.cpu, bundle, "description"))) where = utf8(x, desc);
+        else where = rt(x).objectClassName(bundle);
+    }
+    const std::string reason = "Could not load NIB in bundle: '" + where + "' with name '" + name + "'";
+    const Class cls = rt(x).getClass("NSException");
+    const id exc = cls ? id(rt(x).send(x.cpu, cls, "exceptionWithName:reason:userInfo:",
+                                       {Foundation::constString(x.proc, "NSInternalInconsistencyException"), makeString(x, reason), 0}))
+                       : 0;
+    if (!exc) throw ObjC::ObjCError("Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: '" + reason + "'");
+    Foundation::raiseObjCException(x, exc);
+}
 id b_loadNib(Ctx& x, id self, SEL, id name, id owner, id options) {
     const id externals = options ? Foundation::dictGet(x, options, "UINibExternalObjects") : 0;
-    const id r = loadNib(x, name ? utf8(x, name) : "", self, owner, externals);
-    if (!r) throw ObjC::ObjCError("Could not load NIB in bundle: '" + std::string(name ? utf8(x, name) : "") + "'");
+    const std::string nameStr = name ? utf8(x, name) : "";
+    // A missing file raises before loadNib's "not found" warning. That warning is
+    // for callers that treat a missing nib as nil; this method does not.
+    if (nibPath(x, nameStr, self).empty()) raiseNibLoadFailure(x, self, nameStr);
+    const id r = loadNib(x, nameStr, self, owner, externals);
+    if (!r) raiseNibLoadFailure(x, self, nameStr);
     return r;
 }
 
