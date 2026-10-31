@@ -91,6 +91,13 @@ def gate(repo, config):
         baseline = load_report(config["baseline"])
         if report["host"]["pageSize"] != baseline["host"]["pageSize"]:
             raise GateError("baseline and candidate host page sizes differ")
+        for name, entries in (("baseline", baseline), ("candidate", report)):
+            for suite, key in (("unit", "cases"), ("python", "cases"), ("apps", "apps")):
+                ids = [c.get("id") for c in entries["suites"][suite][key]]
+                if not all(isinstance(i, str) and i for i in ids):
+                    raise GateError(f"{name} {suite} entry has a missing or non-string id")
+                if len(set(ids)) != len(ids):
+                    raise GateError(f"{name} {suite} report has duplicate ids; refusing to compare")
         for suite in ("unit", "python"):
             expected = {c["id"] for c in baseline["suites"][suite]["cases"]}
             measured = {c["id"] for c in report["suites"][suite]["cases"]}

@@ -109,6 +109,26 @@ sys.exit(int(bad))
             self.assertEqual(bisect_corpus.main(self.bisect_args(repo, commits)), 2)
         self.assertIn("timed out", errors.getvalue())
 
+    def test_timeout_status_in_unit_and_python_cases_is_rejected_as_invalid(self):
+        for suite in ("unit", "python"):
+            with self.subTest(suite=suite):
+                self.temp.cleanup(); self.temp = tempfile.TemporaryDirectory(); self.root = Path(self.temp.name)
+                repo, commits = self.repository()
+                self.runner.write_text(self.runner.read_text().replace(
+                    "pathlib.Path(sys.argv[1])", f"r['suites']['{suite}']['cases'][0]['status']='timeout'\npathlib.Path(sys.argv[1])", 1))
+                with contextlib.redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(bisect_corpus.main(self.bisect_args(repo, commits)), 2)
+                self.assertIn("invalid harness report", errors.getvalue())
+
+    def test_duplicate_app_ids_with_different_hashes_abort(self):
+        repo, commits = self.repository()
+        self.runner.write_text(self.runner.read_text().replace(
+            "pathlib.Path(sys.argv[1])",
+            "a=r['suites']['apps']['apps']\nd=dict(a[0]); d['sha256']='f'*64; a.append(d)\npathlib.Path(sys.argv[1])", 1))
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(bisect_corpus.main(self.bisect_args(repo, commits)), 2)
+        self.assertIn("duplicate", errors.getvalue())
+
     def test_omitted_cases_do_not_become_a_regression(self):
         repo, commits = self.repository()
         self.runner.write_text(self.runner.read_text().replace("pathlib.Path(sys.argv[1])", "r['suites']['unit']['cases']=[]\npathlib.Path(sys.argv[1])"))
@@ -170,6 +190,24 @@ option('--frame-file').write_bytes(bytes([{value}]))
         hvm = self.fake_hvm("hvm", write_report=False)
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(ab_diff.main(self.ab_args(hvm, hvm)), 2)
+
+    def test_ab_missing_report_names_exit_status_and_log(self):
+        hvm = self.fake_hvm("hvm", write_report=False)
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(ab_diff.main(self.ab_args(hvm, hvm)), 2)
+        self.assertIn("no valid hvm report (exit 0)", errors.getvalue())
+        self.assertIn("stderr.log", errors.getvalue())
+
+    def test_ab_timeout_keeps_partial_output_and_reports_it(self):
+        hang = self.root / "hang"
+        hang.write_text(f"#!{sys.executable}\nimport sys,time\nprint('partial out',flush=True)\nprint('partial err',file=sys.stderr,flush=True)\ntime.sleep(30)\n")
+        hang.chmod(0o755)
+        args = self.ab_args(hang, hang) + ["--timeout", "2", "--seconds", "1"]
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(ab_diff.main(args), 2)
+        self.assertIn("timed out after 2", errors.getvalue())
+        self.assertEqual((self.root / "ab/old/stdout.log").read_text().strip(), "partial out")
+        self.assertEqual((self.root / "ab/old/stderr.log").read_text().strip(), "partial err")
 
     def test_valid_load_failure_is_a_measured_difference(self):
         old, new = self.fake_hvm("old"), self.fake_hvm("new")
