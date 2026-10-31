@@ -15,6 +15,7 @@
 #include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
 #include <atomic>
+#include <sys/file.h>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -130,11 +131,30 @@ int runAsm(const std::string& elf, const std::vector<std::string>& sources) {
             }
             std::string err;
             const Check* faultWant = nullptr;
-            for (const auto& ch : t.expect) if (ch.key == "fault") faultWant = &ch;
+            const Check* undefWant = nullptr;
+            for (const auto& ch : t.expect) {
+                if (ch.key == "fault") faultWant = &ch;
+                if (ch.key == "undef") undefWant = &ch;
+            }
             const bool ok = h.call(c, it->second, err);
             if (faultWant) {
                 if (!ok && c.exit == CPU::Exit::MemFault && c.exit_info == faultWant->value) ++pass;
                 else { std::printf("FAIL %-28s expected fault at 0x%X: %s\n", t.name.c_str(), faultWant->value, ok ? "returned normally" : err.c_str()); ++fail; }
+                continue;
+            }
+            if (undefWant) {
+                if (!ok && c.exit == CPU::Exit::Undefined) {
+                    uint32_t hw1 = c.thumb ? h.mem.read<uint16_t>(c.exit_info) : 0;
+                    uint32_t raw = c.thumb ? (hw1 | (uint32_t(h.mem.read<uint16_t>(c.exit_info + 2)) << 16)) : h.mem.read<uint32_t>(c.exit_info);
+                    if (raw == undefWant->value || (c.thumb && hw1 == undefWant->value)) {
+                        ++pass;
+                        continue;
+                    }
+                    std::printf("FAIL %-28s expected undef instruction 0x%X, got 0x%X at PC 0x%X\n", t.name.c_str(), undefWant->value, raw, c.exit_info);
+                } else {
+                    std::printf("FAIL %-28s expected undef instruction 0x%X: %s\n", t.name.c_str(), undefWant->value, ok ? "returned normally" : err.c_str());
+                }
+                ++fail;
                 continue;
             }
             if (!ok) { std::printf("FAIL %-28s %s\n", t.name.c_str(), err.c_str()); ++fail; continue; }
@@ -215,6 +235,56 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cstring>
 
 namespace {
+
+// Independent of HVM_ZOMBIES in the environment: enableZombies is the same
+// switch. Returns false when the 16384-record cap is missing or when an
+// evicted zombie is handed back to the guest heap.
+bool zombieMetadataStaysCapped() {
+    using namespace Hydrogen;
+    using namespace Hydrogen::Runtime;
+    constexpr int kZombieCap = 16384;
+    const std::string named = "-[NSObject description]: message sent to deallocated instance";
+    ProcessConfig zcfg;
+    zcfg.homePath = "/tmp/hvm_zombie_cap";
+    zcfg.bundlePath = "/tmp/hvm_zombie_cap/Z.app";
+    zcfg.enableZombies = true;
+    zcfg.log = [](LogLevel, const std::string&) {};
+    Process zp(zcfg);
+    auto& zr = ObjC::rt(zp);
+    auto& zcpu = zp.mainThread().cpu;
+    zp.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
+    zcpu.r[CPU::kSP] = 0xBF000000u - 256;
+    zcpu.r[7] = 0;
+    auto make = [&]() {
+        return ObjC::id(zr.send(zcpu, ObjC::id(zr.send(zcpu, zr.getClass("NSObject"), zr.selAlloc)), "init"));
+    };
+    auto message = [&](ObjC::id obj) {
+        std::string msg;
+        try { zr.send(zcpu, obj, "description"); } catch (const std::exception& e) { msg = e.what(); }
+        return msg;
+    };
+    std::vector<ObjC::id> objects;
+    objects.reserve(size_t(kZombieCap) + 1);
+    for (int i = 0; i < kZombieCap + 1; ++i) objects.push_back(make());
+    for (int i = 0; i < kZombieCap; ++i) zr.send(zcpu, objects[size_t(i)], "release");
+    const bool held = message(objects[0]).find(named) != std::string::npos;
+    zr.send(zcpu, objects[size_t(kZombieCap)], "release");
+    const std::string evictedMsg = message(objects[0]);
+    const bool evicted = evictedMsg.find("message sent to deallocated instance") == std::string::npos &&
+                         evictedMsg.find("unrecognized selector sent to instance") != std::string::npos;
+    const bool recent = message(objects[1]).find(named) != std::string::npos &&
+                        message(objects[size_t(kZombieCap)]).find(named) != std::string::npos;
+    const ObjC::id oldest = objects[0];
+    zp.mem().write<uint32_t>(oldest, 0x5A5A5A5Au);
+    const ObjC::id fresh = make();
+    const bool kept = zp.heap().blockSize(oldest) != 0 && fresh != oldest &&
+                      zp.mem().read<uint32_t>(oldest) == 0x5A5A5A5Au;
+    if (!(held && evicted && recent && kept)) {
+        std::printf("    zombie cap detail held=%d evicted=%d recent=%d kept=%d\n", held, evicted, recent, kept);
+        std::printf("    evicted message: %.200s\n", evictedMsg.c_str());
+    }
+    return held && evicted && recent && kept;
+}
 
 int runFullSubsystemTests() {
     using namespace Hydrogen;
@@ -311,6 +381,18 @@ int runFullSubsystemTests() {
         check(received && stopped, "Desktop audio transports actual mixer PCM and bounds a stalled consumer without blocking shutdown");
     }
 
+    {
+        bool rtti_ok = false;
+        try {
+            Hydrogen::Runtime::ProcessConfig cfg;
+            cfg.stopOnMissingFunction = false;
+            Hydrogen::Runtime::Process p(cfg);
+
+            rtti_ok = p.lookupSymbol("_ZTIPv").has_value() && p.lookupSymbol("__ZTIPv").has_value() && p.lookupSymbol("_ZTIPKv").has_value() && p.lookupSymbol("__ZTIPKv").has_value();
+        } catch (...) {}
+        check(rtti_ok, "C++ RTTI pointer types are successfully registered as missing data symbols");
+    }
+
     // Mixer stats (what Test All Games' music / sound-effects checks read): a short one-shot
     // voice counts as an effect, a looping one as music, a silent one as neither.
     {
@@ -332,6 +414,196 @@ int runFullSubsystemTests() {
                              (unsigned long long)st.musicFrames, (unsigned long long)st.effectFrames,
                              st.musicVoices, st.effectVoices, st.peak);
         check(ok, "Mixer stats tell music (looping) from sound effects (one-shot) and ignore silent voices");
+    }
+
+    // Mixer headroom and stream stitching (#260: audio blown out / buzzing on the device speaker).
+    // Every expected value is analytic, never taken from the mixer: the inputs are int16 sines with an
+    // integer period (441 Hz at 44.1 kHz = 100 frames), so the ideal bus value of every output frame
+    // follows from the input samples, the voice gains and the definition of linear resampling.
+    {
+        constexpr double kTwoPi = 6.283185307179586;
+        auto sine = [&](int frames, double amp, int period) {   // amp in full-scale units, L == R
+            auto pcm = std::make_shared<std::vector<int16_t>>(size_t(frames) * 2);
+            for (int n = 0; n < frames; ++n) {
+                const auto v = int16_t(std::lround(amp * 32767.0 * std::sin(kTwoPi * double(n) / double(period))));
+                (*pcm)[size_t(n) * 2] = v;
+                (*pcm)[size_t(n) * 2 + 1] = v;
+            }
+            return pcm;
+        };
+        auto renderLeft = [&](Audio::Mixer& m, size_t frames) {
+            std::vector<float> out;
+            std::vector<float> l(512), r(512);
+            while (out.size() < frames) {
+                const size_t n = std::min<size_t>(512, frames - out.size());
+                m.render(l.data(), r.data(), n);
+                out.insert(out.end(), l.begin(), l.begin() + long(n));
+            }
+            return out;
+        };
+        struct Fit { double k = 0, residual = 1, peak = 0; int rail = 0; };
+        // Least-squares scale of the ideal waveform onto the output, the relative RMS of what is left
+        // (distortion, so a constant gain reduction costs nothing), peak, and samples sitting on the rail.
+        auto fit = [&](const std::vector<float>& out, const std::vector<double>& ideal, size_t from) {
+            Fit f;
+            double sxy = 0, sxx = 0;
+            for (size_t i = from; i < out.size(); ++i) {
+                sxy += double(out[i]) * ideal[i];
+                sxx += ideal[i] * ideal[i];
+                f.peak = std::max(f.peak, std::fabs(double(out[i])));
+                if (std::fabs(out[i]) >= 1.0f) ++f.rail;
+            }
+            f.k = sxx > 0 ? sxy / sxx : 0;
+            double res = 0, sig = 0;
+            for (size_t i = from; i < out.size(); ++i) {
+                const double e = double(out[i]) - f.k * ideal[i];
+                res += e * e;
+                sig += (f.k * ideal[i]) * (f.k * ideal[i]);
+            }
+            f.residual = sig > 0 ? std::sqrt(res / sig) : 1.0;
+            return f;
+        };
+        constexpr int kLoopFrames = 4400;   // 44 whole periods, so a looping voice stays phase-continuous
+        constexpr size_t kFrames = 16384, kSettle = 8192;
+        constexpr double kMaxResidual = 0.02;   // chosen before measuring: -34 dB distortion
+
+        // 1. Two loud voices at once: 0.7 + 0.7 full scale sums to 1.4. The output must stay a clean
+        //    (scaled) sine instead of being flattened against the rail.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto a = sine(kLoopFrames, 0.7, 100);
+            m.play(a, 44100, loop);
+            m.play(a, 44100, loop);
+            std::vector<double> ideal(kFrames);
+            for (size_t i = 0; i < kFrames; ++i) ideal[i] = 2.0 * double((*a)[(i % kLoopFrames) * 2]) / 32768.0;
+            const Fit f = fit(renderLeft(m, kFrames), ideal, kSettle);
+            const bool ok = f.residual < kMaxResidual && f.rail == 0 && f.k > 0.6;
+            if (!ok) std::printf("    mixer headroom (2 x 0.7 FS): k=%.3f residual=%.4f peak=%.4f railSamples=%d\n", f.k, f.residual, f.peak, f.rail);
+            check(ok, "Mixer keeps two summed loud voices (bus peak 1.4 FS) undistorted instead of hard-clipping them");
+        }
+
+        // 2. One voice with app gain above 1 (OpenAL AL_GAIN may exceed 1): 0.5 FS x 3.0 = 1.5 FS bus.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true; loop.gain = 3.0f;
+            auto a = sine(kLoopFrames, 0.5, 100);
+            m.play(a, 44100, loop);
+            std::vector<double> ideal(kFrames);
+            for (size_t i = 0; i < kFrames; ++i) ideal[i] = 3.0 * double((*a)[(i % kLoopFrames) * 2]) / 32768.0;
+            const Fit f = fit(renderLeft(m, kFrames), ideal, kSettle);
+            const bool ok = f.residual < kMaxResidual && f.rail == 0 && f.k > 0.6;
+            if (!ok) std::printf("    mixer headroom (0.5 FS x gain 3): k=%.3f residual=%.4f peak=%.4f railSamples=%d\n", f.k, f.residual, f.peak, f.rail);
+            check(ok, "Mixer keeps a voice whose gain pushes the bus to 1.5 FS undistorted instead of hard-clipping it");
+        }
+
+        // 3. Transparency: a mix that stays under full scale must pass through unchanged (a limiter
+        //    must not quieten ordinary content). One voice at 0.5 FS, gain 1: output == input / 32768.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto a = sine(kLoopFrames, 0.5, 100);
+            m.play(a, 44100, loop);
+            const std::vector<float> out = renderLeft(m, kFrames);
+            double worst = 0;
+            for (size_t i = 0; i < kFrames; ++i)
+                worst = std::max(worst, std::fabs(double(out[i]) - double((*a)[(i % kLoopFrames) * 2]) / 32768.0));
+            const bool ok = worst < 1e-6;
+            if (!ok) std::printf("    mixer transparency (0.5 FS): worst error %.3g\n", worst);
+            check(ok, "Mixer passes a mix that stays under full scale through bit-for-bit (no level change)");
+        }
+
+        // 3b. Stereo image: the limiter gain is shared by both channels. Two voices with unequal channel
+        //     levels (left bus peak 1.4 FS, right 0.7 FS) must keep their 2:1 ratio. Clamping or limiting
+        //     the channels independently would flatten only the left one and bend the image.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto uneven = std::make_shared<std::vector<int16_t>>(size_t(kLoopFrames) * 2);
+            for (int n = 0; n < kLoopFrames; ++n) {
+                const double w = std::sin(kTwoPi * double(n) / 100.0) * 32767.0;
+                (*uneven)[size_t(n) * 2] = int16_t(std::lround(0.7 * w));
+                (*uneven)[size_t(n) * 2 + 1] = int16_t(std::lround(0.35 * w));
+            }
+            m.play(uneven, 44100, loop);
+            m.play(uneven, 44100, loop);
+            std::vector<float> outL, outR, l(512), r(512);
+            while (outL.size() < kFrames) {
+                m.render(l.data(), r.data(), 512);
+                outL.insert(outL.end(), l.begin(), l.end());
+                outR.insert(outR.end(), r.begin(), r.end());
+            }
+            double worstRatio = 0, peakL = 0;
+            for (size_t i = kSettle; i < kFrames; ++i) {
+                peakL = std::max(peakL, std::fabs(double(outL[i])));
+                if (std::fabs(outL[i]) > 0.05f)   // skip zero crossings, where the ratio is noise
+                    worstRatio = std::max(worstRatio, std::fabs(double(outR[i]) / double(outL[i]) - 0.5));
+            }
+            const bool ok = worstRatio < 0.01 && peakL < 1.0 && peakL > 0.6;
+            if (!ok) std::printf("    mixer stereo image: worst |R/L - 0.5| = %.4f, left peak %.4f\n", worstRatio, peakL);
+            check(ok, "Mixer limits both channels with one shared gain, so unequal channel levels keep their ratio");
+        }
+
+        // 3c. Mirror of 3b: with the dominant channel on the right, the shared gain must still follow it.
+        //     Together with 3b this catches a limiter that looks at only one channel.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto uneven = std::make_shared<std::vector<int16_t>>(size_t(kLoopFrames) * 2);
+            for (int n = 0; n < kLoopFrames; ++n) {
+                const double w = std::sin(kTwoPi * double(n) / 100.0) * 32767.0;
+                (*uneven)[size_t(n) * 2] = int16_t(std::lround(0.35 * w));
+                (*uneven)[size_t(n) * 2 + 1] = int16_t(std::lround(0.7 * w));
+            }
+            m.play(uneven, 44100, loop);
+            m.play(uneven, 44100, loop);
+            std::vector<float> outL, outR, l(512), r(512);
+            while (outL.size() < kFrames) {
+                m.render(l.data(), r.data(), 512);
+                outL.insert(outL.end(), l.begin(), l.end());
+                outR.insert(outR.end(), r.begin(), r.end());
+            }
+            double worstRatio = 0, peakR = 0;
+            for (size_t i = kSettle; i < kFrames; ++i) {
+                peakR = std::max(peakR, std::fabs(double(outR[i])));
+                if (std::fabs(outR[i]) > 0.05f)
+                    worstRatio = std::max(worstRatio, std::fabs(double(outL[i]) / double(outR[i]) - 0.5));
+            }
+            const bool ok = worstRatio < 0.01 && peakR < 1.0 && peakR > 0.6;
+            if (!ok) std::printf("    mixer mirrored stereo image: worst |L/R - 0.5| = %.4f, right peak %.4f\n", worstRatio, peakR);
+            check(ok, "Mixer limits a dominant right channel with the shared gain too (mirror of the left-dominant case)");
+        }
+
+        // 4. Stream stitching: a 22.05 kHz stream of a 441 Hz sine (50-frame period) queued as three
+        //    1000-frame buffers. Output frame j reads source position j/2 of the concatenated stream, so
+        //    the ideal value at an odd j is the mean of source frames j/2 and j/2 + 1, also across a
+        //    buffer boundary. A buffer edge that repeats its last frame instead leaves an error every 1000
+        //    source frames (a periodic click train).
+        {
+            Audio::Mixer m;
+            const uint32_t v = m.createStream({});
+            constexpr int kChunk = 1000, kChunks = 3;
+            auto whole = sine(kChunk * kChunks, 0.5, 50);
+            for (int c = 0; c < kChunks; ++c) {
+                auto part = std::make_shared<std::vector<int16_t>>(whole->begin() + long(c) * kChunk * 2, whole->begin() + long(c + 1) * kChunk * 2);
+                m.enqueue(v, part, 22050, uint64_t(c + 1));
+            }
+            const size_t outFrames = size_t(kChunk) * kChunks * 2 - 2;
+            const std::vector<float> out = renderLeft(m, outFrames);
+            double worst = 0;
+            size_t worstAt = 0;
+            for (size_t j = 0; j < outFrames; ++j) {
+                const size_t k = j / 2;
+                const double s0 = double((*whole)[k * 2]) / 32768.0;
+                const double s1 = double((*whole)[(k + 1) * 2]) / 32768.0;
+                const double ideal = (j & 1) ? 0.5 * (s0 + s1) : s0;
+                const double e = std::fabs(double(out[j]) - ideal);
+                if (e > worst) { worst = e; worstAt = j; }
+            }
+            const bool ok = worst < 1e-4;
+            if (!ok) std::printf("    mixer stream stitching: worst error %.5f FS at output frame %zu\n", worst, worstAt);
+            check(ok, "Mixer interpolates across queued stream buffer boundaries (no click at each buffer edge)");
+        }
     }
 
     // Straight-line GLSL semantics: independent names, actual values, honest rejection.
@@ -2841,6 +3113,58 @@ int runFullSubsystemTests() {
         check(baWhatStr == "std::bad_alloc", "std::bad_alloc::what() returns std::bad_alloc");
     }
 
+    // 2f9. POSIX ftime, std::string::copy and SCNetworkReachability
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = proc.lookupSymbol(sym);
+            return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
+        };
+
+        const uint32_t tp = proc.heap().allocZeroed(16);
+        const uint32_t ret = call("_ftime", {tp});
+        check(ret == 0 && proc.mem().read<uint32_t>(tp) > 0 && proc.mem().read<uint16_t>(tp + 4) < 1000,
+              "ftime returns seconds and milliseconds");
+
+        const uint32_t sObj = proc.heap().allocZeroed(4);
+        call("__ZNSsC1EPKcRKSaIcE", {sObj, proc.allocCString("HydrogenVM"), 0}); // string("HydrogenVM")
+        const uint32_t buf = proc.heap().allocZeroed(32);
+        // Copy entire string
+        const uint32_t count1 = call("_ZNKSs4copyEPcmm", {sObj, buf, 10, 0});
+        check(count1 == 10 && std::strncmp((const char*)proc.mem().host(buf), "HydrogenVM", 10) == 0, "string::copy(buf, 10, 0) copies full string");
+        // Partial copy and no null terminator written after copy (ensure buffer byte at 8 is unmodified zero since we allocZeroed)
+        proc.mem().write<uint8_t>(buf + 8, 0x42);
+        const uint32_t count2 = call("_ZNKSs4copyEPcmm", {sObj, buf, 8, 0});
+        check(count2 == 8 && std::strncmp((const char*)proc.mem().host(buf), "Hydrogen", 8) == 0 && proc.mem().read<uint8_t>(buf + 8) == 0x42, "string::copy(buf, 8, 0) partial copy");
+        // Nonzero starting position and exceeding string length
+        const uint32_t count3 = call("_ZNKSs4copyEPcmm", {sObj, buf, 20, 8});
+        check(count3 == 2 && std::strncmp((const char*)proc.mem().host(buf), "VM", 2) == 0, "string::copy(buf, 20, 8) handles pos > 0 and len > remaining");
+        // Zero length copy
+        const uint32_t count4 = call("_ZNKSs4copyEPcmm", {sObj, buf, 0, 0});
+        check(count4 == 0, "string::copy(buf, 0, 0) zero copy");
+        // Invalid pos raises logic error (which throws in host, halting the run context or just halting HLE execution)
+        // (Testing exception from basic_string is covered by other libstdc++ tests or would abort guest; we just skip invoking it invalidly here).
+        call("__ZNSsD1Ev", {sObj});
+
+        // SystemConfiguration Tests
+        const uint32_t ref1 = call("_SCNetworkReachabilityCreateWithName", {0, proc.allocCString("apple.com")});
+        const uint32_t flagsOut = proc.heap().allocZeroed(4);
+        const uint32_t getFlagsOk1 = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
+        check(ref1 != 0 && getFlagsOk1 == 1 && proc.mem().read<uint32_t>(flagsOut) == 2,
+              "SCNetworkReachabilityGetFlags returns success and 0x2 (Reachable)");
+
+        const uint32_t getFlagsOkRepeated = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
+        check(getFlagsOkRepeated == 1, "SCNetworkReachabilityGetFlags repeated queries work");
+
+        const uint32_t getFlagsInvalidRef = call("_SCNetworkReachabilityGetFlags", {0, flagsOut});
+        check(getFlagsInvalidRef == 0, "SCNetworkReachabilityGetFlags handles invalid reference");
+
+        const uint32_t getFlagsNullOut = call("_SCNetworkReachabilityGetFlags", {ref1, 0});
+        check(getFlagsNullOut == 1, "SCNetworkReachabilityGetFlags handles invalid output pointer but succeeds");
+
+        // CFRelease to clean up
+        call("_CFRelease", {ref1});
+    }
+
     // #31: independent ARMv7 API-family oracles (metadata is laid out by the public ABI).
     {
         auto bound = [&](std::initializer_list<const char*> names) { for (auto n : names) if (!proc.lookupSymbol(n)) return false; return true; };
@@ -3417,6 +3741,12 @@ int runFullSubsystemTests() {
                   "HVM_ZOMBIES names the class of a freed object that is messaged");
         }
 
+        // Cap is 16384 records in Runtime::disposeInstance. Guest memory of an
+        // evicted zombie stays allocated. Runs without HVM_ZOMBIES set, and
+        // fails if the cap is removed.
+        check(zombieMetadataStaysCapped(),
+              "zombie metadata stops at 16384 records and the evicted object's guest memory stays allocated");
+
         // A virtual call through a vtable nothing provides names the class and slot.
         {
             const uint32_t vt = proc.makeMissingStub("__ZTV13HvmNoSuchType");
@@ -3670,6 +4000,44 @@ int runFullSubsystemTests() {
                   "AudioQueue recording fills buffers with microphone audio at the queue's rate and format");
         }
 
+
+        // A guest thread that returns with pools still pushed must release those
+        // objects. NSThread's trampoline pops its own pool before returning, so
+        // this uses a raw guest thread: one object is popped explicitly, and two
+        // more sit in nested pools that only thread exit can drain.
+        {
+            std::atomic<int> deallocs{0};
+            int explicitDeallocs = 0;
+            ObjC::ClassBuilder cls = r.defineClass("HVMThreadExitPool", "NSObject");
+            cls.method("dealloc", [&](Ctx& dx) {
+                deallocs.fetch_add(1);
+                r.disposeInstance(dx.cpu, dx.cpu.r[0]);
+            }, "v@:");
+            auto make = [&](CPU::Cpu& c) {
+                return ObjC::id(r.send(c, ObjC::id(r.send(c, cls.cls(), r.selAlloc)), "init"));
+            };
+            const auto worker = proc.defineFunction("__hvm_test_thread_exit_pool", [&](Ctx& wx) {
+                const uint32_t popped = r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+                r.poolPop(wx.cpu, popped);
+                explicitDeallocs = deallocs.load();
+
+                r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+                r.poolPush();
+                r.autorelease(wx.cpu, make(wx.cpu));
+            });
+            const uint32_t thread = proc.startThread(worker, 0, 64u << 10, false);
+            uint32_t returned = 0;
+            const bool joined = proc.joinThread(thread, &returned);
+            if (!(joined && explicitDeallocs == 1 && deallocs.load() == 3)) {
+                std::printf("    thread-exit pool: joined=%d explicit=%d deallocs=%d\n",
+                            joined, explicitDeallocs, deallocs.load());
+            }
+            check(joined && explicitDeallocs == 1 && deallocs.load() == 3,
+                  "an object autoreleased on a guest thread is released when the thread exits");
+        }
+
         // NSThread -isExecuting / -isFinished across start and the end of the thread's work (Jetpack, #75).
         {
             std::atomic<bool> release{false}, entered{false};
@@ -3726,6 +4094,68 @@ int runFullSubsystemTests() {
             if (good.second != "<cfg v=2><item name=a & b>'x < y'</item><empty></empty>'<raw>'</cfg>") std::printf("    xml events: %s / %s\n", good.second.c_str(), bad.second.c_str());
             check(good.first && good.second == "<cfg v=2><item name=a & b>'x < y'</item><empty></empty>'<raw>'</cfg>" && !bad.first && bad.second.find("ERROR") != std::string::npos,
                   "NSXMLParser elements / attributes / entities / CDATA / self-closing / mismatched-tag error");
+        }
+        {
+            // GCController controllers returns empty array and completion blocks work
+            const ObjC::Class gccCls = r.getClass("GCController");
+            if (gccCls) {
+                const ObjC::id arr = ObjC::id(r.send(cpu, gccCls, "controllers"));
+                const uint32_t count = uint32_t(r.send(cpu, arr, "count"));
+
+                uint32_t called = 0;
+                const uint32_t invoke = proc.defineFunction("test_gc_discovery_completion", [&](Ctx&) { called = 1; });
+                const uint32_t desc = proc.heap().allocZeroed(8);
+                proc.mem().write<uint32_t>(desc + 4, 20); // 32-bit Block_descriptor size
+                const uint32_t bAddr = proc.heap().allocZeroed(20);
+                proc.mem().write<uint32_t>(bAddr + 12, invoke);
+                proc.mem().write<uint32_t>(bAddr + 16, desc);
+                r.send(cpu, gccCls, "startWirelessControllerDiscoveryWithCompletionHandler:", {bAddr});
+                proc.heap().free(bAddr); // callback must hold a copied block
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.05);
+                proc.heap().free(desc);
+
+                check(count == 0 && called == 1, "GCController controllers returns empty array and triggers discovery block");
+            } else {
+                check(false, "GCController class not found");
+            }
+        }
+        {
+            // SKPaymentTransaction properties and types
+            const ObjC::Class sktCls = r.getClass("SKPaymentTransaction");
+            const ObjC::Class skpCls = r.getClass("SKPayment");
+            if (sktCls && skpCls) {
+                const ObjC::id tx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, sktCls, r.selAlloc)), "init"));
+                const ObjC::id tid = ObjC::id(r.send(cpu, tx, "transactionIdentifier"));
+                const ObjC::id tdate = ObjC::id(r.send(cpu, tx, "transactionDate"));
+                const uint32_t tstate = uint32_t(r.send(cpu, tx, "transactionState"));
+
+                const uint32_t stateSel = r.sel("transactionState");
+                const std::string stateSig = r.methodTypes(sktCls, stateSel);
+
+                const ObjC::id prodId = Foundation::makeString(cx, "com.test.product");
+                const ObjC::id pay = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {prodId}));
+                const uint32_t qty1 = uint32_t(r.send(cpu, pay, "quantity"));
+                const ObjC::id pId = ObjC::id(r.send(cpu, pay, "productIdentifier"));
+
+                const ObjC::Class mPayCls = r.getClass("SKMutablePayment");
+                const ObjC::id mPay = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, mPayCls, r.selAlloc)), "init"));
+                r.send(cpu, mPay, "setQuantity:", {uint32_t(3)});
+                const uint32_t qty2 = uint32_t(r.send(cpu, mPay, "quantity"));
+                bool rejectedInvalid = false;
+                try { r.send(cpu, mPay, "setQuantity:", {uint32_t(0)}); }
+                catch (const ObjC::ObjCError&) { rejectedInvalid = true; }
+                catch (const CPU::GuestFault&) { rejectedInvalid = true; }
+                const uint32_t qtyAfterInvalid = uint32_t(r.send(cpu, mPay, "quantity"));
+                const ObjC::id nilPayment = ObjC::id(r.send(cpu, skpCls, "paymentWithProductIdentifier:", {0}));
+
+                const uint32_t qtySel = r.sel("setQuantity:");
+                const std::string qtySig = r.methodTypes(mPayCls, qtySel);
+
+                check(tid == 0 && tdate == 0 && tstate == 0 && stateSig == "i@:" && qtySig == "v@:i" && qty1 == 1 && pId == prodId && qty2 == 3 && rejectedInvalid && qtyAfterInvalid == 3 && !nilPayment,
+                      "SKPayment has armv7 NSInteger signatures, retains product ID, defaults quantity to one and rejects invalid quantities");
+            } else {
+                check(false, "SKPaymentTransaction or SKPayment class not found");
+            }
         }
     }
 
@@ -4552,11 +4982,260 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    // Call ring: the last-N host calls a guest thread made, kept for crash
+    // bundles and stuck-quit diagnosis (T1/T2). Checked on its own first, then
+    // through the real Engine::callHle hook.
+    {
+        using Diag::CallKind;
+        using Diag::CallRecord;
+        const auto inOrder = [](const std::vector<CallRecord>& v, uint64_t firstSeq) {
+            for (size_t i = 0; i < v.size(); ++i)
+                if (v[i].seq != firstSeq + i || v[i].kind != CallKind::Hle || v[i].id != uint32_t((firstSeq + i) * 7)) return false;
+            return true;
+        };
+        Diag::CallRing<8> small;
+        check(small.last(8).empty() && small.total() == 0, "call ring starts empty");
+        for (uint32_t i = 1; i <= 5; ++i) small.push(CallKind::Hle, i * 7);
+        check(small.total() == 5 && small.last(8).size() == 5 && inOrder(small.last(8), 1),
+              "call ring returns every record, oldest first, before it wraps");
+        for (uint32_t i = 6; i <= 27; ++i) small.push(CallKind::Hle, i * 7);   // 27 pushes into 8 slots
+        const auto lastFull = small.last(8);
+        check(small.total() == 27 && lastFull.size() == 8 && inOrder(lastFull, 20),
+              "call ring filled past capacity returns exactly the last N records in order");
+        check(inOrder(small.last(3), 25) && small.last(3).size() == 3,
+              "call ring last(n) for n below capacity returns the newest n records");
+        check(small.last(1000).size() == 8 && small.last(0).empty(),
+              "call ring caps a request at its capacity");
+
+        // A reader on another thread while the writer wraps the ring many times
+        // must see only whole records in strictly increasing order.
+        Diag::CallRing<64> shared;
+        std::atomic<bool> writing{true};
+        std::thread writer([&] {
+            for (uint32_t i = 1; i <= 400000; ++i) shared.push(CallKind::Hle, i * 7);
+            writing = false;
+        });
+        bool consistent = true;
+        uint64_t reads = 0;
+        while (writing.load()) {
+            const auto snap = shared.last(64);
+            for (size_t i = 0; i < snap.size(); ++i) {
+                if (snap[i].kind != CallKind::Hle || snap[i].id != uint32_t(snap[i].seq * 7) ||
+                    (i > 0 && snap[i].seq <= snap[i - 1].seq)) consistent = false;
+            }
+            ++reads;
+        }
+        writer.join();
+        check(consistent && reads > 0 && shared.total() == 400000 && inOrder(shared.last(64), 400000 - 63),
+              "call ring never returns a torn or reordered record to a concurrent reader");
+
+        ProcessConfig ringCfg;
+        ringCfg.homePath = "/tmp/hvm_call_ring";
+        Process ringProc(ringCfg);
+        auto& ringCpu = ringProc.mainThread().cpu;
+        const uint32_t ringFn = ringProc.defineFunction("test_call_ring_fn", [](Ctx&) {});
+        const uint32_t ringIndex = ringProc.engine().hleIndex(ringFn);
+        const Diag::ThreadCallRing* before = ringCpu.call_ring.load();
+        const uint64_t totalBefore = before ? before->total() : 0;
+        for (int i = 0; i < 300; ++i) ringProc.engine().callHle(&ringCpu, ringIndex);
+        const Diag::ThreadCallRing* ring = ringCpu.call_ring.load();
+        bool hooked = ring && ring->total() == totalBefore + 300;
+        if (hooked) {
+            const auto tail = ring->last(Diag::ThreadCallRing::kCapacity);
+            hooked = tail.size() == Diag::ThreadCallRing::kCapacity;
+            for (size_t i = 0; hooked && i < tail.size(); ++i)
+                hooked = tail[i].kind == CallKind::Hle && tail[i].id == ringIndex &&
+                         tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
+        }
+        check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+    }
+
+    // Teardown diagnostics: a guest thread still running (blocked in the real `read` on
+    // an empty pipe) is named with the host function it is inside and its last calls.
+    {
+        int fds[2];
+        const bool piped = ::pipe(fds) == 0;
+        ProcessConfig diagCfg;
+        diagCfg.homePath = "/tmp/hvm_blocked_threads";
+        Process diagProc(diagCfg);
+        check(diagProc.describeRunningThreads().empty(), "no running guest threads: nothing to describe");
+        std::atomic<bool> readerDone{false};
+        const uint32_t readerFn = diagProc.defineFunction("test_blocked_reader", [&](Ctx& x) {
+            const uint32_t buf = x.proc.heap().allocZeroed(16);
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_read"), {uint32_t(fds[0]), buf, 1});
+            readerDone = true;
+        });
+        if (piped) diagProc.startThread(readerFn, 0, 256u << 10, true);
+        std::string described;
+        for (int i = 0; piped && i < 300; ++i) {
+            described = diagProc.describeRunningThreads();
+            if (described.find("_read") != std::string::npos && described.find("last calls:") != std::string::npos) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        check(piped && described.find("thread ") != std::string::npos && described.find("inside ") != std::string::npos &&
+              described.find("_read") != std::string::npos && described.find("last calls:") != std::string::npos,
+              "describeRunningThreads names a blocked guest thread, the host function it is inside and its last calls");
+        if (piped) {
+            const ssize_t unblocked = ::write(fds[1], "x", 1);   // let the reader finish before the Process is destroyed
+            for (int i = 0; i < 300 && !readerDone.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            check(unblocked == 1 && readerDone.load(), "the blocked reader thread finishes once its pipe has data");
+            for (int i = 0; i < 300 && !diagProc.describeRunningThreads().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            check(diagProc.describeRunningThreads().empty(), "a finished guest thread is no longer described as running");
+            ::close(fds[0]);
+            ::close(fds[1]);
+        }
+    }
+
+    // Blocking host reads and locks must notice a stop request (T1/#234). A guest thread
+    // parked in read() on an empty pipe or in a contended flock() used to ignore
+    // requestStop() forever and outlive the process teardown. Normal behaviour must not change.
+    {
+        using namespace std::chrono;
+        struct Run { bool earlyDone; bool done; double wakeMs; };
+        auto callG = [](Ctx& x, const char* sym, std::initializer_list<uint32_t> a) { return uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol(sym), a)); };
+        // Run `body` on a guest thread. If it finishes within `earlyWaitMs` it was not blocked.
+        // Otherwise request a stop and time how long it takes to leave.
+        auto runCase = [&](std::function<void(Process&, Ctx&)> body, int earlyWaitMs) {
+            ProcessConfig cfg;
+            cfg.homePath = "/tmp/hvm_stop_wake";
+            auto* proc = new Process(cfg);
+            std::atomic<bool> done{false};
+            const uint32_t fn = proc->defineFunction("stop_wake_fn", [&](Ctx& x) { try { body(*proc, x); } catch (...) {} done = true; });
+            proc->startThread(fn, 0, 256u << 10, true);
+            const auto start = steady_clock::now();
+            while (!done.load() && steady_clock::now() - start < milliseconds(earlyWaitMs)) std::this_thread::sleep_for(milliseconds(5));
+            Run r{done.load(), done.load(), 0};
+            if (!r.earlyDone) {
+                const auto t0 = steady_clock::now();
+                proc->requestStop();
+                while (!done.load() && steady_clock::now() - t0 < seconds(3)) std::this_thread::sleep_for(milliseconds(5));
+                r.done = done.load();
+                r.wakeMs = duration<double, std::milli>(steady_clock::now() - t0).count();
+            }
+            if (r.done) delete proc;   // a thread that never left still owns the process: leak it rather than free under it
+            return r;
+        };
+        std::atomic<int32_t> ret{99};
+        const auto readFd = [&](int fd) { return [&ret, fd, callG](Process& p, Ctx& x) { ret = int32_t(callG(x, "_read", {uint32_t(fd), p.heap().allocZeroed(16), 1})); }; };
+
+        int blockingPipe[2]; ::pipe(blockingPipe);
+        const Run readStop = runCase(readFd(blockingPipe[0]), 300);
+        check(!readStop.earlyDone && readStop.done && readStop.wakeMs < 1000, "read() on an empty pipe wakes on a stop request");
+
+        char lockPath[] = "/tmp/hvm_stop_wake_lock_XXXXXX";
+        const int lockFile = ::mkstemp(lockPath);
+        const int heldFd = lockFile, waiterFd = ::open(lockPath, O_RDWR);
+        ::flock(heldFd, LOCK_EX);
+        const auto lockFd = [&](int fd, int op) { return [&ret, fd, op, callG](Process&, Ctx& x) { ret = int32_t(callG(x, "_flock", {uint32_t(fd), uint32_t(op)})); }; };
+        const Run flockStop = runCase(lockFd(waiterFd, 2), 300);
+        check(!flockStop.earlyDone && flockStop.done && flockStop.wakeMs < 1000, "a contended flock() wakes on a stop request");
+
+        // Unchanged behaviour.
+        int dataPipe[2]; ::pipe(dataPipe); (void)!::write(dataPipe[1], "x", 1);
+        ret = 99;
+        Run r = runCase(readFd(dataPipe[0]), 1500);
+        check(r.earlyDone && ret == 1, "read() on a pipe with data still returns it immediately");
+
+        int eofPipe[2]; ::pipe(eofPipe); ::close(eofPipe[1]);
+        ret = 99;
+        r = runCase(readFd(eofPipe[0]), 1500);
+        check(r.earlyDone && ret == 0, "read() at end of file on a pipe still returns 0");
+
+        int nbPipe[2]; ::pipe(nbPipe); ::fcntl(nbPipe[0], F_SETFL, ::fcntl(nbPipe[0], F_GETFL) | O_NONBLOCK);
+        ret = 99;
+        r = runCase(readFd(nbPipe[0]), 1500);
+        check(r.earlyDone && ret == -1, "read() on an empty non-blocking pipe still fails at once instead of waiting");
+
+        const int regFd = ::open(lockPath, O_RDONLY);
+        ret = 99;
+        r = runCase(readFd(regFd), 1500);
+        check(r.earlyDone && ret == 0, "read() on a regular file is unaffected");
+
+        ret = 99;
+        r = runCase(lockFd(waiterFd, 2 | 4), 1500);
+        check(r.earlyDone && ret == -1, "flock() with LOCK_NB on a held lock still fails at once");
+
+        char freePath[] = "/tmp/hvm_stop_wake_free_XXXXXX";
+        const int freeFd = ::mkstemp(freePath);
+        ret = 99;
+        r = runCase(lockFd(freeFd, 2), 1500);
+        check(r.earlyDone && ret == 0, "an uncontended blocking flock() still succeeds at once");
+
+        std::thread releaser([&] { std::this_thread::sleep_for(milliseconds(150)); ::flock(heldFd, LOCK_UN); });
+        ret = 99;
+        r = runCase(lockFd(waiterFd, 2), 3000);
+        releaser.join();
+        check(r.earlyDone && ret == 0, "a blocking flock() still acquires once the holder lets go");
+
+        for (int fd : {blockingPipe[0], blockingPipe[1], dataPipe[0], dataPipe[1], eofPipe[0], nbPipe[0], nbPipe[1], regFd, freeFd, waiterFd, heldFd}) ::close(fd);
+        ::unlink(lockPath);
+        ::unlink(freePath);
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
 
 } // namespace
+
+
+// `hvm_tests stopprobe`: block one guest thread in each blocking primitive, call
+// requestStop(), and time how long the thread takes to leave it. A primitive that
+// never wakes is reported STUCK (exit 1). Not part of fulltest: it is a measurement
+// that names the primitives still ignoring a stop (T1, #234), and it takes a few seconds.
+static int runStopProbe() {
+    using namespace std::chrono;
+    using namespace Hydrogen::Runtime;
+    struct Case { const char* name; std::function<void(Process&, Ctx&)> body; };
+    int pipeFds[2]; ::pipe(pipeFds);
+    int sp[2]; ::socketpair(AF_UNIX, SOCK_STREAM, 0, sp);
+    const char* lockPath = "/tmp/hvm_stopprobe.lock";
+    const int lockHeld = ::open(lockPath, O_CREAT | O_RDWR, 0600); ::flock(lockHeld, LOCK_EX);
+    const int lockWaiter = ::open(lockPath, O_RDWR);
+    auto callG = [](Ctx& x, const char* sym, std::initializer_list<uint32_t> a) { return uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol(sym), a)); };
+    std::vector<Case> cases = {
+        {"usleep(5s)",        [&](Process&, Ctx& x) { callG(x, "_usleep", {5000000}); }},
+        {"sleep(5)",          [&](Process&, Ctx& x) { callG(x, "_sleep", {5}); }},
+        {"nanosleep(5s)",     [&](Process& p, Ctx& x) { const uint32_t ts = p.heap().allocZeroed(16); p.mem().write<uint32_t>(ts, 5); callG(x, "_nanosleep", {ts, 0}); }},
+        {"read(pipe)",        [&](Process& p, Ctx& x) { callG(x, "_read", {uint32_t(pipeFds[0]), p.heap().allocZeroed(16), 1}); }},
+        {"recv(socketpair)",  [&](Process& p, Ctx& x) { callG(x, "_recv", {uint32_t(sp[0]), p.heap().allocZeroed(16), 1, 0}); }},
+        {"poll(pipe,-1)",     [&](Process& p, Ctx& x) { const uint32_t pf = p.heap().allocZeroed(16); p.mem().write<uint32_t>(pf, uint32_t(pipeFds[0])); p.mem().write<uint16_t>(pf + 4, 1); callG(x, "_poll", {pf, 1, 0xFFFFFFFFu}); }},
+        {"select(pipe,NULL)", [&](Process& p, Ctx& x) { const uint32_t set = p.heap().allocZeroed(128); p.mem().write<uint32_t>(set, 1u << pipeFds[0]); callG(x, "_select", {uint32_t(pipeFds[0]) + 1, set, 0, 0, 0}); }},
+        {"dispatch_sem_wait(forever)", [&](Process&, Ctx& x) { const uint32_t sem = callG(x, "_dispatch_semaphore_create", {0}); callG(x, "_dispatch_semaphore_wait", {sem, 0xFFFFFFFFu, 0xFFFFFFFFu}); }},
+        {"mutex self-deadlock", [&](Process& p, Ctx& x) { const uint32_t m = p.heap().allocZeroed(64); callG(x, "_pthread_mutex_init", {m, 0}); callG(x, "_pthread_mutex_lock", {m}); callG(x, "_pthread_mutex_lock", {m}); }},
+        {"pthread_cond_wait", [&](Process& p, Ctx& x) { const uint32_t m = p.heap().allocZeroed(64), c = p.heap().allocZeroed(64); callG(x, "_pthread_mutex_init", {m, 0}); callG(x, "_pthread_cond_init", {c, 0}); callG(x, "_pthread_mutex_lock", {m}); callG(x, "_pthread_cond_wait", {c, m}); }},
+        {"flock(contended)",  [&](Process&, Ctx& x) { callG(x, "_flock", {uint32_t(lockWaiter), 2}); }},
+    };
+    int stuck = 0;
+    for (auto& c : cases) {
+        ProcessConfig cfg; cfg.homePath = "/tmp/hvm_stopprobe";
+        auto* proc = new Process(cfg);
+        std::atomic<bool> done{false}, entered{false};
+        const uint32_t fn = proc->defineFunction("stopprobe_fn", [&](Ctx& x) {
+            entered = true;
+            try { c.body(*proc, x); } catch (...) {}
+            done = true;
+        });
+        proc->startThread(fn, 0, 256u << 10, true);
+        std::this_thread::sleep_for(milliseconds(300));
+        const bool blockedBeforeStop = entered.load() && !done.load();
+        const auto t0 = steady_clock::now();
+        proc->requestStop();
+        while (!done.load() && steady_clock::now() - t0 < seconds(3)) std::this_thread::sleep_for(milliseconds(5));
+        const double ms = duration<double, std::milli>(steady_clock::now() - t0).count();
+        if (!blockedBeforeStop) std::printf("  ?      %-28s returned before stop (did not block)\n", c.name);
+        else if (done.load()) std::printf("  ok     %-28s woke in %.0f ms\n", c.name, ms);
+        else {
+            std::printf("  STUCK  %-28s still blocked 3000 ms after requestStop\n%s", c.name, proc->describeRunningThreads().c_str());
+            ++stuck;
+            continue;
+        }   // leak: a stuck thread still owns the process
+        delete proc;
+    }
+    ::write(pipeFds[1], "x", 1); ::write(sp[1], "x", 1);   // let any stuck threads go before exit
+    std::printf("stopprobe: %d stuck of %zu\n", stuck, cases.size());
+    return stuck ? 1 : 0;
+}
 
 int main(int argc, char** argv) {
     if (argc == 4 && std::string(argv[1]) == "audio-decode") {
@@ -4576,6 +5255,7 @@ int main(int argc, char** argv) {
         std::printf("selftest %s: %s (%.0f MIPS)\n", r.passed ? "passed" : "FAILED", r.detail.c_str(), r.mips);
         return r.passed ? 0 : 1;
     }
+    if (argc == 2 && std::string(argv[1]) == "stopprobe") return runStopProbe();
     if (argc == 2 && std::string(argv[1]) == "fulltest") {
         return runFullSubsystemTests();
     }

@@ -4,13 +4,17 @@
 #include <sys/ioctl.h>
 #include <atomic>
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "MachPorts.hpp"
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
 #include <sys/socket.h>
 #include <sys/file.h>
+#include <poll.h>
 #include <sys/uio.h>
 #include <cerrno>
+#include <thread>
+#include <chrono>
 #include <csignal>
 #include <cstring>
 #include <dirent.h>
@@ -476,9 +480,29 @@ int32_t f_close(Ctx& x, int32_t fd) {
     const int tracked = closeNetworkSocket(x.proc, fd);
     return (tracked == -2 ? ::close(fd) : tracked) < 0 ? failD<int32_t>(x) : 0;
 }
+// A host read on a pipe, socket or terminal with nothing to read blocks the calling
+// thread for good, so a stop request never reaches a guest thread parked in it, and
+// the process cannot be torn down cleanly. Wait for the descriptor in short slices and
+// leave through the usual stop exception instead. Regular files and non-blocking
+// descriptors never wait here, so their behaviour is unchanged.
+void waitUntilReadable(Ctx& x, int fd) {
+    struct stat st;
+    if (::fstat(fd, &st) != 0 || S_ISREG(st.st_mode)) return;
+    const int flags = ::fcntl(fd, F_GETFL);
+    if (flags < 0 || (flags & O_NONBLOCK)) return;
+    for (;;) {
+        if (x.proc.stopping()) throw ProcessExit(0, "stopping");
+        pollfd pfd{fd, POLLIN, 0};
+        const int ready = ::poll(&pfd, 1, 50);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready != 0) return;   // readable, hung up, or an error: let read() report it
+    }
+}
+
 int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
     if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
+    waitUntilReadable(x, fd);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
     if (r > 0) {
         auto& ofs = x.proc.service<OpenFds>();
@@ -536,7 +560,15 @@ int32_t f_writev(Ctx& x, int32_t fd, GuestPtr vectors, int32_t count) {
 }
 int32_t f_flock(Ctx& x, int32_t fd, int32_t operation) {
     if ((operation & ~15) || !((operation & 3) == 1 || (operation & 3) == 2 || (operation & 8))) { setErrno(x, 22); return -1; }
-    return ::flock(fd, operation) < 0 ? failD<int32_t>(x) : 0;
+    if ((operation & 8) || (operation & 4)) return ::flock(fd, operation) < 0 ? failD<int32_t>(x) : 0;   // unlock, or LOCK_NB: never blocks
+    // A blocking lock held by someone else would park this thread where a stop request can't
+    // reach it. Try without blocking and retry in short slices, leaving on stop.
+    for (;;) {
+        if (::flock(fd, operation | 4) == 0) return 0;
+        if (errno != EWOULDBLOCK && errno != EINTR) return failD<int32_t>(x);
+        if (x.proc.stopping()) throw ProcessExit(0, "stopping");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 }
 
 int32_t f_pread(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, int64_t off) {
@@ -973,6 +1005,18 @@ int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint
     return 0;
 }
 int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+uint32_t sys_ftime(Ctx& x, GuestPtr tp) {
+    if (tp) {
+        const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+        x.mem.write<uint32_t>(tp + 0, uint32_t(now / 1000));
+        x.mem.write<uint16_t>(tp + 4, uint16_t(now % 1000));
+        x.mem.write<uint16_t>(tp + 6, 0);
+        x.mem.write<uint16_t>(tp + 8, 0);
+    }
+    return 0;
+}
+
 int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1031,6 +1075,7 @@ void registerLibcSystem(Process& p) {
     p.def<&s_getpwnam>("_getpwnam");
     p.def<&s_getpwuid_r>("_getpwuid_r");
     p.def<&s_getpwnam_r>("_getpwnam_r");
+    p.def<&sys_ftime>("_ftime");
     for (const char* n : {"_iconv_open", "_libiconv_open"}) p.def<&s_iconv_open>(n);
     for (const char* n : {"_iconv", "_libiconv"}) p.def<&s_iconv>(n);
     for (const char* n : {"_iconv_close", "_libiconv_close"}) p.def<&s_iconv_close>(n);
@@ -1057,7 +1102,8 @@ void registerLibcSystem(Process& p) {
     p.def<&d_register_remove_image>("__dyld_register_func_for_remove_image");
     p.def<&d_version>("_NSVersionOfRunTimeLibrary");
     p.def<&d_version>("_NSVersionOfLinkTimeLibrary");
-    p.def<&d_dlopen>("_dlopen");
+    supportDef<&d_dlopen>(p, "_dlopen", SupportStatus::Approx,
+        "NULL uses dyld magic handles; named libraries get synthetic handles and are not loaded");
     p.def<&d_dlsym>("_dlsym");
     p.def<&d_dlclose>("_dlclose");
     p.def<&d_dlerror>("_dlerror");
@@ -1095,9 +1141,12 @@ void registerLibcSystem(Process& p) {
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
     p.def<&m_mmap>("_mmap");
     p.def<&m_munmap>("_munmap");
-    p.def<&m_ok3>("_mprotect");
-    p.def<&m_ok3>("_madvise");
-    p.def<&m_ok3>("_msync");
+    supportDef<&m_ok3>(p, "_mprotect", SupportStatus::Stub,
+        "Returns success without changing guest or host page protections");
+    supportDef<&m_ok3>(p, "_madvise", SupportStatus::Stub,
+        "Returns success without applying a memory advice policy");
+    supportDef<&m_ok3>(p, "_msync", SupportStatus::Stub,
+        "Returns success without flushing mapped data to backing storage");
     p.def<&m_ok2>("_mlock");
     p.def<&m_ok2>("_munlock");
     p.def<&g_signal>("_signal");

@@ -1,5 +1,7 @@
 # Roadmap
 
+> **SUPERSEDED for priorities and work order (2026-10-30): read [docs/PLAN.md](../PLAN.md) first.** Everything below is reference only (machine layout, run recipes, architecture notes, per-game history). If anything here disagrees with PLAN.md, PLAN.md wins.
+
 Phases match `IMPLEMENTATION_PLAN.md`. There is no calendar on this roadmap. Ordering is by dependency and by the no-parallel groups.
 
 Integration branch for this system: `main`. `docs/HANDOFF.md` separates current `main` integration from archived `gemini-merge` evidence (B-003).
