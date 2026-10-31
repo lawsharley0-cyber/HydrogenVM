@@ -366,7 +366,7 @@ void hg_glDeleteBuffers(Ctx& x, int32_t a_n, GuestPtr a_buffers) {
 void hg_glDeleteTextures(Ctx& x, int32_t a_n, GuestPtr a_textures) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteTextures) { hgMissing(x, hc, "glDeleteTextures"); return; }
-    { std::lock_guard<std::mutex> lock(S(x.proc).telemetryMu); GuestPtr ptr = a_textures; for(int i=0; i<a_n; i++) { uint32_t tex = x.proc.mem().read<uint32_t>(ptr); S(x.proc).estimatedBytes -= S(x.proc).textureBytes[tex]; S(x.proc).textureBytes.erase(tex); ptr += 4; } } S(x.proc).activeTextures -= a_n;
+    { std::lock_guard<std::mutex> lock(S(x.proc).telemetryMu); GuestPtr ptr = a_textures; for(int i=0; i<a_n; i++) { uint32_t tex = x.mem.read<uint32_t>(ptr); S(x.proc).estimatedBytes -= S(x.proc).textureBytes[tex]; S(x.proc).textureBytes.erase(tex); ptr += 4; } } S(x.proc).activeTextures -= a_n;
     hc->fn.glDeleteTextures(a_n, HG_PTR(x, a_textures));
     if (hgDebug) hgAfter(x, hc, "glDeleteTextures", [&] { return hgArgs(a_n, a_textures); });
 }

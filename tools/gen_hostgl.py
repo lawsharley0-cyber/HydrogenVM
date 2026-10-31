@@ -85,7 +85,7 @@ def main():
             elif name == "glGenRenderbuffers": out.append(f"    S(x.proc).activeRenderbuffers += a_n;")
 
         if name in ("glDeleteTextures", "glDeleteBuffers", "glDeleteFramebuffers", "glDeleteRenderbuffers"):
-            if name == "glDeleteTextures": out.append(f"    {{ std::lock_guard<std::mutex> lock(S(x.proc).telemetryMu); GuestPtr ptr = a_textures; for(int i=0; i<a_n; i++) {{ uint32_t tex = x.proc.mem().read<uint32_t>(ptr); S(x.proc).estimatedBytes -= S(x.proc).textureBytes[tex]; S(x.proc).textureBytes.erase(tex); ptr += 4; }} }} S(x.proc).activeTextures -= a_n;")
+            if name == "glDeleteTextures": out.append(f"    {{ std::lock_guard<std::mutex> lock(S(x.proc).telemetryMu); GuestPtr ptr = a_textures; for(int i=0; i<a_n; i++) {{ uint32_t tex = x.mem.read<uint32_t>(ptr); S(x.proc).estimatedBytes -= S(x.proc).textureBytes[tex]; S(x.proc).textureBytes.erase(tex); ptr += 4; }} }} S(x.proc).activeTextures -= a_n;")
             elif name == "glDeleteBuffers": out.append(f"    S(x.proc).activeBuffers -= a_n;")
             elif name == "glDeleteFramebuffers": out.append(f"    S(x.proc).activeFramebuffers -= a_n;")
             elif name == "glDeleteRenderbuffers": out.append(f"    S(x.proc).activeRenderbuffers -= a_n;")
