@@ -277,6 +277,8 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     State& st = S(p);
     const uint32_t self = p.currentThread().id;
     const std::vector<uint32_t> live = p.liveThreadIds();   // before st.mu: keeps the lock order simple
+    std::vector<std::pair<HostContext*, uint32_t>> retiredHere;   // (context, owner thread) retired by this call
+    {
     std::lock_guard<std::mutex> lk(st.mu);
     for (const auto& kv : st.contexts) {
         if (kv.second && kv.second->guestSharegroup == guestSharegroup) return;   // a context still uses the group
@@ -290,13 +292,31 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
         const bool ownerGone = owner != self && std::find(live.begin(), live.end(), owner) == live.end();
         if (owner == self || ownerGone) {
             // No thread can use it any more (the caller owns it, or its owner has exited): free it now.
-            if (tls.proc == &p && tls.ctx == hc.get()) tls.ctx = nullptr;
+            if (tls.proc == &p && tls.ctx == hc.get()) {
+                st.platform->makeCurrent(nullptr);   // unbind before the native context goes away
+                tls.ctx = nullptr;
+            }
             if (hc->handle) st.platform->destroyContext(hc->handle);
         } else {
             // A live thread may hold it in tls.ctx: keep the object valid and let that thread drop it.
             hc->retired = true;
+            retiredHere.emplace_back(hc.get(), owner);
             st.retiredWorkers.push_back(std::move(hc));
         }
+    }
+    }
+    if (retiredHere.empty()) return;
+    // The owner may have exited between the first snapshot and the retirement, after its exit hook ran:
+    // look again, and free whatever nobody can hold any more.
+    const std::vector<uint32_t> liveNow = p.liveThreadIds();
+    std::lock_guard<std::mutex> lk(st.mu);
+    for (const auto& [hc, owner] : retiredHere) {
+        if (std::find(liveNow.begin(), liveNow.end(), owner) != liveNow.end()) continue;
+        auto it = std::find_if(st.retiredWorkers.begin(), st.retiredWorkers.end(),
+                               [hc](const std::unique_ptr<HostContext>& c) { return c.get() == hc; });
+        if (it == st.retiredWorkers.end()) continue;   // the owner already released it
+        if (hc->handle) { st.platform->destroyContext(hc->handle); hc->handle = nullptr; }
+        st.retiredWorkers.erase(it);
     }
 }
 
