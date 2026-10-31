@@ -2,6 +2,7 @@
 #include "runtime/gl/HostGL.hpp"
 #include "runtime/gl/HostGLInternal.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
 #include <algorithm>
 #include <cmath>
@@ -1166,6 +1167,13 @@ static void chain(Process& p, const std::string& symbol, void (*host)(Ctx&)) {
         if (!soft || hgUseHost(x)) host(x);
         else soft(x.cpu);
     });
+    // A labelled software stub may now dispatch to a driver, but context-based
+    // software fallback and missing driver entry points still limit support.
+    if (auto record = supportRegistry(p).find(symbol)) {
+        record->status = SupportStatus::Approx;
+        record->provenance = "Host GL dispatch when eligible; fallback: " + record->provenance;
+        supportRegistry(p).record(std::move(*record));
+    }
 }
 
 void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {

@@ -79,6 +79,29 @@ int main(int argc,char** argv) {
     check("field-overrun-into-next-entry",archive(1,oversized,false,true),false);
     check("unknown-field-overrun",archive(0,Bytes{0xfe,0xca,0xff,0xff}),false);
     check("field-borrows-next-field",archive(7,Bytes{1,0,0,0,0xfe,0xca,24,0,0,0,0,0}),false);
+
+    if (filter.empty() || std::string("read-past-end").find(filter) != std::string::npos) {
+        auto out_of_bounds = archive(0, {});
+        for(size_t i=0; i<out_of_bounds.size()-3; ++i) {
+            if(out_of_bounds[i]==0x50 && out_of_bounds[i+1]==0x4b && out_of_bounds[i+2]==0x01 && out_of_bounds[i+3]==0x02) {
+                set(out_of_bounds, i+42, 0x7fffffff, 4);
+                break;
+            }
+        }
+        const fs::path path = root / "read-past-end.zip";
+        { std::ofstream file(path, std::ios::binary); file.write(reinterpret_cast<const char*>(out_of_bounds.data()), out_of_bounds.size()); }
+        bool ok = false;
+        try {
+            ZipReader z(path.string());
+            z.read(z.entries().at(0));
+        } catch(const ZipError& e) {
+            ok = (std::string(e.what()) == "read past end of zip");
+        }
+        fs::remove(path);
+        std::printf("%s read-past-end\n", ok ? "PASS" : "FAIL");
+        ok ? ++passed : ++failed;
+    }
+
 #ifdef __linux__
     if (filter.empty()) {
         auto descriptors=[]() {
