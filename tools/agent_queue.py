@@ -10,7 +10,7 @@ bot has to drive anyone's account:
     python3 tools/agent_queue.py release 12 --agent codex [--blocked]
 
 A card is an issue with the labels: `card`, one `status:*` label, optionally
-`needs:game-run` (must run real games) and `hotspot` (edits the shared hotspot
+`umbrella` (tracks child cards, never picked), `needs:game-run` (must run real games) and `hotspot` (edits the shared hotspot
 files, one at a time). Dependencies are a line `Depends-on: #3, #4` in the body.
 Per-agent capability and weekly budget live in tools/agent_queue.json.
 
@@ -43,7 +43,7 @@ def deps(issue: dict) -> list[int]:
 
 
 def card_id(issue: dict) -> str:
-    m = re.match(r"\s*(T\d+)", issue.get("title", ""))
+    m = re.match(r"\s*(T\d+[a-z]?)\b", issue.get("title", ""))
     return m.group(1) if m else f"#{issue['number']}"
 
 
@@ -52,7 +52,8 @@ def pick(agent: str, open_cards: list[dict], closed_numbers: set[int], used_this
     a = cfg["agents"].get(agent)
     if a is None:
         return None, f"unknown agent '{agent}' (known: {', '.join(cfg['agents'])})"
-    in_progress = [c for c in open_cards if "status:in-progress" in labels(c)]
+    # `umbrella` cards only track their child cards; they never count toward the work limit or get picked.
+    in_progress = [c for c in open_cards if "status:in-progress" in labels(c) and "umbrella" not in labels(c)]
     if len(in_progress) >= cfg["wip_limit"]:
         return None, f"work limit reached: {len(in_progress)} cards in progress (limit {cfg['wip_limit']})"
     if used_this_week.get(agent, 0) >= a["weekly_budget"]:
@@ -62,7 +63,7 @@ def pick(agent: str, open_cards: list[dict], closed_numbers: set[int], used_this
     best, best_score = None, None
     for c in open_cards:
         lab = labels(c)
-        if "card" not in lab or "status:ready" not in lab:
+        if "card" not in lab or "status:ready" not in lab or "umbrella" in lab:
             continue
         if any(d in open_numbers and d not in closed_numbers for d in deps(c)):
             continue

@@ -19,6 +19,11 @@ def card(n, tid, *labs, body=""):
 
 
 class PickTests(unittest.TestCase):
+    def test_card_id_keeps_sub_card_letter(self):
+        self.assertEqual(q.card_id({"number": 1, "title": "T5b GL model"}), "T5b")
+        self.assertEqual(q.card_id({"number": 1, "title": "T5 umbrella"}), "T5")
+        self.assertEqual(q.card_id({"number": 9, "title": "misc"}), "#9")
+
     def test_deps_parse(self):
         self.assertEqual(q.deps({"body": "x\nDepends-on: #3, #4\n"}), [3, 4])
         self.assertEqual(q.deps({"body": "nothing"}), [])
@@ -61,6 +66,12 @@ class PickTests(unittest.TestCase):
         self.assertIn("weekly budget", why)
         got, _ = q.pick("a", cards, set(), {"b": 1}, CFG)
         self.assertEqual(got["number"], 3)
+
+    def test_umbrella_cards_do_not_count_or_get_picked(self):
+        cards = [card(1, "T5", "status:in-progress", "umbrella"), card(2, "T5", "status:ready", "umbrella"),
+                 card(3, "T5a", "status:in-progress"), card(4, "T3", "status:ready")]
+        got, _ = q.pick("a", cards, set(), {}, CFG)   # limit 2: only #3 counts, #1 is an umbrella
+        self.assertEqual(got["number"], 4)
 
     def test_unknown_agent(self):
         got, why = q.pick("zzz", [], set(), {}, CFG)
