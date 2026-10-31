@@ -5236,12 +5236,13 @@ int runFullSubsystemTests() {
         auto& cpu = proc.mainThread().cpu;
         const uint32_t stack = proc.heap().allocZeroed(1024);
         cpu.r[CPU::kSP] = stack + 1024;
+        std::string missingSymbols;   // names the tests asked for that are not registered
         auto run = [&](const char* name, std::initializer_list<uint32_t> args) {
             bool fault = false;
             int32_t result = -1;
             try {
                 const auto sym = proc.lookupSymbol(name);
-                if (!sym) return std::pair<bool, int32_t>{true, result};
+                if (!sym) { missingSymbols += std::string(name) + " "; return std::pair<bool, int32_t>{true, result}; }
                 result = int32_t(proc.callGuest(cpu, *sym, args));
             } catch (const CPU::GuestFault&) {
                 fault = true;
@@ -5323,7 +5324,7 @@ int runFullSubsystemTests() {
             WideCall out;
             try {
                 const auto sym = proc.lookupSymbol(name);
-                if (!sym) { out.failed = true; return out; }
+                if (!sym) { missingSymbols += std::string(name) + " "; out.failed = true; return out; }
                 out.result = int32_t(proc.callGuest(cpu, *sym, args));
             } catch (const CPU::GuestFault& fault) {
                 out.failed = true;
@@ -5433,6 +5434,7 @@ int runFullSubsystemTests() {
         w = wideRun("___swprintf_chk", {wideBuf, 4, 0, 16, wideLong});
         check(!w.failed && w.result == -1 && wideEquals(wideBuf, "123"),
               "swprintf_chk truncates inside the object size and returns -1");
+        check(missingSymbols.empty(), "format-bounds tests only call registered guest functions (a missing symbol would make a rejection check pass without running)");
     }
 
     // Mapping and writes must be serialized: on 16 KB hosts a committed host
