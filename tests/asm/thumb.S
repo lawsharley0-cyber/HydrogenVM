@@ -470,3 +470,11 @@ t_ldm_stm_16:
     subs    r1, r5, r1
     add     sp, #16
     bx      lr
+
+@ TEST t_undefined_inst
+@ EXPECT undef=0xDE00
+    .global t_undefined_inst
+    .thumb_func
+t_undefined_inst:
+    .hword  0xDE00          @ UDF #0 (16-bit)
+    bx      lr
