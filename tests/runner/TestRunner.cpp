@@ -2186,6 +2186,24 @@ int runFullSubsystemTests() {
               "UIViewController setView replaces the installed root view in its window");
     }
 
+    // CTLineGetOffsetForStringIndex writes through the guest's secondaryOffset pointer; a pointer into a
+    // read-only page must be left alone (GuestArena::write does not check permissions itself).
+    {
+        auto& mem = proc.mem();
+        const uint32_t page = mem.findFree(4096);
+        mem.map(page, 4096, Memory::kProtRW);
+        for (uint32_t i = 0; i < 4; ++i) mem.write<uint8_t>(page + i, 0xAA);
+        mem.protect(page, 4096, Memory::kProtRead);
+        bool called = false;
+        if (const auto sym = proc.lookupSymbol("_CTLineGetOffsetForStringIndex")) {
+            try { cx.proc.callGuest(cpu, *sym, {0, 0, page}); called = true; } catch (const std::exception&) {}
+        }
+        bool intact = true;
+        for (uint32_t i = 0; i < 4; ++i) intact &= mem.read<uint8_t>(page + i) == 0xAA;
+        mem.unmap(page, 4096);
+        check(called && intact, "CTLineGetOffsetForStringIndex leaves a read-only secondaryOffset page untouched");
+    }
+
     // 2d. UITabBarController, UITabBar, UITabBarItem
     {
         const ObjC::Class vcCls = r.getClass("UIViewController");
