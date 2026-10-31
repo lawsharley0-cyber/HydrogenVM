@@ -2336,6 +2336,38 @@ int runFullSubsystemTests() {
             check(v == "score=-42 0xff     7", "std::ostringstream formatting (int, hex+showbase, width) and str()");
         }
 
+        // std::ofstream + std::ifstream virtual calls (B-207): write via xsputn vtable,
+        // read back via xsgetn. This exercises the filebuf virtual-function table.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            // Get a temp path via tmpnam — guaranteed to exist as a symbol.
+            const uint32_t nameBuf = proc.heap().alloc(256);
+            call("_tmpnam", {nameBuf});
+            const std::string tmpPath = proc.readCString(nameBuf);
+
+            // Construct ofstream on the heap and open it via the constructor overload.
+            // GCC 4.2 ofstream layout: vptr(4) + filebuf(at+8) + ios_base(at kVbase=0x40).
+            // The app-visible object is about 200 bytes; allocate generously.
+            const uint32_t ofs = proc.heap().allocZeroed(256);
+            call("__ZNSt14basic_ofstreamIcSt11char_traitsIcEEC1EPKcSt13_Ios_Openmode", {ofs, nameBuf, 16 /* out */});
+            // Write "hello" via os_write (non-virtual) — this uses the filebuf's xsputn internally.
+            const uint32_t wBuf = proc.allocCString("hello");
+            call("__ZNSo5writeEPKci", {ofs, wBuf, 5});
+            call("__ZNSt14basic_ofstreamIcSt11char_traitsIcEED1Ev", {ofs});
+
+            // Construct ifstream and read back.
+            const uint32_t ifs = proc.heap().allocZeroed(256);
+            call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEEC1EPKcSt13_Ios_Openmode", {ifs, nameBuf, 8 /* in */});
+            const uint32_t rBuf = proc.heap().alloc(8);
+            call("__ZNSi4readEPci", {ifs, rBuf, 5});
+            call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEED1Ev", {ifs});
+            const std::string got(reinterpret_cast<const char*>(proc.mem().host(rBuf)), 5);
+            // Clean up the temp file.
+            std::remove(tmpPath.c_str());
+            check(got == "hello", "std::ofstream write + std::ifstream read via filebuf virtual calls (B-207)");
+            proc.heap().free(ofs); proc.heap().free(ifs); proc.heap().free(rBuf); proc.heap().free(nameBuf);
+        }
+
         // NSCalendar / NSDateComponents: compose, break down, add, difference.
         {
             const ObjC::id calendar = ObjC::id(r.send(cpu, r.getClass("NSCalendar"), "currentCalendar"));

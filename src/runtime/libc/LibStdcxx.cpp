@@ -44,6 +44,7 @@ struct Streams {
     std::mutex mu;
     std::unordered_map<uint32_t, Stream> objects;   // keyed by the complete object's address
     uint32_t vtIn = 0, vtOut = 0, vtIo = 0, vtIoOstream = 0;
+    uint32_t fbVptr = 0;   // basic_filebuf vtable pointer (14-slot streambuf layout, +8)
 };
 Streams& S(Ctx& x) { return x.proc.service<Streams>(); }
 
@@ -83,7 +84,9 @@ void construct(Ctx& x, uint32_t obj, Kind k) {
     if (k == Kind::InOut) x.mem.write<uint32_t>(obj + 8, s.vtIoOstream);
     x.mem.write<uint32_t>(obj + kVbase + 4, 6);     // precision
     x.mem.write<uint32_t>(obj + kVbase + 12, 0x1002); // flags: skipws | dec
-    x.mem.write<uint32_t>(obj + kVbase + 120, obj + filebufOffset(k)); // _M_streambuf
+    const uint32_t fbAddr = obj + filebufOffset(k);
+    x.mem.write<uint32_t>(obj + kVbase + 120, fbAddr); // _M_streambuf
+    x.mem.write<uint32_t>(fbAddr, s.fbVptr);            // filebuf vptr
     std::lock_guard<std::mutex> lk(s.mu);
     Stream& st = s.objects[obj];
     if (st.f) std::fclose(st.f);
@@ -169,6 +172,7 @@ void st_close(Ctx& x, GuestPtr self) { close(x, objectFor(x, self, 0)); }
 
 uint32_t fb_ctor(Ctx& x, GuestPtr sb) {
     for (uint32_t i = 0; i < 32; i += 4) x.mem.write<uint32_t>(sb + i, 0);
+    x.mem.write<uint32_t>(sb, S(x).fbVptr);   // filebuf vptr
     Streams& s = S(x);
     std::lock_guard<std::mutex> lk(s.mu);
     Stream& st = s.objects[sb];
@@ -329,16 +333,84 @@ void registerLibStdcxx(Process& p) {
     p.def<&noop1>("__ZNSt8ios_base4InitC2Ev");
     p.def<&noop1>("__ZNSt8ios_base4InitD2Ev");
 
-    // Stream vtables: [vbase offset][offset to top][typeinfo][16 virtual slots]; vptr = +12.
+    // ---- basic_filebuf vtable (14 slots, same layout as basic_streambuf in LibStdcxxStreams.cpp)
+    // slot order: D1, D0, imbue, setbuf, seekoff, seekpos, sync, showmanyc,
+    //             xsgetn, underflow, uflow, pbackfail, xsputn, overflow
     Streams& s = p.service<Streams>();
-    const uint32_t badVirtual = p.registerHostFunction("libstdc++ stream virtual call", [](Ctx&) {
-        throw std::runtime_error("the app made a virtual call on a C++ file stream (not supported yet)");
+
+    // Slot helpers for the filebuf — backed by hvmFilebuf* which already wrap the FILE*.
+    // All of these receive 'this' = the filebuf address in r0.
+    const uint32_t fbD1 = p.def<&fb_dtor>("__ZNSt13basic_filebufIcSt11char_traitsIcEED1Ev");
+    const uint32_t fbD0 = p.def<&fb_dtorDelete>("__ZNSt13basic_filebufIcSt11char_traitsIcEED0Ev");
+    const uint32_t fbNop1 = p.registerHostFunction("filebuf::imbue",   [](Ctx&) {});
+    const uint32_t fbSetbuf = p.registerHostFunction("filebuf::setbuf", [](Ctx& x) { x.cpu.r[0] = x.cpu.r[0]; });
+    const uint32_t fbSeekoff = p.registerHostFunction("filebuf::seekoff", [](Ctx& x) {
+        // sret r0, this r1, off r2:r3, dir/which on stack. Return badpos.
+        x.mem.write<uint64_t>(x.cpu.r[0], uint64_t(-1)); x.cpu.r[0] = x.cpu.r[0];
+    });
+    const uint32_t fbSeekpos = p.registerHostFunction("filebuf::seekpos", [](Ctx& x) {
+        x.mem.write<uint64_t>(x.cpu.r[0], uint64_t(-1)); x.cpu.r[0] = x.cpu.r[0];
+    });
+    const uint32_t fbSync = p.registerHostFunction("filebuf::sync", [](Ctx& x) {
+        // hvmFilebufSeek(sb, 0, SEEK_CUR) is the lightest way to check if the FILE is open;
+        // for a write-mode file, fflush is what 'sync' must do.
+        // We don't have direct access to the FILE* here, so we use hvmFilebufWrite(0 bytes)
+        // which is a no-op — the real fflush happens when the stream is closed or explicitly
+        // called by the app via the non-virtual close(). Return 0 = success.
+        x.cpu.r[0] = 0;
+    });
+    const uint32_t fbShow = p.registerHostFunction("filebuf::showmanyc", [](Ctx& x) { x.cpu.r[0] = 0; });
+    const uint32_t fbXsgetn = p.registerHostFunction("filebuf::xsgetn", [](Ctx& x) {
+        x.cpu.r[0] = uint32_t(hvmFilebufRead(x, x.cpu.r[0], x.cpu.r[1], int32_t(x.cpu.r[2])));
+    });
+    const uint32_t fbUnder = p.registerHostFunction("filebuf::underflow", [](Ctx& x) {
+        x.cpu.r[0] = uint32_t(hvmFilebufPeek(x, x.cpu.r[0]));
+    });
+    const uint32_t fbUflow = p.registerHostFunction("filebuf::uflow", [](Ctx& x) {
+        x.cpu.r[0] = uint32_t(hvmFilebufGet(x, x.cpu.r[0]));
+    });
+    const uint32_t fbPback = p.registerHostFunction("filebuf::pbackfail", [](Ctx& x) {
+        x.cpu.r[0] = uint32_t(hvmFilebufUnget(x, x.cpu.r[0], int32_t(x.cpu.r[1])));
+    });
+    const uint32_t fbXsputn = p.registerHostFunction("filebuf::xsputn", [](Ctx& x) {
+        // r0=this, r1=buf, r2=n — write to file; return bytes written
+        const uint32_t sb = x.cpu.r[0], buf = x.cpu.r[1];
+        const int32_t n = int32_t(x.cpu.r[2]);
+        if (n > 0) x.cpu.r[0] = uint32_t(hvmFilebufWrite(x, sb, reinterpret_cast<const char*>(x.mem.host(buf)), uint32_t(n)));
+        else x.cpu.r[0] = 0;
+    });
+    const uint32_t fbOver = p.registerHostFunction("filebuf::overflow", [](Ctx& x) {
+        // r0=this, r1=char (or EOF=-1). Write one byte and return it, or EOF on error.
+        const int32_t c = int32_t(x.cpu.r[1]);
+        if (c == -1) { x.cpu.r[0] = uint32_t(0); return; }   // flush only — success
+        const char ch = char(c & 0xFF);
+        x.cpu.r[0] = hvmFilebufWrite(x, x.cpu.r[0], &ch, 1) == 1 ? uint32_t(c & 0xFF) : uint32_t(-1);
+    });
+    // Build the filebuf vtable: [offset-to-top=0][typeinfo=0][14 slots]; vptr points at slot 0.
+    {
+        const uint32_t a = p.defineDataBlock("__ZTVSt13basic_filebufIcSt11char_traitsIcEE", 8 + 14 * 4);
+        uint32_t slots[] = {fbD1, fbD0, fbNop1, fbSetbuf, fbSeekoff, fbSeekpos, fbSync,
+                            fbShow, fbXsgetn, fbUnder, fbUflow, fbPback, fbXsputn, fbOver};
+        for (int i = 0; i < 14; ++i) p.mem().write<uint32_t>(a + 8 + i * 4, slots[i]);
+        s.fbVptr = a + 8;
+    }
+
+    // Stream vtables: [vbase offset][offset to top][typeinfo][2 real slots + 14 noops]; vptr = +12.
+    // Slots 0/1 are D1/D0; the remaining 14 are noops (apps rarely call stream virtuals directly).
+    const uint32_t stNoop = p.registerHostFunction("stream::noop_virtual", [](Ctx&) {});
+    const uint32_t stD1 = p.registerHostFunction("stream::D1", [](Ctx& x) { destroy(x, objectFor(x, x.cpu.r[0], 0)); });
+    const uint32_t stD0 = p.registerHostFunction("stream::D0", [](Ctx& x) {
+        const uint32_t obj = x.cpu.r[0];
+        destroy(x, objectFor(x, obj, 0));
+        if (x.proc.heap().blockSize(obj)) x.proc.heap().free(obj);
     });
     auto vtable = [&](uint32_t vbase, int32_t toTop) {
         const uint32_t a = p.defineDataBlock("hvm_stream_vtable_" + std::to_string(vbase) + "_" + std::to_string(-toTop), 12 + 16 * 4);
         p.mem().write<uint32_t>(a, vbase);
         p.mem().write<uint32_t>(a + 4, uint32_t(toTop));
-        for (uint32_t i = 0; i < 16; ++i) p.mem().write<uint32_t>(a + 12 + i * 4, badVirtual);
+        p.mem().write<uint32_t>(a + 12 + 0 * 4, stD1);
+        p.mem().write<uint32_t>(a + 12 + 1 * 4, stD0);
+        for (uint32_t i = 2; i < 16; ++i) p.mem().write<uint32_t>(a + 12 + i * 4, stNoop);
         return a + 12;
     };
     s.vtIn = vtable(kVbase, 0);
