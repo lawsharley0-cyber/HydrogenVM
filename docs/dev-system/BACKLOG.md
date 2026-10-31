@@ -16,7 +16,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 |---|---|---:|---:|---:|---:|---|---|---|---|
 | B-001 | Make GitHub Actions execute and publish a report for `HEAD`. The empty-step failure on `07fabbb` (run 39633887764) was real. Linux CI on `6af9976` published `runs/20261021-175201-39646696896-linux` (run 39646696896), and the compat harness passed (run 39646706013). | 5 | 5 | 1 | 25.0 | — | — | Yes, except another edit of the same workflow | Operational as of `6af9976`. macOS CI remains conditional |
 | B-002 | Run `fulltest`, the Python protocol tests, and a 3 second smoke of the three in-repo IPAs on `main`. | 5 | 4 | 1 | 20.0 | — | — | Yes, as its own workflow file | Operational. The compat job is green on `6af9976` and runs `fulltest`. Folding the same suites into `hvm_report.py` (default `--only` is still `cpu,ios,bench`) is Planned. macOS CI was not part of that green run |
-| B-003 | Reconcile `docs/ARCHITECTURE.md`, `docs/HANDOFF.md`, and `docs/DEVELOPMENT_AND_RELEASE.md` with the code. Do not delete the shader subset, the missing near clip, or the `CCCrypt` refusal. | 4 | 3 | 1 | 12.0 | — | None | Yes | Planned |
+| B-003 | Reconcile `docs/ARCHITECTURE.md`, `docs/HANDOFF.md`, and `docs/DEVELOPMENT_AND_RELEASE.md` with the code. Do not delete the shader subset, the missing near clip, or the `CCCrypt` refusal. | 4 | 3 | 1 | 12.0 | — | None | Yes | In progress (branch `codex/test-lab-v1`) |
 | B-004 | One Mac compile of current `app/`. `06a7b16` changed the file browser, was marked `[mac]`, and Actions never started. | 4 | 4 | 2 | 8.0 | E | B-001 if no local Mac | Not with another `app/**` edit | Needs owner |
 | B-005 | Test Lab guest IPA (Milestone 1). Five deterministic cases (import/launch, CPU, GLES, audio, persistence), menu UI, durable checkpoint, machine-readable results, automated runner, packaging docs. Files: `tests/ios/apps/testlab/`, `tools/hvm_testlab.py`, `tools/testlab_schema/`, `.github/workflows/testlab.yml`, `docs/TEST_LAB.md`. | 4 | 4 | 2 | 8.0 | Test/regression | None | Yes — does not touch Groups A–E owned files | In progress (branch `codex/test-lab-v1`) |
 
@@ -26,7 +26,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 |---|---|---:|---:|---:|---:|---|---|---|---|
 | B-101 | Enforce guest 4 KB permissions on loads and stores, including the 16 KB host-page case. | 5 | 5 | 3 | 8.33 | A | None, but one owner for the whole group | Not with B-102, B-201, or B-208 | Planned |
 | B-102 | Precise fault PC. Do not `siglongjmp` out of an HLE frame that has live C++ objects. | 4 | 5 | 3 | 6.67 | A | Same owner as B-101, after or inside that design | Not with B-101 | Planned |
-| B-103 | Homogeneous near-plane clip. `OpenGLES.cpp:2320` is only a zero-W guard. Lines 2449–2452 rasterize the bbox of already-projected vertices; there is no near-plane clip. | 4 | 4 | 3 | 5.33 | B | None | Not with B-104, B-105, or B-111 | Planned |
+| B-103 | Homogeneous near-plane clip. `OpenGLES.cpp:2320` is only a zero-W guard. Lines 2449–2452 rasterize the bbox of already-projected vertices; there is no near-plane clip. | 4 | 4 | 3 | 5.33 | B | None | Not with B-104, B-105, or B-111 | Operational (Sutherland-Hodgman 6-plane clipper, commits `840db67`, `4c789a6`, `0c06835`) |
 | B-104 | Widen the GLSL ES 1.00 subset only against a checked-in shader corpus. No guessed sampler roles. | 5 | 4 | 3 | 6.67 | B | B-103. Dump with `HVM_DUMP_SHADERS` first | Not with other B | Planned |
 | B-105 | Raster and composite cost: SIMD triangles, threaded slices, dirty-rect present, upload-time texture conversion. Plus CPU-side ideas in `docs/PERFORMANCE.md` that are not Group A (those are B-201). | 5 | 3 | 3 | 5.0 | B | B-103 | Not with other B | Planned |
 | B-106 | Clash Royale past 65% load: 21903 sector state, then the next message the pinned client actually sends. Do not invent sector payloads. | 5 | 4 | 3 | 6.67 | C | Pinned IPA hash `29269ede…` | Not with edits to `src/runtime/libc/Net.cpp` | Planned. Fetching the third-party URL is Needs owner |
@@ -34,7 +34,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-108 | `regcomp` / `regexec` / `regerror` / `regfree` (Art of Glow). | 3 | 3 | 2 | 4.5 | — if the patch stays in `src/runtime/libc/` | None | Beside D | Operational as of `a767928` (PR #5) |
 | B-109 | `CGFontCopyTableForTag` and the `CGFontGet*` queries Tiny Tower hits. `CGFontCopyTableForTag` is not a getter. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | In progress (branch `codex/test-lab-v1`) |
 | B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Operational as of `a767928` (PR #5) |
-| B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | None, but the file is `OpenGLES.cpp` | Not while B-103 is in progress | Planned |
+| B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | B-103 ✓ | Not with another B change | Planned |
 | B-112 | Stop adding commercial IPAs to git. Hashes plus an external store. | 3 | 4 | 1 | 12.0 | — | Owner picks the store | Yes | Harness side Operational. Removing the three committed files is Needs owner |
 
 ## P2

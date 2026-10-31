@@ -118,7 +118,7 @@ PC-based LDM/STM and NEON loads are filtered out, and are intentionally rejected
 
 ## Testing
 
-`tools/run_tests.sh` builds everything and runs:
+`AGENTS.md` contains the authoritative build and test commands. The suite includes:
 
 * **Asm unit tests** (`tests/asm/*.S`): hand-written edge cases with expected
   registers/flags (carry/overflow, shifts ≥ 32, RRX, IT corner cases, TBB/TBH,
@@ -136,14 +136,13 @@ PC-based LDM/STM and NEON loads are filtered out, and are intentionally rejected
   rounding modes, fixed point, half precision, VLD2/3/4, VTBL/VTBX, permutes,
   saturation + QC, estimates, scalar forms, and Thumb-2 encodings.
 * **Decoder fuzzing** (above).
-* **iOS app tests** (`tools/ios_tests.sh`): real 32-bit iOS executables built
-  with clang + ld64 against stub headers (`tests/ios/include`) and run through
-  the whole stack with `build/hvm`: C/libSystem (`ctest`, also as an iOS 3
-  non-PIE build and with a binary Info.plist), the ObjC runtime (`objctest`),
-  Foundation (`foundationtest`, 126 checks) and UIKit (`uikittest`, 55 checks:
-  views, CG drawing, text, images, nibs in both compiled formats, controls,
-  gestures, alerts, scripted taps). `hvm --screenshot out.png --run-for 2
-  --tap X,Y@T` captures the framebuffer for visual checks.
+* **`hvm_tests fulltest`**: runtime checks covering the ObjC runtime, Foundation,
+  CoreGraphics, UIKit, GLES, and CGFont design-unit metrics. The compat harness
+  (`tools/hvm_compat.py`) wraps all of the above plus the three in-repo IPA smokes
+  and diffs against `docs/dev-system/baselines/linux-headless.json`.
+* **Test Lab** (`tests/ios/apps/testlab/`, `tools/hvm_testlab.py`): a deterministic
+  32-bit iOS guest IPA with independently-derived expected values, covering import/
+  launch, CPU correctness, GLES rendering, audio, and persistence.
 
 A reference CPU (e.g. Unicorn) for instruction-by-instruction fuzzing would be
 a good next addition; it wasn't installable in the environment this was built in.
@@ -205,11 +204,14 @@ environment); the C++ it calls is the same code the test suite builds.
 ### Current limitations
 
 * App Store `.ipa` files are FairPlay-encrypted and must be decrypted first.
-* OpenGL ES isn't implemented yet (most games): they will start but not draw.
-* Audio is silent (AudioToolbox/AVFoundation are stubs).
-* Storyboards aren't supported (nibs are); neither are UITableView,
-  UIScrollView, UINavigationController, UITextField and other larger UIKit
-  classes yet — missing classes are logged by name.
+* OpenGL ES 1.1 (fixed-function) and 2.0 (bounded GLSL ES 1.00 subset) are
+  implemented. The GLSL ES subset does not cover all shader patterns; unknown
+  draws fall back to the fixed-function path or log a gap.
+* `CCCrypt` (AES/DES/3DES) deliberately returns `kCCUnimplemented`. Digests
+  and HMAC are implemented.
+* Audio works for WAV/CAF/AIFF/MP3 sources via the software mixer. Some
+  AudioToolbox/AVAudioEngine APIs are stubs; gaps are logged by name.
+* Storyboards are not supported (nibs are).
 
 ## iOS-specific notes
 
@@ -232,4 +234,5 @@ environment); the C++ it calls is the same code the test suite builds.
 7. ~~Audio (AudioToolbox, OpenAL, AVAudioPlayer) + AVAudioEngine host bridge~~ ✅
 8. ~~Expanded UIKit: UIScrollView, UITableView, UINavigationController, UITabBarController, UITextField, UISwitch, UISlider, UISegmentedControl, UIStoryboard~~ ✅
 9. ~~CPU superinstructions (SUBS/ADDS+branch, BL/BLX, POP {pc}, MOVW+MOVT, paired LDR/STR, LDR+ADD, STR+ADD, MOV+ADD)~~ ✅
-10. Hardware-accelerated Metal backend for OpenGL ES & Android `.apk` (Phase 3).
+10. ~~Homogeneous near-plane clip (Sutherland-Hodgman, 6 planes)~~ ✅
+11. Widen GLSL ES 1.00 shader subset against a checked-in corpus (B-104). Hardware-accelerated Metal backend & Android `.apk` (Phase 3).

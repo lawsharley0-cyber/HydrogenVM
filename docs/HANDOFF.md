@@ -84,7 +84,8 @@ older roadmap below.
 
 JIT-less emulator that runs **32-bit iOS apps (.ipa, armv6/armv7) on modern iPhones**.
 Sideload-only iPhone app, bundle id `com.lfull.HydrogenVM`.
-Repo `github.com/lawsharley0-cyber/HydrogenVM`, **all work on branch `gemini-merge`**.
+Repo `github.com/lawsharley0-cyber/HydrogenVM`, **integration line is `main`**
+(previously `gemini-merge`; see `AGENTS.md` and B-003).
 The owner (Lawson) tests sideloaded builds on device and sends logs and IPAs. He wants
 **systematic fixes**: find every issue per IPA, fix it once in the shared runtime, and
 verify the fix across all apps.
@@ -248,53 +249,11 @@ AddressBook, …).
 
 ## Next steps (agreed with the user, in order)
 
-1. **GLSL ES 1.00 interpreter (main task).** Today `gl_linkProgram` only regex-scans
-   declarations and guesses roles: first mat4 = MVP, first sampler = texture, attribute names
-   containing pos/col/tex. `shadeVertex`/`rasterizeTriangle` then draw as fixed-function.
-   Unity shaders break this. Planned design, all in a new `src/runtime/graphics/glsl/`:
-   * **Preprocessor:**
-     * `#define`, with and without parameters; `#undef`.
-     * `#if`/`#ifdef`/`#ifndef`/`#elif`/`#else`/`#endif`, with expression evaluation and
-       `defined()`.
-     * `#version`, `#extension`, `#pragma` and `#line` are accepted.
-     * Predefined `GL_ES` and `__VERSION__ 100`; line continuations.
-   * **Lexer and parser → AST:**
-     * Precision, storage and parameter qualifiers.
-     * Structs, arrays, and function prototypes with overloading.
-     * All statements and expressions, including swizzles, constructors and indexing.
-   * **Semantic pass:**
-     * Types: float/int/bool scalars and vectors, mat2–4, sampler2D/Cube, structs, arrays.
-     * GLSL ES 1.00 has no implicit conversions.
-     * Overload resolution and the builtin functions.
-   * **Codegen to an IR** with float4 registers (ints and bools as floats; a matrix is N
-     registers):
-     * Each source operand has a swizzle and negate; each destination has a write mask.
-     * **Inline all functions** (GLSL ES has no recursion).
-     * Dynamic array indexing ops (skinning bones).
-   * **Lane-parallel interpreter**:
-     * Runs 16 vertices or fragments per dispatch in SoA layout.
-     * Execution masks handle if/loops/break/continue/discard.
-     * Ops: arithmetic, the full builtin math set, matrix ops expanded to dp/mad, and
-       texture2D/Proj/Lod/Cube through a batched sampler callback.
-   * **GL integration:**
-     * Real compile and link status and info logs.
-     * Active uniform and attribute introspection: glGetActiveUniform/Attrib,
-       glGetProgramiv counts, and glGetUniformLocation for `a[i]` and `s.f`. Unity queries
-       these.
-     * Uniform storage per location, including arrays and samplers.
-     * Generic vertex attributes.
-     * gl_Position, varyings, gl_FragCoord, gl_FrontFacing, gl_PointCoord and
-       gl_PointSize.
-   * **Fix the raster stage for everyone:**
-     * Homogeneous **near-plane clipping**.
-     * **Perspective-correct** interpolation (the `invW` value is computed but unused
-       today).
-     * Early depth test with late write when the shader may `discard`.
-     * Mipmaps and derivatives could come later via 2×2 quads.
-   * **Do this first:** add a shader-source dump (env `HVM_DUMP_SHADERS=<dir>` in
-     `gl_shaderSource`; available now). Collect Subway Surfers' shaders as a
-     corpus and make the compiler accept all of them before integrating. Then judge it with
-     the frame check and screenshots in `compat.py`.
+1. **GLSL ES 1.00 shader subset (B-104).** The bounded interpreter is operational
+   (real compile/link failures and info logs, perspective-correct varyings, Sutherland-
+   Hodgman near-plane clip). The remaining gap is shader-corpus breadth: run
+   `HVM_DUMP_SHADERS=<dir>` to collect Subway Surfers' shaders, ensure all compile,
+   then widen the subset against that corpus (B-104). See `docs/dev-system/BACKLOG.md`.
 2. **Minecraft Story Mode** (Telltale) is too large for the user to upload (ask for a zip of
    the `.app` without its big asset folders). It uses **libc++ (`std::__1::…`)**, a second C++
    runtime ABI next to GCC libstdc++: strings, ostream/streambuf, and typeinfo for
