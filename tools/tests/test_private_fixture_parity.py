@@ -16,9 +16,9 @@ spec.loader.exec_module(module)
 
 class FrameCountTests(unittest.TestCase):
     def test_positive_frames_rejects_non_counts(self):
-        for bad in (True, False, None, "60", 0, -1, 0.0, math.nan, math.inf, -math.inf, [], {}):
+        for bad in (True, False, None, "60", 0, -1, 0.0, math.nan, math.inf, -math.inf, 0.5, 59.9, [], {}):
             self.assertFalse(module.positive_frames(bad), repr(bad))
-        for good in (1, 60, 0.5, 600):
+        for good in (1, 60, 600, 60.0):
             self.assertTrue(module.positive_frames(good), repr(good))
 
     def test_frames_presented_tolerates_malformed_rows(self):

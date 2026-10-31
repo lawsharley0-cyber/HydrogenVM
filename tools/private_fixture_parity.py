@@ -22,8 +22,10 @@ def frames_presented(row):
 
 
 def positive_frames(value):
-    """A real frame count: a finite number above zero (booleans are not numbers here)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+    """A real frame count: a positive integer (booleans, fractions and non-finite numbers are rejected)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return False
+    return value > 0 and value == int(value)
 
 
 def read(path):
