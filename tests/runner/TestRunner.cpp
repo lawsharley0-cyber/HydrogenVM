@@ -2059,6 +2059,9 @@ int runFullSubsystemTests() {
         callGL("_glGenFramebuffers", {1, idsAddr});
         const uint32_t fbo = proc.mem().read<uint32_t>(idsAddr);
         callGL("_glBindFramebuffer", {0x8D40 /* GL_FRAMEBUFFER */, fbo});
+        const uint32_t emptyStatus = uint32_t(callGL("_glCheckFramebufferStatus", {0x8D40}));
+        check(emptyStatus == 0x8CD7 /* GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT */,
+              "Empty FBO reports GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT");
 
         callGL("_glGenRenderbuffers", {1, idsAddr + 4});
         const uint32_t rbo = proc.mem().read<uint32_t>(idsAddr + 4);
@@ -4729,6 +4732,28 @@ int runFullSubsystemTests() {
         cpu.r[1] = uint32_t(v64 >> 32);
         Runtime::ArgReader a(cpu, p.mem(), 0);
         std::string s = Runtime::formatGuest(p, "%10#llx", a);
+        // 4. formatGuest property tests: null pointer, padding, and signed formatting (T5d)
+        {
+            cpu.r[0] = 0;
+            Runtime::ArgReader aNull(cpu, p.mem(), 0);
+            std::string sNull = Runtime::formatGuest(p, "%s", aNull);
+            check(sNull == "(null)", "formatGuest %s with null pointer returns (null)");
+
+            cpu.r[0] = 42;
+            Runtime::ArgReader aPad(cpu, p.mem(), 0);
+            std::string sPad = Runtime::formatGuest(p, "%08x", aPad);
+            check(sPad == "0000002a", "formatGuest %08x zero-pads hexadecimal numbers");
+
+            cpu.r[0] = uint32_t(-123);
+            Runtime::ArgReader aNeg(cpu, p.mem(), 0);
+            std::string sNeg = Runtime::formatGuest(p, "%d", aNeg);
+            check(sNeg == "-123", "formatGuest %d preserves negative integers");
+        }
+        // 5. libstdc++ 4.2 copy-on-write std::string ABI conformance (T5a)
+        {
+            const auto repSym = p.lookupSymbol("__ZNSs4_Rep11_S_max_sizeE");
+            check(repSym.has_value(), "libstdc++ std::string _Rep symbols registered");
+        }
         check(s.find("0x1000") != std::string::npos && s.size() >= 10,
               "formatGuest correctly parses format specifiers with flags after width (%10#llx)");
 
