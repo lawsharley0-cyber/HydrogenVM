@@ -1,6 +1,6 @@
 GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
-Loaded UIKitTest: armv7, 144 imports, 0 initializers, entry 0x0000e2df UIKitTest+41694 _main
-Objective-C: 5 classes, 0 categories, 168 selector refs
+Loaded UIKitTest: armv7, 157 imports, 0 initializers, entry 0x0000e0bb UIKitTest+41146 _main
+Objective-C: 5 classes, 0 categories, 170 selector refs
 [teardown] waiting for the guest run to finish
 Screen: 320x480 @2x, portrait, status bar visible
 ok 3.5-inch screen without a 568h launch image
@@ -95,6 +95,14 @@ ok PanelKeyed nib: outlet + label text
 
 ok PanelKeyed nib: action connection + button title
 
+[gpu] GL layer (64.0, 64.0)
+[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
+ok loadNibNamed: missing NIB raises NSInternalInconsistencyException
+
+ok loadNibNamed: does not strip Landscape to load Panel
+
+ok loadNibNamed: does not strip Portrait to load Panel
+
 ok UIButton target/action
 
 ok UIButton currentTitle
@@ -119,8 +127,6 @@ ok UISwitch, UISlider, UISegmentedControl
 
 ok EAGLContext creation & setCurrentContext
 
-[gpu] GL layer (64.0, 64.0)
-[gpu] GL layer removed
 GPU: drawable 64x64 for renderbuffer 1 (platform layer)
 ok EAGLContext renderbufferStorage:fromDrawable:
 
@@ -129,6 +135,7 @@ ok glCheckFramebufferStatus complete
 GPU: presented frame 1 directly (average rgb 255,0,0, 64/64 samples lit)
 ok OpenGL ES clear, glReadPixels & presentRenderbuffer
 
+[gpu] GL layer removed
 [autotap] 70.0,350.0
 [autotap] 230.0,350.0
 ok drawRect: was called by the compositor
@@ -143,7 +150,7 @@ ok touch location in view coordinates
 
 ok UITapGestureRecognizer
 
-66 checks, 0 failures
+69 checks, 0 failures
 
 ALL CHECKS PASSED
 
@@ -155,4 +162,4 @@ App exited with code 0
 [teardown] host audio stopped; queueing the exit callback
 [teardown] delivering the exit callback
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 26760
+com.lfull.HydrogenVM: 24006

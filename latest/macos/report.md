@@ -1,43 +1,43 @@
-# HydrogenVM report — 54273d4
+# HydrogenVM report — 1d64501
 
-2026-10-29T16:15:12+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
+2026-10-31T18:01:19+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 127.1s |
-| cpu | 15 | 0 | 0 | 0.4s |
-| ios | 6 | 0 | 0 | 2.7s |
-| bench | 5 | 0 | 0 | 21.1s |
+| build | 1 | 0 | 0 | 130.2s |
+| cpu | 15 | 0 | 0 | 0.6s |
+| ios | 6 | 0 | 0 | 2.6s |
+| bench | 5 | 0 | 0 | 18.1s |
 
 ## Speed
 
-CoreMark **1926.2** iterations/s (669.5 guest MIPS)
+CoreMark **2402.5** iterations/s (787.6 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **133.8%** | 803 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **100.3%** | 803 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **80.3%** | 642 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **42.3%** | 550 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **166.8%** | 1001 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **125.1%** | 1001 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **100.1%** | 801 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **52.8%** | 686 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 376 MIPS, ctests_arm 443 MIPS, ftests_vfp_thumb_softfp 479 MIPS, ftests_neon_thumb 488 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 374 MIPS, ctests_arm 409 MIPS, ftests_vfp_thumb_softfp 428 MIPS, ftests_neon_thumb 312 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.11s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.13s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.09s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 1.02s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.07s | 48 | 0.72 ms | 9.12 ms | 0 |
+| CTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.10s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.11s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.13s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 0.91s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.08s | 48 | 0.55 ms | 6.44 ms | 0 |
 
 ## Problems (30)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 42.3% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 52.8% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (29)
 
@@ -54,13 +54,13 @@ Raw interpreter speed (CPU test programs): ctests_thumb 376 MIPS, ctests_arm 443
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:80:20: warning: unused variable 'kCurrentProgram' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:81:20: warning: unused variable 'kFramebuffer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:81:43: warning: unused variable 'kRenderbuffer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:27:47: warning: unused variable 'kDrawFramebuffer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:28:54: warning: unused variable 'kDrawFramebufferBinding' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:38:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:38:50: warning: unused variable 'kNormalArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:38:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:39:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/gl/HostGL.cpp:39:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:28:47: warning: unused variable 'kDrawFramebuffer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:29:54: warning: unused variable 'kDrawFramebufferBinding' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:39:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:39:50: warning: unused variable 'kNormalArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:39:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:40:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:40:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxx.cpp:38:40: warning: unused variable 'kBinary' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:51:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:57:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
