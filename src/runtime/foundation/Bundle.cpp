@@ -5,8 +5,10 @@
 // in the HydrogenVM container), exactly as an iOS app sees its own sandbox.
 #include "Foundation.hpp"
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -81,6 +83,20 @@ struct Bundles {
     std::unordered_map<std::string, id> bundlesByPath;
     std::unordered_map<std::string, std::shared_ptr<Plist::Value>> stringTables;   // path -> parsed table
     std::string language;                                                          // chosen .lproj
+    std::once_flag mainOnce;
+    fs::path installedRoot;  // canonical immutable installation boundary
+    fs::path installedPath;  // lexical installation path, excluding sandbox aliases
+    // Host path strings only: never retain guest NSString/CFURL objects here.
+    // Process lifetime bounds the cache; mutable bundles outside the installed
+    // app are excluded. Directory stamps invalidate changed lookup priorities.
+    using ResourceKey = std::array<std::string, 5>;
+    struct ResourceEntry {
+        std::string path;
+        fs::path boundary;
+        std::vector<std::pair<fs::path, fs::file_time_type>> directories;
+    };
+    std::mutex resourceMu;
+    std::map<ResourceKey, std::shared_ptr<const ResourceEntry>> resources;
 };
 Bundles& B(Process& p) { return p.service<Bundles>(); }
 Bundles& B(Ctx& x) { return B(x.proc); }
@@ -432,17 +448,49 @@ id bundleFor(Ctx& x, const std::string& rawPath, bool main = false) {
 }
 id mainBundle(Ctx& x) {
     auto& b = B(x);
-    if (!b.mainBundle) {
-        b.mainBundle = bundleFor(x, x.proc.bundlePath(), true);
-        b.language = chooseLanguage(x.proc.bundlePath());
-    }
+    struct Unavailable {};
+    try {
+        std::call_once(b.mainOnce, [&] {
+            const id main = bundleFor(x, x.proc.bundlePath(), true);
+            // A not-yet-created bundle must remain retryable. call_once retries
+            // after an exception and publishes only a complete initialization.
+            if (!main) throw Unavailable{};
+            std::error_code ec;
+            auto root = fs::canonical(x.proc.bundlePath(), ec);
+            if (ec) throw Unavailable{};
+            auto path = fs::absolute(x.proc.bundlePath(), ec).lexically_normal();
+            if (ec) throw Unavailable{};
+            b.installedRoot = std::move(root);
+            b.installedPath = std::move(path);
+            b.language = chooseLanguage(x.proc.bundlePath());
+            b.mainBundle = main;
+        });
+    } catch (const Unavailable&) { return 0; }
     return b.mainBundle;
+}
+
+// Compare path components, never raw string prefixes (Game.app-sibling is not
+// inside Game.app). Both paths must already be absolute and normalized.
+bool within(const fs::path& root, const fs::path& path) {
+    auto p = path.begin();
+    for (auto r = root.begin(); r != root.end(); ++r, ++p)
+        if (p == path.end() || *r != *p) return false;
+    return true;
+}
+
+bool resourceInside(const fs::path& root, const fs::path& path) {
+    std::error_code ec;
+    const auto resolved = fs::canonical(path, ec);
+    return !ec && within(root, resolved);
 }
 
 // Resource lookup in the order NSBundle uses: <dir>/ then <dir>/<lang>.lproj,
 // trying the ~iphone device modifier first.
 std::string findResource(Ctx& x, const std::string& bundle, std::string name, std::string type, const std::string& subdir,
                          const std::string& localization = {}) {
+    // Class-level directory lookups can arrive here before any mainBundle API.
+    // Synchronize with its publication before reading shared installation state.
+    const bool initialized = mainBundle(x) != 0;
     if (name.empty() && type.empty()) return {};
     if (!type.empty() && type[0] == '.') type = type.substr(1);
     if (type.empty()) {
@@ -450,30 +498,101 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
         if (dot != std::string::npos && dot > 0 && name.find('/', dot) == std::string::npos) { type = name.substr(dot + 1); name.resize(dot); }
     }
     std::error_code ec;
-    const fs::path root = subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir);
-    const std::string lang = localization.empty() ? (B(x).language.empty() ? chooseLanguage(bundle) : B(x).language) : localization;
-    std::vector<fs::path> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
+    auto& b = B(x);
+    const bool mainLookup = initialized && bundle == x.proc.bundlePath();
+    const fs::path boundary = mainLookup ?
+                              b.installedRoot : fs::canonical(bundle, ec);
+    if (ec) return {};
+    const std::string lang = localization.empty() ? (initialized ? b.language : chooseLanguage(bundle)) : localization;
+    const Bundles::ResourceKey key{bundle, name, type, subdir, lang};
+    bool installedLookup = mainLookup;
+    if (initialized && !mainLookup) {
+        const fs::path lexical = fs::absolute(bundle, ec).lexically_normal();
+        if (ec) return {};
+        installedLookup = within(b.installedPath, lexical);
+    }
+    if (installedLookup && !within(b.installedRoot, boundary)) {
+        // An installed nested bundle may have been retargeted into the sandbox.
+        // Enforce the retained installation boundary even on an uncached lookup.
+        std::lock_guard<std::mutex> lk(b.resourceMu);
+        b.resources.erase(key);
+        return {};
+    }
+    // Both lexical and canonical membership are required: a mutable Documents
+    // alias pointing into the app must never enter (or read) this cache.
+    // Nested names are uncached because intermediate directories are not stamped.
+    const bool cacheable = installedLookup && !name.empty() &&
+                           !fs::path(name).has_parent_path() && type.find('/') == std::string::npos;
+    if (cacheable) {
+        std::shared_ptr<const Bundles::ResourceEntry> cached;
+        {
+            std::lock_guard<std::mutex> lk(b.resourceMu);
+            auto it = b.resources.find(key);
+            if (it != b.resources.end()) cached = it->second;
+        }
+        if (cached) {
+            bool valid = cached->boundary == boundary;
+            for (const auto& [dir, stamp] : cached->directories) {
+                if (!valid) break;
+                ec.clear();
+                const auto current = fs::last_write_time(dir, ec);
+                if (current != stamp) { valid = false; break; }
+            }
+            // Revalidate the target even when directory timestamps match:
+            // symlinks may have changed in an ancestor of a cached path.
+            if (valid && resourceInside(boundary, cached->path)) return cached->path;
+            std::lock_guard<std::mutex> lk(b.resourceMu);
+            b.resources.erase(key);
+        }
+    }
+    const fs::path root = (subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir)).lexically_normal();
+    if (!resourceInside(boundary, root)) return {};
+    const std::array<fs::path, 5> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
+    Bundles::ResourceEntry entry;
+    auto found = [&](const fs::path& path) -> std::string {
+        if (!resourceInside(boundary, path)) return {};
+        const std::string result = path.string();
+        if (cacheable) {
+            entry.path = result;
+            entry.boundary = boundary;
+            std::lock_guard<std::mutex> lk(b.resourceMu);
+            // Simple bounded eviction avoids per-hit LRU allocations/mutations.
+            if (b.resources.size() >= 4096) b.resources.clear();
+            b.resources.insert_or_assign(key, std::make_shared<const Bundles::ResourceEntry>(std::move(entry)));
+        }
+        return result;
+    };
     auto toLower = [](std::string s) {
         for (char& c : s) c = char(std::tolower(uint8_t(c)));
         return s;
     };
     for (const auto& d : dirs) {
+        if (cacheable) entry.directories.emplace_back(d, fs::last_write_time(d, ec));
         if (name.empty()) {   // first file of that type
             if (!fs::is_directory(d, ec)) continue;
-            for (auto& e : fs::directory_iterator(d, ec)) if (e.path().extension() == "." + type) return e.path().string();
+            for (auto& e : fs::directory_iterator(d, ec)) if (e.path().extension() == "." + type) {
+                const auto result = found(e.path());
+                if (!result.empty()) return result;
+            }
             continue;
         }
         const std::string ext = type.empty() ? "" : "." + type;
         for (const std::string& candidate : {name + "~iphone" + ext, name + ext}) {
             const fs::path p = d / candidate;
-            if (fs::exists(p, ec)) return p.string();
+            if (fs::exists(p, ec)) {
+                const auto result = found(p);
+                if (!result.empty()) return result;
+            }
         }
         // Case-insensitive fallback for Linux
         if (fs::is_directory(d, ec)) {
             for (const std::string& candidate : {name + "~iphone" + ext, name + ext}) {
                 const std::string targetLower = toLower(candidate);
                 for (auto& e : fs::directory_iterator(d, ec)) {
-                    if (toLower(e.path().filename().string()) == targetLower) return e.path().string();
+                    if (toLower(e.path().filename().string()) == targetLower) {
+                        const auto result = found(e.path());
+                        if (!result.empty()) return result;
+                    }
                 }
             }
         }
