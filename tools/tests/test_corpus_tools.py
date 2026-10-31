@@ -17,7 +17,9 @@ import hvm_report
 
 
 def git(repo, *args):
-    return subprocess.check_output(["git", *args], cwd=repo, text=True, stderr=subprocess.DEVNULL).strip()
+    # A caller's repository selection (for example from a git hook) must not redirect the fixture repository.
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    return subprocess.check_output(["git", *args], cwd=repo, text=True, stderr=subprocess.DEVNULL, env=env).strip()
 
 
 @unittest.skipUnless(os.name == "posix", "hvm tooling integration requires Linux/macOS")
@@ -113,7 +115,8 @@ sys.exit(int(bad))
         # tools/compat_harness/runner.py records these as a failed case whose summary is "timeout".
         for suite in ("unit", "python", "fuzz"):
             with self.subTest(suite=suite):
-                self.temp.cleanup(); self.temp = tempfile.TemporaryDirectory(); self.root = Path(self.temp.name)
+                self.root = Path(self.temp.name) / suite   # one subdirectory per subtest; setUp's cleanup removes the tree
+                self.root.mkdir()
                 repo, commits = self.repository()
                 mark = (f"r['suites']['{suite}']['cases']=[{{'id':'t','status':'fail','exitCode':None,'durationSec':1,'summary':'timeout'}}]"
                         if suite == "fuzz" else
@@ -135,6 +138,14 @@ sys.exit(int(bad))
         logs = list((self.root / "out").glob("*/run.log"))
         self.assertTrue(logs, errors.getvalue())
         self.assertIn("partial from hung runner", logs[0].read_text())
+
+    def test_changed_app_input_hash_aborts_instead_of_counting_as_bad(self):
+        repo, commits = self.repository()
+        self.runner.write_text(self.runner.read_text().replace(
+            "pathlib.Path(sys.argv[1])", "r['suites']['apps']['apps'][0]['sha256']='e'*64\npathlib.Path(sys.argv[1])", 1))
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(bisect_corpus.main(self.bisect_args(repo, commits)), 2)
+        self.assertIn("sha256", errors.getvalue())
 
     def test_duplicate_app_ids_with_different_hashes_abort(self):
         repo, commits = self.repository()
