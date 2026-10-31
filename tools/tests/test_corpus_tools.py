@@ -101,6 +101,14 @@ sys.exit(int(bad))
             self.assertEqual(bisect_corpus.main(self.bisect_args(repo, commits)), 2)
         self.assertIn("fixtures could not be resolved", errors.getvalue())
 
+    def test_timed_out_app_aborts_instead_of_counting_as_bad(self):
+        repo, commits = self.repository()
+        self.runner.write_text(self.runner.read_text().replace(
+            "pathlib.Path(sys.argv[1])", "r['suites']['apps']['apps'][0]['status']='timeout'\npathlib.Path(sys.argv[1])", 1))
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(bisect_corpus.main(self.bisect_args(repo, commits)), 2)
+        self.assertIn("timed out", errors.getvalue())
+
     def test_omitted_cases_do_not_become_a_regression(self):
         repo, commits = self.repository()
         self.runner.write_text(self.runner.read_text().replace("pathlib.Path(sys.argv[1])", "r['suites']['unit']['cases']=[]\npathlib.Path(sys.argv[1])"))

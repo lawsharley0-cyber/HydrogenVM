@@ -82,12 +82,21 @@ def observation(build, target, folder, args):
     (folder / "command.json").write_text(json.dumps(command, indent=2) + "\n")
     try:
         # Separate stdout/stderr avoids nondeterministic stream interleaving.
-        result = subprocess.run(command, capture_output=True, timeout=args.timeout, text=True, errors="replace")
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        result = subprocess.run(command, capture_output=True, timeout=args.timeout, text=True, errors="replace", check=False)
+    except subprocess.TimeoutExpired as exc:
+        # Keep whatever the hung guest printed: it is the regression evidence. Output may be bytes even with text=True.
+        for name, data in (("stdout.log", exc.stdout), ("stderr.log", exc.stderr)):
+            text = data.decode("utf-8", "replace") if isinstance(data, bytes) else (data or "")
+            (folder / name).write_text(text, encoding="utf-8")
+        raise RuntimeError(f"guest runner timed out after {args.timeout}s; partial output kept in {folder}") from exc
+    except OSError as exc:
         raise RuntimeError(f"guest runner unavailable: {exc}") from exc
     (folder / "stdout.log").write_text(result.stdout, encoding="utf-8")
     (folder / "stderr.log").write_text(result.stderr, encoding="utf-8")
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"no valid hvm report (exit {result.returncode}); see {folder / 'stderr.log'}") from exc
     required = {"exitStatus": int, "crashed": bool, "loadError": str, "perf": dict, "audio": dict}
     if not isinstance(report, dict) or any(type(report.get(k)) is not t for k, t in required.items()):
         raise ValueError("missing/invalid hvm report fields")

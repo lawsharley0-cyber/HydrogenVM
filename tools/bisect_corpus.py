@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -26,7 +27,9 @@ class GateError(RuntimeError):
 
 
 def run(argv, cwd, **kwargs):
-    return subprocess.run([str(a) for a in argv], cwd=cwd, text=True,
+    # Never inherit a caller's repository selection (e.g. from a git hook): it would defeat the disposable worktree.
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    return subprocess.run([str(a) for a in argv], cwd=cwd, text=True, env=env, check=False,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
 
 
@@ -72,6 +75,9 @@ def gate(repo, config):
             logs.append(result.stdout)
             rc = result.returncode
             if index < len(commands) - 1 and rc:
+                failed_dir = Path(config["out"]) / sha
+                failed_dir.mkdir(parents=True, exist_ok=True)
+                (failed_dir / "run.log").write_text("\n".join(logs), encoding="utf-8")
                 raise GateError(f"preparation failed ({rc}): {result.stdout[-2000:]}")
         dest = Path(config["out"]) / sha
         dest.mkdir(parents=True, exist_ok=True)
@@ -90,12 +96,20 @@ def gate(repo, config):
             measured = {c["id"] for c in report["suites"][suite]["cases"]}
             if expected - measured:
                 raise GateError(f"corpus suite {suite} omitted baseline cases")
+        for a in baseline["suites"]["apps"]["apps"]:
+            if a["status"] in ("skipped", "error"):
+                continue
+            cand = next((c for c in report["suites"]["apps"]["apps"] if c["id"] == a["id"]), None)
+            if cand is not None and cand.get("sha256") != a.get("sha256"):
+                raise GateError(f"corpus app {a['id']} input differs from the baseline (sha256); not a VM result")
         expected_apps = {a["id"] for a in baseline["suites"]["apps"]["apps"] if a["status"] not in ("skipped", "error")}
         measured_apps = {a["id"] for a in report["suites"]["apps"]["apps"] if a["status"] not in ("skipped", "error")}
         if expected_apps - measured_apps:
             raise GateError("corpus omitted previously measured apps")
         diff = diff_reports(baseline, report)
         (dest / "diff.json").write_text(json.dumps(diff, indent=2) + "\n", encoding="utf-8")
+        if any(a["status"] == "timeout" for a in report["suites"]["apps"]["apps"]):
+            raise GateError("corpus app timed out; commit was not measured")
         # summary.ok matters even if a failed case was absent from the baseline.
         bad = not report["summary"]["ok"] or not diff["ok"]
         if rc == 1 and not bad:

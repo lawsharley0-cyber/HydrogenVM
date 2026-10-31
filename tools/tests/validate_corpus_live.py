@@ -26,7 +26,7 @@ def main():
     args = ap.parse_args()
     build, out = args.build.resolve(), args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
-    commands = subprocess.check_output(["ninja", "-C", str(build), "-t", "commands", "hvm"], text=True).splitlines()
+    commands = subprocess.check_output(["ninja", "-C", str(build), "-t", "commands", "hvm"], text=True, timeout=300).splitlines()
     compile_argv = shlex.split(next(c for c in commands if " -c " in c and "/foundation/Bundle.cpp" in c))
     source = Path(compile_argv[compile_argv.index("-c") + 1])
     copied_source = out / "Bundle-regression.cpp"
@@ -38,18 +38,28 @@ def main():
     object_path = out / "Bundle.cpp.o"
     compile_argv[compile_argv.index("-c") + 1] = str(copied_source)
     compile_argv[compile_argv.index("-o") + 1] = str(object_path)
+    # Drop dependency-file flags: the copied source must not rewrite the real build's .d files.
+    cleaned, skip = [], 0
+    for arg in compile_argv:
+        if skip:
+            skip -= 1
+        elif arg in ("-MF", "-MT", "-MQ"):
+            skip = 1
+        elif arg not in ("-MD", "-MMD", "-MP"):
+            cleaned.append(arg)
+    compile_argv = cleaned
     compile_argv += ["-I", str(source.parent)]
-    subprocess.run(compile_argv, cwd=build, check=True)
+    subprocess.run(compile_argv, cwd=build, check=True, timeout=1800)
     archive = out / "libhvm_core.a"
     shutil.copyfile(build / "libhvm_core.a", archive)
-    subprocess.run(["ar", "r", str(archive), str(object_path)], check=True)
+    subprocess.run(["ar", "r", str(archive), str(object_path)], check=True, timeout=300)
     link = shlex.split(commands[-1])
     if link[:2] != [":", "&&"] or link[-2:] != ["&&", ":"]:
         raise RuntimeError("unexpected Ninja link command")
     link = link[2:-2]
     link[link.index("-o") + 1] = str(out / "hvm")
     link[link.index("libhvm_core.a")] = str(archive)
-    subprocess.run(link, cwd=build, check=True)
+    subprocess.run(link, cwd=build, check=True, timeout=1800)
     common = ["--guest", str(args.guest.resolve()), "--seconds", "3", "--timeout", "10",
               "--guest-arg=--run", "--guest-arg=TL-A"]
     equal = ab_diff.main([str(build), str(build), "--out", str(out / "identical"), *common])
