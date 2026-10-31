@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import re
 import struct
 import subprocess
@@ -286,6 +287,13 @@ def probe_one(args, ipa, mode):
     except (OSError, ValueError):
         rep = None
     issues = issues_from(rep, log_text, run_dir / 'shot.png', timed_out)
+    
+    # Tag failures with explicit ERROR: lines in the per-run log
+    with open(run_dir / 'run.log', 'a') as log_append:
+        for i in issues:
+            if i['severity'] >= 45 or i['kind'] in ('error', 'crash', 'load', 'hang', 'fault'):
+                log_append.write(f"ERROR: {i['kind']}: {i['text']}\n")
+
     worst = max([i['severity'] for i in issues], default=0)
     status = 'crash' if worst >= 90 else 'broken' if worst >= 70 else 'issues' if worst >= 45 else 'ok'
     perf = (rep or {}).get('perf') or {}
@@ -311,6 +319,9 @@ def main():
                     help='parallel games; keep it at half the CPUs or timings get unreliable')
     ap.add_argument('--launches', type=int, default=1, help='2 = relaunch on the saved data, like Test All Games')
     ap.add_argument('--baseline', type=Path, help='a previous summary.json to compare against')
+    ap.add_argument('--fast', action='store_true', help='probe a seeded random sample of games and print concise summary (<=40 lines)')
+    ap.add_argument('--seed', type=int, default=42, help='random seed for --fast game sampling')
+    ap.add_argument('--sample-size', type=int, default=3, help='number of games to sample in --fast mode')
     args = ap.parse_args()
 
     ipas = sorted(args.ipas.glob('*.ipa'))
@@ -319,17 +330,27 @@ def main():
                [p for p in ipas if args.only.lower() in p.name.lower().replace('_', '')]
     if not ipas:
         sys.exit(f'no .ipa files in {args.ipas}' + (f' matching {args.only!r}' if args.only else ''))
+
+    if args.fast:
+        rng = random.Random(args.seed)
+        sample_count = min(len(ipas), args.sample_size)
+        ipas = sorted(rng.sample(ipas, sample_count), key=lambda p: p.name)
+
     args.apps.mkdir(parents=True, exist_ok=True)
     args.out = args.out or HOME / 'probe' / time.strftime('%Y%m%d-%H%M%S')
     args.out.mkdir(parents=True, exist_ok=True)
     modes = [m.strip() for m in args.modes.split(',') if m.strip()]
     jobs = [(ipa, m) for ipa in ipas for m in modes]
-    print(f'probing {len(jobs)} runs ({len(ipas)} games x {modes}), {args.seconds}s each, {args.jobs} at a time -> {args.out}')
+    
+    if not args.fast:
+        print(f'probing {len(jobs)} runs ({len(ipas)} games x {modes}), {args.seconds}s each, {args.jobs} at a time -> {args.out}')
+    
     results = []
     with ThreadPoolExecutor(args.jobs) as pool:
         for r in pool.map(lambda j: probe_one(args, *j), jobs):
             results.append(r)
-            print(f"  {r['status']:13} {r['bundleId']} ({r['mode']}): {len(r['issues'])} issues")
+            if not args.fast:
+                print(f"  {r['status']:13} {r['bundleId']} ({r['mode']}): {len(r['issues'])} issues")
 
     groups = {}
     for r in results:
@@ -339,9 +360,21 @@ def main():
             g['runs'].append(f"{r['bundleId']}({r['mode']})")
     ranked = sorted(groups.values(), key=lambda g: (-g['severity'], -len(g['runs']), g['key']))
     build, host = current_source_provenance()
+    
+    summary_obj = {
+        'totalRuns': len(results),
+        'gamesProbed': len({r['bundleId'] for r in results}),
+        'okRuns': sum(1 for r in results if r['status'] == 'ok'),
+        'crashRuns': sum(1 for r in results if r['status'] == 'crash'),
+        'brokenRuns': sum(1 for r in results if r['status'] == 'broken'),
+        'issuesCount': len(ranked),
+        'fast': args.fast,
+        'seed': args.seed if args.fast else None,
+    }
+
     summary = {'kind': 'hvm-probe', 'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'seconds': args.seconds,
                'modes': modes, 'launches': args.launches, 'build': build, 'host': host,
-               'results': results, 'issues': ranked, 'taintedRuns': tainted_runs(results)}
+               'results': results, 'issues': ranked, 'summary': summary_obj, 'taintedRuns': tainted_runs(results)}
 
     diff = None
     if args.baseline and args.baseline.exists():
@@ -378,7 +411,29 @@ def main():
         latest.symlink_to(args.out.resolve())
     except OSError:
         pass
-    print(f"\n{len(ranked)} distinct issues. Read {args.out / 'summary.md'}")
+
+    if args.fast:
+        out_lines = [
+            f"=== PROBE SUMMARY (fast mode, seed={args.seed}) ===",
+            f"Runs: {len(results)} ({len(ipas)} games x {modes}), {args.seconds}s each",
+            f"Statuses: {summary_obj['okRuns']} ok, {summary_obj['crashRuns']} crash, {summary_obj['brokenRuns']} broken",
+            f"Issues found: {len(ranked)} distinct issues",
+            "",
+            "Runs detail:"
+        ]
+        for r in results:
+            out_lines.append(f"  {r['status']:10} {r['bundleId']} ({r['mode']}): {len(r['issues'])} issues [dir: {r.get('dir')}]")
+        out_lines.append("")
+        out_lines.append("Top issues:")
+        for n, g in enumerate(ranked[:15], 1):
+            out_lines.append(f"  {n}. [sev {g['severity']}] {g['key'][:60]}")
+        out_lines.append(f"\nFull report written to {args.out / 'summary.json'}")
+        
+        # Ensure output is at most 40 lines
+        trimmed_output = '\n'.join(out_lines[:40])
+        print(trimmed_output)
+    else:
+        print(f"\n{len(ranked)} distinct issues. Read {args.out / 'summary.md'}")
 
 
 if __name__ == '__main__':
