@@ -285,6 +285,248 @@ bool zombieMetadataStaysCapped() {
     return held && evicted && recent && kept;
 }
 
+int runPropertyTests(const std::string& plantOffByOne = "") {
+    int pass = 0, fail = 0;
+    auto check = [&](bool ok, const char* what) {
+        if (ok) { std::printf("  ok   %s\n", what); ++pass; }
+        else { std::printf("  FAIL %s\n", what); ++fail; }
+    };
+
+    using namespace Hydrogen::Runtime;
+    ProcessConfig cfg;
+    const std::string home = "/tmp/hvm_prop_tests_" + std::to_string(getpid());
+    std::error_code ec;
+    std::filesystem::create_directories(home + "/Test.app", ec);
+    cfg.homePath = home;
+    cfg.bundlePath = home + "/Test.app";
+    Process p(cfg);
+    auto& cpu = p.mainThread().cpu;
+    p.mem().map(0xbee00000, 1u << 20, Memory::kProtRW);
+    cpu.r[CPU::kSP] = 0xbef00000 - 256;
+
+    auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
+        auto sym = p.lookupSymbol(name);
+        return sym ? uint32_t(p.callGuest(cpu, *sym, args)) : 0u;
+    };
+
+    const uint32_t bufA = 0xbee10000;
+    const uint32_t bufB = 0xbee20000;
+
+    // 1. String property tests vs glibc
+    // 1a. strlen & strnlen
+    {
+        bool strOk = true;
+        for (size_t len = 0; len <= 64; ++len) {
+            std::string s(len, char('a' + (len % 26)));
+            p.mem().copyIn(bufA, s.c_str(), s.size() + 1);
+            uint32_t gLen = call("_strlen", {bufA});
+            if (plantOffByOne == "strlen" && len == 10) gLen += 1;
+            if (gLen != s.size()) { strOk = false; break; }
+
+            for (size_t maxlen = 0; maxlen <= len + 10; ++maxlen) {
+                uint32_t gNLen = call("_strnlen", {bufA, uint32_t(maxlen)});
+                if (plantOffByOne == "strnlen" && len == 10 && maxlen == 5) gNLen += 1;
+                size_t expNLen = std::min(s.size(), maxlen);
+                if (gNLen != expNLen) { strOk = false; break; }
+            }
+            if (!strOk) break;
+        }
+        check(strOk, "strlen and strnlen property tests match glibc across generated string lengths");
+    }
+
+    // 1b. strcmp & strncmp
+    {
+        bool cmpOk = true;
+        std::vector<std::string> inputs = {"", "a", "b", "aa", "ab", "ba", "hello", "world", "hydrogen", "hydrogenvm"};
+        for (const auto& s1 : inputs) {
+            p.mem().copyIn(bufA, s1.c_str(), s1.size() + 1);
+            for (const auto& s2 : inputs) {
+                p.mem().copyIn(bufB, s2.c_str(), s2.size() + 1);
+                int32_t gCmp = int32_t(call("_strcmp", {bufA, bufB}));
+                int hostCmp = std::strcmp(s1.c_str(), s2.c_str());
+                if ((gCmp > 0) != (hostCmp > 0) || (gCmp < 0) != (hostCmp < 0) || (gCmp == 0) != (hostCmp == 0)) {
+                    cmpOk = false; break;
+                }
+                for (uint32_t n = 0; n <= 12; ++n) {
+                    int32_t gNCmp = int32_t(call("_strncmp", {bufA, bufB, n}));
+                    int hostNCmp = std::strncmp(s1.c_str(), s2.c_str(), n);
+                    if ((gNCmp > 0) != (hostNCmp > 0) || (gNCmp < 0) != (hostNCmp < 0) || (gNCmp == 0) != (hostNCmp == 0)) {
+                        cmpOk = false; break;
+                    }
+                }
+                if (!cmpOk) break;
+            }
+            if (!cmpOk) break;
+        }
+        check(cmpOk, "strcmp and strncmp property tests match glibc across paired test strings");
+    }
+
+    // 1c. strlcpy
+    {
+        bool lcpyOk = true;
+        std::string src = "The quick brown fox jumps over the lazy dog";
+        p.mem().copyIn(bufB, src.c_str(), src.size() + 1);
+        for (size_t dstSize = 0; dstSize <= src.size() + 5; ++dstSize) {
+            std::vector<char> guestDst(dstSize + 8, 'X');
+            p.mem().copyIn(bufA, guestDst.data(), guestDst.size());
+
+            uint32_t ret = call("_strlcpy", {bufA, bufB, uint32_t(dstSize)});
+            if (plantOffByOne == "strlcpy" && dstSize == 10) ret += 1;
+
+            if (ret != src.size()) { lcpyOk = false; break; }
+            p.mem().copyOut(guestDst.data(), bufA, guestDst.size());
+
+            if (dstSize > 0) {
+                size_t expectedCopied = std::min(dstSize - 1, src.size());
+                if (std::memcmp(guestDst.data(), src.data(), expectedCopied) != 0) { lcpyOk = false; break; }
+                if (guestDst[expectedCopied] != '\0') { lcpyOk = false; break; }
+                if (guestDst[dstSize + 1] != 'X') { lcpyOk = false; break; }
+            } else {
+                if (guestDst[0] != 'X') { lcpyOk = false; break; }
+            }
+        }
+        check(lcpyOk, "strlcpy property test matches BSD/glibc behavior with bounds safety");
+    }
+
+    // 2. Memory helpers vs glibc
+    // 2a. memcpy & memset & memchr
+    {
+        bool memOk = true;
+        for (size_t n = 0; n <= 128; ++n) {
+            std::vector<uint8_t> testData(n);
+            for (size_t i = 0; i < n; ++i) testData[i] = uint8_t((i * 37 + 13) & 0xFF);
+            p.mem().copyIn(bufB, testData.data(), n);
+
+            uint32_t memsetRet = call("_memset", {bufA, 0x5A, uint32_t(n)});
+            if (memsetRet != bufA) { memOk = false; break; }
+            std::vector<uint8_t> readBack(n);
+            p.mem().copyOut(readBack.data(), bufA, n);
+            for (size_t i = 0; i < n; ++i) {
+                if (readBack[i] != 0x5A) { memOk = false; break; }
+            }
+            if (!memOk) break;
+
+            uint32_t memcpyRet = call("_memcpy", {bufA, bufB, uint32_t(n)});
+            if (memcpyRet != bufA) { memOk = false; break; }
+            p.mem().copyOut(readBack.data(), bufA, n);
+            if (std::memcmp(readBack.data(), testData.data(), n) != 0) { memOk = false; break; }
+
+            if (n > 0) {
+                uint8_t targetByte = testData[n / 2];
+                uint32_t gChr = call("_memchr", {bufB, targetByte, uint32_t(n)});
+                void* hChr = std::memchr(testData.data(), targetByte, n);
+                uint32_t expectedAddr = bufB + uint32_t((uint8_t*)hChr - testData.data());
+                if (gChr != expectedAddr) { memOk = false; break; }
+            }
+        }
+        check(memOk, "memset, memcpy and memchr property tests match glibc across sizes [0..128]");
+    }
+
+    // 2b. memcmp
+    {
+        bool memcmpOk = true;
+        std::vector<uint8_t> arr1(64, 0x42);
+        std::vector<uint8_t> arr2(64, 0x42);
+        arr2[30] = 0x43;
+
+        p.mem().copyIn(bufA, arr1.data(), 64);
+        p.mem().copyIn(bufB, arr2.data(), 64);
+
+        int32_t cBefore = int32_t(call("_memcmp", {bufA, bufB, 30}));
+        int32_t cAt = int32_t(call("_memcmp", {bufA, bufB, 31}));
+        if (plantOffByOne == "memcmp") cBefore = 1;
+
+        if (cBefore != 0 || cAt >= 0) memcmpOk = false;
+        check(memcmpOk, "memcmp property test correctly distinguishes exact boundary match and mismatch");
+    }
+
+    // 3. formatGuest vs glibc snprintf
+    {
+        bool fmtOk = true;
+        struct IntTestCase {
+            const char* fmt;
+            int32_t val;
+        };
+        std::vector<IntTestCase> intCases = {
+            {"%d", 0}, {"%d", 1}, {"%d", -1}, {"%d", 42}, {"%d", -42}, {"%d", 2147483647},
+            {"%d", int32_t(-2147483647 - 1)},
+            {"%i", 123}, {"%u", 0}, {"%u", 42}, {"%u", int32_t(-1)},
+            {"%x", 0}, {"%x", 0x12ab}, {"%X", 0x12ab}, {"%08x", 0x12ab}, {"%08X", int32_t(0xbeef)},
+            {"%8d", 42}, {"%-8d", 42}, {"%8d", -42}, {"%-8d", -42},
+            {"%+d", 42}, {"%+d", -42}, {"% d", 42}, {"% d", -42},
+            {"%.5d", 42}, {"%10.5d", 42}, {"%-10.5d", 42},
+            {"%o", 0}, {"%o", 0755}, {"%#o", 0755}, {"%#x", int32_t(0xabcd)}
+        };
+
+        for (const auto& tc : intCases) {
+            char hostBuf[256];
+            std::snprintf(hostBuf, sizeof(hostBuf), tc.fmt, tc.val);
+
+            cpu.r[0] = uint32_t(tc.val);
+            Runtime::ArgReader a(cpu, p.mem(), 0);
+            std::string guestOut = Runtime::formatGuest(p, tc.fmt, a);
+
+            if (plantOffByOne == "sprintf" && std::string(tc.fmt) == "%08x") {
+                guestOut += "0";
+            }
+
+            if (guestOut != hostBuf) {
+                fmtOk = false;
+                break;
+            }
+        }
+
+        struct LongTestCase {
+            const char* fmt;
+            uint64_t val;
+        };
+        std::vector<LongTestCase> longCases = {
+            {"%lld", 0}, {"%lld", 1}, {"%lld", uint64_t(-1)}, {"%lld", 0x123456789ABCDEF0ULL},
+            {"%llu", 0}, {"%llu", 10000000000ULL},
+            {"%llx", 0}, {"%llx", 0x123456789ABCDEF0ULL}, {"%016llx", 0x12345678ULL}
+        };
+        for (const auto& tc : longCases) {
+            char hostBuf[256];
+            std::snprintf(hostBuf, sizeof(hostBuf), tc.fmt, (unsigned long long)tc.val);
+
+            cpu.r[0] = uint32_t(tc.val);
+            cpu.r[1] = uint32_t(tc.val >> 32);
+            Runtime::ArgReader a(cpu, p.mem(), 0);
+            std::string guestOut = Runtime::formatGuest(p, tc.fmt, a);
+            if (guestOut != hostBuf) {
+                fmtOk = false;
+                break;
+            }
+        }
+
+        {
+            std::string sample = "Hello World";
+            p.mem().copyIn(bufA, sample.c_str(), sample.size() + 1);
+
+            cpu.r[0] = bufA;
+            Runtime::ArgReader aStr(cpu, p.mem(), 0);
+            std::string sOut = Runtime::formatGuest(p, "%s", aStr);
+            if (sOut != sample) fmtOk = false;
+
+            cpu.r[0] = bufA;
+            Runtime::ArgReader aPrec(cpu, p.mem(), 0);
+            std::string pOut = Runtime::formatGuest(p, "%.5s", aPrec);
+            if (pOut != "Hello") fmtOk = false;
+
+            cpu.r[0] = 0;
+            Runtime::ArgReader aNull(cpu, p.mem(), 0);
+            std::string nOut = Runtime::formatGuest(p, "%s", aNull);
+            if (nOut != "(null)") fmtOk = false;
+        }
+
+        check(fmtOk, "formatGuest printf-family property tests match glibc across types, widths, precisions and flags");
+    }
+
+    std::filesystem::remove_all(home, ec);
+    std::printf("glibc property tests: %d passed, %d failed\n", pass, fail);
+    return fail;
+}
+
 int runFullSubsystemTests() {
     using namespace Hydrogen;
     using namespace Hydrogen::Runtime;
@@ -4779,6 +5021,11 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    {
+        int propFails = runPropertyTests("");
+        check(propFails == 0, "glibc property tests for printf/string/memory helpers (T5d)");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
@@ -4797,6 +5044,14 @@ int main(int argc, char** argv) {
         std::printf("rate=%d channels=%d frames=%zu seconds=%.9f\n", audio.sampleRate, audio.channels,
                     audio.stereoPcm.size()/2, audio.duration);
         return out ? 0 : 2;
+    }
+    if (argc >= 2 && std::string(argv[1]) == "propertytest") {
+        std::string plant = "";
+        if (argc >= 4 && std::string(argv[2]) == "--plant-off-by-one") {
+            plant = argv[3];
+        }
+        int fails = runPropertyTests(plant);
+        return fails == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string(argv[1]) == "selftest") {
         auto r = Hydrogen::runSelfTest();
