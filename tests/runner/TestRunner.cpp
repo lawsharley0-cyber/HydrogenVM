@@ -234,6 +234,8 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cmath>
 #include <cstring>
 
+int runMinimp3HwcapChecks();
+
 namespace {
 
 // Independent of HVM_ZOMBIES in the environment: enableZombies is the same
@@ -295,6 +297,12 @@ int runFullSubsystemTests() {
         if (ok) { std::printf("  ok   %s\n", what); ++pass; }
         else { std::printf("  FAIL %s\n", what); ++fail; }
     };
+
+    {
+        const int hwcapFails = runMinimp3HwcapChecks();
+        check(hwcapFails == 0,
+              "minimp3 enables NEON only for the 32-bit ARM HWCAP_NEON bit");
+    }
 
     {
         auto wav = [](int channels, uint32_t fact) {
