@@ -109,6 +109,17 @@ class TaintedRunListTests(unittest.TestCase):
         self.assertTrue(cell.startswith("`") and cell.endswith("`"), cell)
         self.assertIn("evil'[link](http://x)'name", cell)
 
+    def test_hostile_game_mode_status_and_folder_cannot_break_the_row(self):
+        # bundleId comes from the imported app, mode from the CLI, dir from input-derived paths.
+        r = run("evil|id`x\nnext", report(2, [api("_a", 2)]), status="ok|bad", mode="mo|de`\r")
+        r["dir"] = "/runs/a|b`c\nd"
+        md = hvm_probe.tainted_md(hvm_probe.tainted_runs([r]))
+        row = md[-1]
+        self.assertNotIn("\n", row)
+        self.assertNotIn("\r", row)
+        self.assertEqual(row.count("|"), 8, row)            # 7 cells; every hostile '|' was replaced
+        self.assertEqual(row.count("`"), 4, row)            # only the two code spans (Most called, Run folder)
+
     def test_markdown_says_so_when_nothing_is_tainted(self):
         text = "\n".join(hvm_probe.tainted_md(hvm_probe.tainted_runs([run("com.clean.game", report())])))
         self.assertIn("Tainted runs", text)

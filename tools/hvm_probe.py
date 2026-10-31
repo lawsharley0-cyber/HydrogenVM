@@ -230,6 +230,11 @@ def tainted_runs(results):
     return sorted(rows, key=lambda r: (-r['stubHits'], str(r['bundleId']), str(r['mode'])))
 
 
+def md_cell(value):
+    """One value made safe for a Markdown table cell (and for a code span inside it)."""
+    return str(value).replace('`', "'").replace('|', '/').replace('\r', '\\r').replace('\n', '\\n')
+
+
 def tainted_md(rows):
     """summary.md section for tainted_runs(); says so when there are none."""
     md = ['', '## Tainted runs', '',
@@ -239,11 +244,11 @@ def tainted_md(rows):
         return md + ['No tainted runs.']
     md += ['| Game | Mode | Status | Stub hits | Distinct APIs | Most called | Run folder |', '|---|---|---|---:|---:|---|---|']
     for r in rows:
-        # API names come from the guest: keep a name inside its table cell (no '|'), on one line (no CR/LF)
-        # and inside its code span (no backtick).
-        top = ', '.join('`' + n.replace('`', "'").replace('|', '/').replace('\r', '\\r').replace('\n', '\\n') + '`'
-                        for n in r['topMissing'])
-        md.append(f"| {r['bundleId']} | {r['mode']} | {r['status']} | {r['stubHits']} | {r['distinctMissing']} | {top} | `{r.get('dir', '')}` |")
+        # Every value here is input-derived (guest API names, the app's bundle id, the CLI mode, paths): keep
+        # each inside its table cell (no '|'), on one line (no CR/LF) and, in a code span, free of backticks.
+        top = ', '.join('`' + md_cell(n) + '`' for n in r['topMissing'])
+        md.append(f"| {md_cell(r['bundleId'])} | {md_cell(r['mode'])} | {md_cell(r['status'])} | {md_cell(r['stubHits'])} | "
+                  f"{md_cell(r['distinctMissing'])} | {top} | `{md_cell(r.get('dir', ''))}` |")
     return md
 
 
