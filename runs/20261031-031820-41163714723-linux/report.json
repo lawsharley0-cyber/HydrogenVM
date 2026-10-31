@@ -1,0 +1,35 @@
+{
+  "host": {
+    "os": "Linux 7.0.0-1017-azure",
+    "arch": "x86_64",
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "commit": "4930e8a",
+    "date": "2026-10-31T03:17:41+00:00"
+  },
+  "seconds": 38.7,
+  "ok": false,
+  "suites": {
+    "build": {
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "seconds": 38.67898368835449,
+      "tests": [
+        {
+          "name": "engine",
+          "result": "fail",
+          "seconds": 38.679
+        }
+      ]
+    }
+  },
+  "speed": {},
+  "problems": [
+    {
+      "suite": "build",
+      "test": "ninja",
+      "severity": "fail",
+      "message": "/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/foundation/Bundle.cpp:1030:15: error: no member named 'Hydrogen' in namespace 'Hydrogen::Runtime'; did you mean simply 'Hydrogen'?\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/foundation/Bundle.cpp:1083:15: error: no member named 'Hydrogen' in namespace 'Hydrogen::Runtime'; did you mean simply 'Hydrogen'?\n2 errors generated."
+    }
+  ]
+}
