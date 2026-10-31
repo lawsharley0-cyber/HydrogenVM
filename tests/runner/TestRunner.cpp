@@ -2186,6 +2186,176 @@ int runFullSubsystemTests() {
               "UIViewController setView replaces the installed root view in its window");
     }
 
+    // NIB loading: ~iphone before the base name, and a real exception when the
+    // file is missing or cannot be decoded. Landscape/Portrait are not modifiers.
+    {
+        // The standalone fulltest runner has no on-disk app bundle by default.
+        // NSBundle needs the directory to exist before mainBundle is queried.
+        std::error_code bundleEc;
+        const bool madeTestBundle = std::filesystem::create_directories(cx.proc.bundlePath(), bundleEc);
+        const ObjC::Class bundleCls = r.getClass("NSBundle");
+        const ObjC::id bundle = ObjC::id(r.send(cpu, bundleCls, "mainBundle"));
+
+        // No guest @catch is installed here, so the raised NSException terminates
+        // the host→guest call. The text is the uncaught-exception message.
+        const auto nibFailure = [&](const char* name) -> std::string {
+            try {
+                r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, name), 0, 0});
+                return {};
+            } catch (const CPU::GuestFault& e) {
+                return e.what();
+            } catch (const ObjC::ObjCError& e) {
+                return e.what();
+            } catch (const std::exception& e) {
+                return e.what();
+            }
+        };
+        const auto isNibException = [](const std::string& msg, const char* name) {
+            return msg.find("NSInternalInconsistencyException") != std::string::npos &&
+                   msg.find("Could not load NIB in bundle") != std::string::npos &&
+                   msg.find(name) != std::string::npos;
+        };
+        const std::string missing = nibFailure("DefinitelyMissingNibThatDoesntExist");
+        if (!isNibException(missing, "DefinitelyMissingNibThatDoesntExist"))
+            std::printf("missing NIB raised: %s\n", missing.empty() ? "(returned nil)" : missing.c_str());
+        check(isNibException(missing, "DefinitelyMissingNibThatDoesntExist"),
+              "loadNibNamed:owner:options: missing NIB raises NSInternalInconsistencyException");
+
+        // A real, minimal NIBArchive: root -> NSArray -> NSString. This must
+        // decode a known object. A missing or malformed name raises instead.
+        auto nibBytes = [](const std::string& marker) {
+            std::vector<uint8_t> b(50, 0);
+            const char magic[] = "NIBArchive";
+            std::copy(magic, magic + 10, b.begin());
+            auto u32 = [&](uint32_t n) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(n >> (i * 8))); };
+            auto var = [&](uint32_t n) { b.push_back(uint8_t(n | 0x80)); };
+            auto set32 = [&](size_t off, uint32_t n) {
+                for (int i = 0; i < 4; ++i) b[off + i] = uint8_t(n >> (i * 8));
+            };
+            // The varint writer is enough for this three-object fixture; all
+            // indices and string lengths fit in seven bits.
+            const uint32_t objOff = uint32_t(b.size());
+            for (const auto& obj : {std::array<uint32_t, 3>{0, 0, 1}, {1, 1, 1}, {2, 2, 1}})
+                for (uint32_t n : obj) var(n);
+            const uint32_t keyOff = uint32_t(b.size());
+            for (const std::string key : {"UINibTopLevelObjectsKey", "NS.objects", "NS.string"}) {
+                var(uint32_t(key.size())); b.insert(b.end(), key.begin(), key.end());
+            }
+            const uint32_t valOff = uint32_t(b.size());
+            var(0); b.push_back(10); u32(1);  // root -> NSArray
+            var(1); b.push_back(10); u32(2);  // NSArray -> NSString
+            var(2); b.push_back(8); var(uint32_t(marker.size()));
+            b.insert(b.end(), marker.begin(), marker.end());
+            const uint32_t clsOff = uint32_t(b.size());
+            for (const std::string cls : {"NSObject", "NSArray", "NSString"}) {
+                var(uint32_t(cls.size())); var(0);
+                b.insert(b.end(), cls.begin(), cls.end());
+            }
+            set32(18, 3); set32(22, objOff); set32(26, 3); set32(30, keyOff);
+            set32(34, 3); set32(38, valOff); set32(42, 3); set32(46, clsOff);
+            return b;
+        };
+        auto writeNib = [](const std::string& path, const std::vector<uint8_t>& bytes) {
+            FILE* f = std::fopen(path.c_str(), "wb");
+            if (!f) return false;
+            const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+            return std::fclose(f) == 0 && ok;
+        };
+        const std::string base = cx.proc.bundlePath() + "/HVMNibFixture189";
+        const std::string exact = base + ".nib", idiom = base + "~iphone.nib";
+        const std::string malformed = cx.proc.bundlePath() + "/HVMMalformedNib189.nib";
+        // Previous interrupted test runs may have left these exact fixtures.
+        std::remove(exact.c_str()); std::remove(idiom.c_str()); std::remove(malformed.c_str());
+        const auto loadMarker = [&](const char* name) -> std::string {
+            const ObjC::id loaded = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, name), 0, 0}));
+            if (!loaded || uint32_t(r.send(cpu, loaded, "count")) != 1) return {};
+            const ObjC::id value = ObjC::id(r.send(cpu, loaded, "objectAtIndex:", {0}));
+            return Foundation::utf8(cx, value);
+        };
+        const bool wroteExact = writeNib(exact, nibBytes("exact-object"));
+        bool decodedExact = false, decodedIdiom = false, preferredIdiom = false;
+        bool orientationRejected = false, malformedRejected = false;
+        if (wroteExact) {
+            decodedExact = loadMarker("HVMNibFixture189") == "exact-object";
+            const bool wroteIdiom = writeNib(idiom, nibBytes("idiom-object"));
+            if (wroteIdiom) {
+                preferredIdiom = loadMarker("HVMNibFixture189") == "idiom-object";
+                std::remove(exact.c_str());
+                decodedIdiom = loadMarker("HVMNibFixture189") == "idiom-object";
+                // "Landscape" and "Portrait" are not resource modifiers. With the
+                // idiom file present, those names must still fail to load.
+                const std::string landscape = nibFailure("HVMNibFixture189Landscape");
+                const std::string portrait = nibFailure("HVMNibFixture189Portrait");
+                orientationRejected = isNibException(landscape, "HVMNibFixture189Landscape") &&
+                                      isNibException(portrait, "HVMNibFixture189Portrait");
+                if (!orientationRejected) {
+                    std::printf("landscape NIB raised: %s\nportrait NIB raised: %s\n",
+                                landscape.empty() ? "(returned nil)" : landscape.c_str(),
+                                portrait.empty() ? "(returned nil)" : portrait.c_str());
+                }
+            }
+            if (writeNib(malformed, std::vector<uint8_t>{'b', 'a', 'd'})) {
+                const std::string bad = nibFailure("HVMMalformedNib189");
+                malformedRejected = isNibException(bad, "HVMMalformedNib189");
+                if (!malformedRejected) std::printf("malformed NIB raised: %s\n", bad.empty() ? "(returned nil)" : bad.c_str());
+            }
+        }
+        std::remove(exact.c_str()); std::remove(idiom.c_str()); std::remove(malformed.c_str());
+        if (madeTestBundle) std::filesystem::remove(cx.proc.bundlePath(), bundleEc);
+        check(decodedExact && decodedIdiom && preferredIdiom,
+              "NSBundle decodes valid exact/~iphone NIBs and prefers idiom-specific resource");
+        check(orientationRejected,
+              "loadNibNamed: does not strip Landscape or Portrait from the nib name");
+        check(malformedRejected,
+              "loadNibNamed: malformed NIB raises NSInternalInconsistencyException");
+    }
+
+    // UIButton shadow offset getter/setter
+    {
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id btn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 100.0f, 100.0f});
+
+        CG::CGSize s{2.0f, 3.0f};
+        const ObjC::SEL sSel = r.sel("setTitleShadowOffset:");
+
+        // setTitleShadowOffset: takes CGSize which is passed in registers on ARMv7
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), sSel), {btn, sSel, std::bit_cast<uint32_t>(s.width), std::bit_cast<uint32_t>(s.height)});
+
+        uint32_t tmp = cx.proc.heap().allocZeroed(16);
+        const ObjC::SEL gSel = r.sel("titleShadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), gSel), {tmp, btn, gSel});
+        CG::CGSize sOut = CG::readStruct<CG::CGSize>(cx, tmp);
+        cx.proc.heap().free(tmp);
+
+        check(sOut.width == 2.0f && sOut.height == 3.0f, "UIButton setTitleShadowOffset:/titleShadowOffset preserves custom shadow offset");
+        const ObjC::id titleLabel = ObjC::id(r.send(cpu, btn, "titleLabel"));
+        const uint32_t labelResult = cx.proc.heap().allocZeroed(12);
+        const ObjC::SEL labelSel = r.sel("shadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(titleLabel), labelSel), {labelResult, titleLabel, labelSel});
+        const CG::CGSize labelOffset = CG::readStruct<CG::CGSize>(cx, labelResult);
+        cx.proc.heap().free(labelResult);
+        check(labelOffset.width == 2.0f && labelOffset.height == 3.0f,
+              "UIButton shadow-offset setter propagates ARMv7 CGSize to its UILabel");
+    }
+
+    // A new UIButton reports a zero title shadow offset (UIKit's default), so its title label must start there
+    // too; the UILabel default {0,-1} would draw a displaced shadow for a button that reports no offset.
+    {
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id btn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 100.0f, 100.0f});
+        const ObjC::SEL gSel = r.sel("titleShadowOffset");
+        const uint32_t tmp = cx.proc.heap().allocZeroed(16);
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), gSel), {tmp, btn, gSel});
+        const CG::CGSize reported = CG::readStruct<CG::CGSize>(cx, tmp);
+        const ObjC::id titleLabel = ObjC::id(r.send(cpu, btn, "titleLabel"));
+        const ObjC::SEL labelSel = r.sel("shadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(titleLabel), labelSel), {tmp, titleLabel, labelSel});
+        const CG::CGSize labelOffset = CG::readStruct<CG::CGSize>(cx, tmp);
+        cx.proc.heap().free(tmp);
+        check(reported.width == 0.0f && reported.height == 0.0f && labelOffset.width == 0.0f && labelOffset.height == 0.0f,
+              "a new UIButton's title label starts with the button's zero shadow offset, not the UILabel default");
+    }
+
     // 2d. UITabBarController, UITabBar, UITabBarItem
     {
         const ObjC::Class vcCls = r.getClass("UIViewController");
