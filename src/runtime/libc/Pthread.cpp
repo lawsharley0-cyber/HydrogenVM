@@ -176,6 +176,9 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
             }
         }
     }
+    // The process is ending: a woken waiter must not queue on a mutex that another dying thread still owns
+    // (it would only notice the stop at the next 50 ms mutex poll), so leave without reacquiring it.
+    if (x.proc.stopping()) checkStop(x);
     struct MutexRestorer {
         GuestMutex& m; int saved; bool locked;
         ~MutexRestorer() { if (locked) { std::lock_guard<std::mutex> lk(m.m); m.count = saved; } }
