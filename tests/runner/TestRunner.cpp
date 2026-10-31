@@ -512,6 +512,37 @@ int runFullSubsystemTests() {
             check(ok, "Mixer passes a mix that stays under full scale through bit-for-bit (no level change)");
         }
 
+        // 3b. Stereo image: the limiter gain is shared by both channels. Two voices with unequal channel
+        //     levels (left bus peak 1.4 FS, right 0.7 FS) must keep their 2:1 ratio. Clamping or limiting
+        //     the channels independently would flatten only the left one and bend the image.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto uneven = std::make_shared<std::vector<int16_t>>(size_t(kLoopFrames) * 2);
+            for (int n = 0; n < kLoopFrames; ++n) {
+                const double w = std::sin(kTwoPi * double(n) / 100.0) * 32767.0;
+                (*uneven)[size_t(n) * 2] = int16_t(std::lround(0.7 * w));
+                (*uneven)[size_t(n) * 2 + 1] = int16_t(std::lround(0.35 * w));
+            }
+            m.play(uneven, 44100, loop);
+            m.play(uneven, 44100, loop);
+            std::vector<float> outL, outR, l(512), r(512);
+            while (outL.size() < kFrames) {
+                m.render(l.data(), r.data(), 512);
+                outL.insert(outL.end(), l.begin(), l.end());
+                outR.insert(outR.end(), r.begin(), r.end());
+            }
+            double worstRatio = 0, peakL = 0;
+            for (size_t i = kSettle; i < kFrames; ++i) {
+                peakL = std::max(peakL, std::fabs(double(outL[i])));
+                if (std::fabs(outL[i]) > 0.05f)   // skip zero crossings, where the ratio is noise
+                    worstRatio = std::max(worstRatio, std::fabs(double(outR[i]) / double(outL[i]) - 0.5));
+            }
+            const bool ok = worstRatio < 0.01 && peakL < 1.0 && peakL > 0.6;
+            if (!ok) std::printf("    mixer stereo image: worst |R/L - 0.5| = %.4f, left peak %.4f\n", worstRatio, peakL);
+            check(ok, "Mixer limits both channels with one shared gain, so unequal channel levels keep their ratio");
+        }
+
         // 4. Stream stitching: a 22.05 kHz stream of a 441 Hz sine (50-frame period) queued as three
         //    1000-frame buffers. Output frame j reads source position j/2 of the concatenated stream, so
         //    the ideal value at an odd j is the mean of source frames j/2 and j/2 + 1, also across a
