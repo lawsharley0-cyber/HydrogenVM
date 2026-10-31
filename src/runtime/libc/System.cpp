@@ -1035,6 +1035,11 @@ int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     return 0;
 }
 
+int32_t sys_sem_close(Ctx& x, uint32_t sem) {
+    if (sem == 0 || sem == 0xFFFFFFFFu) { setErrno(x, 22); /* EINVAL */ return -1; }
+    return 0; // successfully "closed" the named semaphore
+}
+
 } // namespace
 
 void registerLibcSystem(Process& p) {
@@ -1084,6 +1089,7 @@ void registerLibcSystem(Process& p) {
     p.def<&s_sysconf>("_sysconf");
     p.def<&s_getrlimit>("_getrlimit");
     p.def<&s_ok2>("_setrlimit");
+    p.def<&sys_sem_close>("_sem_close");
     p.def<&s_getrusage>("_getrusage");
     p.def<&s_sysctl>("_sysctl");
     p.def<&s_sysctlbyname>("_sysctlbyname");

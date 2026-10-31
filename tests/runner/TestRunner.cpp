@@ -2953,6 +2953,18 @@ int runFullSubsystemTests() {
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
+
+        uint32_t fboTest = 0;
+        callGL("_glGenFramebuffers", {1, idsAddr});
+        fboTest = proc.mem().read<uint32_t>(idsAddr);
+        callGL("_glBindFramebuffer", {0x8D40, fboTest});
+        r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41});
+
+        uint32_t currentFBO = 0;
+        callGL("_glGetIntegerv", {0x8CA6 /* GL_FRAMEBUFFER_BINDING */, idsAddr});
+        currentFBO = proc.mem().read<uint32_t>(idsAddr);
+        check(currentFBO == fboTest, "FBO binding is preserved across presentRenderbuffer");
+        callGL("_glBindFramebuffer", {0x8D40, 0});
     }
 
     // 2f2. libstdc++ containers (GCC 4.2 ABI): red-black tree, COW std::string

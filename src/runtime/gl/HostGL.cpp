@@ -1053,7 +1053,12 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
                 if (uint32_t(k >> 32) == hc->guestSharegroup && v.layer) { d = v; rbName = uint32_t(k); break; }
         }
     }
-    if (hgDebugLevel >= 2) p.log(LogLevel::Debug, "GL --- present rb " + std::to_string(rbName));
+    if (hgDebugLevel >= 2) {
+        const int32_t currFb = hgGetInt(hc, kFramebufferBinding);
+        p.log(LogLevel::Debug, "GL --- present rb " + std::to_string(rbName) +
+              ", fbo bound: " + std::to_string(currFb) +
+              ", rb bound: " + std::to_string(rb));
+    }
     if (!d.layer || d.width <= 0 || d.height <= 0) return false;
     layer = d.layer;
     width = d.width;
@@ -1065,6 +1070,13 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     if (sample && hc->fn.glReadPixels) {
         // Diagnostic: sample the frame before it goes to the display, so a blank
         // screen can be told apart from a frame the GPU really rendered black.
+
+        const int32_t prevFb = hgGetInt(hc, kFramebufferBinding);
+        if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
+        hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
+        hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+        if (hc->fn.glFlush) hc->fn.glFlush();
+
         uint64_t sum[3] = {}, lit = 0;
         for (int gy = 0; gy < 8; ++gy)
             for (int gx = 0; gx < 8; ++gx) {
@@ -1073,6 +1085,9 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
                 sum[0] += px[0]; sum[1] += px[1]; sum[2] += px[2];
                 if (px[0] > 8 || px[1] > 8 || px[2] > 8) ++lit;
             }
+
+        hc->fn.glBindFramebuffer(kFramebuffer, uint32_t(prevFb));
+
         probe = " (average rgb " + std::to_string(sum[0] / 64) + "," + std::to_string(sum[1] / 64) + "," +
                 std::to_string(sum[2] / 64) + ", " + std::to_string(lit) + "/64 samples lit)";
     }
@@ -1103,6 +1118,7 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
     hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
     hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+    if (hc->fn.glFlush) hc->fn.glFlush();
     const int32_t prevPack = hgGetInt(hc, kPackAlignment);
     hc->fn.glPixelStorei(kPackAlignment, 4);
     rgba.resize(size_t(width) * size_t(height) * 4);

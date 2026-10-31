@@ -815,6 +815,13 @@ void guestStringSet(Ctx& x, GuestPtr self, const std::string& s) { set(x, self, 
 uint32_t guestWStringData(Ctx& x, const std::u32string& s) { return wmake(x, s); }
 std::u32string guestWStringValue(Ctx& x, GuestPtr self) { return wvalue(x, self); }
 
+uint32_t atomic_exchange_and_add(Ctx& x, uint32_t mem, int32_t val) {
+    if (!mem) return 0;
+    int32_t prev = x.mem.read<int32_t>(mem);
+    x.mem.write<int32_t>(mem, prev + val);
+    return uint32_t(prev);
+}
+
 void registerLibStdcxxContainers(Process& p) {
     p.service<Strings>().emptyRep = p.defineDataBlock("__ZNSs4_Rep20_S_empty_rep_storageE", 16);
     p.mem().write<uint32_t>(p.service<Strings>().emptyRep + 8, 0xFFFFFFFFu);
@@ -982,6 +989,9 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&l_unhook>("__ZNSt15_List_node_base6unhookEv");
     p.def<&l_transfer>("__ZNSt15_List_node_base8transferEPS_S0_");
     p.def<&l_swap>("__ZNSt15_List_node_base4swapERS_S0_");
+
+    p.def<&atomic_exchange_and_add>("__ZN9__gnu_cxx18__exchange_and_addEPVii");
+    p.def<&atomic_exchange_and_add>("__ZN9__gnu_cxx18__exchange_and_add_dispatchEPii");
 
     p.def<&t_increment>("__ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base");
     p.def<&t_increment>("__ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base");
