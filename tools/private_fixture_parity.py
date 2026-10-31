@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 
+MAX_FRAMES = 2**53   # largest integer JSON consumers can represent exactly
 IDS = {"angry-birds", "tiny-tower", "art-of-glow"}
 FILES = ("Tiny_Tower_v1.0_os30", "AngryBirds_v1.0_os30", "Art_Of_Glow_v1.1.2_os313")
 MARKERS = {"uikit": "ALL CHECKS PASSED", "tiny": "GPU: presented frame 60 directly",
@@ -23,9 +24,13 @@ def frames_presented(row):
 
 def positive_frames(value):
     """A real frame count: a positive integer (booleans, fractions and non-finite numbers are rejected)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool):
         return False
-    return value > 0 and value == int(value)
+    if isinstance(value, int):
+        return 0 < value <= MAX_FRAMES   # bounded first: math.isfinite would overflow on 10**1000
+    if isinstance(value, float):
+        return math.isfinite(value) and 0 < value <= MAX_FRAMES and value == int(value)
+    return False
 
 
 def read(path):

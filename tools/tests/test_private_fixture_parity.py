@@ -18,6 +18,11 @@ class FrameCountTests(unittest.TestCase):
     def test_positive_frames_rejects_non_counts(self):
         for bad in (True, False, None, "60", 0, -1, 0.0, math.nan, math.inf, -math.inf, 0.5, 59.9, [], {}):
             self.assertFalse(module.positive_frames(bad), repr(bad))
+        self.assertFalse(module.positive_frames(10**1000))   # oversized ints are rejected without OverflowError
+        self.assertFalse(module.positive_frames(2**53 + 1))
+        self.assertTrue(module.positive_frames(2**53))
+        self.assertFalse(module.positive_frames(-10**1000))
+        self.assertFalse(module.positive_frames(float("1e308") * 10))
         for good in (1, 60, 600, 60.0):
             self.assertTrue(module.positive_frames(good), repr(good))
 
