@@ -54,6 +54,11 @@ Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
 
 ## P2
 
+- UAR-002 asset I/O (Group D plus libc file opens; impact 2, severity 2,
+  complexity 2, score 2): bounded bundle resource lookup caching and best-effort
+  UE3 asset read-ahead, with isolated path/descriptor regressions. Investigation
+  on `codex/ue3-asset-io`; the reported Goat black screen remains unresolved.
+
 | ID | Item | Impact | Sev | Cx | Score | Group | Depends on | Parallel | State |
 |---|---|---:|---:|---:|---:|---|---|---|---|
 | B-201 | CPU fusion and `preserve_none` follow-ups. Linux Clang 18 does not emit `preserve_none`. | 2 | 2 | 3 | 1.33 | After A | B-101 landed | Not with A | Planned |
