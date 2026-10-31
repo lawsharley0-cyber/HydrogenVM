@@ -415,6 +415,135 @@ int runFullSubsystemTests() {
         check(ok, "Mixer stats tell music (looping) from sound effects (one-shot) and ignore silent voices");
     }
 
+    // Mixer headroom and stream stitching (#260: audio blown out / buzzing on the device speaker).
+    // Every expected value is analytic, never taken from the mixer: the inputs are int16 sines with an
+    // integer period (441 Hz at 44.1 kHz = 100 frames), so the ideal bus value of every output frame
+    // follows from the input samples, the voice gains and the definition of linear resampling.
+    {
+        constexpr double kTwoPi = 6.283185307179586;
+        auto sine = [&](int frames, double amp, int period) {   // amp in full-scale units, L == R
+            auto pcm = std::make_shared<std::vector<int16_t>>(size_t(frames) * 2);
+            for (int n = 0; n < frames; ++n) {
+                const auto v = int16_t(std::lround(amp * 32767.0 * std::sin(kTwoPi * double(n) / double(period))));
+                (*pcm)[size_t(n) * 2] = v;
+                (*pcm)[size_t(n) * 2 + 1] = v;
+            }
+            return pcm;
+        };
+        auto renderLeft = [&](Audio::Mixer& m, size_t frames) {
+            std::vector<float> out;
+            std::vector<float> l(512), r(512);
+            while (out.size() < frames) {
+                const size_t n = std::min<size_t>(512, frames - out.size());
+                m.render(l.data(), r.data(), n);
+                out.insert(out.end(), l.begin(), l.begin() + long(n));
+            }
+            return out;
+        };
+        struct Fit { double k = 0, residual = 1, peak = 0; int rail = 0; };
+        // Least-squares scale of the ideal waveform onto the output, the relative RMS of what is left
+        // (distortion, so a constant gain reduction costs nothing), peak, and samples sitting on the rail.
+        auto fit = [&](const std::vector<float>& out, const std::vector<double>& ideal, size_t from) {
+            Fit f;
+            double sxy = 0, sxx = 0;
+            for (size_t i = from; i < out.size(); ++i) {
+                sxy += double(out[i]) * ideal[i];
+                sxx += ideal[i] * ideal[i];
+                f.peak = std::max(f.peak, std::fabs(double(out[i])));
+                if (std::fabs(out[i]) >= 1.0f) ++f.rail;
+            }
+            f.k = sxx > 0 ? sxy / sxx : 0;
+            double res = 0, sig = 0;
+            for (size_t i = from; i < out.size(); ++i) {
+                const double e = double(out[i]) - f.k * ideal[i];
+                res += e * e;
+                sig += (f.k * ideal[i]) * (f.k * ideal[i]);
+            }
+            f.residual = sig > 0 ? std::sqrt(res / sig) : 1.0;
+            return f;
+        };
+        constexpr int kLoopFrames = 4400;   // 44 whole periods, so a looping voice stays phase-continuous
+        constexpr size_t kFrames = 16384, kSettle = 8192;
+        constexpr double kMaxResidual = 0.02;   // chosen before measuring: -34 dB distortion
+
+        // 1. Two loud voices at once: 0.7 + 0.7 full scale sums to 1.4. The output must stay a clean
+        //    (scaled) sine instead of being flattened against the rail.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto a = sine(kLoopFrames, 0.7, 100);
+            m.play(a, 44100, loop);
+            m.play(a, 44100, loop);
+            std::vector<double> ideal(kFrames);
+            for (size_t i = 0; i < kFrames; ++i) ideal[i] = 2.0 * double((*a)[(i % kLoopFrames) * 2]) / 32768.0;
+            const Fit f = fit(renderLeft(m, kFrames), ideal, kSettle);
+            const bool ok = f.residual < kMaxResidual && f.rail == 0 && f.k > 0.6;
+            if (!ok) std::printf("    mixer headroom (2 x 0.7 FS): k=%.3f residual=%.4f peak=%.4f railSamples=%d\n", f.k, f.residual, f.peak, f.rail);
+            check(ok, "Mixer keeps two summed loud voices (bus peak 1.4 FS) undistorted instead of hard-clipping them");
+        }
+
+        // 2. One voice with app gain above 1 (OpenAL AL_GAIN may exceed 1): 0.5 FS x 3.0 = 1.5 FS bus.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true; loop.gain = 3.0f;
+            auto a = sine(kLoopFrames, 0.5, 100);
+            m.play(a, 44100, loop);
+            std::vector<double> ideal(kFrames);
+            for (size_t i = 0; i < kFrames; ++i) ideal[i] = 3.0 * double((*a)[(i % kLoopFrames) * 2]) / 32768.0;
+            const Fit f = fit(renderLeft(m, kFrames), ideal, kSettle);
+            const bool ok = f.residual < kMaxResidual && f.rail == 0 && f.k > 0.6;
+            if (!ok) std::printf("    mixer headroom (0.5 FS x gain 3): k=%.3f residual=%.4f peak=%.4f railSamples=%d\n", f.k, f.residual, f.peak, f.rail);
+            check(ok, "Mixer keeps a voice whose gain pushes the bus to 1.5 FS undistorted instead of hard-clipping it");
+        }
+
+        // 3. Transparency: a mix that stays under full scale must pass through unchanged (a limiter
+        //    must not quieten ordinary content). One voice at 0.5 FS, gain 1: output == input / 32768.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto a = sine(kLoopFrames, 0.5, 100);
+            m.play(a, 44100, loop);
+            const std::vector<float> out = renderLeft(m, kFrames);
+            double worst = 0;
+            for (size_t i = 0; i < kFrames; ++i)
+                worst = std::max(worst, std::fabs(double(out[i]) - double((*a)[(i % kLoopFrames) * 2]) / 32768.0));
+            const bool ok = worst < 1e-6;
+            if (!ok) std::printf("    mixer transparency (0.5 FS): worst error %.3g\n", worst);
+            check(ok, "Mixer passes a mix that stays under full scale through bit-for-bit (no level change)");
+        }
+
+        // 4. Stream stitching: a 22.05 kHz stream of a 441 Hz sine (50-frame period) queued as three
+        //    1000-frame buffers. Output frame j reads source position j/2 of the concatenated stream, so
+        //    the ideal value at an odd j is the mean of source frames j/2 and j/2 + 1, also across a
+        //    buffer boundary. A buffer edge that repeats its last frame instead leaves an error every 1000
+        //    source frames (a periodic click train).
+        {
+            Audio::Mixer m;
+            const uint32_t v = m.createStream({});
+            constexpr int kChunk = 1000, kChunks = 3;
+            auto whole = sine(kChunk * kChunks, 0.5, 50);
+            for (int c = 0; c < kChunks; ++c) {
+                auto part = std::make_shared<std::vector<int16_t>>(whole->begin() + long(c) * kChunk * 2, whole->begin() + long(c + 1) * kChunk * 2);
+                m.enqueue(v, part, 22050, uint64_t(c + 1));
+            }
+            const size_t outFrames = size_t(kChunk) * kChunks * 2 - 2;
+            const std::vector<float> out = renderLeft(m, outFrames);
+            double worst = 0;
+            size_t worstAt = 0;
+            for (size_t j = 0; j < outFrames; ++j) {
+                const size_t k = j / 2;
+                const double s0 = double((*whole)[k * 2]) / 32768.0;
+                const double s1 = double((*whole)[(k + 1) * 2]) / 32768.0;
+                const double ideal = (j & 1) ? 0.5 * (s0 + s1) : s0;
+                const double e = std::fabs(double(out[j]) - ideal);
+                if (e > worst) { worst = e; worstAt = j; }
+            }
+            const bool ok = worst < 1e-4;
+            if (!ok) std::printf("    mixer stream stitching: worst error %.5f FS at output frame %zu\n", worst, worstAt);
+            check(ok, "Mixer interpolates across queued stream buffer boundaries (no click at each buffer edge)");
+        }
+    }
+
     // Straight-line GLSL semantics: independent names, actual values, honest rejection.
     {
         Shader::Program vertex, fragment;
