@@ -2,6 +2,7 @@
 // OpenAL) and platform framework stubs (GameKit, StoreKit, MessageUI,
 // SystemConfiguration).
 #include "UIKit.hpp"
+#include "runtime/Support.hpp"
 #include "runtime/audio/Audio.hpp"
 #include <algorithm>
 #include <chrono>
@@ -1802,9 +1803,12 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aug_ok5>("_AUGraphConnectNodeInput");
     p.def<&aug_ok3>("_AUGraphDisconnectNodeInput");
     p.def<&aug_ok1>("_AUGraphClearConnections");
-    p.def<&aug_getIndNode>("_AUGraphGetIndNode");
-    p.def<&aug_getNodeCount>("_AUGraphGetNodeCount");
-    p.def<&aug_ok3>("_AudioUnitAddRenderNotify");
+    supportDef<&aug_getIndNode>(p, "_AUGraphGetIndNode", SupportStatus::Stub,
+        "Always writes node 1 without consulting the graph or index");
+    supportDef<&aug_getNodeCount>(p, "_AUGraphGetNodeCount", SupportStatus::Stub,
+        "Always writes one node without consulting graph contents");
+    supportDef<&aug_ok3>(p, "_AudioUnitAddRenderNotify", SupportStatus::Stub,
+        "Returns noErr without registering or invoking the render notification");
     p.def<&aug_ok3>("_AudioUnitRemoveRenderNotify");
 
     // OpenAL
@@ -2018,7 +2022,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     avAsset.method("duration", [writeCMTime](Ctx& x) { writeCMTime(x, x.cpu.r[0], 0, 600, 1); }, "{?=qiIq}@:");
     avAsset.method("tracks", [](Ctx& x) { x.cpu.r[0] = Foundation::makeArray(x, {}); }, "@@:");
     avAsset.method("tracksWithMediaType:", [](Ctx& x) { x.cpu.r[0] = Foundation::makeArray(x, {}); }, "@@:@");
-    avAsset.method("isPlayable", [](Ctx& x) { x.cpu.r[0] = 1; }, "c@:");
+    supportMethod(p, avAsset, "AVAsset", "isPlayable", [](Ctx& x) { x.cpu.r[0] = 1; },
+        SupportStatus::Stub, "Always reports playable without checking media or codec support", "c@:");
     avAsset.method("statusOfValueForKey:error:", [](Ctx& x) {
         const GuestPtr errOut = x.cpu.r[3];
         if (errOut) x.mem.write<uint32_t>(errOut, 0);
