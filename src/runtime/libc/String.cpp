@@ -235,12 +235,20 @@ int32_t w_iswalnum(Ctx& x, int32_t c) { return c_isalnum(x, c); }
     throw CPU::GuestFault(CPU::Exit::MemFault, 0, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "buffer overflow detected (__chk_fail)");
 }
 
+// GuestArena::read does not check page permissions, so source buffers are checked explicitly.
+void require_readable(Ctx& x, uint64_t addr, const char* what) {
+    if (!(x.mem.protAt(GuestPtr(addr)) & Memory::kProtRead)) {
+        throw CPU::GuestFault(CPU::Exit::MemFault, GuestPtr(addr), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), what);
+    }
+}
+
 size_t safe_strlen(Ctx& x, GuestPtr p) {
     size_t len = 0;
     while (true) {
         if (uint64_t(p) + len >= Memory::GuestArena::kArenaSize) {
              throw CPU::GuestFault(CPU::Exit::MemFault, p + len, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strlen (overflow)");
         }
+        require_readable(x, uint64_t(p) + len, "invalid guest memory read access in safe_strlen");
         uint8_t val = x.mem.read<uint8_t>(p + len);
         if (val == 0) break;
         len++;
@@ -254,6 +262,7 @@ size_t safe_strnlen(Ctx& x, GuestPtr p, size_t max_len) {
         if (uint64_t(p) + len >= Memory::GuestArena::kArenaSize) {
              throw CPU::GuestFault(CPU::Exit::MemFault, p + len, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strnlen (overflow)");
         }
+        require_readable(x, uint64_t(p) + len, "invalid guest memory read access in safe_strnlen");
         uint8_t val = x.mem.read<uint8_t>(p + len);
         if (val == 0) break;
         len++;
@@ -269,11 +278,13 @@ void safe_read_check(Ctx& x, GuestPtr p, size_t len) {
     uint64_t addr = p;
     uint64_t end = uint64_t(p) + len;
     while (addr < end) {
-        (void)x.mem.read<uint8_t>(addr); // read to force fault if unmapped/unreadable
+        require_readable(x, addr, "invalid guest memory read access");
+        (void)x.mem.read<uint8_t>(addr); // read to force fault if unmapped
         addr = (addr + Memory::GuestArena::kGuestPageSize) & ~(Memory::GuestArena::kGuestPageSize - 1);
         if (addr >= Memory::GuestArena::kArenaSize) break;
     }
     // verify last byte
+    require_readable(x, uint64_t(p) + len - 1, "invalid guest memory read access");
     (void)x.mem.read<uint8_t>(p + len - 1);
 }
 

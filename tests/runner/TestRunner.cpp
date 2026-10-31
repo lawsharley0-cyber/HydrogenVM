@@ -4614,6 +4614,44 @@ int runFullSubsystemTests() {
             if (!check_fault("___strcpy_chk", {dst, src, 49})) return false;
             call("_free", {src}); call("_free", {dst}); return true;
         });
+        run("_FORTIFY_SOURCE rejects unreadable source buffers and checks the overflow guard", [&] {
+            // callGuest reports every host-side fault as "guest call did not return", so the fault is only known
+            // to be caused by the missing read permission if the same call succeeds once the hole is mapped.
+            auto faults = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); }
+                catch (const CPU::GuestFault&) { return true; }
+                catch (...) { return false; }
+                return false;
+            };
+            // Guest pages cannot be made unreadable with protect() (no-permission becomes read-only), so the
+            // source spans a hole: page 0 mapped, page 1 unmapped, page 2 mapped; only 'A' bytes, NUL at the end.
+            const uint32_t src = proc.mem().findFree(12288);
+            proc.mem().map(src, 4096, Memory::kProtRW);
+            proc.mem().map(src + 8192, 4096, Memory::kProtRW);
+            for (uint32_t i = 0; i < 4096; ++i) { proc.mem().write<uint8_t>(src + i, 'A'); proc.mem().write<uint8_t>(src + 8192 + i, 'A'); }
+            proc.mem().write<uint8_t>(src + 8192 + 4095, 0);
+            const uint32_t dst = call("_malloc", {9000});
+            call("_memset", {dst, 'X', 9000});
+            auto dstUntouched = [&] { for (uint32_t i = 0; i < 9000; ++i) if (proc.mem().read<uint8_t>(dst + i) != 'X') return false; return true; };
+            bool ok = faults("___strcpy_chk", {dst, src, 9000}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src, 9000, 9000}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src + 4095, 2, 9000}) && dstUntouched();
+            // Same calls succeed once the hole is mapped, so the faults above came from the source permission check.
+            proc.mem().map(src + 4096, 4096, Memory::kProtRW);
+            for (uint32_t i = 0; i < 4096; ++i) proc.mem().write<uint8_t>(src + 4096 + i, 'A');
+            ok = ok && !faults("___memcpy_chk", {dst, src, 9000, 9000}) && proc.mem().read<uint8_t>(dst + 5000) == 'A';
+            proc.mem().write<uint8_t>(src + 4196, 0);         // strlen now 4196: fits dst
+            call("_memset", {dst, 'X', 9000});
+            ok = ok && !faults("___strcpy_chk", {dst, src, 9000}) && proc.mem().read<uint8_t>(dst + 4196) == 0;
+            // dst + n wraps past 2^32: the write-only memset_chk must stop before touching memory.
+            call("_memset", {dst, 'X', 9000});
+            const uint32_t wrapLen = 0xFFFFFFFFu - dst + 1;
+            ok = ok && faults("___memset_chk", {dst, 'Z', wrapLen, wrapLen}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src, 150, 100}) && dstUntouched();
+            proc.mem().unmap(src, 12288);
+            call("_free", {dst});
+            return ok;
+        });
         run("_FORTIFY_SOURCE test strncpy", [&] {
             uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
             call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
