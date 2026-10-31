@@ -544,6 +544,36 @@ int runFullSubsystemTests() {
             check(ok, "Mixer limits both channels with one shared gain, so unequal channel levels keep their ratio");
         }
 
+        // 3c. Mirror of 3b: with the dominant channel on the right, the shared gain must still follow it.
+        //     Together with 3b this catches a limiter that looks at only one channel.
+        {
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto uneven = std::make_shared<std::vector<int16_t>>(size_t(kLoopFrames) * 2);
+            for (int n = 0; n < kLoopFrames; ++n) {
+                const double w = std::sin(kTwoPi * double(n) / 100.0) * 32767.0;
+                (*uneven)[size_t(n) * 2] = int16_t(std::lround(0.35 * w));
+                (*uneven)[size_t(n) * 2 + 1] = int16_t(std::lround(0.7 * w));
+            }
+            m.play(uneven, 44100, loop);
+            m.play(uneven, 44100, loop);
+            std::vector<float> outL, outR, l(512), r(512);
+            while (outL.size() < kFrames) {
+                m.render(l.data(), r.data(), 512);
+                outL.insert(outL.end(), l.begin(), l.end());
+                outR.insert(outR.end(), r.begin(), r.end());
+            }
+            double worstRatio = 0, peakR = 0;
+            for (size_t i = kSettle; i < kFrames; ++i) {
+                peakR = std::max(peakR, std::fabs(double(outR[i])));
+                if (std::fabs(outR[i]) > 0.05f)
+                    worstRatio = std::max(worstRatio, std::fabs(double(outL[i]) / double(outR[i]) - 0.5));
+            }
+            const bool ok = worstRatio < 0.01 && peakR < 1.0 && peakR > 0.6;
+            if (!ok) std::printf("    mixer mirrored stereo image: worst |L/R - 0.5| = %.4f, right peak %.4f\n", worstRatio, peakR);
+            check(ok, "Mixer limits a dominant right channel with the shared gain too (mirror of the left-dominant case)");
+        }
+
         // 4. Stream stitching: a 22.05 kHz stream of a 441 Hz sine (50-frame period) queued as three
         //    1000-frame buffers. Output frame j reads source position j/2 of the concatenated stream, so
         //    the ideal value at an odd j is the mean of source frames j/2 and j/2 + 1, also across a
