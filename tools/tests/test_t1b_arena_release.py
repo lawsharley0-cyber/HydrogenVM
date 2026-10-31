@@ -36,9 +36,9 @@ class TestT1bArenaRelease(unittest.TestCase):
         swift_path = os.path.join(REPO_ROOT, 'app', 'HydrogenVM', 'BatchTest.swift')
         with open(swift_path, 'r', encoding='utf-8') as f:
             swift_content = f.read()
-        self.assertIn('HVMEngine.waitForGuestArenaRelease(8.0)', swift_content)
+        self.assertIn('HVMEngine.wait(forGuestArenaRelease: 8.0)', swift_content)
         self.assertIn('HVMEngine.liveGuestArenaCount() == 0', swift_content)
-        self.assertIn('HVMEngine.waitForGuestArenaRelease(5.0)', swift_content)
+        self.assertIn('HVMEngine.wait(forGuestArenaRelease: 5.0)', swift_content)
 
 if __name__ == '__main__':
     unittest.main()

@@ -475,7 +475,7 @@ final class BatchTestRunner {
         currentTestTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            _ = HVMEngine.waitForGuestArenaRelease(8.0)
+            _ = HVMEngine.wait(forGuestArenaRelease: 8.0)
 
             var s: HVMSession!
             var exitBox: ExitBox!
@@ -540,7 +540,7 @@ final class BatchTestRunner {
                     startRetries += 1
                     s.stop()
                     self.activeSession = nil
-                    _ = HVMEngine.waitForGuestArenaRelease(5.0)
+                    _ = HVMEngine.wait(forGuestArenaRelease: 5.0)
                     try? await Task.sleep(for: .milliseconds(1000))
                     continue
                 } else {
@@ -671,7 +671,7 @@ final class BatchTestRunner {
             if self.options.relaunchEnabled && !isCrashed && exitBox.exited && !hardStopped && self.status == .running {
                 self.progressText = "Relaunching \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
                 self.activeSession = nil
-                _ = HVMEngine.waitForGuestArenaRelease(8.0)
+                _ = HVMEngine.wait(forGuestArenaRelease: 8.0)
                 try? await Task.sleep(for: .milliseconds(500))
                 relaunch = await self.relaunch(target: target, home: testHome)
             }
@@ -747,7 +747,7 @@ final class BatchTestRunner {
             self.savePendingSession()
 
             // Let the finished game's threads and memory go before the next one starts.
-            _ = HVMEngine.waitForGuestArenaRelease(8.0)
+            _ = HVMEngine.wait(forGuestArenaRelease: 8.0)
             try? await Task.sleep(for: .milliseconds(500))
             self.runNextTarget()
         }
@@ -760,7 +760,7 @@ final class BatchTestRunner {
         var startRetries = 0
         
         while startRetries < 5 {
-            _ = HVMEngine.waitForGuestArenaRelease(8.0)
+            _ = HVMEngine.wait(forGuestArenaRelease: 8.0)
             box = ExitBox()
             s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
             s.keepGoing = options.keepGoing
@@ -792,7 +792,7 @@ final class BatchTestRunner {
                 startRetries += 1
                 s.stop()
                 activeSession = nil
-                _ = HVMEngine.waitForGuestArenaRelease(5.0)
+                _ = HVMEngine.wait(forGuestArenaRelease: 5.0)
                 try? await Task.sleep(for: .milliseconds(1000))
                 continue
             } else {
