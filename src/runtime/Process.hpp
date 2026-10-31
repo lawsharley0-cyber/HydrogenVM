@@ -5,6 +5,7 @@
 #include "Abi.hpp"
 #include "FrameHistogram.hpp"
 #include "Heap.hpp"
+#include "MissingApi.hpp"
 #include "loader/MachO.hpp"
 #include "loader/Plist.hpp"
 #include <atomic>
@@ -322,6 +323,10 @@ public:
     void logf(LogLevel lvl, const char* fmt, ...) const __attribute__((format(printf, 3, 4)));
     void reportMissing(const std::string& what);   // logs once per name
     size_t missingCount() { std::lock_guard<std::mutex> lk(missingMu_); return missing_.size(); }
+    // Every call to a missing or approximated API with its count, caller and first backtrace (T2a, #257).
+    const MissingApiLog& missingApis() const { return missingApis_; }
+    // True from the first such call on: a clean exit from a tainted run is not a compatibility pass.
+    bool tainted() const { return missingApis_.tainted(); }
     std::string describeAddress(uint32_t addr) const;
     std::string hleFunctionName(uint32_t index) const;
     // The host function currently bound to an exported symbol (null if none / not host code).
@@ -434,6 +439,7 @@ private:
     Perf perf_;
     mutable std::mutex missingMu_;
     std::set<std::string> missing_;
+    MissingApiLog missingApis_;
     std::set<std::string> calledImports_;   // symbols the app reaches through lazy (call) stubs
 };
 

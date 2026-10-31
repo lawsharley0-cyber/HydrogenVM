@@ -3751,6 +3751,150 @@ int runFullSubsystemTests() {
                   "Missing vtables and VTTs report the class and slot of a virtual call instead of jumping to 0");
         }
 
+        // T2a (#257): every call to a missing or approximated API is recorded with its count, caller,
+        // backtrace and time since launch, and the run is tainted from the first hit on.
+        {
+            ProcessConfig mcfg;
+            const std::string mhome = "/tmp/hvm_test_missing_" + std::to_string(getpid());
+            std::error_code mec;
+            std::filesystem::create_directories(mhome + "/Test.app", mec);
+            mcfg.homePath = mhome;
+            mcfg.bundlePath = mhome + "/Test.app";
+            mcfg.stopOnMissingFunction = false;   // keep going: the stub returns 0 instead of throwing
+            Process mp(mcfg);
+            auto& mcpu = mp.mainThread().cpu;
+            check(!mp.tainted() && mp.missingApis().totalHits() == 0 && mp.missingApis().records().empty(),
+                  "a fresh process is not tainted and has no missing-API records");
+
+            // A guest frame-pointer chain: fp0 -> {fp1, lr1}, fp1 -> {0, lr2}.
+            constexpr uint32_t kBase = 0xbee00000, kLr0 = 0x00008123, kLr1 = 0x00009001, kLr2 = 0x0000a001;
+            mp.mem().map(kBase, 1u << 16, Memory::kProtRW);
+            const uint32_t fp0 = kBase + 0x100, fp1 = kBase + 0x200;
+            mp.mem().write<uint32_t>(fp0, fp1);  mp.mem().write<uint32_t>(fp0 + 4, kLr1);
+            mp.mem().write<uint32_t>(fp1, 0);    mp.mem().write<uint32_t>(fp1 + 4, kLr2);
+
+            // The real stub for a function nobody implements, called as a guest bl would: LR = caller.
+            mp.makeMissingStub("_hvm_t2a_no_such_function");
+            auto stub = mp.hostFunctionFor("_hvm_t2a_no_such_function");
+            check(bool(stub), "a missing function resolves to a host stub that can be called");
+            mcpu.r[7] = fp0;
+            mcpu.r[CPU::kLR] = kLr0;
+            if (stub) stub(mcpu);
+            const double sinceLaunch = std::chrono::duration<double>(std::chrono::steady_clock::now() - mp.perf().origin).count();
+            auto recs = mp.missingApis().records();
+            const bool one = recs.size() == 1 && recs[0].count == 1 &&
+                             recs[0].name.find("hvm_t2a_no_such_function") != std::string::npos;
+            check(one && recs[0].callerPc == kLr0 && recs[0].caller.find("00008123") != std::string::npos,
+                  "a missing function's record has its count and the guest address it was called from");
+            check(one && recs[0].backtrace.size() == 4 && recs[0].backtrace[1].find("00008123") != std::string::npos &&
+                      recs[0].backtrace[2].find("00009001") != std::string::npos && recs[0].backtrace[3].find("0000a001") != std::string::npos,
+                  "a missing function's record has the guest backtrace of its first call, innermost first");
+            check(one && recs[0].firstSeconds >= 0 && recs[0].firstSeconds <= sinceLaunch && recs[0].lastSeconds == recs[0].firstSeconds,
+                  "a missing function's record has the time since launch of its first call");
+            check(mp.tainted() && mp.missingApis().totalHits() == 1, "the first missing-API hit taints the run");
+
+            // More calls from elsewhere: the count and last time move, the first caller and backtrace stay.
+            const std::vector<std::string> firstBacktrace = one ? recs[0].backtrace : std::vector<std::string>{};
+            mcpu.r[7] = 0;
+            mcpu.r[CPU::kLR] = kLr2;
+            if (stub) { stub(mcpu); stub(mcpu); }
+            recs = mp.missingApis().records();
+            check(recs.size() == 1 && recs[0].count == 3 && recs[0].callerPc == kLr0 && recs[0].backtrace == firstBacktrace &&
+                      recs[0].lastSeconds >= recs[0].firstSeconds && mp.missingApis().totalHits() == 3,
+                  "repeat calls raise the count and keep the first caller and backtrace");
+            check(mp.missingCount() == 1 && mp.missingSymbols().size() == 1,
+                  "the once-per-name missing list and count are unchanged by repeat calls");
+
+            // Any reportMissing caller (ObjC selectors, framework stubs) is counted, not only function stubs.
+            mp.reportMissing("-[HvmNoSuchClass noSuchSelector] (returned nil)");
+            check(mp.missingApis().distinct() == 2 && mp.missingApis().totalHits() == 4 && mp.missingCount() == 2,
+                  "reportMissing from any call site adds a record");
+
+            // The report JSON carries the flag, the hit count and the records.
+            const std::string fields = mp.missingApis().reportFields("  ");
+            check(fields.find("\"tainted\": true") != std::string::npos && fields.find("\"stubHits\": 4") != std::string::npos &&
+                      fields.find("\"missingApis\": [") != std::string::npos &&
+                      fields.find("hvm_t2a_no_such_function\", \"count\": 3") != std::string::npos &&
+                      fields.find("\"callerPc\": " + std::to_string(kLr0)) != std::string::npos,
+                  "the report fields expose tainted, stubHits and each API's count and caller");
+        }
+
+        // T2a (#257): the log on its own, with no Process.
+        {
+            MissingApiLog log;
+            int siteCalls = 0;
+            auto site = [&](MissingApiLog::Site& s) {
+                ++siteCalls;
+                s.callerPc = 7;
+                s.caller = "caller";
+                for (int i = 0; i < 40; ++i) s.backtrace.push_back("frame" + std::to_string(i));
+            };
+            log.hit("b", 2.0, site);
+            log.hit("a", 3.0, site);
+            log.hit("b", 4.0, site);
+            const auto recs = log.records();
+            bool orderOk = recs.size() == 2 && recs[0].name == "b" && recs[1].name == "a";
+            check(orderOk && recs[0].count == 2 && recs[0].firstSeconds == 2.0 && recs[0].lastSeconds == 4.0 && recs[1].count == 1,
+                  "records come back in first-hit order with their counts and first and last times");
+            check(siteCalls == 2 && orderOk && recs[0].callerPc == 7 && recs[0].backtrace.size() == MissingApiLog::kMaxFrames &&
+                      recs[0].backtrace.front() == "frame0" && recs[0].backtrace.back() == "frame" + std::to_string(MissingApiLog::kMaxFrames - 1),
+                  "the caller is captured once per name and a long backtrace keeps its innermost frames");
+
+            MissingApiLog full;
+            for (size_t i = 0; i < MissingApiLog::kMaxNames + 10; ++i) full.hit("n" + std::to_string(i), 1.0, site);
+            full.hit("n0", 2.0, site);
+            const auto fr = full.records();
+            check(full.distinct() == MissingApiLog::kMaxNames && full.totalHits() == MissingApiLog::kMaxNames + 11 &&
+                      full.overflowHits() == 10 && !fr.empty() && fr[0].name == "n0" && fr[0].count == 2,
+                  "the log stores at most kMaxNames APIs, still counts the rest, and keeps counting stored ones");
+
+            MissingApiLog shared;
+            int sharedSites = 0;
+            std::vector<std::thread> workers;
+            for (int t = 0; t < 4; ++t)
+                workers.emplace_back([&] { for (int i = 0; i < 1000; ++i) shared.hit("shared", 1.0, [&](MissingApiLog::Site&) { ++sharedSites; }); });
+            for (auto& w : workers) w.join();
+            check(shared.totalHits() == 4000 && shared.records().size() == 1 && shared.records()[0].count == 4000 && sharedSites == 1,
+                  "hits from several threads are all counted and the first-hit capture runs once");
+
+            // A hit that locks the log later can carry an earlier timestamp (the time is read before the lock).
+            MissingApiLog skew;
+            auto noSite = [](MissingApiLog::Site&) {};
+            skew.hit("_late", 5.0, noSite);
+            skew.hit("_late", 2.0, noSite);
+            skew.hit("_late", 9.0, noSite);
+            const auto skewRecs = skew.records();
+            check(skewRecs.size() == 1 && skewRecs[0].firstSeconds == 2.0 && skewRecs[0].lastSeconds == 9.0 && skewRecs[0].count == 3,
+                  "Missing-API log keeps first/last times as chronological bounds even when hits arrive out of order (T2a)");
+
+            // --launches N builds a new Process per launch but writes one report: absorb() carries the earlier launches over.
+            MissingApiLog launch1, launch2, combined;
+            launch1.hit("_only_first", 1.0, noSite);
+            launch1.hit("_both", 2.0, noSite);
+            launch2.hit("_both", 0.5, noSite);
+            launch2.hit("_both", 3.0, noSite);
+            MissingApiLog cleanLaunch;
+            combined.absorb(launch1);
+            combined.absorb(cleanLaunch);
+            const bool carriedTaint = combined.tainted() && combined.totalHits() == 2;
+            combined.absorb(launch2);
+            const auto crecs = combined.records();
+            check(carriedTaint && combined.tainted() && combined.totalHits() == 4 && combined.distinct() == 2 && crecs.size() == 2 &&
+                      crecs[0].name == "_only_first" && crecs[0].count == 1 && crecs[1].name == "_both" && crecs[1].count == 3 &&
+                      crecs[1].firstSeconds == 0.5 && crecs[1].lastSeconds == 3.0 &&
+                      combined.reportFields("").find("\"tainted\": true") != std::string::npos,
+                  "Missing-API log absorb() keeps a hit from an earlier launch tainted in the final report (T2a)");
+            check(!cleanLaunch.tainted() && MissingApiLog().reportFields("").find("\"tainted\": false") != std::string::npos,
+                  "A launch with no missing-API hits stays untainted (T2a)");
+
+            check(MissingApiLog::jsonEscape("a\"b\\c\nd\x01") == "a\\\"b\\\\c\\nd\\u0001" &&
+                      MissingApiLog::jsonEscape("\xff\xfe") == "??" && MissingApiLog::jsonEscape("h\xc3\xa9llo") == "h\xc3\xa9llo" &&
+                      MissingApiLog::jsonEscape("\xed\xa0\x80") == "???" && MissingApiLog::jsonEscape("\xc3") == "?",
+                  "JSON strings escape quotes and controls and replace bytes that are not valid UTF-8");
+            const auto lines = MissingApiLog::splitLines("    a b\n    c  \n\n  \n");
+            check(lines.size() == 2 && lines[0] == "a b" && lines[1] == "c", "backtrace text splits into one trimmed entry per frame");
+        }
+
         // iconv forwarded to the host, and the getpw*_r family.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };

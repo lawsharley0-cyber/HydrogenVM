@@ -1207,6 +1207,15 @@ void Process::logf(LogLevel lvl, const char* fmt, ...) const {
 }
 
 void Process::reportMissing(const std::string& what) {
+    // Every call is recorded (T2a, #257): count, time since launch, and on the first call of a name the
+    // guest caller and backtrace. The log line below stays once per name.
+    missingApis_.hit(what, std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count(),
+                     [this](MissingApiLog::Site& s) {
+                         const CPU::Cpu& cpu = currentThread().cpu;
+                         s.callerPc = cpu.r[CPU::kLR];
+                         s.caller = describeAddress(s.callerPc);
+                         s.backtrace = MissingApiLog::splitLines(backtrace(cpu, int(MissingApiLog::kMaxFrames) - 2));
+                     });
     {
         std::lock_guard<std::mutex> lk(missingMu_);
         if (!missing_.insert(what).second) return;

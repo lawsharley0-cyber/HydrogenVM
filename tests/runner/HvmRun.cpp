@@ -176,6 +176,9 @@ int hvmRunMain(int argc, char** argv) {
             }
         };
     }
+    // Missing-API hits of the launches finished so far: each launch has its own Process, but the report file is
+    // rewritten by every launch, so a hit in launch 1 must still taint the final report.
+    Runtime::MissingApiLog earlierLaunches;
     // One launch = one Process (as the iOS app does each time a game is opened).
     auto runOnce = [&](int launch) -> int {
         if (launches > 1 && !quiet) std::fprintf(stderr, "[hvm] ---- launch %d of %d ----\n", launch, launches);
@@ -206,6 +209,10 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
+            Runtime::MissingApiLog allLaunches;   // tainted, stubHits, missingApis (T2a), over every launch so far
+            allLaunches.absorb(earlierLaunches);
+            allLaunches.absorb(proc.missingApis());
+            f << allLaunches.reportFields("  ") << ",\n";
             f << "  \"unimplementedImports\": " << jsonList(proc.unimplementedImports()) << ",\n";
             f << "  \"warnings\": " << pairs(warnings) << ",\n";
             f << "  \"errors\": " << pairs(errors) << ",\n";
@@ -322,7 +329,13 @@ int hvmRunMain(int argc, char** argv) {
         }
         const int status = timedStop ? 0 : proc.crashed() ? 70 : r;
         if (timedStop && !quiet) std::fprintf(stderr, "[hvm] still running after %.0f s (stopped by --run-for)\n", runFor);
+        // A run that called missing or approximated APIs is not a clean pass, whatever its exit status says.
+        if (proc.tainted())
+            std::fprintf(stderr, "[hvm] %s with %llu stub hits (%zu distinct missing APIs); see \"missingApis\" in the report\n",
+                         status == 0 ? "exited 0" : "finished", static_cast<unsigned long long>(proc.missingApis().totalHits()),
+                         proc.missingApis().distinct());
         writeReport(status);
+        earlierLaunches.absorb(proc.missingApis());
         return status;
     };
     int status = 0;
