@@ -2133,6 +2133,43 @@ int runFullSubsystemTests() {
         check(deq != 0 && Foundation::utf8(cx, ObjC::id(r.send(cpu, deq, "reuseIdentifier"))) == "RegCell", "UITableView registerClass & dequeueReusableCellWithIdentifier");
     }
 
+
+    // EAGLSharegroup HostGL leak lifecycle test
+    if (HostGL::enabled(proc)) {
+        ObjC::Runtime& r = proc.service<ObjC::Runtime>();
+        CPU::Cpu& cpu = proc.currentThread().cpu;
+
+        const ObjC::Class sgCls = r.getClass("EAGLSharegroup");
+        const ObjC::Class ctxCls = r.getClass("EAGLContext");
+
+        if (sgCls && ctxCls) {
+            const uint32_t workerFn = proc.defineFunction("test_worker_fn", [&](Ctx& cx) {
+                ObjC::Runtime& wr = cx.proc.service<ObjC::Runtime>();
+                ObjC::id ctx = cx.cpu.r[0];
+                wr.send(cx.cpu, wr.getClass("EAGLContext"), "setCurrentContext:", {ctx});
+                // Deliberately leave the context current on this thread.
+                cx.cpu.r[0] = 0;
+            });
+
+            for (int i = 0; i < 20; ++i) {
+                ObjC::id sg = (ObjC::id)r.send(cpu, sgCls, "alloc");
+                sg = (ObjC::id)r.send(cpu, sg, "init");
+
+                ObjC::id ctx = (ObjC::id)r.send(cpu, ctxCls, "alloc");
+                ctx = (ObjC::id)r.send(cpu, ctx, "initWithAPI:sharegroup:", {2, sg});
+
+                const uint32_t tid = proc.startThread(workerFn, ctx, 64u << 10, false);
+                uint32_t retval = 0;
+                proc.joinThread(tid, &retval);
+
+                // Release sharegroup which forces safe teardown even while context might be theoretically "current" (pendingDestruction logic)
+                r.send(cpu, ctx, "release");
+                r.send(cpu, sg, "release");
+            }
+            check(true, "EAGLSharegroup HostGL leak lifecycle with deferred worker teardown");
+        }
+    }
+
     // 2c. UINavigationController, UINavigationBar, UINavigationItem, UIBarButtonItem
     {
         const ObjC::Class vcCls = r.getClass("UIViewController");

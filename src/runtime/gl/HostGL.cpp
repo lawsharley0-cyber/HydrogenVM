@@ -70,7 +70,28 @@ struct State {
     std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
     std::atomic<int> presents{0};                                                  // direct presents so far
     std::atomic<bool> toldReadback{false};
-    std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
+    std::chrono::steady_clock::time_point lastPresent{};
+    std::mutex telemetryMu;
+    std::unordered_map<uint32_t, long long> textureBytes;
+    std::atomic<int> activeTextures{0};
+    std::atomic<int> activeBuffers{0};
+    std::atomic<int> activeFramebuffers{0};
+    std::atomic<int> activeRenderbuffers{0};
+    std::atomic<int> activePrograms{0};
+    std::atomic<int> activeShaders{0};
+    std::atomic<long long> estimatedBytes{0};
+                           // for 60 Hz pacing
+
+    struct ResourceMetrics {
+        std::atomic<int> textures{0};
+        std::atomic<int> buffers{0};
+        std::atomic<int> framebuffers{0};
+        std::atomic<int> renderbuffers{0};
+        std::atomic<int> programs{0};
+        std::atomic<int> shaders{0};
+        std::atomic<long long> estimatedBytes{0};
+    };
+    std::unordered_map<uint32_t, std::unique_ptr<ResourceMetrics>> telemetry; // guestSharegroup -> metrics
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -179,6 +200,40 @@ HostContext* threadClone(Process& p, HostContext* hc) {
     return raw;
 }
 
+void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
+    State& st = S(p);
+    std::lock_guard<std::mutex> lk(st.mu);
+
+    for (const auto& kv : st.contexts) {
+        if (kv.second && kv.second->guestSharegroup == guestSharegroup) {
+            p.logf(LogLevel::Warning, "GPU: sharegroup 0x%x destroyed but context 0x%x still references it", guestSharegroup, kv.first);
+            return;
+        }
+    }
+
+    if (auto it = st.telemetry.find(guestSharegroup); it != st.telemetry.end()) {
+        p.logf(LogLevel::Info, "GPU: sharegroup 0x%x destroyed. Live resources before cleanup: %d textures, %d buffers, %d FBOs, %d RBOs, %d programs, %d shaders, estimated %lld bytes",
+               guestSharegroup, it->second->textures.load(), it->second->buffers.load(), it->second->framebuffers.load(),
+               it->second->renderbuffers.load(), it->second->programs.load(), it->second->shaders.load(),
+               it->second->estimatedBytes.load());
+        st.telemetry.erase(it);
+    }
+
+    st.shareRoot.erase(guestSharegroup);
+
+    for (auto it = st.workers.begin(); it != st.workers.end(); ) {
+        if (uint32_t(it->first) == guestSharegroup) {
+            HostContext* hc = it->second.get();
+            if (tls.proc == &p && tls.ctx == hc) tls.ctx = nullptr;
+            if (hc && hc->handle) st.platform->destroyContext(hc->handle);
+            it = st.workers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+
 void bind(Process& p, HostContext* hc) {
     State& st = S(p);
     HostContext* root = hc;
@@ -248,12 +303,49 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
     }
     {
         std::lock_guard<std::mutex> lk(st.mu);
-        if (!st.shareRoot.count(sharegroup)) st.shareRoot[sharegroup] = hc.get();
+        if (!st.shareRoot.count(sharegroup)) {
+            st.shareRoot[sharegroup] = hc.get();
+            if (!st.telemetry.count(sharegroup)) st.telemetry[sharegroup] = std::make_unique<State::ResourceMetrics>();
+        }
     }
     return hc;
 }
 
 } // namespace
+
+void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
+    State& st = S(p);
+    std::lock_guard<std::mutex> lk(st.mu);
+
+    for (const auto& kv : st.contexts) {
+        if (kv.second && kv.second->guestSharegroup == guestSharegroup) {
+            p.logf(LogLevel::Warning, "GPU: sharegroup 0x%x destroyed but context 0x%x still references it", guestSharegroup, kv.first);
+            return;
+        }
+    }
+
+    if (auto it = st.telemetry.find(guestSharegroup); it != st.telemetry.end()) {
+        p.logf(LogLevel::Info, "GPU: sharegroup 0x%x destroyed. Live resources before cleanup: %d textures, %d buffers, %d FBOs, %d RBOs, %d programs, %d shaders, estimated %lld bytes",
+               guestSharegroup, it->second->textures.load(), it->second->buffers.load(), it->second->framebuffers.load(),
+               it->second->renderbuffers.load(), it->second->programs.load(), it->second->shaders.load(),
+               it->second->estimatedBytes.load());
+        st.telemetry.erase(it);
+    }
+
+    st.shareRoot.erase(guestSharegroup);
+
+    for (auto it = st.workers.begin(); it != st.workers.end(); ) {
+        if (uint32_t(it->first) == guestSharegroup) {
+            HostContext* hc = it->second.get();
+            if (tls.proc == &p && tls.ctx == hc) tls.ctx = nullptr;
+            if (hc && hc->handle) st.platform->destroyContext(hc->handle);
+            it = st.workers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 
 HostContext* currentHostContext() { return tls.ctx; }
 
@@ -434,6 +526,9 @@ static bool isPvrtc(uint32_t f) { return f >= kPvrtcRgb4 && f <= kPvrtcRgba2; }
 void hg_glCompressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t internalformat, int32_t width, int32_t height,
                                int32_t border, int32_t imageSize, GuestPtr data) {
     HG_BEGIN(glCompressedTexImage2D)
+    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->estimatedBytes += (long long)(imageSize);
+    }
     if (isPvrtc(internalformat) && !hostHasPvrtc(hc) && hc->fn.glTexImage2D) {
         const bool twoBpp = internalformat == kPvrtcRgb2 || internalformat == kPvrtcRgba2;
         const bool alpha = internalformat == kPvrtcRgba4 || internalformat == kPvrtcRgba2;
@@ -465,6 +560,9 @@ void hg_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_
 void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalformat, int32_t width, int32_t height,
                      int32_t border, uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexImage2D)
+    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->estimatedBytes += (long long)(width * height * 4); // rough estimate
+    }
     if (format == kBgra && internalformat == int32_t(kRgba) && !hc->desktop) internalformat = int32_t(kBgra);
     hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
 }
@@ -1281,6 +1379,12 @@ void setScreenFbo(Process& p, uint32_t guestContext, uint32_t fbo) {
         it->second->readFbo = fbo; // repurposing readFbo or we can add screenFbo
     }
 }
+
+ProvisionalGpuMetrics provisionalMetrics(Process& p) {
+    State& st = S(p);
+    return { st.activeTextures.load(), st.activeBuffers.load(), st.activeFramebuffers.load(), st.activeRenderbuffers.load(), st.activePrograms.load(), st.activeShaders.load(), st.estimatedBytes.load() };
+}
+
 } // namespace Hydrogen::Runtime::HostGL
 
 
