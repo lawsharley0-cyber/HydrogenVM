@@ -2513,7 +2513,8 @@ uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
 }
 void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {
     ContextData* c = currentCtx(x);
-    if (!c || id == 0) return;
+    if (!c) return;
+    if (id == 0) { c->lastError = GL_INVALID_OPERATION; return; }   // 0 is never a valid query name
 
     if (target != 0x8C2F && target != 0x8D6A) { // GL_ANY_SAMPLES_PASSED_EXT or GL_ANY_SAMPLES_PASSED_CONSERVATIVE_EXT
         c->lastError = GL_INVALID_ENUM;

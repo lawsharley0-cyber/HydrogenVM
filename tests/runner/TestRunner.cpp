@@ -3329,6 +3329,14 @@ int runFullSubsystemTests() {
             const uint32_t badObjPname = callGL("_glGetError", {});
             check(badPname == 0x0500 && badTarget == 0x0500 && badObjPname == 0x0500 && proc.mem().read<uint32_t>(qp) == 0xFFFFFFFF,
                   "glGetQueryivEXT/glGetQueryObjectuivEXT reject unsupported targets and pnames with GL_INVALID_ENUM");
+
+            // Query name 0 is never valid.
+            callGL("_glGetError", {});
+            callGL("_glBeginQueryEXT", {0x8C2F, 0});
+            const uint32_t zeroErr = callGL("_glGetError", {});
+            proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
+            callGL("_glGetQueryivEXT", {0x8C2F, 0x8865, qp});
+            check(zeroErr == 0x0502 && proc.mem().read<uint32_t>(qp) == 0, "glBeginQueryEXT with query name 0 is GL_INVALID_OPERATION and starts nothing");
         }
 
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
