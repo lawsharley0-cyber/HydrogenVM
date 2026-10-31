@@ -22,6 +22,8 @@
 #include <memory>
 #include <vector>
 
+#include "core/diag/CallRing.hpp"
+
 // preserve_none (no callee-saved registers) removes the push/pop that every
 // handler otherwise pays. It needs LLVM 19 for AArch64; Apple clang numbers
 // its releases differently (Apple clang 17 = LLVM 19).
@@ -125,6 +127,11 @@ struct alignas(64) Cpu {
     // threads can run on real host threads without locking on every branch.
     std::unique_ptr<FastEntry[]> fast;
     uint64_t fast_gen = ~0ull;
+
+    // Last host calls this thread made (see Diag::CallRing). Created on the
+    // first call, by the thread that owns this Cpu; readers on other threads
+    // load the pointer with acquire and must not outlive the Cpu.
+    std::atomic<Diag::ThreadCallRing*> call_ring{nullptr};
 
     // Guest SP at the innermost host->guest call (Engine::callGuest). Guest
     // frames at or above it belong to code that host frames are waiting on,
