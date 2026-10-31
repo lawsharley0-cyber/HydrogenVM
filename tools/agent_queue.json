@@ -3,40 +3,56 @@
   "agents": {
     "claude": {
       "can_run_games": true,
-      "weekly_budget": 6,
+      "weekly_budget": 8,
       "prefers": [
         "T1",
         "T1b",
-        "T2",
+        "T2a",
+        "G2",
+        "G3",
         "T7",
         "T5b",
         "T5c",
-        "T3"
+        "P1"
       ]
     },
     "codex": {
       "can_run_games": true,
-      "weekly_budget": 6,
+      "weekly_budget": 8,
       "prefers": [
-        "T3",
-        "T4",
+        "T2b",
         "T6",
         "T8",
-        "T5a",
         "T5d",
-        "T2"
+        "G1",
+        "T5a",
+        "P1"
       ]
     },
     "antigravity": {
       "can_run_games": true,
-      "weekly_budget": 4,
+      "weekly_budget": 8,
       "prefers": [
-        "T4",
+        "G4",
         "T5c",
         "T5b",
-        "T6",
+        "P1",
         "T1b"
       ]
     }
+  },
+  "default": {
+    "can_run_games": true,
+    "weekly_budget": 6,
+    "prefers": [
+      "G1",
+      "G2",
+      "G3",
+      "G4",
+      "T5d",
+      "T2a",
+      "T2b",
+      "P1"
+    ]
   }
 }

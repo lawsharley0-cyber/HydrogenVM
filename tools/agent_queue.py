@@ -10,7 +10,7 @@ bot has to drive anyone's account:
     python3 tools/agent_queue.py release 12 --agent codex [--blocked]
 
 A card is an issue with the labels: `card`, one `status:*` label, optionally
-`umbrella` (tracks child cards, never picked), `needs:game-run` (must run real games) and `hotspot` (edits the shared hotspot
+`umbrella` (tracks child cards, never picked), `hotspot:<area>` (one in-progress card per area), `needs:game-run` (must run real games) and `hotspot` (edits the shared hotspot
 files, one at a time). Dependencies are a line `Depends-on: #3, #4` in the body.
 Per-agent capability and weekly budget live in tools/agent_queue.json.
 
@@ -43,22 +43,23 @@ def deps(issue: dict) -> list[int]:
 
 
 def card_id(issue: dict) -> str:
-    m = re.match(r"\s*(T\d+[a-z]?)\b", issue.get("title", ""))
+    m = re.match(r"\s*([TGP]\d+[a-z]?)\b", issue.get("title", ""))
     return m.group(1) if m else f"#{issue['number']}"
 
 
 def pick(agent: str, open_cards: list[dict], closed_numbers: set[int], used_this_week: dict[str, int], cfg: dict):
     """Return (issue, reason) for the best ready card for `agent`, or (None, why)."""
-    a = cfg["agents"].get(agent)
+    a = cfg["agents"].get(agent) or cfg.get("default")
     if a is None:
-        return None, f"unknown agent '{agent}' (known: {', '.join(cfg['agents'])})"
+        return None, f"unknown agent '{agent}' (known: {', '.join(cfg['agents'])}); add it or a 'default' profile to tools/agent_queue.json"
     # `umbrella` cards only track their child cards; they never count toward the work limit or get picked.
     in_progress = [c for c in open_cards if "status:in-progress" in labels(c) and "umbrella" not in labels(c)]
     if len(in_progress) >= cfg["wip_limit"]:
         return None, f"work limit reached: {len(in_progress)} cards in progress (limit {cfg['wip_limit']})"
     if used_this_week.get(agent, 0) >= a["weekly_budget"]:
         return None, f"{agent} has used its weekly budget ({a['weekly_budget']} cards); another agent can take the card"
-    hotspot_taken = any("hotspot" in labels(c) for c in in_progress)
+    # `hotspot` blocks all other hotspot cards; `hotspot:<area>` blocks only cards in the same area.
+    taken = {l for c in in_progress for l in labels(c) if l == "hotspot" or l.startswith("hotspot:")}
     open_numbers = {c["number"] for c in open_cards}
     best, best_score = None, None
     for c in open_cards:
@@ -69,7 +70,8 @@ def pick(agent: str, open_cards: list[dict], closed_numbers: set[int], used_this
             continue
         if "needs:game-run" in lab and not a["can_run_games"]:
             continue
-        if "hotspot" in lab and hotspot_taken:
+        mine = {l for l in lab if l == "hotspot" or l.startswith("hotspot:")}
+        if mine & taken:
             continue
         pref = a["prefers"]
         cid = card_id(c)
@@ -100,11 +102,11 @@ def fetch_cards(repo: str):
     return open_cards, closed
 
 
-def used_this_week(repo: str, cfg: dict) -> dict[str, int]:
+def used_this_week(repo: str, cfg: dict, extra: tuple = ()) -> dict[str, int]:
     from datetime import datetime, timedelta, timezone
     since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     out = {}
-    for agent in cfg["agents"]:
+    for agent in [*cfg["agents"], *[e for e in extra if e not in cfg["agents"]]]:
         res = json.loads(gh("api", f"repos/{repo}/issues?state=all&labels=card,agent:{agent}&since={since}&per_page=100"))
         out[agent] = len([i for i in res if "pull_request" not in i])
     return out
@@ -116,14 +118,14 @@ def cmd_status(args):
     used = used_this_week(repo, cfg)
     print(f"Work limit {cfg['wip_limit']}; weekly use: " + ", ".join(f"{a} {used[a]}/{cfg['agents'][a]['weekly_budget']}" for a in cfg["agents"]))
     for c in sorted(open_cards, key=lambda c: c["number"]):
-        st = sorted(l for l in labels(c) if l.startswith(("status:", "agent:", "needs:")) or l == "hotspot")
+        st = sorted(l for l in labels(c) if l.startswith(("status:", "agent:", "needs:", "hotspot", "umbrella")))
         print(f"#{c['number']:<4} {card_id(c):<4} {', '.join(st):<60} deps={deps(c) or '-'}")
 
 
 def cmd_next(args):
     repo = repo_slug(); cfg = load_config()
     open_cards, closed = fetch_cards(repo)
-    issue, why = pick(args.agent, open_cards, closed, used_this_week(repo, cfg), cfg)
+    issue, why = pick(args.agent, open_cards, closed, used_this_week(repo, cfg, (args.agent,)), cfg)
     if issue is None:
         print(f"NOTHING: {why}"); return 1
     print(f"NEXT: #{issue['number']} {issue['title']}\n{issue['html_url']}\nwhy: {why}\nclaim it: python3 tools/agent_queue.py claim {issue['number']} --agent {args.agent}")
@@ -142,7 +144,7 @@ def cmd_claim(args):
     issue = next((c for c in open_cards if c["number"] == args.number), None)
     if issue is None or "status:ready" not in labels(issue):
         sys.exit(f"#{args.number} is not a ready card (already claimed, blocked or closed)")
-    pick_issue, why = pick(args.agent, open_cards, closed, used_this_week(repo, cfg), cfg)
+    pick_issue, why = pick(args.agent, open_cards, closed, used_this_week(repo, cfg, (args.agent,)), cfg)
     if pick_issue is None or pick_issue["number"] != args.number:
         sys.exit(f"{args.agent} may not claim #{args.number} now: {why}")
     set_labels(repo, args.number, add=[f"agent:{args.agent}", "status:in-progress"], remove=["status:ready"])

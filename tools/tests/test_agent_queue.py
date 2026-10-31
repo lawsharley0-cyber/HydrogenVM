@@ -78,6 +78,23 @@ class PickTests(unittest.TestCase):
         self.assertIsNone(got)
         self.assertIn("unknown agent", why)
 
+    def test_unknown_agent_uses_default_profile(self):
+        cfg = dict(CFG, default={"can_run_games": False, "weekly_budget": 2, "prefers": []})
+        cards = [card(1, "T1", "status:ready", "needs:game-run"), card(2, "T3", "status:ready")]
+        got, _ = q.pick("newagent", cards, set(), {}, cfg)
+        self.assertEqual(got["number"], 2)
+
+    def test_hotspot_areas_conflict_only_within_the_same_area(self):
+        cards = [card(1, "T1", "status:in-progress", "hotspot:process"),
+                 card(2, "T2a", "status:ready", "hotspot:process"),
+                 card(3, "T2b", "status:ready", "hotspot:objc-runtime")]
+        got, _ = q.pick("a", cards, set(), {}, CFG)
+        self.assertEqual(got["number"], 3)
+
+    def test_card_ids_for_game_and_probe_cards(self):
+        self.assertEqual(q.card_id({"number": 1, "title": "G3 Goat crash"}), "G3")
+        self.assertEqual(q.card_id({"number": 1, "title": "P1 probe sweep"}), "P1")
+
     def test_cards_not_ready_are_ignored(self):
         cards = [card(1, "T1", "status:blocked"), card(2, "T2", "status:review")]
         got, _ = q.pick("a", cards, set(), {}, CFG)
