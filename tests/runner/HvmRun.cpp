@@ -204,6 +204,7 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"crashReport\": \"" << jsonEscape(proc.crashReport()) << "\",\n";
             f << "  \"signature\": \"" << proc.crashSignature() << "\",\n";
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
+            f << "  \"runtimeMemorySamples\": " << proc.memorySamplesJson() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
             f << "  \"unimplementedImports\": " << jsonList(proc.unimplementedImports()) << ",\n";

@@ -432,6 +432,7 @@ struct ButtonData : ObjC::HostObject {
     std::unordered_map<uint32_t, StateContent> content;   // by UIControlState
     id titleLabel = 0, imageView = 0;                     // retained subviews
     UIEdgeInsets contentInsets{0, 0, 0, 0}, titleInsets{0, 0, 0, 0}, imageInsets{0, 0, 0, 0};
+    CGSize titleShadowOffset{0, 0};
     bool adjustsImage = true, adjustsDisabled = true, showsTouch = false;
 };
 ButtonData& BD(Ctx& x, id b) { return rt(x).host<ButtonData>(b); }
@@ -452,6 +453,7 @@ id ensureTitleLabel(Ctx& x, id self) {
         rt(x).send(x.cpu, d.titleLabel, "setOpaque:", {0});
         rt(x).send(x.cpu, d.titleLabel, "setFont:", {systemFont(x, 15, true)});
         rt(x).send(x.cpu, d.titleLabel, "setLineBreakMode:", {5});   // middle truncation
+        LD(x, d.titleLabel).shadowOffset = d.titleShadowOffset;      // the button's default is zero; UILabel's is {0,-1}
         rt(x).send(x.cpu, self, "addSubview:", {d.titleLabel});
     }
     return d.titleLabel;
@@ -521,6 +523,14 @@ id b_initWithCoder(Ctx& x, id self, SEL s, id coder) {
     insets("UIContentEdgeInsets", d.contentInsets);
     insets("UITitleEdgeInsets", d.titleInsets);
     insets("UIImageEdgeInsets", d.imageInsets);
+    if (has(x, coder, "UITitleShadowOffset")) {
+        const uint32_t tmp = x.proc.heap().allocZeroed(16);
+        const SEL sel = rt(x).sel("decodeCGSizeForKey:");
+        x.proc.callGuest(x.cpu, rt(x).lookupForSend(rt(x).classOf(coder), sel), {tmp, coder, sel, makeString(x, "UITitleShadowOffset")});
+        d.titleShadowOffset = CG::readStruct<CGSize>(x, tmp);
+        x.proc.heap().free(tmp);
+        x.proc.callGuest(x.cpu, rt(x).lookupForSend(rt(x).classOf(ensureTitleLabel(x, me)), rt(x).sel("setShadowOffset:")), {ensureTitleLabel(x, me), rt(x).sel("setShadowOffset:"), std::bit_cast<uint32_t>(d.titleShadowOffset.width), std::bit_cast<uint32_t>(d.titleShadowOffset.height)});
+    }
     viewData(x, me).needsLayout = true;
     return me;
 }
@@ -578,6 +588,8 @@ void b_contentInsets(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, re
 void b_setContentInsets(Ctx& x, id self, SEL, UIEdgeInsets i) { BD(x, self).contentInsets = i; viewData(x, self).needsLayout = true; }
 void b_titleInsets(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, BD(x, self).titleInsets); }
 void b_setTitleInsets(Ctx& x, id self, SEL, UIEdgeInsets i) { BD(x, self).titleInsets = i; viewData(x, self).needsLayout = true; }
+void b_titleShadowOffset(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, BD(x, self).titleShadowOffset); }
+void b_setTitleShadowOffset(Ctx& x, id self, SEL, CGSize s) { BD(x, self).titleShadowOffset = s; x.proc.callGuest(x.cpu, rt(x).lookupForSend(rt(x).classOf(ensureTitleLabel(x, self)), rt(x).sel("setShadowOffset:")), {ensureTitleLabel(x, self), rt(x).sel("setShadowOffset:"), std::bit_cast<uint32_t>(s.width), std::bit_cast<uint32_t>(s.height)}); }
 void b_imageInsets(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, BD(x, self).imageInsets); }
 void b_setImageInsets(Ctx& x, id self, SEL, UIEdgeInsets i) { BD(x, self).imageInsets = i; viewData(x, self).needsLayout = true; }
 bool b_adjustsImage(Ctx& x, id self, SEL) { return BD(x, self).adjustsImage; }
@@ -1004,6 +1016,7 @@ void registerUIControls(Process& p, ObjC::Runtime& r) {
        .m<&b_imageFor>("imageForState:").m<&b_backgroundFor>("backgroundImageForState:").m<&b_currentTitle>("currentTitle")
        .m<&b_currentImage>("currentImage").m<&b_currentBackground>("currentBackgroundImage").m<&b_currentTitleColor>("currentTitleColor")
        .m<&b_titleLabel>("titleLabel").m<&b_imageView>("imageView").m<&b_buttonType>("buttonType", "i@:").m<&b_setFont>("setFont:", "v@:@")
+       .m<&b_titleShadowOffset>("titleShadowOffset", kS + "@:").m<&b_setTitleShadowOffset>("setTitleShadowOffset:", "v@:" + kS)
        .m<&b_font>("font").m<&b_contentInsets>("contentEdgeInsets", E + "@:").m<&b_setContentInsets>("setContentEdgeInsets:", "v@:" + E)
        .m<&b_titleInsets>("titleEdgeInsets", E + "@:").m<&b_setTitleInsets>("setTitleEdgeInsets:", "v@:" + E)
        .m<&b_imageInsets>("imageEdgeInsets", E + "@:").m<&b_setImageInsets>("setImageEdgeInsets:", "v@:" + E)
