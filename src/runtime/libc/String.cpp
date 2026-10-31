@@ -280,7 +280,7 @@ void safe_read_check(Ctx& x, GuestPtr p, size_t len) {
     while (addr < end) {
         require_readable(x, addr, "invalid guest memory read access");
         (void)x.mem.read<uint8_t>(addr); // read to force fault if unmapped
-        addr = (addr + Memory::GuestArena::kGuestPageSize) & ~(Memory::GuestArena::kGuestPageSize - 1);
+        addr = (addr + Memory::GuestArena::kGuestPageSize) & ~uint64_t(Memory::GuestArena::kGuestPageSize - 1);
         if (addr >= Memory::GuestArena::kArenaSize) break;
     }
     // verify last byte
@@ -301,7 +301,7 @@ void safe_write_check(Ctx& x, GuestPtr p, size_t len) {
         if (!(x.mem.protAt(addr) & Memory::kProtWrite)) {
             throw CPU::GuestFault(CPU::Exit::MemFault, addr, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory write access");
         }
-        addr = (addr + Memory::GuestArena::kGuestPageSize) & ~(Memory::GuestArena::kGuestPageSize - 1);
+        addr = (addr + Memory::GuestArena::kGuestPageSize) & ~uint64_t(Memory::GuestArena::kGuestPageSize - 1);
         if (addr >= Memory::GuestArena::kArenaSize) break;
     }
     // verify last byte

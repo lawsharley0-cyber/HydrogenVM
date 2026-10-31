@@ -4752,6 +4752,7 @@ int runFullSubsystemTests() {
             if (call("___strlcat_chk", {dst, src, 1, 100}) != 99) return false; // 1-byte means just read dst NUL, then slen=99, return 99
 
             // test unmapped dst with n=0
+            if (proc.mem().isMapped(0x40000000)) return false; // precondition: the address really is unmapped
             if (call("___strlcat_chk", {0x40000000, src, 0, 100}) != 99) return false;
 
             // test in bounds but destlen == SIZE_MAX sentinel
