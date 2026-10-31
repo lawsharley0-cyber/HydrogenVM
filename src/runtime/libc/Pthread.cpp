@@ -147,6 +147,7 @@ GuestCond& condFor(Ctx& x, uint32_t addr) {
 
 // deadline: 0 = none, else nanoseconds since the Unix epoch.
 int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
+    checkStop(x);
     t_testcancel(x);
     GuestCond& c = condFor(x, cv);
     GuestMutex& m = mutexFor(x, mu);
@@ -165,19 +166,27 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
     {
         std::unique_lock<std::mutex> lk(c.m);
         while (c.gen == gen) {
-            c.cv.wait_for(lk, 50ms);
-            if (c.gen != gen) break;
             if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
+            c.cv.wait_for(lk, 50ms);
+            if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
+            if (c.gen != gen) break;
             if (deadlineNs) {
                 const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                 if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
             }
         }
     }
+    // The process is ending: a woken waiter must not queue on a mutex that another dying thread still owns
+    // (it would only notice the stop at the next 50 ms mutex poll), so leave without reacquiring it.
+    if (x.proc.stopping()) checkStop(x);
+    struct MutexRestorer {
+        GuestMutex& m; int saved; bool locked;
+        ~MutexRestorer() { if (locked) { std::lock_guard<std::mutex> lk(m.m); m.count = saved; } }
+    } restorer{m, saved, false};
     lockMutex(x, m, false);
-    { std::lock_guard<std::mutex> lk(m.m); m.count = saved; }
+    restorer.locked = true;
+    checkStop(x);
     t_testcancel(x); // POSIX requires the mutex to be reacquired before cancellation.
-    if (result < 0) checkStop(x);
     return result;
 }
 
@@ -492,6 +501,17 @@ bool spin_try(Ctx& x, GuestPtr p) { int32_t z = 0; return __atomic_compare_excha
 void spin_unlock(Ctx& x, GuestPtr p) { __atomic_store_n(A<int32_t>(x, p), 0, __ATOMIC_RELEASE); }
 
 } // namespace
+
+void pthreadsBroadcastStop(Process& p) {
+    auto& t = p.service<Threads>();
+    std::vector<GuestCond*> conds;
+    { std::lock_guard<std::mutex> lk(t.mu); for (auto& [addr, c] : t.conds) conds.push_back(c.get()); }
+    for (auto* c : conds) {
+        std::lock_guard<std::mutex> clk(c->m);
+        ++c->gen;
+        c->cv.notify_all();
+    }
+}
 
 void registerLibcPthread(Process& p) {
     p.def<&t_cancel>("_pthread_cancel");
