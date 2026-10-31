@@ -4937,6 +4937,11 @@ int runFullSubsystemTests() {
         const uint64_t t1 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
         const uint64_t t2 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
         bool chrono_ok = t2 >= t1 && t1 > 0;
+        // Darwin libc++ system_clock::now() counts microseconds since the epoch.
+        const auto hostBefore = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const uint64_t sysNow = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12system_clock3nowEv"), {});
+        const auto hostAfter = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        chrono_ok = chrono_ok && int64_t(sysNow) >= hostBefore - 1000 && int64_t(sysNow) <= hostAfter + 1000;
 
         const uint32_t dur = proc.heap().allocZeroed(8);
         m.write<uint64_t>(dur, 1000000); // 1ms
@@ -5016,26 +5021,27 @@ int runFullSubsystemTests() {
         // Test TLS isolation
         const uint32_t tls_test_key = m.read<uint32_t>(tls_ptr);
         std::atomic<uint32_t> th1_val{0}, th2_val{0};
-        const uint32_t tls_worker1 = proc.defineFunction("hvm_test_tls1", [&](Ctx& ctx) {
-            auto set_fn = proc.lookupSymbol("_pthread_setspecific");
-            auto get_fn = proc.lookupSymbol("_pthread_getspecific");
-            if (set_fn) proc.callGuest(ctx.cpu, *set_fn, {tls_test_key, 1234});
-            if (get_fn) th1_val = uint32_t(proc.callGuest(ctx.cpu, *get_fn, {tls_test_key}));
-            ctx.cpu.r[0] = 0;
-        });
-        const uint32_t tls_worker2 = proc.defineFunction("hvm_test_tls2", [&](Ctx& ctx) {
-            auto set_fn = proc.lookupSymbol("_pthread_setspecific");
-            auto get_fn = proc.lookupSymbol("_pthread_getspecific");
-            if (set_fn) proc.callGuest(ctx.cpu, *set_fn, {tls_test_key, 5678});
-            if (get_fn) th2_val = uint32_t(proc.callGuest(ctx.cpu, *get_fn, {tls_test_key}));
-            ctx.cpu.r[0] = 0;
-        });
+        std::atomic<int> tls_set{0};   // both workers store before either reads, so a shared slot would show up
+        auto tlsWorker = [&](uint32_t value, std::atomic<uint32_t>& out) {
+            return [&, value](Ctx& ctx) {
+                auto set_fn = proc.lookupSymbol("_pthread_setspecific");
+                auto get_fn = proc.lookupSymbol("_pthread_getspecific");
+                if (set_fn) proc.callGuest(ctx.cpu, *set_fn, {tls_test_key, value});
+                ++tls_set;
+                for (int i = 0; i < 400 && tls_set.load() < 2; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (get_fn) out = uint32_t(proc.callGuest(ctx.cpu, *get_fn, {tls_test_key}));
+                ctx.cpu.r[0] = 0;
+            };
+        };
+        const uint32_t tls_worker1 = proc.defineFunction("hvm_test_tls1", tlsWorker(1234, th1_val));
+        const uint32_t tls_worker2 = proc.defineFunction("hvm_test_tls2", tlsWorker(5678, th2_val));
         const uint32_t tls_th1 = proc.startThread(tls_worker1, 0, 64u << 10, false);
         const uint32_t tls_th2 = proc.startThread(tls_worker2, 0, 64u << 10, false);
         proc.joinThread(tls_th1, nullptr);
         proc.joinThread(tls_th2, nullptr);
+        const uint32_t mainTls = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_pthread_getspecific"), {tls_test_key}));
 
-        bool tls_isolation_ok = th1_val.load() == 1234 && th2_val.load() == 5678;
+        bool tls_isolation_ok = th1_val.load() == 1234 && th2_val.load() == 5678 && tls_set.load() == 2 && mainTls == 0;
 
         // Ensure all detached background threads finish before tearing down the process
         proc.joinThread(worker_th, nullptr);

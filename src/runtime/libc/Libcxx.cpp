@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <stdexcept>
@@ -92,74 +93,61 @@ void t_detach(Ctx& x, GuestPtr self) {
     x.mem.write<uint32_t>(self, 0);
 }
 
-uint32_t m_lock(Ctx& x, GuestPtr self) {
-    auto lock_fn = x.proc.hostFunctionFor("_pthread_mutex_lock");
-    if (lock_fn) {
-        x.cpu.r[0] = self;
-        lock_fn(x.cpu);
-        return x.cpu.r[0];
-    }
-    return 0;
+// A missing pthread implementation is a runtime error, never a silent no-op.
+std::function<void(CPU::Cpu&)> requiredHost(Ctx& x, const char* symbol) {
+    auto fn = x.proc.hostFunctionFor(symbol);
+    if (!fn) throw std::runtime_error(std::string("libc++ shim: missing host function ") + symbol);
+    return fn;
 }
 
-uint32_t m_unlock(Ctx& x, GuestPtr self) {
-    auto unlock_fn = x.proc.hostFunctionFor("_pthread_mutex_unlock");
-    if (unlock_fn) {
-        x.cpu.r[0] = self;
-        unlock_fn(x.cpu);
-        return x.cpu.r[0];
-    }
-    return 0;
+uint32_t callHost1(Ctx& x, const char* symbol, GuestPtr a) {
+    auto fn = requiredHost(x, symbol);
+    x.cpu.r[0] = a;
+    fn(x.cpu);
+    return x.cpu.r[0];
+}
+
+void m_lock(Ctx& x, GuestPtr self) {
+    const uint32_t rc = callHost1(x, "_pthread_mutex_lock", self);
+    if (rc != 0) thread_error("mutex::lock", int(rc));
+}
+
+void m_unlock(Ctx& x, GuestPtr self) {
+    const uint32_t rc = callHost1(x, "_pthread_mutex_unlock", self);
+    if (rc != 0) thread_error("mutex::unlock", int(rc));
 }
 
 void m_dtor(Ctx& x, GuestPtr self) {
-    auto dtor_fn = x.proc.hostFunctionFor("_pthread_mutex_destroy");
-    if (dtor_fn) {
-        x.cpu.r[0] = self;
-        dtor_fn(x.cpu);
-    }
+    callHost1(x, "_pthread_mutex_destroy", self);
 }
 
 void cv_notify_one(Ctx& x, GuestPtr self) {
-    auto fn = x.proc.hostFunctionFor("_pthread_cond_signal");
-    if (fn) {
-        x.cpu.r[0] = self;
-        fn(x.cpu);
-    }
+    callHost1(x, "_pthread_cond_signal", self);
 }
 
 void cv_notify_all(Ctx& x, GuestPtr self) {
-    auto fn = x.proc.hostFunctionFor("_pthread_cond_broadcast");
-    if (fn) {
-        x.cpu.r[0] = self;
-        fn(x.cpu);
-    }
+    callHost1(x, "_pthread_cond_broadcast", self);
 }
 
 void cv_wait(Ctx& x, GuestPtr self, GuestPtr lock) {
     // lock is unique_lock<mutex>, offset 0 is mutex pointer
     uint32_t mtx = x.mem.read<uint32_t>(lock);
-    auto fn = x.proc.hostFunctionFor("_pthread_cond_wait");
-    if (fn) {
-        x.cpu.r[0] = self;
-        x.cpu.r[1] = mtx;
-        fn(x.cpu);
-    }
+    auto fn = requiredHost(x, "_pthread_cond_wait");
+    x.cpu.r[0] = self;
+    x.cpu.r[1] = mtx;
+    fn(x.cpu);
 }
 
 void cv_dtor(Ctx& x, GuestPtr self) {
-    auto fn = x.proc.hostFunctionFor("_pthread_cond_destroy");
-    if (fn) {
-        x.cpu.r[0] = self;
-        fn(x.cpu);
-    }
+    callHost1(x, "_pthread_cond_destroy", self);
 }
 
 void sys_clock_now(Ctx& x) {
+    // Darwin libc++ system_clock counts microseconds (steady_clock counts nanoseconds).
     auto t = std::chrono::system_clock::now();
-    int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
-    x.cpu.r[0] = uint32_t(ns);
-    x.cpu.r[1] = uint32_t(ns >> 32);
+    int64_t us = std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count();
+    x.cpu.r[0] = uint32_t(us);
+    x.cpu.r[1] = uint32_t(us >> 32);
 }
 
 void steady_clock_now(Ctx& x) {
