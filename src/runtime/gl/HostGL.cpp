@@ -277,7 +277,6 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
 void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     State& st = S(p);
     const uint32_t self = p.currentThread().id;
-    const std::vector<uint32_t> live = p.liveThreadIds();   // before st.mu: keeps the lock order simple
     std::vector<std::pair<uint64_t, uint32_t>> retiredHere;   // (retirement id, owner thread) retired by this call
     {
     std::lock_guard<std::mutex> lk(st.mu);
@@ -290,9 +289,8 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
         const uint32_t owner = uint32_t(it->first >> 32);
         std::unique_ptr<HostContext> hc = std::move(it->second);
         it = st.workers.erase(it);
-        const bool ownerGone = owner != self && std::find(live.begin(), live.end(), owner) == live.end();
-        if (owner == self || ownerGone) {
-            // No thread can use it any more (the caller owns it, or its owner has exited): free it now.
+        if (owner == self) {
+            // The caller owns it, so no other thread can hold it: free it now.
             if (tls.proc == &p && tls.ctx == hc.get()) {
                 st.platform->makeCurrent(nullptr);   // unbind before the native context goes away
                 tls.ctx = nullptr;
@@ -308,8 +306,9 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     }
     }
     if (retiredHere.empty()) return;
-    // The owner may have exited between the first snapshot and the retirement, after its exit hook ran:
-    // look again, and free whatever nobody can hold any more.
+    // Workers of other threads are retired above; if an owner has already exited (its exit hook ran before
+    // the retirement), nobody will drop them: take a fresh snapshot (outside st.mu, to keep the lock order
+    // simple) and free whatever nobody can hold any more.
     const std::vector<uint32_t> liveNow = p.liveThreadIds();
     std::lock_guard<std::mutex> lk(st.mu);
     for (const auto& [id, owner] : retiredHere) {
