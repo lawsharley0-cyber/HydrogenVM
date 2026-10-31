@@ -4652,6 +4652,27 @@ int runFullSubsystemTests() {
             call("_free", {dst});
             return ok;
         });
+        run("_FORTIFY_SOURCE strcat/strncat bound the destination scan by destlen", [&] {
+            // Unterminated destination right before an unmapped page: the bounded scan reports the
+            // __chk_fail (info 0); the old unbounded scan walked into the hole and faulted at its address.
+            const uint32_t base = proc.mem().findFree(8192);
+            proc.mem().map(base, 4096, Memory::kProtRW);
+            const uint32_t dst = base + 4096 - 16;
+            for (uint32_t i = 0; i < 16; ++i) proc.mem().write<uint8_t>(dst + i, 'D');
+            const uint32_t src = call("_malloc", {8});
+            call("_memset", {src, 'S', 4}); proc.mem().write<uint8_t>(src + 4, 0);
+            auto faultInfo = [&](const char* fn, std::initializer_list<uint32_t> args, uint32_t& info) {
+                try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); }
+                catch (const CPU::GuestFault& e) { info = e.info; return true; }
+                return false;
+            };
+            uint32_t i1 = 0xFFFF, i2 = 0xFFFF;
+            const bool ok = faultInfo("___strcat_chk", {dst, src, 16}, i1) && faultInfo("___strncat_chk", {dst, src, 4, 16}, i2);
+            proc.mem().unmap(base, 4096);
+            call("_free", {src});
+            if (!ok || i1 != 0 || i2 != 0) std::fprintf(stderr, "strcat info %u strncat info %u\n", i1, i2);
+            return ok && i1 == 0 && i2 == 0;
+        });
         run("_FORTIFY_SOURCE test strncpy", [&] {
             uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
             call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
