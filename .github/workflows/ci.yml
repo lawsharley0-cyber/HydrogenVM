@@ -37,6 +37,8 @@ jobs:
         run: CXX=g++ tools/test_plist.sh
       - name: Evidence contract tests
         run: python3 -m unittest discover -s tools/tests -p 'test_hvm_evidence.py'
+      - name: Agent queue tests
+        run: python3 -m unittest discover -s tools/tests -p 'test_agent_queue.py'
       - name: Cache ld64 (cctools-port)
         id: cctools
         uses: actions/cache@v4

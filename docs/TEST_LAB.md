@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · 18 automated cases (TL-A–TL-R) · schema version 1.
+Version 1.0 · 23 automated cases (TL-A–TL-W) · schema version 1.
 
 ## Contents
 
@@ -23,9 +23,9 @@ toolchain as the other iOS guests (`tools/ios_build.py`).  When imported into
 HydrogenVM on an iPhone it shows a menu; in automated mode each case runs as a
 separate process with an external timeout.
 
-The automated suite now covers 18 case IDs, including import integrity, CPU
+The automated suite now covers 23 case IDs, including import integrity, CPU
 correctness, graphics, audio, persistence, threading, input, and lifecycle.
-TL-L is a host-driven termination check; 17 cases are guest-selectable.
+TL-L is a host-driven termination check; 22 cases are guest-selectable.
 
 ---
 
@@ -51,6 +51,44 @@ TL-L is a host-driven termination check; 17 cases are guest-selectable.
 | TL-P | VFP VCMP | Checks ordered/unordered VCMP condition flags against the ARM architecture definition; passed before any runtime change and adds isolated coverage |
 | TL-Q | RemoteIO thread timing | Requires audio callbacks to continue while the main thread sleeps; proven red with the old main-run-loop timer and green with the guest audio thread |
 | TL-R | Depth/stencil & root view | Requires depth24/stencil8/packed renderbuffers with correct bit counts, real stencil reject/write behavior, and replacement of an installed root controller's view; both graphics and root-view checks were red before their fixes for Minion Rush |
+
+### Objective-C conformance (T8)
+
+TL-S–TL-W are project-authored behavioral ports of selected public API test
+scenarios. Their [design and pinned upstream references](T8_OBJC_TEST_DESIGN.md)
+identify the scope; no Apple source, headers, macros or test harness was copied.
+They do not claim parity with the full modern objc4 suite.
+
+| ID | Name | Independent oracle |
+|---|---|---|
+| TL-S | Selector interning | Equal name bytes and the compiled selector identify the same SEL; different names differ; name lookup round-trips. Separate input buffers rule out accidental pointer equality |
+| TL-T | Class/metaclass graph | The guest declares Child : Base : NSObject. Superclass edges and class/metaclass flags must match those declarations and the public metaclass inheritance contract |
+| TL-U | Method lookup | Guest-authored method bodies return 13 (base instance), 23 (override), and 31 (inherited class method). Typed IMP calls verify lookup; missing methods must return NULL |
+| TL-V | Method mutation/cache | Warm dispatch, add an inherited override returning 29, reject a duplicate, replace it with 47, and preserve the base's 11. The returned previous IMP must be the authored 29 function. A fresh child class permits repeated menu runs |
+| TL-W | Associated-object lifetime | Explicit MRC ownership: allocation +1, association +1, caller release -1, clear -1. The value survives until clear and deallocates exactly once. Getter autoreleases are drained before checking clear; retainCount is not an oracle |
+
+Each case writes its checkpoint and named expected/actual numeric observations.
+The host runner retains these dictionaries and the oracle description in its
+report. A pass marker without a fresh complete guest result (or followed by a
+nonzero exit) is a failure. `objc_conformance.m` uses ARC;
+`objc_lifetime_mrc.m` is independently compiled with MRC by the existing filename
+convention. The menu scrolls so all 22 selectable cases and footer controls remain
+reachable.
+
+These five cases pass on unchanged main; that is new coverage, not a runtime
+repair. Fault detection is checked with a separately linked CLI whose **copied**
+project-owned API wrappers deliberately return wrong results. Each case must pass
+on the original binary and fail its specific named check on the faulty binary:
+
+```sh
+python3 tools/tests/validate_objc_conformance.py \
+  --build build --ipa build/ios/TestLab.ipa --out build/objc-conformance-faults
+```
+
+Only generated sources, objects and an archive copy under `--out` are modified.
+The helper records binary/IPA/source hashes and per-case observations in
+`report.json`; CI uploads it alongside the complete Test Lab report. Native Apple
+reference runs and 16 KB devices are separate evidence, not implied by Linux.
 
 ### Checkpoint / interrupted-case protocol
 
@@ -89,7 +127,7 @@ export HVM_LD64=/opt/cctools/bin/arm-apple-darwin11-ld
 # Generate the bundled tone.wav (already committed; only needed if regenerating)
 python3 tests/ios/apps/testlab/gen_tone_wav.py tests/ios/apps/testlab/tone.wav
 
-# Run all 18 automated cases and write a report
+# Run all 23 automated cases and write a report
 python3 tools/hvm_testlab.py run \
     --hvm build/hvm \
     --out build/testlab-report
@@ -131,7 +169,7 @@ python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
    *Open in…* from Files, or drop it into the app's Files folder and pull to
    refresh.
 3. Tap `TestLab` in the library to run it.
-4. The menu shows the 17 guest-selectable cases (TL-A…TL-K and TL-M…TL-R)
+4. The menu shows the 22 guest-selectable cases (TL-A…TL-K and TL-M…TL-W)
    with their last-known status. TL-L is a host-driven termination test.
 5. Tap a row to run an individual case.  Tap **Run All** to run every case.
 6. Tap **Export JSON** to write `Documents/testlab_result.json` — retrieve it
