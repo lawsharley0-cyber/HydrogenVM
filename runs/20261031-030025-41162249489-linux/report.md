@@ -1,26 +1,31 @@
-# HydrogenVM report — 1a42a2f
+# HydrogenVM report — 406a6f9
 
-2026-10-28T17:03:30+00:00 · INTEL(R) XEON(R) PLATINUM 8573C (x86_64, Linux 7.0.0-1017-azure)
+2026-10-31T02:58:02+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **1 test(s) failed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 0 | 1 | 0 | 147.3s |
+| build | 0 | 1 | 0 | 142.3s |
 
-## Problems (28)
+## Problems (25)
 
 ### Failures (1)
 
 - **build / ninja**
 
   ```
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1921:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?
-  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1931:16: error: use of undeclared identifier 'sk_zero_q'
-  2 errors generated.
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:454:41: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:456:19: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:495:19: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:654:9: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:655:19: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:678:9: error: use of undeclared identifier 'getAssetCache'
+  /home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:679:19: error: use of undeclared identifier 'getAssetCache'
+  7 errors generated.
   ```
 
-### Warnings (27)
+### Warnings (24)
 
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
@@ -46,7 +51,4 @@
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:51:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:57:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/Posix.cpp:59:64: warning: unused variable 'KERN_ABORTED' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]
 

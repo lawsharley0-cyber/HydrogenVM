@@ -2,23 +2,23 @@
   "host": {
     "os": "Linux 7.0.0-1017-azure",
     "arch": "x86_64",
-    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
-    "commit": "1a42a2f",
-    "date": "2026-10-28T17:03:30+00:00"
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "commit": "406a6f9",
+    "date": "2026-10-31T02:58:02+00:00"
   },
-  "seconds": 147.3,
+  "seconds": 142.3,
   "ok": false,
   "suites": {
     "build": {
       "passed": 0,
       "failed": 1,
       "skipped": 0,
-      "seconds": 147.3211133480072,
+      "seconds": 142.3263623714447,
       "tests": [
         {
           "name": "engine",
           "result": "fail",
-          "seconds": 147.321
+          "seconds": 142.326
         }
       ]
     }
@@ -171,27 +171,9 @@
     },
     {
       "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
-      "message": "src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]"
-    },
-    {
-      "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
-      "message": "src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]"
-    },
-    {
-      "suite": "build",
-      "test": "compiler",
-      "severity": "warning",
-      "message": "src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]"
-    },
-    {
-      "suite": "build",
       "test": "ninja",
       "severity": "fail",
-      "message": "/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1921:14: error: use of undeclared identifier 'sk_ignore_q'; did you mean 'sk_ignore_i'?\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/uikit/PlatformStubs.cpp:1931:16: error: use of undeclared identifier 'sk_zero_q'\n2 errors generated."
+      "message": "/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:454:41: error: use of undeclared identifier 'getAssetCache'\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:456:19: error: use of undeclared identifier 'getAssetCache'\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:495:19: error: use of undeclared identifier 'getAssetCache'\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:654:9: error: use of undeclared identifier 'getAssetCache'\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:655:19: error: use of undeclared identifier 'getAssetCache'\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:678:9: error: use of undeclared identifier 'getAssetCache'\n/home/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/System.cpp:679:19: error: use of undeclared identifier 'getAssetCache'\n7 errors generated."
     }
   ]
 }
