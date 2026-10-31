@@ -2294,6 +2294,24 @@ int runFullSubsystemTests() {
                   "zlib compress/uncompress and streaming inflate on guest buffers");
         }
 
+        // Positional printf (%1$d, %2$s): B-206. Uses guest sprintf via va_list.
+        {
+            // "B=%2$s A=%1$d" with args (42, "hello") should produce "B=hello A=42".
+            const std::string fmtStr = "B=%2$s A=%1$d";
+            const std::string argStr = "hello";
+            const uint32_t fmtP = proc.allocCString(fmtStr);
+            const uint32_t strP = proc.allocCString(argStr);
+            const uint32_t outP = proc.heap().alloc(64);
+            // Build a va_list in memory: arg1=42, arg2=pointer to "hello".
+            const uint32_t vaP = proc.heap().alloc(8);
+            proc.mem().write<uint32_t>(vaP,     42u);
+            proc.mem().write<uint32_t>(vaP + 4, strP);
+            proc.callGuest(cpu, *proc.lookupSymbol("_vsprintf"), {outP, fmtP, vaP});
+            const std::string got = proc.readCString(outP);
+            check(got == "B=hello A=42", "positional printf (%2$s %1$d) produces correct reordered output (B-206)");
+            proc.heap().free(outP); proc.heap().free(vaP);
+        }
+
         // std::ostringstream: formatted output through our stringbuf, read back with str().
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };

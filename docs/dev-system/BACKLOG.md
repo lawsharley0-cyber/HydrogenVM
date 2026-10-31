@@ -34,7 +34,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-108 | `regcomp` / `regexec` / `regerror` / `regfree` (Art of Glow). | 3 | 3 | 2 | 4.5 | — if the patch stays in `src/runtime/libc/` | None | Beside D | Operational as of `a767928` (PR #5) |
 | B-109 | `CGFontCopyTableForTag` and the `CGFontGet*` queries Tiny Tower hits. `CGFontCopyTableForTag` is not a getter. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | In progress (branch `codex/test-lab-v1`) |
 | B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Operational as of `a767928` (PR #5) |
-| B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | B-103 ✓ | Not with another B change | In progress (branch `codex/test-lab-v1`) |
+| B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | B-103 ✓ | Not with another B change | Operational as of `ecb9ff9` |
 | B-112 | Stop adding commercial IPAs to git. Hashes plus an external store. | 3 | 4 | 1 | 12.0 | — | Owner picks the store | Yes | Harness side Operational. Removing the three committed files is Needs owner |
 
 ## P2
@@ -46,7 +46,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-203 | Android APK / `armeabi-v7a`. ELF load exists; no Android framework. | 2 | 2 | 3 | 1.33 | — | A stable | Independent of UIKit | Needs owner |
 | B-204 | `CCCrypt` (AES/DES). The code returns `kCCUnimplemented` on purpose. Digests and HMAC stay. | 2 | 3 | 2 | 3.0 | — | Policy change | Yes | Needs owner |
 | B-205 | `NSNotificationQueue` coalescing. No in-repo app was shown to hit it. | 1 | 2 | 1 | 2.0 | D | None | Not with other D | Planned |
-| B-206 | Positional `printf` (`%1$d`). | 1 | 2 | 1 | 2.0 | — | None | Yes if `Format.cpp` is free | Planned |
+| B-206 | Positional `printf` (`%1$d`). | 1 | 2 | 1 | 2.0 | — | None | Yes if `Format.cpp` is free | In progress (branch `codex/test-lab-v1`) |
 | B-207 | libstdc++ file-stream virtuals that throw "not supported yet". | 2 | 2 | 2 | 2.0 | Exclusive on `LibStdcxx.cpp` | None | Not with B-202 | Planned |
 | B-208 | `GuestArena::findFree` linear scan. | 2 | 2 | 1 | 4.0 | A if mapping locks change | None | Not with other A | Planned |
 | B-209 | ASan/UBSan and a coverage build. `siglongjmp` fights ASan. | 3 | 2 | 2 | 3.0 | — | B-102's fault-path decision | Not while A is rewriting the fault path | Planned |
