@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <mutex>
 #include <random>
+#include <string_view>
 #include <sys/stat.h>
 #include <iconv.h>
 #include <mutex>
@@ -448,6 +449,31 @@ int hostOpenFlags(uint32_t f) {
     if (f & 0x100000) h |= O_DIRECTORY;
     return h | O_CLOEXEC;
 }
+
+// This is only an access-pattern hint. Every open still owns a fresh native
+// descriptor and its own offset; no reads, seeks or descriptor reuse here.
+void assetReadAhead(int fd, const std::string& path, uint32_t flags, const struct stat& st) {
+    if ((flags & (3u | 0x8u | 0x200u | 0x400u)) || !S_ISREG(st.st_mode)) return;
+    const std::string_view p(path);
+    const auto dot = p.rfind('.');
+    if (dot == p.npos || (p.substr(dot) != ".tfc" && p.substr(dot) != ".xxx")) return;
+    bool cooked = false;
+    for (size_t start = 0; start < p.size();) {
+        const auto slash = p.find('/', start);
+        if (slash == p.npos) break;
+        if (p.substr(start, slash - start) == "CookedIPhone") { cooked = true; break; }
+        start = slash + 1;
+    }
+    if (!cooked) return;
+    const int savedErrno = errno;
+#if defined(__linux__) && defined(POSIX_FADV_SEQUENTIAL)
+    (void)::posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+#elif defined(__APPLE__) && defined(F_RDAHEAD)
+    (void)::fcntl(fd, F_RDAHEAD, 1);
+#endif
+    errno = savedErrno;
+}
+
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
     const std::string gp = x.proc.readCString(path);
@@ -459,7 +485,10 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     }
     int64_t sz = -1;
     struct stat st;
-    if (::fstat(fd, &st) == 0) sz = st.st_size;
+    if (::fstat(fd, &st) == 0) {
+        sz = st.st_size;
+        assetReadAhead(fd, hp, flags, st);
+    }
     const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
