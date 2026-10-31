@@ -2027,6 +2027,18 @@ int runFullSubsystemTests() {
               call("_CFGetRetainCount", {line}) == 1 && call("_CTRunGetGlyphCount", {items[0]}) == 3 &&
               proc.mem().read<uint16_t>(copies) == 2 && std::bit_cast<double>(metrics) == 36,
               "CoreText line breaking and owned glyph runs preserve custom metrics after source release");
+        {
+            // CTLineGetOffsetForStringIndex returns a CGFloat (32-bit float in r0) and also stores it through
+            // secondaryOffset; the canary after the four bytes must stay untouched.
+            const uint32_t sec = proc.heap().allocZeroed(8);
+            proc.mem().write<uint32_t>(sec, 0xDEADBEEF);
+            proc.mem().write<uint32_t>(sec + 4, 0xCAFEF00D);
+            const uint32_t ret = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_CTLineGetOffsetForStringIndex"), {line, 2, sec}));
+            check(std::bit_cast<float>(ret) == 24.0f && proc.mem().read<float>(sec) == 24.0f &&
+                  proc.mem().read<uint32_t>(sec + 4) == 0xCAFEF00D,
+                  "CTLineGetOffsetForStringIndex returns the summed advance as a float and writes secondaryOffset");
+            proc.heap().free(sec);
+        }
         call("_CFRelease", {line});
         call("_CGContextRelease", {bitmap}); call("_CFRelease", {family}); call("_CFRelease", {copy});
         call("_CFRelease", {desc}); call("_CFRelease", {ct});
@@ -2184,6 +2196,24 @@ int runFullSubsystemTests() {
         check(ObjC::id(r.send(cpu, newRootView, "superview")) == rootWindow &&
                   ObjC::id(r.send(cpu, oldRootView, "superview")) == 0,
               "UIViewController setView replaces the installed root view in its window");
+    }
+
+    // CTLineGetOffsetForStringIndex writes through the guest's secondaryOffset pointer; a pointer into a
+    // read-only page must be left alone (GuestArena::write does not check permissions itself).
+    {
+        auto& mem = proc.mem();
+        const uint32_t page = mem.findFree(4096);
+        mem.map(page, 4096, Memory::kProtRW);
+        for (uint32_t i = 0; i < 4; ++i) mem.write<uint8_t>(page + i, 0xAA);
+        mem.protect(page, 4096, Memory::kProtRead);
+        bool called = false;
+        if (const auto sym = proc.lookupSymbol("_CTLineGetOffsetForStringIndex")) {
+            try { cx.proc.callGuest(cpu, *sym, {0, 0, page}); called = true; } catch (const std::exception&) {}
+        }
+        bool intact = true;
+        for (uint32_t i = 0; i < 4; ++i) intact &= mem.read<uint8_t>(page + i) == 0xAA;
+        mem.unmap(page, 4096);
+        check(called && intact, "CTLineGetOffsetForStringIndex leaves a read-only secondaryOffset page untouched");
     }
 
     // NIB loading: ~iphone before the base name, and a real exception when the
