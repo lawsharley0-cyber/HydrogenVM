@@ -88,6 +88,18 @@ class TaintedRunListTests(unittest.TestCase):
         self.assertIn("_b", text)
         self.assertNotIn("com.clean.game", text)
 
+    def test_api_names_with_line_breaks_stay_inside_their_table_row(self):
+        # Guest-supplied names (for example a KVC key) can hold CR, LF and '|'. They must not split the row.
+        rows = hvm_probe.tainted_runs([run("com.odd.names", report(3, [api("key\nsecond line\rthird|pipe", 3)]))])
+        md = hvm_probe.tainted_md(rows)
+        self.assertEqual(len(md), len(hvm_probe.tainted_md([])) - 1 + 3, md)   # section header lines + table header, divider, one row
+        row = md[-1]
+        self.assertNotIn("\n", row)
+        self.assertNotIn("\r", row)
+        self.assertIn("\\n", row)
+        self.assertIn("\\r", row)
+        self.assertEqual(row.count("|"), 8, row)   # 7 cells, and the name's own '|' is replaced
+
     def test_markdown_says_so_when_nothing_is_tainted(self):
         text = "\n".join(hvm_probe.tainted_md(hvm_probe.tainted_runs([run("com.clean.game", report())])))
         self.assertIn("Tainted runs", text)
