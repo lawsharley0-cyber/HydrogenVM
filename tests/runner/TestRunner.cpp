@@ -4779,6 +4779,87 @@ int runFullSubsystemTests() {
               "software EAGLContext rejects a context already current on another thread");
     }
 
+    // CFRunLoopSource (version 0): signal -> perform on the next loop iteration, in
+    // `order`, once; Remove / Invalidate stop it; version-1 (Mach port) is refused.
+    {
+        ProcessConfig srcCfg;
+        srcCfg.homePath = "/tmp/hvm_runloop_source";
+        Process srcProc(srcCfg);
+        auto& scpu = srcProc.mainThread().cpu;
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(srcProc.callGuest(scpu, *srcProc.lookupSymbol(sym), args)); };
+        auto& loop = Foundation::mainRunLoop(srcProc);
+        const uint32_t mainLoop = call("_CFRunLoopGetMain", {});
+        std::vector<uint32_t> performed, scheduled, cancelled;
+        const uint32_t performFn = srcProc.defineFunction("test_source_perform", [&](Ctx& x) { performed.push_back(x.cpu.r[0]); });
+        const uint32_t scheduleFn = srcProc.defineFunction("test_source_schedule", [&](Ctx& x) { scheduled.push_back(x.cpu.r[0]); });
+        const uint32_t cancelFn = srcProc.defineFunction("test_source_cancel", [&](Ctx& x) { cancelled.push_back(x.cpu.r[0]); });
+        const auto makeSource = [&](int32_t order, uint32_t info, uint32_t version = 0) {
+            const uint32_t ctx = srcProc.heap().allocZeroed(40);
+            srcProc.mem().write<uint32_t>(ctx, version);
+            srcProc.mem().write<uint32_t>(ctx + 4, info);
+            srcProc.mem().write<uint32_t>(ctx + 28, scheduleFn);
+            srcProc.mem().write<uint32_t>(ctx + 32, cancelFn);
+            srcProc.mem().write<uint32_t>(ctx + 36, performFn);
+            return call("_CFRunLoopSourceCreate", {0, uint32_t(order), ctx});
+        };
+        const auto spin = [&] { loop.runOnce(scpu, 0.0); loop.runOnce(scpu, 0.0); };
+
+        const uint32_t a = makeSource(0, 0xA1);
+        call("_CFRunLoopAddSource", {mainLoop, a, 0});
+        check(scheduled == std::vector<uint32_t>{0xA1} && call("_CFRunLoopContainsSource", {mainLoop, a, 0}) != 0,
+              "CFRunLoopAddSource schedules the source on the loop and calls its schedule callback");
+        spin();
+        check(performed.empty(), "an unsignalled run loop source does not perform");
+        call("_CFRunLoopSourceSignal", {a});
+        spin();
+        check(performed == std::vector<uint32_t>{0xA1}, "a signalled run loop source performs once with its info");
+        spin();
+        check(performed.size() == 1, "a run loop source performs only once per signal");
+        call("_CFRunLoopSourceSignal", {a});
+        spin();
+        check(performed.size() == 2, "a run loop source can be signalled again");
+
+        // Two sources signalled together run lowest `order` first, whichever was added first.
+        performed.clear();
+        const uint32_t late = makeSource(5, 0xB5), early = makeSource(1, 0xB1);
+        call("_CFRunLoopAddSource", {mainLoop, late, 0});
+        call("_CFRunLoopAddSource", {mainLoop, early, 0});
+        call("_CFRunLoopSourceSignal", {late});
+        call("_CFRunLoopSourceSignal", {early});
+        spin();
+        check(performed == std::vector<uint32_t>{0xB1, 0xB5}, "signalled run loop sources perform in order, lowest first");
+
+        // Remove stops it, and calls cancel once.
+        performed.clear();
+        cancelled.clear();
+        call("_CFRunLoopRemoveSource", {mainLoop, late, 0});
+        call("_CFRunLoopSourceSignal", {late});
+        spin();
+        check(performed.empty() && cancelled == std::vector<uint32_t>{0xB5} && call("_CFRunLoopContainsSource", {mainLoop, late, 0}) == 0,
+              "CFRunLoopRemoveSource stops a source firing, calls cancel, and it is no longer contained");
+
+        // Invalidate stops it for good.
+        performed.clear();
+        cancelled.clear();
+        call("_CFRunLoopSourceInvalidate", {early});
+        call("_CFRunLoopSourceSignal", {early});
+        spin();
+        check(performed.empty() && call("_CFRunLoopSourceIsValid", {early}) == 0 && cancelled == std::vector<uint32_t>{0xB1},
+              "CFRunLoopSourceInvalidate stops a source firing, calls cancel, and marks it invalid");
+
+        // Signalled before it is added: performs once it is on a loop.
+        performed.clear();
+        const uint32_t pre = makeSource(0, 0xC1);
+        call("_CFRunLoopSourceSignal", {pre});
+        spin();
+        check(performed.empty(), "a signalled source that is on no loop does not perform");
+        call("_CFRunLoopAddSource", {mainLoop, pre, 0});
+        spin();
+        check(performed == std::vector<uint32_t>{0xC1}, "a source signalled before being added performs once it is on a loop");
+
+        check(makeSource(0, 0xD1, 1) == 0, "a version-1 (Mach port) run loop source is refused instead of faked");
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
