@@ -7,7 +7,6 @@
 // event on the run loop the stream was scheduled on. CFHTTPMessage objects are
 // real enough to build requests and read them back.
 #include "Foundation.hpp"
-#include "runtime/Support.hpp"
 #include <fstream>
 #include <iterator>
 
@@ -32,27 +31,6 @@ struct NetState {
 NetState& NS_(Ctx& x) { return x.proc.service<NetState>(); }
 
 id retainObj(Ctx& x, id o) { return o ? R(x).retain(x.cpu, o) : 0; }
-
-// ---------------------------------------------------- SystemConfiguration ---
-uint32_t scr_create(Ctx& x, uint32_t, GuestPtr) {
-    // Intentionally simulating network availability to satisfy legacy apps.
-    // We always report as reachable, instead of offline, because many apps stall if there's no network.
-    return ObjC::rt(x).createInstance(ObjC::rt(x).nsObject);
-}
-uint32_t scr_createWithAddress(Ctx& x, uint32_t a, GuestPtr p) { return scr_create(x, a, p); }
-uint32_t scr_createPair(Ctx& x, uint32_t a, GuestPtr p, GuestPtr) { return scr_create(x, a, p); }
-bool scr_getFlags(Ctx& x, uint32_t ref, GuestPtr flags) {
-    if (!ref) return false;
-    if (flags) {
-        // Intentionally simulate network availability to satisfy apps checking reachability
-        constexpr uint32_t kSCNetworkReachabilityFlagsReachable = 0x2;
-        x.mem.write<uint32_t>(flags, kSCNetworkReachabilityFlagsReachable);
-    }
-    return true;
-}
-bool scr_setCallback(Ctx&, uint32_t, uint32_t, uint32_t) { return true; }
-bool scr_schedule(Ctx&, uint32_t, uint32_t, uint32_t) { return true; }
-bool scr_setQueue(Ctx&, uint32_t, uint32_t) { return true; }
 
 id newMessage(Ctx& x, bool request) {
     const id m = R(x).createInstance(NS_(x).message);
@@ -454,17 +432,6 @@ void registerNetwork(Process& p, ObjC::Runtime& r) {
     p.def<&v3>("_CFHostScheduleWithRunLoop");
     p.def<&v3>("_CFHostUnscheduleFromRunLoop");
     p.def<&v2>("_CFHostCancelInfoResolution");
-
-    // SystemConfiguration
-    p.def<&scr_create>("_SCNetworkReachabilityCreateWithName");
-    p.def<&scr_createWithAddress>("_SCNetworkReachabilityCreateWithAddress");
-    p.def<&scr_createPair>("_SCNetworkReachabilityCreateWithAddressPair");
-    supportDef<&scr_getFlags>(p, "_SCNetworkReachabilityGetFlags", SupportStatus::Stub,
-        "Fabricates Reachable for any non-null reference; does not inspect network state");
-    p.def<&scr_setCallback>("_SCNetworkReachabilitySetCallback");
-    p.def<&scr_schedule>("_SCNetworkReachabilityScheduleWithRunLoop");
-    p.def<&scr_schedule>("_SCNetworkReachabilityUnscheduleFromRunLoop");
-    p.def<&scr_setQueue>("_SCNetworkReachabilitySetDispatchQueue");
 
     // Error-domain numbers (SInt32 constants) and CFNetwork's string constants.
     const std::pair<const char*, uint32_t> domains[] = {

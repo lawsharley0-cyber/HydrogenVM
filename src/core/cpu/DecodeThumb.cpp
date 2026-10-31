@@ -265,7 +265,7 @@ R thumb16(BlockBuilder& bb, uint32_t hw, bool inIt) {
     // B<c> / UDF / SVC
     if ((op6 & 0x3C) == 0x34) {
         const uint32_t cond = bits(hw, 11, 8);
-        if (cond == 0xE) { return undefined(bb, hw); }   // UDF
+        if (cond == 0xE) { bb.exitSimple(&H_Breakpoint, bits(hw, 7, 0)); return R::End; }   // UDF
         if (cond == 0xF) { bb.exitSimple(&H_Svc, (bb.curPc() + 2) | 0, bits(hw, 7, 0)); return R::End; }
         if (inIt) return undefined(bb, hw);
         const uint32_t target = pcT(bb) + uint32_t(sext(bits(hw, 7, 0), 8) * 2);

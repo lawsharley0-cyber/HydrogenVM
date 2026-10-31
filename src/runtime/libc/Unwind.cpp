@@ -497,23 +497,19 @@ void registerUnwinder(Process& p) {
         return a;
     };
     // Fundamental types (throw 42; throw "message";).
-    uint32_t tc = 0, tv = 0;
+    uint32_t tc = 0;
     for (auto [sym, name] : std::initializer_list<std::pair<const char*, const char*>>{
              {"__ZTIi", "i"}, {"__ZTIj", "j"}, {"__ZTIl", "l"}, {"__ZTIm", "m"}, {"__ZTIx", "x"}, {"__ZTIy", "y"},
              {"__ZTIs", "s"}, {"__ZTIt", "t"}, {"__ZTIb", "b"}, {"__ZTIf", "f"}, {"__ZTId", "d"}, {"__ZTIv", "v"}, {"__ZTIc", "c"}}) {
         const uint32_t a = typeinfo(sym, name, e.vtFundamental);
         if (std::string(name) == "c") tc = a;
-        if (std::string(name) == "v") tv = a;
     }
     const uint32_t tKc = typeinfo("__ZTIKc", "Kc", e.vtFundamental);
     for (auto [sym, name, pointee] : std::initializer_list<std::tuple<const char*, const char*, uint32_t>>{
-             {"__ZTIPKc", "PKc", tKc}, {"__ZTIPc", "Pc", tc},
-             {"__ZTIPv", "Pv", tv}, {"__ZTIPKv", "PKv", tv}}) {
+             {"__ZTIPKc", "PKc", tKc}, {"__ZTIPc", "Pc", tc}}) {
         const uint32_t a = typeinfo(sym, name, e.vtPointer);
         m.write<uint32_t>(a + 8, 0);
         m.write<uint32_t>(a + 12, pointee);
-        if (std::string(sym) == "__ZTIPv") p.defineData("_ZTIPv", a);
-        if (std::string(sym) == "__ZTIPKv") p.defineData("_ZTIPKv", a);
     }
     // The standard exception hierarchy, so catch (std::exception&) works.
     const uint32_t exc = typeinfo("__ZTISt9exception", "St9exception", e.vtClass);
