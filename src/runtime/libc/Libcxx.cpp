@@ -1,5 +1,10 @@
 #include "runtime/Process.hpp"
 #include <chrono>
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <mutex>
+#include <string>
 #include <stdexcept>
 #include <thread>
 
@@ -9,6 +14,9 @@ namespace {
 
 uint32_t tld_get(Ctx& x) {
     auto& proc = x.proc;
+    // One lock so concurrent first calls create exactly one pthread key.
+    static std::mutex tldMutex;
+    std::lock_guard<std::mutex> tldLock(tldMutex);
 
     auto addr = proc.lookupSymbol("__hvm_libcxx_tld_key");
     if (addr) {
@@ -29,6 +37,9 @@ uint32_t tld_get(Ctx& x) {
     x.cpu.r[1] = 0; // NULL destructor
 
     key_create_fn(x.cpu); // execute key create
+    if (x.cpu.r[0] != 0) {
+        throw std::runtime_error(std::string("std::thread local data: pthread_key_create failed: ") + std::strerror(int(x.cpu.r[0])));
+    }
 
     proc.defineData("__hvm_libcxx_tld_key", key_addr);
     x.cpu.r[0] = key_addr;
@@ -51,37 +62,34 @@ void t_dtor(Ctx& x, GuestPtr self) {
     }
 }
 
-uint32_t t_join(Ctx& x, GuestPtr self) {
+[[noreturn]] void thread_error(const char* op, int err) {
+    // libc++ throws std::system_error here; the host reports it as a runtime error carrying the errno text.
+    throw std::runtime_error(std::string("std::thread::") + op + " failed: " + std::strerror(err));
+}
+
+void t_join(Ctx& x, GuestPtr self) {
     uint32_t th = x.mem.read<uint32_t>(self);
-    if (th == 0) {
-        return 22; // EINVAL
-    }
+    if (th == 0) thread_error("join", EINVAL);
     auto join_fn = x.proc.hostFunctionFor("_pthread_join");
-    if (join_fn) {
-        x.cpu.r[0] = th;
-        x.cpu.r[1] = 0;
-        join_fn(x.cpu);
-        uint32_t ret = x.cpu.r[0];
-        if (ret == 0) x.mem.write<uint32_t>(self, 0);
-        return ret;
-    }
-    return 3; // ESRCH or 38 ENOSYS
+    if (!join_fn) thread_error("join", ENOSYS);
+    x.cpu.r[0] = th;
+    x.cpu.r[1] = 0;
+    join_fn(x.cpu);
+    const uint32_t ret = x.cpu.r[0];
+    if (ret != 0) thread_error("join", int(ret));
+    x.mem.write<uint32_t>(self, 0);
 }
 
 void t_detach(Ctx& x, GuestPtr self) {
     uint32_t th = x.mem.read<uint32_t>(self);
-    if (th == 0) {
-        x.cpu.r[0] = 22; // EINVAL
-        return;
-    }
+    if (th == 0) thread_error("detach", EINVAL);
     auto detach_fn = x.proc.hostFunctionFor("_pthread_detach");
-    if (detach_fn) {
-        x.cpu.r[0] = th;
-        detach_fn(x.cpu);
-        if (x.cpu.r[0] == 0) x.mem.write<uint32_t>(self, 0);
-    } else {
-        x.cpu.r[0] = 3;
-    }
+    if (!detach_fn) thread_error("detach", ENOSYS);
+    x.cpu.r[0] = th;
+    detach_fn(x.cpu);
+    const uint32_t ret = x.cpu.r[0];
+    if (ret != 0) thread_error("detach", int(ret));
+    x.mem.write<uint32_t>(self, 0);
 }
 
 uint32_t m_lock(Ctx& x, GuestPtr self) {
@@ -163,8 +171,13 @@ void steady_clock_now(Ctx& x) {
 
 void sleep_for(Ctx& x, GuestPtr ns_ptr) {
     int64_t ns = x.mem.read<int64_t>(ns_ptr);
-    if (ns > 0) {
-        std::this_thread::sleep_for(std::chrono::nanoseconds(ns));
+    // Sleep in short slices so a stop request (app exit, kill) interrupts long sleeps.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(ns > 0 ? ns : 0);
+    for (;;) {
+        if (x.proc.stopping()) throw ProcessExit(0, "stopping");
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) break;
+        std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(deadline - now, std::chrono::milliseconds(10)));
     }
 }
 

@@ -4952,22 +4952,28 @@ int runFullSubsystemTests() {
         // TLS separation: run a thread that gets a TLS key. Our tests for TLS are basic but we can just use the key we got.
         // C++ thread tests
         m.write<uint32_t>(th_obj, worker_th);
-        const uint32_t detach_ret = call("__ZNSt3__16thread6detachEv", {th_obj});
-        bool detach_ok = m.read<uint32_t>(th_obj) == 0 && detach_ret == 0;
+        call("__ZNSt3__16thread6detachEv", {th_obj});
+        bool detach_ok = m.read<uint32_t>(th_obj) == 0;
 
-        // Invalid detach
-        const uint32_t detach_inv = call("__ZNSt3__16thread6detachEv", {th_obj});
-        bool detach_inv_ok = detach_inv == 22; // EINVAL
+        // Failed std::thread operations throw (libc++ throws system_error) with the errno text.
+        auto throwsWith = [&](const char* sym, const char* needle) {
+            try { call(sym, {th_obj}); }
+            catch (const std::exception& e) { return std::string(e.what()).find(needle) != std::string::npos; }
+            return false;
+        };
+        // Invalid (repeated) detach
+        bool detach_inv_ok = throwsWith("__ZNSt3__16thread6detachEv", "detach failed") &&
+                             throwsWith("__ZNSt3__16thread6detachEv", std::strerror(EINVAL));
 
         // Setup another thread to join
         const uint32_t worker2_th = proc.startThread(proc.defineFunction("hvm_test_std_thread2", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
         m.write<uint32_t>(th_obj, worker2_th);
-        const uint32_t join_ret = call("__ZNSt3__16thread4joinEv", {th_obj});
-        bool join_ok = m.read<uint32_t>(th_obj) == 0 && join_ret == 0;
+        call("__ZNSt3__16thread4joinEv", {th_obj});
+        bool join_ok = m.read<uint32_t>(th_obj) == 0;
 
-        // Invalid join
-        const uint32_t join_inv = call("__ZNSt3__16thread4joinEv", {th_obj});
-        bool join_inv_ok = join_inv == 22; // EINVAL
+        // Invalid (repeated) join
+        bool join_inv_ok = throwsWith("__ZNSt3__16thread4joinEv", "join failed") &&
+                           throwsWith("__ZNSt3__16thread4joinEv", std::strerror(EINVAL));
 
         // Destructor on joinable thread
         m.write<uint32_t>(th_obj, worker_th);
@@ -4978,33 +4984,34 @@ int runFullSubsystemTests() {
             term_called = std::string(e.what()).find("terminate() called") != std::string::npos;
         }
 
-        // Test condition variable ownership and wait
+        // Test condition variable wait: the worker owns the mutex, waits in a predicate loop, and the main
+        // thread sets the predicate under the same mutex, so the notification cannot be lost.
         const uint32_t cv = proc.heap().allocZeroed(16);
         call("_pthread_cond_init", {cv, 0});
-        // Mutex `mtx` is already initialized. Lock it for CV.
-        call("_pthread_mutex_lock", {mtx});
         const uint32_t cv_ul = proc.heap().allocZeroed(4); // unique_lock just holds the mutex ptr at offset 0
         m.write<uint32_t>(cv_ul, mtx);
 
-        std::atomic<bool> cv_woke{false};
+        std::atomic<bool> cv_entered{false}, cv_woke{false};
+        bool cv_predicate = false;   // guarded by the guest mutex `mtx`
         const uint32_t cv_waiter = proc.defineFunction("hvm_test_cv_wait", [&](Ctx& ctx) {
+            proc.callGuest(ctx.cpu, *proc.lookupSymbol("_pthread_mutex_lock"), {mtx});
+            cv_entered = true;
             auto a = proc.lookupSymbol("__ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE");
-            if (a) proc.callGuest(ctx.cpu, *a, {cv, cv_ul});
-            cv_woke = true;
-            auto u = proc.lookupSymbol("_pthread_mutex_unlock");
-            if (u) proc.callGuest(ctx.cpu, *u, {mtx}); // unlock after wait
+            while (!cv_predicate && a) proc.callGuest(ctx.cpu, *a, {cv, cv_ul});
+            cv_woke = cv_predicate;
+            proc.callGuest(ctx.cpu, *proc.lookupSymbol("_pthread_mutex_unlock"), {mtx});
             ctx.cpu.r[0] = 0;
         });
-        // We simulate `condition_variable::wait` which blocks. Start a thread.
         const uint32_t cv_th = proc.startThread(cv_waiter, 0, 64u << 10, false);
-        // Wait a bit, then signal
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        for (int i = 0; i < 400 && !cv_entered.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        call("_pthread_mutex_lock", {mtx});          // only succeeds once the worker is inside cond_wait
+        cv_predicate = true;
         call("__ZNSt3__118condition_variable10notify_oneEv", {cv});
+        call("_pthread_mutex_unlock", {mtx});
 
         uint32_t cv_ret;
         proc.joinThread(cv_th, &cv_ret);
         bool cv_ok = cv_woke.load();
-        call("_pthread_mutex_unlock", {mtx}); // we must unlock the mutex in main thread too, or we can just let it be
 
         // Test TLS isolation
         const uint32_t tls_test_key = m.read<uint32_t>(tls_ptr);
