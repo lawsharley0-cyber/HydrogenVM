@@ -1,5 +1,7 @@
 # HydrogenVM: handoff for Gemini CLI (2026-10-25)
 
+> **SUPERSEDED for priorities and work order (2026-10-30): read [docs/PLAN.md](PLAN.md) first.** Everything below is reference only (machine layout, run recipes, architecture notes, per-game history). If anything here disagrees with PLAN.md, PLAN.md wins.
+
 ## Latest continuation — 2026-10-26
 
 - **Minion Rush:** missing depth24/stencil8/packed-depth-stencil support stopped
