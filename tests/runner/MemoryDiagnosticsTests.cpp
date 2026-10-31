@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -132,24 +133,41 @@ int main(int argc, char** argv) {
         check(off && Process::memoryDiagEnabled(), "memory sampling gate follows HVM_MEMORY_DIAG");
     }
     {
-        // Concurrent lifecycle and interval samples must be logged in the same order they were recorded.
+        // A worker must be able to record a later sample while an earlier one is still being logged; the
+        // earlier sample's log call is held until then (or a timeout). Logging under the sample lock keeps order.
         setenv("HVM_MEMORY_DIAG", "1", 1);
-        std::mutex logMu;
+        std::mutex mu;
+        std::condition_variable cv;
         std::vector<std::string> logged;
+        bool firstInLog = false, secondLogged = false;
         ProcessConfig cfg;
         cfg.homePath = home.string(); cfg.bundlePath = (home / "Test.app").string();
         cfg.log = [&](LogLevel, const std::string& m) {
-            if (m.rfind("[memory] ", 0) == 0) { std::lock_guard<std::mutex> g(logMu); logged.push_back(m.substr(9)); }
+            if (m.rfind("[memory] ", 0) != 0) return;
+            std::unique_lock<std::mutex> lk(mu);
+            const bool first = !firstInLog;
+            if (first) {
+                firstInLog = true;
+                cv.notify_all();
+                cv.wait_for(lk, std::chrono::milliseconds(500), [&] { return secondLogged; });
+                logged.push_back(m.substr(9));
+            } else {
+                logged.push_back(m.substr(9));
+                secondLogged = true;
+                cv.notify_all();
+            }
         };
         auto process = std::make_unique<Process>(cfg);
-        std::vector<std::thread> threads;
-        for (int t = 0; t < 4; ++t)
-            threads.emplace_back([&] { for (int i = 0; i < 20; ++i) process->recordMemorySample("interval"); });
-        for (auto& th : threads) th.join();
+        std::thread a([&] { process->recordMemorySample("interval"); });
+        {
+            std::unique_lock<std::mutex> lk(mu);
+            cv.wait_for(lk, std::chrono::seconds(5), [&] { return firstInLog; });
+        }
+        std::thread b([&] { process->recordMemorySample("foregrounded"); });
+        a.join(); b.join();
         std::string joined = "[";
         for (size_t i = 0; i < logged.size(); ++i) { if (i) joined += ','; joined += logged[i]; }
-        // The retained samples are the newest 120 of an 80-sample run, so the log must match them exactly.
-        check(logged.size() == 80 && joined + "]" == process->memorySamplesJson(),
+        check(logged.size() == 2 && joined + "]" == process->memorySamplesJson(),
               "concurrent memory samples are logged in recorded order");
     }
     std::filesystem::remove_all(home);

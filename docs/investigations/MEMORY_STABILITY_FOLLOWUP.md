@@ -72,7 +72,7 @@ The installed HydrogenVM build can provide baseline evidence without an update.
 Record its displayed commit/build and the Clash guest build if available.
 Keep the current save; do not uninstall, reset progress or import over it.
 Runtime memory samples (`[memory]` log lines and `runtimeMemorySamples`) are written
-only when the process is launched with `HVM_MEMORY_DIAG=1`, for example
+only when `HVM_MEMORY_DIAG` is set (to any value) in the launching environment, for example
 `HVM_MEMORY_DIAG=1 ./hvm <app>` on a host. No iPhone shell setting for that variable
 exists in this repository, so an already-installed phone build without it records only
 its existing available-memory history; do not describe such a run as sampled.
