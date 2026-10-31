@@ -34,7 +34,7 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 | B-108 | `regcomp` / `regexec` / `regerror` / `regfree` (Art of Glow). | 3 | 3 | 2 | 4.5 | — if the patch stays in `src/runtime/libc/` | None | Beside D | Operational as of `a767928` (PR #5) |
 | B-109 | `CGFontCopyTableForTag` and the `CGFontGet*` queries Tiny Tower hits. `CGFontCopyTableForTag` is not a getter. | 3 | 3 | 1 | 9.0 | D | Text stack | Not with another D change | In progress (branch `codex/test-lab-v1`) |
 | B-110 | `tmpnam` (Angry Birds). | 2 | 2 | 1 | 4.0 | — | None | Yes | Operational as of `a767928` (PR #5) |
-| B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | B-103 ✓ | Not with another B change | Planned |
+| B-111 | `glPointSizePointerOES` (Tiny Tower). | 3 | 3 | 1 | 9.0 | B | B-103 ✓ | Not with another B change | In progress (branch `codex/test-lab-v1`) |
 | B-112 | Stop adding commercial IPAs to git. Hashes plus an external store. | 3 | 4 | 1 | 12.0 | — | Owner picks the store | Yes | Harness side Operational. Removing the three committed files is Needs owner |
 
 ## P2

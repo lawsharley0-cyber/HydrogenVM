@@ -2200,6 +2200,42 @@ int runFullSubsystemTests() {
         check(screenLinear && !perspective,
               "GLES1 color after clipping is screen-linear (66,169,20), matching the fixed-function fill");
 
+        // glPointSizePointerOES (B-111): per-vertex point sizes via GL_OES_point_size_array.
+        // Viewport is still 64×64 (set above). Projection and modelview are identity.
+        // Clear color is blue {0,0,1}; current color is red {1,0,0,1}; GL_COLOR_ARRAY is
+        // still enabled from the previous sub-test — disable it first.
+        {
+            callGL("_glDisableClientState", {0x8076 /* GL_COLOR_ARRAY */});
+            callGL("_glClearColor", {UIKit::fbits(0.f), UIKit::fbits(0.f), UIKit::fbits(0.f), UIKit::fbits(1.f)});
+            callGL("_glClear", {0x4000 /* GL_COLOR_BUFFER_BIT */});
+            // One point at NDC (0,0) → screen (32,32) in a 64×64 viewport. Per-vertex
+            // size 9 → int(9/2)=4, so pixels at dx<=4 should be painted, dx=5 should not.
+            const float ptPos[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            const float ptSize[1] = {9.0f};
+            const uint32_t ptPosMem = proc.heap().alloc(sizeof ptPos);
+            const uint32_t ptSzMem  = proc.heap().alloc(sizeof ptSize);
+            proc.mem().copyIn(ptPosMem, ptPos,  sizeof ptPos);
+            proc.mem().copyIn(ptSzMem,  ptSize, sizeof ptSize);
+            callGL("_glEnableClientState", {0x8074 /* GL_VERTEX_ARRAY */});
+            callGL("_glEnableClientState", {0x8B9C /* GL_POINT_SIZE_ARRAY_OES */});
+            callGL("_glVertexPointer",       {4, 0x1406 /* GL_FLOAT */, 0, ptPosMem});
+            callGL("_glPointSizePointerOES", {0x1406 /* GL_FLOAT */, 0, ptSzMem});
+            callGL("_glDrawArrays", {0x0000 /* GL_POINTS */, 0, 1});
+            callGL("_glDisableClientState", {0x8B9C /* GL_POINT_SIZE_ARRAY_OES */});
+            callGL("_glDisableClientState", {0x8074 /* GL_VERTEX_ARRAY */});
+            const uint32_t pxBuf = proc.heap().alloc(4);
+            callGL("_glReadPixels", {32, 32, 1, 1, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, pxBuf});
+            const uint8_t centerR = proc.mem().read<uint8_t>(pxBuf);
+            callGL("_glReadPixels", {32 + 4, 32, 1, 1, 0x1908, 0x1401, pxBuf});
+            const uint8_t edgeR = proc.mem().read<uint8_t>(pxBuf);
+            callGL("_glReadPixels", {32 + 5, 32, 1, 1, 0x1908, 0x1401, pxBuf});
+            const uint8_t outsideR = proc.mem().read<uint8_t>(pxBuf);
+            std::printf("  glPointSizePointerOES: center=%u edge+4=%u outside+5=%u\n", centerR, edgeR, outsideR);
+            check(centerR > 128 && edgeR > 128 && outsideR == 0,
+                  "glPointSizePointerOES: per-vertex size 9 paints center and r=4, not r=5");
+            proc.heap().free(ptPosMem); proc.heap().free(ptSzMem); proc.heap().free(pxBuf);
+        }
+
         // CommonCrypto digests against the standard "abc" vectors.
         auto hex = [](const std::vector<uint8_t>& v) { std::string h; char b[3]; for (uint8_t c : v) { std::snprintf(b, 3, "%02x", c); h += b; } return h; };
         check(hex(Runtime::hvmDigest(0, "abc")) == "900150983cd24fb0d6963f7d28e17f72" &&
