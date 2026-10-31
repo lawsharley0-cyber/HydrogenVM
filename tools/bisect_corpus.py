@@ -154,8 +154,12 @@ def main(argv=None):
                 if result.returncode:
                     raise GateError(f"bisect failed/aborted; see {out / 'bisect.log'}\n{result.stdout[-2000:]}")
                 culprit = git(checkout, "rev-parse", "refs/bisect/bad")
-                if f"{culprit} is the first bad commit" not in result.stdout:
-                    raise GateError("bisect did not identify a unique first bad commit")
+                # Do not parse git's prose (it varies by version/config). Bisect is finished and unique when the only
+                # commit reachable from the bad ref but not from any good ref is the culprit itself.
+                good_refs = [r for r in git(checkout, "for-each-ref", "--format=%(refname)", "refs/bisect/good-*").split() if r]
+                remaining = git(checkout, "rev-list", "refs/bisect/bad", "--not", *good_refs, good).split()
+                if remaining != [culprit]:
+                    raise GateError("bisect did not identify a unique first bad commit\n" + result.stdout[-2000:])
                 result_path.write_text(json.dumps({"schemaVersion": 1, "firstBadCommit": culprit,
                                                   "good": good, "bad": bad}, indent=2) + "\n")
                 print(f"FIRST BAD: {culprit}\n{result_path}")
