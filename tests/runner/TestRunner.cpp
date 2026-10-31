@@ -15,6 +15,7 @@
 #include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
 #include <atomic>
+#include <sys/file.h>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -4847,11 +4848,106 @@ int runFullSubsystemTests() {
         check(hooked, "Engine::callHle records each host call in the calling thread's ring");
     }
 
+    // Teardown diagnostics: a guest thread still running (blocked in the real `read` on
+    // an empty pipe) is named with the host function it is inside and its last calls.
+    {
+        int fds[2];
+        const bool piped = ::pipe(fds) == 0;
+        ProcessConfig diagCfg;
+        diagCfg.homePath = "/tmp/hvm_blocked_threads";
+        Process diagProc(diagCfg);
+        check(diagProc.describeRunningThreads().empty(), "no running guest threads: nothing to describe");
+        std::atomic<bool> readerDone{false};
+        const uint32_t readerFn = diagProc.defineFunction("test_blocked_reader", [&](Ctx& x) {
+            const uint32_t buf = x.proc.heap().allocZeroed(16);
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_read"), {uint32_t(fds[0]), buf, 1});
+            readerDone = true;
+        });
+        if (piped) diagProc.startThread(readerFn, 0, 256u << 10, true);
+        std::string described;
+        for (int i = 0; piped && i < 300; ++i) {
+            described = diagProc.describeRunningThreads();
+            if (described.find("_read") != std::string::npos && described.find("last calls:") != std::string::npos) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        check(piped && described.find("thread ") != std::string::npos && described.find("inside ") != std::string::npos &&
+              described.find("_read") != std::string::npos && described.find("last calls:") != std::string::npos,
+              "describeRunningThreads names a blocked guest thread, the host function it is inside and its last calls");
+        if (piped) {
+            const ssize_t unblocked = ::write(fds[1], "x", 1);   // let the reader finish before the Process is destroyed
+            for (int i = 0; i < 300 && !readerDone.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            check(unblocked == 1 && readerDone.load(), "the blocked reader thread finishes once its pipe has data");
+            for (int i = 0; i < 300 && !diagProc.describeRunningThreads().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            check(diagProc.describeRunningThreads().empty(), "a finished guest thread is no longer described as running");
+            ::close(fds[0]);
+            ::close(fds[1]);
+        }
+    }
+
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
 
 } // namespace
+
+
+// `hvm_tests stopprobe`: block one guest thread in each blocking primitive, call
+// requestStop(), and time how long the thread takes to leave it. A primitive that
+// never wakes is reported STUCK (exit 1). Not part of fulltest: it is a measurement
+// that names the primitives still ignoring a stop (T1, #234), and it takes a few seconds.
+static int runStopProbe() {
+    using namespace std::chrono;
+    using namespace Hydrogen::Runtime;
+    struct Case { const char* name; std::function<void(Process&, Ctx&)> body; };
+    int pipeFds[2]; ::pipe(pipeFds);
+    int sp[2]; ::socketpair(AF_UNIX, SOCK_STREAM, 0, sp);
+    const char* lockPath = "/tmp/hvm_stopprobe.lock";
+    const int lockHeld = ::open(lockPath, O_CREAT | O_RDWR, 0600); ::flock(lockHeld, LOCK_EX);
+    const int lockWaiter = ::open(lockPath, O_RDWR);
+    auto callG = [](Ctx& x, const char* sym, std::initializer_list<uint32_t> a) { return uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol(sym), a)); };
+    std::vector<Case> cases = {
+        {"usleep(5s)",        [&](Process&, Ctx& x) { callG(x, "_usleep", {5000000}); }},
+        {"sleep(5)",          [&](Process&, Ctx& x) { callG(x, "_sleep", {5}); }},
+        {"nanosleep(5s)",     [&](Process& p, Ctx& x) { const uint32_t ts = p.heap().allocZeroed(16); p.mem().write<uint32_t>(ts, 5); callG(x, "_nanosleep", {ts, 0}); }},
+        {"read(pipe)",        [&](Process& p, Ctx& x) { callG(x, "_read", {uint32_t(pipeFds[0]), p.heap().allocZeroed(16), 1}); }},
+        {"recv(socketpair)",  [&](Process& p, Ctx& x) { callG(x, "_recv", {uint32_t(sp[0]), p.heap().allocZeroed(16), 1, 0}); }},
+        {"poll(pipe,-1)",     [&](Process& p, Ctx& x) { const uint32_t pf = p.heap().allocZeroed(16); p.mem().write<uint32_t>(pf, uint32_t(pipeFds[0])); p.mem().write<uint16_t>(pf + 4, 1); callG(x, "_poll", {pf, 1, 0xFFFFFFFFu}); }},
+        {"select(pipe,NULL)", [&](Process& p, Ctx& x) { const uint32_t set = p.heap().allocZeroed(128); p.mem().write<uint32_t>(set, 1u << pipeFds[0]); callG(x, "_select", {uint32_t(pipeFds[0]) + 1, set, 0, 0, 0}); }},
+        {"dispatch_sem_wait(forever)", [&](Process&, Ctx& x) { const uint32_t sem = callG(x, "_dispatch_semaphore_create", {0}); callG(x, "_dispatch_semaphore_wait", {sem, 0xFFFFFFFFu, 0xFFFFFFFFu}); }},
+        {"mutex self-deadlock", [&](Process& p, Ctx& x) { const uint32_t m = p.heap().allocZeroed(64); callG(x, "_pthread_mutex_init", {m, 0}); callG(x, "_pthread_mutex_lock", {m}); callG(x, "_pthread_mutex_lock", {m}); }},
+        {"pthread_cond_wait", [&](Process& p, Ctx& x) { const uint32_t m = p.heap().allocZeroed(64), c = p.heap().allocZeroed(64); callG(x, "_pthread_mutex_init", {m, 0}); callG(x, "_pthread_cond_init", {c, 0}); callG(x, "_pthread_mutex_lock", {m}); callG(x, "_pthread_cond_wait", {c, m}); }},
+        {"flock(contended)",  [&](Process&, Ctx& x) { callG(x, "_flock", {uint32_t(lockWaiter), 2}); }},
+    };
+    int stuck = 0;
+    for (auto& c : cases) {
+        ProcessConfig cfg; cfg.homePath = "/tmp/hvm_stopprobe";
+        auto* proc = new Process(cfg);
+        std::atomic<bool> done{false}, entered{false};
+        const uint32_t fn = proc->defineFunction("stopprobe_fn", [&](Ctx& x) {
+            entered = true;
+            try { c.body(*proc, x); } catch (...) {}
+            done = true;
+        });
+        proc->startThread(fn, 0, 256u << 10, true);
+        std::this_thread::sleep_for(milliseconds(300));
+        const bool blockedBeforeStop = entered.load() && !done.load();
+        const auto t0 = steady_clock::now();
+        proc->requestStop();
+        while (!done.load() && steady_clock::now() - t0 < seconds(3)) std::this_thread::sleep_for(milliseconds(5));
+        const double ms = duration<double, std::milli>(steady_clock::now() - t0).count();
+        if (!blockedBeforeStop) std::printf("  ?      %-28s returned before stop (did not block)\n", c.name);
+        else if (done.load()) std::printf("  ok     %-28s woke in %.0f ms\n", c.name, ms);
+        else {
+            std::printf("  STUCK  %-28s still blocked 3000 ms after requestStop\n%s", c.name, proc->describeRunningThreads().c_str());
+            ++stuck;
+            continue;
+        }   // leak: a stuck thread still owns the process
+        delete proc;
+    }
+    ::write(pipeFds[1], "x", 1); ::write(sp[1], "x", 1);   // let any stuck threads go before exit
+    std::printf("stopprobe: %d stuck of %zu\n", stuck, cases.size());
+    return stuck ? 1 : 0;
+}
 
 int main(int argc, char** argv) {
     if (argc == 4 && std::string(argv[1]) == "audio-decode") {
@@ -4871,6 +4967,7 @@ int main(int argc, char** argv) {
         std::printf("selftest %s: %s (%.0f MIPS)\n", r.passed ? "passed" : "FAILED", r.detail.c_str(), r.mips);
         return r.passed ? 0 : 1;
     }
+    if (argc == 2 && std::string(argv[1]) == "stopprobe") return runStopProbe();
     if (argc == 2 && std::string(argv[1]) == "fulltest") {
         return runFullSubsystemTests();
     }
