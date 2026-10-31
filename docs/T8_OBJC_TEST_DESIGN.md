@@ -1,12 +1,13 @@
-# T8: Objective-C conformance cases — design for review
+# T8: Objective-C conformance cases — approved design
 
-Owner: **Codex** · Card: [#241](https://github.com/lawsharley0-cyber/HydrogenVM/issues/241) · Status: **design only; awaiting review**.
+Owner: **Codex** · Card: [#241](https://github.com/lawsharley0-cyber/HydrogenVM/issues/241) · Status: **approved and implemented; local gates passed**.
 
 **Goal.** Add five ARMv7 Test Lab cases covering public runtime behavior from
 objc4's tests. Proposed approach: project-authored behavioral ports of selected
-assertions, not a build of Apple's modern test harness. Review must confirm this
-scope satisfies T8. No implementation, passing result or dependency completion
-is claimed here. T1/T2/T3 remain the integration prerequisites.
+assertions, not a build of Apple's modern test harness. Lawson approved this
+scope and authorized implementation after reviewing draft PR #247. No
+Apple-source import or dependency completion is approved by that
+review. T1/T2/T3 remain the recorded integration prerequisites.
 
 **Reference and licence boundary.** Pin Apple's
 [objc4 revision fb265098](https://github.com/apple-oss-distributions/objc4/tree/fb265098298302243cd7eeaa1f63f0ba7786dd9a).
@@ -18,8 +19,8 @@ repository's [APPLE_LICENSE](https://github.com/apple-oss-distributions/objc4/bl
 and applicable file notices. This design does not resolve licensing or authorize
 Apple-source imports. CoreFoundation algorithms are outside this card.
 
-**Cases and independent oracles.** IDs TL-S–TL-W are provisional; confirm they
-are free after rebasing. Each fixture records its reference, contract derivation,
+**Cases and independent oracles.** IDs TL-S–TL-W were free on integration main
+when implementation began. Each fixture records its reference, contract derivation,
 expected values and raw observations. Expected values never come from HVM output.
 
 | ID / upstream topic | Fixture and expected result |
@@ -47,5 +48,5 @@ gates; retain JSON with build/fixture hashes and host.pageSize. Native Apple
 execution is a useful independent cross-check when available; record NOT RUN
 otherwise. No claim covers private APIs, pointer authentication, Swift/GC, full
 upstream test parity, gameplay or 16 KB devices from a Linux pass. Cap: eight
-edit/build/test cycles. Implement only after design review; do not infer a licence
-decision or prerequisite completion from this document's approval.
+edit/build/test cycles. The design review is approved; do not infer a licence
+decision or prerequisite completion from that approval.
