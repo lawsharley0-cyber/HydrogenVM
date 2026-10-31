@@ -1842,7 +1842,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&alc_destroy>("_alcDestroyContext");
     p.def<&alc_getCurrent>("_alcGetCurrentContext");
     p.def<&alc_getDevice>("_alcGetContextsDevice");
-    p.def<&alc_getIntegerv>("_alcGetIntegerv");
+    supportDef<&alc_getIntegerv>(p, "_alcGetIntegerv", SupportStatus::Approx,
+        "Validates the device and buffer, reports ALC 1.1 and an empty attribute list; other queries set ALC_INVALID_ENUM");
     p.def<&alc_getError>("_alcGetError");
     p.def<&alc_isExt>("_alcIsExtensionPresent");
     p.def<&alc_getString>("_alcGetString");
