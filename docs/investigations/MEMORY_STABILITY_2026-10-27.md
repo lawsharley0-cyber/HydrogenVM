@@ -240,6 +240,6 @@ scenarios, not these aggregate Linux tests.
 
 The candidate is for draft review by Lawson; do not merge. Independent review
 must repeat/read the attached gates including 4 KB host-page metadata, and check
-the ownership boundaries. Apple-host compilation and device measurements remain
-pending until an exact-candidate macOS CI/device result exists. No Apple device,
+the ownership boundaries. The macOS/Xcode CI job for `b5df8bc` succeeded (Apple-host compilation is covered for that commit);
+physical-device measurements remain pending until an exact-candidate device result exists. No Apple device,
 Simulator or Xcode was available in this cloud environment.

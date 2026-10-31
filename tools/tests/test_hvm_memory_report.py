@@ -32,6 +32,19 @@ class MemoryReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.summarize([{"elapsedSeconds": 1}, {"elapsedSeconds": 0}])
 
+    def test_single_json_sample_object_and_utf8_file(self):
+        sample = {"elapsedSeconds": 0, "residentBytes": 42, "event": "caf\u00e9"}
+        self.assertEqual(module.read_samples(json.dumps(sample)), [sample])
+        report = {"memorySamples": [{"utc": "2026-10-27T15:10:04Z", "availableBytes": 7}]}
+        self.assertEqual(module.read_samples(json.dumps(report)), report["memorySamples"])
+        import tempfile, subprocess, sys
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "s.json"
+            path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+            done = subprocess.run([sys.executable, "-X", "utf8=0", str(Path(module.__file__)), str(path)],
+                                  capture_output=True, text=True, env={"LC_ALL": "C", "PATH": "/usr/bin"})
+            self.assertEqual(done.returncode, 0, done.stderr)
+
     def test_runtime_samples_survive_shell_available_history(self):
         rows = [{"elapsedSeconds": 0, "residentBytes": 42}]
         shell = {"memorySamples": [{"utc": "2026-10-27T15:10:04Z", "availableBytes": 7}],

@@ -71,6 +71,15 @@ recorded even if a later environment-corrected run succeeds.
 The installed HydrogenVM build can provide baseline evidence without an update.
 Record its displayed commit/build and the Clash guest build if available.
 Keep the current save; do not uninstall, reset progress or import over it.
+Runtime memory samples (`[memory]` log lines and `runtimeMemorySamples`) are written
+only when the process is launched with `HVM_MEMORY_DIAG=1`, for example
+`HVM_MEMORY_DIAG=1 ./hvm <app>` on a host. No iPhone shell setting for that variable
+exists in this repository, so an already-installed phone build without it records only
+its existing available-memory history; do not describe such a run as sampled.
+Before gameplay, exit the guest and make an independent copy of the current
+`Documents` and `Library` homes (Files → On My iPhone → HydrogenVM → copy to another
+location). Verify the copy opens and has matching file counts, and keep it separate
+from the live home so the pre-run state stays restorable.
 
 1. Note the session start time and starting game state.
 2. Leave home idle five minutes, then play normally for ten consecutive battles

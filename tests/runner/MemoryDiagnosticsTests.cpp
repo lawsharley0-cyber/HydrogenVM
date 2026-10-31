@@ -4,6 +4,10 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
 #include <unistd.h>
 using namespace Hydrogen;
 using namespace Hydrogen::Runtime;
@@ -119,6 +123,34 @@ int main(int argc, char** argv) {
         auto process = std::make_unique<Process>(cfg);
         process->setBackgrounded(true); // Should emit a sample
         check(process->memorySamplesJson() != "[]", "sampler is enabled with HVM_MEMORY_DIAG");
+    }
+    {
+        // Process::run() and setBackgrounded() share one gate.
+        unsetenv("HVM_MEMORY_DIAG");
+        const bool off = !Process::memoryDiagEnabled();
+        setenv("HVM_MEMORY_DIAG", "1", 1);
+        check(off && Process::memoryDiagEnabled(), "memory sampling gate follows HVM_MEMORY_DIAG");
+    }
+    {
+        // Concurrent lifecycle and interval samples must be logged in the same order they were recorded.
+        setenv("HVM_MEMORY_DIAG", "1", 1);
+        std::mutex logMu;
+        std::vector<std::string> logged;
+        ProcessConfig cfg;
+        cfg.homePath = home.string(); cfg.bundlePath = (home / "Test.app").string();
+        cfg.log = [&](LogLevel, const std::string& m) {
+            if (m.rfind("[memory] ", 0) == 0) { std::lock_guard<std::mutex> g(logMu); logged.push_back(m.substr(9)); }
+        };
+        auto process = std::make_unique<Process>(cfg);
+        std::vector<std::thread> threads;
+        for (int t = 0; t < 4; ++t)
+            threads.emplace_back([&] { for (int i = 0; i < 20; ++i) process->recordMemorySample("interval"); });
+        for (auto& th : threads) th.join();
+        std::string joined = "[";
+        for (size_t i = 0; i < logged.size(); ++i) { if (i) joined += ','; joined += logged[i]; }
+        // The retained samples are the newest 120 of an 80-sample run, so the log must match them exactly.
+        check(logged.size() == 80 && joined + "]" == process->memorySamplesJson(),
+              "concurrent memory samples are logged in recorded order");
     }
     std::filesystem::remove_all(home);
     std::printf("memory tests: %d passed, %d failed; host page %ld\n", passed, failed, sysconf(_SC_PAGESIZE));

@@ -93,10 +93,11 @@ void Process::recordMemorySample(const char* event) {
         sample = memorySnapshotJson(*this, event);
         if (memorySamples_.size() == 120) memorySamples_.pop_front();
         memorySamples_.push_back(sample);
+        // Existing shell journaling persists the log tail even after a host kill.
+        // A sample is <2 KB; no per-frame/per-allocation traffic is added. Logged under the
+        // lock so log order matches sample timestamps across lifecycle and interval threads.
+        log(LogLevel::Info, "[memory] " + sample);
     }
-    // Existing shell journaling persists the log tail even after a host kill.
-    // A sample is <2 KB; no per-frame/per-allocation traffic is added.
-    log(LogLevel::Info, "[memory] " + sample);
 }
 
 std::string Process::memorySamplesJson() const {

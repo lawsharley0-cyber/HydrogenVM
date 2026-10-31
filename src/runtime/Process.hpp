@@ -217,6 +217,8 @@ public:
     std::string crashBundle();
     // Bounded, read-only allocator/host samples. Event must be an internal constant.
     void recordMemorySample(const char* event);
+    // Runtime memory sampling is opt-in: HVM_MEMORY_DIAG must be set in the launching environment.
+    static bool memoryDiagEnabled() { return std::getenv("HVM_MEMORY_DIAG") != nullptr; }
     std::string memorySamplesJson() const;
     const std::string& crashSignature() const { return crashSignature_; }
     std::vector<std::string> missingSymbols() const;

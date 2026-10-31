@@ -57,6 +57,9 @@ def read_samples(raw):
         return document
     if not isinstance(document, dict):
         raise ValueError("expected a memory array or report object")
+    report_keys = {"runtimeMemorySamples", "crashBundle", "logs", "memorySamples"}
+    if not report_keys & document.keys() and ("elapsedSeconds" in document or "utc" in document):
+        return [document]  # a single timestamped sample
     if document.get("runtimeMemorySamples"):
         return document["runtimeMemorySamples"]
     # iPhone shell overwrites memorySamples with its available-memory history,
@@ -74,7 +77,7 @@ def main():
     parser.add_argument("input", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
-    raw = args.input.read_text()
+    raw = args.input.read_text(encoding="utf-8")
     output = json.dumps(summarize(read_samples(raw)), indent=2) + "\n"
     if args.out:
         args.out.write_text(output)
