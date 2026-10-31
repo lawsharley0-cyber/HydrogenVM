@@ -26,7 +26,7 @@ int test_repeat_creation_distinct(CFURLRef url1, CFURLRef url2) {
     int s1 = AudioServicesCreateSystemSoundID(url1, &id1);
     int s2 = AudioServicesCreateSystemSoundID(url2, &id2);
 
-    if (s1 != 0 || s2 != 0 || id1 == id2 || id1 == 0 || id2 == 0) {
+    if (s1 != kAudioServicesNoError || s2 != kAudioServicesNoError || id1 == id2 || id1 == 0 || id2 == 0) {
          printf("FAIL: distinct URLs - statuses: %d, %d; id1 (%u) and id2 (%u) should be distinct non-zero\n", s1, s2, (unsigned)id1, (unsigned)id2);
          return 1;
     }
@@ -34,7 +34,7 @@ int test_repeat_creation_distinct(CFURLRef url1, CFURLRef url2) {
     int ds1 = AudioServicesDisposeSystemSoundID(id1);
     int ds2 = AudioServicesDisposeSystemSoundID(id2);
 
-    if (ds1 != 0 || ds2 != 0) {
+    if (ds1 != kAudioServicesNoError || ds2 != kAudioServicesNoError) {
          printf("FAIL: distinct URLs dispose failed\n");
          return 1;
     }
@@ -47,7 +47,7 @@ int test_repeat_creation_same(CFURLRef url1) {
     int s1 = AudioServicesCreateSystemSoundID(url1, &id1);
     int s2 = AudioServicesCreateSystemSoundID(url1, &id2);
 
-    if (s1 != 0 || s2 != 0 || id1 == id2 || id1 == 0 || id2 == 0) {
+    if (s1 != kAudioServicesNoError || s2 != kAudioServicesNoError || id1 == id2 || id1 == 0 || id2 == 0) {
          printf("FAIL: same URL - statuses: %d, %d; id1 (%u) and id2 (%u) should be distinct non-zero even with same URL\n", s1, s2, (unsigned)id1, (unsigned)id2);
          return 1;
     }
@@ -55,7 +55,7 @@ int test_repeat_creation_same(CFURLRef url1) {
     int ds1 = AudioServicesDisposeSystemSoundID(id1);
     int ds2 = AudioServicesDisposeSystemSoundID(id2);
 
-    if (ds1 != 0 || ds2 != 0) {
+    if (ds1 != kAudioServicesNoError || ds2 != kAudioServicesNoError) {
          printf("FAIL: same URL dispose failed\n");
          return 1;
     }
@@ -64,7 +64,7 @@ int test_repeat_creation_same(CFURLRef url1) {
 }
 
 int test_invalid_dispose() {
-    int status = AudioServicesDisposeSystemSoundID(99999);
+    AudioServicesDisposeSystemSoundID(99999);
     // Just verifying it doesn't crash.
     return 0;
 }
