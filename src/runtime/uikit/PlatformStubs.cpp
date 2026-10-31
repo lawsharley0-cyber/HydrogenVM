@@ -1327,7 +1327,7 @@ struct ALSource {
     uint32_t state = AL_INITIAL;
     float pitch = 1.0f, gain = 1.0f;
     float minGain = 0.0f, maxGain = 1.0f;
-    float pos[3] = {0, 0, 0}, vel[3] = {0, 0, 0};
+    float pos[3] = {0, 0, 0}, vel[3] = {0, 0, 0}, dir[3] = {0, 0, 0};
     bool looping = false, relative = false;
     std::vector<uint32_t> queuedBuffers;
     uint32_t voice = 0;      // mixer voice while playing or paused
@@ -1360,6 +1360,15 @@ GuestPtr alc_getString(Ctx& x, uint32_t, uint32_t) { return x.proc.internCString
 void alc_macMixerRate(Ctx&, double) {}
 double alc_macGetMixerRate(Ctx&) { return 44100.0; }
 void alc_macIntSetter(Ctx&, int32_t) {}
+void alc_getIntegerv(Ctx& x, uint32_t dev, uint32_t param, uint32_t size, GuestPtr data) {
+    if (!dev || dev != OAL(x).currentDevice) { OAL(x).lastAlcError = 0xA001 /* ALC_INVALID_DEVICE */; return; }
+    if (!data || size < 1) { OAL(x).lastAlcError = 0xA004 /* ALC_INVALID_VALUE */; return; }
+    // The supported OpenAL API is 1.1; no ALC device attribute list is
+    // advertised by this software-only implementation.
+    if (param == 0x1000 /* ALC_MAJOR_VERSION */ || param == 0x1001 /* ALC_MINOR_VERSION */) x.mem.write<int32_t>(data, 1);
+    else if (param == 0x1002 /* ALC_ATTRIBUTES_SIZE */) x.mem.write<int32_t>(data, 0);
+    else OAL(x).lastAlcError = 0xA003 /* ALC_INVALID_ENUM */;
+}
 int32_t alc_macIntGetter(Ctx&) { return 2; }
 
 uint32_t al_getError(Ctx& x) { const uint32_t e = OAL(x).lastError; OAL(x).lastError = 0; return e; }
@@ -1485,6 +1494,7 @@ void al_source3f(Ctx& x, uint32_t sid, uint32_t param, float v1, float v2, float
     ALSource& s = OAL(x).sources[sid];
     if (param == AL_POSITION) { s.pos[0] = v1; s.pos[1] = v2; s.pos[2] = v3; }
     else if (param == AL_VELOCITY) { s.vel[0] = v1; s.vel[1] = v2; s.vel[2] = v3; }
+    else if (param == 0x1005 /* AL_DIRECTION */) { s.dir[0] = v1; s.dir[1] = v2; s.dir[2] = v3; }
     alUpdate(x, s);
 }
 void al_sourcefv(Ctx& x, uint32_t sid, uint32_t param, GuestPtr vals) {
@@ -1506,6 +1516,17 @@ void al_getSourcef(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
               param == AL_MIN_GAIN ? s.minGain : param == AL_MAX_GAIN ? s.maxGain : 0.0f;
     if (param == 0x1024 /* AL_SEC_OFFSET */ && s.voice) v = float(MX(x.proc).positionSeconds(s.voice));
     x.mem.write<float>(val, v);
+}
+void al_getSource3f(Ctx& x, uint32_t sid, uint32_t param, GuestPtr v1, GuestPtr v2, GuestPtr v3) {
+    if (!v1 || !v2 || !v3) { OAL(x).lastError = 0xA004 /* AL_INVALID_VALUE */; return; }
+    if (!OAL(x).sources.count(sid)) { OAL(x).lastError = 0xA001 /* AL_INVALID_NAME */; return; }
+    const ALSource& s = OAL(x).sources[sid];
+    const float* v = nullptr;
+    if (param == AL_POSITION) v = s.pos;
+    else if (param == AL_VELOCITY) v = s.vel;
+    else if (param == 0x1005 /* AL_DIRECTION */) v = s.dir;
+    else { OAL(x).lastError = 0xA002 /* AL_INVALID_ENUM */; return; }
+    if (v) { x.mem.write<float>(v1, v[0]); x.mem.write<float>(v2, v[1]); x.mem.write<float>(v3, v[2]); }
 }
 void al_getSourcei(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     if (!val || !OAL(x).sources.count(sid)) return;
@@ -1821,6 +1842,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&alc_destroy>("_alcDestroyContext");
     p.def<&alc_getCurrent>("_alcGetCurrentContext");
     p.def<&alc_getDevice>("_alcGetContextsDevice");
+    supportDef<&alc_getIntegerv>(p, "_alcGetIntegerv", SupportStatus::Approx,
+        "Validates the device and buffer, reports ALC 1.1 and an empty attribute list; other queries set ALC_INVALID_ENUM");
     p.def<&alc_getError>("_alcGetError");
     p.def<&alc_isExt>("_alcIsExtensionPresent");
     p.def<&alc_getString>("_alcGetString");
@@ -1848,6 +1871,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&al_sourcefv>("_alSourcefv");
     p.def<&al_sourcei>("_alSourcei");
     p.def<&al_getSourcef>("_alGetSourcef");
+    p.def<&al_getSource3f>("_alGetSource3f");
     p.def<&al_getSourcei>("_alGetSourcei");
     p.def<&al_sourcePlay>("_alSourcePlay");
     p.def<&al_sourcePause>("_alSourcePause");
