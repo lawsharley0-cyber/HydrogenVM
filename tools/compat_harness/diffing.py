@@ -79,27 +79,19 @@ def _diff_cases(suite, baseline, current, regressions, improvements) -> None:
 
 
 def _diff_app(ident, before, after, regressions, improvements, attention, informational) -> None:
-    if _diff_app_status(ident, before, after, regressions, informational):
-        return
-    _diff_app_launch_and_crash(ident, before, after, regressions, improvements)
-    _diff_app_symbols(ident, before, after, regressions, improvements, attention)
-    _diff_app_media(ident, before, after, regressions, improvements, informational)
-
-
-def _diff_app_status(ident, before, after, regressions, informational) -> bool:
     if before is None:
         informational.append({"kind": "new-app", "id": ident, "message": f"{ident} was not in the baseline"})
-        return True
+        return
     if after is None:
         regressions.append({"kind": "missing-app", "id": ident, "message": f"{ident} is missing from the current report"})
-        return True
+        return
     if after.get("status") == "skipped" and before.get("status") not in ("skipped", "error"):
         regressions.append({
             "kind": "fixture-skipped",
             "id": ident,
             "message": f"{ident} ran before and is now skipped: {after.get('reason')}",
         })
-        return True
+        return
     if before.get("status") in ("skipped", "error") and after.get("status") in ("skipped", "error"):
         if before.get("status") != after.get("status") or (before.get("reason") or "") != (after.get("reason") or ""):
             informational.append({
@@ -107,7 +99,7 @@ def _diff_app_status(ident, before, after, regressions, informational) -> bool:
                 "id": ident,
                 "message": f"{ident} fixture state {before.get('status')} -> {after.get('status')}: {after.get('reason')}",
             })
-        return True
+        return
     if before.get("status") == "skipped" and after.get("status") in _MEASURED:
         informational.append({
             "kind": "new-coverage",
@@ -117,11 +109,7 @@ def _diff_app_status(ident, before, after, regressions, informational) -> bool:
                 f"({after.get('status')}), not a regression"
             ),
         })
-        return True
-    return False
-
-
-def _diff_app_launch_and_crash(ident, before, after, regressions, improvements) -> None:
+        return
     b_launch = bool(before.get("launchSuccess"))
     a_launch = bool(after.get("launchSuccess"))
     if b_launch and not a_launch:
@@ -145,8 +133,6 @@ def _diff_app_launch_and_crash(ident, before, after, regressions, improvements) 
     elif b_err and not a_err:
         improvements.append({"kind": "load", "id": ident, "message": f"{ident} load error cleared"})
 
-
-def _diff_app_symbols(ident, before, after, regressions, improvements, attention) -> None:
     b_imp = set(before.get("unimplementedImports") or [])
     a_imp = set(after.get("unimplementedImports") or [])
     for name in sorted(a_imp - b_imp):
@@ -165,9 +151,6 @@ def _diff_app_symbols(ident, before, after, regressions, improvements, attention
     for name in sorted(b_miss - a_miss):
         improvements.append({"kind": "runtime-miss", "id": ident, "message": f"{ident} no longer hits {name}"})
 
-
-def _diff_app_media(ident, before, after, regressions, improvements, informational) -> None:
-    a_launch = bool(after.get("launchSuccess"))
     b_frames = ((before.get("perf") or {}).get("framesPresented")) or 0
     a_frames = ((after.get("perf") or {}).get("framesPresented")) or 0
     if b_frames and not a_frames and a_launch:
