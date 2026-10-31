@@ -103,10 +103,13 @@ void recordLogLineAsyncSafeImpl(const char* data, size_t len) {
     g_logRing.lengths[slot] = copyLen;
 }
 
-// Async-signal-safe I/O primitives using raw write(STDERR_FILENO).
+// Async-signal-safe I/O primitives using raw write(fd).
 static std::atomic<int> g_faultFd{STDERR_FILENO};
-static void safeWrite(const char* str, size_t len) {
-    const int fd = g_faultFd.load(std::memory_order_relaxed);
+static std::atomic<const Memory::GuestArena*> g_activeArena{nullptr};
+static const char* g_hleNames[Engine::kMaxHle]{};
+
+static void safeWriteTo(int fd, const char* str, size_t len) {
+    if (fd < 0 || !str) return;
     while (len > 0) {
         ssize_t r = ::write(fd, str, len);
         if (r <= 0) break;
@@ -115,12 +118,12 @@ static void safeWrite(const char* str, size_t len) {
     }
 }
 
-static void safeWriteStr(const char* str) {
+static void safeWriteStrTo(int fd, const char* str) {
     if (!str) return;
-    safeWrite(str, std::strlen(str));
+    safeWriteTo(fd, str, std::strlen(str));
 }
 
-static void safeWriteHex(uint64_t val, int width = 8) {
+static void safeWriteHexTo(int fd, uint64_t val, int width = 8) {
     static const char hexChars[] = "0123456789abcdef";
     char buf[32];
     int pos = sizeof(buf);
@@ -136,10 +139,10 @@ static void safeWriteHex(uint64_t val, int width = 8) {
     while ((sizeof(buf) - 1 - pos) < (size_t)width && pos > 0) {
         buf[--pos] = '0';
     }
-    safeWriteStr(buf + pos);
+    safeWriteStrTo(fd, buf + pos);
 }
 
-static void safeWriteDec(uint64_t val) {
+static void safeWriteDecTo(int fd, uint64_t val) {
     char buf[32];
     int pos = sizeof(buf);
     buf[--pos] = '\0';
@@ -151,7 +154,7 @@ static void safeWriteDec(uint64_t val) {
             val /= 10;
         }
     }
-    safeWriteStr(buf + pos);
+    safeWriteStrTo(fd, buf + pos);
 }
 
 static std::atomic<bool> g_faultDiagnosticActive{false};
@@ -165,53 +168,8 @@ void faultHandler(int sig, siginfo_t* si, void* uctx) {
 
     // Host SIGSEGV/SIGBUS fault: print async-signal-safe diagnostic report.
     if (!g_faultDiagnosticActive.exchange(true, std::memory_order_acq_rel)) {
-        safeWriteStr("\n=== HVM HOST FAULT DIAGNOSTICS ===\nSignal: ");
-        safeWriteStr(sig == SIGSEGV ? "SIGSEGV (Segmentation Fault)" : sig == SIGBUS ? "SIGBUS (Bus Error)" : "OTHER");
-        safeWriteStr("\nHost Fault Address (si_addr): 0x");
-        safeWriteHex(reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr), 16);
-
-        if (s && s->arena) {
-            if (s->arena->containsHost(si->si_addr)) {
-                safeWriteStr("\nGuest Arena Offset: 0x");
-                safeWriteHex(s->arena->guestAddr(si->si_addr), 8);
-            } else {
-                safeWriteStr("\nGuest Arena Base: 0x");
-                safeWriteHex(reinterpret_cast<uintptr_t>(s->arena->base()), 16);
-                safeWriteStr(" (fault address outside guest arena)");
-            }
-        }
-        safeWriteStr("\n\n--- Guest Threads State ---\n");
-
-        for (size_t i = 0; i < kMaxCpus; ++i) {
-            Cpu* c = g_activeCpus[i].load(std::memory_order_relaxed);
-            if (!c) continue;
-            safeWriteStr("Thread slot #");
-            safeWriteDec(i);
-            safeWriteStr(": PC=0x");
-            safeWriteHex(c->r[kPC], 8);
-            safeWriteStr(" LR=0x");
-            safeWriteHex(c->r[kLR], 8);
-            safeWriteStr(" block_pc=0x");
-            safeWriteHex(c->block_pc, 8);
-            safeWriteStr(" in_guest=");
-            safeWriteStr(c->in_guest.load(std::memory_order_relaxed) ? "true" : "false");
-            safeWriteStr(" current_hle=0x");
-            safeWriteHex(c->current_hle.load(std::memory_order_relaxed), 8);
-            safeWriteStr("\n");
-        }
-
-        safeWriteStr("\n--- Recent Logs (last 200) ---\n");
-        const uint64_t totalWritten = g_logRing.writeIdx.load(std::memory_order_relaxed);
-        const uint64_t count = totalWritten < kLogRingCap ? totalWritten : kLogRingCap;
-        const uint64_t startIdx = totalWritten > count ? (totalWritten - count) : 0;
-        for (uint64_t i = startIdx; i < totalWritten; ++i) {
-            const size_t slot = i % kLogRingCap;
-            if (g_logRing.lengths[slot] > 0) {
-                safeWrite(g_logRing.lines[slot], g_logRing.lengths[slot]);
-                safeWriteStr("\n");
-            }
-        }
-        safeWriteStr("=== END HOST FAULT DIAGNOSTICS ===\n\n");
+        const int fd = g_faultFd.load(std::memory_order_relaxed);
+        Engine::writeHostFaultReport(sig, si, fd);
     }
 
     // Not ours: chain to the previous handler (or default).
@@ -244,19 +202,89 @@ void Engine::recordLogLineAsyncSafe(const char* data, size_t len) {
 }
 void Engine::setFaultReportFd(int fd) { g_faultFd.store(fd >= 0 ? fd : STDERR_FILENO, std::memory_order_relaxed); }
 
+void Engine::writeHostFaultReport(int sig, const siginfo_t* si, int fd) {
+    if (fd < 0) return;
+    safeWriteStrTo(fd, "\n=== HVM HOST FAULT DIAGNOSTICS ===\nSignal: ");
+    safeWriteStrTo(fd, sig == SIGSEGV ? "SIGSEGV (Segmentation Fault)" : sig == SIGBUS ? "SIGBUS (Bus Error)" : "OTHER");
+    safeWriteStrTo(fd, "\nHost Fault Address (si_addr): 0x");
+    safeWriteHexTo(fd, reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr), 16);
+
+    FaultScope* s = t_scope;
+    const Memory::GuestArena* arena = s ? s->arena : g_activeArena.load(std::memory_order_relaxed);
+    if (arena) {
+        if (si && arena->containsHost(si->si_addr)) {
+            safeWriteStrTo(fd, "\nGuest Arena Offset: 0x");
+            safeWriteHexTo(fd, arena->guestAddr(si->si_addr), 8);
+            safeWriteStrTo(fd, " (host fault inside guest arena: guest pointer escaped without translation)\n");
+        } else {
+            safeWriteStrTo(fd, "\nGuest Arena Base: 0x");
+            safeWriteHexTo(fd, reinterpret_cast<uintptr_t>(arena->base()), 16);
+            safeWriteStrTo(fd, " (fault address outside guest arena)\n");
+        }
+    }
+
+    safeWriteStrTo(fd, "\n--- Guest Threads State ---\n");
+    bool anyCpus = false;
+    for (size_t i = 0; i < kMaxCpus; ++i) {
+        Cpu* c = g_activeCpus[i].load(std::memory_order_relaxed);
+        if (!c) continue;
+        anyCpus = true;
+        safeWriteStrTo(fd, "Thread slot #");
+        safeWriteDecTo(fd, i);
+        safeWriteStrTo(fd, ": PC=0x");
+        safeWriteHexTo(fd, c->r[kPC], 8);
+        safeWriteStrTo(fd, " LR=0x");
+        safeWriteHexTo(fd, c->r[kLR], 8);
+        safeWriteStrTo(fd, " block_pc=0x");
+        safeWriteHexTo(fd, c->block_pc, 8);
+        safeWriteStrTo(fd, " in_guest=");
+        safeWriteStrTo(fd, c->in_guest.load(std::memory_order_relaxed) ? "true" : "false");
+        const uint32_t hleIdx = c->current_hle.load(std::memory_order_relaxed);
+        safeWriteStrTo(fd, " current_hle=0x");
+        safeWriteHexTo(fd, hleIdx, 8);
+        if (hleIdx < kMaxHle && g_hleNames[hleIdx]) {
+            safeWriteStrTo(fd, " (");
+            safeWriteStrTo(fd, g_hleNames[hleIdx]);
+            safeWriteStrTo(fd, ")");
+        }
+        safeWriteStrTo(fd, "\n");
+    }
+    if (!anyCpus) {
+        safeWriteStrTo(fd, "No active guest threads\n");
+    }
+
+    safeWriteStrTo(fd, "\n--- Recent Logs (last 200) ---\n");
+    const uint64_t totalWritten = g_logRing.writeIdx.load(std::memory_order_relaxed);
+    const uint64_t count = totalWritten < kLogRingCap ? totalWritten : kLogRingCap;
+    const uint64_t startIdx = totalWritten > count ? (totalWritten - count) : 0;
+    for (uint64_t i = startIdx; i < totalWritten; ++i) {
+        const size_t slot = i % kLogRingCap;
+        if (g_logRing.lengths[slot] > 0) {
+            safeWriteTo(fd, g_logRing.lines[slot], g_logRing.lengths[slot]);
+            safeWriteStrTo(fd, "\n");
+        }
+    }
+    safeWriteStrTo(fd, "=== END HOST FAULT DIAGNOSTICS ===\n\n");
+}
+
 // ---------------------------------------------------------------- engine ---
 
 Engine::Engine(Memory::GuestArena& mem) : mem_(mem), hle_(kMaxHle) {
     installFaultHandler();
+    g_activeArena.store(&mem_, std::memory_order_release);
     returnStub_ = registerHle("__hvm_return_to_host", [](Cpu& c) { c.exit = Exit::Return; });
 }
-Engine::~Engine() = default;
+Engine::~Engine() {
+    const Memory::GuestArena* expected = &mem_;
+    g_activeArena.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+}
 
 uint32_t Engine::registerHle(std::string name, HleFn fn) {
     std::lock_guard<std::mutex> lk(mu_);
     const uint32_t idx = hleCount_.load(std::memory_order_relaxed);
     if (idx >= kMaxHle) throw std::runtime_error("HydrogenVM: HLE table full");
     hle_[idx] = {std::move(name), std::move(fn)};
+    g_hleNames[idx] = hle_[idx].name.c_str();
     hleCount_.store(idx + 1, std::memory_order_release);
     return Memory::GuestArena::kHleBase + idx * 4;
 }

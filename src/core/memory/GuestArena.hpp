@@ -44,7 +44,7 @@ public:
     static constexpr uint32_t kHleBase = 0xFFFF0000u;
     static constexpr uint32_t kHleSize = 0x00010000u;
 
-    GuestArena();
+    explicit GuestArena(size_t hostPage = 0);
     ~GuestArena();
     GuestArena(const GuestArena&) = delete;
     GuestArena& operator=(const GuestArena&) = delete;

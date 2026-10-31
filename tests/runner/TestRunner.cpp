@@ -25,6 +25,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include <map>
 #include <sstream>
 #include <string>
@@ -4777,6 +4778,123 @@ int runFullSubsystemTests() {
         check((mainBound & 0xFF) == 1 && joined && workerBound == (host ? 1 : 0), host ?
               "GPU EAGLContext reports a successful shared-context bind on a second thread" :
               "software EAGLContext rejects a context already current on another thread");
+    }
+
+    // G4/#264: 16 KB host page commit granularity and mapping isolation (suspect B-101)
+    {
+        Memory::GuestArena arena16k(16384);
+        check(arena16k.hostPageSize() == 16384, "GuestArena accepts 16 KB host page size");
+        const uint32_t free1 = arena16k.findFree(0x1000, 0x10000);
+        check((free1 & 0x3FFF) == 0, "GuestArena findFree aligns to 16 KB host page boundaries");
+
+        // Map two adjacent 4 KB guest pages that share the same 16 KB host page
+        const uint32_t pageA = 0x20000, pageB = 0x21000;
+        arena16k.map(pageA, 0x1000);
+        arena16k.write<uint32_t>(pageA, 0x11223344);
+
+        arena16k.map(pageB, 0x1000);
+        check(arena16k.read<uint32_t>(pageA) == 0x11223344,
+              "16 KB host page: mapping adjacent 4 KB guest page does not clobber existing data");
+        arena16k.write<uint32_t>(pageB, 0x55667788);
+
+        // Unmap pageA: pageB must retain its data, pageA must be zeroed
+        arena16k.unmap(pageA, 0x1000);
+        check(!arena16k.isMapped(pageA) && arena16k.isMapped(pageB),
+              "16 KB host page: partial unmap updates 4 KB guest protection flags independently");
+        check(arena16k.read<uint32_t>(pageB) == 0x55667788,
+              "16 KB host page: unmapping neighbor 4 KB page preserves surviving page data");
+        check(arena16k.read<uint32_t>(pageA) == 0,
+              "16 KB host page: unmapped 4 KB page in shared host page is zeroed");
+
+        // Unmap pageB: whole 16 KB host page is now released
+        arena16k.unmap(pageB, 0x1000);
+        check(!arena16k.isMapped(pageA) && !arena16k.isMapped(pageB),
+              "16 KB host page: host page fully released when all constituent guest pages unmapped");
+    }
+
+    // G4/#264: host fault diagnostics bundle generation
+    {
+        Memory::GuestArena testMem;
+        CPU::Engine testEngine(testMem);
+        const uint32_t testHle = testEngine.registerHle("cocos2d_tex_worker", [](CPU::Cpu& c) {});
+
+        CPU::Cpu testCpu;
+        testCpu.r[CPU::kPC] = 0x10008888;
+        testCpu.r[CPU::kLR] = 0x10009999;
+        testCpu.block_pc = 0x10008800;
+        testCpu.in_guest.store(false);
+        testCpu.current_hle.store((testHle - Memory::GuestArena::kHleBase) / 4);
+
+        for (int i = 0; i < 5; ++i) {
+            std::string logLine = "[testlog] line number " + std::to_string(i + 1);
+            CPU::Engine::recordLogLineAsyncSafe(logLine.c_str(), logLine.size());
+        }
+
+        int pipeFds[2];
+        if (pipe(pipeFds) == 0) {
+            siginfo_t si{};
+            si.si_signo = SIGSEGV;
+            si.si_addr = testMem.base() + 0x4000;
+
+            CPU::Engine::writeHostFaultReport(SIGSEGV, &si, pipeFds[1]);
+            close(pipeFds[1]);
+
+            char buf[8192] = {};
+            ssize_t totalRead = 0, n = 0;
+            while ((n = read(pipeFds[0], buf + totalRead, sizeof(buf) - 1 - totalRead)) > 0) {
+                totalRead += n;
+            }
+            close(pipeFds[0]);
+            buf[totalRead] = '\0';
+            std::string report(buf);
+
+            const bool hasHeader = report.find("=== HVM HOST FAULT DIAGNOSTICS ===") != std::string::npos;
+            const bool hasSig = report.find("Signal: SIGSEGV (Segmentation Fault)") != std::string::npos;
+            const bool hasAddr = report.find("Host Fault Address (si_addr): 0x") != std::string::npos;
+            const bool hasArena = report.find("Guest Arena Offset: 0x00004000") != std::string::npos;
+            const bool hasEscaped = report.find("host fault inside guest arena: guest pointer escaped without translation") != std::string::npos;
+            const bool hasThread = report.find("PC=0x10008888") != std::string::npos &&
+                                  report.find("LR=0x10009999") != std::string::npos &&
+                                  report.find("block_pc=0x10008800") != std::string::npos;
+            const bool hasHleName = report.find("cocos2d_tex_worker") != std::string::npos;
+            const bool hasLogs = report.find("[testlog] line number 5") != std::string::npos;
+            const bool hasFooter = report.find("=== END HOST FAULT DIAGNOSTICS ===") != std::string::npos;
+
+            check(hasHeader && hasSig && hasAddr && hasArena && hasEscaped && hasThread && hasHleName && hasLogs && hasFooter,
+                  "forced host fault produces bundle with signal, addr, arena offset, thread state, HLE name and log ring");
+        }
+    }
+
+    // G4/#264: forced real SIGSEGV signal handler execution in subprocess
+    {
+        int pipeFds[2];
+        if (pipe(pipeFds) == 0) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                close(pipeFds[0]);
+                CPU::Engine::setFaultReportFd(pipeFds[1]);
+                const char logMsg[] = "[fork_fault] before crash";
+                CPU::Engine::recordLogLineAsyncSafe(logMsg, sizeof(logMsg) - 1);
+                *reinterpret_cast<volatile int*>(0x1234) = 42;
+                _exit(1);
+            }
+            close(pipeFds[1]);
+            int status = 0;
+            waitpid(pid, &status, 0);
+
+            char buf[8192] = {};
+            ssize_t totalRead = 0, n = 0;
+            while ((n = read(pipeFds[0], buf + totalRead, sizeof(buf) - 1 - totalRead)) > 0) {
+                totalRead += n;
+            }
+            close(pipeFds[0]);
+            std::string childReport(buf, totalRead > 0 ? size_t(totalRead) : 0);
+
+            const bool handlerFired = childReport.find("=== HVM HOST FAULT DIAGNOSTICS ===") != std::string::npos &&
+                                      childReport.find("[fork_fault] before crash") != std::string::npos &&
+                                      childReport.find("=== END HOST FAULT DIAGNOSTICS ===") != std::string::npos;
+            check(handlerFired, "real host SIGSEGV signal handler writes fault diagnostics to configured report fd");
+        }
     }
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);

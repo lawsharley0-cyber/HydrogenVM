@@ -16,8 +16,8 @@ std::atomic<uint32_t> liveArenas{0};
 
 uint32_t GuestArena::liveCount() noexcept { return liveArenas.load(std::memory_order_relaxed); }
 
-GuestArena::GuestArena() {
-    host_page_ = size_t(sysconf(_SC_PAGESIZE));
+GuestArena::GuestArena(size_t hostPage) {
+    host_page_ = hostPage ? hostPage : size_t(sysconf(_SC_PAGESIZE));
     if (host_page_ < kGuestPageSize || (host_page_ & (host_page_ - 1)))
         throw std::runtime_error("HydrogenVM: unsupported host page size");
 

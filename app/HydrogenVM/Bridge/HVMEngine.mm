@@ -476,6 +476,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         auto sessionLog = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
             std::lock_guard<std::mutex> lk(core->logMu);
             core->logToFile("", msg);
+            Hydrogen::CPU::Engine::recordLogLineAsyncSafe(msg.data(), msg.size());
             if (core->logs.size() < 5000) core->logs.emplace_back(msg, lvl);
             if (!core->logFlushScheduled) {
                 core->logFlushScheduled = true;

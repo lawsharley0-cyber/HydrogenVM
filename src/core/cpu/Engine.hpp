@@ -18,6 +18,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <signal.h>
 
 namespace Hydrogen::CPU {
 
@@ -46,6 +47,7 @@ struct FaultSnapshot {
 
 class Engine {
 public:
+    static constexpr size_t kMaxHle = Memory::GuestArena::kHleSize / 4;
     using HleFn = std::function<void(Cpu&)>;
 
     explicit Engine(Memory::GuestArena& mem);
@@ -130,6 +132,7 @@ public:
     // (default stderr; the iPhone app points it at a file for the crash report).
     static void recordLogLineAsyncSafe(const char* data, size_t len);
     static void setFaultReportFd(int fd);
+    static void writeHostFaultReport(int sig, const siginfo_t* si, int fd);
 
     struct Stats { uint64_t blocks_decoded = 0, guest_insns_decoded = 0, ops_emitted = 0; };
     Stats stats() const { std::lock_guard<std::mutex> lk(mu_); return stats_; }
@@ -144,7 +147,6 @@ private:
     void decodeArmBlock(Block& b, uint32_t pc);
     void decodeThumbBlock(Block& b, uint32_t pc);
 
-    static constexpr size_t kMaxHle = Memory::GuestArena::kHleSize / 4;
 
     Memory::GuestArena& mem_;
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blocks_;

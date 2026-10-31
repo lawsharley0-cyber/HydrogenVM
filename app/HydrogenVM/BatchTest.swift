@@ -419,6 +419,7 @@ final class BatchTestRunner {
         currentTestTask?.cancel()
         activeSession?.stopGracefully()
         activeSession = nil
+        HVMCrashJournal.closeSignalFile()
         fpsTimer?.invalidate()
         fpsTimer = nil
         UIApplication.shared.isIdleTimerDisabled = false
@@ -474,6 +475,8 @@ final class BatchTestRunner {
 
         currentTestTask = Task { @MainActor [weak self] in
             guard let self else { return }
+
+            HVMCrashJournal.openSignalFile(CrashReport.signal.path)
 
             var s: HVMSession!
             var exitBox: ExitBox!
@@ -723,6 +726,7 @@ final class BatchTestRunner {
             self.results.append(finished)
             self.currentIndex += 1
             self.activeSession = nil
+            HVMCrashJournal.closeSignalFile()
             try? FileManager.default.removeItem(at: testHome)
 
             if engineTeardownTimedOut {
@@ -746,6 +750,8 @@ final class BatchTestRunner {
 
     /// Starts the game again on `home` for `relaunchTime` seconds and reports what happened.
     private func relaunch(target: BatchTarget, home: URL) async -> (crashed: Bool, frames: Int, summary: String?) {
+        HVMCrashJournal.openSignalFile(CrashReport.signal.path)
+        defer { HVMCrashJournal.closeSignalFile() }
         var s: HVMSession!
         var box: ExitBox!
         var startRetries = 0
