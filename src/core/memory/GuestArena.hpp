@@ -52,6 +52,7 @@ public:
     uint8_t* base() const noexcept { return base_; }
     size_t   hostPageSize() const noexcept { return host_page_; }
     static uint32_t liveCount() noexcept;
+    static bool waitForRelease(double timeoutSeconds = 5.0, uint32_t targetCount = 0) noexcept;
 
     // Commit [addr, addr+size) with the given guest permissions. Safe to call on
     // ranges that overlap already-committed memory; existing contents are kept.

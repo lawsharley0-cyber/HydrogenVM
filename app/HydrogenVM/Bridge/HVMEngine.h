@@ -110,6 +110,11 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @interface HVMEngine : NSObject
 /// Whether a 4 GB guest arena can be reserved on this device (entitlement check).
 + (BOOL)canReserveGuestArena:(NSString *_Nullable *_Nullable)error;
+/// Number of currently live 4 GB guest arenas.
++ (NSUInteger)liveGuestArenaCount;
+/// Wait up to timeout seconds for all live guest arenas to be released.
++ (BOOL)waitForGuestArenaRelease:(NSTimeInterval)timeout;
++ (BOOL)waitForGuestArenaRelease:(NSTimeInterval)timeout targetCount:(NSUInteger)targetCount;
 /// Runs a small built-in ARM + Thumb program and times it. Call off the main thread.
 + (HVMSelfTestResult *)runSelfTest;
 /// Extract an .ipa into appsRoot/<bundle id>/<Name>.app. Call off the main thread.

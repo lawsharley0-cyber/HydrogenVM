@@ -475,6 +475,8 @@ final class BatchTestRunner {
         currentTestTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
+            _ = HVMEngine.wait(forGuestArenaRelease: 8.0)
+
             var s: HVMSession!
             var exitBox: ExitBox!
             var startRetries = 0
@@ -529,12 +531,17 @@ final class BatchTestRunner {
 
                 s.start()
 
-                try? await Task.sleep(for: .milliseconds(1500))
+                let startWaitDeadline = Date().addingTimeInterval(5.5)
+                while Date() < startWaitDeadline && !exitBox.exited && HVMEngine.liveGuestArenaCount() == 0 {
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+
                 if exitBox.exited, let crash = exitBox.crash, crash.contains("failed to reserve") {
                     startRetries += 1
                     s.stop()
                     self.activeSession = nil
-                    try? await Task.sleep(for: .milliseconds(3000))
+                    _ = HVMEngine.wait(forGuestArenaRelease: 5.0)
+                    try? await Task.sleep(for: .milliseconds(1000))
                     continue
                 } else {
                     break
@@ -664,7 +671,8 @@ final class BatchTestRunner {
             if self.options.relaunchEnabled && !isCrashed && exitBox.exited && !hardStopped && self.status == .running {
                 self.progressText = "Relaunching \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
                 self.activeSession = nil
-                try? await Task.sleep(for: .milliseconds(1500))
+                _ = HVMEngine.wait(forGuestArenaRelease: 8.0)
+                try? await Task.sleep(for: .milliseconds(500))
                 relaunch = await self.relaunch(target: target, home: testHome)
             }
             guard self.status == .running else { return }
@@ -739,7 +747,8 @@ final class BatchTestRunner {
             self.savePendingSession()
 
             // Let the finished game's threads and memory go before the next one starts.
-            try? await Task.sleep(for: .milliseconds(1500))
+            _ = HVMEngine.wait(forGuestArenaRelease: 8.0)
+            try? await Task.sleep(for: .milliseconds(500))
             self.runNextTarget()
         }
     }
@@ -751,6 +760,7 @@ final class BatchTestRunner {
         var startRetries = 0
         
         while startRetries < 5 {
+            _ = HVMEngine.wait(forGuestArenaRelease: 8.0)
             box = ExitBox()
             s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
             s.keepGoing = options.keepGoing
@@ -774,12 +784,16 @@ final class BatchTestRunner {
             }
             s.start()
             
-            try? await Task.sleep(for: .milliseconds(1500))
+            let startWaitDeadline = Date().addingTimeInterval(5.5)
+            while Date() < startWaitDeadline && !box.exited && HVMEngine.liveGuestArenaCount() == 0 {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
             if box.exited, let crash = box.crash, crash.contains("failed to reserve") {
                 startRetries += 1
                 s.stop()
                 activeSession = nil
-                try? await Task.sleep(for: .milliseconds(3000))
+                _ = HVMEngine.wait(forGuestArenaRelease: 5.0)
+                try? await Task.sleep(for: .milliseconds(1000))
                 continue
             } else {
                 break

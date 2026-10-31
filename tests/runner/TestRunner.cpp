@@ -4935,6 +4935,38 @@ int runFullSubsystemTests() {
     check(Memory::GuestArena::liveCount() == arenasBefore,
           "GuestArena diagnostics count reservations released at destruction");
 
+    // T1b/#253: Process destruction returns the 4 GB guest arena reservation
+    // so batch runs never hit "failed to reserve".
+    {
+        for (int i = 0; i < 3; ++i) {
+            ProcessConfig cfg;
+            cfg.homePath = "/tmp/hvm_arena_live";
+            Process proc(cfg);
+            check(Memory::GuestArena::liveCount() == arenasBefore + 1,
+                  "a live Process holds exactly one arena reservation");
+        }
+        check(Memory::GuestArena::liveCount() == arenasBefore,
+              "arena reservations return to the starting count after Processes are destroyed");
+    }
+
+    // T1b/#253: waitForRelease helper behavior
+    {
+        check(Memory::GuestArena::waitForRelease(0.1, arenasBefore),
+              "waitForRelease returns true immediately when no extra arenas are held");
+
+        auto held = std::make_unique<Memory::GuestArena>();
+        check(!Memory::GuestArena::waitForRelease(0.1, arenasBefore),
+              "waitForRelease returns false on timeout when an arena is held");
+
+        std::thread releaser([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            held.reset();
+        });
+        check(Memory::GuestArena::waitForRelease(1.0, arenasBefore),
+              "waitForRelease returns true when arena is released mid-wait");
+        releaser.join();
+    }
+
     // EAGLContext affinity: the software renderer rejects sharing one context
     // between live threads. The host renderer transparently gives the second
     // thread a shared host context, so that successful bind must not be reported
