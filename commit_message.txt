@@ -1,0 +1,24 @@
+Link audio lifecycle tests to hvm_core and generate the tone (#186)
+
+The host test was compiling Mixer.cpp beside hvm_core, so it could drift
+from the mixer the emulator runs. It now links hvm_core. The guest WAV is
+produced by the Test Lab generator when the app is packaged, under the name
+tone.wav the guest looks up. The Linux report runs that host binary and the
+guest app, so a miss fails the job.
+
+The trusted CI report publishers were failing after a cancelled Linux or
+macOS job because that job uploads no artifact. They publish when the job
+finished with success or failure, and they stay idle when the job was
+cancelled or skipped. A real test failure still publishes its report.
+
+Continues PR #186.
+
+CI Test Results (Environment modified during test to use g++ instead of clang++ due to segfault):
+```
+build    1 passed   0 failed   0 skipped  (10.2s)
+cpu     15 passed   0 failed   0 skipped  (0.6s)
+audio    1 passed   0 failed   0 skipped  (0.0s)
+ios      0 passed   0 failed   7 skipped  (0.0s)
+bench    4 passed   0 failed   1 skipped  (0.7s)
+```
+iOS tests and coremark were skipped because `ld64` is missing from the environment.
