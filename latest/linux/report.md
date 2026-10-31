@@ -1,45 +1,45 @@
-# HydrogenVM report — 02c4ebb
+# HydrogenVM report — 6197f69
 
-2026-10-31T03:01:48+00:00 · Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz (x86_64, Linux 7.0.0-1017-azure)
+2026-10-31T03:03:57+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 181.6s |
-| cpu | 15 | 0 | 0 | 0.6s |
+| build | 1 | 0 | 0 | 113.3s |
+| cpu | 15 | 0 | 0 | 0.4s |
 | ios | 6 | 0 | 0 | 2.1s |
-| bench | 5 | 0 | 0 | 20.6s |
+| bench | 5 | 0 | 0 | 15.6s |
 
 ## Speed
 
-CoreMark **2052.5** iterations/s (687.0 guest MIPS)
+CoreMark **3343.1** iterations/s (1118.1 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **142.5%** | 855 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **106.9%** | 855 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **85.5%** | 684 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **45.1%** | 586 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **232.2%** | 1393 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **174.1%** | 1393 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **139.3%** | 1114 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **73.5%** | 955 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 472 MIPS, ctests_arm 490 MIPS, ftests_vfp_thumb_softfp 566 MIPS, ftests_neon_thumb 436 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 867 MIPS, ctests_arm 957 MIPS, ftests_vfp_thumb_softfp 958 MIPS, ftests_neon_thumb 866 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
 | CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.05s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.43 ms | 6.69 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.23 ms | 4.56 ms | 0 |
 
-## Problems (30)
+## Problems (31)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 45.1% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 73.5% of iPhone 5 single-core speed (goal: 100%)
 
-### Warnings (29)
+### Warnings (30)
 
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
@@ -54,6 +54,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 472 MIPS, ctests_arm 490
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:80:20: warning: unused variable 'kCurrentProgram' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:81:20: warning: unused variable 'kFramebuffer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:81:43: warning: unused variable 'kRenderbuffer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:202:6: warning: unused function 'sharegroupDestroy' [-Wunused-function]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:27:47: warning: unused variable 'kDrawFramebuffer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:28:54: warning: unused variable 'kDrawFramebufferBinding' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:38:20: warning: unused variable 'kVertexArrayPointer' [-Wunused-const-variable]
