@@ -41,7 +41,7 @@ def decode_turn(payload, account):
         elif kind == 1:
             command = {'type': kind, **base(), 'spellIndex': r.vint()}
             if r.boolean():
-                raise ValueError('Custom spell payload is not supported by the local turn')
+                raise ValueError('Custom spell payload is not supported by the local turn relay')
             command['x'], command['y'] = r.vint(), r.vint()
             if not 0 <= command['x'] < 18000 or not 0 <= command['y'] < 32000:
                 raise ValueError('Spell target exceeds the initial arena bounds')

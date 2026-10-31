@@ -10,7 +10,6 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
-#include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -87,36 +86,21 @@ int32_t f_vfprintf(Ctx& x, GuestPtr fp, GuestPtr fmt, VaList ap) {
     ArgReader a(x.mem, ap.ptr);
     return outString(x, fp, formatGuest(x.proc, x.proc.readCString(fmt), a));
 }
-// `snprintf` may truncate successfully. Only the bytes actually written need
-// guest backing; _chk additionally rejects n > the compiler's object size.
-int32_t storeFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t objectSize,
-                       bool bounded, const std::string& s) {
-    if (bounded && n > objectSize) throw std::runtime_error("__snprintf_chk object bound exceeded");
-    if (s.size() > size_t(INT32_MAX)) return -1; // EOVERFLOW-style return
-    const uint64_t required = bounded ? (n ? std::min<size_t>(s.size(), size_t(n) - 1) + 1 : 0)
-                                      : uint64_t(s.size()) + 1;
-    if (required) {
-        if (!buf) throw std::runtime_error("null formatted guest destination");
-        if (!bounded && required > objectSize)
-            throw std::runtime_error("__sprintf_chk object bound exceeded");
-        // Keep allocation and page-map locks through the write. A concurrent
-        // free or unmap must not invalidate a separate bounds-check result.
-        const size_t copied = size_t(required - 1);
-        const bool safe = x.proc.heap().owns(buf)
-            ? x.proc.heap().copyCStringWithinAllocation(buf, s.data(), copied)
-            : x.mem.copyCStringWritable(buf, s.data(), copied);
-        if (!safe) throw std::runtime_error("formatted write exceeds guest allocation or writable mapping");
+int32_t storeFormatted(Ctx& x, GuestPtr buf, uint32_t size, const std::string& s) {
+    if (size && buf) {
+        const size_t n = std::min<size_t>(s.size(), size - 1);
+        x.mem.copyIn(buf, s.data(), n);
+        x.mem.write<uint8_t>(buf + uint32_t(n), 0);
     }
     return int32_t(s.size());
 }
-int32_t f_sprintf(Ctx& x, GuestPtr buf, GuestPtr fmt, VarArgs va) { return storeFormatted(x, buf, 0, UINT32_MAX, false, formatGuest(x.proc, x.proc.readCString(fmt), va.args)); }
-int32_t f_sprintf_chk(Ctx& x, GuestPtr buf, int32_t, uint32_t os, GuestPtr fmt, VarArgs va) { return storeFormatted(x, buf, 0, os, false, formatGuest(x.proc, x.proc.readCString(fmt), va.args)); }
-int32_t f_snprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VarArgs va) { return storeFormatted(x, buf, n, UINT32_MAX, true, formatGuest(x.proc, x.proc.readCString(fmt), va.args)); }
-int32_t f_snprintf_chk(Ctx& x, GuestPtr buf, uint32_t n, int32_t, uint32_t os, GuestPtr fmt, VarArgs va) { return storeFormatted(x, buf, n, os, true, formatGuest(x.proc, x.proc.readCString(fmt), va.args)); }
-int32_t f_vsprintf(Ctx& x, GuestPtr buf, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeFormatted(x, buf, 0, UINT32_MAX, false, formatGuest(x.proc, x.proc.readCString(fmt), a)); }
-int32_t f_vsprintf_chk(Ctx& x, GuestPtr buf, int32_t, uint32_t os, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeFormatted(x, buf, 0, os, false, formatGuest(x.proc, x.proc.readCString(fmt), a)); }
-int32_t f_vsnprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeFormatted(x, buf, n, UINT32_MAX, true, formatGuest(x.proc, x.proc.readCString(fmt), a)); }
-int32_t f_vsnprintf_chk(Ctx& x, GuestPtr buf, uint32_t n, int32_t, uint32_t os, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeFormatted(x, buf, n, os, true, formatGuest(x.proc, x.proc.readCString(fmt), a)); }
+int32_t f_sprintf(Ctx& x, GuestPtr buf, GuestPtr fmt, VarArgs va) { return storeFormatted(x, buf, 0x7FFFFFFF, formatGuest(x.proc, x.proc.readCString(fmt), va.args)); }
+int32_t f_sprintf_chk(Ctx& x, GuestPtr buf, int32_t, uint32_t, GuestPtr fmt, VarArgs va) { return storeFormatted(x, buf, 0x7FFFFFFF, formatGuest(x.proc, x.proc.readCString(fmt), va.args)); }
+int32_t f_snprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VarArgs va) { return storeFormatted(x, buf, n, formatGuest(x.proc, x.proc.readCString(fmt), va.args)); }
+int32_t f_snprintf_chk(Ctx& x, GuestPtr buf, uint32_t n, int32_t, uint32_t, GuestPtr fmt, VarArgs va) { return storeFormatted(x, buf, n, formatGuest(x.proc, x.proc.readCString(fmt), va.args)); }
+int32_t f_vsprintf(Ctx& x, GuestPtr buf, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeFormatted(x, buf, 0x7FFFFFFF, formatGuest(x.proc, x.proc.readCString(fmt), a)); }
+int32_t f_vsnprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeFormatted(x, buf, n, formatGuest(x.proc, x.proc.readCString(fmt), a)); }
+int32_t f_vsnprintf_chk(Ctx& x, GuestPtr buf, uint32_t n, int32_t, uint32_t, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeFormatted(x, buf, n, formatGuest(x.proc, x.proc.readCString(fmt), a)); }
 int32_t f_asprintf(Ctx& x, GuestPtr out, GuestPtr fmt, VarArgs va) {
     const std::string s = formatGuest(x.proc, x.proc.readCString(fmt), va.args);
     x.mem.write<uint32_t>(out, x.proc.allocCString(s));
@@ -436,43 +420,19 @@ std::string readWString(Ctx& x, GuestPtr ws, size_t maxChars = 65536) {
     }
     return out;
 }
-// C99 swprintf: `n` counts wchar_t values, including the terminating NUL.
-// n == 0 writes nothing and returns -1. A result that does not fit in n is
-// truncated to n - 1 characters plus NUL and returns -1. Each stored wchar_t
-// is 4 bytes. ___swprintf_chk's object size is the compiler's byte count
-// (__builtin_object_size); n * 4 past that size is rejected before any store.
-// The bytes actually written are checked and copied under one lock, matching
-// the narrow formatted path. A short destination throws; it is not clamped.
-int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t objectSize,
-                           bool checked, const std::string& s) {
-    if (checked && uint64_t(n) * 4 > uint64_t(objectSize))
-        throw std::runtime_error("__swprintf_chk object bound exceeded");
-    if (!n) return -1;
-    if (s.size() > size_t(INT32_MAX)) return -1;
-    const size_t chars = std::min(s.size(), size_t(n) - 1);
-    if (!buf) throw std::runtime_error("null formatted guest destination");
-    const bool safe = x.proc.heap().owns(buf)
-        ? x.proc.heap().copyWideWithinAllocation(buf, s.data(), chars)
-        : x.mem.copyWideWritable(buf, s.data(), chars);
-    if (!safe) throw std::runtime_error("formatted write exceeds guest allocation or writable mapping");
-    return s.size() < size_t(n) ? int32_t(s.size()) : -1;
+int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t size, const std::string& s) {
+    if (!size) return -1;
+    if (buf) {
+        const size_t n = std::min<size_t>(s.size(), size - 1);
+        for (size_t i = 0; i < n; ++i) x.mem.write<uint32_t>(buf + uint32_t(i) * 4, uint8_t(s[i]));
+        x.mem.write<uint32_t>(buf + uint32_t(n) * 4, 0);
+    }
+    return s.size() < size ? int32_t(s.size()) : -1;
 }
 int32_t f_wprintf(Ctx& x, GuestPtr fmt, VarArgs va) { return outString(x, S(x).sF + kFileSize, formatGuest(x.proc, readWString(x, fmt), va.args)); }
 int32_t f_fwprintf(Ctx& x, GuestPtr fp, GuestPtr fmt, VarArgs va) { return outString(x, fp, formatGuest(x.proc, readWString(x, fmt), va.args)); }
-int32_t f_swprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VarArgs va) {
-    return storeWideFormatted(x, buf, n, 0, false, formatGuest(x.proc, readWString(x, fmt), va.args));
-}
-int32_t f_swprintf_chk(Ctx& x, GuestPtr buf, uint32_t n, int32_t, uint32_t os, GuestPtr fmt, VarArgs va) {
-    return storeWideFormatted(x, buf, n, os, true, formatGuest(x.proc, readWString(x, fmt), va.args));
-}
-int32_t f_vswprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VaList ap) {
-    ArgReader a(x.mem, ap.ptr);
-    return storeWideFormatted(x, buf, n, 0, false, formatGuest(x.proc, readWString(x, fmt), a));
-}
-int32_t f_vswprintf_chk(Ctx& x, GuestPtr buf, uint32_t n, int32_t, uint32_t os, GuestPtr fmt, VaList ap) {
-    ArgReader a(x.mem, ap.ptr);
-    return storeWideFormatted(x, buf, n, os, true, formatGuest(x.proc, readWString(x, fmt), a));
-}
+int32_t f_swprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VarArgs va) { return storeWideFormatted(x, buf, n, formatGuest(x.proc, readWString(x, fmt), va.args)); }
+int32_t f_vswprintf(Ctx& x, GuestPtr buf, uint32_t n, GuestPtr fmt, VaList ap) { ArgReader a(x.mem, ap.ptr); return storeWideFormatted(x, buf, n, formatGuest(x.proc, readWString(x, fmt), a)); }
 int32_t f_swscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VarArgs va) { StringSource src(readWString(x, s)); return scanGuest(x, src, readWString(x, fmt), va.args); }
 int32_t f_vswscanf(Ctx& x, GuestPtr s, GuestPtr fmt, VaList ap) { StringSource src(readWString(x, s)); ArgReader a(x.mem, ap.ptr); return scanGuest(x, src, readWString(x, fmt), a); }
 
@@ -550,7 +510,6 @@ void registerLibcStdio(Process& p) {
     p.def<&f_snprintf>("_snprintf");
     p.def<&f_snprintf_chk>("___snprintf_chk");
     p.def<&f_vsprintf>("_vsprintf");
-    p.def<&f_vsprintf_chk>("___vsprintf_chk");
     p.def<&f_vsnprintf>("_vsnprintf");
     p.def<&f_vsnprintf_chk>("___vsnprintf_chk");
     p.def<&f_asprintf>("_asprintf");
@@ -598,9 +557,7 @@ void registerLibcStdio(Process& p) {
     p.def<&f_wprintf>("_wprintf");
     p.def<&f_fwprintf>("_fwprintf");
     p.def<&f_swprintf>("_swprintf");
-    p.def<&f_swprintf_chk>("___swprintf_chk");
     p.def<&f_vswprintf>("_vswprintf");
-    p.def<&f_vswprintf_chk>("___vswprintf_chk");
     p.def<&f_swscanf>("_swscanf");
     p.def<&f_vswscanf>("_vswscanf");
     p.def<&f_tmpnam>("_tmpnam");

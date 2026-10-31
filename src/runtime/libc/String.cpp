@@ -227,178 +227,6 @@ int32_t w_iswdigit(Ctx& x, int32_t c) { return c_isdigit(x, c); }
 int32_t w_iswalpha(Ctx& x, int32_t c) { return c_isalpha(x, c); }
 int32_t w_iswalnum(Ctx& x, int32_t c) { return c_isalnum(x, c); }
 
-
-
-
-
-[[noreturn]] void s_chk_fail(Ctx& x) {
-    throw CPU::GuestFault(CPU::Exit::MemFault, 0, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "buffer overflow detected (__chk_fail)");
-}
-
-// GuestArena::read does not check page permissions, so source buffers are checked explicitly.
-void require_readable(Ctx& x, uint64_t addr, const char* what) {
-    if (!(x.mem.protAt(GuestPtr(addr)) & Memory::kProtRead)) {
-        throw CPU::GuestFault(CPU::Exit::MemFault, GuestPtr(addr), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), what);
-    }
-}
-
-size_t safe_strlen(Ctx& x, GuestPtr p) {
-    size_t len = 0;
-    while (true) {
-        if (uint64_t(p) + len >= Memory::GuestArena::kArenaSize) {
-             throw CPU::GuestFault(CPU::Exit::MemFault, p + len, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strlen (overflow)");
-        }
-        require_readable(x, uint64_t(p) + len, "invalid guest memory read access in safe_strlen");
-        uint8_t val = x.mem.read<uint8_t>(p + len);
-        if (val == 0) break;
-        len++;
-    }
-    return len;
-}
-
-size_t safe_strnlen(Ctx& x, GuestPtr p, size_t max_len) {
-    size_t len = 0;
-    while (len < max_len) {
-        if (uint64_t(p) + len >= Memory::GuestArena::kArenaSize) {
-             throw CPU::GuestFault(CPU::Exit::MemFault, p + len, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_strnlen (overflow)");
-        }
-        require_readable(x, uint64_t(p) + len, "invalid guest memory read access in safe_strnlen");
-        uint8_t val = x.mem.read<uint8_t>(p + len);
-        if (val == 0) break;
-        len++;
-    }
-    return len;
-}
-
-void safe_read_check(Ctx& x, GuestPtr p, size_t len) {
-    if (len == 0) return;
-    if (uint64_t(p) + len > Memory::GuestArena::kArenaSize) {
-        throw CPU::GuestFault(CPU::Exit::MemFault, p, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access (overflow)");
-    }
-    uint64_t addr = p;
-    uint64_t end = uint64_t(p) + len;
-    while (addr < end) {
-        require_readable(x, addr, "invalid guest memory read access");
-        (void)x.mem.read<uint8_t>(addr); // read to force fault if unmapped
-        addr = (addr + Memory::GuestArena::kGuestPageSize) & ~uint64_t(Memory::GuestArena::kGuestPageSize - 1);
-        if (addr >= Memory::GuestArena::kArenaSize) break;
-    }
-    // verify last byte
-    require_readable(x, uint64_t(p) + len - 1, "invalid guest memory read access");
-    (void)x.mem.read<uint8_t>(p + len - 1);
-}
-
-void safe_write_check(Ctx& x, GuestPtr p, size_t len) {
-    if (len == 0) return;
-    if (uint64_t(p) + len > Memory::GuestArena::kArenaSize) {
-        throw CPU::GuestFault(CPU::Exit::MemFault, p, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access (overflow)");
-    }
-    uint64_t addr = p;
-    uint64_t end = uint64_t(p) + len;
-    while (addr < end) {
-        // we can't easily check for write without actually writing using the public interface.
-        // Let's use protAt to check for write, but we must do it securely.
-        if (!(x.mem.protAt(addr) & Memory::kProtWrite)) {
-            throw CPU::GuestFault(CPU::Exit::MemFault, addr, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory write access");
-        }
-        addr = (addr + Memory::GuestArena::kGuestPageSize) & ~uint64_t(Memory::GuestArena::kGuestPageSize - 1);
-        if (addr >= Memory::GuestArena::kArenaSize) break;
-    }
-    // verify last byte
-    if (!(x.mem.protAt(p + len - 1) & Memory::kProtWrite)) {
-        throw CPU::GuestFault(CPU::Exit::MemFault, p + len - 1, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory write access");
-    }
-}
-
-uint32_t s_memcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
-    if (n > destlen) s_chk_fail(x);
-    safe_read_check(x, s, n);
-    safe_write_check(x, d, n);
-    return s_memcpy(x, d, s, n);
-}
-
-uint32_t s_memmove_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
-    if (n > destlen) s_chk_fail(x);
-    safe_read_check(x, s, n);
-    safe_write_check(x, d, n);
-    return s_memcpy(x, d, s, n); // s_memcpy uses memmove internally.
-}
-
-uint32_t s_memset_chk(Ctx& x, GuestPtr d, int32_t c, uint32_t n, uint32_t destlen) {
-    if (n > destlen) s_chk_fail(x);
-    safe_write_check(x, d, n);
-    return s_memset(x, d, c, n);
-}
-
-uint32_t s_strcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
-    const size_t slen = safe_strlen(x, s);
-    if (slen + 1 > destlen) s_chk_fail(x);
-    safe_write_check(x, d, slen + 1);
-    std::memmove(H(x, d), H(x, s), slen + 1);
-    return d;
-}
-
-uint32_t s_strncpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
-    if (n > destlen) s_chk_fail(x);
-    safe_write_check(x, d, n);
-    const size_t sl = safe_strnlen(x, s, n);
-    std::memcpy(H(x, d), H(x, s), sl);
-    if (sl < n) std::memset(H(x, d) + sl, 0, n - sl);
-    return d;
-}
-
-uint32_t s_strcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
-    const size_t dl = safe_strnlen(x, d, destlen); // never scan past the destination limit
-    if (dl >= destlen) s_chk_fail(x);
-    const size_t sl = safe_strlen(x, s);
-    if (uint64_t(dl) + uint64_t(sl) + 1 > destlen) s_chk_fail(x);
-    safe_write_check(x, d + dl, sl + 1);
-    std::memmove(H(x, d) + dl, H(x, s), sl + 1);
-    return d;
-}
-
-uint32_t s_strncat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
-    const size_t dl = safe_strnlen(x, d, destlen); // never scan past the destination limit
-    if (dl >= destlen) s_chk_fail(x);
-    const size_t sl = safe_strnlen(x, s, n);
-    if (dl + sl + 1 > destlen) s_chk_fail(x);
-    safe_write_check(x, d + dl, sl + 1);
-    std::memcpy(H(x, d) + dl, H(x, s), sl);
-    x.mem.write<uint8_t>(d + dl + sl, 0); // safe write
-    return d;
-}
-
-uint32_t s_strlcpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
-    if (n > destlen) s_chk_fail(x);
-    const size_t sl = safe_strlen(x, s);
-    if (n > 0) {
-        size_t copy_len = std::min<size_t>(sl, n - 1);
-        safe_write_check(x, d, copy_len + 1);
-        std::memmove(H(x, d), H(x, s), copy_len);
-        x.mem.write<uint8_t>(d + copy_len, 0); // safe write
-    }
-    return sl;
-}
-
-uint32_t s_strlcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
-    if (n > destlen) s_chk_fail(x);
-    if (n == 0) return safe_strlen(x, s);
-
-    const size_t dl = safe_strnlen(x, d, n);
-    const size_t sl = safe_strlen(x, s);
-
-    if (dl < n) {
-        size_t append_len = std::min<size_t>(sl, n - dl - 1);
-        safe_write_check(x, d + dl, append_len + 1);
-        std::memmove(H(x, d) + dl, H(x, s), append_len);
-        x.mem.write<uint8_t>(d + dl + append_len, 0); // safe write
-    }
-    return dl + sl;
-}
-
-
-
-
 } // namespace
 
 // Darwin's <ctype.h> inlines isalpha() & co. as table lookups into
@@ -442,10 +270,10 @@ static void buildRuneLocale(Process& p) {
 void registerLibcString(Process& p) {
     p.def<&s_memcpy>("_memcpy");
     p.def<&s_memcpy>("_memmove");
-    p.def<&s_memcpy_chk>("___memcpy_chk");
-    p.def<&s_memmove_chk>("___memmove_chk");
+    p.def<&s_memcpy>("___memcpy_chk");
+    p.def<&s_memcpy>("___memmove_chk");
     p.def<&s_memset>("_memset");
-    p.def<&s_memset_chk>("___memset_chk");
+    p.def<&s_memset>("___memset_chk");
     p.def<&s_memcmp>("_memcmp");
     p.def<&s_memcmp>("_bcmp");
     p.def<&s_memchr>("_memchr");
@@ -462,18 +290,18 @@ void registerLibcString(Process& p) {
     p.def<&s_strncasecmp>("_strncasecmp");
     p.def<&s_strcoll>("_strcoll");
     p.def<&s_strcpy>("_strcpy");
-    p.def<&s_strcpy_chk>("___strcpy_chk");
+    p.def<&s_strcpy>("___strcpy_chk");
     p.def<&s_stpcpy>("_stpcpy");
     p.def<&s_strncpy>("_strncpy");
-    p.def<&s_strncpy_chk>("___strncpy_chk");
+    p.def<&s_strncpy>("___strncpy_chk");
     p.def<&s_strcat>("_strcat");
-    p.def<&s_strcat_chk>("___strcat_chk");
+    p.def<&s_strcat>("___strcat_chk");
     p.def<&s_strncat>("_strncat");
-    p.def<&s_strncat_chk>("___strncat_chk");
+    p.def<&s_strncat>("___strncat_chk");
     p.def<&s_strlcpy>("_strlcpy");
-    p.def<&s_strlcpy_chk>("___strlcpy_chk");
+    p.def<&s_strlcpy>("___strlcpy_chk");
     p.def<&s_strlcat>("_strlcat");
-    p.def<&s_strlcat_chk>("___strlcat_chk");
+    p.def<&s_strlcat>("___strlcat_chk");
     p.def<&s_strchr>("_strchr");
     p.def<&s_strchr>("_index");
     p.def<&s_strrchr>("_strrchr");

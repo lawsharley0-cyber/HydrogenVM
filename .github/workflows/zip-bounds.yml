@@ -1,0 +1,20 @@
+name: ZIP metadata regression
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  zip:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install compiler and zlib
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq clang libstdc++-14-dev zlib1g-dev
+      - name: Synthetic ZIP metadata and ASan/UBSan regression
+        run: tools/test_zip_bounds.sh
