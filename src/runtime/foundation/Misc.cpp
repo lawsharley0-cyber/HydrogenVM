@@ -1040,6 +1040,8 @@ id f_userName(Ctx& x) { return makeString(x, "mobile"); }
 
 } // namespace
 
+[[noreturn]] void raiseObjCException(Ctx& x, id exception) { throwException(x, exception); }
+
 // Exported helpers ------------------------------------------------------------
 
 id makeIndexSet(Ctx& x, const std::set<uint32_t>& indices, bool owned, bool isMutable) {

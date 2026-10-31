@@ -118,6 +118,38 @@ void GuestArena::unmap(uint32_t addr, uint32_t size) {
     }
 }
 
+bool GuestArena::copyCStringWritable(uint32_t addr, const char* src, size_t chars) noexcept {
+    const uint64_t end = uint64_t(addr) + chars + 1;
+    if (end > kArenaSize) return false;
+    std::lock_guard<std::mutex> lk(mu_);
+    for (uint64_t page = uint64_t(addr) >> kGuestPageShift;
+         page <= (end - 1) >> kGuestPageShift; ++page) {
+        if (!(prot_[page] & kProtWrite)) return false;
+    }
+    std::memcpy(base_ + uint64_t(addr), src, chars);
+    base_[uint64_t(addr) + chars] = 0;
+    return true;
+}
+
+bool GuestArena::copyWideWritable(uint32_t addr, const char* chars, size_t count) noexcept {
+    if (count > (UINT64_MAX / 4) - 1) return false;
+    const uint64_t bytes = (uint64_t(count) + 1) * 4;
+    const uint64_t end = uint64_t(addr) + bytes;
+    if (end < uint64_t(addr) || end > kArenaSize) return false;
+    std::lock_guard<std::mutex> lk(mu_);
+    for (uint64_t page = uint64_t(addr) >> kGuestPageShift;
+         page <= (end - 1) >> kGuestPageShift; ++page) {
+        if (!(prot_[page] & kProtWrite)) return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const uint32_t wc = uint8_t(chars[i]);
+        std::memcpy(base_ + uint64_t(addr) + i * 4, &wc, 4);
+    }
+    const uint32_t zero = 0;
+    std::memcpy(base_ + uint64_t(addr) + count * 4, &zero, 4);
+    return true;
+}
+
 uint32_t GuestArena::findFree(uint32_t size, uint32_t hint) const {
     std::lock_guard<std::mutex> lk(mu_);
     // Allocate at host-page granularity so fresh allocations never share a host
