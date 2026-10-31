@@ -1,0 +1,31 @@
+name: Stub honesty
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint regression tests
+        run: python3 -m unittest discover -s tools/tests -p test_lint_stubs.py -v
+      - name: List legacy findings and reject new unlabelled success bodies
+        run: python3 tools/lint_stubs.py --baseline tools/stub_lint_baseline.json --json build/stub-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stub-audit
+          path: build/stub-audit.json
+      - name: Install C++ dependencies
+        run: sudo apt-get update -q && sudo apt-get install -yq clang cmake ninja-build zlib1g-dev libsqlite3-dev libssl-dev uuid-dev
+      - name: Build and check support registrations
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+          ninja -C build hvm_support_tests
+          build/hvm_support_tests

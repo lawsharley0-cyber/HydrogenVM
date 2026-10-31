@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   zip-and-pcm:
-    name: ZIP + PCM ASan/UBSan
+    name: ZIP + PCM + Mach-O ASan/UBSan
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -25,3 +25,9 @@ jobs:
       - name: Synthetic ZIP metadata ASan/UBSan regression
         if: ${{ always() }}
         run: tools/test_zip_bounds.sh
+      - name: Synthetic Mach-O probe ASan/UBSan regression
+        if: ${{ always() }}
+        run: tools/test_macho_probe.sh
+      - name: AppBundle read checks
+        if: ${{ always() }}
+        run: CXX=clang++ tools/test_app_bundle.sh

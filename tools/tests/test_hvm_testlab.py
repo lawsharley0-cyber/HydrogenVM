@@ -9,6 +9,8 @@ Tests cover:
 - TL-J baseline ceiling logic
 """
 import os
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +23,8 @@ ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 from hvm_testlab import (
+    CASE_IDS,
+    OBJC_CASE_IDS,
     _apply_tj_ceiling,
     _baseline_mflops_ceiling,
     _parse_case_output,
@@ -137,6 +141,73 @@ class TestLifecycleResult(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertIn("--gpu", command)
         self.assertLess(command.index("--gpu"), command.index("--"))
+
+
+class TestObjCResults(unittest.TestCase):
+    def _run(self, case_id="TL-S", *, write=True, stale=False, status="passed", marker="passed", rc=0, payload=None):
+        with tempfile.TemporaryDirectory() as home:
+            path = Path(home) / "com.hydrogenvm.test.testlab/Documents/testlab_result.json"
+            guest = {"id": case_id, "version": 1, "status": status,
+                     "expected": {"contract": 13}, "actual": {"contract": 13},
+                     "diagnostics": {"oracle": "authored constant", "checks": 1}}
+            content = json.dumps(payload if payload is not None else {"cases": [guest]})
+            if stale:
+                path.parent.mkdir(parents=True)
+                path.write_text(content)
+
+            def execute(*args, **kwargs):
+                if write:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content)
+                return MagicMock(returncode=rc, stdout=f"TESTLAB {case_id} {marker}\n  reason: fixture diagnostic\n", stderr="")
+
+            with patch("hvm_testlab.subprocess.run", side_effect=execute):
+                return run_case("hvm", "TestLab.ipa", case_id, home, 10)
+
+    def test_all_five_results_keep_raw_oracles_and_validate(self):
+        for case_id in OBJC_CASE_IDS:
+            with self.subTest(case_id=case_id):
+                result = self._run(case_id)
+                self.assertEqual(result["status"], "passed")
+                self.assertEqual(result["expected"], {"contract": 13})
+                self.assertEqual(result["actual"], {"contract": 13})
+                self.assertEqual(result["diagnostics"]["conformance"]["oracle"], "authored constant")
+                self.assertEqual(validate(_minimal_report(cases=[result])), [])
+        self.assertEqual(len(CASE_IDS), len(set(CASE_IDS)))
+        self.assertTrue({f"TL-{chr(letter)}" for letter in range(ord("A"), ord("R") + 1)} <= set(CASE_IDS))
+        self.assertTrue(set(OBJC_CASE_IDS) <= set(CASE_IDS))
+
+    def test_stale_result_cannot_back_a_new_pass_marker(self):
+        result = self._run(write=False, stale=True)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("fresh", result["reason"])
+
+    def test_no_result_is_not_success(self):
+        self.assertEqual(self._run(write=False)["status"], "failed")
+
+    def test_json_status_must_agree_with_pass_marker(self):
+        result = self._run(status="failed")
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("contradicts", result["reason"])
+
+    def test_nonzero_exit_after_pass_is_not_success(self):
+        self.assertEqual(self._run(rc=1)["status"], "failed")
+
+    def test_wrong_case_or_incomplete_diagnostics_are_not_success(self):
+        for payload in ({"cases": []}, {"cases": [{"id": "TL-W"}]},
+                        {"cases": [{"id": "TL-S", "expected": {}, "actual": {}, "diagnostics": {}}]}, []):
+            with self.subTest(payload=payload):
+                self.assertEqual(self._run(payload=payload)["status"], "failed")
+
+    def test_failed_case_keeps_diagnostics(self):
+        result = self._run(status="failed", marker="failed", rc=1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["actual"], {"contract": 13})
+
+    def test_timeout_stays_interrupted(self):
+        with tempfile.TemporaryDirectory() as home, patch("hvm_testlab.subprocess.run", side_effect=subprocess.TimeoutExpired("hvm", 1)):
+            result = run_case("hvm", "TestLab.ipa", "TL-W", home, 1)
+        self.assertEqual(result["status"], "interrupted")
 
 
 class TestParseCaseOutput(unittest.TestCase):

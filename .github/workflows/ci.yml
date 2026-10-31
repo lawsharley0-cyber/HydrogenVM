@@ -33,8 +33,12 @@ jobs:
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
         run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
+      - name: Synthetic Plist metadata and ASan/UBSan regression
+        run: CXX=g++ tools/test_plist.sh
       - name: Evidence contract tests
         run: python3 -m unittest discover -s tools/tests -p 'test_hvm_evidence.py'
+      - name: Agent queue tests
+        run: python3 -m unittest discover -s tools/tests -p 'test_agent_queue.py'
       - name: Cache ld64 (cctools-port)
         id: cctools
         uses: actions/cache@v4
