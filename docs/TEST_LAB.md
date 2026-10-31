@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · five initial cases · schema version 1.
+Version 1.0 · 24 automated cases (TL-A–TL-X) · schema version 1.
 
 ## Contents
 
@@ -23,8 +23,9 @@ toolchain as the other iOS guests (`tools/ios_build.py`).  When imported into
 HydrogenVM on an iPhone it shows a menu; in automated mode each case runs as a
 separate process with an external timeout.
 
-Five cases cover import integrity, CPU correctness, GLES correctness, audio
-signal, and sandboxed persistence.
+The automated suite now covers 23 case IDs, including import integrity, CPU
+correctness, graphics, audio, persistence, threading, input, and lifecycle.
+TL-L is a host-driven termination check; 22 cases are guest-selectable.
 
 ---
 
@@ -40,12 +41,55 @@ signal, and sandboxed persistence.
 | TL-F | Threading & Mutex | `pthread_create` spawns a background worker thread computing a 64 KB FNV-1a hash (`0x75389DC5`), while main and worker threads safely increment a shared counter under `pthread_mutex_t` to 20,000, verified via `pthread_join` |
 | TL-G | Keychain | `Security.framework` (`SecItemAdd`, `SecItemCopyMatching`, `SecItemDelete`); verifies generic password addition, duplicate key rejection (`errSecDuplicateItem`), query data matching, and removal/not-found verification (`errSecItemNotFound`) |
 | TL-H | File System & Sandbox | `NSFileManager` nested directory creation (`createDirectoryAtPath:withIntermediateDirectories:`), atomic write of 1024-byte payload, file/dir existence and size verification via `attributesOfItemAtPath:`, payload integrity check, and recursive removal |
+| TL-I | Texture formats and NPOT | Offscreen GLES sampling of RGBA, luminance, non-power-of-two textures, and a 2×2 corner-pattern texture |
+| TL-J | Throughput correctness and regression | Fixed 5 M iteration floating-point workload, output hash and headless baseline throughput floor |
+| TL-K | UIKit controls and sorting | UIButton and UISwitch target-action, UISearchBar properties, and NSSortDescriptor sorting |
+| TL-L | Graceful shutdown persistence | Host-driven 1-second graceful termination; verifies a file saved during the guest's termination callback |
+| TL-M | Mutable array insertion sort | Three equivalent sorting approaches exercise replace, exchange, remove, and insert object ownership/indices |
 | TL-N | EAGL worker binding | Runs with `--gpu`. Main binds an ES2 context, then a pthread binds the same context through HostGL's shared-context path. The independent EAGL API oracle requires both calls to return true and the worker's `currentContext` to equal the object it bound. Proven red on the unfixed runtime (`workerBound=0`) for the Clumsy Ninja affinity regression |
 | TL-O | RemoteIO mixing | Registers a RemoteIO render callback, starts output, and independently requires callback delivery plus non-silent mixer PCM; guards the callback/mixer path used by Angry Birds and Hungry Shark |
 | TL-P | VFP VCMP | Checks ordered/unordered VCMP condition flags against the ARM architecture definition; passed before any runtime change and adds isolated coverage |
 | TL-Q | RemoteIO thread timing | Requires audio callbacks to continue while the main thread sleeps; proven red with the old main-run-loop timer and green with the guest audio thread |
 | TL-R | Depth/stencil & root view | Requires depth24/stencil8/packed renderbuffers with correct bit counts, real stencil reject/write behavior, and replacement of an installed root controller's view; both graphics and root-view checks were red before their fixes for Minion Rush |
-| TL-S | Player-item readiness | Requires Initial KVO to report Unknown before player creation, followed by an observed ReadyToPlay transition that can start the assigned player; reproduces the UE3 startup-movie wait in Goat Simulator. Oracle: Apple's documented AVPlayerItem status lifecycle |
+| TL-X | Player-item readiness | Requires Initial KVO to report Unknown before player creation, followed by an observed ReadyToPlay transition that can start the assigned player; reproduces the UE3 startup-movie wait in Goat Simulator. Oracle: Apple's documented AVPlayerItem status lifecycle |
+
+### Objective-C conformance (T8)
+
+TL-S–TL-W are project-authored behavioral ports of selected public API test
+scenarios. Their [design and pinned upstream references](T8_OBJC_TEST_DESIGN.md)
+identify the scope; no Apple source, headers, macros or test harness was copied.
+They do not claim parity with the full modern objc4 suite.
+
+| ID | Name | Independent oracle |
+|---|---|---|
+| TL-S | Selector interning | Equal name bytes and the compiled selector identify the same SEL; different names differ; name lookup round-trips. Separate input buffers rule out accidental pointer equality |
+| TL-T | Class/metaclass graph | The guest declares Child : Base : NSObject. Superclass edges and class/metaclass flags must match those declarations and the public metaclass inheritance contract |
+| TL-U | Method lookup | Guest-authored method bodies return 13 (base instance), 23 (override), and 31 (inherited class method). Typed IMP calls verify lookup; missing methods must return NULL |
+| TL-V | Method mutation/cache | Warm dispatch, add an inherited override returning 29, reject a duplicate, replace it with 47, and preserve the base's 11. The returned previous IMP must be the authored 29 function. A fresh child class permits repeated menu runs |
+| TL-W | Associated-object lifetime | Explicit MRC ownership: allocation +1, association +1, caller release -1, clear -1. The value survives until clear and deallocates exactly once. Getter autoreleases are drained before checking clear; retainCount is not an oracle |
+
+Each case writes its checkpoint and named expected/actual numeric observations.
+The host runner retains these dictionaries and the oracle description in its
+report. A pass marker without a fresh complete guest result (or followed by a
+nonzero exit) is a failure. `objc_conformance.m` uses ARC;
+`objc_lifetime_mrc.m` is independently compiled with MRC by the existing filename
+convention. The menu scrolls so all 22 selectable cases and footer controls remain
+reachable.
+
+These five cases pass on unchanged main; that is new coverage, not a runtime
+repair. Fault detection is checked with a separately linked CLI whose **copied**
+project-owned API wrappers deliberately return wrong results. Each case must pass
+on the original binary and fail its specific named check on the faulty binary:
+
+```sh
+python3 tools/tests/validate_objc_conformance.py \
+  --build build --ipa build/ios/TestLab.ipa --out build/objc-conformance-faults
+```
+
+Only generated sources, objects and an archive copy under `--out` are modified.
+The helper records binary/IPA/source hashes and per-case observations in
+`report.json`; CI uploads it alongside the complete Test Lab report. Native Apple
+reference runs and 16 KB devices are separate evidence, not implied by Linux.
 
 ### Checkpoint / interrupted-case protocol
 
@@ -66,7 +110,11 @@ owner or the workflow step continues with remaining cases.
 
 Same as the compat harness (see `AGENTS.md`): Clang, `cmake`, `ninja`,
 `python3`, `lld`, `llvm`, `zlib1g-dev`, `libsqlite3-dev`, `uuid-dev`.
-Also needs `ld64` from `tools/build_cctools.sh`.
+Also needs `ld64` from `tools/build_cctools.sh`. On Linux, the
+GPU-backed TL-N requires Mesa's headless EGL/GLES runtime (for example
+Ubuntu packages `libegl1 libgles2 libgl1 libgl1-mesa-dri`). A missing
+`libEGL.so.1` prevents TL-N from starting and is a host dependency failure,
+not evidence of a guest crash.
 
 ```sh
 # Build the engine
@@ -80,7 +128,7 @@ export HVM_LD64=/opt/cctools/bin/arm-apple-darwin11-ld
 # Generate the bundled tone.wav (already committed; only needed if regenerating)
 python3 tests/ios/apps/testlab/gen_tone_wav.py tests/ios/apps/testlab/tone.wav
 
-# Run all five cases and write a report
+# Run all 23 automated cases and write a report
 python3 tools/hvm_testlab.py run \
     --hvm build/hvm \
     --out build/testlab-report
@@ -122,8 +170,8 @@ python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
    *Open in…* from Files, or drop it into the app's Files folder and pull to
    refresh.
 3. Tap `TestLab` in the library to run it.
-4. The menu shows five rows (`A: Import`, `B: CPU`, `C: GLES`, `D: Audio`,
-   `E: Persist`) and their last-known status (pending/passed/failed/interrupted).
+4. The menu shows the 22 guest-selectable cases (TL-A…TL-K and TL-M…TL-W)
+   with their last-known status. TL-L is a host-driven termination test.
 5. Tap a row to run an individual case.  Tap **Run All** to run every case.
 6. Tap **Export JSON** to write `Documents/testlab_result.json` — retrieve it
    via the Files app.
@@ -217,7 +265,7 @@ Reports record `host.pageSize`.
 
 ```
 tests/ios/apps/testlab/
-  main.m          — guest app: menu UI, five cases, checkpoint/result JSON
+  main.m          — guest app: menu UI, 17 selectable cases, checkpoint/result JSON
   gen_tone_wav.py — generates tone.wav (original 440 Hz sine)
   tone.wav        — committed resource (1 s, 44100 Hz, mono, 16-bit PCM)
   empty.dat       — committed zero-length resource (tests stored ZIP entry)
@@ -269,7 +317,7 @@ does not claim phone-equivalent behaviour.
 ## Next milestone
 
 1. **Verify on device** — import `TestLab.ipa` from the CI artifact, run all
-   cases, export JSON, confirm all five pass.
+   guest-selectable cases, export JSON, and inspect each result. TL-L runs only from the host runner.
 2. **TL-E on device** — verify the two-launch persistence path works in the
    real iOS sandbox (NSUserDefaults survives a stop/relaunch cycle).
 3. **TL-C tolerance document** — record the exact pixel values from the device
