@@ -508,8 +508,29 @@ id un_instantiate(Ctx& x, id self, SEL, id owner, id options) {
 }
 id b_loadNib(Ctx& x, id self, SEL, id name, id owner, id options) {
     const id externals = options ? Foundation::dictGet(x, options, "UINibExternalObjects") : 0;
-    const id r = loadNib(x, name ? utf8(x, name) : "", self, owner, externals);
-    if (!r) throw ObjC::ObjCError("Could not load NIB in bundle: '" + std::string(name ? utf8(x, name) : "") + "'");
+    std::string n = name ? utf8(x, name) : "";
+    id r = loadNib(x, n, self, owner, externals);
+
+    auto tryFallback = [&](const char* suffix) {
+        if (!r && n.size() > strlen(suffix) && n.substr(n.size() - strlen(suffix)) == suffix) {
+            std::string fallback = n;
+            fallback.erase(fallback.size() - strlen(suffix));
+            r = loadNib(x, fallback, self, owner, externals);
+        }
+    };
+    tryFallback("Landscape");
+    tryFallback("-Landscape");
+    tryFallback("~Landscape");
+    tryFallback("Portrait");
+    tryFallback("-Portrait");
+    tryFallback("~Portrait");
+
+    if (!r) {
+        id exc = id(rt(x).send(x.cpu, rt(x).getClass("NSException"), "exceptionWithName:reason:userInfo:", {
+            Foundation::makeString(x, "NSInternalInconsistencyException"),
+            Foundation::makeString(x, "Could not load NIB in bundle: '" + n + "'"), 0}));
+        rt(x).send(x.cpu, exc, "raise");
+    }
     return r;
 }
 

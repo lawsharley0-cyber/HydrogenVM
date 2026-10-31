@@ -432,6 +432,7 @@ struct ButtonData : ObjC::HostObject {
     std::unordered_map<uint32_t, StateContent> content;   // by UIControlState
     id titleLabel = 0, imageView = 0;                     // retained subviews
     UIEdgeInsets contentInsets{0, 0, 0, 0}, titleInsets{0, 0, 0, 0}, imageInsets{0, 0, 0, 0};
+    CGSize titleShadowOffset{0, 0};
     bool adjustsImage = true, adjustsDisabled = true, showsTouch = false;
 };
 ButtonData& BD(Ctx& x, id b) { return rt(x).host<ButtonData>(b); }
@@ -584,6 +585,8 @@ bool b_adjustsImage(Ctx& x, id self, SEL) { return BD(x, self).adjustsImage; }
 void b_setAdjustsImage(Ctx& x, id self, SEL, bool b) { BD(x, self).adjustsImage = b; }
 bool b_showsTouch(Ctx& x, id self, SEL) { return BD(x, self).showsTouch; }
 void b_setShowsTouch(Ctx& x, id self, SEL, bool b) { BD(x, self).showsTouch = b; }
+void b_setTitleShadowOffset(Ctx& x, id self, SEL, CGSize s) { BD(x, self).titleShadowOffset = s; rt(x).send(x.cpu, ensureTitleLabel(x, self), "setShadowOffset:", {fbits(s.width), fbits(s.height)}); viewData(x, self).needsLayout = true; }
+void b_titleShadowOffset(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, BD(x, self).titleShadowOffset); }
 void b_ignoreBool(Ctx&, id, SEL, bool) {}
 G::Size contentSize(Ctx& x, id self, G::Size& titleSize, G::Size& imageSize_) {
     const id title = b_currentTitle(x, self, 0);
@@ -1010,6 +1013,7 @@ void registerUIControls(Process& p, ObjC::Runtime& r) {
        .m<&b_adjustsImage>("adjustsImageWhenHighlighted", "c@:").m<&b_setAdjustsImage>("setAdjustsImageWhenHighlighted:", "v@:c")
        .m<&b_ignoreBool>("setAdjustsImageWhenDisabled:", "v@:c").m<&b_showsTouch>("showsTouchWhenHighlighted", "c@:")
        .m<&b_setShowsTouch>("setShowsTouchWhenHighlighted:", "v@:c").m<&b_ignoreBool>("setReversesTitleShadowWhenHighlighted:", "v@:c")
+       .m<&b_setTitleShadowOffset>("setTitleShadowOffset:", "v@:" + S).m<&b_titleShadowOffset>("titleShadowOffset", S + "@:")
        .m<&b_layoutSubviews>("layoutSubviews", "v@:").m<&b_setHighlighted>("setHighlighted:", "v@:c")
        .m<&b_sizeThatFits>("sizeThatFits:", S + "@:" + S);
     ObjC::ClassBuilder bc = r.defineClass("UIButtonContent", "NSObject");
