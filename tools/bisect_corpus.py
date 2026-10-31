@@ -71,7 +71,15 @@ def gate(repo, config):
             try:
                 result = run(argv, repo, timeout=config["timeout"])
             except (OSError, subprocess.TimeoutExpired) as exc:
-                raise GateError(f"runner could not execute: {exc}") from exc
+                # Keep the earlier commands' logs and whatever the hung command printed: it is the evidence.
+                partial = getattr(exc, "stdout", None)
+                if isinstance(partial, bytes):
+                    partial = partial.decode("utf-8", "replace")
+                logs.append(partial or "")
+                failed_dir = Path(config["out"]) / sha
+                failed_dir.mkdir(parents=True, exist_ok=True)
+                (failed_dir / "run.log").write_text("\n".join(logs), encoding="utf-8")
+                raise GateError(f"runner could not execute: {exc}; logs in {failed_dir / 'run.log'}") from exc
             logs.append(result.stdout)
             rc = result.returncode
             if index < len(commands) - 1 and rc:
@@ -117,6 +125,11 @@ def gate(repo, config):
         (dest / "diff.json").write_text(json.dumps(diff, indent=2) + "\n", encoding="utf-8")
         if any(a["status"] == "timeout" for a in report["suites"]["apps"]["apps"]):
             raise GateError("corpus app timed out; commit was not measured")
+        # The harness records a timed-out unit, python or fuzz command as a failed case with summary "timeout".
+        for suite in ("unit", "python", "fuzz"):
+            timed_out = [c.get("id") for c in report["suites"].get(suite, {}).get("cases", []) if c.get("summary") == "timeout"]
+            if timed_out:
+                raise GateError(f"corpus {suite} case timed out ({timed_out[0]}); commit was not measured")
         # summary.ok matters even if a failed case was absent from the baseline.
         bad = not report["summary"]["ok"] or not diff["ok"]
         if rc == 1 and not bad:

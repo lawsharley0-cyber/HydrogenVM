@@ -109,16 +109,32 @@ sys.exit(int(bad))
             self.assertEqual(bisect_corpus.main(self.bisect_args(repo, commits)), 2)
         self.assertIn("timed out", errors.getvalue())
 
-    def test_timeout_status_in_unit_and_python_cases_is_rejected_as_invalid(self):
-        for suite in ("unit", "python"):
+    def test_timed_out_unit_python_and_fuzz_cases_abort_instead_of_counting_as_bad(self):
+        # tools/compat_harness/runner.py records these as a failed case whose summary is "timeout".
+        for suite in ("unit", "python", "fuzz"):
             with self.subTest(suite=suite):
                 self.temp.cleanup(); self.temp = tempfile.TemporaryDirectory(); self.root = Path(self.temp.name)
                 repo, commits = self.repository()
-                self.runner.write_text(self.runner.read_text().replace(
-                    "pathlib.Path(sys.argv[1])", f"r['suites']['{suite}']['cases'][0]['status']='timeout'\npathlib.Path(sys.argv[1])", 1))
+                mark = (f"r['suites']['{suite}']['cases']=[{{'id':'t','status':'fail','exitCode':None,'durationSec':1,'summary':'timeout'}}]"
+                        if suite == "fuzz" else
+                        f"r['suites']['{suite}']['cases'][0].update(status='fail',summary='timeout')")
+                self.runner.write_text(self.runner.read_text().replace("pathlib.Path(sys.argv[1])", mark + "\npathlib.Path(sys.argv[1])", 1))
                 with contextlib.redirect_stderr(io.StringIO()) as errors:
                     self.assertEqual(bisect_corpus.main(self.bisect_args(repo, commits)), 2)
-                self.assertIn("invalid harness report", errors.getvalue())
+                self.assertIn("timed out", errors.getvalue())
+
+    def test_runner_timeout_saves_logs_and_partial_output(self):
+        repo, commits = self.repository()
+        hang = self.root / "hang.py"
+        hang.write_text("import sys,time\nprint('partial from hung runner',flush=True)\ntime.sleep(30)\n")
+        args = self.bisect_args(repo, commits, [sys.executable, str(hang)])
+        cut = args.index("--command")   # --command takes the rest of the line, so --timeout must come before it
+        args = args[:cut] + ["--timeout", "1"] + args[cut:]
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(bisect_corpus.main(args), 2)
+        logs = list((self.root / "out").glob("*/run.log"))
+        self.assertTrue(logs, errors.getvalue())
+        self.assertIn("partial from hung runner", logs[0].read_text())
 
     def test_duplicate_app_ids_with_different_hashes_abort(self):
         repo, commits = self.repository()
@@ -144,7 +160,7 @@ sys.exit(int(bad))
         self.assertIn("bisect failed/aborted", errors.getvalue())
         self.assertIn("infrastructure exit 2", (self.root / "out/bisect.log").read_text())
 
-    def fake_hvm(self, name, value=0, write_report=True):
+    def fake_hvm(self, name, value=0, write_report=True, exit_status=0):
         path = self.root / name
         path.write_text(f'''#!{sys.executable}
 import json, pathlib, sys
@@ -154,10 +170,11 @@ home=option('--home')
 assert not (home/'used').exists()
 (home/'used').write_text('used')
 print('guest result {value}')
-report={{'exitStatus':0,'crashed':False,'loadError':'','perf':{{'wallSeconds':1,'framesPresented':1}},'audio':{{'frames':{value}}},'value':{value}}}
+report={{'exitStatus':{exit_status},'crashed':False,'loadError':'','perf':{{'wallSeconds':1,'framesPresented':1}},'audio':{{'frames':{value}}},'value':{value}}}
 if {write_report!r}: option('--report').write_text(json.dumps(report))
 option('--screenshot').write_bytes(bytes([{value}]))
 option('--frame-file').write_bytes(bytes([{value}]))
+sys.exit({exit_status})
 ''')
         path.chmod(0o755)
         return path
@@ -210,10 +227,12 @@ option('--frame-file').write_bytes(bytes([{value}]))
         self.assertEqual((self.root / "ab/old/stderr.log").read_text().strip(), "partial err")
 
     def test_valid_load_failure_is_a_measured_difference(self):
-        old, new = self.fake_hvm("old"), self.fake_hvm("new")
+        old, new = self.fake_hvm("old"), self.fake_hvm("new", exit_status=1)
         new.write_text(new.read_text().replace("'loadError':''", "'loadError':'unimplemented import'"))
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ab_diff.main(self.ab_args(old, new)), 1)
+        result = json.loads((self.root / "ab/diff.json").read_text())
+        self.assertEqual([o["returncode"] for o in result["observations"]], [0, 1])
 
 
 class ComparisonTests(unittest.TestCase):
