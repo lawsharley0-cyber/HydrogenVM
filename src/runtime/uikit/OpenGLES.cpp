@@ -458,7 +458,6 @@ struct ContextData : ObjC::HostObject {
     uint32_t nextQuery = 1;
     std::unordered_set<uint32_t> reservedQueries;
     std::unordered_map<uint32_t, uint32_t> queryObjects;   // begun query name -> target it was begun on
-    std::unordered_set<uint32_t> queryPendingDelete;       // deleted while active: released by glEndQuery
     uint32_t activeQueryAnySamples = 0;
     uint32_t activeQueryAnySamplesConservative = 0;
     uint32_t arrayBuffer = 0;
@@ -2499,12 +2498,8 @@ void gl_deleteQueriesEXT(Ctx& x, int32_t n, GuestPtr ids) {
     for (int32_t i = 0; i < n; ++i) {
         const uint32_t id = x.mem.read<uint32_t>(ids + uint32_t(i) * 4);
         c->reservedQueries.erase(id);
-        if (id != 0 && (c->activeQueryAnySamples == id || c->activeQueryAnySamplesConservative == id)) {
-            // An active query stays bound until glEndQuery, which then releases it.
-            c->queryPendingDelete.insert(id);
-        } else {
-            c->queryObjects.erase(id);
-        }
+        // The name is unused at once; a query that is active stays bound (activeQuery*) until glEndQuery.
+        c->queryObjects.erase(id);
     }
 }
 uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
@@ -2560,7 +2555,6 @@ void gl_endQueryEXT(Ctx& x, uint32_t target) {
         return;
     }
 
-    if (c->queryPendingDelete.erase(activeId)) c->queryObjects.erase(activeId);   // deleted while active
     activeId = 0;
 }
 void gl_getQueryivEXT(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {

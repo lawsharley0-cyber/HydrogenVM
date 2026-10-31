@@ -3280,7 +3280,7 @@ int runFullSubsystemTests() {
             callGL("_glGetQueryivEXT", {0x8C2F, 0x8865, qp});   // GL_CURRENT_QUERY_EXT
             const uint32_t cur_before = proc.mem().read<uint32_t>(qp);
             const bool still_q2 = callGL("_glIsQueryEXT", {q2}) != 0;
-            check(cur_before == q2 && still_q2, "glDeleteQueriesEXT leaves an active query bound (GL_CURRENT_QUERY_EXT reports it) until glEndQueryEXT");
+            check(cur_before == q2 && !still_q2, "glDeleteQueriesEXT frees the name at once but leaves an active query bound (GL_CURRENT_QUERY_EXT reports it) until glEndQueryEXT");
             callGL("_glEndQueryEXT", {0x8C2F});
             const uint32_t endErr = callGL("_glGetError", {});
             proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
