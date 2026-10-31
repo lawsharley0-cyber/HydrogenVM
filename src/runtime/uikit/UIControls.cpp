@@ -453,6 +453,7 @@ id ensureTitleLabel(Ctx& x, id self) {
         rt(x).send(x.cpu, d.titleLabel, "setOpaque:", {0});
         rt(x).send(x.cpu, d.titleLabel, "setFont:", {systemFont(x, 15, true)});
         rt(x).send(x.cpu, d.titleLabel, "setLineBreakMode:", {5});   // middle truncation
+        LD(x, d.titleLabel).shadowOffset = d.titleShadowOffset;      // the button's default is zero; UILabel's is {0,-1}
         rt(x).send(x.cpu, self, "addSubview:", {d.titleLabel});
     }
     return d.titleLabel;

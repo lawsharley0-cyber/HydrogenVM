@@ -2338,6 +2338,24 @@ int runFullSubsystemTests() {
               "UIButton shadow-offset setter propagates ARMv7 CGSize to its UILabel");
     }
 
+    // A new UIButton reports a zero title shadow offset (UIKit's default), so its title label must start there
+    // too; the UILabel default {0,-1} would draw a displaced shadow for a button that reports no offset.
+    {
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id btn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 100.0f, 100.0f});
+        const ObjC::SEL gSel = r.sel("titleShadowOffset");
+        const uint32_t tmp = cx.proc.heap().allocZeroed(16);
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), gSel), {tmp, btn, gSel});
+        const CG::CGSize reported = CG::readStruct<CG::CGSize>(cx, tmp);
+        const ObjC::id titleLabel = ObjC::id(r.send(cpu, btn, "titleLabel"));
+        const ObjC::SEL labelSel = r.sel("shadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(titleLabel), labelSel), {tmp, titleLabel, labelSel});
+        const CG::CGSize labelOffset = CG::readStruct<CG::CGSize>(cx, tmp);
+        cx.proc.heap().free(tmp);
+        check(reported.width == 0.0f && reported.height == 0.0f && labelOffset.width == 0.0f && labelOffset.height == 0.0f,
+              "a new UIButton's title label starts with the button's zero shadow offset, not the UILabel default");
+    }
+
     // 2d. UITabBarController, UITabBar, UITabBarItem
     {
         const ObjC::Class vcCls = r.getClass("UIViewController");
