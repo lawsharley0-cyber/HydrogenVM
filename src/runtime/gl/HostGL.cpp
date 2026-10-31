@@ -1109,6 +1109,31 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
     return ok;
 }
 
+namespace {
+// Every entry point the readback paths of presentRenderbuffer call.
+bool hasReadbackFns(const HostContext* hc) {
+    return hc->fn.glReadPixels && hc->fn.glGenFramebuffers && hc->fn.glBindFramebuffer && hc->fn.glFramebufferRenderbuffer;
+}
+// The guest's draw and read framebuffer bindings; presentRenderbuffer borrows both while it reads back.
+struct FbBindings { uint32_t draw = 0, read = 0; bool separate = false; };
+FbBindings saveFbBindings(HostContext* hc) {
+    FbBindings b;
+    b.draw = uint32_t(hgGetInt(hc, kFramebufferBinding));
+    b.read = b.draw;
+    if (hc->api >= 3 || hc->desktop) b.read = uint32_t(hgGetInt(hc, kReadFramebufferBinding));   // ES 1/2 have one binding
+    b.separate = b.read != b.draw;
+    return b;
+}
+void restoreFbBindings(HostContext* hc, const FbBindings& b) {
+    if (b.separate) {
+        hc->fn.glBindFramebuffer(kDrawFramebuffer, b.draw);
+        hc->fn.glBindFramebuffer(kReadFramebuffer, b.read);
+    } else {
+        hc->fn.glBindFramebuffer(kFramebuffer, b.draw);
+    }
+}
+} // namespace
+
 bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int& width, int& height,
                          std::vector<uint8_t>& rgba, bool& direct) {
     State& st = ready(p);
@@ -1143,11 +1168,10 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     const int n = st.presents + 1;
     std::string probe;
     const bool sample = n == 1 || n == 30 || n == 60 || n == 120 || n == 300 || n == 600 || (n > 600 && n % 1800 == 0);
-    if (sample && hc->fn.glReadPixels) {
+    if (sample && hasReadbackFns(hc)) {
         // Diagnostic: sample the frame before it goes to the display, so a blank
         // screen can be told apart from a frame the GPU really rendered black.
-
-        const int32_t prevFb = hgGetInt(hc, kFramebufferBinding);
+        const FbBindings saved = saveFbBindings(hc);
         if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
         hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
         hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
@@ -1162,7 +1186,7 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
                 if (px[0] > 8 || px[1] > 8 || px[2] > 8) ++lit;
             }
 
-        hc->fn.glBindFramebuffer(kFramebuffer, uint32_t(prevFb));
+        restoreFbBindings(hc, saved);
 
         probe = " (average rgb " + std::to_string(sum[0] / 64) + "," + std::to_string(sum[1] / 64) + "," +
                 std::to_string(sum[2] / 64) + ", " + std::to_string(lit) + "/64 samples lit)";
@@ -1189,8 +1213,8 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     }
 
     // Read the drawable back for the software compositor.
-    if (!hc->fn.glGenFramebuffers || !hc->fn.glReadPixels) return false;
-    const int32_t prevFb = hgGetInt(hc, kFramebufferBinding);
+    if (!hasReadbackFns(hc)) return false;
+    const FbBindings saved = saveFbBindings(hc);
     if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
     hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
     hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
@@ -1200,7 +1224,8 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     rgba.resize(size_t(width) * size_t(height) * 4);
     hc->fn.glReadPixels(0, 0, width, height, kRgba, kUnsignedByte, rgba.data());
     hc->fn.glPixelStorei(kPackAlignment, prevPack ? prevPack : 4);
-    hc->fn.glBindFramebuffer(kFramebuffer, uint32_t(prevFb));
+    restoreFbBindings(hc, saved);
+    ++st.presents;   // a fallback present counts too, so the diagnostic sampling above stays rate-limited
     return true;
 }
 

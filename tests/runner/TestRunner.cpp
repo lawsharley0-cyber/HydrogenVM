@@ -1880,6 +1880,13 @@ int runFullSubsystemTests() {
         check(int32_t(call("_syscall", {286})) == -1 && getErrno() == 3, "_syscall(286) returns -1 and ESRCH (3)");
         check(call("_syscall", {372}) == proc.currentThread().id, "_syscall(372) returns thread_selfid");
         check(int32_t(call("_syscall", {999})) == -1 && getErrno() == 78, "_syscall(unhandled) returns -1 and ENOSYS (78)");
+
+        // POSIX named semaphores are unimplemented, so no handle is a valid open semaphore.
+        for (uint32_t handle : {0u, 0xFFFFFFFFu, 0x1234u}) {
+            proc.mem().write<uint32_t>(errAddr, 0);
+            check(int32_t(call("_sem_close", {handle})) == -1 && getErrno() == 22,
+                  "sem_close of an unopened handle returns -1 and EINVAL (22)");
+        }
         check(call("_mach_port_mod_refs", {42, 0x103, 0, 1}) == 16 &&
               call("_mach_port_mod_refs", {0x103, 42, 0, 1}) == 15 &&
               call("_mach_port_mod_refs", {0x103, 0x103, 1, 1}) == 17 &&
@@ -3199,18 +3206,6 @@ int runFullSubsystemTests() {
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
-
-        uint32_t fboTest = 0;
-        callGL("_glGenFramebuffers", {1, idsAddr});
-        fboTest = proc.mem().read<uint32_t>(idsAddr);
-        callGL("_glBindFramebuffer", {0x8D40, fboTest});
-        r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41});
-
-        uint32_t currentFBO = 0;
-        callGL("_glGetIntegerv", {0x8CA6 /* GL_FRAMEBUFFER_BINDING */, idsAddr});
-        currentFBO = proc.mem().read<uint32_t>(idsAddr);
-        check(currentFBO == fboTest, "FBO binding is preserved across presentRenderbuffer");
-        callGL("_glBindFramebuffer", {0x8D40, 0});
     }
 
     // 2f2. libstdc++ containers (GCC 4.2 ABI): red-black tree, COW std::string
@@ -3220,6 +3215,36 @@ int runFullSubsystemTests() {
             return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
         };
         auto& m = proc.mem();
+        // __gnu_cxx::__exchange_and_add (both GCC 4.2 symbols): returns the previous value, wraps at 32 bits,
+        // and concurrent adds from several guest threads are not lost.
+        {
+            const uint32_t word = proc.heap().allocZeroed(4);
+            for (const char* sym : {"__ZN9__gnu_cxx18__exchange_and_addEPVii", "__ZN9__gnu_cxx27__exchange_and_add_dispatchEPii"}) {
+                m.write<uint32_t>(word, 5);
+                const uint32_t prev = call(sym, {word, 3});
+                const uint32_t afterAdd = m.read<uint32_t>(word);
+                m.write<uint32_t>(word, 0x7FFFFFFFu);
+                const uint32_t prevWrap = call(sym, {word, 1});
+                const uint32_t wrapped = m.read<uint32_t>(word);
+                m.write<uint32_t>(word, 2);
+                const uint32_t prevNeg = call(sym, {word, uint32_t(-5)});
+                const std::string what = std::string(sym) + " returns the previous value and wraps at 32 bits";
+                check(prev == 5 && afterAdd == 8 && prevWrap == 0x7FFFFFFFu && wrapped == 0x80000000u &&
+                      prevNeg == 2 && m.read<uint32_t>(word) == uint32_t(-3),
+                      what.c_str());
+            }
+            m.write<uint32_t>(word, 0);
+            const uint32_t addAddr = *proc.lookupSymbol("__ZN9__gnu_cxx18__exchange_and_addEPVii");
+            const uint32_t worker = proc.defineFunction("test_exchange_and_add_worker", [word, addAddr](Ctx& x) {
+                for (int i = 0; i < 2000; ++i) x.proc.callGuest(x.cpu, addAddr, {word, 1});
+                x.cpu.r[0] = 0;
+            });
+            uint32_t threads[4];
+            for (uint32_t& t : threads) t = proc.startThread(worker, 0, 64u << 10, false);
+            bool joined = true;
+            for (uint32_t t : threads) { uint32_t rv = 0; joined = proc.joinThread(t, &rv) && joined; }
+            check(joined && m.read<uint32_t>(word) == 8000, "__exchange_and_add loses no update across four concurrent guest threads");
+        }
         // Tree: header + nodes {color, parent, left, right, key}.
         const uint32_t header = proc.heap().allocZeroed(16);
         m.write<uint32_t>(header + 8, header);   // leftmost

@@ -1064,9 +1064,11 @@ int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     return 0;
 }
 
-int32_t sys_sem_close(Ctx& x, uint32_t sem) {
-    if (sem == 0 || sem == 0xFFFFFFFFu) { setErrno(x, 22); /* EINVAL */ return -1; }
-    return 0; // successfully "closed" the named semaphore
+// POSIX named semaphores are not implemented (there is no sem_open), so no handle can name an open
+// semaphore: every close is EINVAL rather than a silent success.
+int32_t sys_sem_close(Ctx& x, uint32_t) {
+    setErrno(x, 22);   // EINVAL
+    return -1;
 }
 
 } // namespace
