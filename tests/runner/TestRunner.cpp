@@ -2059,6 +2059,14 @@ int runFullSubsystemTests() {
         callGL("_glGenFramebuffers", {1, idsAddr});
         const uint32_t fbo = proc.mem().read<uint32_t>(idsAddr);
         callGL("_glBindFramebuffer", {0x8D40 /* GL_FRAMEBUFFER */, fbo});
+        const uint32_t emptyStatus = uint32_t(callGL("_glCheckFramebufferStatus", {0x8D40}));
+        check(emptyStatus == 0x8CD7 /* GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT */,
+              "Empty FBO reports GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT");
+        callGL("_glBindFramebuffer", {0x8D40, 0});
+        const uint32_t defaultStatus = uint32_t(callGL("_glCheckFramebufferStatus", {0x8D40}));
+        check(defaultStatus == 0x8CD5 /* GL_FRAMEBUFFER_COMPLETE */,
+              "Default FBO 0 reports GL_FRAMEBUFFER_COMPLETE");
+        callGL("_glBindFramebuffer", {0x8D40, fbo});
 
         callGL("_glGenRenderbuffers", {1, idsAddr + 4});
         const uint32_t rbo = proc.mem().read<uint32_t>(idsAddr + 4);

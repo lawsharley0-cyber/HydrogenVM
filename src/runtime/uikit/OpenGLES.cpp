@@ -235,6 +235,7 @@ enum : uint32_t {
     GL_DEPTH_ATTACHMENT = 0x8D00,
     GL_STENCIL_ATTACHMENT = 0x8D20,
     GL_FRAMEBUFFER_COMPLETE = 0x8CD5,
+    GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT = 0x8CD7,
     GL_FRAMEBUFFER_BINDING = 0x8CA6,
     GL_RENDERBUFFER_BINDING = 0x8CA7,
     GL_RGBA4 = 0x8056,
@@ -1540,7 +1541,21 @@ bool gl_isFramebuffer(Ctx& x, uint32_t fb) {
     SharegroupData* sg = currentSg(x, c);
     return sg && fb != 0 && sg->framebuffers.count(fb) > 0;
 }
-uint32_t gl_checkFramebufferStatus(Ctx&, uint32_t) { return GL_FRAMEBUFFER_COMPLETE; }
+uint32_t gl_checkFramebufferStatus(Ctx& x, uint32_t target) {
+    (void)target;
+    ContextData* c = currentCtx(x);
+    if (!c) return 0;
+    if (c->framebuffer == 0) return GL_FRAMEBUFFER_COMPLETE;
+    SharegroupData* sg = currentSg(x, c);
+    if (!sg) return 0;
+    auto it = sg->framebuffers.find(c->framebuffer);
+    if (it == sg->framebuffers.end()) return GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
+    const Framebuffer& fb = it->second;
+    if (fb.colorAttachmentType == 0 && fb.depthAttachmentType == 0 && fb.stencilAttachmentType == 0) {
+        return GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
+    }
+    return GL_FRAMEBUFFER_COMPLETE;
+}
 void gl_framebufferRenderbuffer(Ctx& x, uint32_t target, uint32_t attachment, uint32_t renderbuffertarget, uint32_t rb) {
     (void)target; (void)renderbuffertarget;
     ContextData* c = currentCtx(x);
