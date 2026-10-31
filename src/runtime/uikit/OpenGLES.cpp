@@ -5,6 +5,7 @@
 // programs, uniforms, vertex attributes, VBOs, FBOs, textures) state tracker
 // and software rasterizer wired into CAEAGLLayer via LayerData::externalContents.
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/Support.hpp"
 #include "UIKit.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
 #include "runtime/graphics/Shader.hpp"
@@ -3788,23 +3789,39 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     p.def<&gl_vertexAttrib3f>("_glVertexAttrib3f");
     p.def<&gl_vertexAttrib4f>("_glVertexAttrib4f");
     p.def<&gl_vertexAttrib4fv>("_glVertexAttrib4fv");
-    p.def<&gl_drawBuffers>("_glDrawBuffers");
-    p.def<&gl_readBuffer>("_glReadBuffer");
+    supportDef<&gl_drawBuffers>(p, "_glDrawBuffers", SupportStatus::Stub,
+        "Software renderer ignores draw buffer selection");
+    supportDef<&gl_readBuffer>(p, "_glReadBuffer", SupportStatus::Stub,
+        "Software renderer ignores read buffer selection");
     p.def<&gl_getVertexAttribfv>("_glGetVertexAttribfv");
-    p.def<&gl_genQueriesEXT>("_glGenQueriesEXT");
-    p.def<&gl_genQueriesEXT>("_glGenQueries");
-    p.def<&gl_deleteQueriesEXT>("_glDeleteQueriesEXT");
-    p.def<&gl_deleteQueriesEXT>("_glDeleteQueries");
-    p.def<&gl_isQueryEXT>("_glIsQueryEXT");
-    p.def<&gl_isQueryEXT>("_glIsQuery");
-    p.def<&gl_beginQueryEXT>("_glBeginQueryEXT");
-    p.def<&gl_beginQueryEXT>("_glBeginQuery");
-    p.def<&gl_endQueryEXT>("_glEndQueryEXT");
-    p.def<&gl_endQueryEXT>("_glEndQuery");
-    p.def<&gl_getQueryivEXT>("_glGetQueryivEXT");
-    p.def<&gl_getQueryivEXT>("_glGetQueryiv");
-    p.def<&gl_getQueryObjectuivEXT>("_glGetQueryObjectuivEXT");
-    p.def<&gl_getQueryObjectuivEXT>("_glGetQueryObjectuiv");
+    supportDef<&gl_genQueriesEXT>(p, "_glGenQueriesEXT", SupportStatus::Stub,
+        "Software renderer generates sequential names without query object state");
+    supportDef<&gl_genQueriesEXT>(p, "_glGenQueries", SupportStatus::Stub,
+        "Software renderer generates sequential names without query object state");
+    supportDef<&gl_deleteQueriesEXT>(p, "_glDeleteQueriesEXT", SupportStatus::Stub,
+        "Software renderer ignores query deletion");
+    supportDef<&gl_deleteQueriesEXT>(p, "_glDeleteQueries", SupportStatus::Stub,
+        "Software renderer ignores query deletion");
+    supportDef<&gl_isQueryEXT>(p, "_glIsQueryEXT", SupportStatus::Stub,
+        "Software renderer accepts any nonzero query name without tracking objects");
+    supportDef<&gl_isQueryEXT>(p, "_glIsQuery", SupportStatus::Stub,
+        "Software renderer accepts any nonzero query name without tracking objects");
+    supportDef<&gl_beginQueryEXT>(p, "_glBeginQueryEXT", SupportStatus::Stub,
+        "Software renderer ignores query begin");
+    supportDef<&gl_beginQueryEXT>(p, "_glBeginQuery", SupportStatus::Stub,
+        "Software renderer ignores query begin");
+    supportDef<&gl_endQueryEXT>(p, "_glEndQueryEXT", SupportStatus::Stub,
+        "Software renderer ignores query end");
+    supportDef<&gl_endQueryEXT>(p, "_glEndQuery", SupportStatus::Stub,
+        "Software renderer ignores query end");
+    supportDef<&gl_getQueryivEXT>(p, "_glGetQueryivEXT", SupportStatus::Stub,
+        "Software renderer writes zero rather than querying occlusion state");
+    supportDef<&gl_getQueryivEXT>(p, "_glGetQueryiv", SupportStatus::Stub,
+        "Software renderer writes zero rather than querying occlusion state");
+    supportDef<&gl_getQueryObjectuivEXT>(p, "_glGetQueryObjectuivEXT", SupportStatus::Stub,
+        "Software renderer always writes 1 for result and availability without measuring occlusion");
+    supportDef<&gl_getQueryObjectuivEXT>(p, "_glGetQueryObjectuiv", SupportStatus::Stub,
+        "Software renderer always writes 1 for result and availability without measuring occlusion");
     p.def<&gl_getVertexAttribiv>("_glGetVertexAttribiv");
     p.def<&gl_getVertexAttribPointerv>("_glGetVertexAttribPointerv");
     p.def<&gl_uniform1i>("_glUniform1i");
