@@ -127,6 +127,20 @@ Mixer::Stats Mixer::stats() const {
     return stats_;
 }
 
+Mixer::MemoryStats Mixer::memoryStats() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    MemoryStats out;
+    out.voiceCount = voices_.size();
+    for (const auto& [id, voice] : voices_) {
+        out.queuedBufferCount += voice.queue.size();
+        out.processedTagCount += voice.processed.size();
+        out.processedTagCapacityBytes += voice.processed.capacity() * sizeof(uint64_t);
+        for (const auto& buffer : voice.queue)
+            if (buffer.pcm) out.referencedPcmBytes += buffer.pcm->capacity() * sizeof(int16_t);
+    }
+    return out;
+}
+
 void Mixer::render(float* left, float* right, size_t frames) {
     std::memset(left, 0, frames * sizeof(float));
     std::memset(right, 0, frames * sizeof(float));

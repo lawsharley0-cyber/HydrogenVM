@@ -16,6 +16,14 @@ std::atomic<uint32_t> liveArenas{0};
 
 uint32_t GuestArena::liveCount() noexcept { return liveArenas.load(std::memory_order_relaxed); }
 
+GuestArena::Stats GuestArena::stats() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    Stats out;
+    for (auto prot : prot_) if (prot != kProtNone) out.mappedBytes += kGuestPageSize;
+    for (auto committed : host_committed_) if (committed) out.committedHostBytes += host_page_;
+    return out;
+}
+
 GuestArena::GuestArena() {
     host_page_ = size_t(sysconf(_SC_PAGESIZE));
     if (host_page_ < kGuestPageSize || (host_page_ & (host_page_ - 1)))
