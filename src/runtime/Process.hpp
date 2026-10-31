@@ -456,6 +456,7 @@ void registerLibcSystem(Process& p);
 void registerCxxRuntime(Process& p);
 void registerUnwinder(Process& p);
 void registerLibStdcxx(Process& p);
+void registerLibcxx(Process& p);
 void registerLibcPosix(Process& p);
 void registerZlib(Process& p);
 void registerLibcNet(Process& p);

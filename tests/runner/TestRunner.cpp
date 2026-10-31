@@ -5124,6 +5124,166 @@ int runFullSubsystemTests() {
         });
     }
 
+    // 2f4. libc++ (std::__1) threading and concurrency
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = proc.lookupSymbol(sym);
+            return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
+        };
+        auto& m = proc.mem();
+        const uint32_t tls_ptr = call("__ZNSt3__119__thread_local_dataEv", {});
+        const uint32_t tls_key = tls_ptr != 0xDEADu ? m.read<uint32_t>(tls_ptr) : 0;
+        bool tls_ok = tls_ptr != 0 && tls_ptr != 0xDEADu && tls_key != 0;
+
+        const uint32_t ts = proc.heap().allocZeroed(16);
+        const uint32_t ts_ret = call("__ZNSt3__115__thread_structC1Ev", {ts});
+        call("__ZNSt3__115__thread_structD1Ev", {ts});
+        bool ts_ok = ts_ret == ts;
+
+        const uint32_t mtx = proc.heap().allocZeroed(16);
+        call("_pthread_mutex_init", {mtx, 0});
+        const uint32_t lock_ret = call("__ZNSt3__15mutex4lockEv", {mtx});
+        const uint32_t unlock_ret = call("__ZNSt3__15mutex6unlockEv", {mtx});
+        bool mtx_ok = lock_ret == 0 && unlock_ret == 0;
+        // Error paths: an error-checking mutex rejects a second lock by its owner and an unlock by a
+        // non-owner, and the shim reports both as exceptions with the errno text.
+        {
+            const uint32_t attr = proc.heap().allocZeroed(16), emtx = proc.heap().allocZeroed(64);
+            const bool setupOk = call("_pthread_mutexattr_init", {attr}) == 0 &&
+                                 call("_pthread_mutexattr_settype", {attr, 1}) == 0 &&   // PTHREAD_MUTEX_ERRORCHECK
+                                 call("_pthread_mutex_init", {emtx, attr}) == 0;
+            auto throwsFor = [&](const char* sym, const char* needle) {
+                try { call(sym, {emtx}); }
+                catch (const std::exception& e) { return std::string(e.what()).find(needle) != std::string::npos; }
+                return false;
+            };
+            bool errorPaths = false;
+            if (setupOk) {   // skip the lock paths unless the error-checking mutex really exists
+                const bool unownedUnlock = throwsFor("__ZNSt3__15mutex6unlockEv", "unlock failed");
+                const bool firstLock = call("__ZNSt3__15mutex4lockEv", {emtx}) == 0;
+                const bool relock = firstLock && throwsFor("__ZNSt3__15mutex4lockEv", "lock failed");
+                if (firstLock) call("__ZNSt3__15mutex6unlockEv", {emtx});
+                errorPaths = unownedUnlock && firstLock && relock;
+            }
+            call("_pthread_mutex_destroy", {emtx});
+            mtx_ok = mtx_ok && errorPaths;
+        }
+
+        const uint64_t t1 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
+        const uint64_t t2 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
+        bool chrono_ok = t2 >= t1 && t1 > 0;
+        // Darwin libc++ system_clock::now() counts microseconds since the epoch.
+        const auto hostBefore = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const uint64_t sysNow = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12system_clock3nowEv"), {});
+        const auto hostAfter = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        chrono_ok = chrono_ok && int64_t(sysNow) >= hostBefore - 1000 && int64_t(sysNow) <= hostAfter + 1000;
+
+        const uint32_t dur = proc.heap().allocZeroed(8);
+        m.write<uint64_t>(dur, 1000000); // 1ms
+        const auto sleep_start = std::chrono::steady_clock::now();
+        call("__ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILx1ELx1000000000EEEEE", {dur});
+        const auto sleep_end = std::chrono::steady_clock::now();
+        bool sleep_ok = std::chrono::duration_cast<std::chrono::milliseconds>(sleep_end - sleep_start).count() >= 1;
+
+        // Thread identity and teardown checks
+        const uint32_t th_obj = proc.heap().allocZeroed(16);
+        const uint32_t worker_th = proc.startThread(proc.defineFunction("hvm_test_std_thread", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
+
+        // TLS separation: run a thread that gets a TLS key. Our tests for TLS are basic but we can just use the key we got.
+        // C++ thread tests
+        m.write<uint32_t>(th_obj, worker_th);
+        call("__ZNSt3__16thread6detachEv", {th_obj});
+        bool detach_ok = m.read<uint32_t>(th_obj) == 0;
+
+        // Failed std::thread operations throw (libc++ throws system_error) with the errno text.
+        auto throwsWith = [&](const char* sym, const char* needle) {
+            try { call(sym, {th_obj}); }
+            catch (const std::exception& e) { return std::string(e.what()).find(needle) != std::string::npos; }
+            return false;
+        };
+        // Invalid (repeated) detach
+        bool detach_inv_ok = throwsWith("__ZNSt3__16thread6detachEv", "detach failed") &&
+                             throwsWith("__ZNSt3__16thread6detachEv", std::strerror(EINVAL));
+
+        // Setup another thread to join
+        const uint32_t worker2_th = proc.startThread(proc.defineFunction("hvm_test_std_thread2", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
+        m.write<uint32_t>(th_obj, worker2_th);
+        call("__ZNSt3__16thread4joinEv", {th_obj});
+        bool join_ok = m.read<uint32_t>(th_obj) == 0;
+
+        // Invalid (repeated) join
+        bool join_inv_ok = throwsWith("__ZNSt3__16thread4joinEv", "join failed") &&
+                           throwsWith("__ZNSt3__16thread4joinEv", std::strerror(EINVAL));
+
+        // Destructor on joinable thread
+        m.write<uint32_t>(th_obj, worker_th);
+        bool term_called = false;
+        try {
+            call("__ZNSt3__16threadD1Ev", {th_obj});
+        } catch (const std::exception& e) {
+            term_called = std::string(e.what()).find("terminate() called") != std::string::npos;
+        }
+
+        // Test condition variable wait: the worker owns the mutex, waits in a predicate loop, and the main
+        // thread sets the predicate under the same mutex, so the notification cannot be lost.
+        const uint32_t cv = proc.heap().allocZeroed(16);
+        call("_pthread_cond_init", {cv, 0});
+        const uint32_t cv_ul = proc.heap().allocZeroed(4); // unique_lock just holds the mutex ptr at offset 0
+        m.write<uint32_t>(cv_ul, mtx);
+
+        std::atomic<bool> cv_entered{false}, cv_woke{false};
+        bool cv_predicate = false;   // guarded by the guest mutex `mtx`
+        const uint32_t cv_waiter = proc.defineFunction("hvm_test_cv_wait", [&](Ctx& ctx) {
+            proc.callGuest(ctx.cpu, *proc.lookupSymbol("_pthread_mutex_lock"), {mtx});
+            cv_entered = true;
+            auto a = proc.lookupSymbol("__ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE");
+            while (!cv_predicate && a) proc.callGuest(ctx.cpu, *a, {cv, cv_ul});
+            cv_woke = cv_predicate;
+            proc.callGuest(ctx.cpu, *proc.lookupSymbol("_pthread_mutex_unlock"), {mtx});
+            ctx.cpu.r[0] = 0;
+        });
+        const uint32_t cv_th = proc.startThread(cv_waiter, 0, 64u << 10, false);
+        for (int i = 0; i < 400 && !cv_entered.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        call("_pthread_mutex_lock", {mtx});          // only succeeds once the worker is inside cond_wait
+        cv_predicate = true;
+        call("__ZNSt3__118condition_variable10notify_oneEv", {cv});
+        call("_pthread_mutex_unlock", {mtx});
+
+        uint32_t cv_ret;
+        proc.joinThread(cv_th, &cv_ret);
+        bool cv_ok = cv_woke.load();
+
+        // Test TLS isolation
+        const uint32_t tls_test_key = m.read<uint32_t>(tls_ptr);
+        std::atomic<uint32_t> th1_val{0}, th2_val{0};
+        std::atomic<int> tls_set{0};   // both workers store before either reads, so a shared slot would show up
+        auto tlsWorker = [&](uint32_t value, std::atomic<uint32_t>& out) {
+            return [&, value](Ctx& ctx) {
+                auto set_fn = proc.lookupSymbol("_pthread_setspecific");
+                auto get_fn = proc.lookupSymbol("_pthread_getspecific");
+                if (set_fn) proc.callGuest(ctx.cpu, *set_fn, {tls_test_key, value});
+                ++tls_set;
+                for (int i = 0; i < 400 && tls_set.load() < 2; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (get_fn) out = uint32_t(proc.callGuest(ctx.cpu, *get_fn, {tls_test_key}));
+                ctx.cpu.r[0] = 0;
+            };
+        };
+        const uint32_t tls_worker1 = proc.defineFunction("hvm_test_tls1", tlsWorker(1234, th1_val));
+        const uint32_t tls_worker2 = proc.defineFunction("hvm_test_tls2", tlsWorker(5678, th2_val));
+        const uint32_t tls_th1 = proc.startThread(tls_worker1, 0, 64u << 10, false);
+        const uint32_t tls_th2 = proc.startThread(tls_worker2, 0, 64u << 10, false);
+        proc.joinThread(tls_th1, nullptr);
+        proc.joinThread(tls_th2, nullptr);
+        const uint32_t mainTls = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_pthread_getspecific"), {tls_test_key}));
+
+        bool tls_isolation_ok = th1_val.load() == 1234 && th2_val.load() == 5678 && tls_set.load() == 2 && mainTls == 0;
+
+        // Ensure all detached background threads finish before tearing down the process
+        proc.joinThread(worker_th, nullptr);
+
+        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && detach_inv_ok && join_ok && join_inv_ok && term_called && cv_ok && tls_isolation_ok, "libc++ (std::__1) threading and concurrency");
+    }
+
     // Host-requested shutdown must not become an HLE error. An unrelated
     // exception still remains a failure even if stop was requested concurrently.
     for (bool intentional : {true, false}) {
