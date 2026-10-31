@@ -63,6 +63,9 @@ target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -fop
 add_executable(hvm_tests tests/runner/TestRunner.cpp)
 target_link_libraries(hvm_tests PRIVATE hvm_core)
 
+add_executable(hvm_gl_lifetime_tests tests/runner/HostGLLifetimeTests.cpp)
+target_link_libraries(hvm_gl_lifetime_tests PRIVATE hvm_core)
+
 add_executable(hvm_decodecheck tests/runner/DecodeCheck.cpp)
 target_link_libraries(hvm_decodecheck PRIVATE hvm_core)
 
