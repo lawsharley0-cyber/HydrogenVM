@@ -2950,6 +2950,84 @@ int runFullSubsystemTests() {
                   "GLES2 clips a line whose screen delta exceeds INT_MAX to the framebuffer and still draws the visible pixels");
         }
 
+        // 2f11. OpenGL ES occlusion queries state machine
+        {
+            const uint32_t ids = proc.heap().allocZeroed(8);
+
+            // Gen queries
+            callGL("_glGenQueriesEXT", {2, ids});
+            const uint32_t q1 = proc.mem().read<uint32_t>(ids);
+            const uint32_t q2 = proc.mem().read<uint32_t>(ids + 4);
+
+            check(q1 > 0 && q2 > q1, "glGenQueriesEXT produces monotonic query ids");
+
+            // Check isQuery before begin
+            const bool isq1_pre = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool isq2_pre = callGL("_glIsQueryEXT", {q2}) != 0;
+            check(!isq1_pre && !isq2_pre, "glIsQueryEXT is false for reserved but unbegun query names");
+
+            // Invalid target begin checking
+            callGL("_glBeginQueryEXT", {0x8866, q1});
+            const uint32_t err1 = callGL("_glGetError", {});
+
+            // Begin query
+            callGL("_glBeginQueryEXT", {0x8C2F, q1});
+            const uint32_t err2 = callGL("_glGetError", {});
+
+            check(err1 == 0x0500 /* GL_INVALID_ENUM */ && err2 == 0, "glBeginQueryEXT only accepts occlusion query targets (GL_ANY_SAMPLES_PASSED_EXT)");
+
+            // Check isQuery after begin
+            const bool isq1_post = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool isq2_post = callGL("_glIsQueryEXT", {q2}) != 0;
+            const bool isq3 = callGL("_glIsQueryEXT", {q2 + 1}) != 0;
+            check(isq1_post && !isq2_post && !isq3, "glIsQueryEXT is true only after glBeginQueryEXT");
+
+            // Get query object params on active query (should fail/ignore)
+            const uint32_t params = proc.heap().allocZeroed(4);
+            proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8866, params}); // GL_QUERY_RESULT
+            const uint32_t res_active = proc.mem().read<uint32_t>(params);
+
+            // End query
+            callGL("_glEndQueryEXT", {0x8C2F});
+
+            // Get query object params after end
+            proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8867, params}); // GL_QUERY_RESULT_AVAILABLE
+            const uint32_t avail = proc.mem().read<uint32_t>(params);
+            proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8866, params}); // GL_QUERY_RESULT
+            const uint32_t res = proc.mem().read<uint32_t>(params);
+
+            proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {q2, 0x8866, params}); // Should not modify params (unbegun)
+            const uint32_t res_unbegun = proc.mem().read<uint32_t>(params);
+
+            check(res_active == 0xFFFFFFFF && avail == 1 && res == 1 && res_unbegun == 0xFFFFFFFF, "glGetQueryObjectuivEXT ignores active and unbegun queries, writes 1 for completed");
+
+            // Duplicate/invalid begin checking
+            callGL("_glBeginQueryEXT", {0x8C2F, q2}); // valid begin
+            // call begin again on same target with another ID (should fail)
+            callGL("_glBeginQueryEXT", {0x8C2F, q1});
+
+            // Cross-context check
+            const ObjC::id ctx2 = ObjC::id(r.send(cpu, r.getClass("EAGLContext"), r.selAlloc));
+            r.send(cpu, ctx2, "initWithAPI:sharegroup:", {2, uint32_t(r.send(cpu, glCtx, "sharegroup"))});
+            r.send(cpu, r.getClass("EAGLContext"), "setCurrentContext:", {ctx2});
+
+            const bool cross_ctx_q1 = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool cross_ctx_q2 = callGL("_glIsQueryEXT", {q2}) != 0;
+            check(!cross_ctx_q1 && !cross_ctx_q2, "glIsQueryEXT proves query objects are NOT shared between contexts");
+
+            r.send(cpu, r.getClass("EAGLContext"), "setCurrentContext:", {glCtx});
+
+            // Delete queries (while q2 is active)
+            callGL("_glDeleteQueriesEXT", {2, ids});
+
+            const bool disq1 = callGL("_glIsQueryEXT", {q1}) != 0;
+            check(!disq1, "glDeleteQueriesEXT removes ids from state");
+        }
+
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
