@@ -1,5 +1,7 @@
 // HydrogenVM — run loops, timers, dates, delayed/cross-thread performs, NSThread.
 #include "Foundation.hpp"
+#include <algorithm>
+#include <mutex>
 #include <chrono>
 #include <future>
 #include <thread>
@@ -447,17 +449,33 @@ struct SourceData : ObjC::HostObject {
     std::shared_ptr<RunLoop::Source> src = std::make_shared<RunLoop::Source>();
     uint32_t info = 0, releaseCb = 0, scheduleCb = 0, cancelCb = 0, performCb = 0;
     struct Added { RunLoop* loop; uint32_t mode; };
-    std::vector<Added> loops;   // the loops this source is currently in (guest thread only)
+    std::mutex mu;               // guards `loops`; never held across a guest callback or a retain/release
+    std::vector<Added> loops;    // one entry per (run loop, mode) membership
 };
 SourceData* sd(Ctx& x, id s) { return s ? rt(x).hostIf<SourceData>(s) : nullptr; }
 
-// Drop `s` from one loop: tell the source (cancel), then give back the loop's reference.
-void detachSource(Ctx& x, id s, SourceData& d, size_t index) {
-    const SourceData::Added a = d.loops[index];
-    d.loops.erase(d.loops.begin() + std::ptrdiff_t(index));
-    a.loop->removeSource(d.src);
-    if (d.cancelCb) x.proc.callGuest(x.cpu, d.cancelCb, {d.info, loopObject(x, *a.loop), a.mode});
-    rt(x).release(x.cpu, s);   // the run loop's reference
+// Drop the (loop, mode) memberships selected by `match`: each gets a cancel callback; the loop itself
+// lets go of the source (and its reference) only when its last mode is gone. Callbacks run unlocked.
+template <class Match>
+void detachSources(Ctx& x, id s, SourceData& d, Match match) {
+    std::vector<SourceData::Added> gone;
+    std::vector<RunLoop*> released;
+    {
+        std::lock_guard<std::mutex> lk(d.mu);
+        for (size_t i = 0; i < d.loops.size();) {
+            if (!match(d.loops[i])) { ++i; continue; }
+            gone.push_back(d.loops[i]);
+            d.loops.erase(d.loops.begin() + std::ptrdiff_t(i));
+        }
+        for (const auto& a : gone) {
+            const bool stillIn = std::any_of(d.loops.begin(), d.loops.end(), [&](const SourceData::Added& o) { return o.loop == a.loop; });
+            if (!stillIn && std::find(released.begin(), released.end(), a.loop) == released.end()) released.push_back(a.loop);
+        }
+    }
+    for (RunLoop* l : released) l->removeSource(d.src);
+    for (const auto& a : gone)
+        if (d.cancelCb) x.proc.callGuest(x.cpu, d.cancelCb, {d.info, loopObject(x, *a.loop), a.mode});
+    for (size_t i = 0; i < released.size(); ++i) rt(x).release(x.cpu, s);   // one reference per loop that held the source
 }
 
 id cf_sourceCreate(Ctx& x, uint32_t, int32_t order, GuestPtr context) {
@@ -495,34 +513,48 @@ void cf_addSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
     SourceData* d = sd(x, s);
     if (!d || !d->src->valid.load()) return;
     RunLoop& loop = loopOf(x, rl);
-    for (const auto& a : d->loops) if (a.loop == &loop) return;   // already scheduled here
-    rt(x).retain(x.cpu, s);   // the run loop retains its sources
-    d->loops.push_back({&loop, mode});
-    loop.addSource(d->src);
+    bool firstForLoop = false;
+    {
+        std::lock_guard<std::mutex> lk(d->mu);
+        for (const auto& a : d->loops) if (a.loop == &loop && a.mode == mode) return;   // already scheduled in this mode
+        firstForLoop = std::none_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == &loop; });
+        d->loops.push_back({&loop, mode});
+    }
+    if (firstForLoop) {
+        rt(x).retain(x.cpu, s);   // the run loop retains its sources (once per loop, however many modes)
+        loop.addSource(d->src);
+    }
     if (d->scheduleCb) x.proc.callGuest(x.cpu, d->scheduleCb, {d->info, loopObject(x, loop), mode});
 }
-void cf_removeSource(Ctx& x, uint32_t rl, id s, uint32_t) {
+void cf_removeSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
     SourceData* d = sd(x, s);
     if (!d) return;
-    RunLoop& loop = loopOf(x, rl);
-    for (size_t i = 0; i < d->loops.size(); ++i)
-        if (d->loops[i].loop == &loop) { detachSource(x, s, *d, i); return; }
+    RunLoop* loop = &loopOf(x, rl);
+    detachSources(x, s, *d, [&](const SourceData::Added& a) { return a.loop == loop && a.mode == mode; });
 }
-bool cf_containsSource(Ctx& x, uint32_t rl, id s, uint32_t) {
+bool cf_containsSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
     SourceData* d = sd(x, s);
-    return d && d->src->valid.load() && loopOf(x, rl).hasSource(d->src);
+    if (!d || !d->src->valid.load()) return false;
+    RunLoop* loop = &loopOf(x, rl);
+    std::lock_guard<std::mutex> lk(d->mu);
+    return std::any_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == loop && a.mode == mode; });
 }
 void cf_sourceSignal(Ctx& x, id s) {
     SourceData* d = sd(x, s);
     if (!d || !d->src->valid.load()) return;
     d->src->signalled.store(true);
-    for (const auto& a : d->loops) a.loop->wake();
+    std::vector<RunLoop*> wake;
+    {
+        std::lock_guard<std::mutex> lk(d->mu);
+        for (const auto& a : d->loops) if (std::find(wake.begin(), wake.end(), a.loop) == wake.end()) wake.push_back(a.loop);
+    }
+    for (RunLoop* l : wake) l->wake();   // unlocked: wake() may take the loop's own lock
 }
 void cf_sourceInvalidate(Ctx& x, id s) {
     SourceData* d = sd(x, s);
     if (!d || !d->src->valid.exchange(false)) return;
     rt(x).retain(x.cpu, s);   // keep it alive while the loops let go of it
-    while (!d->loops.empty()) detachSource(x, s, *d, d->loops.size() - 1);
+    detachSources(x, s, *d, [](const SourceData::Added&) { return true; });
     rt(x).release(x.cpu, s);
 }
 bool cf_sourceIsValid(Ctx& x, id s) { SourceData* d = sd(x, s); return d && d->src->valid.load(); }
@@ -530,7 +562,10 @@ int32_t cf_sourceGetOrder(Ctx& x, id s) { SourceData* d = sd(x, s); return d ? i
 void source_dealloc(Ctx& x, id self, SEL) {
     if (SourceData* d = sd(x, self)) {
         d->src->valid.store(false);
-        for (const auto& a : d->loops) a.loop->removeSource(d->src);   // can't happen while a loop holds a reference
+        {
+            std::lock_guard<std::mutex> lk(d->mu);
+            for (const auto& a : d->loops) a.loop->removeSource(d->src);   // can't happen while a loop holds a reference
+        }
         if (d->releaseCb) x.proc.callGuest(x.cpu, d->releaseCb, {d->info});
     }
     rt(x).disposeInstance(x.cpu, self);
