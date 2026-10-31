@@ -275,13 +275,6 @@ int32_t q_compareSubC(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr 
     const int r = v.compare(pos, clip(uint32_t(v.size()), pos, n), x.proc.readCString(s));
     return r < 0 ? -1 : r > 0;
 }
-uint32_t q_copy(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n, uint32_t pos) {
-    const std::string v = value(x, self);
-    checkPos(pos, uint32_t(v.size()), "basic_string::copy");
-    const uint32_t count = std::min(n, uint32_t(v.size()) - pos);
-    if (count > 0) std::memcpy(x.mem.host(s), v.data() + pos, count);
-    return count;
-}
 uint32_t m_assignSub(Ctx& x, GuestPtr self, GuestPtr other, uint32_t pos, uint32_t n) {
     const std::string o = value(x, other);
     checkPos(pos, uint32_t(o.size()), "basic_string::assign");
@@ -901,7 +894,6 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&q_compareStr>("__ZNKSs7compareERKSs");
     p.def<&q_compareSubStr>("__ZNKSs7compareEmmRKSs");
     p.def<&q_compareSubC>("__ZNKSs7compareEmmPKc");
-    p.def<&q_copy>("_ZNKSs4copyEPcmm");
     p.defineFunction("__ZNKSs6substrEmm", [](Ctx& x) { q_substr(x); });
     p.def<&r_create>("__ZNSs4_Rep9_S_createEmmRKSaIcE");
     p.def<&r_dispose>("__ZNSs4_Rep10_M_disposeERKSaIcE");

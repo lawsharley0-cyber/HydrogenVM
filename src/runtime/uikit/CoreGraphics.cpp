@@ -1056,8 +1056,6 @@ uint32_t ct_createName(Ctx& x, id name, float size, GuestPtr matrix) {
     rt(x).release(x.cpu, cg);
     return ct;
 }
-uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) { auto* f = hd<FontData>(x, desc); if(f) { x.proc.reportMissing("CTFontDescriptorCreateCopyWithAttributes dictionary merge logic"); return newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)); } return 0; }
-uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) { x.proc.reportMissing("CTFontDescriptorCreateWithAttributes dictionary processing"); return newObject(x, S(x).descriptor, std::make_unique<FontData>()); }
 uint32_t ct_copyDescriptor(Ctx& x, id font) {
     auto* f = hd<FontData>(x, font);
     return f ? newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)) : 0;
@@ -1216,23 +1214,6 @@ int32_t text_break(Ctx& x, id text, int32_t start, double width) {
     }
     if (size_t(i) == d->string.size()) return i - start;
     return lastSpace >= start ? lastSpace - start + 1 : std::max(i - start, 1);
-}
-// CGFloat is a 32-bit float for this guest, returned in r0; a double would put its low word in r0.
-float text_offset(Ctx& x, id text, int32_t charIndex, GuestPtr secondaryOffset) {
-    // GuestArena::write does not check guest permissions: only write through a pointer whose four bytes are writable.
-    const bool writable = secondaryOffset && uint64_t(secondaryOffset) + 4 <= 0x100000000ull &&
-        (x.mem.protAt(secondaryOffset) & Memory::kProtWrite) && (x.mem.protAt(secondaryOffset + 3) & Memory::kProtWrite);
-    if (writable) x.mem.write<float>(secondaryOffset, 0.0f);
-    auto* d = hd<TextData>(x, text);
-    if (!d || charIndex < d->start) return 0.0f;
-    int32_t localIndex = charIndex - d->start;
-    if (localIndex > int32_t(d->string.size())) localIndex = int32_t(d->string.size());
-    float offset = 0.0f;
-    for (int32_t i = 0; i < localIndex && size_t(i) < d->advances.size(); ++i) {
-        offset += d->advances[i];
-    }
-    if (writable) x.mem.write<float>(secondaryOffset, offset);
-    return offset;
 }
 void text_range(Ctx& x, GuestPtr ret, id text) {
     auto* d = hd<TextData>(x, text);
@@ -1740,8 +1721,6 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ct_createGraphics>("_CTFontCreateWithGraphicsFont");
     p.def<&ct_createName>("_CTFontCreateWithName");
     p.def<&ct_copyDescriptor>("_CTFontCopyFontDescriptor");
-    p.def<&ct_descriptorCopyWithAttributes>("_CTFontDescriptorCreateCopyWithAttributes");
-    p.def<&ct_descriptorWithAttributes>("_CTFontDescriptorCreateWithAttributes");
     p.def<&ct_createDescriptor>("_CTFontCreateWithFontDescriptor");
     p.def<&ct_family>("_CTFontCopyFamilyName");
     p.def<&ct_traits>("_CTFontGetSymbolicTraits");
@@ -1760,7 +1739,6 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&text_wholeLine>("_CTLineCreateWithAttributedString");
     p.def<&text_bounds>("_CTLineGetTypographicBounds");
     p.def<&text_range>("_CTLineGetStringRange");
-    p.def<&text_offset>("_CTLineGetOffsetForStringIndex");
     p.def<&text_runs>("_CTLineGetGlyphRuns");
     p.def<&text_draw>("_CTLineDraw");
     p.def<&run_count>("_CTRunGetGlyphCount");

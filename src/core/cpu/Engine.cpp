@@ -237,7 +237,7 @@ void installFaultHandler() {
 } // namespace
 
 Cpu::Cpu() { registerCpu(this); }
-Cpu::~Cpu() { unregisterCpu(this); delete call_ring.load(std::memory_order_relaxed); }
+Cpu::~Cpu() { unregisterCpu(this); }
 
 void Engine::recordLogLineAsyncSafe(const char* data, size_t len) {
     recordLogLineAsyncSafeImpl(data, len);
@@ -279,12 +279,6 @@ const std::string& Engine::lastHostError() { return t_hostError; }
 void Engine::setLastHostError(std::string s) { t_hostError = std::move(s); }
 
 void Engine::callHle(Cpu* c, uint32_t index) {
-    Diag::ThreadCallRing* ring = c->call_ring.load(std::memory_order_relaxed);
-    if (__builtin_expect(!ring, 0)) {
-        ring = new Diag::ThreadCallRing();
-        c->call_ring.store(ring, std::memory_order_release);
-    }
-    ring->push(Diag::CallKind::Hle, index);
     c->in_guest.store(false, std::memory_order_release);
     const uint32_t outerHle = c->current_hle.exchange(index, std::memory_order_relaxed);
     struct Reenter {

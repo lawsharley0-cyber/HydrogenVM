@@ -2,10 +2,8 @@
 #include "runtime/gl/HostGL.hpp"
 #include "runtime/gl/HostGLInternal.hpp"
 #include "runtime/Process.hpp"
-#include "runtime/Support.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
 #include <algorithm>
-#include <vector>
 #include <cmath>
 #include <chrono>
 #include <thread>
@@ -61,8 +59,6 @@ struct State {
     std::shared_ptr<Platform> platform;
     std::unordered_map<uint32_t, std::unique_ptr<HostContext>> contexts;          // guest EAGLContext -> host
     std::unordered_map<uint64_t, std::unique_ptr<HostContext>> workers;           // (thread, sharegroup) -> implicit
-    uint64_t nextRetireId = 1;
-    std::vector<std::unique_ptr<HostContext>> retiredWorkers;                      // destroyed sharegroups; kept alive for tls.ctx users
     std::unordered_map<uint32_t, HostContext*> shareRoot;                          // guest sharegroup -> first host ctx
     std::unordered_map<uint64_t, Drawable> drawables;                              // (sharegroup << 32 | rb) -> drawable
     std::unordered_map<uint32_t, void*> syncs;                                     // guest handle -> GLsync
@@ -73,7 +69,28 @@ struct State {
     std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
     std::atomic<int> presents{0};                                                  // direct presents so far
     std::atomic<bool> toldReadback{false};
-    std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
+    std::chrono::steady_clock::time_point lastPresent{};
+    std::mutex telemetryMu;
+    std::unordered_map<uint32_t, long long> textureBytes;
+    std::atomic<int> activeTextures{0};
+    std::atomic<int> activeBuffers{0};
+    std::atomic<int> activeFramebuffers{0};
+    std::atomic<int> activeRenderbuffers{0};
+    std::atomic<int> activePrograms{0};
+    std::atomic<int> activeShaders{0};
+    std::atomic<long long> estimatedBytes{0};
+                           // for 60 Hz pacing
+
+    struct ResourceMetrics {
+        std::atomic<int> textures{0};
+        std::atomic<int> buffers{0};
+        std::atomic<int> framebuffers{0};
+        std::atomic<int> renderbuffers{0};
+        std::atomic<int> programs{0};
+        std::atomic<int> shaders{0};
+        std::atomic<long long> estimatedBytes{0};
+    };
+    std::unordered_map<uint32_t, std::unique_ptr<ResourceMetrics>> telemetry; // guestSharegroup -> metrics
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -182,24 +199,42 @@ HostContext* threadClone(Process& p, HostContext* hc) {
     return raw;
 }
 
-// The calling thread's current context belongs to a sharegroup that was destroyed: unbind it, destroy its
-// native context and drop the retired object. Only the owning thread has it in tls.ctx, so this is safe.
-void releaseRetiredCurrent(Process& p) {
-    if (tls.proc != &p || !tls.ctx || !tls.ctx->retired.load(std::memory_order_acquire)) return;
+void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     State& st = S(p);
-    HostContext* gone = tls.ctx;
-    tls.ctx = nullptr;
     std::lock_guard<std::mutex> lk(st.mu);
-    st.platform->makeCurrent(nullptr);
-    if (gone->handle) { st.platform->destroyContext(gone->handle); gone->handle = nullptr; }
-    st.retiredWorkers.erase(std::remove_if(st.retiredWorkers.begin(), st.retiredWorkers.end(),
-                                           [gone](const std::unique_ptr<HostContext>& c) { return c.get() == gone; }),
-                            st.retiredWorkers.end());
+
+    for (const auto& kv : st.contexts) {
+        if (kv.second && kv.second->guestSharegroup == guestSharegroup) {
+            p.logf(LogLevel::Warning, "GPU: sharegroup 0x%x destroyed but context 0x%x still references it", guestSharegroup, kv.first);
+            return;
+        }
+    }
+
+    if (auto it = st.telemetry.find(guestSharegroup); it != st.telemetry.end()) {
+        p.logf(LogLevel::Info, "GPU: sharegroup 0x%x destroyed. Live resources before cleanup: %d textures, %d buffers, %d FBOs, %d RBOs, %d programs, %d shaders, estimated %lld bytes",
+               guestSharegroup, it->second->textures.load(), it->second->buffers.load(), it->second->framebuffers.load(),
+               it->second->renderbuffers.load(), it->second->programs.load(), it->second->shaders.load(),
+               it->second->estimatedBytes.load());
+        st.telemetry.erase(it);
+    }
+
+    st.shareRoot.erase(guestSharegroup);
+
+    for (auto it = st.workers.begin(); it != st.workers.end(); ) {
+        if (uint32_t(it->first) == guestSharegroup) {
+            HostContext* hc = it->second.get();
+            if (tls.proc == &p && tls.ctx == hc) tls.ctx = nullptr;
+            if (hc && hc->handle) st.platform->destroyContext(hc->handle);
+            it = st.workers.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
+
 
 void bind(Process& p, HostContext* hc) {
     State& st = S(p);
-    releaseRetiredCurrent(p);   // never overwrite tls.ctx while it still points at a retired worker
     HostContext* root = hc;
     if (hc && !st.platform->makeCurrent(hc->handle) && !hc->implicitWorker) {
         if (HostContext* clone = threadClone(p, hc); clone && st.platform->makeCurrent(clone->handle)) hc = clone;
@@ -267,7 +302,10 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
     }
     {
         std::lock_guard<std::mutex> lk(st.mu);
-        if (!st.shareRoot.count(sharegroup)) st.shareRoot[sharegroup] = hc.get();
+        if (!st.shareRoot.count(sharegroup)) {
+            st.shareRoot[sharegroup] = hc.get();
+            if (!st.telemetry.count(sharegroup)) st.telemetry[sharegroup] = std::make_unique<State::ResourceMetrics>();
+        }
     }
     return hc;
 }
@@ -276,66 +314,43 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
 
 void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
     State& st = S(p);
-    const uint32_t self = p.currentThread().id;
-    std::vector<std::pair<uint64_t, uint32_t>> retiredHere;   // (retirement id, owner thread) retired by this call
-    {
     std::lock_guard<std::mutex> lk(st.mu);
+
     for (const auto& kv : st.contexts) {
-        if (kv.second && kv.second->guestSharegroup == guestSharegroup) return;   // a context still uses the group
-    }
-    st.shareRoot.erase(guestSharegroup);
-    for (auto it = st.workers.begin(); it != st.workers.end();) {
-        if (uint32_t(it->first) != guestSharegroup) { ++it; continue; }
-        const uint32_t owner = uint32_t(it->first >> 32);
-        std::unique_ptr<HostContext> hc = std::move(it->second);
-        it = st.workers.erase(it);
-        if (owner == self) {
-            // The caller owns it, so no other thread can hold it: free it now.
-            if (tls.proc == &p && tls.ctx == hc.get()) {
-                st.platform->makeCurrent(nullptr);   // unbind before the native context goes away
-                tls.ctx = nullptr;
-            }
-            if (hc->handle) st.platform->destroyContext(hc->handle);
-        } else {
-            // A live thread may hold it in tls.ctx: keep the object valid and let that thread drop it.
-            hc->retired = true;
-            hc->retireId = st.nextRetireId++;
-            retiredHere.emplace_back(hc->retireId, owner);
-            st.retiredWorkers.push_back(std::move(hc));
+        if (kv.second && kv.second->guestSharegroup == guestSharegroup) {
+            p.logf(LogLevel::Warning, "GPU: sharegroup 0x%x destroyed but context 0x%x still references it", guestSharegroup, kv.first);
+            return;
         }
     }
+
+    if (auto it = st.telemetry.find(guestSharegroup); it != st.telemetry.end()) {
+        p.logf(LogLevel::Info, "GPU: sharegroup 0x%x destroyed. Live resources before cleanup: %d textures, %d buffers, %d FBOs, %d RBOs, %d programs, %d shaders, estimated %lld bytes",
+               guestSharegroup, it->second->textures.load(), it->second->buffers.load(), it->second->framebuffers.load(),
+               it->second->renderbuffers.load(), it->second->programs.load(), it->second->shaders.load(),
+               it->second->estimatedBytes.load());
+        st.telemetry.erase(it);
     }
-    if (retiredHere.empty()) return;
-    // Workers of other threads are retired above; if an owner has already exited (its exit hook ran before
-    // the retirement), nobody will drop them: take a fresh snapshot (outside st.mu, to keep the lock order
-    // simple) and free whatever nobody can hold any more.
-    const std::vector<uint32_t> liveNow = p.liveThreadIds();
-    std::lock_guard<std::mutex> lk(st.mu);
-    for (const auto& [id, owner] : retiredHere) {
-        if (std::find(liveNow.begin(), liveNow.end(), owner) != liveNow.end()) continue;
-        // Match by retirement id, not address: a context released by its owner may be followed by a new
-        // allocation at the same address.
-        auto it = std::find_if(st.retiredWorkers.begin(), st.retiredWorkers.end(),
-                               [id](const std::unique_ptr<HostContext>& c) { return c->retireId == id; });
-        if (it == st.retiredWorkers.end()) continue;   // the owner already released it
-        if ((*it)->handle) { st.platform->destroyContext((*it)->handle); (*it)->handle = nullptr; }
-        st.retiredWorkers.erase(it);
+
+    st.shareRoot.erase(guestSharegroup);
+
+    for (auto it = st.workers.begin(); it != st.workers.end(); ) {
+        if (uint32_t(it->first) == guestSharegroup) {
+            HostContext* hc = it->second.get();
+            if (tls.proc == &p && tls.ctx == hc) tls.ctx = nullptr;
+            if (hc && hc->handle) st.platform->destroyContext(hc->handle);
+            it = st.workers.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
-void threadExit(Process& p) {
-    if (!enabled(p)) return;
-    releaseRetiredCurrent(p);
-}
 
 HostContext* currentHostContext() { return tls.ctx; }
 
 // ------------------------------------------------------------ current context ---
 
 HostContext* hgCurrent(Ctx& x) {
-    // Its sharegroup died while this thread had it current: release it here, on the owning thread,
-    // then fall through to the no-context path below.
-    releaseRetiredCurrent(x.proc);
     if (tls.proc == &x.proc && tls.ctx) return tls.ctx;
     if (tls.proc == &x.proc && tls.software) return nullptr;
     // No context on this thread. iOS apps (Cocos2d texture loaders, for one) issue
@@ -510,6 +525,9 @@ static bool isPvrtc(uint32_t f) { return f >= kPvrtcRgb4 && f <= kPvrtcRgba2; }
 void hg_glCompressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t internalformat, int32_t width, int32_t height,
                                int32_t border, int32_t imageSize, GuestPtr data) {
     HG_BEGIN(glCompressedTexImage2D)
+    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->estimatedBytes += (long long)(imageSize);
+    }
     if (isPvrtc(internalformat) && !hostHasPvrtc(hc) && hc->fn.glTexImage2D) {
         const bool twoBpp = internalformat == kPvrtcRgb2 || internalformat == kPvrtcRgba2;
         const bool alpha = internalformat == kPvrtcRgba4 || internalformat == kPvrtcRgba2;
@@ -541,6 +559,9 @@ void hg_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_
 void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalformat, int32_t width, int32_t height,
                      int32_t border, uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexImage2D)
+    if (auto it = S(x.proc).telemetry.find(hc->guestSharegroup); it != S(x.proc).telemetry.end()) {
+        it->second->estimatedBytes += (long long)(width * height * 4); // rough estimate
+    }
     if (format == kBgra && internalformat == int32_t(kRgba) && !hc->desktop) internalformat = int32_t(kBgra);
     hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
 }
@@ -1243,13 +1264,6 @@ static void chain(Process& p, const std::string& symbol, void (*host)(Ctx&)) {
         if (!soft || hgUseHost(x)) host(x);
         else soft(x.cpu);
     });
-    // A labelled software stub may now dispatch to a driver, but context-based
-    // software fallback and missing driver entry points still limit support.
-    if (auto record = supportRegistry(p).find(symbol)) {
-        record->status = SupportStatus::Approx;
-        record->provenance = "Host GL dispatch when eligible; fallback: " + record->provenance;
-        supportRegistry(p).record(std::move(*record));
-    }
 }
 
 void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
@@ -1357,6 +1371,12 @@ void setScreenFbo(Process& p, uint32_t guestContext, uint32_t fbo) {
         it->second->readFbo = fbo; // repurposing readFbo or we can add screenFbo
     }
 }
+
+ProvisionalGpuMetrics provisionalMetrics(Process& p) {
+    State& st = S(p);
+    return { st.activeTextures.load(), st.activeBuffers.load(), st.activeFramebuffers.load(), st.activeRenderbuffers.load(), st.activePrograms.load(), st.activeShaders.load(), st.estimatedBytes.load() };
+}
+
 } // namespace Hydrogen::Runtime::HostGL
 
 

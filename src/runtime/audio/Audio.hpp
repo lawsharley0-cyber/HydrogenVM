@@ -65,9 +65,7 @@ public:
     void setAllPaused(bool paused);   // app in the background: silence everything, keep positions
     void stopAll();
 
-    // Mixes `frames` frames at kRate into separate left/right channels. Peaks of the summed bus
-    // are limited to just under full scale with a smoothly released gain (no hard clipping); a mix
-    // that stays under that ceiling passes through unchanged.
+    // Mixes `frames` frames at kRate into separate left/right channels.
     void render(float* left, float* right, size_t frames);
 
     // What the app actually made audible (before the player's own volume), for
@@ -79,13 +77,6 @@ public:
         float peak = 0;
     };
     Stats stats() const;
-    // Queue ownership only. Shared PCM referenced twice is counted twice;
-    // decoder/OpenAL/player caches outside the mixer are not included.
-    struct MemoryStats {
-        uint64_t voiceCount = 0, queuedBufferCount = 0, referencedPcmBytes = 0;
-        uint64_t processedTagCount = 0, processedTagCapacityBytes = 0;
-    };
-    MemoryStats memoryStats() const;
 
 private:
     struct Buffer { Pcm pcm; int rate; uint64_t tag; };
@@ -100,7 +91,6 @@ private:
     std::unordered_map<uint32_t, Voice> voices_;
     uint32_t next_ = 1;
     float master_ = 1.0f;
-    float limiter_ = 1.0f;   // bus limiter gain, 1 = no reduction; guarded by mu_
     std::atomic<bool> allPaused_{false};
     Stats stats_;   // guarded by mu_
 };

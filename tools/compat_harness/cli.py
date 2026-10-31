@@ -120,7 +120,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
-def _resolve_manifest(args: argparse.Namespace, root: str) -> tuple[dict, list[dict], bool, int]:
+def _cmd_run(args: argparse.Namespace) -> int:
+    root = repo_root()
+    if args.launches < 1:
+        print("--launches must be positive", file=sys.stderr)
+        return 2
     from .library import load_library
     manifest = load_library(args.library, args.fixture_root) if args.library else load_manifest(args.manifest)
     if args.library:
@@ -134,7 +138,7 @@ def _resolve_manifest(args: argparse.Namespace, root: str) -> tuple[dict, list[d
         unknown = selected - known
         if unknown:
             print("unknown app id(s): " + ", ".join(sorted(unknown)), file=sys.stderr)
-            return {}, [], False, 2
+            return 2
     resolved = []
     for app in manifest["apps"]:
         if selected is not None and app["id"] not in selected:
@@ -145,10 +149,8 @@ def _resolve_manifest(args: argparse.Namespace, root: str) -> tuple[dict, list[d
         for item in missing:
             print(f"unresolved {item['id']}: {item['reason']}", file=sys.stderr)
         # Still write a report, then fail. Optional skips are not in this list.
-    return manifest, resolved, allow, 0
-
-
-def _setup_and_run_suites(args: argparse.Namespace, root: str, hvm: str, manifest: dict, resolved: list[dict], allow: bool) -> tuple[dict, dict, dict, dict]:
+    hvm = args.hvm or os.path.join(args.build_dir, "hvm")
+    os.makedirs(args.out, exist_ok=True)
     if args.cmd == "unit" or (args.cmd == "run" and not args.skip_unit):
         unit = runner.run_unit(root, args.build_dir)
     else:
@@ -167,10 +169,28 @@ def _setup_and_run_suites(args: argparse.Namespace, root: str, hvm: str, manifes
         apps = {"status": "skip", "apps": []}
     if args.cmd == "unit":
         apps = {"status": "skip", "apps": []}
-    return unit, python, fuzz, apps
-
-
-def _process_baseline_and_history(args: argparse.Namespace, root: str, report: dict, report_path: str, exit_code: int) -> int:
+    report = runner.build_report(
+        root=root,
+        unit=unit,
+        python=python,
+        fuzz=fuzz,
+        apps=apps,
+        manifest_path=args.manifest,
+        fixture_root=args.fixture_root,
+        allow_legacy=allow,
+    )
+    unresolved = [a for a in apps.get("apps") or [] if a["status"] in ("skipped", "error") and not a.get("optional")]
+    if unresolved:
+        report["summary"]["ok"] = False
+    schema_errors = validate_report(report)
+    if schema_errors:
+        report["summary"]["ok"] = False
+        report["schemaErrors"] = schema_errors
+    report_path = os.path.join(args.out, "report.json")
+    _dump(report_path, report)
+    print(report_path)
+    _print_summary(report)
+    exit_code = 0 if report["summary"]["ok"] else 1
     if args.baseline:
         baseline = _load(args.baseline)
         diff = diffing.diff_reports(baseline, report)
@@ -214,43 +234,6 @@ def _process_baseline_and_history(args: argparse.Namespace, root: str, report: d
         recorded = indexed.get("recorded")
         if recorded:
             print(os.path.join(root, "docs", "dev-system", "reports", recorded["path"]))
-    return exit_code
-
-
-def _cmd_run(args: argparse.Namespace) -> int:
-    root = repo_root()
-    if args.launches < 1:
-        print("--launches must be positive", file=sys.stderr)
-        return 2
-    manifest, resolved, allow, error_code = _resolve_manifest(args, root)
-    if error_code != 0:
-        return error_code
-    hvm = args.hvm or os.path.join(args.build_dir, "hvm")
-    os.makedirs(args.out, exist_ok=True)
-    unit, python, fuzz, apps = _setup_and_run_suites(args, root, hvm, manifest, resolved, allow)
-    report = runner.build_report(
-        root=root,
-        unit=unit,
-        python=python,
-        fuzz=fuzz,
-        apps=apps,
-        manifest_path=args.manifest,
-        fixture_root=args.fixture_root,
-        allow_legacy=allow,
-    )
-    unresolved = [a for a in apps.get("apps") or [] if a["status"] in ("skipped", "error") and not a.get("optional")]
-    if unresolved:
-        report["summary"]["ok"] = False
-    schema_errors = validate_report(report)
-    if schema_errors:
-        report["summary"]["ok"] = False
-        report["schemaErrors"] = schema_errors
-    report_path = os.path.join(args.out, "report.json")
-    _dump(report_path, report)
-    print(report_path)
-    _print_summary(report)
-    exit_code = 0 if report["summary"]["ok"] else 1
-    exit_code = _process_baseline_and_history(args, root, report, report_path, exit_code)
     if schema_errors:
         for err in schema_errors:
             print(f"schema: {err}", file=sys.stderr)
