@@ -3667,6 +3667,36 @@ int runFullSubsystemTests() {
             check(shared.totalHits() == 4000 && shared.records().size() == 1 && shared.records()[0].count == 4000 && sharedSites == 1,
                   "hits from several threads are all counted and the first-hit capture runs once");
 
+            // A hit that locks the log later can carry an earlier timestamp (the time is read before the lock).
+            MissingApiLog skew;
+            auto noSite = [](MissingApiLog::Site&) {};
+            skew.hit("_late", 5.0, noSite);
+            skew.hit("_late", 2.0, noSite);
+            skew.hit("_late", 9.0, noSite);
+            const auto skewRecs = skew.records();
+            check(skewRecs.size() == 1 && skewRecs[0].firstSeconds == 2.0 && skewRecs[0].lastSeconds == 9.0 && skewRecs[0].count == 3,
+                  "Missing-API log keeps first/last times as chronological bounds even when hits arrive out of order (T2a)");
+
+            // --launches N builds a new Process per launch but writes one report: absorb() carries the earlier launches over.
+            MissingApiLog launch1, launch2, combined;
+            launch1.hit("_only_first", 1.0, noSite);
+            launch1.hit("_both", 2.0, noSite);
+            launch2.hit("_both", 0.5, noSite);
+            launch2.hit("_both", 3.0, noSite);
+            MissingApiLog cleanLaunch;
+            combined.absorb(launch1);
+            combined.absorb(cleanLaunch);
+            const bool carriedTaint = combined.tainted() && combined.totalHits() == 2;
+            combined.absorb(launch2);
+            const auto crecs = combined.records();
+            check(carriedTaint && combined.tainted() && combined.totalHits() == 4 && combined.distinct() == 2 && crecs.size() == 2 &&
+                      crecs[0].name == "_only_first" && crecs[0].count == 1 && crecs[1].name == "_both" && crecs[1].count == 3 &&
+                      crecs[1].firstSeconds == 0.5 && crecs[1].lastSeconds == 3.0 &&
+                      combined.reportFields("").find("\"tainted\": true") != std::string::npos,
+                  "Missing-API log absorb() keeps a hit from an earlier launch tainted in the final report (T2a)");
+            check(!cleanLaunch.tainted() && MissingApiLog().reportFields("").find("\"tainted\": false") != std::string::npos,
+                  "A launch with no missing-API hits stays untainted (T2a)");
+
             check(MissingApiLog::jsonEscape("a\"b\\c\nd\x01") == "a\\\"b\\\\c\\nd\\u0001" &&
                       MissingApiLog::jsonEscape("\xff\xfe") == "??" && MissingApiLog::jsonEscape("h\xc3\xa9llo") == "h\xc3\xa9llo" &&
                       MissingApiLog::jsonEscape("\xed\xa0\x80") == "???" && MissingApiLog::jsonEscape("\xc3") == "?",

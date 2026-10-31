@@ -66,8 +66,37 @@ public:
             if (r.backtrace.size() > kMaxFrames) r.backtrace.resize(kMaxFrames);
             it = byName_.emplace(name, std::move(r)).first;
         }
-        ++it->second.count;
-        it->second.lastSeconds = secondsSinceLaunch;
+        // The time is read before the lock is taken, so a later-locked hit can carry an earlier time.
+        MissingApiRecord& rec = it->second;
+        ++rec.count;
+        rec.firstSeconds = std::min(rec.firstSeconds, secondsSinceLaunch);
+        rec.lastSeconds = std::max(rec.lastSeconds, secondsSinceLaunch);
+    }
+
+    // Add another log's counts and records to this one (`hvm run --launches N`: each launch has its own
+    // Process and log, but the run writes one report). Names new to this log keep `other`'s capture and
+    // come after the existing ones; times stay relative to the launch they were taken in.
+    void absorb(const MissingApiLog& other) {
+        if (&other == this) return;
+        const std::vector<MissingApiRecord> recs = other.records();
+        uint64_t total, overflow;
+        { std::lock_guard<std::mutex> lk(other.mu_); total = other.totalHits_; overflow = other.overflowHits_; }
+        std::lock_guard<std::mutex> lk(mu_);
+        totalHits_ += total;
+        overflowHits_ += overflow;
+        for (MissingApiRecord r : recs) {
+            auto it = byName_.find(r.name);
+            if (it == byName_.end()) {
+                if (byName_.size() >= kMaxNames) { overflowHits_ += r.count; continue; }
+                r.order = nextOrder_++;
+                byName_.emplace(r.name, std::move(r));
+            } else {
+                MissingApiRecord& rec = it->second;
+                rec.count += r.count;
+                rec.firstSeconds = std::min(rec.firstSeconds, r.firstSeconds);
+                rec.lastSeconds = std::max(rec.lastSeconds, r.lastSeconds);
+            }
+        }
     }
 
     // True from the first hit on.
