@@ -3272,6 +3272,63 @@ int runFullSubsystemTests() {
 
             const bool disq1 = callGL("_glIsQueryEXT", {q1}) != 0;
             check(!disq1, "glDeleteQueriesEXT removes ids from state");
+
+            // Deleting an active query keeps it bound until glEndQueryEXT, which then releases it.
+            callGL("_glGetError", {});
+            const uint32_t qp = proc.heap().allocZeroed(4);
+            proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
+            callGL("_glGetQueryivEXT", {0x8C2F, 0x8865, qp});   // GL_CURRENT_QUERY_EXT
+            const uint32_t cur_before = proc.mem().read<uint32_t>(qp);
+            const bool still_q2 = callGL("_glIsQueryEXT", {q2}) != 0;
+            check(cur_before == q2 && still_q2, "glDeleteQueriesEXT leaves an active query bound (GL_CURRENT_QUERY_EXT reports it) until glEndQueryEXT");
+            callGL("_glEndQueryEXT", {0x8C2F});
+            const uint32_t endErr = callGL("_glGetError", {});
+            proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
+            callGL("_glGetQueryivEXT", {0x8C2F, 0x8865, qp});
+            check(endErr == 0 && proc.mem().read<uint32_t>(qp) == 0 && callGL("_glIsQueryEXT", {q2}) == 0,
+                  "glEndQueryEXT releases a query deleted while active");
+
+            // Negative counts are GL_INVALID_VALUE and touch no guest memory.
+            const uint32_t nid = proc.heap().allocZeroed(4);
+            proc.mem().write<uint32_t>(nid, 0xAAAAAAAA);
+            callGL("_glGenQueriesEXT", {uint32_t(-1), nid});
+            const uint32_t negGen = callGL("_glGetError", {});
+            callGL("_glDeleteQueriesEXT", {uint32_t(-1), nid});
+            const uint32_t negDel = callGL("_glGetError", {});
+            check(negGen == 0x0501 && negDel == 0x0501 && proc.mem().read<uint32_t>(nid) == 0xAAAAAAAA,
+                  "glGenQueriesEXT/glDeleteQueriesEXT reject negative counts with GL_INVALID_VALUE");
+
+            // One occlusion query at a time across both targets; an object keeps its first target.
+            callGL("_glGenQueriesEXT", {2, ids});
+            const uint32_t a1 = proc.mem().read<uint32_t>(ids), a2 = proc.mem().read<uint32_t>(ids + 4);
+            callGL("_glBeginQueryEXT", {0x8C2F, a1});
+            const uint32_t okBegin = callGL("_glGetError", {});
+            callGL("_glBeginQueryEXT", {0x8D6A, a2});   // conservative target while any-samples is active
+            const uint32_t crossErr = callGL("_glGetError", {});
+            callGL("_glEndQueryEXT", {0x8C2F});
+            callGL("_glGetError", {});
+            callGL("_glBeginQueryEXT", {0x8D6A, a1});   // a1 was first begun on 0x8C2F
+            const uint32_t retargetErr = callGL("_glGetError", {});
+            callGL("_glBeginQueryEXT", {0x8D6A, a2});
+            const uint32_t okCons = callGL("_glGetError", {});
+            proc.mem().write<uint32_t>(qp, 0);
+            callGL("_glGetQueryivEXT", {0x8D6A, 0x8865, qp});
+            const uint32_t consCur = proc.mem().read<uint32_t>(qp);
+            callGL("_glEndQueryEXT", {0x8D6A});
+            check(okBegin == 0 && crossErr == 0x0502 && retargetErr == 0x0502 && okCons == 0 && consCur == a2,
+                  "glBeginQueryEXT allows one active occlusion query across both targets and rejects re-targeting an existing object");
+
+            // Enum validation in glGetQueryivEXT / glGetQueryObjectuivEXT.
+            callGL("_glGetError", {});
+            callGL("_glGetQueryivEXT", {0x8C2F, 0x1234, qp});
+            const uint32_t badPname = callGL("_glGetError", {});
+            callGL("_glGetQueryivEXT", {0x1234, 0x8865, qp});
+            const uint32_t badTarget = callGL("_glGetError", {});
+            proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {a1, 0x1234, qp});
+            const uint32_t badObjPname = callGL("_glGetError", {});
+            check(badPname == 0x0500 && badTarget == 0x0500 && badObjPname == 0x0500 && proc.mem().read<uint32_t>(qp) == 0xFFFFFFFF,
+                  "glGetQueryivEXT/glGetQueryObjectuivEXT reject unsupported targets and pnames with GL_INVALID_ENUM");
         }
 
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;

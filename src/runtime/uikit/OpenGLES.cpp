@@ -457,7 +457,8 @@ struct ContextData : ObjC::HostObject {
     // Bindings
     uint32_t nextQuery = 1;
     std::unordered_set<uint32_t> reservedQueries;
-    std::unordered_set<uint32_t> queryObjects;
+    std::unordered_map<uint32_t, uint32_t> queryObjects;   // begun query name -> target it was begun on
+    std::unordered_set<uint32_t> queryPendingDelete;       // deleted while active: released by glEndQuery
     uint32_t activeQueryAnySamples = 0;
     uint32_t activeQueryAnySamplesConservative = 0;
     uint32_t arrayBuffer = 0;
@@ -2480,25 +2481,30 @@ bool vertexAttribState(Ctx& x, uint32_t idx, uint32_t pname, float out[4], int& 
     return true;
 }
 // EXT_occlusion_query_boolean
-void gl_genQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
+void gl_genQueriesEXT(Ctx& x, int32_t n, GuestPtr ids) {
     ContextData* c = currentCtx(x);
     if (!c) return;
-    for (uint32_t i = 0; i < n; ++i) {
+    if (n < 0) { c->lastError = GL_INVALID_VALUE; return; }
+    for (int32_t i = 0; i < n; ++i) {
         const uint32_t id = c->nextQuery++;
         c->reservedQueries.insert(id);
-        x.mem.write<uint32_t>(ids + i * 4, id);
+        x.mem.write<uint32_t>(ids + uint32_t(i) * 4, id);
     }
 }
-void gl_deleteQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
+void gl_deleteQueriesEXT(Ctx& x, int32_t n, GuestPtr ids) {
     ContextData* c = currentCtx(x);
-    if (!c || !ids) return;
-    for (uint32_t i = 0; i < n; ++i) {
-        const uint32_t id = x.mem.read<uint32_t>(ids + i * 4);
+    if (!c) return;
+    if (n < 0) { c->lastError = GL_INVALID_VALUE; return; }
+    if (!ids) return;
+    for (int32_t i = 0; i < n; ++i) {
+        const uint32_t id = x.mem.read<uint32_t>(ids + uint32_t(i) * 4);
         c->reservedQueries.erase(id);
-        c->queryObjects.erase(id);
-
-        if (c->activeQueryAnySamples == id) c->activeQueryAnySamples = 0;
-        if (c->activeQueryAnySamplesConservative == id) c->activeQueryAnySamplesConservative = 0;
+        if (id != 0 && (c->activeQueryAnySamples == id || c->activeQueryAnySamplesConservative == id)) {
+            // An active query stays bound until glEndQuery, which then releases it.
+            c->queryPendingDelete.insert(id);
+        } else {
+            c->queryObjects.erase(id);
+        }
     }
 }
 uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
@@ -2514,30 +2520,29 @@ void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {
         return;
     }
 
-    // Khronos: error if another query is already active for this target
-    uint32_t& activeId = (target == 0x8C2F) ? c->activeQueryAnySamples : c->activeQueryAnySamplesConservative;
-    if (activeId != 0) {
-        c->lastError = GL_INVALID_OPERATION;
-        return;
-    }
-
-    // Khronos: error if id is an active query for some other target
-    if ((target == 0x8C2F && c->activeQueryAnySamplesConservative == id) ||
-        (target == 0x8D6A && c->activeQueryAnySamples == id)) {
+    // Khronos: only one occlusion query may be active at a time, across both targets
+    // (this also rejects an id that is active on the other target).
+    if (c->activeQueryAnySamples != 0 || c->activeQueryAnySamplesConservative != 0) {
         c->lastError = GL_INVALID_OPERATION;
         return;
     }
 
     // Must be a valid reserved name or an existing object
-    if (!c->reservedQueries.count(id) && !c->queryObjects.count(id)) {
+    auto existing = c->queryObjects.find(id);
+    if (existing == c->queryObjects.end() && !c->reservedQueries.count(id)) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+    // Khronos: an existing query object keeps the target it was first begun on
+    if (existing != c->queryObjects.end() && existing->second != target) {
         c->lastError = GL_INVALID_OPERATION;
         return;
     }
 
     c->reservedQueries.erase(id);
-    c->queryObjects.insert(id);
+    c->queryObjects[id] = target;
 
-    activeId = id;
+    (target == 0x8C2F ? c->activeQueryAnySamples : c->activeQueryAnySamplesConservative) = id;
 }
 void gl_endQueryEXT(Ctx& x, uint32_t target) {
     ContextData* c = currentCtx(x);
@@ -2554,10 +2559,17 @@ void gl_endQueryEXT(Ctx& x, uint32_t target) {
         return;
     }
 
+    if (c->queryPendingDelete.erase(activeId)) c->queryObjects.erase(activeId);   // deleted while active
     activeId = 0;
 }
 void gl_getQueryivEXT(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
-    if (params) x.mem.write<int32_t>(params, 0);
+    ContextData* c = currentCtx(x);
+    if (!c) return;
+    if ((target != 0x8C2F && target != 0x8D6A) || pname != 0x8865) {   // GL_CURRENT_QUERY_EXT is the only occlusion pname
+        c->lastError = GL_INVALID_ENUM;
+        return;
+    }
+    if (params) x.mem.write<int32_t>(params, int32_t(target == 0x8C2F ? c->activeQueryAnySamples : c->activeQueryAnySamplesConservative));
 }
 void gl_getQueryObjectuivEXT(Ctx& x, uint32_t id, uint32_t pname, GuestPtr params) {
     ContextData* c = currentCtx(x);
@@ -2575,9 +2587,11 @@ void gl_getQueryObjectuivEXT(Ctx& x, uint32_t id, uint32_t pname, GuestPtr param
         return;
     }
 
-    if (pname == 0x8867 || pname == 0x8866) { // GL_QUERY_RESULT_AVAILABLE or GL_QUERY_RESULT
-        x.mem.write<uint32_t>(params, 1);
+    if (pname != 0x8867 && pname != 0x8866) {   // GL_QUERY_RESULT_AVAILABLE / GL_QUERY_RESULT
+        c->lastError = GL_INVALID_ENUM;
+        return;
     }
+    x.mem.write<uint32_t>(params, 1);
 }
 
 void gl_drawBuffers(Ctx& x, int32_t n, GuestPtr bufs) {}
