@@ -1040,6 +1040,8 @@ id f_userName(Ctx& x) { return makeString(x, "mobile"); }
 
 } // namespace
 
+[[noreturn]] void raiseObjCException(Ctx& x, id exception) { throwException(x, exception); }
+
 // Exported helpers ------------------------------------------------------------
 
 [[noreturn]] void throwGuestException(Ctx& x, const std::string& name, const std::string& reason) {
