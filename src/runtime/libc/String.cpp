@@ -348,7 +348,7 @@ uint32_t s_strncpy_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t dest
 }
 
 uint32_t s_strcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
-    const size_t dl = safe_strlen(x, d);
+    const size_t dl = safe_strnlen(x, d, destlen); // never scan past the destination limit
     if (dl >= destlen) s_chk_fail(x);
     const size_t sl = safe_strlen(x, s);
     if (uint64_t(dl) + uint64_t(sl) + 1 > destlen) s_chk_fail(x);
@@ -358,7 +358,7 @@ uint32_t s_strcat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t destlen) {
 }
 
 uint32_t s_strncat_chk(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n, uint32_t destlen) {
-    const size_t dl = safe_strlen(x, d);
+    const size_t dl = safe_strnlen(x, d, destlen); // never scan past the destination limit
     if (dl >= destlen) s_chk_fail(x);
     const size_t sl = safe_strnlen(x, s, n);
     if (dl + sl + 1 > destlen) s_chk_fail(x);
