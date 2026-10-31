@@ -13,7 +13,7 @@ class TestGlibcProperties(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not HVM_TESTS.exists():
-            raise unittest.SkipTest(f"{HVM_TESTS} binary not built yet")
+            raise AssertionError(f"{HVM_TESTS} is missing; build it first: cmake -S . -B build -G Ninja && ninja -C build hvm_tests")
 
     def test_property_tests_pass(self):
         cmd = [str(HVM_TESTS), "propertytest"]
@@ -21,6 +21,12 @@ class TestGlibcProperties(unittest.TestCase):
         self.assertEqual(res.returncode, 0, f"propertytest failed:\n{res.stdout}\n{res.stderr}")
         self.assertIn("glibc property tests: 6 passed, 0 failed", res.stdout)
         self.assertNotIn("FAIL", res.stdout)
+
+    def test_invalid_plant_request_is_a_usage_error(self):
+        for extra in (["--plant-off-by-one"], ["--plant-off-by-one", "bogus"], ["--other", "strlen"]):
+            res = subprocess.run([str(HVM_TESTS), "propertytest", *extra], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 2, extra)
+            self.assertIn("usage:", res.stderr)
 
     def test_planted_off_by_one_strlen_caught(self):
         cmd = [str(HVM_TESTS), "propertytest", "--plant-off-by-one", "strlen"]
