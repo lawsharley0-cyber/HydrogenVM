@@ -199,6 +199,12 @@ def issues_from(rep, log_text, shot, timed_out):
     mx = rep.get('mixer') or {}
     if mx.get('framesRendered', 0) and not mx.get('audibleFrames', 0) and not report:
         add('silent', 'no audible sound during the whole run')
+    try:
+        from unity_mono_checklist import check_probe_run
+        for ci in check_probe_run(rep, log_text):
+            add(ci['kind'], ci['text'])
+    except Exception:
+        pass
     return found
 
 
