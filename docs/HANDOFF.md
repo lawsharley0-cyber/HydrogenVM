@@ -1,7 +1,5 @@
 # HydrogenVM — handoff (2026-10-20)
 
-> **SUPERSEDED for priorities and work order (2026-10-30): read [docs/PLAN.md](PLAN.md) first.** Everything below is reference only (machine layout, run recipes, architecture notes, per-game history). If anything here disagrees with PLAN.md, PLAN.md wins.
-
 ## Current continuation — October 22, 2026
 
 Integration is `main`. Use a topic branch and a draft PR; the owner integrates

@@ -13,7 +13,6 @@
 #include <memory>
 #include <mutex>
 #include <typeinfo>
-#include <queue>
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -172,10 +171,6 @@ public:
     void makeImmortal(id obj);
     uint32_t poolPush();
     void poolPop(CPU::Cpu& c, uint32_t token);
-    // Release every autorelease pool still open on the current thread.
-    // poolPush's first token is 1; popping that token releases nested pools too.
-    // Token 0 is not a drain-all sentinel: poolPop ignores it.
-    void drainPools(CPU::Cpu& c);
     void addToPool(id obj);
     // weak references
     id loadWeak(uint32_t slot);
@@ -266,13 +261,10 @@ private:
     // HVM_ZOMBIES=1 or ProcessConfig::enableZombies: freed objects keep their
     // memory (so the address isn't reused) and remember their class and the guest
     // backtrace of the release that freed them; a later message names them.
-    // The metadata for zombies is bounded to save host memory, but the guest
-    // memory remains allocated to guarantee use-after-free detection.
     bool zombiesEnabled_ = false;
     std::mutex zombieMu_;
     std::unordered_map<id, std::pair<std::string, std::string>> zombies_;   // class, "freed by" + "allocated by"
     std::unordered_map<id, std::string> allocSites_;                        // live objects' creation backtraces
-    std::queue<id> zombieQueue_;
 };
 
 Runtime& rt(Process& p);

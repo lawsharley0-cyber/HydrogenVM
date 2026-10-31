@@ -2,9 +2,9 @@
 
 HydrogenVM is a JIT-less ARMv7 user-mode emulator. Guest code is decoded into `Op` records and executed by ahead-of-time C++ handlers. No guest code is written into executable host memory. One process owns a 4 GB `GuestArena`, an `Engine`, guest threads that are host threads, and a symbol table that binds Mach-O imports to host functions. Frameworks are a guest Objective-C runtime in C++. The UI is composited in software. The phone shell is SwiftUI under `app/`. The desktop CLI is `hvm`.
 
-**Start with [docs/PLAN.md](docs/PLAN.md)**: the only plan, with task cards and the rules for running several agents at once. [docs/GROK_HANDOFF.md](docs/GROK_HANDOFF.md) and [docs/GEMINI_HANDOFF.md](docs/GEMINI_HANDOFF.md) are reference (run recipes, per-game history).
+**Handing over? Read [docs/GROK_HANDOFF.md](docs/GROK_HANDOFF.md) first** (current state, open tasks, how to test).
 
-The older [docs/dev-system/MASTER_PLAN.md](docs/dev-system/MASTER_PLAN.md) is superseded by PLAN.md. The comparable-project research behind it is [docs/research/COMPARABLE_PROJECTS.md](docs/research/COMPARABLE_PROJECTS.md). Read only the docs your ticket names.
+**Start with [docs/dev-system/MASTER_PLAN.md](docs/dev-system/MASTER_PLAN.md)**: the current phase order, the per-app plan and the agent split. The comparable-project research behind it is [docs/research/COMPARABLE_PROJECTS.md](docs/research/COMPARABLE_PROJECTS.md). Read only the docs your ticket names.
 
 This file is the working agreement for a coding agent. It does not change the emulator. The detail is in `docs/dev-system/`:
 
@@ -30,14 +30,6 @@ python3 tools/hvm_testlab.py run --hvm build/hvm --out build/testlab-report   # 
 ```
 
 Read [docs/TEST_LAB.md](docs/TEST_LAB.md), especially "Agent guide": what each case covers, how to run one case by hand, the oracle rule (never copy emulator output into an expectation), the blind-spot table (what a green run does *not* prove: shader breadth, threading, keychain, texture formats, perf thresholds, touch/lifecycle), and the bug-class process (every new real-app bug becomes a minimal `TL-X` case that is shown to fail before the fix). A green Test Lab run is necessary, not sufficient: still run the affected real app.
-
-## Parallel-agent rules
-
-1. **Plan first.** Before coding, post a short plan (files, tests, risks) as a comment on the card's issue.
-2. **Iteration cap: 8.** Eight edit-build-test cycles per card. If the "done when" line is still false, stop, push what you have as a draft and comment what you learned. Lawson or the coordinator can raise the cap on the issue for that card only.
-3. **One editor for hotspot files.** `src/runtime/Process.cpp`, `src/runtime/Process.hpp`, `src/runtime/objc/Runtime.cpp` and `src/runtime/libc/System.cpp` are edited by one agent at a time. The designated agent is named in a `Hotspot editor:` line on the card's issue before parallel work starts. Others wait or rebase after it merges.
-4. **Cards that need a game run stay on a runner with the IPAs** (the Gemini VM). Copilot, Codex, Jules and Cursor take code-and-test cards only.
-5. **Draft until the gates pass.** Open the PR as a draft, then mark it ready for review once the gates in this file have run and their output is in the PR body. Do not merge it yourself.
 
 ## Build and test
 

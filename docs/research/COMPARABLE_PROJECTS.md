@@ -1,7 +1,7 @@
 # Research: how comparable emulators solved compatibility, JIT-less speed, GLES2, testing and UX
 
 Research report produced 2026-10-23 for HydrogenVM planning. It is reference material, not
-policy. The plan that acts on it is now [`docs/PLAN.md`](../PLAN.md) ([`MASTER_PLAN.md`](../dev-system/MASTER_PLAN.md) is superseded).
+policy; the plan that acts on it is [`docs/dev-system/MASTER_PLAN.md`](../dev-system/MASTER_PLAN.md).
 Claims sourced from forks, issue trackers and AI-assisted community projects are self-reported.
 
 ## TL;DR

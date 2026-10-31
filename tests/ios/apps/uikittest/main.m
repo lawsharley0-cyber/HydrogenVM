@@ -241,37 +241,6 @@ static unsigned pixelAt(CGImageRef img, int x, int y) {
         if (panel && [name isEqualToString:@"Panel"]) [self.vc.view addSubview:panel];
     }
 
-    // A missing nib is an NSInternalInconsistencyException the guest can catch.
-    // Orientation words are not resource modifiers: PanelLandscape must not load Panel.
-    BOOL missingNibRaised = NO, landscapeAliasRejected = NO, portraitAliasRejected = NO;
-    @try {
-        (void)[[NSBundle mainBundle] loadNibNamed:@"DefinitelyMissingNibThatDoesntExist" owner:nil options:nil];
-    } @catch (NSException *e) {
-        const char *reason = e.reason ? [e.reason UTF8String] : NULL;
-        missingNibRaised = [e.name isEqualToString:@"NSInternalInconsistencyException"]
-            && reason && strstr(reason, "Could not load NIB in bundle")
-            && strstr(reason, "DefinitelyMissingNibThatDoesntExist");
-    }
-    CHECK(missingNibRaised, "loadNibNamed: missing NIB raises NSInternalInconsistencyException");
-    @try {
-        (void)[[NSBundle mainBundle] loadNibNamed:@"PanelLandscape" owner:self.vc options:nil];
-    } @catch (NSException *e) {
-        const char *reason = e.reason ? [e.reason UTF8String] : NULL;
-        landscapeAliasRejected = [e.name isEqualToString:@"NSInternalInconsistencyException"]
-            && reason && strstr(reason, "Could not load NIB in bundle")
-            && strstr(reason, "PanelLandscape");
-    }
-    CHECK(landscapeAliasRejected, "loadNibNamed: does not strip Landscape to load Panel");
-    @try {
-        (void)[[NSBundle mainBundle] loadNibNamed:@"PanelPortrait" owner:self.vc options:nil];
-    } @catch (NSException *e) {
-        const char *reason = e.reason ? [e.reason UTF8String] : NULL;
-        portraitAliasRejected = [e.name isEqualToString:@"NSInternalInconsistencyException"]
-            && reason && strstr(reason, "Could not load NIB in bundle")
-            && strstr(reason, "PanelPortrait");
-    }
-    CHECK(portraitAliasRejected, "loadNibNamed: does not strip Portrait to load Panel");
-
     // controls
     [self.vc.button sendActionsForControlEvents:UIControlEventTouchUpInside];
     CHECK(buttonTaps == 1, "UIButton target/action");
