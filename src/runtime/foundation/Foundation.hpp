@@ -149,6 +149,9 @@ id mainDispatchQueue(Process& p);
 // ---- misc
 id nullObject(Process& p);                               // [NSNull null]
 bool characterSetContains(Ctx& x, id set, char16_t c);
+// Lands `exception` in a guest @catch on this host→guest call. With no handler,
+// runs the uncaught-exception handler and then terminates.
+[[noreturn]] void raiseObjCException(Ctx& x, id exception);
 
 // ---- class registration
 void registerStrings(Process& p, ObjC::Runtime& r);

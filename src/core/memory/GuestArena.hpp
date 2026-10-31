@@ -65,6 +65,13 @@ public:
 
     bool    isMapped(uint32_t addr) const noexcept { return prot_[addr >> kGuestPageShift] != kProtNone; }
     uint8_t protAt(uint32_t addr) const noexcept   { return prot_[addr >> kGuestPageShift]; }
+    // Validate and perform a complete NUL-terminated write under the mapping
+    // lock, so concurrent unmap cannot invalidate the check before the copy.
+    bool copyCStringWritable(uint32_t addr, const char* src, size_t chars) noexcept;
+    // Same lock as copyCStringWritable, for a wchar_t image: `count` guest
+    // bytes expanded to 4-byte code units, plus a 4-byte NUL. Nothing is
+    // stored unless every byte of that span is writable.
+    bool copyWideWritable(uint32_t addr, const char* chars, size_t count) noexcept;
 
     // Find a free, page-aligned range of `size` bytes at or above `hint`.
     // Returns 0 on failure (address 0 is never handed out).
