@@ -47,6 +47,7 @@ PASS, FAIL, UNVERIFIED = "pass", "fail", "unverified"
 # UNVERIFIED, never PASS: a checklist that passes without evidence is worse than none.
 STAT_MARKER = "Darwin 32-bit struct stat legacy and INODE64 layouts"   # no such assertion in fulltest yet
 DLOPEN_MARKER = "dlopen(NULL) returns RTLD_DEFAULT"
+DLSYM_MARKER = "dlsym(RTLD_DEFAULT) resolves guest and HLE exports"   # no such assertion in fulltest yet
 GETPWNAM_MARKER = "getpwnam_r finds only mobile"
 GETPWUID_MARKER = "getpwuid(501) returns mobile"                          # no such assertion in fulltest yet
 AUDIO_MARKER = "AudioQueue accepts 44.1 kHz stereo 16-bit PCM"           # no such assertion in fulltest yet
@@ -57,7 +58,10 @@ def run_fulltest(hvm_tests_bin: Path | None) -> str | None:
     """stdout of `hvm_tests fulltest`, or None when the binary is not available. Run once, shared by the checks."""
     if not hvm_tests_bin or not Path(hvm_tests_bin).exists():
         return None
-    res = subprocess.run([str(hvm_tests_bin), "fulltest"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        res = subprocess.run([str(hvm_tests_bin), "fulltest"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except OSError:
+        return None   # a directory, a file that is not executable, ...: no evidence, not a crash
     return res.stdout
 
 
@@ -105,9 +109,13 @@ def check_signals(report_json: dict | None = None) -> dict:
 
 
 def check_dlopen_null(fulltest_output: str | None = None) -> dict:
-    """dlopen(NULL) returns RTLD_DEFAULT."""
-    return _result(assertion_status(fulltest_output, DLOPEN_MARKER), rtld_default=RTLD_DEFAULT_HANDLE,
-                   description="dlopen(NULL) returns the RTLD_DEFAULT handle")
+    """dlopen(NULL) returns RTLD_DEFAULT AND dlsym on it resolves exports; both need evidence. The existing handle
+    assertion is a compound line (it also covers CVPixelBuffer and AVAssetWriter), so a FAIL there can come from
+    another part of it; the dedicated dlsym assertion is what establishes resolution."""
+    handle = assertion_status(fulltest_output, DLOPEN_MARKER)
+    resolve = assertion_status(fulltest_output, DLSYM_MARKER)
+    return _result(combine(handle, resolve), handle=handle, resolve=resolve, rtld_default=RTLD_DEFAULT_HANDLE,
+                   description="dlopen(NULL) returns the RTLD_DEFAULT handle and dlsym resolves exports")
 
 
 def check_getpw(fulltest_output: str | None = None) -> dict:
@@ -140,11 +148,11 @@ def check_probe_run(rep: dict | None, log_text: str = "") -> list[dict]:
 
     # 3. dlopen(NULL) check
     if "dlsym(RTLD_DEFAULT)" in log_text and "symbol not found" in log_text:
-        issues.append({"kind": "missing", "check": "dlopen_null", "text": "dlopen(NULL) export resolution failure"})
+        issues.append({"kind": "error", "check": "dlopen_null", "text": "dlopen(NULL) export resolution failure"})
 
     # 4. getpw check
     if "getpwnam failed" in log_text or "getpwuid failed" in log_text:
-        issues.append({"kind": "missing", "check": "getpw", "text": "getpw mobile user resolution failure"})
+        issues.append({"kind": "error", "check": "getpw", "text": "getpw mobile user resolution failure"})
 
     # 5. audio_format check
     if "AudioQueue: unsupported format" in log_text:

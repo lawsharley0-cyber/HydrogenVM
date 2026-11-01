@@ -51,8 +51,11 @@ class TestUnityMonoChecklist(unittest.TestCase):
             self.assertIn(sig, U.check_signals(None)["signals"])
 
     def test_dlopen_null(self):
-        self.assertEqual(U.check_dlopen_null(ok(U.DLOPEN_MARKER))["status"], U.PASS)
-        self.assertEqual(U.check_dlopen_null(failed(U.DLOPEN_MARKER))["status"], U.FAIL)
+        both = ok(U.DLOPEN_MARKER) + ok(U.DLSYM_MARKER)
+        self.assertEqual(U.check_dlopen_null(both)["status"], U.PASS)
+        self.assertEqual(U.check_dlopen_null(ok(U.DLOPEN_MARKER))["status"], U.UNVERIFIED)   # export resolution not shown
+        self.assertEqual(U.check_dlopen_null(ok(U.DLOPEN_MARKER) + failed(U.DLSYM_MARKER))["status"], U.FAIL)
+        self.assertEqual(U.check_dlopen_null(failed(U.DLOPEN_MARKER) + ok(U.DLSYM_MARKER))["status"], U.FAIL)
         self.assertEqual(U.check_dlopen_null("")["status"], U.UNVERIFIED)
         self.assertEqual(U.check_dlopen_null(None)["rtld_default"], 0xFFFFFFFE)   # the handle the runtime test checks
 
@@ -74,6 +77,21 @@ class TestUnityMonoChecklist(unittest.TestCase):
         self.assertFalse(res["overall_pass"])
         self.assertFalse(res["fulltest_available"])
         self.assertEqual(res["overall_status"], U.UNVERIFIED)
+
+    def test_unusable_test_binary_is_unverified_not_a_traceback(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            self.assertIsNone(U.run_fulltest(Path(td)))              # a directory
+            plain = Path(td) / "not_executable"
+            plain.write_text("x")
+            self.assertIsNone(U.run_fulltest(plain))                 # no execute permission
+            self.assertEqual(U.run_checklist(plain)["overall_status"], U.UNVERIFIED)
+
+    def test_startup_lookup_failures_make_the_run_not_ok(self):
+        for log in ("dlsym(RTLD_DEFAULT): symbol not found: mono_x\n", "getpwnam failed: no mobile\n"):
+            found = hvm_probe.issues_from({"mixer": {}}, log, Path("/nonexistent"), False)
+            worst = max(i["severity"] for i in found)
+            self.assertGreaterEqual(worst, 45, log)   # >= 45 is status 'issues', not 'ok'
 
     def test_cli_exit_codes(self):
         import io
