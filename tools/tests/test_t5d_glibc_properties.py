@@ -31,25 +31,25 @@ class TestGlibcProperties(unittest.TestCase):
     def test_planted_off_by_one_strlen_caught(self):
         cmd = [str(HVM_TESTS), "propertytest", "--plant-off-by-one", "strlen"]
         res = subprocess.run(cmd, capture_output=True, text=True)
-        self.assertNotEqual(res.returncode, 0, "Planted off-by-one in strlen was not caught!")
+        self.assertEqual(res.returncode, 1, "Planted off-by-one in strlen was not caught!")
         self.assertIn("FAIL strlen and strnlen", res.stdout)
 
     def test_planted_off_by_one_memcmp_caught(self):
         cmd = [str(HVM_TESTS), "propertytest", "--plant-off-by-one", "memcmp"]
         res = subprocess.run(cmd, capture_output=True, text=True)
-        self.assertNotEqual(res.returncode, 0, "Planted off-by-one in memcmp was not caught!")
+        self.assertEqual(res.returncode, 1, "Planted off-by-one in memcmp was not caught!")
         self.assertIn("FAIL memcmp", res.stdout)
 
     def test_planted_off_by_one_strlcpy_caught(self):
         cmd = [str(HVM_TESTS), "propertytest", "--plant-off-by-one", "strlcpy"]
         res = subprocess.run(cmd, capture_output=True, text=True)
-        self.assertNotEqual(res.returncode, 0, "Planted off-by-one in strlcpy was not caught!")
+        self.assertEqual(res.returncode, 1, "Planted off-by-one in strlcpy was not caught!")
         self.assertIn("FAIL strlcpy", res.stdout)
 
     def test_planted_off_by_one_sprintf_caught(self):
         cmd = [str(HVM_TESTS), "propertytest", "--plant-off-by-one", "sprintf"]
         res = subprocess.run(cmd, capture_output=True, text=True)
-        self.assertNotEqual(res.returncode, 0, "Planted off-by-one in formatGuest sprintf was not caught!")
+        self.assertEqual(res.returncode, 1, "Planted off-by-one in formatGuest sprintf was not caught!")
         self.assertIn("FAIL formatGuest", res.stdout)
 
 

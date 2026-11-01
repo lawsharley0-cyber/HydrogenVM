@@ -441,6 +441,23 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
         if (plantOffByOne == "memcmp") cBefore = 1;
 
         if (cBefore != 0 || cAt >= 0) memcmpOk = false;
+
+        // Generated inputs: the sign of the guest _memcmp must equal the host memcmp for every length, mismatch
+        // position and byte value (including bytes >= 0x80, which expose signed-char comparisons).
+        uint32_t rng = 0x2545F491u;
+        auto next = [&]() { rng = rng * 1664525u + 1013904223u; return uint8_t(rng >> 24); };
+        for (size_t n = 0; n <= 64 && memcmpOk; ++n) {
+            for (int variant = 0; variant < 6 && memcmpOk; ++variant) {
+                std::vector<uint8_t> x(n + 1), y(n + 1);   // never empty: x.data() is read even for n == 0
+                for (size_t i = 0; i < n; ++i) x[i] = y[i] = next();
+                if (n && variant) { const size_t at = next() % n; y[at] = (variant & 1) ? uint8_t(x[at] ^ 0x80) : next(); }
+                p.mem().copyIn(bufA, x.data(), n ? n : 1);
+                p.mem().copyIn(bufB, y.data(), n ? n : 1);
+                const int32_t g = int32_t(call("_memcmp", {bufA, bufB, uint32_t(n)}));
+                const int h = n ? std::memcmp(x.data(), y.data(), n) : 0;
+                if ((g > 0) != (h > 0) || (g < 0) != (h < 0)) memcmpOk = false;
+            }
+        }
         check(memcmpOk, "memcmp property test correctly distinguishes exact boundary match and mismatch");
     }
 
@@ -472,6 +489,16 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
 
             if (plantOffByOne == "sprintf" && std::string(tc.fmt) == "%08x") {
                 guestOut += "0";
+            }
+
+            // The guest _sprintf entry point itself: return value and the bytes written to the destination.
+            {
+                const uint32_t fmtAddr = 0xbee30000;
+                p.mem().copyIn(fmtAddr, tc.fmt, std::strlen(tc.fmt) + 1);
+                const uint32_t ret = call("_sprintf", {bufA, fmtAddr, uint32_t(tc.val)});
+                std::string written(std::strlen(hostBuf) + 1, '\0');
+                p.mem().copyOut(written.data(), bufA, written.size());
+                if (ret != std::strlen(hostBuf) || std::strcmp(written.c_str(), hostBuf) != 0) { fmtOk = false; break; }
             }
 
             if (guestOut != hostBuf) {
