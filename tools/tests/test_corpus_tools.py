@@ -207,6 +207,23 @@ sys.exit({exit_status})
         self.assertEqual(commands[0][commands[0].index("--tap"):], commands[1][commands[1].index("--tap"):])
         self.assertNotEqual(commands[0][commands[0].index("--home")+1], commands[1][commands[1].index("--home")+1])
 
+    def test_invalid_ignore_log_regex_is_a_tool_error(self):
+        hvm = self.fake_hvm("hvm")
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(ab_diff.main(self.ab_args(hvm, hvm) + ["--ignore-log-regex", "["]), 2)
+        self.assertIn("invalid --ignore-log-regex", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+
+    def test_git_helper_ignores_inherited_repository_variables(self):
+        repo, _ = self.repository()
+        other = self.root / "other"
+        other.mkdir()
+        subprocess.check_call(["git", "init", "-q", str(other)], stderr=subprocess.DEVNULL)
+        wanted = git(repo, "rev-parse", "--show-toplevel")
+        env = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other), "GIT_INDEX_FILE": str(other / ".git" / "index")}
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(git(repo, "rev-parse", "--show-toplevel"), wanted)
+
     def test_planted_change_reports_every_observation_category(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ab_diff.main(self.ab_args(self.fake_hvm("old"), self.fake_hvm("new", 1))), 1)

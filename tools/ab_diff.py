@@ -139,7 +139,10 @@ def main(argv=None):
         if not args.guest.exists():
             raise ValueError("guest path does not exist")
         for pattern in args.ignore_log_regex:
-            re.compile(pattern)
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"invalid --ignore-log-regex {pattern!r}: {exc}") from exc
         out = args.out.resolve()
         # Refuse reuse: old sandboxes and reports can manufacture equality.
         out.mkdir(parents=True, exist_ok=False)
