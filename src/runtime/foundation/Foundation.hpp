@@ -150,6 +150,9 @@ std::string urlString(Ctx& x, id url);
 bool isURL(Ctx& x, id obj);
 id localizedString(Ctx& x, id key, id value, id table);
 
+// ---- exceptions
+[[noreturn]] void throwGuestException(Ctx& x, const std::string& name, const std::string& reason);
+
 // ---- notifications (Notifications.cpp)
 void postNotification(Ctx& x, id name, id object, id userInfo = 0);
 void postNotification(Ctx& x, const std::string& name, id object, id userInfo = 0);
@@ -164,6 +167,9 @@ id mainDispatchQueue(Process& p);
 // ---- misc
 id nullObject(Process& p);                               // [NSNull null]
 bool characterSetContains(Ctx& x, id set, char16_t c);
+// Lands `exception` in a guest @catch on this host→guest call. With no handler,
+// runs the uncaught-exception handler and then terminates.
+[[noreturn]] void raiseObjCException(Ctx& x, id exception);
 
 // ---- class registration
 void registerStrings(Process& p, ObjC::Runtime& r);

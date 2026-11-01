@@ -449,7 +449,7 @@ struct SourceData : ObjC::HostObject {
     std::shared_ptr<RunLoop::Source> src = std::make_shared<RunLoop::Source>();
     uint32_t info = 0, releaseCb = 0, scheduleCb = 0, cancelCb = 0, performCb = 0;
     struct Added { RunLoop* loop; uint32_t mode; };
-    std::mutex mu;               // guards `loops`; never held across a guest callback or a retain/release
+    std::mutex mu;               // guards `loops` and the add/invalidate ordering; never held across a guest callback or a release
     std::vector<Added> loops;    // one entry per (run loop, mode) membership
 };
 SourceData* sd(Ctx& x, id s) { return s ? rt(x).hostIf<SourceData>(s) : nullptr; }
@@ -511,18 +511,21 @@ id cf_sourceCreate(Ctx& x, uint32_t, int32_t order, GuestPtr context) {
 }
 void cf_addSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
     SourceData* d = sd(x, s);
-    if (!d || !d->src->valid.load()) return;
+    if (!d) return;
     RunLoop& loop = loopOf(x, rl);
-    bool firstForLoop = false;
     {
+        // Validity, membership and attachment are one step under d->mu, so an Invalidate on another thread
+        // either runs first (and the add is refused) or runs after (and detaches what was just attached).
+        // detachSources drops d->mu before it touches the loop, so this order cannot deadlock.
         std::lock_guard<std::mutex> lk(d->mu);
+        if (!d->src->valid.load()) return;
         for (const auto& a : d->loops) if (a.loop == &loop && a.mode == mode) return;   // already scheduled in this mode
-        firstForLoop = std::none_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == &loop; });
+        const bool firstForLoop = std::none_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == &loop; });
         d->loops.push_back({&loop, mode});
-    }
-    if (firstForLoop) {
-        rt(x).retain(x.cpu, s);   // the run loop retains its sources (once per loop, however many modes)
-        loop.addSource(d->src);
+        if (firstForLoop) {
+            rt(x).retain(x.cpu, s);   // the run loop retains its sources (once per loop, however many modes)
+            loop.addSource(d->src);
+        }
     }
     if (d->scheduleCb) x.proc.callGuest(x.cpu, d->scheduleCb, {d->info, loopObject(x, loop), mode});
 }
