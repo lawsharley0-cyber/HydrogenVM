@@ -62,6 +62,15 @@ int runThreadLifetimeChild() {
     // The deleted Process was constructed on this thread but destroyed on the
     // other one. currentThread must not inspect its now-dangling TLS pointer.
     if (&survivor.currentThread() != &survivor.mainThread()) _exit(6);
+    {
+        const auto done = survivor.registerHostFunction("completed_worker", [](Runtime::Ctx&) {});
+        const auto first = survivor.startThread(done, 0, 0, true);
+        auto* thread = survivor.findThread(first);
+        while (!thread->finished.load()) std::this_thread::yield();
+        const auto second = survivor.startThread(done, 0, 0, true);
+        if (thread->hostJoinable) _exit(8); // completed native stacks must not accumulate until Process exit
+        while (!survivor.findThread(second)->finished.load()) std::this_thread::yield();
+    }
     for (unsigned i = 0; i < 10; ++i) {
         { Runtime::Process next(cfg); }
         if (Memory::GuestArena::liveCount() != arenas) _exit(5);

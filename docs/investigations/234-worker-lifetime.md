@@ -29,6 +29,13 @@ finished. Admission and handle publication are serialized with the thread
 registry. It retains the two-second diagnostic warning without treating that
 deadline as permission to free live state. A unique Process identity prevents
 host TLS from dereferencing a thread record belonging to a destroyed Process.
+Completed native workers are reaped on subsequent creation/join operations so
+their 8 MB host stacks do not accumulate until Process destruction.
+
+A private 420-second Goat probe exposed a separate reporting defect: the
+watchdog recorded `crashed=true` while `--run-for` forced the process/report
+status to zero. The CLI now gives a recorded crash precedence over timed-stop
+success. The watchdog remains a failure; this does not claim its save completed.
 
 This is lifetime safety, not a claim that every external host call can be
 cancelled. An uninterruptible call keeps teardown pending and retains its arena;
@@ -47,3 +54,14 @@ Mega Jump apps. The extracted apps have executable/tree fingerprints rather
 than a verified original IPA hash. The four-game quit timings and a physical
 iPhone ten-game batch remain unverified until the runner is responsive and the
 owner provides device evidence. Do not close #234 based on this synthetic test.
+
+The review follow-up also tests a guest that enters its actual
+applicationWillTerminate callback and deliberately keeps executing guest
+instructions until the saving watchdog fires. On main, both readiness markers
+appear and the report says crashed=true, but process/report statuses are 0:
+
+    FAIL termination watchdog must produce host/report status 70 and a recorded crash; actual 0 0 True
+
+The unchanged five-second watchdog must instead yield process/report status
+70. tools/test_shutdown_watchdog.py builds and drives that minimal guest; CI
+runs it after the normal build. It does not simulate a successful game save.

@@ -189,13 +189,18 @@ Process::~Process() {
         const std::string stuck = describeRunningThreads();
         if (!stuck.empty()) std::fprintf(stderr, "[hvm:warn] Process teardown: guest threads still running 2 s after stop:\n%s", stuck.c_str());
     }
+    joinHostThreads(true);
+    if (t_processIdentity == identity_) { t_thread = nullptr; t_processIdentity = 0; }
+}
+
+void Process::joinHostThreads(bool includeRunning) {
     for (;;) {
         std::thread::native_handle_type host{};
         bool found = false;
         {
             std::lock_guard<std::mutex> lock(threadsMu_);
             for (auto& [id, thread] : threads_) {
-                if (!thread->hostJoinable) continue;
+                if (!thread->hostJoinable || (!includeRunning && !thread->finished.load())) continue;
                 host = thread->host;
                 thread->hostJoinable = false;
                 found = true;
@@ -211,7 +216,6 @@ Process::~Process() {
             std::terminate(); // freeing potentially live runtime state is unsafe
         }
     }
-    if (t_processIdentity == identity_) { t_thread = nullptr; t_processIdentity = 0; }
 }
 
 void Process::requestStop() {
@@ -747,6 +751,7 @@ GuestThread* Process::findThreadById(uint32_t id) {
 
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
     if (stopping()) throw ProcessExit(exitCode_, "stopping");
+    joinHostThreads(false); // reclaim the 8 MB native stacks of completed workers
     auto t = std::make_unique<GuestThread>(*this);
     GuestThread* raw = t.get();
     {
@@ -824,6 +829,8 @@ bool Process::joinThread(uint32_t self, uint32_t* retval) {
         t->cv.wait_for(lk, std::chrono::milliseconds(50));
     }
     if (retval) *retval = t->retval;
+    lk.unlock();
+    joinHostThreads(false);
     return true;
 }
 
