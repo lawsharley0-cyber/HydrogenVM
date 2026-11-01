@@ -14,6 +14,7 @@ struct DictData : ObjC::HostObject {
     std::vector<std::pair<id, id>> entries;
     std::unordered_multimap<uint32_t, size_t> index;   // hash -> entry
     bool isMutable = false;
+    bool copyStringKeys = false;   // created with kCFCopyStringDictionaryKeyCallBacks
     uint32_t mutationCell = 0;
 };
 struct SetData : ObjC::HostObject { std::vector<id> items; bool isMutable = false; uint32_t mutationCell = 0; };
@@ -1033,9 +1034,10 @@ bool isArray(Ctx& x, id obj) { return obj && rt(x).isKindOf(obj, C(x).nsArray); 
 bool dictSetRetainingKey(Ctx& x, id dict, id key, id value) {
     DictData* d = dd(x, dict);
     if (!d || !d->isMutable) return false;
-    dictSet(x, *d, key, value, false);
+    dictSet(x, *d, key, value, d->copyStringKeys && isString(x, key));   // kCFCopyString... copies string keys only
     return true;
 }
+void dictUseCopyStringKeys(Ctx& x, id dict) { if (DictData* d = dd(x, dict)) d->copyStringKeys = true; }
 
 id makeDict(Ctx& x, const std::vector<std::pair<id, id>>& entries, bool owned, bool isMutable) {
     const id d = newDict(x, isMutable);

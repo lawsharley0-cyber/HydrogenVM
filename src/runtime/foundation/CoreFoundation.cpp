@@ -704,7 +704,11 @@ uint32_t d_create(Ctx& x, uint32_t, GuestPtr keys, GuestPtr values, int32_t n, G
 }
 uint32_t d_createMutable(Ctx& x, uint32_t, int32_t, GuestPtr kcb, GuestPtr vcb) {
     const bool ko = objectCallbacks(x, kcb), vo = objectCallbacks(x, vcb);
-    if (ko && vo) return makeDict(x, {}, true, true);
+    if (ko && vo) {
+        const id d = makeDict(x, {}, true, true);
+        if (kcb == cf(x).copyStringKeyCallbacks) dictUseCopyStringKeys(x, d);
+        return d;
+    }
     id d = newRawDict(x, ko, vo, dictKeyEq(x, kcb)); rawD(x, d)->mutableDict = true; return d;
 }
 uint32_t d_createCopy(Ctx& x, uint32_t, id d) {

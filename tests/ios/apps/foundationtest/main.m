@@ -447,6 +447,21 @@ static void testCoreFoundation(void) {
     CHECK(copyKey->_copyCount == 0, "CFDictionarySetValue does not copy the key");
     CHECK(keyAfter == keyBefore + 1, "CFDictionarySetValue retains the key once");
     CHECK(valAfter == valBefore + 1, "CFDictionarySetValue retains the value once");
+    // The two key-callback modes: kCFCopyString... copies string keys, kCFType... keeps the very same object.
+    NSMutableString *ms1 = [NSMutableString stringWithString:@"alpha"];
+    CFMutableDictionaryRef copyDict = CFDictionaryCreateMutable(NULL, 0, &kCFCopyStringDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(copyDict, (__bridge const void *)ms1, CFSTR("v1"));
+    const void *copiedKeyPtr = NULL;
+    CFDictionaryGetKeysAndValues(copyDict, &copiedKeyPtr, NULL);
+    CHECK(copiedKeyPtr != (__bridge const void *)ms1, "kCFCopyStringDictionaryKeyCallBacks copies a string key");
+    CFRelease(copyDict);
+    NSMutableString *ms2 = [NSMutableString stringWithString:@"beta"];
+    CFMutableDictionaryRef typeDict = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(typeDict, (__bridge const void *)ms2, CFSTR("v2"));
+    const void *keptKeyPtr = NULL;
+    CFDictionaryGetKeysAndValues(typeDict, &keptKeyPtr, NULL);
+    CHECK(keptKeyPtr == (__bridge const void *)ms2, "kCFTypeDictionaryKeyCallBacks keeps the same string key object");
+    CFRelease(typeDict);
     CFRelease(cmd);
 }
 
