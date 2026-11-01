@@ -52,6 +52,9 @@ public:
     uint8_t* base() const noexcept { return base_; }
     size_t   hostPageSize() const noexcept { return host_page_; }
     static uint32_t liveCount() noexcept;
+    // Mapped address space / host backing, not physically resident bytes.
+    struct Stats { uint64_t mappedBytes = 0, committedHostBytes = 0; };
+    Stats stats() const;
 
     // Commit [addr, addr+size) with the given guest permissions. Safe to call on
     // ranges that overlap already-committed memory; existing contents are kept.
@@ -62,6 +65,13 @@ public:
 
     bool    isMapped(uint32_t addr) const noexcept { return prot_[addr >> kGuestPageShift] != kProtNone; }
     uint8_t protAt(uint32_t addr) const noexcept   { return prot_[addr >> kGuestPageShift]; }
+    // Validate and perform a complete NUL-terminated write under the mapping
+    // lock, so concurrent unmap cannot invalidate the check before the copy.
+    bool copyCStringWritable(uint32_t addr, const char* src, size_t chars) noexcept;
+    // Same lock as copyCStringWritable, for a wchar_t image: `count` guest
+    // bytes expanded to 4-byte code units, plus a 4-byte NUL. Nothing is
+    // stored unless every byte of that span is writable.
+    bool copyWideWritable(uint32_t addr, const char* chars, size_t count) noexcept;
 
     // Find a free, page-aligned range of `size` bytes at or above `hint`.
     // Returns 0 on failure (address 0 is never handed out).

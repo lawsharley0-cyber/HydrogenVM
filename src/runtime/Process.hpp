@@ -5,6 +5,7 @@
 #include "Abi.hpp"
 #include "FrameHistogram.hpp"
 #include "Heap.hpp"
+#include "MissingApi.hpp"
 #include "loader/MachO.hpp"
 #include "loader/Plist.hpp"
 #include <atomic>
@@ -215,6 +216,11 @@ public:
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
     std::string crashBundle();
+    // Bounded, read-only allocator/host samples. Event must be an internal constant.
+    void recordMemorySample(const char* event);
+    // Runtime memory sampling is opt-in: HVM_MEMORY_DIAG must be set in the launching environment.
+    static bool memoryDiagEnabled() { return std::getenv("HVM_MEMORY_DIAG") != nullptr; }
+    std::string memorySamplesJson() const;
     const std::string& crashSignature() const { return crashSignature_; }
     std::vector<std::string> missingSymbols() const;
     // Imports bound to "missing" stubs at load (functions), in file order — the static gap list.
@@ -284,6 +290,10 @@ public:
     GuestThread* findThread(uint32_t self);
     GuestThread* findThreadById(uint32_t id);
     std::vector<uint32_t> liveThreadIds();   // ids of the main thread and all running threads
+    // One line per guest thread that has not finished: its id, the host function it is
+    // inside (if any) and its last few host calls, oldest first. Empty when none is running.
+    // For teardown diagnostics; safe to call from any thread.
+    std::string describeRunningThreads();
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
     bool joinThread(uint32_t self, uint32_t* retval);
@@ -318,6 +328,10 @@ public:
     void logf(LogLevel lvl, const char* fmt, ...) const __attribute__((format(printf, 3, 4)));
     void reportMissing(const std::string& what);   // logs once per name
     size_t missingCount() { std::lock_guard<std::mutex> lk(missingMu_); return missing_.size(); }
+    // Every call to a missing or approximated API with its count, caller and first backtrace (T2a, #257).
+    const MissingApiLog& missingApis() const { return missingApis_; }
+    // True from the first such call on: a clean exit from a tainted run is not a compatibility pass.
+    bool tainted() const { return missingApis_.tainted(); }
     std::string describeAddress(uint32_t addr) const;
     std::string hleFunctionName(uint32_t index) const;
     // The host function currently bound to an exported symbol (null if none / not host code).
@@ -427,9 +441,12 @@ private:
     std::function<void(float, float, float)> accelHandler_;
 
     // diagnostics
+    mutable std::mutex memorySamplesMu_;
+    std::deque<std::string> memorySamples_;   // last 10 minutes at the five-second cadence
     Perf perf_;
     mutable std::mutex missingMu_;
     std::set<std::string> missing_;
+    MissingApiLog missingApis_;
     std::set<std::string> calledImports_;   // symbols the app reaches through lazy (call) stubs
 };
 
@@ -445,6 +462,7 @@ void registerLibcSystem(Process& p);
 void registerCxxRuntime(Process& p);
 void registerUnwinder(Process& p);
 void registerLibStdcxx(Process& p);
+void registerLibcxx(Process& p);
 void registerLibcPosix(Process& p);
 void registerZlib(Process& p);
 void registerLibcNet(Process& p);
