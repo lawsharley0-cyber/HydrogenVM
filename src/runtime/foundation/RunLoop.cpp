@@ -1,5 +1,7 @@
 // HydrogenVM — run loops, timers, dates, delayed/cross-thread performs, NSThread.
 #include "Foundation.hpp"
+#include <algorithm>
+#include <mutex>
 #include <chrono>
 #include <future>
 #include <thread>
@@ -28,6 +30,22 @@ std::shared_ptr<RunLoop::Timer> RunLoop::addTimer(double delay, double interval,
     return t;
 }
 
+void RunLoop::addSource(const std::shared_ptr<Source>& s) {
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        if (std::find(sources.begin(), sources.end(), s) == sources.end()) sources.push_back(s);
+    }
+    cv.notify_all();   // it may already be signalled
+}
+void RunLoop::removeSource(const std::shared_ptr<Source>& s) {
+    std::lock_guard<std::mutex> lk(mu);
+    sources.erase(std::remove(sources.begin(), sources.end(), s), sources.end());
+}
+bool RunLoop::hasSource(const std::shared_ptr<Source>& s) {
+    std::lock_guard<std::mutex> lk(mu);
+    return std::find(sources.begin(), sources.end(), s) != sources.end();
+}
+
 void RunLoop::post(std::function<void(CPU::Cpu&)> fn) {
     {
         std::lock_guard<std::mutex> lk(mu);
@@ -40,6 +58,7 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
     if (proc.terminating() || proc.stopping()) return false;
     std::deque<std::function<void(CPU::Cpu&)>> work;
     std::vector<std::shared_ptr<Timer>> due;
+    std::vector<std::shared_ptr<Source>> ready;
     std::vector<std::function<void(CPU::Cpu&, double)>> hooks;
     double nextDeadline;
     bool frameDue = false;
@@ -52,14 +71,23 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
             if (tm->fireAt <= t) due.push_back(tm);
             else nextDeadline = std::min(nextDeadline, tm->fireAt);
         }
+        // Signalled sources: claiming one clears its flag, so a source shared by two loops performs once.
+        const auto claimSources = [&] {
+            sources.erase(std::remove_if(sources.begin(), sources.end(), [](auto& s) { return !s->valid.load(); }), sources.end());
+            for (auto& s : sources)
+                if (s->signalled.exchange(false) && std::find(ready.begin(), ready.end(), s) == ready.end()) ready.push_back(s);
+        };
+        if (!sources.empty()) claimSources();
         if (!frameHooks.empty()) nextDeadline = std::min(nextDeadline, nextFrameAt);
-        if (queue.empty() && due.empty() && nextDeadline > t) {
+        if (queue.empty() && due.empty() && ready.empty() && nextDeadline > t) {
             cv.wait_for(lk, std::chrono::duration<double>(std::min(nextDeadline - t, 0.05)));
             if (queue.empty()) {
                 t = now();
                 for (auto& tm : timers) if (tm->valid && tm->fireAt <= t && std::find(due.begin(), due.end(), tm) == due.end()) due.push_back(tm);
             }
+            if (!sources.empty()) claimSources();
         }
+        std::stable_sort(ready.begin(), ready.end(), [](auto& a, auto& b) { return a->order < b->order; });
         work.swap(queue);
         t = now();
         if (!frameHooks.empty() && t >= nextFrameAt) {
@@ -73,6 +101,12 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait) {
     for (auto& fn : work) {
         if (proc.terminating() || proc.stopping()) return ran;
         fn(c);
+    }
+    for (auto& s : ready) {
+        if (proc.terminating() || proc.stopping()) return ran;
+        if (!s->valid.load() || !s->perform) continue;
+        ran = true;
+        s->perform(c);
     }
     for (auto& tm : due) {
         if (proc.terminating() || proc.stopping()) return ran;
@@ -121,7 +155,7 @@ struct Loops {
     std::mutex mu;
     std::unordered_map<GuestThread*, std::unique_ptr<RunLoop>> perThread;
     std::unordered_map<RunLoop*, id> objects;      // NSRunLoop objects
-    Class nsRunLoop = 0, nsDate = 0, dateConcrete = 0, nsTimer = 0, timerConcrete = 0, nsThread = 0;
+    Class nsRunLoop = 0, nsDate = 0, dateConcrete = 0, nsTimer = 0, timerConcrete = 0, nsThread = 0, sourceConcrete = 0;
     std::unordered_map<GuestThread*, id> threadObjects;
     struct Perform { id target; SEL sel; id arg; std::shared_ptr<RunLoop::Timer> t; };
     std::vector<Perform> performs;
@@ -407,6 +441,151 @@ void cf_timerInvalidate(Ctx& x, id t) { t_invalidate(x, t, 0); }
 void cf_timerSetNextFireDate(Ctx& x, id t, double date) { if (TimerData* d = td(x, t)) { d->fireAt = date; if (d->t) d->t->fireAt = date; } }
 double cf_absoluteTime(Ctx&) { return now(); }
 
+// ------------------------------------------------- CFRunLoopSource ---
+// Version-0 (custom) sources only. Version-1 sources wrap a Mach port, which this
+// runtime has no equivalent of, so creating one fails visibly instead of pretending.
+
+struct SourceData : ObjC::HostObject {
+    std::shared_ptr<RunLoop::Source> src = std::make_shared<RunLoop::Source>();
+    uint32_t info = 0, releaseCb = 0, scheduleCb = 0, cancelCb = 0, performCb = 0;
+    struct Added { RunLoop* loop; uint32_t mode; std::string name; };   // mode: retained CFString; modes compare by `name`
+    std::mutex mu;               // guards `loops` and the add/invalidate ordering; never held across a guest callback or a release
+    std::vector<Added> loops;    // one entry per (run loop, mode) membership
+};
+// Run loop modes are compared by string value, as CoreFoundation does, not by CFString address.
+std::string modeKey(Ctx& x, uint32_t mode) {
+    if (!mode) return {};
+    if (Foundation::isString(x, mode)) return "s:" + Foundation::utf8(x, mode);
+    return "p:" + std::to_string(mode);
+}
+SourceData* sd(Ctx& x, id s) { return s ? rt(x).hostIf<SourceData>(s) : nullptr; }
+
+// Drop the (loop, mode) memberships selected by `match`: each gets a cancel callback; the loop itself
+// lets go of the source (and its reference) only when its last mode is gone. Callbacks run unlocked.
+template <class Match>
+void detachSources(Ctx& x, id s, SourceData& d, Match match) {
+    std::vector<SourceData::Added> gone;
+    std::vector<RunLoop*> released;
+    {
+        std::lock_guard<std::mutex> lk(d.mu);
+        for (size_t i = 0; i < d.loops.size();) {
+            if (!match(d.loops[i])) { ++i; continue; }
+            gone.push_back(d.loops[i]);
+            d.loops.erase(d.loops.begin() + std::ptrdiff_t(i));
+        }
+        for (const auto& a : gone) {
+            const bool stillIn = std::any_of(d.loops.begin(), d.loops.end(), [&](const SourceData::Added& o) { return o.loop == a.loop; });
+            if (!stillIn && std::find(released.begin(), released.end(), a.loop) == released.end()) released.push_back(a.loop);
+        }
+    }
+    for (RunLoop* l : released) l->removeSource(d.src);
+    for (const auto& a : gone) {
+        if (d.cancelCb) x.proc.callGuest(x.cpu, d.cancelCb, {d.info, loopObject(x, *a.loop), a.mode});
+        if (a.mode && Foundation::isString(x, a.mode)) rt(x).release(x.cpu, a.mode);   // the membership's own reference to the mode string
+    }
+    for (size_t i = 0; i < released.size(); ++i) rt(x).release(x.cpu, s);   // one reference per loop that held the source
+}
+
+id cf_sourceCreate(Ctx& x, uint32_t, int32_t order, GuestPtr context) {
+    if (!context) {
+        x.proc.log(LogLevel::Warning, "CFRunLoopSourceCreate: NULL context; no source created");
+        return 0;
+    }
+    const uint32_t version = x.mem.read<uint32_t>(context);
+    if (version != 0) {
+        x.proc.logf(LogLevel::Warning, "CFRunLoopSourceCreate: version-%u (Mach port) sources aren't supported; no source created", version);
+        return 0;
+    }
+    // CFRunLoopSourceContext (32-bit): version, info, retain, release, copyDescription, equal, hash, schedule, cancel, perform
+    const id obj = rt(x).createInstance(L(x).sourceConcrete);
+    auto d = std::make_unique<SourceData>();
+    uint32_t info = x.mem.read<uint32_t>(context + 4);
+    const uint32_t retainCb = x.mem.read<uint32_t>(context + 8);
+    if (retainCb) info = uint32_t(x.proc.callGuest(x.cpu, retainCb, {info}));
+    d->info = info;
+    d->releaseCb = x.mem.read<uint32_t>(context + 12);
+    d->scheduleCb = x.mem.read<uint32_t>(context + 28);
+    d->cancelCb = x.mem.read<uint32_t>(context + 32);
+    d->performCb = x.mem.read<uint32_t>(context + 36);
+    d->src->order = order;
+    Process* p = &x.proc;
+    d->src->perform = [p, info, perform = d->performCb](CPU::Cpu& c) {
+        if (!perform) return;
+        Ctx cx{*p, c, p->mem()};
+        p->callGuest(c, perform, {info});
+    };
+    rt(x).setHost(obj, std::move(d));
+    return obj;
+}
+void cf_addSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
+    SourceData* d = sd(x, s);
+    if (!d) return;
+    RunLoop& loop = loopOf(x, rl);
+    const std::string modeName = modeKey(x, mode);
+    {
+        // Validity, membership and attachment are one step under d->mu, so an Invalidate on another thread
+        // either runs first (and the add is refused) or runs after (and detaches what was just attached).
+        // detachSources drops d->mu before it touches the loop, so this order cannot deadlock.
+        std::lock_guard<std::mutex> lk(d->mu);
+        if (!d->src->valid.load()) return;
+        for (const auto& a : d->loops) if (a.loop == &loop && a.name == modeName) return;   // already scheduled in this mode
+        const bool firstForLoop = std::none_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == &loop; });
+        if (mode && Foundation::isString(x, mode)) rt(x).retain(x.cpu, mode);   // held for the membership's lifetime; released after the cancel callback
+        d->loops.push_back({&loop, mode, modeName});
+        if (firstForLoop) {
+            rt(x).retain(x.cpu, s);   // the run loop retains its sources (once per loop, however many modes)
+            loop.addSource(d->src);
+        }
+    }
+    if (d->scheduleCb) x.proc.callGuest(x.cpu, d->scheduleCb, {d->info, loopObject(x, loop), mode});
+}
+void cf_removeSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
+    SourceData* d = sd(x, s);
+    if (!d) return;
+    RunLoop* loop = &loopOf(x, rl);
+    const std::string modeName = modeKey(x, mode);
+    detachSources(x, s, *d, [&](const SourceData::Added& a) { return a.loop == loop && a.name == modeName; });
+}
+bool cf_containsSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
+    SourceData* d = sd(x, s);
+    if (!d || !d->src->valid.load()) return false;
+    RunLoop* loop = &loopOf(x, rl);
+    const std::string modeName = modeKey(x, mode);
+    std::lock_guard<std::mutex> lk(d->mu);
+    return std::any_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == loop && a.name == modeName; });
+}
+void cf_sourceSignal(Ctx& x, id s) {
+    SourceData* d = sd(x, s);
+    if (!d || !d->src->valid.load()) return;
+    d->src->signalled.store(true);
+    std::vector<RunLoop*> wake;
+    {
+        std::lock_guard<std::mutex> lk(d->mu);
+        for (const auto& a : d->loops) if (std::find(wake.begin(), wake.end(), a.loop) == wake.end()) wake.push_back(a.loop);
+    }
+    for (RunLoop* l : wake) l->wake();   // unlocked: wake() may take the loop's own lock
+}
+void cf_sourceInvalidate(Ctx& x, id s) {
+    SourceData* d = sd(x, s);
+    if (!d || !d->src->valid.exchange(false)) return;
+    rt(x).retain(x.cpu, s);   // keep it alive while the loops let go of it
+    detachSources(x, s, *d, [](const SourceData::Added&) { return true; });
+    rt(x).release(x.cpu, s);
+}
+bool cf_sourceIsValid(Ctx& x, id s) { SourceData* d = sd(x, s); return d && d->src->valid.load(); }
+int32_t cf_sourceGetOrder(Ctx& x, id s) { SourceData* d = sd(x, s); return d ? int32_t(d->src->order) : 0; }
+void source_dealloc(Ctx& x, id self, SEL) {
+    if (SourceData* d = sd(x, self)) {
+        d->src->valid.store(false);
+        {
+            std::lock_guard<std::mutex> lk(d->mu);
+            for (const auto& a : d->loops) a.loop->removeSource(d->src);   // can't happen while a loop holds a reference
+        }
+        if (d->releaseCb) x.proc.callGuest(x.cpu, d->releaseCb, {d->info});
+    }
+    rt(x).disposeInstance(x.cpu, self);
+}
+
 // ------------------------------------------------- NSObject performs ---
 
 void performLater(Ctx& x, id target, SEL sel, id arg, double delay) {
@@ -639,6 +818,10 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
         .m<&d_copy>("copyWithZone:");
     dateC.m<&obj_dealloc>("dealloc", "v@:");
 
+    ObjC::ClassBuilder sourceC = r.defineClass("__NSCFRunLoopSource", "NSObject");
+    l.sourceConcrete = sourceC.cls();
+    sourceC.m<&source_dealloc>("dealloc", "v@:");
+
     ObjC::ClassBuilder timer = r.defineClass("NSTimer", "NSObject");
     ObjC::ClassBuilder timerC = r.defineClass("__NSCFTimer", "NSTimer");
     l.nsTimer = timer.cls(); l.timerConcrete = timerC.cls();
@@ -700,6 +883,14 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     p.def<&cf_timerCreate>("_CFRunLoopTimerCreate");
     p.def<&cf_timerInvalidate>("_CFRunLoopTimerInvalidate");
     p.def<&cf_timerSetNextFireDate>("_CFRunLoopTimerSetNextFireDate");
+    p.def<&cf_sourceCreate>("_CFRunLoopSourceCreate");
+    p.def<&cf_addSource>("_CFRunLoopAddSource");
+    p.def<&cf_removeSource>("_CFRunLoopRemoveSource");
+    p.def<&cf_containsSource>("_CFRunLoopContainsSource");
+    p.def<&cf_sourceSignal>("_CFRunLoopSourceSignal");
+    p.def<&cf_sourceInvalidate>("_CFRunLoopSourceInvalidate");
+    p.def<&cf_sourceIsValid>("_CFRunLoopSourceIsValid");
+    p.def<&cf_sourceGetOrder>("_CFRunLoopSourceGetOrder");
     p.def<&cf_absoluteTime>("_CFAbsoluteTimeGetCurrent");
     for (const char* n : {"_kCFRunLoopDefaultMode", "_kCFRunLoopCommonModes", "_NSDefaultRunLoopMode", "_NSRunLoopCommonModes",
                           "_UITrackingRunLoopMode", "_NSEventTrackingRunLoopMode"}) {
