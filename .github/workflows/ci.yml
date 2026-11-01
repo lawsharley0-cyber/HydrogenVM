@@ -50,6 +50,8 @@ jobs:
         run: tools/build_cctools.sh /home/runner/cctools
       - name: Test + performance report
         run: python3 tools/hvm_report.py --out report
+      - name: HostGL sequential process lifetime
+        run: build/hvm_gl_lifetime_tests
       - name: Host AAC decoder comparison
         run: python3 tools/test_m4a_audio.py --hvm-tests build/hvm_tests --out report/m4a.json
       - name: Upload report and test apps
