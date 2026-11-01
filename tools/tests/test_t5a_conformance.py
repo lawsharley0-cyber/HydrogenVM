@@ -25,11 +25,11 @@ class TestLibStdcxxConformance(unittest.TestCase):
         cls.addClassCleanup(cls._out.cleanup)
         cmd = [sys.executable, str(TESTLAB_PY), "run", "--hvm", str(HVM_BIN), "--case", "TL-Y", "--out", cls._out.name]
         # No check=True: a failing TL-Y exits 1, and the report (with the guest's reason) is what explains it.
-        cls.run = subprocess.run(cmd, capture_output=True, text=True)
+        cls.testlab_run = subprocess.run(cmd, capture_output=True, text=True)
         cls.out_dir = Path(cls._out.name)
         report_path = cls.out_dir / "testlab_report.json"
         if not report_path.exists():
-            raise AssertionError(f"Test Lab produced no report (exit {cls.run.returncode}):\n{cls.run.stdout}\n{cls.run.stderr}")
+            raise AssertionError(f"Test Lab produced no report (exit {cls.testlab_run.returncode}):\n{cls.testlab_run.stdout}\n{cls.testlab_run.stderr}")
         cls.report = json.loads(report_path.read_text())
 
     def test_tly_passed(self):
