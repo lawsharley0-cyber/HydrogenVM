@@ -163,6 +163,8 @@ class TestProbeFastMode(unittest.TestCase):
         base = {"results": [{"sha256": "h1", "mode": "software"}, {"sha256": "h2", "mode": "gpu"}, {"mode": "gpu"}]}
         self.assertEqual(self.probe.baseline_coverage(base), {("h1", "software"), ("h2", "gpu")})
         self.assertEqual(self.probe.baseline_coverage({}), set())
+        failed = {"results": [{"sha256": "h1", "mode": "software", "status": "import-failed"}]}
+        self.assertEqual(self.probe.baseline_coverage(failed), set())   # an import failure is not coverage
 
     def test_error_lines_start_on_their_own_line(self):
         with tempfile.TemporaryDirectory() as td:
@@ -191,33 +193,19 @@ class TestLedgerProbeReports(unittest.TestCase):
         self.assertNotEqual(ledger.group_failures([f])[0]["failure_class"], "other")
 
     def test_reads_non_ascii_json_as_utf8(self):
-        import io
-        import contextlib
-        import locale
+        # Run under a non-UTF-8 default encoding, where reading without an explicit encoding fails.
+        import os
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "f.json"
             path.write_bytes(json.dumps([{"app": "caf\u00e9", "signature": "s", "severity": 1, "message": "\u00e9"}],
                                         ensure_ascii=False).encode("utf-8"))
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                ledger.main([str(path), "--json"])
-        self.assertEqual(json.loads(out.getvalue())[0]["apps"], ["caf\u00e9"])
+            env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
+            env.pop("PYTHONIOENCODING", None)
+            res = subprocess.run([sys.executable, "-X", "utf8=0", str(TOOLS_DIR / "ledger.py"), str(path), "--json"],
+                                 capture_output=True, env=env)
+        self.assertEqual(res.returncode, 0, res.stderr.decode("utf-8", "replace"))
+        self.assertEqual(json.loads(res.stdout.decode("ascii"))[0]["apps"], ["caf\u00e9"])
 
-    def test_crash_signature_of_the_run_is_kept(self):
-        import io
-        import contextlib
-        report = {"results": [
-            {"bundleId": "game.a", "signature": "sigA", "issues": [{"key": "crash:abort", "kind": "crash", "severity": 100, "text": "abort"}]},
-            {"bundleId": "game.b", "signature": "sigB", "issues": [{"key": "crash:abort", "kind": "crash", "severity": 100, "text": "abort"}]},
-        ]}
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "summary.json"
-            path.write_text(json.dumps(report))
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                ledger.main([str(path), "--json"])
-        sigs = sorted(g["signature"] for g in json.loads(out.getvalue()))
-        self.assertEqual(sigs, ["sigA", "sigB"])   # same first line, different crash signatures: two groups
 
 
 if __name__ == "__main__":

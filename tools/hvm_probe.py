@@ -233,7 +233,8 @@ def tainted_runs(results):
 
 def baseline_coverage(baseline):
     """The (ipa sha256, mode) pairs a baseline summary.json probed; empty when it does not say."""
-    return {(r.get('sha256'), r.get('mode')) for r in baseline.get('results') or [] if r.get('sha256')}
+    return {(r.get('sha256'), r.get('mode')) for r in baseline.get('results') or []
+            if r.get('sha256') and r.get('status') != 'import-failed'}   # an app that never ran was not probed
 
 
 def sample_ipas(ipas, seed, size):
@@ -414,7 +415,7 @@ def main():
             # An issue missing from a sampled run is only known to be fixed when this run probed everything the
             # baseline did: the same (ipa hash, mode) pairs.
             base_cov = baseline_coverage(json.loads(args.baseline.read_text(encoding='utf-8')))
-            now_cov = {(r.get('sha256'), r['mode']) for r in results}
+            now_cov = {(r.get('sha256'), r['mode']) for r in results if r.get('status') != 'import-failed'}
             if not base_cov or not base_cov <= now_cov:
                 diff['fixed'] = []
                 diff['fixedNotComparable'] = True
