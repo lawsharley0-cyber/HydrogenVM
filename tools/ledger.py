@@ -51,10 +51,11 @@ def group_failures(failures: list[dict]) -> list[dict]:
     for f in failures:
         app = f.get("app") or f.get("bundleId") or f.get("game") or f.get("id") or "unknown"
         sig = normalize_signature(f)
-        summary = str(f.get("summary") or f.get("crashReport") or f.get("message") or f.get("text") or sig).split("\n")[0].strip()
+        full = str(f.get("summary") or f.get("crashReport") or f.get("message") or f.get("text") or sig)
+        summary = full.split("\n")[0].strip()
         sev = int(f.get("severity", 1))
 
-        cls = classify_failure(sig, summary)
+        cls = classify_failure(sig, full)   # classify the whole diagnostic: the telling line is not always the first
         if sig not in groups:
             groups[sig] = {
                 "signature": sig,
@@ -94,7 +95,7 @@ def main(argv=None):
 
     failures = []
     for r_path in args.reports:
-        data = json.loads(Path(r_path).read_text())
+        data = json.loads(Path(r_path).read_text(encoding="utf-8"))
         if isinstance(data, list):
             failures.extend(data)
         elif isinstance(data, dict):

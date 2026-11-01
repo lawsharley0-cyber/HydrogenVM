@@ -60,6 +60,10 @@ class TestCensus(unittest.TestCase):
         p = subprocess.run([str(BUILD_HVM), "--dump-support"], capture_output=True, text=True, check=True)
         cls.manifest = json.loads(p.stdout)   # dumped fresh for every run: no cache that outlives a rebuild
 
+    def test_missing_manifest_path_is_an_error(self):
+        with self.assertRaises(FileNotFoundError):
+            census.get_support_manifest(manifest_path="/nonexistent/manifest.json")
+
     def test_fixture_hash_mismatch_raises(self):
         with tempfile.TemporaryDirectory() as td:
             bad_ipa = Path(td) / "AngryBirds_v1.0_os30.ipa"
@@ -151,6 +155,15 @@ class TestProbeFastMode(unittest.TestCase):
         self.assertEqual((s["okRuns"], s["crashRuns"], s["brokenRuns"], s["issuesRuns"], s["importFailedRuns"]),
                          (1, 1, 1, 1, 1))
 
+    def test_summary_counts_tainted_runs_whatever_their_status(self):
+        results = [{"bundleId": "a", "status": "ok", "tainted": True}, {"bundleId": "b", "status": "ok"}]
+        self.assertEqual(self.probe.summarize_runs(results, 0, False, None)["taintedRunCount"], 1)
+
+    def test_baseline_coverage_is_ipa_hash_and_mode(self):
+        base = {"results": [{"sha256": "h1", "mode": "software"}, {"sha256": "h2", "mode": "gpu"}, {"mode": "gpu"}]}
+        self.assertEqual(self.probe.baseline_coverage(base), {("h1", "software"), ("h2", "gpu")})
+        self.assertEqual(self.probe.baseline_coverage({}), set())
+
     def test_error_lines_start_on_their_own_line(self):
         with tempfile.TemporaryDirectory() as td:
             log_path = Path(td) / "run.log"
@@ -171,6 +184,25 @@ class TestProbeFastMode(unittest.TestCase):
 
 
 class TestLedgerProbeReports(unittest.TestCase):
+    def test_classification_uses_the_whole_diagnostic(self):
+        f = {"app": "g", "signature": "sig1", "severity": 100,
+             "crashReport": "The game crashed\nGuestFault: memory fault at 0x10"}
+        self.assertEqual(ledger.group_failures([f])[0]["failure_class"], ledger.classify_failure("sig1", f["crashReport"]))
+        self.assertNotEqual(ledger.group_failures([f])[0]["failure_class"], "other")
+
+    def test_reads_non_ascii_json_as_utf8(self):
+        import io
+        import contextlib
+        import locale
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "f.json"
+            path.write_bytes(json.dumps([{"app": "caf\u00e9", "signature": "s", "severity": 1, "message": "\u00e9"}],
+                                        ensure_ascii=False).encode("utf-8"))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                ledger.main([str(path), "--json"])
+        self.assertEqual(json.loads(out.getvalue())[0]["apps"], ["caf\u00e9"])
+
     def test_crash_signature_of_the_run_is_kept(self):
         import io
         import contextlib

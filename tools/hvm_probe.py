@@ -231,6 +231,11 @@ def tainted_runs(results):
     return sorted(rows, key=lambda r: (-r['stubHits'], str(r['bundleId']), str(r['mode'])))
 
 
+def baseline_coverage(baseline):
+    """The (ipa sha256, mode) pairs a baseline summary.json probed; empty when it does not say."""
+    return {(r.get('sha256'), r.get('mode')) for r in baseline.get('results') or [] if r.get('sha256')}
+
+
 def sample_ipas(ipas, seed, size):
     """--fast: a seeded sample of at most `size` apps, in name order, so the same seed picks the same apps."""
     rng = random.Random(seed)
@@ -260,6 +265,7 @@ def summarize_runs(results, issues_count, fast, seed):
         'gamesProbed': len({r['bundleId'] for r in results}),
         'okRuns': n('ok'), 'crashRuns': n('crash'), 'brokenRuns': n('broken'),
         'issuesRuns': n('issues'), 'importFailedRuns': n('import-failed'),
+        'taintedRunCount': sum(1 for r in results if r.get('tainted')),   # status can be ok while stubs were hit
         'issuesCount': issues_count,
         'fast': fast,
         'seed': seed,
@@ -401,13 +407,17 @@ def main():
 
     diff = None
     if args.baseline and args.baseline.exists():
-        old = {g['key'] for g in json.loads(args.baseline.read_text()).get('issues', [])}
+        old = {g['key'] for g in json.loads(args.baseline.read_text(encoding='utf-8')).get('issues', [])}
         new = {g['key'] for g in ranked}
         diff = {'fixed': sorted(old - new), 'new': sorted(new - old), 'still': len(old & new)}
         if args.fast:
-            # A sampled run did not probe every app, so an issue missing from it is not known to be fixed.
-            diff['fixed'] = []
-            diff['fixedNotComparable'] = True
+            # An issue missing from a sampled run is only known to be fixed when this run probed everything the
+            # baseline did: the same (ipa hash, mode) pairs.
+            base_cov = baseline_coverage(json.loads(args.baseline.read_text(encoding='utf-8')))
+            now_cov = {(r.get('sha256'), r['mode']) for r in results}
+            if not base_cov or not base_cov <= now_cov:
+                diff['fixed'] = []
+                diff['fixedNotComparable'] = True
         summary['baselineDiff'] = diff
     summary['summary'] = summary_obj   # last field of the report, after every optional one
     (args.out / 'summary.json').write_text(json.dumps(summary, indent=1))
@@ -446,6 +456,7 @@ def main():
             f"Runs: {len(results)} ({len(ipas)} games x {modes}), {args.seconds}s each",
             f"Statuses: {summary_obj['okRuns']} ok, {summary_obj['crashRuns']} crash, {summary_obj['brokenRuns']} broken, "
             f"{summary_obj['issuesRuns']} issues-only, {summary_obj['importFailedRuns']} import-failed",
+            f"Tainted runs (stub hits, any status): {summary_obj['taintedRunCount']}",
             f"Issues found: {len(ranked)} distinct issues",
             "",
             "Runs detail:"

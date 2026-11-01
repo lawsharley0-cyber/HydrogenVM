@@ -110,8 +110,10 @@ def cstr_at(m: bytes, secs: dict, vm: int) -> str | None:
 
 
 def get_support_manifest(hvm_binary: str | None = None, manifest_path: str | None = None) -> dict:
-    if manifest_path and Path(manifest_path).exists():
-        return json.loads(Path(manifest_path).read_text())
+    if manifest_path:
+        if not Path(manifest_path).exists():
+            raise FileNotFoundError(f"support manifest not found: {manifest_path}")   # never fall back to another manifest
+        return json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     
     bin_path = hvm_binary or "build/hvm"
     if not Path(bin_path).exists():
