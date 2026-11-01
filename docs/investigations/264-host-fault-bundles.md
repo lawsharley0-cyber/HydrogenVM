@@ -119,3 +119,20 @@ line. No proprietary fixture or actual device crash is included in this patch.
 Linux 16 KB commit-granularity emulation covers mapping bookkeeping and data
 isolation. It does not emulate Darwin VM behavior, Metal/OpenGL driver calls,
 device scheduling or the actual device fault.
+
+## GitHub Actions provenance
+
+Head ccc309fc84c5baf3428b2f650ec235a04e764a2e against main
+4c09fa4708fe48796f3255695e97aef685087042 was tested as GitHub's PR merge
+checkout 4dd2cb59aafc762942fbd0db4c2ea20f7490fb90 (verified in both job
+checkout logs). [CI run 41358248915](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41358248915)
+passed its Linux fulltest/performance and focused host-fault ASan/UBSan steps.
+[Test Lab run 41358248896](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41358248896)
+passed. The 202-test full tools result above is local, not a claim about those
+Actions runs: CI previously ran only selected Python modules. This follow-up
+adds the complete enabled tools suite and its jsonschema dependency to CI;
+its actual result must be linked after that run finishes.
+
+[Apple file-editor run 41358248921](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41358248921)
+passed Swift tests and unsigned simulator compilation but failed the save/close
+UI exercise. That is a failed run, not a physical-device or full Apple pass.
