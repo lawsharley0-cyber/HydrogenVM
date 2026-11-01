@@ -21,6 +21,21 @@ static void runLoopFor(double seconds) {
 
 // ------------------------------------------------------------------ model ---
 
+extern void CFDictionaryGetKeysAndValues(CFDictionaryRef dict, const void **keys, const void **values);
+
+@interface MyCopyKey : NSObject <NSCopying> {
+@public
+    int _copyCount;
+}
+@end
+@implementation MyCopyKey
+- (id)copyWithZone:(NSZone *)zone {
+    MyCopyKey *k = [[MyCopyKey alloc] init];
+    k->_copyCount = _copyCount + 1;
+    return k;
+}
+@end
+
 @interface Person : NSObject <NSCoding>
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic) NSInteger age;
@@ -400,6 +415,54 @@ static void testCoreFoundation(void) {
     CHECK(pv && [(__bridge NSString *)pv isEqualToString:@"yes"], "CFPreferences");
     CFRelease(s); CFRelease(ms); CFRelease(fmt); CFRelease(num); CFRelease(arr); CFRelease(raw); CFRelease(dict); CFRelease(rawd);
     CFRelease(uuid); CFRelease(us); CFRelease(cfg); CFRelease(pv);
+
+    MyCopyKey *copyKey = [[MyCopyKey alloc] init];
+    MyCopyKey *valObj = [[MyCopyKey alloc] init];
+    CFMutableDictionaryRef cmd = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    NSMutableDictionary *bmd = (__bridge NSMutableDictionary *)cmd;
+    // The app builds with ARC, so retain counts are read with CFGetRetainCount (deltas around the call).
+    CFIndex valBefore = CFGetRetainCount((__bridge CFTypeRef)valObj);
+    CFIndex keyBefore = CFGetRetainCount((__bridge CFTypeRef)copyKey);
+    [bmd setObject:valObj forKey:copyKey];
+
+    const void *firstKeyPtr = NULL;
+    CFDictionaryGetKeysAndValues(cmd, &firstKeyPtr, NULL);
+    MyCopyKey *firstKey = (__bridge MyCopyKey *)firstKeyPtr;
+    CHECK(firstKey != copyKey && firstKey->_copyCount == 1 && CFGetRetainCount((__bridge CFTypeRef)valObj) == valBefore + 1 &&
+          CFGetRetainCount((__bridge CFTypeRef)copyKey) == keyBefore,
+          "rd_setObjectForKey copies the key and retains the copy and the value");
+
+    [bmd removeAllObjects];
+    firstKey = nil;
+    valBefore = CFGetRetainCount((__bridge CFTypeRef)valObj);
+    keyBefore = CFGetRetainCount((__bridge CFTypeRef)copyKey);
+    CFDictionarySetValue(cmd, (__bridge const void *)copyKey, (__bridge const void *)valObj);
+
+    const void *secondKeyPtr = NULL;
+    CFDictionaryGetKeysAndValues(cmd, &secondKeyPtr, NULL);
+    // Read the counts before any strong local refers to the key: under ARC that local would add its own retain.
+    const CFIndex keyAfter = CFGetRetainCount((__bridge CFTypeRef)copyKey);
+    const CFIndex valAfter = CFGetRetainCount((__bridge CFTypeRef)valObj);
+    CHECK(secondKeyPtr == (__bridge const void *)copyKey, "CFDictionarySetValue stores the key object itself");
+    CHECK(copyKey->_copyCount == 0, "CFDictionarySetValue does not copy the key");
+    CHECK(keyAfter == keyBefore + 1, "CFDictionarySetValue retains the key once");
+    CHECK(valAfter == valBefore + 1, "CFDictionarySetValue retains the value once");
+    // The two key-callback modes: kCFCopyString... copies string keys, kCFType... keeps the very same object.
+    NSMutableString *ms1 = [NSMutableString stringWithString:@"alpha"];
+    CFMutableDictionaryRef copyDict = CFDictionaryCreateMutable(NULL, 0, &kCFCopyStringDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(copyDict, (__bridge const void *)ms1, CFSTR("v1"));
+    const void *copiedKeyPtr = NULL;
+    CFDictionaryGetKeysAndValues(copyDict, &copiedKeyPtr, NULL);
+    CHECK(copiedKeyPtr != (__bridge const void *)ms1, "kCFCopyStringDictionaryKeyCallBacks copies a string key");
+    CFRelease(copyDict);
+    NSMutableString *ms2 = [NSMutableString stringWithString:@"beta"];
+    CFMutableDictionaryRef typeDict = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(typeDict, (__bridge const void *)ms2, CFSTR("v2"));
+    const void *keptKeyPtr = NULL;
+    CFDictionaryGetKeysAndValues(typeDict, &keptKeyPtr, NULL);
+    CHECK(keptKeyPtr == (__bridge const void *)ms2, "kCFTypeDictionaryKeyCallBacks keeps the same string key object");
+    CFRelease(typeDict);
+    CFRelease(cmd);
 }
 
 static dispatch_once_t onceToken;

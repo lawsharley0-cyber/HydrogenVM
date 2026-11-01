@@ -23,6 +23,7 @@ struct Allocator : ObjC::HostObject { std::array<uint32_t, 9> context{}; bool nu
 struct RawDict : ObjC::HostObject {
     std::vector<std::pair<uint32_t, uint32_t>> entries;
     bool keyObjects = false, valueObjects = false, keyEqual = false;
+    bool mutableDict = false;
 };
 
 struct CF {
@@ -31,7 +32,7 @@ struct CF {
     id systemAllocator = 0, nullAllocator = 0;
     uint32_t arrayCallbacks = 0, dictKeyCallbacks = 0, dictValueCallbacks = 0, copyStringKeyCallbacks = 0, setCallbacks = 0,
              copyStringSetCallbacks = 0;
-    uint32_t cfRetainFn = 0, cfReleaseFn = 0, cfEqualFn = 0, cfHashFn = 0, cfCopyDescFn = 0;
+    uint32_t cfRetainFn = 0, cfCopyStringRetainFn = 0, cfReleaseFn = 0, cfEqualFn = 0, cfHashFn = 0, cfCopyDescFn = 0;
 };
 CF& cf(Ctx& x) { return x.proc.service<CF>(); }
 
@@ -90,6 +91,12 @@ uint32_t cf_retain(Ctx& x, id o) {
     if (!o) { x.proc.log(LogLevel::Warning, "CFRetain(NULL) — this crashes on iOS"); return 0; }
     if (!x.mem.read<uint32_t>(o)) return o;
     return R(x).retain(x.cpu, o);
+}
+// The retain callback of kCFCopyStringDictionaryKeyCallBacks: (allocator, value) -> a copy of a string, else the value retained.
+// It is a distinct function so a dictionary recognises the mode from the callback contents, not from the struct's address.
+uint32_t cf_copyStringKeyRetain(Ctx& x, uint32_t, id o) {
+    if (o && isString(x, o)) return uint32_t(send(x, o, "copy"));
+    return cf_retain(x, o);
 }
 void cf_release(Ctx& x, id o) {
     if (!o) { x.proc.log(LogLevel::Warning, "CFRelease(NULL) — this crashes on iOS"); return; }
@@ -664,6 +671,8 @@ id newRawDict(Ctx& x, bool keyObj, bool valObj, bool keyEq) {
     h->keyObjects = keyObj;
     h->valueObjects = valObj;
     h->keyEqual = keyEq;
+    h->mutableDict = false;
+
     R(x).setHost(d, std::move(h));
     return d;
 }
@@ -701,8 +710,12 @@ uint32_t d_create(Ctx& x, uint32_t, GuestPtr keys, GuestPtr values, int32_t n, G
 }
 uint32_t d_createMutable(Ctx& x, uint32_t, int32_t, GuestPtr kcb, GuestPtr vcb) {
     const bool ko = objectCallbacks(x, kcb), vo = objectCallbacks(x, vcb);
-    if (ko && vo) return makeDict(x, {}, true, true);
-    return newRawDict(x, ko, vo, dictKeyEq(x, kcb));
+    if (ko && vo) {
+        const id d = makeDict(x, {}, true, true);
+        if (kcb == cf(x).copyStringKeyCallbacks) dictUseCopyStringKeys(x, d);
+        return d;
+    }
+    id d = newRawDict(x, ko, vo, dictKeyEq(x, kcb)); rawD(x, d)->mutableDict = true; return d;
 }
 uint32_t d_createCopy(Ctx& x, uint32_t, id d) {
     if (RawDict* r = rawD(x, d)) {
@@ -713,7 +726,11 @@ uint32_t d_createCopy(Ctx& x, uint32_t, id d) {
     return uint32_t(send(x, d, "copy"));
 }
 uint32_t d_createMutableCopy(Ctx& x, uint32_t a, int32_t, id d) {
-    if (rawD(x, d)) return d_createCopy(x, a, d);
+    if (rawD(x, d)) {
+        id res = d_createCopy(x, a, d);
+        rawD(x, res)->mutableDict = true;
+        return res;
+    }
     return uint32_t(send(x, d, "mutableCopy"));
 }
 int32_t d_count(Ctx& x, id d) {
@@ -748,6 +765,7 @@ void d_setMode(Ctx& x, id d, uint32_t key, uint32_t v, int mode) {
     const bool has = dictGet(x, d, key) != 0;
     if ((mode == 1 && has) || (mode == 2 && !has)) return;
     if (!v) { x.proc.log(LogLevel::Warning, "CFDictionarySetValue with a NULL value on an object dictionary"); return; }
+    if (dictSetRetainingKey(x, d, key, v)) return;   // CF retains the key; it does not copy it like -setObject:forKey:
     send(x, d, "setObject:forKey:", {v, key});
 }
 void d_set(Ctx& x, id d, uint32_t k, uint32_t v) { d_setMode(x, d, k, v, 0); }
@@ -804,6 +822,44 @@ uint32_t rd_objectForKey(Ctx& x, id self, SEL, uint32_t k) { return d_get(x, sel
 void rd_dealloc(Ctx& x, id self, SEL) {
     if (RawDict* r = rawD(x, self)) rawClear(x, *r);
     R(x).disposeInstance(x.cpu, self);
+}
+
+uint32_t rd_keyEnumerator(Ctx& x, id self, SEL) {
+    // CF dictionaries with raw-pointer key callbacks are not NSDictionary:
+    // constructing an NSArray would retain arbitrary pointer bits as ObjC ids.
+    if (auto* d = rawD(x, self); d && !d->keyObjects)
+        throw ObjC::ObjCError("raw CFDictionary keys cannot be enumerated as Objective-C objects");
+    std::vector<id> keys;
+    for (auto& [k, v] : entriesOfAny(x, self)) keys.push_back(k);
+    return uint32_t(send(x, makeArray(x, keys), "objectEnumerator"));
+}
+uint32_t rd_allKeys(Ctx& x, id self, SEL) {
+    if (auto* d = rawD(x, self); d && !d->keyObjects)
+        throw ObjC::ObjCError("raw CFDictionary keys cannot be bridged to NSArray");
+    std::vector<id> keys;
+    for (auto& [k, v] : entriesOfAny(x, self)) keys.push_back(k);
+    return makeArray(x, keys);
+}
+void rd_setObjectForKey(Ctx& x, id self, SEL, uint32_t v, uint32_t k) {
+    RawDict* r = rawD(x, self);
+    if (r && r->mutableDict) {
+        if (r->keyObjects && k) {
+            uint32_t copiedKey = uint32_t(send(x, k, "copy"));
+            d_set(x, self, copiedKey, v);
+            R(x).release(x.cpu, copiedKey);
+            return;
+        }
+        d_set(x, self, k, v);
+    }
+    else throw ObjC::ObjCError("mutation of immutable CFDictionary");
+}
+void rd_removeObjectForKey(Ctx& x, id self, SEL, uint32_t k) {
+    if (rawD(x, self) && rawD(x, self)->mutableDict) d_remove(x, self, k);
+    else throw ObjC::ObjCError("mutation of immutable CFDictionary");
+}
+void rd_removeAllObjects(Ctx& x, id self, SEL) {
+    if (rawD(x, self) && rawD(x, self)->mutableDict) d_removeAll(x, self);
+    else throw ObjC::ObjCError("mutation of immutable CFDictionary");
 }
 
 // --------------------------------------------------------------- CFSet ---
@@ -1135,6 +1191,7 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&bv_set>("_CFBitVectorSetBitAtIndex");
     // CFType
     c.cfRetainFn = p.def<&cf_retain>("_CFRetain");
+    c.cfCopyStringRetainFn = p.def<&cf_copyStringKeyRetain>("___HVMCFCopyStringKeyRetain");
     c.cfReleaseFn = p.def<&cf_release>("_CFRelease");
     p.def<&cf_autorelease>("_CFAutorelease");
     p.def<&cf_makeCollectable>("_CFMakeCollectable");
@@ -1169,12 +1226,11 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     // callback structs: {version, retain, release, copyDescription, equal, hash}
     auto callbacks = [&](const char* name, bool withHash, bool copyKeys) {
         const uint32_t a = p.defineDataBlock(name, withHash ? 24 : 20);
-        p.mem().write<uint32_t>(a + 4, c.cfRetainFn);
+        p.mem().write<uint32_t>(a + 4, copyKeys ? c.cfCopyStringRetainFn : c.cfRetainFn);
         p.mem().write<uint32_t>(a + 8, c.cfReleaseFn);
         p.mem().write<uint32_t>(a + 12, c.cfCopyDescFn);
         p.mem().write<uint32_t>(a + 16, c.cfEqualFn);
         if (withHash) p.mem().write<uint32_t>(a + 20, c.cfHashFn);
-        (void)copyKeys;
         return a;
     };
     c.arrayCallbacks = callbacks("_kCFTypeArrayCallBacks", false, false);
@@ -1305,7 +1361,11 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     // CFDictionary
     ObjC::ClassBuilder rd = r.defineClass("__HVMCFRawDictionary", "NSObject");
     c.rawDict = rd.cls();
-    rd.m<&rd_count>("count", "I@:").m<&rd_objectForKey>("objectForKey:").m<&rd_dealloc>("dealloc", "v@:");
+    rd.m<&rd_count>("count", "I@:").m<&rd_objectForKey>("objectForKey:").m<&rd_dealloc>("dealloc", "v@:")
+      .m<&rd_setObjectForKey>("setObject:forKey:", "v@:@@").m<&rd_removeObjectForKey>("removeObjectForKey:", "v@:@")
+      .m<&rd_removeAllObjects>("removeAllObjects", "v@:")
+      .m<&rd_keyEnumerator>("keyEnumerator", "@@:")
+      .m<&rd_allKeys>("allKeys", "@@:");
     p.def<&d_create>("_CFDictionaryCreate");
     p.def<&d_createMutable>("_CFDictionaryCreateMutable");
     p.def<&d_createCopy>("_CFDictionaryCreateCopy");

@@ -63,6 +63,8 @@ id makeValue(Ctx& x, const void* bytes, uint32_t size, const std::string& objcTy
 id makeArray(Ctx& x, const std::vector<id>& items, bool owned = false, bool isMutable = false);
 std::vector<id> arrayItems(Ctx& x, id array);   // works for any NSArray (uses -count/-objectAtIndex: if needed)
 bool isArray(Ctx& x, id obj);
+bool dictSetRetainingKey(Ctx& x, id dict, id key, id value);
+void dictUseCopyStringKeys(Ctx& x, id dict);
 id makeDict(Ctx& x, const std::vector<std::pair<id, id>>& entries, bool owned = false, bool isMutable = false);
 std::vector<std::pair<id, id>> dictEntries(Ctx& x, id dict);
 id dictGet(Ctx& x, id dict, id key);
