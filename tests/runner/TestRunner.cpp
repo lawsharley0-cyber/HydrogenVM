@@ -4147,6 +4147,7 @@ int runFullSubsystemTests() {
 
         const auto tStart = std::chrono::steady_clock::now();
         while (readyCount < 3 && std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
+        const bool allReady = readyCount.load() == 3;   // recorded before the lock loop, not inferred afterwards
         // Only a held mutex proves all three waiters are parked in cond_wait (it was released by each one's wait).
         bool acquired = false;
         while (!(acquired = isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_trylock"), {mu}) == 0) &&
@@ -4160,7 +4161,7 @@ int runFullSubsystemTests() {
         const auto t1 = std::chrono::steady_clock::now();
 
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        check(readyCount.load() == 3 && acquired && finishedCount.load() == 3 && ms < 35.0,
+        check(allReady && acquired && finishedCount.load() == 3 && ms < 35.0,
               "pthread condition variable process stop broadcast wakes up and joins quickly");
         // The Process must outlive every waiter, even when the check above failed: give a stuck one time to leave.
         const auto drain = std::chrono::steady_clock::now();
