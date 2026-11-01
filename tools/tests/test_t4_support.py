@@ -52,13 +52,8 @@ class TestDumpSupportManifest(unittest.TestCase):
         self.assertEqual(self.symbols_by_name["_glDrawBuffers"]["status"], "Stub")
 
 
-class TestCensus(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        if not BUILD_HVM.exists():
-            raise unittest.SkipTest(f"{BUILD_HVM} not built")
-        p = subprocess.run([str(BUILD_HVM), "--dump-support"], capture_output=True, text=True, check=True)
-        cls.manifest = json.loads(p.stdout)   # dumped fresh for every run: no cache that outlives a rebuild
+class TestCensusWithoutBinary(unittest.TestCase):
+    """These need no hvm binary, so they run everywhere."""
 
     def test_missing_manifest_path_is_an_error(self):
         with self.assertRaises(FileNotFoundError):
@@ -69,7 +64,16 @@ class TestCensus(unittest.TestCase):
             bad_ipa = Path(td) / "AngryBirds_v1.0_os30.ipa"
             bad_ipa.write_text("corrupted content")
             with self.assertRaises(ValueError):
-                census.census_ipa(bad_ipa, self.manifest)
+                census.census_ipa(bad_ipa, {"symbols": [], "classes": []})
+
+
+class TestCensus(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not BUILD_HVM.exists():
+            raise unittest.SkipTest(f"{BUILD_HVM} not built")
+        p = subprocess.run([str(BUILD_HVM), "--dump-support"], capture_output=True, text=True, check=True)
+        cls.manifest = json.loads(p.stdout)   # dumped fresh for every run: no cache that outlives a rebuild
 
     def test_reproduces_reference_numbers(self):
         # Reproduce reference numbers for all 3 committed repo-root IPAs
