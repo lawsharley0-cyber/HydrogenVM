@@ -815,6 +815,13 @@ void guestStringSet(Ctx& x, GuestPtr self, const std::string& s) { set(x, self, 
 uint32_t guestWStringData(Ctx& x, const std::u32string& s) { return wmake(x, s); }
 std::u32string guestWStringValue(Ctx& x, GuestPtr self) { return wvalue(x, self); }
 
+// __gnu_cxx::__exchange_and_add(volatile _Atomic_word*, int): one atomic fetch-add on the guest word,
+// returning the previous value; unsigned arithmetic so the sum wraps like the 32-bit original.
+uint32_t atomic_exchange_and_add(Ctx& x, uint32_t mem, int32_t val) {
+    if (!mem || (mem & 3u)) throw CPU::GuestFault(CPU::Exit::MemFault, mem, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "__exchange_and_add on a null or unaligned address");
+    return __atomic_fetch_add(reinterpret_cast<uint32_t*>(x.mem.host(mem)), uint32_t(val), __ATOMIC_SEQ_CST);
+}
+
 void registerLibStdcxxContainers(Process& p) {
     p.service<Strings>().emptyRep = p.defineDataBlock("__ZNSs4_Rep20_S_empty_rep_storageE", 16);
     p.mem().write<uint32_t>(p.service<Strings>().emptyRep + 8, 0xFFFFFFFFu);
@@ -982,6 +989,9 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&l_unhook>("__ZNSt15_List_node_base6unhookEv");
     p.def<&l_transfer>("__ZNSt15_List_node_base8transferEPS_S0_");
     p.def<&l_swap>("__ZNSt15_List_node_base4swapERS_S0_");
+
+    p.def<&atomic_exchange_and_add>("__ZN9__gnu_cxx18__exchange_and_addEPVii");
+    p.def<&atomic_exchange_and_add>("__ZN9__gnu_cxx27__exchange_and_add_dispatchEPii");
 
     p.def<&t_increment>("__ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base");
     p.def<&t_increment>("__ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base");
