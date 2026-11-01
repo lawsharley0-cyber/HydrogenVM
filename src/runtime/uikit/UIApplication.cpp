@@ -622,7 +622,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         rt(cx).poolPop(c, fp);
     });
     installLifecycle(x.proc);
-    for (;;) Foundation::mainRunLoop(x.proc).runUntil(x.cpu, 1e18);
+    for (;;) Foundation::mainRunLoop(x.proc).runUntil(x.cpu, 1e18, false, Foundation::runLoopModeKey("kCFRunLoopDefaultMode"));
 }
 
 } // namespace

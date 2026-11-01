@@ -105,6 +105,7 @@ struct RunLoop {
         double interval = 0;
         bool repeats = false;
         bool valid = true;
+        std::vector<std::string> modes;   // run loop mode keys it belongs to; empty = fires in every mode (internal timers)
         std::function<void(CPU::Cpu&)> fire;
     };
     // A version-0 CFRunLoopSource: its perform callback runs on the next loop
@@ -115,6 +116,10 @@ struct RunLoop {
         std::atomic<bool> signalled{false};
         std::atomic<bool> valid{true};
         std::function<void(CPU::Cpu&)> perform;
+        std::mutex modeMu;   // guards `memberships`
+        std::vector<std::pair<const void*, std::string>> memberships;   // (run loop, mode key) it was added with
+        void addMembership(const void* loop, const std::string& mode);
+        void removeMembership(const void* loop, const std::string& mode);
     };
     std::mutex mu;
     std::condition_variable cv;
@@ -126,18 +131,26 @@ struct RunLoop {
     double nextFrameAt = 0;     // next frame-hook deadline (60 Hz)
     void addFrameHook(std::function<void(CPU::Cpu&, double)> h) { std::lock_guard<std::mutex> lk(mu); frameHooks.push_back(std::move(h)); }
 
-    std::shared_ptr<Timer> addTimer(double delay, double interval, bool repeats, std::function<void(CPU::Cpu&)> fire, id timerObj = 0);
+    std::shared_ptr<Timer> addTimer(double delay, double interval, bool repeats, std::function<void(CPU::Cpu&)> fire, id timerObj = 0,
+                                    std::vector<std::string> modes = {});
+    void addTimerMode(const std::shared_ptr<Timer>& t, const std::string& mode);
     void post(std::function<void(CPU::Cpu&)> fn);    // any thread
     void addSource(const std::shared_ptr<Source>& s);
     void removeSource(const std::shared_ptr<Source>& s);
     bool hasSource(const std::shared_ptr<Source>& s);
     void wake() { std::lock_guard<std::mutex> lk(mu); cv.notify_all(); }   // any thread
     // Process due work; returns true if anything ran. Waits up to `maxWait` seconds for work.
-    bool runOnce(CPU::Cpu& c, double maxWait);
+    // `mode` (a runLoopModeKey, empty = any) limits the run to the timers and sources registered for that mode
+    // or for the common modes; a signalled source of another mode keeps its signal.
+    bool runOnce(CPU::Cpu& c, double maxWait, const std::string& mode = {});
     // Run until `until` (absolute, reference-date seconds) or stop().
-    void runUntil(CPU::Cpu& c, double until, bool returnAfterSource = false);
+    void runUntil(CPU::Cpu& c, double until, bool returnAfterSource = false, const std::string& mode = {});
     void stop() { std::lock_guard<std::mutex> lk(mu); stopFlag = true; cv.notify_all(); }
 };
+// Run loop modes compare by string value. Keys are "s:<name>"; the common-modes pseudo-mode covers the default
+// and tracking modes.
+std::string runLoopModeKey(const std::string& name);
+bool runLoopModeRuns(const std::string& registered, const std::string& running);
 RunLoop& mainRunLoop(Process& p);
 RunLoop& runLoopForObject(Ctx& x, id loop);   // an NSRunLoop / CFRunLoop object (current loop if 0)
 double now();          // seconds since 2001-01-01 (NSDate reference)
