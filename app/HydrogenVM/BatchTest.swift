@@ -542,8 +542,8 @@ final class BatchTestRunner {
                     s.stop()
                     self.activeSession = nil
                     _ = await Self.waitForArenaRelease(5.0)
-                    guard !Task.isCancelled, self.status == .running else { return }
                     try? await Task.sleep(for: .milliseconds(1000))
+                    guard !Task.isCancelled, self.status == .running else { return }
                     continue
                 } else {
                     break
@@ -796,8 +796,8 @@ final class BatchTestRunner {
                 s.stop()
                 activeSession = nil
                 _ = await Self.waitForArenaRelease(5.0)
-                if Task.isCancelled || status != .running { return (false, 0, nil) }
                 try? await Task.sleep(for: .milliseconds(1000))
+                if Task.isCancelled || status != .running { return (false, 0, nil) }
                 continue
             } else {
                 break
