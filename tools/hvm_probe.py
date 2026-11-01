@@ -161,9 +161,19 @@ def issues_from(rep, log_text, shot, timed_out):
                       'text': (text + (' ' + detail if detail else '')).strip()[:400]})
     if timed_out:
         add('hang', 'did not stop when asked (killed by the probe timeout)')
+    def add_checklist():
+        # Unity/Mono startup checklist (T5c): log evidence works with or without a report. A failure of the
+        # checklist itself is a finding, not something to swallow.
+        try:
+            from unity_mono_checklist import check_probe_run
+            for ci in check_probe_run(rep, log_text):
+                add(ci['kind'], ci['text'])
+        except Exception as e:
+            add('error', f'unity_mono_checklist integration failed: {type(e).__name__}: {e}')
     if rep is None:
         tail = '\n'.join(log_text.strip().splitlines()[-5:])
         add('crash', 'no report written; log tail: ' + tail)
+        add_checklist()
         return found
     if rep.get('loadError'):
         add('load', rep['loadError'])
@@ -199,6 +209,7 @@ def issues_from(rep, log_text, shot, timed_out):
     mx = rep.get('mixer') or {}
     if mx.get('framesRendered', 0) and not mx.get('audibleFrames', 0) and not report:
         add('silent', 'no audible sound during the whole run')
+    add_checklist()
     return found
 
 
