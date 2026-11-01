@@ -2090,6 +2090,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
             if (data->preparing || data->status != 0) return;
             data->preparing = true;
         }
+        x.proc.reportMissing("AVPlayerItem media decoding (items are marked ReadyToPlay without decoding their media)");
         rt(x).retain(x.cpu,item);
         Process* process = &x.proc;
         // Publish after player construction/current-item assignment returns.

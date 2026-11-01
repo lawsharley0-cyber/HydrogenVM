@@ -3,6 +3,7 @@
 // thread, then constructs a second Process in the same stack slot.
 #include "runtime/Process.hpp"
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/gl/HostGLInternal.hpp"
 #include "runtime/objc/ObjC.hpp"
 
 #include <cstdint>
@@ -38,7 +39,17 @@ int main() {
             std::fprintf(stderr, "EAGL context bind failed on launch %d\n", i + 1);
             return 1;
         }
+        // The bind must have gone through the host renderer, not fallen back to software.
+        if (!HostGL::currentHostContext()) {
+            std::fprintf(stderr, "no host GL context is current after the bind on launch %d\n", i + 1);
+            return 1;
+        }
         // Intentionally no setCurrentContext:nil: catch stale TLS on relaunch.
+    }
+    // Both processes are gone: neither may leave a binding behind on this thread.
+    if (HostGL::currentHostContext()) {
+        std::fputs("a destroyed process left a host GL context bound on this thread\n", stderr);
+        return 1;
     }
     std::puts("HostGL sequential EAGL process lifetime: passed");
     return 0;
