@@ -66,6 +66,10 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def _reject_constant(name):
+    raise ValueError(f"report contains non-finite number {name}")
+
+
 def observation(build, target, folder, args):
     folder.mkdir(parents=True, exist_ok=False)
     home = folder / "home"
@@ -94,7 +98,7 @@ def observation(build, target, folder, args):
     (folder / "stdout.log").write_text(result.stdout, encoding="utf-8")
     (folder / "stderr.log").write_text(result.stderr, encoding="utf-8")
     try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report = json.loads(report_path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"no valid hvm report (exit {result.returncode}); see {folder / 'stderr.log'}") from exc
     required = {"exitStatus": int, "crashed": bool, "loadError": str, "perf": dict, "audio": dict}

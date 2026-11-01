@@ -54,7 +54,7 @@ sys.exit(int(bad))
         for i in range(10):
             (repo / "version").write_text(str(i))
             git(repo, "add", ".")
-            git(repo, "commit", "-qm", f"version {i}")
+            git(repo, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", f"version {i}")
             commits.append(git(repo, "rev-parse", "HEAD"))
         return repo, commits
 
@@ -223,6 +223,38 @@ sys.exit({exit_status})
         env = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other), "GIT_INDEX_FILE": str(other / ".git" / "index")}
         with mock.patch.dict(os.environ, env):
             self.assertEqual(git(repo, "rev-parse", "--show-toplevel"), wanted)
+
+    def test_report_with_non_finite_numbers_is_rejected(self):
+        hvm = self.fake_hvm("hvm")
+        hvm.write_text(hvm.read_text().replace("json.dumps(report)", "json.dumps(report).replace('\"value\": 0', '\"value\": NaN')"))
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(ab_diff.main(self.ab_args(hvm, hvm)), 2)
+        self.assertIn("no valid hvm report", errors.getvalue())
+
+    def test_inherited_commit_signing_and_hooks_do_not_break_the_fixture_repository(self):
+        hooks = self.root / "failing-hooks"
+        hooks.mkdir()
+        (hooks / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+        (hooks / "pre-commit").chmod(0o755)
+        env = {"GIT_CONFIG_COUNT": "3",
+               "GIT_CONFIG_KEY_0": "commit.gpgSign", "GIT_CONFIG_VALUE_0": "true",
+               "GIT_CONFIG_KEY_1": "gpg.program", "GIT_CONFIG_VALUE_1": "/bin/false",
+               "GIT_CONFIG_KEY_2": "core.hooksPath", "GIT_CONFIG_VALUE_2": str(hooks)}
+        with mock.patch.dict(os.environ, env):
+            repo, commits = self.repository()
+        self.assertEqual(len(commits), 10)
+
+    def test_bisect_run_ignores_inherited_repository_variables(self):
+        repo, _ = self.repository()
+        other = self.root / "other-repo"
+        other.mkdir()
+        subprocess.check_call(["git", "init", "-q", str(other)], stderr=subprocess.DEVNULL)
+        env = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other), "GIT_INDEX_FILE": str(other / ".git" / "index"),
+               "GIT_COMMON_DIR": str(other / ".git")}
+        with mock.patch.dict(os.environ, env):
+            result = bisect_corpus.run(["git", "rev-parse", "--show-toplevel"], repo)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(Path(result.stdout.strip()).resolve(), Path(repo).resolve())
 
     def test_planted_change_reports_every_observation_category(self):
         with contextlib.redirect_stdout(io.StringIO()):
