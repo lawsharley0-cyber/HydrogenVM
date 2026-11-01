@@ -14,7 +14,18 @@ namespace {
 std::atomic<uint32_t> liveArenas{0};
 }
 
-uint32_t GuestArena::liveCount() noexcept { return liveArenas.load(std::memory_order_relaxed); }
+uint32_t GuestArena::liveCount() noexcept { return liveArenas.load(std::memory_order_acquire); }
+
+bool GuestArena::waitForRelease(double timeoutSeconds, uint32_t targetCount) noexcept {
+    if (liveCount() <= targetCount) return true;
+    const auto start = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::duration<double>(timeoutSeconds);
+    while (liveCount() > targetCount) {
+        if (std::chrono::steady_clock::now() - start >= timeout) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return true;
+}
 
 GuestArena::Stats GuestArena::stats() const {
     std::lock_guard<std::mutex> lk(mu_);
@@ -51,13 +62,13 @@ GuestArena::GuestArena() {
     base_ = static_cast<uint8_t*>(p);
     prot_.assign(kGuestPageCount, kProtNone);
     host_committed_.assign(size_t(kArenaSize / host_page_), 0);
-    liveArenas.fetch_add(1, std::memory_order_relaxed);
+    liveArenas.fetch_add(1, std::memory_order_release);
 }
 
 GuestArena::~GuestArena() {
     if (base_) {
         munmap(base_, size_t(kArenaSize));
-        liveArenas.fetch_sub(1, std::memory_order_relaxed);
+        liveArenas.fetch_sub(1, std::memory_order_release);
     }
 }
 
