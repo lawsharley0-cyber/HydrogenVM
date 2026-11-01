@@ -14,6 +14,8 @@ on:
       - 'src/**'
       - 'CMakeLists.txt'
       - 'tests/ios/apps/testlab/**'
+      - 'tests/ios/apps/objcsymbolication/**'
+      - 'tools/test_objc_symbolication.py'
       - 'tools/hvm_testlab.py'
       - 'tools/testlab_schema/**'
       - '.github/workflows/testlab.yml'
@@ -22,6 +24,8 @@ on:
       - 'src/**'
       - 'CMakeLists.txt'
       - 'tests/ios/apps/testlab/**'
+      - 'tests/ios/apps/objcsymbolication/**'
+      - 'tools/test_objc_symbolication.py'
       - 'tools/hvm_testlab.py'
       - 'tools/testlab_schema/**'
       - '.github/workflows/testlab.yml'
@@ -135,6 +139,11 @@ jobs:
         if: ${{ always() && hashFiles('build/hvm') != '' }}
         run: python3 tools/test_crash_bundle.py --hvm build/hvm
 
+      - name: Verify stripped ObjC method names in crash bundle
+        run: python3 tools/test_objc_symbolication.py --hvm build/hvm --out build/objc-symbolication
+        env:
+          HVM_LD64: /home/runner/cctools/bin/arm-apple-darwin11-ld
+
       - name: Validate report schema
         if: ${{ always() && hashFiles('build/testlab-report-all/testlab_report.json') != '' }}
         run: |
@@ -165,4 +174,8 @@ jobs:
             build/testlab-report-all/testlab_report.json
             build/objc-conformance-faults/report.json
             build/ios/TestLab.ipa
+            build/objc-symbolication/verification.json
+            build/objc-symbolication/hvm-report.json
+            build/objc-symbolication/run.log
+            build/objc-symbolication/nm.log
           if-no-files-found: warn
