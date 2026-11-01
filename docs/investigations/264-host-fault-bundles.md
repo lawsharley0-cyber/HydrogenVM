@@ -18,6 +18,54 @@ On unmodified main `4c09fa47`, the callback arena-offset and HLE-name checks fai
 the other four checks pass. The baseline report does not identify the active
 arena on a callback thread without a guest fault scope.
 
+The fulltest regression also faults during concurrent log writes and repeated
+Cpu/Engine construction/destruction. It checks that the reporter still reaches
+its footer and retains the two blocked threads' register/HLE observations. The
+16 KB tests verify shared-page preservation, independent guest protection,
+partial unmap, released backing-byte accounting and zero-filled remapping.
+
+## Report limits
+
+The reporter uses permanent storage for 128 CPU slots and 32 arena bases.
+Numeric register fields are independent samples at block entry/HLE boundaries,
+not an instruction-precise, simultaneous stop of all host threads. Each thread
+record includes its arena and a slot generation; a reused slot is discarded if
+its generation changes during capture. HLE names are bounded to 127 bytes.
+The last 200 log entries are bounded to 255 bytes each. A signal interrupting a
+publisher never waits on it; unavailable HLE/log data and CPU-capacity overflow
+are reported explicitly. A 16 KB Linux pass does not prove device equivalence.
+
+Batch journal identity is saved before the native signal files open. Old
+nonempty evidence must be recovered successfully before those paths can be
+truncated again. A run whose arena has not released keeps its journal open;
+session tokens stop an older task's cleanup from deleting a newer journal.
+Recovery tolerates missing pending metadata and invalid UTF-8 in a clipped log
+line. No proprietary fixture or actual device crash is included in this patch.
+
+## Verification record (2026-11-01)
+
+- Linux x86_64, native host pages 4096. Baseline main `4c09fa47`: fulltest
+  487/487; Test Lab 25/25, zero failures, interruptions or skips.
+- Final focused ASan/UBSan: forced fault, concurrent teardown/logging and 16 KB
+  checks pass. `bash tools/test_host_fault.sh` leaves normal memory/UB
+  instrumentation enabled; only sanitizer interception of the deliberately
+  fatal SIGSEGV/SIGBUS is disabled so the emulator's real handler runs.
+- Final Test Lab: 25/25, zero failures, interruptions or skips.
+- The first final release fulltest aborted with `double free or corruption
+  (fasttop)` immediately after the formatting regression and before the asset
+  I/O results. Four subsequent fulltest runs passed 488/488. The abort remains
+  an unresolved gate concern; a full-runtime ASan/UBSan run is being used to
+  diagnose it rather than treating the reruns as a fix.
+- Enabling `HVM_TESTLAB_TOOLCHAIN=1` exposed an existing test fixture assigning
+  a CompletedProcess to `TestCase.run`. The result attribute is renamed to
+  `testlab_run`; all original guest expectations remain intact. The enabled
+  tools suite then passed all 202 tests with zero skips.
+- CI stub audit reports four new/changed findings relative to its committed
+  baseline, all in unchanged `RunLoop.cpp`, `Libcxx.cpp`, and `Pthread.cpp`.
+  The baseline and the stub implementations are not modified here.
+- Physical iPhone/game runs and local Apple compilation: NOT RUN. The PR stays
+  draft; synthetic diagnostics do not resolve the underlying game faults.
+
 ## Owner capture on a physical iPhone
 
 1. Install the CI unsigned-device artifact after signing privately. Record the
