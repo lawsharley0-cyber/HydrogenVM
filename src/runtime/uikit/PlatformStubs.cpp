@@ -5,11 +5,13 @@
 #include "runtime/Support.hpp"
 #include "runtime/audio/Audio.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -2058,7 +2060,58 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         x.cpu.r[0] = d ? d->url : 0;
     }, "@@:");
 
-    struct AVPlayerItemData : ObjC::HostObject { id asset = 0; };
+    struct ItemStatusObserver {
+        id observer = 0;
+        uint32_t options = 0, context = 0;
+        std::atomic<bool> active{true};
+    };
+    struct AVPlayerItemData : ObjC::HostObject {
+        id asset = 0;
+        int32_t status = 0; // AVPlayerItemStatusUnknown until associated/prepared
+        bool preparing = false;
+        std::mutex mu;
+        std::vector<std::shared_ptr<ItemStatusObserver>> observers;
+    };
+    auto itemStatusNote = [](Ctx& x, id item, const std::shared_ptr<ItemStatusObserver>& o,
+                             int32_t old, int32_t value, bool initial, bool prior) {
+        if (!o->active) return;
+        std::vector<std::pair<id,id>> fields{{makeString(x,"kind"),Foundation::makeNumberInt(x,1)}};
+        if (prior) fields.emplace_back(makeString(x,"notificationIsPrior"),Foundation::makeBool(x,true));
+        if (!initial && (o->options & 2)) fields.emplace_back(makeString(x,"old"),Foundation::makeNumberInt(x,old));
+        if (!prior && (o->options & 1)) fields.emplace_back(makeString(x,"new"),Foundation::makeNumberInt(x,value));
+        rt(x).send(x.cpu,o->observer,"observeValueForKeyPath:ofObject:change:context:",
+                   {Foundation::constString(x.proc,"status"),item,Foundation::makeDict(x,fields),o->context});
+    };
+    auto prepareItem = [itemStatusNote](Ctx& x, id item) {
+        auto* data = rt(x).hostIf<AVPlayerItemData>(item);
+        if (!data) return;
+        {
+            std::lock_guard<std::mutex> lock(data->mu);
+            if (data->preparing || data->status != 0) return;
+            data->preparing = true;
+        }
+        x.proc.reportMissing("AVPlayerItem media decoding (items are marked ReadyToPlay without decoding their media)");
+        rt(x).retain(x.cpu,item);
+        Process* process = &x.proc;
+        // Publish after player construction/current-item assignment returns.
+        // An Initial KVO callback must not start a not-yet-created player.
+        Foundation::mainRunLoop(x.proc).post([process,item,itemStatusNote](CPU::Cpu& cpu) {
+            Ctx cx{*process,cpu,process->mem()};
+            try {
+                auto& data = rt(cx).host<AVPlayerItemData>(item);
+                std::vector<std::shared_ptr<ItemStatusObserver>> observers;
+                { std::lock_guard<std::mutex> lock(data.mu); observers = data.observers; }
+                for (auto& o : observers) if (o->options & 8) itemStatusNote(cx,item,o,0,1,false,true);
+                {
+                    std::lock_guard<std::mutex> lock(data.mu);
+                    data.status = 1; // AVPlayerItemStatusReadyToPlay
+                    observers = data.observers;
+                }
+                for (auto& o : observers) itemStatusNote(cx,item,o,0,1,false,false);
+            } catch (...) { rt(cx).release(cpu,item); throw; }
+            rt(cx).release(cpu,item);
+        });
+    };
     ObjC::ClassBuilder avItem = r.defineClass("AVPlayerItem", "NSObject");
     avItem.classMethod("playerItemWithAsset:", [](Ctx& x) {
         const id inst = rt(x).createInstance(x.cpu.r[0]);
@@ -2086,7 +2139,46 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         auto* d = rt(x).hostIf<AVPlayerItemData>(x.cpu.r[0]);
         x.cpu.r[0] = d ? d->asset : 0;
     }, "@@:");
-    avItem.method("status", [](Ctx& x) { x.cpu.r[0] = 1; /* AVPlayerItemStatusReadyToPlay */ }, "i@:");
+    avItem.method("status", [](Ctx& x) {
+        auto& d = rt(x).host<AVPlayerItemData>(x.cpu.r[0]);
+        std::lock_guard<std::mutex> lock(d.mu);
+        x.cpu.r[0] = uint32_t(d.status);
+    }, "i@:");
+    avItem.method("addObserver:forKeyPath:options:context:", [itemStatusNote](Ctx& x) {
+        const id self = x.cpu.r[0]; const SEL selector = x.cpu.r[1];
+        ArgReader args(x.cpu,x.mem,2);
+        const id observer = args.word(), key = args.word();
+        const uint32_t options = args.word(), context = args.word();
+        if (utf8(x,key) != "status") {
+            rt(x).sendSuper(x.cpu,self,rt(x).nsObject,selector,{observer,key,options,context}); return;
+        }
+        if (!observer) return;
+        auto o = std::make_shared<ItemStatusObserver>();
+        o->observer = observer; o->options = options; o->context = context;
+        int32_t value;
+        auto& d = rt(x).host<AVPlayerItemData>(self);
+        { std::lock_guard<std::mutex> lock(d.mu); d.observers.push_back(o); value = d.status; }
+        if (options & 4) itemStatusNote(x,self,o,value,value,true,false);
+    }, "v@:@@I^v");
+    auto removeItemObserver = [](Ctx& x, bool hasContext) {
+        const id self = x.cpu.r[0]; const SEL selector = x.cpu.r[1];
+        ArgReader args(x.cpu,x.mem,2);
+        const id observer = args.word(), key = args.word();
+        const uint32_t context = hasContext ? args.word() : 0;
+        if (utf8(x,key) != "status") {
+            if (hasContext) rt(x).sendSuper(x.cpu,self,rt(x).nsObject,selector,{observer,key,context});
+            else rt(x).sendSuper(x.cpu,self,rt(x).nsObject,selector,{observer,key});
+            return;
+        }
+        auto& d = rt(x).host<AVPlayerItemData>(self);
+        std::lock_guard<std::mutex> lock(d.mu);
+        std::erase_if(d.observers,[&](const auto& o) {
+            if (o->observer != observer || (hasContext && o->context != context)) return false;
+            o->active = false; return true;
+        });
+    };
+    avItem.method("removeObserver:forKeyPath:",[removeItemObserver](Ctx& x) { removeItemObserver(x,false); },"v@:@@");
+    avItem.method("removeObserver:forKeyPath:context:",[removeItemObserver](Ctx& x) { removeItemObserver(x,true); },"v@:@@^v");
     avItem.method("error", [](Ctx& x) { x.cpu.r[0] = 0; }, "@@:");
     avItem.method("duration", [writeCMTime](Ctx& x) { writeCMTime(x, x.cpu.r[0], 0, 600, 1); }, "{?=qiIq}@:");
     avItem.method("currentTime", [writeCMTime](Ctx& x) { writeCMTime(x, x.cpu.r[0], 0, 600, 1); }, "{?=qiIq}@:");
@@ -2121,37 +2213,42 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         });
     };
     ObjC::ClassBuilder avPlayer = r.defineClass("AVPlayer", "NSObject");
-    avPlayer.classMethod("playerWithPlayerItem:", [](Ctx& x) {
+    avPlayer.classMethod("playerWithPlayerItem:", [prepareItem](Ctx& x) {
         const id inst = rt(x).createInstance(x.cpu.r[0]);
         rt(x).host<AVPlayerData>(inst).currentItem = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        prepareItem(x,rt(x).host<AVPlayerData>(inst).currentItem);
         x.cpu.r[0] = autoreleased(x, inst);
     }, "@@:@");
-    avPlayer.classMethod("playerWithURL:", [](Ctx& x) {
+    avPlayer.classMethod("playerWithURL:", [prepareItem](Ctx& x) {
         const id item = id(rt(x).send(x.cpu, rt(x).getClass("AVPlayerItem"), "playerItemWithURL:", {x.cpu.r[2]}));
         const id inst = rt(x).createInstance(x.cpu.r[0]);
         rt(x).host<AVPlayerData>(inst).currentItem = item ? rt(x).retain(x.cpu, item) : 0;
+        prepareItem(x,item);
         x.cpu.r[0] = autoreleased(x, inst);
     }, "@@:@");
-    avPlayer.method("initWithPlayerItem:", [](Ctx& x) {
+    avPlayer.method("initWithPlayerItem:", [prepareItem](Ctx& x) {
         const id self = x.cpu.r[0];
         rt(x).host<AVPlayerData>(self).currentItem = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        prepareItem(x,rt(x).host<AVPlayerData>(self).currentItem);
         x.cpu.r[0] = self;
     }, "@@:@");
-    avPlayer.method("initWithURL:", [](Ctx& x) {
+    avPlayer.method("initWithURL:", [prepareItem](Ctx& x) {
         const id self = x.cpu.r[0];
         const id item = id(rt(x).send(x.cpu, rt(x).getClass("AVPlayerItem"), "playerItemWithURL:", {x.cpu.r[2]}));
         rt(x).host<AVPlayerData>(self).currentItem = item ? rt(x).retain(x.cpu, item) : 0;
+        prepareItem(x,item);
         x.cpu.r[0] = self;
     }, "@@:@");
     avPlayer.method("currentItem", [](Ctx& x) {
         auto* d = rt(x).hostIf<AVPlayerData>(x.cpu.r[0]);
         x.cpu.r[0] = d ? d->currentItem : 0;
     }, "@@:");
-    avPlayer.method("replaceCurrentItemWithPlayerItem:", [](Ctx& x) {
+    avPlayer.method("replaceCurrentItemWithPlayerItem:", [prepareItem](Ctx& x) {
         auto& d = rt(x).host<AVPlayerData>(x.cpu.r[0]);
         const id next = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
         if (d.currentItem) rt(x).release(x.cpu, d.currentItem);
         d.currentItem = next;
+        prepareItem(x,next);
     }, "v@:@");
     avPlayer.method("play", [notifyFinish](Ctx& x) {
         const id self = x.cpu.r[0];
