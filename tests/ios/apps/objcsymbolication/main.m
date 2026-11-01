@@ -23,10 +23,12 @@ static volatile int returned;
 @end
 
 // A category +load is called by the runtime, never attached as a method, so its frame needs its own name.
+// The category extends a class from another image (NSObject): the linker merges a category into a class
+// defined in the same image, which would leave the frame named after the class and lose the category name.
 // It starts the whole chain: the guest traps below it, before main runs.
-@interface HVMTraceCallee (Boot)
+@interface NSObject (HVMBoot)
 @end
-@implementation HVMTraceCallee (Boot)
+@implementation NSObject (HVMBoot)
 + (void)load {
     HVMTraceCaller *caller = [HVMTraceCaller new];
     [caller enter];
