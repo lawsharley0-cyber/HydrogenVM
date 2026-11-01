@@ -41,104 +41,98 @@ MONO_FAULT_SIGNALS = {
 }
 
 
-def check_stat_layout(hvm_tests_bin: Path | None = None) -> dict:
-    """Validate struct stat layout conforms to Darwin 32-bit ABI expectations."""
-    if hvm_tests_bin and Path(hvm_tests_bin).exists():
-        cmd = [str(hvm_tests_bin), "fulltest"]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        # Search for stat test assertion in fulltest
-        if "Survivalcraft" in res.stdout or "stat" in res.stdout:
-            passed = res.returncode == 0
-        else:
-            passed = res.returncode == 0
-    else:
-        passed = True
+PASS, FAIL, UNVERIFIED = "pass", "fail", "unverified"
 
-    return {
-        "pass": passed,
-        "legacy_size": DARWIN_STAT32_LEGACY_SIZE,
-        "inode64_size": DARWIN_STAT32_INODE64_SIZE,
-        "st_size_offset": DARWIN_STAT32_OFFSETS["st_size"],
-        "st_mtime_offset": DARWIN_STAT32_OFFSETS["st_mtime"],
-        "st_mode_offset": DARWIN_STAT32_OFFSETS["st_mode"],
-    }
+# Exact fulltest assertion text each runtime check relies on. A check whose assertion is not in the output is
+# UNVERIFIED, never PASS: a checklist that passes without evidence is worse than none.
+STAT_MARKER = "Darwin 32-bit struct stat legacy and INODE64 layouts"   # no such assertion in fulltest yet
+DLOPEN_MARKER = "dlopen(NULL) returns RTLD_DEFAULT"
+GETPWNAM_MARKER = "getpwnam_r finds only mobile"
+GETPWUID_MARKER = "getpwuid(501) returns mobile"                          # no such assertion in fulltest yet
+AUDIO_MARKER = "AudioQueue accepts 44.1 kHz stereo 16-bit PCM"           # no such assertion in fulltest yet
+RTLD_DEFAULT_HANDLE = 0xFFFFFFFE   # what _dlopen(NULL) returns (tests/runner/TestRunner.cpp)
+
+
+def run_fulltest(hvm_tests_bin: Path | None) -> str | None:
+    """stdout of `hvm_tests fulltest`, or None when the binary is not available. Run once, shared by the checks."""
+    if not hvm_tests_bin or not Path(hvm_tests_bin).exists():
+        return None
+    res = subprocess.run([str(hvm_tests_bin), "fulltest"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return res.stdout
+
+
+def assertion_status(output: str | None, marker: str) -> str:
+    """PASS when every fulltest line naming `marker` is an `ok` line, FAIL when one is not, UNVERIFIED when there is
+    no output or no such assertion."""
+    if output is None:
+        return UNVERIFIED
+    lines = [l for l in output.splitlines() if marker in l]
+    if not lines:
+        return UNVERIFIED
+    return PASS if all(l.lstrip().startswith("ok") for l in lines) else FAIL
+
+
+def combine(*statuses: str) -> str:
+    if FAIL in statuses:
+        return FAIL
+    return UNVERIFIED if UNVERIFIED in statuses else PASS
+
+
+def _result(status: str, **extra) -> dict:
+    return {"status": status, "pass": status == PASS, **extra}
+
+
+def check_stat_layout(fulltest_output: str | None = None) -> dict:
+    """struct stat layout (96 bytes legacy, 108 bytes INODE64): needs a dedicated fulltest assertion."""
+    return _result(assertion_status(fulltest_output, STAT_MARKER),
+                   legacy_size=DARWIN_STAT32_LEGACY_SIZE, inode64_size=DARWIN_STAT32_INODE64_SIZE,
+                   st_size_offset=DARWIN_STAT32_OFFSETS["st_size"], st_mtime_offset=DARWIN_STAT32_OFFSETS["st_mtime"],
+                   st_mode_offset=DARWIN_STAT32_OFFSETS["st_mode"],
+                   description="Darwin 32-bit struct stat legacy (96) and INODE64 (108) layouts")
 
 
 def check_signals(report_json: dict | None = None) -> dict:
-    """Verify fault signal handling required for Mono exception handling."""
+    """Fault signal delivery to the guest handler. Only a run in which faults reached the guest handler and the
+    process still did not crash is evidence; an ordinary exit proves nothing."""
+    status = UNVERIFIED
     if report_json:
         faults = (report_json.get("display") or {}).get("faultsToApp", 0)
-        crashed = report_json.get("crashed", False)
-        # If Mono handled faults without crashing, or reported faultsToApp
-        pass_signals = not crashed or faults > 0
-    else:
-        pass_signals = True
-
-    return {
-        "pass": pass_signals,
-        "signals": MONO_FAULT_SIGNALS,
-        "description": "SIGSEGV, SIGBUS, SIGILL, SIGFPE delivered to guest handler",
-    }
+        crashed = bool(report_json.get("crashed"))
+        if faults > 0:
+            status = FAIL if crashed else PASS
+    return _result(status, signals=MONO_FAULT_SIGNALS,
+                   description="SIGSEGV, SIGBUS, SIGILL, SIGFPE delivered to guest handler")
 
 
-def check_dlopen_null(hvm_tests_bin: Path | None = None) -> dict:
-    """Verify dlopen(NULL) returns RTLD_DEFAULT and resolves exports."""
-    if hvm_tests_bin and Path(hvm_tests_bin).exists():
-        cmd = [str(hvm_tests_bin), "fulltest"]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        pass_dlopen = "dlopen(NULL) returns RTLD_DEFAULT" in res.stdout and res.returncode == 0
-    else:
-        pass_dlopen = True
-
-    return {
-        "pass": pass_dlopen,
-        "rtld_default": 0,
-        "description": "dlopen(NULL) returns valid RTLD_DEFAULT handle resolving exports",
-    }
+def check_dlopen_null(fulltest_output: str | None = None) -> dict:
+    """dlopen(NULL) returns RTLD_DEFAULT."""
+    return _result(assertion_status(fulltest_output, DLOPEN_MARKER), rtld_default=RTLD_DEFAULT_HANDLE,
+                   description="dlopen(NULL) returns the RTLD_DEFAULT handle")
 
 
-def check_getpw(hvm_tests_bin: Path | None = None) -> dict:
-    """Verify getpwnam('mobile') and getpwuid(501) return mobile user with /var/mobile."""
-    if hvm_tests_bin and Path(hvm_tests_bin).exists():
-        cmd = [str(hvm_tests_bin), "fulltest"]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        pass_getpw = "getpwnam_r finds only mobile" in res.stdout and res.returncode == 0
-    else:
-        pass_getpw = True
-
-    return {
-        "pass": pass_getpw,
-        "user": "mobile",
-        "uid": 501,
-        "gid": 501,
-        "dir": "/var/mobile",
-    }
+def check_getpw(fulltest_output: str | None = None) -> dict:
+    """getpwnam_r('mobile') and getpwuid(501) both resolve to the mobile user."""
+    by_name = assertion_status(fulltest_output, GETPWNAM_MARKER)
+    by_uid = assertion_status(fulltest_output, GETPWUID_MARKER)
+    return _result(combine(by_name, by_uid), getpwnam=by_name, getpwuid=by_uid, user="mobile", uid=501, gid=501,
+                   dir="/var/mobile", description="getpwnam/getpwuid map to the mobile user")
 
 
-def check_audio_format(report_json: dict | None = None) -> dict:
-    """Verify audio format negotiation: 44.1kHz stereo 16-bit PCM."""
-    if report_json:
-        mx = report_json.get("mixer") or {}
-        # Audio rendered without audio queue failure
-        pass_audio = mx.get("framesRendered", 0) >= 0
-    else:
-        pass_audio = True
-
-    return {
-        "pass": pass_audio,
-        "rate": 44100,
-        "channels": 2,
-        "bits": 16,
-        "format": "lpcm",
-    }
+def check_audio_format(fulltest_output: str | None = None) -> dict:
+    """AudioQueue accepts 44.1 kHz stereo 16-bit PCM: needs a targeted fulltest assertion (a frame count is not it)."""
+    return _result(assertion_status(fulltest_output, AUDIO_MARKER), rate=44100, channels=2, bits=16, format="lpcm",
+                   description="AudioQueue negotiates 44.1 kHz stereo 16-bit PCM")
 
 
 def check_probe_run(rep: dict | None, log_text: str = "") -> list[dict]:
     """Inspect probe report and log for Unity/Mono startup checklist failures."""
     issues = []
     # 1. stat check
-    if "Could not load Manifest asset" in log_text or "stat struct size mismatch" in log_text:
+    if "stat struct size mismatch" in log_text:
         issues.append({"kind": "error", "check": "stat_layout", "text": "Unity/Mono stat layout failure"})
+    elif "Could not load Manifest asset" in log_text:
+        # Ambiguous: a missing asset, a bad path or a stat layout problem all print this. Do not blame stat.
+        issues.append({"kind": "error", "check": "manifest_asset", "text": "Unity could not load its Manifest asset (cause not established)"})
 
     # 2. signal check
     if "SIGSEGV" in log_text and "mono_sigsegv_signal_handler" in log_text and (rep and rep.get("crashed")):
@@ -159,18 +153,21 @@ def check_probe_run(rep: dict | None, log_text: str = "") -> list[dict]:
     return issues
 
 
-def run_checklist(hvm_tests_bin: Path | None = None) -> dict:
-    """Run all 5 checklist verification items against the runtime."""
+def run_checklist(hvm_tests_bin: Path | None = None, report_json: dict | None = None) -> dict:
+    """Run the checklist. `overall_pass` needs every check to PASS; a check without evidence is UNVERIFIED."""
+    out = run_fulltest(hvm_tests_bin)
     results = {
-        "stat_layout": check_stat_layout(hvm_tests_bin),
-        "signals": check_signals(),
-        "dlopen_null": check_dlopen_null(hvm_tests_bin),
-        "getpw": check_getpw(hvm_tests_bin),
-        "audio_format": check_audio_format(),
+        "stat_layout": check_stat_layout(out),
+        "signals": check_signals(report_json),
+        "dlopen_null": check_dlopen_null(out),
+        "getpw": check_getpw(out),
+        "audio_format": check_audio_format(out),
     }
-    all_pass = all(item.get("pass", False) for item in results.values())
+    statuses = [r["status"] for r in results.values()]
     return {
-        "overall_pass": all_pass,
+        "overall_pass": all(x == PASS for x in statuses),
+        "overall_status": combine(*statuses),
+        "fulltest_available": out is not None,
         "checks": results,
     }
 
@@ -187,11 +184,14 @@ def main(argv=None):
         print(json.dumps(res, indent=2))
     else:
         print("=== Unity/Mono Startup Checklist (T5c) ===")
-        print(f"Status: {'PASSED' if res['overall_pass'] else 'FAILED'}")
+        if not res["fulltest_available"]:
+            print(f"hvm_tests not found at {args.tests_bin}: runtime checks are UNVERIFIED")
+        print(f"Status: {res['overall_status'].upper()}")
         for k, v in res["checks"].items():
-            print(f"  [{'x' if v['pass'] else ' '}] {k}: {v.get('description', 'OK')}")
+            print(f"  [{v['status']:10}] {k}: {v.get('description', '')}")
 
-    return 0 if res["overall_pass"] else 1
+    # 0 only when every check passed; 1 when one failed; 2 when none failed but some could not be verified.
+    return {PASS: 0, FAIL: 1, UNVERIFIED: 2}[res["overall_status"]]
 
 
 if __name__ == "__main__":
