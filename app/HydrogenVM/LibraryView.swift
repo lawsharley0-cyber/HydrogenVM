@@ -142,6 +142,8 @@ struct AppIcon: View {
 
 struct LibraryView: View {
     @AppStorage("keepIpaForReinstall") private var keepIpaForReinstall = true
+    /// Default display mode for games that have no setting of their own (PlayerSettings).
+    @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleMode = PlayerScaleMode.fit.rawValue
     @AppStorage("hvm.zombies") private var zombies = false
     @State private var store = LibraryStore()
     @State private var pickingFile = false
@@ -200,6 +202,11 @@ struct LibraryView: View {
                         Divider()
                         Toggle("Continue past missing functions", isOn: $keepGoing)
                         Toggle("Keep .ipa for reinstall", isOn: $keepIpaForReinstall)
+                        Picker("Default display mode", selection: $defaultScaleMode) {
+                            ForEach(PlayerScaleMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode.rawValue)
+                            }
+                        }
                         Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
                     }
                 }

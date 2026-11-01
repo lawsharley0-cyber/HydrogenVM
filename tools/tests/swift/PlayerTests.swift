@@ -77,6 +77,80 @@ struct PlayerTests {
         check(state.reconcile(ready: true, backgrounded: true, running: true) == .foreground, "foreground resumes")
         check(state.reconcile(ready: true, backgrounded: false, running: false) == nil && state.phase == .stopped,
               "exit resets status")
+        // #281: fill and extended bars share this one layout with every other mode.
+        let phone = CGSize(width: 390, height: 844)
+        for orientation in GuestOrientation.allCases {
+            let container = orientation.landscape ? CGSize(width: 844, height: 390) : phone
+            for mode in PlayerScaleMode.allCases {
+                let g = PlayerGeometry(container: container, guest: guest, pixels: pixels,
+                                       orientation: orientation, mode: mode, displayScale: 3,
+                                       focus: PlayerCropFocus.center.position, touchSafeArea: .zero)
+                let center = g.guestPoint(CGPoint(x: container.width / 2, y: container.height / 2))!
+                check(near(center.x, 160) && near(center.y, 240),
+                      "display centre reaches the guest centre (\(mode.rawValue), \(orientation))")
+                if mode.crops {
+                    check(g.rect.minX <= 0.0001 && g.rect.minY <= 0.0001
+                          && g.rect.maxX >= container.width - 0.0001 && g.rect.maxY >= container.height - 0.0001,
+                          "fill covers the whole display (\(orientation))")
+                    check(!g.hasBars, "fill has no bars (\(orientation))")
+                } else {
+                    check(g.rect.minX >= -0.0001 && g.rect.maxX <= container.width + 0.0001
+                          && g.rect.minY >= -0.0001 && g.rect.maxY <= container.height + 0.0001,
+                          "\(mode.rawValue) never crops (\(orientation))")
+                }
+            }
+        }
+        // The crop focus picks which edge survives; the guest sees the matching edge.
+        let narrow = CGSize(width: 320, height: 800)
+        let topFocus = PlayerGeometry(container: phone, guest: narrow, pixels: narrow, orientation: .portrait,
+                                      mode: .fill, displayScale: 3, focus: PlayerCropFocus.top.position)
+        check(near(topFocus.rect.minY, 0), "top focus keeps the top edge")
+        check(near(topFocus.guestPoint(CGPoint(x: 195, y: 0))!.y, 0), "top of the display is the top of the guest")
+        let bottomFocus = PlayerGeometry(container: phone, guest: narrow, pixels: narrow, orientation: .portrait,
+                                         mode: .fill, displayScale: 3, focus: PlayerCropFocus.bottom.position)
+        check(near(bottomFocus.rect.maxY, phone.height), "bottom focus keeps the bottom edge")
+        check(near(bottomFocus.guestPoint(CGPoint(x: 195, y: phone.height - 0.001))!.y, 799.5),
+              "bottom of the display is the end of the guest")
+        // The notch and home indicator must stay over game pixels, for every focus.
+        for orientation in GuestOrientation.allCases {
+            let container = orientation.landscape ? CGSize(width: 844, height: 390) : phone
+            let safeArea = orientation.landscape
+                ? CGRect(x: 47, y: 21, width: 844 - 94, height: 390 - 42)
+                : CGRect(x: 0, y: 59, width: 390, height: 844 - 93)
+            for focus in PlayerCropFocus.allCases {
+                let g = PlayerGeometry(container: container, guest: guest, pixels: pixels,
+                                       orientation: orientation, mode: .fill, displayScale: 3,
+                                       focus: focus.position, touchSafeArea: safeArea)
+                check(g.rect.minX <= safeArea.minX + 0.0001 && g.rect.maxX >= safeArea.maxX - 0.0001
+                      && g.rect.minY <= safeArea.minY + 0.0001 && g.rect.maxY >= safeArea.maxY - 0.0001,
+                      "fill keeps the touch safe area covered (\(orientation), \(focus.rawValue))")
+            }
+        }
+        // Extended bars: same picture as aspect fit, and the bars never swallow a touch.
+        let extended = PlayerGeometry(container: phone, guest: guest, pixels: pixels, orientation: .portrait,
+                                      mode: .extended, displayScale: 3)
+        let fit = PlayerGeometry(container: phone, guest: guest, pixels: pixels, orientation: .portrait,
+                                 mode: .fit, displayScale: 3)
+        check(extended.rect == fit.rect && extended.hasBars, "extended bars keep the aspect-fit picture")
+        check(extended.guestPoint(CGPoint(x: 195, y: 10)) == nil, "a tap in the bar does not reach the guest")
+        check(extended.guestPoint(CGPoint(x: 195, y: 10), continuing: true) != nil,
+              "a drag into the bar stays clamped on the guest edge")
+        // Per-game setting with a global default.
+        let suite = "hvm.player.settings.tests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        check(PlayerSettings.scaleMode(bundleID: "com.one", defaults: defaults) == .fit, "no setting means aspect fit")
+        defaults.set(PlayerScaleMode.fill.rawValue, forKey: PlayerSettings.scaleModeKey)
+        check(PlayerSettings.scaleMode(bundleID: "com.one", defaults: defaults) == .fill, "the global default applies")
+        PlayerSettings.setScaleMode(.extended, bundleID: "com.one", defaults: defaults)
+        check(PlayerSettings.scaleMode(bundleID: "com.one", defaults: defaults) == .extended, "a game overrides the default")
+        check(PlayerSettings.scaleMode(bundleID: "com.two", defaults: defaults) == .fill, "other games keep the default")
+        PlayerSettings.clearScaleMode(bundleID: "com.one", defaults: defaults)
+        check(PlayerSettings.scaleMode(bundleID: "com.one", defaults: defaults) == .fill, "clearing falls back to the default")
+        check(PlayerSettings.cropFocus(bundleID: "com.one", defaults: defaults) == .center, "crop focus defaults to centre")
+        PlayerSettings.setCropFocus(.bottom, bundleID: "com.one", defaults: defaults)
+        check(PlayerSettings.cropFocus(bundleID: "com.one", defaults: defaults) == .bottom, "crop focus is remembered per game")
+        defaults.removePersistentDomain(forName: suite)
         print("Player geometry/activity: \(checks) checks passed")
     }
 }
