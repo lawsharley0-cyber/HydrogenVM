@@ -1,6 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Twenty-four automated cases (TL-A--TL-X); see docs/TEST_LAB.md for the
+// Twenty-five automated cases (TL-A--TL-Y); see docs/TEST_LAB.md for the
 // complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
@@ -16,7 +16,7 @@
 // Invocation modes:
 //   Default    : interactive; shows a menu of test status, tap to run individual
 //                or tap "Run All".
-//   --run TL-X : automated; runs a single case, writes result to Documents/, exits.
+//   --run TL-Y : automated; runs a single case, writes result to Documents/, exits.
 //   --runall   : automated; runs all cases sequentially, writes combined result.
 //
 // Result file: Documents/testlab_result.json  (schema version 1)
@@ -78,6 +78,7 @@ static const char *kAppBuild        = "1";
 #define CASE_R  @"TL-R"
 #define CASE_S  @"TL-S"
 #define CASE_X  @"TL-X"
+#define CASE_Y  @"TL-Y"
 #define CASE_T  @"TL-T"
 #define CASE_U  @"TL-U"
 #define CASE_V  @"TL-V"
@@ -1774,6 +1775,147 @@ static TLResult *runObjCCase(NSString *caseId, void (*fixture)(TLObjCObservation
     return r;
 }
 
+// TL-Y: libstdc++ 4.2 ABI conformance (string COW, list node hooking, RB-tree rebalancing, and SJLJ frames).
+struct TLYRbNode {
+    int color; // 0 = red, 1 = black
+    struct TLYRbNode *parent;
+    struct TLYRbNode *left;
+    struct TLYRbNode *right;
+};
+extern struct TLYRbNode *_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base(struct TLYRbNode *);
+extern void _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(bool, struct TLYRbNode *, struct TLYRbNode *, struct TLYRbNode *);
+
+struct TLYListNode {
+    struct TLYListNode *next;
+    struct TLYListNode *prev;
+};
+extern void _ZNSt15_List_node_base4hookEPS_(struct TLYListNode *, struct TLYListNode *);
+extern void _ZNSt15_List_node_base6unhookEv(struct TLYListNode *);
+
+struct TLYStringRep {
+    size_t length;
+    size_t capacity;
+    int refcount;
+};
+extern void *_ZNSs4_Rep12_S_empty_repEv(void);
+extern void *_ZNSs4_Rep9_S_createEmmRKSaIcE(size_t, size_t, const void *);
+extern void *_ZNSs4_Rep10_M_refcopyEv(void *);
+extern void _ZNSs4_Rep10_M_disposeERKSaIcE(void *, const void *);
+
+struct TLYUnwindContext {
+    struct TLYUnwindContext *prev;
+    int32_t call_site;
+    uint32_t data[4];
+    uint32_t personality;
+    uint32_t lsda;
+    uint32_t jbuf[3];
+};
+extern void _Unwind_SjLj_Register(struct TLYUnwindContext *);
+extern void _Unwind_SjLj_Unregister(struct TLYUnwindContext *);
+
+static TLResult *runCaseY(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_Y version:1];
+    writeCheckpoint(CASE_Y);
+    r.checkpointWritten = YES;
+
+    // 1. std::string COW _Rep conformance
+    struct TLYStringRep *emptyRep = (struct TLYStringRep *)_ZNSs4_Rep12_S_empty_repEv();
+    const BOOL emptyOk = emptyRep != NULL && emptyRep->length == 0 && emptyRep->capacity == 0 && emptyRep->refcount == -1;
+
+    struct TLYStringRep *dynRep = (struct TLYStringRep *)_ZNSs4_Rep9_S_createEmmRKSaIcE(32, 0, NULL);
+    const BOOL dynCreated = dynRep != NULL && dynRep->capacity >= 32 && dynRep->refcount == 0;
+    if (dynRep) _ZNSs4_Rep10_M_refcopyEv(dynRep);
+    const BOOL refcopyOk = dynCreated && dynRep->refcount == 1;
+    // First dispose drops the extra reference (1 -> 0); the second releases the representation.
+    BOOL disposeOk = NO;
+    if (dynRep) {
+        _ZNSs4_Rep10_M_disposeERKSaIcE(dynRep, NULL);
+        disposeOk = dynRep->refcount == 0;
+        _ZNSs4_Rep10_M_disposeERKSaIcE(dynRep, NULL);
+    }
+    const BOOL stringOk = emptyOk && refcopyOk && disposeOk;
+
+    // 2. std::list node linking
+    struct TLYListNode listHead;
+    listHead.next = &listHead;
+    listHead.prev = &listHead;
+    struct TLYListNode nodeA;
+    memset(&nodeA, 0, sizeof(nodeA));
+    struct TLYListNode nodeB;
+    memset(&nodeB, 0, sizeof(nodeB));
+    // hook(n, pos) inserts n before pos, so hooking A then B before the head gives head -> A -> B -> head.
+    _ZNSt15_List_node_base4hookEPS_(&nodeA, &listHead);
+    _ZNSt15_List_node_base4hookEPS_(&nodeB, &listHead);
+    const BOOL hookOk = listHead.next == &nodeA && nodeA.next == &nodeB && nodeB.next == &listHead &&
+                        listHead.prev == &nodeB && nodeB.prev == &nodeA && nodeA.prev == &listHead;
+    _ZNSt15_List_node_base6unhookEv(&nodeA);
+    const BOOL midOk = listHead.next == &nodeB && nodeB.prev == &listHead && nodeB.next == &listHead && listHead.prev == &nodeB;
+    _ZNSt15_List_node_base6unhookEv(&nodeB);
+    const BOOL unhookOk = midOk && listHead.next == &listHead && listHead.prev == &listHead;
+
+    // 3. RB-tree root insertion and rebalance (root must be black = 1)
+    struct TLYRbNode treeHeader;
+    treeHeader.color = 0;
+    treeHeader.parent = NULL;
+    treeHeader.left = &treeHeader;
+    treeHeader.right = &treeHeader;
+    struct TLYRbNode rootNode;
+    memset(&rootNode, 0, sizeof(rootNode));
+    _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(true, &rootNode, &treeHeader, &treeHeader);
+    const BOOL rootOk = rootNode.color == 1 && treeHeader.parent == &rootNode;
+
+    // Insert left child of root
+    struct TLYRbNode childLeft;
+    memset(&childLeft, 0, sizeof(childLeft));
+    _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(true, &childLeft, &rootNode, &treeHeader);
+    struct TLYRbNode *succ = _ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base(&childLeft);
+    const BOOL insertOk = rootOk && (succ == &rootNode);
+
+    // A red child under a red parent with a null (black) uncle needs a right rotation: the left child becomes the
+    // black root, the old root a red right child (CLRS case 3; libstdc++ _Rb_tree_insert_and_rebalance).
+    struct TLYRbNode grandChild;
+    memset(&grandChild, 0, sizeof(grandChild));
+    _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(true, &grandChild, &childLeft, &treeHeader);
+    const BOOL rotateOk = treeHeader.parent == &childLeft && childLeft.parent == &treeHeader && childLeft.color == 1 &&
+                          childLeft.left == &grandChild && childLeft.right == &rootNode &&
+                          rootNode.color == 0 && rootNode.parent == &childLeft && grandChild.color == 0;
+    const BOOL rbtreeOk = insertOk && rotateOk;
+
+    // 4. SJLJ exception frame linking
+    struct TLYUnwindContext ctx1, ctx2;
+    memset(&ctx1, 0, sizeof(ctx1));
+    memset(&ctx2, 0, sizeof(ctx2));
+    _Unwind_SjLj_Register(&ctx1);
+    struct TLYUnwindContext *outerFrame = ctx1.prev;   // frames the caller's own code may already have registered
+    _Unwind_SjLj_Register(&ctx2);
+    // Unregistering must really pop the frame: after ctx2 is gone a new frame links to ctx1 again, and once
+    // everything is unregistered a fresh frame links to the frame that was on top before ctx1.
+    _Unwind_SjLj_Unregister(&ctx2);
+    struct TLYUnwindContext ctx3;
+    memset(&ctx3, 0, sizeof(ctx3));
+    _Unwind_SjLj_Register(&ctx3);
+    const BOOL relinkOk = (ctx3.prev == &ctx1);
+    _Unwind_SjLj_Unregister(&ctx3);
+    _Unwind_SjLj_Unregister(&ctx1);
+    struct TLYUnwindContext ctx4;
+    memset(&ctx4, 0, sizeof(ctx4));
+    _Unwind_SjLj_Register(&ctx4);
+    const BOOL restoredFrameOk = (ctx4.prev == outerFrame);   // back to whatever frame was on top before ctx1
+    _Unwind_SjLj_Unregister(&ctx4);
+    const BOOL sjljOk = (ctx2.prev == &ctx1) && relinkOk && restoredFrameOk;
+
+    const BOOL ok = stringOk && hookOk && unhookOk && rbtreeOk && sjljOk;
+    r.status = ok ? @"passed" : @"failed";
+    r.expected = @"empty rep (0,0); refcount +1 on copy; circular list hook/unhook; RB-tree root black, successor and right rotation on a red-red insert; SJLJ chain link";
+    r.actual = [NSString stringWithFormat:@"string=%d hook=%d unhook=%d rbtree=%d sjlj=%d",
+                stringOk, hookOk, unhookOk, rbtreeOk, sjljOk];
+    if (!ok) {
+        r.reason = @"libstdc++ 4.2 layout/rebalancing or SJLJ unwinder linking does not match GCC 4.2 ABI";
+    }
+    clearCheckpoint();
+    return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
@@ -1835,7 +1977,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1890,6 +2032,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runObjCCase(cid, TLObjCLifetime)];
         } else if ([cid isEqualToString:CASE_X]) {
             [results addObject:runCaseX()];
+        } else if ([cid isEqualToString:CASE_Y]) {
+            [results addObject:runCaseY()];
         }
     }
     return results;
@@ -1927,6 +2071,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_V]) return runObjCCase(caseId, TLObjCMutation);
     if ([caseId isEqualToString:CASE_W]) return runObjCCase(caseId, TLObjCLifetime);
     if ([caseId isEqualToString:CASE_X]) return runCaseX();
+    if ([caseId isEqualToString:CASE_Y]) return runCaseY();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1963,8 +2108,8 @@ static UIColor *colorForStatus(NSString *s) {
     scroll.scrollEnabled = YES;
     [self.view addSubview:scroll];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1991,6 +2136,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_V version:1],
         [[TLResult alloc] initWithId:CASE_W version:1],
         [[TLResult alloc] initWithId:CASE_X version:1],
+        [[TLResult alloc] initWithId:CASE_Y version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -2051,7 +2197,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
