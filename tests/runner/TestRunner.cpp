@@ -6618,6 +6618,20 @@ int runFullSubsystemTests() {
             fs::create_symlink(home + "/Game.app-sibling/secret.tfc", bundle + "/CookedIPhone/Link.tfc");
             mutations &= lookup("Link").empty();
             check(mutations, "bundle cache invalidates additions/removals and rejects a cached file replaced by an escaping symlink");
+            // A directory's mtime can repeat within one clock tick, so a device
+            // variant added right after the plain resource was cached must still
+            // win even though the stamp the cache recorded did not change.
+            // Restoring that stamp keeps this independent of host timestamp
+            // granularity instead of a race that only fails on a coarse clock.
+            const std::string dirPath = bundle + "/CookedIPhone";
+            const std::string stamped = dirPath + "/Stamped.tfc";
+            put(stamped);
+            const auto beforeAdd = fs::last_write_time(dirPath);
+            const bool cachedPlain = lookup("Stamped") == stamped;
+            put(dirPath + "/Stamped~iphone.tfc");
+            fs::last_write_time(dirPath, beforeAdd);
+            check(cachedPlain && lookup("Stamped") == dirPath + "/Stamped~iphone.tfc",
+                  "bundle cache prefers a device variant added under an unchanged directory timestamp");
             put(home + "/Mutable.tfc");
             const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
             auto mutableLookup = [&] {

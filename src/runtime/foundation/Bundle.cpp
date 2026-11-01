@@ -518,6 +518,8 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
         b.resources.erase(key);
         return {};
     }
+    const fs::path root = (subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir)).lexically_normal();
+    const std::array<fs::path, 5> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
     // Both lexical and canonical membership are required: a mutable Documents
     // alias pointing into the app must never enter (or read) this cache.
     // Nested names are uncached because intermediate directories are not stamped.
@@ -538,6 +540,28 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
                 const auto current = fs::last_write_time(dir, ec);
                 if (current != stamp) { valid = false; break; }
             }
+            // Directory stamps cannot see a file created within the same clock
+            // tick: ext4 and network filesystems report an unchanged directory
+            // mtime for a create that lands in the same tick as the previous
+            // one. A device-specific variant installed after the plain resource
+            // was cached would then be ignored for the life of the process, so
+            // re-derive the ordered candidates and require the cached path to
+            // still be the one that lookup order selects. This costs two stats
+            // per directory and never scans one. Case-insensitive scan hits are
+            // unaffected: their exact-case candidates do not exist by definition.
+            if (valid && !name.empty()) {
+                const std::string ext = type.empty() ? std::string() : "." + type;
+                std::string best;
+                for (const auto& d : dirs) {
+                    for (const std::string& candidate : {name + "~iphone" + ext, name + ext}) {
+                        ec.clear();
+                        const fs::path p = d / candidate;
+                        if (fs::exists(p, ec)) { best = p.string(); break; }
+                    }
+                    if (!best.empty()) break;
+                }
+                if (!best.empty() && best != cached->path) valid = false;
+            }
             // Revalidate the target even when directory timestamps match:
             // symlinks may have changed in an ancestor of a cached path.
             if (valid && resourceInside(boundary, cached->path)) return cached->path;
@@ -545,9 +569,7 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
             b.resources.erase(key);
         }
     }
-    const fs::path root = (subdir.empty() ? fs::path(bundle) : (fs::path(subdir).is_absolute() ? fs::path(subdir) : fs::path(bundle) / subdir)).lexically_normal();
     if (!resourceInside(boundary, root)) return {};
-    const std::array<fs::path, 5> dirs = {root, root / (lang + ".lproj"), root / "Base.lproj", root / "en.lproj", root / "English.lproj"};
     Bundles::ResourceEntry entry;
     auto found = [&](const fs::path& path) -> std::string {
         if (!resourceInside(boundary, path)) return {};
