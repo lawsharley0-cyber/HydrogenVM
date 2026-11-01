@@ -103,7 +103,10 @@ def main(argv=None):
                 for run in data["results"]:
                     if isinstance(run, dict) and "issues" in run:
                         for issue in run["issues"]:
-                            failures.append({**issue, "app": run.get("bundleId") or issue.get("app")})
+                            f = {**issue, "app": run.get("bundleId") or issue.get("app")}
+                            if issue.get("kind") == "crash" and run.get("signature"):
+                                f["signature"] = run["signature"]   # the report's crash signature beats the first log line
+                            failures.append(f)
                     else:
                         failures.append(run)
             else:

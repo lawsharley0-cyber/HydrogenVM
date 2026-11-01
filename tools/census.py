@@ -121,6 +121,7 @@ def get_support_manifest(hvm_binary: str | None = None, manifest_path: str | Non
     return json.loads(r.stdout)
 
 
+MAX_INFO_PLIST_BYTES = 8 * 1024 * 1024
 MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024   # refuse a zip entry that would expand to more than this
 
 
@@ -151,6 +152,8 @@ def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None)
             for n in z.namelist():
                 parts = n.split("/")
                 if len(parts) == 3 and parts[0] == "Payload" and parts[1].endswith(".app") and parts[2] == "Info.plist":
+                    if z.getinfo(n).file_size > MAX_INFO_PLIST_BYTES:
+                        raise ValueError(f"Info.plist in {ipa_path} is larger than {MAX_INFO_PLIST_BYTES} bytes")
                     info = plistlib.loads(z.read(n))
                     name = info.get("CFBundleExecutable")
                     if name and f"Payload/{parts[1]}/{name}" in z.namelist():

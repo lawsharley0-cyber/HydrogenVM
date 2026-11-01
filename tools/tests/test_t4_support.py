@@ -162,6 +162,31 @@ class TestProbeFastMode(unittest.TestCase):
             self.assertEqual([l for l in lines if l.startswith("ERROR:")], ["ERROR: crash: SIGABRT inside libc abort()"])
             self.assertIn("last line without a newline", lines)
 
+    def test_error_tagging_survives_undecodable_log_bytes(self):
+        with tempfile.TemporaryDirectory() as td:
+            log_path = Path(td) / "run.log"
+            log_path.write_bytes(b"binary \xff\xfe tail")
+            self.probe.tag_errors(log_path, [{"kind": "crash", "severity": 100, "text": "caf\u00e9 crash"}])
+            self.assertIn("ERROR: crash: caf\u00e9 crash", log_path.read_text(encoding="utf-8", errors="replace"))
+
+
+class TestLedgerProbeReports(unittest.TestCase):
+    def test_crash_signature_of_the_run_is_kept(self):
+        import io
+        import contextlib
+        report = {"results": [
+            {"bundleId": "game.a", "signature": "sigA", "issues": [{"key": "crash:abort", "kind": "crash", "severity": 100, "text": "abort"}]},
+            {"bundleId": "game.b", "signature": "sigB", "issues": [{"key": "crash:abort", "kind": "crash", "severity": 100, "text": "abort"}]},
+        ]}
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "summary.json"
+            path.write_text(json.dumps(report))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                ledger.main([str(path), "--json"])
+        sigs = sorted(g["signature"] for g in json.loads(out.getvalue()))
+        self.assertEqual(sigs, ["sigA", "sigB"])   # same first line, different crash signatures: two groups
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -243,8 +243,8 @@ def tag_errors(log_path, issues):
     tagged = [i for i in issues if i['severity'] >= 45 or i['kind'] in ('error', 'crash', 'load', 'hang', 'fault')]
     if not tagged:
         return
-    existing = log_path.read_text(errors='replace') if log_path.exists() else ''
-    with open(log_path, 'a') as f:
+    existing = log_path.read_text(encoding='utf-8', errors='replace') if log_path.exists() else ''
+    with open(log_path, 'a', encoding='utf-8') as f:
         if existing and not existing.endswith('\n'):
             f.write('\n')   # the first ERROR: tag must start its own line
         for i in tagged:
@@ -316,7 +316,7 @@ def probe_one(args, ipa, mode):
             code = p.returncode
         except subprocess.TimeoutExpired:
             timed_out, code = True, -9
-    log_text = (run_dir / 'run.log').read_text(errors='replace')
+    log_text = (run_dir / 'run.log').read_text(encoding='utf-8', errors='replace')
     try:
         rep = json.loads((run_dir / 'report.json').read_text())
     except (OSError, ValueError):
@@ -404,6 +404,10 @@ def main():
         old = {g['key'] for g in json.loads(args.baseline.read_text()).get('issues', [])}
         new = {g['key'] for g in ranked}
         diff = {'fixed': sorted(old - new), 'new': sorted(new - old), 'still': len(old & new)}
+        if args.fast:
+            # A sampled run did not probe every app, so an issue missing from it is not known to be fixed.
+            diff['fixed'] = []
+            diff['fixedNotComparable'] = True
         summary['baselineDiff'] = diff
     summary['summary'] = summary_obj   # last field of the report, after every optional one
     (args.out / 'summary.json').write_text(json.dumps(summary, indent=1))
