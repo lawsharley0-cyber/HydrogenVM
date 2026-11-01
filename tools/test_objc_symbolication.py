@@ -40,6 +40,10 @@ def main():
     summary = {"schemaVersion": 1, "expected": expected, "found": found,
                "returnCode": result.returncode, "guestSHA256": hashlib.sha256(executable.read_bytes()).hexdigest(),
                "host": (data.get("crashBundle") or {}).get("host"), "ok": ok}
+    if not ok:
+        # Keep the evidence in the CI log: the trace is what shows which frame lost its name.
+        summary["backtrace"] = (data.get("crashBundle") or {}).get("backtrace") or []
+        summary["runLogTail"] = (result.stdout + result.stderr).splitlines()[-30:]
     (out / "verification.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0 if ok else 1
