@@ -342,6 +342,12 @@ void Process::addMissingSymbolResolver(std::function<uint32_t(const std::string&
     missingResolvers_.push_back(std::move(fn));
 }
 
+uint32_t Process::resolveMissingSymbol(const std::string& name) {
+    for (auto& r : missingResolvers_)
+        if (uint32_t a = r(name)) { defineData(name, a); return a; }
+    return 0;
+}
+
 uint32_t Process::makeMissingStub(const std::string& name) {
     // Data, by name, or because the app only takes its address (never calls it
     // through a lazy stub) and it has a Cocoa-style constant name (NSFooKey,

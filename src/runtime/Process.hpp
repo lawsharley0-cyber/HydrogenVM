@@ -262,6 +262,7 @@ public:
     // Hooks consulted (in order) for imports that nothing defines. Return 0
     // to decline. Used for e.g. auto-creating stub ObjC classes.
     void addMissingSymbolResolver(std::function<uint32_t(const std::string&)> fn);
+    uint32_t resolveMissingSymbol(const std::string& name);
     // Register a host function without exporting a symbol (method IMPs, …).
     uint32_t registerHostFunction(const std::string& debugName, HostFn fn);
 
