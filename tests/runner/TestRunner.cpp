@@ -401,8 +401,16 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             for (size_t i = 0; i < n; ++i) testData[i] = uint8_t((i * 37 + 13) & 0xFF);
             p.mem().copyIn(bufB, testData.data(), n);
 
+            // 8 guard bytes right after the destination must survive both calls (no write past n).
+            const std::vector<uint8_t> guard(8, 0xC3);
+            std::vector<uint8_t> guardBack(8);
+            auto guardIntact = [&]() {
+                p.mem().copyOut(guardBack.data(), bufA + uint32_t(n), 8);
+                return guardBack == guard;
+            };
+            p.mem().copyIn(bufA + uint32_t(n), guard.data(), 8);
             uint32_t memsetRet = call("_memset", {bufA, 0x5A, uint32_t(n)});
-            if (memsetRet != bufA) { memOk = false; break; }
+            if (memsetRet != bufA || !guardIntact()) { memOk = false; break; }
             std::vector<uint8_t> readBack(n);
             p.mem().copyOut(readBack.data(), bufA, n);
             for (size_t i = 0; i < n; ++i) {
@@ -410,8 +418,9 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             }
             if (!memOk) break;
 
+            p.mem().copyIn(bufA + uint32_t(n), guard.data(), 8);
             uint32_t memcpyRet = call("_memcpy", {bufA, bufB, uint32_t(n)});
-            if (memcpyRet != bufA) { memOk = false; break; }
+            if (memcpyRet != bufA || !guardIntact()) { memOk = false; break; }
             p.mem().copyOut(readBack.data(), bufA, n);
             if (std::memcmp(readBack.data(), testData.data(), n) != 0) { memOk = false; break; }
 
