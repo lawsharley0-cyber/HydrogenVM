@@ -36,9 +36,12 @@ class TestT1bArenaRelease(unittest.TestCase):
         swift_path = os.path.join(REPO_ROOT, 'app', 'HydrogenVM', 'BatchTest.swift')
         with open(swift_path, 'r', encoding='utf-8') as f:
             swift_content = f.read()
-        self.assertIn('HVMEngine.wait(forGuestArenaRelease: 8.0)', swift_content)
+        self.assertIn('await Self.waitForArenaRelease(8.0)', swift_content)
+        self.assertIn('HVMEngine.wait(forGuestArenaRelease: timeout)', swift_content)   # the Swift-imported name, called off the main actor
+        self.assertNotIn('_ = HVMEngine.wait(', swift_content)   # no synchronous wait on the main actor
         self.assertIn('HVMEngine.liveGuestArenaCount() == 0', swift_content)
-        self.assertIn('HVMEngine.wait(forGuestArenaRelease: 5.0)', swift_content)
+        self.assertIn('await Self.waitForArenaRelease(5.0)', swift_content)
+        self.assertEqual(swift_content.count('!Task.isCancelled && HVMEngine.liveGuestArenaCount() == 0'), 2)   # both startup polls stop on cancel
 
 if __name__ == '__main__':
     unittest.main()
