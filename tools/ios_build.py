@@ -15,13 +15,70 @@ usage:
 import argparse, os, plistlib, re, shutil, subprocess, sys, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LD = os.environ.get("HVM_LD64") or shutil.which("arm-apple-darwin11-ld") or (
-    "/home/lawson/cctools/bin/arm-apple-darwin11-ld" if os.path.exists("/home/lawson/cctools/bin/arm-apple-darwin11-ld") else "/opt/cctools/bin/arm-apple-darwin11-ld"
+TOOLCHAIN = os.environ.get("HVM_TOOLCHAIN") or os.path.join(ROOT, "tools", "toolchain")
+TOOLCHAIN_BIN = os.path.join(TOOLCHAIN, "bin")
+
+def resolve_tool(env_var, candidate_names, fallback_paths=()):
+    if os.environ.get(env_var):
+        return os.environ[env_var]
+    # Check workspace toolchain first
+    for name in candidate_names:
+        p = os.path.join(TOOLCHAIN_BIN, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    # Check system PATH
+    for name in candidate_names:
+        w = shutil.which(name)
+        if w:
+            return w
+    # Check fallback paths
+    for p in fallback_paths:
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+LD = resolve_tool(
+    "HVM_LD64",
+    ["arm-apple-darwin11-ld", "ld64"],
+    [
+        "/home/lawson/cctools/bin/arm-apple-darwin11-ld",
+        "/opt/cctools/bin/arm-apple-darwin11-ld",
+    ],
 )
-CLANG = os.environ.get("HVM_CLANG", "clang")
-NM = os.environ.get("HVM_NM") or shutil.which("llvm-nm") or shutil.which("llvm-nm-18") or "llvm-nm"
+CLANG = resolve_tool(
+    "HVM_CLANG",
+    ["clang", "clang-18", "clang-17", "clang-16", "clang-15", "clang-14"],
+)
+NM = resolve_tool(
+    "HVM_NM",
+    ["llvm-nm", "llvm-nm-18", "llvm-nm-17", "llvm-nm-16", "llvm-nm-15", "llvm-nm-14"],
+)
 SDK_SRC = os.path.join(ROOT, "tests", "ios", "sdk")
 HEADERS = os.path.join(ROOT, "tests", "ios", "include")
+
+def check_prerequisites():
+    missing = []
+    if not CLANG or not (os.path.isfile(CLANG) or shutil.which(CLANG)):
+        missing.append(
+            "clang: ARMv7 iOS cross-compiler not found. Install clang (e.g. clang-18) in PATH, "
+            "place it in tools/toolchain/bin/clang, or set HVM_CLANG. See docs/TEST_LAB.md."
+        )
+    if not LD or not (os.path.isfile(LD) or shutil.which(LD)):
+        missing.append(
+            "ld64 (arm-apple-darwin11-ld): cctools-port linker not found. Build it without sudo into "
+            "tools/toolchain via 'tools/build_cctools.sh tools/toolchain', place it in PATH, or set "
+            "HVM_LD64. See docs/TEST_LAB.md."
+        )
+    if not NM or not (os.path.isfile(NM) or shutil.which(NM)):
+        missing.append(
+            "llvm-nm: LLVM symbol reader not found. Install llvm-nm in PATH, place it in "
+            "tools/toolchain/bin/llvm-nm, or set HVM_NM. See docs/TEST_LAB.md."
+        )
+    if missing:
+        sys.stderr.write("tools/ios_build.py: error: missing build prerequisites:\n")
+        for m in missing:
+            sys.stderr.write(f"  - {m}\n")
+        raise SystemExit(3)
 
 # Which stub library a symbol lives in (only affects the load commands and
 # dylib ordinals; HydrogenVM resolves imports by name).
@@ -42,7 +99,11 @@ LIBS = [
 ]
 
 def run(cmd, **kw):
-    p = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"tools/ios_build.py: error: command {cmd[0]!r} not found: {e}\n")
+        raise SystemExit(3)
     err = "\n".join(l for l in (p.stderr or "").splitlines() if "directory not found for option" not in l and "was built for newer iOS version" not in l)
     if p.returncode != 0:
         sys.stderr.write(" ".join(cmd) + "\n" + err + "\n" + (p.stdout or ""))
@@ -130,6 +191,7 @@ def link(objs, out, sdk, libs, min_ios, pie, legacy):
     run(args)
 
 def build_app(a):
+    check_prerequisites()
     out = os.path.abspath(a.out)
     work = os.path.join(out, "_work", a.name)
     if os.path.exists(work):
