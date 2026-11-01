@@ -443,8 +443,10 @@ static void testCoreFoundation(void) {
     // Read the counts before any strong local refers to the key: under ARC that local would add its own retain.
     const CFIndex keyAfter = CFGetRetainCount((__bridge CFTypeRef)copyKey);
     const CFIndex valAfter = CFGetRetainCount((__bridge CFTypeRef)valObj);
-    CHECK(secondKeyPtr == (__bridge const void *)copyKey && copyKey->_copyCount == 0 && keyAfter == keyBefore + 1 && valAfter == valBefore + 1,
-          "CFDictionarySetValue retains the key and value without copying");
+    CHECK(secondKeyPtr == (__bridge const void *)copyKey, "CFDictionarySetValue stores the key object itself");
+    CHECK(copyKey->_copyCount == 0, "CFDictionarySetValue does not copy the key");
+    CHECK(keyAfter == keyBefore + 1, "CFDictionarySetValue retains the key once");
+    CHECK(valAfter == valBefore + 1, "CFDictionarySetValue retains the value once");
     CFRelease(cmd);
 }
 
