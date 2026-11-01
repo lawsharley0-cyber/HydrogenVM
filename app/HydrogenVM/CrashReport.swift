@@ -19,6 +19,41 @@ struct CrashReport: Identifiable {
     static var signal: URL { directory.appending(path: "pending.signal.json") }
     /// The emulator's host-fault diagnostics (log tail, guest threads), written from its signal handler.
     static var hostFault: URL { directory.appending(path: "pending.hostfault.txt") }
+    private static var journalID: UUID?
+
+    /// Called only after the previous engine has released its arena. Persist
+    /// identity before opening the signal files, and preserve an older crash
+    /// before any O_TRUNC open (including batch restarts).
+    static func beginSession(bundleID: String, version: String, renderer: String, phase: String) throws -> UUID {
+        guard HVMEngine.liveGuestArenaCount() == 0 else {
+            throw NSError(domain: "HydrogenVM.CrashJournal", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "The previous guest arena is still active."])
+        }
+        HVMCrashJournal.closeSignalFile()
+        let evidence = [pending, signal, hostFault].contains {
+            ((try? Data(contentsOf: $0))?.count ?? 0) > 0
+        }
+        if evidence && recover() == nil {
+            throw NSError(domain: "HydrogenVM.CrashJournal", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Could not preserve the previous crash journal."])
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let id = UUID()
+        let fields: [String: Any] = ["bundleId": bundleID, "appVersion": version,
+                                    "emulatorCommit": HVMSession.emulatorCommit,
+                                    "renderer": renderer, "phase": phase,
+                                    "journalId": id.uuidString,
+                                    "host": ["pageSize": getpagesize()]]
+        try JSONSerialization.data(withJSONObject: fields).write(to: pending, options: .atomic)
+        journalID = id
+        HVMCrashJournal.openSignalFile(signal.path)
+        return id
+    }
+
+    static func endSession(_ id: UUID) {
+        guard journalID == id else { return }
+        clearPending()
+    }
 
     static func save(_ fields: [String: Any], app: String) throws -> CrashReport {
         var fields = fields
@@ -45,17 +80,24 @@ struct CrashReport: Identifiable {
     }
 
     static func recover() -> CrashReport? {
-        guard let data = try? Data(contentsOf: pending),
-              var fields = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let data = try? Data(contentsOf: pending)
+        var fields = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
+        let signalData = try? Data(contentsOf: signal)
+        let fault = signalData.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        let hostText = (try? Data(contentsOf: hostFault)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        // Older batch builds did not create pending.json. Recover their signal
+        // evidence too, rather than erasing it at the next launch.
+        guard !fields.isEmpty || fault != nil || !hostText.isEmpty else { return nil }
         fields["exceptionKind"] = "interrupted-host-session"
         fields["summary"] = "The previous game session ended unexpectedly. iOS may have stopped HydrogenVM; the exact cause is unknown."
-        if let data = try? Data(contentsOf: signal),
-           let fault = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+        if let fault {
             fields.merge(fault) { _, new in new }
             fields["summary"] = "HydrogenVM encountered a host memory fault. Share this report to help diagnose it."
         }
-        if let text = try? String(contentsOf: hostFault, encoding: .utf8), !text.isEmpty {
-            fields["hostFaultDiagnostics"] = String(text.suffix(60_000))
+        if !hostText.isEmpty {
+            // The bounded native report is < 200 KB even at registry capacity.
+            // Keep its header/address as well as the log tail.
+            fields["hostFaultDiagnostics"] = String(hostText.prefix(200_000))
         }
         guard let report = try? save(fields, app: fields["bundleId"] as? String ?? "unknown") else { return nil }
         clearPending()
@@ -63,6 +105,7 @@ struct CrashReport: Identifiable {
     }
 
     static func clearPending() {
+        journalID = nil
         HVMCrashJournal.closeSignalFile()
         try? FileManager.default.removeItem(at: pending)
         try? FileManager.default.removeItem(at: signal)

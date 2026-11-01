@@ -101,6 +101,8 @@ public:
     void resume(Cpu& target);
     // Marks `c` as running guest code, parking first while it is suspended.
     void enterGuest(Cpu& c) {
+        c.recordFaultRegisters(c.r[kPC]);
+        if (c.fault_state) c.fault_state->inGuest.store(true, std::memory_order_relaxed);
         c.in_guest.store(true, std::memory_order_seq_cst);
         if (__builtin_expect(c.suspend_count.load(std::memory_order_seq_cst) != 0, 0)) park(c);
     }
@@ -135,6 +137,8 @@ public:
     Stats stats() const { std::lock_guard<std::mutex> lk(mu_); return stats_; }
 
 private:
+    void recordHleState(Cpu& c, uint32_t index);
+    size_t faultArenaSlot_ = size_t(-1);
     FaultHook faultHook_;
     void park(Cpu& c);
     std::mutex suspendMu_;

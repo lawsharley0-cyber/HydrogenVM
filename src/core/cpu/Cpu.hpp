@@ -88,6 +88,20 @@ struct FastEntry { uint32_t key; Block* block; const Op* first; };
 inline constexpr size_t kFastSize = 1u << 14;
 inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (kFastSize - 1); }
 
+// Permanent signal-readable storage, owned by the registry in Engine.cpp.
+// Numeric fields are independent samples from the latest block/HLE boundary.
+// Never point a signal reader at the Cpu or an Engine-owned string.
+struct HostFaultThreadState {
+    std::atomic<bool> claimed{false}, active{false}, inGuest{false};
+    std::atomic<uint32_t> pc{0}, lr{0}, block{0};
+    std::atomic<uintptr_t> arena{0};
+    std::atomic<uint64_t> generation{0};
+    std::atomic_flag nameBusy = ATOMIC_FLAG_INIT;
+    uint32_t hleIndex = 0xFFFFFFFFu;  // protected by nameBusy; reader never waits
+    uint64_t hleGeneration = 0;
+    char hleName[128]{};
+};
+
 struct alignas(64) Cpu {
     Cpu();
     ~Cpu();
@@ -121,6 +135,13 @@ struct alignas(64) Cpu {
     uint32_t block_pc   = 0;   // start of the block currently executing (fault reports)
     uint64_t insn_count = 0;   // retired guest instructions (approximate, per block; updated when run() returns)
     Engine*  engine     = nullptr;
+    HostFaultThreadState* fault_state = nullptr; // static storage; never freed
+    void recordFaultRegisters(uint32_t pc) {
+        if (!fault_state) return;
+        fault_state->pc.store(pc, std::memory_order_relaxed);
+        fault_state->lr.store(r[kLR], std::memory_order_relaxed);
+        fault_state->block.store(block_pc, std::memory_order_relaxed);
+    }
     void*    user       = nullptr;  // owner (guest thread object, test harness, ...)
 
     // Block lookup cache, private to the host thread running this Cpu, so guest
