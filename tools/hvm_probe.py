@@ -233,8 +233,10 @@ def tainted_runs(results):
 
 def baseline_coverage(baseline):
     """The (ipa sha256, mode) pairs a baseline summary.json probed; empty when it does not say."""
+    if not isinstance(baseline, dict) or not isinstance(baseline.get('results') or [], list):
+        return set()
     return {(r.get('sha256'), r.get('mode')) for r in baseline.get('results') or []
-            if r.get('sha256') and r.get('status') != 'import-failed'}   # an app that never ran was not probed
+            if isinstance(r, dict) and r.get('sha256') and r.get('status') != 'import-failed'}   # an app that never ran was not probed
 
 
 def sample_ipas(ipas, seed, size):

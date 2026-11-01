@@ -165,6 +165,10 @@ class TestProbeFastMode(unittest.TestCase):
         self.assertEqual(self.probe.baseline_coverage({}), set())
         failed = {"results": [{"sha256": "h1", "mode": "software", "status": "import-failed"}]}
         self.assertEqual(self.probe.baseline_coverage(failed), set())   # an import failure is not coverage
+        # malformed baselines are non-comparable (empty), not a crash
+        self.assertEqual(self.probe.baseline_coverage({"results": [None, "x", {"sha256": "h3", "mode": "gpu"}]}), {("h3", "gpu")})
+        self.assertEqual(self.probe.baseline_coverage({"results": "oops"}), set())
+        self.assertEqual(self.probe.baseline_coverage([]), set())
 
     def test_error_lines_start_on_their_own_line(self):
         with tempfile.TemporaryDirectory() as td:
