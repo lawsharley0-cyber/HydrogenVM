@@ -19,6 +19,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import plistlib
 import zipfile
 
 FIXTURE_MANIFEST = {
@@ -120,6 +121,9 @@ def get_support_manifest(hvm_binary: str | None = None, manifest_path: str | Non
     return json.loads(r.stdout)
 
 
+MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024   # refuse a zip entry that would expand to more than this
+
+
 def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None) -> dict:
     ipa_path = Path(ipa_path)
     if not ipa_path.exists():
@@ -143,13 +147,20 @@ def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None)
         if fixture and fixture["payload_path"] in z.namelist():
             exec_path = fixture["payload_path"]
         else:
+            # The executable is named by CFBundleExecutable in the app's Info.plist, not by zip order.
             for n in z.namelist():
-                if n.startswith("Payload/") and n.count("/") == 2 and not n.endswith("/"):
-                    exec_path = n
+                parts = n.split("/")
+                if len(parts) == 3 and parts[0] == "Payload" and parts[1].endswith(".app") and parts[2] == "Info.plist":
+                    info = plistlib.loads(z.read(n))
+                    name = info.get("CFBundleExecutable")
+                    if name and f"Payload/{parts[1]}/{name}" in z.namelist():
+                        exec_path = f"Payload/{parts[1]}/{name}"
                     break
         if not exec_path:
             raise ValueError(f"Could not locate app executable in {ipa_path}")
 
+        if z.getinfo(exec_path).file_size > MAX_EXECUTABLE_BYTES:
+            raise ValueError(f"App executable in {ipa_path} is larger than {MAX_EXECUTABLE_BYTES} bytes")
         raw_bytes = z.read(exec_path)
         with tempfile.TemporaryDirectory() as tmpdir:
             bin_file = Path(tmpdir) / "app_bin"
@@ -181,20 +192,6 @@ def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None)
             imports.append(m.group(1))
 
     imported_non_objc = sum(1 for s in imports if not s.startswith("_OBJC_"))
-
-    # If this is a fixture IPA, we enforce exact reproduction of reference numbers
-    if fixture:
-        ref = fixture["reference"]
-        return {
-            "ipa": ipa_name,
-            "sha256": file_hash,
-            "slice": fixture["slice"],
-            "imported_non_objc_symbols": ref["imported_non_objc_symbols"],
-            "unimplemented_symbols": ref["unimplemented_symbols"],
-            "missing_or_stubbed_classes": ref["missing_or_stubbed_classes"],
-            "missing_selectors_classes_constants": ref["missing_selectors_classes_constants"],
-            "is_fixture": True
-        }
 
     # Dynamic evaluation against manifest
     supported_symbols = {s["name"]: s for s in manifest.get("symbols", [])}
@@ -244,7 +241,10 @@ def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None)
         "unimplemented_symbols": unimp_syms,
         "missing_or_stubbed_classes": miss_classes,
         "missing_selectors_classes_constants": len(miss),
-        "is_fixture": False
+        "is_fixture": bool(fixture),
+        # The recorded reference numbers (research_census). Computed values are always reported; the reference is
+        # only for comparison, since the manifest changes as support is added.
+        "reference": fixture["reference"] if fixture else None,
     }
 
 

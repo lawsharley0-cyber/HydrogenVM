@@ -34,7 +34,7 @@ def classify_failure(signature: str, text: str) -> str:
 
 
 def normalize_signature(failure: dict) -> str:
-    sig = failure.get("signature") or failure.get("crashSignature")
+    sig = failure.get("signature") or failure.get("crashSignature") or failure.get("key")
     if sig:
         return str(sig).strip()
     
@@ -54,8 +54,8 @@ def group_failures(failures: list[dict]) -> list[dict]:
         summary = str(f.get("summary") or f.get("crashReport") or f.get("message") or f.get("text") or sig).split("\n")[0].strip()
         sev = int(f.get("severity", 1))
 
+        cls = classify_failure(sig, summary)
         if sig not in groups:
-            cls = classify_failure(sig, summary)
             groups[sig] = {
                 "signature": sig,
                 "failure_class": cls,
@@ -64,6 +64,8 @@ def group_failures(failures: list[dict]) -> list[dict]:
                 "summaries": set()
             }
         g = groups[sig]
+        if g["failure_class"] == "other" and cls != "other":
+            g["failure_class"] = cls   # a later failure with the same signature identified the class
         g["apps"].add(app)
         g["severity"] = max(g["severity"], sev)
         if summary:
@@ -97,7 +99,13 @@ def main(argv=None):
             failures.extend(data)
         elif isinstance(data, dict):
             if "results" in data:
-                failures.extend(data["results"])
+                # A probe summary.json lists runs; each run carries its own failures in `issues`.
+                for run in data["results"]:
+                    if isinstance(run, dict) and "issues" in run:
+                        for issue in run["issues"]:
+                            failures.append({**issue, "app": run.get("bundleId") or issue.get("app")})
+                    else:
+                        failures.append(run)
             else:
                 failures.append(data)
 
@@ -107,14 +115,14 @@ def main(argv=None):
         print(json.dumps(grouped, indent=2))
         return 0
 
-    print(f"{'Signature':<24} {'Class':<20} {'Apps':<6} {'Examples':<30}")
-    print("-" * 80)
+    print(f"{'Signature':<24} {'Class':<20} {'Count':<6} {'Apps':<30} {'Example':<30}")
+    print("-" * 114)
     for g in grouped:
         apps_str = ", ".join(g["apps"][:3])
         if len(g["apps"]) > 3:
             apps_str += f" +{len(g['apps']) - 3}"
         summary = g["summaries"][0] if g["summaries"] else ""
-        print(f"{g['signature']:<24} {g['failure_class']:<20} {g['count']:<6} {summary[:30]}")
+        print(f"{g['signature']:<24} {g['failure_class']:<20} {g['count']:<6} {apps_str[:30]:<30} {summary[:30]}")
 
     return 0
 

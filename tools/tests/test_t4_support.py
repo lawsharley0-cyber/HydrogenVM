@@ -36,11 +36,7 @@ class TestDumpSupportManifest(unittest.TestCase):
             import jsonschema
             jsonschema.validate(instance=self.manifest, schema=self.schema)
         except ImportError:
-            # Fallback manual validation if jsonschema is not installed in the environment
-            self.assertIn("symbols", self.manifest)
-            self.assertIn("classes", self.manifest)
-            self.assertIn("selectors", self.manifest)
-            self.assertIn("provenance", self.manifest)
+            self.skipTest("jsonschema is not installed; the manifest cannot be validated against its schema")
 
     def test_lists_known_function(self):
         self.assertIn("_printf", self.symbols_by_name, "Known function _printf should be in symbols")
@@ -59,13 +55,10 @@ class TestDumpSupportManifest(unittest.TestCase):
 class TestCensus(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        manifest_path = ROOT_DIR / "build" / "manifest_cache.json"
-        if not manifest_path.exists():
-            if not BUILD_HVM.exists():
-                raise unittest.SkipTest(f"{BUILD_HVM} not built")
-            p = subprocess.run([str(BUILD_HVM), "--dump-support"], capture_output=True, text=True, check=True)
-            manifest_path.write_text(p.stdout)
-        cls.manifest = json.loads(manifest_path.read_text())
+        if not BUILD_HVM.exists():
+            raise unittest.SkipTest(f"{BUILD_HVM} not built")
+        p = subprocess.run([str(BUILD_HVM), "--dump-support"], capture_output=True, text=True, check=True)
+        cls.manifest = json.loads(p.stdout)   # dumped fresh for every run: no cache that outlives a rebuild
 
     def test_fixture_hash_mismatch_raises(self):
         with tempfile.TemporaryDirectory() as td:
@@ -82,14 +75,14 @@ class TestCensus(unittest.TestCase):
                 self.skipTest(f"Fixture IPA {fixture_name} not found at repo root")
             res = census.census_ipa(ipa_path, self.manifest)
             ref = meta["reference"]
+            self.assertTrue(res["is_fixture"])
+            # Computed from the IPA and the live manifest, never copied from the reference. The import count is a
+            # property of the binary and must match exactly; the gap counts can only shrink as support is added.
             self.assertEqual(res["imported_non_objc_symbols"], ref["imported_non_objc_symbols"],
                              f"{fixture_name}: non-objc symbols mismatch")
-            self.assertEqual(res["unimplemented_symbols"], ref["unimplemented_symbols"],
-                             f"{fixture_name}: unimplemented symbols mismatch")
-            self.assertEqual(res["missing_or_stubbed_classes"], ref["missing_or_stubbed_classes"],
-                             f"{fixture_name}: missing classes mismatch")
-            self.assertEqual(res["missing_selectors_classes_constants"], ref["missing_selectors_classes_constants"],
-                             f"{fixture_name}: total gaps mismatch")
+            for key in ("unimplemented_symbols", "missing_or_stubbed_classes", "missing_selectors_classes_constants"):
+                self.assertLessEqual(res[key], ref[key], f"{fixture_name}: {key} grew past the recorded reference")
+            self.assertEqual(res["reference"], ref)
 
 
 class TestLedger(unittest.TestCase):
@@ -133,62 +126,41 @@ class TestLedger(unittest.TestCase):
 
 
 class TestProbeFastMode(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import hvm_probe
+        cls.probe = hvm_probe
+
     def test_seed_determinism(self):
-        sample_ipas = [Path(f"Game_{i}.ipa") for i in range(20)]
-        seed = 12345
-        sample_size = 4
-
-        rng1 = random.Random(seed)
-        pick1 = sorted(rng1.sample(sample_ipas, sample_size), key=lambda p: p.name)
-
-        rng2 = random.Random(seed)
-        pick2 = sorted(rng2.sample(sample_ipas, sample_size), key=lambda p: p.name)
-
+        ipas = [Path(f"Game_{i}.ipa") for i in range(20)]
+        pick1 = self.probe.sample_ipas(ipas, 12345, 4)
+        pick2 = self.probe.sample_ipas(ipas, 12345, 4)
         self.assertEqual(pick1, pick2)
+        self.assertEqual(len(pick1), 4)
+        self.assertEqual(pick1, sorted(pick1, key=lambda p: p.name))
+        self.assertEqual(len(self.probe.sample_ipas(ipas[:3], 1, 10)), 3)   # fewer apps than the sample size
 
-    def test_summary_object_generation(self):
+    def test_summary_object_counts_every_status(self):
         results = [
-            {"bundleId": "game.a", "mode": "software", "status": "ok", "issues": []},
-            {"bundleId": "game.b", "mode": "software", "status": "crash", "issues": [{"key": "crash:abort", "kind": "crash", "severity": 100, "text": "abort"}]},
-            {"bundleId": "game.c", "mode": "software", "status": "broken", "issues": [{"key": "broken:gl", "kind": "error", "severity": 70, "text": "gl issue"}]},
+            {"bundleId": "game.a", "status": "ok"}, {"bundleId": "game.b", "status": "crash"},
+            {"bundleId": "game.c", "status": "broken"}, {"bundleId": "game.d", "status": "issues"},
+            {"bundleId": "game.e", "status": "import-failed"},
         ]
-        summary_obj = {
-            'totalRuns': len(results),
-            'gamesProbed': len({r['bundleId'] for r in results}),
-            'okRuns': sum(1 for r in results if r['status'] == 'ok'),
-            'crashRuns': sum(1 for r in results if r['status'] == 'crash'),
-            'brokenRuns': sum(1 for r in results if r['status'] == 'broken'),
-            'issuesCount': 2,
-            'fast': True,
-            'seed': 42,
-        }
-        report = {'results': results, 'summary': summary_obj}
-        parsed = json.loads(json.dumps(report))
-        self.assertIn("summary", parsed)
-        s = parsed["summary"]
-        self.assertEqual(s["totalRuns"], 3)
-        self.assertEqual(s["okRuns"], 1)
-        self.assertEqual(s["crashRuns"], 1)
-        self.assertEqual(s["brokenRuns"], 1)
-        self.assertEqual(s["seed"], 42)
+        s = self.probe.summarize_runs(results, 2, True, 42)
+        self.assertEqual((s["totalRuns"], s["gamesProbed"], s["issuesCount"], s["seed"]), (5, 5, 2, 42))
+        self.assertEqual((s["okRuns"], s["crashRuns"], s["brokenRuns"], s["issuesRuns"], s["importFailedRuns"]),
+                         (1, 1, 1, 1, 1))
 
-    def test_error_line_grepping_in_log(self):
+    def test_error_lines_start_on_their_own_line(self):
         with tempfile.TemporaryDirectory() as td:
             log_path = Path(td) / "run.log"
-            log_path.write_text("Normal execution line 1\nNormal execution line 2\n")
-            issues = [
+            log_path.write_text("Normal line\nlast line without a newline")
+            self.probe.tag_errors(log_path, [
                 {"kind": "crash", "severity": 100, "text": "SIGABRT inside libc abort()"},
-                {"kind": "warning", "severity": 20, "text": "minor warning ignored"}
-            ]
-            with open(log_path, "a") as log_append:
-                for i in issues:
-                    if i["severity"] >= 45 or i["kind"] in ("error", "crash", "load", "hang", "fault"):
-                        log_append.write(f"ERROR: {i['kind']}: {i['text']}\n")
-
-            content = log_path.read_text()
-            error_lines = [line for line in content.splitlines() if line.startswith("ERROR:")]
-            self.assertEqual(len(error_lines), 1)
-            self.assertIn("ERROR: crash: SIGABRT inside libc abort()", error_lines[0])
+                {"kind": "warning", "severity": 20, "text": "minor warning ignored"}])
+            lines = log_path.read_text().splitlines()
+            self.assertEqual([l for l in lines if l.startswith("ERROR:")], ["ERROR: crash: SIGABRT inside libc abort()"])
+            self.assertIn("last line without a newline", lines)
 
 
 if __name__ == "__main__":
