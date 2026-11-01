@@ -107,6 +107,8 @@ void spawnHostThread(std::function<void()> fn) {
 // ----------------------------------------------------------- lifecycle ---
 
 Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_shared<Audio::Mixer>()) {
+    if (const char* enabled = std::getenv("HVM_THREAD_LIVENESS"); enabled && std::strcmp(enabled, "1") == 0)
+        cfg_.threadLiveness = true;
     mem_ = std::make_unique<Memory::GuestArena>();
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
@@ -639,6 +641,7 @@ void Process::setenv(const std::string& name, const std::string& value) {
 // --------------------------------------------------------------- threads ---
 
 void Process::initThreadState(GuestThread& t, uint32_t stackSize) {
+    t.cpu.progress.enabled = cfg_.threadLiveness;
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
         stackTop_ -= stackSize + kGuard;
@@ -933,9 +936,39 @@ struct MemorySampler {
         try { p.recordMemorySample("run-end"); } catch (...) {}
     }
 };
+
+struct ThreadLivenessSampler {
+    Process& p;
+    std::mutex mu;
+    std::condition_variable cv;
+    bool stopped = false;
+    std::thread thread;
+    explicit ThreadLivenessSampler(Process& process) : p(process) {
+        p.recordThreadLiveness("run-start");
+        thread = std::thread([this] {
+            std::unique_lock<std::mutex> lock(mu);
+            while (!cv.wait_for(lock, std::chrono::seconds(1), [this] { return stopped; })) {
+                lock.unlock();
+                try { p.recordThreadLiveness("interval"); }
+                catch (const std::exception& e) {
+                    try { p.log(LogLevel::Warning, std::string("Thread liveness sample unavailable: ") + e.what()); } catch (...) {}
+                }
+                lock.lock();
+            }
+        });
+    }
+    ~ThreadLivenessSampler() {
+        { std::lock_guard<std::mutex> lock(mu); stopped = true; }
+        cv.notify_one();
+        if (thread.joinable()) thread.join();
+        try { p.recordThreadLiveness("run-end"); } catch (...) {}
+    }
+};
 } // namespace
 
 int Process::run() {
+    std::unique_ptr<ThreadLivenessSampler> threadSampler;
+    if (cfg_.threadLiveness) threadSampler = std::make_unique<ThreadLivenessSampler>(*this);
     std::unique_ptr<MemorySampler> memorySampler;
     if (memoryDiagEnabled()) {
         try { memorySampler = std::make_unique<MemorySampler>(*this); }

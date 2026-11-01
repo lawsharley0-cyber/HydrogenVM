@@ -287,10 +287,14 @@ void Engine::callHle(Cpu* c, uint32_t index) {
     ring->push(Diag::CallKind::Hle, index);
     c->in_guest.store(false, std::memory_order_release);
     const uint32_t outerHle = c->current_hle.exchange(index, std::memory_order_relaxed);
+    const uint32_t outerArg0 = c->progress_argument0, outerArg1 = c->progress_argument1;
+    c->progress_argument0 = c->r[0]; c->progress_argument1 = c->r[1];
+    c->publishProgress(false);
     struct Reenter {
-        Engine* e; Cpu* c; uint32_t outer;
-        ~Reenter() { c->current_hle.store(outer, std::memory_order_relaxed); e->enterGuest(*c); }
-    } reenter{this, c, outerHle};
+        Engine* e; Cpu* c; uint32_t outer, a0, a1;
+        ~Reenter() { c->current_hle.store(outer, std::memory_order_relaxed);
+            c->progress_argument0 = a0; c->progress_argument1 = a1; e->enterGuest(*c); }
+    } reenter{this, c, outerHle, outerArg0, outerArg1};
     try {
         hle_[index].fn(*c);
     } catch (const GuestFault& f) {
@@ -462,6 +466,7 @@ void Engine::decodeThumbBlock(Block& b, uint32_t pc) {
 Exit Engine::run(Cpu& cpu, int64_t budget) {
     cpu.engine = this;
     cpu.budget = budget;
+    cpu.progress_budget_start = budget;
     const int64_t startBudget = budget;
     cpu.exit = Exit::None;
     cpu.exit_info = 0;
@@ -478,6 +483,8 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         cpu.r[kPC] = cpu.block_pc;   // precise PC within the block isn't tracked
         cpu.insn_count += uint64_t(startBudget - cpu.budget);
         cpu.in_guest.store(false, std::memory_order_release);
+        cpu.progress_budget_start = cpu.budget;
+        cpu.publishProgress(false);
         return cpu.exit;
     }
     uint8_t* const base = mem_.base();
@@ -494,16 +501,20 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     cpu.in_guest.store(false, std::memory_order_release);
     // Handlers only decrement the budget; the retired count falls out of it.
     cpu.insn_count += uint64_t(startBudget - cpu.budget);
+    cpu.progress_budget_start = cpu.budget;
+    cpu.publishProgress(false);
     return cpu.exit;
 }
 
 void Engine::park(Cpu& c) {
     c.in_guest.store(false, std::memory_order_seq_cst);
+    c.publishProgress(false);
     std::unique_lock<std::mutex> lk(suspendMu_);
     suspendCv_.notify_all();
     suspendCv_.wait(lk, [&] { return c.suspend_count.load() == 0 || stopRequested(); });
     lk.unlock();
     c.in_guest.store(true, std::memory_order_seq_cst);
+    c.publishProgress(true);
 }
 
 void Engine::suspend(Cpu& t) {
@@ -569,6 +580,7 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     std::memcpy(saved, c.r, sizeof saved);
     const uint32_t nzcv = c.nzcv, q = c.q, ge = c.ge, thumb = c.thumb, blockPc = c.block_pc;
     const int64_t budget = c.budget;
+    const int64_t progressBudgetStart = c.progress_budget_start;
     const Exit exitSaved = c.exit;
     const uint32_t infoSaved = c.exit_info;
     const uint32_t boundarySaved = c.call_boundary_sp;
@@ -593,12 +605,16 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
         const uint32_t info = c.exit_info, pc = c.r[kPC], th = c.thumb;
         std::memcpy(c.r, saved, sizeof saved);
         c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
+        c.progress_budget_start = progressBudgetStart;
         c.exit = exitSaved; c.exit_info = infoSaved;
+        c.publishProgress(false);
         throw GuestFault(e, info, pc, th, e == Exit::HostError ? t_hostError : "guest call did not return");
     }
     std::memcpy(c.r, saved, sizeof saved);
     c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
+    c.progress_budget_start = progressBudgetStart;
     c.exit = exitSaved; c.exit_info = infoSaved;
+    c.publishProgress(false);
     return result;
 }
 

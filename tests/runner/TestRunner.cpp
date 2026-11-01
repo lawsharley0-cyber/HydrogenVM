@@ -235,6 +235,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cstring>
 
 int runMinimp3HwcapChecks();
+int runThreadProgressTests();
 
 namespace {
 
@@ -7524,6 +7525,7 @@ int runFullSubsystemTests() {
         ::unlink(freePath);
     }
 
+    check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

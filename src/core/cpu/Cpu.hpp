@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "core/diag/CallRing.hpp"
+#include "ThreadProgress.hpp"
 
 // preserve_none (no callee-saved registers) removes the push/pop that every
 // handler otherwise pays. It needs LLVM 19 for AArch64; Apple clang numbers
@@ -119,7 +120,17 @@ struct alignas(64) Cpu {
     Exit     exit       = Exit::None;
     uint32_t exit_info  = 0;
     uint32_t block_pc   = 0;   // start of the block currently executing (fault reports)
-    uint64_t insn_count = 0;   // retired guest instructions (approximate, per block; updated when run() returns)
+    std::atomic<uint64_t> insn_count{0}; // completed dispatches, also read by diagnostic threads
+    ThreadProgress progress;
+    int64_t progress_budget_start = 0;
+    uint32_t progress_argument0 = 0, progress_argument1 = 0;
+    void publishProgress(bool guest) {
+        if (!progress.enabled) return;
+        const uint64_t pending = uint64_t(progress_budget_start) - uint64_t(budget);
+        progress.publish({insn_count.load(std::memory_order_relaxed) + pending,
+            r[kPC], r[kLR], block_pc, current_hle.load(std::memory_order_relaxed),
+            progress_argument0, progress_argument1, guest});
+    }
     Engine*  engine     = nullptr;
     void*    user       = nullptr;  // owner (guest thread object, test harness, ...)
 
