@@ -84,16 +84,20 @@ struct CrashReport: Identifiable {
         var fields = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
         let signalData = try? Data(contentsOf: signal)
         let fault = signalData.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        let pendingRaw = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+        let signalRaw = signalData.map { String(decoding: $0, as: UTF8.self) } ?? ""
         let hostText = (try? Data(contentsOf: hostFault)).map { String(decoding: $0, as: UTF8.self) } ?? ""
         // Older batch builds did not create pending.json. Recover their signal
         // evidence too, rather than erasing it at the next launch.
-        guard !fields.isEmpty || fault != nil || !hostText.isEmpty else { return nil }
+        guard !pendingRaw.isEmpty || !signalRaw.isEmpty || !hostText.isEmpty else { return nil }
+        if fields.isEmpty && !pendingRaw.isEmpty { fields["pendingRaw"] = String(pendingRaw.prefix(200_000)) }
         fields["exceptionKind"] = "interrupted-host-session"
         fields["summary"] = "The previous game session ended unexpectedly. iOS may have stopped HydrogenVM; the exact cause is unknown."
         if let fault {
             fields.merge(fault) { _, new in new }
             fields["summary"] = "HydrogenVM encountered a host memory fault. Share this report to help diagnose it."
         }
+        if fault == nil && !signalRaw.isEmpty { fields["signalRaw"] = String(signalRaw.prefix(200_000)) }
         if !hostText.isEmpty {
             // The bounded native report is < 200 KB even at registry capacity.
             // Keep its header/address as well as the log tail.

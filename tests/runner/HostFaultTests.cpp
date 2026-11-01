@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <sstream>
 #include <thread>
 #include <sys/wait.h>
 #include <sys/resource.h>
@@ -17,12 +18,26 @@ using namespace Hydrogen;
 // A real signal on a host callback thread, while two guest threads are in HLE.
 // The file (rather than a pipe) deliberately permits a full 200-line report.
 int runHostFaultChild(int fd, bool stress) {
+        const bool afterUnwind = fd < 0;
+        if (afterUnwind) fd = -fd;
         const rlimit noCore{0, 0};
         setrlimit(RLIMIT_CORE, &noCore);
         alarm(15);
         Memory::GuestArena arena;
         CPU::Engine engine(arena);
         CPU::Engine::setFaultReportFd(fd);
+        if (afterUnwind) {
+            CPU::Cpu cpu;
+            const auto throwing = engine.registerHle("throwing_test_hle", [](CPU::Cpu&) { throw 42; });
+            cpu.r[CPU::kPC] = throwing;
+            try { engine.run(cpu); }
+            catch (int) {
+                // The guest scope has unwound. This must be a fatal host fault,
+                // never a siglongjmp into the abandoned Engine::run frame.
+                *reinterpret_cast<volatile unsigned*>(arena.base() + 0x4000) = 1;
+            }
+            _exit(3);
+        }
         std::atomic<unsigned> ready{0};
         auto hle = engine.registerHle("host_fault_test_wait", [&](CPU::Cpu&) {
             ready.fetch_add(1);
@@ -71,7 +86,7 @@ int runHostFaultChild(int fd, bool stress) {
         _exit(3);
 }
 
-static int runOneHostFaultTest(bool stress) {
+static int runOneHostFaultTest(bool stress, bool afterUnwind = false) {
     char path[] = "/tmp/hvm-host-fault-XXXXXX";
     int fd = mkstemp(path);
     if (fd < 0) return 2;
@@ -82,7 +97,7 @@ static int runOneHostFaultTest(bool stress) {
     if (_NSGetExecutablePath(executable, &size)) return 2;
 #endif
     char fdArg[32];
-    std::snprintf(fdArg, sizeof fdArg, "%d", fd);
+    std::snprintf(fdArg, sizeof fdArg, "%d", afterUnwind ? -fd : fd);
     pid_t child = fork();
     if (child < 0) return 2;
     if (!child) {
@@ -107,7 +122,22 @@ static int runOneHostFaultTest(bool stress) {
     auto has = [&](const char* s) { return report.find(s) != std::string::npos; };
     check(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV, "fatal signal preserved");
     check(has("Host Fault Address (si_addr): 0x") && has("Guest Arena Offset: 0x00004000"), "callback fault address and arena offset");
-    check(has("LR=0x11223344") && has("LR=0x55667788") && has("PC=0xffff0004") && has("block_pc=0xffff0004"), "both guest thread register snapshots");
+    if (afterUnwind) {
+        check(has("=== END HOST FAULT DIAGNOSTICS ==="), "host fault after C++ unwind does not jump into a dead guest scope");
+        return failures ? 1 : 0;
+    }
+    auto threadMatches = [&](const char* lr) {
+        std::istringstream lines(report);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (line.rfind("Thread slot #", 0) == 0 && line.find(lr) != std::string::npos &&
+                line.find("PC=0xffff0004") != std::string::npos &&
+                line.find("block_pc=0xffff0004") != std::string::npos &&
+                line.find("host_fault_test_wait") != std::string::npos) return true;
+        }
+        return false;
+    };
+    check(threadMatches("LR=0x11223344") && threadMatches("LR=0x55667788"), "both guest thread register snapshots");
     check(has("host_fault_test_wait"), "current HLE name survives signal");
     if (stress) {
         check(has("=== END HOST FAULT DIAGNOSTICS ==="), "complete signal report during concurrent logging and CPU/Engine destruction");
@@ -128,7 +158,8 @@ static int runOneHostFaultTest(bool stress) {
     check(arena16.read<uint32_t>(a) == 0x11223344 && arena16.stats().committedHostBytes == 16384,
           "16 KB commit preserves adjacent 4 KB page");
     arena16.protect(a, 4096, Memory::kProtRead);
-    check(arena16.isMapped(b) && arena16.read<uint32_t>(a) == 0x11223344,
+    check(arena16.protAt(a) == Memory::kProtRead && arena16.protAt(b) == Memory::kProtRW &&
+          arena16.read<uint32_t>(a) == 0x11223344,
           "16 KB backing survives guest protection change");
     arena16.write<uint32_t>(b, 0x55667788);
     arena16.unmap(a, 4096);
@@ -145,7 +176,8 @@ static int runOneHostFaultTest(bool stress) {
 int runHostFaultTests() {
     const int single = runOneHostFaultTest(false);
     const int concurrent = runOneHostFaultTest(true);
-    return single || concurrent;
+    const int unwound = runOneHostFaultTest(false, true);
+    return single || concurrent || unwound;
 }
 
 #ifndef HVM_HOST_FAULT_NO_MAIN

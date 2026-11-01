@@ -53,7 +53,7 @@ namespace {
 
 struct FaultScope {
     sigjmp_buf jb;
-    const Memory::GuestArena* arena;
+    uintptr_t arenaBase;
     uint32_t addr;
 };
 thread_local FaultScope* t_scope = nullptr;
@@ -184,8 +184,9 @@ static std::atomic<bool> g_faultDiagnosticActive{false};
 
 void faultHandler(int sig, siginfo_t* si, void* uctx) {
     FaultScope* s = t_scope;
-    if (s && s->arena->containsHost(si->si_addr)) {
-        s->addr = s->arena->guestAddr(si->si_addr);
+    const uintptr_t address = reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr);
+    if (s && address >= s->arenaBase && uint64_t(address - s->arenaBase) < Memory::GuestArena::kArenaSize) {
+        s->addr = uint32_t(address - s->arenaBase);
         siglongjmp(s->jb, 1);
     }
 
@@ -196,7 +197,6 @@ void faultHandler(int sig, siginfo_t* si, void* uctx) {
         safeWriteStr("\nHost Fault Address (si_addr): 0x");
         safeWriteHex(reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr), 16);
 
-        const uintptr_t address = reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr);
         bool anyArena = false, inside = false;
         for (auto& item : g_arenas) {
             const uintptr_t base = item.load(std::memory_order_acquire);
@@ -566,9 +566,12 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     cpu.exit_info = 0;
 
     FaultScope scope;
-    scope.arena = &mem_;
+    scope.arenaBase = reinterpret_cast<uintptr_t>(mem_.base());
     scope.addr = 0;
     FaultScope* prev = t_scope;
+    // Restore on C++ exceptions too: a subsequent host fault must not follow
+    // a scope pointer into the abandoned Engine::run stack frame.
+    struct RestoreScope { FaultScope* prev; ~RestoreScope() { t_scope = prev; } } restore{prev};
     t_scope = &scope;
     if (sigsetjmp(scope.jb, 1)) {
         t_scope = prev;

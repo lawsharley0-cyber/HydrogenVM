@@ -24,6 +24,13 @@ its footer and retains the two blocked threads' register/HLE observations. The
 16 KB tests verify shared-page preservation, independent guest protection,
 partial unmap, released backing-byte accounting and zero-filled remapping.
 
+An additional minimized failure escapes `Engine::run` via an HLE C++ exception,
+then faults on the same host thread. Without exception-safe scope restoration,
+the old thread-local pointer refers to an abandoned stack frame. The subprocess
+still dies but its address/offset and report footer checks fail. Restoring the
+scope with RAII makes all three checks pass; arena classification uses a copied
+integer base so it cannot dereference an arena object during teardown.
+
 ## Report limits
 
 The reporter uses permanent storage for 128 CPU slots and 32 arena bases.
@@ -54,15 +61,26 @@ line. No proprietary fixture or actual device crash is included in this patch.
 - The first final release fulltest aborted with `double free or corruption
   (fasttop)` immediately after the formatting regression and before the asset
   I/O results. Four subsequent fulltest runs passed 488/488. The abort remains
-  an unresolved gate concern; a full-runtime ASan/UBSan run is being used to
-  diagnose it rather than treating the reruns as a fix.
+  an unresolved gate concern. Eight further GDB runs exited normally without
+  reproducing the abort; that is not a fix. After review changes, release
+  fulltest again passed 488/488 and the focused ASan/UBSan tests passed,
+  including the exception-unwind regression.
+- The full runtime was built under ASan/UBSan. Its fulltest stops before the
+  heap-abort location at unchanged `src/runtime/graphics/Shader.cpp:1455:29`:
+  `2.14748e+09 is outside the range of representable values of type 'int'`.
+  This gate failed; it was not suppressed. Evidence is posted on umbrella #234.
 - Enabling `HVM_TESTLAB_TOOLCHAIN=1` exposed an existing test fixture assigning
   a CompletedProcess to `TestCase.run`. The result attribute is renamed to
   `testlab_run`; all original guest expectations remain intact. The enabled
   tools suite then passed all 202 tests with zero skips.
 - CI stub audit reports four new/changed findings relative to its committed
   baseline, all in unchanged `RunLoop.cpp`, `Libcxx.cpp`, and `Pthread.cpp`.
-  The baseline and the stub implementations are not modified here.
+  The baseline and the stub implementations are not modified here. The runtime
+  tree is identical to main: `cd9f698d086bf7df9b168f8328a9bb5d48951571`.
+- CodeRabbit's three findings were corrected: cleanup also runs from each
+  attempt's exit callback after cancellation; malformed pending/signal bytes
+  are retained as raw evidence rather than blocking future launches; each
+  thread's expected LR/PC/block/HLE is checked on one complete record.
 - Physical iPhone/game runs and local Apple compilation: NOT RUN. The PR stays
   draft; synthetic diagnostics do not resolve the underlying game faults.
 

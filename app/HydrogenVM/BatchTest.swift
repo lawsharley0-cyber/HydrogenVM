@@ -478,18 +478,9 @@ final class BatchTestRunner {
             _ = await Self.waitForArenaRelease(8.0)
             guard !Task.isCancelled, self.status == .running else { return }
 
-            let journalID: UUID
-            do {
-                journalID = try CrashReport.beginSession(bundleID: target.app.info.bundleIdentifier,
-                    version: target.app.info.version, renderer: target.modeName, phase: "batch-launch")
-            } catch {
-                self.keepLog("[crash-journal] \(error.localizedDescription)")
-                self.status = .paused
-                UIApplication.shared.isIdleTimerDisabled = false
-                return
-            }
+            var journalID: UUID?
             defer {
-                if HVMEngine.liveGuestArenaCount() == 0 { CrashReport.endSession(journalID) }
+                if let journalID, HVMEngine.liveGuestArenaCount() == 0 { CrashReport.endSession(journalID) }
             }
 
             var s: HVMSession!
@@ -497,6 +488,17 @@ final class BatchTestRunner {
             var startRetries = 0
 
             while startRetries < 5 {
+                let attemptJournalID: UUID
+                do {
+                    attemptJournalID = try CrashReport.beginSession(bundleID: target.app.info.bundleIdentifier,
+                        version: target.app.info.version, renderer: target.modeName, phase: "batch-launch")
+                } catch {
+                    self.keepLog("[crash-journal] \(error.localizedDescription)")
+                    self.status = .paused
+                    UIApplication.shared.isIdleTimerDisabled = false
+                    return
+                }
+                journalID = attemptJournalID
                 exitBox = ExitBox()
                 s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: testHome.path(percentEncoded: false))
                 s.keepGoing = self.options.keepGoing
@@ -523,6 +525,9 @@ final class BatchTestRunner {
 
                 s.onExit = { code, crash in
                     MainActor.assumeIsolated {
+                        // Runs even if cancellation already unwound the task.
+                        // Each startup retry creates a fresh, token-owned journal.
+                        CrashReport.endSession(attemptJournalID)
                         exitBox.exited = true
                         exitBox.code = code
                         exitBox.crash = crash
@@ -688,7 +693,7 @@ final class BatchTestRunner {
                 self.progressText = "Relaunching \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
                 self.activeSession = nil
                 _ = await Self.waitForArenaRelease(8.0)
-                if HVMEngine.liveGuestArenaCount() == 0 { CrashReport.endSession(journalID) }
+                if let journalID, HVMEngine.liveGuestArenaCount() == 0 { CrashReport.endSession(journalID) }
                 try? await Task.sleep(for: .milliseconds(500))
                 relaunch = await self.relaunch(target: target, home: testHome)
             }
@@ -772,16 +777,9 @@ final class BatchTestRunner {
 
     /// Starts the game again on `home` for `relaunchTime` seconds and reports what happened.
     private func relaunch(target: BatchTarget, home: URL) async -> (crashed: Bool, frames: Int, summary: String?) {
-        _ = await Self.waitForArenaRelease(8.0)
-        let journalID: UUID
-        do {
-            journalID = try CrashReport.beginSession(bundleID: target.app.info.bundleIdentifier,
-                version: target.app.info.version, renderer: target.modeName, phase: "batch-relaunch")
-        } catch {
-            return (true, 0, "Crash journal: \(error.localizedDescription)")
-        }
+        var journalID: UUID?
         defer {
-            if HVMEngine.liveGuestArenaCount() == 0 { CrashReport.endSession(journalID) }
+            if let journalID, HVMEngine.liveGuestArenaCount() == 0 { CrashReport.endSession(journalID) }
         }
         var s: HVMSession!
         var box: ExitBox!
@@ -790,6 +788,14 @@ final class BatchTestRunner {
         while startRetries < 5 {
             _ = await Self.waitForArenaRelease(8.0)
             if Task.isCancelled || status != .running { return (false, 0, nil) }
+            let attemptJournalID: UUID
+            do {
+                attemptJournalID = try CrashReport.beginSession(bundleID: target.app.info.bundleIdentifier,
+                    version: target.app.info.version, renderer: target.modeName, phase: "batch-relaunch")
+            } catch {
+                return (true, 0, "Crash journal: \(error.localizedDescription)")
+            }
+            journalID = attemptJournalID
             box = ExitBox()
             s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
             s.keepGoing = options.keepGoing
@@ -806,6 +812,7 @@ final class BatchTestRunner {
             }
             s.onExit = { code, crash in
                 MainActor.assumeIsolated {
+                    CrashReport.endSession(attemptJournalID)
                     box.exited = true
                     box.code = code
                     box.crash = crash
