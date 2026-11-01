@@ -5007,6 +5007,41 @@ int runFullSubsystemTests() {
             const bool rtldDefault = call("_dlopen", {0, 1}) == 0xFFFFFFFEu;
             check(pbOk && can && writes && rtldDefault,
                   "CVPixelBuffer has real memory; AVAssetWriter takes inputs and starts writing; dlopen(NULL) returns RTLD_DEFAULT");
+
+            // T5c: Unity/Mono startup checklist assertions (Darwin stat, dlsym RTLD_DEFAULT, getpwuid, AudioQueue 44.1kHz PCM).
+            const uint32_t symGetpid = proc.allocCString("getpid");
+            const uint32_t dlsymRes = call("_dlsym", {0xFFFFFFFEu, symGetpid});
+            check(dlsymRes != 0, "dlsym(RTLD_DEFAULT) resolves guest and HLE exports");
+
+            const uint32_t pw501 = call("_getpwuid", {501});
+            const bool pw501Ok = pw501 && proc.readCString(proc.mem().read<uint32_t>(pw501)) == "mobile" &&
+                                proc.mem().read<uint32_t>(pw501 + 8) == 501;
+            check(pw501Ok, "getpwuid(501) returns mobile");
+
+            const uint32_t stBuf = proc.heap().allocZeroed(128);
+            const std::string stPath = proc.guestHomePath() + "/Documents/hvm_stat_test.txt";
+            const uint32_t cStPath = proc.allocCString(stPath);
+            const uint32_t fdSt = call("_open", {cStPath, 0x0202 /* O_RDWR | O_CREAT */, 0644});
+            call("_pwrite", {fdSt, proc.allocCString("unity"), 5, 0});
+            call("_close", {fdSt});
+            const bool statOk = call("_stat", {cStPath, stBuf}) == 0;
+            const uint16_t stMode = proc.mem().read<uint16_t>(stBuf + 4);
+            const int64_t stSz = proc.mem().read<int64_t>(stBuf + 60);
+            check(statOk && (stMode & 0100000) && stSz == 5, "Darwin 32-bit struct stat legacy and INODE64 layouts");
+
+            const uint32_t asbdPcm = proc.heap().allocZeroed(40), outPcmAq = proc.heap().allocZeroed(4);
+            proc.mem().write<double>(asbdPcm, 44100.0);
+            proc.mem().write<uint32_t>(asbdPcm + 8, 0x6c70636d);   // lpcm
+            proc.mem().write<uint32_t>(asbdPcm + 12, 12);
+            proc.mem().write<uint32_t>(asbdPcm + 16, 4);
+            proc.mem().write<uint32_t>(asbdPcm + 20, 1);
+            proc.mem().write<uint32_t>(asbdPcm + 24, 4);
+            proc.mem().write<uint32_t>(asbdPcm + 28, 2);           // 2 channels
+            proc.mem().write<uint32_t>(asbdPcm + 32, 16);          // 16 bits
+            const int32_t aqPcmRes = int32_t(call("_AudioQueueNewOutput", {asbdPcm, 0, 0, 0, 0, 0, outPcmAq}));
+            const uint32_t qidPcm = proc.mem().read<uint32_t>(outPcmAq);
+            if (qidPcm) call("_AudioQueueDispose", {qidPcm, 0});
+            check(aqPcmRes == 0 && qidPcm != 0, "AudioQueue accepts 44.1 kHz stereo 16-bit PCM");
         }
 
         // A std::filebuf has a vtable, so app code can call its virtuals (sgetc, sbumpc, delete).
