@@ -4147,8 +4147,11 @@ int runFullSubsystemTests() {
 
         const auto tStart = std::chrono::steady_clock::now();
         while (readyCount < 3 && std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
-        while (isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_trylock"), {mu}) != 0 && std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
-        isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_unlock"), {mu});
+        // Only a held mutex proves all three waiters are parked in cond_wait (it was released by each one's wait).
+        bool acquired = false;
+        while (!(acquired = isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_trylock"), {mu}) == 0) &&
+               std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
+        if (acquired) isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_unlock"), {mu});
 
         const auto t0 = std::chrono::steady_clock::now();
         isolated.requestStop();
@@ -4157,7 +4160,11 @@ int runFullSubsystemTests() {
         const auto t1 = std::chrono::steady_clock::now();
 
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        check(finishedCount.load() == 3 && ms < 35.0, "pthread condition variable process stop broadcast wakes up and joins quickly");
+        check(readyCount.load() == 3 && acquired && finishedCount.load() == 3 && ms < 35.0,
+              "pthread condition variable process stop broadcast wakes up and joins quickly");
+        // The Process must outlive every waiter, even when the check above failed: give a stuck one time to leave.
+        const auto drain = std::chrono::steady_clock::now();
+        while (finishedCount < 3 && std::chrono::steady_clock::now() - drain < std::chrono::seconds(10)) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
