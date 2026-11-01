@@ -24,7 +24,7 @@ def main():
     executable = app / "ObjCSymbolication"
     subprocess.run(["llvm-strip", "--strip-all", str(executable)], check=True)
     nm = subprocess.run(["llvm-nm", "--defined-only", str(executable)], capture_output=True, text=True, check=True)
-    if "HVMTrace" in nm.stdout:
+    if "HVMTrace" in nm.stdout or "HVMBoot" in nm.stdout:
         raise RuntimeError("fixture still contains named method symbols")
     (out / "nm.log").write_text(nm.stdout + nm.stderr, encoding="utf-8")
     report = out / "hvm-report.json"
@@ -33,7 +33,7 @@ def main():
     (out / "run.log").write_text(result.stdout + result.stderr, encoding="utf-8")
     data = json.loads(report.read_text(encoding="utf-8"))
     trace = "\n".join((data.get("crashBundle") or {}).get("backtrace") or [])
-    expected = ["-[HVMTraceCaller enter]", "+[HVMTraceCallee trap]", "+[HVMTraceCallee(Boot) load]"]
+    expected = ["-[HVMTraceCaller enter]", "+[HVMTraceCallee trap]", "+[NSObject(HVMBoot) load]"]
     found = {name: name in trace for name in expected}
     # A guest trap is reported as EX_SOFTWARE (70), not a generic tool error.
     ok = result.returncode == 70 and data.get("exitStatus") == 70 and data.get("crashed") is True and all(found.values())
