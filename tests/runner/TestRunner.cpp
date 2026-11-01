@@ -6943,6 +6943,43 @@ int runFullSubsystemTests() {
         call("_CFRunLoopSourceSignal", {multi});
         spin();
         check(cancelled.size() == 2 && performed.empty(), "removing the last mode detaches the source and cancels once per mode");
+
+        // Mode-aware dispatch (#277): a source or timer registered in one mode does not fire while another mode
+        // runs, and a source's signal is kept for the mode it belongs to.
+        {
+            const auto key = [](const char* n) { return Foundation::runLoopModeKey(n); };
+            const uint32_t modeX = Foundation::makeString(sx, "HVMModeX"), modeY = Foundation::makeString(sx, "HVMModeY");
+            performed.clear();
+            const uint32_t inX = makeSource(0, 0xF1);
+            call("_CFRunLoopAddSource", {mainLoop, inX, modeX});
+            call("_CFRunLoopSourceSignal", {inX});
+            loop.runOnce(scpu, 0.0, key("HVMModeY")); loop.runOnce(scpu, 0.0, key("kCFRunLoopDefaultMode"));
+            check(performed.empty(), "a source registered in one mode does not perform while another mode runs");
+            loop.runOnce(scpu, 0.0, key("HVMModeX"));
+            check(performed == std::vector<uint32_t>{0xF1}, "the signal was kept and the source performs when its mode runs");
+            performed.clear();
+            const uint32_t common = makeSource(0, 0xF2);
+            call("_CFRunLoopAddSource", {mainLoop, common, Foundation::makeString(sx, "kCFRunLoopCommonModes")});
+            call("_CFRunLoopSourceSignal", {common});
+            loop.runOnce(scpu, 0.0, key("HVMModeY"));
+            check(performed.empty(), "a common-modes source does not perform in a mode outside the common set");
+            loop.runOnce(scpu, 0.0, key("UITrackingRunLoopMode"));
+            check(performed == std::vector<uint32_t>{0xF2}, "a common-modes source performs in a common mode");
+            (void)modeY;
+
+            int fired = 0;
+            loop.addTimer(0, 0, false, [&](CPU::Cpu&) { ++fired; }, 0, {key("HVMModeX")});
+            loop.runOnce(scpu, 0.0, key("kCFRunLoopDefaultMode"));
+            check(fired == 0, "a timer registered in one mode does not fire while another mode runs");
+            loop.runOnce(scpu, 0.0, key("HVMModeX"));
+            check(fired == 1, "the timer fires when its mode runs");
+            loop.addTimer(0, 0, false, [&](CPU::Cpu&) { ++fired; }, 0, {key("kCFRunLoopCommonModes")});
+            loop.runOnce(scpu, 0.0, key("kCFRunLoopDefaultMode"));
+            check(fired == 2, "a common-modes timer fires in the default mode");
+            loop.addTimer(0, 0, false, [&](CPU::Cpu&) { ++fired; });
+            loop.runOnce(scpu, 0.0, key("HVMModeY"));
+            check(fired == 3, "an internal timer with no mode runs in any mode");
+        }
     }
 
     {
