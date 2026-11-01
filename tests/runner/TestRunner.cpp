@@ -4126,9 +4126,14 @@ int runFullSubsystemTests() {
         isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_init"), {mu, 0});
         isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_cond_init"), {cv, 0});
 
-        std::atomic<int> readyCount{0};
-        std::atomic<int> finishedCount{0};
-        const uint32_t waiterFn = isolated.registerHostFunction("waiter", [cv, mu, &readyCount, &finishedCount](Runtime::Ctx& x) {
+        // The waiters' state is shared with the host function so it outlives this scope if a waiter is slow to exit.
+        struct StopCounts { std::atomic<int> ready{0}, finished{0}; };
+        const auto counts = std::make_shared<StopCounts>();
+        auto& readyCount = counts->ready;
+        auto& finishedCount = counts->finished;
+        const uint32_t waiterFn = isolated.registerHostFunction("waiter", [cv, mu, counts](Runtime::Ctx& x) {
+            auto& readyCount = counts->ready;
+            auto& finishedCount = counts->finished;
             x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_lock"), {mu});
             ++readyCount;
             try {
