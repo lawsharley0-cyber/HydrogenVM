@@ -151,6 +151,8 @@ struct RunLoop {
 };
 // A mode object (CFString/NSString) as the runtime keys it; null is the default mode.
 std::string runLoopModeKey(Ctx& x, id mode);
+// The default mode's key ("s:kCFRunLoopDefaultMode"): what the app's own loop runs in.
+std::string defaultRunLoopModeKey();
 RunLoop& mainRunLoop(Process& p);
 RunLoop& runLoopForObject(Ctx& x, id loop);   // an NSRunLoop / CFRunLoop object (current loop if 0)
 double now();          // seconds since 2001-01-01 (NSDate reference)

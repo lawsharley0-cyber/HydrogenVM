@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <filesystem>
 #include <arpa/inet.h>
@@ -6943,6 +6944,123 @@ int runFullSubsystemTests() {
         call("_CFRunLoopSourceSignal", {multi});
         spin();
         check(cancelled.size() == 2 && performed.empty(), "removing the last mode detaches the source and cancels once per mode");
+    }
+
+    // Run loop modes: work belongs to the mode it was added in, a timer added to two modes is
+    // still one timer, and a run in kCFRunLoopCommonModes runs the default mode.
+    {
+        ProcessConfig modeCfg;
+        modeCfg.homePath = "/tmp/hvm_runloop_modes";
+        Process modeProc(modeCfg);
+        auto& mcpu = modeProc.mainThread().cpu;
+        // A Process with no loaded image starts with no stack; calls that pass arguments on the
+        // stack (_CFRunLoopTimerCreate, _CFRunLoopRunInMode) need one.
+        const uint32_t stack = modeProc.heap().allocZeroed(8u << 10);
+        mcpu.r[CPU::kSP] = stack + (8u << 10) - 64;
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(modeProc.callGuest(mcpu, *modeProc.lookupSymbol(sym), args)); };
+        auto callv = [&](const char* sym, const std::vector<uint32_t>& args) { return uint32_t(modeProc.callGuest(mcpu, *modeProc.lookupSymbol(sym), args)); };
+        Ctx mx{modeProc, mcpu, modeProc.mem()};
+        const auto words = [](double d) { std::vector<uint32_t> w(2); std::memcpy(w.data(), &d, 8); return w; };
+        const auto exportMode = [&](const char* sym) { return modeProc.mem().read<uint32_t>(*modeProc.lookupSymbol(sym)); };
+        const uint32_t mainLoop = call("_CFRunLoopGetMain", {});
+        const uint32_t defaultMode = exportMode("_kCFRunLoopDefaultMode");
+        const uint32_t commonModes = exportMode("_kCFRunLoopCommonModes");
+        const uint32_t modeA = Foundation::makeString(mx, "HVMModeA");
+        const uint32_t modeB = Foundation::makeString(mx, "HVMModeB");
+        const uint32_t modeC = Foundation::makeString(mx, "HVMModeC");
+        const auto runInMode = [&](uint32_t mode) {
+            std::vector<uint32_t> args{mode};   // _CFRunLoopRunInMode(mode, seconds, returnAfterSource)
+            const auto seconds = words(0.0);
+            args.insert(args.end(), seconds.begin(), seconds.end());
+            args.push_back(0);
+            callv("_CFRunLoopRunInMode", args);
+        };
+        std::vector<uint32_t> performed, fired;
+        const uint32_t performFn = modeProc.defineFunction("test_mode_source_perform", [&](Ctx& x) { performed.push_back(x.cpu.r[0]); });
+        const uint32_t fireFn = modeProc.defineFunction("test_mode_timer_fire", [&](Ctx& x) { fired.push_back(x.cpu.r[1]); });
+        const auto makeSource = [&](uint32_t info) {
+            const uint32_t ctx = modeProc.heap().allocZeroed(40);
+            modeProc.mem().write<uint32_t>(ctx + 4, info);        // CFRunLoopSourceContext.info
+            modeProc.mem().write<uint32_t>(ctx + 36, performFn);  // CFRunLoopSourceContext.perform
+            return call("_CFRunLoopSourceCreate", {0, 0, ctx});
+        };
+        const auto makeTimer = [&](uint32_t info) {
+            const uint32_t ctx = modeProc.heap().allocZeroed(20);
+            modeProc.mem().write<uint32_t>(ctx + 4, info);        // CFRunLoopTimerContext.info
+            std::vector<uint32_t> args{0};                        // _CFRunLoopTimerCreate(alloc, fireDate, interval, flags, order, callout, ctx)
+            for (double d : {Foundation::now() - 0.001, 0.0}) {   // already due, one shot
+                const auto w = words(d);
+                args.insert(args.end(), w.begin(), w.end());
+            }
+            args.push_back(0);
+            args.push_back(0);
+            args.push_back(fireFn);
+            args.push_back(ctx);
+            return callv("_CFRunLoopTimerCreate", args);
+        };
+
+        // A source added in one mode does not perform in another: it waits, still signalled, for
+        // a run in its own mode.
+        const uint32_t sourceA = makeSource(0xA1);
+        call("_CFRunLoopAddSource", {mainLoop, sourceA, modeA});
+        call("_CFRunLoopSourceSignal", {sourceA});
+        runInMode(modeB);
+        check(performed.empty(), "a run loop source added in one mode does not perform in another mode");
+        runInMode(modeA);
+        check(performed == std::vector<uint32_t>{0xA1}, "a run loop source performs in the mode it was added in");
+
+        // A timer added to two modes is one timer: it fires once, and only in those modes.
+        fired.clear();
+        const uint32_t bothModes = makeTimer(0xB1);
+        call("_CFRunLoopAddTimer", {mainLoop, bothModes, modeA});
+        call("_CFRunLoopAddTimer", {mainLoop, bothModes, modeB});
+        runInMode(modeC);
+        check(fired.empty(), "a timer added to two modes does not fire in a third mode");
+        runInMode(modeA);
+        runInMode(modeB);
+        check(fired == std::vector<uint32_t>{0xB1}, "a timer added to two modes fires once");
+
+        // Running in kCFRunLoopCommonModes runs the default mode: a default-mode timer fires, a
+        // timer that belongs to a private mode waits for that mode.
+        fired.clear();
+        const uint32_t defaultTimer = makeTimer(0xC1);
+        const uint32_t privateTimer = makeTimer(0xC2);
+        call("_CFRunLoopAddTimer", {mainLoop, defaultTimer, defaultMode});
+        call("_CFRunLoopAddTimer", {mainLoop, privateTimer, modeB});
+        runInMode(commonModes);
+        check(fired == std::vector<uint32_t>{0xC1},
+              "_CFRunLoopRunInMode in kCFRunLoopCommonModes fires a default-mode timer and not a private-mode one");
+    }
+
+    // UIApplication's main loop runs the main run loop in the default mode: a source that belongs
+    // to another mode waits for a run in that mode instead of performing on a frame.
+    {
+        ProcessConfig appCfg;
+        appCfg.homePath = "/tmp/hvm_app_loop_mode";
+        Process appProc(appCfg);
+        auto& acpu = appProc.mainThread().cpu;
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(appProc.callGuest(acpu, *appProc.lookupSymbol(sym), args)); };
+        Ctx ax{appProc, acpu, appProc.mem()};
+        const uint32_t mainLoop = call("_CFRunLoopGetMain", {});
+        const uint32_t privateMode = Foundation::makeString(ax, "HVMModeB");
+        std::vector<uint32_t> performed;
+        const uint32_t performFn = appProc.defineFunction("test_app_loop_source_perform", [&](Ctx& x) { performed.push_back(x.cpu.r[0]); });
+        const auto makeSource = [&](uint32_t info) {
+            const uint32_t ctx = appProc.heap().allocZeroed(40);
+            appProc.mem().write<uint32_t>(ctx + 4, info);
+            appProc.mem().write<uint32_t>(ctx + 36, performFn);
+            return call("_CFRunLoopSourceCreate", {0, 0, ctx});
+        };
+        const uint32_t privateSource = makeSource(0xD1);
+        call("_CFRunLoopAddSource", {mainLoop, privateSource, privateMode});
+        call("_CFRunLoopSourceSignal", {privateSource});
+        UIKit::runApplicationLoop(ax, Foundation::now() + 0.01);
+        check(performed.empty(), "UIApplication's main loop does not perform a source added in another mode");
+        const uint32_t defaultSource = makeSource(0xD2);
+        call("_CFRunLoopAddSource", {mainLoop, defaultSource, 0});
+        call("_CFRunLoopSourceSignal", {defaultSource});
+        UIKit::runApplicationLoop(ax, Foundation::now() + 0.01);
+        check(performed == std::vector<uint32_t>{0xD2}, "UIApplication's main loop performs a default-mode source");
     }
 
     {

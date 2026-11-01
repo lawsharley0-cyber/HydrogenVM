@@ -862,6 +862,7 @@ bool th_setPriority(Ctx&, id, SEL, double) { return true; }
 } // namespace
 
 std::string runLoopModeKey(Ctx& x, id mode) { return modeKey(x, mode); }
+std::string defaultRunLoopModeKey() { return kDefaultModeKey; }
 RunLoop& mainRunLoop(Process& p) { return *L(p).main; }
 double dateInterval(Ctx& x, id date) { return dateValue(x, date); }
 id makeDate(Ctx& x, double t, bool owned) { return newDate(x, t, owned); }

@@ -196,6 +196,7 @@ G::Size drawText(Ctx& x, id ctx, const std::string& s, const G::FontDesc& f, con
 
 // ---- events (UIApplication.cpp)
 void deliverPendingInput(Ctx& x);
+void runApplicationLoop(Ctx& x, double until);                  // the app's main loop: default run loop mode
 
 // ---- message helpers
 uint64_t sendRect(Ctx& x, id self, SEL s, const G::Rect& r);
