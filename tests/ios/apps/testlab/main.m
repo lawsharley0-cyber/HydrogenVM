@@ -1,6 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Twenty-three automated cases (TL-A--TL-X); see docs/TEST_LAB.md for the
+// Twenty-four automated cases (TL-A--TL-X); see docs/TEST_LAB.md for the
 // complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
