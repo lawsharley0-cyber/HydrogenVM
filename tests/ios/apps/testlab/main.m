@@ -1850,7 +1850,17 @@ static TLResult *runCaseY(void) {
     memset(&childLeft, 0, sizeof(childLeft));
     _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(true, &childLeft, &rootNode, &treeHeader);
     struct TLYRbNode *succ = _ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base(&childLeft);
-    const BOOL rbtreeOk = rootOk && (succ == &rootNode);
+    const BOOL insertOk = rootOk && (succ == &rootNode);
+
+    // A red child under a red parent with a null (black) uncle needs a right rotation: the left child becomes the
+    // black root, the old root a red right child (CLRS case 3; libstdc++ _Rb_tree_insert_and_rebalance).
+    struct TLYRbNode grandChild;
+    memset(&grandChild, 0, sizeof(grandChild));
+    _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(true, &grandChild, &childLeft, &treeHeader);
+    const BOOL rotateOk = treeHeader.parent == &childLeft && childLeft.parent == &treeHeader && childLeft.color == 1 &&
+                          childLeft.left == &grandChild && childLeft.right == &rootNode &&
+                          rootNode.color == 0 && rootNode.parent == &childLeft && grandChild.color == 0;
+    const BOOL rbtreeOk = insertOk && rotateOk;
 
     // 4. SJLJ exception frame linking
     struct TLYUnwindContext ctx1, ctx2;
@@ -1864,7 +1874,7 @@ static TLResult *runCaseY(void) {
 
     const BOOL ok = stringOk && hookOk && unhookOk && rbtreeOk && sjljOk;
     r.status = ok ? @"passed" : @"failed";
-    r.expected = @"empty rep (0,0); refcount +1 on copy; circular list hook/unhook; RB-tree root black + successor; SJLJ chain link";
+    r.expected = @"empty rep (0,0); refcount +1 on copy; circular list hook/unhook; RB-tree root black, successor and right rotation on a red-red insert; SJLJ chain link";
     r.actual = [NSString stringWithFormat:@"string=%d hook=%d unhook=%d rbtree=%d sjlj=%d",
                 stringOk, hookOk, unhookOk, rbtreeOk, sjljOk];
     if (!ok) {
