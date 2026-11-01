@@ -755,6 +755,7 @@ void d_setMode(Ctx& x, id d, uint32_t key, uint32_t v, int mode) {
     const bool has = dictGet(x, d, key) != 0;
     if ((mode == 1 && has) || (mode == 2 && !has)) return;
     if (!v) { x.proc.log(LogLevel::Warning, "CFDictionarySetValue with a NULL value on an object dictionary"); return; }
+    if (dictSetRetainingKey(x, d, key, v)) return;   // CF retains the key; it does not copy it like -setObject:forKey:
     send(x, d, "setObject:forKey:", {v, key});
 }
 void d_set(Ctx& x, id d, uint32_t k, uint32_t v) { d_setMode(x, d, k, v, 0); }

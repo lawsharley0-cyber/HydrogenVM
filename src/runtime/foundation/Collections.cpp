@@ -555,7 +555,7 @@ void reindex(Ctx& x, DictData& d) {
     d.index.clear();
     for (size_t i = 0; i < d.entries.size(); ++i) d.index.emplace(objectHash(x, d.entries[i].first), i);
 }
-void dictSet(Ctx& x, DictData& d, id key, id value) {
+void dictSet(Ctx& x, DictData& d, id key, id value, bool copyTheKey = true) {
     if (!key) throw ObjC::ObjCError("*** -[__NSDictionaryM setObject:forKey:]: key cannot be nil");
     if (!value) throw ObjC::ObjCError("*** -[__NSDictionaryM setObject:forKey:]: object cannot be nil (key: " + describe(x, key) + ")");
     const uint32_t h = objectHash(x, key);
@@ -567,7 +567,7 @@ void dictSet(Ctx& x, DictData& d, id key, id value) {
         releaseObj(x, old);
         return;
     }
-    d.entries.emplace_back(copyKey(x, key), value);
+    d.entries.emplace_back(copyTheKey ? copyKey(x, key) : retainObj(x, key), value);
     d.index.emplace(h, d.entries.size() - 1);
     bump(x, d.mutationCell);
 }
@@ -1028,6 +1028,15 @@ id makeArray(Ctx& x, const std::vector<id>& items, bool owned, bool isMutable) {
 }
 std::vector<id> arrayItems(Ctx& x, id array) { return itemsOf(x, array); }
 bool isArray(Ctx& x, id obj) { return obj && rt(x).isKindOf(obj, C(x).nsArray); }
+// CFDictionarySetValue on a dictionary made with kCFTypeDictionaryKeyCallBacks retains the key; unlike
+// -setObject:forKey: it never copies it, so non-NSCopying keys work. Returns false when `dict` is not host-backed.
+bool dictSetRetainingKey(Ctx& x, id dict, id key, id value) {
+    DictData* d = dd(x, dict);
+    if (!d || !d->isMutable) return false;
+    dictSet(x, *d, key, value, false);
+    return true;
+}
+
 id makeDict(Ctx& x, const std::vector<std::pair<id, id>>& entries, bool owned, bool isMutable) {
     const id d = newDict(x, isMutable);
     dictAssign(x, d, entries);
