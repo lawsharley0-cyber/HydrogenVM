@@ -234,6 +234,8 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cmath>
 #include <cstring>
 
+int runMinimp3HwcapChecks();
+
 namespace {
 
 // Independent of HVM_ZOMBIES in the environment: enableZombies is the same
@@ -538,6 +540,12 @@ int runFullSubsystemTests() {
         if (ok) { std::printf("  ok   %s\n", what); ++pass; }
         else { std::printf("  FAIL %s\n", what); ++fail; }
     };
+
+    {
+        const int hwcapFails = runMinimp3HwcapChecks();
+        check(hwcapFails == 0,
+              "minimp3 enables NEON only for the 32-bit ARM HWCAP_NEON bit");
+    }
 
     {
         auto wav = [](int channels, uint32_t fact) {
@@ -1963,6 +1971,63 @@ int runFullSubsystemTests() {
     }
 
 
+    // AVPlayerItem starts Unknown; readiness is observed after association with
+    // a player. Apple documents this transition; a synchronous Ready initial
+    // observation made UE3 call play on a player it had not created yet.
+    {
+        struct ReadyObserver : ObjC::HostObject {
+            std::vector<int64_t> states;
+            std::vector<uint32_t> contexts;
+            ObjC::id player = 0, primary = 0;
+            bool playerAssigned = true;
+        };
+        auto cls = r.defineClass("HVMPlayerItemReadyObserver", "NSObject");
+        cls.method("observeValueForKeyPath:ofObject:change:context:", [](Ctx& x) {
+            auto& state = ObjC::rt(x).host<ReadyObserver>(x.cpu.r[0]);
+            Runtime::ArgReader args(x.cpu, x.mem, 2);
+            args.word();
+            const auto item = args.word(), change = args.word(), context = args.word();
+            const int64_t status = Foundation::numberInt(x, Foundation::dictGet(x, change, "new"));
+            state.states.push_back(status); state.contexts.push_back(context);
+            if (status == 1 && item == state.primary) {
+                state.playerAssigned &= state.player != 0;
+                if (state.player) ObjC::rt(x).send(x.cpu, state.player, "play");
+            }
+        }, "v@:@@@^v");
+        const auto observer = r.createInstance(cls.cls());
+        r.setHost(observer, std::make_unique<ReadyObserver>());
+        auto& state = r.host<ReadyObserver>(observer);
+        const auto key = Foundation::makeString(cx, "status");
+        const std::string mediaPath = proc.homePath() + "/ready-test.wav";
+        // Valid PCM WAV with one silent mono sample, independently encoded.
+        const uint8_t wave[] = {'R','I','F','F',38,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0,
+            1,0,1,0,0x40,0x1f,0,0,0x80,0x3e,0,0,2,0,16,0,'d','a','t','a',2,0,0,0,0,0};
+        std::ofstream(mediaPath,std::ios::binary).write(reinterpret_cast<const char*>(wave),sizeof wave);
+        const auto url = Foundation::makeFileURL(cx, mediaPath);
+        auto item = [&] { return uint32_t(r.send(cpu, r.getClass("AVPlayerItem"), "playerItemWithURL:", {url})); };
+        auto player = [&](uint32_t i) { return uint32_t(r.send(cpu, r.getClass("AVPlayer"), "playerWithPlayerItem:", {i})); };
+        state.primary = item();
+        r.send(cpu, state.primary, "addObserver:forKeyPath:options:context:", {observer,key,5,0x1234});
+        check(uint32_t(r.send(cpu,state.primary,"status")) == 0 && state.states == std::vector<int64_t>{0},
+              "AVPlayerItem Initial KVO reports Unknown before a player exists");
+        state.player = player(state.primary);
+        Foundation::mainRunLoop(proc).runOnce(cpu, 0);
+        check(state.states == std::vector<int64_t>({0,1}) && state.playerAssigned &&
+              uint32_t(r.send(cpu,state.player,"rate")) == 0x3f800000u,
+              "AVPlayerItem readiness KVO arrives after player construction and can start playback");
+        r.send(cpu,state.primary,"removeObserver:forKeyPath:context:",{observer,key,0x1234});
+        const auto removed = item();
+        r.send(cpu,removed,"addObserver:forKeyPath:options:context:",{observer,key,5,0x5678});
+        const size_t before = state.states.size();
+        player(removed);
+        r.send(cpu,removed,"removeObserver:forKeyPath:context:",{observer,key,0x5678});
+        Foundation::mainRunLoop(proc).runOnce(cpu, 0);
+        check(state.states.size() == before && uint32_t(r.send(cpu,removed,"status")) == 1,
+              "AVPlayerItem removing a status observer cancels pending readiness delivery");
+        r.release(cpu, observer);
+        std::filesystem::remove(mediaPath);
+    }
+
     {
         const auto backing = Foundation::makeDict(cx, {}, true, true);
         int reads = 0, writes = 0, removes = 0;
@@ -2115,6 +2180,13 @@ int runFullSubsystemTests() {
         check(int32_t(call("_syscall", {286})) == -1 && getErrno() == 3, "_syscall(286) returns -1 and ESRCH (3)");
         check(call("_syscall", {372}) == proc.currentThread().id, "_syscall(372) returns thread_selfid");
         check(int32_t(call("_syscall", {999})) == -1 && getErrno() == 78, "_syscall(unhandled) returns -1 and ENOSYS (78)");
+
+        // POSIX named semaphores are unimplemented, so no handle is a valid open semaphore.
+        for (uint32_t handle : {0u, 0xFFFFFFFFu, 0x1234u}) {
+            proc.mem().write<uint32_t>(errAddr, 0);
+            check(int32_t(call("_sem_close", {handle})) == -1 && getErrno() == 22,
+                  "sem_close of an unopened handle returns -1 and EINVAL (22)");
+        }
         check(call("_mach_port_mod_refs", {42, 0x103, 0, 1}) == 16 &&
               call("_mach_port_mod_refs", {0x103, 42, 0, 1}) == 15 &&
               call("_mach_port_mod_refs", {0x103, 0x103, 1, 1}) == 17 &&
@@ -2228,6 +2300,46 @@ int runFullSubsystemTests() {
         proc.heap().free(testGlyphsMem);
 
         call("_CGDataProviderRelease", {provider}); call("_CFRelease", {data}); call("_CGFontRelease", {cg});
+        {
+            // CTFontDescriptor attribute dictionaries: kCTFontNameAttribute reaches the descriptor, its copy and the font.
+            const uint32_t mockName = Foundation::makeString(cx, "Arial", true);
+            // Unresolved _k* imports are materialised by the loader as CFStrings holding the symbol name without the
+            // underscore (the convention text_font() already relies on for kCTFontAttributeName); use that value.
+            const uint32_t fontNameKey = Foundation::makeString(cx, "kCTFontNameAttribute", true);
+            const uint32_t fontAttrs = Foundation::makeDict(cx, {{fontNameKey, mockName}}, true);
+            const uint32_t descWithAttrs = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {fontAttrs}));
+            const uint32_t createdFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {descWithAttrs, 0, 0}));
+            const auto familyAttrs = uint32_t(call("_CTFontCopyFamilyName", {createdFont}));
+            const uint32_t otherName = Foundation::makeString(cx, "Courier", true);
+            const uint32_t otherAttrs = Foundation::makeDict(cx, {{fontNameKey, otherName}}, true);
+            const uint32_t renamed = uint32_t(call("_CTFontDescriptorCreateCopyWithAttributes", {descWithAttrs, otherAttrs}));
+            const uint32_t renamedFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {renamed, 0, 0}));
+            const auto renamedFamily = uint32_t(call("_CTFontCopyFamilyName", {renamedFont}));
+            const uint32_t againFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {descWithAttrs, 0, 0}));
+            const auto againFamily = uint32_t(call("_CTFontCopyFamilyName", {againFont}));
+            // Renaming a copy of the existing ct fixture's descriptor changes the copy only.
+            const uint32_t fixtureDesc = uint32_t(call("_CTFontCopyFontDescriptor", {ct}));
+            const uint32_t fixtureRenamed = uint32_t(call("_CTFontDescriptorCreateCopyWithAttributes", {fixtureDesc, otherAttrs}));
+            const uint32_t fixtureFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {fixtureRenamed, 0, 0}));
+            const auto fixtureFamily = uint32_t(call("_CTFontCopyFamilyName", {fixtureFont}));
+            const auto ctFamily = uint32_t(call("_CTFontCopyFamilyName", {ct}));
+            const uint32_t emptyDesc = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {0}));
+            const uint32_t emptyFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {emptyDesc, 0, 0}));
+            const auto emptyFamily = uint32_t(call("_CTFontCopyFamilyName", {emptyFont}));
+            // An attribute key other than kCTFontNameAttribute is not modelled: it must be reported, not silently dropped.
+            const size_t missingBefore = proc.missingCount();
+            const uint32_t sizeKey = Foundation::makeString(cx, "kCTFontSizeAttribute", true);
+            const uint32_t sizeVal = Foundation::makeString(cx, "12", true);
+            const uint32_t unsupportedAttrs = Foundation::makeDict(cx, {{sizeKey, sizeVal}}, true);
+            const uint32_t unsupportedDesc = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {unsupportedAttrs}));
+            const bool reportedUnsupported = unsupportedDesc && proc.missingCount() == missingBefore + 1;
+            check(reportedUnsupported, "CTFontDescriptor attribute APIs report unsupported attribute keys instead of ignoring them");
+            check(descWithAttrs && renamed && createdFont && Foundation::utf8(cx, familyAttrs) == "Arial" &&
+                  Foundation::utf8(cx, renamedFamily) == "Courier" && Foundation::utf8(cx, againFamily) == "Arial" &&
+                  Foundation::utf8(cx, emptyFamily) == "Helvetica" &&
+                  Foundation::utf8(cx, fixtureFamily) == "Courier" && Foundation::utf8(cx, ctFamily) == "HVM Test",
+                  "CTFontDescriptor attribute APIs apply kCTFontNameAttribute, leave the source descriptor alone, and default an unnamed descriptor to Helvetica");
+        }
         const uint32_t desc = uint32_t(call("_CTFontCopyFontDescriptor", {ct}));
         const uint32_t copy = uint32_t(call("_CTFontCreateWithFontDescriptor", {desc, 0, 0}));
         const auto family = uint32_t(call("_CTFontCopyFamilyName", {copy}));
@@ -2270,6 +2382,18 @@ int runFullSubsystemTests() {
               call("_CFGetRetainCount", {line}) == 1 && call("_CTRunGetGlyphCount", {items[0]}) == 3 &&
               proc.mem().read<uint16_t>(copies) == 2 && std::bit_cast<double>(metrics) == 36,
               "CoreText line breaking and owned glyph runs preserve custom metrics after source release");
+        {
+            // CTLineGetOffsetForStringIndex returns a CGFloat (32-bit float in r0) and also stores it through
+            // secondaryOffset; the canary after the four bytes must stay untouched.
+            const uint32_t sec = proc.heap().allocZeroed(8);
+            proc.mem().write<uint32_t>(sec, 0xDEADBEEF);
+            proc.mem().write<uint32_t>(sec + 4, 0xCAFEF00D);
+            const uint32_t ret = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_CTLineGetOffsetForStringIndex"), {line, 2, sec}));
+            check(std::bit_cast<float>(ret) == 24.0f && proc.mem().read<float>(sec) == 24.0f &&
+                  proc.mem().read<uint32_t>(sec + 4) == 0xCAFEF00D,
+                  "CTLineGetOffsetForStringIndex returns the summed advance as a float and writes secondaryOffset");
+            proc.heap().free(sec);
+        }
         call("_CFRelease", {line});
         call("_CGContextRelease", {bitmap}); call("_CFRelease", {family}); call("_CFRelease", {copy});
         call("_CFRelease", {desc}); call("_CFRelease", {ct});
@@ -2429,6 +2553,194 @@ int runFullSubsystemTests() {
               "UIViewController setView replaces the installed root view in its window");
     }
 
+    // CTLineGetOffsetForStringIndex writes through the guest's secondaryOffset pointer; a pointer into a
+    // read-only page must be left alone (GuestArena::write does not check permissions itself).
+    {
+        auto& mem = proc.mem();
+        const uint32_t page = mem.findFree(4096);
+        mem.map(page, 4096, Memory::kProtRW);
+        for (uint32_t i = 0; i < 4; ++i) mem.write<uint8_t>(page + i, 0xAA);
+        mem.protect(page, 4096, Memory::kProtRead);
+        bool called = false;
+        if (const auto sym = proc.lookupSymbol("_CTLineGetOffsetForStringIndex")) {
+            try { cx.proc.callGuest(cpu, *sym, {0, 0, page}); called = true; } catch (const std::exception&) {}
+        }
+        bool intact = true;
+        for (uint32_t i = 0; i < 4; ++i) intact &= mem.read<uint8_t>(page + i) == 0xAA;
+        mem.unmap(page, 4096);
+        check(called && intact, "CTLineGetOffsetForStringIndex leaves a read-only secondaryOffset page untouched");
+    }
+
+    // NIB loading: ~iphone before the base name, and a real exception when the
+    // file is missing or cannot be decoded. Landscape/Portrait are not modifiers.
+    {
+        // The standalone fulltest runner has no on-disk app bundle by default.
+        // NSBundle needs the directory to exist before mainBundle is queried.
+        std::error_code bundleEc;
+        const bool madeTestBundle = std::filesystem::create_directories(cx.proc.bundlePath(), bundleEc);
+        const ObjC::Class bundleCls = r.getClass("NSBundle");
+        const ObjC::id bundle = ObjC::id(r.send(cpu, bundleCls, "mainBundle"));
+
+        // No guest @catch is installed here, so the raised NSException terminates
+        // the host→guest call. The text is the uncaught-exception message.
+        const auto nibFailure = [&](const char* name) -> std::string {
+            try {
+                r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, name), 0, 0});
+                return {};
+            } catch (const CPU::GuestFault& e) {
+                return e.what();
+            } catch (const ObjC::ObjCError& e) {
+                return e.what();
+            } catch (const std::exception& e) {
+                return e.what();
+            }
+        };
+        const auto isNibException = [](const std::string& msg, const char* name) {
+            return msg.find("NSInternalInconsistencyException") != std::string::npos &&
+                   msg.find("Could not load NIB in bundle") != std::string::npos &&
+                   msg.find(name) != std::string::npos;
+        };
+        const std::string missing = nibFailure("DefinitelyMissingNibThatDoesntExist");
+        if (!isNibException(missing, "DefinitelyMissingNibThatDoesntExist"))
+            std::printf("missing NIB raised: %s\n", missing.empty() ? "(returned nil)" : missing.c_str());
+        check(isNibException(missing, "DefinitelyMissingNibThatDoesntExist"),
+              "loadNibNamed:owner:options: missing NIB raises NSInternalInconsistencyException");
+
+        // A real, minimal NIBArchive: root -> NSArray -> NSString. This must
+        // decode a known object. A missing or malformed name raises instead.
+        auto nibBytes = [](const std::string& marker) {
+            std::vector<uint8_t> b(50, 0);
+            const char magic[] = "NIBArchive";
+            std::copy(magic, magic + 10, b.begin());
+            auto u32 = [&](uint32_t n) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(n >> (i * 8))); };
+            auto var = [&](uint32_t n) { b.push_back(uint8_t(n | 0x80)); };
+            auto set32 = [&](size_t off, uint32_t n) {
+                for (int i = 0; i < 4; ++i) b[off + i] = uint8_t(n >> (i * 8));
+            };
+            // The varint writer is enough for this three-object fixture; all
+            // indices and string lengths fit in seven bits.
+            const uint32_t objOff = uint32_t(b.size());
+            for (const auto& obj : {std::array<uint32_t, 3>{0, 0, 1}, {1, 1, 1}, {2, 2, 1}})
+                for (uint32_t n : obj) var(n);
+            const uint32_t keyOff = uint32_t(b.size());
+            for (const std::string key : {"UINibTopLevelObjectsKey", "NS.objects", "NS.string"}) {
+                var(uint32_t(key.size())); b.insert(b.end(), key.begin(), key.end());
+            }
+            const uint32_t valOff = uint32_t(b.size());
+            var(0); b.push_back(10); u32(1);  // root -> NSArray
+            var(1); b.push_back(10); u32(2);  // NSArray -> NSString
+            var(2); b.push_back(8); var(uint32_t(marker.size()));
+            b.insert(b.end(), marker.begin(), marker.end());
+            const uint32_t clsOff = uint32_t(b.size());
+            for (const std::string cls : {"NSObject", "NSArray", "NSString"}) {
+                var(uint32_t(cls.size())); var(0);
+                b.insert(b.end(), cls.begin(), cls.end());
+            }
+            set32(18, 3); set32(22, objOff); set32(26, 3); set32(30, keyOff);
+            set32(34, 3); set32(38, valOff); set32(42, 3); set32(46, clsOff);
+            return b;
+        };
+        auto writeNib = [](const std::string& path, const std::vector<uint8_t>& bytes) {
+            FILE* f = std::fopen(path.c_str(), "wb");
+            if (!f) return false;
+            const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+            return std::fclose(f) == 0 && ok;
+        };
+        const std::string base = cx.proc.bundlePath() + "/HVMNibFixture189";
+        const std::string exact = base + ".nib", idiom = base + "~iphone.nib";
+        const std::string malformed = cx.proc.bundlePath() + "/HVMMalformedNib189.nib";
+        // Previous interrupted test runs may have left these exact fixtures.
+        std::remove(exact.c_str()); std::remove(idiom.c_str()); std::remove(malformed.c_str());
+        const auto loadMarker = [&](const char* name) -> std::string {
+            const ObjC::id loaded = ObjC::id(r.send(cpu, bundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, name), 0, 0}));
+            if (!loaded || uint32_t(r.send(cpu, loaded, "count")) != 1) return {};
+            const ObjC::id value = ObjC::id(r.send(cpu, loaded, "objectAtIndex:", {0}));
+            return Foundation::utf8(cx, value);
+        };
+        const bool wroteExact = writeNib(exact, nibBytes("exact-object"));
+        bool decodedExact = false, decodedIdiom = false, preferredIdiom = false;
+        bool orientationRejected = false, malformedRejected = false;
+        if (wroteExact) {
+            decodedExact = loadMarker("HVMNibFixture189") == "exact-object";
+            const bool wroteIdiom = writeNib(idiom, nibBytes("idiom-object"));
+            if (wroteIdiom) {
+                preferredIdiom = loadMarker("HVMNibFixture189") == "idiom-object";
+                std::remove(exact.c_str());
+                decodedIdiom = loadMarker("HVMNibFixture189") == "idiom-object";
+                // "Landscape" and "Portrait" are not resource modifiers. With the
+                // idiom file present, those names must still fail to load.
+                const std::string landscape = nibFailure("HVMNibFixture189Landscape");
+                const std::string portrait = nibFailure("HVMNibFixture189Portrait");
+                orientationRejected = isNibException(landscape, "HVMNibFixture189Landscape") &&
+                                      isNibException(portrait, "HVMNibFixture189Portrait");
+                if (!orientationRejected) {
+                    std::printf("landscape NIB raised: %s\nportrait NIB raised: %s\n",
+                                landscape.empty() ? "(returned nil)" : landscape.c_str(),
+                                portrait.empty() ? "(returned nil)" : portrait.c_str());
+                }
+            }
+            if (writeNib(malformed, std::vector<uint8_t>{'b', 'a', 'd'})) {
+                const std::string bad = nibFailure("HVMMalformedNib189");
+                malformedRejected = isNibException(bad, "HVMMalformedNib189");
+                if (!malformedRejected) std::printf("malformed NIB raised: %s\n", bad.empty() ? "(returned nil)" : bad.c_str());
+            }
+        }
+        std::remove(exact.c_str()); std::remove(idiom.c_str()); std::remove(malformed.c_str());
+        if (madeTestBundle) std::filesystem::remove(cx.proc.bundlePath(), bundleEc);
+        check(decodedExact && decodedIdiom && preferredIdiom,
+              "NSBundle decodes valid exact/~iphone NIBs and prefers idiom-specific resource");
+        check(orientationRejected,
+              "loadNibNamed: does not strip Landscape or Portrait from the nib name");
+        check(malformedRejected,
+              "loadNibNamed: malformed NIB raises NSInternalInconsistencyException");
+    }
+
+    // UIButton shadow offset getter/setter
+    {
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id btn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 100.0f, 100.0f});
+
+        CG::CGSize s{2.0f, 3.0f};
+        const ObjC::SEL sSel = r.sel("setTitleShadowOffset:");
+
+        // setTitleShadowOffset: takes CGSize which is passed in registers on ARMv7
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), sSel), {btn, sSel, std::bit_cast<uint32_t>(s.width), std::bit_cast<uint32_t>(s.height)});
+
+        uint32_t tmp = cx.proc.heap().allocZeroed(16);
+        const ObjC::SEL gSel = r.sel("titleShadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), gSel), {tmp, btn, gSel});
+        CG::CGSize sOut = CG::readStruct<CG::CGSize>(cx, tmp);
+        cx.proc.heap().free(tmp);
+
+        check(sOut.width == 2.0f && sOut.height == 3.0f, "UIButton setTitleShadowOffset:/titleShadowOffset preserves custom shadow offset");
+        const ObjC::id titleLabel = ObjC::id(r.send(cpu, btn, "titleLabel"));
+        const uint32_t labelResult = cx.proc.heap().allocZeroed(12);
+        const ObjC::SEL labelSel = r.sel("shadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(titleLabel), labelSel), {labelResult, titleLabel, labelSel});
+        const CG::CGSize labelOffset = CG::readStruct<CG::CGSize>(cx, labelResult);
+        cx.proc.heap().free(labelResult);
+        check(labelOffset.width == 2.0f && labelOffset.height == 3.0f,
+              "UIButton shadow-offset setter propagates ARMv7 CGSize to its UILabel");
+    }
+
+    // A new UIButton reports a zero title shadow offset (UIKit's default), so its title label must start there
+    // too; the UILabel default {0,-1} would draw a displaced shadow for a button that reports no offset.
+    {
+        const ObjC::Class btnCls = r.getClass("UIButton");
+        const ObjC::id btn = UIKit::sendRect(cx, ObjC::id(r.send(cpu, btnCls, r.selAlloc)), r.sel("initWithFrame:"), {0.0f, 0.0f, 100.0f, 100.0f});
+        const ObjC::SEL gSel = r.sel("titleShadowOffset");
+        const uint32_t tmp = cx.proc.heap().allocZeroed(16);
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(btn), gSel), {tmp, btn, gSel});
+        const CG::CGSize reported = CG::readStruct<CG::CGSize>(cx, tmp);
+        const ObjC::id titleLabel = ObjC::id(r.send(cpu, btn, "titleLabel"));
+        const ObjC::SEL labelSel = r.sel("shadowOffset");
+        cx.proc.callGuest(cpu, r.lookupForSend(r.classOf(titleLabel), labelSel), {tmp, titleLabel, labelSel});
+        const CG::CGSize labelOffset = CG::readStruct<CG::CGSize>(cx, tmp);
+        cx.proc.heap().free(tmp);
+        check(reported.width == 0.0f && reported.height == 0.0f && labelOffset.width == 0.0f && labelOffset.height == 0.0f,
+              "a new UIButton's title label starts with the button's zero shadow offset, not the UILabel default");
+    }
+
     // 2d. UITabBarController, UITabBar, UITabBarItem
     {
         const ObjC::Class vcCls = r.getClass("UIViewController");
@@ -2467,6 +2779,44 @@ int runFullSubsystemTests() {
         r.send(cpu, seg, "setSelectedSegmentIndex:", {1});
         check((r.send(cpu, sw, "isOn") & 0xFF) != 0 && std::abs(slVal - 42.5f) < 0.01f && int32_t(r.send(cpu, seg, "selectedSegmentIndex")) == 1,
               "UISwitch, UISlider, and UISegmentedControl");
+    }
+
+    // NSUserDefaults rejects non-property-list values with a guest-visible exception.
+    {
+        const ObjC::Class nsoCls = r.getClass("NSObject");
+        const ObjC::id nso = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, nsoCls, r.selAlloc)), r.selInit));
+        const ObjC::Class udCls = r.getClass("NSUserDefaults");
+        const ObjC::id ud = ObjC::id(r.send(cpu, udCls, r.sel("standardUserDefaults")));
+        const ObjC::id testKey = Runtime::Foundation::makeString(cx, "testKeyNonPlist");
+        // A previous value must survive the rejected write.
+        const ObjC::id initialValue = Runtime::Foundation::makeString(cx, "initialValue");
+        r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(initialValue), uint32_t(testKey)});
+        // No guest @catch is installed in this runner, so the raised NSException terminates the host->guest
+        // call as a GuestFault whose text carries the exception name and reason (as for the NIB tests).
+        bool guestException = false;
+        std::string faultText;
+        try { r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(nso), uint32_t(testKey)}); }
+        catch (const Hydrogen::CPU::GuestFault& e) { guestException = true; faultText = e.what(); }
+        catch (const ObjC::ObjCError&) { /* Pre-fix behavior: host exception, not a guest exception. */ }
+        check(guestException, "NSUserDefaults setObject:forKey: raises a guest exception for non-plist objects");
+        check(faultText.find("NSInvalidArgumentException") != std::string::npos &&
+              faultText.find("Attempt to insert non-property list object") != std::string::npos &&
+              faultText.find("testKeyNonPlist") != std::string::npos,
+              "NSUserDefaults rejection carries the exception name, reason and key");
+        const ObjC::id keptValue = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(testKey)}));
+        check(Runtime::Foundation::utf8(cx, keptValue) == "initialValue",
+              "NSUserDefaults keeps the previous value after a rejected write");
+        const ObjC::id validKey = Runtime::Foundation::makeString(cx, "testKeyPlist");
+        const ObjC::id validString = Runtime::Foundation::makeString(cx, "validStringValue");
+        const ObjC::id validArray = Runtime::Foundation::makeArray(cx, {validString});
+        const ObjC::id validDict = Runtime::Foundation::makeDict(cx, {{validString, validArray}});
+        r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(validDict), uint32_t(validKey)});
+        r.send(cpu, ud, r.sel("synchronize"));
+        const ObjC::id validVal = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(validKey)}));
+        const ObjC::id validArrBack = Runtime::Foundation::dictGet(cx, validVal, validString);
+        const auto validItems = Runtime::Foundation::arrayItems(cx, validArrBack);
+        const std::string validDesc = validItems.empty() ? std::string() : Runtime::Foundation::utf8(cx, validItems[0]);
+        check(!validItems.empty() && validDesc == "validStringValue", "NSUserDefaults preserves nested supported plist values across round-trip");
     }
 
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
@@ -3193,6 +3543,149 @@ int runFullSubsystemTests() {
                   "GLES2 clips a line whose screen delta exceeds INT_MAX to the framebuffer and still draws the visible pixels");
         }
 
+        // 2f11. OpenGL ES occlusion queries state machine
+        {
+            const uint32_t ids = proc.heap().allocZeroed(8);
+
+            // Gen queries
+            callGL("_glGenQueriesEXT", {2, ids});
+            const uint32_t q1 = proc.mem().read<uint32_t>(ids);
+            const uint32_t q2 = proc.mem().read<uint32_t>(ids + 4);
+
+            check(q1 > 0 && q2 > q1, "glGenQueriesEXT produces monotonic query ids");
+
+            // Check isQuery before begin
+            const bool isq1_pre = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool isq2_pre = callGL("_glIsQueryEXT", {q2}) != 0;
+            check(!isq1_pre && !isq2_pre, "glIsQueryEXT is false for reserved but unbegun query names");
+
+            // Invalid target begin checking
+            callGL("_glBeginQueryEXT", {0x8866, q1});
+            const uint32_t err1 = callGL("_glGetError", {});
+
+            // Begin query
+            callGL("_glBeginQueryEXT", {0x8C2F, q1});
+            const uint32_t err2 = callGL("_glGetError", {});
+
+            check(err1 == 0x0500 /* GL_INVALID_ENUM */ && err2 == 0, "glBeginQueryEXT only accepts occlusion query targets (GL_ANY_SAMPLES_PASSED_EXT)");
+
+            // Check isQuery after begin
+            const bool isq1_post = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool isq2_post = callGL("_glIsQueryEXT", {q2}) != 0;
+            const bool isq3 = callGL("_glIsQueryEXT", {q2 + 1}) != 0;
+            check(isq1_post && !isq2_post && !isq3, "glIsQueryEXT is true only after glBeginQueryEXT");
+
+            // Get query object params on active query (should fail/ignore)
+            const uint32_t params = proc.heap().allocZeroed(4);
+            proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8866, params}); // GL_QUERY_RESULT
+            const uint32_t res_active = proc.mem().read<uint32_t>(params);
+
+            // End query
+            callGL("_glEndQueryEXT", {0x8C2F});
+
+            // Get query object params after end
+            proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8867, params}); // GL_QUERY_RESULT_AVAILABLE
+            const uint32_t avail = proc.mem().read<uint32_t>(params);
+            proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {q1, 0x8866, params}); // GL_QUERY_RESULT
+            const uint32_t res = proc.mem().read<uint32_t>(params);
+
+            proc.mem().write<uint32_t>(params, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {q2, 0x8866, params}); // Should not modify params (unbegun)
+            const uint32_t res_unbegun = proc.mem().read<uint32_t>(params);
+
+            check(res_active == 0xFFFFFFFF && avail == 1 && res == 1 && res_unbegun == 0xFFFFFFFF, "glGetQueryObjectuivEXT ignores active and unbegun queries, writes 1 for completed");
+
+            // Duplicate/invalid begin checking
+            callGL("_glBeginQueryEXT", {0x8C2F, q2}); // valid begin
+            // call begin again on same target with another ID (should fail)
+            callGL("_glBeginQueryEXT", {0x8C2F, q1});
+
+            // Cross-context check
+            const ObjC::id ctx2 = ObjC::id(r.send(cpu, r.getClass("EAGLContext"), r.selAlloc));
+            r.send(cpu, ctx2, "initWithAPI:sharegroup:", {2, uint32_t(r.send(cpu, glCtx, "sharegroup"))});
+            r.send(cpu, r.getClass("EAGLContext"), "setCurrentContext:", {ctx2});
+
+            const bool cross_ctx_q1 = callGL("_glIsQueryEXT", {q1}) != 0;
+            const bool cross_ctx_q2 = callGL("_glIsQueryEXT", {q2}) != 0;
+            check(!cross_ctx_q1 && !cross_ctx_q2, "glIsQueryEXT proves query objects are NOT shared between contexts");
+
+            r.send(cpu, r.getClass("EAGLContext"), "setCurrentContext:", {glCtx});
+
+            // Delete queries (while q2 is active)
+            callGL("_glDeleteQueriesEXT", {2, ids});
+
+            const bool disq1 = callGL("_glIsQueryEXT", {q1}) != 0;
+            check(!disq1, "glDeleteQueriesEXT removes ids from state");
+
+            // Deleting an active query keeps it bound until glEndQueryEXT, which then releases it.
+            callGL("_glGetError", {});
+            const uint32_t qp = proc.heap().allocZeroed(4);
+            proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
+            callGL("_glGetQueryivEXT", {0x8C2F, 0x8865, qp});   // GL_CURRENT_QUERY_EXT
+            const uint32_t cur_before = proc.mem().read<uint32_t>(qp);
+            const bool still_q2 = callGL("_glIsQueryEXT", {q2}) != 0;
+            check(cur_before == q2 && !still_q2, "glDeleteQueriesEXT frees the name at once but leaves an active query bound (GL_CURRENT_QUERY_EXT reports it) until glEndQueryEXT");
+            callGL("_glEndQueryEXT", {0x8C2F});
+            const uint32_t endErr = callGL("_glGetError", {});
+            proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
+            callGL("_glGetQueryivEXT", {0x8C2F, 0x8865, qp});
+            check(endErr == 0 && proc.mem().read<uint32_t>(qp) == 0 && callGL("_glIsQueryEXT", {q2}) == 0,
+                  "glEndQueryEXT releases a query deleted while active");
+
+            // Negative counts are GL_INVALID_VALUE and touch no guest memory.
+            const uint32_t nid = proc.heap().allocZeroed(4);
+            proc.mem().write<uint32_t>(nid, 0xAAAAAAAA);
+            callGL("_glGenQueriesEXT", {uint32_t(-1), nid});
+            const uint32_t negGen = callGL("_glGetError", {});
+            callGL("_glDeleteQueriesEXT", {uint32_t(-1), nid});
+            const uint32_t negDel = callGL("_glGetError", {});
+            check(negGen == 0x0501 && negDel == 0x0501 && proc.mem().read<uint32_t>(nid) == 0xAAAAAAAA,
+                  "glGenQueriesEXT/glDeleteQueriesEXT reject negative counts with GL_INVALID_VALUE");
+
+            // One occlusion query at a time across both targets; an object keeps its first target.
+            callGL("_glGenQueriesEXT", {2, ids});
+            const uint32_t a1 = proc.mem().read<uint32_t>(ids), a2 = proc.mem().read<uint32_t>(ids + 4);
+            callGL("_glBeginQueryEXT", {0x8C2F, a1});
+            const uint32_t okBegin = callGL("_glGetError", {});
+            callGL("_glBeginQueryEXT", {0x8D6A, a2});   // conservative target while any-samples is active
+            const uint32_t crossErr = callGL("_glGetError", {});
+            callGL("_glEndQueryEXT", {0x8C2F});
+            callGL("_glGetError", {});
+            callGL("_glBeginQueryEXT", {0x8D6A, a1});   // a1 was first begun on 0x8C2F
+            const uint32_t retargetErr = callGL("_glGetError", {});
+            callGL("_glBeginQueryEXT", {0x8D6A, a2});
+            const uint32_t okCons = callGL("_glGetError", {});
+            proc.mem().write<uint32_t>(qp, 0);
+            callGL("_glGetQueryivEXT", {0x8D6A, 0x8865, qp});
+            const uint32_t consCur = proc.mem().read<uint32_t>(qp);
+            callGL("_glEndQueryEXT", {0x8D6A});
+            check(okBegin == 0 && crossErr == 0x0502 && retargetErr == 0x0502 && okCons == 0 && consCur == a2,
+                  "glBeginQueryEXT allows one active occlusion query across both targets and rejects re-targeting an existing object");
+
+            // Enum validation in glGetQueryivEXT / glGetQueryObjectuivEXT.
+            callGL("_glGetError", {});
+            callGL("_glGetQueryivEXT", {0x8C2F, 0x1234, qp});
+            const uint32_t badPname = callGL("_glGetError", {});
+            callGL("_glGetQueryivEXT", {0x1234, 0x8865, qp});
+            const uint32_t badTarget = callGL("_glGetError", {});
+            proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
+            callGL("_glGetQueryObjectuivEXT", {a1, 0x1234, qp});
+            const uint32_t badObjPname = callGL("_glGetError", {});
+            check(badPname == 0x0500 && badTarget == 0x0500 && badObjPname == 0x0500 && proc.mem().read<uint32_t>(qp) == 0xFFFFFFFF,
+                  "glGetQueryivEXT/glGetQueryObjectuivEXT reject unsupported targets and pnames with GL_INVALID_ENUM");
+
+            // Query name 0 is never valid.
+            callGL("_glGetError", {});
+            callGL("_glBeginQueryEXT", {0x8C2F, 0});
+            const uint32_t zeroErr = callGL("_glGetError", {});
+            proc.mem().write<uint32_t>(qp, 0xFFFFFFFF);
+            callGL("_glGetQueryivEXT", {0x8C2F, 0x8865, qp});
+            check(zeroErr == 0x0502 && proc.mem().read<uint32_t>(qp) == 0, "glBeginQueryEXT with query name 0 is GL_INVALID_OPERATION and starts nothing");
+        }
+
         const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
         UIKit::compositeFrame(cx);
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
@@ -3205,6 +3698,36 @@ int runFullSubsystemTests() {
             return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
         };
         auto& m = proc.mem();
+        // __gnu_cxx::__exchange_and_add (both GCC 4.2 symbols): returns the previous value, wraps at 32 bits,
+        // and concurrent adds from several guest threads are not lost.
+        {
+            const uint32_t word = proc.heap().allocZeroed(4);
+            for (const char* sym : {"__ZN9__gnu_cxx18__exchange_and_addEPVii", "__ZN9__gnu_cxx27__exchange_and_add_dispatchEPii"}) {
+                m.write<uint32_t>(word, 5);
+                const uint32_t prev = call(sym, {word, 3});
+                const uint32_t afterAdd = m.read<uint32_t>(word);
+                m.write<uint32_t>(word, 0x7FFFFFFFu);
+                const uint32_t prevWrap = call(sym, {word, 1});
+                const uint32_t wrapped = m.read<uint32_t>(word);
+                m.write<uint32_t>(word, 2);
+                const uint32_t prevNeg = call(sym, {word, uint32_t(-5)});
+                const std::string what = std::string(sym) + " returns the previous value and wraps at 32 bits";
+                check(prev == 5 && afterAdd == 8 && prevWrap == 0x7FFFFFFFu && wrapped == 0x80000000u &&
+                      prevNeg == 2 && m.read<uint32_t>(word) == uint32_t(-3),
+                      what.c_str());
+            }
+            m.write<uint32_t>(word, 0);
+            const uint32_t addAddr = *proc.lookupSymbol("__ZN9__gnu_cxx18__exchange_and_addEPVii");
+            const uint32_t worker = proc.defineFunction("test_exchange_and_add_worker", [word, addAddr](Ctx& x) {
+                for (int i = 0; i < 2000; ++i) x.proc.callGuest(x.cpu, addAddr, {word, 1});
+                x.cpu.r[0] = 0;
+            });
+            uint32_t threads[4];
+            for (uint32_t& t : threads) t = proc.startThread(worker, 0, 64u << 10, false);
+            bool joined = true;
+            for (uint32_t t : threads) { uint32_t rv = 0; joined = proc.joinThread(t, &rv) && joined; }
+            check(joined && m.read<uint32_t>(word) == 8000, "__exchange_and_add loses no update across four concurrent guest threads");
+        }
         // Tree: header + nodes {color, parent, left, right, key}.
         const uint32_t header = proc.heap().allocZeroed(16);
         m.write<uint32_t>(header + 8, header);   // leftmost
@@ -3994,6 +4517,150 @@ int runFullSubsystemTests() {
                   "Missing vtables and VTTs report the class and slot of a virtual call instead of jumping to 0");
         }
 
+        // T2a (#257): every call to a missing or approximated API is recorded with its count, caller,
+        // backtrace and time since launch, and the run is tainted from the first hit on.
+        {
+            ProcessConfig mcfg;
+            const std::string mhome = "/tmp/hvm_test_missing_" + std::to_string(getpid());
+            std::error_code mec;
+            std::filesystem::create_directories(mhome + "/Test.app", mec);
+            mcfg.homePath = mhome;
+            mcfg.bundlePath = mhome + "/Test.app";
+            mcfg.stopOnMissingFunction = false;   // keep going: the stub returns 0 instead of throwing
+            Process mp(mcfg);
+            auto& mcpu = mp.mainThread().cpu;
+            check(!mp.tainted() && mp.missingApis().totalHits() == 0 && mp.missingApis().records().empty(),
+                  "a fresh process is not tainted and has no missing-API records");
+
+            // A guest frame-pointer chain: fp0 -> {fp1, lr1}, fp1 -> {0, lr2}.
+            constexpr uint32_t kBase = 0xbee00000, kLr0 = 0x00008123, kLr1 = 0x00009001, kLr2 = 0x0000a001;
+            mp.mem().map(kBase, 1u << 16, Memory::kProtRW);
+            const uint32_t fp0 = kBase + 0x100, fp1 = kBase + 0x200;
+            mp.mem().write<uint32_t>(fp0, fp1);  mp.mem().write<uint32_t>(fp0 + 4, kLr1);
+            mp.mem().write<uint32_t>(fp1, 0);    mp.mem().write<uint32_t>(fp1 + 4, kLr2);
+
+            // The real stub for a function nobody implements, called as a guest bl would: LR = caller.
+            mp.makeMissingStub("_hvm_t2a_no_such_function");
+            auto stub = mp.hostFunctionFor("_hvm_t2a_no_such_function");
+            check(bool(stub), "a missing function resolves to a host stub that can be called");
+            mcpu.r[7] = fp0;
+            mcpu.r[CPU::kLR] = kLr0;
+            if (stub) stub(mcpu);
+            const double sinceLaunch = std::chrono::duration<double>(std::chrono::steady_clock::now() - mp.perf().origin).count();
+            auto recs = mp.missingApis().records();
+            const bool one = recs.size() == 1 && recs[0].count == 1 &&
+                             recs[0].name.find("hvm_t2a_no_such_function") != std::string::npos;
+            check(one && recs[0].callerPc == kLr0 && recs[0].caller.find("00008123") != std::string::npos,
+                  "a missing function's record has its count and the guest address it was called from");
+            check(one && recs[0].backtrace.size() == 4 && recs[0].backtrace[1].find("00008123") != std::string::npos &&
+                      recs[0].backtrace[2].find("00009001") != std::string::npos && recs[0].backtrace[3].find("0000a001") != std::string::npos,
+                  "a missing function's record has the guest backtrace of its first call, innermost first");
+            check(one && recs[0].firstSeconds >= 0 && recs[0].firstSeconds <= sinceLaunch && recs[0].lastSeconds == recs[0].firstSeconds,
+                  "a missing function's record has the time since launch of its first call");
+            check(mp.tainted() && mp.missingApis().totalHits() == 1, "the first missing-API hit taints the run");
+
+            // More calls from elsewhere: the count and last time move, the first caller and backtrace stay.
+            const std::vector<std::string> firstBacktrace = one ? recs[0].backtrace : std::vector<std::string>{};
+            mcpu.r[7] = 0;
+            mcpu.r[CPU::kLR] = kLr2;
+            if (stub) { stub(mcpu); stub(mcpu); }
+            recs = mp.missingApis().records();
+            check(recs.size() == 1 && recs[0].count == 3 && recs[0].callerPc == kLr0 && recs[0].backtrace == firstBacktrace &&
+                      recs[0].lastSeconds >= recs[0].firstSeconds && mp.missingApis().totalHits() == 3,
+                  "repeat calls raise the count and keep the first caller and backtrace");
+            check(mp.missingCount() == 1 && mp.missingSymbols().size() == 1,
+                  "the once-per-name missing list and count are unchanged by repeat calls");
+
+            // Any reportMissing caller (ObjC selectors, framework stubs) is counted, not only function stubs.
+            mp.reportMissing("-[HvmNoSuchClass noSuchSelector] (returned nil)");
+            check(mp.missingApis().distinct() == 2 && mp.missingApis().totalHits() == 4 && mp.missingCount() == 2,
+                  "reportMissing from any call site adds a record");
+
+            // The report JSON carries the flag, the hit count and the records.
+            const std::string fields = mp.missingApis().reportFields("  ");
+            check(fields.find("\"tainted\": true") != std::string::npos && fields.find("\"stubHits\": 4") != std::string::npos &&
+                      fields.find("\"missingApis\": [") != std::string::npos &&
+                      fields.find("hvm_t2a_no_such_function\", \"count\": 3") != std::string::npos &&
+                      fields.find("\"callerPc\": " + std::to_string(kLr0)) != std::string::npos,
+                  "the report fields expose tainted, stubHits and each API's count and caller");
+        }
+
+        // T2a (#257): the log on its own, with no Process.
+        {
+            MissingApiLog log;
+            int siteCalls = 0;
+            auto site = [&](MissingApiLog::Site& s) {
+                ++siteCalls;
+                s.callerPc = 7;
+                s.caller = "caller";
+                for (int i = 0; i < 40; ++i) s.backtrace.push_back("frame" + std::to_string(i));
+            };
+            log.hit("b", 2.0, site);
+            log.hit("a", 3.0, site);
+            log.hit("b", 4.0, site);
+            const auto recs = log.records();
+            bool orderOk = recs.size() == 2 && recs[0].name == "b" && recs[1].name == "a";
+            check(orderOk && recs[0].count == 2 && recs[0].firstSeconds == 2.0 && recs[0].lastSeconds == 4.0 && recs[1].count == 1,
+                  "records come back in first-hit order with their counts and first and last times");
+            check(siteCalls == 2 && orderOk && recs[0].callerPc == 7 && recs[0].backtrace.size() == MissingApiLog::kMaxFrames &&
+                      recs[0].backtrace.front() == "frame0" && recs[0].backtrace.back() == "frame" + std::to_string(MissingApiLog::kMaxFrames - 1),
+                  "the caller is captured once per name and a long backtrace keeps its innermost frames");
+
+            MissingApiLog full;
+            for (size_t i = 0; i < MissingApiLog::kMaxNames + 10; ++i) full.hit("n" + std::to_string(i), 1.0, site);
+            full.hit("n0", 2.0, site);
+            const auto fr = full.records();
+            check(full.distinct() == MissingApiLog::kMaxNames && full.totalHits() == MissingApiLog::kMaxNames + 11 &&
+                      full.overflowHits() == 10 && !fr.empty() && fr[0].name == "n0" && fr[0].count == 2,
+                  "the log stores at most kMaxNames APIs, still counts the rest, and keeps counting stored ones");
+
+            MissingApiLog shared;
+            int sharedSites = 0;
+            std::vector<std::thread> workers;
+            for (int t = 0; t < 4; ++t)
+                workers.emplace_back([&] { for (int i = 0; i < 1000; ++i) shared.hit("shared", 1.0, [&](MissingApiLog::Site&) { ++sharedSites; }); });
+            for (auto& w : workers) w.join();
+            check(shared.totalHits() == 4000 && shared.records().size() == 1 && shared.records()[0].count == 4000 && sharedSites == 1,
+                  "hits from several threads are all counted and the first-hit capture runs once");
+
+            // A hit that locks the log later can carry an earlier timestamp (the time is read before the lock).
+            MissingApiLog skew;
+            auto noSite = [](MissingApiLog::Site&) {};
+            skew.hit("_late", 5.0, noSite);
+            skew.hit("_late", 2.0, noSite);
+            skew.hit("_late", 9.0, noSite);
+            const auto skewRecs = skew.records();
+            check(skewRecs.size() == 1 && skewRecs[0].firstSeconds == 2.0 && skewRecs[0].lastSeconds == 9.0 && skewRecs[0].count == 3,
+                  "Missing-API log keeps first/last times as chronological bounds even when hits arrive out of order (T2a)");
+
+            // --launches N builds a new Process per launch but writes one report: absorb() carries the earlier launches over.
+            MissingApiLog launch1, launch2, combined;
+            launch1.hit("_only_first", 1.0, noSite);
+            launch1.hit("_both", 2.0, noSite);
+            launch2.hit("_both", 0.5, noSite);
+            launch2.hit("_both", 3.0, noSite);
+            MissingApiLog cleanLaunch;
+            combined.absorb(launch1);
+            combined.absorb(cleanLaunch);
+            const bool carriedTaint = combined.tainted() && combined.totalHits() == 2;
+            combined.absorb(launch2);
+            const auto crecs = combined.records();
+            check(carriedTaint && combined.tainted() && combined.totalHits() == 4 && combined.distinct() == 2 && crecs.size() == 2 &&
+                      crecs[0].name == "_only_first" && crecs[0].count == 1 && crecs[1].name == "_both" && crecs[1].count == 3 &&
+                      crecs[1].firstSeconds == 0.5 && crecs[1].lastSeconds == 3.0 &&
+                      combined.reportFields("").find("\"tainted\": true") != std::string::npos,
+                  "Missing-API log absorb() keeps a hit from an earlier launch tainted in the final report (T2a)");
+            check(!cleanLaunch.tainted() && MissingApiLog().reportFields("").find("\"tainted\": false") != std::string::npos,
+                  "A launch with no missing-API hits stays untainted (T2a)");
+
+            check(MissingApiLog::jsonEscape("a\"b\\c\nd\x01") == "a\\\"b\\\\c\\nd\\u0001" &&
+                      MissingApiLog::jsonEscape("\xff\xfe") == "??" && MissingApiLog::jsonEscape("h\xc3\xa9llo") == "h\xc3\xa9llo" &&
+                      MissingApiLog::jsonEscape("\xed\xa0\x80") == "???" && MissingApiLog::jsonEscape("\xc3") == "?",
+                  "JSON strings escape quotes and controls and replace bytes that are not valid UTF-8");
+            const auto lines = MissingApiLog::splitLines("    a b\n    c  \n\n  \n");
+            check(lines.size() == 2 && lines[0] == "a b" && lines[1] == "c", "backtrace text splits into one trimmed entry per frame");
+        }
+
         // iconv forwarded to the host, and the getpw*_r family.
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
@@ -4646,6 +5313,218 @@ int runFullSubsystemTests() {
             call("_regfree", {re}); call("_regfree", {re2}); call("_regfree", {re3});
             return empty && plus && blank;
         });
+
+        run("_FORTIFY_SOURCE test strcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___strcpy_chk", {dst, src, 100}) != dst) return false;
+            if (!check_fault("___strcpy_chk", {dst, src, 49})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE rejects unreadable source buffers and checks the overflow guard", [&] {
+            // callGuest reports every host-side fault as "guest call did not return", so the fault is only known
+            // to be caused by the missing read permission if the same call succeeds once the hole is mapped.
+            auto faults = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); }
+                catch (const CPU::GuestFault&) { return true; }
+                catch (...) { return false; }
+                return false;
+            };
+            // Guest pages cannot be made unreadable with protect() (no-permission becomes read-only), so the
+            // source spans a hole: page 0 mapped, page 1 unmapped, page 2 mapped; only 'A' bytes, NUL at the end.
+            // search above the heap range (0x10000000..0x80000000) so heap growth cannot commit the hole
+            const uint32_t src = proc.mem().findFree(12288, 0x80000000u);
+            proc.mem().map(src, 4096, Memory::kProtRW);
+            proc.mem().map(src + 8192, 4096, Memory::kProtRW);
+            for (uint32_t i = 0; i < 4096; ++i) { proc.mem().write<uint8_t>(src + i, 'A'); proc.mem().write<uint8_t>(src + 8192 + i, 'A'); }
+            proc.mem().write<uint8_t>(src + 8192 + 4095, 0);
+            const uint32_t dst = call("_malloc", {9000});
+            call("_memset", {dst, 'X', 9000});
+            auto dstUntouched = [&] { for (uint32_t i = 0; i < 9000; ++i) if (proc.mem().read<uint8_t>(dst + i) != 'X') return false; return true; };
+            bool ok = faults("___strcpy_chk", {dst, src, 9000}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src, 9000, 9000}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src + 4095, 2, 9000}) && dstUntouched();
+            // Same calls succeed once the hole is mapped, so the faults above came from the source permission check.
+            proc.mem().map(src + 4096, 4096, Memory::kProtRW);
+            for (uint32_t i = 0; i < 4096; ++i) proc.mem().write<uint8_t>(src + 4096 + i, 'A');
+            ok = ok && !faults("___memcpy_chk", {dst, src, 9000, 9000}) && proc.mem().read<uint8_t>(dst + 5000) == 'A';
+            proc.mem().write<uint8_t>(src + 4196, 0);         // strlen now 4196: fits dst
+            call("_memset", {dst, 'X', 9000});
+            ok = ok && !faults("___strcpy_chk", {dst, src, 9000}) && proc.mem().read<uint8_t>(dst + 4196) == 0;
+            // dst + n wraps past 2^32: the write-only memset_chk must stop before touching memory.
+            call("_memset", {dst, 'X', 9000});
+            const uint32_t wrapLen = 0xFFFFFFFFu - dst + 1;
+            ok = ok && faults("___memset_chk", {dst, 'Z', wrapLen, wrapLen}) && dstUntouched();
+            ok = ok && faults("___memcpy_chk", {dst, src, 150, 100}) && dstUntouched();
+            proc.mem().unmap(src, 12288);
+            call("_free", {dst});
+            return ok;
+        });
+        run("_FORTIFY_SOURCE strcat/strncat bound the destination scan by destlen", [&] {
+            // Unterminated destination right before an unmapped page: the bounded scan reports the
+            // __chk_fail (info 0); the old unbounded scan walked into the hole and faulted at its address.
+            const uint32_t base = proc.mem().findFree(8192, 0x80000000u);
+            proc.mem().map(base, 4096, Memory::kProtRW);
+            const uint32_t dst = base + 4096 - 16;
+            for (uint32_t i = 0; i < 16; ++i) proc.mem().write<uint8_t>(dst + i, 'D');
+            const uint32_t src = call("_malloc", {8});
+            call("_memset", {src, 'S', 4}); proc.mem().write<uint8_t>(src + 4, 0);
+            auto faultInfo = [&](const char* fn, std::initializer_list<uint32_t> args, uint32_t& info) {
+                try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); }
+                catch (const CPU::GuestFault& e) { info = e.info; return true; }
+                return false;
+            };
+            uint32_t i1 = 0xFFFF, i2 = 0xFFFF;
+            const bool ok = faultInfo("___strcat_chk", {dst, src, 16}, i1) && faultInfo("___strncat_chk", {dst, src, 4, 16}, i2);
+            proc.mem().unmap(base, 4096);
+            call("_free", {src});
+            if (!ok || i1 != 0 || i2 != 0) std::fprintf(stderr, "strcat info %u strncat info %u\n", i1, i2);
+            return ok && i1 == 0 && i2 == 0;
+        });
+        run("_FORTIFY_SOURCE test strncpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___strncpy_chk", {dst, src, 50, 100}) != dst) return false;
+            if (!check_fault("___strncpy_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strcat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strcat_chk", {dst, src, 100}) != dst) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strcat_chk", {dst, src, 49})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strncat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strncat_chk", {dst, src, 50, 100}) != dst) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strncat_chk", {dst, src, 150, 50})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___memcpy_chk", {dst, src, 50, 100}) != dst) return false;
+            if (!check_fault("___memcpy_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memmove", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___memmove_chk", {dst, src, 50, 100}) != dst) return false;
+            if (call("___memmove_chk", {dst + 10, dst, 20, 100}) != dst + 10) return false;
+            if (!check_fault("___memmove_chk", {dst, src, 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test memset", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___memset_chk", {dst, 'X', 50, 100}) != dst) return false;
+            if (!check_fault("___memset_chk", {dst, 'X', 150, 100})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strlcpy", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            if (call("___strlcpy_chk", {dst, src, 50, 100}) != 99) return false;
+            if (!check_fault("___strlcpy_chk", {dst, src, 50, 20})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+        run("_FORTIFY_SOURCE test strlcat", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0); call("_memset", {dst, 'B', 100});
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 50, 100}) != 99) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (!check_fault("___strlcat_chk", {dst, src, 50, 20})) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+
+        run("_FORTIFY_SOURCE test strlcat edge cases", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {src, 'A', 99}); proc.mem().write<uint8_t>(src + 99, 0);
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false; try { proc.callGuest(cpu, *proc.lookupSymbol(fn), args); } catch (const CPU::GuestFault& e) { std::string msg = e.what(); caught = (msg.find("buffer overflow detected") != std::string::npos || msg.find("invalid guest memory access") != std::string::npos || msg.find("guest call did not return") != std::string::npos); } catch (...) { caught = false; } return caught;
+            };
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 0, 100}) != 99) return false;
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 1, 100}) != 99) return false; // 1-byte means just read dst NUL, then slen=99, return 99
+
+            // test unmapped dst with n=0
+            if (proc.mem().isMapped(0x40000000)) return false; // precondition: the address really is unmapped
+            if (call("___strlcat_chk", {0x40000000, src, 0, 100}) != 99) return false;
+
+            // test in bounds but destlen == SIZE_MAX sentinel
+            proc.mem().write<uint8_t>(dst, 0);
+            if (call("___strlcat_chk", {dst, src, 50, 0xFFFFFFFF}) != 99) return false;
+            call("_free", {src}); call("_free", {dst}); return true;
+        });
+                                run("_FORTIFY_SOURCE test 32-bit wraparound", [&] {
+            uint32_t src = call("_malloc", {100}); uint32_t dst = call("_malloc", {100});
+            call("_memset", {dst, 'X', 100});
+
+            auto check_fault = [&](const char* fn, std::initializer_list<uint32_t> args) {
+                bool caught = false;
+                try {
+                    proc.callGuest(cpu, *proc.lookupSymbol(fn), args);
+                } catch (const CPU::GuestFault& e) {
+                    std::string msg = e.what();
+                    // Any fault is OK for this test as long as it faults and buffer isn't modified
+                    caught = true;
+                } catch (...) {
+                    caught = false;
+                }
+                return caught;
+            };
+
+            uint32_t exact_overflow_len = 0xFFFFFFFF - dst + 1; // 2^32 - dst
+
+            bool ok = true;
+            if (!check_fault("___memcpy_chk", {dst, src, exact_overflow_len, exact_overflow_len})) {
+                ok = false;
+            }
+
+            uint8_t val = proc.mem().read<uint8_t>(dst);
+            if (val != 'X') {
+                ok = false;
+            }
+
+            call("_free", {src}); call("_free", {dst}); return ok;
+        });
+
         run("tmpnam names are unique inside the guest sandbox tmp directory", [&] {
             const std::string root = proc.guestHomePath() + "/tmp/";
             std::vector<std::string> names;
@@ -4917,6 +5796,166 @@ int runFullSubsystemTests() {
         });
     }
 
+    // 2f4. libc++ (std::__1) threading and concurrency
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto a = proc.lookupSymbol(sym);
+            return a ? uint32_t(proc.callGuest(cpu, *a, args)) : 0xDEADu;
+        };
+        auto& m = proc.mem();
+        const uint32_t tls_ptr = call("__ZNSt3__119__thread_local_dataEv", {});
+        const uint32_t tls_key = tls_ptr != 0xDEADu ? m.read<uint32_t>(tls_ptr) : 0;
+        bool tls_ok = tls_ptr != 0 && tls_ptr != 0xDEADu && tls_key != 0;
+
+        const uint32_t ts = proc.heap().allocZeroed(16);
+        const uint32_t ts_ret = call("__ZNSt3__115__thread_structC1Ev", {ts});
+        call("__ZNSt3__115__thread_structD1Ev", {ts});
+        bool ts_ok = ts_ret == ts;
+
+        const uint32_t mtx = proc.heap().allocZeroed(16);
+        call("_pthread_mutex_init", {mtx, 0});
+        const uint32_t lock_ret = call("__ZNSt3__15mutex4lockEv", {mtx});
+        const uint32_t unlock_ret = call("__ZNSt3__15mutex6unlockEv", {mtx});
+        bool mtx_ok = lock_ret == 0 && unlock_ret == 0;
+        // Error paths: an error-checking mutex rejects a second lock by its owner and an unlock by a
+        // non-owner, and the shim reports both as exceptions with the errno text.
+        {
+            const uint32_t attr = proc.heap().allocZeroed(16), emtx = proc.heap().allocZeroed(64);
+            const bool setupOk = call("_pthread_mutexattr_init", {attr}) == 0 &&
+                                 call("_pthread_mutexattr_settype", {attr, 1}) == 0 &&   // PTHREAD_MUTEX_ERRORCHECK
+                                 call("_pthread_mutex_init", {emtx, attr}) == 0;
+            auto throwsFor = [&](const char* sym, const char* needle) {
+                try { call(sym, {emtx}); }
+                catch (const std::exception& e) { return std::string(e.what()).find(needle) != std::string::npos; }
+                return false;
+            };
+            bool errorPaths = false;
+            if (setupOk) {   // skip the lock paths unless the error-checking mutex really exists
+                const bool unownedUnlock = throwsFor("__ZNSt3__15mutex6unlockEv", "unlock failed");
+                const bool firstLock = call("__ZNSt3__15mutex4lockEv", {emtx}) == 0;
+                const bool relock = firstLock && throwsFor("__ZNSt3__15mutex4lockEv", "lock failed");
+                if (firstLock) call("__ZNSt3__15mutex6unlockEv", {emtx});
+                errorPaths = unownedUnlock && firstLock && relock;
+            }
+            call("_pthread_mutex_destroy", {emtx});
+            mtx_ok = mtx_ok && errorPaths;
+        }
+
+        const uint64_t t1 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
+        const uint64_t t2 = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12steady_clock3nowEv"), {});
+        bool chrono_ok = t2 >= t1 && t1 > 0;
+        // Darwin libc++ system_clock::now() counts microseconds since the epoch.
+        const auto hostBefore = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const uint64_t sysNow = proc.callGuest(cpu, *proc.lookupSymbol("__ZNSt3__16chrono12system_clock3nowEv"), {});
+        const auto hostAfter = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        chrono_ok = chrono_ok && int64_t(sysNow) >= hostBefore - 1000 && int64_t(sysNow) <= hostAfter + 1000;
+
+        const uint32_t dur = proc.heap().allocZeroed(8);
+        m.write<uint64_t>(dur, 1000000); // 1ms
+        const auto sleep_start = std::chrono::steady_clock::now();
+        call("__ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILx1ELx1000000000EEEEE", {dur});
+        const auto sleep_end = std::chrono::steady_clock::now();
+        bool sleep_ok = std::chrono::duration_cast<std::chrono::milliseconds>(sleep_end - sleep_start).count() >= 1;
+
+        // Thread identity and teardown checks
+        const uint32_t th_obj = proc.heap().allocZeroed(16);
+        const uint32_t worker_th = proc.startThread(proc.defineFunction("hvm_test_std_thread", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
+
+        // TLS separation: run a thread that gets a TLS key. Our tests for TLS are basic but we can just use the key we got.
+        // C++ thread tests
+        m.write<uint32_t>(th_obj, worker_th);
+        call("__ZNSt3__16thread6detachEv", {th_obj});
+        bool detach_ok = m.read<uint32_t>(th_obj) == 0;
+
+        // Failed std::thread operations throw (libc++ throws system_error) with the errno text.
+        auto throwsWith = [&](const char* sym, const char* needle) {
+            try { call(sym, {th_obj}); }
+            catch (const std::exception& e) { return std::string(e.what()).find(needle) != std::string::npos; }
+            return false;
+        };
+        // Invalid (repeated) detach
+        bool detach_inv_ok = throwsWith("__ZNSt3__16thread6detachEv", "detach failed") &&
+                             throwsWith("__ZNSt3__16thread6detachEv", std::strerror(EINVAL));
+
+        // Setup another thread to join
+        const uint32_t worker2_th = proc.startThread(proc.defineFunction("hvm_test_std_thread2", [](Ctx& ctx){ ctx.cpu.r[0] = 0; }), 0, 64u << 10, false);
+        m.write<uint32_t>(th_obj, worker2_th);
+        call("__ZNSt3__16thread4joinEv", {th_obj});
+        bool join_ok = m.read<uint32_t>(th_obj) == 0;
+
+        // Invalid (repeated) join
+        bool join_inv_ok = throwsWith("__ZNSt3__16thread4joinEv", "join failed") &&
+                           throwsWith("__ZNSt3__16thread4joinEv", std::strerror(EINVAL));
+
+        // Destructor on joinable thread
+        m.write<uint32_t>(th_obj, worker_th);
+        bool term_called = false;
+        try {
+            call("__ZNSt3__16threadD1Ev", {th_obj});
+        } catch (const std::exception& e) {
+            term_called = std::string(e.what()).find("terminate() called") != std::string::npos;
+        }
+
+        // Test condition variable wait: the worker owns the mutex, waits in a predicate loop, and the main
+        // thread sets the predicate under the same mutex, so the notification cannot be lost.
+        const uint32_t cv = proc.heap().allocZeroed(16);
+        call("_pthread_cond_init", {cv, 0});
+        const uint32_t cv_ul = proc.heap().allocZeroed(4); // unique_lock just holds the mutex ptr at offset 0
+        m.write<uint32_t>(cv_ul, mtx);
+
+        std::atomic<bool> cv_entered{false}, cv_woke{false};
+        bool cv_predicate = false;   // guarded by the guest mutex `mtx`
+        const uint32_t cv_waiter = proc.defineFunction("hvm_test_cv_wait", [&](Ctx& ctx) {
+            proc.callGuest(ctx.cpu, *proc.lookupSymbol("_pthread_mutex_lock"), {mtx});
+            cv_entered = true;
+            auto a = proc.lookupSymbol("__ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE");
+            while (!cv_predicate && a) proc.callGuest(ctx.cpu, *a, {cv, cv_ul});
+            cv_woke = cv_predicate;
+            proc.callGuest(ctx.cpu, *proc.lookupSymbol("_pthread_mutex_unlock"), {mtx});
+            ctx.cpu.r[0] = 0;
+        });
+        const uint32_t cv_th = proc.startThread(cv_waiter, 0, 64u << 10, false);
+        for (int i = 0; i < 400 && !cv_entered.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        call("_pthread_mutex_lock", {mtx});          // only succeeds once the worker is inside cond_wait
+        cv_predicate = true;
+        call("__ZNSt3__118condition_variable10notify_oneEv", {cv});
+        call("_pthread_mutex_unlock", {mtx});
+
+        uint32_t cv_ret;
+        proc.joinThread(cv_th, &cv_ret);
+        bool cv_ok = cv_woke.load();
+
+        // Test TLS isolation
+        const uint32_t tls_test_key = m.read<uint32_t>(tls_ptr);
+        std::atomic<uint32_t> th1_val{0}, th2_val{0};
+        std::atomic<int> tls_set{0};   // both workers store before either reads, so a shared slot would show up
+        auto tlsWorker = [&](uint32_t value, std::atomic<uint32_t>& out) {
+            return [&, value](Ctx& ctx) {
+                auto set_fn = proc.lookupSymbol("_pthread_setspecific");
+                auto get_fn = proc.lookupSymbol("_pthread_getspecific");
+                if (set_fn) proc.callGuest(ctx.cpu, *set_fn, {tls_test_key, value});
+                ++tls_set;
+                for (int i = 0; i < 400 && tls_set.load() < 2; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (get_fn) out = uint32_t(proc.callGuest(ctx.cpu, *get_fn, {tls_test_key}));
+                ctx.cpu.r[0] = 0;
+            };
+        };
+        const uint32_t tls_worker1 = proc.defineFunction("hvm_test_tls1", tlsWorker(1234, th1_val));
+        const uint32_t tls_worker2 = proc.defineFunction("hvm_test_tls2", tlsWorker(5678, th2_val));
+        const uint32_t tls_th1 = proc.startThread(tls_worker1, 0, 64u << 10, false);
+        const uint32_t tls_th2 = proc.startThread(tls_worker2, 0, 64u << 10, false);
+        proc.joinThread(tls_th1, nullptr);
+        proc.joinThread(tls_th2, nullptr);
+        const uint32_t mainTls = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_pthread_getspecific"), {tls_test_key}));
+
+        bool tls_isolation_ok = th1_val.load() == 1234 && th2_val.load() == 5678 && tls_set.load() == 2 && mainTls == 0;
+
+        // Ensure all detached background threads finish before tearing down the process
+        proc.joinThread(worker_th, nullptr);
+
+        check(tls_ok && ts_ok && mtx_ok && chrono_ok && sleep_ok && detach_ok && detach_inv_ok && join_ok && join_inv_ok && term_called && cv_ok && tls_isolation_ok, "libc++ (std::__1) threading and concurrency");
+    }
+
     // Host-requested shutdown must not become an HLE error. An unrelated
     // exception still remains a failure even if stop was requested concurrently.
     for (bool intentional : {true, false}) {
@@ -5169,6 +6208,263 @@ int runFullSubsystemTests() {
         std::filesystem::remove_all(home, ec);
     }
 
+    // Asset I/O uses its own Process, guest stack, and temporary bundle. Expected
+    // bytes and offsets below come directly from the ten-byte host fixture.
+    {
+        namespace fs = std::filesystem;
+        char temp[] = "/tmp/hvm_asset_io_XXXXXX";
+        const char* created = ::mkdtemp(temp);
+        if (!created) throw std::runtime_error("mkdtemp for asset I/O tests failed");
+        const std::string home = created, bundle = home + "/Game.app";
+        fs::create_directories(bundle + "/CookedIPhone");
+        fs::create_directories(bundle + "/fr.lproj");
+        fs::create_directories(bundle + "/Base.lproj");
+        fs::create_directories(bundle + "/Other");
+        fs::create_directories(bundle + "/CookedIPhoneBackup");
+        fs::create_directories(home + "/Game.app-sibling");
+        auto put = [](const std::string& path, const std::string& bytes = "0123456789") {
+            std::ofstream out(path, std::ios::binary); out << bytes;
+            if (!out) throw std::runtime_error("write asset I/O fixture failed");
+        };
+        put(bundle + "/CookedIPhone/Texture.tfc");
+        put(bundle + "/CookedIPhone/Map.xxx");
+        put(bundle + "/Other/Texture.tfc");
+        put(bundle + "/CookedIPhoneBackup/Texture.tfc");
+        put(bundle + "/CookedIPhone/Texture.dat");
+        put(bundle + "/fr.lproj/Word.txt");
+        put(bundle + "/Base.lproj/Word.txt");
+        put(home + "/Game.app-sibling/secret.tfc");
+        fs::create_directory_symlink(home + "/Game.app-sibling", bundle + "/Escape");
+        fs::create_directory_symlink(bundle + "/Other", bundle + "/Inside");
+        {
+            ProcessConfig assetCfg;
+            assetCfg.homePath = home; assetCfg.bundlePath = bundle;
+            Process ap(assetCfg);
+            auto& acpu = ap.mainThread().cpu;
+            ap.mem().map(0xbee00000, 1u << 20, Memory::kProtRW);
+            acpu.r[CPU::kSP] = 0xbef00000 - 256;
+            // A Process without a loaded Mach-O needs explicit guest errno
+            // storage, just like the existing libc fixtures in this suite.
+            ap.mainThread().errnoAddr = ap.heap().allocZeroed(4);
+            Ctx ax{ap, acpu, ap.mem()};
+            auto& ar = ObjC::rt(ap);
+            const auto pool = ar.poolPush();
+            auto call = [&](const char* symbol, std::initializer_list<uint32_t> args) {
+                auto address = ap.lookupSymbol(symbol);
+                if (!address) throw std::runtime_error(std::string("missing test API: ") + symbol);
+                return uint32_t(ap.callGuest(acpu, *address, args));
+            };
+            auto lookup = [&](const std::string& name, const std::string& type = "tfc", const std::string& dir = "CookedIPhone") {
+                return Foundation::bundleResource(ax, name, type, dir);
+            };
+            // The class directory API used to bypass main-bundle publication.
+            // Race that cold entry point against the native main-bundle helper.
+            const auto coldName = Foundation::makeString(ax, "Texture");
+            const auto coldType = Foundation::makeString(ax, "tfc");
+            const auto coldDir = Foundation::makeString(ax, bundle + "/CookedIPhone");
+            ap.mem().map(0xbec00000, 0x20000, Memory::kProtRW);
+            std::atomic<unsigned> ready{0};
+            std::atomic<bool> start{false}, coldOK{true};
+            auto coldLookup = [&](bool viaClass) {
+                CPU::Cpu coldCPU;
+                coldCPU.r[CPU::kSP] = (viaClass ? 0xbec10000 : 0xbec20000) - 256;
+                Ctx coldCtx{ap, coldCPU, ap.mem()};
+                const auto coldPool = ar.poolPush();
+                ++ready;
+                while (!start) std::this_thread::yield();
+                std::string result;
+                if (viaClass) {
+                    const auto value = uint32_t(ar.send(coldCPU, ar.getClass("NSBundle"),
+                        "pathForResource:ofType:inDirectory:", {coldName, coldType, coldDir}));
+                    result = ap.hostPath(Foundation::utf8(coldCtx, value));
+                } else result = Foundation::bundleResource(coldCtx, "Texture", "tfc", "CookedIPhone");
+                if (result != bundle + "/CookedIPhone/Texture.tfc") coldOK = false;
+                ar.poolPop(coldCPU, coldPool);
+            };
+            std::thread coldClass(coldLookup, true), coldNative(coldLookup, false);
+            while (ready != 2) std::this_thread::yield();
+            start = true;
+            coldClass.join(); coldNative.join();
+            check(coldOK, "cold class and native bundle lookups synchronize main-bundle publication");
+            check(lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc" &&
+                  lookup("Texture.tfc", "") == lookup("Texture") &&
+                  lookup("Texture", ".tfc") == lookup("Texture") &&
+                  lookup("Texture", "tfc", "Other") == bundle + "/Other/Texture.tfc" &&
+                  lookup("Map", "xxx") == bundle + "/CookedIPhone/Map.xxx",
+                  "bundle resource cache distinguishes names, extensions and subdirectories");
+            const auto main = uint32_t(call("_CFBundleGetMainBundle", {}));
+            auto localized = [&](const char* lang) {
+                const auto path = uint32_t(ar.send(acpu, main, "pathForResource:ofType:inDirectory:forLocalization:",
+                    {Foundation::makeString(ax, "Word"), Foundation::makeString(ax, "txt"), 0, Foundation::makeString(ax, lang)}));
+                return ap.hostPath(Foundation::utf8(ax, path));
+            };
+            check(localized("fr") == bundle + "/fr.lproj/Word.txt" &&
+                  localized("Base") == bundle + "/Base.lproj/Word.txt" && localized("fr") == bundle + "/fr.lproj/Word.txt",
+                  "bundle resource cache separates explicit localizations");
+            check(lookup("secret", "tfc", "../Game.app-sibling").empty() &&
+                  lookup("secret", "tfc", home + "/Game.app-sibling").empty() &&
+                  lookup("secret", "tfc", "Escape").empty() &&
+                  lookup("../Game.app-sibling/secret", "tfc", "").empty() &&
+                  lookup(home + "/Game.app-sibling/secret", "tfc", "").empty() &&
+                  lookup("Texture", "tfc", bundle + "/CookedIPhone") == lookup("Texture"),
+                  "bundle lookup rejects traversal, absolute and symlink escapes with component boundaries");
+            check(lookup("Texture", "tfc", "Inside") == bundle + "/Inside/Texture.tfc",
+                  "bundle lookup still permits symlinks targeting resources inside the bundle");
+            // Missing resources must become visible, and a cached fallback must
+            // yield to a newly installed device-specific variant.
+            bool mutations = lookup("New").empty();
+            put(bundle + "/CookedIPhone/New.tfc");
+            mutations &= lookup("New") == bundle + "/CookedIPhone/New.tfc";
+            put(bundle + "/CookedIPhone/Texture~iphone.tfc");
+            mutations &= lookup("Texture") == bundle + "/CookedIPhone/Texture~iphone.tfc";
+            fs::remove(bundle + "/CookedIPhone/Texture~iphone.tfc");
+            mutations &= lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc";
+            put(bundle + "/CookedIPhone/Link.tfc");
+            mutations &= !lookup("Link").empty();
+            fs::remove(bundle + "/CookedIPhone/Link.tfc");
+            fs::create_symlink(home + "/Game.app-sibling/secret.tfc", bundle + "/CookedIPhone/Link.tfc");
+            mutations &= lookup("Link").empty();
+            check(mutations, "bundle cache invalidates additions/removals and rejects a cached file replaced by an escaping symlink");
+            put(home + "/Mutable.tfc");
+            const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
+            auto mutableLookup = [&] {
+                return uint32_t(ar.send(acpu, mutableBundle, "pathForResource:ofType:",
+                    {Foundation::makeString(ax, "Mutable"), Foundation::makeString(ax, "tfc")}));
+            };
+            bool mutableOK = mutableLookup() != 0;
+            fs::remove(home + "/Mutable.tfc");
+            check(mutableOK && !mutableLookup(), "sandbox bundle lookups do not retain stale mutable paths");
+            fs::create_directories(home + "/Documents");
+            fs::create_directories(home + "/Mutable.app/CookedIPhone");
+            fs::create_directories(bundle + "/Nested.app/CookedIPhone");
+            for (const auto& root : {home + "/Mutable.app", bundle + "/Nested.app"}) {
+                put(root + "/CookedIPhone/Texture.tfc");
+                put(root + "/CookedIPhone/Texture~iphone.tfc");
+            }
+            const auto stamp = fs::last_write_time(bundle + "/CookedIPhone");
+            fs::last_write_time(home + "/Mutable.app/CookedIPhone", stamp);
+            fs::last_write_time(bundle + "/Nested.app/CookedIPhone", stamp);
+            auto bundleAt = [&](const std::string& path) {
+                return uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, path)}));
+            };
+            auto aliasResource = [&](uint32_t object) {
+                const auto value = uint32_t(ar.send(acpu, object, "pathForResource:ofType:inDirectory:",
+                    {coldName, coldType, Foundation::makeString(ax, "CookedIPhone")}));
+                return value ? ap.hostPath(Foundation::utf8(ax, value)) : std::string();
+            };
+            const auto outsideAlias = home + "/Documents/Alias.app";
+            fs::create_directory_symlink(bundle, outsideAlias);
+            const auto mutableAlias = bundleAt(outsideAlias);
+            bool aliasOK = aliasResource(mutableAlias) == outsideAlias + "/CookedIPhone/Texture.tfc";
+            fs::remove(outsideAlias);
+            fs::create_directory_symlink(home + "/Mutable.app", outsideAlias);
+            check(aliasOK && aliasResource(mutableAlias) == outsideAlias + "/CookedIPhone/Texture~iphone.tfc",
+                  "mutable sandbox aliases stay uncached after retarget with matching directory timestamps");
+            const auto insideAlias = bundle + "/Alias.bundle";
+            fs::create_directory_symlink(bundle, insideAlias);
+            const auto nestedAlias = bundleAt(insideAlias);
+            aliasOK = aliasResource(nestedAlias) == insideAlias + "/CookedIPhone/Texture.tfc";
+            fs::remove(insideAlias);
+            fs::create_directory_symlink(bundle + "/Nested.app", insideAlias);
+            check(aliasOK && aliasResource(nestedAlias) == insideAlias + "/CookedIPhone/Texture~iphone.tfc",
+                  "cached nested bundle aliases invalidate when their canonical bundle changes");
+            fs::remove(insideAlias);
+            fs::create_directory_symlink(home + "/Mutable.app", insideAlias);
+            check(aliasResource(nestedAlias).empty(),
+                  "nested bundle aliases cannot escape the retained installation boundary on cache miss or hit");
+            const auto name = Foundation::makeString(ax, "Texture"), ext = Foundation::makeString(ax, "tfc"), dir = Foundation::makeString(ax, "CookedIPhone");
+            const auto url1 = uint32_t(call("_CFBundleCopyResourceURL", {main, name, ext, dir}));
+            const auto url2 = uint32_t(call("_CFBundleCopyResourceURL", {main, name, ext, dir}));
+            check(url1 && url2 && Foundation::urlFilePath(ax, url1) == Foundation::urlFilePath(ax, url2),
+                  "separate CFBundle Copy results have equivalent resource paths");
+            call("_CFRelease", {url1}); call("_CFRelease", {url2});
+            // A directory full of distinct successful lookups exercises eviction.
+            for (unsigned i = 0; i < 4100; ++i) put(bundle + "/CookedIPhone/evict" + std::to_string(i) + ".tfc");
+            bool bounded = true;
+            for (unsigned i = 0; i < 4100; ++i) bounded &= !lookup("evict" + std::to_string(i)).empty();
+            check(bounded && lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc", "bundle resource lookup remains correct across the 4096-entry cache bound");
+            std::atomic<bool> concurrent{true};
+            std::vector<std::thread> workers;
+            for (unsigned i = 0; i < 4; ++i) workers.emplace_back([&] {
+                CPU::Cpu workerCPU;
+                Ctx workerCtx{ap, workerCPU, ap.mem()};
+                for (unsigned j = 0; j < 100; ++j)
+                    if (Foundation::bundleResource(workerCtx, "texture", "tfc", "CookedIPhone") != bundle + "/CookedIPhone/Texture.tfc") concurrent = false;
+            });
+            for (auto& worker : workers) worker.join();
+            check(concurrent, "bundle resource cache supports simultaneous native lookups and case-insensitive fallback");
+
+            const auto buffer = ap.heap().allocZeroed(256);
+            auto openAsset = [&](const std::string& path, uint32_t flags = 0) {
+                return int32_t(call("_open", {ap.internCString(path), flags, 0600}));
+            };
+            auto seek = [&](int fd, uint64_t off, int whence) {
+                // Apple's ARMv7 ABI packs 64-bit arguments without padding.
+                return int64_t(ap.callGuest(acpu, *ap.lookupSymbol("_lseek"), {uint32_t(fd), uint32_t(off), uint32_t(off >> 32), uint32_t(whence)}));
+            };
+            const auto errnoAddr = uint32_t(call("___error", {}));
+            for (const char* leaf : {"Texture.tfc", "Map.xxx"}) {
+                const auto path = ap.guestBundlePath() + "/CookedIPhone/" + leaf;
+                ap.mem().write<uint32_t>(errnoAddr, 123);
+                int a = openAsset(path), b = openAsset(path);
+                bool ok = a >= 0 && b >= 0 && a != b && ap.mem().read<uint32_t>(errnoAddr) == 123;
+                ok &= call("_read", {uint32_t(a), buffer, 3}) == 3 && ap.readCString(buffer) == "012";
+                ok &= seek(a, 6, SEEK_SET) == 6 && seek(b, 0, SEEK_CUR) == 0;
+                ok &= call("_pread", {uint32_t(a), buffer, 2, 4, 0}) == 2;
+                ok &= std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "45" && seek(a, 0, SEEK_CUR) == 6;
+                ok &= call("_pread", {uint32_t(a), buffer, 1, 0xffffffffu, 0xffffffffu}) == uint32_t(-1) &&
+                      ap.mem().read<uint32_t>(errnoAddr) == 22 && seek(a, 0, SEEK_CUR) == 6;
+                ok &= call("_fstat", {uint32_t(a), buffer}) == 0 && call("_fcntl", {uint32_t(a), 3}) == 0;
+                ok &= call("_close", {uint32_t(a)}) == 0;
+                ok &= call("_read", {uint32_t(a), buffer, 1}) == uint32_t(-1) && ap.mem().read<uint32_t>(errnoAddr) == 9;
+                ok &= call("_read", {uint32_t(b), buffer, 2}) == 2 && std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "01";
+                int c = openAsset(path);
+                ok &= c >= 0 && seek(c, 0, SEEK_CUR) == 0 && seek(b, 0, SEEK_CUR) == 2;
+                call("_close", {uint32_t(b)}); call("_close", {uint32_t(c)});
+                check(ok, leaf[0] == 'T' ? "TFC opens own independent descriptors, offsets, pread, fstat, fcntl and close" : "XXX opens own independent descriptors, offsets, pread, fstat, fcntl and close");
+            }
+            bool errors = openAsset(ap.guestBundlePath() + "/CookedIPhone/missing.tfc") == -1 && ap.mem().read<uint32_t>(errnoAddr) == 2;
+            errors &= call("_read", {0xffffffffu, buffer, 1}) == uint32_t(-1) && ap.mem().read<uint32_t>(errnoAddr) == 9;
+            errors &= seek(-1, 0, SEEK_SET) == -1 && ap.mem().read<uint32_t>(errnoAddr) == 9;
+            check(errors, "asset open/read/lseek failures retain Darwin ENOENT and EBADF");
+            bool ordinary = true;
+            for (const char* relative : {"Other/Texture.tfc", "CookedIPhoneBackup/Texture.tfc", "CookedIPhone/Texture.dat"}) {
+                const int fd = openAsset(ap.guestBundlePath() + "/" + relative);
+                ordinary &= fd >= 0 && call("_read", {uint32_t(fd), buffer, 1}) == 1;
+                call("_close", {uint32_t(fd)});
+            }
+            check(ordinary, "non-UE3 paths and CookedIPhone prefix siblings retain ordinary file behavior");
+            int rw = openAsset(ap.guestBundlePath() + "/CookedIPhone/Map.xxx", 2);
+            check(rw >= 0 && call("_write", {uint32_t(rw), ap.internCString("AB"), 2}) == 2 && seek(rw, 0, SEEK_SET) == 0 &&
+                  call("_read", {uint32_t(rw), buffer, 2}) == 2 && std::string(reinterpret_cast<const char*>(ap.mem().host(buffer)), 2) == "AB",
+                  "writable UE3 asset opens retain normal write/read/seek behavior");
+            call("_close", {uint32_t(rw)});
+            fs::rename(bundle, bundle + ".moved");
+            fs::create_directory_symlink(home + "/Game.app-sibling", bundle);
+            const bool rootEscape = lookup("secret", "tfc", "").empty() && lookup("Texture").empty();
+            fs::remove(bundle);
+            fs::rename(bundle + ".moved", bundle);
+            check(rootEscape && lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc",
+                  "cached installation boundary rejects replacing the entire bundle with an external symlink");
+            ar.poolPop(acpu, pool);
+        }
+        {
+            ProcessConfig lateCfg;
+            lateCfg.homePath = home; lateCfg.bundlePath = home + "/Late.app";
+            Process late(lateCfg);
+            auto& lateCPU = late.mainThread().cpu;
+            late.mem().map(0xbee00000, 1u << 20, Memory::kProtRW);
+            lateCPU.r[CPU::kSP] = 0xbef00000 - 256;
+            const auto mainSymbol = *late.lookupSymbol("_CFBundleGetMainBundle");
+            const bool absent = uint32_t(late.callGuest(lateCPU, mainSymbol, {})) == 0;
+            fs::create_directories(lateCfg.bundlePath);
+            check(absent && uint32_t(late.callGuest(lateCPU, mainSymbol, {})) != 0,
+                  "thread-safe main bundle initialization retries a not-yet-created directory");
+        }
+        std::error_code ec;
+        fs::remove_all(home, ec);
+    }
+
     const uint32_t arenasBefore = Memory::GuestArena::liveCount();
     {
         Memory::GuestArena first, second;
@@ -5216,6 +6512,308 @@ int runFullSubsystemTests() {
     {
         int propFails = runPropertyTests("");
         check(propFails == 0, "glibc property tests for printf/string/memory helpers (T5d)");
+    }
+
+    // EAGLSharegroup teardown: the implicit per-thread worker contexts made for a sharegroup are released when
+    // it dies, whether their owning thread already exited or is still running (and may still hold the context).
+    {
+        struct CountingPlatform final : HostGL::Platform {
+            std::atomic<int> live{0};
+            std::mutex mu;
+            std::unordered_map<void*, std::thread::id> owner;
+            const char* name() const override { return "sharegroup-test"; }
+            void* createContext(int, void*, bool& desktop) override { desktop = false; ++live; return new uint8_t(1); }
+            void destroyContext(void* p) override { std::lock_guard<std::mutex> lk(mu); owner.erase(p); --live; delete static_cast<uint8_t*>(p); }
+            bool makeCurrent(void* p) override {
+                std::lock_guard<std::mutex> lk(mu);
+                const auto me = std::this_thread::get_id();
+                if (!p) { for (auto it = owner.begin(); it != owner.end();) it = it->second == me ? owner.erase(it) : std::next(it); return true; }
+                auto it = owner.find(p);
+                if (it != owner.end() && it->second != me) return false;   // EGL: current on another thread
+                owner[p] = me;
+                return true;
+            }
+            void* proc(void*, const char*) override { return nullptr; }
+        };
+        // 0: owner exited before teardown; 1: owner then issues GL; 2: owner then exits without GL;
+        // 3: owner then switches to no context (bind).
+        for (int mode = 0; mode < 4; ++mode) {
+            const bool ownerAlive = mode != 0;
+            auto platform = std::make_shared<CountingPlatform>();
+            ProcessConfig sgCfg;
+            sgCfg.homePath = "/tmp/hvm_sharegroup_teardown";
+            sgCfg.hostGL = platform;
+            Process sgProc(sgCfg);
+            auto& sr = ObjC::rt(sgProc);
+            auto& scpu = sgProc.mainThread().cpu;
+            const ObjC::id sg = ObjC::id(sr.send(scpu, ObjC::id(sr.send(scpu, ObjC::id(sr.getClass("EAGLSharegroup")), sr.selAlloc)), "init"));
+            const ObjC::Class ctxCls = sr.getClass("EAGLContext");
+            const ObjC::id context = ObjC::id(sr.send(scpu, ObjC::id(sr.send(scpu, ObjC::id(ctxCls), sr.selAlloc)),
+                                                      "initWithAPI:sharegroup:", {2, uint32_t(sg)}));
+            sr.send(scpu, ObjC::id(ctxCls), "setCurrentContext:", {context});   // main thread owns the root context
+            std::atomic<bool> bound{false}, groupGone{false};
+            const uint32_t workerFn = sgProc.defineFunction("test_sharegroup_worker", [&, context, mode](Ctx& x) {
+                auto& rt = ObjC::rt(x);
+                rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {context});   // gets its own shared context
+                bound = true;
+                if (ownerAlive) {
+                    for (int i = 0; i < 1000 && !groupGone.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    if (mode == 1) x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glFlush"), {});   // first GL call after the sharegroup died
+                    if (mode == 3) rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {0});
+                }
+                x.cpu.r[0] = 0;
+            });
+            const uint32_t tid = sgProc.startThread(workerFn, 0, 64u << 10, false);
+            for (int i = 0; i < 1000 && !bound.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            if (!ownerAlive) sgProc.joinThread(tid, nullptr);   // the owning thread has exited before teardown
+            const int beforeTeardown = platform->live.load();   // root + the worker's context
+            sr.send(scpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+            sr.send(scpu, context, "release");
+            sr.send(scpu, sg, "release");
+            const int afterTeardown = platform->live.load();
+            groupGone = true;
+            if (ownerAlive) sgProc.joinThread(tid, nullptr);
+            const int afterWorker = platform->live.load();
+            const char* names[] = {
+                "sharegroup teardown frees the worker contexts of threads that already exited",
+                "sharegroup teardown retires a worker context a running thread holds; its next GL call releases it",
+                "a thread that exits after sharegroup teardown releases its retired worker context",
+                "unbinding after sharegroup teardown releases the retired worker context"};
+            check(beforeTeardown == 2 && afterTeardown == (ownerAlive ? 1 : 0) && afterWorker == 0, names[mode]);
+        }
+    }
+
+    // PR #167: fixed-size heap objects share writable pages, so a successful
+    // host mapping check alone is not enough to protect adjacent allocations.
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-format-bounds-tests";
+        Process proc(cfg);
+        auto& cpu = proc.mainThread().cpu;
+        const uint32_t stack = proc.heap().allocZeroed(1024);
+        cpu.r[CPU::kSP] = stack + 1024;
+        std::string missingSymbols;   // names the tests asked for that are not registered
+        auto run = [&](const char* name, std::initializer_list<uint32_t> args) {
+            bool fault = false;
+            int32_t result = -1;
+            try {
+                const auto sym = proc.lookupSymbol(name);
+                if (!sym) { missingSymbols += std::string(name) + " "; return std::pair<bool, int32_t>{true, result}; }
+                result = int32_t(proc.callGuest(cpu, *sym, args));
+            } catch (const CPU::GuestFault&) {
+                fault = true;
+            } catch (const std::exception&) {
+                fault = true;
+            }
+            return std::pair<bool, int32_t>{fault, result};
+        };
+        const uint32_t exact = proc.allocCString("123456789012345");
+        const uint32_t overflow = proc.allocCString("1234567890123456");
+        const uint32_t shortText = proc.allocCString("12345");
+        const uint32_t small = proc.heap().allocZeroed(16);
+        auto r = run("_sprintf", {small, exact});
+        check(!r.first && r.second == 15 && proc.mem().read<uint8_t>(small + 15) == 0,
+              "sprintf accepts exact heap allocation fit");
+        r = run("_sprintf", {small, overflow});
+        check(r.first, "sprintf rejects one-byte heap allocation overflow");
+
+        const uint32_t adjacent = proc.heap().allocZeroed(16);
+        proc.mem().write<uint8_t>(adjacent, 0x5a);
+        r = run("_sprintf", {small, overflow});
+        check(r.first && proc.mem().read<uint8_t>(adjacent) == 0x5a,
+              "sprintf cannot corrupt adjacent live allocation");
+
+        const uint32_t inside = proc.heap().allocZeroed(16) + 5;
+        r = run("_sprintf", {inside, proc.allocCString("1234567890")});
+        check(!r.first && r.second == 10, "sprintf accepts interior pointer exact fit");
+        r = run("_sprintf", {inside, proc.allocCString("12345678901")});
+        check(r.first, "sprintf rejects interior pointer overflow");
+
+        r = run("_snprintf", {small, 4, shortText});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(small), "123\0", 4) == 0,
+              "snprintf truncates and reports untruncated length");
+        r = run("_snprintf", {0, 0, shortText});
+        check(!r.first && r.second == 5, "snprintf allows null destination with zero size");
+        r = run("___snprintf_chk", {small, 4, 0, 4, shortText});
+        check(!r.first && r.second == 5, "snprintf_chk permits truncation within object bound");
+        r = run("___snprintf_chk", {small, 5, 0, 4, shortText});
+        check(r.first, "snprintf_chk rejects size exceeding object bound");
+        r = run("___snprintf_chk", {0, 0, 0, 0, shortText});
+        check(!r.first && r.second == 5, "snprintf_chk accepts zero-size destination");
+        r = run("_vsnprintf", {small, 4, shortText, 0});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(small), "123\0", 4) == 0,
+              "vsnprintf truncates and reports untruncated length");
+        r = run("___vsnprintf_chk", {small, 4, 0, 4, shortText, 0});
+        check(!r.first && r.second == 5, "vsnprintf_chk permits bounded truncation");
+        r = run("___vsnprintf_chk", {small, 5, 0, 4, shortText, 0});
+        check(r.first, "vsnprintf_chk rejects size exceeding object bound");
+        r = run("___sprintf_chk", {small, 0, 15, exact});
+        check(r.first, "sprintf_chk enforces object size including terminator");
+        r = run("___sprintf_chk", {small, 0, 16, exact});
+        check(!r.first && r.second == 15, "sprintf_chk accepts exact compiler object bound");
+        r = run("___vsprintf_chk", {small, 0, 15, exact});
+        check(r.first, "vsprintf_chk exists and enforces object size");
+
+        // The managed heap reserves 0x10000000..0x80000000; use an
+        // independent mapping so this is genuinely a stack/global-style
+        // destination, not an unallocated address within the heap reserve.
+        constexpr uint32_t page = 0x90000000;
+        proc.mem().map(page, 4096, Memory::kProtRW);
+        const uint32_t edge = page + 4096 - 5;
+        r = run("_sprintf", {edge, proc.allocCString("1234")});
+        check(!r.first && r.second == 4, "sprintf accepts mapped guest-page exact fit");
+        r = run("_sprintf", {edge, shortText});
+        check(r.first, "sprintf rejects overflow into unmapped guest page");
+        const uint32_t global = proc.allocStatic(32);
+        r = run("_sprintf", {global, shortText});
+        check(!r.first && r.second == 5 &&
+              std::memcmp(proc.mem().host(global), "12345\0", 6) == 0,
+              "sprintf permits writable global buffers outside tracked heap");
+
+        // Wide formatting stores 4 bytes per wchar_t. C99 swprintf honours n
+        // (including the NUL), returns -1 when the text does not fit, and
+        // must throw before any store when that span is not writable.
+        struct WideCall { bool failed = false; bool bounds = false; int32_t result = -1; };
+        auto wideRun = [&](const char* name, std::initializer_list<uint32_t> args) {
+            WideCall out;
+            try {
+                const auto sym = proc.lookupSymbol(name);
+                if (!sym) { missingSymbols += std::string(name) + " "; out.failed = true; return out; }
+                out.result = int32_t(proc.callGuest(cpu, *sym, args));
+            } catch (const CPU::GuestFault& fault) {
+                out.failed = true;
+                out.bounds = fault.exit == CPU::Exit::HostError;
+            } catch (const std::exception&) {
+                out.failed = true;
+                out.bounds = true;
+            }
+            return out;
+        };
+        auto wideLiteral = [&](const char* text) {
+            const size_t n = std::strlen(text);
+            const uint32_t p = proc.heap().allocZeroed(uint32_t((n + 1) * 4));
+            for (size_t i = 0; i < n; ++i)
+                proc.mem().write<uint32_t>(p + uint32_t(i * 4), uint8_t(text[i]));
+            return p;
+        };
+        auto wideEquals = [&](uint32_t addr, const char* text) {
+            const size_t n = std::strlen(text);
+            for (size_t i = 0; i <= n; ++i) {
+                const uint32_t expect = i < n ? uint32_t(uint8_t(text[i])) : 0u;
+                if (proc.mem().read<uint32_t>(addr + uint32_t(i * 4)) != expect) return false;
+            }
+            return true;
+        };
+        auto paint = [&](uint32_t addr, uint32_t bytes, uint8_t value) {
+            for (uint32_t i = 0; i < bytes; ++i) proc.mem().write<uint8_t>(addr + i, value);
+        };
+        auto painted = [&](uint32_t addr, uint32_t bytes, uint8_t value) {
+            for (uint32_t i = 0; i < bytes; ++i)
+                if (proc.mem().read<uint8_t>(addr + i) != value) return false;
+            return true;
+        };
+        const uint32_t wideExact = wideLiteral("123");
+        const uint32_t wideOver = wideLiteral("1234");
+        const uint32_t wideLong = wideLiteral("12345");
+        const uint32_t wideBuf = proc.heap().allocZeroed(16);
+        const uint32_t wideNext = proc.heap().allocZeroed(16);
+        paint(wideNext, 16, 0xa5);
+
+        auto w = wideRun("_swprintf", {wideBuf, 4, wideExact});
+        check(!w.failed && w.result == 3 && wideEquals(wideBuf, "123") && painted(wideNext, 16, 0xa5),
+              "swprintf accepts an exact four-wchar heap fit");
+        w = wideRun("_vswprintf", {wideBuf, 4, wideExact, 0});
+        check(!w.failed && w.result == 3 && wideEquals(wideBuf, "123"),
+              "vswprintf accepts an exact four-wchar heap fit");
+
+        paint(wideBuf, 16, 0xa5);
+        w = wideRun("_swprintf", {wideBuf, 0, wideLong});
+        check(!w.failed && w.result == -1 && painted(wideBuf, 16, 0xa5),
+              "swprintf with n=0 writes nothing and returns -1");
+        w = wideRun("_vswprintf", {0, 0, wideLong, 0});
+        check(!w.failed && w.result == -1, "vswprintf with n=0 accepts a null destination");
+
+        w = wideRun("_swprintf", {wideBuf, 4, wideLong});
+        check(!w.failed && w.result == -1 && wideEquals(wideBuf, "123") && painted(wideNext, 16, 0xa5),
+              "swprintf truncates to n-1 wide characters and returns -1");
+        w = wideRun("_vswprintf", {wideBuf, 4, wideLong, 0});
+        check(!w.failed && w.result == -1 && wideEquals(wideBuf, "123"),
+              "vswprintf truncates to n-1 wide characters and returns -1");
+
+        paint(wideBuf, 16, 0xa5);
+        paint(wideNext, 16, 0xa5);
+        w = wideRun("_swprintf", {wideBuf, 5, wideOver});
+        check(w.failed && w.bounds && painted(wideBuf, 16, 0xa5) && painted(wideNext, 16, 0xa5),
+              "swprintf throws before a wide write can leave its heap allocation");
+        w = wideRun("_vswprintf", {wideBuf, 5, wideOver, 0});
+        check(w.failed && w.bounds && painted(wideBuf, 16, 0xa5) && painted(wideNext, 16, 0xa5),
+              "vswprintf throws before a wide write can leave its heap allocation");
+
+        const uint32_t wideInside = proc.heap().allocZeroed(16) + 4;
+        paint(wideInside, 12, 0xa5);
+        w = wideRun("_swprintf", {wideInside, 3, wideLiteral("12")});
+        check(!w.failed && w.result == 2 && wideEquals(wideInside, "12"),
+              "swprintf accepts an interior pointer that fits the remaining allocation");
+        paint(wideInside, 12, 0xa5);
+        w = wideRun("_swprintf", {wideInside, 4, wideExact});
+        check(w.failed && w.bounds && painted(wideInside, 12, 0xa5),
+              "swprintf throws when an interior wide write leaves its allocation");
+
+        constexpr uint32_t widePage = 0x91000000;
+        proc.mem().map(widePage, 4096, Memory::kProtRW);
+        const uint32_t wideEdge = widePage + 4096 - 16;
+        w = wideRun("_swprintf", {wideEdge, 4, wideExact});
+        check(!w.failed && w.result == 3 && wideEquals(wideEdge, "123"),
+              "swprintf accepts a mapped guest-page exact wide fit");
+        paint(wideEdge, 16, 0xa5);
+        w = wideRun("_swprintf", {wideEdge, 5, wideOver});
+        check(w.failed && w.bounds && painted(wideEdge, 16, 0xa5),
+              "swprintf throws before a wide write runs onto an unmapped page");
+        paint(wideEdge, 16, 0xa5);
+        w = wideRun("_vswprintf", {wideEdge, 5, wideOver, 0});
+        check(w.failed && w.bounds && painted(wideEdge, 16, 0xa5),
+              "vswprintf throws before a wide write runs onto an unmapped page");
+
+        const uint32_t wideBig = proc.heap().allocZeroed(64);
+        w = wideRun("___swprintf_chk", {wideBig, 4, 0, 16, wideExact});
+        check(!w.failed && w.result == 3 && wideEquals(wideBig, "123"),
+              "swprintf_chk accepts an exact object-size wide span");
+        paint(wideBig, 64, 0xa5);
+        w = wideRun("___swprintf_chk", {wideBig, 5, 0, 16, wideExact});
+        check(w.failed && w.bounds && painted(wideBig, 64, 0xa5),
+              "swprintf_chk throws when the wchar count exceeds the object size");
+        w = wideRun("___vswprintf_chk", {wideBig, 5, 0, 16, wideExact, 0});
+        check(w.failed && w.bounds && painted(wideBig, 64, 0xa5),
+              "vswprintf_chk throws when the wchar count exceeds the object size");
+        w = wideRun("___swprintf_chk", {wideBuf, 4, 0, 16, wideLong});
+        check(!w.failed && w.result == -1 && wideEquals(wideBuf, "123"),
+              "swprintf_chk truncates inside the object size and returns -1");
+        check(missingSymbols.empty(), "format-bounds tests only call registered guest functions (a missing symbol would make a rejection check pass without running)");
+    }
+
+    // Mapping and writes must be serialized: on 16 KB hosts a committed host
+    // page can remain accessible after its 4 KB guest mapping is removed.
+    {
+        Memory::GuestArena arena;
+        constexpr uint32_t page = 0x90000000;
+        arena.map(page, 4096, Memory::kProtRW);
+        std::atomic<int> attempted{0};
+        std::thread writer([&] {
+            for (int i = 0; i < 1000; ++i) {
+                arena.copyCStringWritable(page, "ok", 2);
+                attempted.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+        for (int i = 0; i < 100; ++i) {
+            arena.unmap(page, 4096);
+            arena.map(page, 4096, Memory::kProtRW);
+        }
+        writer.join();
+        arena.unmap(page, 4096);
+        check(attempted.load() == 1000 && !arena.copyCStringWritable(page, "no", 2),
+              "formatted guest-page writes synchronize with concurrent map/unmap");
     }
 
     // Call ring: the last-N host calls a guest thread made, kept for crash
