@@ -95,6 +95,11 @@ def do_build(b):
 
 # -------------------------------------------------------------------- cpu ---
 def do_cpu(b):
+    rc, out, err, t = run([sys.executable, "-m", "unittest", "discover", "-s",
+                           os.path.join(ROOT, "tools", "tests"), "-p", "test_corpus_tools.py", "-v"], cwd=ROOT)
+    record("tools", "corpus bisect and A/B regression tests", rc == 0, t)
+    if rc:
+        problem("tools", "corpus bisect and A/B regression tests", "fail", (out + err)[-3000:])
     tb = os.path.join(b, "tests")
     rc, out, err, t = run([os.path.join(ROOT, "tools", "build_tests.sh"), tb], timeout=1800)
     if rc:
