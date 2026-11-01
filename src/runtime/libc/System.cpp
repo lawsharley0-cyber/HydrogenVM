@@ -1064,6 +1064,13 @@ int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     return 0;
 }
 
+// POSIX named semaphores are not implemented (there is no sem_open), so no handle can name an open
+// semaphore: every close is EINVAL rather than a silent success.
+int32_t sys_sem_close(Ctx& x, uint32_t) {
+    setErrno(x, 22);   // EINVAL
+    return -1;
+}
+
 } // namespace
 
 void registerLibcSystem(Process& p) {
@@ -1113,6 +1120,7 @@ void registerLibcSystem(Process& p) {
     p.def<&s_sysconf>("_sysconf");
     p.def<&s_getrlimit>("_getrlimit");
     p.def<&s_ok2>("_setrlimit");
+    p.def<&sys_sem_close>("_sem_close");
     p.def<&s_getrusage>("_getrusage");
     p.def<&s_sysctl>("_sysctl");
     p.def<&s_sysctlbyname>("_sysctlbyname");

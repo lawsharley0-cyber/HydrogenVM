@@ -1124,6 +1124,40 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
     return ok;
 }
 
+namespace {
+// Every entry point the readback paths of presentRenderbuffer call.
+bool hasReadbackFns(const HostContext* hc) {
+    return hc->fn.glReadPixels && hc->fn.glGenFramebuffers && hc->fn.glBindFramebuffer && hc->fn.glFramebufferRenderbuffer;
+}
+// The guest's draw and read framebuffer bindings; presentRenderbuffer borrows both while it reads back.
+struct FbBindings { uint32_t draw = 0, read = 0; bool separate = false; };
+FbBindings saveFbBindings(HostContext* hc) {
+    FbBindings b;
+    b.draw = uint32_t(hgGetInt(hc, kFramebufferBinding));
+    b.read = b.draw;
+    // A native ES 3 / desktop context has separate read and draw bindings even for an ES 2 guest
+    // (APPLE_framebuffer_multisample); glBlitFramebuffer marks that capability. ES 1/2 contexts have one.
+    // If EGL fell back to an ES 2 context the query is an unsupported enum and leaves the sentinel untouched:
+    // then there is only the one binding, and restoring through the read/draw targets would be an error.
+    if ((hc->api >= 3 || hc->desktop || hc->fn.glBlitFramebuffer || hc->fn.glResolveMultisampleFramebufferAPPLE) &&
+        hc->fn.glGetIntegerv) {
+        int32_t v[4] = {-1, -1, -1, -1};
+        hc->fn.glGetIntegerv(kReadFramebufferBinding, v);
+        if (v[0] != -1) b.read = uint32_t(v[0]);
+    }
+    b.separate = b.read != b.draw;
+    return b;
+}
+void restoreFbBindings(HostContext* hc, const FbBindings& b) {
+    if (b.separate) {
+        hc->fn.glBindFramebuffer(kDrawFramebuffer, b.draw);
+        hc->fn.glBindFramebuffer(kReadFramebuffer, b.read);
+    } else {
+        hc->fn.glBindFramebuffer(kFramebuffer, b.draw);
+    }
+}
+} // namespace
+
 bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int& width, int& height,
                          std::vector<uint8_t>& rgba, bool& direct) {
     discardExpiredBinding();
@@ -1145,7 +1179,12 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
                 if (uint32_t(k >> 32) == hc->guestSharegroup && v.layer) { d = v; rbName = uint32_t(k); break; }
         }
     }
-    if (hgDebugLevel >= 2) p.log(LogLevel::Debug, "GL --- present rb " + std::to_string(rbName));
+    if (hgDebugLevel >= 2) {
+        const int32_t currFb = hgGetInt(hc, kFramebufferBinding);
+        p.log(LogLevel::Debug, "GL --- present rb " + std::to_string(rbName) +
+              ", fbo bound: " + std::to_string(currFb) +
+              ", rb bound: " + std::to_string(rb));
+    }
     if (!d.layer || d.width <= 0 || d.height <= 0) return false;
     layer = d.layer;
     width = d.width;
@@ -1154,9 +1193,15 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     const int n = st.presents + 1;
     std::string probe;
     const bool sample = n == 1 || n == 30 || n == 60 || n == 120 || n == 300 || n == 600 || (n > 600 && n % 1800 == 0);
-    if (sample && hc->fn.glReadPixels) {
+    if (sample && hasReadbackFns(hc)) {
         // Diagnostic: sample the frame before it goes to the display, so a blank
         // screen can be told apart from a frame the GPU really rendered black.
+        const FbBindings saved = saveFbBindings(hc);
+        if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
+        hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
+        hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+        if (hc->fn.glFlush) hc->fn.glFlush();
+
         uint64_t sum[3] = {}, lit = 0;
         for (int gy = 0; gy < 8; ++gy)
             for (int gx = 0; gx < 8; ++gx) {
@@ -1165,6 +1210,9 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
                 sum[0] += px[0]; sum[1] += px[1]; sum[2] += px[2];
                 if (px[0] > 8 || px[1] > 8 || px[2] > 8) ++lit;
             }
+
+        restoreFbBindings(hc, saved);
+
         probe = " (average rgb " + std::to_string(sum[0] / 64) + "," + std::to_string(sum[1] / 64) + "," +
                 std::to_string(sum[2] / 64) + ", " + std::to_string(lit) + "/64 samples lit)";
     }
@@ -1190,17 +1238,19 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     }
 
     // Read the drawable back for the software compositor.
-    if (!hc->fn.glGenFramebuffers || !hc->fn.glReadPixels) return false;
-    const int32_t prevFb = hgGetInt(hc, kFramebufferBinding);
+    if (!hasReadbackFns(hc)) return false;
+    const FbBindings saved = saveFbBindings(hc);
     if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
     hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
     hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+    if (hc->fn.glFlush) hc->fn.glFlush();
     const int32_t prevPack = hgGetInt(hc, kPackAlignment);
     hc->fn.glPixelStorei(kPackAlignment, 4);
     rgba.resize(size_t(width) * size_t(height) * 4);
     hc->fn.glReadPixels(0, 0, width, height, kRgba, kUnsignedByte, rgba.data());
     hc->fn.glPixelStorei(kPackAlignment, prevPack ? prevPack : 4);
-    hc->fn.glBindFramebuffer(kFramebuffer, uint32_t(prevFb));
+    restoreFbBindings(hc, saved);
+    ++st.presents;   // a fallback present counts too, so the diagnostic sampling above stays rate-limited
     return true;
 }
 
