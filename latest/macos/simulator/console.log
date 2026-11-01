@@ -1,4 +1,7 @@
 GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
+[gpu] GL layer (64.0, 64.0)
+[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
+[gpu] GL layer removed
 Loaded UIKitTest: armv7, 157 imports, 0 initializers, entry 0x0000e0bb UIKitTest+41146 _main
 Objective-C: 5 classes, 0 categories, 170 selector refs
 [teardown] waiting for the guest run to finish
@@ -95,8 +98,6 @@ ok PanelKeyed nib: outlet + label text
 
 ok PanelKeyed nib: action connection + button title
 
-[gpu] GL layer (64.0, 64.0)
-[gpu] layout picture (402.0, 603.0) gl (64.0, 64.0) super true
 ok loadNibNamed: missing NIB raises NSInternalInconsistencyException
 
 ok loadNibNamed: does not strip Landscape to load Panel
@@ -135,7 +136,6 @@ ok glCheckFramebufferStatus complete
 GPU: presented frame 1 directly (average rgb 255,0,0, 64/64 samples lit)
 ok OpenGL ES clear, glReadPixels & presentRenderbuffer
 
-[gpu] GL layer removed
 [autotap] 70.0,350.0
 [autotap] 230.0,350.0
 ok drawRect: was called by the compositor
@@ -162,4 +162,4 @@ App exited with code 0
 [teardown] host audio stopped; queueing the exit callback
 [teardown] delivering the exit callback
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 24006
+com.lfull.HydrogenVM: 25496
