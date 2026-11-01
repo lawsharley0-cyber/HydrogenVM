@@ -1728,6 +1728,63 @@ int runFullSubsystemTests() {
     }
 
 
+    // AVPlayerItem starts Unknown; readiness is observed after association with
+    // a player. Apple documents this transition; a synchronous Ready initial
+    // observation made UE3 call play on a player it had not created yet.
+    {
+        struct ReadyObserver : ObjC::HostObject {
+            std::vector<int64_t> states;
+            std::vector<uint32_t> contexts;
+            ObjC::id player = 0, primary = 0;
+            bool playerAssigned = true;
+        };
+        auto cls = r.defineClass("HVMPlayerItemReadyObserver", "NSObject");
+        cls.method("observeValueForKeyPath:ofObject:change:context:", [](Ctx& x) {
+            auto& state = ObjC::rt(x).host<ReadyObserver>(x.cpu.r[0]);
+            Runtime::ArgReader args(x.cpu, x.mem, 2);
+            args.word();
+            const auto item = args.word(), change = args.word(), context = args.word();
+            const int64_t status = Foundation::numberInt(x, Foundation::dictGet(x, change, "new"));
+            state.states.push_back(status); state.contexts.push_back(context);
+            if (status == 1 && item == state.primary) {
+                state.playerAssigned &= state.player != 0;
+                if (state.player) ObjC::rt(x).send(x.cpu, state.player, "play");
+            }
+        }, "v@:@@@^v");
+        const auto observer = r.createInstance(cls.cls());
+        r.setHost(observer, std::make_unique<ReadyObserver>());
+        auto& state = r.host<ReadyObserver>(observer);
+        const auto key = Foundation::makeString(cx, "status");
+        const std::string mediaPath = proc.homePath() + "/ready-test.wav";
+        // Valid PCM WAV with one silent mono sample, independently encoded.
+        const uint8_t wave[] = {'R','I','F','F',38,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0,
+            1,0,1,0,0x40,0x1f,0,0,0x80,0x3e,0,0,2,0,16,0,'d','a','t','a',2,0,0,0,0,0};
+        std::ofstream(mediaPath,std::ios::binary).write(reinterpret_cast<const char*>(wave),sizeof wave);
+        const auto url = Foundation::makeFileURL(cx, mediaPath);
+        auto item = [&] { return uint32_t(r.send(cpu, r.getClass("AVPlayerItem"), "playerItemWithURL:", {url})); };
+        auto player = [&](uint32_t i) { return uint32_t(r.send(cpu, r.getClass("AVPlayer"), "playerWithPlayerItem:", {i})); };
+        state.primary = item();
+        r.send(cpu, state.primary, "addObserver:forKeyPath:options:context:", {observer,key,5,0x1234});
+        check(uint32_t(r.send(cpu,state.primary,"status")) == 0 && state.states == std::vector<int64_t>{0},
+              "AVPlayerItem Initial KVO reports Unknown before a player exists");
+        state.player = player(state.primary);
+        Foundation::mainRunLoop(proc).runOnce(cpu, 0);
+        check(state.states == std::vector<int64_t>({0,1}) && state.playerAssigned &&
+              uint32_t(r.send(cpu,state.player,"rate")) == 0x3f800000u,
+              "AVPlayerItem readiness KVO arrives after player construction and can start playback");
+        r.send(cpu,state.primary,"removeObserver:forKeyPath:context:",{observer,key,0x1234});
+        const auto removed = item();
+        r.send(cpu,removed,"addObserver:forKeyPath:options:context:",{observer,key,5,0x5678});
+        const size_t before = state.states.size();
+        player(removed);
+        r.send(cpu,removed,"removeObserver:forKeyPath:context:",{observer,key,0x5678});
+        Foundation::mainRunLoop(proc).runOnce(cpu, 0);
+        check(state.states.size() == before && uint32_t(r.send(cpu,removed,"status")) == 1,
+              "AVPlayerItem removing a status observer cancels pending readiness delivery");
+        r.release(cpu, observer);
+        std::filesystem::remove(mediaPath);
+    }
+
     {
         const auto backing = Foundation::makeDict(cx, {}, true, true);
         int reads = 0, writes = 0, removes = 0;
