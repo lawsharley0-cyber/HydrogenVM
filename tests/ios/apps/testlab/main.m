@@ -1867,10 +1867,23 @@ static TLResult *runCaseY(void) {
     memset(&ctx1, 0, sizeof(ctx1));
     memset(&ctx2, 0, sizeof(ctx2));
     _Unwind_SjLj_Register(&ctx1);
+    struct TLYUnwindContext *outerFrame = ctx1.prev;   // frames the caller's own code may already have registered
     _Unwind_SjLj_Register(&ctx2);
-    const BOOL sjljOk = (ctx2.prev == &ctx1);
+    // Unregistering must really pop the frame: after ctx2 is gone a new frame links to ctx1 again, and once
+    // everything is unregistered a fresh frame links to the frame that was on top before ctx1.
     _Unwind_SjLj_Unregister(&ctx2);
+    struct TLYUnwindContext ctx3;
+    memset(&ctx3, 0, sizeof(ctx3));
+    _Unwind_SjLj_Register(&ctx3);
+    const BOOL relinkOk = (ctx3.prev == &ctx1);
+    _Unwind_SjLj_Unregister(&ctx3);
     _Unwind_SjLj_Unregister(&ctx1);
+    struct TLYUnwindContext ctx4;
+    memset(&ctx4, 0, sizeof(ctx4));
+    _Unwind_SjLj_Register(&ctx4);
+    const BOOL emptyOk = (ctx4.prev == outerFrame);   // back to whatever frame was on top before ctx1
+    _Unwind_SjLj_Unregister(&ctx4);
+    const BOOL sjljOk = (ctx2.prev == &ctx1) && relinkOk && emptyOk;
 
     const BOOL ok = stringOk && hookOk && unhookOk && rbtreeOk && sjljOk;
     r.status = ok ? @"passed" : @"failed";
