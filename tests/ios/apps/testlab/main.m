@@ -1881,9 +1881,9 @@ static TLResult *runCaseY(void) {
     struct TLYUnwindContext ctx4;
     memset(&ctx4, 0, sizeof(ctx4));
     _Unwind_SjLj_Register(&ctx4);
-    const BOOL emptyOk = (ctx4.prev == outerFrame);   // back to whatever frame was on top before ctx1
+    const BOOL restoredFrameOk = (ctx4.prev == outerFrame);   // back to whatever frame was on top before ctx1
     _Unwind_SjLj_Unregister(&ctx4);
-    const BOOL sjljOk = (ctx2.prev == &ctx1) && relinkOk && emptyOk;
+    const BOOL sjljOk = (ctx2.prev == &ctx1) && relinkOk && restoredFrameOk;
 
     const BOOL ok = stringOk && hookOk && unhookOk && rbtreeOk && sjljOk;
     r.status = ok ? @"passed" : @"failed";
