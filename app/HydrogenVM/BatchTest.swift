@@ -476,6 +476,7 @@ final class BatchTestRunner {
             guard let self else { return }
 
             _ = await Self.waitForArenaRelease(8.0)
+            guard !Task.isCancelled, self.status == .running else { return }
 
             var s: HVMSession!
             var exitBox: ExitBox!
@@ -541,6 +542,7 @@ final class BatchTestRunner {
                     s.stop()
                     self.activeSession = nil
                     _ = await Self.waitForArenaRelease(5.0)
+                    guard !Task.isCancelled, self.status == .running else { return }
                     try? await Task.sleep(for: .milliseconds(1000))
                     continue
                 } else {
@@ -761,6 +763,7 @@ final class BatchTestRunner {
         
         while startRetries < 5 {
             _ = await Self.waitForArenaRelease(8.0)
+            if Task.isCancelled || status != .running { return (false, 0, nil) }
             box = ExitBox()
             s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
             s.keepGoing = options.keepGoing
@@ -793,6 +796,7 @@ final class BatchTestRunner {
                 s.stop()
                 activeSession = nil
                 _ = await Self.waitForArenaRelease(5.0)
+                if Task.isCancelled || status != .running { return (false, 0, nil) }
                 try? await Task.sleep(for: .milliseconds(1000))
                 continue
             } else {
