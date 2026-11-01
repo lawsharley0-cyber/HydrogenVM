@@ -82,6 +82,7 @@ class TestCensus(unittest.TestCase):
             if not ipa_path.exists():
                 self.skipTest(f"Fixture IPA {fixture_name} not found at repo root")
             res = census.census_ipa(ipa_path, self.manifest)
+            self.assertEqual(res["slice"], meta["slice"], fixture_name)
             ref = meta["reference"]
             self.assertTrue(res["is_fixture"])
             # Computed from the IPA and the live manifest, never copied from the reference. The import count is a
@@ -162,6 +163,14 @@ class TestProbeFastMode(unittest.TestCase):
     def test_summary_counts_tainted_runs_whatever_their_status(self):
         results = [{"bundleId": "a", "status": "ok", "tainted": True}, {"bundleId": "b", "status": "ok"}]
         self.assertEqual(self.probe.summarize_runs(results, 0, False, None)["taintedRunCount"], 1)
+
+    def test_baseline_settings_must_match_for_fixed_claims(self):
+        base = {"seconds": 30, "launches": 2}
+        self.assertTrue(self.probe.baseline_settings_match(base, 30, 2))
+        self.assertFalse(self.probe.baseline_settings_match(base, 10, 2))   # shorter run than the baseline
+        self.assertFalse(self.probe.baseline_settings_match(base, 30, 1))   # single launch vs multi-launch baseline
+        self.assertTrue(self.probe.baseline_settings_match({"seconds": 30}, 30, 1))   # old baselines are single launch
+        self.assertFalse(self.probe.baseline_settings_match([], 30, 1))
 
     def test_baseline_coverage_is_ipa_hash_and_mode(self):
         base = {"results": [{"sha256": "h1", "mode": "software"}, {"sha256": "h2", "mode": "gpu"}, {"mode": "gpu"}]}

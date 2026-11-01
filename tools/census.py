@@ -241,7 +241,7 @@ def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None)
     return {
         "ipa": ipa_name,
         "sha256": file_hash,
-        "slice": arch or "armv7",
+        "slice": arch or (fixture["slice"] if fixture else "armv7"),
         "imported_non_objc_symbols": imported_non_objc,
         "unimplemented_symbols": unimp_syms,
         "missing_or_stubbed_classes": miss_classes,

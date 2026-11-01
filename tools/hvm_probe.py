@@ -250,6 +250,12 @@ def baseline_coverage(baseline):
             if isinstance(r, dict) and r.get('sha256') and r.get('status') != 'import-failed'}   # an app that never ran was not probed
 
 
+def baseline_settings_match(baseline, seconds, launches):
+    """A baseline is only comparable when it ran each app as long and as many times as this run does."""
+    return (isinstance(baseline, dict) and baseline.get('seconds') == seconds
+            and (baseline.get('launches') or 1) == (launches or 1))
+
+
 def sample_ipas(ipas, seed, size):
     """--fast: a seeded sample of at most `size` apps, in name order, so the same seed picks the same apps."""
     rng = random.Random(seed)
@@ -427,9 +433,11 @@ def main():
         if args.fast:
             # An issue missing from a sampled run is only known to be fixed when this run probed everything the
             # baseline did: the same (ipa hash, mode) pairs.
-            base_cov = baseline_coverage(json.loads(args.baseline.read_text(encoding='utf-8')))
-            now_cov = {(r.get('sha256'), r['mode']) for r in results if r.get('status') != 'import-failed'}
-            if not base_cov or not base_cov <= now_cov:
+            base_doc = json.loads(args.baseline.read_text(encoding='utf-8'))
+            base_cov = baseline_coverage(base_doc)
+            # a run that crashed or never imported did not get far enough to show an issue is gone
+            now_cov = {(r.get('sha256'), r['mode']) for r in results if r.get('status') not in ('import-failed', 'crash')}
+            if not base_cov or not base_cov <= now_cov or not baseline_settings_match(base_doc, args.seconds, args.launches):
                 diff['fixed'] = []
                 diff['fixedNotComparable'] = True
         summary['baselineDiff'] = diff
