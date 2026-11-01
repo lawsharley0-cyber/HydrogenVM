@@ -29,6 +29,17 @@ with tempfile.TemporaryDirectory() as directory:
         assert bundle['backtrace'] and 'TestLab+' in bundle['backtrace'][0]
         assert 0 < len(bundle['logs']) <= 2000
         assert bundle['bundleId'] and 'guestMIPS' in bundle['perf']
+        # T2c (#259): the last host calls of each thread, oldest first, newest at the end.
+        ring = bundle['callRing']
+        assert ring, 'FAIL: crash bundle has no call ring threads'
+        for thread in ring:
+            calls = thread['calls']
+            assert len(calls) == min(64, thread['total']), (len(calls), thread['total'])
+            seqs = [call['seq'] for call in calls]
+            assert seqs == sorted(set(seqs)), 'FAIL: ring entries are not strictly increasing'
+            assert not calls or seqs[-1] == thread['total'], 'FAIL: the newest entry is not the ring total'
+            assert all(call['kind'] in ('hle', 'objc', 'gl') and 'name' in call for call in calls)
+            assert all(call['name'] for call in calls if call['kind'] == 'hle'), 'FAIL: an HLE entry has no name'
         results.append(data['signature'])
     assert len(set(results)) == 1, results
-    print(f'PASS: forced Test Lab crash; signature={results[0]}; stable across two launches; registers, image offsets, logs, hash, page size and perf present')
+    print(f'PASS: forced Test Lab crash; signature={results[0]}; stable across two launches; registers, image offsets, logs, hash, page size, perf and call ring present')
