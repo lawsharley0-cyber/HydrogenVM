@@ -1,6 +1,8 @@
 #include "Process.hpp"
+#include "MemoryDiagnostics.hpp"
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
+#include "runtime/gl/HostGL.hpp"
 #include <sstream>
 #include "audio/Audio.hpp"
 #include "loader/ElfLoader.hpp"
@@ -151,6 +153,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     registerObjCRuntime(*this);
     registerUnwinder(*this);
     registerLibStdcxx(*this);
+    registerLibcxx(*this);
     registerLibcPosix(*this);
     registerZlib(*this);
     registerLibcNet(*this);
@@ -238,6 +241,9 @@ void Process::setBackgrounded(bool b) {
     }
     mixer_->setAllPaused(b);
     lifeCv_.notify_all();
+    if (memoryDiagEnabled()) {
+        try { recordMemorySample(b ? "backgrounded" : "foregrounded"); } catch (...) {}
+    }
 }
 void Process::waitWhileBackgrounded() {
     std::unique_lock<std::mutex> lk(lifeMu_);
@@ -764,6 +770,7 @@ void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
         if (t->objcStateFree) t->objcStateFree(t->objcState);
         t->objcState = nullptr;
     }
+    try { HostGL::threadExit(*this); } catch (...) {}   // release a retired GL worker context this thread still holds
     {
         std::lock_guard<std::mutex> lk(t->m);
         t->finished = true;
@@ -898,9 +905,42 @@ struct GuestSampler {
         std::fclose(f);
     }
 };
+
+// One bounded sample every five seconds, independent of guest rendering and
+// run-loop progress. Join before Process::run returns; never retain a Process.
+// No GPU calls, guest execution, per-allocation logging or accumulating history.
+struct MemorySampler {
+    Process& p;
+    std::mutex mu;
+    std::condition_variable cv;
+    bool stopped = false;
+    std::thread thread;
+    explicit MemorySampler(Process& proc) : p(proc) {
+        p.recordMemorySample("run-start");
+        thread = std::thread([this] {
+            std::unique_lock<std::mutex> lock(mu);
+            while (!cv.wait_for(lock, std::chrono::seconds(5), [this] { return stopped; })) {
+                lock.unlock();
+                try { p.recordMemorySample("interval"); } catch (...) { /* diagnostics must not stop a game */ }
+                lock.lock();
+            }
+        });
+    }
+    ~MemorySampler() {
+        { std::lock_guard<std::mutex> lock(mu); stopped = true; }
+        cv.notify_one();
+        if (thread.joinable()) thread.join();
+        try { p.recordMemorySample("run-end"); } catch (...) {}
+    }
+};
 } // namespace
 
 int Process::run() {
+    std::unique_ptr<MemorySampler> memorySampler;
+    if (memoryDiagEnabled()) {
+        try { memorySampler = std::make_unique<MemorySampler>(*this); }
+        catch (...) { /* best-effort diagnostics, including thread creation */ }
+    }
     std::unique_ptr<GuestSampler> sampler;
     if (const char* prof = std::getenv("HVM_GUEST_PROFILE"); prof && *prof) sampler = std::make_unique<GuestSampler>(*this, prof);
     t_thread = mainThread_;
@@ -1085,7 +1125,7 @@ std::string Process::crashBundle() {
         std::lock_guard<std::mutex> lk(logRingMu_);
         for (size_t i = 0; i < logRing_.size(); ++i) out << (i ? "," : "") << quote(logRing_[i]);
     }
-    out << "],\"fileHistory\":[";
+    out << "],\"runtimeMemorySamples\":" << memorySamplesJson() << ",\"fileHistory\":[";
     {
         std::lock_guard<std::mutex> lk(fileRingMu_);
         for (size_t i = 0; i < fileRing_.size(); ++i) {
@@ -1208,6 +1248,15 @@ void Process::logf(LogLevel lvl, const char* fmt, ...) const {
 }
 
 void Process::reportMissing(const std::string& what) {
+    // Every call is recorded (T2a, #257): count, time since launch, and on the first call of a name the
+    // guest caller and backtrace. The log line below stays once per name.
+    missingApis_.hit(what, std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count(),
+                     [this](MissingApiLog::Site& s) {
+                         const CPU::Cpu& cpu = currentThread().cpu;
+                         s.callerPc = cpu.r[CPU::kLR];
+                         s.caller = describeAddress(s.callerPc);
+                         s.backtrace = MissingApiLog::splitLines(backtrace(cpu, int(MissingApiLog::kMaxFrames) - 2));
+                     });
     {
         std::lock_guard<std::mutex> lk(missingMu_);
         if (!missing_.insert(what).second) return;
