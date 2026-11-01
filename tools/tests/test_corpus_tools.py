@@ -16,10 +16,13 @@ import bisect_corpus
 import hvm_report
 
 
+def clean_git_env():
+    # A caller's repository selection (for example from a git hook) must not redirect the fixture repositories.
+    return {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+
+
 def git(repo, *args):
-    # A caller's repository selection (for example from a git hook) must not redirect the fixture repository.
-    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
-    return subprocess.check_output(["git", *args], cwd=repo, text=True, stderr=subprocess.DEVNULL, env=env).strip()
+    return subprocess.check_output(["git", *args], cwd=repo, text=True, stderr=subprocess.DEVNULL, env=clean_git_env()).strip()
 
 
 @unittest.skipUnless(os.name == "posix", "hvm tooling integration requires Linux/macOS")
@@ -218,7 +221,7 @@ sys.exit({exit_status})
         repo, _ = self.repository()
         other = self.root / "other"
         other.mkdir()
-        subprocess.check_call(["git", "init", "-q", str(other)], stderr=subprocess.DEVNULL)
+        subprocess.check_call(["git", "init", "-q", str(other)], stderr=subprocess.DEVNULL, env=clean_git_env())
         wanted = git(repo, "rev-parse", "--show-toplevel")
         env = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other), "GIT_INDEX_FILE": str(other / ".git" / "index")}
         with mock.patch.dict(os.environ, env):
@@ -248,13 +251,31 @@ sys.exit({exit_status})
         repo, _ = self.repository()
         other = self.root / "other-repo"
         other.mkdir()
-        subprocess.check_call(["git", "init", "-q", str(other)], stderr=subprocess.DEVNULL)
+        subprocess.check_call(["git", "init", "-q", str(other)], stderr=subprocess.DEVNULL, env=clean_git_env())
         env = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other), "GIT_INDEX_FILE": str(other / ".git" / "index"),
                "GIT_COMMON_DIR": str(other / ".git")}
         with mock.patch.dict(os.environ, env):
             result = bisect_corpus.run(["git", "rev-parse", "--show-toplevel"], repo)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(Path(result.stdout.strip()).resolve(), Path(repo).resolve())
+
+    def test_fixture_init_works_when_the_caller_selects_another_repository(self):
+        decoy = self.root / "decoy"
+        decoy.mkdir()
+        subprocess.check_call(["git", "init", "-q", str(decoy)], stderr=subprocess.DEVNULL, env=clean_git_env())
+        target = self.root / "fresh"
+        target.mkdir()
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(decoy / ".git"), "GIT_WORK_TREE": str(decoy)}):
+            subprocess.check_call(["git", "init", "-q", str(target)], stderr=subprocess.DEVNULL, env=clean_git_env())
+        self.assertTrue((target / ".git").is_dir())
+
+    def test_report_with_infinite_floats_is_rejected(self):
+        hvm = self.fake_hvm("hvm")
+        hvm.write_text(hvm.read_text().replace("json.dumps(report)", "json.dumps(report).replace('\"wallSeconds\": 1', '\"wallSeconds\": 1e999')"))
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(ab_diff.main(self.ab_args(hvm, hvm)), 2)
+        self.assertIn("no valid hvm report", errors.getvalue())
+        self.assertFalse((self.root / "ab" / "diff.json").exists())
 
     def test_planted_change_reports_every_observation_category(self):
         with contextlib.redirect_stdout(io.StringIO()):

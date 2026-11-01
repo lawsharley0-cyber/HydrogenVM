@@ -66,6 +66,13 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def _finite_float(text):
+    value = float(text)
+    if value in (float("inf"), float("-inf")):   # for example 1e999
+        raise ValueError(f"report contains non-finite number {text}")
+    return value
+
+
 def _reject_constant(name):
     raise ValueError(f"report contains non-finite number {name}")
 
@@ -98,7 +105,7 @@ def observation(build, target, folder, args):
     (folder / "stdout.log").write_text(result.stdout, encoding="utf-8")
     (folder / "stderr.log").write_text(result.stderr, encoding="utf-8")
     try:
-        report = json.loads(report_path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
+        report = json.loads(report_path.read_text(encoding="utf-8"), parse_constant=_reject_constant, parse_float=_finite_float)
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"no valid hvm report (exit {result.returncode}); see {folder / 'stderr.log'}") from exc
     required = {"exitStatus": int, "crashed": bool, "loadError": str, "perf": dict, "audio": dict}
