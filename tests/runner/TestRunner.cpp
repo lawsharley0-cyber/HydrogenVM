@@ -2000,6 +2000,46 @@ int runFullSubsystemTests() {
         proc.heap().free(testGlyphsMem);
 
         call("_CGDataProviderRelease", {provider}); call("_CFRelease", {data}); call("_CGFontRelease", {cg});
+        {
+            // CTFontDescriptor attribute dictionaries: kCTFontNameAttribute reaches the descriptor, its copy and the font.
+            const uint32_t mockName = Foundation::makeString(cx, "Arial", true);
+            // Unresolved _k* imports are materialised by the loader as CFStrings holding the symbol name without the
+            // underscore (the convention text_font() already relies on for kCTFontAttributeName); use that value.
+            const uint32_t fontNameKey = Foundation::makeString(cx, "kCTFontNameAttribute", true);
+            const uint32_t fontAttrs = Foundation::makeDict(cx, {{fontNameKey, mockName}}, true);
+            const uint32_t descWithAttrs = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {fontAttrs}));
+            const uint32_t createdFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {descWithAttrs, 0, 0}));
+            const auto familyAttrs = uint32_t(call("_CTFontCopyFamilyName", {createdFont}));
+            const uint32_t otherName = Foundation::makeString(cx, "Courier", true);
+            const uint32_t otherAttrs = Foundation::makeDict(cx, {{fontNameKey, otherName}}, true);
+            const uint32_t renamed = uint32_t(call("_CTFontDescriptorCreateCopyWithAttributes", {descWithAttrs, otherAttrs}));
+            const uint32_t renamedFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {renamed, 0, 0}));
+            const auto renamedFamily = uint32_t(call("_CTFontCopyFamilyName", {renamedFont}));
+            const uint32_t againFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {descWithAttrs, 0, 0}));
+            const auto againFamily = uint32_t(call("_CTFontCopyFamilyName", {againFont}));
+            // Renaming a copy of the existing ct fixture's descriptor changes the copy only.
+            const uint32_t fixtureDesc = uint32_t(call("_CTFontCopyFontDescriptor", {ct}));
+            const uint32_t fixtureRenamed = uint32_t(call("_CTFontDescriptorCreateCopyWithAttributes", {fixtureDesc, otherAttrs}));
+            const uint32_t fixtureFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {fixtureRenamed, 0, 0}));
+            const auto fixtureFamily = uint32_t(call("_CTFontCopyFamilyName", {fixtureFont}));
+            const auto ctFamily = uint32_t(call("_CTFontCopyFamilyName", {ct}));
+            const uint32_t emptyDesc = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {0}));
+            const uint32_t emptyFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {emptyDesc, 0, 0}));
+            const auto emptyFamily = uint32_t(call("_CTFontCopyFamilyName", {emptyFont}));
+            // An attribute key other than kCTFontNameAttribute is not modelled: it must be reported, not silently dropped.
+            const size_t missingBefore = proc.missingCount();
+            const uint32_t sizeKey = Foundation::makeString(cx, "kCTFontSizeAttribute", true);
+            const uint32_t sizeVal = Foundation::makeString(cx, "12", true);
+            const uint32_t unsupportedAttrs = Foundation::makeDict(cx, {{sizeKey, sizeVal}}, true);
+            const uint32_t unsupportedDesc = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {unsupportedAttrs}));
+            const bool reportedUnsupported = unsupportedDesc && proc.missingCount() == missingBefore + 1;
+            check(reportedUnsupported, "CTFontDescriptor attribute APIs report unsupported attribute keys instead of ignoring them");
+            check(descWithAttrs && renamed && createdFont && Foundation::utf8(cx, familyAttrs) == "Arial" &&
+                  Foundation::utf8(cx, renamedFamily) == "Courier" && Foundation::utf8(cx, againFamily) == "Arial" &&
+                  Foundation::utf8(cx, emptyFamily) == "Helvetica" &&
+                  Foundation::utf8(cx, fixtureFamily) == "Courier" && Foundation::utf8(cx, ctFamily) == "HVM Test",
+                  "CTFontDescriptor attribute APIs apply kCTFontNameAttribute, leave the source descriptor alone, and default an unnamed descriptor to Helvetica");
+        }
         const uint32_t desc = uint32_t(call("_CTFontCopyFontDescriptor", {ct}));
         const uint32_t copy = uint32_t(call("_CTFontCreateWithFontDescriptor", {desc, 0, 0}));
         const auto family = uint32_t(call("_CTFontCopyFamilyName", {copy}));
