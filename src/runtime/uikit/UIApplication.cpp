@@ -622,10 +622,17 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         rt(cx).poolPop(c, fp);
     });
     installLifecycle(x.proc);
-    for (;;) Foundation::mainRunLoop(x.proc).runUntil(x.cpu, 1e18);
+    for (;;) runApplicationLoop(x, 1e18);
 }
 
 } // namespace
+
+// The application's main loop. UIKit runs the main run loop in its default mode, so a timer or
+// source a component added in another mode waits for a run in that mode instead of firing on a
+// frame. Host pumps that are not the app loop (dispatch_main, -[NSRunLoop run]) stay unfiltered.
+void runApplicationLoop(Ctx& x, double until) {
+    Foundation::mainRunLoop(x.proc).runUntil(x.cpu, until, false, Foundation::defaultRunLoopModeKey());
+}
 
 void registerUIApplication(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
