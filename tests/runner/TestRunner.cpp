@@ -4279,6 +4279,60 @@ int runFullSubsystemTests() {
         check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
     }
 
+    // 2f13. Pthread condition variable process stop broadcast
+    {
+        ProcessConfig pcfg;
+        pcfg.homePath = "/tmp/hvm_pthreads_stop";
+        Process isolated(pcfg);
+        auto& icpu = isolated.mainThread().cpu;
+
+        const uint32_t cv = isolated.heap().allocZeroed(4);
+        const uint32_t mu = isolated.heap().allocZeroed(4);
+        isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_init"), {mu, 0});
+        isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_cond_init"), {cv, 0});
+
+        // The waiters' state is shared with the host function so it outlives this scope if a waiter is slow to exit.
+        struct StopCounts { std::atomic<int> ready{0}, finished{0}; };
+        const auto counts = std::make_shared<StopCounts>();
+        auto& readyCount = counts->ready;
+        auto& finishedCount = counts->finished;
+        const uint32_t waiterFn = isolated.registerHostFunction("waiter", [cv, mu, counts](Runtime::Ctx& x) {
+            auto& readyCount = counts->ready;
+            auto& finishedCount = counts->finished;
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_lock"), {mu});
+            ++readyCount;
+            try {
+                x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_cond_wait"), {cv, mu});
+            } catch (const Runtime::ProcessExit&) {
+            } catch (const CPU::GuestFault&) {}
+            ++finishedCount;
+        });
+
+        for (int i = 0; i < 3; ++i) isolated.startThread(waiterFn, 0, 16u << 10, false);
+
+        const auto tStart = std::chrono::steady_clock::now();
+        while (readyCount < 3 && std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
+        const bool allReady = readyCount.load() == 3;   // recorded before the lock loop, not inferred afterwards
+        // Only a held mutex proves all three waiters are parked in cond_wait (it was released by each one's wait).
+        bool acquired = false;
+        while (!(acquired = isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_trylock"), {mu}) == 0) &&
+               std::chrono::steady_clock::now() - tStart < std::chrono::seconds(2)) std::this_thread::yield();
+        if (acquired) isolated.callGuest(icpu, *isolated.lookupSymbol("_pthread_mutex_unlock"), {mu});
+
+        const auto t0 = std::chrono::steady_clock::now();
+        isolated.requestStop();
+
+        while (finishedCount < 3 && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2)) std::this_thread::yield();
+        const auto t1 = std::chrono::steady_clock::now();
+
+        const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        check(allReady && acquired && finishedCount.load() == 3 && ms < 35.0,
+              "pthread condition variable process stop broadcast wakes up and joins quickly");
+        // The Process must outlive every waiter, even when the check above failed: give a stuck one time to leave.
+        const auto drain = std::chrono::steady_clock::now();
+        while (finishedCount < 3 && std::chrono::steady_clock::now() - drain < std::chrono::seconds(10)) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)

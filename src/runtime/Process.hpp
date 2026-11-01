@@ -458,6 +458,7 @@ void registerLibcStdlib(Process& p);
 void registerLibcMath(Process& p);
 void registerLibcTime(Process& p);
 void registerLibcPthread(Process& p);
+void pthreadsBroadcastStop(Process& p);
 void registerLibcSystem(Process& p);
 void registerCxxRuntime(Process& p);
 void registerUnwinder(Process& p);
