@@ -1,7 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Twenty-five automated cases (TL-A--TL-Y); see docs/TEST_LAB.md for the
-// complete list and independent oracles. The original five cases are:
+// Five deterministic test cases:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
 //   TL-B  CPU correctness    — xorshift32 workload, result compared against a
@@ -16,7 +15,7 @@
 // Invocation modes:
 //   Default    : interactive; shows a menu of test status, tap to run individual
 //                or tap "Run All".
-//   --run TL-Y : automated; runs a single case, writes result to Documents/, exits.
+//   --run TL-X : automated; runs a single case, writes result to Documents/, exits.
 //   --runall   : automated; runs all cases sequentially, writes combined result.
 //
 // Result file: Documents/testlab_result.json  (schema version 1)
@@ -29,7 +28,6 @@
 //
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
-#include "objc_conformance.h"
 #import <Security/Security.h>
 #include <stdio.h>
 #include <errno.h>
@@ -76,13 +74,6 @@ static const char *kAppBuild        = "1";
 #define CASE_P  @"TL-P"
 #define CASE_Q  @"TL-Q"
 #define CASE_R  @"TL-R"
-#define CASE_S  @"TL-S"
-#define CASE_X  @"TL-X"
-#define CASE_Y  @"TL-Y"
-#define CASE_T  @"TL-T"
-#define CASE_U  @"TL-U"
-#define CASE_V  @"TL-V"
-#define CASE_W  @"TL-W"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -1645,7 +1636,6 @@ static TLResult *runCaseR(void) {
     TLResult *r = [[TLResult alloc] initWithId:CASE_R version:1];
     writeCheckpoint(CASE_R);
     r.checkpointWritten = YES;
-    GLenum emptyStatus = 0, colorStatus = 0;   // framebuffer completeness answers, reported in the result
     UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 320, 480)];
     UIViewController *controller = [[UIViewController alloc] init];
     window.rootViewController = controller;
@@ -1661,14 +1651,10 @@ static TLResult *runCaseR(void) {
     if (ctx && [EAGLContext setCurrentContext:ctx]) {
         glGenFramebuffers(1, &fbo);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        emptyStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        const BOOL emptyFboOk = (emptyStatus == 0x8CD7);
         glGenRenderbuffers(1, &colorRb);
         glBindRenderbuffer(GL_RENDERBUFFER, colorRb);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8_OES, 64, 64);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRb);
-        colorStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        const BOOL colorFboOk = (colorStatus == 0x8CD5);
         glGenRenderbuffers(1, &depthRb);
         glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24_OES, 64, 64);
@@ -1723,7 +1709,6 @@ static TLResult *runCaseR(void) {
         const BOOL extensionsOk = extensions && strstr(extensions, "GL_OES_depth24") &&
                                   strstr(extensions, "GL_OES_stencil8") && strstr(extensions, "GL_OES_packed_depth_stencil");
         const BOOL ok = rootReplaced && depthOk && stencilOk && packedDepth == 24 && packedStencil == 8 && extensionsOk &&
-                        emptyFboOk && colorFboOk &&
                         pixel[0] == 0 && pixel[1] == 255 && pixel[2] == 0 && pixel[3] == 255;
         r.status = ok ? @"passed" : @"failed";
         if (!ok) r.reason = @"Root view replacement, depth/stencil allocation or stencil behavior differs from UIKit/GLES";
@@ -1731,187 +1716,12 @@ static TLResult *runCaseR(void) {
         r.status = @"failed";
         r.reason = @"Could not create a GLES 2 context";
     }
-    r.expected = @"three extensions present; depth=24/0, stencil=0/8, packed=24/8; rejected red draw leaves green; empty FBO 0x8CD7, colour-only FBO 0x8CD5";
-    r.actual = [NSString stringWithFormat:@"depth=%d/%d stencil=%d/%d packed=%d/%d pixel=rgba(%u,%u,%u,%u) emptyFbo=0x%X colorFbo=0x%X",
+    r.expected = @"three extensions present; depth=24/0, stencil=0/8, packed=24/8; rejected red draw leaves green";
+    r.actual = [NSString stringWithFormat:@"depth=%d/%d stencil=%d/%d packed=%d/%d pixel=rgba(%u,%u,%u,%u)",
                 depthBits, stencilBits, depthBits, stencilBits, packedDepth, packedStencil,
-                pixel[0], pixel[1], pixel[2], pixel[3], (unsigned)emptyStatus, (unsigned)colorStatus];
+                pixel[0], pixel[1], pixel[2], pixel[3]];
     r.diagnostics[@"packedDepthBits"] = @(packedDepth);
     r.diagnostics[@"packedStencilBits"] = @(packedStencil);
-    clearCheckpoint();
-    return r;
-}
-
-// TL-S--TL-W use plain C observations, including the separately compiled MRC
-// lifetime fixture. Expected values are authored with each independent oracle.
-static TLResult *runObjCCase(NSString *caseId, void (*fixture)(TLObjCObservation *)) {
-    TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
-    double t0 = monoMs();
-    writeCheckpoint(caseId);
-    r.checkpointWritten = YES;
-    TLObjCObservation observation = {0};
-    fixture(&observation);
-    BOOL ok = observation.count > 0 && observation.count <= TL_OBJC_MAX_CHECKS;
-    NSMutableDictionary *expected = [NSMutableDictionary dictionary];
-    NSMutableDictionary *actual = [NSMutableDictionary dictionary];
-    for (uint32_t i = 0; i < observation.count && i < TL_OBJC_MAX_CHECKS; ++i) {
-        NSString *name = [NSString stringWithUTF8String:observation.names[i]];
-        expected[name] = @(observation.expected[i]);
-        actual[name] = @(observation.actual[i]);
-        if (observation.actual[i] != observation.expected[i]) {
-            ok = NO;
-            if (!r.reason) r.reason = [NSString stringWithFormat:@"%@: expected %d, observed %d",
-                name, observation.expected[i], observation.actual[i]];
-        }
-    }
-    r.expected = expected;
-    r.actual = actual;
-    r.diagnostics[@"oracle"] = [NSString stringWithUTF8String:observation.oracle ?: "missing oracle"];
-    r.diagnostics[@"referenceRevision"] = @"fb265098298302243cd7eeaa1f63f0ba7786dd9a";
-    r.diagnostics[@"checks"] = @(observation.count);
-    r.status = ok ? @"passed" : @"failed";
-    if (!ok && !r.reason) r.reason = @"Invalid conformance fixture observation count";
-    r.durationMs = monoMs() - t0;
-    clearCheckpoint();
-    return r;
-}
-
-// TL-Y: libstdc++ 4.2 ABI conformance (string COW, list node hooking, RB-tree rebalancing, and SJLJ frames).
-struct TLYRbNode {
-    int color; // 0 = red, 1 = black
-    struct TLYRbNode *parent;
-    struct TLYRbNode *left;
-    struct TLYRbNode *right;
-};
-extern struct TLYRbNode *_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base(struct TLYRbNode *);
-extern void _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(bool, struct TLYRbNode *, struct TLYRbNode *, struct TLYRbNode *);
-
-struct TLYListNode {
-    struct TLYListNode *next;
-    struct TLYListNode *prev;
-};
-extern void _ZNSt15_List_node_base4hookEPS_(struct TLYListNode *, struct TLYListNode *);
-extern void _ZNSt15_List_node_base6unhookEv(struct TLYListNode *);
-
-struct TLYStringRep {
-    size_t length;
-    size_t capacity;
-    int refcount;
-};
-extern void *_ZNSs4_Rep12_S_empty_repEv(void);
-extern void *_ZNSs4_Rep9_S_createEmmRKSaIcE(size_t, size_t, const void *);
-extern void *_ZNSs4_Rep10_M_refcopyEv(void *);
-extern void _ZNSs4_Rep10_M_disposeERKSaIcE(void *, const void *);
-
-struct TLYUnwindContext {
-    struct TLYUnwindContext *prev;
-    int32_t call_site;
-    uint32_t data[4];
-    uint32_t personality;
-    uint32_t lsda;
-    uint32_t jbuf[3];
-};
-extern void _Unwind_SjLj_Register(struct TLYUnwindContext *);
-extern void _Unwind_SjLj_Unregister(struct TLYUnwindContext *);
-
-static TLResult *runCaseY(void) {
-    TLResult *r = [[TLResult alloc] initWithId:CASE_Y version:1];
-    writeCheckpoint(CASE_Y);
-    r.checkpointWritten = YES;
-
-    // 1. std::string COW _Rep conformance
-    struct TLYStringRep *emptyRep = (struct TLYStringRep *)_ZNSs4_Rep12_S_empty_repEv();
-    const BOOL emptyOk = emptyRep != NULL && emptyRep->length == 0 && emptyRep->capacity == 0 && emptyRep->refcount == -1;
-
-    struct TLYStringRep *dynRep = (struct TLYStringRep *)_ZNSs4_Rep9_S_createEmmRKSaIcE(32, 0, NULL);
-    const BOOL dynCreated = dynRep != NULL && dynRep->capacity >= 32 && dynRep->refcount == 0;
-    if (dynRep) _ZNSs4_Rep10_M_refcopyEv(dynRep);
-    const BOOL refcopyOk = dynCreated && dynRep->refcount == 1;
-    // First dispose drops the extra reference (1 -> 0); the second releases the representation.
-    BOOL disposeOk = NO;
-    if (dynRep) {
-        _ZNSs4_Rep10_M_disposeERKSaIcE(dynRep, NULL);
-        disposeOk = dynRep->refcount == 0;
-        _ZNSs4_Rep10_M_disposeERKSaIcE(dynRep, NULL);
-    }
-    const BOOL stringOk = emptyOk && refcopyOk && disposeOk;
-
-    // 2. std::list node linking
-    struct TLYListNode listHead;
-    listHead.next = &listHead;
-    listHead.prev = &listHead;
-    struct TLYListNode nodeA;
-    memset(&nodeA, 0, sizeof(nodeA));
-    struct TLYListNode nodeB;
-    memset(&nodeB, 0, sizeof(nodeB));
-    // hook(n, pos) inserts n before pos, so hooking A then B before the head gives head -> A -> B -> head.
-    _ZNSt15_List_node_base4hookEPS_(&nodeA, &listHead);
-    _ZNSt15_List_node_base4hookEPS_(&nodeB, &listHead);
-    const BOOL hookOk = listHead.next == &nodeA && nodeA.next == &nodeB && nodeB.next == &listHead &&
-                        listHead.prev == &nodeB && nodeB.prev == &nodeA && nodeA.prev == &listHead;
-    _ZNSt15_List_node_base6unhookEv(&nodeA);
-    const BOOL midOk = listHead.next == &nodeB && nodeB.prev == &listHead && nodeB.next == &listHead && listHead.prev == &nodeB;
-    _ZNSt15_List_node_base6unhookEv(&nodeB);
-    const BOOL unhookOk = midOk && listHead.next == &listHead && listHead.prev == &listHead;
-
-    // 3. RB-tree root insertion and rebalance (root must be black = 1)
-    struct TLYRbNode treeHeader;
-    treeHeader.color = 0;
-    treeHeader.parent = NULL;
-    treeHeader.left = &treeHeader;
-    treeHeader.right = &treeHeader;
-    struct TLYRbNode rootNode;
-    memset(&rootNode, 0, sizeof(rootNode));
-    _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(true, &rootNode, &treeHeader, &treeHeader);
-    const BOOL rootOk = rootNode.color == 1 && treeHeader.parent == &rootNode;
-
-    // Insert left child of root
-    struct TLYRbNode childLeft;
-    memset(&childLeft, 0, sizeof(childLeft));
-    _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(true, &childLeft, &rootNode, &treeHeader);
-    struct TLYRbNode *succ = _ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base(&childLeft);
-    const BOOL insertOk = rootOk && (succ == &rootNode);
-
-    // A red child under a red parent with a null (black) uncle needs a right rotation: the left child becomes the
-    // black root, the old root a red right child (CLRS case 3; libstdc++ _Rb_tree_insert_and_rebalance).
-    struct TLYRbNode grandChild;
-    memset(&grandChild, 0, sizeof(grandChild));
-    _ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_(true, &grandChild, &childLeft, &treeHeader);
-    const BOOL rotateOk = treeHeader.parent == &childLeft && childLeft.parent == &treeHeader && childLeft.color == 1 &&
-                          childLeft.left == &grandChild && childLeft.right == &rootNode &&
-                          rootNode.color == 0 && rootNode.parent == &childLeft && grandChild.color == 0;
-    const BOOL rbtreeOk = insertOk && rotateOk;
-
-    // 4. SJLJ exception frame linking
-    struct TLYUnwindContext ctx1, ctx2;
-    memset(&ctx1, 0, sizeof(ctx1));
-    memset(&ctx2, 0, sizeof(ctx2));
-    _Unwind_SjLj_Register(&ctx1);
-    struct TLYUnwindContext *outerFrame = ctx1.prev;   // frames the caller's own code may already have registered
-    _Unwind_SjLj_Register(&ctx2);
-    // Unregistering must really pop the frame: after ctx2 is gone a new frame links to ctx1 again, and once
-    // everything is unregistered a fresh frame links to the frame that was on top before ctx1.
-    _Unwind_SjLj_Unregister(&ctx2);
-    struct TLYUnwindContext ctx3;
-    memset(&ctx3, 0, sizeof(ctx3));
-    _Unwind_SjLj_Register(&ctx3);
-    const BOOL relinkOk = (ctx3.prev == &ctx1);
-    _Unwind_SjLj_Unregister(&ctx3);
-    _Unwind_SjLj_Unregister(&ctx1);
-    struct TLYUnwindContext ctx4;
-    memset(&ctx4, 0, sizeof(ctx4));
-    _Unwind_SjLj_Register(&ctx4);
-    const BOOL restoredFrameOk = (ctx4.prev == outerFrame);   // back to whatever frame was on top before ctx1
-    _Unwind_SjLj_Unregister(&ctx4);
-    const BOOL sjljOk = (ctx2.prev == &ctx1) && relinkOk && restoredFrameOk;
-
-    const BOOL ok = stringOk && hookOk && unhookOk && rbtreeOk && sjljOk;
-    r.status = ok ? @"passed" : @"failed";
-    r.expected = @"empty rep (0,0); refcount +1 on copy; circular list hook/unhook; RB-tree root black, successor and right rotation on a red-red insert; SJLJ chain link";
-    r.actual = [NSString stringWithFormat:@"string=%d hook=%d unhook=%d rbtree=%d sjlj=%d",
-                stringOk, hookOk, unhookOk, rbtreeOk, sjljOk];
-    if (!ok) {
-        r.reason = @"libstdc++ 4.2 layout/rebalancing or SJLJ unwinder linking does not match GCC 4.2 ABI";
-    }
     clearCheckpoint();
     return r;
 }
@@ -1921,63 +1731,11 @@ static NSString *makeRunId(void) {
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
 }
 
-// TL-X: reproduce the UE3 movie startup ordering without proprietary media.
-// Apple's AVPlayerItem status contract supplies the oracle: Unknown=0 on
-// creation, then an observed ReadyToPlay=1 after association with AVPlayer.
-@interface AVPlayerItem : NSObject
-+ (id)playerItemWithURL:(NSURL *)url;
-- (NSInteger)status;
-@end
-@interface AVPlayer : NSObject
-+ (id)playerWithPlayerItem:(id)item;
-- (void)play;
-- (float)rate;
-@end
-static int itemReadyContext;
-@interface TLItemReadyObserver : NSObject {
-@public
-    AVPlayer *player;
-    NSUInteger unknownCount, readyCount;
-    BOOL readyBeforePlayer;
-}
-@end
-@implementation TLItemReadyObserver
-- (void)observeValueForKeyPath:(NSString *)key ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
-    if (context != &itemReadyContext) return;
-    NSInteger status = [[change objectForKey:@"new"] integerValue];
-    if (status == 0) unknownCount++;
-    if (status == 1) {
-        readyCount++;
-        readyBeforePlayer |= player == nil;
-        [player play];
-    }
-}
-@end
-static TLResult *runCaseX(void) {
-    TLResult *r = [[TLResult alloc] initWithId:CASE_X version:1];
-    writeCheckpoint(CASE_X); r.checkpointWritten = YES;
-    NSString *path = [[NSBundle mainBundle] pathForResource:@"tone" ofType:@"wav"];
-    AVPlayerItem *item = [NSClassFromString(@"AVPlayerItem") playerItemWithURL:[NSURL fileURLWithPath:path]];
-    TLItemReadyObserver *observer = [[TLItemReadyObserver alloc] init];
-    [item addObserver:observer forKeyPath:@"status" options:NSKeyValueObservingOptionNew|NSKeyValueObservingOptionInitial context:&itemReadyContext];
-    BOOL initiallyUnknown = [item status] == 0 && observer->unknownCount == 1 && observer->readyCount == 0;
-    observer->player = [NSClassFromString(@"AVPlayer") playerWithPlayerItem:item];
-    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
-    BOOL ready = [item status] == 1 && observer->readyCount == 1 && !observer->readyBeforePlayer;
-    BOOL started = [observer->player rate] == 1.0f;
-    [item removeObserver:observer forKeyPath:@"status" context:&itemReadyContext];
-    r.expected = @{ @"initiallyUnknown":@YES, @"readyAfterPlayer":@YES, @"playStarted":@YES };
-    r.actual = @{ @"initiallyUnknown":@(initiallyUnknown), @"readyAfterPlayer":@(ready), @"playStarted":@(started) };
-    r.status = initiallyUnknown && ready && started ? @"passed" : @"failed";
-    if (![r.status isEqualToString:@"passed"]) r.reason = @"Player-item readiness arrived before player construction or failed to notify";
-    clearCheckpoint(); return r;
-}
-
 static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -2020,20 +1778,6 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseQ()];
         } else if ([cid isEqualToString:CASE_R]) {
             [results addObject:runCaseR()];
-        } else if ([cid isEqualToString:CASE_S]) {
-            [results addObject:runObjCCase(cid, TLObjCSelectors)];
-        } else if ([cid isEqualToString:CASE_T]) {
-            [results addObject:runObjCCase(cid, TLObjCClassGraph)];
-        } else if ([cid isEqualToString:CASE_U]) {
-            [results addObject:runObjCCase(cid, TLObjCMethodLookup)];
-        } else if ([cid isEqualToString:CASE_V]) {
-            [results addObject:runObjCCase(cid, TLObjCMutation)];
-        } else if ([cid isEqualToString:CASE_W]) {
-            [results addObject:runObjCCase(cid, TLObjCLifetime)];
-        } else if ([cid isEqualToString:CASE_X]) {
-            [results addObject:runCaseX()];
-        } else if ([cid isEqualToString:CASE_Y]) {
-            [results addObject:runCaseY()];
         }
     }
     return results;
@@ -2065,13 +1809,6 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_P]) return runCaseP();
     if ([caseId isEqualToString:CASE_Q]) return runCaseQ();
     if ([caseId isEqualToString:CASE_R]) return runCaseR();
-    if ([caseId isEqualToString:CASE_S]) return runObjCCase(caseId, TLObjCSelectors);
-    if ([caseId isEqualToString:CASE_T]) return runObjCCase(caseId, TLObjCClassGraph);
-    if ([caseId isEqualToString:CASE_U]) return runObjCCase(caseId, TLObjCMethodLookup);
-    if ([caseId isEqualToString:CASE_V]) return runObjCCase(caseId, TLObjCMutation);
-    if ([caseId isEqualToString:CASE_W]) return runObjCCase(caseId, TLObjCLifetime);
-    if ([caseId isEqualToString:CASE_X]) return runCaseX();
-    if ([caseId isEqualToString:CASE_Y]) return runCaseY();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -2104,12 +1841,8 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 55, self.view.bounds.size.width, self.view.bounds.size.height - 55)];
-    scroll.scrollEnabled = YES;
-    [self.view addSubview:scroll];
-
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -2130,13 +1863,6 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_P version:1],
         [[TLResult alloc] initWithId:CASE_Q version:1],
         [[TLResult alloc] initWithId:CASE_R version:1],
-        [[TLResult alloc] initWithId:CASE_S version:1],
-        [[TLResult alloc] initWithId:CASE_T version:1],
-        [[TLResult alloc] initWithId:CASE_U version:1],
-        [[TLResult alloc] initWithId:CASE_V version:1],
-        [[TLResult alloc] initWithId:CASE_W version:1],
-        [[TLResult alloc] initWithId:CASE_X version:1],
-        [[TLResult alloc] initWithId:CASE_Y version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -2148,7 +1874,7 @@ static UIColor *colorForStatus(NSString *s) {
         }
     }
 
-    CGFloat y = 10;
+    CGFloat y = 65;
     for (int i = 0; i < (int)caseIds.count; ++i) {
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
         btn.frame = CGRectMake(10, y, 130, 32);
@@ -2157,14 +1883,14 @@ static UIColor *colorForStatus(NSString *s) {
         btn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
         btn.tag = 100 + i;
         [btn addTarget:self action:@selector(runCase:) forControlEvents:UIControlEventTouchUpInside];
-        [scroll addSubview:btn];
+        [self.view addSubview:btn];
 
         UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(150, y+6, 160, 20)];
         TLResult *r  = self.results[i];
         lbl.text = [NSString stringWithFormat:@"%@ — %@", r.caseId, r.status];
         lbl.textColor = colorForStatus(r.status);
         lbl.font = [UIFont systemFontOfSize:13];
-        [scroll addSubview:lbl];
+        [self.view addSubview:lbl];
         [self.labels addObject:lbl];
 
         y += 38;
@@ -2177,7 +1903,7 @@ static UIColor *colorForStatus(NSString *s) {
     all.backgroundColor = [UIColor colorWithRed:0.1 green:0.3 blue:0.7 alpha:1];
     all.tag = 99;
     [all addTarget:self action:@selector(runAll:) forControlEvents:UIControlEventTouchUpInside];
-    [scroll addSubview:all];
+    [self.view addSubview:all];
 
     UIButton *export = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     export.frame = CGRectMake(160, y + 6, 130, 34);
@@ -2185,19 +1911,18 @@ static UIColor *colorForStatus(NSString *s) {
     [export setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     export.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1];
     [export addTarget:self action:@selector(exportResults:) forControlEvents:UIControlEventTouchUpInside];
-    [scroll addSubview:export];
+    [self.view addSubview:export];
 
     UIButton *crash = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     crash.frame = CGRectMake(10, y + 46, 280, 34);
     [crash setTitle:@"Force diagnostic crash (ends session)" forState:UIControlStateNormal];
     [crash addTarget:self action:@selector(forceDiagnosticCrash:) forControlEvents:UIControlEventTouchUpInside];
-    [scroll addSubview:crash];
-    scroll.contentSize = CGSizeMake(self.view.bounds.size.width, y + 90);
+    [self.view addSubview:crash];
 }
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

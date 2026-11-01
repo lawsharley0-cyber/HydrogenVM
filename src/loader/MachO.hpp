@@ -10,8 +10,6 @@
 #include "core/memory/GuestArena.hpp"
 #include <cstdint>
 #include <map>
-#include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -52,17 +50,6 @@ struct BindRecord {
     bool        lazy = false;
 };
 
-// Shared with the ObjC runtime; snapshots remain valid during service teardown.
-class MethodSymbols {
-public:
-    void set(uint64_t binding, uint32_t imp, std::string name);
-    std::string describe(uint32_t address) const;
-private:
-    mutable std::mutex mutex_;
-    std::unordered_map<uint64_t, uint32_t> bindings_;
-    std::map<uint32_t, std::map<uint64_t, std::string>> names_;
-};
-
 struct Image {
     std::string path;
     uint32_t cpuSubtype = 0;
@@ -93,8 +80,6 @@ struct Image {
     // address for crash reports. Thumb functions carry bit 0.
     std::unordered_map<std::string, uint32_t> exports;
     std::map<uint32_t, std::string> symbolsByAddr;
-    std::vector<uint32_t> functionStarts; // LC_FUNCTION_STARTS, slid and Thumb-normalized
-    mutable std::shared_ptr<MethodSymbols> methodSymbols;
 
     const Section* findSection(const char* seg, const char* sect) const;
     std::vector<const Section*> sectionsOfType(uint32_t type) const;

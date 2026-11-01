@@ -56,7 +56,6 @@ ClassBuilder& ClassBuilder::alias(const std::string& sel, const std::string& exi
 // ------------------------------------------------------------ runtime ---
 
 Runtime::Runtime(Process& p) : proc_(p) {
-    std::atomic_store(&p.image().methodSymbols, methodSymbols_);
     emptyCache = p.defineDataBlock("__objc_empty_cache", 16);
     p.defineDataBlock("__objc_empty_vtable", 16);
     selAlloc = sel("alloc"); selInit = sel("init"); selDealloc = sel("dealloc"); selRetain = sel("retain");
@@ -138,22 +137,8 @@ bool Runtime::isSubclass(Class sub, Class cls) const {
 }
 bool Runtime::isKindOf(id obj, Class cls) const { return obj && isSubclass(classOf(obj), cls); }
 
-std::string Runtime::diagnosticSelector(SEL s) const {
-    std::lock_guard<std::mutex> lock(selMu_);
-    auto it = selNames_.find(s);
-    if (it != selNames_.end()) return it->second;
-    char unknown[32];
-    std::snprintf(unknown, sizeof unknown, "<SEL 0x%x>", s);
-    return unknown;
-}
-
 void Runtime::registerClassInfo(std::unique_ptr<ClassInfo> ci) {
-    std::vector<std::pair<SEL, std::string>> names;
-    for (const auto& [s, imp] : ci->methods) names.emplace_back(s, diagnosticSelector(s));
     std::unique_lock<std::shared_mutex> lk(classMu_);
-    for (const auto& [s, name] : names)
-        methodSymbols_->set((uint64_t(ci->cls) << 32) | s, ci->methods.at(s),
-                            std::string(ci->isMeta ? "+[" : "-[") + ci->name + " " + name + "]");
     if (!ci->isMeta) classByName_[ci->name] = ci->cls;
     const Class c = ci->cls;
     classes_[c] = std::move(ci);
@@ -234,7 +219,6 @@ Class Runtime::stubClass(const std::string& name) {
 }
 
 void Runtime::addMethod(Class cls, SEL s, IMP imp, const std::string& types, bool replace) {
-    const std::string selector = diagnosticSelector(s);
     {
         std::unique_lock<std::shared_mutex> lk(classMu_);
         auto it = classes_.find(cls);
@@ -242,8 +226,6 @@ void Runtime::addMethod(Class cls, SEL s, IMP imp, const std::string& types, boo
         ClassInfo& ci = *it->second;
         if (!replace && ci.methods.count(s)) return;
         ci.methods[s] = imp;
-        methodSymbols_->set((uint64_t(cls) << 32) | s, imp,
-                            std::string(ci.isMeta ? "+[" : "-[") + ci.name + " " + selector + "]");
         ci.types[s] = types;
         if (s == selCxxDestruct) ci.hasCxxDestruct = true;
         if (s == selCxxConstruct) ci.hasCxxConstruct = true;
@@ -901,12 +883,7 @@ void Runtime::attachCategory(uint32_t cat) {
     readMethodList(tmpMeta, m.read<uint32_t>(cat + 12));
     for (auto& [s, imp] : tmp.methods) addMethod(cls, s, imp, tmp.types[s]);
     for (auto& [s, imp] : tmpMeta.methods) {
-        if (s == selLoad) {   // category +load is called, not attached; still name its IMP for crash backtraces
-            pendingCategoryLoads_.push_back(cat);
-            const std::string catName = proc_.readCString(m.read<uint32_t>(cat));
-            methodSymbols_->set((uint64_t(cat) << 32) | s, imp, "+[" + info(cls)->name + "(" + catName + ") load]");
-            continue;
-        }
+        if (s == selLoad) { pendingCategoryLoads_.push_back(cat); continue; }   // category +load is called, not attached
         addMethod(meta, s, imp, tmpMeta.types[s]);
     }
     if (const uint32_t pl = m.read<uint32_t>(cat + 16)) {
@@ -918,8 +895,6 @@ void Runtime::attachCategory(uint32_t cat) {
 }
 
 void Runtime::registerImage(const Loader::Image& img) {
-    // Process replaces its Image during load, after host classes register.
-    std::atomic_store(&img.methodSymbols, methodSymbols_);
     auto& m = proc_.mem();
     auto words = [&](const char* sect, auto fn) {
         if (const Loader::Section* s = img.findSection("__DATA", sect))

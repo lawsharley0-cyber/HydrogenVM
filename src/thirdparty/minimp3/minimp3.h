@@ -176,34 +176,9 @@ end:
 #define VMUL_S(x, s)  vmulq_f32(x, vmovq_n_f32(s))
 #define VREV(x) vcombine_f32(vget_high_f32(vrev64q_f32(x)), vget_low_f32(vrev64q_f32(x)))
 typedef float32x4_t f4;
-#if !defined(MINIMP3_ONLY_SIMD) && !defined(__aarch64__) && !defined(_M_ARM64) && defined(__linux__)
-#include "minimp3_hwcap.h"
-#endif
 static int have_simd()
-{
-#ifdef MINIMP3_ONLY_SIMD
+{   /* TODO: detect neon for !MINIMP3_ONLY_SIMD */
     return 1;
-#else /* MINIMP3_ONLY_SIMD */
-#if defined(__aarch64__) || defined(_M_ARM64)
-    return 1; /* NEON is mandatory in AArch64 */
-#elif defined(__linux__)
-    /* 0 = not probed, 1 = scalar, 2 = NEON. Atomic so two decoder threads
-       racing the first call is defined. The probe is idempotent: both threads
-       may sample AT_HWCAP and store the same result. A missing auxv entry
-       stays scalar (cached == 1). */
-    static int g_have_simd;
-    int cached = __atomic_load_n(&g_have_simd, __ATOMIC_ACQUIRE);
-    if (cached)
-        return cached - 1;
-    int has = minimp3_linux_neon_probe();
-    __atomic_store_n(&g_have_simd, has + 1, __ATOMIC_RELEASE);
-    return has;
-#elif defined(__APPLE__)
-    return 1;
-#else
-    return 1; /* TODO: detect neon for other platforms */
-#endif
-#endif /* MINIMP3_ONLY_SIMD */
 }
 #else /* SIMD checks... */
 #define HAVE_SSE 0

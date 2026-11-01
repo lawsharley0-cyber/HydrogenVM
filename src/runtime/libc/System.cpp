@@ -4,17 +4,13 @@
 #include <sys/ioctl.h>
 #include <atomic>
 #include "runtime/Process.hpp"
-#include "runtime/Support.hpp"
 #include "MachPorts.hpp"
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
 #include <sys/socket.h>
 #include <sys/file.h>
-#include <poll.h>
 #include <sys/uio.h>
 #include <cerrno>
-#include <thread>
-#include <chrono>
 #include <csignal>
 #include <cstring>
 #include <dirent.h>
@@ -22,7 +18,6 @@
 #include <filesystem>
 #include <mutex>
 #include <random>
-#include <string_view>
 #include <sys/stat.h>
 #include <iconv.h>
 #include <mutex>
@@ -449,31 +444,6 @@ int hostOpenFlags(uint32_t f) {
     if (f & 0x100000) h |= O_DIRECTORY;
     return h | O_CLOEXEC;
 }
-
-// This is only an access-pattern hint. Every open still owns a fresh native
-// descriptor and its own offset; no reads, seeks or descriptor reuse here.
-void assetReadAhead(int fd, const std::string& path, uint32_t flags, const struct stat& st) {
-    if ((flags & (3u | 0x8u | 0x200u | 0x400u)) || !S_ISREG(st.st_mode)) return;
-    const std::string_view p(path);
-    const auto dot = p.rfind('.');
-    if (dot == p.npos || (p.substr(dot) != ".tfc" && p.substr(dot) != ".xxx")) return;
-    bool cooked = false;
-    for (size_t start = 0; start < p.size();) {
-        const auto slash = p.find('/', start);
-        if (slash == p.npos) break;
-        if (p.substr(start, slash - start) == "CookedIPhone") { cooked = true; break; }
-        start = slash + 1;
-    }
-    if (!cooked) return;
-    const int savedErrno = errno;
-#if defined(__linux__) && defined(POSIX_FADV_SEQUENTIAL)
-    (void)::posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
-#elif defined(__APPLE__) && defined(F_RDAHEAD)
-    (void)::fcntl(fd, F_RDAHEAD, 1);
-#endif
-    errno = savedErrno;
-}
-
 int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
     const std::string gp = x.proc.readCString(path);
@@ -485,10 +455,7 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     }
     int64_t sz = -1;
     struct stat st;
-    if (::fstat(fd, &st) == 0) {
-        sz = st.st_size;
-        assetReadAhead(fd, hp, flags, st);
-    }
+    if (::fstat(fd, &st) == 0) sz = st.st_size;
     const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
@@ -509,29 +476,9 @@ int32_t f_close(Ctx& x, int32_t fd) {
     const int tracked = closeNetworkSocket(x.proc, fd);
     return (tracked == -2 ? ::close(fd) : tracked) < 0 ? failD<int32_t>(x) : 0;
 }
-// A host read on a pipe, socket or terminal with nothing to read blocks the calling
-// thread for good, so a stop request never reaches a guest thread parked in it, and
-// the process cannot be torn down cleanly. Wait for the descriptor in short slices and
-// leave through the usual stop exception instead. Regular files and non-blocking
-// descriptors never wait here, so their behaviour is unchanged.
-void waitUntilReadable(Ctx& x, int fd) {
-    struct stat st;
-    if (::fstat(fd, &st) != 0 || S_ISREG(st.st_mode)) return;
-    const int flags = ::fcntl(fd, F_GETFL);
-    if (flags < 0 || (flags & O_NONBLOCK)) return;
-    for (;;) {
-        if (x.proc.stopping()) throw ProcessExit(0, "stopping");
-        pollfd pfd{fd, POLLIN, 0};
-        const int ready = ::poll(&pfd, 1, 50);
-        if (ready < 0 && errno == EINTR) continue;
-        if (ready != 0) return;   // readable, hung up, or an error: let read() report it
-    }
-}
-
 int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
     if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
-    waitUntilReadable(x, fd);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
     if (r > 0) {
         auto& ofs = x.proc.service<OpenFds>();
@@ -589,15 +536,7 @@ int32_t f_writev(Ctx& x, int32_t fd, GuestPtr vectors, int32_t count) {
 }
 int32_t f_flock(Ctx& x, int32_t fd, int32_t operation) {
     if ((operation & ~15) || !((operation & 3) == 1 || (operation & 3) == 2 || (operation & 8))) { setErrno(x, 22); return -1; }
-    if ((operation & 8) || (operation & 4)) return ::flock(fd, operation) < 0 ? failD<int32_t>(x) : 0;   // unlock, or LOCK_NB: never blocks
-    // A blocking lock held by someone else would park this thread where a stop request can't
-    // reach it. Try without blocking and retry in short slices, leaving on stop.
-    for (;;) {
-        if (::flock(fd, operation | 4) == 0) return 0;
-        if (errno != EWOULDBLOCK && errno != EINTR) return failD<int32_t>(x);
-        if (x.proc.stopping()) throw ProcessExit(0, "stopping");
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    return ::flock(fd, operation) < 0 ? failD<int32_t>(x) : 0;
 }
 
 int32_t f_pread(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, int64_t off) {
@@ -1064,13 +1003,6 @@ int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     return 0;
 }
 
-// POSIX named semaphores are not implemented (there is no sem_open), so no handle can name an open
-// semaphore: every close is EINVAL rather than a silent success.
-int32_t sys_sem_close(Ctx& x, uint32_t) {
-    setErrno(x, 22);   // EINVAL
-    return -1;
-}
-
 } // namespace
 
 void registerLibcSystem(Process& p) {
@@ -1120,7 +1052,6 @@ void registerLibcSystem(Process& p) {
     p.def<&s_sysconf>("_sysconf");
     p.def<&s_getrlimit>("_getrlimit");
     p.def<&s_ok2>("_setrlimit");
-    p.def<&sys_sem_close>("_sem_close");
     p.def<&s_getrusage>("_getrusage");
     p.def<&s_sysctl>("_sysctl");
     p.def<&s_sysctlbyname>("_sysctlbyname");
@@ -1133,8 +1064,7 @@ void registerLibcSystem(Process& p) {
     p.def<&d_register_remove_image>("__dyld_register_func_for_remove_image");
     p.def<&d_version>("_NSVersionOfRunTimeLibrary");
     p.def<&d_version>("_NSVersionOfLinkTimeLibrary");
-    supportDef<&d_dlopen>(p, "_dlopen", SupportStatus::Approx,
-        "NULL uses dyld magic handles; named libraries get synthetic handles and are not loaded");
+    p.def<&d_dlopen>("_dlopen");
     p.def<&d_dlsym>("_dlsym");
     p.def<&d_dlclose>("_dlclose");
     p.def<&d_dlerror>("_dlerror");
@@ -1172,12 +1102,9 @@ void registerLibcSystem(Process& p) {
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
     p.def<&m_mmap>("_mmap");
     p.def<&m_munmap>("_munmap");
-    supportDef<&m_ok3>(p, "_mprotect", SupportStatus::Stub,
-        "Returns success without changing guest or host page protections");
-    supportDef<&m_ok3>(p, "_madvise", SupportStatus::Stub,
-        "Returns success without applying a memory advice policy");
-    supportDef<&m_ok3>(p, "_msync", SupportStatus::Stub,
-        "Returns success without flushing mapped data to backing storage");
+    p.def<&m_ok3>("_mprotect");
+    p.def<&m_ok3>("_madvise");
+    p.def<&m_ok3>("_msync");
     p.def<&m_ok2>("_mlock");
     p.def<&m_ok2>("_munlock");
     p.def<&g_signal>("_signal");

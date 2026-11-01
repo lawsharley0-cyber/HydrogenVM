@@ -475,9 +475,6 @@ final class BatchTestRunner {
         currentTestTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            _ = await Self.waitForArenaRelease(8.0)
-            guard !Task.isCancelled, self.status == .running else { return }
-
             var s: HVMSession!
             var exitBox: ExitBox!
             var startRetries = 0
@@ -532,18 +529,12 @@ final class BatchTestRunner {
 
                 s.start()
 
-                let startWaitDeadline = Date().addingTimeInterval(5.5)
-                while Date() < startWaitDeadline && !exitBox.exited && !Task.isCancelled && HVMEngine.liveGuestArenaCount() == 0 {
-                    try? await Task.sleep(for: .milliseconds(50))
-                }
-
+                try? await Task.sleep(for: .milliseconds(1500))
                 if exitBox.exited, let crash = exitBox.crash, crash.contains("failed to reserve") {
                     startRetries += 1
                     s.stop()
                     self.activeSession = nil
-                    _ = await Self.waitForArenaRelease(5.0)
-                    try? await Task.sleep(for: .milliseconds(1000))
-                    guard !Task.isCancelled, self.status == .running else { return }
+                    try? await Task.sleep(for: .milliseconds(3000))
                     continue
                 } else {
                     break
@@ -673,8 +664,7 @@ final class BatchTestRunner {
             if self.options.relaunchEnabled && !isCrashed && exitBox.exited && !hardStopped && self.status == .running {
                 self.progressText = "Relaunching \(self.currentIndex + 1)/\(self.targets.count): \(target.app.title) (\(target.modeName.uppercased()))"
                 self.activeSession = nil
-                _ = await Self.waitForArenaRelease(8.0)
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .milliseconds(1500))
                 relaunch = await self.relaunch(target: target, home: testHome)
             }
             guard self.status == .running else { return }
@@ -749,8 +739,7 @@ final class BatchTestRunner {
             self.savePendingSession()
 
             // Let the finished game's threads and memory go before the next one starts.
-            _ = await Self.waitForArenaRelease(8.0)
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: .milliseconds(1500))
             self.runNextTarget()
         }
     }
@@ -762,8 +751,6 @@ final class BatchTestRunner {
         var startRetries = 0
         
         while startRetries < 5 {
-            _ = await Self.waitForArenaRelease(8.0)
-            if Task.isCancelled || status != .running { return (false, 0, nil) }
             box = ExitBox()
             s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
             s.keepGoing = options.keepGoing
@@ -787,17 +774,12 @@ final class BatchTestRunner {
             }
             s.start()
             
-            let startWaitDeadline = Date().addingTimeInterval(5.5)
-            while Date() < startWaitDeadline && !box.exited && !Task.isCancelled && HVMEngine.liveGuestArenaCount() == 0 {
-                try? await Task.sleep(for: .milliseconds(50))
-            }
+            try? await Task.sleep(for: .milliseconds(1500))
             if box.exited, let crash = box.crash, crash.contains("failed to reserve") {
                 startRetries += 1
                 s.stop()
                 activeSession = nil
-                _ = await Self.waitForArenaRelease(5.0)
-                try? await Task.sleep(for: .milliseconds(1000))
-                if Task.isCancelled || status != .running { return (false, 0, nil) }
+                try? await Task.sleep(for: .milliseconds(3000))
                 continue
             } else {
                 break
@@ -834,12 +816,6 @@ final class BatchTestRunner {
     }
 
     static let testHomesDir = FileManager.default.temporaryDirectory.appending(path: "BatchTestHomes", directoryHint: .isDirectory)
-
-    /// Waits (off the main actor) for the previous session's guest arena to be unmapped, so the main thread keeps
-    /// serving the UI and exit callbacks while the wait runs.
-    nonisolated static func waitForArenaRelease(_ timeout: TimeInterval) async -> Bool {
-        await Task.detached(priority: .utility) { HVMEngine.wait(forGuestArenaRelease: timeout) }.value
-    }
 
     /// A scratch home for one test run: a copy of the app's Documents and Library
     /// (or empty ones when `fresh`). The app's real data is never written by a test.

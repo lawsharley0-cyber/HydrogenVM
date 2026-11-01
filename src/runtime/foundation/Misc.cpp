@@ -1040,15 +1040,7 @@ id f_userName(Ctx& x) { return makeString(x, "mobile"); }
 
 } // namespace
 
-[[noreturn]] void raiseObjCException(Ctx& x, id exception) { throwException(x, exception); }
-
 // Exported helpers ------------------------------------------------------------
-
-[[noreturn]] void throwGuestException(Ctx& x, const std::string& name, const std::string& reason) {
-    const id n = constString(x.proc, name);
-    const id r = makeString(x, reason);
-    throwException(x, excc_with(x, rt(x).getClass("NSException"), 0, n, r, 0));
-}
 
 id makeIndexSet(Ctx& x, const std::set<uint32_t>& indices, bool owned, bool isMutable) {
     const Class cls = isMutable ? M(x).mutableIndexSet : M(x).indexSet;

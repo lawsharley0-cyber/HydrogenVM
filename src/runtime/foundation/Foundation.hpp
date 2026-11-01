@@ -4,7 +4,6 @@
 #pragma once
 #include "runtime/objc/ObjC.hpp"
 #include "loader/Plist.hpp"
-#include <atomic>
 #include <deque>
 #include <functional>
 #include <utility>
@@ -105,19 +104,9 @@ struct RunLoop {
         bool valid = true;
         std::function<void(CPU::Cpu&)> fire;
     };
-    // A version-0 CFRunLoopSource: its perform callback runs on the next loop
-    // iteration after it is signalled. One state object is shared by every loop
-    // the source is added to; whichever loop gets to it first performs it.
-    struct Source {
-        long order = 0;
-        std::atomic<bool> signalled{false};
-        std::atomic<bool> valid{true};
-        std::function<void(CPU::Cpu&)> perform;
-    };
     std::mutex mu;
     std::condition_variable cv;
     std::vector<std::shared_ptr<Timer>> timers;
-    std::vector<std::shared_ptr<Source>> sources;
     std::deque<std::function<void(CPU::Cpu&)>> queue;   // performSelectorOnMainThread, dispatch main queue
     std::vector<std::function<void(CPU::Cpu&, double now)>> frameHooks;   // CADisplayLink, input pumping
     bool stopFlag = false;
@@ -126,10 +115,6 @@ struct RunLoop {
 
     std::shared_ptr<Timer> addTimer(double delay, double interval, bool repeats, std::function<void(CPU::Cpu&)> fire, id timerObj = 0);
     void post(std::function<void(CPU::Cpu&)> fn);    // any thread
-    void addSource(const std::shared_ptr<Source>& s);
-    void removeSource(const std::shared_ptr<Source>& s);
-    bool hasSource(const std::shared_ptr<Source>& s);
-    void wake() { std::lock_guard<std::mutex> lk(mu); cv.notify_all(); }   // any thread
     // Process due work; returns true if anything ran. Waits up to `maxWait` seconds for work.
     bool runOnce(CPU::Cpu& c, double maxWait);
     // Run until `until` (absolute, reference-date seconds) or stop().
@@ -150,9 +135,6 @@ std::string urlString(Ctx& x, id url);
 bool isURL(Ctx& x, id obj);
 id localizedString(Ctx& x, id key, id value, id table);
 
-// ---- exceptions
-[[noreturn]] void throwGuestException(Ctx& x, const std::string& name, const std::string& reason);
-
 // ---- notifications (Notifications.cpp)
 void postNotification(Ctx& x, id name, id object, id userInfo = 0);
 void postNotification(Ctx& x, const std::string& name, id object, id userInfo = 0);
@@ -167,9 +149,6 @@ id mainDispatchQueue(Process& p);
 // ---- misc
 id nullObject(Process& p);                               // [NSNull null]
 bool characterSetContains(Ctx& x, id set, char16_t c);
-// Lands `exception` in a guest @catch on this host→guest call. With no handler,
-// runs the uncaught-exception handler and then terminates.
-[[noreturn]] void raiseObjCException(Ctx& x, id exception);
 
 // ---- class registration
 void registerStrings(Process& p, ObjC::Runtime& r);

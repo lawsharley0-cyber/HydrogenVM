@@ -14,8 +14,6 @@ on:
       - 'src/**'
       - 'CMakeLists.txt'
       - 'tests/ios/apps/testlab/**'
-      - 'tests/ios/apps/objcsymbolication/**'
-      - 'tools/test_objc_symbolication.py'
       - 'tools/hvm_testlab.py'
       - 'tools/testlab_schema/**'
       - '.github/workflows/testlab.yml'
@@ -24,8 +22,6 @@ on:
       - 'src/**'
       - 'CMakeLists.txt'
       - 'tests/ios/apps/testlab/**'
-      - 'tests/ios/apps/objcsymbolication/**'
-      - 'tools/test_objc_symbolication.py'
       - 'tools/hvm_testlab.py'
       - 'tools/testlab_schema/**'
       - '.github/workflows/testlab.yml'
@@ -59,9 +55,6 @@ jobs:
 
       - name: Schema unit tests
         run: python3 -m unittest discover -s tools/testlab_schema/tests -v
-
-      - name: Test Lab runner unit tests
-        run: python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
 
       - name: Cache ld64 (cctools-port)
         id: cctools
@@ -98,9 +91,7 @@ jobs:
             --min-ios 6.0 \
             --resource tests/ios/apps/testlab/tone.wav \
             --resource tests/ios/apps/testlab/empty.dat \
-            tests/ios/apps/testlab/main.m \
-            tests/ios/apps/testlab/objc_conformance.m \
-            tests/ios/apps/testlab/objc_lifetime_mrc.m
+            tests/ios/apps/testlab/main.m
         env:
           HVM_LD64: /home/runner/cctools/bin/arm-apple-darwin11-ld
 
@@ -130,19 +121,9 @@ jobs:
             --skip-build \
             --timeout 30
 
-      - name: Verify Objective-C conformance fault detection
-        run: |
-          python3 tools/tests/validate_objc_conformance.py \
-            --build build --ipa build/ios/TestLab.ipa --out build/objc-conformance-faults
-
       - name: Verify forced-crash bundle
         if: ${{ always() && hashFiles('build/hvm') != '' }}
         run: python3 tools/test_crash_bundle.py --hvm build/hvm
-
-      - name: Verify stripped ObjC method names in crash bundle
-        run: python3 tools/test_objc_symbolication.py --hvm build/hvm --out build/objc-symbolication
-        env:
-          HVM_LD64: /home/runner/cctools/bin/arm-apple-darwin11-ld
 
       - name: Validate report schema
         if: ${{ always() && hashFiles('build/testlab-report-all/testlab_report.json') != '' }}
@@ -172,10 +153,5 @@ jobs:
           name: testlab-report
           path: |
             build/testlab-report-all/testlab_report.json
-            build/objc-conformance-faults/report.json
             build/ios/TestLab.ipa
-            build/objc-symbolication/verification.json
-            build/objc-symbolication/hvm-report.json
-            build/objc-symbolication/run.log
-            build/objc-symbolication/nm.log
           if-no-files-found: warn

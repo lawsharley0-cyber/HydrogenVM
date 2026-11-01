@@ -7,7 +7,6 @@
 // event on the run loop the stream was scheduled on. CFHTTPMessage objects are
 // real enough to build requests and read them back.
 #include "Foundation.hpp"
-#include "runtime/Support.hpp"
 #include <fstream>
 #include <iterator>
 
@@ -459,8 +458,7 @@ void registerNetwork(Process& p, ObjC::Runtime& r) {
     p.def<&scr_create>("_SCNetworkReachabilityCreateWithName");
     p.def<&scr_createWithAddress>("_SCNetworkReachabilityCreateWithAddress");
     p.def<&scr_createPair>("_SCNetworkReachabilityCreateWithAddressPair");
-    supportDef<&scr_getFlags>(p, "_SCNetworkReachabilityGetFlags", SupportStatus::Stub,
-        "Fabricates Reachable for any non-null reference; does not inspect network state");
+    p.def<&scr_getFlags>("_SCNetworkReachabilityGetFlags");
     p.def<&scr_setCallback>("_SCNetworkReachabilitySetCallback");
     p.def<&scr_schedule>("_SCNetworkReachabilityScheduleWithRunLoop");
     p.def<&scr_schedule>("_SCNetworkReachabilityUnscheduleFromRunLoop");

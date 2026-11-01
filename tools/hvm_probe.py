@@ -21,7 +21,6 @@ import argparse
 import hashlib
 import json
 import os
-import random
 import re
 import struct
 import subprocess
@@ -162,19 +161,9 @@ def issues_from(rep, log_text, shot, timed_out):
                       'text': (text + (' ' + detail if detail else '')).strip()[:400]})
     if timed_out:
         add('hang', 'did not stop when asked (killed by the probe timeout)')
-    def add_checklist():
-        # Unity/Mono startup checklist (T5c): log evidence works with or without a report. A failure of the
-        # checklist itself is a finding, not something to swallow.
-        try:
-            from unity_mono_checklist import check_probe_run
-            for ci in check_probe_run(rep, log_text):
-                add(ci['kind'], ci['text'])
-        except Exception as e:
-            add('error', f'unity_mono_checklist integration failed: {type(e).__name__}: {e}')
     if rep is None:
         tail = '\n'.join(log_text.strip().splitlines()[-5:])
         add('crash', 'no report written; log tail: ' + tail)
-        add_checklist()
         return found
     if rep.get('loadError'):
         add('load', rep['loadError'])
@@ -210,108 +199,7 @@ def issues_from(rep, log_text, shot, timed_out):
     mx = rep.get('mixer') or {}
     if mx.get('framesRendered', 0) and not mx.get('audibleFrames', 0) and not report:
         add('silent', 'no audible sound during the whole run')
-    add_checklist()
     return found
-
-
-def taint_info(rep):
-    """(tainted, stub hits, distinct APIs, three most-called API names) from a run report.
-
-    A tainted run called at least one missing or approximated API, so a clean-looking
-    exit is not a compatibility verdict. Reports from older builds, and runs with no
-    report at all, carry none of these fields and read as (False, 0, 0, []).
-    """
-    rep = rep or {}
-    hits = rep.get('stubHits')
-    hits = hits if isinstance(hits, int) and not isinstance(hits, bool) and hits > 0 else 0
-    apis = rep.get('missingApis')
-    apis = [a for a in apis if isinstance(a, dict) and isinstance(a.get('name'), str)] if isinstance(apis, list) else []
-
-    def count(a):
-        return a['count'] if isinstance(a.get('count'), int) else 0
-    top = [a['name'] for a in sorted(apis, key=lambda a: (-count(a), a['name']))[:3]]
-    return hits > 0, hits, len(apis), top
-
-
-def tainted_runs(results):
-    """The runs that hit a missing or approximated API, most hits first. Status is left as it was."""
-    rows = [{'bundleId': r.get('bundleId'), 'mode': r.get('mode'), 'status': r.get('status'),
-             'stubHits': r.get('stubHits', 0), 'distinctMissing': r.get('distinctMissing', 0),
-             'topMissing': r.get('topMissing') or [], 'dir': r.get('dir')}
-            for r in results if r.get('tainted')]
-    return sorted(rows, key=lambda r: (-r['stubHits'], str(r['bundleId']), str(r['mode'])))
-
-
-def baseline_coverage(baseline):
-    """The (ipa sha256, mode) pairs a baseline summary.json probed; empty when it does not say."""
-    if not isinstance(baseline, dict) or not isinstance(baseline.get('results') or [], list):
-        return set()
-    return {(r.get('sha256'), r.get('mode')) for r in baseline.get('results') or []
-            if isinstance(r, dict) and r.get('sha256') and r.get('status') != 'import-failed'}   # an app that never ran was not probed
-
-
-def baseline_settings_match(baseline, seconds, launches):
-    """A baseline is only comparable when it ran each app as long and as many times as this run does."""
-    return (isinstance(baseline, dict) and baseline.get('seconds') == seconds
-            and (baseline.get('launches') or 1) == (launches or 1))
-
-
-def sample_ipas(ipas, seed, size):
-    """--fast: a seeded sample of at most `size` apps, in name order, so the same seed picks the same apps."""
-    rng = random.Random(seed)
-    return sorted(rng.sample(list(ipas), min(len(ipas), size)), key=lambda p: p.name)
-
-
-def tag_errors(log_path, issues):
-    """Append an `ERROR: kind: text` line to the run log for each failure-grade issue."""
-    log_path = Path(log_path)
-    tagged = [i for i in issues if i['severity'] >= 45 or i['kind'] in ('error', 'crash', 'load', 'hang', 'fault')]
-    if not tagged:
-        return
-    existing = log_path.read_text(encoding='utf-8', errors='replace') if log_path.exists() else ''
-    with open(log_path, 'a', encoding='utf-8') as f:
-        if existing and not existing.endswith('\n'):
-            f.write('\n')   # the first ERROR: tag must start its own line
-        for i in tagged:
-            f.write(f"ERROR: {i['kind']}: {i['text']}\n")
-
-
-def summarize_runs(results, issues_count, fast, seed):
-    """The `summary` object of summary.json: one count per run status, so every run is accounted for."""
-    def n(status):
-        return sum(1 for r in results if r['status'] == status)
-    return {
-        'totalRuns': len(results),
-        'gamesProbed': len({r['bundleId'] for r in results}),
-        'okRuns': n('ok'), 'crashRuns': n('crash'), 'brokenRuns': n('broken'),
-        'issuesRuns': n('issues'), 'importFailedRuns': n('import-failed'),
-        'taintedRunCount': sum(1 for r in results if r.get('tainted')),   # status can be ok while stubs were hit
-        'issuesCount': issues_count,
-        'fast': fast,
-        'seed': seed,
-    }
-
-
-def md_cell(value):
-    """One value made safe for a Markdown table cell (and for a code span inside it)."""
-    return str(value).replace('`', "'").replace('|', '/').replace('\r', '\\r').replace('\n', '\\n')
-
-
-def tainted_md(rows):
-    """summary.md section for tainted_runs(); says so when there are none."""
-    md = ['', '## Tainted runs', '',
-          'A tainted run called at least one missing or approximated API. It can still exit 0 with a '
-          'healthy picture, so its status above is not a compatibility verdict.', '']
-    if not rows:
-        return md + ['No tainted runs.']
-    md += ['| Game | Mode | Status | Stub hits | Distinct APIs | Most called | Run folder |', '|---|---|---|---:|---:|---|---|']
-    for r in rows:
-        # Every value here is input-derived (guest API names, the app's bundle id, the CLI mode, paths): keep
-        # each inside its table cell (no '|'), on one line (no CR/LF) and, in a code span, free of backticks.
-        top = ', '.join('`' + md_cell(n) + '`' for n in r['topMissing'])
-        md.append(f"| {md_cell(r['bundleId'])} | {md_cell(r['mode'])} | {md_cell(r['status'])} | {md_cell(r['stubHits'])} | "
-                  f"{md_cell(r['distinctMissing'])} | {top} | `{md_cell(r.get('dir', ''))}` |")
-    return md
 
 
 def probe_one(args, ipa, mode):
@@ -342,22 +230,16 @@ def probe_one(args, ipa, mode):
             code = p.returncode
         except subprocess.TimeoutExpired:
             timed_out, code = True, -9
-    log_text = (run_dir / 'run.log').read_text(encoding='utf-8', errors='replace')
+    log_text = (run_dir / 'run.log').read_text(errors='replace')
     try:
         rep = json.loads((run_dir / 'report.json').read_text())
     except (OSError, ValueError):
         rep = None
     issues = issues_from(rep, log_text, run_dir / 'shot.png', timed_out)
-    
-    # Tag failures with explicit ERROR: lines in the per-run log
-    tag_errors(run_dir / 'run.log', issues)
-
     worst = max([i['severity'] for i in issues], default=0)
     status = 'crash' if worst >= 90 else 'broken' if worst >= 70 else 'issues' if worst >= 45 else 'ok'
     perf = (rep or {}).get('perf') or {}
-    tainted, stub_hits, distinct_missing, top_missing = taint_info(rep)
     return {'bundleId': bid, 'ipa': ipa.name, 'sha256': ipa_hash, 'mode': mode, 'status': status, 'exit': code,
-            'tainted': tainted, 'stubHits': stub_hits, 'distinctMissing': distinct_missing, 'topMissing': top_missing,
             'seconds': round(time.time() - started, 1), 'framesPresented': perf.get('framesPresented', 0),
             'mixer': (rep or {}).get('mixer'), 'dir': str(run_dir), 'issues': issues,
             'signature': (rep or {}).get('signature'), 'exceptionKind': (rep or {}).get('exceptionKind'),
@@ -377,9 +259,6 @@ def main():
                     help='parallel games; keep it at half the CPUs or timings get unreliable')
     ap.add_argument('--launches', type=int, default=1, help='2 = relaunch on the saved data, like Test All Games')
     ap.add_argument('--baseline', type=Path, help='a previous summary.json to compare against')
-    ap.add_argument('--fast', action='store_true', help='probe a seeded random sample of games and print concise summary (<=40 lines)')
-    ap.add_argument('--seed', type=int, default=42, help='random seed for --fast game sampling')
-    ap.add_argument('--sample-size', type=int, default=3, help='number of games to sample in --fast mode')
     args = ap.parse_args()
 
     ipas = sorted(args.ipas.glob('*.ipa'))
@@ -388,27 +267,17 @@ def main():
                [p for p in ipas if args.only.lower() in p.name.lower().replace('_', '')]
     if not ipas:
         sys.exit(f'no .ipa files in {args.ipas}' + (f' matching {args.only!r}' if args.only else ''))
-
-    if args.fast:
-        if args.sample_size < 1:
-            ap.error('--sample-size must be at least 1')
-        ipas = sample_ipas(ipas, args.seed, args.sample_size)
-
     args.apps.mkdir(parents=True, exist_ok=True)
     args.out = args.out or HOME / 'probe' / time.strftime('%Y%m%d-%H%M%S')
     args.out.mkdir(parents=True, exist_ok=True)
     modes = [m.strip() for m in args.modes.split(',') if m.strip()]
     jobs = [(ipa, m) for ipa in ipas for m in modes]
-    
-    if not args.fast:
-        print(f'probing {len(jobs)} runs ({len(ipas)} games x {modes}), {args.seconds}s each, {args.jobs} at a time -> {args.out}')
-    
+    print(f'probing {len(jobs)} runs ({len(ipas)} games x {modes}), {args.seconds}s each, {args.jobs} at a time -> {args.out}')
     results = []
     with ThreadPoolExecutor(args.jobs) as pool:
         for r in pool.map(lambda j: probe_one(args, *j), jobs):
             results.append(r)
-            if not args.fast:
-                print(f"  {r['status']:13} {r['bundleId']} ({r['mode']}): {len(r['issues'])} issues")
+            print(f"  {r['status']:13} {r['bundleId']} ({r['mode']}): {len(r['issues'])} issues")
 
     groups = {}
     for r in results:
@@ -418,30 +287,16 @@ def main():
             g['runs'].append(f"{r['bundleId']}({r['mode']})")
     ranked = sorted(groups.values(), key=lambda g: (-g['severity'], -len(g['runs']), g['key']))
     build, host = current_source_provenance()
-    
-    summary_obj = summarize_runs(results, len(ranked), args.fast, args.seed if args.fast else None)
-
     summary = {'kind': 'hvm-probe', 'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'seconds': args.seconds,
                'modes': modes, 'launches': args.launches, 'build': build, 'host': host,
-               'results': results, 'issues': ranked, 'taintedRuns': tainted_runs(results)}
+               'results': results, 'issues': ranked}
 
     diff = None
     if args.baseline and args.baseline.exists():
-        old = {g['key'] for g in json.loads(args.baseline.read_text(encoding='utf-8')).get('issues', [])}
+        old = {g['key'] for g in json.loads(args.baseline.read_text()).get('issues', [])}
         new = {g['key'] for g in ranked}
         diff = {'fixed': sorted(old - new), 'new': sorted(new - old), 'still': len(old & new)}
-        if args.fast:
-            # An issue missing from a sampled run is only known to be fixed when this run probed everything the
-            # baseline did: the same (ipa hash, mode) pairs.
-            base_doc = json.loads(args.baseline.read_text(encoding='utf-8'))
-            base_cov = baseline_coverage(base_doc)
-            # a run that crashed or never imported did not get far enough to show an issue is gone
-            now_cov = {(r.get('sha256'), r['mode']) for r in results if r.get('status') not in ('import-failed', 'crash')}
-            if not base_cov or not base_cov <= now_cov or not baseline_settings_match(base_doc, args.seconds, args.launches):
-                diff['fixed'] = []
-                diff['fixedNotComparable'] = True
         summary['baselineDiff'] = diff
-    summary['summary'] = summary_obj   # last field of the report, after every optional one
     (args.out / 'summary.json').write_text(json.dumps(summary, indent=1))
     write_bundle(bundle_from_probe(summary), args.out / 'evidence')
 
@@ -456,7 +311,6 @@ def main():
         mx = r.get('mixer') or {}
         md.append(f"| {r['bundleId']} | {r['mode']} | {r['status']} | {r.get('framesPresented', 0)} | "
                   f"{mx.get('audibleFrames', 0)} | {len(r['issues'])} | `{r.get('dir', '')}` |")
-    md += tainted_md(summary['taintedRuns'])
     md += ['', '## Issues (ranked)', '', '| # | Severity | Issue | Games | Example run |', '|---:|---:|---|---|---|']
     for n, g in enumerate(ranked, 1):
         if g['severity'] < 20 and n > 60:
@@ -471,32 +325,7 @@ def main():
         latest.symlink_to(args.out.resolve())
     except OSError:
         pass
-
-    if args.fast:
-        out_lines = [
-            f"=== PROBE SUMMARY (fast mode, seed={args.seed}) ===",
-            f"Runs: {len(results)} ({len(ipas)} games x {modes}), {args.seconds}s each",
-            f"Statuses: {summary_obj['okRuns']} ok, {summary_obj['crashRuns']} crash, {summary_obj['brokenRuns']} broken, "
-            f"{summary_obj['issuesRuns']} issues-only, {summary_obj['importFailedRuns']} import-failed",
-            f"Tainted runs (stub hits, any status): {summary_obj['taintedRunCount']}",
-            f"Issues found: {len(ranked)} distinct issues",
-            "",
-            "Runs detail:"
-        ]
-        for r in results:
-            out_lines.append(f"  {r['status']:10} {r['bundleId']} ({r['mode']}): {len(r['issues'])} issues [dir: {r.get('dir')}]")
-        out_lines.append("")
-        out_lines.append("Top issues:")
-        for n, g in enumerate(ranked[:15], 1):
-            out_lines.append(f"  {n}. [sev {g['severity']}] {g['key'][:60]}")
-        out_lines.append(f"\nFull report written to {args.out / 'summary.json'}")
-        
-        # At most 40 physical lines: embedded newlines are flattened, and the last line (the report path) is kept.
-        flat = [' '.join(str(l).split()) if l else '' for l in out_lines[:-1]]
-        tail = f"Full report written to {args.out / 'summary.json'}"
-        print('\n'.join(flat[:39] + [tail]))
-    else:
-        print(f"\n{len(ranked)} distinct issues. Read {args.out / 'summary.md'}")
+    print(f"\n{len(ranked)} distinct issues. Read {args.out / 'summary.md'}")
 
 
 if __name__ == '__main__':

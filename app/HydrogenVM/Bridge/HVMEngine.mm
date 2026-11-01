@@ -712,18 +712,6 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     }
 }
 
-+ (NSUInteger)liveGuestArenaCount {
-    return Hydrogen::Memory::GuestArena::liveCount();
-}
-
-+ (BOOL)waitForGuestArenaRelease:(NSTimeInterval)timeout {
-    return Hydrogen::Memory::GuestArena::waitForRelease(timeout, 0);
-}
-
-+ (BOOL)waitForGuestArenaRelease:(NSTimeInterval)timeout targetCount:(NSUInteger)targetCount {
-    return Hydrogen::Memory::GuestArena::waitForRelease(timeout, targetCount);
-}
-
 + (HVMSelfTestResult *)runSelfTest {
     return [[HVMSelfTestResult alloc] initWithResult:Hydrogen::runSelfTest()];
 }

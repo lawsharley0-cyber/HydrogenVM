@@ -36,26 +36,24 @@ Open groups that must not be double-staffed: A memory, B pixels, C Clash wire, D
 
 ## Current compat results
 
-WSL2 Linux x86_64, Clang 18.1.3, Release, **4096-byte host pages**. Tested T2b (#258) worktree on base `2dbde4b51d0dc0260129541b5e4e87d42fa1b73c`, branch `agent/T2b-codex`; report correctly records `git.dirty=true` for the uncommitted patch.
+Cloud Linux x86_64 (Ubuntu 24.04, kernel 6.18.55), Intel Xeon Platinum 8573C, Clang 18.1.3, Release `-O3 -DNDEBUG`, `-ffp-contract=off`, **4096-byte host pages**. Tested clean commit `cb3509e234ae4b83452ce55bbee76935d9fa281d`, branch `codex/zip-entry-bounds`, PR [#17](https://github.com/lawsharley0-cyber/HydrogenVM/pull/17).
 
-Indexed evidence: [20261031T020424Z-2dbde4b51d0d.json](reports/linux-x86_64/20261031T020424Z-2dbde4b51d0d.json). `summary.ok=true`; baseline and previous indexed diffs have **zero regressions and zero attention**. The previous-run improvements predate this patch and are not credited to T2b. The committed baseline remains unchanged.
+Indexed evidence: [20261022T135259Z-cb3509e234ae.json](reports/linux-x86_64/20261022T135259Z-cb3509e234ae.json). `git.dirty=false`, `summary.ok=true`; baseline and previous indexed diffs have **zero regressions and zero attention**. Timing differences from older hosts are informational. Existing tmpnam/regex binding improvements predate this patch and are not credited to #17. The committed baseline remains unchanged.
 
 | Suite | Result |
 |---|---|
-| ObjC symbolication | Fulltest regression failed before fix; stripped guest crash names both instance/class methods after fix |
-| Test Lab | 18 passed, zero failed/interrupted/skipped, before and after |
-| fulltest | 296 passed, zero failures; before fix 286 passed, 1 failed |
-| Heap / support | 12 / 40 passed, zero failures |
+| ZIP regression | 58 pass in Release and targeted ASan/UBSan; original main fails 10 checks |
+| PCM regression | 42 pass in Release and targeted ASan/UBSan |
+| fulltest | 191 pass, zero failures |
 | CPU | selftest, four asm guests and ten differential C configurations pass |
-| Python | three required modules, 82 harness tests and 9 stub-lint tests pass; audit 755 baseline findings, zero new |
-| ld64 | Project-owned stripped ObjC guest and Test Lab built/run |
-| decoder fuzz / CoreMark / Apple device / 16 KB host | NOT RUN |
+| Python | three required modules and 56 harness tests pass |
+| decoder fuzz / ld64 / CoreMark / Apple device | Not run |
 
 | App | 3-second smoke | Presented frames | Frame signal | Mixer signal |
 |---|---|---:|---|---|
-| Angry Birds 1.0 | Ran, no crash | 113 | mostly-one-color | silent |
-| Tiny Tower 1.0 | Ran, no crash | 64 | varied | active |
-| Art of Glow 1.1.2 | Ran, no crash | 40 | varied | silent |
+| Angry Birds 1.0 | Ran, no crash | 73 | mostly-one-color | silent |
+| Tiny Tower 1.0 | Ran, no crash | 60 | varied | active |
+| Art of Glow 1.1.2 | Ran, no crash | 37 | varied | silent |
 | Clash Royale 2.1306.1 | Optional fixture absent: **skip** | — | not run | not measured |
 
 A 4 KB Linux pass does not prove 16 KB iPhone permissions, precise fault behavior, signed-device operation, speaker output, or full gameplay. The original 13 owner observations remain unresolved.
@@ -82,7 +80,6 @@ A 4 KB Linux pass does not prove 16 KB iPhone permissions, precise fault behavio
 
 | Date | Decision | Who | Notes |
 |---|---|---|---|
-| 2026-10-30 | T2b maps registered ObjC IMPs through image symbolication without Process hotspot edits | codex, #258 | Shared synchronized naming state survives image rebinding; interior PCs require Mach-O function/symbol boundaries; aliases retained; 5 edit/build/test cycles including two test-assumption corrections and one build/edit race |
 | 2026-10-21 | Integration line for this system is `main` | Scope of this change | `docs/HANDOFF.md` still says `gemini-merge`. That edit is B-003, not a branch rename |
 | 2026-10-21 | Scope is the audit backlog, Clash past the 65% load, and performance follow-ons found while speeding apps up | Scope of this change | Does not by itself implement those items |
 | 2026-10-21 | Harness fixtures are SHA-256 plus a directory. Three existing IPAs stay grandfathered. New ids cannot use a repo path | This change | Deleting the committed IPAs is still open |

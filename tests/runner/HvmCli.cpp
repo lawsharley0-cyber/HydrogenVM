@@ -1,34 +1,15 @@
 // hvm — command-line front end used by the test suite (and handy for
 // debugging on a desktop): import .ipa files, inspect bundles, run apps.
+#include "loader/AppBundle.hpp"
+#include "runtime/objc/ObjC.hpp"
+#include <set>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
-#include <chrono>
-#include <map>
-#include <set>
-#include <vector>
-#include <string>
-#include <memory>
-#include <functional>
-#include <algorithm>
 #include <cxxabi.h>
 #include <cstdio>
 #include <cstring>
-#include <atomic>
-#include <mutex>
-#include <condition_variable>
-#include <thread>
-#include <typeindex>
-#include <unordered_map>
-#include <unordered_set>
-#include <queue>
-#include <shared_mutex>
-#include "loader/AppBundle.hpp"
-#define private public
-#include "runtime/Process.hpp"
-#include "runtime/objc/ObjC.hpp"
-#undef private
-#include "runtime/Support.hpp"
+#include <string>
 
 using namespace Hydrogen;
 
@@ -58,110 +39,6 @@ static std::string pretty(std::string name) {
     if (demangled && !status) name = demangled;
     std::free(demangled);
     return name;
-}
-
-static void dumpSupport() {
-    Runtime::ProcessConfig cfg;
-    cfg.bundlePath = "/tmp/dummy.app";
-    cfg.homePath = "/tmp/dummy_home";
-    cfg.log = [](Runtime::LogLevel, const std::string&) {};
-    Runtime::Process process(cfg);
-    auto& objc = Runtime::ObjC::rt(process);
-    auto& supportReg = Runtime::supportRegistry(process);
-
-    std::cout << "{\"$schema\":\"https://hydrogenvm.local/schemas/support-manifest-v1.json\",\"version\":1";
-
-    // Symbols
-    std::cout << ",\"symbols\":[";
-    bool first = true;
-    for (const auto& [name, addr] : process.symbols_) {
-        const bool isFn = process.engine().isHleAddress(addr);
-        const auto rec = supportReg.find(name);
-        std::string status = rec ? Runtime::supportStatusName(rec->status) : "Real";
-        std::string provenance = rec ? rec->provenance : "HydrogenVM";
-        std::cout << (first ? "" : ",") << "{\"name\":" << quoted(name)
-                  << ",\"kind\":" << quoted(isFn ? "function" : "data")
-                  << ",\"status\":" << quoted(status)
-                  << ",\"provenance\":" << quoted(provenance) << "}";
-        first = false;
-    }
-    std::cout << "]";
-
-    // Classes (only non-metaclasses)
-    std::cout << ",\"classes\":[";
-    first = true;
-    std::set<std::string> allSelectors;
-    for (const auto& [cls, infoPtr] : objc.classes_) {
-        const auto* info = infoPtr.get();
-        if (!info || info->isMeta) continue;
-        const std::string status = info->stub ? "Stub" : "Real";
-        const std::string provenance = "HydrogenVM";
-        std::cout << (first ? "" : ",") << "{\"name\":" << quoted(info->name)
-                  << ",\"status\":" << quoted(status)
-                  << ",\"provenance\":" << quoted(provenance)
-                  << ",\"methods\":[";
-        bool mFirst = true;
-        for (const auto& [sel, imp] : info->methods) {
-            std::string selName = objc.selName(sel);
-            if (!info->stub) allSelectors.insert(selName);
-            std::cout << (mFirst ? "" : ",") << quoted(selName);
-            mFirst = false;
-        }
-        // Also collect class methods on meta
-        if (info->meta) {
-            const auto* metaInfo = objc.info(info->meta);
-            if (metaInfo) {
-                for (const auto& [sel, imp] : metaInfo->methods) {
-                    std::string selName = objc.selName(sel);
-                    if (!info->stub) allSelectors.insert(selName);
-                    std::cout << (mFirst ? "" : ",") << quoted(selName);
-                    mFirst = false;
-                }
-            }
-        }
-        std::cout << "]}";
-        first = false;
-    }
-    std::cout << "]";
-
-    // Selectors
-    std::cout << ",\"selectors\":[";
-    first = true;
-    for (const auto& selName : allSelectors) {
-        std::cout << (first ? "" : ",") << "{\"name\":" << quoted(selName)
-                  << ",\"status\":\"Real\",\"provenance\":\"HydrogenVM\"}";
-        first = false;
-    }
-    std::cout << "]";
-
-    // Flat entries array
-    std::cout << ",\"entries\":[";
-    first = true;
-    for (const auto& [name, addr] : process.symbols_) {
-        const auto rec = supportReg.find(name);
-        std::string status = rec ? Runtime::supportStatusName(rec->status) : "Real";
-        std::string provenance = rec ? rec->provenance : "HydrogenVM";
-        std::cout << (first ? "" : ",") << "{\"kind\":\"symbol\",\"name\":" << quoted(name)
-                  << ",\"status\":" << quoted(status)
-                  << ",\"provenance\":" << quoted(provenance) << "}";
-        first = false;
-    }
-    for (const auto& [cls, infoPtr] : objc.classes_) {
-        const auto* info = infoPtr.get();
-        if (!info || info->isMeta) continue;
-        std::cout << (first ? "" : ",") << "{\"kind\":\"class\",\"name\":" << quoted(info->name)
-                  << ",\"status\":" << quoted(info->stub ? "Stub" : "Real")
-                  << ",\"provenance\":\"HydrogenVM\"}";
-        first = false;
-    }
-    for (const auto& selName : allSelectors) {
-        std::cout << (first ? "" : ",") << "{\"kind\":\"selector\",\"name\":" << quoted(selName)
-                  << ",\"status\":\"Real\",\"provenance\":\"HydrogenVM\"}";
-        first = false;
-    }
-    std::cout << "]";
-
-    std::cout << "}\n";
 }
 
 static void linkingInfo(const char* path) {
@@ -231,11 +108,10 @@ int hvmRunMain(int argc, char** argv);   // HvmRun.cpp
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: hvm import <ipa> <apps-root> | info <app> | run <app> [options] | --dump-support\n");
+        std::fprintf(stderr, "usage: hvm import <ipa> <apps-root> | info <app> | run <app> [options]\n");
         return 2;
     }
     try {
-        if (!std::strcmp(argv[1], "--dump-support") || !std::strcmp(argv[1], "dump-support")) { dumpSupport(); return 0; }
         if (!std::strcmp(argv[1], "import") && argc >= 4) { printInfo(Loader::importIpa(argv[2], argv[3])); return 0; }
         if (!std::strcmp(argv[1], "info") && argc == 5 && !std::strcmp(argv[2], "--linking") && !std::strcmp(argv[4], "--json")) { linkingInfo(argv[3]); return 0; }
         if (!std::strcmp(argv[1], "info") && argc >= 3) { printInfo(Loader::readBundle(argv[2])); return 0; }

@@ -22,15 +22,6 @@ Groups A–E are exclusive. Two tasks with the same letter do not run together. 
 
 ## P1
 
-- UAR-002 startup (Group D, `PlatformStubs.cpp`): AVPlayerItem must report
-  Unknown initially and publish readiness after player construction. TL-X fails
-  on the old implementation and passes with the deferred status KVO transition.
-  Goat Simulator 1.0.3 reaches the menu and interactive world on Linux/Mesa;
-  movement, camera and jump respond. Longer gameplay hit a host SIGSEGV outside
-  the guest arena; stability, save/relaunch and physical iPhone remain open.
-  This does not resolve the owner's original device report.
-- **Memory stability investigation (2026-10-27, Codex):** P1, Clash 2.1306.1 on iPhone18,2. Branch `codex/memory-stability-diagnostics`; initial scope is host/guest/audio diagnostics and a ranked report. Graphics/presentation ownership remains with #33; guest transport/checkpoint ownership remains with draft #138. No cache eviction or gameplay changes without allocation evidence. See `docs/investigations/MEMORY_STABILITY_2026-10-27.md`.
-
 Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
 
 - B-212 / UX-2 (Group E): guest-oriented viewport, display scaling/filtering,
@@ -60,11 +51,6 @@ Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
 | B-118 | Minecraft Story Mode GLSL ES 3 output/texture aliases and cross-thread program lifetime/table safety. | 5 | 4 | 3 | 6.67 | B | None | Not with another B change | Locally implemented 2026-10-26: red-first fulltest coverage; opening legal screen and music verified. Gameplay and timing-dependent timed-stop host crash remain open |
 
 ## P2
-
-- UAR-002 asset I/O (Group D plus libc file opens; impact 2, severity 2,
-  complexity 2, score 2): bounded bundle resource lookup caching and best-effort
-  UE3 asset read-ahead, with isolated path/descriptor regressions. Investigation
-  on `codex/ue3-asset-io`; the reported Goat black screen remains unresolved.
 
 | ID | Item | Impact | Sev | Cx | Score | Group | Depends on | Parallel | State |
 |---|---|---:|---:|---:|---:|---|---|---|---|

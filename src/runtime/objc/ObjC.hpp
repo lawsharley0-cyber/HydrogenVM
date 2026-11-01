@@ -223,8 +223,6 @@ private:
     void cxxDestruct(CPU::Cpu& c, Class cls, id obj);
 
     Process& proc_;
-    std::shared_ptr<Loader::MethodSymbols> methodSymbols_ = std::make_shared<Loader::MethodSymbols>();
-    std::string diagnosticSelector(SEL s) const;
     mutable std::shared_mutex classMu_;
     std::once_flag nilImpOnce_;
     IMP nilImp_ = 0;

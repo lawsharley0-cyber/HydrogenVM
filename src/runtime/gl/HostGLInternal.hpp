@@ -1,7 +1,6 @@
 // HydrogenVM — HostGL internals shared by HostGL.cpp and Gles1Emu.cpp.
 #pragma once
 #include "runtime/gl/HostGL.hpp"
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -44,8 +43,6 @@ struct HostContext {
     int api = 2;
     bool desktop = false;    // ES 1.1 guest on a desktop compatibility context
     bool implicitWorker = false;
-    uint64_t retireId = 0;               // unique per retirement (set under State::mu); never reused, unlike addresses
-    std::atomic<bool> retired{false};   // its sharegroup was destroyed; the owning thread must drop it
     uint32_t guestContext = 0, guestSharegroup = 0;
     uint32_t boundFbo = 0;
     uint32_t currentProgram = 0;

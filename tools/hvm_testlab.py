@@ -12,7 +12,7 @@ usage:
         [--timeout 30] [--skip-build]
         [--home DIR]
 
-    # Omit --case to execute the complete TL-A through TL-Y suite.
+    # Omit --case to execute the complete TL-A through TL-R suite.
     python3 tools/hvm_testlab.py validate REPORT.json
 
 Exit status:
@@ -45,8 +45,7 @@ ROOT = Path(__file__).parent.parent
 TESTLAB_SRC = ROOT / "tests" / "ios" / "apps" / "testlab"
 SCHEMA_MOD  = str(ROOT / "tools" / "testlab_schema")
 
-OBJC_CASE_IDS = ("TL-S", "TL-T", "TL-U", "TL-V", "TL-W")
-CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L", "TL-M", "TL-N", "TL-O", "TL-P", "TL-Q", "TL-R", *OBJC_CASE_IDS, "TL-X", "TL-Y"]
+CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L", "TL-M", "TL-N", "TL-O", "TL-P", "TL-Q", "TL-R"]
 # Wall-clock timeout (seconds) per case process, including hvm startup.
 DEFAULT_TIMEOUT = 30
 # TL-E phase 1 is fast; allow extra for the full two-launch cycle.
@@ -96,8 +95,6 @@ def build_testlab(build_dir: str, skip_build: bool) -> tuple[str, str]:
         "--resource", str(tone_src),
         "--resource", str(empty_src),
         str(TESTLAB_SRC / "main.m"),
-        str(TESTLAB_SRC / "objc_conformance.m"),
-        str(TESTLAB_SRC / "objc_lifetime_mrc.m"),
     ]
     print(f"[testlab] building IPA …", flush=True)
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -155,10 +152,6 @@ def run_case(
 ) -> dict:
     """Run one case in a subprocess.  Returns a caseResult dict."""
     t0 = time.monotonic()
-    objc_result = Path(home) / "com.hydrogenvm.test.testlab" / "Documents" / "testlab_result.json"
-    if case_id in OBJC_CASE_IDS:
-        # A previous invocation of this case must not supply its observations.
-        objc_result.unlink(missing_ok=True)
 
     # hvm run imports the IPA on first use; for phase 2 of TL-E we must NOT
     # re-import (that would replace the sandbox and erase the persisted prefs).
@@ -204,26 +197,6 @@ def run_case(
         timed_out = True
 
     case_result = _parse_case_output(stdout, case_id, elapsed, rc, timed_out, stderr)
-    if case_id in OBJC_CASE_IDS:
-        try:
-            data = json.loads(objc_result.read_text())
-            matching = [c for c in data["cases"] if c.get("id") == case_id]
-            if len(matching) != 1:
-                raise ValueError("expected one matching guest case")
-            guest = matching[0]
-            if not all(isinstance(guest.get(key), dict) and guest[key] for key in ("expected", "actual", "diagnostics")):
-                raise ValueError("missing conformance observations")
-            case_result["expected"] = guest["expected"]
-            case_result["actual"] = guest["actual"]
-            case_result["diagnostics"]["conformance"] = guest["diagnostics"]
-            if case_result["status"] == "passed" and (guest["status"] != "passed" or rc != 0):
-                case_result["status"] = "failed"
-                case_result["reason"] = "Guest JSON/exit status contradicts conformance pass marker"
-        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-            case_result["diagnostics"]["guestResultError"] = str(exc)
-            if case_result["status"] == "passed":
-                case_result["status"] = "failed"
-                case_result["reason"] = "Conformance pass marker lacks a fresh, complete guest result"
     if case_id == "TL-L":
         save = Path(home) / "com.hydrogenvm.test.testlab" / "Documents" / "lifecycle-save.txt"
         saved = save.is_file() and save.read_text() == "saved before termination completed"
