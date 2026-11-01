@@ -57,6 +57,9 @@ struct Placement { float unit[6] = {}; };
 
 struct State {
     explicit State(Process&) {}
+    // Process addresses can be reused across relaunches. Cached TLS contexts
+    // therefore need an independent owner-lifetime identity.
+    std::shared_ptr<char> lifetime = std::make_shared<char>();
     std::mutex mu;
     std::shared_ptr<Platform> platform;
     std::unordered_map<uint32_t, std::unique_ptr<HostContext>> contexts;          // guest EAGLContext -> host
@@ -82,8 +85,13 @@ struct Tls {
     Process* proc = nullptr;
     HostContext* ctx = nullptr;
     bool software = false;   // the guest made a software-rendered context current on this thread
+    std::weak_ptr<char> lifetime;
 };
 thread_local Tls tls;
+
+void discardExpiredBinding() {
+    if (tls.proc && tls.lifetime.expired()) tls = {};
+}
 
 uint64_t key2(uint32_t a, uint32_t b) { return (uint64_t(a) << 32) | b; }
 
@@ -199,6 +207,7 @@ void releaseRetiredCurrent(Process& p) {
 
 void bind(Process& p, HostContext* hc) {
     State& st = S(p);
+    discardExpiredBinding();
     releaseRetiredCurrent(p);   // never overwrite tls.ctx while it still points at a retired worker
     HostContext* root = hc;
     if (hc && !st.platform->makeCurrent(hc->handle) && !hc->implicitWorker) {
@@ -222,6 +231,7 @@ void bind(Process& p, HostContext* hc) {
     tls.proc = &p;
     tls.ctx = hc;
     tls.software = false;
+    tls.lifetime = st.lifetime;
 }
 
 std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestContext, uint32_t sharegroup, bool worker) {
@@ -328,11 +338,12 @@ void threadExit(Process& p) {
     releaseRetiredCurrent(p);
 }
 
-HostContext* currentHostContext() { return tls.ctx; }
+HostContext* currentHostContext() { discardExpiredBinding(); return tls.ctx; }
 
 // ------------------------------------------------------------ current context ---
 
 HostContext* hgCurrent(Ctx& x) {
+    discardExpiredBinding();
     // Its sharegroup died while this thread had it current: release it here, on the owning thread,
     // then fall through to the no-context path below.
     releaseRetiredCurrent(x.proc);
@@ -1020,6 +1031,7 @@ void* contextCreate(Process& p, uint32_t guestContext, int api, uint32_t guestSh
 }
 
 void contextDestroy(Process& p, uint32_t guestContext) {
+    discardExpiredBinding();
     State& st = ready(p);
     std::unique_ptr<HostContext> hc;
     {
@@ -1039,6 +1051,7 @@ void contextDestroy(Process& p, uint32_t guestContext) {
 }
 
 void contextMakeCurrent(Process& p, uint32_t guestContext) {
+    discardExpiredBinding();
     State& st = ready(p);
     HostContext* hc = nullptr;
     {
@@ -1068,6 +1081,7 @@ bool isHostContext(Process& p, uint32_t guestContext) {
 
 // Which implementation serves a GL call on this thread.
 static bool hgUseHost(Ctx& x) {
+    discardExpiredBinding();
     if (tls.proc == &x.proc) {
         if (tls.ctx) return true;
         if (tls.software) return false;
@@ -1085,6 +1099,7 @@ static HostContext* contextFor(Process& p, uint32_t guestContext) {
 }
 
 bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t layer, int width, int height) {
+    discardExpiredBinding();
     State& st = ready(p);
     HostContext* hc = contextFor(p, guestContext);
     if (!hc) return false;
@@ -1145,6 +1160,7 @@ void restoreFbBindings(HostContext* hc, const FbBindings& b) {
 
 bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int& width, int& height,
                          std::vector<uint8_t>& rgba, bool& direct) {
+    discardExpiredBinding();
     State& st = ready(p);
     direct = false;
     HostContext* hc = contextFor(p, guestContext);

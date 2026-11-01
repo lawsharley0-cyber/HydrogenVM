@@ -1,6 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Twenty-three automated cases (TL-A--TL-W); see docs/TEST_LAB.md for the
+// Twenty-four automated cases (TL-A--TL-X); see docs/TEST_LAB.md for the
 // complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
@@ -77,6 +77,7 @@ static const char *kAppBuild        = "1";
 #define CASE_Q  @"TL-Q"
 #define CASE_R  @"TL-R"
 #define CASE_S  @"TL-S"
+#define CASE_X  @"TL-X"
 #define CASE_T  @"TL-T"
 #define CASE_U  @"TL-U"
 #define CASE_V  @"TL-V"
@@ -1772,11 +1773,63 @@ static NSString *makeRunId(void) {
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
 }
 
+// TL-X: reproduce the UE3 movie startup ordering without proprietary media.
+// Apple's AVPlayerItem status contract supplies the oracle: Unknown=0 on
+// creation, then an observed ReadyToPlay=1 after association with AVPlayer.
+@interface AVPlayerItem : NSObject
++ (id)playerItemWithURL:(NSURL *)url;
+- (NSInteger)status;
+@end
+@interface AVPlayer : NSObject
++ (id)playerWithPlayerItem:(id)item;
+- (void)play;
+- (float)rate;
+@end
+static int itemReadyContext;
+@interface TLItemReadyObserver : NSObject {
+@public
+    AVPlayer *player;
+    NSUInteger unknownCount, readyCount;
+    BOOL readyBeforePlayer;
+}
+@end
+@implementation TLItemReadyObserver
+- (void)observeValueForKeyPath:(NSString *)key ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    if (context != &itemReadyContext) return;
+    NSInteger status = [[change objectForKey:@"new"] integerValue];
+    if (status == 0) unknownCount++;
+    if (status == 1) {
+        readyCount++;
+        readyBeforePlayer |= player == nil;
+        [player play];
+    }
+}
+@end
+static TLResult *runCaseX(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_X version:1];
+    writeCheckpoint(CASE_X); r.checkpointWritten = YES;
+    NSString *path = [[NSBundle mainBundle] pathForResource:@"tone" ofType:@"wav"];
+    AVPlayerItem *item = [NSClassFromString(@"AVPlayerItem") playerItemWithURL:[NSURL fileURLWithPath:path]];
+    TLItemReadyObserver *observer = [[TLItemReadyObserver alloc] init];
+    [item addObserver:observer forKeyPath:@"status" options:NSKeyValueObservingOptionNew|NSKeyValueObservingOptionInitial context:&itemReadyContext];
+    BOOL initiallyUnknown = [item status] == 0 && observer->unknownCount == 1 && observer->readyCount == 0;
+    observer->player = [NSClassFromString(@"AVPlayer") playerWithPlayerItem:item];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+    BOOL ready = [item status] == 1 && observer->readyCount == 1 && !observer->readyBeforePlayer;
+    BOOL started = [observer->player rate] == 1.0f;
+    [item removeObserver:observer forKeyPath:@"status" context:&itemReadyContext];
+    r.expected = @{ @"initiallyUnknown":@YES, @"readyAfterPlayer":@YES, @"playStarted":@YES };
+    r.actual = @{ @"initiallyUnknown":@(initiallyUnknown), @"readyAfterPlayer":@(ready), @"playStarted":@(started) };
+    r.status = initiallyUnknown && ready && started ? @"passed" : @"failed";
+    if (![r.status isEqualToString:@"passed"]) r.reason = @"Player-item readiness arrived before player construction or failed to notify";
+    clearCheckpoint(); return r;
+}
+
 static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1829,6 +1882,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runObjCCase(cid, TLObjCMutation)];
         } else if ([cid isEqualToString:CASE_W]) {
             [results addObject:runObjCCase(cid, TLObjCLifetime)];
+        } else if ([cid isEqualToString:CASE_X]) {
+            [results addObject:runCaseX()];
         }
     }
     return results;
@@ -1865,6 +1920,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_U]) return runObjCCase(caseId, TLObjCMethodLookup);
     if ([caseId isEqualToString:CASE_V]) return runObjCCase(caseId, TLObjCMutation);
     if ([caseId isEqualToString:CASE_W]) return runObjCCase(caseId, TLObjCLifetime);
+    if ([caseId isEqualToString:CASE_X]) return runCaseX();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1901,8 +1957,8 @@ static UIColor *colorForStatus(NSString *s) {
     scroll.scrollEnabled = YES;
     [self.view addSubview:scroll];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1928,6 +1984,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_U version:1],
         [[TLResult alloc] initWithId:CASE_V version:1],
         [[TLResult alloc] initWithId:CASE_W version:1],
+        [[TLResult alloc] initWithId:CASE_X version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1988,7 +2045,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
