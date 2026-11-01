@@ -253,10 +253,20 @@ def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None)
     }
 
 
+def fixture_path(name: str, repo_root: Path, fixture_root: str | None = None) -> Path:
+    """Where fixture `name` lives. With a fixture root set it is `<root>/ipas/<name>` (the apps.json fixtureRelPath)
+    and the repo copy is never used, the same rule as the compat harness. census_ipa still checks the SHA-256."""
+    if fixture_root:
+        return Path(fixture_root) / "ipas" / name
+    return Path(repo_root) / name
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("ipa", nargs="?", help="Path to .ipa file")
-    p.add_argument("--all", action="store_true", help="Run census on all fixture IPAs in repo root")
+    p.add_argument("--all", action="store_true", help="Run census on all fixture IPAs (HVM_FIXTURE_ROOT/ipas, else the repo root)")
+    p.add_argument("--fixture-root", default=os.environ.get("HVM_FIXTURE_ROOT") or None,
+                   help="Private fixture store for --all (default: $HVM_FIXTURE_ROOT)")
     p.add_argument("--hvm", default="build/hvm", help="Path to hvm binary (default: build/hvm)")
     p.add_argument("--manifest", help="Path to pre-dumped support manifest JSON")
     p.add_argument("--json", action="store_true", help="Output results as JSON")
@@ -271,7 +281,7 @@ def main(argv=None):
     if args.all or not args.ipa:
         repo_root = Path(__file__).resolve().parent.parent
         for ipa_name in FIXTURE_MANIFEST:
-            ipa_path = repo_root / ipa_name
+            ipa_path = fixture_path(ipa_name, repo_root, args.fixture_root)
             if not ipa_path.exists():
                 sys.exit(f"Fixture IPA missing: {ipa_path}")
             res = census_ipa(ipa_path, manifest)
