@@ -1062,7 +1062,11 @@ void applyDescriptorAttributes(Ctx& x, FontData& h, id attrs) {
     if (!attrs) return;
     for (auto [key, value] : Foundation::dictEntries(x, attrs)) {
         const std::string k = Foundation::utf8(x, key);
-        if (k == "kCTFontNameAttribute") h.name = Foundation::utf8(x, value);
+        if (k == "kCTFontNameAttribute") {
+            const std::string name = Foundation::utf8(x, value);
+            if (name != h.name) h.face.reset();   // a custom face belongs to the old name; render the new one by name
+            h.name = name;
+        }
         else x.proc.reportMissing("CTFontDescriptor attribute " + k);
     }
 }
@@ -1075,6 +1079,7 @@ uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) {
 }
 uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) {
     auto h = std::make_unique<FontData>();
+    h->name = "Helvetica";   // same default as CGFontCreateWithFontName(nil)
     applyDescriptorAttributes(x, *h, attrs);
     return newObject(x, S(x).descriptor, std::move(h));
 }
