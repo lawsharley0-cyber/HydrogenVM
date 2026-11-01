@@ -35,6 +35,8 @@ jobs:
         run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
       - name: Synthetic Plist metadata and ASan/UBSan regression
         run: CXX=g++ tools/test_plist.sh
+      - name: Native guest-worker lifetime under ASan/UBSan
+        run: bash tools/test_thread_lifetime.sh
       - name: Evidence contract tests
         run: python3 -m unittest discover -s tools/tests -p 'test_hvm_evidence.py'
       - name: Agent queue tests

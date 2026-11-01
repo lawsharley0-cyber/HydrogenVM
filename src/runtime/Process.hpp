@@ -74,7 +74,8 @@ struct GuestThread {
     uint32_t stackBase = 0, stackSize = 0;
     uint32_t errnoAddr = 0;
     std::unordered_map<uint32_t, uint32_t> tsd;   // pthread keys
-    std::thread host;
+    std::thread::native_handle_type host{};
+    bool hostJoinable = false; // guarded by Process::threadsMu_; independent of guest detach
     std::atomic<bool> finished{false};
     bool detached = false;
     bool pthreadExited = false;   // left via pthread_exit()
@@ -368,6 +369,7 @@ private:
     void finishCrash(const CPU::Cpu& c, CPU::Exit e);
 
     ProcessConfig cfg_;
+    const uint64_t identity_; // distinguishes stale host TLS from a different/reused Process
     std::unique_ptr<Memory::GuestArena> mem_;
     std::unique_ptr<CPU::Engine> engine_;
     std::unique_ptr<Heap> heap_;
