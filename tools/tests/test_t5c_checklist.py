@@ -88,10 +88,13 @@ class TestUnityMonoChecklist(unittest.TestCase):
             self.assertEqual(U.run_checklist(plain)["overall_status"], U.UNVERIFIED)
 
     def test_startup_lookup_failures_make_the_run_not_ok(self):
-        for log in ("dlsym(RTLD_DEFAULT): symbol not found: mono_x\n", "getpwnam failed: no mobile\n"):
+        cases = (("dlsym(RTLD_DEFAULT): symbol not found: mono_x\n", "dlopen(NULL) export resolution failure"),
+                 ("getpwnam failed: no mobile\n", "getpw mobile user resolution failure"))
+        for log, text in cases:
             found = hvm_probe.issues_from({"mixer": {}}, log, Path("/nonexistent"), False)
-            worst = max(i["severity"] for i in found)
-            self.assertGreaterEqual(worst, 45, log)   # >= 45 is status 'issues', not 'ok'
+            lookup = [i for i in found if i["kind"] == "error" and i["text"] == text]
+            self.assertEqual(len(lookup), 1, log)
+            self.assertGreaterEqual(lookup[0]["severity"], 45, log)   # >= 45 is status 'issues', not 'ok'
 
     def test_cli_exit_codes(self):
         import io
