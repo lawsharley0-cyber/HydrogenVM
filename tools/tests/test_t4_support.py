@@ -2,9 +2,11 @@
 """Unit tests for T4 Support manifest, census, failure ledger, and probe fast mode."""
 
 import json
+import os
 from pathlib import Path
 import random
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -77,21 +79,54 @@ class TestCensus(unittest.TestCase):
 
     def test_reproduces_reference_numbers(self):
         # Reproduce reference numbers for all 3 committed repo-root IPAs
+        # Check LLVM / Mach-O inspection tools prerequisite
+        nm_tool = shutil.which("llvm-nm") or shutil.which("llvm-nm", path=str(ROOT_DIR / "tools" / "toolchain" / "bin"))
+        objdump_tool = shutil.which("llvm-objdump") or shutil.which("llvm-objdump", path=str(ROOT_DIR / "tools" / "toolchain" / "bin"))
+        if not nm_tool or not objdump_tool:
+            missing = []
+            if not nm_tool:
+                missing.append("llvm-nm")
+            if not objdump_tool:
+                missing.append("llvm-objdump")
+            self.skipTest(
+                f"Missing prerequisite tool(s) {', '.join(missing)} required by census to inspect Mach-O symbols. "
+                "To provide them, install LLVM (e.g. 'sudo apt install llvm') or place them in tools/toolchain/bin/ or PATH."
+            )
+
+        tested = 0
+        missing_fixtures = []
         for fixture_name, meta in census.FIXTURE_MANIFEST.items():
             ipa_path = ROOT_DIR / fixture_name
             if not ipa_path.exists():
-                self.skipTest(f"Fixture IPA {fixture_name} not found at repo root")
-            res = census.census_ipa(ipa_path, self.manifest)
-            self.assertEqual(res["slice"], meta["slice"], fixture_name)
-            ref = meta["reference"]
-            self.assertTrue(res["is_fixture"])
-            # Computed from the IPA and the live manifest, never copied from the reference. The import count is a
-            # property of the binary and must match exactly; the gap counts can only shrink as support is added.
-            self.assertEqual(res["imported_non_objc_symbols"], ref["imported_non_objc_symbols"],
-                             f"{fixture_name}: non-objc symbols mismatch")
-            for key in ("unimplemented_symbols", "missing_or_stubbed_classes", "missing_selectors_classes_constants"):
-                self.assertLessEqual(res[key], ref[key], f"{fixture_name}: {key} grew past the recorded reference")
-            self.assertEqual(res["reference"], ref)
+                fixture_root = os.environ.get("HVM_FIXTURE_ROOT")
+                if fixture_root:
+                    cand = Path(fixture_root) / fixture_name
+                    if cand.exists():
+                        ipa_path = cand
+            if not ipa_path.exists():
+                missing_fixtures.append(fixture_name)
+                continue
+
+            with self.subTest(fixture=fixture_name):
+                res = census.census_ipa(ipa_path, self.manifest)
+                self.assertEqual(res["slice"], meta["slice"], fixture_name)
+                ref = meta["reference"]
+                self.assertTrue(res["is_fixture"])
+                # Computed from the IPA and the live manifest, never copied from the reference. The import count is a
+                # property of the binary and must match exactly; the gap counts can only shrink as support is added.
+                self.assertEqual(res["imported_non_objc_symbols"], ref["imported_non_objc_symbols"],
+                                 f"{fixture_name}: non-objc symbols mismatch")
+                for key in ("unimplemented_symbols", "missing_or_stubbed_classes", "missing_selectors_classes_constants"):
+                    self.assertLessEqual(res[key], ref[key], f"{fixture_name}: {key} grew past the recorded reference")
+                self.assertEqual(res["reference"], ref)
+                tested += 1
+
+        if tested == 0:
+            self.skipTest(
+                f"None of the reference fixture IPAs ({', '.join(census.FIXTURE_MANIFEST.keys())}) found at repository root or HVM_FIXTURE_ROOT. "
+                "To provide them, place the fixture IPAs at the repository root or set HVM_FIXTURE_ROOT to their directory "
+                "(obtain via private fixture store per docs/dev-system/library.json)."
+            )
 
 
 class TestLedger(unittest.TestCase):
