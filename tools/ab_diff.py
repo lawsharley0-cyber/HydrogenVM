@@ -122,6 +122,14 @@ def observation(build, target, folder, args):
     stable = normalize(report, replacements)
     perf = stable.pop("perf")
     stable["perf"] = {k: v for k, v in perf.items() if k in {"frames", "framesPresented"}}
+    # A crash bundle repeats timing and the emulator build, which differ between two builds by construction.
+    bundle = stable.get("crashBundle")
+    if isinstance(bundle, dict):
+        stable["crashBundle"] = bundle = dict(bundle)
+        if isinstance(bundle.get("perf"), dict):
+            bundle["perf"] = {k: v for k, v in bundle["perf"].items() if k != "wallSeconds"}
+        if isinstance(bundle.get("host"), dict):
+            bundle["host"] = {k: v for k, v in bundle["host"].items() if k != "emulatorCommit"}
     logs = {}
     for name, content in (("stdout", result.stdout), ("stderr", result.stderr)):
         lines = normalize(content, replacements).splitlines()

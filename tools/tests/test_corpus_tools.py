@@ -263,11 +263,22 @@ sys.exit({exit_status})
         decoy = self.root / "decoy"
         decoy.mkdir()
         subprocess.check_call(["git", "init", "-q", str(decoy)], stderr=subprocess.DEVNULL, env=clean_git_env())
-        target = self.root / "fresh"
-        target.mkdir()
         with mock.patch.dict(os.environ, {"GIT_DIR": str(decoy / ".git"), "GIT_WORK_TREE": str(decoy)}):
-            subprocess.check_call(["git", "init", "-q", str(target)], stderr=subprocess.DEVNULL, env=clean_git_env())
-        self.assertTrue((target / ".git").is_dir())
+            repo, commits = self.repository()
+        self.assertEqual(len(commits), 10)
+        self.assertEqual(Path(git(repo, "rev-parse", "--show-toplevel")).resolve(), Path(repo).resolve())
+        self.assertNotEqual(Path(repo).resolve(), decoy.resolve())
+
+    def test_crash_bundle_timing_and_emulator_commit_are_not_differences(self):
+        def variant(name, wall, commit):
+            hvm = self.fake_hvm(name)
+            bundle = f"{{'perf': {{'wallSeconds': {wall}, 'frames': 3}}, 'host': {{'emulatorCommit': '{commit}', 'os': 'linux'}}}}"
+            hvm.write_text(hvm.read_text().replace("json.dumps(report)", f"json.dumps(dict(report, crashBundle={bundle}))"))
+            return hvm
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ab_diff.main(self.ab_args(variant("old", 1.5, "aaaa"), variant("new", 9.5, "bbbb"))), 0)
+        raw = json.loads((self.root / "ab" / "new" / "report.json").read_text())
+        self.assertEqual(raw["crashBundle"]["host"]["emulatorCommit"], "bbbb")   # kept in the raw report
 
     def test_report_with_infinite_floats_is_rejected(self):
         hvm = self.fake_hvm("hvm")
