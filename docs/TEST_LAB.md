@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · 24 automated cases (TL-A–TL-X) · schema version 1.
+Version 1.0 · 25 automated cases (TL-A–TL-Y) · schema version 1.
 
 ## Contents
 
@@ -52,6 +52,7 @@ TL-L is a host-driven termination check; 22 cases are guest-selectable.
 | TL-Q | RemoteIO thread timing | Requires audio callbacks to continue while the main thread sleeps; proven red with the old main-run-loop timer and green with the guest audio thread |
 | TL-R | Depth/stencil & root view | Requires depth24/stencil8/packed renderbuffers with correct bit counts, real stencil reject/write behavior, and replacement of an installed root controller's view; both graphics and root-view checks were red before their fixes for Minion Rush |
 | TL-X | Player-item readiness | Requires Initial KVO to report Unknown before player creation, followed by an observed ReadyToPlay transition that can start the assigned player; reproduces the UE3 startup-movie wait in Goat Simulator. Oracle: Apple's documented AVPlayerItem status lifecycle |
+| TL-Y | libstdc++ 4.2 ABI | Calls the GCC 4.2 libstdc++ entry points directly: std::string COW `_Rep` (empty rep, refcopy, dispose), `std::list` node hook/unhook, red-black tree insert/rebalance and increment, and the SJLJ unwinder frame chain. Oracle: the libstdc++ 4.2 ABI layouts the app binaries are compiled against |
 
 ### Objective-C conformance (T8)
 
