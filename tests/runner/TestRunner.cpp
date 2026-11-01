@@ -7523,6 +7523,29 @@ int runFullSubsystemTests() {
         ::unlink(lockPath);
         ::unlink(freePath);
     }
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-dlsym-tests";
+        Process proc(cfg);
+        auto& cpu = proc.mainThread().cpu;
+        const uint32_t stack = proc.heap().allocZeroed(1024);
+        cpu.r[CPU::kSP] = stack + 1024;
+
+        auto callDlsym = [&](const char* name) -> uint32_t {
+            const uint32_t namePtr = proc.allocCString(name);
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_dlsym"), {0xFFFFFFFEu, namePtr}));
+        };
+
+        const uint32_t addrHttp = callDlsym("kCFHTTPVersion1_1");
+        const uint32_t addrProxyFtp = callDlsym("kCFProxyTypeFTP");
+        const uint32_t addrProxyJs = callDlsym("kCFProxyTypeAutoConfigurationJavaScript");
+
+        bool okHttp = addrHttp != 0 && proc.mem().read<uint32_t>(addrHttp) != 0;
+        bool okProxyFtp = addrProxyFtp != 0 && proc.mem().read<uint32_t>(addrProxyFtp) != 0;
+        bool okProxyJs = addrProxyJs != 0 && proc.mem().read<uint32_t>(addrProxyJs) != 0;
+
+        check(okHttp && okProxyFtp && okProxyJs, "dlsym(RTLD_DEFAULT) resolves dynamic CFNetwork and proxy constants");
+    }
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
