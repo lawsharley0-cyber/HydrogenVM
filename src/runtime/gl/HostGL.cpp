@@ -5,6 +5,7 @@
 #include "runtime/Support.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
 #include <algorithm>
+#include <vector>
 #include <cmath>
 #include <chrono>
 #include <thread>
@@ -60,6 +61,8 @@ struct State {
     std::shared_ptr<Platform> platform;
     std::unordered_map<uint32_t, std::unique_ptr<HostContext>> contexts;          // guest EAGLContext -> host
     std::unordered_map<uint64_t, std::unique_ptr<HostContext>> workers;           // (thread, sharegroup) -> implicit
+    uint64_t nextRetireId = 1;
+    std::vector<std::unique_ptr<HostContext>> retiredWorkers;                      // destroyed sharegroups; kept alive for tls.ctx users
     std::unordered_map<uint32_t, HostContext*> shareRoot;                          // guest sharegroup -> first host ctx
     std::unordered_map<uint64_t, Drawable> drawables;                              // (sharegroup << 32 | rb) -> drawable
     std::unordered_map<uint32_t, void*> syncs;                                     // guest handle -> GLsync
@@ -179,8 +182,24 @@ HostContext* threadClone(Process& p, HostContext* hc) {
     return raw;
 }
 
+// The calling thread's current context belongs to a sharegroup that was destroyed: unbind it, destroy its
+// native context and drop the retired object. Only the owning thread has it in tls.ctx, so this is safe.
+void releaseRetiredCurrent(Process& p) {
+    if (tls.proc != &p || !tls.ctx || !tls.ctx->retired.load(std::memory_order_acquire)) return;
+    State& st = S(p);
+    HostContext* gone = tls.ctx;
+    tls.ctx = nullptr;
+    std::lock_guard<std::mutex> lk(st.mu);
+    st.platform->makeCurrent(nullptr);
+    if (gone->handle) { st.platform->destroyContext(gone->handle); gone->handle = nullptr; }
+    st.retiredWorkers.erase(std::remove_if(st.retiredWorkers.begin(), st.retiredWorkers.end(),
+                                           [gone](const std::unique_ptr<HostContext>& c) { return c.get() == gone; }),
+                            st.retiredWorkers.end());
+}
+
 void bind(Process& p, HostContext* hc) {
     State& st = S(p);
+    releaseRetiredCurrent(p);   // never overwrite tls.ctx while it still points at a retired worker
     HostContext* root = hc;
     if (hc && !st.platform->makeCurrent(hc->handle) && !hc->implicitWorker) {
         if (HostContext* clone = threadClone(p, hc); clone && st.platform->makeCurrent(clone->handle)) hc = clone;
@@ -255,11 +274,68 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
 
 } // namespace
 
+void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
+    State& st = S(p);
+    const uint32_t self = p.currentThread().id;
+    std::vector<std::pair<uint64_t, uint32_t>> retiredHere;   // (retirement id, owner thread) retired by this call
+    {
+    std::lock_guard<std::mutex> lk(st.mu);
+    for (const auto& kv : st.contexts) {
+        if (kv.second && kv.second->guestSharegroup == guestSharegroup) return;   // a context still uses the group
+    }
+    st.shareRoot.erase(guestSharegroup);
+    for (auto it = st.workers.begin(); it != st.workers.end();) {
+        if (uint32_t(it->first) != guestSharegroup) { ++it; continue; }
+        const uint32_t owner = uint32_t(it->first >> 32);
+        std::unique_ptr<HostContext> hc = std::move(it->second);
+        it = st.workers.erase(it);
+        if (owner == self) {
+            // The caller owns it, so no other thread can hold it: free it now.
+            if (tls.proc == &p && tls.ctx == hc.get()) {
+                st.platform->makeCurrent(nullptr);   // unbind before the native context goes away
+                tls.ctx = nullptr;
+            }
+            if (hc->handle) st.platform->destroyContext(hc->handle);
+        } else {
+            // A live thread may hold it in tls.ctx: keep the object valid and let that thread drop it.
+            hc->retired = true;
+            hc->retireId = st.nextRetireId++;
+            retiredHere.emplace_back(hc->retireId, owner);
+            st.retiredWorkers.push_back(std::move(hc));
+        }
+    }
+    }
+    if (retiredHere.empty()) return;
+    // Workers of other threads are retired above; if an owner has already exited (its exit hook ran before
+    // the retirement), nobody will drop them: take a fresh snapshot (outside st.mu, to keep the lock order
+    // simple) and free whatever nobody can hold any more.
+    const std::vector<uint32_t> liveNow = p.liveThreadIds();
+    std::lock_guard<std::mutex> lk(st.mu);
+    for (const auto& [id, owner] : retiredHere) {
+        if (std::find(liveNow.begin(), liveNow.end(), owner) != liveNow.end()) continue;
+        // Match by retirement id, not address: a context released by its owner may be followed by a new
+        // allocation at the same address.
+        auto it = std::find_if(st.retiredWorkers.begin(), st.retiredWorkers.end(),
+                               [id](const std::unique_ptr<HostContext>& c) { return c->retireId == id; });
+        if (it == st.retiredWorkers.end()) continue;   // the owner already released it
+        if ((*it)->handle) { st.platform->destroyContext((*it)->handle); (*it)->handle = nullptr; }
+        st.retiredWorkers.erase(it);
+    }
+}
+
+void threadExit(Process& p) {
+    if (!enabled(p)) return;
+    releaseRetiredCurrent(p);
+}
+
 HostContext* currentHostContext() { return tls.ctx; }
 
 // ------------------------------------------------------------ current context ---
 
 HostContext* hgCurrent(Ctx& x) {
+    // Its sharegroup died while this thread had it current: release it here, on the owning thread,
+    // then fall through to the no-context path below.
+    releaseRetiredCurrent(x.proc);
     if (tls.proc == &x.proc && tls.ctx) return tls.ctx;
     if (tls.proc == &x.proc && tls.software) return nullptr;
     // No context on this thread. iOS apps (Cocos2d texture loaders, for one) issue
@@ -1033,6 +1109,40 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
     return ok;
 }
 
+namespace {
+// Every entry point the readback paths of presentRenderbuffer call.
+bool hasReadbackFns(const HostContext* hc) {
+    return hc->fn.glReadPixels && hc->fn.glGenFramebuffers && hc->fn.glBindFramebuffer && hc->fn.glFramebufferRenderbuffer;
+}
+// The guest's draw and read framebuffer bindings; presentRenderbuffer borrows both while it reads back.
+struct FbBindings { uint32_t draw = 0, read = 0; bool separate = false; };
+FbBindings saveFbBindings(HostContext* hc) {
+    FbBindings b;
+    b.draw = uint32_t(hgGetInt(hc, kFramebufferBinding));
+    b.read = b.draw;
+    // A native ES 3 / desktop context has separate read and draw bindings even for an ES 2 guest
+    // (APPLE_framebuffer_multisample); glBlitFramebuffer marks that capability. ES 1/2 contexts have one.
+    // If EGL fell back to an ES 2 context the query is an unsupported enum and leaves the sentinel untouched:
+    // then there is only the one binding, and restoring through the read/draw targets would be an error.
+    if ((hc->api >= 3 || hc->desktop || hc->fn.glBlitFramebuffer || hc->fn.glResolveMultisampleFramebufferAPPLE) &&
+        hc->fn.glGetIntegerv) {
+        int32_t v[4] = {-1, -1, -1, -1};
+        hc->fn.glGetIntegerv(kReadFramebufferBinding, v);
+        if (v[0] != -1) b.read = uint32_t(v[0]);
+    }
+    b.separate = b.read != b.draw;
+    return b;
+}
+void restoreFbBindings(HostContext* hc, const FbBindings& b) {
+    if (b.separate) {
+        hc->fn.glBindFramebuffer(kDrawFramebuffer, b.draw);
+        hc->fn.glBindFramebuffer(kReadFramebuffer, b.read);
+    } else {
+        hc->fn.glBindFramebuffer(kFramebuffer, b.draw);
+    }
+}
+} // namespace
+
 bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int& width, int& height,
                          std::vector<uint8_t>& rgba, bool& direct) {
     State& st = ready(p);
@@ -1053,7 +1163,12 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
                 if (uint32_t(k >> 32) == hc->guestSharegroup && v.layer) { d = v; rbName = uint32_t(k); break; }
         }
     }
-    if (hgDebugLevel >= 2) p.log(LogLevel::Debug, "GL --- present rb " + std::to_string(rbName));
+    if (hgDebugLevel >= 2) {
+        const int32_t currFb = hgGetInt(hc, kFramebufferBinding);
+        p.log(LogLevel::Debug, "GL --- present rb " + std::to_string(rbName) +
+              ", fbo bound: " + std::to_string(currFb) +
+              ", rb bound: " + std::to_string(rb));
+    }
     if (!d.layer || d.width <= 0 || d.height <= 0) return false;
     layer = d.layer;
     width = d.width;
@@ -1062,9 +1177,15 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     const int n = st.presents + 1;
     std::string probe;
     const bool sample = n == 1 || n == 30 || n == 60 || n == 120 || n == 300 || n == 600 || (n > 600 && n % 1800 == 0);
-    if (sample && hc->fn.glReadPixels) {
+    if (sample && hasReadbackFns(hc)) {
         // Diagnostic: sample the frame before it goes to the display, so a blank
         // screen can be told apart from a frame the GPU really rendered black.
+        const FbBindings saved = saveFbBindings(hc);
+        if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
+        hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
+        hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+        if (hc->fn.glFlush) hc->fn.glFlush();
+
         uint64_t sum[3] = {}, lit = 0;
         for (int gy = 0; gy < 8; ++gy)
             for (int gx = 0; gx < 8; ++gx) {
@@ -1073,6 +1194,9 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
                 sum[0] += px[0]; sum[1] += px[1]; sum[2] += px[2];
                 if (px[0] > 8 || px[1] > 8 || px[2] > 8) ++lit;
             }
+
+        restoreFbBindings(hc, saved);
+
         probe = " (average rgb " + std::to_string(sum[0] / 64) + "," + std::to_string(sum[1] / 64) + "," +
                 std::to_string(sum[2] / 64) + ", " + std::to_string(lit) + "/64 samples lit)";
     }
@@ -1098,17 +1222,19 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     }
 
     // Read the drawable back for the software compositor.
-    if (!hc->fn.glGenFramebuffers || !hc->fn.glReadPixels) return false;
-    const int32_t prevFb = hgGetInt(hc, kFramebufferBinding);
+    if (!hasReadbackFns(hc)) return false;
+    const FbBindings saved = saveFbBindings(hc);
     if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
     hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
     hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+    if (hc->fn.glFlush) hc->fn.glFlush();
     const int32_t prevPack = hgGetInt(hc, kPackAlignment);
     hc->fn.glPixelStorei(kPackAlignment, 4);
     rgba.resize(size_t(width) * size_t(height) * 4);
     hc->fn.glReadPixels(0, 0, width, height, kRgba, kUnsignedByte, rgba.data());
     hc->fn.glPixelStorei(kPackAlignment, prevPack ? prevPack : 4);
-    hc->fn.glBindFramebuffer(kFramebuffer, uint32_t(prevFb));
+    restoreFbBindings(hc, saved);
+    ++st.presents;   // a fallback present counts too, so the diagnostic sampling above stays rate-limited
     return true;
 }
 
