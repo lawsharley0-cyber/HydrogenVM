@@ -20,6 +20,7 @@ enum : uint32_t {
     LC_DYLD_INFO = 0x22, LC_REQ_DYLD = 0x80000000u,
     LC_LOAD_WEAK_DYLIB = 0x18 | LC_REQ_DYLD, LC_REEXPORT_DYLIB = 0x1F | LC_REQ_DYLD,
     LC_DYLD_INFO_ONLY = 0x22 | LC_REQ_DYLD, LC_LOAD_UPWARD_DYLIB = 0x23 | LC_REQ_DYLD,
+    LC_FUNCTION_STARTS = 0x26,
     LC_MAIN = 0x28 | LC_REQ_DYLD, LC_DYLD_CHAINED_FIXUPS = 0x34 | LC_REQ_DYLD,
 };
 
@@ -170,7 +171,60 @@ std::vector<const Section*> Image::sectionsOfType(uint32_t type) const {
     return out;
 }
 
+void MethodSymbols::set(uint64_t binding, uint32_t imp, std::string name) {
+    std::lock_guard lock(mutex_);
+    if (auto old = bindings_.find(binding); old != bindings_.end()) {
+        auto& aliases = names_.at(old->second);
+        aliases.erase(binding);
+        if (aliases.empty()) names_.erase(old->second);
+        bindings_.erase(old);
+    }
+    if (imp) {
+        const uint32_t address = imp & ~1u;
+        bindings_[binding] = address;
+        names_[address][binding] = std::move(name);
+    }
+}
+
+std::string MethodSymbols::describe(uint32_t address) const {
+    std::lock_guard lock(mutex_);
+    auto it = names_.find(address & ~1u);
+    if (it == names_.end()) return {};
+    std::string result;
+    size_t count = 0;
+    for (const auto& [binding, name] : it->second) {
+        if (count++ == 4) break;
+        if (!result.empty()) result += " | ";
+        result += name;
+    }
+    if (it->second.size() > 4) result += " | (" + std::to_string(it->second.size() - 4) + " more aliases)";
+    return result;
+}
+
 std::string Image::symbolicate(uint32_t addr) const {
+    addr &= ~1u;
+    const auto methods = std::atomic_load(&methodSymbols);
+    if (methods) {
+        if (auto name = methods->describe(addr); !name.empty()) return name;
+        // Interior PCs require a known function boundary. Never guess the
+        // nearest IMP: a stripped C function may immediately follow it.
+        bool executable = false;
+        for (const auto& s : segments)
+            if ((s.initprot & 4) && addr >= s.vmaddr && uint64_t(addr) < uint64_t(s.vmaddr) + s.vmsize)
+                executable = true;
+        uint32_t base = 0;
+        auto f = std::upper_bound(functionStarts.begin(), functionStarts.end(), addr);
+        if (f != functionStarts.begin()) base = *--f;
+        auto n = symbolsByAddr.upper_bound(addr | 1u);
+        if (n != symbolsByAddr.begin()) base = std::max(base, (--n)->first & ~1u);
+        if (executable && base) {
+            if (auto name = methods->describe(base); !name.empty()) {
+                char offset[32];
+                std::snprintf(offset, sizeof offset, " + 0x%x", addr - base);
+                return name + offset;
+            }
+        }
+    }
     if (addr < lowAddr || addr >= highAddr || symbolsByAddr.empty()) return {};
     auto it = symbolsByAddr.upper_bound(addr | 1);
     if (it == symbolsByAddr.begin()) return {};
@@ -398,6 +452,7 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
     const DyldInfoCmd* dyldInfo = nullptr;
     DyldInfoCmd dyldInfoStorage{};
     uint32_t unixThreadPc = 0, mainEntryOff = 0;
+    uint32_t startsOff = 0, startsSize = 0;
     bool haveMain = false, haveThread = false;
     size_t off = sizeof(MachHeader);
     for (uint32_t i = 0; i < h.ncmds; ++i) {
@@ -424,6 +479,9 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
                 }
                 break;
             }
+            case LC_FUNCTION_STARTS:
+                if (size >= 16) { startsOff = slice.at<uint32_t>(off + 8); startsSize = slice.at<uint32_t>(off + 12); }
+                break;
             case LC_SYMTAB: cx.symtabStorage = slice.at<SymtabCmd>(off); cx.symtab = &cx.symtabStorage; break;
             case LC_DYSYMTAB: cx.dysymtabStorage = slice.at<DysymtabCmd>(off); cx.dysymtab = &cx.dysymtabStorage; break;
             case LC_DYLD_INFO: case LC_DYLD_INFO_ONLY:
@@ -480,6 +538,32 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
     img.lowAddr = lo + cx.slide;
     img.highAddr = hi + cx.slide;
     if (uint64_t(img.highAddr) > Memory::GuestArena::kHleBase) throw MachOError("Mach-O: image overlaps the HLE region");
+
+    // Optional diagnostic metadata: malformed streams are ignored in full.
+    if (startsSize && uint64_t(startsOff) + startsSize <= sl.size) {
+        for (const auto& text : img.segments) if (text.name == "__TEXT") {
+            size_t pos = startsOff, end = size_t(startsOff) + startsSize;
+            uint64_t address = text.vmaddr;
+            bool terminated = false, valid = true;
+            while (pos < end && valid) {
+                uint32_t delta = 0;
+                bool complete = false;
+                for (unsigned shift = 0; shift <= 28 && pos < end; shift += 7) {
+                    uint8_t byte = slice.p[pos++];
+                    if (shift == 28 && (byte & 0xF0)) { valid = false; break; }
+                    delta |= uint32_t(byte & 0x7F) << shift;
+                    if (!(byte & 0x80)) { complete = true; break; }
+                }
+                if (!valid || !complete) { valid = false; break; }
+                if (!delta) { terminated = true; break; }
+                address += delta;
+                if (address >= uint64_t(text.vmaddr) + text.vmsize || address > UINT32_MAX) { valid = false; break; }
+                img.functionStarts.push_back(uint32_t(address) & ~1u);
+            }
+            if (!valid || !terminated) img.functionStarts.clear();
+            break;
+        }
+    }
 
     // ---- map segments
     for (const auto& s : img.segments) {

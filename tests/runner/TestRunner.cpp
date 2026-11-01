@@ -6727,6 +6727,88 @@ int runFullSubsystemTests() {
     }
 
     {
+        ProcessConfig traceCfg = cfg;
+        traceCfg.homePath = "/tmp/hvm_symbolication_test";
+        traceCfg.log = [](LogLevel, const std::string&) {};
+        Process trace(traceCfg);
+        auto& methods = ObjC::rt(trace);
+        auto alpha = methods.defineClass("HVMTraceAlpha", "NSObject");
+        auto beta = methods.defineClass("HVMTraceBeta", "NSObject");
+        methods.addMethod(alpha.cls(), methods.sel("first"), 0x00101001u, "v@:");
+        methods.addMethod(beta.meta(), methods.sel("second"), 0x00102000u, "v@:");
+        CPU::Cpu frames{};
+        frames.r[15] = 0x00101001u; // Thumb IMP, stripped of a Mach-O symbol
+        frames.r[14] = 0x00102000u; // ARM class-method IMP
+        const std::string backtrace = trace.backtrace(frames);
+        check(backtrace.find("-[HVMTraceAlpha first]") != std::string::npos &&
+              backtrace.find("+[HVMTraceBeta second]") != std::string::npos,
+              "ObjC IMP backtrace names both guest instance and class methods without Mach-O symbols");
+        auto symbols = std::atomic_load(&trace.image().methodSymbols);
+        Loader::Image image;
+        image.lowAddr = 0x00100000u; image.highAddr = 0x00110000u;
+        image.segments.push_back({"__TEXT", image.lowAddr, 0x10000u, 0, 0, 5, 5});
+        image.methodSymbols = symbols;
+        check(image.symbolicate(0x00101000u) == "-[HVMTraceAlpha first]" &&
+              image.symbolicate(0x00101004u).empty(),
+              "ObjC IMP normalizes Thumb and refuses unbounded interior guesses");
+        image.functionStarts = {0x00101000u, 0x00101020u, 0x00102000u};
+        check(image.symbolicate(0x00101005u) == "-[HVMTraceAlpha first] + 0x4" &&
+              image.symbolicate(0x00101024u).empty(),
+              "ObjC interior frame names stop at the next function boundary");
+        image.symbolsByAddr[0x00101011u] = "_ordinary_c_function";
+        check(image.symbolicate(0x00101014u) == "_ordinary_c_function + 0x4",
+              "Mach-O symbol boundary prevents ObjC misattribution");
+        const auto first = methods.sel("first"), alias = methods.sel("alias");
+        methods.addMethod(alpha.cls(), alias, 0x00101001u, "v@:");
+        methods.addMethod(alpha.cls(), first, 0x00103000u, "v@:", true);
+        check(image.symbolicate(0x00101000u) == "-[HVMTraceAlpha alias]" &&
+              image.symbolicate(0x00103000u) == "-[HVMTraceAlpha first]",
+              "ObjC replacement removes only its old binding and preserves shared IMP aliases");
+        methods.addMethod(alpha.cls(), alias, 0x00103000u, "v@:", true);
+        const auto shared = image.symbolicate(0x00103000u);
+        check(shared.find("-[HVMTraceAlpha first]") != std::string::npos &&
+              shared.find("-[HVMTraceAlpha alias]") != std::string::npos &&
+              symbols->describe(0x00101000u).empty(),
+              "ObjC shared IMP reports aliases and drops addresses without bindings");
+        methods.addMethod(alpha.cls(), alias, 0, "v@:", true);
+        methods.addMethod(alpha.cls(), first, 0x00104000u, "v@:", false); // rejected duplicate
+        check(image.symbolicate(0x00103000u) == "-[HVMTraceAlpha first]" &&
+              symbols->describe(0x00104000u).empty(),
+              "ObjC rejected additions and null replacements keep symbol map consistent");
+        Loader::Image other;
+        check(other.symbolicate(0x00103000u).empty(), "ObjC method map is not global");
+        // Minimal MH_DYLIB with one __TEXT and LC_FUNCTION_STARTS. ULEBs
+        // 0x101, 0x20 encode Thumb starts relative to the unslid text base.
+        auto parseStarts = [](const std::vector<uint8_t>& stream, uint32_t dataOffset = 128) {
+            std::vector<uint8_t> file(256);
+            auto word = [&](size_t at, uint32_t value) { std::memcpy(file.data() + at, &value, 4); };
+            word(0, 0xFEEDFACEu); word(4, 12); word(8, 9); word(12, 6);
+            word(16, 2); word(20, 72);
+            word(28, 1); word(32, 56); std::memcpy(file.data() + 36, "__TEXT", 6);
+            word(52, 0x10000); word(56, 0x1000); word(64, 256);
+            word(68, 5); word(72, 5);
+            word(84, 0x26); word(88, 16); word(92, dataOffset); word(96, uint32_t(stream.size()));
+            std::copy(stream.begin(), stream.end(), file.begin() + 128);
+            Memory::GuestArena arena;
+            Loader::LoadOptions options; options.loadAddress = 0x20000;
+            return Loader::loadMachO(arena, file, "synthetic-starts.dylib", options).functionStarts;
+        };
+        check(parseStarts({0x81, 0x02, 0x20, 0}) == std::vector<uint32_t>({0x20100, 0x20120}),
+              "Mach-O function starts accumulate ULEB deltas before Thumb normalization and slide");
+        check(parseStarts({0x81, 0x02, 0x80}).empty() &&
+              parseStarts({0x81, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0}).empty() &&
+              parseStarts({0x81, 0x02, 0x80, 0x20, 0}).empty() &&
+              parseStarts({0x81, 0x02, 0}, 255).empty(),
+              "Mach-O ignores truncated, overflowing, out-of-text and out-of-file function starts");
+        auto host = methods.defineClass("HVMTraceHost", "NSObject");
+        host.method("knownHostMethod", [](Ctx&) {});
+        frames.r[15] = methods.lookup(host.cls(), methods.sel("knownHostMethod"));
+        frames.r[14] = 0;
+        check(trace.backtrace(frames).find("-[HVMTraceHost knownHostMethod]") != std::string::npos,
+              "ObjC host-method HLE backtrace names are preserved");
+    }
+
+    {
         int propFails = runPropertyTests("");
         check(propFails == 0, "glibc property tests for printf/string/memory helpers (T5d)");
     }
