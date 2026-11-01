@@ -2026,6 +2026,14 @@ int runFullSubsystemTests() {
             const uint32_t emptyDesc = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {0}));
             const uint32_t emptyFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {emptyDesc, 0, 0}));
             const auto emptyFamily = uint32_t(call("_CTFontCopyFamilyName", {emptyFont}));
+            // An attribute key other than kCTFontNameAttribute is not modelled: it must be reported, not silently dropped.
+            const size_t missingBefore = proc.missingCount();
+            const uint32_t sizeKey = Foundation::makeString(cx, "kCTFontSizeAttribute", true);
+            const uint32_t sizeVal = Foundation::makeString(cx, "12", true);
+            const uint32_t unsupportedAttrs = Foundation::makeDict(cx, {{sizeKey, sizeVal}}, true);
+            const uint32_t unsupportedDesc = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {unsupportedAttrs}));
+            const bool reportedUnsupported = unsupportedDesc && proc.missingCount() == missingBefore + 1;
+            check(reportedUnsupported, "CTFontDescriptor attribute APIs report unsupported attribute keys instead of ignoring them");
             check(descWithAttrs && renamed && createdFont && Foundation::utf8(cx, familyAttrs) == "Arial" &&
                   Foundation::utf8(cx, renamedFamily) == "Courier" && Foundation::utf8(cx, againFamily) == "Arial" &&
                   Foundation::utf8(cx, emptyFamily) == "Helvetica" &&
