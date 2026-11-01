@@ -2617,6 +2617,36 @@ int runFullSubsystemTests() {
         const uint32_t fbStatus = uint32_t(callGL("_glCheckFramebufferStatus", {0x8D40}));
         check(rbOk && fbStatus == 0x8CD5 /* GL_FRAMEBUFFER_COMPLETE */, "EAGLContext renderbufferStorage:fromDrawable: & FBO complete");
 
+        {
+            // Completeness follows the attached images: missing storage, mismatched sizes, detach, and the target asked about.
+            const uint32_t kFb = 0x8D40, kRb = 0x8D41, kColor = 0x8CE0, kDepth = 0x8D00;
+            callGL("_glGenRenderbuffers", {1, idsAddr + 32});
+            const uint32_t extra = proc.mem().read<uint32_t>(idsAddr + 32);
+            callGL("_glBindRenderbuffer", {kRb, extra});
+            callGL("_glFramebufferRenderbuffer", {kFb, kDepth, kRb, extra});
+            const uint32_t noStorage = uint32_t(callGL("_glCheckFramebufferStatus", {kFb}));
+            callGL("_glRenderbufferStorage", {kRb, 0x81A5 /* GL_DEPTH_COMPONENT16 */, 16, 16});
+            const uint32_t wrongSize = uint32_t(callGL("_glCheckFramebufferStatus", {kFb}));
+            callGL("_glFramebufferRenderbuffer", {kFb, kDepth, kRb, 0});
+            const uint32_t depthDetached = uint32_t(callGL("_glCheckFramebufferStatus", {kFb}));
+            callGL("_glFramebufferRenderbuffer", {kFb, kColor, kRb, 0});
+            const uint32_t colorDetached = uint32_t(callGL("_glCheckFramebufferStatus", {kFb}));
+            callGL("_glFramebufferRenderbuffer", {kFb, kColor, kRb, rbo});   // restore for the rest of the test
+            check(noStorage == 0x8CD6 && wrongSize == 0x8CD9 && depthDetached == 0x8CD5 && colorDetached == 0x8CD7,
+                  "FBO status: attachment without storage is INCOMPLETE_ATTACHMENT, mismatched sizes INCOMPLETE_DIMENSIONS, detaching returns to the previous state");
+
+            // A query with a different read binding asks about the read framebuffer.
+            callGL("_glGenFramebuffers", {1, idsAddr + 36});
+            const uint32_t emptyFb = proc.mem().read<uint32_t>(idsAddr + 36);
+            callGL("_glBindFramebuffer", {0x8CA9 /* GL_DRAW_FRAMEBUFFER_APPLE */, emptyFb});
+            callGL("_glBindFramebuffer", {0x8CA8 /* GL_READ_FRAMEBUFFER_APPLE */, fbo});
+            const uint32_t readStatus = uint32_t(callGL("_glCheckFramebufferStatus", {0x8CA8}));
+            const uint32_t drawStatus = uint32_t(callGL("_glCheckFramebufferStatus", {0x8CA9}));
+            callGL("_glBindFramebuffer", {kFb, fbo});
+            check(readStatus == 0x8CD5 && drawStatus == 0x8CD7,
+                  "glCheckFramebufferStatus reports the read or draw framebuffer according to its target");
+        }
+
         // Compile & link a GLSL ES 2.0 shader program and draw a full-screen triangle/quad
         const uint32_t vs = uint32_t(callGL("_glCreateShader", {0x8B31 /* GL_VERTEX_SHADER */}));
         const uint32_t fs = uint32_t(callGL("_glCreateShader", {0x8B30 /* GL_FRAGMENT_SHADER */}));

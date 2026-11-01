@@ -2,8 +2,10 @@
 """Unit tests for T5b: One documented GL context/thread/FBO model."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import sys
 import unittest
 
@@ -48,13 +50,16 @@ class TestGlModelRuntimeEnforcement(unittest.TestCase):
         self.assertIn("passed, 0 failed", res.stdout)
         self.assertNotIn("FAILED", res.stdout)
 
+    @unittest.skipUnless(os.environ.get("HVM_TESTLAB_TOOLCHAIN") == "1",
+                         "builds the iOS Test Lab (needs the ARM iOS linker and LLVM tools); set HVM_TESTLAB_TOOLCHAIN=1")
     def test_testlab_tl_r_enforces_fbo_completeness(self):
         """TestLab TL-R validates empty FBO returns 0x8CD7 and attached FBO returns 0x8CD5."""
-        cmd = [sys.executable, str(TESTLAB_PY), "run", "--hvm", str(HVM_BIN), "--case", "TL-R"]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        report_path = ROOT_DIR / "build" / "testlab-report" / "testlab_report.json"
-        self.assertTrue(report_path.exists())
-        rep = json.loads(report_path.read_text())
+        with tempfile.TemporaryDirectory() as out:
+            cmd = [sys.executable, str(TESTLAB_PY), "run", "--hvm", str(HVM_BIN), "--case", "TL-R", "--out", out]
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            report_path = Path(out) / "testlab_report.json"
+            self.assertTrue(report_path.exists())
+            rep = json.loads(report_path.read_text())
         cases = rep.get("cases", [])
         self.assertEqual(len(cases), 1)
         c = cases[0]

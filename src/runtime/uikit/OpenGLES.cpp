@@ -1551,18 +1551,47 @@ bool gl_isFramebuffer(Ctx& x, uint32_t fb) {
     SharegroupData* sg = currentSg(x, c);
     return sg && fb != 0 && sg->framebuffers.count(fb) > 0;
 }
+// Size of the image attached as (type, name); false when the object does not exist or has no storage.
+static bool attachmentSize(const SharegroupData& sg, uint32_t type, uint32_t name, int& w, int& h) {
+    if (type == GL_RENDERBUFFER) {
+        auto it = sg.renderbuffers.find(name);
+        if (it == sg.renderbuffers.end()) return false;
+        w = it->second.width; h = it->second.height;
+    } else if (type == GL_TEXTURE_2D) {
+        auto it = sg.textures.find(name);
+        if (it == sg.textures.end()) return false;
+        w = it->second.width; h = it->second.height;
+    } else {
+        return false;
+    }
+    return w > 0 && h > 0;
+}
 uint32_t gl_checkFramebufferStatus(Ctx& x, uint32_t target) {
-    (void)target;
     ContextData* c = currentCtx(x);
     if (!c) return 0;
-    if (c->framebuffer == 0) return GL_FRAMEBUFFER_COMPLETE;
+    // GL_READ_FRAMEBUFFER_APPLE asks about the read binding; every other target about the draw binding.
+    const uint32_t bound = target == 0x8CA8 /* GL_READ_FRAMEBUFFER_APPLE */ ? c->readFramebuffer : c->framebuffer;
+    if (bound == 0) return GL_FRAMEBUFFER_COMPLETE;
     SharegroupData* sg = currentSg(x, c);
     if (!sg) return 0;
-    auto it = sg->framebuffers.find(c->framebuffer);
+    auto it = sg->framebuffers.find(bound);
     if (it == sg->framebuffers.end()) return GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
     const Framebuffer& fb = it->second;
     if (fb.colorAttachmentType == 0 && fb.depthAttachmentType == 0 && fb.stencilAttachmentType == 0) {
         return GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
+    }
+    // Every attached image must exist with storage (INCOMPLETE_ATTACHMENT) and all must share one size
+    // (INCOMPLETE_DIMENSIONS).
+    const struct { uint32_t type, id; } attached[] = {
+        {fb.colorAttachmentType, fb.colorAttachmentId}, {fb.depthAttachmentType, fb.depthAttachmentId},
+        {fb.stencilAttachmentType, fb.stencilAttachmentId}};
+    int w0 = -1, h0 = -1;
+    for (const auto& a : attached) {
+        if (a.type == 0) continue;
+        int w = 0, h = 0;
+        if (!attachmentSize(*sg, a.type, a.id, w, h)) return 0x8CD6;   // GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT
+        if (w0 < 0) { w0 = w; h0 = h; }
+        else if (w != w0 || h != h0) return 0x8CD9;                      // GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS
     }
     return GL_FRAMEBUFFER_COMPLETE;
 }
@@ -1572,9 +1601,11 @@ void gl_framebufferRenderbuffer(Ctx& x, uint32_t target, uint32_t attachment, ui
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || c->framebuffer == 0) return;
     Framebuffer& fb = sg->framebuffers[c->framebuffer];
-    if (attachment == GL_COLOR_ATTACHMENT0) { fb.colorAttachmentType = GL_RENDERBUFFER; fb.colorAttachmentId = rb; }
-    else if (attachment == GL_DEPTH_ATTACHMENT) { fb.depthAttachmentType = GL_RENDERBUFFER; fb.depthAttachmentId = rb; }
-    else if (attachment == GL_STENCIL_ATTACHMENT) { fb.stencilAttachmentType = GL_RENDERBUFFER; fb.stencilAttachmentId = rb; }
+    // Object name 0 detaches the image: the attachment point goes back to "nothing attached".
+    const uint32_t type = rb ? GL_RENDERBUFFER : 0;
+    if (attachment == GL_COLOR_ATTACHMENT0) { fb.colorAttachmentType = type; fb.colorAttachmentId = rb; }
+    else if (attachment == GL_DEPTH_ATTACHMENT) { fb.depthAttachmentType = type; fb.depthAttachmentId = rb; }
+    else if (attachment == GL_STENCIL_ATTACHMENT) { fb.stencilAttachmentType = type; fb.stencilAttachmentId = rb; }
 }
 void gl_framebufferTexture2D(Ctx& x, uint32_t target, uint32_t attachment, uint32_t textarget, uint32_t texture, int32_t level) {
     (void)target; (void)textarget; (void)level;
@@ -1582,7 +1613,7 @@ void gl_framebufferTexture2D(Ctx& x, uint32_t target, uint32_t attachment, uint3
     SharegroupData* sg = currentSg(x, c);
     if (!c || !sg || c->framebuffer == 0) return;
     Framebuffer& fb = sg->framebuffers[c->framebuffer];
-    if (attachment == GL_COLOR_ATTACHMENT0) { fb.colorAttachmentType = GL_TEXTURE_2D; fb.colorAttachmentId = texture; }
+    if (attachment == GL_COLOR_ATTACHMENT0) { fb.colorAttachmentType = texture ? GL_TEXTURE_2D : 0; fb.colorAttachmentId = texture; }
 }
 void gl_getFramebufferAttachmentParameteriv(Ctx& x, uint32_t target, uint32_t attachment, uint32_t pname, GuestPtr params) {
     (void)target;

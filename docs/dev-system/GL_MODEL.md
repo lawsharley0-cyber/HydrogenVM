@@ -87,3 +87,23 @@ When `-[EAGLContext presentRenderbuffer:GL_RENDERBUFFER]` is called:
 
 2. **Telemetry Synchronization**:
    - `textureBytes`, VBO allocations, and frame counters must update under the global telemetry lock or using atomic primitives to prevent deadlocks and data races between host render threads and guest engine threads.
+
+---
+
+## Known deviations (software backend)
+
+These differ from the invariants above today. They are listed so nobody relies on the stated rule where the
+code does not enforce it yet.
+
+- **Unbound threads still see a context.** After `+[EAGLContext setCurrentContext:nil]`, `ctx_current`/`currentCtx` in
+  `OpenGLES.cpp` fall back to the last active context, so a thread that unbound can still issue GL calls.
+- **Framebuffer objects are sharegroup-wide.** `SharegroupData::framebuffers` holds the container for every context in
+  a sharegroup, so two shared contexts that bind the same framebuffer name modify the same attachments. In OpenGL ES
+  framebuffer objects are not shared between contexts.
+- **Completeness is tested on the software backend only.** `hvm_tests fulltest` and Test Lab `TL-R` run without
+  `HostGL`; the host GPU passthrough relies on the host driver's own `glCheckFramebufferStatus`.
+
+Completeness itself is enforced as documented: no attachment is `INCOMPLETE_MISSING_ATTACHMENT`, an attachment whose
+object is missing or has no storage is `INCOMPLETE_ATTACHMENT` (0x8CD6), attachments of different sizes are
+`INCOMPLETE_DIMENSIONS` (0x8CD9), detaching with object name 0 clears the attachment point, and
+`glCheckFramebufferStatus` answers for the read or draw binding named by its target.
