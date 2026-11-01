@@ -216,7 +216,7 @@ public:
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
     std::string crashBundle();
-    // Each live thread's last `perThread` host calls as a JSON array, oldest first (T2c). Safe while threads run.
+    // Each thread's (finished ones included, so a crashed worker stays) last `perThread` host calls as a JSON array, oldest first (T2c). Safe while threads run.
     std::string callRingJson(size_t perThread);
     // Bounded, read-only allocator/host samples. Event must be an internal constant.
     void recordMemorySample(const char* event);

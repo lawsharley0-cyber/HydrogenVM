@@ -7404,9 +7404,9 @@ int runFullSubsystemTests() {
 
         // The crash bundle carries each thread's last calls (T2c, #259): oldest first, exactly the last N,
         // with the support status of a function that was declared a Stub.
-        const uint32_t ringStubFn = ringProc.defineFunction("test_call_ring_stub_fn", [](Ctx&) {});
+        const uint32_t ringStubFn = ringProc.defineFunction("_test_call_ring_stub_fn", [](Ctx&) {});
         const uint32_t ringStubIndex = ringProc.engine().hleIndex(ringStubFn);
-        supportRegistry(ringProc).record({SupportKind::Function, "test_call_ring_stub_fn", SupportStatus::Stub,
+        supportRegistry(ringProc).record({SupportKind::Function, "_test_call_ring_stub_fn", SupportStatus::Stub,
                                           "test: a placeholder that must show up as a stub hit"});
         ringProc.engine().callHle(&ringCpu, ringStubIndex);
         const uint64_t ringTotal = ringCpu.call_ring.load()->total();

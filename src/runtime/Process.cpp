@@ -1099,7 +1099,8 @@ std::string Process::callRingJson(size_t perThread) {
     std::vector<GuestThread*> list{mainThread_};
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
-        for (auto& [k, t] : threads_) if (!t->finished.load()) list.push_back(t.get());
+        // Finished workers stay: the thread that crashed is marked finished before the bundle is written.
+        for (auto& [k, t] : threads_) list.push_back(t.get());
     }
     std::sort(list.begin() + 1, list.end(), [](const GuestThread* a, const GuestThread* b) { return a->id < b->id; });
     SupportRegistry& support = supportRegistry(*this);
@@ -1116,12 +1117,14 @@ std::string Process::callRingJson(size_t perThread) {
             const char* kind = r.kind == Diag::CallKind::Hle ? "hle" : r.kind == Diag::CallKind::ObjC ? "objc" : r.kind == Diag::CallKind::Gl ? "gl" : "none";
             // Only HLE entries carry a name today; ObjC and GL entries are not pushed yet.
             const std::string name = r.kind == Diag::CallKind::Hle ? hleFunctionName(r.id) : std::string();
+            // The registry is keyed by the raw engine symbol; `name` is demangled for display only.
+            const std::string symbol = r.kind == Diag::CallKind::Hle ? engine_->hleName(r.id) : std::string();
             out << (firstCall ? "" : ",") << "{\"seq\":" << r.seq << ",\"kind\":\"" << kind << "\",\"name\":" << quote(name);
             firstCall = false;
             // A function that was declared Stub/Approx/Unavailable says so; an undeclared one gets no status
             // (missing metadata never means Real).
-            if (!name.empty()) {
-                if (const auto rec = support.find(name)) out << ",\"status\":\"" << supportStatusName(rec->status) << "\"";
+            if (!symbol.empty()) {
+                if (const auto rec = support.find(symbol)) out << ",\"status\":\"" << supportStatusName(rec->status) << "\"";
             }
             out << "}";
         }
