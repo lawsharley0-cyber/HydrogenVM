@@ -26,7 +26,6 @@ extern void CFDictionaryGetKeysAndValues(CFDictionaryRef dict, const void **keys
 @interface MyCopyKey : NSObject <NSCopying> {
 @public
     int _copyCount;
-    int _retainCount;
 }
 @end
 @implementation MyCopyKey
@@ -35,12 +34,6 @@ extern void CFDictionaryGetKeysAndValues(CFDictionaryRef dict, const void **keys
     k->_copyCount = _copyCount + 1;
     return k;
 }
-#if !__has_feature(objc_arc)
-- (id)retain {
-    _retainCount++;
-    return [super retain];
-}
-#endif
 @end
 
 @interface Person : NSObject <NSCoding>
@@ -427,24 +420,30 @@ static void testCoreFoundation(void) {
     MyCopyKey *valObj = [[MyCopyKey alloc] init];
     CFMutableDictionaryRef cmd = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     NSMutableDictionary *bmd = (__bridge NSMutableDictionary *)cmd;
+    // The app builds with ARC, so retain counts are read with CFGetRetainCount (deltas around the call).
+    CFIndex valBefore = CFGetRetainCount((__bridge CFTypeRef)valObj);
+    CFIndex keyBefore = CFGetRetainCount((__bridge CFTypeRef)copyKey);
     [bmd setObject:valObj forKey:copyKey];
 
     const void *firstKeyPtr = NULL;
     CFDictionaryGetKeysAndValues(cmd, &firstKeyPtr, NULL);
     MyCopyKey *firstKey = (__bridge MyCopyKey *)firstKeyPtr;
-    CHECK(firstKey->_copyCount == 1 && firstKey->_retainCount == 1 && valObj->_retainCount == 1, "rd_setObjectForKey copies key, retains key copy and value");
+    CHECK(firstKey != copyKey && firstKey->_copyCount == 1 && CFGetRetainCount((__bridge CFTypeRef)valObj) == valBefore + 1 &&
+          CFGetRetainCount((__bridge CFTypeRef)copyKey) == keyBefore,
+          "rd_setObjectForKey copies the key and retains the copy and the value");
 
     [bmd removeAllObjects];
     firstKey = nil;
-    copyKey->_copyCount = 0;
-    copyKey->_retainCount = 0;
-    valObj->_retainCount = 0;
+    valBefore = CFGetRetainCount((__bridge CFTypeRef)valObj);
+    keyBefore = CFGetRetainCount((__bridge CFTypeRef)copyKey);
     CFDictionarySetValue(cmd, (__bridge const void *)copyKey, (__bridge const void *)valObj);
 
     const void *secondKeyPtr = NULL;
     CFDictionaryGetKeysAndValues(cmd, &secondKeyPtr, NULL);
     MyCopyKey *secondKey = (__bridge MyCopyKey *)secondKeyPtr;
-    CHECK(secondKey == copyKey && copyKey->_copyCount == 0 && copyKey->_retainCount == 1 && valObj->_retainCount == 1, "CFDictionarySetValue only retains key");
+    CHECK(secondKey == copyKey && copyKey->_copyCount == 0 && CFGetRetainCount((__bridge CFTypeRef)copyKey) == keyBefore + 1 &&
+          CFGetRetainCount((__bridge CFTypeRef)valObj) == valBefore + 1,
+          "CFDictionarySetValue retains the key and value without copying");
     CFRelease(cmd);
 }
 
