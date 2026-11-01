@@ -143,6 +143,7 @@ struct AppIcon: View {
 struct LibraryView: View {
     @AppStorage("keepIpaForReinstall") private var keepIpaForReinstall = true
     @AppStorage("hvm.zombies") private var zombies = false
+    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = false
     @State private var store = LibraryStore()
     @State private var pickingFile = false
     @State private var running: InstalledApp?
@@ -200,6 +201,9 @@ struct LibraryView: View {
                         Divider()
                         Toggle("Continue past missing functions", isOn: $keepGoing)
                         Toggle("Keep .ipa for reinstall", isOn: $keepIpaForReinstall)
+                        Toggle("Show debug overlay while playing", isOn: $showDebugOverlay)
+                        Text("Off: nothing of HydrogenVM is drawn over a game. Hold three fingers on the screen for a moment to open pause, volume, log and quit.")
+                            .font(.footnote).foregroundStyle(.secondary)
                         Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
                     }
                 }

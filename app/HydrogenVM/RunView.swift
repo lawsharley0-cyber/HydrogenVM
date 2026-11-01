@@ -379,6 +379,8 @@ struct RunView: View {
     @State private var model: RunModel
     @State private var showLog = false
     @State private var hudExpanded = false
+    @State private var overlay = PlayerOverlay()
+    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = false
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
@@ -420,7 +422,11 @@ struct RunView: View {
                                    orientation: effectiveOrientation,
                                    mode: PlayerScaleMode(rawValue: scaleSetting) ?? .fit,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
-                                   inputEnabled: model.inputEnabled) { phase, point, finger in
+                                   inputEnabled: model.inputEnabled,
+                                   onOverlayGesture: showDebugOverlay ? nil : {
+                                       overlay.summon()
+                                       withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { hudExpanded = true }
+                                   }) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
                     }
                     if model.closing {
@@ -453,9 +459,12 @@ struct RunView: View {
             }
 
             // Collapsible Floating Glassmorphic In-Game HUD Pill in Top Corner
-            floatingHUDPill
-                .padding(.top, 16)
-                .padding(.trailing, 16)
+            // Not drawn at all unless the setting is on or the player held three fingers down.
+            if showDebugOverlay || overlay.visible {
+                floatingHUDPill
+                    .padding(.top, 16)
+                    .padding(.trailing, 16)
+            }
         }
         .statusBarHidden(true)
         .preferredColorScheme(.dark)
@@ -536,6 +545,7 @@ struct RunView: View {
                         Button {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                                 hudExpanded = false
+                                overlay.minimize()
                             }
                         } label: {
                             Image(systemName: "chevron.up.circle.fill")
