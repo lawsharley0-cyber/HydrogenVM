@@ -22,10 +22,18 @@ static volatile int returned;
 }
 @end
 
+// A category +load is called by the runtime, never attached as a method, so its frame needs its own name.
+// It starts the whole chain: the guest traps below it, before main runs.
+@interface HVMTraceCallee (Boot)
+@end
+@implementation HVMTraceCallee (Boot)
++ (void)load {
+    HVMTraceCaller *caller = [HVMTraceCaller new];
+    [caller enter];
+    ++returned; // keep this frame; no tail call
+}
+@end
+
 int main(void) {
-    @autoreleasepool {
-        HVMTraceCaller *caller = [HVMTraceCaller new];
-        [caller enter];
-    }
     return returned;
 }

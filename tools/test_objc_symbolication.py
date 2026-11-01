@@ -33,7 +33,7 @@ def main():
     (out / "run.log").write_text(result.stdout + result.stderr, encoding="utf-8")
     data = json.loads(report.read_text(encoding="utf-8"))
     trace = "\n".join((data.get("crashBundle") or {}).get("backtrace") or [])
-    expected = ["-[HVMTraceCaller enter]", "+[HVMTraceCallee trap]"]
+    expected = ["-[HVMTraceCaller enter]", "+[HVMTraceCallee trap]", "+[HVMTraceCallee(Boot) load]"]
     found = {name: name in trace for name in expected}
     # A guest trap is reported as EX_SOFTWARE (70), not a generic tool error.
     ok = result.returncode == 70 and data.get("exitStatus") == 70 and data.get("crashed") is True and all(found.values())
