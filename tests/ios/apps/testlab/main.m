@@ -1826,8 +1826,14 @@ static TLResult *runCaseY(void) {
     const BOOL dynCreated = dynRep != NULL && dynRep->capacity >= 32 && dynRep->refcount == 0;
     if (dynRep) _ZNSs4_Rep10_M_refcopyEv(dynRep);
     const BOOL refcopyOk = dynCreated && dynRep->refcount == 1;
-    if (dynRep) _ZNSs4_Rep10_M_disposeERKSaIcE(dynRep, NULL);
-    const BOOL stringOk = emptyOk && refcopyOk && dynRep->refcount == 0;
+    // First dispose drops the extra reference (1 -> 0); the second releases the representation.
+    BOOL disposeOk = NO;
+    if (dynRep) {
+        _ZNSs4_Rep10_M_disposeERKSaIcE(dynRep, NULL);
+        disposeOk = dynRep->refcount == 0;
+        _ZNSs4_Rep10_M_disposeERKSaIcE(dynRep, NULL);
+    }
+    const BOOL stringOk = emptyOk && refcopyOk && disposeOk;
 
     // 2. std::list node linking
     struct TLYListNode listHead;
@@ -1835,10 +1841,17 @@ static TLResult *runCaseY(void) {
     listHead.prev = &listHead;
     struct TLYListNode nodeA;
     memset(&nodeA, 0, sizeof(nodeA));
+    struct TLYListNode nodeB;
+    memset(&nodeB, 0, sizeof(nodeB));
+    // hook(n, pos) inserts n before pos, so hooking A then B before the head gives head -> A -> B -> head.
     _ZNSt15_List_node_base4hookEPS_(&nodeA, &listHead);
-    const BOOL hookOk = listHead.next == &nodeA && listHead.prev == &nodeA && nodeA.next == &listHead && nodeA.prev == &listHead;
+    _ZNSt15_List_node_base4hookEPS_(&nodeB, &listHead);
+    const BOOL hookOk = listHead.next == &nodeA && nodeA.next == &nodeB && nodeB.next == &listHead &&
+                        listHead.prev == &nodeB && nodeB.prev == &nodeA && nodeA.prev == &listHead;
     _ZNSt15_List_node_base6unhookEv(&nodeA);
-    const BOOL unhookOk = listHead.next == &listHead && listHead.prev == &listHead;
+    const BOOL midOk = listHead.next == &nodeB && nodeB.prev == &listHead && nodeB.next == &listHead && listHead.prev == &nodeB;
+    _ZNSt15_List_node_base6unhookEv(&nodeB);
+    const BOOL unhookOk = midOk && listHead.next == &listHead && listHead.prev == &listHead;
 
     // 3. RB-tree root insertion and rebalance (root must be black = 1)
     struct TLYRbNode treeHeader;
