@@ -1,5 +1,7 @@
 # HydrogenVM master plan (2026-10-23)
 
+> **SUPERSEDED for priorities and work order (2026-10-30): read [docs/PLAN.md](../PLAN.md) first.** Everything below is reference only (machine layout, run recipes, architecture notes, per-game history). If anything here disagrees with PLAN.md, PLAN.md wins.
+
 This is the plan for getting every app in the owner's library to run with its features and
 good performance. It reviews the work done since the `fd96801` handoff, gives the measurements
 behind the plan, and orders the work so that each credit spent moves an app forward.

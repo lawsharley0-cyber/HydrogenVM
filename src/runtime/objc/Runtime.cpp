@@ -535,7 +535,13 @@ void Runtime::disposeInstance(CPU::Cpu& c, id obj) {
             allocSites_.erase(a);
         }
         zombies_[obj] = {className(classOf(obj)), std::move(trace)};
-        proc_.mem().write<uint32_t>(obj, 0);   // kept allocated: never reused
+        proc_.mem().write<uint32_t>(obj, 0);   // kept allocated: never reused (prevents false dispatch)
+        zombieQueue_.push(obj);
+        if (zombieQueue_.size() > 16384) {
+            id oldest = zombieQueue_.front();
+            zombieQueue_.pop();
+            zombies_.erase(oldest);
+        }
     } else {
         proc_.mem().write<uint32_t>(obj, 0);
         proc_.heap().free(obj);
@@ -617,6 +623,14 @@ void Runtime::poolPop(CPU::Cpu& c, uint32_t token) {
         }
         ts.marks.pop_back();
     }
+}
+
+void Runtime::drainPools(CPU::Cpu& c) {
+    // The first pool pushed on this thread is token 1. Nested pools get 2, 3, ...
+    // Popping 1 walks every mark still on the stack, which is the thread-exit
+    // equivalent of libobjc's TLS destructor. Token 0 is a no-op in poolPop.
+    ThreadState& ts = threadState(proc_);
+    if (!ts.marks.empty()) poolPop(c, 1);
 }
 
 void Runtime::addToPool(id obj) {
