@@ -3819,6 +3819,14 @@ int runFullSubsystemTests() {
         const bool badSource = call_tmp("_alGetError", {}) == 0xA001;
         call_tmp("_alGetSource3f", {alSrc, 0xFFFF, f, f+4, f+8});
         const bool badSourceEnum = call_tmp("_alGetError", {}) == 0xA002;
+        const uint32_t nullOutErrors = [&] {
+            uint32_t ok = 1;
+            for (const auto& args : {std::initializer_list<uint32_t>{alSrc, 0x1004, 0, f+4, f+8}, {alSrc, 0x1004, f, 0, f+8}, {alSrc, 0x1004, f, f+4, 0}}) {
+                call_tmp("_alGetSource3f", args);
+                ok &= call_tmp("_alGetError", {}) == 0xA003 ? 1u : 0u;   // AL_INVALID_VALUE
+            }
+            return ok;
+        }();
 
         const uint32_t d = uint32_t(call_tmp("_CFDictionaryCreateMutable", {0, 0, 0, 0}));
         const uint32_t k = cstr2("key"), v = cstr2("value");
@@ -3839,8 +3847,15 @@ int runFullSubsystemTests() {
         try { call_tmp("_objc_msgSend", {idict, r.sel("setObject:forKey:"), v, k}); }
         catch (const CPU::GuestFault&) { immutableRejected = true; }
         catch (const ObjC::ObjCError&) { immutableRejected = true; }
+        bool removeRejected = false, removeAllRejected = false;
+        try { call_tmp("_objc_msgSend", {idict, r.sel("removeObjectForKey:"), k}); }
+        catch (const CPU::GuestFault&) { removeRejected = true; }
+        catch (const ObjC::ObjCError&) { removeRejected = true; }
+        try { call_tmp("_objc_msgSend", {idict, r.sel("removeAllObjects")}); }
+        catch (const CPU::GuestFault&) { removeAllRejected = true; }
+        catch (const ObjC::ObjCError&) { removeAllRejected = true; }
         uint32_t ret3 = uint32_t(call_tmp("_objc_msgSend", {idict, r.sel("objectForKey:"), k}));
-        bool okIDictMut = immutableRejected && ret3 == 0;
+        bool okIDictMut = immutableRejected && removeRejected && removeAllRejected && ret3 == 0;
 
         call_tmp("_objc_msgSend", {d, r.sel("setObject:forKey:"), v, k});
         call_tmp("_objc_msgSend", {d, r.sel("removeAllObjects")});
@@ -3899,14 +3914,19 @@ int runFullSubsystemTests() {
         call_tmp("_objc_msgSend", {valueDict, r.sel("setObject:forKey:"), valueB, k});
         call_tmp("_objc_msgSend", {valueDict, r.sel("removeAllObjects")});
         const bool clearRetain = uint32_t(r.send(cpu, valueB, "retainCount")) == b0;
+        // Releasing a non-empty dictionary (rd_dealloc) gives back the value retains it still holds.
+        call_tmp("_objc_msgSend", {valueDict, r.sel("setObject:forKey:"), valueB, k});
+        const bool heldBeforeRelease = uint32_t(r.send(cpu, valueB, "retainCount")) == b0 + 1;
+        call_tmp("_CFRelease", {valueDict});
+        const bool deallocRetain = heldBeforeRelease && uint32_t(r.send(cpu, valueB, "retainCount")) == b0;
 
-        check(okPosDefault && okPosSet && okVelSet && okDirSet && okAlcMajor && okAlcAttr && badDevice && badSize && negativeSize && nullDeviceVersion && nullDeviceOther && badEnum && badSource && badSourceEnum,
+        check(okPosDefault && okPosSet && okVelSet && okDirSet && okAlcMajor && okAlcAttr && badDevice && badSize && negativeSize && nullOutErrors && nullDeviceVersion && nullDeviceOther && badEnum && badSource && badSourceEnum,
               "OpenAL valid queries, invalid source/device/enum/size errors");
         check(okDictMut && okRawOverwrite && okDictRm && okIDictMut && okDictRmAll && rawEnumRejected && rawArrayRejected,
               "raw CFDictionary mutation, immutable rejection, unsafe key enumeration");
         check(objectKeysSafe && keyEnumOk, "CFDictionary object-key callback supports safe ObjC enumeration");
         check(keyBalanced, "CFDictionary object-key callback balances retain/release");
-        check(firstRetain && overwriteRetain && removedRetain && clearRetain,
+        check(firstRetain && overwriteRetain && removedRetain && clearRetain && deallocRetain,
               "CFDictionary object-value callbacks balance overwrite/remove/clear ownership");
     }
 

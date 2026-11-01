@@ -1522,7 +1522,7 @@ void al_getSourcef(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     x.mem.write<float>(val, v);
 }
 void al_getSource3f(Ctx& x, uint32_t sid, uint32_t param, GuestPtr v1, GuestPtr v2, GuestPtr v3) {
-    if (!v1 || !v2 || !v3) { OAL(x).lastError = 0xA004 /* AL_INVALID_VALUE */; return; }
+    if (!v1 || !v2 || !v3) { OAL(x).lastError = 0xA003 /* AL_INVALID_VALUE */; return; }
     if (!OAL(x).sources.count(sid)) { OAL(x).lastError = 0xA001 /* AL_INVALID_NAME */; return; }
     const ALSource& s = OAL(x).sources[sid];
     const float* v = nullptr;
