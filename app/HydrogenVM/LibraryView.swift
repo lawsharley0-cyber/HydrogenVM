@@ -149,11 +149,16 @@ struct LibraryView: View {
     @State private var browsing: InstalledApp?
     @State private var keepGoing = false
     @State private var testingAllGames = false
+    /// A `hydrogenvm://run/<id>` link (Home Screen icon) waiting to be opened.
+    @State private var router = LaunchRouter.shared
 
     var body: some View {
         NavigationStack {
             Group {
-                if store.apps.isEmpty && store.importing.isEmpty {
+                if router.pending != nil {
+                    // A Home Screen link is opening a game: stay black, never flash the library.
+                    Color.black.ignoresSafeArea()
+                } else if store.apps.isEmpty && store.importing.isEmpty {
                     ContentUnavailableView {
                         Label("No apps yet", systemImage: "shippingbox")
                     } description: {
@@ -216,6 +221,9 @@ struct LibraryView: View {
             .alert("Import failed", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
                 Button("OK") { store.lastError = nil }
             } message: { Text(store.lastError ?? "") }
+            .alert("Can't open that game", isPresented: Binding(get: { router.message != nil }, set: { if !$0 { router.message = nil } })) {
+                Button("OK") { router.message = nil }
+            } message: { Text(router.message ?? "") }
             .task {
                 // Headless Test All Games CI hook
                 if ProcessInfo.processInfo.environment["HVM_TEST_ALL_GAMES"] != nil {
@@ -262,12 +270,35 @@ struct LibraryView: View {
             .fullScreenCover(item: $running) { app in
                 RunView(app: app, keepGoing: keepGoing)
             }
+            .onChange(of: router.pending) { _, _ in openPendingLink() }
+            .task { openPendingLink() }
             .sheet(item: $browsing) { app in
                 FileBrowserView(app: app)
             }
             .sheet(isPresented: $testingAllGames) {
                 BatchTestView(installedApps: store.apps)
             }
+        }
+    }
+
+    /// Open the game a Home Screen icon asked for. Unknown or uninstalled ids get a
+    /// clear message instead of an empty run screen.
+    private func openPendingLink() {
+        guard let url = router.pending else { return }
+        router.pending = nil
+        switch GameLink.resolve(url, installed: store.apps.map { $0.info.bundleIdentifier }) {
+        case .failure(let error):
+            router.message = error.message
+        case .success(let id):
+            guard let app = store.apps.first(where: { $0.info.bundleIdentifier == id }) else {
+                router.message = GameLinkError.unknownGame(id).message
+                return
+            }
+            guard app.info.runnable else {
+                router.message = "\(app.title) is installed but cannot run here: \(app.info.problem)"
+                return
+            }
+            running = app
         }
     }
 }
@@ -288,6 +319,7 @@ private struct LibraryAppRow: View {
     @State private var showingVerifyResult = false
     @State private var verifyError: String? = nil
     @State private var showingVerifyError = false
+    @State private var makingClip = false
 
     private var storedIPAURL: URL? {
         guard let appSupport = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return nil }
@@ -323,6 +355,7 @@ private struct LibraryAppRow: View {
         }
         .contextMenu {
             Button("Files", systemImage: "folder", action: browse)
+            Button("Add to Home Screen", systemImage: "plus.app") { makingClip = true }
             Button("Verify files", systemImage: "checkmark.seal", action: doVerify)
             Button("Reinstall", systemImage: "arrow.down.app") {
                 if storedIPAURL != nil {
@@ -347,6 +380,7 @@ private struct LibraryAppRow: View {
         .fileImporter(isPresented: $pickingReinstallIPA, allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .zip, .zip]) { result in
             if case .success(let url) = result { reinstall(url) }
         }
+        .sheet(isPresented: $makingClip) { AddToHomeScreenSheet(app: app) }
         .alert("Verify failed", isPresented: $showingVerifyError) {
             Button("OK", role: .cancel) {}
         } message: { Text(verifyError ?? "") }
