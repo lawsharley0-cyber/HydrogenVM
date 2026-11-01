@@ -79,6 +79,13 @@ public:
         float peak = 0;
     };
     Stats stats() const;
+    // Queue ownership only. Shared PCM referenced twice is counted twice;
+    // decoder/OpenAL/player caches outside the mixer are not included.
+    struct MemoryStats {
+        uint64_t voiceCount = 0, queuedBufferCount = 0, referencedPcmBytes = 0;
+        uint64_t processedTagCount = 0, processedTagCapacityBytes = 0;
+    };
+    MemoryStats memoryStats() const;
 
 private:
     struct Buffer { Pcm pcm; int rate; uint64_t tag; };

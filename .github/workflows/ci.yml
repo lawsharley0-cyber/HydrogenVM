@@ -39,6 +39,8 @@ jobs:
         run: python3 -m unittest discover -s tools/tests -p 'test_hvm_evidence.py'
       - name: Agent queue tests
         run: python3 -m unittest discover -s tools/tests -p 'test_agent_queue.py'
+      - name: Probe tainted-run tests
+        run: python3 -m unittest discover -s tools/tests -p 'test_hvm_probe_tainted.py'
       - name: Cache ld64 (cctools-port)
         id: cctools
         uses: actions/cache@v4
@@ -50,6 +52,8 @@ jobs:
         run: tools/build_cctools.sh /home/runner/cctools
       - name: Test + performance report
         run: python3 tools/hvm_report.py --out report
+      - name: HostGL sequential process lifetime
+        run: build/hvm_gl_lifetime_tests
       - name: Host AAC decoder comparison
         run: python3 tools/test_m4a_audio.py --hvm-tests build/hvm_tests --out report/m4a.json
       - name: Upload report and test apps

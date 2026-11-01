@@ -22,7 +22,7 @@ enum { NSASCIIStringEncoding = 1, NSUTF8StringEncoding = 4, NSISOLatin1StringEnc
 enum { NSCaseInsensitiveSearch = 1, NSLiteralSearch = 2, NSBackwardsSearch = 4, NSAnchoredSearch = 8, NSNumericSearch = 64 };
 enum { NSDocumentDirectory = 9, NSLibraryDirectory = 5, NSCachesDirectory = 13 };
 enum { NSUserDomainMask = 1 };
-enum { NSKeyValueObservingOptionNew = 1, NSKeyValueObservingOptionOld = 2 };
+enum { NSKeyValueObservingOptionNew = 1, NSKeyValueObservingOptionOld = 2, NSKeyValueObservingOptionInitial = 4, NSKeyValueObservingOptionPrior = 8 };
 typedef NSUInteger NSEnumerationOptions;
 enum { NSEnumerationConcurrent = 1, NSEnumerationReverse = 2 };
 enum { NSJSONReadingMutableContainers = 1, NSJSONReadingMutableLeaves = 2, NSJSONReadingAllowFragments = 4 };
@@ -61,6 +61,7 @@ typedef struct {
 + (void)cancelPreviousPerformRequestsWithTarget:(id)aTarget selector:(SEL)aSelector object:(id)anArgument;
 - (void)addObserver:(NSObject *)observer forKeyPath:(NSString *)keyPath options:(NSUInteger)options context:(void *)context;
 - (void)removeObserver:(NSObject *)observer forKeyPath:(NSString *)keyPath;
+- (void)removeObserver:(NSObject *)observer forKeyPath:(NSString *)keyPath context:(void *)context;
 @end
 
 @interface NSString : NSObject <NSCopying, NSMutableCopying>
