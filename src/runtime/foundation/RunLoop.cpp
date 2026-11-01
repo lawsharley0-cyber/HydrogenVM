@@ -448,10 +448,16 @@ double cf_absoluteTime(Ctx&) { return now(); }
 struct SourceData : ObjC::HostObject {
     std::shared_ptr<RunLoop::Source> src = std::make_shared<RunLoop::Source>();
     uint32_t info = 0, releaseCb = 0, scheduleCb = 0, cancelCb = 0, performCb = 0;
-    struct Added { RunLoop* loop; uint32_t mode; };
+    struct Added { RunLoop* loop; uint32_t mode; std::string name; };   // mode: retained CFString; modes compare by `name`
     std::mutex mu;               // guards `loops` and the add/invalidate ordering; never held across a guest callback or a release
     std::vector<Added> loops;    // one entry per (run loop, mode) membership
 };
+// Run loop modes are compared by string value, as CoreFoundation does, not by CFString address.
+std::string modeKey(Ctx& x, uint32_t mode) {
+    if (!mode) return {};
+    if (Foundation::isString(x, mode)) return "s:" + Foundation::utf8(x, mode);
+    return "p:" + std::to_string(mode);
+}
 SourceData* sd(Ctx& x, id s) { return s ? rt(x).hostIf<SourceData>(s) : nullptr; }
 
 // Drop the (loop, mode) memberships selected by `match`: each gets a cancel callback; the loop itself
@@ -473,8 +479,10 @@ void detachSources(Ctx& x, id s, SourceData& d, Match match) {
         }
     }
     for (RunLoop* l : released) l->removeSource(d.src);
-    for (const auto& a : gone)
+    for (const auto& a : gone) {
         if (d.cancelCb) x.proc.callGuest(x.cpu, d.cancelCb, {d.info, loopObject(x, *a.loop), a.mode});
+        if (a.mode && Foundation::isString(x, a.mode)) rt(x).release(x.cpu, a.mode);   // the membership's own reference to the mode string
+    }
     for (size_t i = 0; i < released.size(); ++i) rt(x).release(x.cpu, s);   // one reference per loop that held the source
 }
 
@@ -513,15 +521,17 @@ void cf_addSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
     SourceData* d = sd(x, s);
     if (!d) return;
     RunLoop& loop = loopOf(x, rl);
+    const std::string modeName = modeKey(x, mode);
     {
         // Validity, membership and attachment are one step under d->mu, so an Invalidate on another thread
         // either runs first (and the add is refused) or runs after (and detaches what was just attached).
         // detachSources drops d->mu before it touches the loop, so this order cannot deadlock.
         std::lock_guard<std::mutex> lk(d->mu);
         if (!d->src->valid.load()) return;
-        for (const auto& a : d->loops) if (a.loop == &loop && a.mode == mode) return;   // already scheduled in this mode
+        for (const auto& a : d->loops) if (a.loop == &loop && a.name == modeName) return;   // already scheduled in this mode
         const bool firstForLoop = std::none_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == &loop; });
-        d->loops.push_back({&loop, mode});
+        if (mode && Foundation::isString(x, mode)) rt(x).retain(x.cpu, mode);   // held for the membership's lifetime; released after the cancel callback
+        d->loops.push_back({&loop, mode, modeName});
         if (firstForLoop) {
             rt(x).retain(x.cpu, s);   // the run loop retains its sources (once per loop, however many modes)
             loop.addSource(d->src);
@@ -533,14 +543,16 @@ void cf_removeSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
     SourceData* d = sd(x, s);
     if (!d) return;
     RunLoop* loop = &loopOf(x, rl);
-    detachSources(x, s, *d, [&](const SourceData::Added& a) { return a.loop == loop && a.mode == mode; });
+    const std::string modeName = modeKey(x, mode);
+    detachSources(x, s, *d, [&](const SourceData::Added& a) { return a.loop == loop && a.name == modeName; });
 }
 bool cf_containsSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
     SourceData* d = sd(x, s);
     if (!d || !d->src->valid.load()) return false;
     RunLoop* loop = &loopOf(x, rl);
+    const std::string modeName = modeKey(x, mode);
     std::lock_guard<std::mutex> lk(d->mu);
-    return std::any_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == loop && a.mode == mode; });
+    return std::any_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == loop && a.name == modeName; });
 }
 void cf_sourceSignal(Ctx& x, id s) {
     SourceData* d = sd(x, s);

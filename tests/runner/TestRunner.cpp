@@ -6699,19 +6699,27 @@ int runFullSubsystemTests() {
         // (and keeps performing) until its last mode is removed, and cancel runs once per mode.
         performed.clear(); scheduled.clear(); cancelled.clear();
         const uint32_t multi = makeSource(0, 0xE1);
-        call("_CFRunLoopAddSource", {mainLoop, multi, 1});
-        call("_CFRunLoopAddSource", {mainLoop, multi, 2});
+        // Modes are CFStrings compared by value: equal strings at different addresses are the same mode, and the
+        // source keeps its own reference, so the caller may release its string right after adding.
+        Ctx sx{srcProc, scpu, srcProc.mem()};
+        const uint32_t modeA1 = Foundation::makeString(sx, "HVMModeA"), modeA2 = Foundation::makeString(sx, "HVMModeA");
+        const uint32_t modeB = Foundation::makeString(sx, "HVMModeB"), modeC = Foundation::makeString(sx, "HVMModeC");
+        call("_CFRunLoopAddSource", {mainLoop, multi, modeA1});
+        call("_CFRunLoopAddSource", {mainLoop, multi, modeA2});   // same mode again: no second membership
+        call("_CFRunLoopAddSource", {mainLoop, multi, modeB});
+        call("_CFRelease", {modeB});
         check(scheduled == std::vector<uint32_t>{0xE1, 0xE1} &&
-              call("_CFRunLoopContainsSource", {mainLoop, multi, 1}) != 0 && call("_CFRunLoopContainsSource", {mainLoop, multi, 2}) != 0 &&
-              call("_CFRunLoopContainsSource", {mainLoop, multi, 3}) == 0,
-              "a run loop source can be added in two modes and containment is per mode");
-        call("_CFRunLoopRemoveSource", {mainLoop, multi, 1});
+              call("_CFRunLoopContainsSource", {mainLoop, multi, modeA2}) != 0 && call("_CFRunLoopContainsSource", {mainLoop, multi, modeB}) != 0 &&
+              call("_CFRunLoopContainsSource", {mainLoop, multi, modeC}) == 0,
+              "a run loop source can be added in two modes, modes compare by string value, and containment is per mode");
+        call("_CFRunLoopRemoveSource", {mainLoop, multi, modeA2});   // removes the membership added with modeA1
         call("_CFRunLoopSourceSignal", {multi});
         spin();
         check(cancelled.size() == 1 && performed == std::vector<uint32_t>{0xE1} &&
-              call("_CFRunLoopContainsSource", {mainLoop, multi, 1}) == 0 && call("_CFRunLoopContainsSource", {mainLoop, multi, 2}) != 0,
+              call("_CFRunLoopContainsSource", {mainLoop, multi, modeA1}) == 0 && call("_CFRunLoopContainsSource", {mainLoop, multi, modeB}) != 0,
               "removing one mode leaves the source attached and performing in the other");
-        call("_CFRunLoopRemoveSource", {mainLoop, multi, 2});
+        const uint32_t modeB2 = Foundation::makeString(sx, "HVMModeB");
+        call("_CFRunLoopRemoveSource", {mainLoop, multi, modeB2});
         performed.clear();
         call("_CFRunLoopSourceSignal", {multi});
         spin();
