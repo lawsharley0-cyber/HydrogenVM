@@ -214,6 +214,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "AudioOutput.hpp"
@@ -7400,6 +7401,30 @@ int runFullSubsystemTests() {
                          tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
         }
         check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+
+        // The crash bundle carries each thread's last calls (T2c, #259): oldest first, exactly the last N,
+        // with the support status of a function that was declared a Stub.
+        const uint32_t ringStubFn = ringProc.defineFunction("test_call_ring_stub_fn", [](Ctx&) {});
+        const uint32_t ringStubIndex = ringProc.engine().hleIndex(ringStubFn);
+        supportRegistry(ringProc).record({SupportKind::Function, "test_call_ring_stub_fn", SupportStatus::Stub,
+                                          "test: a placeholder that must show up as a stub hit"});
+        ringProc.engine().callHle(&ringCpu, ringStubIndex);
+        const uint64_t ringTotal = ringCpu.call_ring.load()->total();
+        const std::string ringJson = ringProc.callRingJson(8);
+        auto seqAt = [&](uint64_t seq) { return ringJson.find("\"seq\":" + std::to_string(seq) + ","); };
+        size_t hleEntries = 0;
+        for (size_t at = ringJson.find("\"kind\":\"hle\""); at != std::string::npos; at = ringJson.find("\"kind\":\"hle\"", at + 1)) ++hleEntries;
+        const size_t lastEntry = seqAt(ringTotal);
+        const size_t stubAt = ringJson.find("\"status\":\"Stub\"");
+        bool ringOrdered = seqAt(ringTotal - 7) != std::string::npos && seqAt(ringTotal - 8) == std::string::npos;
+        for (uint64_t q = ringTotal - 7; ringOrdered && q < ringTotal; ++q) ringOrdered = seqAt(q) < seqAt(q + 1);
+        check(ringJson.find("\"thread\":" + std::to_string(ringProc.mainThread().id) + ",\"total\":" + std::to_string(ringTotal)) != std::string::npos &&
+              hleEntries == 8 && ringOrdered,
+              "callRingJson lists exactly the last N calls of a thread, oldest first, with the thread's total");
+        check(lastEntry != std::string::npos && stubAt != std::string::npos && stubAt > lastEntry &&
+              ringJson.find("\"name\":\"test_call_ring_stub_fn\"") != std::string::npos &&
+              ringJson.find("\"status\"") == stubAt && ringJson.find("\"status\"", stubAt + 1) == std::string::npos,
+              "callRingJson marks a declared Stub call and leaves unlabelled calls without a status");
     }
 
     // Teardown diagnostics: a guest thread still running (blocked in the real `read` on
