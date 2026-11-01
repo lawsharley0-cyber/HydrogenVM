@@ -440,9 +440,10 @@ static void testCoreFoundation(void) {
 
     const void *secondKeyPtr = NULL;
     CFDictionaryGetKeysAndValues(cmd, &secondKeyPtr, NULL);
-    MyCopyKey *secondKey = (__bridge MyCopyKey *)secondKeyPtr;
-    CHECK(secondKey == copyKey && copyKey->_copyCount == 0 && CFGetRetainCount((__bridge CFTypeRef)copyKey) == keyBefore + 1 &&
-          CFGetRetainCount((__bridge CFTypeRef)valObj) == valBefore + 1,
+    // Read the counts before any strong local refers to the key: under ARC that local would add its own retain.
+    const CFIndex keyAfter = CFGetRetainCount((__bridge CFTypeRef)copyKey);
+    const CFIndex valAfter = CFGetRetainCount((__bridge CFTypeRef)valObj);
+    CHECK(secondKeyPtr == (__bridge const void *)copyKey && copyKey->_copyCount == 0 && keyAfter == keyBefore + 1 && valAfter == valBefore + 1,
           "CFDictionarySetValue retains the key and value without copying");
     CFRelease(cmd);
 }
