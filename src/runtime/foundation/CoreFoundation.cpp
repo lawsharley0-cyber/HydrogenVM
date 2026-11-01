@@ -32,7 +32,7 @@ struct CF {
     id systemAllocator = 0, nullAllocator = 0;
     uint32_t arrayCallbacks = 0, dictKeyCallbacks = 0, dictValueCallbacks = 0, copyStringKeyCallbacks = 0, setCallbacks = 0,
              copyStringSetCallbacks = 0;
-    uint32_t cfRetainFn = 0, cfReleaseFn = 0, cfEqualFn = 0, cfHashFn = 0, cfCopyDescFn = 0;
+    uint32_t cfRetainFn = 0, cfCopyStringRetainFn = 0, cfReleaseFn = 0, cfEqualFn = 0, cfHashFn = 0, cfCopyDescFn = 0;
 };
 CF& cf(Ctx& x) { return x.proc.service<CF>(); }
 
@@ -91,6 +91,12 @@ uint32_t cf_retain(Ctx& x, id o) {
     if (!o) { x.proc.log(LogLevel::Warning, "CFRetain(NULL) — this crashes on iOS"); return 0; }
     if (!x.mem.read<uint32_t>(o)) return o;
     return R(x).retain(x.cpu, o);
+}
+// The retain callback of kCFCopyStringDictionaryKeyCallBacks: (allocator, value) -> a copy of a string, else the value retained.
+// It is a distinct function so a dictionary recognises the mode from the callback contents, not from the struct's address.
+uint32_t cf_copyStringKeyRetain(Ctx& x, uint32_t, id o) {
+    if (o && isString(x, o)) return uint32_t(send(x, o, "copy"));
+    return cf_retain(x, o);
 }
 void cf_release(Ctx& x, id o) {
     if (!o) { x.proc.log(LogLevel::Warning, "CFRelease(NULL) — this crashes on iOS"); return; }
@@ -1185,6 +1191,7 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     p.def<&bv_set>("_CFBitVectorSetBitAtIndex");
     // CFType
     c.cfRetainFn = p.def<&cf_retain>("_CFRetain");
+    c.cfCopyStringRetainFn = p.def<&cf_copyStringKeyRetain>("___HVMCFCopyStringKeyRetain");
     c.cfReleaseFn = p.def<&cf_release>("_CFRelease");
     p.def<&cf_autorelease>("_CFAutorelease");
     p.def<&cf_makeCollectable>("_CFMakeCollectable");
@@ -1219,12 +1226,11 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     // callback structs: {version, retain, release, copyDescription, equal, hash}
     auto callbacks = [&](const char* name, bool withHash, bool copyKeys) {
         const uint32_t a = p.defineDataBlock(name, withHash ? 24 : 20);
-        p.mem().write<uint32_t>(a + 4, c.cfRetainFn);
+        p.mem().write<uint32_t>(a + 4, copyKeys ? c.cfCopyStringRetainFn : c.cfRetainFn);
         p.mem().write<uint32_t>(a + 8, c.cfReleaseFn);
         p.mem().write<uint32_t>(a + 12, c.cfCopyDescFn);
         p.mem().write<uint32_t>(a + 16, c.cfEqualFn);
         if (withHash) p.mem().write<uint32_t>(a + 20, c.cfHashFn);
-        (void)copyKeys;
         return a;
     };
     c.arrayCallbacks = callbacks("_kCFTypeArrayCallBacks", false, false);
