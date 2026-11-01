@@ -3805,6 +3805,14 @@ int runFullSubsystemTests() {
         const bool badDevice = call_tmp("_alcGetError", {dev}) == 0xA001 && call_tmp("_alcGetError", {dev}) == 0;
         call_tmp("_alcGetIntegerv", {dev, 0x1000, 0, i});
         const bool badSize = call_tmp("_alcGetError", {dev}) == 0xA004;
+        proc.mem().write<int32_t>(i, 77);
+        call_tmp("_alcGetIntegerv", {dev, 0x1000, uint32_t(-1), i});
+        const bool negativeSize = call_tmp("_alcGetError", {dev}) == 0xA004 && proc.mem().read<int32_t>(i) == 77;   // rejected, nothing written
+        proc.mem().write<int32_t>(i, 77);
+        call_tmp("_alcGetIntegerv", {0, 0x1001 /* ALC_MINOR_VERSION */, 1, i});
+        const bool nullDeviceVersion = proc.mem().read<int32_t>(i) == 1 && call_tmp("_alcGetError", {dev}) == 0;
+        call_tmp("_alcGetIntegerv", {0, 0x1002 /* ALC_ATTRIBUTES_SIZE */, 1, i});
+        const bool nullDeviceOther = call_tmp("_alcGetError", {dev}) == 0xA001;
         call_tmp("_alcGetIntegerv", {dev, 0xFFFF, 1, i});
         const bool badEnum = call_tmp("_alcGetError", {dev}) == 0xA003;
         call_tmp("_alGetSource3f", {alSrc + 123, 0x1004, f, f+4, f+8});
@@ -3865,6 +3873,12 @@ int runFullSubsystemTests() {
         // allKeys retains its elements. Removing the dictionary's entry must
         // drop exactly one retain while the returned array still owns the key.
         const bool keyBalanced = heldRetain == beforeRetain + 1 && afterRetain == heldRetain;
+        // Enumerate after the retain accounting above: the enumerator keeps its own reference to the key.
+        call_tmp("_objc_msgSend", {objectKeyDict, r.sel("setObject:forKey:"), v, objcKey});
+        const uint32_t keyEnum = uint32_t(call_tmp("_objc_msgSend", {objectKeyDict, r.sel("keyEnumerator")}));
+        const bool keyEnumOk = keyEnum != 0 && uint32_t(call_tmp("_objc_msgSend", {keyEnum, r.sel("nextObject")})) == objcKey &&
+            uint32_t(call_tmp("_objc_msgSend", {keyEnum, r.sel("nextObject")})) == 0;   // one key, then exhausted
+        call_tmp("_objc_msgSend", {objectKeyDict, r.sel("removeAllObjects")});
 
         // Value-only object callbacks: an overwrite releases the old value,
         // and removal releases the replacement without retaining a raw key.
@@ -3886,11 +3900,11 @@ int runFullSubsystemTests() {
         call_tmp("_objc_msgSend", {valueDict, r.sel("removeAllObjects")});
         const bool clearRetain = uint32_t(r.send(cpu, valueB, "retainCount")) == b0;
 
-        check(okPosDefault && okPosSet && okVelSet && okDirSet && okAlcMajor && okAlcAttr && badDevice && badSize && badEnum && badSource && badSourceEnum,
+        check(okPosDefault && okPosSet && okVelSet && okDirSet && okAlcMajor && okAlcAttr && badDevice && badSize && negativeSize && nullDeviceVersion && nullDeviceOther && badEnum && badSource && badSourceEnum,
               "OpenAL valid queries, invalid source/device/enum/size errors");
         check(okDictMut && okRawOverwrite && okDictRm && okIDictMut && okDictRmAll && rawEnumRejected && rawArrayRejected,
               "raw CFDictionary mutation, immutable rejection, unsafe key enumeration");
-        check(objectKeysSafe, "CFDictionary object-key callback supports safe ObjC enumeration");
+        check(objectKeysSafe && keyEnumOk, "CFDictionary object-key callback supports safe ObjC enumeration");
         check(keyBalanced, "CFDictionary object-key callback balances retain/release");
         check(firstRetain && overwriteRetain && removedRetain && clearRetain,
               "CFDictionary object-value callbacks balance overwrite/remove/clear ownership");

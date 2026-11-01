@@ -1362,9 +1362,11 @@ GuestPtr alc_getString(Ctx& x, uint32_t, uint32_t) { return x.proc.internCString
 void alc_macMixerRate(Ctx&, double) {}
 double alc_macGetMixerRate(Ctx&) { return 44100.0; }
 void alc_macIntSetter(Ctx&, int32_t) {}
-void alc_getIntegerv(Ctx& x, uint32_t dev, uint32_t param, uint32_t size, GuestPtr data) {
-    if (!dev || dev != OAL(x).currentDevice) { OAL(x).lastAlcError = 0xA001 /* ALC_INVALID_DEVICE */; return; }
-    if (!data || size < 1) { OAL(x).lastAlcError = 0xA004 /* ALC_INVALID_VALUE */; return; }
+void alc_getIntegerv(Ctx& x, uint32_t dev, uint32_t param, int32_t size, GuestPtr data) {
+    // ALC_MAJOR_VERSION / ALC_MINOR_VERSION may be queried with a NULL device; everything else needs the open one.
+    const bool versionQuery = param == 0x1000 /* ALC_MAJOR_VERSION */ || param == 0x1001 /* ALC_MINOR_VERSION */;
+    if (!(versionQuery && !dev) && (!dev || dev != OAL(x).currentDevice)) { OAL(x).lastAlcError = 0xA001 /* ALC_INVALID_DEVICE */; return; }
+    if (!data || size < 1) { OAL(x).lastAlcError = 0xA004 /* ALC_INVALID_VALUE */; return; }   // size is signed: -1 is invalid
     // The supported OpenAL API is 1.1; no ALC device attribute list is
     // advertised by this software-only implementation.
     if (param == 0x1000 /* ALC_MAJOR_VERSION */ || param == 0x1001 /* ALC_MINOR_VERSION */) x.mem.write<int32_t>(data, 1);
