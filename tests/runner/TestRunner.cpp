@@ -1993,6 +1993,26 @@ int runFullSubsystemTests() {
         proc.heap().free(testGlyphsMem);
 
         call("_CGDataProviderRelease", {provider}); call("_CFRelease", {data}); call("_CGFontRelease", {cg});
+        {
+            // CTFontDescriptor attribute dictionaries: kCTFontNameAttribute reaches the descriptor, its copy and the font.
+            const uint32_t mockName = Foundation::makeString(cx, "Arial", true);
+            const uint32_t fontNameKey = Foundation::makeString(cx, "kCTFontNameAttribute", true);
+            const uint32_t fontAttrs = Foundation::makeDict(cx, {{fontNameKey, mockName}}, true);
+            const uint32_t descWithAttrs = uint32_t(call("_CTFontDescriptorCreateWithAttributes", {fontAttrs}));
+            const uint32_t copyWithAttrs = uint32_t(call("_CTFontDescriptorCreateCopyWithAttributes", {descWithAttrs, fontAttrs}));
+            const uint32_t createdFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {copyWithAttrs, 0, 0}));
+            const auto familyAttrs = uint32_t(call("_CTFontCopyFamilyName", {createdFont}));
+            const uint32_t renamedKey = Foundation::makeString(cx, "kCTFontNameAttribute", true);
+            const uint32_t otherName = Foundation::makeString(cx, "Courier", true);
+            const uint32_t otherAttrs = Foundation::makeDict(cx, {{renamedKey, otherName}}, true);
+            const uint32_t renamed = uint32_t(call("_CTFontDescriptorCreateCopyWithAttributes", {descWithAttrs, otherAttrs}));
+            const uint32_t renamedFont = uint32_t(call("_CTFontCreateWithFontDescriptor", {renamed, 0, 0}));
+            const auto renamedFamily = uint32_t(call("_CTFontCopyFamilyName", {renamedFont}));
+            const auto originalFamily = uint32_t(call("_CTFontCopyFamilyName", {createdFont}));
+            check(descWithAttrs && copyWithAttrs && createdFont && Foundation::utf8(cx, familyAttrs) == "Arial" &&
+                  Foundation::utf8(cx, renamedFamily) == "Courier" && Foundation::utf8(cx, originalFamily) == "Arial",
+                  "CTFontDescriptorCreateWithAttributes/CopyWithAttributes apply kCTFontNameAttribute without touching the source descriptor");
+        }
         const uint32_t desc = uint32_t(call("_CTFontCopyFontDescriptor", {ct}));
         const uint32_t copy = uint32_t(call("_CTFontCreateWithFontDescriptor", {desc, 0, 0}));
         const auto family = uint32_t(call("_CTFontCopyFamilyName", {copy}));
