@@ -202,6 +202,56 @@ def issues_from(rep, log_text, shot, timed_out):
     return found
 
 
+def taint_info(rep):
+    """(tainted, stub hits, distinct APIs, three most-called API names) from a run report.
+
+    A tainted run called at least one missing or approximated API, so a clean-looking
+    exit is not a compatibility verdict. Reports from older builds, and runs with no
+    report at all, carry none of these fields and read as (False, 0, 0, []).
+    """
+    rep = rep or {}
+    hits = rep.get('stubHits')
+    hits = hits if isinstance(hits, int) and not isinstance(hits, bool) and hits > 0 else 0
+    apis = rep.get('missingApis')
+    apis = [a for a in apis if isinstance(a, dict) and isinstance(a.get('name'), str)] if isinstance(apis, list) else []
+
+    def count(a):
+        return a['count'] if isinstance(a.get('count'), int) else 0
+    top = [a['name'] for a in sorted(apis, key=lambda a: (-count(a), a['name']))[:3]]
+    return hits > 0, hits, len(apis), top
+
+
+def tainted_runs(results):
+    """The runs that hit a missing or approximated API, most hits first. Status is left as it was."""
+    rows = [{'bundleId': r.get('bundleId'), 'mode': r.get('mode'), 'status': r.get('status'),
+             'stubHits': r.get('stubHits', 0), 'distinctMissing': r.get('distinctMissing', 0),
+             'topMissing': r.get('topMissing') or [], 'dir': r.get('dir')}
+            for r in results if r.get('tainted')]
+    return sorted(rows, key=lambda r: (-r['stubHits'], str(r['bundleId']), str(r['mode'])))
+
+
+def md_cell(value):
+    """One value made safe for a Markdown table cell (and for a code span inside it)."""
+    return str(value).replace('`', "'").replace('|', '/').replace('\r', '\\r').replace('\n', '\\n')
+
+
+def tainted_md(rows):
+    """summary.md section for tainted_runs(); says so when there are none."""
+    md = ['', '## Tainted runs', '',
+          'A tainted run called at least one missing or approximated API. It can still exit 0 with a '
+          'healthy picture, so its status above is not a compatibility verdict.', '']
+    if not rows:
+        return md + ['No tainted runs.']
+    md += ['| Game | Mode | Status | Stub hits | Distinct APIs | Most called | Run folder |', '|---|---|---|---:|---:|---|---|']
+    for r in rows:
+        # Every value here is input-derived (guest API names, the app's bundle id, the CLI mode, paths): keep
+        # each inside its table cell (no '|'), on one line (no CR/LF) and, in a code span, free of backticks.
+        top = ', '.join('`' + md_cell(n) + '`' for n in r['topMissing'])
+        md.append(f"| {md_cell(r['bundleId'])} | {md_cell(r['mode'])} | {md_cell(r['status'])} | {md_cell(r['stubHits'])} | "
+                  f"{md_cell(r['distinctMissing'])} | {top} | `{md_cell(r.get('dir', ''))}` |")
+    return md
+
+
 def probe_one(args, ipa, mode):
     ipa_hash = file_sha256(ipa)
     try:
@@ -239,7 +289,9 @@ def probe_one(args, ipa, mode):
     worst = max([i['severity'] for i in issues], default=0)
     status = 'crash' if worst >= 90 else 'broken' if worst >= 70 else 'issues' if worst >= 45 else 'ok'
     perf = (rep or {}).get('perf') or {}
+    tainted, stub_hits, distinct_missing, top_missing = taint_info(rep)
     return {'bundleId': bid, 'ipa': ipa.name, 'sha256': ipa_hash, 'mode': mode, 'status': status, 'exit': code,
+            'tainted': tainted, 'stubHits': stub_hits, 'distinctMissing': distinct_missing, 'topMissing': top_missing,
             'seconds': round(time.time() - started, 1), 'framesPresented': perf.get('framesPresented', 0),
             'mixer': (rep or {}).get('mixer'), 'dir': str(run_dir), 'issues': issues,
             'signature': (rep or {}).get('signature'), 'exceptionKind': (rep or {}).get('exceptionKind'),
@@ -289,7 +341,7 @@ def main():
     build, host = current_source_provenance()
     summary = {'kind': 'hvm-probe', 'time': time.strftime('%Y-%m-%d %H:%M:%S'), 'seconds': args.seconds,
                'modes': modes, 'launches': args.launches, 'build': build, 'host': host,
-               'results': results, 'issues': ranked}
+               'results': results, 'issues': ranked, 'taintedRuns': tainted_runs(results)}
 
     diff = None
     if args.baseline and args.baseline.exists():
@@ -311,6 +363,7 @@ def main():
         mx = r.get('mixer') or {}
         md.append(f"| {r['bundleId']} | {r['mode']} | {r['status']} | {r.get('framesPresented', 0)} | "
                   f"{mx.get('audibleFrames', 0)} | {len(r['issues'])} | `{r.get('dir', '')}` |")
+    md += tainted_md(summary['taintedRuns'])
     md += ['', '## Issues (ranked)', '', '| # | Severity | Issue | Games | Example run |', '|---:|---:|---|---|---|']
     for n, g in enumerate(ranked, 1):
         if g['severity'] < 20 and n > 60:

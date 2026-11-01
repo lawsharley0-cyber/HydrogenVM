@@ -1,20 +1,58 @@
 {
-  "wip_limit": 3,
+  "wip_limit": 5,
   "agents": {
     "claude": {
       "can_run_games": true,
-      "weekly_budget": 4,
-      "prefers": ["T1", "T2", "T7", "T5", "T3"]
+      "weekly_budget": 8,
+      "prefers": [
+        "T1",
+        "T1b",
+        "T2a",
+        "G2",
+        "G3",
+        "T7",
+        "T5b",
+        "T5c",
+        "P1"
+      ]
     },
     "codex": {
       "can_run_games": true,
-      "weekly_budget": 4,
-      "prefers": ["T3", "T4", "T6", "T8", "T5", "T2"]
+      "weekly_budget": 8,
+      "prefers": [
+        "T2b",
+        "T6",
+        "T8",
+        "T5d",
+        "G1",
+        "T5a",
+        "P1"
+      ]
     },
     "antigravity": {
       "can_run_games": true,
-      "weekly_budget": 6,
-      "prefers": ["T4", "T5", "T6"]
+      "weekly_budget": 8,
+      "prefers": [
+        "G4",
+        "T5c",
+        "T5b",
+        "P1",
+        "T1b"
+      ]
     }
+  },
+  "default": {
+    "can_run_games": false,
+    "weekly_budget": 6,
+    "prefers": [
+      "G1",
+      "G2",
+      "G3",
+      "G4",
+      "T5d",
+      "T2a",
+      "T2b",
+      "P1"
+    ]
   }
 }

@@ -456,6 +456,11 @@ struct ContextData : ObjC::HostObject {
     uint32_t lastError = GL_NO_ERROR;
 
     // Bindings
+    uint32_t nextQuery = 1;
+    std::unordered_set<uint32_t> reservedQueries;
+    std::unordered_map<uint32_t, uint32_t> queryObjects;   // begun query name -> target it was begun on
+    uint32_t activeQueryAnySamples = 0;
+    uint32_t activeQueryAnySamplesConservative = 0;
     uint32_t arrayBuffer = 0;
     uint32_t framebuffer = 0;        // draw framebuffer (GL_FRAMEBUFFER / GL_DRAW_FRAMEBUFFER_APPLE)
     uint32_t readFramebuffer = 0;    // GL_READ_FRAMEBUFFER_APPLE (multisample resolve source)
@@ -690,6 +695,11 @@ void eaglLayer_setProps(Ctx& x, id self, SEL, id dict) {
 id sg_init(Ctx& x, id self, SEL) {
     rt(x).host<SharegroupData>(self);
     return self;
+}
+
+void sg_dealloc(Ctx& x, id self, SEL) {
+    if (HostGL::enabled(x.proc)) HostGL::sharegroupDestroy(x.proc, self);
+    rt(x).disposeInstance(x.cpu, self);
 }
 
 id ctx_initWithAPI(Ctx& x, id self, SEL, uint32_t api) {
@@ -2485,19 +2495,113 @@ bool vertexAttribState(Ctx& x, uint32_t idx, uint32_t pname, float out[4], int& 
     return true;
 }
 // EXT_occlusion_query_boolean
-void gl_genQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {
-    if (!currentCtx(x)) return;
-    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint32_t>(ids + i * 4, i + 1);
+void gl_genQueriesEXT(Ctx& x, int32_t n, GuestPtr ids) {
+    ContextData* c = currentCtx(x);
+    if (!c) return;
+    if (n < 0) { c->lastError = GL_INVALID_VALUE; return; }
+    for (int32_t i = 0; i < n; ++i) {
+        const uint32_t id = c->nextQuery++;
+        c->reservedQueries.insert(id);
+        x.mem.write<uint32_t>(ids + uint32_t(i) * 4, id);
+    }
 }
-void gl_deleteQueriesEXT(Ctx& x, uint32_t n, GuestPtr ids) {}
-uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) { return id > 0 ? 1 : 0; }
-void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {}
-void gl_endQueryEXT(Ctx& x, uint32_t target) {}
+void gl_deleteQueriesEXT(Ctx& x, int32_t n, GuestPtr ids) {
+    ContextData* c = currentCtx(x);
+    if (!c) return;
+    if (n < 0) { c->lastError = GL_INVALID_VALUE; return; }
+    if (!ids) return;
+    for (int32_t i = 0; i < n; ++i) {
+        const uint32_t id = x.mem.read<uint32_t>(ids + uint32_t(i) * 4);
+        c->reservedQueries.erase(id);
+        // The name is unused at once; a query that is active stays bound (activeQuery*) until glEndQuery.
+        c->queryObjects.erase(id);
+    }
+}
+uint32_t gl_isQueryEXT(Ctx& x, uint32_t id) {
+    ContextData* c = currentCtx(x);
+    return (c && c->queryObjects.count(id)) ? 1 : 0;
+}
+void gl_beginQueryEXT(Ctx& x, uint32_t target, uint32_t id) {
+    ContextData* c = currentCtx(x);
+    if (!c) return;
+    if (id == 0) { c->lastError = GL_INVALID_OPERATION; return; }   // 0 is never a valid query name
+
+    if (target != 0x8C2F && target != 0x8D6A) { // GL_ANY_SAMPLES_PASSED_EXT or GL_ANY_SAMPLES_PASSED_CONSERVATIVE_EXT
+        c->lastError = GL_INVALID_ENUM;
+        return;
+    }
+
+    // Khronos: only one occlusion query may be active at a time, across both targets
+    // (this also rejects an id that is active on the other target).
+    if (c->activeQueryAnySamples != 0 || c->activeQueryAnySamplesConservative != 0) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    // Must be a valid reserved name or an existing object
+    auto existing = c->queryObjects.find(id);
+    if (existing == c->queryObjects.end() && !c->reservedQueries.count(id)) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+    // Khronos: an existing query object keeps the target it was first begun on
+    if (existing != c->queryObjects.end() && existing->second != target) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    c->reservedQueries.erase(id);
+    c->queryObjects[id] = target;
+
+    (target == 0x8C2F ? c->activeQueryAnySamples : c->activeQueryAnySamplesConservative) = id;
+}
+void gl_endQueryEXT(Ctx& x, uint32_t target) {
+    ContextData* c = currentCtx(x);
+    if (!c) return;
+
+    if (target != 0x8C2F && target != 0x8D6A) {
+        c->lastError = GL_INVALID_ENUM;
+        return;
+    }
+
+    uint32_t& activeId = (target == 0x8C2F) ? c->activeQueryAnySamples : c->activeQueryAnySamplesConservative;
+    if (activeId == 0) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    activeId = 0;
+}
 void gl_getQueryivEXT(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
-    if (params) x.mem.write<int32_t>(params, 0);
+    ContextData* c = currentCtx(x);
+    if (!c) return;
+    if ((target != 0x8C2F && target != 0x8D6A) || pname != 0x8865) {   // GL_CURRENT_QUERY_EXT is the only occlusion pname
+        c->lastError = GL_INVALID_ENUM;
+        return;
+    }
+    if (params) x.mem.write<int32_t>(params, int32_t(target == 0x8C2F ? c->activeQueryAnySamples : c->activeQueryAnySamplesConservative));
 }
 void gl_getQueryObjectuivEXT(Ctx& x, uint32_t id, uint32_t pname, GuestPtr params) {
-    if (params) x.mem.write<uint32_t>(params, 1);
+    ContextData* c = currentCtx(x);
+    if (!c || !params) return;
+
+    // Must be a query object
+    if (!c->queryObjects.count(id)) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    // Result not available if currently active
+    if (c->activeQueryAnySamples == id || c->activeQueryAnySamplesConservative == id) {
+        c->lastError = GL_INVALID_OPERATION;
+        return;
+    }
+
+    if (pname != 0x8867 && pname != 0x8866) {   // GL_QUERY_RESULT_AVAILABLE / GL_QUERY_RESULT
+        c->lastError = GL_INVALID_ENUM;
+        return;
+    }
+    x.mem.write<uint32_t>(params, 1);
 }
 
 void gl_drawBuffers(Ctx& x, int32_t n, GuestPtr bufs) {}
@@ -3564,7 +3668,8 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r) {
     // EAGLSharegroup & EAGLContext
     ObjC::ClassBuilder sg = r.defineClass("EAGLSharegroup", "NSObject");
     st.eaglSharegroup = sg.cls();
-    sg.m<&sg_init>("init");
+    sg.m<&sg_init>("init")
+      .m<&sg_dealloc>("dealloc", "v@:");
 
     ObjC::ClassBuilder ctx = r.defineClass("EAGLContext", "NSObject");
     st.eaglContext = ctx.cls();

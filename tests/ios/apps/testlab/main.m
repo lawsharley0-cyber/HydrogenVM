@@ -1,6 +1,7 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Five deterministic test cases:
+// Twenty-four automated cases (TL-A--TL-X); see docs/TEST_LAB.md for the
+// complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
 //   TL-B  CPU correctness    — xorshift32 workload, result compared against a
@@ -28,6 +29,7 @@
 //
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#include "objc_conformance.h"
 #import <Security/Security.h>
 #include <stdio.h>
 #include <errno.h>
@@ -74,6 +76,12 @@ static const char *kAppBuild        = "1";
 #define CASE_P  @"TL-P"
 #define CASE_Q  @"TL-Q"
 #define CASE_R  @"TL-R"
+#define CASE_S  @"TL-S"
+#define CASE_X  @"TL-X"
+#define CASE_T  @"TL-T"
+#define CASE_U  @"TL-U"
+#define CASE_V  @"TL-V"
+#define CASE_W  @"TL-W"
 
 static const int kVersionA = 1;
 static const int kVersionB = 1;
@@ -1731,16 +1739,102 @@ static TLResult *runCaseR(void) {
     return r;
 }
 
+// TL-S--TL-W use plain C observations, including the separately compiled MRC
+// lifetime fixture. Expected values are authored with each independent oracle.
+static TLResult *runObjCCase(NSString *caseId, void (*fixture)(TLObjCObservation *)) {
+    TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
+    double t0 = monoMs();
+    writeCheckpoint(caseId);
+    r.checkpointWritten = YES;
+    TLObjCObservation observation = {0};
+    fixture(&observation);
+    BOOL ok = observation.count > 0 && observation.count <= TL_OBJC_MAX_CHECKS;
+    NSMutableDictionary *expected = [NSMutableDictionary dictionary];
+    NSMutableDictionary *actual = [NSMutableDictionary dictionary];
+    for (uint32_t i = 0; i < observation.count && i < TL_OBJC_MAX_CHECKS; ++i) {
+        NSString *name = [NSString stringWithUTF8String:observation.names[i]];
+        expected[name] = @(observation.expected[i]);
+        actual[name] = @(observation.actual[i]);
+        if (observation.actual[i] != observation.expected[i]) {
+            ok = NO;
+            if (!r.reason) r.reason = [NSString stringWithFormat:@"%@: expected %d, observed %d",
+                name, observation.expected[i], observation.actual[i]];
+        }
+    }
+    r.expected = expected;
+    r.actual = actual;
+    r.diagnostics[@"oracle"] = [NSString stringWithUTF8String:observation.oracle ?: "missing oracle"];
+    r.diagnostics[@"referenceRevision"] = @"fb265098298302243cd7eeaa1f63f0ba7786dd9a";
+    r.diagnostics[@"checks"] = @(observation.count);
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok && !r.reason) r.reason = @"Invalid conformance fixture observation count";
+    r.durationMs = monoMs() - t0;
+    clearCheckpoint();
+    return r;
+}
+
 static NSString *makeRunId(void) {
     double t = monoMs();
     return [NSString stringWithFormat:@"%016llX", (uint64_t)(t * 1000)];
+}
+
+// TL-X: reproduce the UE3 movie startup ordering without proprietary media.
+// Apple's AVPlayerItem status contract supplies the oracle: Unknown=0 on
+// creation, then an observed ReadyToPlay=1 after association with AVPlayer.
+@interface AVPlayerItem : NSObject
++ (id)playerItemWithURL:(NSURL *)url;
+- (NSInteger)status;
+@end
+@interface AVPlayer : NSObject
++ (id)playerWithPlayerItem:(id)item;
+- (void)play;
+- (float)rate;
+@end
+static int itemReadyContext;
+@interface TLItemReadyObserver : NSObject {
+@public
+    AVPlayer *player;
+    NSUInteger unknownCount, readyCount;
+    BOOL readyBeforePlayer;
+}
+@end
+@implementation TLItemReadyObserver
+- (void)observeValueForKeyPath:(NSString *)key ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    if (context != &itemReadyContext) return;
+    NSInteger status = [[change objectForKey:@"new"] integerValue];
+    if (status == 0) unknownCount++;
+    if (status == 1) {
+        readyCount++;
+        readyBeforePlayer |= player == nil;
+        [player play];
+    }
+}
+@end
+static TLResult *runCaseX(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_X version:1];
+    writeCheckpoint(CASE_X); r.checkpointWritten = YES;
+    NSString *path = [[NSBundle mainBundle] pathForResource:@"tone" ofType:@"wav"];
+    AVPlayerItem *item = [NSClassFromString(@"AVPlayerItem") playerItemWithURL:[NSURL fileURLWithPath:path]];
+    TLItemReadyObserver *observer = [[TLItemReadyObserver alloc] init];
+    [item addObserver:observer forKeyPath:@"status" options:NSKeyValueObservingOptionNew|NSKeyValueObservingOptionInitial context:&itemReadyContext];
+    BOOL initiallyUnknown = [item status] == 0 && observer->unknownCount == 1 && observer->readyCount == 0;
+    observer->player = [NSClassFromString(@"AVPlayer") playerWithPlayerItem:item];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+    BOOL ready = [item status] == 1 && observer->readyCount == 1 && !observer->readyBeforePlayer;
+    BOOL started = [observer->player rate] == 1.0f;
+    [item removeObserver:observer forKeyPath:@"status" context:&itemReadyContext];
+    r.expected = @{ @"initiallyUnknown":@YES, @"readyAfterPlayer":@YES, @"playStarted":@YES };
+    r.actual = @{ @"initiallyUnknown":@(initiallyUnknown), @"readyAfterPlayer":@(ready), @"playStarted":@(started) };
+    r.status = initiallyUnknown && ready && started ? @"passed" : @"failed";
+    if (![r.status isEqualToString:@"passed"]) r.reason = @"Player-item readiness arrived before player construction or failed to notify";
+    clearCheckpoint(); return r;
 }
 
 static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -1783,6 +1877,18 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseQ()];
         } else if ([cid isEqualToString:CASE_R]) {
             [results addObject:runCaseR()];
+        } else if ([cid isEqualToString:CASE_S]) {
+            [results addObject:runObjCCase(cid, TLObjCSelectors)];
+        } else if ([cid isEqualToString:CASE_T]) {
+            [results addObject:runObjCCase(cid, TLObjCClassGraph)];
+        } else if ([cid isEqualToString:CASE_U]) {
+            [results addObject:runObjCCase(cid, TLObjCMethodLookup)];
+        } else if ([cid isEqualToString:CASE_V]) {
+            [results addObject:runObjCCase(cid, TLObjCMutation)];
+        } else if ([cid isEqualToString:CASE_W]) {
+            [results addObject:runObjCCase(cid, TLObjCLifetime)];
+        } else if ([cid isEqualToString:CASE_X]) {
+            [results addObject:runCaseX()];
         }
     }
     return results;
@@ -1814,6 +1920,12 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_P]) return runCaseP();
     if ([caseId isEqualToString:CASE_Q]) return runCaseQ();
     if ([caseId isEqualToString:CASE_R]) return runCaseR();
+    if ([caseId isEqualToString:CASE_S]) return runObjCCase(caseId, TLObjCSelectors);
+    if ([caseId isEqualToString:CASE_T]) return runObjCCase(caseId, TLObjCClassGraph);
+    if ([caseId isEqualToString:CASE_U]) return runObjCCase(caseId, TLObjCMethodLookup);
+    if ([caseId isEqualToString:CASE_V]) return runObjCCase(caseId, TLObjCMutation);
+    if ([caseId isEqualToString:CASE_W]) return runObjCCase(caseId, TLObjCLifetime);
+    if ([caseId isEqualToString:CASE_X]) return runCaseX();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -1846,8 +1958,12 @@ static UIColor *colorForStatus(NSString *s) {
     title.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:title];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil" ];
+    UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 55, self.view.bounds.size.width, self.view.bounds.size.height - 55)];
+    scroll.scrollEnabled = YES;
+    [self.view addSubview:scroll];
+
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -1868,6 +1984,12 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_P version:1],
         [[TLResult alloc] initWithId:CASE_Q version:1],
         [[TLResult alloc] initWithId:CASE_R version:1],
+        [[TLResult alloc] initWithId:CASE_S version:1],
+        [[TLResult alloc] initWithId:CASE_T version:1],
+        [[TLResult alloc] initWithId:CASE_U version:1],
+        [[TLResult alloc] initWithId:CASE_V version:1],
+        [[TLResult alloc] initWithId:CASE_W version:1],
+        [[TLResult alloc] initWithId:CASE_X version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -1879,7 +2001,7 @@ static UIColor *colorForStatus(NSString *s) {
         }
     }
 
-    CGFloat y = 65;
+    CGFloat y = 10;
     for (int i = 0; i < (int)caseIds.count; ++i) {
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
         btn.frame = CGRectMake(10, y, 130, 32);
@@ -1888,14 +2010,14 @@ static UIColor *colorForStatus(NSString *s) {
         btn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
         btn.tag = 100 + i;
         [btn addTarget:self action:@selector(runCase:) forControlEvents:UIControlEventTouchUpInside];
-        [self.view addSubview:btn];
+        [scroll addSubview:btn];
 
         UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(150, y+6, 160, 20)];
         TLResult *r  = self.results[i];
         lbl.text = [NSString stringWithFormat:@"%@ — %@", r.caseId, r.status];
         lbl.textColor = colorForStatus(r.status);
         lbl.font = [UIFont systemFontOfSize:13];
-        [self.view addSubview:lbl];
+        [scroll addSubview:lbl];
         [self.labels addObject:lbl];
 
         y += 38;
@@ -1908,7 +2030,7 @@ static UIColor *colorForStatus(NSString *s) {
     all.backgroundColor = [UIColor colorWithRed:0.1 green:0.3 blue:0.7 alpha:1];
     all.tag = 99;
     [all addTarget:self action:@selector(runAll:) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:all];
+    [scroll addSubview:all];
 
     UIButton *export = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     export.frame = CGRectMake(160, y + 6, 130, 34);
@@ -1916,18 +2038,19 @@ static UIColor *colorForStatus(NSString *s) {
     [export setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     export.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1];
     [export addTarget:self action:@selector(exportResults:) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:export];
+    [scroll addSubview:export];
 
     UIButton *crash = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     crash.frame = CGRectMake(10, y + 46, 280, 34);
     [crash setTitle:@"Force diagnostic crash (ends session)" forState:UIControlStateNormal];
     [crash addTarget:self action:@selector(forceDiagnosticCrash:) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:crash];
+    [scroll addSubview:crash];
+    scroll.contentSize = CGSizeMake(self.view.bounds.size.width, y + 90);
 }
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
