@@ -29,6 +29,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace Hydrogen;
@@ -890,6 +891,140 @@ int runFullSubsystemTests() {
             const bool ok = worst < 1e-4;
             if (!ok) std::printf("    mixer stream stitching: worst error %.5f FS at output frame %zu\n", worst, worstAt);
             check(ok, "Mixer interpolates across queued stream buffer boundaries (no click at each buffer edge)");
+        }
+
+        // 5. Sample-rate / host-pipeline mismatch (refs #228).
+        //    The mixer runs at kRate (44100 Hz). The iPhone hardware pipeline typically
+        //    operates at 48000 Hz. When the iOS AVAudioSourceNode render block requests
+        //    N frames at 48000 Hz from Mixer::render(), the mixer fills those frames
+        //    treating them as kRate-spaced: it advances voices by 1 source frame per output
+        //    frame, not by 48000/44100 = 1.0884 source frames.  As a result a 44100 Hz
+        //    source sounds at 44100/48000 = 0.9188× speed (flat by ~143 cents), and the
+        //    entire mix is subtly slow on a 48 kHz hardware path.
+        //
+        //    This test renders a 441 Hz tone (100-frame period at kRate) using a block size
+        //    that a 48 kHz host would send (4800 frames = 100 ms at 48 kHz).  It measures
+        //    the zero-crossing period of the output and verifies it equals the period that
+        //    a *kRate* consumer (44100 Hz) would see.  On a 48 kHz host those same 4800
+        //    output frames span 4800/48000 = 100 ms of wall time, but carry
+        //    4800/44100 = 108.8 ms of audio, so the pitch is flat by ~143 cents.
+        //
+        //    The test PASSES today because the mixer produces exactly kRate-rate content for
+        //    any block size: Mixer::render() has no concept of the consumer's sample rate.
+        //    What this documents is that the mismatch is entirely in the app shell
+        //    (app/HydrogenVM/Bridge/HVMEngine.mm), where the AVAudioSourceNode format must
+        //    match kRate.  This is a Linux-verifiable oracle: kRate must equal the iOS
+        //    hardware sample rate the app shell configures, and this test proves what kRate is.
+        {
+            // Render one second of 441 Hz at kRate using 4800-frame blocks (as a 48 kHz host would).
+            constexpr int kSourceRate  = Audio::Mixer::kRate;   // 44100
+            constexpr int kHostRate    = 48000;                  // typical iPhone hardware rate
+            constexpr int kBlockFrames = kHostRate / 10;         // 100 ms at host rate
+            constexpr int kBlocks      = 10;                     // 1 s total
+
+            Audio::Mixer m;
+            Audio::VoiceParams loop; loop.loop = true;
+            auto a = sine(kLoopFrames, 0.5, 100);   // 441 Hz at kRate = 100-frame period
+            m.play(a, kSourceRate, loop);
+
+            std::vector<float> out;
+            std::vector<float> l(kBlockFrames), r(kBlockFrames);
+            for (int b = 0; b < kBlocks; ++b) {
+                m.render(l.data(), r.data(), size_t(kBlockFrames));
+                out.insert(out.end(), l.begin(), l.end());
+            }
+
+            // Count zero-crossings (positive-going) to measure the output frequency.
+            // At kRate the 100-frame period gives 441 Hz.  The render does not
+            // know or care that the caller uses kHostRate; it simply fills blocks.
+            // So the observed period in output samples is still 100 frames.
+            int crossings = 0;
+            for (size_t i = 1; i < out.size(); ++i)
+                if (out[i - 1] < 0.0f && out[i] >= 0.0f) ++crossings;
+            // At kRate the expected crossing count is kBlocks * kBlockFrames / 100.
+            // (= 10 * 4800 / 100 = 480).  If the render advanced at kHostRate/kRate
+            // the period would be 100 * kHostRate / kRate ≈ 108.8 frames → ~441 crossings.
+            const float observedPeriodFrames = (crossings > 0)
+                ? float(kBlocks * kBlockFrames) / float(crossings) : 0.0f;
+            const bool mismatch = kSourceRate != kHostRate;
+            const bool periodMatchesSourceRate = observedPeriodFrames > 95.0f && observedPeriodFrames < 105.0f;
+            if (!periodMatchesSourceRate)
+                std::printf("    mixer rate check: observedPeriod=%.1f frames crossings=%d\n",
+                            observedPeriodFrames, crossings);
+            check(periodMatchesSourceRate,
+                  "Mixer output period is exactly kRate-spaced (not host-rate-spaced) -- "
+                  "kRate must equal the AVAudioSourceNode format rate in the app shell");
+            // Report the mismatch for the owner's on-device listen.
+            if (mismatch)
+                std::printf("    [#228] Mixer kRate=%d, typical iPhone hardware rate=%d: "
+                            "app shell must configure AVAudioSourceNode at kRate (%d Hz), "
+                            "not at the OS default; unconfirmed on device.\n",
+                            kSourceRate, kHostRate, kSourceRate);
+        }
+
+        // 6. Render-lock contention (refs #228).
+        //    Mixer::render() holds mu_ for the entire mix.  If a guest AudioQueue pump
+        //    callback calls Mixer::enqueue() on the same thread while the iOS
+        //    AVAudioSourceNode render block is mid-mix (different thread), the enqueue
+        //    blocks until render finishes.  On a real-time audio thread that delay causes
+        //    a buffer underrun (audible silence gap / click).
+        //
+        //    This test spawns a thread that calls enqueue() at 10 ms intervals while the
+        //    main thread calls render() in a tight loop.  It measures the maximum time
+        //    render() spends inside the lock.  A render call that takes longer than a
+        //    typical iOS audio buffer period (~5–11 ms at 44100 Hz, 256–512 frames) risks
+        //    a real-time overrun; here we flag anything over 20 ms as a failure so the
+        //    bar is not spuriously tripped on a slow CI machine.
+        {
+            constexpr int kVoices = 16;
+            constexpr int kRenderFrames = 512;   // one typical iOS audio buffer
+            constexpr int kRenderCalls = 200;    // ~2.3 s of audio at 44100 Hz
+            constexpr double kMaxRenderMs = 20.0; // generous: just detects pathological stalls
+
+            Audio::Mixer m;
+            // Fill the mixer with kVoices looping streams to maximise lock-hold time.
+            Audio::VoiceParams vp; vp.loop = true;
+            auto buf = sine(kLoopFrames, 0.5, 100);
+            for (int i = 0; i < kVoices; ++i) m.play(buf, Audio::Mixer::kRate, vp);
+
+            std::atomic<bool> stop{false};
+            std::atomic<int> enqueueCalls{0};
+            // Enqueue thread: repeatedly enqueues empty-ish buffers to contest the lock.
+            auto enqThread = std::thread([&]() {
+                auto small = std::make_shared<std::vector<int16_t>>(2 * 64, int16_t(1000));
+                while (!stop.load(std::memory_order_relaxed)) {
+                    const uint32_t id = m.createStream({});
+                    m.enqueue(id, small, Audio::Mixer::kRate, 0);
+                    m.release(id);
+                    ++enqueueCalls;
+                    std::this_thread::sleep_for(std::chrono::microseconds(200));
+                }
+            });
+
+            std::vector<float> l(kRenderFrames), r(kRenderFrames);
+            double worstMs = 0.0;
+            for (int i = 0; i < kRenderCalls; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                m.render(l.data(), r.data(), size_t(kRenderFrames));
+                const auto t1 = std::chrono::steady_clock::now();
+                const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                if (ms > worstMs) worstMs = ms;
+            }
+            stop.store(true);
+            enqThread.join();
+
+            const bool ok = worstMs < kMaxRenderMs;
+            if (!ok)
+                std::printf("    [#228] mixer render contention: worst render call %.3f ms "
+                            "(%d enqueue calls during %d renders) -- "
+                            "real-time audio thread risk on device\n",
+                            worstMs, enqueueCalls.load(), kRenderCalls);
+            else
+                std::printf("    [#228] mixer render contention (Linux headless): worst=%.3f ms "
+                            "(%d enqueue calls) -- device behaviour unconfirmed.\n",
+                            worstMs, enqueueCalls.load());
+            check(ok, "Mixer render() completes in under 20 ms even with concurrent enqueue() calls "
+                      "(real-time safety check; pass here does not guarantee device behaviour)");
         }
     }
 
