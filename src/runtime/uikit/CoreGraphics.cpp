@@ -1056,8 +1056,33 @@ uint32_t ct_createName(Ctx& x, id name, float size, GuestPtr matrix) {
     rt(x).release(x.cpu, cg);
     return ct;
 }
-uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) { auto* f = hd<FontData>(x, desc); if(f) { x.proc.reportMissing("CTFontDescriptorCreateCopyWithAttributes dictionary merge logic"); return newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)); } return 0; }
-uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) { x.proc.reportMissing("CTFontDescriptorCreateWithAttributes dictionary processing"); return newObject(x, S(x).descriptor, std::make_unique<FontData>()); }
+// Applies a CTFontDescriptor attribute dictionary. Only kCTFontNameAttribute is modelled; any other key is
+// reported as missing rather than silently dropped.
+void applyDescriptorAttributes(Ctx& x, FontData& h, id attrs) {
+    if (!attrs) return;
+    for (auto [key, value] : Foundation::dictEntries(x, attrs)) {
+        const std::string k = Foundation::utf8(x, key);
+        if (k == "kCTFontNameAttribute") {
+            const std::string name = Foundation::utf8(x, value);
+            if (name != h.name) h.face.reset();   // a custom face belongs to the old name; render the new one by name
+            h.name = name;
+        }
+        else x.proc.reportMissing("CTFontDescriptor attribute " + k);
+    }
+}
+uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) {
+    auto* f = hd<FontData>(x, desc);
+    if (!f) return 0;
+    auto h = std::make_unique<FontData>(*f);
+    applyDescriptorAttributes(x, *h, attrs);
+    return newObject(x, S(x).descriptor, std::move(h));
+}
+uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) {
+    auto h = std::make_unique<FontData>();
+    h->name = "Helvetica";   // same default as CGFontCreateWithFontName(nil)
+    applyDescriptorAttributes(x, *h, attrs);
+    return newObject(x, S(x).descriptor, std::move(h));
+}
 uint32_t ct_copyDescriptor(Ctx& x, id font) {
     auto* f = hd<FontData>(x, font);
     return f ? newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)) : 0;
