@@ -127,7 +127,8 @@ MAX_INFO_PLIST_BYTES = 8 * 1024 * 1024
 MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024   # refuse a zip entry that would expand to more than this
 
 
-def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None) -> dict:
+def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None, *,
+               nm_tool: str = "llvm-nm", objdump_tool: str = "llvm-objdump") -> dict:
     ipa_path = Path(ipa_path)
     if not ipa_path.exists():
         raise FileNotFoundError(f"IPA not found: {ipa_path}")
@@ -172,7 +173,7 @@ def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None)
             bin_file.write_bytes(raw_bytes)
 
             # llvm-nm
-            cmd_nm = ["llvm-nm", "-m", "-u"]
+            cmd_nm = [nm_tool, "-m", "-u"]
             if arch and not (fixture and fixture["thin"]):
                 cmd_nm += ["--arch", arch]
             cmd_nm.append(str(bin_file))
@@ -181,7 +182,7 @@ def census_ipa(ipa_path: Path, manifest: dict, arch_override: str | None = None)
                 raise RuntimeError(f"llvm-nm failed (code {p_nm.returncode}): {p_nm.stderr}")
             
             # llvm-objdump
-            cmd_obj = ["llvm-objdump", "--macho", "--objc-meta-data"]
+            cmd_obj = [objdump_tool, "--macho", "--objc-meta-data"]
             if arch and not (fixture and fixture["thin"]):
                 cmd_obj += ["--arch", arch]
             cmd_obj.append(str(bin_file))
