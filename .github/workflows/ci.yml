@@ -60,6 +60,8 @@ jobs:
         env:
           HVM_TESTLAB_TOOLCHAIN: "1"
         run: python3 -m unittest discover -s tools/tests
+      - name: Support registration tests
+        run: build/hvm_support_tests
       - name: Guest termination watchdog is a failed run
         run: python3 tools/test_shutdown_watchdog.py --hvm build/hvm
       - name: HostGL sequential process lifetime
