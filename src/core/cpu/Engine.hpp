@@ -101,10 +101,12 @@ public:
     void resume(Cpu& target);
     // Marks `c` as running guest code, parking first while it is suspended.
     void enterGuest(Cpu& c) {
-        c.recordFaultRegisters(c.r[kPC]);
-        if (c.fault_state) c.fault_state->inGuest.store(true, std::memory_order_relaxed);
         c.in_guest.store(true, std::memory_order_seq_cst);
         if (__builtin_expect(c.suspend_count.load(std::memory_order_seq_cst) != 0, 0)) park(c);
+        // Registers are sampled only now: while suspended, thread_set_state may rewrite c.r[], and a suspender
+        // only touches them once in_guest is false, which park() guarantees until the thread is resumed.
+        c.recordFaultRegisters(c.r[kPC]);
+        if (c.fault_state) c.fault_state->inGuest.store(true, std::memory_order_relaxed);
     }
 
     // Run until an exit other than Budget (checking for stop requests).

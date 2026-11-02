@@ -615,15 +615,16 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
 }
 
 void Engine::park(Cpu& c) {
-    c.in_guest.store(false, std::memory_order_seq_cst);
+    // Sample before announcing the park: once in_guest is false a suspender may rewrite c.r[].
     c.recordFaultRegisters(c.r[kPC]);
     if (c.fault_state) c.fault_state->inGuest.store(false, std::memory_order_relaxed);
+    c.in_guest.store(false, std::memory_order_seq_cst);
     std::unique_lock<std::mutex> lk(suspendMu_);
     suspendCv_.notify_all();
     suspendCv_.wait(lk, [&] { return c.suspend_count.load() == 0 || stopRequested(); });
     lk.unlock();
     c.in_guest.store(true, std::memory_order_seq_cst);
-    if (c.fault_state) c.fault_state->inGuest.store(true, std::memory_order_relaxed);
+    // enterGuest samples the registers after this returns, so they are the post-resume (possibly rewritten) ones.
 }
 
 void Engine::suspend(Cpu& t) {
