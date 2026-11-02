@@ -17,21 +17,48 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// scene's connection options, before any SwiftUI view exists, so it can be queued here
     /// and the library stays hidden until it has been routed. A link that arrives while
     /// the app is already running comes through `.onOpenURL` instead. Not verified on a device.
+    ///
+    /// Check both `urlContexts` and `userActivities` (some system paths deliver a browsing
+    /// activity). The returned configuration uses an explicit role-matched scene config so
+    /// connection options are delivered to the scene lifecycle.
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
-        // Only game links: .ipa imports keep using the library's own .onOpenURL.
-        if let url = options.urlContexts.first?.url, url.scheme?.lowercased() == GameLink.scheme {
-            MainActor.assumeIsolated {
-                LaunchRouter.shared.open(url)
-                #if COLD_START_URL_TEST && targetEnvironment(simulator)
-                if LaunchRouter.shared.pending == url {
-                    ColdStartURLTest.record("queued", value: url.absoluteString)
-                }
-                #endif
+        if let url = Self.gameLink(from: options) {
+            // Queue before any SwiftUI view exists. MainActor is required for LaunchRouter.
+            if Thread.isMainThread {
+                Self.queueColdStart(url)
+            } else {
+                DispatchQueue.main.sync { Self.queueColdStart(url) }
             }
         }
-        return UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+        let config = UISceneConfiguration(name: "Default Configuration",
+                                          sessionRole: connectingSceneSession.role)
+        // Keep the system/SwiftUI scene delegate path; do not install a custom class that
+        // would replace the WindowGroup hosting.
+        return config
+    }
+
+    private static func gameLink(from options: UIScene.ConnectionOptions) -> URL? {
+        if let url = options.urlContexts.first?.url,
+           url.scheme?.lowercased() == GameLink.scheme {
+            return url
+        }
+        for activity in options.userActivities {
+            if let url = activity.webpageURL,
+               url.scheme?.lowercased() == GameLink.scheme {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private static func queueColdStart(_ url: URL) {
+        LaunchRouter.shared.open(url)
+        #if COLD_START_URL_TEST && targetEnvironment(simulator)
+        // Record even if pending was already set; the marker is the contract with the test.
+        ColdStartURLTest.record("queued", value: url.absoluteString)
+        #endif
     }
 }
 
