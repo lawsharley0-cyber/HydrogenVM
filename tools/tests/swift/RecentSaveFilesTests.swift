@@ -2,6 +2,7 @@ import Foundation
 
 /// Recent files opened for app A must never appear in app B's save editor.
 @main
+@MainActor
 struct RecentSaveFilesTests {
     static var checks = 0
 

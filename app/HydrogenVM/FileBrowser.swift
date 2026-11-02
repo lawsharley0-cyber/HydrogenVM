@@ -308,13 +308,7 @@ struct SaveEditorDashboardView: View {
     @State private var statusMessage: String?
     @State private var newSnapshotLabel = ""
     @State private var showingSnapshotPrompt = false
-    @State private var recents: RecentSaveFiles
-
-    init(app: InstalledApp) {
-        self.app = app
-        _recents = State(initialValue: RecentSaveFiles.load(
-            bundleID: app.info.bundleIdentifier, container: app.dataDir))
-    }
+    @State private var recents = RecentSaveFiles()
 
     /// Files opened in this app's container. Another game's paths are never listed.
     private var recentFiles: [URL] {
@@ -480,13 +474,15 @@ struct SaveEditorDashboardView: View {
             Button("Create") { createSnapshot(label: newSnapshotLabel) }
             Button("Cancel", role: .cancel) {}
         }
-        .onChange(of: editingFile) { _, newItem in
-            if let url = newItem?.url {
-                recents.record(url, container: app.dataDir)
-                recents.save(bundleID: app.info.bundleIdentifier)
-            }
+        .onChange(of: editingFile) { (_: FileItem?, newItem: FileItem?) in
+            guard let url = newItem?.url else { return }
+            recents.record(url, container: app.dataDir)
+            recents.save(bundleID: app.info.bundleIdentifier)
         }
-        .onAppear { scanSandbox() }
+        .onAppear {
+            recents = RecentSaveFiles.load(bundleID: app.info.bundleIdentifier, container: app.dataDir)
+            scanSandbox()
+        }
     }
 
     private func scanSandbox() {
