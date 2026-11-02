@@ -56,20 +56,27 @@ NM = resolve_tool(
 SDK_SRC = os.path.join(ROOT, "tests", "ios", "sdk")
 HEADERS = os.path.join(ROOT, "tests", "ios", "include")
 
+def tool_available(tool):
+    if not tool:
+        return False
+    if os.path.dirname(tool):
+        return os.path.isfile(tool) and os.access(tool, os.X_OK)
+    return shutil.which(tool) is not None
+
 def check_prerequisites():
     missing = []
-    if not CLANG or not (os.path.isfile(CLANG) or shutil.which(CLANG)):
+    if not tool_available(CLANG):
         missing.append(
             "clang: ARMv7 iOS cross-compiler not found. Install clang (e.g. clang-18) in PATH, "
             "place it in tools/toolchain/bin/clang, or set HVM_CLANG. See docs/TEST_LAB.md."
         )
-    if not LD or not (os.path.isfile(LD) or shutil.which(LD)):
+    if not tool_available(LD):
         missing.append(
             "ld64 (arm-apple-darwin11-ld): cctools-port linker not found. Build it without sudo into "
-            "tools/toolchain via 'tools/build_cctools.sh tools/toolchain', place it in PATH, or set "
+            "tools/toolchain via 'tools/build_cctools.sh', place it in PATH, or set "
             "HVM_LD64. See docs/TEST_LAB.md."
         )
-    if not NM or not (os.path.isfile(NM) or shutil.which(NM)):
+    if not tool_available(NM):
         missing.append(
             "llvm-nm: LLVM symbol reader not found. Install llvm-nm in PATH, place it in "
             "tools/toolchain/bin/llvm-nm, or set HVM_NM. See docs/TEST_LAB.md."

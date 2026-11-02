@@ -115,6 +115,14 @@ Test Lab guest builds require:
 - **llvm-nm** (`llvm-nm`)
 - Python 3.8+ and standard POSIX build tools (`cmake`, `ninja`, `make`, `git`)
 
+The host engine also needs ZLIB and SQLite3 development headers and libraries
+for CMake. On Ubuntu/Debian, run `sudo apt-get install zlib1g-dev libsqlite3-dev`.
+On macOS, the Xcode Command Line Tools SDK provides them, or run
+`brew install zlib sqlite3`. If CMake cannot find the Homebrew libraries, set
+`export CMAKE_PREFIX_PATH="$(brew --prefix zlib):$(brew --prefix sqlite3)"` before
+configuring. On hosts without system packages, install both libraries in a
+user-owned prefix and add that prefix to `CMAKE_PREFIX_PATH`.
+
 On Linux, GPU-backed cases like TL-N require Mesa's headless EGL/GLES runtime (e.g. Ubuntu packages `libegl1 libgles2 libgl1 libgl1-mesa-dri`).
 
 #### Setting up the toolchain without sudo (Linux x86_64)
@@ -134,7 +142,7 @@ The build script `tools/ios_build.py` automatically checks the workspace directo
 2. **ld64 (cctools-port)**:
    Build `cctools-port` and Apple `libdispatch` directly into the workspace toolchain without sudo:
    ```sh
-   tools/build_cctools.sh tools/toolchain
+   tools/build_cctools.sh
    ```
    This installs `tools/toolchain/bin/arm-apple-darwin11-ld`. Alternatively, if installed elsewhere, set:
    ```sh
@@ -147,6 +155,7 @@ The build script `tools/ios_build.py` automatically checks the workspace directo
 4. **Run the Test Lab gate**:
    ```sh
    # Build the host engine
+   export PATH="$PWD/tools/toolchain/bin:$PATH"
    cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
    ninja -C build hvm
 
@@ -154,7 +163,7 @@ The build script `tools/ios_build.py` automatically checks the workspace directo
    python3 tools/hvm_testlab.py run --hvm build/hvm --out build/testlab-report
 
    # Run a single case (e.g. TL-B)
-   python3 tools/hvm_testlab.py run --hvm build/hvm --case TL-B --out build/testlab-report
+   python3 tools/hvm_testlab.py run --hvm build/hvm --case TL-B --out build/testlab-report-tl-b
 
    # Validate report against schema
    python3 tools/hvm_testlab.py validate build/testlab-report/testlab_report.json
