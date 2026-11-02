@@ -56,6 +56,8 @@ jobs:
         env:
           HVM_TESTLAB_TOOLCHAIN: "1"
         run: python3 -m unittest discover -s tools/tests
+      - name: Support registration tests
+        run: build/hvm_support_tests
       - name: HostGL sequential process lifetime
         run: build/hvm_gl_lifetime_tests
       - name: Host AAC decoder comparison
