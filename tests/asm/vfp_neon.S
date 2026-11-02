@@ -639,3 +639,56 @@ vfp_cmp_vmrs_flags:
     lsr     r3, r3, #28
     bx      lr
     .ltorg
+
+@ TEST neon_vclt_zero
+@ EXPECT r0=0xFFFFFFFF r1=0 r2=0xFFFFFFFF r3=0
+    .global neon_vclt_zero
+neon_vclt_zero:
+    mov     r0, #0x3F800000         @ 1.0
+    vmov    s0, r0
+    vmov    s1, r0
+    vmov    s2, r0
+    vmov    s3, r0
+    ldr     r0, =0xBF800000         @ -1.0
+    vmov    s16, r0
+    mov     r1, #0x40000000         @ 2.0
+    vmov    s17, r1
+    ldr     r2, =0xC0400000         @ -3.0
+    vmov    s18, r2
+    mov     r3, #0                  @ 0.0
+    vmov    s19, r3
+    vclt.f32 q4, q4, #0
+    vmov    r0, s16
+    vmov    r1, s17
+    vmov    r2, s18
+    vmov    r3, s19
+    bx      lr
+    .ltorg
+
+@ TEST t_neon_vclt_zero
+@ EXPECT r0=0xFFFFFFFF r1=0 r2=0xFFFFFFFF r3=0
+    .thumb
+    .global t_neon_vclt_zero
+    .thumb_func
+t_neon_vclt_zero:
+    push    {r4-r7, lr}
+    mov.w   r0, #0x3F800000         @ 1.0
+    vmov    s0, r0
+    vmov    s1, r0
+    vmov    s2, r0
+    vmov    s3, r0
+    ldr     r0, =0xBF800000         @ -1.0
+    vmov    s16, r0
+    mov.w   r1, #0x40000000         @ 2.0
+    vmov    s17, r1
+    ldr     r2, =0xC0400000         @ -3.0
+    vmov    s18, r2
+    movs    r3, #0                  @ 0.0
+    vmov    s19, r3
+    vclt.f32 q4, q4, #0
+    vmov    r0, s16
+    vmov    r1, s17
+    vmov    r2, s18
+    vmov    r3, s19
+    pop     {r4-r7, pc}
+    .ltorg
