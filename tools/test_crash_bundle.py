@@ -32,6 +32,7 @@ with tempfile.TemporaryDirectory() as directory:
         # T2c (#259): the last host calls of each thread, oldest first, newest at the end.
         ring = bundle['callRing']
         assert ring, 'FAIL: crash bundle has no call ring threads'
+        assert any(thread['calls'] for thread in ring), 'FAIL: no thread recorded any call'
         for thread in ring:
             calls = thread['calls']
             assert len(calls) == min(64, thread['total']), (len(calls), thread['total'])
