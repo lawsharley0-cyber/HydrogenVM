@@ -1,7 +1,10 @@
 // HydrogenVM — UIApplication, UIApplicationMain (the launch sequence), UITouch /
 // UIEvent and touch delivery, UIDevice, UIAccelerometer.
 #include "UIKit.hpp"
+#include "runtime/Support.hpp"
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -245,7 +248,7 @@ void app_setStatusBarOrientation(Ctx& x, id, SEL, int32_t o) {
 void app_setStatusBarOrientationAnim(Ctx& x, id s, SEL c, int32_t o, bool) { app_setStatusBarOrientation(x, s, c, o); }
 void app_statusBarFrame(Ctx& x, GuestPtr ret, id, SEL) {
     auto& u = ui(x);
-    CG::writeStruct(x, ret, u.statusBarHidden ? CGRect{{0, 0}, {0, 0}} : CGRect{{0, 0}, {u.screenW, 20}});
+    CG::writeStruct(x, ret, u.statusBarHidden ? CGRect{{0, 0}, {0, 0}} : CGRect{{0, 0}, {u.screenW, std::min(u.screenH, std::max(20.0f, u.safeTop))}});
 }
 int32_t app_statusBarStyle(Ctx&, id, SEL) { return 0; }
 void app_ignoreInt(Ctx&, id, SEL, int32_t) {}
@@ -440,6 +443,7 @@ void configureScreen(Ctx& x) {
     u.screenH = tall ? std::max(568.0f, float(x.proc.config().screenHeight)) : 480.0f;
     if (!tall && x.proc.config().screenHeight < 568) u.screenH = float(x.proc.config().screenHeight);
     u.scale = x.proc.config().screenScale;
+    applyGuestScreenEnv(x);
     x.proc.setScreenSize(uint32_t(u.screenW), uint32_t(u.screenH));
     if (info) {
         if (const Plist::Value* h = info->get("UIStatusBarHidden"); h && h->type == Plist::Value::Type::Bool) u.statusBarHidden = h->b;
@@ -627,6 +631,42 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
 
 } // namespace
 
+void applyGuestScreenEnv(Ctx& x) {
+    auto& u = ui(x);
+    // Both variables are set by the player for one launch from the per-app settings.
+    auto number = [](const char* text, float& out) {
+        char* end = nullptr;
+        const float v = std::strtof(text, &end);
+        if (end == text || *end != '\0' || !std::isfinite(v)) return false;
+        out = v;
+        return true;
+    };
+    if (const char* h = std::getenv("HVM_VIRTUAL_SCREEN_HEIGHT")) {
+        float v = 0;
+        // 480 is today's shortest screen; 1024 keeps tablets-in-portrait out of reach of a typo.
+        if (number(h, v) && v >= 480 && v <= 1024) {
+            u.screenH = std::floor(v);
+            x.proc.setScreenSize(uint32_t(u.screenW), uint32_t(u.screenH));
+        }
+    }
+    u.safeTop = u.safeLeft = u.safeBottom = u.safeRight = 0;
+    if (const char* s = std::getenv("HVM_SAFE_AREA")) {
+        // top,left,bottom,right in portrait-framebuffer points; all four or none.
+        float v[4];
+        std::string text = s;
+        size_t pos = 0;
+        bool ok = true;
+        for (int i = 0; i < 4 && ok; ++i) {
+            const size_t comma = text.find(',', pos);
+            if ((comma == std::string::npos) != (i == 3)) { ok = false; break; }
+            ok = number(text.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos).c_str(), v[i])
+                 && v[i] >= 0 && v[i] <= 200;
+            pos = comma + 1;
+        }
+        if (ok) { u.safeTop = v[0]; u.safeLeft = v[1]; u.safeBottom = v[2]; u.safeRight = v[3]; }
+    }
+}
+
 void registerUIApplication(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
     ObjC::ClassBuilder touch = r.defineClass("UITouch", "NSObject");
@@ -650,7 +690,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_setStatusBarHiddenAnim>("setStatusBarHidden:animated:", "v@:cc").m<&app_setStatusBarHiddenAnim>("setStatusBarHidden:withAnimation:", "v@:ci")
        .m<&app_statusBarOrientation>("statusBarOrientation", "i@:").m<&app_setStatusBarOrientation>("setStatusBarOrientation:", "v@:i")
        .m<&app_setStatusBarOrientationAnim>("setStatusBarOrientation:animated:", "v@:ic")
-       .m<&app_statusBarFrame>("statusBarFrame", "{CGRect={CGPoint=ff}{CGSize=ff}}@:").m<&app_statusBarStyle>("statusBarStyle", "i@:")
+       .m<&app_statusBarStyle>("statusBarStyle", "i@:")
        .m<&app_ignoreInt>("setStatusBarStyle:", "v@:i").m<&app_ignoreIntBool>("setStatusBarStyle:animated:", "v@:ic")
        .m<&app_state>("applicationState", "i@:").m<&app_backgroundTime>("backgroundTimeRemaining", "d@:")
        .m<&app_openURL>("openURL:", "c@:@").m<&app_canOpenURL>("canOpenURL:", "c@:@").m<&app_openURLOptions>("openURL:options:completionHandler:", "v@:@@@?")
@@ -672,6 +712,9 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory")
        .m<&app_layoutDirection>("userInterfaceLayoutDirection", "i@:")
        .m<&app_supportedOrientations>("supportedInterfaceOrientationsForWindow:", "I@:@");
+    supportMethod(p, app, "UIApplication", "statusBarFrame", [](Ctx& x) { callWrapped<&app_statusBarFrame>(x); }, SupportStatus::Approx,
+        "Fixed 20pt-high bar across the screen; with HVM_SAFE_AREA it is as tall as the top inset. Not the real safeAreaInsets API",
+        "{CGRect={CGPoint=ff}{CGSize=ff}}@:");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
     
     r.defineClass("UILocalNotification", "NSObject");
