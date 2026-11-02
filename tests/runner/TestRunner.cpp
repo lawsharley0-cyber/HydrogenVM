@@ -3050,6 +3050,35 @@ int runFullSubsystemTests() {
         UIKit::setTextInputObserver(proc, nullptr);
     }
 
+    // Key-path KVC goes through a class's own valueForKey:/setValue:forKey: (iPhoto reads "mainTabIndex" this way).
+    {
+        const ObjC::Class udCls = r.getClass("NSUserDefaults");
+        const ObjC::id ud = ObjC::id(r.send(cpu, udCls, r.sel("standardUserDefaults")));
+        const ObjC::id key = Runtime::Foundation::makeString(cx, "kvcMainTabIndex");
+        bool raised = false;
+        ObjC::id unsetValue = 1;
+        try { unsetValue = ObjC::id(r.send(cpu, ud, r.sel("valueForKeyPath:"), {uint32_t(key)})); }
+        catch (const std::exception&) { raised = true; }
+        check(!raised && unsetValue == 0, "NSUserDefaults valueForKeyPath: of an unset key returns nil instead of raising");
+        const ObjC::id stored = Runtime::Foundation::makeString(cx, "tab-3");
+        r.send(cpu, ud, r.sel("setValue:forKeyPath:"), {uint32_t(stored), uint32_t(key)});
+        const ObjC::id viaObject = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(key)}));
+        check(viaObject && Runtime::Foundation::utf8(cx, viaObject) == "tab-3",
+              "NSUserDefaults setValue:forKeyPath: writes through to the defaults");
+        const ObjC::id viaPath = ObjC::id(r.send(cpu, ud, r.sel("valueForKeyPath:"), {uint32_t(key)}));
+        check(viaPath && Runtime::Foundation::utf8(cx, viaPath) == "tab-3",
+              "NSUserDefaults valueForKeyPath: reads the stored value");
+        const ObjC::id keys = Runtime::Foundation::makeArray(cx, {key});
+        const ObjC::id dict = ObjC::id(r.send(cpu, ud, r.sel("dictionaryWithValuesForKeys:"), {uint32_t(keys)}));
+        check(dict != 0, "NSUserDefaults dictionaryWithValuesForKeys: uses the defaults");
+        r.send(cpu, ud, r.sel("removeObjectForKey:"), {uint32_t(key)});
+        // NSObject's own valueForKey: must not recurse into itself.
+        const ObjC::id plain = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSObject"), r.selAlloc)), r.selInit));
+        bool plainRaised = false;
+        try { r.send(cpu, plain, r.sel("valueForKey:"), {uint32_t(key)}); } catch (const std::exception&) { plainRaised = true; }
+        check(plainRaised, "NSObject valueForKey: of an unknown key still raises (and does not recurse)");
+    }
+
     // NSUserDefaults rejects non-property-list values with a guest-visible exception.
     {
         const ObjC::Class nsoCls = r.getClass("NSObject");
