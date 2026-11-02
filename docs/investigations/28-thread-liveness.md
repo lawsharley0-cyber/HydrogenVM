@@ -85,7 +85,8 @@ real guest lifecycle for five seconds and checks run-start/interval/run-end
 samples. This covers the sampler thread itself in addition to the focused CPU
 snapshot test. Its new Actions result remains pending until actually run.
 
-The first complete-runtime sanitizer gate passed in Actions41365952096 at
-head e3812f9ea9ac50f04c46de8cedb114472aa16f0b, including actual lifecycle
+The first complete-runtime sanitizer gate passed in
+[Actions run 41365952096](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41365952096)
+at head e3812f9ea9ac50f04c46de8cedb114472aa16f0b, including actual lifecycle
 samples. Review adds two seconds of scheduling margin to that probe while
 retaining the same minimum-two-interval assertion. No expectation is relaxed.
