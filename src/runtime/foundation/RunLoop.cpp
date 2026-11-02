@@ -890,7 +890,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     p.def<&cf_containsSource>("_CFRunLoopContainsSource");
     p.def<&cf_sourceSignal>("_CFRunLoopSourceSignal");
     supportDef<&cf_sourceInvalidate>(p, "_CFRunLoopSourceInvalidate", SupportStatus::Approx,
-                                     "Invalidates and detaches version-0 run loop sources");
+                                     "Invalidates version-0 sources and detaches them from run loops");
     p.def<&cf_sourceIsValid>("_CFRunLoopSourceIsValid");
     p.def<&cf_sourceGetOrder>("_CFRunLoopSourceGetOrder");
     p.def<&cf_absoluteTime>("_CFAbsoluteTimeGetCurrent");
