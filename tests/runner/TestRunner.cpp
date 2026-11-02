@@ -14,6 +14,7 @@
 #include "runtime/Abi.hpp"
 #include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
+#include <array>
 #include <atomic>
 #include <sys/file.h>
 #include <chrono>
@@ -235,6 +236,8 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cstring>
 
 int runMinimp3HwcapChecks();
+int runThreadLifetimeTests();
+int runThreadLifetimeChild();
 
 namespace {
 
@@ -5266,8 +5269,10 @@ int runFullSubsystemTests() {
             const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
                                                 "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
             const uint32_t defaultSize = uint32_t(r.send(cpu, th, "stackSize"));
-            r.send(cpu, th, "setStackSize:", {16u << 10});
+            r.send(cpu, th, "setStackSize:", {8u << 10});   // below Apple's 16 KiB minimum
             const bool rejectedSmall = uint32_t(r.send(cpu, th, "stackSize")) == defaultSize;
+            r.send(cpu, th, "setStackSize:", {16u << 10});   // the smallest size Apple documents
+            check(uint32_t(r.send(cpu, th, "stackSize")) == (16u << 10), "NSThread accepts the documented 16 KiB minimum stack size");
             const auto threadsBefore = proc.liveThreadIds();
             bool rejectedOverflow = false, rejectedRange = false;
             r.send(cpu, th, "setStackSize:", {0xffffffffu});
@@ -5279,6 +5284,18 @@ int runFullSubsystemTests() {
                 return std::find(threadsBefore.begin(), threadsBefore.end(), id) != threadsBefore.end();
             });
             const bool unchanged = noNewThreads && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff);
+            // Host-thread creation failing after the guest stack is mapped must leave nothing behind and not
+            // poison later launches (the same NSThread can be started again afterwards).
+            r.send(cpu, th, "setStackSize:", {1u << 20});
+            Process::failNextHostThreadSpawns(1);
+            bool spawnFailed = false;
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { spawnFailed = true; }
+            Process::failNextHostThreadSpawns(0);
+            {
+                const auto afterFailure = proc.liveThreadIds();
+                check(spawnFailed && afterFailure.size() == threadsBefore.size() && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff),
+                      "a host-thread creation failure leaves no guest thread registered and the NSThread startable again");
+            }
             r.send(cpu, th, "setStackSize:", {1u << 20});
             const uint32_t setSize = uint32_t(r.send(cpu, th, "stackSize"));
             r.send(cpu, th, "start");
@@ -5433,6 +5450,29 @@ int runFullSubsystemTests() {
             check(Foundation::utf8(sx, savedCategory) == "AVAudioSessionCategoryPlayAndRecord" &&
                   Foundation::utf8(sx, savedMode) == "AVAudioSessionModeVoiceChat",
                   "AVAudioSession getters keep their results alive after replacement");
+            {
+                // The setter must copy: mutating the caller's string afterwards must not change the stored category/mode.
+                const auto probeCategory = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback", true, true);
+                const auto probeMode = Foundation::makeString(sx, "AVAudioSessionModeDefault", true, true);
+                r.send(cpu, session, "setCategory:mode:options:error:", {probeCategory, probeMode, 0u, 0u});
+                r.send(cpu, probeCategory, "appendString:", {Foundation::makeString(sx, "-mutated")});
+                r.send(cpu, probeMode, "appendString:", {Foundation::makeString(sx, "-mutated")});
+                check(Foundation::utf8(sx, ObjC::id(r.send(cpu, session, "category"))) == "AVAudioSessionCategoryPlayback" &&
+                          Foundation::utf8(sx, ObjC::id(r.send(cpu, session, "mode"))) == "AVAudioSessionModeDefault",
+                      "AVAudioSession setters copy mutable category and mode strings");
+                r.release(cpu, probeCategory); r.release(cpu, probeMode);
+            }
+            // Apple adds MixWithOthers implicitly for Ambient and DuckOthers.
+            r.send(cpu, session, "setCategory:withOptions:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 2u, 0u});
+            const bool duckMixes = uint32_t(r.send(cpu, session, "categoryOptions")) == 3u;
+            r.send(cpu, session, "setCategory:withOptions:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryAmbient"), 0u, 0u});
+            check(duckMixes && uint32_t(r.send(cpu, session, "categoryOptions")) == 1u,
+                  "AVAudioSession reports the implicit MixWithOthers for DuckOthers and for Ambient");
+            // Record is stored, but playback is not silenced: that is reported as missing rather than hidden.
+            const uint64_t missingBefore = proc.missingApis().totalHits();
+            r.send(cpu, session, "setCategory:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryRecord"), 0u});
+            check(proc.missingApis().totalHits() == missingBefore + 1, "AVAudioSession Record category is reported as missing behaviour");
+            r.send(cpu, session, "setCategory:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 0u});
 
             proc.mem().map(0xbb000000, 0x40000, Memory::kProtRW);
             std::atomic<unsigned> ready{0}, done{0};
@@ -7756,7 +7796,79 @@ int runFullSubsystemTests() {
         ::unlink(lockPath);
         ::unlink(freePath);
     }
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-dlsym-tests";
+        Process proc(cfg);
+        auto& cpu = proc.mainThread().cpu;
+        const uint32_t stack = proc.heap().allocZeroed(1024);
+        cpu.r[CPU::kSP] = stack + 1024;
 
+        auto callDlsym = [&](const char* name) -> uint32_t {
+            const uint32_t namePtr = proc.allocCString(name);
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_dlsym"), {0xFFFFFFFEu, namePtr}));
+        };
+
+        const uint32_t addrHttp = callDlsym("kCFHTTPVersion1_1");
+        const uint32_t addrProxyFtp = callDlsym("kCFProxyTypeFTP");
+        const uint32_t addrProxyJs = callDlsym("kCFProxyTypeAutoConfigurationJavaScript");
+
+        Ctx cx{proc, cpu, proc.mem()};
+        auto hasValue = [&](uint32_t addr, const char* expected) {
+            return addr != 0 && proc.mem().read<uint32_t>(addr) != 0 &&
+                   Foundation::utf8(cx, proc.mem().read<uint32_t>(addr)) == expected;
+        };
+        bool okHttp = hasValue(addrHttp, "HTTP/1.1");
+        bool okProxyFtp = hasValue(addrProxyFtp, "kCFProxyTypeFTP");
+        bool okProxyJs = hasValue(addrProxyJs, "kCFProxyTypeAutoConfigurationJavaScript");
+
+        check(okHttp && okProxyFtp && okProxyJs, "dlsym(RTLD_DEFAULT) resolves dynamic CFNetwork and proxy constants");
+        check(callDlsym("kHVMDefinitelyUnknownType") == 0, "dlsym returns 0 for an unknown constant-like name");
+        check(callDlsym("OBJC_CLASS_$_HVMDefinitelyUnknown") == 0, "dlsym returns 0 for an unknown class");
+        check(callDlsym("hvmDefinitelyUnknownFunction") == 0, "dlsym returns 0 for an unknown function");
+        const uint32_t accuracy = callDlsym("kCLLocationAccuracyBest");
+        check(accuracy && proc.mem().read<double>(accuracy) == -1,
+              "dlsym resolves a recognized numeric framework constant");
+    }
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-symbol-resolution-tests";
+        Process proc(cfg);
+        std::atomic<int> calls{0}, ready{0}, misses{0};
+        std::atomic<bool> go{false};
+        proc.addMissingSymbolResolver([&](const std::string& name, Process::MissingSymbolMode mode) -> uint32_t {
+            if (mode != Process::MissingSymbolMode::DynamicLookup) return 0;
+            if (name == "_HVMUnresolvedTest") { ++misses; return 0; }
+            if (name != "_HVMConcurrentResolutionTest") return 0;
+            const int call = ++calls;
+            proc.defineData("_HVMResolutionSideEffect", 0x55);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            return 0x12340000u + uint32_t(call);
+        });
+        constexpr size_t count = 8;
+        std::array<uint32_t, count> results{};
+        std::array<std::thread, count> workers;
+        for (size_t i = 0; i < count; ++i) workers[i] = std::thread([&, i] {
+            const auto existing = proc.lookupSymbol("_HVMConcurrentResolutionTest");
+            ++ready;
+            while (!go.load()) std::this_thread::yield();
+            results[i] = existing ? *existing : proc.resolveMissingSymbol("_HVMConcurrentResolutionTest");
+        });
+        while (ready.load() != int(count)) std::this_thread::yield();
+        go = true;
+        for (auto& worker : workers) worker.join();
+        bool same = results[0] != 0;
+        for (auto result : results) same &= result == results[0];
+        check(same && calls == 1 && proc.lookupSymbol("_HVMConcurrentResolutionTest") == results[0] &&
+              proc.lookupSymbol("_HVMResolutionSideEffect") == 0x55,
+              "concurrent first dynamic symbol resolution publishes one address");
+        check(proc.resolveMissingSymbol("_HVMUnresolvedTest") == 0 &&
+              proc.resolveMissingSymbol("_HVMUnresolvedTest") == 0 && misses == 2 &&
+              !proc.lookupSymbol("_HVMUnresolvedTest"),
+              "unresolved dynamic symbols remain uncached");
+    }
+
+    check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
@@ -7823,6 +7935,7 @@ static int runStopProbe() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "thread-lifetime-child") return runThreadLifetimeChild();
     if (argc == 4 && std::string(argv[1]) == "audio-decode") {
         std::ifstream in(argv[2], std::ios::binary);
         if (!in) return 2;

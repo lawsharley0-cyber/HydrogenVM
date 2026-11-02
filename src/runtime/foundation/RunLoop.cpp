@@ -707,6 +707,7 @@ id threadObject(Ctx& x, GuestThread* t) {
     auto h = std::make_unique<ThreadData>();
     h->t = t;
     h->started = true;
+    if (t->stackSize) h->stackSize = t->stackSize;   // report the stack this thread really has (main: >= 1 MiB)
     rt(x).setHost(o, std::move(h));
     rt(x).makeImmortal(o);
     std::lock_guard<std::mutex> lk(l.mu);
@@ -812,7 +813,7 @@ void th_setStackSize(Ctx& x, id self, SEL, uint32_t n) {
     ThreadData* d = rt(x).hostIf<ThreadData>(self);
     if (!d) return;
     std::lock_guard<std::mutex> lk(d->stackMu);
-    if (!d->started.load() && n >= (64u << 10)) d->stackSize = n;   // after -start the running thread keeps its stack
+    if (!d->started.load() && n >= (16u << 10)) d->stackSize = n;   // after -start the running thread keeps its stack
 }
 void th_noop(Ctx&, id, SEL) {}
 id th_name(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d && d->name ? d->name : makeString(x, ""); }

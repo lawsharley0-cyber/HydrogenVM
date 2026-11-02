@@ -1151,18 +1151,29 @@ void avs_recomputeOptions(Ctx& x, SessionData& d) {
     const auto category = d.category ? Foundation::utf8(x, d.category) : "";
     const auto mode = d.mode ? Foundation::utf8(x, d.mode) : "";
     const bool playAndRecord = category == "AVAudioSessionCategoryPlayAndRecord";
+    // Apple adds MixWithOthers implicitly for Ambient and whenever DuckOthers is set.
+    if (category == "AVAudioSessionCategoryAmbient" || (d.categoryOptions & 2u)) d.options |= 1u;
     if (mode == "AVAudioSessionModeVoiceChat" && playAndRecord)
         d.options |= 4u;  // allow Bluetooth HFP
     else if (mode == "AVAudioSessionModeVideoChat" &&
              (playAndRecord || category == "AVAudioSessionCategoryRecord"))
         d.options |= 4u | 8u;  // also default to speaker
 }
+// The session stores the category but the mixer does not change with it. Record silences playback on iOS; say so
+// rather than pretend the category took effect.
+void avs_noteUnapplied(Ctx& x, id category) {
+    const std::string name = category ? Foundation::utf8(x, category) : "";
+    if (name == "AVAudioSessionCategoryRecord" || name == "AVAudioSessionCategoryAudioProcessing")
+        x.proc.reportMissing("AVAudioSession category " + name + " (stored; playback is not silenced)");
+}
 bool avs_setCategory(Ctx& x, id self, SEL, id category, GuestPtr) {
     if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = 0; avs_recomputeOptions(x, *d); }
+    avs_noteUnapplied(x, category);
     return true;
 }
 bool avs_setCategoryOptions(Ctx& x, id self, SEL, id category, uint32_t options, GuestPtr) {
     if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = options; avs_recomputeOptions(x, *d); }
+    avs_noteUnapplied(x, category);
     return true;
 }
 void avs_applyMode(Ctx& x, SessionData& d, id mode) {
@@ -1171,6 +1182,7 @@ void avs_applyMode(Ctx& x, SessionData& d, id mode) {
 }
 bool avs_setCategoryModeOptions(Ctx& x, id self, SEL, id category, id mode, uint32_t options, GuestPtr) {
     if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = options; avs_applyMode(x, *d, mode); }
+    avs_noteUnapplied(x, category);
     return true;
 }
 bool avs_setMode(Ctx& x, id self, SEL, id mode, GuestPtr) {
