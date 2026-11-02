@@ -5436,6 +5436,308 @@ int runFullSubsystemTests() {
             check(before && during && after, "NSThread isExecuting/isFinished follow start and the end of its work");
         }
 
+        // Verify the configured size on the live guest thread, and the post-start contract.
+        {
+            struct StackProbe { std::atomic<uint32_t> id{0}, threadObject{0}; std::atomic<bool> release{false}, done{false}; };
+            auto probe = std::make_shared<StackProbe>();
+            ObjC::ClassBuilder targetClass = r.defineClass("HVMTestStackTarget", "NSObject");
+            targetClass.method("work:", [probe, &r](Ctx& cx) {
+                probe->threadObject = ObjC::id(r.send(cx.cpu, r.getClass("NSThread"), "currentThread"));
+                probe->id = cx.proc.currentThread().id;
+                while (!probe->release && !cx.proc.stopping()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                probe->done = true;
+            }, "v@:@");
+            const ObjC::id target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, targetClass.cls(), r.selAlloc)), "init"));
+            const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
+                                                "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
+            const uint32_t defaultSize = uint32_t(r.send(cpu, th, "stackSize"));
+            r.send(cpu, th, "setStackSize:", {8u << 10});   // below Apple's 16 KiB minimum
+            const bool rejectedSmall = uint32_t(r.send(cpu, th, "stackSize")) == defaultSize;
+            r.send(cpu, th, "setStackSize:", {16u << 10});   // the smallest size Apple documents
+            check(uint32_t(r.send(cpu, th, "stackSize")) == (16u << 10), "NSThread accepts the documented 16 KiB minimum stack size");
+            const auto threadsBefore = proc.liveThreadIds();
+            bool rejectedOverflow = false, rejectedRange = false;
+            r.send(cpu, th, "setStackSize:", {0xffffffffu});
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { rejectedOverflow = true; }
+            r.send(cpu, th, "setStackSize:", {0x40000000u});
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { rejectedRange = true; }
+            const auto threadsAfter = proc.liveThreadIds();
+            const bool noNewThreads = std::all_of(threadsAfter.begin(), threadsAfter.end(), [&](uint32_t id) {
+                return std::find(threadsBefore.begin(), threadsBefore.end(), id) != threadsBefore.end();
+            });
+            const bool unchanged = noNewThreads && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff);
+            // Host-thread creation failing after the guest stack is mapped must leave nothing behind and not
+            // poison later launches (the same NSThread can be started again afterwards).
+            r.send(cpu, th, "setStackSize:", {1u << 20});
+            Process::failNextHostThreadSpawns(1);
+            bool spawnFailed = false;
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { spawnFailed = true; }
+            Process::failNextHostThreadSpawns(0);
+            {
+                const auto afterFailure = proc.liveThreadIds();
+                // Every live thread must be one that was already live: threads that finish meanwhile may leave, none may appear.
+                const bool noneLeaked = std::all_of(afterFailure.begin(), afterFailure.end(), [&](uint32_t id) {
+                    return std::find(threadsBefore.begin(), threadsBefore.end(), id) != threadsBefore.end();
+                });
+                check(spawnFailed && noneLeaked && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff),
+                      "a host-thread creation failure leaves no guest thread registered and the NSThread startable again");
+            }
+            r.send(cpu, th, "setStackSize:", {1u << 20});
+            const uint32_t setSize = uint32_t(r.send(cpu, th, "stackSize"));
+            r.send(cpu, th, "start");
+            for (int i = 0; i < 400 && !probe->id; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            const uint32_t threadId = probe->id;
+            GuestThread* running = threadId && probe->threadObject == th ? proc.findThreadById(threadId) : nullptr;
+            const bool actualSize = running && running->stackSize == (1u << 20);
+            r.send(cpu, th, "setStackSize:", {2u << 20});
+            const bool keptSize = uint32_t(r.send(cpu, th, "stackSize")) == (1u << 20) && running && running->stackSize == (1u << 20);
+            probe->release = true;
+            for (int i = 0; i < 400 && !probe->done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            check(defaultSize == (512u << 10) && setSize == (1u << 20) && actualSize && keptSize && probe->done,
+                  "NSThread applies the requested guest stack and ignores updates after start");
+            check(rejectedSmall, "NSThread ignores stack requests below 64 KiB");
+            check(rejectedOverflow && rejectedRange && unchanged && actualSize,
+                  "NSThread rejects oversized stacks without starting and can retry with a valid size");
+
+            ObjC::ClassBuilder subclass = r.defineClass("HVMTestThreadSubclass", "NSThread");
+            const ObjC::id child = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, subclass.cls(), r.selAlloc)), "init"));
+            r.send(cpu, child, "setStackSize:", {1u << 20});
+            check(uint32_t(r.send(cpu, child, "stackSize")) == (1u << 20),
+                  "NSThread subclass alloc/init retains its requested stack size");
+        }
+
+        // AVAudioSession keeps its category, options and mode, and reports a route (Hungry Shark Evolution, #53 / #63).
+        {
+            Ctx sx{proc, cpu, proc.mem()};
+            const ObjC::id session = ObjC::id(r.send(cpu, r.getClass("AVAudioSession"), "sharedInstance"));
+            auto same = [&](ObjC::id value, const char* text) {
+                return (uint32_t(r.send(cpu, value, "isEqualToString:", {Foundation::makeString(sx, text)})) & 0xFF) != 0;
+            };
+            const bool initial = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategorySoloAmbient") &&
+                                 same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeDefault");
+            const bool setOk = (uint32_t(r.send(cpu, session, "setCategory:withOptions:error:",
+                                                {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 1u, 0u})) & 0xFF) != 0;
+            const bool kept = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategoryPlayback") &&
+                              uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoRecording"), 0u});
+            const bool modeKept = same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoRecording");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeGameChat"), 4u, 0u});
+            const bool combined = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategoryPlayAndRecord") &&
+                                  same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeGameChat") &&
+                                  uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            check(initial && setOk && kept && modeKept && combined,
+                  "AVAudioSession keeps category, categoryOptions and mode across setCategory:/setMode:");
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u});
+            const bool videoDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 12u;
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 1u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u});
+            check(videoDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 13u,
+                  "AVAudioSession video chat adds Bluetooth and speaker options while preserving existing options");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u, 0u});
+            check(uint32_t(r.send(cpu, session, "categoryOptions")) == 12u,
+                  "AVAudioSession combined video chat setter adds Bluetooth and speaker defaults");
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u});
+            const bool voiceDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 1u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u});
+            check(voiceDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 5u,
+                  "AVAudioSession voice chat adds Bluetooth while preserving existing options");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u, 0u});
+            const bool combinedVoiceDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 1u, 0u});
+            check(combinedVoiceDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 5u,
+                  "AVAudioSession combined voice chat setter adds Bluetooth while preserving options");
+            const auto playAndRecord = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord");
+            const auto playback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback");
+            const auto record = Foundation::makeString(sx, "AVAudioSessionCategoryRecord");
+            const auto voice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat");
+            const auto video = Foundation::makeString(sx, "AVAudioSessionModeVideoChat");
+            const auto defaultMode = Foundation::makeString(sx, "AVAudioSessionModeDefault");
+            auto options = [&] { return uint32_t(r.send(cpu, session, "categoryOptions")); };
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+            r.send(cpu, session, "setCategory:withOptions:error:", {playAndRecord, 0u, 0u});
+            check(options() == 4u, "AVAudioSession keeps voice defaults when category options change");
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+            const bool clearedVideoDefaults = options() == 0u;
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 5u, 0u});
+            r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+            check(clearedVideoDefaults && options() == 5u, "AVAudioSession clears video defaults but keeps explicitly requested bits");
+            const bool acceptedVoice = (uint32_t(r.send(cpu, session, "setCategory:mode:options:error:", {playback, voice, 1u, 0u})) & 0xff) != 0;
+            const bool playbackVoice = options() == 1u && same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVoiceChat");
+            const bool acceptedVideo = (uint32_t(r.send(cpu, session, "setMode:error:", {video, 0u})) & 0xff) != 0;
+            const bool playbackVideo = options() == 1u && same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoChat");
+            check(acceptedVoice && acceptedVideo && playbackVoice && playbackVideo,
+                  "AVAudioSession accepts chat modes on playback without chat defaults");
+            r.send(cpu, session, "setCategory:error:", {record, 0u});
+            const bool recordVideo = options() == 12u;
+            r.send(cpu, session, "setMode:error:", {voice, 0u});
+            const bool recordVoice = options() == 0u;
+            r.send(cpu, session, "setCategory:error:", {playAndRecord, 0u});
+            check(recordVideo && recordVoice && options() == 4u,
+                  "AVAudioSession recomputes chat defaults when the category or mode changes");
+            {
+                const auto playAndRecord = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord");
+                const auto playback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback");
+                const auto record = Foundation::makeString(sx, "AVAudioSessionCategoryRecord");
+                const auto voice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat");
+                const auto video = Foundation::makeString(sx, "AVAudioSessionModeVideoChat");
+                const auto defaultMode = Foundation::makeString(sx, "AVAudioSessionModeDefault");
+                r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+                r.send(cpu, session, "setCategory:withOptions:error:", {playAndRecord, 0u, 0u});
+                const bool voiceAfterOptions = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+                r.send(cpu, session, "setCategory:error:", {playAndRecord, 0u});
+                check(voiceAfterOptions && uint32_t(r.send(cpu, session, "categoryOptions")) == 4u,
+                      "AVAudioSession retains voice chat defaults after category setters");
+                r.send(cpu, session, "setMode:error:", {video, 0u});
+                r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+                const bool videoCleared = uint32_t(r.send(cpu, session, "categoryOptions")) == 0u;
+                r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 4u, 0u});
+                r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+                check(videoCleared && uint32_t(r.send(cpu, session, "categoryOptions")) == 4u,
+                      "AVAudioSession clears mode defaults while preserving explicit overlapping options");
+                r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+                r.send(cpu, session, "setCategory:withOptions:error:", {playback, 1u, 0u});
+                const bool voicePlayback = uint32_t(r.send(cpu, session, "categoryOptions")) == 1u &&
+                                           (uint32_t(r.send(cpu, session, "setMode:error:", {voice, 0u})) & 0xff) &&
+                                           same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVoiceChat") &&
+                                           uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+                const bool videoAccepted = (uint32_t(r.send(cpu, session, "setMode:error:", {video, 0u})) & 0xff) != 0;
+                const bool videoPlayback = videoAccepted && uint32_t(r.send(cpu, session, "categoryOptions")) == 1u &&
+                                           same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoChat");
+                r.send(cpu, session, "setCategory:mode:options:error:", {playback, video, 1u, 0u});
+                const bool combinedPlayback = uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+                r.send(cpu, session, "setCategory:withOptions:error:", {record, 1u, 0u});
+                const bool videoRecord = uint32_t(r.send(cpu, session, "categoryOptions")) == 13u;
+                r.send(cpu, session, "setMode:error:", {voice, 0u});
+                check(voicePlayback && videoPlayback && combinedPlayback && videoRecord &&
+                      uint32_t(r.send(cpu, session, "categoryOptions")) == 1u,
+                      "AVAudioSession applies chat defaults only to supported categories");
+            }
+            // Mutable inputs make each setter copy and release the previous stored string.
+            const auto mutableCategory = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord", true, true);
+            const auto mutablePlayback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback", true, true);
+            const auto mutableVoice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat", true, true);
+            const auto mutableVideo = Foundation::makeString(sx, "AVAudioSessionModeVideoChat", true, true);
+            r.send(cpu, session, "setCategory:mode:options:error:", {mutableCategory, mutableVoice, 0u, 0u});
+            const auto savedCategory = ObjC::id(r.send(cpu, session, "category"));
+            const auto savedMode = ObjC::id(r.send(cpu, session, "mode"));
+            r.send(cpu, session, "setCategory:mode:options:error:", {mutablePlayback, mutableVideo, 0u, 0u});
+            check(Foundation::utf8(sx, savedCategory) == "AVAudioSessionCategoryPlayAndRecord" &&
+                  Foundation::utf8(sx, savedMode) == "AVAudioSessionModeVoiceChat",
+                  "AVAudioSession getters keep their results alive after replacement");
+            {
+                // The setter must copy: mutating the caller's string afterwards must not change the stored category/mode.
+                const auto probeCategory = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback", true, true);
+                const auto probeMode = Foundation::makeString(sx, "AVAudioSessionModeDefault", true, true);
+                r.send(cpu, session, "setCategory:mode:options:error:", {probeCategory, probeMode, 0u, 0u});
+                r.send(cpu, probeCategory, "appendString:", {Foundation::makeString(sx, "-mutated")});
+                r.send(cpu, probeMode, "appendString:", {Foundation::makeString(sx, "-mutated")});
+                check(Foundation::utf8(sx, ObjC::id(r.send(cpu, session, "category"))) == "AVAudioSessionCategoryPlayback" &&
+                          Foundation::utf8(sx, ObjC::id(r.send(cpu, session, "mode"))) == "AVAudioSessionModeDefault",
+                      "AVAudioSession setters copy mutable category and mode strings");
+                r.release(cpu, probeCategory); r.release(cpu, probeMode);
+            }
+            // Apple adds MixWithOthers implicitly for Ambient and DuckOthers.
+            r.send(cpu, session, "setCategory:withOptions:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 2u, 0u});
+            const bool duckMixes = uint32_t(r.send(cpu, session, "categoryOptions")) == 3u;
+            r.send(cpu, session, "setCategory:withOptions:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryAmbient"), 0u, 0u});
+            check(duckMixes && uint32_t(r.send(cpu, session, "categoryOptions")) == 1u,
+                  "AVAudioSession reports the implicit MixWithOthers for DuckOthers and for Ambient");
+            // Record is stored, but playback is not silenced: that is reported as missing rather than hidden.
+            const uint64_t missingBefore = proc.missingApis().totalHits();
+            r.send(cpu, session, "setCategory:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryRecord"), 0u});
+            check(proc.missingApis().totalHits() == missingBefore + 1, "AVAudioSession Record category is reported as missing behaviour");
+            r.send(cpu, session, "setCategory:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 0u});
+
+            proc.mem().map(0xbb000000, 0x40000, Memory::kProtRW);
+            std::atomic<unsigned> ready{0}, done{0};
+            std::atomic<bool> start{false}, optionsOk{true};
+            auto worker = [&](unsigned which) {
+                CPU::Cpu workerCpu;
+                workerCpu.r[CPU::kSP] = 0xbb000000 + (which + 1) * 0x10000 - 256;
+                ++ready;
+                while (!start) std::this_thread::yield();
+                if (which == 3) {
+                    unsigned reads = 0;
+                    do {
+                        const uint32_t value = uint32_t(r.send(workerCpu, session, "categoryOptions"));
+                        if (value != 0 && value != 1 && value != 4 && value != 5 && value != 12 && value != 13)
+                            optionsOk = false;
+                        ++reads;
+                    } while (done != 3 || reads < 4000);
+                } else {
+                    for (unsigned i = 0; i < 2000; ++i) {
+                        if (which == 0) {
+                            r.send(workerCpu, session, "setCategory:error:", {mutableCategory, 0u});
+                            r.send(workerCpu, session, "setCategory:withOptions:error:", {mutablePlayback, 1u, 0u});
+                        } else if (which == 1) {
+                            r.send(workerCpu, session, "setMode:error:", {mutableVoice, 0u});
+                            r.send(workerCpu, session, "setMode:error:", {mutableVideo, 0u});
+                        } else {
+                            r.send(workerCpu, session, "setCategory:mode:options:error:", {mutableCategory, mutableVideo, 1u, 0u});
+                            r.send(workerCpu, session, "setCategory:mode:options:error:", {mutablePlayback, mutableVoice, 0u, 0u});
+                        }
+                    }
+                    ++done;
+                }
+            };
+            std::thread a(worker, 0), b(worker, 1), c(worker, 2), reader(worker, 3);
+            while (ready != 4) std::this_thread::yield();
+            start = true;
+            a.join(); b.join(); c.join(); reader.join();
+            check(optionsOk, "AVAudioSession synchronizes options reads with concurrent category and mode updates");
+            r.release(cpu, mutableCategory); r.release(cpu, mutablePlayback);
+            r.release(cpu, mutableVoice); r.release(cpu, mutableVideo);
+
+            {   // The first currentRoute read builds the route: concurrent first reads must all see the same object. The
+                // cache is per session, so each round uses a fresh process (a cold cache) to make the race likely.
+                bool allSame = true;
+                for (int round = 0; round < 40 && allSame; ++round) {
+                    ProcessConfig routeCfg;
+                    routeCfg.homePath = "/tmp/hvm_route_race";
+                    Process routeProc(routeCfg);
+                    auto& rr = ObjC::rt(routeProc);
+                    const ObjC::id routeSession = ObjC::id(rr.send(routeProc.mainThread().cpu, rr.getClass("AVAudioSession"), "sharedInstance"));
+                    routeProc.mem().map(0xbb000000, 0x40000, Memory::kProtRW);
+                    std::atomic<unsigned> routeReady{0};
+                    std::atomic<bool> routeStart{false};
+                    std::vector<uint32_t> routes(4, 0);
+                    auto routeWorker = [&](unsigned which) {
+                        CPU::Cpu workerCpu;
+                        workerCpu.r[CPU::kSP] = 0xbb000000 + (which + 1) * 0x10000 - 256;
+                        ++routeReady;
+                        while (!routeStart) std::this_thread::yield();
+                        routes[which] = uint32_t(rr.send(workerCpu, routeSession, "currentRoute"));
+                    };
+                    std::thread t0(routeWorker, 0), t1(routeWorker, 1), t2(routeWorker, 2), t3(routeWorker, 3);
+                    while (routeReady != 4) std::this_thread::yield();
+                    routeStart = true;
+                    t0.join(); t1.join(); t2.join(); t3.join();
+                    allSame = routes[0] != 0 && routes[0] == routes[1] && routes[1] == routes[2] && routes[2] == routes[3];
+                }
+                check(allSame, "concurrent first reads of AVAudioSession currentRoute all get one route");
+            }
+            const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
+            const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
+            const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;
+            check(port && same(ObjC::id(r.send(cpu, port, "portType")), "Speaker"),
+                  "AVAudioSession currentRoute reports the built-in speaker as its one output");
+            check(proc.lookupSymbol("_AVAudioSessionModeGameChat") && proc.lookupSymbol("_AVAudioSessionModeVideoRecording") &&
+                  proc.lookupSymbol("_AVAudioSessionModeMeasurement") && proc.lookupSymbol("_AVAudioSessionCategoryMultiRoute"),
+                  "AVAudioSession exports the remaining mode and category string constants");
+        }
+
         // NSXMLParser: elements, attributes, entities, CDATA, self-closing tags, errors.
         {
             Ctx x{proc, cpu, proc.mem()};
