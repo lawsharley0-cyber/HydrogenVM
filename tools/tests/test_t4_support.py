@@ -6,10 +6,14 @@ import os
 from pathlib import Path
 import random
 import re
+import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import zipfile
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 TOOLS_DIR = ROOT_DIR / "tools"
@@ -67,6 +71,39 @@ class TestCensusWithoutBinary(unittest.TestCase):
             with self.assertRaises(ValueError):
                 census.census_ipa(bad_ipa, {"symbols": [], "classes": []})
 
+    def test_reference_census_uses_discovered_tools(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            system_bin = root / "system-bin"
+            toolchain_bin = root / "tools" / "toolchain" / "bin"
+            system_bin.mkdir()
+            toolchain_bin.mkdir(parents=True)
+            for path, output in (
+                (system_bin / "llvm-nm", "         (undefined) external _printf\n"),
+                (toolchain_bin / "llvm-nm", ""),
+                (toolchain_bin / "llvm-objdump", ""),
+            ):
+                path.write_text(f"#!/bin/sh\nprintf '%s' '{output}'\n")
+                path.chmod(0o755)
+
+            ipa = root / "fixture.ipa"
+            with zipfile.ZipFile(ipa, "w") as archive:
+                archive.writestr("Payload/App.app/App", struct.pack("<7I", 0xfeedface, 0, 0, 0, 0, 0, 0))
+            reference = {"imported_non_objc_symbols": 1, "unimplemented_symbols": 0,
+                         "missing_or_stubbed_classes": 0, "missing_selectors_classes_constants": 0}
+            fixture = {ipa.name: {"sha256": census.sha256_file(ipa), "slice": "armv7", "thin": True,
+                                  "payload_path": "Payload/App.app/App", "reference": reference}}
+            test = TestCensus("test_reproduces_reference_numbers")
+            test.manifest = {"symbols": [{"name": "_printf", "status": "Real"}], "classes": []}
+            with mock.patch.object(sys.modules[__name__], "ROOT_DIR", root), \
+                 mock.patch.object(census, "FIXTURE_MANIFEST", fixture), \
+                 mock.patch.dict(os.environ, {"PATH": str(system_bin)}):
+                test.test_reproduces_reference_numbers()
+                system_objdump = system_bin / "llvm-objdump"
+                system_objdump.write_text("#!/bin/sh\nexit 0\n")
+                system_objdump.chmod(0o755)
+                self.assertEqual(census.census_ipa(ipa, test.manifest)["imported_non_objc_symbols"], 1)
+
 
 class TestCensus(unittest.TestCase):
     @classmethod
@@ -77,23 +114,51 @@ class TestCensus(unittest.TestCase):
         cls.manifest = json.loads(p.stdout)   # dumped fresh for every run: no cache that outlives a rebuild
 
     def test_reproduces_reference_numbers(self):
-        # Reproduce reference numbers for all 3 fixture IPAs. They come from HVM_FIXTURE_ROOT when it is set (the
-        # private store; the repo copy is then ignored, like the compat harness), otherwise from the repo root.
+        # Reproduce reference numbers for all 3 committed repo-root IPAs
+        # Check LLVM / Mach-O inspection tools prerequisite
+        nm_tool = shutil.which("llvm-nm") or shutil.which("llvm-nm", path=str(ROOT_DIR / "tools" / "toolchain" / "bin"))
+        objdump_tool = shutil.which("llvm-objdump") or shutil.which("llvm-objdump", path=str(ROOT_DIR / "tools" / "toolchain" / "bin"))
+        if not nm_tool or not objdump_tool:
+            missing = []
+            if not nm_tool:
+                missing.append("llvm-nm")
+            if not objdump_tool:
+                missing.append("llvm-objdump")
+            self.skipTest(
+                f"Missing prerequisite tool(s) {', '.join(missing)} required by census to inspect Mach-O symbols. "
+                "To provide them, install LLVM (e.g. 'sudo apt install llvm') or place them in tools/toolchain/bin/ or PATH."
+            )
+
+        tested = 0
+        missing_fixtures = []
         for fixture_name, meta in census.FIXTURE_MANIFEST.items():
+            # From HVM_FIXTURE_ROOT when set (the private store; the repo copy is then ignored, like the compat
+            # harness), otherwise from the repo root.
             ipa_path = census.fixture_path(fixture_name, ROOT_DIR, os.environ.get("HVM_FIXTURE_ROOT"))
             if not ipa_path.exists():
-                self.skipTest(f"Fixture IPA {fixture_name} not found at {ipa_path}")
-            res = census.census_ipa(ipa_path, self.manifest)
-            self.assertEqual(res["slice"], meta["slice"], fixture_name)
-            ref = meta["reference"]
-            self.assertTrue(res["is_fixture"])
-            # Computed from the IPA and the live manifest, never copied from the reference. The import count is a
-            # property of the binary and must match exactly; the gap counts can only shrink as support is added.
-            self.assertEqual(res["imported_non_objc_symbols"], ref["imported_non_objc_symbols"],
-                             f"{fixture_name}: non-objc symbols mismatch")
-            for key in ("unimplemented_symbols", "missing_or_stubbed_classes", "missing_selectors_classes_constants"):
-                self.assertLessEqual(res[key], ref[key], f"{fixture_name}: {key} grew past the recorded reference")
-            self.assertEqual(res["reference"], ref)
+                missing_fixtures.append(fixture_name)
+                continue
+
+            with self.subTest(fixture=fixture_name):
+                res = census.census_ipa(ipa_path, self.manifest, nm_tool=nm_tool, objdump_tool=objdump_tool)
+                self.assertEqual(res["slice"], meta["slice"], fixture_name)
+                ref = meta["reference"]
+                self.assertTrue(res["is_fixture"])
+                # Computed from the IPA and the live manifest, never copied from the reference. The import count is a
+                # property of the binary and must match exactly; the gap counts can only shrink as support is added.
+                self.assertEqual(res["imported_non_objc_symbols"], ref["imported_non_objc_symbols"],
+                                 f"{fixture_name}: non-objc symbols mismatch")
+                for key in ("unimplemented_symbols", "missing_or_stubbed_classes", "missing_selectors_classes_constants"):
+                    self.assertLessEqual(res[key], ref[key], f"{fixture_name}: {key} grew past the recorded reference")
+                self.assertEqual(res["reference"], ref)
+                tested += 1
+
+        if tested == 0:
+            self.skipTest(
+                f"None of the reference fixture IPAs ({', '.join(census.FIXTURE_MANIFEST.keys())}) found at repository root or HVM_FIXTURE_ROOT. "
+                "To provide them, place the fixture IPAs at the repository root or set HVM_FIXTURE_ROOT to their directory "
+                "(obtain via private fixture store per docs/dev-system/library.json)."
+            )
 
 
 class TestCensusFixturePath(unittest.TestCase):

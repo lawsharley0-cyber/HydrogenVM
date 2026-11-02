@@ -14,6 +14,7 @@
 #include "runtime/Abi.hpp"
 #include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
+#include <array>
 #include <atomic>
 #include <sys/file.h>
 #include <chrono>
@@ -235,6 +236,8 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cstring>
 
 int runMinimp3HwcapChecks();
+int runThreadLifetimeTests();
+int runThreadLifetimeChild();
 
 namespace {
 
@@ -7523,7 +7526,79 @@ int runFullSubsystemTests() {
         ::unlink(lockPath);
         ::unlink(freePath);
     }
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-dlsym-tests";
+        Process proc(cfg);
+        auto& cpu = proc.mainThread().cpu;
+        const uint32_t stack = proc.heap().allocZeroed(1024);
+        cpu.r[CPU::kSP] = stack + 1024;
 
+        auto callDlsym = [&](const char* name) -> uint32_t {
+            const uint32_t namePtr = proc.allocCString(name);
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_dlsym"), {0xFFFFFFFEu, namePtr}));
+        };
+
+        const uint32_t addrHttp = callDlsym("kCFHTTPVersion1_1");
+        const uint32_t addrProxyFtp = callDlsym("kCFProxyTypeFTP");
+        const uint32_t addrProxyJs = callDlsym("kCFProxyTypeAutoConfigurationJavaScript");
+
+        Ctx cx{proc, cpu, proc.mem()};
+        auto hasValue = [&](uint32_t addr, const char* expected) {
+            return addr != 0 && proc.mem().read<uint32_t>(addr) != 0 &&
+                   Foundation::utf8(cx, proc.mem().read<uint32_t>(addr)) == expected;
+        };
+        bool okHttp = hasValue(addrHttp, "HTTP/1.1");
+        bool okProxyFtp = hasValue(addrProxyFtp, "kCFProxyTypeFTP");
+        bool okProxyJs = hasValue(addrProxyJs, "kCFProxyTypeAutoConfigurationJavaScript");
+
+        check(okHttp && okProxyFtp && okProxyJs, "dlsym(RTLD_DEFAULT) resolves dynamic CFNetwork and proxy constants");
+        check(callDlsym("kHVMDefinitelyUnknownType") == 0, "dlsym returns 0 for an unknown constant-like name");
+        check(callDlsym("OBJC_CLASS_$_HVMDefinitelyUnknown") == 0, "dlsym returns 0 for an unknown class");
+        check(callDlsym("hvmDefinitelyUnknownFunction") == 0, "dlsym returns 0 for an unknown function");
+        const uint32_t accuracy = callDlsym("kCLLocationAccuracyBest");
+        check(accuracy && proc.mem().read<double>(accuracy) == -1,
+              "dlsym resolves a recognized numeric framework constant");
+    }
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-symbol-resolution-tests";
+        Process proc(cfg);
+        std::atomic<int> calls{0}, ready{0}, misses{0};
+        std::atomic<bool> go{false};
+        proc.addMissingSymbolResolver([&](const std::string& name, Process::MissingSymbolMode mode) -> uint32_t {
+            if (mode != Process::MissingSymbolMode::DynamicLookup) return 0;
+            if (name == "_HVMUnresolvedTest") { ++misses; return 0; }
+            if (name != "_HVMConcurrentResolutionTest") return 0;
+            const int call = ++calls;
+            proc.defineData("_HVMResolutionSideEffect", 0x55);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            return 0x12340000u + uint32_t(call);
+        });
+        constexpr size_t count = 8;
+        std::array<uint32_t, count> results{};
+        std::array<std::thread, count> workers;
+        for (size_t i = 0; i < count; ++i) workers[i] = std::thread([&, i] {
+            const auto existing = proc.lookupSymbol("_HVMConcurrentResolutionTest");
+            ++ready;
+            while (!go.load()) std::this_thread::yield();
+            results[i] = existing ? *existing : proc.resolveMissingSymbol("_HVMConcurrentResolutionTest");
+        });
+        while (ready.load() != int(count)) std::this_thread::yield();
+        go = true;
+        for (auto& worker : workers) worker.join();
+        bool same = results[0] != 0;
+        for (auto result : results) same &= result == results[0];
+        check(same && calls == 1 && proc.lookupSymbol("_HVMConcurrentResolutionTest") == results[0] &&
+              proc.lookupSymbol("_HVMResolutionSideEffect") == 0x55,
+              "concurrent first dynamic symbol resolution publishes one address");
+        check(proc.resolveMissingSymbol("_HVMUnresolvedTest") == 0 &&
+              proc.resolveMissingSymbol("_HVMUnresolvedTest") == 0 && misses == 2 &&
+              !proc.lookupSymbol("_HVMUnresolvedTest"),
+              "unresolved dynamic symbols remain uncached");
+    }
+
+    check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
@@ -7590,6 +7665,7 @@ static int runStopProbe() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "thread-lifetime-child") return runThreadLifetimeChild();
     if (argc == 4 && std::string(argv[1]) == "audio-decode") {
         std::ifstream in(argv[2], std::ios::binary);
         if (!in) return 2;
