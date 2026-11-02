@@ -97,6 +97,11 @@ def validate_capture(doc, root, expected_commit=None, expected_ipa=None):
         errors.append('scenario.outcome must distinguish host/guest crash, jetsam, watchdog, world-loaded or unconfirmed')
     if outcome == 'world-loaded':
         entry = scenario.get('worldEntrySeconds')
+        selection = scenario.get('worldSelectionSeconds')
+        if not valid_seconds(selection):
+            errors.append('world-loaded requires a recorded worldSelectionSeconds')
+        elif valid_seconds(entry) and entry < selection:
+            errors.append('worldEntrySeconds must not precede worldSelectionSeconds')
         if not valid_seconds(entry) or not finite_duration or duration - entry < 60:
             errors.append('world-loaded requires a recorded worldEntrySeconds and at least 60 seconds afterward')
     artifacts = doc.get('artifacts')

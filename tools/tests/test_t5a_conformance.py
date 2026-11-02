@@ -4,14 +4,75 @@
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 TESTLAB_PY = ROOT_DIR / "tools" / "hvm_testlab.py"
 HVM_BIN = ROOT_DIR / "build" / "hvm"
+
+
+def run_testlab(cmd, timeout=240):
+    # A timed-out runner can leave build/hvm holding the output pipes open.
+    # Own the process group so the runner and its children can be killed together.
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, start_new_session=True) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
+            raise
+    # Like subprocess.run(check=False), retain nonzero exits for the report.
+    return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+
+
+class TestTestLabInvocation(unittest.TestCase):
+    def test_default_timeout_and_nonzero_exit(self):
+        process = mock.MagicMock()
+        process.communicate.return_value = ("out", "err")
+        process.returncode = 1
+        with mock.patch("subprocess.Popen") as popen:
+            popen.return_value.__enter__.return_value = process
+            result = run_testlab(["testlab"])
+        popen.assert_called_once_with(["testlab"], stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True, start_new_session=True)
+        process.communicate.assert_called_once_with(timeout=240)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "out", "err"))
+
+    def test_nonzero_exit_keeps_output(self):
+        result = run_testlab([sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr); sys.exit(1)"])
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "out\n", "err\n"))
+
+    def test_timeout_kills_runner_and_descendant_holding_output(self):
+        # The descendant inherits stdout, as hvm or a build command can.
+        child = "import time; time.sleep(5)"
+        runner = ("import subprocess, sys, time; "
+                  f"child = subprocess.Popen([sys.executable, '-c', {child!r}]); "
+                  "print(child.pid, flush=True); time.sleep(5)")
+        start = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired) as raised:
+            run_testlab([sys.executable, "-c", runner], timeout=1)
+        self.assertLess(time.monotonic() - start, 4)
+        child_pid = int(raised.exception.output.strip())
+        try:
+            status = subprocess.run(["ps", "-o", "stat=", "-p", str(child_pid)],
+                                    capture_output=True, text=True, check=False).stdout.strip()
+            # A killed orphan can remain a zombie until its new parent reaps it.
+            self.assertTrue(not status or status.startswith("Z"), status)
+        finally:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 class TestLibStdcxxConformance(unittest.TestCase):
@@ -24,8 +85,7 @@ class TestLibStdcxxConformance(unittest.TestCase):
         cls._out = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls._out.cleanup)
         cmd = [sys.executable, str(TESTLAB_PY), "run", "--hvm", str(HVM_BIN), "--case", "TL-Y", "--out", cls._out.name]
-        # No check=True: a failing TL-Y exits 1, and the report (with the guest's reason) is what explains it.
-        cls.testlab_run = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+        cls.testlab_run = run_testlab(cmd)
         cls.out_dir = Path(cls._out.name)
         report_path = cls.out_dir / "testlab_report.json"
         if not report_path.exists():

@@ -60,6 +60,16 @@ No renderer/runtime workaround or fabricated crash evidence is included.
    Keep #29 open until the exact world-load failure is reproduced and diagnosed
    or the affected device/fixture completes the requested scenario.
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:192fc878ec3abc40aa0006aa53b011d8d0994c22906f34518d7ca7b7ff0d959d -->
+
+For a world-loaded outcome, record worldSelectionSeconds and
+worldEntrySeconds in the scenario, measured from the start of capture.
+Entry must not precede selection.
+
+<!-- /coderabbit-ai-generated:v1 -->
+
 ## Unfilled metadata template
 
 ```json

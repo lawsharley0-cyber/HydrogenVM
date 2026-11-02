@@ -39,10 +39,25 @@ class DeviceWorldCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); doc = self.capture(root)
             doc['scenario']['outcome'] = 'world-loaded'
+            doc['scenario']['worldSelectionSeconds'] = 2
             self.assertTrue(validate_capture(doc, root))
             doc['scenario']['worldEntrySeconds'] = 2
             self.assertTrue(validate_capture(doc, root))
             doc['scenario']['durationSeconds'] = 62
+            self.assertEqual(validate_capture(doc, root), [])
+
+    def test_world_entry_follows_valid_recorded_selection(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); doc = self.capture(root)
+            scenario = doc['scenario']
+            scenario.update(outcome='world-loaded', durationSeconds=100, worldEntrySeconds=10)
+            for selection in (None, True, -1, float('nan'), 10 ** 1000):
+                with self.subTest(selection=selection):
+                    scenario['worldSelectionSeconds'] = selection
+                    self.assertTrue(any('worldSelectionSeconds' in e for e in validate_capture(doc, root)))
+            scenario['worldSelectionSeconds'] = 11
+            self.assertTrue(any('must not precede' in e for e in validate_capture(doc, root)))
+            scenario['worldSelectionSeconds'] = 10
             self.assertEqual(validate_capture(doc, root), [])
 
     def test_large_integer_times_are_validation_errors_without_tracebacks(self):
