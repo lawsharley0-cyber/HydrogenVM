@@ -130,6 +130,7 @@ int main() {
             return cls ? ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, cls, r.selAlloc)), r.selInit)) : 0;
         };
         exercise(player, "authenticateWithCompletionHandler:", false, 2, "GameKit authentication completes with cancellation");
+        exercise(player, "loadFriendsWithCompletionHandler:", true, 6, "GameKit friend lookup completes with nil and not-authenticated error");
         exercise(make("GKLeaderboard"), "loadScoresWithCompletionHandler:", true, 6, "GameKit score lookup completes with nil and not-authenticated error");
         exercise(make("GKScore"), "reportScoreWithCompletionHandler:", false, 6, "GameKit score reporting completes with not-authenticated error");
     }
