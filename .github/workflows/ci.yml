@@ -35,6 +35,8 @@ jobs:
         run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
       - name: Synthetic Plist metadata and ASan/UBSan regression
         run: CXX=g++ tools/test_plist.sh
+      - name: Native guest-worker lifetime under ASan/UBSan
+        run: bash tools/test_thread_lifetime.sh
       - name: Evidence contract tests
         run: python3 -m unittest discover -s tools/tests -p 'test_hvm_evidence.py'
       - name: Device world-load capture completeness tests
@@ -58,6 +60,8 @@ jobs:
         env:
           HVM_TESTLAB_TOOLCHAIN: "1"
         run: python3 -m unittest discover -s tools/tests
+      - name: Guest termination watchdog is a failed run
+        run: python3 tools/test_shutdown_watchdog.py --hvm build/hvm
       - name: HostGL sequential process lifetime
         run: build/hvm_gl_lifetime_tests
       - name: Host AAC decoder comparison
