@@ -114,7 +114,8 @@ id kvcGet(Ctx& x, id self, const std::string& key, bool viaOverride = true) {
     const Class cls = r.classOf(self);
     if (viaOverride) {
         const SEL vfk = r.sel("valueForKey:");
-        if (r.lookup(cls, vfk) != r.lookup(r.getClass("NSObject"), vfk))
+        const IMP own = r.lookup(cls, vfk);
+        if (own && own != r.lookup(r.getClass("NSObject"), vfk))
             return id(r.send(x.cpu, self, vfk, {makeString(x, key)}));
     }
     for (const std::string& name : {key, "get" + capitalized(key), "is" + capitalized(key), "_" + key}) {
@@ -149,7 +150,8 @@ void kvcSet(Ctx& x, id self, const std::string& key, id value, bool viaOverride 
     const Class cls = r.classOf(self);
     if (viaOverride) {
         const SEL svfk = r.sel("setValue:forKey:");
-        if (r.lookup(cls, svfk) != r.lookup(r.getClass("NSObject"), svfk)) {
+        const IMP own = r.lookup(cls, svfk);
+        if (own && own != r.lookup(r.getClass("NSObject"), svfk)) {
             r.send(x.cpu, self, svfk, {value, makeString(x, key)});
             return;
         }

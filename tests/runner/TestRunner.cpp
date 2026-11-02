@@ -3070,7 +3070,9 @@ int runFullSubsystemTests() {
               "NSUserDefaults valueForKeyPath: reads the stored value");
         const ObjC::id keys = Runtime::Foundation::makeArray(cx, {key});
         const ObjC::id dict = ObjC::id(r.send(cpu, ud, r.sel("dictionaryWithValuesForKeys:"), {uint32_t(keys)}));
-        check(dict != 0, "NSUserDefaults dictionaryWithValuesForKeys: uses the defaults");
+        const ObjC::id dictValue = dict ? Runtime::Foundation::dictGet(cx, dict, key) : 0;
+        check(dictValue && Runtime::Foundation::utf8(cx, dictValue) == "tab-3",
+              "NSUserDefaults dictionaryWithValuesForKeys: uses the defaults");
         r.send(cpu, ud, r.sel("removeObjectForKey:"), {uint32_t(key)});
         // NSObject's own valueForKey: must not recurse into itself.
         const ObjC::id plain = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSObject"), r.selAlloc)), r.selInit));
