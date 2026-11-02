@@ -41,6 +41,14 @@ int main() {
           playable->status == SupportStatus::Stub, "AVAsset playable metadata");
     check(registry.find("_dlopen") && registry.find("_dlopen")->status == SupportStatus::Approx,
           "dlopen partial implementation is explicit");
+    for (const auto& [name, status] : {
+             std::pair{"_CFRunLoopSourceInvalidate", SupportStatus::Approx},
+             std::pair{"_pthread_cond_signal", SupportStatus::Approx},
+             std::pair{"_pthread_cond_broadcast", SupportStatus::Approx},
+             std::pair{"__ZNSt3__115__thread_structD1Ev", SupportStatus::Stub}}) {
+        const auto r = registry.find(name);
+        check(r && r->status == status && !r->provenance.empty() && p.lookupSymbol(name), name);
+    }
     check(!registry.find("_unclassified"), "unknown metadata is not Real");
     const auto address = supportDef<&zero>(p, "_support_test", SupportStatus::Real, "Test-only constant oracle");
     check(p.lookupSymbol("_support_test") == address && registry.find("_support_test")->status == SupportStatus::Real,
