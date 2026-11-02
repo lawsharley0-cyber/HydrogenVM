@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 
 
@@ -26,10 +27,12 @@ def file_sha256(path):
 
 def snapshot_home(home):
     home = Path(home)
-    if not home.exists():
-        return {}
+    if not home.is_dir():
+        raise ValueError("Snapshot requires an existing home directory")
+    def fail_walk(error):
+        raise error
     result = {}
-    for parent, dirs, files in os.walk(home, followlinks=False):
+    for parent, dirs, files in os.walk(home, followlinks=False, onerror=fail_walk):
         for name in sorted(dirs + files):
             path = Path(parent) / name
             relative = path.relative_to(home).as_posix()
@@ -64,11 +67,15 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
         raise ValueError('Use separate/in-process mode and 1..20 launches')
     if not math.isfinite(seconds) or seconds <= 0:
         raise ValueError('seconds must be finite and positive')
+    if not home.is_dir():
+        raise ValueError('Preserved capture requires an existing home directory')
+    if os.name == 'posix' and out.exists() and out.stat().st_mode & 0o077:
+        raise ValueError('Evidence directory must not be accessible by group or other users')
     if out.exists() and any(out.iterdir()):
         raise ValueError('Evidence directory must be empty; previous evidence is preserved')
     if not app.exists():
         raise ValueError('The app or IPA does not exist')
-    out.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True, mode=0o700)
     if app.is_file():
         fingerprint = {'kind': 'file', 'sha256': file_sha256(app)}
     else:
@@ -82,7 +89,15 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
               'app': str(app), 'appFingerprint': fingerprint,
               'home': str(home), 'mode': mode, 'requestedLaunches': launches,
               'intermediateSnapshotsAvailable': mode == 'separate', 'runs': []}
-    before = snapshot_home(home)
+    def capture_home(stage):
+        try:
+            return snapshot_home(home)
+        except (OSError, ValueError) as error:
+            result['captureComplete'] = False
+            result['captureError'] = {'stage': stage, 'message': str(error)}
+            write_json(out / 'relaunch.json', result)
+            raise
+    before = capture_home('before first launch')
     write_json(out / 'home-0.json', before)
     count = launches if mode == 'separate' else 1
     for index in range(1, count + 1):
@@ -103,7 +118,12 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
                 row['timedOut'] = True
             except OSError as error:
                 row['toolError'] = str(error)
-        after = snapshot_home(home)
+        try:
+            after = capture_home(f'after launch {index}')
+        except (OSError, ValueError):
+            result['runs'].append(row)
+            write_json(out / 'relaunch.json', result)
+            raise
         write_json(out / f'home-{index}.json', after)
         row['homeDiff'] = diff_snapshots(before, after)
         try:
@@ -115,14 +135,21 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
             row['report'] = report
         except (OSError, ValueError) as error:
             row['reportError'] = str(error)
+        if mode == 'in-process':
+            text = (out / f'launch-{index}.log').read_text(encoding='utf-8', errors='replace')
+            banners = re.findall(r'\[hvm\] ---- launch (\d+) of (\d+) ----', text)
+            row['attemptedLaunches'] = max((int(n) for n, total in banners if int(total) == launches), default=0)
+            row['allRequestedLaunchesAttempted'] = row['attemptedLaunches'] == launches
         result['runs'].append(row)
         before = after
         # Preserve partial results even when a later launch crashes or times out.
         write_json(out / 'relaunch.json', result)
+    result['captureComplete'] = True
     result['allProcessesExitedZero'] = all(r['returnCode'] == 0 for r in result['runs'])
     result['reportsComplete'] = all('report' in r for r in result['runs'])
     result['allRunsExitedWithoutCrash'] = all(r['returnCode'] == 0 and
-        r.get('report', {}).get('exitStatus') == 0 and r.get('report', {}).get('crashed') is False for r in result['runs'])
+        r.get('report', {}).get('exitStatus') == 0 and r.get('report', {}).get('crashed') is False and
+        r.get('allRequestedLaunchesAttempted', True) for r in result['runs'])
     write_json(out / 'relaunch.json', result)
     return result
 

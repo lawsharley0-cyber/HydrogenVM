@@ -59,4 +59,25 @@ PR; no C++ thread or memory implementation changes are made by this card.
    into a failing test before altering either side. Do not upload save values
    or identify the Linux non-reproduction as resolution. #26 remains open.
 
-Enabled Linux tools suite: 207/207 tests, zero skips (HVM_TESTLAB_TOOLCHAIN=1).
+Local enabled Linux tools suite for original candidate c0438238eeb8482e240b5da8bda4545cca463495: 207/207 tests, zero skips (HVM_TESTLAB_TOOLCHAIN=1).
+
+Review follow-up requires an existing home, propagates unreadable-directory
+errors and records incomplete capture metadata instead of inventing a diff.
+POSIX evidence directories are created 0700 and public existing outputs are
+rejected. The failure fixture now seeds bytes before the first launch and
+checks both initial/first-launch hashes. Nine focused tests pass.
+The existing CLI stops an in-process batch on its first failed launch; it has
+no continuation flag. The tool records banner-derived attemptedLaunches and
+allRequestedLaunchesAttempted, while separate mode still attempts all three.
+No unsupported flag or guessed successful third launch is introduced.
+The complete enabled Test Lab integration test is bounded to 240 seconds; a
+timeout fails the suite.
+
+The original head c0438238eeb8482e240b5da8bda4545cca463495 was independently
+tested by [Actions CI 41364496774](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364496774).
+Its checkout log identifies merge 3ef9bba3a10b5f95b2f013c6525d36785c8fe84f;
+the complete tools step passed 207 tests in 12.044 seconds. These Actions
+results apply to the original head, while the new error/privacy regressions
+require their own final run.
+
+After the review fixes, the local enabled tools suite passes 211/211 with zero skips. Existing runtime fulltest487 and TestLab25 results still apply; no runtime source changed.
