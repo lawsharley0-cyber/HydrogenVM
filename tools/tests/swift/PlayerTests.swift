@@ -144,9 +144,13 @@ struct PlayerTests {
         check(PlayerSettings.scaleMode(bundleID: "com.one", defaults: defaults) == .fill, "the global default applies")
         PlayerSettings.setScaleMode(.extended, bundleID: "com.one", defaults: defaults)
         check(PlayerSettings.scaleMode(bundleID: "com.one", defaults: defaults) == .extended, "a game overrides the default")
+        check(PlayerSettings.hasScaleOverride(bundleID: "com.one", defaults: defaults)
+              && !PlayerSettings.hasScaleOverride(bundleID: "com.two", defaults: defaults),
+              "only the game that chose a mode has an override")
         check(PlayerSettings.scaleMode(bundleID: "com.two", defaults: defaults) == .fill, "other games keep the default")
         PlayerSettings.clearScaleMode(bundleID: "com.one", defaults: defaults)
         check(PlayerSettings.scaleMode(bundleID: "com.one", defaults: defaults) == .fill, "clearing falls back to the default")
+        check(!PlayerSettings.hasScaleOverride(bundleID: "com.one", defaults: defaults), "clearing removes the override")
         check(PlayerSettings.cropFocus(bundleID: "com.one", defaults: defaults) == .center, "crop focus defaults to centre")
         PlayerSettings.setCropFocus(.bottom, bundleID: "com.one", defaults: defaults)
         check(PlayerSettings.cropFocus(bundleID: "com.one", defaults: defaults) == .bottom, "crop focus is remembered per game")

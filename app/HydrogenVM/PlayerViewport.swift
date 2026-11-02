@@ -138,11 +138,14 @@ struct EmulatorScreen: UIViewRepresentable {
         private func updateBackdrop(_ image: CGImage?) {
             let wants = mode == .extended && image != nil
             backdrop.isHidden = !wants
-            guard wants, let image else { return }
+            guard wants, let image else {
+                backdropSource = nil   // the next time the bars show, draw at once
+                return
+            }
             let now = CACurrentMediaTime()
-            // A few updates a second is enough for a blurred backdrop and much cheaper
-            // than regenerating a bitmap for every frame.
-            guard backdropSource !== image || now - backdropTime > 0.25 else { return }
+            // Draw immediately when the bars first appear, then at most four times a second:
+            // every software frame is a new image, so identity alone would redraw at frame rate.
+            guard backdropSource == nil || now - backdropTime > 0.25 else { return }
             backdropSource = image
             backdropTime = now
             backdrop.contents = Self.blurredCopy(image)

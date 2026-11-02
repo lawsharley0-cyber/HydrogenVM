@@ -188,6 +188,11 @@ enum PlayerSettings {
         defaults.removeObject(forKey: perGameKey(scaleModeKey, bundleID: bundleID))
     }
 
+    /// True when this game has chosen its own mode, so a later change of the global default does not reach it.
+    static func hasScaleOverride(bundleID: String, defaults: UserDefaults = .standard) -> Bool {
+        defaults.string(forKey: perGameKey(scaleModeKey, bundleID: bundleID)) != nil
+    }
+
     static func cropFocus(bundleID: String, defaults: UserDefaults = .standard) -> PlayerCropFocus {
         guard let raw = defaults.string(forKey: perGameKey(cropFocusKey, bundleID: bundleID)),
               let focus = PlayerCropFocus(rawValue: raw) else {

@@ -619,6 +619,15 @@ struct RunView: View {
                         .pickerStyle(.segmented)
                         .accessibilityIdentifier("player-scale-mode")
 
+                        // Choosing a mode here is a per-game override; this is the way back to the global default.
+                        if PlayerSettings.hasScaleOverride(bundleID: app.info.bundleIdentifier) {
+                            Button("Use default display mode") {
+                                PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
+                            }
+                            .font(.caption2)
+                            .accessibilityIdentifier("player-scale-use-default")
+                        }
+
                         if PlayerScaleMode(rawValue: scaleSetting)?.crops == true {
                             Picker("Crop Focus", selection: $cropFocusSetting) {
                                 ForEach(PlayerCropFocus.allCases) { focus in
