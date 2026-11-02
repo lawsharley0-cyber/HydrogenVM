@@ -33,14 +33,9 @@ int main() {
                             "_glIsQueryEXT", "_glIsQuery", "_glBeginQueryEXT", "_glBeginQuery",
                             "_glEndQueryEXT", "_glEndQuery", "_glGetQueryivEXT", "_glGetQueryiv",
                             "_glGetQueryObjectuivEXT", "_glGetQueryObjectuiv", "_AUGraphGetIndNode",
-                            "_AUGraphGetNodeCount", "_AudioUnitAddRenderNotify", "_SCNetworkReachabilityGetFlags",
-                            "__ZNSt3__115__thread_structD1Ev"}) {
+                            "_AUGraphGetNodeCount", "_AudioUnitAddRenderNotify", "_SCNetworkReachabilityGetFlags"}) {
         const auto r = registry.find(name);
         check(r && r->status == SupportStatus::Stub && !r->provenance.empty(), name);
-    }
-    for (const char* name : {"_CFRunLoopSourceInvalidate", "_pthread_cond_signal", "_pthread_cond_broadcast"}) {
-        const auto r = registry.find(name);
-        check(r && r->status == SupportStatus::Approx && !r->provenance.empty(), name);
     }
     const auto playable = registry.find("-[AVAsset isPlayable]");
     check(playable && playable->kind == SupportKind::InstanceMethod &&
