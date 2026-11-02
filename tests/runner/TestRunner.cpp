@@ -238,6 +238,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cstring>
 
 int runMinimp3HwcapChecks();
+int runThreadProgressTests();
 int runGuestCallBoundaryTests();
 int runGuestCallBoundaryChild(int mode);
 int runThreadLifetimeTests();
@@ -8437,6 +8438,7 @@ int runFullSubsystemTests() {
     }
 
     check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
+    check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
