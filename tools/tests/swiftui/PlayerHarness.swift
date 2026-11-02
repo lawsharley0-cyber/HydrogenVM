@@ -1,9 +1,21 @@
 import SwiftUI
 import UIKit
 
-struct HarnessAppInfo { let bundlePath: String }
+struct HarnessAppInfo {
+    let bundlePath: String
+    let bundleIdentifier = "com.lfull.HydrogenVM.SyntheticPlayer"
+    let version = "1"
+}
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
+let HVMGLLayerUnitTransformKey = "hvmUnitTransform"
+
+// The fixture has no emulator or host-fault signal handler.
+enum HVMCrashJournal {
+    static func openSignalFile(_ path: String) {}
+    static func closeSignalFile() {}
+    static func availableMemory() -> UInt64 { 0 }
+}
 
 @Observable @MainActor
 final class PlayerProbe {
@@ -22,14 +34,19 @@ final class PlayerProbe {
 /// viewport and geometry are compiled into this synthetic UI fixture.
 @MainActor
 final class HVMSession {
+    static let emulatorCommit = "synthetic"
     var keepGoing = false
+    var useGPU = false
     var onFrame: ((CGImage) -> Void)?
+    var onGLLayer: ((CALayer?) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?
     var onExit: ((Int, String?) -> Void)?
+    var crashBundle: String?
     var screenSize = CGSize(width: 320, height: 480)
     var interfaceOrientation = 1
     var isBackgrounded = false
     var frameTimeP95Milliseconds = 4.2
+    var framesPresented: UInt64 = 0
     var outputVolume: Float = 1 { didSet { PlayerProbe.shared.volume = outputVolume } }
     private var activeFingers: Set<UInt> = []
     init(bundlePath: String, homePath: String) { PlayerProbe.shared.session = self }
