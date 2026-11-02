@@ -546,6 +546,7 @@ struct RunView: View {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                                 hudExpanded = false
                                 overlay.minimize()
+                                if !showDebugOverlay { showLog = false }   // the log toggle lives in the hidden controls
                             }
                         } label: {
                             Image(systemName: "chevron.up.circle.fill")

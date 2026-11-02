@@ -49,6 +49,7 @@ struct EmulatorScreen: UIViewRepresentable {
             r.minimumPressDuration = PlayerOverlay.gestureHoldSeconds
             r.cancelsTouchesInView = false
             r.delaysTouchesBegan = false
+            r.delaysTouchesEnded = false   // the default would withhold the game's touch-end once this recognizes
             r.delegate = self
             r.isEnabled = false
             return r
