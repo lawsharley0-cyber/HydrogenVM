@@ -5251,6 +5251,54 @@ int runFullSubsystemTests() {
             check(before && during && after, "NSThread isExecuting/isFinished follow start and the end of its work");
         }
 
+        // NSThread -stackSize / -setStackSize: keep real state; the size is honoured until the thread starts (#63).
+        {
+            ObjC::ClassBuilder quick = r.defineClass("HVMTestQuickTarget", "NSObject");
+            quick.method("work:", [](Ctx&) {}, "v@:@");
+            const ObjC::id target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, quick.cls(), r.selAlloc)), "init"));
+            const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
+                                                "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
+            const uint32_t defaultSize = uint32_t(r.send(cpu, th, "stackSize"));
+            r.send(cpu, th, "setStackSize:", {1u << 20});
+            const uint32_t setSize = uint32_t(r.send(cpu, th, "stackSize"));
+            r.send(cpu, th, "start");
+            r.send(cpu, th, "setStackSize:", {2u << 20});
+            check(defaultSize == (512u << 10) && setSize == (1u << 20) && uint32_t(r.send(cpu, th, "stackSize")) == (1u << 20),
+                  "NSThread stackSize defaults to 512 KB, takes setStackSize: before start and ignores it after");
+        }
+
+        // AVAudioSession keeps its category, options and mode, and reports a route (Hungry Shark Evolution, #53 / #63).
+        {
+            Ctx sx{proc, cpu, proc.mem()};
+            const ObjC::id session = ObjC::id(r.send(cpu, r.getClass("AVAudioSession"), "sharedInstance"));
+            auto same = [&](ObjC::id value, const char* text) {
+                return (uint32_t(r.send(cpu, value, "isEqualToString:", {Foundation::makeString(sx, text)})) & 0xFF) != 0;
+            };
+            const bool initial = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategorySoloAmbient") &&
+                                 same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeDefault");
+            const bool setOk = (uint32_t(r.send(cpu, session, "setCategory:withOptions:error:",
+                                                {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 1u, 0u})) & 0xFF) != 0;
+            const bool kept = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategoryPlayback") &&
+                              uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoRecording"), 0u});
+            const bool modeKept = same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoRecording");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeGameChat"), 4u, 0u});
+            const bool combined = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategoryPlayAndRecord") &&
+                                  same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeGameChat") &&
+                                  uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            check(initial && setOk && kept && modeKept && combined,
+                  "AVAudioSession keeps category, categoryOptions and mode across setCategory:/setMode:");
+            const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
+            const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
+            const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;
+            check(port && same(ObjC::id(r.send(cpu, port, "portType")), "Speaker"),
+                  "AVAudioSession currentRoute reports the built-in speaker as its one output");
+            check(proc.lookupSymbol("_AVAudioSessionModeGameChat") && proc.lookupSymbol("_AVAudioSessionModeVideoRecording") &&
+                  proc.lookupSymbol("_AVAudioSessionModeMeasurement") && proc.lookupSymbol("_AVAudioSessionCategoryMultiRoute"),
+                  "AVAudioSession exports the remaining mode and category string constants");
+        }
+
         // NSXMLParser: elements, attributes, entities, CDATA, self-closing tags, errors.
         {
             Ctx x{proc, cpu, proc.mem()};
