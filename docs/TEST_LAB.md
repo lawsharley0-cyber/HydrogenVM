@@ -155,7 +155,7 @@ The build script `tools/ios_build.py` automatically checks the workspace directo
 4. **Run the Test Lab gate**:
    ```sh
    # Build the host engine
-   export PATH="${HVM_TOOLCHAIN:-$PWD/tools/toolchain}/bin:$PATH"
+   export PATH="${HVM_TOOLCHAIN:-$PWD/tools/toolchain}/bin:$PWD/tools/toolchain/bin:$PATH"
    cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
    ninja -C build hvm
 
