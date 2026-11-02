@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -22,7 +23,10 @@ int runGuestCallBoundaryChild(int mode) {
     CPU::Cpu cpu;
     memory.map(0x21000, 4096);
     memory.write<uint32_t>(0x21ff0, 0xDEADBEEFu);
-    if (mode == 0) memory.map(0x22000, 4096);
+    if (mode == 0 || mode >= 6) {
+        memory.map(0x22000, 4096);
+        memory.write<uint32_t>(0x22000, 0xCAFEBABEu);
+    }
     if (mode == 3) memory.protect(0x21000, 4096, Memory::kProtRead);
     bool invoked = false;
     const auto target = engine.registerHle("checked_stack_arguments", [&](CPU::Cpu& c) {
@@ -38,24 +42,37 @@ int runGuestCallBoundaryChild(int mode) {
     cpu.r[CPU::kLR] = 0x87654320;
     cpu.r[CPU::kSP] = mode == 1 ? 0x30000 : mode == 4 ? 0 : mode == 3 ? 0x22000 : 0x22008;
     cpu.call_boundary_sp = 0x77777777;
+    if (mode >= 6) {
+        cpu.nzcv = CPU::kFlagN | CPU::kFlagC;
+        cpu.q = 1; cpu.ge = 0x00050000; cpu.thumb = 1;
+        cpu.d[0] = 0x123456789ABCDEF0ull; cpu.fpscr = 0x12345678;
+        cpu.block_pc = 0x11112222; cpu.budget = 123;
+        cpu.exit = CPU::Exit::Breakpoint; cpu.exit_info = 0x33334444;
+    }
     uint32_t saved[CPU::kNumRegs];
     std::memcpy(saved, cpu.r, sizeof saved);
     const uint32_t args[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
-    const size_t count = mode == 5 ? std::numeric_limits<size_t>::max() : (mode == 1 || mode == 3) ? 5 : 9;
+    const size_t count = mode == 5 ? std::numeric_limits<size_t>::max() : mode == 6 ? 1 : (mode == 1 || mode == 3 || mode == 7) ? 5 : 9;
     const uint32_t expectedFault = mode == 1 ? 0x2fff8 : mode == 3 ? 0x21ff8 : mode == 4 ? 0 : 0x22008;
     bool faulted = false;
+    bool invalidArgument = false;
     CPU::Engine::lastFault() = {};
     try {
-        const auto value = engine.callGuest(cpu, target, args, count);
+        const auto value = engine.callGuest(cpu, target, mode >= 6 ? nullptr : args, count);
         if (mode != 0 || uint32_t(value) != 45) return 1;
+    } catch (const std::invalid_argument&) {
+        invalidArgument = true;
     } catch (const CPU::GuestFault& fault) {
         faulted = true;
         const uint32_t address = mode == 2 ? 0x22000 : expectedFault;
-        if (mode == 0 || fault.exit != CPU::Exit::MemFault || fault.info != address ||
+        if (mode == 0 || mode >= 6 || fault.exit != CPU::Exit::MemFault || fault.info != address ||
             !CPU::Engine::lastFault().valid || CPU::Engine::lastFault().info != address) return 1;
     }
-    if (faulted != (mode != 0) || invoked != (mode == 0)) return 1;
+    if (invalidArgument != (mode >= 6) || faulted != (mode > 0 && mode < 6) || invoked != (mode == 0)) return 1;
     if (std::memcmp(saved, cpu.r, sizeof saved) || cpu.call_boundary_sp != 0x77777777) return 1;
+    if (mode >= 6 && (cpu.nzcv != (CPU::kFlagN | CPU::kFlagC) || cpu.q != 1 || cpu.ge != 0x00050000 || cpu.thumb != 1 ||
+        cpu.d[0] != 0x123456789ABCDEF0ull || cpu.fpscr != 0x12345678 || cpu.block_pc != 0x11112222 || cpu.budget != 123 ||
+        cpu.exit != CPU::Exit::Breakpoint || cpu.exit_info != 0x33334444 || memory.read<uint32_t>(0x22000) != 0xCAFEBABEu)) return 1;
     if (mode == 2 && memory.read<uint32_t>(0x21ff0) != 0xDEADBEEFu) return 1;
     return 0;
 }
@@ -66,9 +83,9 @@ int runGuestCallBoundaryTests() {
     uint32_t size = sizeof executable;
     if (_NSGetExecutablePath(executable, &size)) return 2;
 #endif
-    const char* names[] = {"valid cross-page arguments", "unmapped stack", "partial cross-page write", "read-only stack", "stack underflow", "argument count overflow"};
+    const char* names[] = {"valid cross-page arguments", "unmapped stack", "partial cross-page write", "read-only stack", "stack underflow", "argument count overflow", "null register arguments", "null stack arguments"};
     int failures = 0;
-    for (int mode = 0; mode < 6; ++mode) {
+    for (int mode = 0; mode < 8; ++mode) {
         char arg[16];
         std::snprintf(arg, sizeof arg, "%d", mode);
         const auto child = fork();
