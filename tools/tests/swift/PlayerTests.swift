@@ -205,26 +205,40 @@ struct PlayerTests {
               "negative inset refused")
         check(GuestScreenSettings.safeAreaValue(top: 500, left: 0, bottom: 0, right: 0, orientation: .portrait, scale: 1) == nil,
               "inset beyond the runtime limit refused")
-        let suite = UserDefaults(suiteName: "hvm.player.tests.281b")!
-        suite.removePersistentDomain(forName: "hvm.player.tests.281b")
+        let screenSuite = UserDefaults(suiteName: "hvm.player.tests.281b")!
+        screenSuite.removePersistentDomain(forName: "hvm.player.tests.281b")
         let gid = "com.example.game"
         var env: [String: String?] = [:]
         func launch() {
             GuestScreenSettings.apply(bundleID: gid, display: CGSize(width: 390, height: 844),
-                                      insets: (47, 0, 34, 0), orientation: .portrait, defaults: suite) { env[$0] = $1 }
+                                      insets: (47, 0, 34, 0), orientation: .portrait, defaults: screenSuite) { env[$0] = $1 }
         }
         launch()
         check(env["HVM_VIRTUAL_SCREEN_HEIGHT"] == .some(nil) && env["HVM_SAFE_AREA"] == .some(nil), "off by default: both cleared")
-        GuestScreenSettings.setVirtualScreen(true, bundleID: gid, defaults: suite)
+        GuestScreenSettings.setVirtualScreen(true, bundleID: gid, defaults: screenSuite)
         launch()
         check(env["HVM_VIRTUAL_SCREEN_HEIGHT"] == .some("692") && env["HVM_SAFE_AREA"] == .some("39,0,28,0"), "opt-in sets both")
-        GuestScreenSettings.setSafeArea(false, bundleID: gid, defaults: suite)
+        GuestScreenSettings.setSafeArea(false, bundleID: gid, defaults: screenSuite)
         launch()
         check(env["HVM_VIRTUAL_SCREEN_HEIGHT"] == .some("692") && env["HVM_SAFE_AREA"] == .some(nil), "safe-area off switch")
-        GuestScreenSettings.setRecord(.broken, bundleID: gid, defaults: suite)
+        GuestScreenSettings.setRecord(.broken, bundleID: gid, defaults: screenSuite)
         launch()
         check(env["HVM_VIRTUAL_SCREEN_HEIGHT"] == .some(nil), "a game recorded as broken falls back to the previous screen")
-        check(!GuestScreenSettings.virtualScreen(bundleID: "com.example.other", defaults: suite), "settings are per game")
+        check(!GuestScreenSettings.virtualScreen(bundleID: "com.example.other", defaults: screenSuite), "settings are per game")
+        // The same physical edges (47, 3, 34, 5) as seen in each host orientation.
+        let sceneInsets: [(GuestOrientation, CGFloat, CGFloat, CGFloat, CGFloat)] = [
+            (.portrait, 47, 3, 34, 5), (.upsideDown, 34, 5, 47, 3),
+            (.landscapeLeft, 5, 47, 3, 34), (.landscapeRight, 3, 34, 5, 47)
+        ]
+        GuestScreenSettings.setRecord(.unknown, bundleID: gid, defaults: screenSuite)
+        GuestScreenSettings.setSafeArea(true, bundleID: gid, defaults: screenSuite)
+        for (host, top, left, bottom, right) in sceneInsets {
+            let portrait = GuestScreenSettings.portraitInsets(top: top, left: left, bottom: bottom, right: right, host: host)
+            GuestScreenSettings.apply(bundleID: gid, display: CGSize(width: 844, height: 390),
+                                      insets: portrait, orientation: .portrait, defaults: screenSuite) { env[$0] = $1 }
+            check(env["HVM_SAFE_AREA"] == .some("39,2,28,4"), "host orientation maps to portrait launch insets")
+        }
+        screenSuite.removePersistentDomain(forName: "hvm.player.tests.281b")
         print("Player geometry/activity: \(checks) checks passed")
     }
 }

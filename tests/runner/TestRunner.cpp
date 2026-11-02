@@ -2513,6 +2513,8 @@ int runFullSubsystemTests() {
         auto screenSize = [&](const char* sel) { return UIKit::getRect(cx, ObjC::id(r.send(cpu, r.getClass("UIScreen"), "mainScreen")), sel); };
         auto& u = UIKit::ui(cx);
         const float w0 = u.screenW, h0 = u.screenH;
+        const auto processW = proc.config().screenWidth, processH = proc.config().screenHeight;
+        const auto orientation = u.statusBarOrientation;
         ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "694", 1);
         UIKit::applyGuestScreenEnv(cx);
         check(std::abs(screenSize("bounds").h - 694.0f) < 0.01f && std::abs(screenSize("bounds").w - w0) < 0.01f,
@@ -2543,7 +2545,9 @@ int runFullSubsystemTests() {
         ::unsetenv("HVM_SAFE_AREA");
         UIKit::applyGuestScreenEnv(cx);
         u.statusBarHidden = hidden;
+        u.statusBarOrientation = orientation;
         u.screenW = w0; u.screenH = h0;
+        proc.setScreenSize(processW, processH);
     }
 
     // 2a. UIScrollView

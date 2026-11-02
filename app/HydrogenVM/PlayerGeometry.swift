@@ -263,6 +263,17 @@ enum GuestScreenSettings {
         return (480...1024).contains(height) ? height : nil
     }
 
+    /// Convert scene-edge insets back to portrait display edges before starting the guest.
+    static func portraitInsets(top: CGFloat, left: CGFloat, bottom: CGFloat, right: CGFloat,
+                               host: GuestOrientation) -> (top: CGFloat, left: CGFloat, bottom: CGFloat, right: CGFloat) {
+        switch host {
+        case .portrait: (top, left, bottom, right)
+        case .upsideDown: (bottom, right, top, left)
+        case .landscapeLeft: (left, bottom, right, top)
+        case .landscapeRight: (right, top, left, bottom)
+        }
+    }
+
     /// Display-edge insets expressed as "top,left,bottom,right" in the portrait framebuffer's
     /// points. `scale` is guest points per display point. Which display edge is which guest
     /// edge follows the same quarter turns as `PlayerGeometry.guestPoint`.
