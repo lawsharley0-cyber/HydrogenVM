@@ -2548,8 +2548,17 @@ int runFullSubsystemTests() {
         const Graphics::Rect af = screenSize("applicationFrame");
         check(std::abs(af.y - 44.0f) < 0.01f && std::abs(af.h - (h0 - 44.0f - 34.0f)) < 0.01f,
               "safe-area insets shrink applicationFrame (top 44, bottom 34)");
+        const ObjC::id sharedApp = u.app ? u.app : r.createInstance(r.getClass("UIApplication"));
+        check(std::abs(UIKit::getRect(cx, sharedApp, "statusBarFrame").h - 44.0f) < 0.01f,
+              "with safe-area insets the status bar is as tall as the top inset");
+        ::setenv("HVM_SAFE_AREA", "0,200,0,200", 1);   // 400 points of side insets on a 320-point screen
+        UIKit::applyGuestScreenEnv(cx);
+        const Graphics::Rect erased = screenSize("applicationFrame");
+        check(std::abs(erased.w - w0) < 0.01f && std::abs(erased.y - 20.0f) < 0.01f,
+              "insets that would leave no usable width are rejected");
         ::setenv("HVM_SAFE_AREA", "bogus", 1);
         UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(UIKit::getRect(cx, sharedApp, "statusBarFrame").h - 20.0f) < 0.01f, "without valid insets the status bar is 20 points high");
         const Graphics::Rect plain = screenSize("applicationFrame");
         check(std::abs(plain.y - 20.0f) < 0.01f && std::abs(plain.h - (h0 - 20.0f)) < 0.01f,
               "invalid safe-area text means no insets");
@@ -8135,6 +8144,19 @@ int runFullSubsystemTests() {
                          tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
         }
         check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+        {   // total and records come from one read of the head: the newest record never exceeds the reported total, even
+            // while a writer keeps pushing
+            std::atomic<bool> pushing{true};
+            std::thread writer([&] { while (pushing) ringProc.engine().callHle(&ringCpu, ringIndex); });
+            bool consistent = true;
+            for (int i = 0; i < 2000 && consistent; ++i) {
+                const auto snap = ringCpu.call_ring.load()->snapshot(16);
+                consistent = snap.calls.empty() || snap.calls.back().seq <= snap.total;
+            }
+            pushing = false;
+            writer.join();
+            check(consistent, "a call-ring snapshot never holds a record newer than its total");
+        }
 
         // The crash bundle carries each thread's last calls (T2c, #259): oldest first, exactly the last N,
         // with the support status of a function that was declared a Stub.

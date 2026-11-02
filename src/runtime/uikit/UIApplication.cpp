@@ -663,6 +663,8 @@ void applyGuestScreenEnv(Ctx& x) {
                  && v[i] >= 0 && v[i] <= 200;
             pos = comma + 1;
         }
+        // Insets that leave no usable screen (their sum covers a whole dimension) are as invalid as unparsable ones.
+        if (ok && !(v[0] + v[2] < u.screenH && v[1] + v[3] < u.screenW)) ok = false;
         if (ok) { u.safeTop = v[0]; u.safeLeft = v[1]; u.safeBottom = v[2]; u.safeRight = v[3]; }
     }
 }
