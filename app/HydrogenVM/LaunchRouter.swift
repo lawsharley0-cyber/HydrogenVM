@@ -19,3 +19,18 @@ final class LaunchRouter {
         pending = url
     }
 }
+
+#if COLD_START_URL_TEST && targetEnvironment(simulator)
+/// Mark the actual handoff stages for the simulator regression test.
+enum ColdStartURLTest {
+    static func record(_ stage: String, value: String) {
+        let file = URL.documentsDirectory.appending(path: "cold-start-" + stage)
+        try? value.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    static func queued(_ url: URL) -> Bool {
+        let file = URL.documentsDirectory.appending(path: "cold-start-queued")
+        return (try? String(contentsOf: file, encoding: .utf8)) == url.absoluteString
+    }
+}
+#endif

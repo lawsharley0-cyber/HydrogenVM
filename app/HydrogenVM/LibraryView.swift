@@ -306,6 +306,11 @@ struct LibraryView: View {
             switch GameLink.startDecision(wanted: app.info.bundleIdentifier, running: running?.info.bundleIdentifier) {
             case .start:
                 running = app
+                #if COLD_START_URL_TEST && targetEnvironment(simulator)
+                if ColdStartURLTest.queued(url) {
+                    ColdStartURLTest.record("routed", value: app.info.bundleIdentifier)
+                }
+                #endif
             case .alreadyRunning:
                 break
             case .busy:

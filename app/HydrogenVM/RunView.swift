@@ -343,6 +343,11 @@ final class RunModel {
 
     private func append(_ line: String, _ level: HVMLogLevel) {
         if Self.automation { Self.console(line) }
+        #if COLD_START_URL_TEST && targetEnvironment(simulator)
+        if line.split(separator: "\n").contains("ALL CHECKS PASSED") {
+            ColdStartURLTest.record("guest-passed", value: app.info.bundleIdentifier)
+        }
+        #endif
         var parts = line.split(separator: "\n", omittingEmptySubsequences: false)
         if parts.count > 1, parts.last?.isEmpty == true { parts.removeLast() }
         for part in parts {

@@ -141,6 +141,17 @@ jobs:
         run: |
           tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
             "ALL CHECKS PASSED" "70,350@0.3;230,350@0.5" sim-out
+      - name: Test cold-start game URL handoff (simulator)
+        run: |
+          xcodebuild -project app/HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
+            -sdk iphonesimulator SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) COLD_START_URL_TEST' \
+            SYMROOT="$PWD/build/cold-start-xbuild" CODE_SIGNING_ALLOWED=NO build >build/cold-start-build.log 2>&1 || {
+              tail -150 build/cold-start-build.log
+              exit 1
+            }
+          bash tools/test_cold_start_url.sh build/cold-start-xbuild/Release-iphonesimulator/HydrogenVM.app \
+            build/ios/FoundationTest.app
       - name: Run a GLES game on the GPU path inside HydrogenVM (simulator)
         # Tiny Tower (GLES 1.1, in-repo fixture). Diagnostic: the screenshot and
         # console go to ci-reports under simulator-gl/; it does not gate the build.

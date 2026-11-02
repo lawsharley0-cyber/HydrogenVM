@@ -22,7 +22,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         // Only game links: .ipa imports keep using the library's own .onOpenURL.
         if let url = options.urlContexts.first?.url, url.scheme?.lowercased() == GameLink.scheme {
-            MainActor.assumeIsolated { LaunchRouter.shared.open(url) }
+            MainActor.assumeIsolated {
+                LaunchRouter.shared.open(url)
+                #if COLD_START_URL_TEST && targetEnvironment(simulator)
+                if LaunchRouter.shared.pending == url {
+                    ColdStartURLTest.record("queued", value: url.absoluteString)
+                }
+                #endif
+            }
         }
         return UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
     }
@@ -41,7 +48,13 @@ struct HydrogenVMApp: App {
                 Tab("Diagnostics", systemImage: "stethoscope") { DiagnosticsView() }
             }
             .task { recoveredCrash = CrashReport.recover() }
-            .onOpenURL { LaunchRouter.shared.open($0) }
+            .onOpenURL { url in
+                #if COLD_START_URL_TEST && targetEnvironment(simulator)
+                // The regression must use the queued scene URL, not a later delivery.
+                #else
+                LaunchRouter.shared.open(url)
+                #endif
+            }
             .sheet(item: $recoveredCrash) { CrashReportView(report: $0) }
         }
     }
