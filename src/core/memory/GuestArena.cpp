@@ -137,6 +137,22 @@ void GuestArena::unmap(uint32_t addr, uint32_t size) {
     }
 }
 
+bool GuestArena::copyInWritable(uint32_t addr, const void* src, size_t bytes, uint32_t& fault) noexcept {
+    fault = addr;
+    if (bytes > kArenaSize || uint64_t(addr) + bytes > kArenaSize) return false;
+    if (!bytes) return true;
+    const uint64_t end = uint64_t(addr) + bytes;
+    std::lock_guard<std::mutex> lk(mu_);
+    for (uint64_t page = uint64_t(addr) >> kGuestPageShift; page <= (end - 1) >> kGuestPageShift; ++page) {
+        if (!(prot_[page] & kProtWrite)) {
+            fault = uint32_t(std::max<uint64_t>(addr, page << kGuestPageShift));
+            return false;
+        }
+    }
+    std::memcpy(base_ + uint64_t(addr), src, bytes);
+    return true;
+}
+
 bool GuestArena::copyCStringWritable(uint32_t addr, const char* src, size_t chars) noexcept {
     const uint64_t end = uint64_t(addr) + chars + 1;
     if (end > kArenaSize) return false;

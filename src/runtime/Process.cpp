@@ -37,7 +37,7 @@ std::atomic<uint64_t> nextProcessIdentity{1};
 
 constexpr uint32_t kHeapBase = 0x10000000u, kHeapLimit = 0x80000000u;
 constexpr uint32_t kStaticBase = 0x0E000000u, kStaticLimit = 0x10000000u;
-constexpr uint32_t kMainStackSize = 1u << 20, kThreadStackSize = 512u << 10, kGuard = 64u << 10;
+constexpr uint32_t kMainStackSize = 1u << 20, kThreadStackSize = 512u << 10, kMinThreadStackSize = 16u << 10, kGuard = 64u << 10;
 
 std::string demangle(const std::string& sym) {
     std::string s = sym;
@@ -89,7 +89,11 @@ bool looksLikeData(const std::string& s) {
 
 // Host threads for guest threads get a generous stack: nested host↔guest
 // calls (ObjC dispatch from host code, callbacks) recurse on it.
+std::atomic<int> gInjectedSpawnFailures{0};   // test seam: Process::failNextHostThreadSpawns
+
 pthread_t spawnHostThread(std::function<void()> fn) {
+    if (gInjectedSpawnFailures.load() > 0 && gInjectedSpawnFailures.fetch_sub(1) > 0)
+        throw std::runtime_error("couldn't create host thread (injected failure)");
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 8u << 20);
@@ -688,6 +692,8 @@ void Process::setenv(const std::string& name, const std::string& value) {
 void Process::initThreadState(GuestThread& t, uint32_t stackSize) {
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
+        if (uint64_t(stackSize) + kGuard > uint64_t(stackTop_) - kHeapLimit)
+            throw std::runtime_error("HydrogenVM: guest stack exceeds available stack space");
         stackTop_ -= stackSize + kGuard;
         t.stackBase = stackTop_ + kGuard;
     }
@@ -768,26 +774,37 @@ GuestThread* Process::findThreadById(uint32_t id) {
     return nullptr;
 }
 
+void Process::failNextHostThreadSpawns(int count) { gInjectedSpawnFailures = count; }
+
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
     if (stopping()) throw ProcessExit(exitCode_, "stopping");
     joinHostThreads(false); // reclaim the 8 MB native stacks of completed workers
+    const uint64_t rounded = stackSize ? (uint64_t(stackSize) + 4095) & ~uint64_t(4095) : kThreadStackSize;
+    if (rounded > UINT32_MAX) throw std::runtime_error("HydrogenVM: guest stack size is too large");
     auto t = std::make_unique<GuestThread>(*this);
     GuestThread* raw = t.get();
+    initThreadState(*raw, std::max<uint32_t>(uint32_t(rounded), kMinThreadStackSize));
+    // The guest stack is mapped by now: give it back if the thread never starts (callers hold threadsMu_).
+    const uint32_t stackBase = raw->stackBase, mappedSize = raw->stackSize;
+    const auto releaseStack = [&] {
+        mem_->unmap(stackBase, mappedSize);
+        if (stackTop_ == stackBase - kGuard) stackTop_ = stackBase + mappedSize;
+    };
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
         raw->id = nextThreadId_++;
     }
-    initThreadState(*raw, std::max<uint32_t>(stackSize ? (stackSize + 4095) & ~4095u : kThreadStackSize, 64u << 10));
     raw->detached = detached;
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
-        if (stopping()) throw ProcessExit(exitCode_, "stopping");
+        if (stopping()) { releaseStack(); throw ProcessExit(exitCode_, "stopping"); }
         threads_[raw->self] = std::move(t);
         try {
             raw->host = spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
             raw->hostJoinable = true;
         } catch (...) {
-            threads_.erase(raw->self);
+            threads_.erase(raw->self);   // destroys the GuestThread (raw is dangling after this)
+            releaseStack();
             throw;
         }
     }

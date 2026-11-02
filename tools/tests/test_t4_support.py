@@ -97,7 +97,7 @@ class TestCensusWithoutBinary(unittest.TestCase):
             test.manifest = {"symbols": [{"name": "_printf", "status": "Real"}], "classes": []}
             with mock.patch.object(sys.modules[__name__], "ROOT_DIR", root), \
                  mock.patch.object(census, "FIXTURE_MANIFEST", fixture), \
-                 mock.patch.dict(os.environ, {"PATH": str(system_bin)}):
+                 mock.patch.dict(os.environ, {"PATH": str(system_bin), "HVM_FIXTURE_ROOT": ""}):   # not the developer's store
                 test.test_reproduces_reference_numbers()
                 system_objdump = system_bin / "llvm-objdump"
                 system_objdump.write_text("#!/bin/sh\nexit 0\n")
@@ -130,17 +130,11 @@ class TestCensus(unittest.TestCase):
             )
 
         tested = 0
-        missing_fixtures = []
         for fixture_name, meta in census.FIXTURE_MANIFEST.items():
-            ipa_path = ROOT_DIR / fixture_name
+            # From HVM_FIXTURE_ROOT when set (the private store; the repo copy is then ignored, like the compat
+            # harness), otherwise from the repo root.
+            ipa_path = census.fixture_path(fixture_name, ROOT_DIR, os.environ.get("HVM_FIXTURE_ROOT"))
             if not ipa_path.exists():
-                fixture_root = os.environ.get("HVM_FIXTURE_ROOT")
-                if fixture_root:
-                    cand = Path(fixture_root) / fixture_name
-                    if cand.exists():
-                        ipa_path = cand
-            if not ipa_path.exists():
-                missing_fixtures.append(fixture_name)
                 continue
 
             with self.subTest(fixture=fixture_name):
@@ -157,12 +151,63 @@ class TestCensus(unittest.TestCase):
                 self.assertEqual(res["reference"], ref)
                 tested += 1
 
+        missing_fixtures = census.missing_fixtures(ROOT_DIR, os.environ.get("HVM_FIXTURE_ROOT"))
+        if missing_fixtures and os.environ.get("HVM_FIXTURE_ROOT"):
+            # A configured store must be complete: a passing subset may not hide the fixtures that are absent.
+            self.fail(f"fixture store {os.environ['HVM_FIXTURE_ROOT']} is missing: {', '.join(missing_fixtures)}")
         if tested == 0:
             self.skipTest(
                 f"None of the reference fixture IPAs ({', '.join(census.FIXTURE_MANIFEST.keys())}) found at repository root or HVM_FIXTURE_ROOT. "
                 "To provide them, place the fixture IPAs at the repository root or set HVM_FIXTURE_ROOT to their directory "
                 "(obtain via private fixture store per docs/dev-system/library.json)."
             )
+
+
+class TestCensusFixturePath(unittest.TestCase):
+    """Where census looks for a fixture IPA. Pure path logic: no real game file and no build needed."""
+
+    NAME = "AngryBirds_v1.0_os30.ipa"
+
+    def test_partial_store_reports_every_missing_fixture(self):
+        names = list(census.FIXTURE_MANIFEST)
+        self.assertGreaterEqual(len(names), 2)
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as store:
+            (Path(store) / "ipas").mkdir()
+            (Path(repo) / names[1]).write_bytes(b"repo copy must be ignored")
+            (Path(store) / "ipas" / names[0]).write_bytes(b"present")
+            self.assertEqual(census.missing_fixtures(Path(repo), store), names[1:])   # every absent one, repo copies ignored
+            self.assertEqual(census.missing_fixtures(Path(repo), None), [n for n in names if n != names[1]])
+
+    def test_fixture_that_escapes_the_store_through_a_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as store:
+            (Path(repo) / self.NAME).write_bytes(b"repo copy")
+            os.symlink(repo, Path(store) / "ipas")   # the store's ipas/ points back at the repository
+            with self.assertRaises(ValueError):
+                census.fixture_path(self.NAME, Path(repo), store)
+            os.unlink(Path(store) / "ipas")
+            (Path(store) / "ipas").mkdir()
+            os.symlink(Path(repo) / self.NAME, Path(store) / "ipas" / self.NAME)   # a single fixture that is a link out
+            with self.assertRaises(ValueError):
+                census.fixture_path(self.NAME, Path(repo), store)
+
+    def test_fixture_root_wins_and_repo_copy_is_never_used(self):
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as store:
+            (Path(repo) / self.NAME).write_bytes(b"repo copy")
+            got = census.fixture_path(self.NAME, Path(repo), store)
+            self.assertEqual(got, Path(store) / "ipas" / self.NAME)   # same layout as apps.json fixtureRelPath
+            self.assertFalse(got.exists())   # a missing store file is reported as missing, not replaced by the repo copy
+
+    def test_without_a_fixture_root_the_repo_root_is_used(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self.assertEqual(census.fixture_path(self.NAME, Path(repo), None), Path(repo) / self.NAME)
+            self.assertEqual(census.fixture_path(self.NAME, Path(repo), ""), Path(repo) / self.NAME)
+
+    def test_census_all_names_the_missing_store_path(self):
+        with tempfile.TemporaryDirectory() as store:
+            (Path(store) / "m.json").write_text('{"symbols": [], "classes": []}')   # the manifest loads before fixtures
+            with self.assertRaises(SystemExit) as ctx:
+                census.main(["--all", "--fixture-root", store, "--manifest", str(Path(store) / "m.json")])
+            self.assertIn(str(Path(store) / "ipas"), str(ctx.exception))
 
 
 class TestLedger(unittest.TestCase):

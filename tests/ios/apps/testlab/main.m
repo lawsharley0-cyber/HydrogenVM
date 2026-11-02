@@ -2329,6 +2329,12 @@ static UIColor *colorForStatus(NSString *s) {
 }
 
 - (void)applicationWillTerminate:(UIApplication *)application {
+    // Opt-in watchdog regression: model a save that never returns.
+    if ([[[NSProcessInfo processInfo] arguments] containsObject:@"--stall-termination"]) {
+        printf("TESTLAB stalling termination\n");
+        fflush(stdout);
+        for (;;) { __asm__ volatile(""); }
+    }
     if (!self.lifecycleTest) return;
     self.terminationDelivered = YES;
     // Model games that tear down their scene, then pump a nested loop while
