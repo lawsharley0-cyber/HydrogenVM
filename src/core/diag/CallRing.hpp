@@ -50,9 +50,13 @@ public:
     // A total and the records up to exactly that total, from one read of the head, so no record's sequence number
     // can exceed the total reported with it.
     struct Snapshot { uint64_t total = 0; std::vector<CallRecord> calls; };
-    Snapshot snapshot(size_t n) const {
+    Snapshot snapshot(size_t n) const { return snapshot(n, [] {}); }
+    // `betweenReads` runs after the head is read and before the records are, so a test can force a push there.
+    template <class F>
+    Snapshot snapshot(size_t n, F&& betweenReads) const {
         Snapshot out;
         out.total = head_.load(std::memory_order_acquire);
+        betweenReads();
         out.calls = lastUpTo(out.total, n);
         return out;
     }

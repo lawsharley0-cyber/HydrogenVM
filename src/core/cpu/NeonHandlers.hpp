@@ -178,7 +178,7 @@ HVM_H(H_NFCmp) {
         constexpr int cnt = int(BYTES / 4);
         float n[cnt], mm[cnt] = {};
         uint32_t out[cnt];
-        vld(c, op->b, n, BYTES);
+        vld(c, ZERO ? op->c : op->b, n, BYTES);
         if constexpr (!ZERO) vld(c, op->c, mm, BYTES);
         for (int i = 0; i < cnt; ++i) {
             float a = nIn(n[i]), b = nIn(mm[i]);

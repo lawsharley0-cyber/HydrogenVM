@@ -105,6 +105,7 @@ int hvmRunMain(int argc, char** argv) {
             }
         }
         else if (!std::strcmp(argv[i], "--trace")) cfg.traceCalls = true;
+        else if (!std::strcmp(argv[i], "--thread-liveness")) cfg.threadLiveness = true;
         else if (!std::strcmp(argv[i], "--gpu")) {
             std::string why;
             cfg.hostGL = Hydrogen::Runtime::HostGL::createEglPlatform(&why);
@@ -208,6 +209,7 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"signature\": \"" << proc.crashSignature() << "\",\n";
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
             f << "  \"runtimeMemorySamples\": " << proc.memorySamplesJson() << ",\n";
+            f << "  \"threadLiveness\": " << proc.threadLivenessJson() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
             Runtime::MissingApiLog allLaunches;   // tainted, stubHits, missingApis (T2a), over every launch so far

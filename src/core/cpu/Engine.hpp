@@ -101,6 +101,7 @@ public:
     void resume(Cpu& target);
     // Marks `c` as running guest code, parking first while it is suspended.
     void enterGuest(Cpu& c) {
+        c.publishProgress(true);
         c.in_guest.store(true, std::memory_order_seq_cst);
         if (__builtin_expect(c.suspend_count.load(std::memory_order_seq_cst) != 0, 0)) park(c);
     }
