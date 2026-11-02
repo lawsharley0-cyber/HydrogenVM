@@ -381,10 +381,14 @@ void Engine::callHle(Cpu* c, uint32_t index) {
     c->in_guest.store(false, std::memory_order_release);
     const uint32_t outerHle = c->current_hle.exchange(index, std::memory_order_relaxed);
     recordHleState(*c, index);
+    const uint32_t outerArg0 = c->progress_argument0, outerArg1 = c->progress_argument1;
+    c->progress_argument0 = c->r[0]; c->progress_argument1 = c->r[1];
+    c->publishProgress(false);
     struct Reenter {
-        Engine* e; Cpu* c; uint32_t outer;
-        ~Reenter() { c->current_hle.store(outer, std::memory_order_relaxed); e->recordHleState(*c, outer); e->enterGuest(*c); }
-    } reenter{this, c, outerHle};
+        Engine* e; Cpu* c; uint32_t outer, a0, a1;
+        ~Reenter() { c->current_hle.store(outer, std::memory_order_relaxed); e->recordHleState(*c, outer);
+            c->progress_argument0 = a0; c->progress_argument1 = a1; e->enterGuest(*c); }
+    } reenter{this, c, outerHle, outerArg0, outerArg1};
     try {
         hle_[index].fn(*c);
     } catch (const GuestFault& f) {
@@ -564,6 +568,7 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         cpu.fault_state->active.store(true, std::memory_order_release);
     }
     cpu.budget = budget;
+    cpu.progress_budget_start = budget;
     const int64_t startBudget = budget;
     cpu.exit = Exit::None;
     cpu.exit_info = 0;
@@ -589,9 +594,12 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         cpu.exit_info = scope.addr;
         cpu.r[kPC] = cpu.block_pc;   // precise PC within the block isn't tracked
         cpu.insn_count += uint64_t(startBudget - cpu.budget);
-        cpu.in_guest.store(false, std::memory_order_release);
+        // Sample the registers before releasing the CPU: once in_guest is false a suspender may rewrite them.
         cpu.recordFaultRegisters(cpu.r[kPC]);
         if (cpu.fault_state) cpu.fault_state->inGuest.store(false, std::memory_order_relaxed);
+        cpu.in_guest.store(false, std::memory_order_release);
+        cpu.progress_budget_start = cpu.budget;
+        cpu.publishProgress(false);
         return cpu.exit;
     }
     uint8_t* const base = mem_.base();
@@ -606,11 +614,13 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         first->fn(&cpu, first, base);
     }
     t_scope = prev;
+    cpu.recordFaultRegisters(cpu.r[kPC]);   // before releasing the CPU to a suspender
+    if (cpu.fault_state) cpu.fault_state->inGuest.store(false, std::memory_order_relaxed);
     cpu.in_guest.store(false, std::memory_order_release);
     // Handlers only decrement the budget; the retired count falls out of it.
     cpu.insn_count += uint64_t(startBudget - cpu.budget);
-    cpu.recordFaultRegisters(cpu.r[kPC]);
-    if (cpu.fault_state) cpu.fault_state->inGuest.store(false, std::memory_order_relaxed);
+    cpu.progress_budget_start = cpu.budget;
+    cpu.publishProgress(false);
     return cpu.exit;
 }
 
@@ -619,6 +629,7 @@ void Engine::park(Cpu& c) {
     c.recordFaultRegisters(c.r[kPC]);
     if (c.fault_state) c.fault_state->inGuest.store(false, std::memory_order_relaxed);
     c.in_guest.store(false, std::memory_order_seq_cst);
+    c.publishProgress(false);
     std::unique_lock<std::mutex> lk(suspendMu_);
     suspendCv_.notify_all();
     suspendCv_.wait(lk, [&] { return c.suspend_count.load() == 0 || stopRequested(); });
@@ -626,7 +637,7 @@ void Engine::park(Cpu& c) {
     // it to clear, or has already raised suspend_count, which enterGuest re-checks.
     c.in_guest.store(true, std::memory_order_seq_cst);
     lk.unlock();
-    // enterGuest samples the registers after this returns, so they are the post-resume (possibly rewritten) ones.
+    // enterGuest samples the registers and publishes progress after this returns (post-resume registers).
 }
 
 void Engine::suspend(Cpu& t) {
@@ -693,6 +704,8 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     std::memcpy(saved, c.r, sizeof saved);
     const uint32_t nzcv = c.nzcv, q = c.q, ge = c.ge, thumb = c.thumb, blockPc = c.block_pc;
     const int64_t budget = c.budget;
+    const int64_t progressBudgetStart = c.progress_budget_start;
+    const uint64_t progressCarry = c.progress_carry;
     const Exit exitSaved = c.exit;
     const uint32_t infoSaved = c.exit_info;
     const uint32_t boundarySaved = c.call_boundary_sp;
@@ -725,6 +738,8 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     c.r[kPC] = fn & ~1u;
     c.thumb = fn & 1;
 
+    // After the stack-argument writes (they can fault, and a fault publishes before the carry is restored): the nested slices replace budget/progress_budget_start; keep the outer slice's pending count in the published total.
+    c.progress_carry += uint64_t(c.progress_budget_start) - uint64_t(c.budget);
     const Exit e = runToExit(c);
     const uint64_t result = (uint64_t(c.r[1]) << 32) | c.r[0];
     if (e != Exit::Return) {
@@ -732,12 +747,18 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
         const uint32_t info = c.exit_info, pc = c.r[kPC], th = c.thumb;
         std::memcpy(c.r, saved, sizeof saved);
         c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
+        c.progress_budget_start = progressBudgetStart;
+        c.progress_carry = progressCarry;
         c.exit = exitSaved; c.exit_info = infoSaved;
+        c.publishProgress(false);
         throw GuestFault(e, info, pc, th, e == Exit::HostError ? t_hostError : "guest call did not return");
     }
     std::memcpy(c.r, saved, sizeof saved);
     c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
+    c.progress_budget_start = progressBudgetStart;
+    c.progress_carry = progressCarry;
     c.exit = exitSaved; c.exit_info = infoSaved;
+    c.publishProgress(false);
     return result;
 }
 

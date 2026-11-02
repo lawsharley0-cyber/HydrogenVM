@@ -109,6 +109,7 @@ public:
         // only touches them once in_guest is false, which park() guarantees until the thread is resumed.
         c.recordFaultRegisters(c.r[kPC]);
         if (c.fault_state) c.fault_state->inGuest.store(true, std::memory_order_relaxed);
+        c.publishProgress(true);
     }
 
     // Run until an exit other than Budget (checking for stop requests).

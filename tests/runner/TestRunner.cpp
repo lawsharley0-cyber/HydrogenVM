@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <filesystem>
 #include <arpa/inet.h>
@@ -239,6 +240,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 int runMinimp3HwcapChecks();
 int runHostFaultTests();
 int runHostFaultChild(int fd, bool stress, bool afterUnwind);
+int runThreadProgressTests();
 int runGuestCallBoundaryTests();
 int runSuspendTests();
 int runGuestCallBoundaryChild(int mode);
@@ -1873,6 +1875,42 @@ int runFullSubsystemTests() {
         while ((ex = engine.run(cpu, 2)) == CPU::Exit::Budget) {}
         check(ex == CPU::Exit::Halt && cpu.r[0] == 0x5678123Eu, "CPU superinstructions (MOVW+MOVT, LDR+ADD, POP {pc}) under 2-insn slices");
     }
+    // NEON float compare against zero (2-register misc) must read the source register,
+    // not register 0 (issue #34: Subway Surfers AABB frustum plane culling).
+    {
+        Memory::GuestArena mem;
+        CPU::Engine engine(mem);
+        static const uint32_t kNeonProg[] = {
+            0xE3000000, 0xE3430F80, // movw r0, 0; movt r0, 0x3F80 (1.0f)
+            0xEE000A10, 0xEE000A90, // vmov s0, r0; vmov s1, r0
+            0xEE010A10, 0xEE010A90, // vmov s2, r0; vmov s3, r0
+            0xE3000000, 0xE34B0F80, // movw r0, 0; movt r0, 0xBF80 (-1.0f)
+            0xEE080A10,             // vmov s16, r0
+            0xE3001000, 0xE3441000, // movw r1, 0; movt r1, 0x4000 (2.0f)
+            0xEE081A90,             // vmov s17, r1
+            0xE3002000, 0xE34C2040, // movw r2, 0; movt r2, 0xC040 (-3.0f)
+            0xEE092A10,             // vmov s18, r2
+            0xE3A03000,             // mov r3, #0 (0.0f)
+            0xEE093A90,             // vmov s19, r3
+            0xF3B98648,             // vclt.f32 q4, q4, #0
+            0xEE180A10, 0xEE181A90, // vmov r0, s16; vmov r1, s17
+            0xEE192A10, 0xEE193A90, // vmov r2, s18; vmov r3, s19
+            0xE12FFF1E,             // bx lr
+        };
+        mem.map(0x10000, 0x1000, Memory::kProtRX);
+        mem.copyIn(0x10000, kNeonProg, sizeof kNeonProg);
+        mem.map(0x000F0000, 0x10000, Memory::kProtRW);
+        const uint32_t halt = engine.registerHle("halt", [](CPU::Cpu& c) { c.exit = CPU::Exit::Halt; });
+        CPU::Cpu cpu;
+        cpu.r[CPU::kSP] = 0x00100000;
+        cpu.r[CPU::kLR] = halt;
+        cpu.r[CPU::kPC] = 0x10000;
+        CPU::Exit ex;
+        while ((ex = engine.run(cpu, 1000)) == CPU::Exit::Budget) {}
+        check(ex == CPU::Exit::Halt && cpu.r[0] == 0xFFFFFFFFu && cpu.r[1] == 0 && cpu.r[2] == 0xFFFFFFFFu && cpu.r[3] == 0,
+              "NEON float compare with zero (VCLT #0) uses source register");
+    }
+
 
     // 2. Full Process + Objective-C + UIKit + OpenGL ES + Audio verification
     ProcessConfig cfg;
@@ -7494,6 +7532,217 @@ int runFullSubsystemTests() {
         check(cancelled.size() == 2 && performed.empty(), "removing the last mode detaches the source and cancels once per mode");
     }
 
+    // Run loop modes: work belongs to the mode it was added in, a timer added to two modes is
+    // still one timer, and a run in kCFRunLoopCommonModes runs the default mode.
+    {
+        ProcessConfig modeCfg;
+        modeCfg.homePath = "/tmp/hvm_runloop_modes";
+        Process modeProc(modeCfg);
+        auto& mcpu = modeProc.mainThread().cpu;
+        // A Process with no loaded image starts with no stack; calls that pass arguments on the
+        // stack (_CFRunLoopTimerCreate, _CFRunLoopRunInMode) need one.
+        const uint32_t stack = modeProc.heap().allocZeroed(8u << 10);
+        mcpu.r[CPU::kSP] = stack + (8u << 10) - 64;
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(modeProc.callGuest(mcpu, *modeProc.lookupSymbol(sym), args)); };
+        auto callv = [&](const char* sym, const std::vector<uint32_t>& args) { return uint32_t(modeProc.callGuest(mcpu, *modeProc.lookupSymbol(sym), args)); };
+        Ctx mx{modeProc, mcpu, modeProc.mem()};
+        const auto words = [](double d) { std::vector<uint32_t> w(2); std::memcpy(w.data(), &d, 8); return w; };
+        const auto exportMode = [&](const char* sym) { return modeProc.mem().read<uint32_t>(*modeProc.lookupSymbol(sym)); };
+        const uint32_t mainLoop = call("_CFRunLoopGetMain", {});
+        const uint32_t defaultMode = exportMode("_kCFRunLoopDefaultMode");
+        const uint32_t commonModes = exportMode("_kCFRunLoopCommonModes");
+        const uint32_t modeA = Foundation::makeString(mx, "HVMModeA");
+        const uint32_t modeB = Foundation::makeString(mx, "HVMModeB");
+        const uint32_t modeC = Foundation::makeString(mx, "HVMModeC");
+        const auto runInMode = [&](uint32_t mode) {
+            std::vector<uint32_t> args{mode};   // _CFRunLoopRunInMode(mode, seconds, returnAfterSource)
+            const auto seconds = words(0.0);
+            args.insert(args.end(), seconds.begin(), seconds.end());
+            args.push_back(0);
+            callv("_CFRunLoopRunInMode", args);
+        };
+        std::vector<uint32_t> performed, fired;
+        const uint32_t performFn = modeProc.defineFunction("test_mode_source_perform", [&](Ctx& x) { performed.push_back(x.cpu.r[0]); });
+        const uint32_t fireFn = modeProc.defineFunction("test_mode_timer_fire", [&](Ctx& x) { fired.push_back(x.cpu.r[1]); });
+        const auto makeSource = [&](uint32_t info) {
+            const uint32_t ctx = modeProc.heap().allocZeroed(40);
+            modeProc.mem().write<uint32_t>(ctx + 4, info);        // CFRunLoopSourceContext.info
+            modeProc.mem().write<uint32_t>(ctx + 36, performFn);  // CFRunLoopSourceContext.perform
+            return call("_CFRunLoopSourceCreate", {0, 0, ctx});
+        };
+        const auto makeTimer = [&](uint32_t info) {
+            const uint32_t ctx = modeProc.heap().allocZeroed(20);
+            modeProc.mem().write<uint32_t>(ctx + 4, info);        // CFRunLoopTimerContext.info
+            std::vector<uint32_t> args{0};                        // _CFRunLoopTimerCreate(alloc, fireDate, interval, flags, order, callout, ctx)
+            for (double d : {Foundation::now() - 0.001, 0.0}) {   // already due, one shot
+                const auto w = words(d);
+                args.insert(args.end(), w.begin(), w.end());
+            }
+            args.push_back(0);
+            args.push_back(0);
+            args.push_back(fireFn);
+            args.push_back(ctx);
+            return callv("_CFRunLoopTimerCreate", args);
+        };
+
+        // A source added in one mode does not perform in another: it waits, still signalled, for
+        // a run in its own mode.
+        const uint32_t sourceA = makeSource(0xA1);
+        call("_CFRunLoopAddSource", {mainLoop, sourceA, modeA});
+        call("_CFRunLoopSourceSignal", {sourceA});
+        runInMode(modeB);
+        check(performed.empty(), "a run loop source added in one mode does not perform in another mode");
+        runInMode(modeA);
+        check(performed == std::vector<uint32_t>{0xA1}, "a run loop source performs in the mode it was added in");
+
+        // A timer added to two modes is one timer: it fires once, and only in those modes.
+        fired.clear();
+        const uint32_t bothModes = makeTimer(0xB1);
+        call("_CFRunLoopAddTimer", {mainLoop, bothModes, modeA});
+        call("_CFRunLoopAddTimer", {mainLoop, bothModes, modeB});
+        runInMode(modeC);
+        check(fired.empty(), "a timer added to two modes does not fire in a third mode");
+        runInMode(modeA);
+        runInMode(modeB);
+        check(fired == std::vector<uint32_t>{0xB1}, "a timer added to two modes fires once");
+
+        // Running in kCFRunLoopCommonModes runs the default mode: a default-mode timer fires, a
+        // timer that belongs to a private mode waits for that mode.
+        fired.clear();
+        const uint32_t defaultTimer = makeTimer(0xC1);
+        const uint32_t privateTimer = makeTimer(0xC2);
+        call("_CFRunLoopAddTimer", {mainLoop, defaultTimer, defaultMode});
+        call("_CFRunLoopAddTimer", {mainLoop, privateTimer, modeB});
+        runInMode(commonModes);
+        check(fired == std::vector<uint32_t>{0xC1},
+              "_CFRunLoopRunInMode in kCFRunLoopCommonModes fires a default-mode timer and not a private-mode one");
+
+        // An item added to kCFRunLoopCommonModes belongs to the common modes (the default mode is one),
+        // not to a private mode.
+        fired.clear();
+        const uint32_t commonTimer = makeTimer(0xD1);
+        call("_CFRunLoopAddTimer", {mainLoop, commonTimer, commonModes});
+        runInMode(modeC);
+        check(fired.empty(), "a timer added to the common modes does not fire in a private mode");
+        runInMode(defaultMode);
+        check(fired == std::vector<uint32_t>{0xD1}, "a timer added to the common modes fires in the default mode");
+
+        // -currentMode is nil when the loop is idle and the running mode's own string inside a callout.
+        auto& mr = ObjC::rt(modeProc);
+        check(uint32_t(mr.send(mcpu, mainLoop, "currentMode")) == 0, "NSRunLoop currentMode is nil while the loop is not running");
+        std::string seenMode = "<unset>";
+        const uint32_t modeProbe = modeProc.defineFunction("test_mode_probe_fire", [&](Ctx& x) {
+            const uint32_t m = uint32_t(ObjC::rt(x).send(x.cpu, mainLoop, "currentMode"));
+            seenMode = m ? Foundation::utf8(x, m) : "<nil>";
+        });
+        {
+            const uint32_t ctx = modeProc.heap().allocZeroed(20);
+            std::vector<uint32_t> args{0};
+            for (double d : {Foundation::now() - 0.001, 0.0}) {
+                const auto w = words(d);
+                args.insert(args.end(), w.begin(), w.end());
+            }
+            args.push_back(0);
+            args.push_back(0);
+            args.push_back(modeProbe);
+            args.push_back(ctx);
+            const uint32_t probeTimer = callv("_CFRunLoopTimerCreate", args);
+            call("_CFRunLoopAddTimer", {mainLoop, probeTimer, modeA});
+        }
+        runInMode(modeA);
+        check(seenMode == "HVMModeA", "NSRunLoop currentMode inside a callout is the running mode's name");
+
+        // -currentMode answers for the receiver's loop, not the calling thread's: a guest thread (which has a run loop
+        // of its own, idle) asking the main loop while it runs in modeA sees modeA.
+        // The worker owns its state through shared_ptr, so a worker still running after the wait times out cannot touch
+        // destroyed locals.
+        struct WorkerState { std::atomic<bool> done{false}; std::mutex mu; std::string saw = "<unset>"; };
+        const auto workerState = std::make_shared<WorkerState>();
+        auto workerCls = mr.defineClass("HVMModeProbeWorker", "NSObject");
+        workerCls.method("work:", [workerState, mainLoop](Ctx& x) {
+            ObjC::rt(x).send(x.cpu, ObjC::rt(x).getClass("NSRunLoop"), "currentRunLoop");   // this thread's own loop, not running
+            const uint32_t m = uint32_t(ObjC::rt(x).send(x.cpu, mainLoop, "currentMode"));
+            { std::lock_guard<std::mutex> lk(workerState->mu); workerState->saw = m ? Foundation::utf8(x, m) : "<nil>"; }
+            workerState->done = true;
+        }, "v@:@");
+        const uint32_t workerTarget = mr.createInstance(workerCls.cls());
+        const uint32_t crossProbe = modeProc.defineFunction("test_mode_cross_thread_fire", [workerState, workerTarget](Ctx& x) {
+            const uint32_t th = uint32_t(ObjC::rt(x).send(x.cpu, ObjC::id(ObjC::rt(x).send(x.cpu, ObjC::rt(x).getClass("NSThread"), ObjC::rt(x).selAlloc)),
+                                                         "initWithTarget:selector:object:", {workerTarget, ObjC::rt(x).sel("work:"), 0}));
+            ObjC::rt(x).send(x.cpu, th, "start");
+            for (int i = 0; i < 5000 && !workerState->done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        });
+        {
+            const uint32_t ctx = modeProc.heap().allocZeroed(20);
+            std::vector<uint32_t> args{0};
+            for (double d : {Foundation::now() - 0.001, 0.0}) {
+                const auto w = words(d);
+                args.insert(args.end(), w.begin(), w.end());
+            }
+            args.push_back(0);
+            args.push_back(0);
+            args.push_back(crossProbe);
+            args.push_back(ctx);
+            call("_CFRunLoopAddTimer", {mainLoop, callv("_CFRunLoopTimerCreate", args), modeA});
+        }
+        runInMode(modeA);
+        std::string workerSaw;
+        { std::lock_guard<std::mutex> lk(workerState->mu); workerSaw = workerState->saw; }
+        check(workerState->done && workerSaw == "HVMModeA", "NSRunLoop currentMode answers for the receiver's loop, not the calling thread's");
+
+        // performSelector:withObject:afterDelay:inModes: runs only in the modes it names.
+        int delayedRuns = 0;
+        auto delayedCls = mr.defineClass("HVMDelayedModeTarget", "NSObject");
+        delayedCls.method("go:", [&](Ctx&) { ++delayedRuns; }, "v@:@");
+        const uint32_t delayedTarget = mr.createInstance(delayedCls.cls());
+        {
+            const uint32_t modeList = Foundation::makeArray(mx, {modeA});
+            const auto w = words(0.0);
+            const uint32_t sp = mcpu.r[CPU::kSP];
+            mcpu.r[CPU::kSP] = sp - 16;   // soft-float: the delay is 8-aligned on the stack after (sel, arg); modes follows
+            modeProc.mem().write<uint32_t>(mcpu.r[CPU::kSP], w[0]);
+            modeProc.mem().write<uint32_t>(mcpu.r[CPU::kSP] + 4, w[1]);
+            modeProc.mem().write<uint32_t>(mcpu.r[CPU::kSP] + 8, modeList);
+            mr.send(mcpu, delayedTarget, "performSelector:withObject:afterDelay:inModes:", {mr.sel("go:"), 0});
+            mcpu.r[CPU::kSP] = sp;
+        }
+        runInMode(modeB);
+        check(delayedRuns == 0, "a delayed selector scoped to one mode does not run in another mode");
+        runInMode(modeA);
+        check(delayedRuns == 1, "a delayed selector scoped to a mode runs in that mode");
+    }
+
+    // UIApplication's main loop runs the main run loop in the default mode: a source that belongs
+    // to another mode waits for a run in that mode instead of performing on a frame.
+    {
+        ProcessConfig appCfg;
+        appCfg.homePath = "/tmp/hvm_app_loop_mode";
+        Process appProc(appCfg);
+        auto& acpu = appProc.mainThread().cpu;
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(appProc.callGuest(acpu, *appProc.lookupSymbol(sym), args)); };
+        Ctx ax{appProc, acpu, appProc.mem()};
+        const uint32_t mainLoop = call("_CFRunLoopGetMain", {});
+        const uint32_t privateMode = Foundation::makeString(ax, "HVMModeB");
+        std::vector<uint32_t> performed;
+        const uint32_t performFn = appProc.defineFunction("test_app_loop_source_perform", [&](Ctx& x) { performed.push_back(x.cpu.r[0]); });
+        const auto makeSource = [&](uint32_t info) {
+            const uint32_t ctx = appProc.heap().allocZeroed(40);
+            appProc.mem().write<uint32_t>(ctx + 4, info);
+            appProc.mem().write<uint32_t>(ctx + 36, performFn);
+            return call("_CFRunLoopSourceCreate", {0, 0, ctx});
+        };
+        const uint32_t privateSource = makeSource(0xD1);
+        call("_CFRunLoopAddSource", {mainLoop, privateSource, privateMode});
+        call("_CFRunLoopSourceSignal", {privateSource});
+        UIKit::runApplicationLoop(ax, Foundation::now() + 0.01);
+        check(performed.empty(), "UIApplication's main loop does not perform a source added in another mode");
+        const uint32_t defaultSource = makeSource(0xD2);
+        call("_CFRunLoopAddSource", {mainLoop, defaultSource, 0});
+        call("_CFRunLoopSourceSignal", {defaultSource});
+        UIKit::runApplicationLoop(ax, Foundation::now() + 0.01);
+        check(performed == std::vector<uint32_t>{0xD2}, "UIApplication's main loop performs a default-mode source");
+    }
+
     {
         ProcessConfig traceCfg = cfg;
         traceCfg.homePath = "/tmp/hvm_symbolication_test";
@@ -8193,6 +8442,7 @@ int runFullSubsystemTests() {
 
     check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
     check(runHostFaultTests() == 0, "host-fault bundle contains complete thread, arena, HLE and log evidence");
+    check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
     check(runSuspendTests() == 0, "a suspended Cpu stays out of guest code, including across back-to-back suspensions");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
