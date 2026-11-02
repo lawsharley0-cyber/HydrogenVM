@@ -47,6 +47,7 @@ struct EmulatorScreen: UIViewRepresentable {
         private let backdropDim = CALayer()
         private var backdropSource: CGImage?
         private var backdropTime: CFTimeInterval = 0
+        var backdropClock: () -> CFTimeInterval = CACurrentMediaTime
         private var glLayer: CALayer?
         private var guestSize = CGSize(width: 320, height: 480)
         private var pixelSize = CGSize(width: 640, height: 960)
@@ -142,7 +143,7 @@ struct EmulatorScreen: UIViewRepresentable {
                 backdropSource = nil   // the next time the bars show, draw at once
                 return
             }
-            let now = CACurrentMediaTime()
+            let now = backdropClock()
             // Draw immediately when the bars first appear, then at most four times a second:
             // every software frame is a new image, so identity alone would redraw at frame rate.
             guard backdropSource == nil || now - backdropTime > 0.25 else { return }

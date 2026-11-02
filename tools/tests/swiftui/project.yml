@@ -52,6 +52,16 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.EditorUITests
         TEST_TARGET_NAME: SaveEditorHarness
+  PlayerViewportTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - PlayerViewportTests.swift
+    dependencies:
+      - target: SaveEditorHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.PlayerViewportTests
 schemes:
   SaveEditorHarness:
     build:
@@ -60,3 +70,4 @@ schemes:
     test:
       targets:
         - SaveEditorUITests
+        - PlayerViewportTests

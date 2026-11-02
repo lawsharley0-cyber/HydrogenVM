@@ -64,6 +64,25 @@ final class PlayerUITests: XCTestCase {
     }
 
     @MainActor
+    func testScaleModeReturnsToLiveGlobalDefault() {
+        let app = open()
+        app.buttons["player-controls"].tap()
+        app.buttons["Fill (Crop)"].tap()
+        XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
+        app.buttons["Use Default"].tap()
+        XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForNonExistence(timeout: 5))
+        app.buttons["probe-default-extended"].tap()
+        XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
+        app.buttons["probe-default-fill"].tap()
+        XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
+        app.buttons["Stretch"].tap()
+        app.buttons["probe-default-extended"].tap()
+        XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForNonExistence(timeout: 5))
+        app.buttons["Use Default"].tap()
+        XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testInspectWaitsForStopAndOpensExistingBrowser() {
         let app = open()
         app.buttons["player-controls"].tap()
