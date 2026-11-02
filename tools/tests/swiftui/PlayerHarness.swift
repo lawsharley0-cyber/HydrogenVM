@@ -1,9 +1,21 @@
 import SwiftUI
 import UIKit
 
-struct HarnessAppInfo { let bundlePath: String }
+struct HarnessAppInfo {
+    let bundlePath: String
+    let bundleIdentifier = "com.lfull.HydrogenVM.EditorHarness.fixture"
+    let version = "1.0"
+}
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
+
+// The synthetic player has no engine, GPU layer, or host-fault handler.
+let HVMGLLayerUnitTransformKey = "hvmUnitTransform"
+enum HVMCrashJournal {
+    static func openSignalFile(_ path: String) {}
+    static func closeSignalFile() {}
+    static func availableMemory() -> UInt64 { 0 }
+}
 
 @Observable @MainActor
 final class PlayerProbe {
@@ -22,10 +34,15 @@ final class PlayerProbe {
 /// viewport and geometry are compiled into this synthetic UI fixture.
 @MainActor
 final class HVMSession {
+    static let emulatorCommit = "synthetic"
     var keepGoing = false
+    var useGPU = false
     var onFrame: ((CGImage) -> Void)?
+    var onGLLayer: ((CALayer?) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?
     var onExit: ((Int, String?) -> Void)?
+    var crashBundle: String? { nil }
+    private(set) var framesPresented: UInt64 = 0
     var screenSize = CGSize(width: 320, height: 480)
     var interfaceOrientation = 1
     var isBackgrounded = false
@@ -49,6 +66,7 @@ final class HVMSession {
             UIColor.yellow.setFill(); context.fill(CGRect(x: 160, y: 240, width: 160, height: 240))
         }
         PlayerProbe.shared.lastOrientation = interfaceOrientation
+        framesPresented += 1
         onFrame?(image.cgImage!)
     }
     func stopGracefully() {
