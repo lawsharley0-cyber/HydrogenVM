@@ -61,6 +61,10 @@ def write_json(path, value):
 
 def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', timeout=None, extra_args=()):
     hvm, app, home, out = (Path(p).resolve() for p in (hvm, app, home, out))
+    extra_args = list(extra_args)
+    options = extra_args[:extra_args.index('--')] if '--' in extra_args else extra_args
+    if any(arg == '--launches' or arg.startswith('--launches=') for arg in options):
+        raise ValueError('extra_args cannot override --launches')
     if home == out or home in out.parents or out in home.parents:
         raise ValueError('Home and evidence directories must not overlap')
     if mode not in ('separate', 'in-process') or not 1 <= launches <= 20:
@@ -107,7 +111,7 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
         batch = launches if mode == 'in-process' else 1
         if mode == 'in-process':
             command += ['--launches', str(launches)]
-        command += list(extra_args)
+        command += extra_args
         row = {'index': index, 'command': command, 'returnCode': None, 'timedOut': False}
         with (out / f'launch-{index}.log').open('wb') as log:
             try:
@@ -136,21 +140,21 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
         except (OSError, ValueError) as error:
             row['reportError'] = str(error)
         if mode == 'in-process':
-            attempted = 0
+            attempted = None
             with (out / f'launch-{index}.log').open(encoding='utf-8', errors='replace') as log:
                 for line in log:
                     for n, total in re.findall(r'\[hvm\] ---- launch (\d+) of (\d+) ----', line):
                         if int(total) == launches:
-                            attempted = max(attempted, int(n))
+                            attempted = max(attempted or 0, int(n))
             # hvm omits banners for a single launch and when --quiet is an hvm option.
             options = command[:command.index('--')] if '--' in command else command
             quiet = '--quiet' in options
             if not attempted and (launches == 1 or quiet):
                 report = row.get('report', {})
-                if row['returnCode'] == 0 and report.get('exitStatus') == 0 and report.get('crashed') is False:
+                if launches == 1 and 'report' in row:
+                    attempted = 1
+                elif row['returnCode'] == 0 and report.get('exitStatus') == 0 and report.get('crashed') is False:
                     attempted = launches
-                elif quiet:
-                    attempted = None  # Suppressed banners cannot establish the count.
             row['attemptedLaunches'] = attempted
             row['allRequestedLaunchesAttempted'] = row['attemptedLaunches'] == launches
         result['runs'].append(row)

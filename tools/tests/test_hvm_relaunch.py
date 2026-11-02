@@ -130,7 +130,7 @@ pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({'exitStatus':0,'cr
 import json, pathlib, sys
 a = sys.argv
 launches = int(a[a.index('--launches')+1])
-if launches > 1 and '--quiet' not in a:
+if launches > 1 and '--quiet' not in a and '--no-banner' not in a:
     for n in range(1, launches+1):
         print(f'[hvm] ---- launch {n} of {launches} ----')
 failed = '--fail' in a
@@ -144,7 +144,8 @@ sys.exit(42 if failed else 0)
                     ('quiet', 3, ['--quiet'], 3, True),
                     ('quiet-failure', 3, ['--quiet', '--fail'], None, False),
                     ('quiet-crash', 3, ['--quiet', '--crash'], None, False),
-                    ('quiet-no-report', 3, ['--quiet', '--missing-report'], None, False)]:
+                    ('quiet-no-report', 3, ['--quiet', '--missing-report'], None, False),
+                    ('no-evidence', 3, ['--no-banner', '--missing-report'], None, False)]:
                 with self.subTest(name=name):
                     out = root / name
                     result = run_relaunch(hvm, root / 'app', root / 'home', out,
@@ -154,6 +155,66 @@ sys.exit(42 if failed else 0)
                     self.assertEqual(row['attemptedLaunches'], attempted)
                     self.assertEqual(row['allRequestedLaunchesAttempted'], complete)
                     self.assertEqual(result['allRunsExitedWithoutCrash'], complete)
+
+    @unittest.skipUnless(os.name == 'posix', 'uses a POSIX executable fixture')
+    def test_single_launch_attempt_is_recorded_even_when_it_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for name in ['home', 'app']: (root / name).mkdir()
+            hvm = root / 'hvm'
+            hvm.write_text('''#!/usr/bin/env python3
+import json, pathlib, sys
+a = sys.argv
+if '--missing-report' not in a:
+    pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({
+        'exitStatus': 42 if '--fail' in a else 0, 'crashed': '--crash' in a}))
+sys.exit(42 if '--fail' in a else 0)
+''')
+            hvm.chmod(0o700)
+            for name, args, attempted in [
+                    ('failure', ['--fail'], 1),
+                    ('crash', ['--crash'], 1),
+                    ('quiet-failure', ['--quiet', '--fail'], 1),
+                    ('missing', ['--missing-report'], None)]:
+                with self.subTest(name=name):
+                    result = run_relaunch(hvm, root / 'app', root / 'home', root / name,
+                                          launches=1, seconds=1, mode='in-process', extra_args=args)
+                    row = result['runs'][0]
+                    self.assertEqual(row['attemptedLaunches'], attempted)
+                    self.assertEqual(row['allRequestedLaunchesAttempted'], attempted == 1)
+                    self.assertFalse(result['allRunsExitedWithoutCrash'])
+
+    @unittest.skipUnless(os.name == 'posix', 'uses a POSIX executable fixture')
+    def test_extra_launches_cannot_override_batch_size(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for name in ['home', 'app']: (root / name).mkdir()
+            hvm = root / 'hvm'
+            hvm.write_text('''#!/usr/bin/env python3
+import json, pathlib, sys
+a = sys.argv
+options = a[:a.index('--')] if '--' in a else a
+launches = 1
+for i, arg in enumerate(options):
+    if arg == '--launches': launches = int(options[i+1])
+if launches > 1 and '--quiet' not in options:
+    for n in range(1, launches+1): print(f'[hvm] ---- launch {n} of {launches} ----')
+pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({'exitStatus':0,'crashed':False}))
+''')
+            hvm.chmod(0o700)
+            for mode in ('separate', 'in-process'):
+                for override in (['--launches', '1'], ['--launches=1']):
+                    with self.subTest(mode=mode, override=override):
+                        out = root / (mode + override[0].replace('=', '-'))
+                        with self.assertRaisesRegex(ValueError, '--launches'):
+                            run_relaunch(hvm, root / 'app', root / 'home', out, launches=3,
+                                         seconds=1, mode=mode, extra_args=['--quiet', *override])
+                        self.assertFalse(out.exists())
+            result = run_relaunch(hvm, root / 'app', root / 'home', root / 'guest',
+                                  launches=3, seconds=1, mode='in-process',
+                                  extra_args=['--', '--launches', '1'])
+            self.assertEqual(result['runs'][0]['attemptedLaunches'], 3)
+            self.assertTrue(result['allRunsExitedWithoutCrash'])
 
     @unittest.skipUnless(os.environ.get('HVM_TESTLAB_TOOLCHAIN') == '1', 'requires Test Lab toolchain')
     def test_watchdog_crash_stops_in_process_batch_and_preserves_report(self):
