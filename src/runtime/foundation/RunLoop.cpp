@@ -75,6 +75,10 @@ bool RunLoop::inMode(const std::vector<std::string>& modes, const std::string& m
     }
     return false;
 }
+std::string RunLoop::activeModeKey() {
+    std::lock_guard<std::mutex> lk(mu);
+    return activeMode;
+}
 std::string RunLoop::currentModeKey() {
     std::lock_guard<std::mutex> lk(mu);
     return activeMode.empty() ? kDefaultModeKey : activeMode;
@@ -469,7 +473,12 @@ bool r_runModeBeforeDate(Ctx& x, id self, SEL, id mode, id date) {
     loopOf(x, self).runUntil(x.cpu, dateValue(x, date), true, runModeKey(x, mode));
     return true;
 }
-id r_currentMode(Ctx& x, id, SEL) { return constString(x.proc, currentLoop(x).currentModeKey()); }
+// The mode being run, as the guest's string (no internal "s:" key prefix); nil when the loop is not running.
+id r_currentMode(Ctx& x, id, SEL) {
+    const std::string key = currentLoop(x).activeModeKey();
+    if (key.empty()) return 0;
+    return constString(x.proc, key.rfind("s:", 0) == 0 ? key.substr(2) : key);
+}
 uint32_t r_getCFRunLoop(Ctx&, id self, SEL) { return self; }
 
 // CFRunLoop
@@ -542,9 +551,11 @@ void detachSources(Ctx& x, id s, SourceData& d, Match match) {
             const bool nameStillIn = std::any_of(d.loops.begin(), d.loops.end(), [&](const SourceData::Added& o) { return o.loop == a.loop && o.name == a.name; });
             if (!nameStillIn) droppedModes.push_back({a.loop, a.name});
         }
+        // Updated under d.mu, in the same d.mu -> loop lock order cf_addSource uses: a concurrent add of the
+        // same mode then cannot slip in between "forgotten here" and "removed from the loop" and lose its membership.
+        for (RunLoop* l : released) l->removeSource(d.src);
+        for (const auto& dm : droppedModes) dm.first->removeSourceMode(d.src, dm.second);
     }
-    for (RunLoop* l : released) l->removeSource(d.src);
-    for (const auto& dm : droppedModes) dm.first->removeSourceMode(d.src, dm.second);
     for (const auto& a : gone) {
         if (d.cancelCb) x.proc.callGuest(x.cpu, d.cancelCb, {d.info, loopObject(x, *a.loop), a.mode});
         if (a.mode && Foundation::isString(x, a.mode)) rt(x).release(x.cpu, a.mode);   // the membership's own reference to the mode string
@@ -598,11 +609,11 @@ void cf_addSource(Ctx& x, uint32_t rl, id s, uint32_t mode) {
         const bool firstForLoop = std::none_of(d->loops.begin(), d->loops.end(), [&](const SourceData::Added& a) { return a.loop == &loop; });
         if (mode && Foundation::isString(x, mode)) rt(x).retain(x.cpu, mode);   // held for the membership's lifetime; released after the cancel callback
         d->loops.push_back({&loop, mode, modeName});
+        loop.addSourceMode(d->src, modeName);   // membership first: a signalled source must never be seen without its modes
         if (firstForLoop) {
             rt(x).retain(x.cpu, s);   // the run loop retains its sources (once per loop, however many modes)
             loop.addSource(d->src);
         }
-        loop.addSourceMode(d->src, modeName);   // membership the loop's dispatch filters on
     }
     if (d->scheduleCb) x.proc.callGuest(x.cpu, d->scheduleCb, {d->info, loopObject(x, loop), mode});
 }
@@ -655,12 +666,16 @@ void source_dealloc(Ctx& x, id self, SEL) {
 
 // ------------------------------------------------- NSObject performs ---
 
-void performLater(Ctx& x, id target, SEL sel, id arg, double delay) {
+void performLater(Ctx& x, id target, SEL sel, id arg, double delay, id modes = 0) {
     auto& l = L(x);
     rt(x).retain(x.cpu, target);
     rt(x).retain(x.cpu, arg);
     Process* p = &x.proc;
     auto entry = std::make_shared<std::shared_ptr<RunLoop::Timer>>();
+    // performSelector:withObject:afterDelay: runs in the default mode; the inModes: form in exactly the modes given.
+    std::vector<std::string> modeKeys;
+    if (modes) for (id m : arrayItems(x, modes)) modeKeys.push_back(modeKey(x, m));
+    if (modeKeys.empty()) modeKeys.push_back(kDefaultModeKey);
     auto t = currentLoop(x).addTimer(delay, 0, false, [p, target, sel, arg, entry](CPU::Cpu& c) {
         Ctx cx{*p, c, p->mem()};
         {
@@ -671,13 +686,14 @@ void performLater(Ctx& x, id target, SEL sel, id arg, double delay) {
         rt(cx).send(c, target, sel, {arg});
         rt(cx).release(c, arg);
         rt(cx).release(c, target);
-    });
+    }, 0, modeKeys[0]);   // scoped from the start: an unscoped timer would match every mode
     *entry = t;
+    for (size_t i = 1; i < modeKeys.size(); ++i) currentLoop(x).addTimerMode(t, modeKeys[i]);
     std::lock_guard<std::mutex> lk(l.mu);
     l.performs.push_back({target, sel, arg, t});
 }
 void o_performAfterDelay(Ctx& x, id self, SEL, SEL sel, id arg, double delay) { performLater(x, self, sel, arg, delay); }
-void o_performAfterDelayModes(Ctx& x, id self, SEL, SEL sel, id arg, double delay, id) { performLater(x, self, sel, arg, delay); }
+void o_performAfterDelayModes(Ctx& x, id self, SEL, SEL sel, id arg, double delay, id modes) { performLater(x, self, sel, arg, delay, modes); }
 void cancelPerforms(Ctx& x, id target, std::function<bool(const Loops::Perform&)> match) {
     std::vector<Loops::Perform> cancelled;
     {

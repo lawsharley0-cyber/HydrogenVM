@@ -7093,6 +7093,62 @@ int runFullSubsystemTests() {
         runInMode(commonModes);
         check(fired == std::vector<uint32_t>{0xC1},
               "_CFRunLoopRunInMode in kCFRunLoopCommonModes fires a default-mode timer and not a private-mode one");
+
+        // An item added to kCFRunLoopCommonModes belongs to the common modes (the default mode is one),
+        // not to a private mode.
+        fired.clear();
+        const uint32_t commonTimer = makeTimer(0xD1);
+        call("_CFRunLoopAddTimer", {mainLoop, commonTimer, commonModes});
+        runInMode(modeC);
+        check(fired.empty(), "a timer added to the common modes does not fire in a private mode");
+        runInMode(defaultMode);
+        check(fired == std::vector<uint32_t>{0xD1}, "a timer added to the common modes fires in the default mode");
+
+        // -currentMode is nil when the loop is idle and the running mode's own string inside a callout.
+        auto& mr = ObjC::rt(modeProc);
+        check(uint32_t(mr.send(mcpu, mainLoop, "currentMode")) == 0, "NSRunLoop currentMode is nil while the loop is not running");
+        std::string seenMode = "<unset>";
+        const uint32_t modeProbe = modeProc.defineFunction("test_mode_probe_fire", [&](Ctx& x) {
+            const uint32_t m = uint32_t(ObjC::rt(x).send(x.cpu, mainLoop, "currentMode"));
+            seenMode = m ? Foundation::utf8(x, m) : "<nil>";
+        });
+        {
+            const uint32_t ctx = modeProc.heap().allocZeroed(20);
+            std::vector<uint32_t> args{0};
+            for (double d : {Foundation::now() - 0.001, 0.0}) {
+                const auto w = words(d);
+                args.insert(args.end(), w.begin(), w.end());
+            }
+            args.push_back(0);
+            args.push_back(0);
+            args.push_back(modeProbe);
+            args.push_back(ctx);
+            const uint32_t probeTimer = callv("_CFRunLoopTimerCreate", args);
+            call("_CFRunLoopAddTimer", {mainLoop, probeTimer, modeA});
+        }
+        runInMode(modeA);
+        check(seenMode == "HVMModeA", "NSRunLoop currentMode inside a callout is the running mode's name");
+
+        // performSelector:withObject:afterDelay:inModes: runs only in the modes it names.
+        int delayedRuns = 0;
+        auto delayedCls = mr.defineClass("HVMDelayedModeTarget", "NSObject");
+        delayedCls.method("go:", [&](Ctx&) { ++delayedRuns; }, "v@:@");
+        const uint32_t delayedTarget = mr.createInstance(delayedCls.cls());
+        {
+            const uint32_t modeList = Foundation::makeArray(mx, {modeA});
+            const auto w = words(0.0);
+            const uint32_t sp = mcpu.r[CPU::kSP];
+            mcpu.r[CPU::kSP] = sp - 16;   // soft-float: the delay is 8-aligned on the stack after (sel, arg); modes follows
+            modeProc.mem().write<uint32_t>(mcpu.r[CPU::kSP], w[0]);
+            modeProc.mem().write<uint32_t>(mcpu.r[CPU::kSP] + 4, w[1]);
+            modeProc.mem().write<uint32_t>(mcpu.r[CPU::kSP] + 8, modeList);
+            mr.send(mcpu, delayedTarget, "performSelector:withObject:afterDelay:inModes:", {mr.sel("go:"), 0});
+            mcpu.r[CPU::kSP] = sp;
+        }
+        runInMode(modeB);
+        check(delayedRuns == 0, "a delayed selector scoped to one mode does not run in another mode");
+        runInMode(modeA);
+        check(delayedRuns == 1, "a delayed selector scoped to a mode runs in that mode");
     }
 
     // UIApplication's main loop runs the main run loop in the default mode: a source that belongs

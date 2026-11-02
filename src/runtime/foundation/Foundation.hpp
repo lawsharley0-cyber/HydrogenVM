@@ -137,6 +137,7 @@ struct RunLoop {
     void removeSourceMode(const std::shared_ptr<Source>& s, const std::string& mode);
     bool inMode(const std::vector<std::string>& modes, const std::string& mode);   // caller holds mu
     std::string currentModeKey();
+    std::string activeModeKey();   // empty when the loop is not running
     void post(std::function<void(CPU::Cpu&)> fn);    // any thread
     void addSource(const std::shared_ptr<Source>& s);
     void removeSource(const std::shared_ptr<Source>& s);
