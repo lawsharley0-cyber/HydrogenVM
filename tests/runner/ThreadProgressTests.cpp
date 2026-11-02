@@ -51,6 +51,24 @@ int runThreadProgressTests() {
         }
     }
 
+    // A guest call whose stack arguments cannot be written throws before anything runs; it must not leave the outer
+    // slice's pending count folded into the carry (nothing restores it after a throw).
+    {
+        CPU::Cpu low;
+        low.progress.enabled = true;
+        low.budget = 100;
+        low.progress_budget_start = 600;     // 500 instructions of the outer slice still pending
+        low.r[CPU::kSP] = 0x10000;           // the page below is not mapped
+        const uint64_t carryBefore = low.progress_carry;
+        bool threw = false;
+        try { engine.callGuest(low, returning, {1, 2, 3, 4, 5, 6}); } catch (const std::exception&) { threw = true; }
+        if (!threw || low.progress_carry != carryBefore) {
+            std::printf("FAIL a faulting stack-argument write leaves the progress carry changed (threw=%d, carry %llu -> %llu)\n",
+                        int(threw), (unsigned long long)carryBefore, (unsigned long long)low.progress_carry);
+            return 1;
+        }
+    }
+
     std::mutex mu;
     std::condition_variable cv;
     bool ready = false, release = false;

@@ -305,6 +305,8 @@ public:
     std::string describeRunningThreads();
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
+    /// Test seam: the next `count` host-thread creations (process-wide) fail, to exercise startThread cleanup.
+    static void failNextHostThreadSpawns(int count);
     bool joinThread(uint32_t self, uint32_t* retval);
     void detachThread(uint32_t self);
     GuestThread& mainThread() { return *mainThread_; }

@@ -66,11 +66,15 @@ case "$mode" in
             --out "$out/library-scan-$(date +%Y%m%d-%H%M%S)" --seconds 15 --jobs 1 --relaunch
         ;;
     regress)
-        fixtures=${HVM_LOCAL_FIXTURES:-/var/tmp/hvm-fixtures}
-        for fixture in AngryBirds_v1.0_os30.ipa Tiny_Tower_v1.0_os30.ipa Art_Of_Glow_v1.1.2_os313.ipa; do
-            if [[ ! -f "$fixtures/$fixture" ]]; then echo "Missing regression fixture: $fixtures/$fixture" >&2; exit 2; fi
-        done
-        python3 "$root/tools/compat.py" scan "$client" "$fixtures/AngryBirds_v1.0_os30.ipa" "$fixtures/Tiny_Tower_v1.0_os30.ipa" "$fixtures/Art_Of_Glow_v1.1.2_os313.ipa" \
+        # The three regression IPAs come from the private store (HVM_FIXTURE_ROOT, files under
+        # ipas/), each checked against the SHA-256 in tools/compat_harness/manifests/apps.json.
+        # Nothing is read from the repository or from the old HVM_LOCAL_FIXTURES directory.
+        regress_ipas=$(python3 "$root/tools/resolve_fixtures.py" angry-birds tiny-tower art-of-glow) || {
+            echo "Regression fixtures are unavailable. Set HVM_FIXTURE_ROOT to the private store (it holds ipas/<name>.ipa)." >&2
+            exit 2
+        }
+        mapfile -t regress_ipa_list <<<"$regress_ipas"
+        python3 "$root/tools/compat.py" scan "$client" "${regress_ipa_list[@]}" \
             --hvm "$build/hvm" --out "$out/regression-$(date +%Y%m%d-%H%M%S)" --seconds 15 --jobs 1 --relaunch
         ;;
     trace)
