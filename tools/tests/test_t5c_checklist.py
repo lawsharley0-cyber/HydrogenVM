@@ -40,7 +40,8 @@ class TestUnityMonoChecklist(unittest.TestCase):
         self.assertEqual(U.check_stat_layout(ok("Darwin 32-bit struct stat legacy and INODE64 layouts"))["status"], U.UNVERIFIED)
         res = U.check_stat_layout(ok(U.STAT_MARKER))
         self.assertEqual(res["status"], U.PASS)
-        self.assertEqual((res["inode64_size"], res["st_size_offset"], res["st_mode_offset"]), (108, 60, 4))
+        self.assertNotIn("inode64_size", res)
+        self.assertEqual((res["st_size_offset"], res["st_mode_offset"]), (60, 4))
         self.assertNotIn("legacy_size", res)
         self.assertEqual(U.check_stat_layout(failed(U.STAT_MARKER))["status"], U.FAIL)
 

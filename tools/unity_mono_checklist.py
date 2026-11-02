@@ -46,11 +46,11 @@ PASS, FAIL, UNVERIFIED = "pass", "fail", "unverified"
 # UNVERIFIED, never PASS: a checklist that passes without evidence is worse than none.
 STAT_MARKER = "Darwin 32-bit INODE64 stat mode and size offsets"
 DLOPEN_MARKER = "dlopen(NULL) returns RTLD_DEFAULT"
-DLSYM_MARKER = "dlsym(RTLD_DEFAULT) resolves guest and HLE exports"   # no such assertion in fulltest yet
+DLSYM_MARKER = "dlsym(RTLD_DEFAULT) resolves guest and HLE exports"
 GUEST_DLSYM_MARKER = "dlsym(RTLD_DEFAULT) resolves a guest export"
 GETPWNAM_MARKER = "getpwnam_r finds only mobile"
-GETPWUID_MARKER = "getpwuid(501) returns mobile"                          # no such assertion in fulltest yet
-AUDIO_MARKER = "AudioQueue accepts 44.1 kHz stereo 16-bit PCM"           # no such assertion in fulltest yet
+GETPWUID_MARKER = "getpwuid(501) returns mobile"
+AUDIO_MARKER = "AudioQueue accepts 44.1 kHz stereo 16-bit PCM"
 RTLD_DEFAULT_HANDLE = 0xFFFFFFFE   # what _dlopen(NULL) returns (tests/runner/TestRunner.cpp)
 
 
@@ -89,7 +89,7 @@ def _result(status: str, **extra) -> dict:
 def check_stat_layout(fulltest_output: str | None = None) -> dict:
     """Check the mode and size fields of the INODE64 stat layout."""
     return _result(assertion_status(fulltest_output, STAT_MARKER),
-                   inode64_size=DARWIN_STAT32_INODE64_SIZE, st_size_offset=DARWIN_STAT32_OFFSETS["st_size"],
+                   st_size_offset=DARWIN_STAT32_OFFSETS["st_size"],
                    st_mode_offset=DARWIN_STAT32_OFFSETS["st_mode"],
                    description="Darwin 32-bit INODE64 stat mode and size offsets")
 
@@ -128,7 +128,7 @@ def check_getpw(fulltest_output: str | None = None) -> dict:
 
 
 def check_audio_format(fulltest_output: str | None = None) -> dict:
-    """AudioQueue accepts 44.1 kHz stereo 16-bit PCM: needs a targeted fulltest assertion (a frame count is not it)."""
+    """AudioQueue accepts 44.1 kHz stereo 16-bit PCM."""
     return _result(assertion_status(fulltest_output, AUDIO_MARKER), rate=44100, channels=2, bits=16, format="lpcm",
                    description="AudioQueue negotiates 44.1 kHz stereo 16-bit PCM")
 
