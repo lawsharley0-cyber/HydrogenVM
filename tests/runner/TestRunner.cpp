@@ -2917,6 +2917,13 @@ int runFullSubsystemTests() {
         check(uint32_t(r.send(cpu, field, "autocapitalizationType")) == 2 && requests.back().autocapitalization == 2,
               "a field that never sets autocapitalizationType defaults to Sentences, as on iOS");
 
+        // Host edits replace whole characters: U+1F600 -> U+1F601 share a high surrogate, and the delegate must see the
+        // whole emoji as the replaced range and the replacement, not a lone low surrogate.
+        send(UIKit::TextInputEvent::SetText, "cleared\xF0\x9F\x98\x80"); pump();
+        send(UIKit::TextInputEvent::SetText, "cleared\xF0\x9F\x98\x81"); pump();
+        check(textOfField(field) == "cleared\xF0\x9F\x98\x81" && changes.back() == "7,2:\xF0\x9F\x98\x81",
+              "replacing one emoji with another reports whole characters (no split surrogate pair) to the delegate");
+
         // Events for a field that has lost focus never reach the new first responder.
         const ObjC::id second = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 120, 120, 30});
         r.send(cpu, second, "becomeFirstResponder");

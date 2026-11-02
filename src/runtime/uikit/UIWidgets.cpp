@@ -1472,6 +1472,12 @@ void applyHostText(Ctx& x, id self, const std::string& newUtf8) {
     size_t suf = 0;
     while (suf < oldS.size() - pre && suf < newS.size() - pre && oldS[oldS.size() - 1 - suf] == newS[newS.size() - 1 - suf]) ++suf;
     if (pre == oldS.size() && pre == newS.size()) return;   // unchanged
+    // Never split a surrogate pair: a shared high surrogate ends the prefix, a shared low one starts the suffix, and the
+    // delegate must see whole characters (U+1F600 -> U+1F601 replaces the whole emoji, not a lone low surrogate).
+    const auto isHigh = [](char16_t c) { return c >= 0xD800 && c <= 0xDBFF; };
+    const auto isLow = [](char16_t c) { return c >= 0xDC00 && c <= 0xDFFF; };
+    if (pre > 0 && ((pre < oldS.size() && isLow(oldS[pre])) || (pre < newS.size() && isLow(newS[pre]))) && isHigh(oldS[pre - 1])) --pre;
+    if (suf > 0 && isLow(oldS[oldS.size() - suf]) && oldS.size() - suf > pre && isHigh(oldS[oldS.size() - suf - 1])) --suf;
     const uint32_t loc = uint32_t(pre), len = uint32_t(oldS.size() - pre - suf);
     const id rep = makeString(x, newS.substr(pre, newS.size() - pre - suf));
     const char* shouldSel = tv ? "textView:shouldChangeTextInRange:replacementText:" : "textField:shouldChangeCharactersInRange:replacementString:";
