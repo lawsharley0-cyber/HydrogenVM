@@ -130,13 +130,11 @@ class TestCensus(unittest.TestCase):
             )
 
         tested = 0
-        missing_fixtures = []
         for fixture_name, meta in census.FIXTURE_MANIFEST.items():
             # From HVM_FIXTURE_ROOT when set (the private store; the repo copy is then ignored, like the compat
             # harness), otherwise from the repo root.
             ipa_path = census.fixture_path(fixture_name, ROOT_DIR, os.environ.get("HVM_FIXTURE_ROOT"))
             if not ipa_path.exists():
-                missing_fixtures.append(fixture_name)
                 continue
 
             with self.subTest(fixture=fixture_name):
@@ -153,6 +151,7 @@ class TestCensus(unittest.TestCase):
                 self.assertEqual(res["reference"], ref)
                 tested += 1
 
+        missing_fixtures = census.missing_fixtures(ROOT_DIR, os.environ.get("HVM_FIXTURE_ROOT"))
         if missing_fixtures and os.environ.get("HVM_FIXTURE_ROOT"):
             # A configured store must be complete: a passing subset may not hide the fixtures that are absent.
             self.fail(f"fixture store {os.environ['HVM_FIXTURE_ROOT']} is missing: {', '.join(missing_fixtures)}")
@@ -168,6 +167,16 @@ class TestCensusFixturePath(unittest.TestCase):
     """Where census looks for a fixture IPA. Pure path logic: no real game file and no build needed."""
 
     NAME = "AngryBirds_v1.0_os30.ipa"
+
+    def test_partial_store_reports_every_missing_fixture(self):
+        names = list(census.FIXTURE_MANIFEST)
+        self.assertGreaterEqual(len(names), 2)
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as store:
+            (Path(store) / "ipas").mkdir()
+            (Path(repo) / names[1]).write_bytes(b"repo copy must be ignored")
+            (Path(store) / "ipas" / names[0]).write_bytes(b"present")
+            self.assertEqual(census.missing_fixtures(Path(repo), store), names[1:])   # every absent one, repo copies ignored
+            self.assertEqual(census.missing_fixtures(Path(repo), None), [n for n in names if n != names[1]])
 
     def test_fixture_that_escapes_the_store_through_a_symlink_is_rejected(self):
         with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as store:

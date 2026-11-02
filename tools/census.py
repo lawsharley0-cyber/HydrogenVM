@@ -268,6 +268,11 @@ def fixture_path(name: str, repo_root: Path, fixture_root: str | None = None) ->
     return Path(repo_root) / name
 
 
+def missing_fixtures(repo_root: Path, fixture_root: str | None = None) -> list[str]:
+    """Names of the reference fixtures that are not present where census looks for them."""
+    return [name for name in FIXTURE_MANIFEST if not fixture_path(name, repo_root, fixture_root).exists()]
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("ipa", nargs="?", help="Path to .ipa file")
