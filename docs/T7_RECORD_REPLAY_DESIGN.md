@@ -29,7 +29,7 @@ To guarantee deterministic replay, all sources of entropy, timing jitter, and ex
 | **Clocks & Timers** | **No** | Wall-clock reads and host timer scheduling vary. | Use virtual time derived from retired instructions and deterministic timer ordering. |
 | **RNG & Entropy** | **No** | `arc4random()` is host-seeded; `rand()` has guest-controlled state; entropy reads can vary. | Use a session-seeded deterministic PRNG for `arc4random()` and a deterministic PRNG for `rand()` with its existing default seed of 1 and guest `srand()` reseeding. Fix the algorithms and seed mapping for a compatible record/replay implementation. Record every `/dev/urandom` read and `SecRandomCopyBytes` result and returned bytes as `EVENT_RNG_VAL`; replay returns those results without host entropy. |
 | **Thread Scheduling & Race Conditions** | **No** | Host scheduling, mutex acquisition, and memory contention vary. | Run guest threads cooperatively in fixed round-robin instruction quanta; record mutex acquisition order. |
-| **File System & Directory Order** | **Partially** | Directory order and file timestamps depend on the host. | Record the initial sandbox checksum, sort `readdir` alphabetically, and freeze timestamps to session start. |
+| **File System & Directory Order** | **Partially** | Directory order and file timestamps depend on the host. | Record the initial sandbox checksum, sort `readdir` alphabetically, and freeze timestamps to session start. Replay first recomputes the checksum and fails before executing any guest instruction on a mismatch; it then serves every file read, directory listing, and stat result from `EVENT_FS_READ` and never reads the host sandbox for guest-visible state. |
 | **Host Graphics & OpenGL ES** | **No** | Driver capabilities, GPU operations, and readbacks can vary. | Require a deterministic renderer in recording and replay, with identical guest-visible capabilities and deterministic readbacks. Hash a fixed normalized framebuffer format at each checkpoint; unsupported graphics operations fail the deterministic session rather than fall back to host rendering. |
 | **Network & IPC** | **No** | Socket, DNS, HTTP, and IPC results depend on external peers. | Record each boundary result and its stream identity, or force the operation offline with a recorded synthetic error. Replay uses the journal without contacting peers. |
 
@@ -58,12 +58,14 @@ All multi-byte integers in headers, event frames, and structured payloads are en
 struct HVMRecordHeader {
     char magic[8];             // "HVMREC01"
     uint32_t schemaVersion;    // 1
-    uint32_t hostPageSize;     // 4096 or 16384
+    uint32_t hostPageSize;     // 4096 or 16384; replay requires the same value
     uint64_t initialRNGSeed;   // Session seed for arc4random
     uint64_t sessionStartTime; // Virtual epoch in microseconds
     uint8_t  appSha256[32];    // Exact SHA-256 of the executed binary/IPA
 };
 ```
+
+Replay compares `hostPageSize` with the replay host's page size, and `appSha256` with the executed binary, before running any guest instruction. A mismatch is a deterministic startup failure (`replay-incompatible-host` / `replay-wrong-app`); the replayer does not emulate another page size, because page-granular behavior (`mmap`, `mprotect`, fault addresses) would differ.
 
 <!-- /coderabbit-ai-generated:v1 -->
 
@@ -96,6 +98,18 @@ Payloads of at most 65,535 bytes use one ordinary event frame. For a larger logi
 8. `EVENT_NETWORK_IPC` (0x08): Operation, stable stream ID, call parameters, return value/error, and exact returned bytes or other output for every external network or IPC call, including connection, send, receive, close, and DNS operations. Assign an ID to each stream or standalone request in recording order and never reuse it in the session. Replay verifies the operation, stream and parameters, returns the recorded result, and performs no external call.
 9. `EVENT_PAYLOAD_START` (0x09) and `EVENT_PAYLOAD_CHUNK` (0x0A): Oversized logical-event framing as specified in Section 3.2.
 
+### 3.4 Structured Payload Layouts
+Fields are written in the order listed, little-endian, with no padding. `bytes` fields are a `uint32_t length` followed by that many bytes; `string` fields are `bytes` holding UTF-8 with no terminator. `status` is an `int32_t` (0 = success, otherwise the guest-visible errno or `OSStatus` the call returned).
+
+| Event | Payload fields |
+| :--- | :--- |
+| `EVENT_RNG_VAL` | `uint8_t operation` (0 = `/dev/urandom` read, 1 = `SecRandomCopyBytes`), `uint32_t requestedLength`, `int32_t status`, `bytes data` |
+| `EVENT_MUTEX_SYNC` | `uint8_t operation` (0 = lock, 1 = trylock, 2 = unlock, 3 = destroy), `uint64_t lockId`, `uint32_t generation`, `uint64_t acquisitionSequence` (0 for operations that do not acquire), `int32_t status` |
+| `EVENT_NETWORK_IPC` | `uint8_t operation` (0 = connect, 1 = send, 2 = receive, 3 = close, 4 = DNS, 5 = other), `uint64_t streamId`, `bytes parameters`, `int32_t status`, `bytes output` |
+| `EVENT_FS_READ` | `uint8_t operation` (0 = read, 1 = directory listing, 2 = stat), `string path`, `uint64_t offset`, `uint32_t requestedLength`, `int32_t status`, `bytes data` |
+
+`lockId` is assigned in recording order and `generation` increments when a guest address is reused for a different mutex lifetime. `bytes parameters` holds the call's arguments in the order the guest passed them, each encoded as a `uint64_t`, and the reader checks them for equality. Oversized `data` or `output` uses the payload framing of Section 3.2.
+
 <!-- /coderabbit-ai-generated:v1 -->
 
 ---
@@ -108,10 +122,14 @@ Payloads of at most 65,535 bytes use one ordinary event frame. For a larger logi
 
 ### 4.1 Virtual Monotonic Clock & Timer Wheel
 - In record/replay mode, host calls to `mach_absolute_time()`, `clock_gettime(CLOCK_MONOTONIC)`, and `gettimeofday()` do not query the host kernel.
+- `time()`, `clock()`, `CFAbsoluteTimeGetCurrent`, `[NSDate date]`, and `CACurrentMediaTime()` are derived from the same virtual clock (`time()` from the session start time plus virtual seconds, `clock()` from virtual CPU time); none calls `std::time` or `std::clock` on the host.
+- `sleep()`, `usleep()`, `nanosleep()`, and timed waits do not block the host: the calling thread becomes ineligible until virtual time reaches its deadline, and the scheduler advances virtual time to the earliest deadline when every thread is waiting.
 - Instead, time advances as a function of retired instructions:
   $$\Delta t_{\text{virtual}} = \frac{\Delta \text{guestInstructions}}{\text{ClockRateMIPS}}$$
 - `NSRunLoop` and `CFRunLoopTimer` timers use a priority queue ordered by trigger tick, then deterministic insertion order. Recording and replay split execution at a timer or journal event tick so neither is delivered late.
 - At a block boundary with both due timers and journal events, enqueue all due asynchronous events at the journal head first, in file order, before running a timer callback. Then run the earliest due timer; repeat this check after each callback and at every boundary reached within a callback, before executing another guest instruction. Enqueuing an event does not itself execute guest instructions. Synchronous journal events are consumed only by their corresponding calls, including calls made by timer callbacks; never skip the journal head. Events with the same `instructionTick` are consumed or dispatched in journal file order. An unexpected call or an event that cannot be consumed at its recorded tick is a replay divergence.
+
+- `CADisplayLink` callbacks (and the frame presents they drive) run on a fixed virtual schedule: a 60 Hz display, one callback per 1/60 s of virtual time, `timestamp` and `targetTimestamp` taken from that schedule, and no frame dropping. The host display's refresh rate never reaches the guest.
 
 ### 4.2 Deterministic Cooperative Multithreading
 - Multithreaded execution is the largest hurdle to bit-for-bit replay on modern multicore hosts.
