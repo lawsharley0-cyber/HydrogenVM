@@ -5354,6 +5354,35 @@ int runFullSubsystemTests() {
                    {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 1u, 0u});
             check(combinedVoiceDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 5u,
                   "AVAudioSession combined voice chat setter adds Bluetooth while preserving options");
+            const auto playAndRecord = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord");
+            const auto playback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback");
+            const auto record = Foundation::makeString(sx, "AVAudioSessionCategoryRecord");
+            const auto voice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat");
+            const auto video = Foundation::makeString(sx, "AVAudioSessionModeVideoChat");
+            const auto defaultMode = Foundation::makeString(sx, "AVAudioSessionModeDefault");
+            auto options = [&] { return uint32_t(r.send(cpu, session, "categoryOptions")); };
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+            r.send(cpu, session, "setCategory:withOptions:error:", {playAndRecord, 0u, 0u});
+            check(options() == 4u, "AVAudioSession keeps voice defaults when category options change");
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+            const bool clearedVideoDefaults = options() == 0u;
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 5u, 0u});
+            r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+            check(clearedVideoDefaults && options() == 5u, "AVAudioSession clears video defaults but keeps explicitly requested bits");
+            const bool acceptedVoice = (uint32_t(r.send(cpu, session, "setCategory:mode:options:error:", {playback, voice, 1u, 0u})) & 0xff) != 0;
+            const bool playbackVoice = options() == 1u && same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVoiceChat");
+            const bool acceptedVideo = (uint32_t(r.send(cpu, session, "setMode:error:", {video, 0u})) & 0xff) != 0;
+            const bool playbackVideo = options() == 1u && same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoChat");
+            check(acceptedVoice && acceptedVideo && playbackVoice && playbackVideo,
+                  "AVAudioSession accepts chat modes on playback without chat defaults");
+            r.send(cpu, session, "setCategory:error:", {record, 0u});
+            const bool recordVideo = options() == 12u;
+            r.send(cpu, session, "setMode:error:", {voice, 0u});
+            const bool recordVoice = options() == 0u;
+            r.send(cpu, session, "setCategory:error:", {playAndRecord, 0u});
+            check(recordVideo && recordVoice && options() == 4u,
+                  "AVAudioSession recomputes chat defaults when the category or mode changes");
             const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
             const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
             const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;

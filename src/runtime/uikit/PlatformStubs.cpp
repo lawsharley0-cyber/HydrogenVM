@@ -1128,7 +1128,7 @@ int32_t afmt_getProperty(Ctx& x, uint32_t, uint32_t, GuestPtr, GuestPtr ioSize, 
 // The session keeps what the app set (category, options, mode), as AVAudioSession does.
 struct SessionData : ObjC::HostObject {
     id category = 0, mode = 0, route = 0;
-    uint32_t options = 0;
+    uint32_t categoryOptions = 0, options = 0;
 };
 SessionData* ses(Ctx& x, id self) { return rt(x).hostIf<SessionData>(self); }
 id avs_shared(Ctx& x, id self, SEL) {
@@ -1145,24 +1145,31 @@ void avs_keep(Ctx& x, id& slot, id value) {
     slot = value ? id(rt(x).send(x.cpu, value, "copy")) : 0;
     if (old) rt(x).release(x.cpu, old);
 }
+void avs_recomputeOptions(Ctx& x, SessionData& d) {
+    d.options = d.categoryOptions;
+    const auto category = d.category ? Foundation::utf8(x, d.category) : "";
+    const auto mode = d.mode ? Foundation::utf8(x, d.mode) : "";
+    const bool playAndRecord = category == "AVAudioSessionCategoryPlayAndRecord";
+    if (mode == "AVAudioSessionModeVoiceChat" && playAndRecord)
+        d.options |= 4u;  // allow Bluetooth HFP
+    else if (mode == "AVAudioSessionModeVideoChat" &&
+             (playAndRecord || category == "AVAudioSessionCategoryRecord"))
+        d.options |= 4u | 8u;  // also default to speaker
+}
 bool avs_setCategory(Ctx& x, id self, SEL, id category, GuestPtr) {
-    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->options = 0; }
+    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->categoryOptions = 0; avs_recomputeOptions(x, *d); }
     return true;
 }
 bool avs_setCategoryOptions(Ctx& x, id self, SEL, id category, uint32_t options, GuestPtr) {
-    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->options = options; }
+    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->categoryOptions = options; avs_recomputeOptions(x, *d); }
     return true;
 }
 void avs_applyMode(Ctx& x, SessionData& d, id mode) {
     avs_keep(x, d.mode, mode);
-    if (mode) {
-        const auto name = Foundation::utf8(x, mode);
-        if (name == "AVAudioSessionModeVoiceChat") d.options |= 4u;  // allow Bluetooth HFP
-        else if (name == "AVAudioSessionModeVideoChat") d.options |= 4u | 8u;  // also default to speaker
-    }
+    avs_recomputeOptions(x, d);
 }
 bool avs_setCategoryModeOptions(Ctx& x, id self, SEL, id category, id mode, uint32_t options, GuestPtr) {
-    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->options = options; avs_applyMode(x, *d, mode); }
+    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->categoryOptions = options; avs_applyMode(x, *d, mode); }
     return true;
 }
 bool avs_setMode(Ctx& x, id self, SEL, id mode, GuestPtr) {
