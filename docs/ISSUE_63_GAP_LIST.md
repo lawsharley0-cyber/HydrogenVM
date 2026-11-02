@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-This document provides the evidence-backed gap analysis requested in **Issue #63** (*Device reports: missing Foundation/AV methods and a message to a freed object*), incorporating merged reports #47, #53, #55, #59, #60, #91, #111 (RETRY console report), and #113 (Subway Surfers console report).
+This document provides a gap analysis for **Issue #63** (*Device reports: missing Foundation/AV methods and a message to a freed object*), incorporating merged reports #47, #53, #55, #59, #60, #91, #111 (RETRY console report), and #113 (Subway Surfers console report). External measurements below are unverified in this checkout.
 
 The analysis cross-checks every class, selector, and symbol against the HydrogenVM support manifest emitted by:
 ```bash
@@ -20,13 +20,15 @@ build/hvm --dump-support
    - `/home/lawson/compat/runs/jetpack/keepgoing.json`
    - `/home/lawson/compat/runs/Tiny Tower/keepgoing.json`
    - Additional test runs in `/home/lawson/compat/runs/` (GoatGame, TalkingBird, terraria, anthill, Mega Jump, GameApp)
-2. **Mach-O Binary Disassembly & Symbol Analysis** (`tools/census.py` via `llvm-nm` and `llvm-objdump`) across 6 test IPAs:
+2. **Mach-O Binary Disassembly & Symbol Analysis**: reported external measurements (`tools/census.py` via `llvm-nm` and `llvm-objdump`) across 6 test IPAs. The full input set and machine-readable outputs are not committed or tied to these measurements by hashes, so these counts are unverified, including the reported Tiny Tower count:
    - `RETRY_1_5_0_ios_6_0.ipa` (56 missing classes, 136 missing symbols, 576 missing selectors)
    - `Subway_Surfers_1_41_0.ipa` (36 missing classes, 106 missing symbols, 643 missing selectors)
    - `Hungry_Shark_Evolution_2_5_0_ios_4_3.ipa` (64 missing classes, 147 missing symbols, 592 missing selectors)
    - `The_Sandbox_v1.02_iPhone_OS_3.1_2012-05-23.ipa` (12 missing classes, 12 missing symbols, 128 missing selectors)
    - `Tiny_Tower_v1.0_os30.ipa` (6 missing classes, 0 missing symbols, 40 missing selectors)
    - `Jetpack_Joyride.ipa` (13 missing classes, 40 missing symbols, 203 missing selectors)
+
+The reproducible census baseline is the three committed fixtures (Angry Birds, Art of Glow, and Tiny Tower), with hashes, slices, and reference counts in `tools/census.py` and `tools/research_census/README.md`. Those references do not verify the six measurements above.
 
 ---
 
@@ -38,19 +40,19 @@ Issue #63 highlights five primary blockers from the initial device test cohort. 
 | :--- | :--- | :--- | :--- |
 | **NSString** (#60 Tiny Tower) | `initWithContentsOfURL:`<br>`initWithContentsOfURL:encoding:error:`<br>`initWithContentsOfURL:usedEncoding:error:`<br>`stringWithContentsOfURL:`<br>`stringWithContentsOfURL:encoding:error:`<br>`stringWithContentsOfURL:usedEncoding:error:` | **Already Real** | Implemented in `src/runtime/foundation/String.cpp`. Reads local `file://` URLs from disk; non-file URLs fail cleanly with `NSURLErrorCannotOpenFile` / `kCFURLErrorFileDoesNotExist`. |
 | **NSThread** (#47 Jetpack Joyride) | `isFinished`<br>`isExecuting`<br>`isCancelled`<br>`cancel`<br>`name` / `setName:`<br>`threadDictionary` | **Already Real** | Backed by `ThreadData` in `src/runtime/foundation/RunLoop.cpp:760-800`. Accurately tracks thread lifecycle and state flags. |
-| **NSThread** (#47 Jetpack Joyride) | `threadPriority`<br>`setThreadPriority:` | **Present but Shallow (Approx)** | `th_priority` returns fixed `0.5` (`RunLoop.cpp:788`). `th_setPriority:` is a no-op returning `true` without storing the guest priority. |
+| **NSThread** (#47 Jetpack Joyride) | `threadPriority`<br>`setThreadPriority:` | **Present but Shallow (Approx)** | `th_priority` returns fixed `0.5` (`RunLoop.cpp:793`). `th_setPriority` (`RunLoop.cpp:794`) is a no-op returning `true` without storing the guest priority. |
 | **NSThread** (#47 Jetpack Joyride) | `stackSize`<br>`setStackSize:` | **Missing** | Not declared in `RunLoop.cpp` nor registered in manifest. Calling `-[NSThread stackSize]` sends unrecognized selector. |
 | **AVAudioSession** (#53 Hungry Shark) | `mode`<br>`category`<br>`categoryOptions`<br>`sampleRate` / `preferredSampleRate`<br>`outputVolume`<br>`isOtherAudioPlaying`<br>`secondaryAudioShouldBeSilencedHint` | **Present but Shallow (Approx)** | Implemented in `src/runtime/uikit/PlatformStubs.cpp:1125-1170`. Getters return static constants (`"AVAudioSessionModeDefault"`, `"AVAudioSessionCategorySoloAmbient"`, 44100.0, volume 1.0). Mutators (`setCategory:`, `setMode:error:`) accept inputs and return `true`, but do not mutate state. |
 | **AVAudioSession** (#53 Hungry Shark) | `currentRoute` | **Missing** | Not declared on `AVAudioSession`. Calling `-[AVAudioSession currentRoute]` triggers unrecognized selector. |
 | **AVAudioSession** Constants | `AVAudioSessionCategory*`<br>`AVAudioSessionMode*` | **Mixed (Real / Missing)** | **Real**: `_AVAudioSessionCategoryAmbient`, `_AVAudioSessionCategorySoloAmbient`, `_AVAudioSessionCategoryPlayback`, `_AVAudioSessionCategoryRecord`, `_AVAudioSessionCategoryPlayAndRecord`, `_AVAudioSessionModeDefault`.<br>**Missing**: `_AVAudioSessionCategoryAudioProcessing`, `_AVAudioSessionCategoryMultiRoute`, `_AVAudioSessionModeVoiceChat`, `_AVAudioSessionModeGameChat`, `_AVAudioSessionModeVideoRecording`, `_AVAudioSessionModeMeasurement`, `_AVAudioSessionModeMoviePlayback`. |
 | **NSInvocation** (#55 Subway Surfers) | `+[NSInvocation invocationWithMethodSignature:]`<br>`-[NSInvocation invoke]` | **Already Real** | Full host invocation dispatch implemented in `src/runtime/foundation/Invocation.cpp`. On device, a nil method signature arose from unrecognized guest selectors without type encodings. |
-| **Object Lifetime** (#59 The Sandbox) | `-[nil release]` (freed object isa 0) | **Addressed via Diagnostics** | `HVM_ZOMBIES=1` environment flag was introduced to prevent immediate recycling and report the precise deallocated class on illegal access. |
+| **Object Lifetime** (#59 The Sandbox) | Message sent to a deallocated instance (freed object isa 0) | **Addressed via Diagnostics** | `HVM_ZOMBIES=1` environment flag was introduced to prevent immediate recycling and report the precise deallocated class on illegal access. |
 
 ---
 
 ## 3. Ranked Gap List: Classes
 
-Aggregated across console run warnings, crash reports, and Mach-O import references across the cohort IPAs:
+Reported across console run warnings, crash reports, and Mach-O import references across the cohort IPAs; the external counts are unverified in this checkout:
 
 | Rank | Class | Mentions | Status in Manifest | Category / Framework | Impacted Applications | Notes / Missing Selectors |
 | :---: | :--- | :---: | :---: | :--- | :--- | :--- |
@@ -161,22 +163,21 @@ To implement these gaps safely without modifying runtime behavior in this PR or 
 - **Proposed Branch**: `feature/eventkit-stubs`
 - **Scope**:
   - Implement stub classes for `EKEventStore`, `EKEvent`, `EKAlarm`, `EKRecurrenceRule`, `EKRecurrenceDayOfWeek`, `EKRecurrenceEnd`, and `EKEventEditViewController`.
-  - Stub `requestAccessToEntityType:completion:` and `authorizationStatusForEntityType:` to return authorized / immediate completion.
-- **Verification**: Test Lab case validating instantiation and callback invocation.
+  - Until authorization is implemented, have `authorizationStatusForEntityType:` return denied and `requestAccessToEntityType:completion:` invoke its completion with `granted = false` and an error describing the unsupported service.
+- **Verification**: Test Lab case validating instantiation, denied status, and completion with `granted = false` and a non-nil error.
 
 ### Workstream 3: Security & Network Credentials
 - **Proposed Branch**: `feature/security-url-credential-storage`
 - **Scope**:
   - Implement `NSURLCredentialStorage` (singleton `sharedCredentialStorage`, empty credential lookup responses).
   - Add `_NSURLAuthenticationMethodServerTrust` and `_NSURLAuthenticationMethodClientCertificate` data constants.
-- **Verification**: `tools/tests/test_t4_support.py` manifest verification.
+- **Verification**: Retain `tools/tests/test_t4_support.py` manifest and status checks. When implementing storage, add behavior tests proving repeated `sharedCredentialStorage` calls return the same non-nil instance and default credential lookups return nil for distinct protection spaces. Demonstrate each test fails before the implementation and passes afterward.
 
 ### Workstream 4: GameKit Minimal Stubs
 - **Proposed Branch**: `feature/gamekit-stubs`
 - **Scope**:
-  - Complete methods on `GKAchievement`, `GKLeaderboard`, `GKScore`, `GKPlayer`, `GKLocalPlayer`.
-  - Provide no-op handlers for `authenticateWithCompletionHandler:`, `loadScoresWithCompletionHandler:`, and `reportScoreWithCompletionHandler:`.
-- **Verification**: `tools/census.py` check confirming reduced missing selector count across the 6 fixture IPAs.
+  - Complete remaining methods on `GKAchievement`, `GKLeaderboard`, `GKScore`, `GKPlayer`, `GKLocalPlayer`. Existing authentication, score loading, and score reporting callbacks complete asynchronously with GameKit errors when unavailable.
+- **Verification**: Retain manifest and status checks, and test singleton identity, callback delivery and error results. Add behavior tests for each remaining method before implementing it, showing failure before and success afterward. Run `tools/census.py` against the three committed fixtures to check for regressions; the six external measurements above are not a reproducible verification baseline.
 
 ### Workstream 5: UIKit & CoreAnimation Visual Elements
 - **Proposed Branch**: `feature/uikit-gradient-picker`
