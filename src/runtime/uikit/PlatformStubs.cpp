@@ -1966,10 +1966,16 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     // AVAudioSession
     ObjC::ClassBuilder avs = r.defineClass("AVAudioSession", "NSObject");
     avs.cm<&avs_shared>("sharedInstance");
-    avs.m<&avs_setCategory>("setCategory:error:", "c@:@^@").m<&avs_setCategoryOptions>("setCategory:withOptions:error:", "c@:@I^@")
-       .m<&avs_setCategoryModeOptions>("setCategory:mode:options:error:", "c@:@@I^@")
-       .m<&avs_yesBoolErr>("setActive:error:", "c@:c^@").m<&avs_yesErr2>("setActive:withOptions:error:", "c@:cI^@")
-       .m<&avs_setMode>("setMode:error:", "c@:@^@").m<&avs_category>("category").m<&avs_no>("isOtherAudioPlaying", "c@:")
+    supportMethod(p, avs, "AVAudioSession", "setCategory:error:", [](Ctx& x) { callWrapped<&avs_setCategory>(x); },
+                  SupportStatus::Approx, "Stores category and resets options; always reports success without validating or configuring the host", "c@:@^@");
+    supportMethod(p, avs, "AVAudioSession", "setCategory:withOptions:error:", [](Ctx& x) { callWrapped<&avs_setCategoryOptions>(x); },
+                  SupportStatus::Approx, "Stores category and options; always reports success without validating or configuring the host", "c@:@I^@");
+    supportMethod(p, avs, "AVAudioSession", "setCategory:mode:options:error:", [](Ctx& x) { callWrapped<&avs_setCategoryModeOptions>(x); },
+                  SupportStatus::Approx, "Stores category, mode and options; always reports success without validating or configuring the host", "c@:@@I^@");
+    supportMethod(p, avs, "AVAudioSession", "setMode:error:", [](Ctx& x) { callWrapped<&avs_setMode>(x); },
+                  SupportStatus::Approx, "Stores mode and adds video-chat options; always reports success without validation or host configuration", "c@:@^@");
+    avs.m<&avs_yesBoolErr>("setActive:error:", "c@:c^@").m<&avs_yesErr2>("setActive:withOptions:error:", "c@:cI^@")
+       .m<&avs_category>("category").m<&avs_no>("isOtherAudioPlaying", "c@:")
        .m<&avs_no>("secondaryAudioShouldBeSilencedHint", "c@:").m<&avs_setDelegate>("setDelegate:", "v@:@")
        .m<&avs_rate>("sampleRate", "d@:").m<&avs_rate>("currentHardwareSampleRate", "d@:").m<&avs_rate>("preferredSampleRate", "d@:")
        .m<&avs_yesDoubleErr>("setPreferredSampleRate:error:", "c@:d^@").m<&avs_yesDoubleErr>("setPreferredHardwareSampleRate:error:", "c@:d^@")
@@ -1986,7 +1992,9 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder routeCls = r.defineClass("AVAudioSessionRouteDescription", "NSObject");
     routeCls.m<&route_inputs>("inputs").m<&route_outputs>("outputs");
     ObjC::ClassBuilder portCls = r.defineClass("AVAudioSessionPortDescription", "NSObject");
-    portCls.m<&port_type>("portType").m<&port_name>("portName").m<&port_uid>("UID").m<&port_channels>("channels");
+    portCls.m<&port_type>("portType").m<&port_name>("portName").m<&port_uid>("UID");
+    supportMethod(p, portCls, "AVAudioSessionPortDescription", "channels", [](Ctx& x) { callWrapped<&port_channels>(x); },
+                  SupportStatus::Stub, "Channel descriptions are not implemented; always returns nil");
     {
         const uint32_t cell = p.defineDataBlock("_AVAudioSessionPortBuiltInSpeaker", 4);   // the constant's value is "Speaker"
         p.mem().write<uint32_t>(cell, Foundation::constString(p, "Speaker"));
