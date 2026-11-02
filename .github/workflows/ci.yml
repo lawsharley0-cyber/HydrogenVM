@@ -29,12 +29,14 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 python3-jsonschema
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
         run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
       - name: Synthetic Plist metadata and ASan/UBSan regression
         run: CXX=g++ tools/test_plist.sh
+      - name: Host-fault bundles and 16 KB backing under ASan/UBSan
+        run: bash tools/test_host_fault.sh
       - name: Evidence contract tests
         run: python3 -m unittest discover -s tools/tests -p 'test_hvm_evidence.py'
       - name: Agent queue tests
@@ -52,6 +54,10 @@ jobs:
         run: tools/build_cctools.sh /home/runner/cctools
       - name: Test + performance report
         run: python3 tools/hvm_report.py --out report
+      - name: Full tools suite including Test Lab integration
+        env:
+          HVM_TESTLAB_TOOLCHAIN: "1"
+        run: python3 -m unittest discover -s tools/tests
       - name: HostGL sequential process lifetime
         run: build/hvm_gl_lifetime_tests
       - name: Host AAC decoder comparison

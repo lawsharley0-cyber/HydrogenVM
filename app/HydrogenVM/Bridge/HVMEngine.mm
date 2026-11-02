@@ -483,6 +483,12 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             }
         };
         cfg.log = sessionLog;
+        // Process::log already records runtime lines. Only direct bridge logs
+        // need forwarding here, otherwise every runtime line would be doubled.
+        auto hostLog = [sessionLog](RT::LogLevel lvl, const std::string &msg) {
+            Hydrogen::CPU::Engine::recordLogLineAsyncSafe(msg.data(), msg.size());
+            sessionLog(lvl, msg);
+        };
         cfg.microphone = [core](bool on) { setMicrophone(core, on); };
         cfg.present = [core, weakSelf](const uint8_t *rgba, int w, int h) {
             if (core->framePending.exchange(true)) return;   // the UI hasn't taken the last one: drop
@@ -524,9 +530,9 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 proc->load();
                 core->ready = true;
                 if (core->stopRequested) proc->requestStop();
-                sessionLog(RT::LogLevel::Info, "[teardown] waiting for the guest run to finish");
+                hostLog(RT::LogLevel::Info, "[teardown] waiting for the guest run to finish");
                 code = proc->run();
-                sessionLog(RT::LogLevel::Info, "[teardown] guest run returned status " + std::to_string(code));
+                hostLog(RT::LogLevel::Info, "[teardown] guest run returned status " + std::to_string(code));
                 if (proc->crashed()) {
                     crash = proc->crashReport().empty() ? "The app crashed." : proc->crashReport();
                     bundleJSON = proc->crashBundle();
@@ -537,9 +543,9 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 std::lock_guard<std::mutex> lk(core->mu);
                 core->proc.reset();
             }
-            sessionLog(RT::LogLevel::Info, "[teardown] destroying the guest process");
+            hostLog(RT::LogLevel::Info, "[teardown] destroying the guest process");
             proc.reset();
-            sessionLog(RT::LogLevel::Info, "[teardown] guest process destroyed; live arenas " +
+            hostLog(RT::LogLevel::Info, "[teardown] guest process destroyed; live arenas " +
                                             std::to_string(Hydrogen::Memory::GuestArena::liveCount()));
         } catch (const std::exception &e) {
             core->ready = false;
@@ -548,14 +554,14 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 std::lock_guard<std::mutex> lk(core->mu);
                 core->proc.reset();
             }
-            sessionLog(RT::LogLevel::Info, "[teardown] destroying the guest process after an error");
+            hostLog(RT::LogLevel::Info, "[teardown] destroying the guest process after an error");
             proc.reset();
-            sessionLog(RT::LogLevel::Info, "[teardown] guest process destroyed after an error; live arenas " +
+            hostLog(RT::LogLevel::Info, "[teardown] guest process destroyed after an error; live arenas " +
                                             std::to_string(Hydrogen::Memory::GuestArena::liveCount()));
         }
-        sessionLog(RT::LogLevel::Info, "[teardown] stopping host audio");
+        hostLog(RT::LogLevel::Info, "[teardown] stopping host audio");
         stopAudio(core);
-        sessionLog(RT::LogLevel::Info, "[teardown] host audio stopped; queueing the exit callback");
+        hostLog(RT::LogLevel::Info, "[teardown] host audio stopped; queueing the exit callback");
         const bool userStopped = core->stopRequested;
         {
             std::lock_guard<std::mutex> lk(core->logMu);
@@ -563,7 +569,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             if (!crash.empty()) core->logToFile("[crash]\n", crash);
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            sessionLog(RT::LogLevel::Info, "[teardown] delivering the exit callback");
+            hostLog(RT::LogLevel::Info, "[teardown] delivering the exit callback");
             flushLogs();
             HVMSession *s = weakSelf;
             if (!s) return;
