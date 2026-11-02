@@ -22,6 +22,8 @@ struct EmulatorScreen: UIViewRepresentable {
     var mode: PlayerScaleMode = .fit
     var filter: PlayerFilter = .linear
     var inputEnabled = true
+    /// Where the crop sits in fill mode (PlayerCropFocus).
+    var focus: CGPoint = CGPoint(x: 0.5, y: 0.5)
     let onTouch: (HVMTouchPhase, CGPoint, Int) -> Void
 
     func makeUIView(context: Context) -> ScreenView { ScreenView() }
@@ -29,7 +31,7 @@ struct EmulatorScreen: UIViewRepresentable {
     func updateUIView(_ view: ScreenView, context: Context) {
         view.onTouch = onTouch
         view.configure(image: image, glLayer: glLayer, guest: guestSize, orientation: orientation,
-                       mode: mode, filter: filter, enabled: inputEnabled)
+                       mode: mode, filter: filter, enabled: inputEnabled, focus: focus)
     }
 
     static func dismantleUIView(_ view: ScreenView, coordinator: ()) { view.cancelTouches() }
@@ -40,11 +42,17 @@ struct EmulatorScreen: UIViewRepresentable {
         /// underneath, the composited UIKit frame on top.
         private let picture = CALayer()
         private let overlay = CALayer()
+        /// Extended bars: a blurred, dimmed copy of the frame behind the picture.
+        private let backdrop = CALayer()
+        private let backdropDim = CALayer()
+        private var backdropSource: CGImage?
+        private var backdropTime: CFTimeInterval = 0
         private var glLayer: CALayer?
         private var guestSize = CGSize(width: 320, height: 480)
         private var pixelSize = CGSize(width: 640, height: 960)
         private var orientation = GuestOrientation.portrait
         private var mode = PlayerScaleMode.fit
+        private var focus = CGPoint(x: 0.5, y: 0.5)
         private var enabled = true
         private var geometry: PlayerGeometry?
         private struct Finger { let id: Int; var point: CGPoint }
@@ -69,6 +77,13 @@ struct EmulatorScreen: UIViewRepresentable {
             isMultipleTouchEnabled = true
             backgroundColor = .black
             clipsToBounds = true
+            backdrop.isHidden = true
+            backdrop.magnificationFilter = .linear
+            backdrop.minificationFilter = .linear
+            backdropDim.backgroundColor = UIColor.black.cgColor
+            backdropDim.opacity = 0.45
+            backdrop.addSublayer(backdropDim)
+            layer.addSublayer(backdrop)
             layer.addSublayer(picture)
             picture.addSublayer(overlay)
             // A 180° turn between the two landscapes doesn't change the view's size, so
@@ -87,9 +102,11 @@ struct EmulatorScreen: UIViewRepresentable {
         required init?(coder: NSCoder) { fatalError() }
 
         func configure(image: CGImage?, glLayer newGL: CALayer?, guest: CGSize, orientation: GuestOrientation,
-                       mode: PlayerScaleMode, filter: PlayerFilter, enabled: Bool) {
+                       mode: PlayerScaleMode, filter: PlayerFilter, enabled: Bool,
+                       focus: CGPoint = CGPoint(x: 0.5, y: 0.5)) {
             let pixels = image.map { CGSize(width: $0.width, height: $0.height) } ?? pixelSize
-            if guestSize != guest || self.orientation != orientation || self.mode != mode || pixelSize != pixels || !enabled {
+            if guestSize != guest || self.orientation != orientation || self.mode != mode || pixelSize != pixels
+                || !enabled || self.focus != focus {
                 cancelTouches()
             }
             guestSize = guest
@@ -97,6 +114,7 @@ struct EmulatorScreen: UIViewRepresentable {
             self.orientation = orientation
             self.mode = mode
             self.enabled = enabled
+            self.focus = focus
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             overlay.contents = image
@@ -109,8 +127,38 @@ struct EmulatorScreen: UIViewRepresentable {
             }
             glLayer?.magnificationFilter = overlay.magnificationFilter
             glLayer?.minificationFilter = overlay.minificationFilter
+            updateBackdrop(image)
             CATransaction.commit()
             setNeedsLayout()
+        }
+
+        /// Extended bars: a heavily downscaled (box-blurred) copy of the frame, dimmed,
+        /// filling the whole display behind the picture. Once the GPU path can read its
+        /// drawable back, the same layer takes that image.
+        private func updateBackdrop(_ image: CGImage?) {
+            let wants = mode == .extended && image != nil
+            backdrop.isHidden = !wants
+            guard wants, let image else {
+                backdropSource = nil   // the next time the bars show, draw at once
+                return
+            }
+            let now = CACurrentMediaTime()
+            // Draw immediately when the bars first appear, then at most four times a second:
+            // every software frame is a new image, so identity alone would redraw at frame rate.
+            guard backdropSource == nil || now - backdropTime > 0.25 else { return }
+            backdropSource = image
+            backdropTime = now
+            backdrop.contents = Self.blurredCopy(image)
+        }
+
+        private static func blurredCopy(_ image: CGImage) -> CGImage? {
+            let width = 32, height = 32
+            guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            ctx.interpolationQuality = .medium
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return ctx.makeImage()
         }
 
         override func layoutSubviews() {
@@ -118,14 +166,23 @@ struct EmulatorScreen: UIViewRepresentable {
             // The picture's turns depend only on the guest's orientation: the window
             // already turns with the phone between the two landscapes, so the
             // picture stays upright without changing them.
+            // The notch and home indicator must keep showing game pixels in fill mode,
+            // so pass the window's safe area in with the layout.
+            let insets = window?.safeAreaInsets ?? .zero
+            let safeArea = CGRect(x: insets.left, y: insets.top,
+                                  width: max(bounds.width - insets.left - insets.right, 0),
+                                  height: max(bounds.height - insets.top - insets.bottom, 0))
             let next = PlayerGeometry(container: bounds.size, guest: guestSize, pixels: pixelSize,
                                       orientation: orientation, mode: mode,
-                                      displayScale: window?.screen.scale ?? traitCollection.displayScale)
+                                      displayScale: window?.screen.scale ?? traitCollection.displayScale,
+                                      focus: focus, touchSafeArea: safeArea)
             if let geometry, geometry != next { cancelTouches() }
             geometry = next
             let rect = next.rect
             CATransaction.begin()
             CATransaction.setDisableActions(true)
+            backdrop.frame = bounds
+            backdropDim.frame = backdrop.bounds
             picture.bounds = CGRect(origin: .zero, size: orientation.landscape
                 ? CGSize(width: rect.height, height: rect.width) : rect.size)
             picture.position = CGPoint(x: rect.midX, y: rect.midY)

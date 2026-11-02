@@ -383,7 +383,9 @@ struct RunView: View {
     @State private var showFiles = false
     @State private var confirmInspect = false
     @State private var overrideOrientation: GuestOrientation?
-    @AppStorage("player.scaleMode") private var scaleSetting = PlayerScaleMode.fit.rawValue
+    /// Display mode for this game; the global default lives in the library's Options menu.
+    @AppStorage private var scaleSetting: String
+    @AppStorage private var cropFocusSetting: String
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
     /// Read by the session at start (RunModel.start): GPU rendering unless this is on. Per game.
     @AppStorage private var softwareRenderer: Bool
@@ -395,6 +397,10 @@ struct RunView: View {
         _model = State(initialValue: RunModel(app: app))
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: app.info.bundleIdentifier),
                                        RunModel.softwareRenderingKey(app.info.bundleIdentifier))
+        _scaleSetting = AppStorage(wrappedValue: PlayerSettings.scaleMode(bundleID: app.info.bundleIdentifier).rawValue,
+                                   PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
+        _cropFocusSetting = AppStorage(wrappedValue: PlayerSettings.cropFocus(bundleID: app.info.bundleIdentifier).rawValue,
+                                       PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
     }
 
     private var effectiveOrientation: GuestOrientation {
@@ -420,7 +426,8 @@ struct RunView: View {
                                    orientation: effectiveOrientation,
                                    mode: PlayerScaleMode(rawValue: scaleSetting) ?? .fit,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
-                                   inputEnabled: model.inputEnabled) { phase, point, finger in
+                                   inputEnabled: model.inputEnabled,
+                                   focus: PlayerCropFocus(rawValue: cropFocusSetting)?.position ?? PlayerCropFocus.center.position) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
                     }
                     if model.closing {
@@ -610,6 +617,30 @@ struct RunView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+                        .accessibilityIdentifier("player-scale-mode")
+
+                        // Choosing a mode here is a per-game override; this is the way back to the global default.
+                        if PlayerSettings.hasScaleOverride(bundleID: app.info.bundleIdentifier) {
+                            Button("Use default display mode") {
+                                PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
+                            }
+                            .font(.caption2)
+                            .accessibilityIdentifier("player-scale-use-default")
+                        }
+
+                        if PlayerScaleMode(rawValue: scaleSetting)?.crops == true {
+                            Picker("Crop Focus", selection: $cropFocusSetting) {
+                                ForEach(PlayerCropFocus.allCases) { focus in
+                                    Text(focus.rawValue).tag(focus.rawValue)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("player-crop-focus")
+                        }
+                        if PlayerScaleMode(rawValue: scaleSetting)?.extendsBars == true {
+                            Text("The bars show a blurred, dimmed copy of the frame.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
 
                         Picker("Interpolation", selection: $filterSetting) {
                             ForEach(PlayerFilter.allCases) { filter in
