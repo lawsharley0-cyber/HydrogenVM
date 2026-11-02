@@ -6632,6 +6632,30 @@ int runFullSubsystemTests() {
             fs::last_write_time(dirPath, beforeAdd);
             check(cachedPlain && lookup("Stamped") == dirPath + "/Stamped~iphone.tfc",
                   "bundle cache prefers a device variant added under an unchanged directory timestamp");
+            const std::string priorityDir = bundle + "/Priority";
+            fs::create_directories(priorityDir + "/Base.lproj");
+            const std::string earlier = priorityDir + "/pRiOrItY.tfc";
+            put(earlier);
+            put(priorityDir + "/Base.lproj/Priority.tfc");
+            // This fixture requires a case-sensitive filesystem. Removing read
+            // permission exposes an unexpected rescan while retaining search
+            // permission for cached-path validation.
+            if (!fs::exists(priorityDir + "/Priority.tfc")) {
+                bool priority = lookup("Priority", "tfc", "Priority") == earlier &&
+                                lookup("Priority", "tfc", "Priority/") == earlier;
+                const auto permissions = fs::status(priorityDir).permissions();
+                fs::permissions(priorityDir, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec);
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority/") == earlier;
+                fs::permissions(priorityDir, permissions);
+                check(priority, "bundle cache retains an earlier case-insensitive match over a later exact match");
+                const auto priorityStamp = fs::last_write_time(priorityDir);
+                put(priorityDir + "/Priority~iphone.tfc");
+                fs::last_write_time(priorityDir, priorityStamp);
+                check(lookup("Priority", "tfc", "Priority") == priorityDir + "/Priority~iphone.tfc",
+                      "bundle cache still prefers a new exact device variant in the cached directory");
+            }
             put(home + "/Mutable.tfc");
             const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
             auto mutableLookup = [&] {
