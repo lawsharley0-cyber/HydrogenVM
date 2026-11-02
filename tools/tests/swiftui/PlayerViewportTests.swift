@@ -23,7 +23,7 @@ final class PlayerViewportTests: XCTestCase {
         }
         func backdropImage() -> CGImage? {
             guard let contents = backdrop.contents else { return nil }
-            guard CFGetTypeID(contents as CFTypeRef) == CGImageGetTypeID() else {
+            guard CFGetTypeID(contents as CFTypeRef) == CGImage.typeID else {
                 XCTFail("Backdrop contents must be a CGImage")
                 return nil
             }
