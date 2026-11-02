@@ -654,6 +654,7 @@ struct ThreadData : ObjC::HostObject {
     id target = 0, arg = 0, name = 0, dict = 0;
     SEL sel = 0;
     bool cancelled = false;
+    uint32_t stackSize = 512u << 10;   // -stackSize; honoured until -start, as on iOS
     std::atomic<bool> started{false}, finished{false};   // -isExecuting / -isFinished
 };
 void bindThreadObject(Ctx& x, id threadObj, GuestThread* t);
@@ -674,13 +675,13 @@ void perform_trampoline(Ctx& x, GuestPtr req) {
     rt(x).release(x.cpu, arg);
     rt(x).release(x.cpu, target);
 }
-void startBackground(Ctx& x, id target, SEL sel, id arg, id threadObj = 0) {
+void startBackground(Ctx& x, id target, SEL sel, id arg, id threadObj = 0, uint32_t stackSize = 512u << 10) {
     const uint32_t req = x.proc.heap().alloc(16);
     x.mem.write<uint32_t>(req, rt(x).retain(x.cpu, target));
     x.mem.write<uint32_t>(req + 4, sel);
     x.mem.write<uint32_t>(req + 8, rt(x).retain(x.cpu, arg));
     x.mem.write<uint32_t>(req + 12, threadObj);
-    x.proc.startThread(*x.proc.lookupSymbol("__hvm_perform_trampoline"), req, 512u << 10, true);
+    x.proc.startThread(*x.proc.lookupSymbol("__hvm_perform_trampoline"), req, stackSize, true);
 }
 void o_performInBackground(Ctx& x, id self, SEL, SEL sel, id arg) { startBackground(x, self, sel, arg); }
 
@@ -774,8 +775,13 @@ void th_start(Ctx& x, id self, SEL) {
     if (d) {
         if (d->started.exchange(true)) return;   // NSInvalidArgumentException on iOS; starting twice is a no-op here
     }
-    if (d && d->target) startBackground(x, d->target, d->sel, d->arg, self);
-    else if (d) startBackground(x, self, rt(x).sel("main"), 0, self);
+    if (d && d->target) startBackground(x, d->target, d->sel, d->arg, self, d->stackSize);
+    else if (d) startBackground(x, self, rt(x).sel("main"), 0, self, d->stackSize);
+}
+uint32_t th_stackSize(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d ? d->stackSize : (512u << 10); }
+void th_setStackSize(Ctx& x, id self, SEL, uint32_t n) {
+    ThreadData* d = rt(x).hostIf<ThreadData>(self);
+    if (d && !d->started.load() && n) d->stackSize = n;   // after -start the running thread keeps its stack
 }
 void th_noop(Ctx&, id, SEL) {}
 id th_name(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d && d->name ? d->name : makeString(x, ""); }
@@ -870,7 +876,8 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
       .m<&th_noop>("main", "v@:").m<&th_name>("name").m<&th_setName>("setName:").m<&th_dict>("threadDictionary")
       .m<&th_cancel>("cancel", "v@:").m<&th_isCancelled>("isCancelled", "c@:")
       .m<&th_isExecuting>("isExecuting", "c@:").m<&th_isFinished>("isFinished", "c@:")
-      .m<&th_priority>("threadPriority", "d@:").m<&th_setPriority>("setThreadPriority:", "c@:d");
+      .m<&th_priority>("threadPriority", "d@:").m<&th_setPriority>("setThreadPriority:", "c@:d")
+      .m<&th_stackSize>("stackSize", "I@:").m<&th_setStackSize>("setStackSize:", "v@:I");
 
     p.def<&cf_getCurrent>("_CFRunLoopGetCurrent");
     p.def<&cf_getMain>("_CFRunLoopGetMain");
