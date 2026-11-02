@@ -41,7 +41,10 @@ targetTemplates:
           - $(DERIVED_FILE_DIR)/HVMRevision.h
         script: |
           revision=$(/usr/bin/git -C "$SRCROOT/.." rev-parse HEAD 2>/dev/null || echo unknown)
-          printf '#define HVM_COMMIT "%s"\n' "$revision" > "$DERIVED_FILE_DIR/HVMRevision.h"
+          header="$DERIVED_FILE_DIR/HVMRevision.h"
+          if [ ! -f "$header" ] || [ "$(cat "$header")" != "#define HVM_COMMIT \"$revision\"" ]; then
+            printf '#define HVM_COMMIT "%s"\n' "$revision" > "$header"
+          fi
     dependencies:
       - sdk: libz.tbd
       - sdk: libsqlite3.tbd
