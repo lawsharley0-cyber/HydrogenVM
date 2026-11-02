@@ -19,14 +19,18 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from compat_harness.manifest import default_manifest_path, load_manifest, repo_root, resolve_app  # noqa: E402
+from compat_harness.manifest import ManifestError, default_manifest_path, load_manifest, repo_root, resolve_app  # noqa: E402
 
 
 def resolve(ids, *, fixture_root, manifest_path=None):
     """Return (paths, problems). Either every id resolves and problems is empty, or paths is empty."""
     if not fixture_root:
         return [], ["HVM_FIXTURE_ROOT is not set (or pass --fixture-root); there is no fallback to repository copies"]
-    manifest = load_manifest(manifest_path or default_manifest_path())
+    manifest_path = manifest_path or default_manifest_path()
+    try:
+        manifest = load_manifest(manifest_path)
+    except (OSError, ValueError, ManifestError) as exc:
+        return [], [f"cannot load manifest {manifest_path}: {exc}"]
     by_id = {app["id"]: app for app in manifest["apps"]}
     paths, problems = [], []
     for ident in ids:

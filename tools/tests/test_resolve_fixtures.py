@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -100,6 +101,30 @@ class ResolveFixturesTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(out.getvalue(), "")
         self.assertIn("nope", err.getvalue())
+
+    def test_cli_reports_manifest_read_and_validation_errors(self):
+        bad_json = os.path.join(self._tmp.name, "bad.json")
+        bad_schema = os.path.join(self._tmp.name, "bad-schema.json")
+        bad_encoding = os.path.join(self._tmp.name, "bad-encoding.json")
+        for path, content in ((bad_json, b"{"), (bad_schema, b'{}'), (bad_encoding, b'\xff')):
+            with open(path, "wb") as f:
+                f.write(content)
+        cases = ((os.path.join(self._tmp.name, "missing.json"), "missing.json"),
+                 (bad_json, "Expecting property name"),
+                 (bad_schema, "schemaVersion"),
+                 (bad_encoding, "utf-8"))
+        for path, message in cases:
+            with self.subTest(manifest=path):
+                result = subprocess.run(
+                    [sys.executable, os.path.join(TOOLS, "resolve_fixtures.py"),
+                     "--fixture-root", self.root, "--manifest", path, "one"],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("resolve_fixtures:", result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":
