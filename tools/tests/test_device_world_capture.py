@@ -18,7 +18,7 @@ class DeviceWorldCaptureTests(unittest.TestCase):
             artifacts.append({'role': role, 'path': role, 'sha256': hashlib.sha256(data).hexdigest()})
         return {'schemaVersion': 1, 'kind': 'hvm-device-world-capture',
                 'emulator': {'commit': 'a' * 40, 'build': 'synthetic-test', 'dirty': False},
-                'host': {'system': 'iOS', 'deviceModel': 'synthetic', 'osVersion': 'test', 'pageSize': 16384},
+                'host': {'system': 'iOS', 'deviceModel': 'synthetic', 'osVersion': 'test', 'pageSize': 16384, 'renderer': 'software'},
                 'fixture': {'ipaSha256': 'b' * 64, 'bundleId': 'test.synthetic', 'version': '1'},
                 'scenario': {'durationSeconds': 61, 'homeState': 'preserved test sandbox',
                              'actions': [{'atSeconds': 2, 'action': 'tap Play'}, {'atSeconds': 4, 'action': 'tap world'}],
@@ -28,6 +28,39 @@ class DeviceWorldCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             self.assertEqual(validate_capture(self.capture(root), root), [])
+
+    def test_missing_renderer_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); doc = self.capture(root)
+            del doc['host']['renderer']
+            self.assertTrue(any('renderer' in e for e in validate_capture(doc, root)))
+
+    def test_world_loaded_requires_sixty_seconds_after_recorded_entry(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); doc = self.capture(root)
+            doc['scenario']['outcome'] = 'world-loaded'
+            self.assertTrue(validate_capture(doc, root))
+            doc['scenario']['worldEntrySeconds'] = 2
+            self.assertTrue(validate_capture(doc, root))
+            doc['scenario']['durationSeconds'] = 62
+            self.assertEqual(validate_capture(doc, root), [])
+
+    def test_large_integer_times_are_validation_errors_without_tracebacks(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); doc = self.capture(root)
+            doc['scenario']['durationSeconds'] = 10 ** 1000
+            doc['scenario']['actions'][0]['atSeconds'] = 10 ** 999
+            errors = validate_capture(doc, root)
+            self.assertTrue(any('durationSeconds' in e for e in errors))
+            self.assertTrue(any('timestamp' in e for e in errors))
+
+    def test_distinct_required_roles_cannot_reuse_one_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); doc = self.capture(root)
+            first = doc['artifacts'][0]
+            for artifact in doc['artifacts']:
+                artifact.update(path=first['path'], sha256=first['sha256'])
+            self.assertTrue(any('reuse' in e for e in validate_capture(doc, root)))
 
     def test_boolean_schema_version_is_rejected(self):
         with tempfile.TemporaryDirectory() as d:

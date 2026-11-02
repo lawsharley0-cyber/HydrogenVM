@@ -67,7 +67,7 @@ No renderer/runtime workaround or fabricated crash evidence is included.
   "schemaVersion": 1,
   "kind": "hvm-device-world-capture",
   "emulator": {"commit": "<full installed SHA>", "build": "<build>", "dirty": false},
-  "host": {"system": "iOS", "deviceModel": "<model>", "osVersion": "<iOS>", "pageSize": 16384},
+  "host": {"system": "iOS", "deviceModel": "<model>", "osVersion": "<iOS>", "renderer": "<actual renderer>", "pageSize": 16384},
   "fixture": {"ipaSha256": "<private original IPA SHA256>", "bundleId": "<measured>", "version": "<measured>"},
   "scenario": {"durationSeconds": 0, "homeState": "<preserved home reference>",
     "outcome": "unconfirmed", "actions": [{"atSeconds": 0, "action": "<actual input>"}]},
@@ -80,3 +80,19 @@ The template is deliberately incomplete; replace pageSize and duration too.
 It is not a successful capture. No private files belong in this repository.
 
 Local unchanged-runtime gates: fulltest 487/487; Test Lab 25/25, zero skips; complete enabled tools suite 209/209, zero skips. The baseline runtime binary fingerprint is recorded above. This card changes evidence tooling only; thread/memory sanitizer work remains on #264/#263/#234/#28.
+
+The extended 180-second preserved-home probe reached a visible world with
+block inventory and directional controls. It presented 439 frames, retired
+26,972,907,964 guest instructions, reported exitStatus=0/crashed=false and
+finished graceful saving. The available Linux fixture did not reproduce #29;
+control responsiveness and a matching original-IPA/device run are still needed.
+Private evidence: minecraft-world-long-1793577534192472202.
+
+Review regressions first failed for a missing renderer, an incomplete world
+observation, reused artifact paths and oversized JSON integer timestamps.
+The validator now requires renderer, distinct files for required roles and
+worldEntrySeconds plus at least 60 seconds afterward for world-loaded.
+Timestamps outside 0..2^53 seconds are rejected without float conversion.
+All eleven focused tests pass. These are metadata/integrity checks only.
+
+After the review fixes, the local complete enabled tools suite passes 213/213 with zero skips. Existing runtime fulltest487/TestLab25 results apply to the unchanged runtime; final Actions results are tracked separately on the PR.

@@ -21,6 +21,13 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def valid_seconds(value):
+    # Bound integer metadata to JSON's interoperable exact-integer range without
+    # converting attacker-controlled large integers to float.
+    return (type(value) is int and 0 <= value <= 2 ** 53 or
+            type(value) is float and math.isfinite(value) and 0 <= value <= 2 ** 53)
+
+
 def validate_capture(doc, root, expected_commit=None, expected_ipa=None):
     errors = []
     root = Path(root).resolve()
@@ -37,7 +44,7 @@ def validate_capture(doc, root, expected_commit=None, expected_ipa=None):
         sections[key] = value
     emulator, host, fixture, scenario = (sections[k] for k in ('emulator', 'host', 'fixture', 'scenario'))
     for obj, keys, prefix in ((emulator, ('build',), 'emulator'),
-                              (host, ('deviceModel', 'osVersion'), 'host'),
+                              (host, ('deviceModel', 'osVersion', 'renderer'), 'host'),
                               (fixture, ('bundleId', 'version'), 'fixture'),
                               (scenario, ('homeState',), 'scenario')):
         for key in keys:
@@ -60,7 +67,7 @@ def validate_capture(doc, root, expected_commit=None, expected_ipa=None):
     if type(page) is not int or page < 4096 or page & (page - 1):
         errors.append('host.pageSize must be the measured native page size')
     duration = scenario.get('durationSeconds')
-    finite_duration = type(duration) in (int, float) and math.isfinite(duration) and duration >= 0
+    finite_duration = valid_seconds(duration)
     if not finite_duration:
         errors.append('scenario.durationSeconds must be finite and nonnegative')
     actions = scenario.get('actions')
@@ -70,7 +77,7 @@ def validate_capture(doc, root, expected_commit=None, expected_ipa=None):
         previous = -1
         for index, action in enumerate(actions):
             at = action.get('atSeconds') if isinstance(action, dict) else None
-            if type(at) not in (int, float) or not math.isfinite(at) or at < previous or at < 0:
+            if not valid_seconds(at) or at < previous:
                 errors.append(f'scenario action {index} has an invalid timestamp')
                 continue
             previous = at
@@ -88,8 +95,13 @@ def validate_capture(doc, root, expected_commit=None, expected_ipa=None):
         required |= {'ips'}
     elif outcome not in ('world-loaded', 'unconfirmed'):
         errors.append('scenario.outcome must distinguish host/guest crash, jetsam, watchdog, world-loaded or unconfirmed')
+    if outcome == 'world-loaded':
+        entry = scenario.get('worldEntrySeconds')
+        if not valid_seconds(entry) or not finite_duration or duration - entry < 60:
+            errors.append('world-loaded requires a recorded worldEntrySeconds and at least 60 seconds afterward')
     artifacts = doc.get('artifacts')
     roles = set()
+    required_paths = {}
     if not isinstance(artifacts, list):
         errors.append('artifacts must be a list')
         artifacts = []
@@ -107,6 +119,11 @@ def validate_capture(doc, root, expected_commit=None, expected_ipa=None):
         if rel.is_absolute() or PureWindowsPath(relative).is_absolute() or '..' in rel.parts or not path.is_relative_to(root):
             errors.append(f'artifact {role} path may not escape the capture directory')
             continue
+        if role in required:
+            prior = required_paths.get(path)
+            if prior is not None and prior != role:
+                errors.append(f'required artifact roles {prior} and {role} may not reuse one path')
+            required_paths[path] = role
         digest = artifact.get('sha256')
         if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', digest):
             errors.append(f'artifact {role} requires a SHA-256 checksum')
