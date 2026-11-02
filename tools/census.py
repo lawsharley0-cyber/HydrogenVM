@@ -258,6 +258,12 @@ def fixture_path(name: str, repo_root: Path, fixture_root: str | None = None) ->
     """Where fixture `name` lives. With a fixture root set it is `<root>/ipas/<name>` (the apps.json fixtureRelPath)
     and the repo copy is never used, the same rule as the compat harness. census_ipa still checks the SHA-256."""
     if fixture_root:
+        root = (Path(fixture_root) / "ipas").resolve()
+        candidate = root / name
+        # A symlinked ipas/ directory or fixture must not lead back into the repository (or anywhere else outside the
+        # store): resolve both and reject an escape, the rule the compat resolver applies.
+        if not candidate.resolve().is_relative_to(Path(fixture_root).resolve()):
+            raise ValueError(f"fixture {name} resolves outside the fixture root {fixture_root}")
         return Path(fixture_root) / "ipas" / name
     return Path(repo_root) / name
 
@@ -282,7 +288,10 @@ def main(argv=None):
     if args.all or not args.ipa:
         repo_root = Path(__file__).resolve().parent.parent
         for ipa_name in FIXTURE_MANIFEST:
-            ipa_path = fixture_path(ipa_name, repo_root, args.fixture_root)
+            try:
+                ipa_path = fixture_path(ipa_name, repo_root, args.fixture_root)
+            except ValueError as e:
+                sys.exit(str(e))
             if not ipa_path.exists():
                 sys.exit(f"Fixture IPA missing: {ipa_path}")
             res = census_ipa(ipa_path, manifest)

@@ -97,7 +97,7 @@ class TestCensusWithoutBinary(unittest.TestCase):
             test.manifest = {"symbols": [{"name": "_printf", "status": "Real"}], "classes": []}
             with mock.patch.object(sys.modules[__name__], "ROOT_DIR", root), \
                  mock.patch.object(census, "FIXTURE_MANIFEST", fixture), \
-                 mock.patch.dict(os.environ, {"PATH": str(system_bin)}):
+                 mock.patch.dict(os.environ, {"PATH": str(system_bin), "HVM_FIXTURE_ROOT": ""}):   # not the developer's store
                 test.test_reproduces_reference_numbers()
                 system_objdump = system_bin / "llvm-objdump"
                 system_objdump.write_text("#!/bin/sh\nexit 0\n")
@@ -153,6 +153,9 @@ class TestCensus(unittest.TestCase):
                 self.assertEqual(res["reference"], ref)
                 tested += 1
 
+        if missing_fixtures and os.environ.get("HVM_FIXTURE_ROOT"):
+            # A configured store must be complete: a passing subset may not hide the fixtures that are absent.
+            self.fail(f"fixture store {os.environ['HVM_FIXTURE_ROOT']} is missing: {', '.join(missing_fixtures)}")
         if tested == 0:
             self.skipTest(
                 f"None of the reference fixture IPAs ({', '.join(census.FIXTURE_MANIFEST.keys())}) found at repository root or HVM_FIXTURE_ROOT. "
@@ -165,6 +168,18 @@ class TestCensusFixturePath(unittest.TestCase):
     """Where census looks for a fixture IPA. Pure path logic: no real game file and no build needed."""
 
     NAME = "AngryBirds_v1.0_os30.ipa"
+
+    def test_fixture_that_escapes_the_store_through_a_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as store:
+            (Path(repo) / self.NAME).write_bytes(b"repo copy")
+            os.symlink(repo, Path(store) / "ipas")   # the store's ipas/ points back at the repository
+            with self.assertRaises(ValueError):
+                census.fixture_path(self.NAME, Path(repo), store)
+            os.unlink(Path(store) / "ipas")
+            (Path(store) / "ipas").mkdir()
+            os.symlink(Path(repo) / self.NAME, Path(store) / "ipas" / self.NAME)   # a single fixture that is a link out
+            with self.assertRaises(ValueError):
+                census.fixture_path(self.NAME, Path(repo), store)
 
     def test_fixture_root_wins_and_repo_copy_is_never_used(self):
         with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as store:
