@@ -1870,6 +1870,42 @@ int runFullSubsystemTests() {
         while ((ex = engine.run(cpu, 2)) == CPU::Exit::Budget) {}
         check(ex == CPU::Exit::Halt && cpu.r[0] == 0x5678123Eu, "CPU superinstructions (MOVW+MOVT, LDR+ADD, POP {pc}) under 2-insn slices");
     }
+    // NEON float compare against zero (2-register misc) must read the source register,
+    // not register 0 (issue #34: Subway Surfers AABB frustum plane culling).
+    {
+        Memory::GuestArena mem;
+        CPU::Engine engine(mem);
+        static const uint32_t kNeonProg[] = {
+            0xE3000000, 0xE3430F80, // movw r0, 0; movt r0, 0x3F80 (1.0f)
+            0xEE000A10, 0xEE000A90, // vmov s0, r0; vmov s1, r0
+            0xEE010A10, 0xEE010A90, // vmov s2, r0; vmov s3, r0
+            0xE3000000, 0xE34B0F80, // movw r0, 0; movt r0, 0xBF80 (-1.0f)
+            0xEE080A10,             // vmov s16, r0
+            0xE3001000, 0xE3441000, // movw r1, 0; movt r1, 0x4000 (2.0f)
+            0xEE081A90,             // vmov s17, r1
+            0xE3002000, 0xE34C2040, // movw r2, 0; movt r2, 0xC040 (-3.0f)
+            0xEE092A10,             // vmov s18, r2
+            0xE3A03000,             // mov r3, #0 (0.0f)
+            0xEE093A90,             // vmov s19, r3
+            0xF3B98648,             // vclt.f32 q4, q4, #0
+            0xEE180A10, 0xEE181A90, // vmov r0, s16; vmov r1, s17
+            0xEE192A10, 0xEE193A90, // vmov r2, s18; vmov r3, s19
+            0xE12FFF1E,             // bx lr
+        };
+        mem.map(0x10000, 0x1000, Memory::kProtRX);
+        mem.copyIn(0x10000, kNeonProg, sizeof kNeonProg);
+        mem.map(0x000F0000, 0x10000, Memory::kProtRW);
+        const uint32_t halt = engine.registerHle("halt", [](CPU::Cpu& c) { c.exit = CPU::Exit::Halt; });
+        CPU::Cpu cpu;
+        cpu.r[CPU::kSP] = 0x00100000;
+        cpu.r[CPU::kLR] = halt;
+        cpu.r[CPU::kPC] = 0x10000;
+        CPU::Exit ex;
+        while ((ex = engine.run(cpu, 1000)) == CPU::Exit::Budget) {}
+        check(ex == CPU::Exit::Halt && cpu.r[0] == 0xFFFFFFFFu && cpu.r[1] == 0 && cpu.r[2] == 0xFFFFFFFFu && cpu.r[3] == 0,
+              "NEON float compare with zero (VCLT #0) uses source register");
+    }
+
 
     // 2. Full Process + Objective-C + UIKit + OpenGL ES + Audio verification
     ProcessConfig cfg;
