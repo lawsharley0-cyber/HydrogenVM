@@ -17,9 +17,7 @@ using namespace Hydrogen;
 
 // A real signal on a host callback thread, while two guest threads are in HLE.
 // The file (rather than a pipe) deliberately permits a full 200-line report.
-int runHostFaultChild(int fd, bool stress) {
-        const bool afterUnwind = fd < 0;
-        if (afterUnwind) fd = -fd;
+int runHostFaultChild(int fd, bool stress, bool afterUnwind) {
         const rlimit noCore{0, 0};
         setrlimit(RLIMIT_CORE, &noCore);
         alarm(15);
@@ -32,6 +30,7 @@ int runHostFaultChild(int fd, bool stress) {
             cpu.r[CPU::kPC] = throwing;
             try { engine.run(cpu); }
             catch (int) {
+                CPU::Engine::recordLogLineAsyncSafe("unwind-exception-caught", sizeof("unwind-exception-caught") - 1);
                 // The guest scope has unwound. This must be a fatal host fault,
                 // never a siglongjmp into the abandoned Engine::run frame.
                 *reinterpret_cast<volatile unsigned*>(arena.base() + 0x4000) = 1;
@@ -97,13 +96,14 @@ static int runOneHostFaultTest(bool stress, bool afterUnwind = false) {
     if (_NSGetExecutablePath(executable, &size)) return 2;
 #endif
     char fdArg[32];
-    std::snprintf(fdArg, sizeof fdArg, "%d", afterUnwind ? -fd : fd);
+    std::snprintf(fdArg, sizeof fdArg, "%d", afterUnwind ? 0 : fd);
     pid_t child = fork();
     if (child < 0) return 2;
     if (!child) {
         // fulltest may have other host threads. Only async-safe operations are
         // allowed between fork and exec; never construct an Engine here.
-        execl(executable, executable, stress ? "hostfault-stress-child" : "hostfault-child", fdArg, static_cast<char*>(nullptr));
+        if (afterUnwind && dup2(fd, STDIN_FILENO) < 0) _exit(126);
+        execl(executable, executable, afterUnwind ? "hostfault-unwind-child" : stress ? "hostfault-stress-child" : "hostfault-child", fdArg, static_cast<char*>(nullptr));
         _exit(127);
     }
     int status = 0;
@@ -123,6 +123,7 @@ static int runOneHostFaultTest(bool stress, bool afterUnwind = false) {
     check(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV, "fatal signal preserved");
     check(has("Host Fault Address (si_addr): 0x") && has("Guest Arena Offset: 0x00004000"), "callback fault address and arena offset");
     if (afterUnwind) {
+        check(has("unwind-exception-caught"), "descriptor zero selects the actual C++ unwind scenario");
         check(has("=== END HOST FAULT DIAGNOSTICS ==="), "host fault after C++ unwind does not jump into a dead guest scope");
         return failures ? 1 : 0;
     }
@@ -174,16 +175,27 @@ static int runOneHostFaultTest(bool stress, bool afterUnwind = false) {
 }
 
 int runHostFaultTests() {
+    bool cleared = false;
+    {
+        Memory::GuestArena memory;
+        CPU::Engine engine(memory);
+        CPU::Cpu cpu;
+        const auto hle = engine.registerHle("unwind_flag", [](CPU::Cpu&) { throw 42; });
+        cpu.r[CPU::kPC] = hle;
+        try { engine.run(cpu); } catch (int) {}
+        cleared = cpu.fault_state && !cpu.fault_state->inGuest.load();
+        std::printf("%s outermost C++ unwind clears the diagnostic in-guest flag\n", cleared ? "ok" : "FAIL");
+    }
     const int single = runOneHostFaultTest(false);
     const int concurrent = runOneHostFaultTest(true);
     const int unwound = runOneHostFaultTest(false, true);
-    return single || concurrent || unwound;
+    return !cleared || single || concurrent || unwound;
 }
 
 #ifndef HVM_HOST_FAULT_NO_MAIN
 int main(int argc, char** argv) {
-    if (argc == 3 && (std::string(argv[1]) == "hostfault-child" || std::string(argv[1]) == "hostfault-stress-child"))
-        return runHostFaultChild(std::atoi(argv[2]), std::string(argv[1]) == "hostfault-stress-child");
+    if (argc == 3 && (std::string(argv[1]) == "hostfault-child" || std::string(argv[1]) == "hostfault-stress-child" || std::string(argv[1]) == "hostfault-unwind-child"))
+        return runHostFaultChild(std::atoi(argv[2]), std::string(argv[1]) == "hostfault-stress-child", std::string(argv[1]) == "hostfault-unwind-child");
     return runHostFaultTests();
 }
 #endif

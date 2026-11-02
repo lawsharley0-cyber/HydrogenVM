@@ -554,6 +554,9 @@ void Engine::decodeThumbBlock(Block& b, uint32_t pc) {
 // --------------------------------------------------------------- run loop ---
 
 Exit Engine::run(Cpu& cpu, int64_t budget) {
+    FaultScope* prev = t_scope;
+    const bool previousFaultInGuest = prev && cpu.fault_state &&
+        cpu.fault_state->inGuest.load(std::memory_order_relaxed);
     cpu.engine = this;
     if (cpu.fault_state) {
         cpu.fault_state->arena.store(reinterpret_cast<uintptr_t>(mem_.base()), std::memory_order_relaxed);
@@ -568,10 +571,17 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     FaultScope scope;
     scope.arenaBase = reinterpret_cast<uintptr_t>(mem_.base());
     scope.addr = 0;
-    FaultScope* prev = t_scope;
     // Restore on C++ exceptions too: a subsequent host fault must not follow
     // a scope pointer into the abandoned Engine::run stack frame.
-    struct RestoreScope { FaultScope* prev; ~RestoreScope() { t_scope = prev; } } restore{prev};
+    struct RestoreScope {
+        FaultScope* prev;
+        HostFaultThreadState* state;
+        bool inGuest;
+        ~RestoreScope() {
+            if (state) state->inGuest.store(inGuest, std::memory_order_relaxed);
+            t_scope = prev;
+        }
+    } restore{prev, cpu.fault_state, previousFaultInGuest};
     t_scope = &scope;
     if (sigsetjmp(scope.jb, 1)) {
         t_scope = prev;

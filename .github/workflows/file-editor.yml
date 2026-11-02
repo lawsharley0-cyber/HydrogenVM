@@ -49,6 +49,47 @@ jobs:
               tail -150 build/file-editor/simulator.log
               exit 1
             }
+      - name: Crash journal recovery with the actual engine bridge
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices=json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if "iOS" not in runtime: continue
+              for device in devices[runtime]:
+                  if device["name"].startswith("iPhone"):
+                      print(device["udid"]); sys.exit(0)
+          sys.exit("No iPhone simulator")')
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          cp app/HydrogenVM/CrashReport.swift "$RUNNER_TEMP/hvm-current-crash-report.swift"
+          trap 'cp "$RUNNER_TEMP/hvm-current-crash-report.swift" app/HydrogenVM/CrashReport.swift' EXIT
+          git fetch --no-tags --depth=1 origin 1a874239966f0f04697aaaa2897103a094846e6d
+          git show 1a874239966f0f04697aaaa2897103a094846e6d:app/HydrogenVM/CrashReport.swift > app/HydrogenVM/CrashReport.swift
+          if xcodebuild -project app/HydrogenVM.xcodeproj -scheme HydrogenVMJournalTests \
+            -configuration Release -destination "platform=iOS Simulator,id=$UDID" \
+            SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 ENABLE_TESTABILITY=YES \
+            SYMROOT="$PWD/build/file-editor/xbuild" CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO \
+            -resultBundlePath build/file-editor/CrashJournalBefore.xcresult \
+            test >build/file-editor/crash-journal-before.log 2>&1; then
+            echo "Previous recovery unexpectedly passed the regression"
+            exit 1
+          fi
+          grep -E 'testMalformedPendingAndSignalArePreserved.*failed' build/file-editor/crash-journal-before.log
+          grep -E 'testSignalWithoutPendingMetadataIsRecovered.*failed' build/file-editor/crash-journal-before.log
+          cp "$RUNNER_TEMP/hvm-current-crash-report.swift" app/HydrogenVM/CrashReport.swift
+          trap - EXIT
+          xcodebuild -project app/HydrogenVM.xcodeproj -scheme HydrogenVMJournalTests \
+            -configuration Release -destination "platform=iOS Simulator,id=$UDID" \
+            SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 ENABLE_TESTABILITY=YES \
+            SYMROOT="$PWD/build/file-editor/xbuild" CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO \
+            -resultBundlePath build/file-editor/CrashJournalTests.xcresult \
+            test >build/file-editor/crash-journal.log 2>&1 || {
+              tail -150 build/file-editor/crash-journal.log
+              exit 1
+            }
       - name: Exercise save and close flows on an iPhone simulator
         timeout-minutes: 15
         run: |
@@ -80,3 +121,5 @@ jobs:
           path: |
             build/file-editor/*.log
             build/file-editor/EditorUITests.xcresult
+            build/file-editor/CrashJournalTests.xcresult
+            build/file-editor/CrashJournalBefore.xcresult

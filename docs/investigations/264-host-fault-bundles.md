@@ -136,3 +136,34 @@ its actual result must be linked after that run finishes.
 [Apple file-editor run 41358248921](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41358248921)
 passed Swift tests and unsigned simulator compilation but failed the save/close
 UI exercise. That is a failed run, not a physical-device or full Apple pass.
+
+Head 57963f62d9d2e475f79416668c61337899624eca was checked out by
+[CI 41364337611](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364337611)
+as merge 7cc032dd794be130801692fcbba129803aa405b3. The job log confirms
+202 tools tests passed in 16.663 seconds with the integration enabled, plus
+fulltest and focused ASan/UBSan success. [Test Lab 41364337427](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364337427)
+passed. These are actual Actions results for that head, not the later follow-up.
+
+Further review regressions exposed stale diagnostic inGuest=true after an
+outermost C++ unwind. The new test failed against the preceding candidate,
+then passed with the previous diagnostic sample restored (false outermost).
+The signal regression now passes mode independently and deliberately uses
+child descriptor zero, checking an unwind-only log marker. Neither test can
+accidentally pass by running the ordinary fault path.
+
+Three actual-app XCTest cases cover clipped/invalid pending and signal bytes,
+signal evidence without pending metadata, and a real read-only-directory save
+failure retaining all journal bytes before a successful retry. They use the
+real engine bridge in an isolated app test sandbox, without success stubs.
+Their Apple Actions result remains pending; no local Swift pass is claimed.
+The earlier file-editor failure included missing bridge types and BinaryEditorView
+in its separate synthetic UI harness. The actual shell compilation passed;
+the new journal test target does not depend on that harness.
+
+The review C++ candidate again passed local fulltest 488/488, Test Lab 25/25
+zero skips, the complete enabled tools suite 202/202 and focused ASan/UBSan.
+The Apple journal gate first requires the two named recovery tests to fail
+against actual earlier CrashReport.swift from 1a874239966f0f04697aaaa2897103a094846e6d,
+then restores the candidate and requires the complete journal tests to pass.
+A baseline build failure cannot satisfy the required named-test failures.
+The test source and actual bridge stay identical between both executions.

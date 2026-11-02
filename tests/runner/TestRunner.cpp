@@ -236,7 +236,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 
 int runMinimp3HwcapChecks();
 int runHostFaultTests();
-int runHostFaultChild(int fd, bool stress);
+int runHostFaultChild(int fd, bool stress, bool afterUnwind);
 
 namespace {
 
@@ -7593,8 +7593,8 @@ static int runStopProbe() {
 }
 
 int main(int argc, char** argv) {
-    if (argc == 3 && (std::string(argv[1]) == "hostfault-child" || std::string(argv[1]) == "hostfault-stress-child"))
-        return runHostFaultChild(std::atoi(argv[2]), std::string(argv[1]) == "hostfault-stress-child");
+    if (argc == 3 && (std::string(argv[1]) == "hostfault-child" || std::string(argv[1]) == "hostfault-stress-child" || std::string(argv[1]) == "hostfault-unwind-child"))
+        return runHostFaultChild(std::atoi(argv[2]), std::string(argv[1]) == "hostfault-stress-child", std::string(argv[1]) == "hostfault-unwind-child");
     if (argc == 4 && std::string(argv[1]) == "audio-decode") {
         std::ifstream in(argv[2], std::ios::binary);
         if (!in) return 2;
