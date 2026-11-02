@@ -162,8 +162,8 @@ the new journal test target does not depend on that harness.
 
 The review C++ candidate again passed local fulltest 488/488, Test Lab 25/25
 zero skips, the complete enabled tools suite 202/202 and focused ASan/UBSan.
-The Apple journal gate first requires the three named recovery tests to fail
-against actual earlier CrashReport.swift from 1a874239966f0f04697aaaa2897103a094846e6d,
+The Apple journal gate first requires the two changed-behavior recovery tests to fail
+against the verbatim recovery method from main 4c09fa4708fe48796f3255695e97aef685087042,
 then restores the candidate and requires the complete journal tests to pass.
 A baseline build failure cannot satisfy the required named-test failures.
 The test source and actual bridge stay identical between both executions.
@@ -171,7 +171,17 @@ The test source and actual bridge stay identical between both executions.
 The failed-save fixture uses a valid overlong bundle identifier so report-file
 creation fails with ENAMETOOLONG while the three pending paths remain writable
 and deletable. A read-only-directory fixture would also prevent deletion and
-could hide the old unconditional-cleanup bug. The named failed-save test is
-therefore also required to fail against the earlier actual recovery source.
+could hide a future unconditional-cleanup regression. The failed-save test guards existing behavior: main already preserves journals
+on save failure. It is not required to fail against main.
 After checking the exact retained bytes, the test fixes only its synthetic
 metadata and verifies successful recovery; production saved state is untouched.
+
+The first Apple journal attempt failed before test execution because the
+device-only scheme did not resolve a simulator destination. Its artifact log
+shows that configuration failure; it is not a red regression result. The
+gate now explicitly selects the simulator SDK. The negative comparison uses
+main's verbatim recover() method, preserving unrelated current session APIs
+for compilation. Earlier 1a874239 already supports missing pending metadata
+and was not a suitable baseline for that behavior. Failed-save retention
+already exists on main and is a conformance check, not a newly discovered
+cleanup defect. No Apple journal pass is claimed until the corrected run.

@@ -54,8 +54,8 @@ final class CrashReportTests: XCTestCase {
         try withFreshJournal {
             // A valid JSON bundle ID can exceed NAME_MAX in save's generated
             // filename. Creation fails with ENAMETOOLONG while pending files
-            // remain readable and deletable, so the old unconditional cleanup
-            // really loses evidence and fails this test.
+            // remain readable and deletable. Retention must depend on the
+            // successful-save guard, which already exists on main.
             let pending = try JSONSerialization.data(withJSONObject: ["bundleId": String(repeating: "x", count: 300)])
             let signal = Data("{\"exceptionKind\":\"host-SIGBUS\"}".utf8)
             let host = Data("private test host-fault text".utf8)
