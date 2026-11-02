@@ -6656,6 +6656,27 @@ int runFullSubsystemTests() {
                 check(lookup("Priority", "tfc", "Priority") == priorityDir + "/Priority~iphone.tfc",
                       "bundle cache still prefers a new exact device variant in the cached directory");
             }
+            // A later exact match must not evict an earlier case-insensitive hit.
+            // Add a case-insensitive variant with the same timestamp so a
+            // re-scan would visibly select it instead of the cached path.
+            fs::create_directories(dirPath + "/Base.lproj");
+            const std::string remoteEarlier = dirPath + "/priority.tfc";
+            put(remoteEarlier);
+            put(dirPath + "/Base.lproj/Priority.tfc");
+            if (!fs::exists(dirPath + "/Priority.tfc")) { // case-sensitive filesystem
+                const auto priorityStamp = fs::last_write_time(dirPath);
+                bool priorityOK = lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                put(dirPath + "/priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                check(priorityOK, "later exact resource does not evict an earlier case-insensitive cached match");
+                put(dirPath + "/Priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                check(lookup("Priority") == dirPath + "/Priority~iphone.tfc",
+                      "cached case-insensitive match yields to an exact device variant in the same directory");
+            }
             put(home + "/Mutable.tfc");
             const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
             auto mutableLookup = [&] {
