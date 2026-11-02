@@ -37,9 +37,11 @@ class TestUnityMonoChecklist(unittest.TestCase):
 
     def test_stat_layout_needs_its_own_assertion(self):
         self.assertEqual(U.check_stat_layout("  ok   unrelated\n")["status"], U.UNVERIFIED)   # an unrelated green run is no proof
+        self.assertEqual(U.check_stat_layout(ok("Darwin 32-bit struct stat legacy and INODE64 layouts"))["status"], U.UNVERIFIED)
         res = U.check_stat_layout(ok(U.STAT_MARKER))
         self.assertEqual(res["status"], U.PASS)
-        self.assertEqual((res["legacy_size"], res["inode64_size"], res["st_size_offset"]), (96, 108, 48))
+        self.assertEqual((res["inode64_size"], res["st_size_offset"], res["st_mode_offset"]), (108, 60, 4))
+        self.assertNotIn("legacy_size", res)
         self.assertEqual(U.check_stat_layout(failed(U.STAT_MARKER))["status"], U.FAIL)
 
     def test_signals_need_faults_that_reached_the_guest_handler(self):
@@ -51,8 +53,10 @@ class TestUnityMonoChecklist(unittest.TestCase):
             self.assertIn(sig, U.check_signals(None)["signals"])
 
     def test_dlopen_null(self):
-        both = ok(U.DLOPEN_MARKER) + ok(U.DLSYM_MARKER)
+        both = ok(U.DLOPEN_MARKER) + ok(U.DLSYM_MARKER) + ok(U.GUEST_DLSYM_MARKER)
         self.assertEqual(U.check_dlopen_null(both)["status"], U.PASS)
+        self.assertEqual(U.check_dlopen_null(ok(U.DLOPEN_MARKER) + ok(U.DLSYM_MARKER))["status"], U.UNVERIFIED)
+        self.assertEqual(U.check_dlopen_null(both + failed(U.GUEST_DLSYM_MARKER))["status"], U.FAIL)
         self.assertEqual(U.check_dlopen_null(ok(U.DLOPEN_MARKER))["status"], U.UNVERIFIED)   # export resolution not shown
         self.assertEqual(U.check_dlopen_null(ok(U.DLOPEN_MARKER) + failed(U.DLSYM_MARKER))["status"], U.FAIL)
         self.assertEqual(U.check_dlopen_null(failed(U.DLOPEN_MARKER) + ok(U.DLSYM_MARKER))["status"], U.FAIL)

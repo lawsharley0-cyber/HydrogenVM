@@ -5012,6 +5012,15 @@ int runFullSubsystemTests() {
             const uint32_t symGetpid = proc.allocCString("getpid");
             const uint32_t dlsymRes = call("_dlsym", {0xFFFFFFFEu, symGetpid});
             check(dlsymRes != 0, "dlsym(RTLD_DEFAULT) resolves guest and HLE exports");
+            // Populate the unloaded process's image with a unique synthetic guest export.
+            auto& exports = const_cast<Loader::Image&>(proc.image()).exports;
+            const char* guestExportName = "_hvm_test_guest_export";
+            const bool noHleExport = !proc.lookupSymbol(guestExportName);
+            const uint32_t guestExportAddr = proc.heap().allocZeroed(4);
+            exports.emplace(guestExportName, guestExportAddr);
+            const uint32_t guestDlsymRes = call("_dlsym", {0xFFFFFFFEu, proc.allocCString("hvm_test_guest_export")});
+            check(noHleExport && guestExportAddr && guestDlsymRes == guestExportAddr, "dlsym(RTLD_DEFAULT) resolves a guest export");
+            exports.erase(guestExportName);
 
             const uint32_t pw501 = call("_getpwuid", {501});
             const bool pw501Ok = pw501 && proc.readCString(proc.mem().read<uint32_t>(pw501)) == "mobile" &&
@@ -5021,13 +5030,13 @@ int runFullSubsystemTests() {
             const uint32_t stBuf = proc.heap().allocZeroed(128);
             const std::string stPath = proc.guestHomePath() + "/Documents/hvm_stat_test.txt";
             const uint32_t cStPath = proc.allocCString(stPath);
-            const uint32_t fdSt = call("_open", {cStPath, 0x0202 /* O_RDWR | O_CREAT */, 0644});
+            const uint32_t fdSt = call("_open", {cStPath, 0x0602 /* O_RDWR | O_CREAT | O_TRUNC */, 0644});
             call("_pwrite", {fdSt, proc.allocCString("unity"), 5, 0});
             call("_close", {fdSt});
             const bool statOk = call("_stat", {cStPath, stBuf}) == 0;
             const uint16_t stMode = proc.mem().read<uint16_t>(stBuf + 4);
             const int64_t stSz = proc.mem().read<int64_t>(stBuf + 60);
-            check(statOk && (stMode & 0100000) && stSz == 5, "Darwin 32-bit struct stat legacy and INODE64 layouts");
+            check(statOk && (stMode & 0100000) && stSz == 5, "Darwin 32-bit INODE64 stat mode and size offsets");
 
             const uint32_t asbdPcm = proc.heap().allocZeroed(40), outPcmAq = proc.heap().allocZeroed(4);
             proc.mem().write<double>(asbdPcm, 44100.0);
