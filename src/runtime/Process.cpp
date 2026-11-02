@@ -1225,10 +1225,11 @@ std::string Process::callRingJson(size_t perThread) {
     for (GuestThread* t : list) {
         const Diag::ThreadCallRing* ring = t->cpu.call_ring.load(std::memory_order_acquire);
         if (!ring) continue;   // the thread never made a host call
-        out << (firstThread ? "" : ",") << "{\"thread\":" << t->id << ",\"total\":" << ring->total() << ",\"calls\":[";
+        const auto snapshot = ring->snapshot(perThread);   // total and calls from one read of the ring head
+        out << (firstThread ? "" : ",") << "{\"thread\":" << t->id << ",\"total\":" << snapshot.total << ",\"calls\":[";
         firstThread = false;
         bool firstCall = true;
-        for (const auto& r : ring->last(perThread)) {
+        for (const auto& r : snapshot.calls) {
             const char* kind = r.kind == Diag::CallKind::Hle ? "hle" : r.kind == Diag::CallKind::ObjC ? "objc" : r.kind == Diag::CallKind::Gl ? "gl" : "none";
             // Only HLE entries carry a name today; ObjC and GL entries are not pushed yet.
             const std::string name = r.kind == Diag::CallKind::Hle ? hleFunctionName(r.id) : std::string();

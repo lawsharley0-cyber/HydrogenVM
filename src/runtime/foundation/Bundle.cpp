@@ -558,7 +558,8 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
                     for (const std::string& candidate : {name + "~iphone" + ext, name + ext}) {
                         ec.clear();
                         const fs::path p = d / candidate;
-                        if (fs::exists(p, ec)) { best = p.string(); break; }
+                        // A candidate that escapes the bundle (a symlink) is never selected by a real lookup either.
+                        if (fs::exists(p, ec) && resourceInside(boundary, p)) { best = p.string(); break; }
                     }
                     if (!best.empty()) break;
                 }

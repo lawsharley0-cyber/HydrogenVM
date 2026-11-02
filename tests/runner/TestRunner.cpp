@@ -2557,6 +2557,57 @@ int runFullSubsystemTests() {
               "named UTC zone is independent of the host's local timezone");
     }
 
+    // 2a0. Guest screen overrides (issue #281, modes 3 and 4): opt-in by environment, per launch.
+    {
+        auto screenSize = [&](const char* sel) { return UIKit::getRect(cx, ObjC::id(r.send(cpu, r.getClass("UIScreen"), "mainScreen")), sel); };
+        auto& u = UIKit::ui(cx);
+        const float w0 = u.screenW, h0 = u.screenH;
+        const auto processW = proc.config().screenWidth, processH = proc.config().screenHeight;
+        const auto orientation = u.statusBarOrientation;
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "694", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - 694.0f) < 0.01f && std::abs(screenSize("bounds").w - w0) < 0.01f,
+              "HVM_VIRTUAL_SCREEN_HEIGHT gives the guest a taller UIScreen");
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "99999", 1);
+        u.screenH = h0;
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "an out-of-range virtual height is ignored");
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "abc", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "a non-numeric virtual height is ignored");
+        ::unsetenv("HVM_VIRTUAL_SCREEN_HEIGHT");
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "no variable keeps the previous screen");
+        const bool hidden = u.statusBarHidden;
+        u.statusBarHidden = false;
+        u.statusBarOrientation = 1;
+        ::setenv("HVM_SAFE_AREA", "44,0,34,0", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        const Graphics::Rect af = screenSize("applicationFrame");
+        check(std::abs(af.y - 44.0f) < 0.01f && std::abs(af.h - (h0 - 44.0f - 34.0f)) < 0.01f,
+              "safe-area insets shrink applicationFrame (top 44, bottom 34)");
+        const ObjC::id sharedApp = u.app ? u.app : r.createInstance(r.getClass("UIApplication"));
+        check(std::abs(UIKit::getRect(cx, sharedApp, "statusBarFrame").h - 44.0f) < 0.01f,
+              "with safe-area insets the status bar is as tall as the top inset");
+        ::setenv("HVM_SAFE_AREA", "0,200,0,200", 1);   // 400 points of side insets on a 320-point screen
+        UIKit::applyGuestScreenEnv(cx);
+        const Graphics::Rect erased = screenSize("applicationFrame");
+        check(std::abs(erased.w - w0) < 0.01f && std::abs(erased.y - 20.0f) < 0.01f,
+              "insets that would leave no usable width are rejected");
+        ::setenv("HVM_SAFE_AREA", "bogus", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(UIKit::getRect(cx, sharedApp, "statusBarFrame").h - 20.0f) < 0.01f, "without valid insets the status bar is 20 points high");
+        const Graphics::Rect plain = screenSize("applicationFrame");
+        check(std::abs(plain.y - 20.0f) < 0.01f && std::abs(plain.h - (h0 - 20.0f)) < 0.01f,
+              "invalid safe-area text means no insets");
+        ::unsetenv("HVM_SAFE_AREA");
+        UIKit::applyGuestScreenEnv(cx);
+        u.statusBarHidden = hidden;
+        u.statusBarOrientation = orientation;
+        u.screenW = w0; u.screenH = h0;
+        proc.setScreenSize(processW, processH);
+    }
+
     // 2a. UIScrollView
     {
         const ObjC::Class svCls = r.getClass("UIScrollView");
@@ -4458,6 +4509,76 @@ int runFullSubsystemTests() {
         check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
     }
 
+    // A signal selects one already-waiting thread; broadcast releases the rest.
+    {
+        ProcessConfig pcfg;
+        pcfg.homePath = "/tmp/hvm_pthreads_signal";
+        Process isolated(pcfg);
+        auto& icpu = isolated.mainThread().cpu;
+        const uint32_t cv = isolated.heap().allocZeroed(4), mu = isolated.heap().allocZeroed(4);
+        auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
+            return uint32_t(isolated.callGuest(icpu, *isolated.lookupSymbol(name), args));
+        };
+        call("_pthread_mutex_init", {mu, 0});
+        call("_pthread_cond_init", {cv, 0});
+        call("_pthread_cond_signal", {cv}); // A signal without waiters is not retained.
+        struct Counts { std::atomic<int> ready{0}, awakened{0}, finished{0}; };
+        const auto counts = std::make_shared<Counts>();
+        const uint32_t waiter = isolated.registerHostFunction("cond_signal_waiter", [cv, mu, counts](Runtime::Ctx& x) {
+            try {
+                x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_lock"), {mu});
+                ++counts->ready;
+                x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_cond_wait"), {cv, mu});
+                ++counts->awakened;
+                x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_unlock"), {mu});
+            } catch (const Runtime::ProcessExit&) {
+            } catch (const CPU::GuestFault&) {}
+            ++counts->finished;
+        });
+        for (int i = 0; i < 4; ++i) isolated.startThread(waiter, 0, 16u << 10, false);
+        auto waitFor = [](const std::atomic<int>& value, int target) {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (value.load() < target && std::chrono::steady_clock::now() < until)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return value.load() >= target;
+        };
+        const bool ready = waitFor(counts->ready, 4);
+        bool acquired = false;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (ready && !(acquired = call("_pthread_mutex_trylock", {mu}) == 0) &&
+               std::chrono::steady_clock::now() < until) std::this_thread::yield();
+        bool one = false, two = false, all = false;
+        if (acquired) {
+            // Acquiring the mutex after all workers reached wait proves they have released it.
+            call("_pthread_cond_signal", {cv});
+            call("_pthread_mutex_unlock", {mu});
+            const bool woke = waitFor(counts->awakened, 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(200)); // covers multiple 50 ms stop polls
+            one = woke && counts->awakened.load() == 1;
+            call("_pthread_cond_signal", {cv});
+            const bool wokeAgain = waitFor(counts->awakened, 2);
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            two = wokeAgain && counts->awakened.load() == 2;
+            call("_pthread_cond_broadcast", {cv});
+            all = waitFor(counts->awakened, 4);
+        }
+        check(ready && acquired && one && two && all,
+              "pthread cond signals wake one waiter each and broadcast wakes the remainder");
+        if (all && waitFor(counts->finished, 4)) {
+            const uint32_t ts = isolated.heap().allocZeroed(8);
+            isolated.mem().write<int32_t>(ts + 4, 1000000); // one millisecond, relative
+            call("_pthread_mutex_lock", {mu});
+            const auto result = call("_pthread_cond_timedwait_relative_np", {cv, mu, ts});
+            call("_pthread_mutex_unlock", {mu});
+            call("_pthread_cond_signal", {cv}); // The expired waiter must no longer be queued.
+            check(result == 60, "pthread timed wait expires and leaves no waiter to signal");
+        } else {
+            check(false, "pthread timed wait expires and leaves no waiter to signal");
+        }
+        isolated.requestStop();
+        waitFor(counts->finished, 4);
+    }
+
     // 2f13. Pthread condition variable process stop broadcast
     {
         ProcessConfig pcfg;
@@ -4510,6 +4631,83 @@ int runFullSubsystemTests() {
         // The Process must outlive every waiter, even when the check above failed: give a stuck one time to leave.
         const auto drain = std::chrono::steady_clock::now();
         while (finishedCount < 3 && std::chrono::steady_clock::now() - drain < std::chrono::seconds(10)) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    // A signal selects one current waiter; signals do not accumulate for future waits.
+    {
+        ProcessConfig pcfg;
+        pcfg.homePath = "/tmp/hvm_pthreads_signal";
+        Process isolated(pcfg);
+        auto& icpu = isolated.mainThread().cpu;
+        const uint32_t cv = isolated.heap().allocZeroed(4), mu = isolated.heap().allocZeroed(4);
+        auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
+            return uint32_t(isolated.callGuest(icpu, *isolated.lookupSymbol(name), args));
+        };
+        bool ok = call("_pthread_mutex_init", {mu, 0}) == 0 && call("_pthread_cond_init", {cv, 0}) == 0;
+        ok &= call("_pthread_cond_signal", {cv}) == 0;
+        struct Counts { std::atomic<int> ready{0}, finished{0}, errors{0}; };
+        const auto counts = std::make_shared<Counts>();
+        const uint32_t waiter = isolated.registerHostFunction("signal_waiter", [cv, mu, counts](Runtime::Ctx& x) {
+            auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
+                return uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol(name), args));
+            };
+            try {
+                if (call("_pthread_mutex_lock", {mu}) != 0) { ++counts->errors; return; }
+                ++counts->ready;
+                if (call("_pthread_cond_wait", {cv, mu}) != 0) ++counts->errors;
+                ++counts->finished;
+                if (call("_pthread_mutex_unlock", {mu}) != 0) ++counts->errors;
+            } catch (const Runtime::ProcessExit&) {}
+        });
+        std::vector<uint32_t> threads;
+        for (int i = 0; i < 4; ++i) threads.push_back(isolated.startThread(waiter, 0, 16u << 10, false));
+        auto awaitCount = [](const std::atomic<int>& count, int target) {
+            const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (count.load() < target && std::chrono::steady_clock::now() < end)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return count.load() >= target;
+        };
+        const bool ready = awaitCount(counts->ready, 4);
+        // Holding the guest mutex after all workers have acquired it proves they entered cond_wait.
+        bool locked = false;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (ready && !(locked = call("_pthread_mutex_trylock", {mu}) == 0) &&
+               std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        ok &= ready && locked;
+        if (locked) {
+            ok &= counts->finished.load() == 0;
+            ok &= call("_pthread_cond_signal", {cv}) == 0;
+            call("_pthread_mutex_unlock", {mu});
+            ok &= awaitCount(counts->finished, 1);
+            // Longer than the runtime's 50 ms stop/cancellation polling interval.
+            std::this_thread::sleep_for(std::chrono::milliseconds(160));
+            ok &= counts->finished.load() == 1;
+            call("_pthread_mutex_lock", {mu});
+            ok &= call("_pthread_cond_signal", {cv}) == 0;
+            ok &= call("_pthread_cond_signal", {cv}) == 0;
+            call("_pthread_mutex_unlock", {mu});
+            ok &= awaitCount(counts->finished, 3);
+            std::this_thread::sleep_for(std::chrono::milliseconds(160));
+            ok &= counts->finished.load() == 3;
+            ok &= call("_pthread_cond_broadcast", {cv}) == 0;
+            ok &= awaitCount(counts->finished, 4);
+        }
+        if (counts->finished.load() != 4) isolated.requestStop();
+        else for (uint32_t thread : threads) { uint32_t retval; isolated.joinThread(thread, &retval); }
+        check(ok && counts->finished.load() == 4 && counts->errors.load() == 0,
+              "pthread signal wakes one current waiter per call and broadcast wakes the rest");
+        bool timed = false;
+        if (counts->finished.load() == 4 && !isolated.stopping()) {
+            const uint32_t ts = isolated.heap().allocZeroed(8);
+            isolated.mem().write<uint32_t>(ts + 4, 20000000); // 20 ms relative timeout
+            if (call("_pthread_mutex_lock", {mu}) == 0) {
+                timed = call("_pthread_cond_timedwait_relative_np", {cv, mu, ts}) == 60 &&
+                        call("_pthread_mutex_trylock", {mu}) == 16; // Darwin ETIMEDOUT, EBUSY
+                timed &= call("_pthread_mutex_unlock", {mu}) == 0;
+                timed &= call("_pthread_cond_signal", {cv}) == 0;
+            }
+        }
+        check(timed, "pthread timed wait removes its waiter and reacquires the mutex on timeout");
     }
 
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
@@ -8195,6 +8393,18 @@ int runFullSubsystemTests() {
                          tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
         }
         check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+        {   // Total and records come from one read of the head. A push forced between the head read and the record
+            // read must not leak into the snapshot; the former two-read order (total(), then last()) does leak it.
+            const auto pushOne = [&] { ringProc.engine().callHle(&ringCpu, ringIndex); };
+            const Diag::ThreadCallRing* r2 = ringCpu.call_ring.load();
+            const auto snap = r2->snapshot(16, pushOne);
+            const bool consistent = !snap.calls.empty() && snap.calls.back().seq <= snap.total;
+            const uint64_t oldTotal = r2->total();
+            pushOne();
+            const auto oldCalls = r2->last(16);   // the former order: a push landed between the two reads
+            check(consistent && !oldCalls.empty() && oldCalls.back().seq > oldTotal,
+                  "a call-ring snapshot never holds a record newer than its total (the former two-read order does)");
+        }
 
         // The crash bundle carries each thread's last calls (T2c, #259): oldest first, exactly the last N,
         // with the support status of a function that was declared a Stub.
