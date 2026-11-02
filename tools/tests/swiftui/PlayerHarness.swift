@@ -14,7 +14,7 @@ let HVMGLLayerUnitTransformKey = "hvmUnitTransform"
 enum HVMCrashJournal {
     static func openSignalFile(_ path: String) {}
     static func closeSignalFile() {}
-    static func availableMemory() -> UInt64 { 0 }
+    static func availableMemory() -> UInt64 { UInt64(os_proc_available_memory()) }
 }
 
 @Observable @MainActor
