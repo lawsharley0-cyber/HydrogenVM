@@ -9,7 +9,7 @@ cmake -S . -B "$out" -G Ninja -DCMAKE_CXX_COMPILER="${CXX:-clang++}" \
 cmake --build "$out" --target hvm -j 2
 HVM_THREAD_LIVENESS=1 python3 tools/hvm_testlab.py run --hvm "$out/hvm" \
   --out "$out/testlab" --case TL-L
-"$out/hvm" run build/ios/TestLab.app --home "$out/probe-home" --run-for 3 \
+"$out/hvm" run build/ios/TestLab.app --home "$out/probe-home" --run-for 5 \
   --graceful --thread-liveness --report "$out/probe.json" -- --run TL-L
 python3 - "$out/probe.json" <<'PY'
 import json, sys

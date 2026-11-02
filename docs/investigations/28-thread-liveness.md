@@ -81,6 +81,11 @@ best-effort, matching MemorySampler; they cannot escape before guest startup.
 
 The runtime sanitizer gate also builds the complete runtime with ASan/UBSan,
 runs unchanged Test Lab TL-L with the sampler enabled, then drives that same
-real guest lifecycle for three seconds and checks run-start/interval/run-end
+real guest lifecycle for five seconds and checks run-start/interval/run-end
 samples. This covers the sampler thread itself in addition to the focused CPU
 snapshot test. Its new Actions result remains pending until actually run.
+
+The first complete-runtime sanitizer gate passed in Actions41365952096 at
+head e3812f9ea9ac50f04c46de8cedb114472aa16f0b, including actual lifecycle
+samples. Review adds two seconds of scheduling margin to that probe while
+retaining the same minimum-two-interval assertion. No expectation is relaxed.
