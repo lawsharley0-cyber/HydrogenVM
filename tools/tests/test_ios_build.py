@@ -1,4 +1,5 @@
 """Tests for iOS build prerequisite detection."""
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -48,6 +49,32 @@ class TestPrerequisites(unittest.TestCase):
                 self.assertTrue(ios_build.tool_available(os.path.relpath(tool)))
                 self.assertFalse(ios_build.tool_available(tmp))
                 self.assertFalse(ios_build.tool_available("missing-tool"))
+
+    def test_resolve_tool_precedence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            toolchain_bin = root / "configured toolchain" / "bin"
+            path_bin = root / "path"
+            override = root / "override-tool"
+            toolchain_bin.mkdir(parents=True)
+            path_bin.mkdir()
+            toolchain_tool = toolchain_bin / "tool"
+            path_tool = path_bin / "tool"
+            for tool in (toolchain_tool, path_tool, override):
+                tool.write_text("#!/bin/sh\nexit 0\n")
+                tool.chmod(0o755)
+
+            # The toolchain is read when the module is imported.
+            with patch.dict(os.environ, {"HVM_TOOLCHAIN": str(toolchain_bin.parent),
+                                         "PATH": str(path_bin)}, clear=True):
+                spec = importlib.util.spec_from_file_location("ios_build_test", ROOT / "tools/ios_build.py")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                self.assertEqual(module.resolve_tool("HVM_CLANG", ["tool"]), str(toolchain_tool))
+                with patch.dict(os.environ, {"HVM_CLANG": str(override)}):
+                    self.assertEqual(module.resolve_tool("HVM_CLANG", ["tool"]), str(override))
+                toolchain_tool.unlink()
+                self.assertEqual(module.resolve_tool("HVM_CLANG", ["tool"]), str(path_tool))
 
     def test_command_name_is_resolved_on_path(self):
         with tempfile.TemporaryDirectory() as tmp:
