@@ -546,13 +546,15 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
             // one. A device-specific variant installed after the plain resource
             // was cached would then be ignored for the life of the process, so
             // re-derive the ordered candidates and require the cached path to
-            // still be the one that lookup order selects. This costs two stats
-            // per directory and never scans one. Case-insensitive scan hits are
-            // unaffected: their exact-case candidates do not exist by definition.
+            // still be the one that lookup order selects. Check only the
+            // directories visited through the cached hit: later directories
+            // cannot override an earlier case-insensitive match. This costs two
+            // stats per directory and never scans one.
             if (valid && !name.empty()) {
                 const std::string ext = type.empty() ? std::string() : "." + type;
                 std::string best;
-                for (const auto& d : dirs) {
+                for (const auto& visited : cached->directories) {
+                    const auto& d = visited.first;
                     for (const std::string& candidate : {name + "~iphone" + ext, name + ext}) {
                         ec.clear();
                         const fs::path p = d / candidate;
