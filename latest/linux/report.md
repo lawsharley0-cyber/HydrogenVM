@@ -1,29 +1,29 @@
-# HydrogenVM report — 4c09fa4
+# HydrogenVM report — 1b3c79b
 
-2026-11-02T06:42:20+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-11-02T07:37:29+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 133.2s |
-| tools | 1 | 0 | 0 | 5.7s |
-| cpu | 15 | 0 | 0 | 0.5s |
-| ios | 6 | 0 | 0 | 2.1s |
-| bench | 5 | 0 | 0 | 22.4s |
+| build | 1 | 0 | 0 | 231.6s |
+| tools | 1 | 0 | 0 | 6.9s |
+| cpu | 15 | 0 | 0 | 0.8s |
+| ios | 6 | 0 | 0 | 2.2s |
+| bench | 5 | 0 | 0 | 24.0s |
 
 ## Speed
 
-CoreMark **3209.8** iterations/s (1082.9 guest MIPS)
+CoreMark **1767.1** iterations/s (589.9 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **222.9%** | 1337 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **167.2%** | 1337 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **133.7%** | 1070 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **70.5%** | 917 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **122.7%** | 736 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **92.0%** | 736 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **73.6%** | 589 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.8%** | 505 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 849 MIPS, ctests_arm 909 MIPS, ftests_vfp_thumb_softfp 852 MIPS, ftests_neon_thumb 713 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 444 MIPS, ctests_arm 490 MIPS, ftests_vfp_thumb_softfp 432 MIPS, ftests_neon_thumb 391 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -31,20 +31,20 @@ Raw interpreter speed (CPU test programs): ctests_thumb 849 MIPS, ctests_arm 909
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.23 ms | 4.05 ms | 0 |
+| FoundationTest | 0.67s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.04s | 61 | 0.43 ms | 7.72 ms | 0 |
 
 ## Problems (34)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 70.5% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 38.8% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (33)
 
 - **build / compiler**: src/loader/MachO.cpp:206:31: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
-- **build / compiler**: src/runtime/foundation/RunLoop.cpp:514:13: warning: unused variable 'cx' [-Wunused-variable]
+- **build / compiler**: src/runtime/foundation/RunLoop.cpp:515:13: warning: unused variable 'cx' [-Wunused-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:38:37: warning: unused variable 'kUnsignedByte' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:38:61: warning: unused variable 'kByte' [-Wunused-const-variable]
