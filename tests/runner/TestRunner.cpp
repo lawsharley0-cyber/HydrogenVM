@@ -7614,21 +7614,23 @@ int runFullSubsystemTests() {
 
         // -currentMode answers for the receiver's loop, not the calling thread's: a guest thread (which has a run loop
         // of its own, idle) asking the main loop while it runs in modeA sees modeA.
-        std::atomic<bool> workerDone{false};
-        std::string workerSaw = "<unset>";
+        // The worker owns its state through shared_ptr, so a worker still running after the wait times out cannot touch
+        // destroyed locals.
+        struct WorkerState { std::atomic<bool> done{false}; std::mutex mu; std::string saw = "<unset>"; };
+        const auto workerState = std::make_shared<WorkerState>();
         auto workerCls = mr.defineClass("HVMModeProbeWorker", "NSObject");
-        workerCls.method("work:", [&](Ctx& x) {
+        workerCls.method("work:", [workerState, mainLoop](Ctx& x) {
             ObjC::rt(x).send(x.cpu, ObjC::rt(x).getClass("NSRunLoop"), "currentRunLoop");   // this thread's own loop, not running
             const uint32_t m = uint32_t(ObjC::rt(x).send(x.cpu, mainLoop, "currentMode"));
-            workerSaw = m ? Foundation::utf8(x, m) : "<nil>";
-            workerDone = true;
+            { std::lock_guard<std::mutex> lk(workerState->mu); workerState->saw = m ? Foundation::utf8(x, m) : "<nil>"; }
+            workerState->done = true;
         }, "v@:@");
         const uint32_t workerTarget = mr.createInstance(workerCls.cls());
-        const uint32_t crossProbe = modeProc.defineFunction("test_mode_cross_thread_fire", [&](Ctx& x) {
+        const uint32_t crossProbe = modeProc.defineFunction("test_mode_cross_thread_fire", [workerState, workerTarget](Ctx& x) {
             const uint32_t th = uint32_t(ObjC::rt(x).send(x.cpu, ObjC::id(ObjC::rt(x).send(x.cpu, ObjC::rt(x).getClass("NSThread"), ObjC::rt(x).selAlloc)),
                                                          "initWithTarget:selector:object:", {workerTarget, ObjC::rt(x).sel("work:"), 0}));
             ObjC::rt(x).send(x.cpu, th, "start");
-            for (int i = 0; i < 5000 && !workerDone; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            for (int i = 0; i < 5000 && !workerState->done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         });
         {
             const uint32_t ctx = modeProc.heap().allocZeroed(20);
@@ -7644,7 +7646,9 @@ int runFullSubsystemTests() {
             call("_CFRunLoopAddTimer", {mainLoop, callv("_CFRunLoopTimerCreate", args), modeA});
         }
         runInMode(modeA);
-        check(workerDone && workerSaw == "HVMModeA", "NSRunLoop currentMode answers for the receiver's loop, not the calling thread's");
+        std::string workerSaw;
+        { std::lock_guard<std::mutex> lk(workerState->mu); workerSaw = workerState->saw; }
+        check(workerState->done && workerSaw == "HVMModeA", "NSRunLoop currentMode answers for the receiver's loop, not the calling thread's");
 
         // performSelector:withObject:afterDelay:inModes: runs only in the modes it names.
         int delayedRuns = 0;
