@@ -20,6 +20,7 @@ final class PlayerProbe {
 
 final class HVMTextInputRequest {
     let active = true, text = "", placeholder = ""
+    let focusId: UInt64 = 1, ackSeq: UInt64 = 0
     let keyboardType = 0, returnKeyType = 0, autocapitalizationType = 0, autocorrectionType = 0
     let secure = false, multiline = false
 }
@@ -83,9 +84,9 @@ final class HVMSession {
         PlayerProbe.shared.touch = "\(phase.rawValue):\(Int(x.rounded())),\(Int(y.rounded())):\(finger)"
     }
     func setAccelerationX(_ x: Double, y: Double, z: Double) {}
-    func submitText(_ text: String) {}
-    func submitReturnKey() {}
-    func dismissKeyboard() {}
+    func submitText(_ text: String, focusId: UInt64, sequence: UInt64) {}
+    func submitReturnKey(forFocus focusId: UInt64) {}
+    func dismissKeyboard(forFocus focusId: UInt64) {}
 }
 
 struct PlayerHarness: View {

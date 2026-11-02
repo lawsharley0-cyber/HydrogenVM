@@ -140,6 +140,8 @@ struct UIState {
     std::vector<id> eaglLayers;
     // on-screen keyboard (#303)
     std::function<void(const TextInputRequest&)> textInputObserver;   // guarded by inputMu
+    uint64_t textFocusId = 0;   // bumped each time a text field becomes first responder
+    uint64_t textAckSeq = 0;    // the host edit sequence number the guest has processed
 };
 UIState& ui(Process& p);
 
@@ -147,6 +149,8 @@ UIState& ui(Process& p);
 // a native keyboard); the host sends edits back with submitTextInput, which runs on the guest's main run loop.
 struct TextInputRequest {
     bool active = false;                   // false = the keyboard should be dismissed
+    uint64_t focusId = 0;                  // which focus this request belongs to; events must echo it
+    uint64_t ackSeq = 0;                   // last host edit (TextInputEvent::seq) the guest has processed
     std::string text, placeholder;
     int32_t keyboardType = 0, returnKeyType = 0, autocapitalization = 0, autocorrection = 0;
     bool secure = false, multiline = false;
@@ -154,6 +158,8 @@ struct TextInputRequest {
 struct TextInputEvent {
     enum Kind { SetText, Return, Dismiss } kind;
     std::string text;                      // SetText: the field's full new text
+    uint64_t focusId = 0;                  // from the request being answered; events for an older focus are dropped
+    uint64_t seq = 0;                      // host edit counter, echoed back as TextInputRequest::ackSeq
 };
 void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&)> observer);
 void submitTextInput(Process& p, TextInputEvent ev);

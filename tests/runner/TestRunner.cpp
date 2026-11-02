@@ -2836,10 +2836,19 @@ int runFullSubsystemTests() {
         }, "c@:@{_NSRange=II}@");
         del.method("textFieldShouldReturn:", [&](Ctx& x) { ++returns; x.cpu.r[0] = 1; }, "c@:@");
         del.method("textFieldDidBeginEditing:", [&](Ctx&) { ++began; }, "v@:@");
+        bool refuseEnd = false, rewrite = false;
+        del.method("textFieldShouldEndEditing:", [&](Ctx& x) { x.cpu.r[0] = refuseEnd ? 0 : 1; }, "c@:@");
+        del.method("rewrite:", [&](Ctx& x) {
+            if (rewrite) { rewrite = false; ObjC::rt(x).send(x.cpu, x.cpu.r[2], "setText:", {Foundation::makeString(x, "REWRITTEN")}); }
+        }, "v@:@");
         del.method("textFieldDidEndEditing:", [&](Ctx&) { ++ended; }, "v@:@");
         del.method("changed:", [&](Ctx&) { ++editingChanged; }, "v@:@");
         del.method("textViewDidChange:", [&](Ctx&) { ++viewChanged; }, "v@:@");
         const ObjC::id delegate = r.createInstance(del.cls());
+        uint64_t seq = 0;
+        const auto send = [&](UIKit::TextInputEvent::Kind k, const std::string& t) {
+            UIKit::submitTextInput(proc, {k, t, requests.empty() ? 0 : requests.back().focusId, ++seq});
+        };
         const auto pump = [&] { for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.0); };
         const auto textOfField = [&](ObjC::id f) { return Foundation::utf8(cx, ObjC::id(r.send(cpu, f, "text"))); };
 
@@ -2857,19 +2866,51 @@ int runFullSubsystemTests() {
               requests[0].secure && !requests[0].multiline && requests[0].placeholder == "Name" && began == 1,
               "a text field that becomes first responder asks the host for a keyboard with its traits");
 
-        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "ab"}); pump();
+        send(UIKit::TextInputEvent::SetText, "ab"); pump();
         check(textOfField(field) == "ab" && changes == std::vector<std::string>{"0,0:ab"} && editingChanged == 1,
               "typed text reaches the field through the delegate and the editing-changed control event");
-        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "abx"}); pump();
+        send(UIKit::TextInputEvent::SetText, "abx"); pump();
         check(textOfField(field) == "ab" && changes.back() == "2,0:x" && editingChanged == 1 && requests.back().active && requests.back().text == "ab",
               "an edit the delegate refuses is not applied, and the host is told the text to go back to");
-        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "a"}); pump();
+        send(UIKit::TextInputEvent::SetText, "a"); pump();
         check(textOfField(field) == "a" && changes.back() == "1,1:" && editingChanged == 2, "deleting reaches the delegate as a replacement of the removed range");
-        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::Return, ""}); pump();
+        send(UIKit::TextInputEvent::Return, ""); pump();
         check(returns == 1, "the return key asks the delegate textFieldShouldReturn:");
-        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::Dismiss, ""}); pump();
+        send(UIKit::TextInputEvent::Dismiss, ""); pump();
         check((r.send(cpu, field, "isFirstResponder") & 0xFF) == 0 && ended == 1 && !requests.back().active,
               "dismissing the keyboard resigns the field and tells the host the keyboard is gone");
+
+        // A refused edit is acknowledged by sequence number, so a correction that arrives after newer typing is stale.
+        r.send(cpu, field, "becomeFirstResponder");
+        const uint64_t focusA = requests.back().focusId;
+        send(UIKit::TextInputEvent::SetText, "q"); pump();
+        send(UIKit::TextInputEvent::SetText, "qx"); pump();   // refused by the delegate
+        check(requests.back().ackSeq == seq && requests.back().text == "q", "a correction names the host edit it answers (ackSeq)");
+
+        // Guest code that rewrites the text during a callback is published back to the keyboard.
+        r.send(cpu, field, "addTarget:action:forControlEvents:", {delegate, r.sel("rewrite:"), 1u << 17});
+        rewrite = true;
+        send(UIKit::TextInputEvent::SetText, "qw"); pump();
+        rewrite = false;
+        check(textOfField(field) == "REWRITTEN" && requests.back().text == "REWRITTEN",
+              "text changed by guest callbacks after an edit is republished to the keyboard");
+
+        // The guest may refuse to end editing: the keyboard stays.
+        refuseEnd = true;
+        send(UIKit::TextInputEvent::Dismiss, ""); pump();
+        check((r.send(cpu, field, "isFirstResponder") & 0xFF) != 0 && requests.back().active,
+              "when the guest refuses to resign, the keyboard is told the field is still active");
+        refuseEnd = false;
+
+        // Events for a field that has lost focus never reach the new first responder.
+        const ObjC::id second = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 120, 120, 30});
+        r.send(cpu, second, "becomeFirstResponder");
+        check(requests.back().focusId != focusA, "each focus gets its own id");
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "stale", focusA, ++seq}); pump();
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::Dismiss, "", focusA, ++seq}); pump();
+        check(textOfField(second).empty() && (r.send(cpu, second, "isFirstResponder") & 0xFF) != 0,
+              "text and dismiss events for an older focus are dropped");
+        r.send(cpu, second, "resignFirstResponder");
 
         // A tap focuses a field, as on iOS, and a UITextView asks for a multi-line keyboard.
         const ObjC::id other = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 40, 120, 30});
@@ -2881,7 +2922,7 @@ int runFullSubsystemTests() {
         const ObjC::id view = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextView"), r.selAlloc)), r.sel("initWithFrame:"), {0, 80, 120, 80});
         r.send(cpu, view, "setDelegate:", {delegate});
         r.send(cpu, view, "becomeFirstResponder");
-        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "hi\nthere"}); pump();
+        send(UIKit::TextInputEvent::SetText, "hi\nthere"); pump();
         check(requests.back().multiline && textOfField(view) == "hi\nthere" && viewChanged == 1,
               "a UITextView asks for a multi-line keyboard and reports changes through textViewDidChange:");
         r.send(cpu, view, "resignFirstResponder");

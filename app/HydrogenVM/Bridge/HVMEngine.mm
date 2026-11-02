@@ -693,16 +693,16 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
     if (p) RT::UIKit::submitTextInput(*p, std::move(ev));
 }
-- (void)submitText:(NSString *)text {
-    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::SetText, std::string(text.UTF8String ?: "")};
+- (void)submitText:(NSString *)text focusId:(uint64_t)focusId sequence:(uint64_t)sequence {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::SetText, std::string(text.UTF8String ?: ""), focusId, sequence};
     [self submitTextInput:ev];
 }
-- (void)submitReturnKey {
-    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Return, std::string()};
+- (void)submitReturnKeyForFocus:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Return, std::string(), focusId, 0};
     [self submitTextInput:ev];
 }
-- (void)dismissKeyboard {
-    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Dismiss, std::string()};
+- (void)dismissKeyboardForFocus:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Dismiss, std::string(), focusId, 0};
     [self submitTextInput:ev];
 }
 
@@ -734,8 +734,9 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 - (instancetype)initWithRequest:(const RT::UIKit::TextInputRequest &)q {
     if ((self = [super init])) {
         _active = q.active;
-        _text = [NSString stringWithUTF8String:q.text.c_str()] ?: @"";
-        _placeholder = [NSString stringWithUTF8String:q.placeholder.c_str()] ?: @"";
+        _focusId = q.focusId; _ackSeq = q.ackSeq;
+        _text = str(q.text);
+        _placeholder = str(q.placeholder);
         _keyboardType = q.keyboardType; _returnKeyType = q.returnKeyType;
         _autocapitalizationType = q.autocapitalization; _autocorrectionType = q.autocorrection;
         _secure = q.secure; _multiline = q.multiline;

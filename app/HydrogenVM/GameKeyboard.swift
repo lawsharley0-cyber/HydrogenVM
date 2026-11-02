@@ -33,10 +33,13 @@ enum GuestKeyboard {
 /// send a different text back (a refused edit), in which case the bar follows the guest.
 struct GameKeyboardBar: View {
     let request: HVMTextInputRequest
-    let onText: (String) -> Void
+    /// The new full text and the edit's sequence number (the guest echoes it back as `ackSeq`).
+    let onText: (String, UInt64) -> Void
     let onReturn: () -> Void
     let onDismiss: () -> Void
     @State private var text = ""
+    @State private var sent: UInt64 = 0
+    @State private var returning = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -47,21 +50,35 @@ struct GameKeyboardBar: View {
                 .textInputAutocapitalization(GuestKeyboard.autocapitalization(request.autocapitalizationType))
                 .autocorrectionDisabled(GuestKeyboard.autocorrectionDisabled(request.autocorrectionType) || request.secure)
                 .submitLabel(GuestKeyboard.submitLabel(request.returnKeyType))
-                .onSubmit { onReturn() }
+                .onSubmit {
+                    // Return goes to the guest, which decides whether the keyboard stays (moving to the next field,
+                    // or resigning, which removes this bar). SwiftUI drops focus on submit, so take it back.
+                    returning = true
+                    onReturn()
+                    focused = true
+                    Task { @MainActor in returning = false }
+                }
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("game-keyboard-field")
-            Button("Done") { focused = false }
+            Button("Done") { onDismiss() }
                 .accessibilityIdentifier("game-keyboard-done")
         }
         .padding(10)
         .background(.regularMaterial)
         .onAppear { text = request.text; focused = true }
         .onChange(of: ObjectIdentifier(request)) { _, _ in
-            if text != request.text { text = request.text }
-            focused = true
+            // A correction from the guest (a refused edit, or text it rewrote) applies only if the player has not
+            // typed anything newer since: otherwise it would overwrite that edit with stale text.
+            if request.ackSeq >= sent, text != request.text { text = request.text }
         }
-        .onChange(of: text) { _, new in onText(new) }
-        .onChange(of: focused) { _, now in if !now { onDismiss() } }
+        .onChange(of: text) { _, new in
+            sent += 1
+            onText(new, sent)
+        }
+        .onChange(of: focused) { _, now in
+            // The player tapped away (not Return, which refocuses above): close the guest field's editing.
+            if !now && !returning { onDismiss() }
+        }
     }
 
     @ViewBuilder private var field: some View {

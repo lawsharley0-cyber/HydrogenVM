@@ -1437,6 +1437,8 @@ void publishKeyboard(Ctx& x, id self, bool active) {
     if (!obs) return;
     TextInputRequest q;
     q.active = active;
+    q.focusId = ui(x).textFocusId;
+    q.ackSeq = ui(x).textAckSeq;
     if (active) {
         const TextFieldData& d = TFD(x, self);
         q.text = textOf(x, d.text);
@@ -1475,13 +1477,19 @@ void applyHostText(Ctx& x, id self, const std::string& newUtf8) {
     } else if (rt(x).respondsTo(self, rt(x).sel("sendActionsForControlEvents:"))) {
         rt(x).send(x.cpu, self, "sendActionsForControlEvents:", {1u << 17});   // UIControlEventEditingChanged
     }
+    // Guest callbacks may have rewritten the text; the keyboard must follow.
+    if (textOf(x, TFD(x, self).text) != newUtf8) publishKeyboard(x, self, true);
 }
 void handleTextInput(Ctx& x, const TextInputEvent& ev) {
     const id fr = ui(x).firstResponder;
     if (!fr || !rt(x).hostIf<TextFieldData>(fr)) return;
+    if (ev.focusId != ui(x).textFocusId) return;   // typed for a field that has since lost focus
     rt(x).retain(x.cpu, fr);
     switch (ev.kind) {
-    case TextInputEvent::SetText: applyHostText(x, fr, ev.text); break;
+    case TextInputEvent::SetText:
+        ui(x).textAckSeq = ev.seq;
+        applyHostText(x, fr, ev.text);
+        break;
     case TextInputEvent::Return:
         if (!isTextView(x, fr)) {
             const id del = TFD(x, fr).delegate;
@@ -1490,7 +1498,10 @@ void handleTextInput(Ctx& x, const TextInputEvent& ev) {
                 rt(x).send(x.cpu, fr, "sendActionsForControlEvents:", {1u << 19});   // UIControlEventEditingDidEndOnExit
         }
         break;
-    case TextInputEvent::Dismiss: rt(x).send(x.cpu, fr, "resignFirstResponder"); break;
+    case TextInputEvent::Dismiss:
+        rt(x).send(x.cpu, fr, "resignFirstResponder");
+        if (ui(x).firstResponder == fr) publishKeyboard(x, fr, true);   // the guest refused: keep the keyboard
+        break;
     }
     rt(x).release(x.cpu, fr);
 }
@@ -1511,6 +1522,8 @@ bool tf_become(Ctx& x, id self, SEL s) {
         Foundation::postNotification(x, "UITextFieldTextDidBeginEditingNotification", self);
         Foundation::postNotification(x, "UIKeyboardWillShowNotification", 0);
         Foundation::postNotification(x, "UIKeyboardDidShowNotification", 0);
+        ++ui(x).textFocusId;
+        ui(x).textAckSeq = 0;
         publishKeyboard(x, self, true);
     }
     return ok;
