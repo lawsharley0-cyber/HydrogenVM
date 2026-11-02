@@ -1125,21 +1125,129 @@ int32_t afmt_getProperty(Ctx& x, uint32_t, uint32_t, GuestPtr, GuestPtr ioSize, 
 
 // =========================================================== AVAudioSession ===
 
+// The session keeps what the app set (category, options, mode), as AVAudioSession does.
+struct SessionData : ObjC::HostObject {
+    std::recursive_mutex mu;
+    id category = 0, mode = 0, route = 0;
+    uint32_t categoryOptions = 0, options = 0;
+};
+SessionData* ses(Ctx& x, id self) { return rt(x).hostIf<SessionData>(self); }
 id avs_shared(Ctx& x, id self, SEL) {
     static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
-    if (!shared) { shared = rt(x).createInstance(self); rt(x).makeImmortal(shared); }
+    if (!shared) {
+        shared = rt(x).createInstance(self);
+        rt(x).setHost(shared, std::make_unique<SessionData>());
+        rt(x).makeImmortal(shared);
+    }
     return shared;
+}
+void avs_keep(Ctx& x, id& slot, id value) {
+    const id old = slot;
+    slot = value ? id(rt(x).send(x.cpu, value, "copy")) : 0;
+    if (old) rt(x).release(x.cpu, old);
+}
+void avs_recomputeOptions(Ctx& x, SessionData& d) {
+    d.options = d.categoryOptions;
+    const auto category = d.category ? Foundation::utf8(x, d.category) : "";
+    const auto mode = d.mode ? Foundation::utf8(x, d.mode) : "";
+    const bool playAndRecord = category == "AVAudioSessionCategoryPlayAndRecord";
+    // Apple adds MixWithOthers implicitly for Ambient and whenever DuckOthers is set.
+    if (category == "AVAudioSessionCategoryAmbient" || (d.categoryOptions & 2u)) d.options |= 1u;
+    if (mode == "AVAudioSessionModeVoiceChat" && playAndRecord)
+        d.options |= 4u;  // allow Bluetooth HFP
+    else if (mode == "AVAudioSessionModeVideoChat" &&
+             (playAndRecord || category == "AVAudioSessionCategoryRecord"))
+        d.options |= 4u | 8u;  // also default to speaker
+}
+// The session stores the category but the mixer does not change with it. Record silences playback on iOS; say so
+// rather than pretend the category took effect.
+void avs_noteUnapplied(Ctx& x, id category) {
+    const std::string name = category ? Foundation::utf8(x, category) : "";
+    if (name == "AVAudioSessionCategoryRecord" || name == "AVAudioSessionCategoryAudioProcessing")
+        x.proc.reportMissing("AVAudioSession category " + name + " (stored; playback is not silenced)");
+}
+bool avs_setCategory(Ctx& x, id self, SEL, id category, GuestPtr) {
+    if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = 0; avs_recomputeOptions(x, *d); }
+    avs_noteUnapplied(x, category);
+    return true;
+}
+bool avs_setCategoryOptions(Ctx& x, id self, SEL, id category, uint32_t options, GuestPtr) {
+    if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = options; avs_recomputeOptions(x, *d); }
+    avs_noteUnapplied(x, category);
+    return true;
+}
+void avs_applyMode(Ctx& x, SessionData& d, id mode) {
+    avs_keep(x, d.mode, mode);
+    avs_recomputeOptions(x, d);
+}
+bool avs_setCategoryModeOptions(Ctx& x, id self, SEL, id category, id mode, uint32_t options, GuestPtr) {
+    if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = options; avs_applyMode(x, *d, mode); }
+    avs_noteUnapplied(x, category);
+    return true;
+}
+bool avs_setMode(Ctx& x, id self, SEL, id mode, GuestPtr) {
+    if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_applyMode(x, *d, mode); }
+    return true;
+}
+uint32_t avs_options(Ctx& x, id self, SEL) {
+    SessionData* d = ses(x, self);
+    if (!d) return 0;
+    std::lock_guard<std::recursive_mutex> lk(d->mu);
+    return d->options;
+}
+// Route: the host's real output is not visible to the guest, so one built-in speaker output is reported.
+struct PortData : ObjC::HostObject { id type = 0, name = 0, uid = 0; };
+struct RouteData : ObjC::HostObject { id inputs = 0, outputs = 0; };
+id port_type(Ctx& x, id self, SEL) { PortData* d = rt(x).hostIf<PortData>(self); return d ? d->type : 0; }
+id port_name(Ctx& x, id self, SEL) { PortData* d = rt(x).hostIf<PortData>(self); return d ? d->name : 0; }
+id port_uid(Ctx& x, id self, SEL) { PortData* d = rt(x).hostIf<PortData>(self); return d ? d->uid : 0; }
+id port_channels(Ctx&, id, SEL) { return 0; }
+id route_inputs(Ctx& x, id self, SEL) { RouteData* d = rt(x).hostIf<RouteData>(self); return d ? d->inputs : 0; }
+id route_outputs(Ctx& x, id self, SEL) { RouteData* d = rt(x).hostIf<RouteData>(self); return d ? d->outputs : 0; }
+id avs_currentRoute(Ctx& x, id self) {
+    SessionData* d = ses(x, self);
+    if (!d) return 0;
+    std::lock_guard<std::recursive_mutex> lk(d->mu);   // the first read builds and caches the route: two threads must not each build one
+    if (!d->route) {
+        const id port = rt(x).createInstance(rt(x).getClass("AVAudioSessionPortDescription"));
+        auto pd = std::make_unique<PortData>();
+        pd->type = Foundation::constString(x.proc, "Speaker");
+        pd->name = Foundation::constString(x.proc, "Speaker");
+        pd->uid = Foundation::constString(x.proc, "Speaker");
+        rt(x).setHost(port, std::move(pd));
+        rt(x).makeImmortal(port);
+        const id route = rt(x).createInstance(rt(x).getClass("AVAudioSessionRouteDescription"));
+        auto rd = std::make_unique<RouteData>();
+        rd->inputs = rt(x).retain(x.cpu, Foundation::makeArray(x, {}));
+        rd->outputs = rt(x).retain(x.cpu, Foundation::makeArray(x, {port}));
+        rt(x).setHost(route, std::move(rd));
+        rt(x).makeImmortal(route);
+        d->route = route;
+    }
+    return d->route;
 }
 bool avs_yesErr(Ctx&, id, SEL, id, GuestPtr err) { if (err) (void)err; return true; }
 bool avs_yesBoolErr(Ctx&, id, SEL, bool, GuestPtr) { return true; }
 bool avs_yesErr2(Ctx&, id, SEL, id, uint32_t, GuestPtr) { return true; }
 bool avs_no(Ctx&, id, SEL) { return false; }
-id avs_category(Ctx& x, id, SEL) { return makeString(x, "AVAudioSessionCategorySoloAmbient"); }
+id avs_category(Ctx& x, id self, SEL) {
+    if (SessionData* d = ses(x, self)) {
+        std::lock_guard<std::recursive_mutex> lk(d->mu);
+        if (d->category) return rt(x).autorelease(x.cpu, rt(x).retain(x.cpu, d->category));
+    }
+    return makeString(x, "AVAudioSessionCategorySoloAmbient");
+}
 void avs_setDelegate(Ctx&, id, SEL, id) {}
 double avs_rate(Ctx&, id, SEL) { return 44100; }
 float avs_volume(Ctx&, id, SEL) { return 1; }
 bool avs_yesDoubleErr(Ctx&, id, SEL, double, GuestPtr) { return true; }
-id avs_mode(Ctx& x, id, SEL) { return makeString(x, "AVAudioSessionModeDefault"); }
+id avs_mode(Ctx& x, id self, SEL) {
+    if (SessionData* d = ses(x, self)) {
+        std::lock_guard<std::recursive_mutex> lk(d->mu);
+        if (d->mode) return rt(x).autorelease(x.cpu, rt(x).retain(x.cpu, d->mode));
+    }
+    return makeString(x, "AVAudioSessionModeDefault");
+}
 uint32_t avs_zero(Ctx&, id, SEL) { return 0; }
 uint32_t avs_two(Ctx&, id, SEL) { return 2; }
 uint32_t avs_one(Ctx&, id, SEL) { return 1; }
@@ -1900,21 +2008,44 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     // AVAudioSession
     ObjC::ClassBuilder avs = r.defineClass("AVAudioSession", "NSObject");
     avs.cm<&avs_shared>("sharedInstance");
-    avs.m<&avs_yesErr>("setCategory:error:", "c@:@^@").m<&avs_yesErr2>("setCategory:withOptions:error:", "c@:@I^@")
-       .m<&avs_yesBoolErr>("setActive:error:", "c@:c^@").m<&avs_yesErr2>("setActive:withOptions:error:", "c@:cI^@")
-       .m<&avs_yesErr>("setMode:error:", "c@:@^@").m<&avs_category>("category").m<&avs_no>("isOtherAudioPlaying", "c@:")
+    supportMethod(p, avs, "AVAudioSession", "setCategory:error:", [](Ctx& x) { callWrapped<&avs_setCategory>(x); },
+                  SupportStatus::Approx, "Stores category and resets options; always reports success without validating or configuring the host", "c@:@^@");
+    supportMethod(p, avs, "AVAudioSession", "setCategory:withOptions:error:", [](Ctx& x) { callWrapped<&avs_setCategoryOptions>(x); },
+                  SupportStatus::Approx, "Stores category and options; always reports success without validating or configuring the host", "c@:@I^@");
+    supportMethod(p, avs, "AVAudioSession", "setCategory:mode:options:error:", [](Ctx& x) { callWrapped<&avs_setCategoryModeOptions>(x); },
+                  SupportStatus::Approx, "Stores category, mode and options; always reports success without validating or configuring the host", "c@:@@I^@");
+    supportMethod(p, avs, "AVAudioSession", "setMode:error:", [](Ctx& x) { callWrapped<&avs_setMode>(x); },
+                  SupportStatus::Approx, "Stores mode and adds video-chat options; always reports success without validation or host configuration", "c@:@^@");
+    avs.m<&avs_yesBoolErr>("setActive:error:", "c@:c^@").m<&avs_yesErr2>("setActive:withOptions:error:", "c@:cI^@")
+       .m<&avs_category>("category").m<&avs_no>("isOtherAudioPlaying", "c@:")
        .m<&avs_no>("secondaryAudioShouldBeSilencedHint", "c@:").m<&avs_setDelegate>("setDelegate:", "v@:@")
        .m<&avs_rate>("sampleRate", "d@:").m<&avs_rate>("currentHardwareSampleRate", "d@:").m<&avs_rate>("preferredSampleRate", "d@:")
        .m<&avs_yesDoubleErr>("setPreferredSampleRate:error:", "c@:d^@").m<&avs_yesDoubleErr>("setPreferredHardwareSampleRate:error:", "c@:d^@")
        .m<&avs_yesDoubleErr>("setPreferredIOBufferDuration:error:", "c@:d^@").m<&avs_volume>("outputVolume", "f@:")
        // Read-only state (Hungry Shark Evolution asks for -mode at startup).
-       .m<&avs_mode>("mode").m<&avs_zero>("categoryOptions", "I@:").m<&avs_yes>("isInputAvailable", "c@:")
+       .m<&avs_mode>("mode").m<&avs_options>("categoryOptions", "I@:").m<&avs_yes>("isInputAvailable", "c@:")
        .m<&avs_yes>("inputIsAvailable", "c@:").m<&avs_two>("outputNumberOfChannels", "i@:").m<&avs_one>("inputNumberOfChannels", "i@:")
        .m<&avs_ioDuration>("IOBufferDuration", "d@:").m<&avs_ioDuration>("preferredIOBufferDuration", "d@:")
        .m<&avs_ioDuration>("outputLatency", "d@:").m<&avs_ioDuration>("inputLatency", "d@:")
        .m<&avs_emptyArray>("availableInputs");
+    supportMethod(p, avs, "AVAudioSession", "currentRoute", [](Ctx& x) { x.cpu.r[0] = avs_currentRoute(x, x.cpu.r[0]); },
+                  SupportStatus::Approx, "Always reports one built-in speaker output; the host's real route is not visible to the guest",
+                  "@@:");
+    ObjC::ClassBuilder routeCls = r.defineClass("AVAudioSessionRouteDescription", "NSObject");
+    routeCls.m<&route_inputs>("inputs").m<&route_outputs>("outputs");
+    ObjC::ClassBuilder portCls = r.defineClass("AVAudioSessionPortDescription", "NSObject");
+    portCls.m<&port_type>("portType").m<&port_name>("portName").m<&port_uid>("UID");
+    supportMethod(p, portCls, "AVAudioSessionPortDescription", "channels", [](Ctx& x) { callWrapped<&port_channels>(x); },
+                  SupportStatus::Stub, "Channel descriptions are not implemented; always returns nil");
+    {
+        const uint32_t cell = p.defineDataBlock("_AVAudioSessionPortBuiltInSpeaker", 4);   // the constant's value is "Speaker"
+        p.mem().write<uint32_t>(cell, Foundation::constString(p, "Speaker"));
+    }
     for (const char* n : {"AVAudioSessionCategoryAmbient", "AVAudioSessionCategorySoloAmbient", "AVAudioSessionCategoryPlayback",
                           "AVAudioSessionCategoryRecord", "AVAudioSessionCategoryPlayAndRecord", "AVAudioSessionModeDefault",
+                          "AVAudioSessionCategoryMultiRoute", "AVAudioSessionCategoryAudioProcessing", "AVAudioSessionModeVoiceChat",
+                          "AVAudioSessionModeVideoChat", "AVAudioSessionModeGameChat", "AVAudioSessionModeVideoRecording",
+                          "AVAudioSessionModeMeasurement", "AVAudioSessionModeMoviePlayback", "AVAudioSessionModeSpokenAudio",
                           "AVAudioSessionInterruptionNotification", "AVAudioSessionRouteChangeNotification"}) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         p.mem().write<uint32_t>(cell, Foundation::constString(p, n));

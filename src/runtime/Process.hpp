@@ -217,6 +217,8 @@ public:
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
     std::string crashBundle();
+    // Each thread's (finished ones included, so a crashed worker stays) last `perThread` host calls as a JSON array, oldest first (T2c). Safe while threads run.
+    std::string callRingJson(size_t perThread);
     // Bounded, read-only allocator/host samples. Event must be an internal constant.
     void recordMemorySample(const char* event);
     // Runtime memory sampling is opt-in: HVM_MEMORY_DIAG must be set in the launching environment.
@@ -300,6 +302,8 @@ public:
     std::string describeRunningThreads();
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
+    /// Test seam: the next `count` host-thread creations (process-wide) fail, to exercise startThread cleanup.
+    static void failNextHostThreadSpawns(int count);
     bool joinThread(uint32_t self, uint32_t* retval);
     void detachThread(uint32_t self);
     GuestThread& mainThread() { return *mainThread_; }

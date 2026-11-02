@@ -622,8 +622,10 @@ void Engine::park(Cpu& c) {
     std::unique_lock<std::mutex> lk(suspendMu_);
     suspendCv_.notify_all();
     suspendCv_.wait(lk, [&] { return c.suspend_count.load() == 0 || stopRequested(); });
-    lk.unlock();
+    // Published while still holding suspendMu_: a suspend() that starts after this either sees in_guest and waits for
+    // it to clear, or has already raised suspend_count, which enterGuest re-checks.
     c.in_guest.store(true, std::memory_order_seq_cst);
+    lk.unlock();
     // enterGuest samples the registers after this returns, so they are the post-resume (possibly rewritten) ones.
 }
 
@@ -685,6 +687,7 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, std::initializer_list<uint32_t> 
 }
 
 uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nargs) {
+    if (nargs && !args) throw std::invalid_argument("guest call arguments are null");
     // Save everything the interrupted context can observe.
     uint32_t saved[kNumRegs];
     std::memcpy(saved, c.r, sizeof saved);
@@ -698,8 +701,23 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     uint32_t sp = c.r[kSP] & ~7u;
     c.call_boundary_sp = sp;
     if (nargs > 4) {
-        sp = (sp - uint32_t(nargs - 4) * 4) & ~7u;
-        for (size_t i = 4; i < nargs; ++i) mem_.write<uint32_t>(sp + uint32_t(i - 4) * 4, args[i]);
+        auto stackFault = [&](uint32_t address, const char* reason) {
+            const auto oldInfo = c.exit_info;
+            c.exit_info = address;
+            captureFault(c, Exit::MemFault);
+            c.exit_info = oldInfo;
+            throw GuestFault(Exit::MemFault, address, c.r[kPC], c.thumb, reason);
+        };
+        const size_t extra = nargs - 4;
+        if (extra > UINT32_MAX / 4 || uint64_t(extra) * 4 > sp)
+            stackFault(sp, "guest call argument stack overflows its address space");
+        const size_t bytes = extra * 4;
+        sp = (sp - uint32_t(bytes)) & ~7u;
+        uint32_t fault = sp;
+        // These writes happen before run() establishes a guest fault scope.
+        // A bad guest stack must be a controlled GuestFault, not a host SIGSEGV.
+        if (!mem_.copyInWritable(sp, args + 4, bytes, fault))
+            stackFault(fault, "guest call argument stack is not writable");
     }
     for (size_t i = 0; i < 4; ++i) c.r[i] = i < nargs ? args[i] : 0;
     c.r[kSP] = sp;

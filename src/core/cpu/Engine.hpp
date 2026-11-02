@@ -102,7 +102,9 @@ public:
     // Marks `c` as running guest code, parking first while it is suspended.
     void enterGuest(Cpu& c) {
         c.in_guest.store(true, std::memory_order_seq_cst);
-        if (__builtin_expect(c.suspend_count.load(std::memory_order_seq_cst) != 0, 0)) park(c);
+        // park() returns with in_guest already true (set under suspendMu_), but a new suspension may have begun
+        // meanwhile, so check again rather than assuming the thread may run.
+        while (__builtin_expect(c.suspend_count.load(std::memory_order_seq_cst) != 0, 0) && !stopRequested()) park(c);
         // Registers are sampled only now: while suspended, thread_set_state may rewrite c.r[], and a suspender
         // only touches them once in_guest is false, which park() guarantees until the thread is resumed.
         c.recordFaultRegisters(c.r[kPC]);

@@ -407,6 +407,10 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 @property (nonatomic, readwrite, nullable) CALayer *glLayer;
 @end
 
+@interface HVMTextInputRequest ()
+- (instancetype)initWithRequest:(const RT::UIKit::TextInputRequest &)q;
+@end
+
 @implementation HVMSession {
     NSString *_bundlePath;
     NSString *_homePath;
@@ -525,6 +529,13 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 std::lock_guard<std::mutex> lk(core->mu);
                 core->proc = proc;
             }
+            RT::UIKit::setTextInputObserver(*proc, [weakSelf](const RT::UIKit::TextInputRequest &q) {
+                HVMTextInputRequest *req = [[HVMTextInputRequest alloc] initWithRequest:q];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    HVMSession *s = weakSelf;
+                    if (s && s.onTextInput) s.onTextInput(req);
+                });
+            });
             startAudio(core, proc->mixerPtr());
             if (!core->stopRequested) {
                 proc->load();
@@ -682,6 +693,25 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if (p && _core->ready) p->enterForeground();
 }
 
+- (void)submitTextInput:(RT::UIKit::TextInputEvent)ev {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (p) RT::UIKit::submitTextInput(*p, std::move(ev));
+}
+- (void)submitText:(NSString *)text focusId:(uint64_t)focusId sequence:(uint64_t)sequence {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::SetText, std::string(text.UTF8String ?: ""), focusId, sequence};
+    [self submitTextInput:ev];
+}
+- (void)submitReturnKeyForFocus:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Return, std::string(), focusId, 0};
+    [self submitTextInput:ev];
+}
+- (void)dismissKeyboardForFocus:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Dismiss, std::string(), focusId, 0};
+    [self submitTextInput:ev];
+}
+
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger {
     if (!_core->ready) return;
     std::shared_ptr<RT::Process> p;
@@ -705,6 +735,21 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 @end
 
 // --------------------------------------------------------------- engine ---
+
+@implementation HVMTextInputRequest
+- (instancetype)initWithRequest:(const RT::UIKit::TextInputRequest &)q {
+    if ((self = [super init])) {
+        _active = q.active;
+        _focusId = q.focusId; _ackSeq = q.ackSeq;
+        _text = str(q.text);
+        _placeholder = str(q.placeholder);
+        _keyboardType = q.keyboardType; _returnKeyType = q.returnKeyType;
+        _autocapitalizationType = q.autocapitalization; _autocorrectionType = q.autocorrection;
+        _secure = q.secure; _multiline = q.multiline;
+    }
+    return self;
+}
+@end
 
 @implementation HVMEngine
 
