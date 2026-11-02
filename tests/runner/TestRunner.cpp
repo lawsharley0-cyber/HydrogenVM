@@ -246,6 +246,7 @@ int runSuspendTests();
 int runGuestCallBoundaryChild(int mode);
 int runThreadLifetimeTests();
 int runThreadLifetimeChild();
+int runArenaPoolTests();
 
 namespace {
 
@@ -7551,6 +7552,10 @@ int runFullSubsystemTests() {
     }
     check(Memory::GuestArena::liveCount() == arenasBefore,
           "GuestArena diagnostics count reservations released at destruction");
+
+    // Issue #307: a destroyed arena keeps its 4 GB range reserved for the next
+    // one, so a batch run cannot trip over a transient reservation failure.
+    check(runArenaPoolTests() == 0, "guest arena pool reuses one reservation and clears it between games");
 
     // T1b/#253: Process destruction returns the 4 GB guest arena reservation
     // so batch runs never hit "failed to reserve".
