@@ -1872,7 +1872,11 @@ int runFullSubsystemTests() {
     // 2. Full Process + Objective-C + UIKit + OpenGL ES + Audio verification
     ProcessConfig cfg;
     cfg.bundlePath = "/tmp/hvm_test_bundle.app";
-    cfg.homePath = "/tmp/hvm_test_home";
+    // A private home (mkdtemp, mode 0700): a fixed /tmp path could be pre-seeded with a symlink that redirects the
+    // fixtures' O_TRUNC writes.
+    char privateHome[] = "/tmp/hvm_test_home.XXXXXX";
+    if (!mkdtemp(privateHome)) { std::fprintf(stderr, "mkdtemp failed\n"); return 1; }
+    cfg.homePath = privateHome;
     Process proc(cfg);
     // Renders the mixer (as the platform's audio thread does) and returns how many
     // frames of sound came out: the index after the last non-silent frame.
@@ -5035,7 +5039,7 @@ int runFullSubsystemTests() {
             const std::string stPath = proc.guestHomePath() + "/Documents/hvm_stat_test.txt";
             const uint32_t cStPath = proc.allocCString(stPath);
             const uint32_t fdSt = call("_open", {cStPath, 0x0602 /* O_RDWR | O_CREAT | O_TRUNC */, 0644});
-            call("_pwrite", {fdSt, proc.allocCString("unity"), 5, 0});
+            call("_pwrite", {fdSt, proc.allocCString("unity"), 5, 0, 0});   // off_t is two words: low in r3, high on the stack
             call("_close", {fdSt});
             const bool statOk = call("_stat", {cStPath, stBuf}) == 0;
             const uint16_t stMode = proc.mem().read<uint16_t>(stBuf + 4);
