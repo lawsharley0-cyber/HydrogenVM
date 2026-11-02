@@ -1,5 +1,6 @@
 // HydrogenVM — run loops, timers, dates, delayed/cross-thread performs, NSThread.
 #include "Foundation.hpp"
+#include "runtime/Support.hpp"
 #include <algorithm>
 #include <mutex>
 #include <chrono>
@@ -888,7 +889,8 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     p.def<&cf_removeSource>("_CFRunLoopRemoveSource");
     p.def<&cf_containsSource>("_CFRunLoopContainsSource");
     p.def<&cf_sourceSignal>("_CFRunLoopSourceSignal");
-    p.def<&cf_sourceInvalidate>("_CFRunLoopSourceInvalidate");
+    supportDef<&cf_sourceInvalidate>(p, "_CFRunLoopSourceInvalidate", SupportStatus::Approx,
+                                     "Invalidates version-0 sources; Mach-port sources are unsupported");
     p.def<&cf_sourceIsValid>("_CFRunLoopSourceIsValid");
     p.def<&cf_sourceGetOrder>("_CFRunLoopSourceGetOrder");
     p.def<&cf_absoluteTime>("_CFAbsoluteTimeGetCurrent");
