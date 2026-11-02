@@ -28,6 +28,7 @@ jobs:
         run: |
           xcrun swiftc -swift-version 6 -o build/file-editor/player-tests \
             app/HydrogenVM/PlayerGeometry.swift app/HydrogenVM/PlayerActivity.swift \
+            app/HydrogenVM/HomeScreenLink.swift \
             tools/tests/swift/PlayerTests.swift
           set -o pipefail
           build/file-editor/player-tests 2>&1 | tee build/file-editor/player-models.log
