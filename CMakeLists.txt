@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(HydrogenVM CXX)
+enable_testing()
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   message(FATAL_ERROR "HydrogenVM requires Clang or GCC.")
@@ -60,11 +61,22 @@ endif()
 # -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
 target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off)
 
-add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/ThreadLifetimeTests.cpp tests/host/minimp3_hwcap_test.cpp)
+add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/GuestCallBoundaryTests.cpp tests/runner/ThreadLifetimeTests.cpp tests/host/minimp3_hwcap_test.cpp)
+add_executable(hvm_guest_call_boundary_tests tests/runner/GuestCallBoundaryTests.cpp)
+target_link_libraries(hvm_guest_call_boundary_tests PRIVATE hvm_core)
 add_executable(hvm_thread_lifetime_tests tests/runner/ThreadLifetimeTests.cpp)
 target_link_libraries(hvm_thread_lifetime_tests PRIVATE hvm_core)
-target_compile_definitions(hvm_tests PRIVATE MINIMP3_HWCAP_NO_MAIN HVM_THREAD_LIFETIME_NO_MAIN)
+target_compile_definitions(hvm_tests PRIVATE MINIMP3_HWCAP_NO_MAIN HVM_GUEST_CALL_BOUNDARY_NO_MAIN HVM_THREAD_LIFETIME_NO_MAIN)
 target_link_libraries(hvm_tests PRIVATE hvm_core)
+
+# GNU-style linker wrapping keeps host thread failure injection in the test binary.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(hvm_thread_launch_tests tests/runner/ThreadLaunchTests.cpp)
+  target_link_libraries(hvm_thread_launch_tests PRIVATE hvm_core)
+  target_link_options(hvm_thread_launch_tests PRIVATE "-Wl,--wrap=pthread_create")
+  add_test(NAME hvm_thread_launch_tests COMMAND hvm_thread_launch_tests)
+  set_tests_properties(hvm_thread_launch_tests PROPERTIES TIMEOUT 30)
+endif()
 
 add_executable(hvm_gl_lifetime_tests tests/runner/HostGLLifetimeTests.cpp)
 target_link_libraries(hvm_gl_lifetime_tests PRIVATE hvm_core)
