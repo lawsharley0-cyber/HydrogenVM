@@ -14,6 +14,7 @@
 #include "runtime/Abi.hpp"
 #include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
+#include <array>
 #include <atomic>
 #include <sys/file.h>
 #include <chrono>
@@ -214,6 +215,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "AudioOutput.hpp"
@@ -235,6 +237,8 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cstring>
 
 int runMinimp3HwcapChecks();
+int runThreadLifetimeTests();
+int runThreadLifetimeChild();
 
 namespace {
 
@@ -6618,6 +6622,65 @@ int runFullSubsystemTests() {
             fs::create_symlink(home + "/Game.app-sibling/secret.tfc", bundle + "/CookedIPhone/Link.tfc");
             mutations &= lookup("Link").empty();
             check(mutations, "bundle cache invalidates additions/removals and rejects a cached file replaced by an escaping symlink");
+            // A directory's mtime can repeat within one clock tick, so a device
+            // variant added right after the plain resource was cached must still
+            // win even though the stamp the cache recorded did not change.
+            // Restoring that stamp keeps this independent of host timestamp
+            // granularity instead of a race that only fails on a coarse clock.
+            const std::string dirPath = bundle + "/CookedIPhone";
+            const std::string stamped = dirPath + "/Stamped.tfc";
+            put(stamped);
+            const auto beforeAdd = fs::last_write_time(dirPath);
+            const bool cachedPlain = lookup("Stamped") == stamped;
+            put(dirPath + "/Stamped~iphone.tfc");
+            fs::last_write_time(dirPath, beforeAdd);
+            check(cachedPlain && lookup("Stamped") == dirPath + "/Stamped~iphone.tfc",
+                  "bundle cache prefers a device variant added under an unchanged directory timestamp");
+            const std::string priorityDir = bundle + "/Priority";
+            fs::create_directories(priorityDir + "/Base.lproj");
+            const std::string earlier = priorityDir + "/pRiOrItY.tfc";
+            put(earlier);
+            put(priorityDir + "/Base.lproj/Priority.tfc");
+            // This fixture requires a case-sensitive filesystem. Removing read
+            // permission exposes an unexpected rescan while retaining search
+            // permission for cached-path validation.
+            if (!fs::exists(priorityDir + "/Priority.tfc")) {
+                bool priority = lookup("Priority", "tfc", "Priority") == earlier &&
+                                lookup("Priority", "tfc", "Priority/") == earlier;
+                const auto permissions = fs::status(priorityDir).permissions();
+                fs::permissions(priorityDir, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec);
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority/") == earlier;
+                fs::permissions(priorityDir, permissions);
+                check(priority, "bundle cache retains an earlier case-insensitive match over a later exact match");
+                const auto priorityStamp = fs::last_write_time(priorityDir);
+                put(priorityDir + "/Priority~iphone.tfc");
+                fs::last_write_time(priorityDir, priorityStamp);
+                check(lookup("Priority", "tfc", "Priority") == priorityDir + "/Priority~iphone.tfc",
+                      "bundle cache still prefers a new exact device variant in the cached directory");
+            }
+            // A later exact match must not evict an earlier case-insensitive hit.
+            // Add a case-insensitive variant with the same timestamp so a
+            // re-scan would visibly select it instead of the cached path.
+            fs::create_directories(dirPath + "/Base.lproj");
+            const std::string remoteEarlier = dirPath + "/priority.tfc";
+            put(remoteEarlier);
+            put(dirPath + "/Base.lproj/Priority.tfc");
+            if (!fs::exists(dirPath + "/Priority.tfc")) { // case-sensitive filesystem
+                const auto priorityStamp = fs::last_write_time(dirPath);
+                bool priorityOK = lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                put(dirPath + "/priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                check(priorityOK, "later exact resource does not evict an earlier case-insensitive cached match");
+                put(dirPath + "/Priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                check(lookup("Priority") == dirPath + "/Priority~iphone.tfc",
+                      "cached case-insensitive match yields to an exact device variant in the same directory");
+            }
             put(home + "/Mutable.tfc");
             const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
             auto mutableLookup = [&] {
@@ -7400,6 +7463,53 @@ int runFullSubsystemTests() {
                          tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
         }
         check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+
+        // The crash bundle carries each thread's last calls (T2c, #259): oldest first, exactly the last N,
+        // with the support status of a function that was declared a Stub.
+        const uint32_t ringStubFn = ringProc.defineFunction("_test_call_ring_stub_fn", [](Ctx&) {});
+        const uint32_t ringStubIndex = ringProc.engine().hleIndex(ringStubFn);
+        supportRegistry(ringProc).record({SupportKind::Function, "_test_call_ring_stub_fn", SupportStatus::Stub,
+                                          "test: a placeholder that must show up as a stub hit"});
+        ringProc.engine().callHle(&ringCpu, ringStubIndex);
+        const uint64_t ringTotal = ringCpu.call_ring.load()->total();
+        const std::string ringJson = ringProc.callRingJson(8);
+        auto seqAt = [&](uint64_t seq) { return ringJson.find("\"seq\":" + std::to_string(seq) + ","); };
+        size_t hleEntries = 0;
+        for (size_t at = ringJson.find("\"kind\":\"hle\""); at != std::string::npos; at = ringJson.find("\"kind\":\"hle\"", at + 1)) ++hleEntries;
+        const size_t lastEntry = seqAt(ringTotal);
+        const size_t stubAt = ringJson.find("\"status\":\"Stub\"");
+        bool ringOrdered = seqAt(ringTotal - 7) != std::string::npos && seqAt(ringTotal - 8) == std::string::npos;
+        for (uint64_t q = ringTotal - 7; ringOrdered && q < ringTotal; ++q) ringOrdered = seqAt(q) < seqAt(q + 1);
+        check(ringJson.find("\"thread\":" + std::to_string(ringProc.mainThread().id) + ",\"total\":" + std::to_string(ringTotal)) != std::string::npos &&
+              hleEntries == 8 && ringOrdered,
+              "callRingJson lists exactly the last N calls of a thread, oldest first, with the thread's total");
+        check(lastEntry != std::string::npos && stubAt != std::string::npos && stubAt > lastEntry &&
+              ringJson.find("\"name\":\"test_call_ring_stub_fn\"") != std::string::npos &&
+              ringJson.find("\"status\"") == stubAt && ringJson.find("\"status\"", stubAt + 1) == std::string::npos,
+              "callRingJson marks a declared Stub call and leaves unlabelled calls without a status");
+
+        // A worker that has finished (the one that crashed is marked finished before the bundle is written)
+        // is still in the dump.
+        const uint32_t ringWorkerFn = ringProc.defineFunction("test_call_ring_worker_fn", [&](Ctx& x) {
+            ringProc.engine().callHle(&x.cpu, ringStubIndex);   // a host call made on the worker lands in the worker's ring
+            x.cpu.r[0] = 0;
+        });
+        const uint32_t ringWorker = ringProc.startThread(ringWorkerFn, 0, 64u << 10, false);
+        uint32_t ringWorkerResult = 1;
+        const bool ringWorkerJoined = ringProc.joinThread(ringWorker, &ringWorkerResult);
+        const std::string ringAfter = ringProc.callRingJson(8);
+        size_t ringThreads = 0;   // the dump names a thread by its id (not the pthread handle startThread returns)
+        for (size_t at = ringAfter.find("\"thread\":"); at != std::string::npos; at = ringAfter.find("\"thread\":", at + 1)) ++ringThreads;
+        check(ringWorkerJoined && ringThreads == 2,
+              "callRingJson keeps a finished worker's ring so a crashed thread is not dropped");
+
+        // Generated placeholders for missing imports and C++ vtable slots are declared Stub, never unlabelled.
+        ringProc.makeMissingStub("_hvm_test_missing_import");
+        ringProc.makeMissingStub("__ZTV13HVMTestMissing");
+        const auto missingFn = supportRegistry(ringProc).find("_hvm_test_missing_import");
+        const auto missingSlot = supportRegistry(ringProc).find("__ZTV13HVMTestMissing$hvm_slot0");
+        check(missingFn && missingFn->status == SupportStatus::Stub && missingSlot && missingSlot->status == SupportStatus::Stub,
+              "a generated missing-function or vtable-slot stub is recorded as Stub");
     }
 
     // Teardown diagnostics: a guest thread still running (blocked in the real `read` on
@@ -7523,7 +7633,79 @@ int runFullSubsystemTests() {
         ::unlink(lockPath);
         ::unlink(freePath);
     }
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-dlsym-tests";
+        Process proc(cfg);
+        auto& cpu = proc.mainThread().cpu;
+        const uint32_t stack = proc.heap().allocZeroed(1024);
+        cpu.r[CPU::kSP] = stack + 1024;
 
+        auto callDlsym = [&](const char* name) -> uint32_t {
+            const uint32_t namePtr = proc.allocCString(name);
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_dlsym"), {0xFFFFFFFEu, namePtr}));
+        };
+
+        const uint32_t addrHttp = callDlsym("kCFHTTPVersion1_1");
+        const uint32_t addrProxyFtp = callDlsym("kCFProxyTypeFTP");
+        const uint32_t addrProxyJs = callDlsym("kCFProxyTypeAutoConfigurationJavaScript");
+
+        Ctx cx{proc, cpu, proc.mem()};
+        auto hasValue = [&](uint32_t addr, const char* expected) {
+            return addr != 0 && proc.mem().read<uint32_t>(addr) != 0 &&
+                   Foundation::utf8(cx, proc.mem().read<uint32_t>(addr)) == expected;
+        };
+        bool okHttp = hasValue(addrHttp, "HTTP/1.1");
+        bool okProxyFtp = hasValue(addrProxyFtp, "kCFProxyTypeFTP");
+        bool okProxyJs = hasValue(addrProxyJs, "kCFProxyTypeAutoConfigurationJavaScript");
+
+        check(okHttp && okProxyFtp && okProxyJs, "dlsym(RTLD_DEFAULT) resolves dynamic CFNetwork and proxy constants");
+        check(callDlsym("kHVMDefinitelyUnknownType") == 0, "dlsym returns 0 for an unknown constant-like name");
+        check(callDlsym("OBJC_CLASS_$_HVMDefinitelyUnknown") == 0, "dlsym returns 0 for an unknown class");
+        check(callDlsym("hvmDefinitelyUnknownFunction") == 0, "dlsym returns 0 for an unknown function");
+        const uint32_t accuracy = callDlsym("kCLLocationAccuracyBest");
+        check(accuracy && proc.mem().read<double>(accuracy) == -1,
+              "dlsym resolves a recognized numeric framework constant");
+    }
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-symbol-resolution-tests";
+        Process proc(cfg);
+        std::atomic<int> calls{0}, ready{0}, misses{0};
+        std::atomic<bool> go{false};
+        proc.addMissingSymbolResolver([&](const std::string& name, Process::MissingSymbolMode mode) -> uint32_t {
+            if (mode != Process::MissingSymbolMode::DynamicLookup) return 0;
+            if (name == "_HVMUnresolvedTest") { ++misses; return 0; }
+            if (name != "_HVMConcurrentResolutionTest") return 0;
+            const int call = ++calls;
+            proc.defineData("_HVMResolutionSideEffect", 0x55);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            return 0x12340000u + uint32_t(call);
+        });
+        constexpr size_t count = 8;
+        std::array<uint32_t, count> results{};
+        std::array<std::thread, count> workers;
+        for (size_t i = 0; i < count; ++i) workers[i] = std::thread([&, i] {
+            const auto existing = proc.lookupSymbol("_HVMConcurrentResolutionTest");
+            ++ready;
+            while (!go.load()) std::this_thread::yield();
+            results[i] = existing ? *existing : proc.resolveMissingSymbol("_HVMConcurrentResolutionTest");
+        });
+        while (ready.load() != int(count)) std::this_thread::yield();
+        go = true;
+        for (auto& worker : workers) worker.join();
+        bool same = results[0] != 0;
+        for (auto result : results) same &= result == results[0];
+        check(same && calls == 1 && proc.lookupSymbol("_HVMConcurrentResolutionTest") == results[0] &&
+              proc.lookupSymbol("_HVMResolutionSideEffect") == 0x55,
+              "concurrent first dynamic symbol resolution publishes one address");
+        check(proc.resolveMissingSymbol("_HVMUnresolvedTest") == 0 &&
+              proc.resolveMissingSymbol("_HVMUnresolvedTest") == 0 && misses == 2 &&
+              !proc.lookupSymbol("_HVMUnresolvedTest"),
+              "unresolved dynamic symbols remain uncached");
+    }
+
+    check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
@@ -7590,6 +7772,7 @@ static int runStopProbe() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "thread-lifetime-child") return runThreadLifetimeChild();
     if (argc == 4 && std::string(argv[1]) == "audio-decode") {
         std::ifstream in(argv[2], std::ios::binary);
         if (!in) return 2;
