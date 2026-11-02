@@ -152,7 +152,7 @@ child descriptor zero, checking an unwind-only log marker. Neither test can
 accidentally pass by running the ordinary fault path.
 
 Three actual-app XCTest cases cover clipped/invalid pending and signal bytes,
-signal evidence without pending metadata, and a real read-only-directory save
+signal evidence without pending metadata, and a real ENAMETOOLONG save
 failure retaining all journal bytes before a successful retry. They use the
 real engine bridge in an isolated app test sandbox, without success stubs.
 Their Apple Actions result remains pending; no local Swift pass is claimed.
@@ -162,8 +162,16 @@ the new journal test target does not depend on that harness.
 
 The review C++ candidate again passed local fulltest 488/488, Test Lab 25/25
 zero skips, the complete enabled tools suite 202/202 and focused ASan/UBSan.
-The Apple journal gate first requires the two named recovery tests to fail
+The Apple journal gate first requires the three named recovery tests to fail
 against actual earlier CrashReport.swift from 1a874239966f0f04697aaaa2897103a094846e6d,
 then restores the candidate and requires the complete journal tests to pass.
 A baseline build failure cannot satisfy the required named-test failures.
 The test source and actual bridge stay identical between both executions.
+
+The failed-save fixture uses a valid overlong bundle identifier so report-file
+creation fails with ENAMETOOLONG while the three pending paths remain writable
+and deletable. A read-only-directory fixture would also prevent deletion and
+could hide the old unconditional-cleanup bug. The named failed-save test is
+therefore also required to fail against the earlier actual recovery source.
+After checking the exact retained bytes, the test fixes only its synthetic
+metadata and verifies successful recovery; production saved state is untouched.

@@ -52,18 +52,21 @@ final class CrashReportTests: XCTestCase {
     @MainActor
     func testFailedRealFilesystemSaveRetainsAllJournalBytes() throws {
         try withFreshJournal {
-            let pending = Data("{\"bundleId\":\"test.journal\"}".utf8)
+            // A valid JSON bundle ID can exceed NAME_MAX in save's generated
+            // filename. Creation fails with ENAMETOOLONG while pending files
+            // remain readable and deletable, so the old unconditional cleanup
+            // really loses evidence and fails this test.
+            let pending = try JSONSerialization.data(withJSONObject: ["bundleId": String(repeating: "x", count: 300)])
             let signal = Data("{\"exceptionKind\":\"host-SIGBUS\"}".utf8)
             let host = Data("private test host-fault text".utf8)
             try pending.write(to: CrashReport.pending)
             try signal.write(to: CrashReport.signal)
             try host.write(to: CrashReport.hostFault)
-            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: CrashReport.directory.path)
             XCTAssertNil(CrashReport.recover())
             XCTAssertEqual(try Data(contentsOf: CrashReport.pending), pending)
             XCTAssertEqual(try Data(contentsOf: CrashReport.signal), signal)
             XCTAssertEqual(try Data(contentsOf: CrashReport.hostFault), host)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: CrashReport.directory.path)
+            try JSONSerialization.data(withJSONObject: ["bundleId": "test.journal"]).write(to: CrashReport.pending)
             XCTAssertNotNil(CrashReport.recover())
         }
     }

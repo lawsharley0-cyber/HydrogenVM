@@ -79,6 +79,7 @@ jobs:
           fi
           grep -E 'testMalformedPendingAndSignalArePreserved.*failed' build/file-editor/crash-journal-before.log
           grep -E 'testSignalWithoutPendingMetadataIsRecovered.*failed' build/file-editor/crash-journal-before.log
+          grep -E 'testFailedRealFilesystemSaveRetainsAllJournalBytes.*failed' build/file-editor/crash-journal-before.log
           cp "$RUNNER_TEMP/hvm-current-crash-report.swift" app/HydrogenVM/CrashReport.swift
           trap - EXIT
           xcodebuild -project app/HydrogenVM.xcodeproj -scheme HydrogenVMJournalTests \
