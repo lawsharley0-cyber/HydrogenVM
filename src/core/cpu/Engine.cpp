@@ -582,8 +582,6 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     const int64_t budget = c.budget;
     const int64_t progressBudgetStart = c.progress_budget_start;
     const uint64_t progressCarry = c.progress_carry;
-    // The nested slices replace budget/progress_budget_start; keep the outer slice's pending count in the published total.
-    c.progress_carry += uint64_t(c.progress_budget_start) - uint64_t(c.budget);
     const Exit exitSaved = c.exit;
     const uint32_t infoSaved = c.exit_info;
     const uint32_t boundarySaved = c.call_boundary_sp;
@@ -601,6 +599,8 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     c.r[kPC] = fn & ~1u;
     c.thumb = fn & 1;
 
+    // After the stack-argument writes (they can fault, and a fault publishes before the carry is restored): the nested slices replace budget/progress_budget_start; keep the outer slice's pending count in the published total.
+    c.progress_carry += uint64_t(c.progress_budget_start) - uint64_t(c.budget);
     const Exit e = runToExit(c);
     const uint64_t result = (uint64_t(c.r[1]) << 32) | c.r[0];
     if (e != Exit::Return) {
