@@ -59,10 +59,23 @@ def write_json(path, value):
     temporary.replace(path)
 
 
+def hvm_option_prefix(args):
+    # Keep this list in sync with the value-taking options in hvmRunMain.
+    value_options = {'--run-for', '--screenshot', '--tap', '--drag', '--report',
+                     '--frame-file', '--input-file', '--audio-fd', '--home',
+                     '--launches', '--lifecycle', '--loopback-alias'}
+    index = 0
+    while index < len(args):
+        if args[index] == '--':
+            break
+        index += 2 if args[index] in value_options else 1
+    return args[:index]
+
+
 def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', timeout=None, extra_args=()):
     hvm, app, home, out = (Path(p).resolve() for p in (hvm, app, home, out))
     extra_args = list(extra_args)
-    options = extra_args[:extra_args.index('--')] if '--' in extra_args else extra_args
+    options = hvm_option_prefix(extra_args)
     if any(arg == '--launches' or arg.startswith('--launches=') for arg in options):
         raise ValueError('extra_args cannot override --launches')
     if any(arg == '--home' or arg.startswith('--home=') for arg in options):
@@ -149,7 +162,7 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
                         if int(total) == launches:
                             attempted = max(attempted or 0, int(n))
             # hvm omits banners for a single launch and when --quiet is an hvm option.
-            options = command[:command.index('--')] if '--' in command else command
+            options = hvm_option_prefix(command)
             quiet = '--quiet' in options
             if not attempted and (launches == 1 or quiet):
                 report = row.get('report', {})

@@ -142,6 +142,7 @@ sys.exit(42 if failed else 0)
             for name, launches, args, attempted, complete in [
                     ('single', 1, [], 1, True),
                     ('quiet', 3, ['--quiet'], 3, True),
+                    ('quiet-after-value', 3, ['--tap', '--', '--quiet'], 3, True),
                     ('quiet-failure', 3, ['--quiet', '--fail'], None, False),
                     ('quiet-crash', 3, ['--quiet', '--crash'], None, False),
                     ('quiet-no-report', 3, ['--quiet', '--missing-report'], None, False),
@@ -203,7 +204,8 @@ pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({'exitStatus':0,'cr
 ''')
             hvm.chmod(0o700)
             for mode in ('separate', 'in-process'):
-                for override in (['--launches', '1'], ['--launches=1']):
+                for override in (['--launches', '1'], ['--launches=1'],
+                                 ['--tap', '--', '--launches', '1']):
                     with self.subTest(mode=mode, override=override):
                         out = root / (mode + override[0].replace('=', '-'))
                         with self.assertRaisesRegex(ValueError, '--launches'):
@@ -229,8 +231,14 @@ pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({'exitStatus':0,'cr
 ''')
             hvm.chmod(0o700)
             for mode in ('separate', 'in-process'):
-                for index, override in enumerate((['--home', str(root / 'other-home')],
-                                                  [f'--home={root / "other-home"}'])):
+                value_options = ('--run-for', '--screenshot', '--tap', '--drag', '--report',
+                                 '--frame-file', '--input-file', '--audio-fd', '--lifecycle',
+                                 '--loopback-alias')
+                overrides = [['--home', str(root / 'other-home')],
+                             [f'--home={root / "other-home"}']]
+                overrides += [[option, '--', '--home', str(root / 'other-home')]
+                              for option in value_options]
+                for index, override in enumerate(overrides):
                     with self.subTest(mode=mode, override=override):
                         out = root / f'rejected-{mode}-{index}'
                         with self.assertRaisesRegex(ValueError, '--home'):
@@ -240,6 +248,11 @@ pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({'exitStatus':0,'cr
                 guest_args = ['--', '--home', str(root / 'other-home'),
                               f'--home={root / "other-home"}']
                 result = run_relaunch(hvm, root / 'app', root / 'home', root / mode,
+                                      launches=1, seconds=1, mode=mode, extra_args=guest_args)
+                self.assertEqual(result['runs'][0]['command'][-len(guest_args):], guest_args)
+                self.assertTrue(result['allRunsExitedWithoutCrash'])
+                guest_args = ['--tap', '--', '--', '--home', str(root / 'other-home')]
+                result = run_relaunch(hvm, root / 'app', root / 'home', root / f'{mode}-value',
                                       launches=1, seconds=1, mode=mode, extra_args=guest_args)
                 self.assertEqual(result['runs'][0]['command'][-len(guest_args):], guest_args)
                 self.assertTrue(result['allRunsExitedWithoutCrash'])
