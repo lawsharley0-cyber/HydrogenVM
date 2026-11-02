@@ -53,7 +53,7 @@ All multi-byte integers in headers, event frames, and structured payloads are en
 
 <!-- coderabbit-ai-generated-section:v1:18fdffc239ce869b5e4fc12e0e5b3e15d0403718a61535c0f538a242ce286507 -->
 
-### 3.1 Header (Fixed 64 bytes)
+### 3.1 Header (Fixed 96 bytes)
 ```c
 struct HVMRecordHeader {
     char magic[8];             // "HVMREC01"
@@ -62,8 +62,11 @@ struct HVMRecordHeader {
     uint64_t initialRNGSeed;   // Session seed for arc4random
     uint64_t sessionStartTime; // Virtual epoch in microseconds
     uint8_t  appSha256[32];    // Exact SHA-256 of the executed binary/IPA
+    uint8_t  sandboxSha256[32]; // Digest of the initial sandbox (Section 2, File System row)
 };
 ```
+
+**Sandbox lifecycle.** Before the case starts, the recorder snapshots the guest `home` directory into a fresh sandbox, stores its digest (over sorted relative paths, file modes, and contents) in `sandboxSha256`, and runs against that sandbox. Each replay (A and B, and every later replay) restores `home` from the same initial snapshot into its own fresh directory before validating `sandboxSha256`; the snapshot is journal metadata supplied alongside the `.hvmrec` file. Replay writes go only to that per-replay directory, so replays cannot affect the recording or each other. The current Test Lab harness does not implement `TL-Replay` or reset `home` per case; Phase 4 adds both.
 
 Replay compares `hostPageSize` with the replay host's page size, and `appSha256` with the executed binary, before running any guest instruction. A mismatch is a deterministic startup failure (`replay-incompatible-host` / `replay-wrong-app`); the replayer does not emulate another page size, because page-granular behavior (`mmap`, `mprotect`, fault addresses) would differ.
 
@@ -85,7 +88,7 @@ struct HVMRecordEvent {
 
 <!-- coderabbit-ai-generated-section:v1:f2b8bac029bab8d01a5f8675e633161f845b42735116b8740bb44859bb7171ec -->
 
-Payloads of at most 65,535 bytes use one ordinary event frame. For a larger logical payload, write one `EVENT_PAYLOAD_START` (0x09) frame containing, in order, `uint16_t originalEventKind`, `uint64_t payloadId`, and `uint64_t totalPayloadSize`, followed immediately by one or more `EVENT_PAYLOAD_CHUNK` (0x0A) frames. Each chunk payload contains `uint64_t payloadId`, `uint64_t offset`, and 1 to 65,519 data bytes. `payloadId` uniquely identifies this logical payload within the journal and is distinct from a network/IPC stream ID. All frames in the sequence have the logical event's tick and thread ID. Chunks are contiguous and uninterleaved, starting at offset zero and continuing in increasing offset order until exactly `totalPayloadSize` bytes are present. The reader rejects missing, duplicate, overlapping, out-of-order, or excess chunks, nested framing kinds, and totals at or below 65,535. It reconstructs and dispatches the original event atomically at the start frame's position in journal order. This framing applies equally to filesystem and network/IPC payloads.
+Payloads of at most 65,535 bytes use one ordinary event frame. For a larger logical payload, write one `EVENT_PAYLOAD_START` (0x09) frame containing, in order, `uint16_t originalEventKind`, `uint64_t payloadId`, and `uint64_t totalPayloadSize`, followed immediately by one or more `EVENT_PAYLOAD_CHUNK` (0x0A) frames. Each chunk payload contains `uint64_t payloadId`, `uint64_t offset`, and 1 to 65,519 data bytes. `payloadId` uniquely identifies this logical payload within the journal and is distinct from a network/IPC stream ID. All frames in the sequence have the logical event's tick and thread ID. Chunks are contiguous and uninterleaved, starting at offset zero and continuing in increasing offset order until exactly `totalPayloadSize` bytes are present. The reader rejects missing, duplicate, overlapping, out-of-order, or excess chunks, nested framing kinds, totals at or below 65,535, and totals above `MAX_EVENT_PAYLOAD_TOTAL_SIZE` (64 MiB in `hvmrec/v1`). The reader checks `totalPayloadSize` against this maximum before allocating or spooling any chunk data. It reconstructs and dispatches the original event atomically at the start frame's position in journal order. This framing applies equally to filesystem and network/IPC payloads.
 
 ### 3.3 Event Kinds
 1. `EVENT_INPUT_TOUCH` (0x01): Touch ID, phase, normalized coordinates $(x, y)$.
@@ -108,7 +111,7 @@ Fields are written in the order listed, little-endian, with no padding. `bytes` 
 | `EVENT_NETWORK_IPC` | `uint8_t operation` (0 = connect, 1 = send, 2 = receive, 3 = close, 4 = DNS, 5 = other), `uint64_t streamId`, `bytes parameters`, `int32_t status`, `bytes output` |
 | `EVENT_FS_READ` | `uint8_t operation` (0 = read, 1 = directory listing, 2 = stat), `string path`, `uint64_t offset`, `uint32_t requestedLength`, `int32_t status`, `bytes data` |
 
-`lockId` is assigned in recording order and `generation` increments when a guest address is reused for a different mutex lifetime. `bytes parameters` holds the call's arguments in the order the guest passed them, each encoded as a `uint64_t`, and the reader checks them for equality. Oversized `data` or `output` uses the payload framing of Section 3.2.
+`lockId` is assigned in recording order and `generation` increments when a guest address is reused for a different mutex lifetime. `bytes parameters` encodes the operation's request by value, never by pointer: for `connect` the destination address family, address bytes, and port; for `send` the length and the bytes sent; for `receive` the requested length and flags; for DNS the queried name and record type; for `close` only the stream ID. The reader compares the recorded request with the replayed call's request byte for byte, so a call with changed contents but the same pointers is a divergence. Oversized `data` or `output` uses the payload framing of Section 3.2.
 
 <!-- /coderabbit-ai-generated:v1 -->
 
