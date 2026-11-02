@@ -35,9 +35,11 @@ GuestArena::Stats GuestArena::stats() const {
     return out;
 }
 
-GuestArena::GuestArena() {
-    host_page_ = size_t(sysconf(_SC_PAGESIZE));
-    if (host_page_ < kGuestPageSize || (host_page_ & (host_page_ - 1)))
+GuestArena::GuestArena(size_t hostPage) {
+    const size_t nativePage = size_t(sysconf(_SC_PAGESIZE));
+    host_page_ = hostPage ? hostPage : nativePage;
+    if (host_page_ < kGuestPageSize || host_page_ < nativePage ||
+        host_page_ > kArenaSize || (host_page_ & (host_page_ - 1)))
         throw std::runtime_error("HydrogenVM: unsupported host page size");
 
     // NOTE (iOS): reserving 4 GB of address space needs the
