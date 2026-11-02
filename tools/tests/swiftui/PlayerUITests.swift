@@ -2,8 +2,10 @@ import XCTest
 
 final class PlayerUITests: XCTestCase {
     @MainActor
-    private func open(_ orientation: Int = 1) -> XCUIApplication {
+    private func open(_ orientation: Int = 1, overlay: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
+        // The debug overlay is off by default (#280); tests that drive the controls turn it on.
+        if overlay { app.launchArguments += ["-player.showDebugOverlay", "YES"] }
         app.launchEnvironment["PLAYER_ORIENTATION"] = String(orientation)
         app.launch()
         app.buttons["Open Player"].tap()
@@ -16,6 +18,16 @@ final class PlayerUITests: XCTestCase {
         let predicate = NSPredicate(format: "label == %@", label)
         expectation(for: predicate, evaluatedWith: element)
         waitForExpectations(timeout: 10)
+    }
+
+    @MainActor
+    func testControlsAreNotDrawnByDefault() {
+        let app = open(overlay: false)
+        XCTAssertFalse(app.buttons["player-controls"].exists)
+        XCTAssertFalse(app.buttons["player-pause"].exists)
+        // The game still receives its touches with nothing drawn over it.
+        app.otherElements["player-viewport"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
     }
 
     @MainActor

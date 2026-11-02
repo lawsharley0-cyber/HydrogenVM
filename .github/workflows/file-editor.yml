@@ -27,7 +27,7 @@ jobs:
       - name: Player geometry and lifecycle regression tests (Swift 6)
         run: |
           xcrun swiftc -swift-version 6 -o build/file-editor/player-tests \
-            app/HydrogenVM/PlayerGeometry.swift app/HydrogenVM/PlayerActivity.swift \
+            app/HydrogenVM/PlayerGeometry.swift app/HydrogenVM/PlayerActivity.swift app/HydrogenVM/PlayerOverlay.swift \
             tools/tests/swift/PlayerTests.swift
           set -o pipefail
           build/file-editor/player-tests 2>&1 | tee build/file-editor/player-models.log

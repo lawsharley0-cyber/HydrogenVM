@@ -22,20 +22,44 @@ struct EmulatorScreen: UIViewRepresentable {
     var mode: PlayerScaleMode = .fit
     var filter: PlayerFilter = .linear
     var inputEnabled = true
+    /// Three fingers held down (PlayerOverlay): asks for the controls while the overlay is off.
+    var onOverlayGesture: (() -> Void)? = nil
     let onTouch: (HVMTouchPhase, CGPoint, Int) -> Void
 
     func makeUIView(context: Context) -> ScreenView { ScreenView() }
 
     func updateUIView(_ view: ScreenView, context: Context) {
         view.onTouch = onTouch
+        view.onOverlayGesture = onOverlayGesture
         view.configure(image: image, glLayer: glLayer, guest: guestSize, orientation: orientation,
                        mode: mode, filter: filter, enabled: inputEnabled)
     }
 
     static func dismantleUIView(_ view: ScreenView, coordinator: ()) { view.cancelTouches() }
 
-    final class ScreenView: UIView {
+    final class ScreenView: UIView, UIGestureRecognizerDelegate {
         var onTouch: ((HVMTouchPhase, CGPoint, Int) -> Void)?
+        var onOverlayGesture: (() -> Void)? {
+            didSet { holdRecognizer.isEnabled = onOverlayGesture != nil }
+        }
+        // Observes only: it never cancels or delays the touches the game receives.
+        private lazy var holdRecognizer: UILongPressGestureRecognizer = {
+            let r = UILongPressGestureRecognizer(target: self, action: #selector(overlayHeld(_:)))
+            r.numberOfTouchesRequired = PlayerOverlay.gestureTouches
+            r.minimumPressDuration = PlayerOverlay.gestureHoldSeconds
+            r.cancelsTouchesInView = false
+            r.delaysTouchesBegan = false
+            r.delaysTouchesEnded = false   // the default would withhold the game's touch-end once this recognizes
+            r.delegate = self
+            r.isEnabled = false
+            return r
+        }()
+
+        @objc private func overlayHeld(_ r: UILongPressGestureRecognizer) {
+            if r.state == .began { onOverlayGesture?() }
+        }
+
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
         /// Container scaled and rotated to the viewport: the GL layer (if any)
         /// underneath, the composited UIKit frame on top.
         private let picture = CALayer()
@@ -67,6 +91,7 @@ struct EmulatorScreen: UIViewRepresentable {
         override init(frame: CGRect) {
             super.init(frame: frame)
             isMultipleTouchEnabled = true
+            addGestureRecognizer(holdRecognizer)
             backgroundColor = .black
             clipsToBounds = true
             layer.addSublayer(picture)

@@ -77,6 +77,17 @@ struct PlayerTests {
         check(state.reconcile(ready: true, backgrounded: true, running: true) == .foreground, "foreground resumes")
         check(state.reconcile(ready: true, backgrounded: false, running: false) == nil && state.phase == .stopped,
               "exit resets status")
+        var overlay = PlayerOverlay()
+        check(!overlay.visible && !overlay.startsExpanded, "overlay hidden by default")
+        overlay.summon()
+        check(overlay.visible && overlay.startsExpanded, "gesture opens the expanded controls")
+        overlay.minimize()
+        check(!overlay.visible, "minimizing hides the overlay again when the setting is off")
+        overlay.settingOn = true
+        check(overlay.visible && !overlay.startsExpanded, "setting on keeps the minimized pill")
+        overlay.summon(); overlay.minimize()
+        check(overlay.visible, "setting on stays visible after minimize")
+        check(PlayerOverlay.gestureTouches == 3 && PlayerOverlay.gestureHoldSeconds >= 0.5, "deliberate gesture")
         print("Player geometry/activity: \(checks) checks passed")
     }
 }
