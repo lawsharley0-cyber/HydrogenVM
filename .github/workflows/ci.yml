@@ -37,8 +37,12 @@ jobs:
         run: CXX=g++ tools/test_plist.sh
       - name: Thread progress snapshots under ASan/UBSan
         run: bash tools/test_thread_progress.sh
+      - name: Native guest-worker lifetime under ASan/UBSan
+        run: bash tools/test_thread_lifetime.sh
       - name: Evidence contract tests
         run: python3 -m unittest discover -s tools/tests -p 'test_hvm_evidence.py'
+      - name: Device world-load capture completeness tests
+        run: python3 -m unittest discover -s tools/tests -p 'test_device_world_capture.py'
       - name: Agent queue tests
         run: python3 -m unittest discover -s tools/tests -p 'test_agent_queue.py'
       - name: Probe tainted-run tests
@@ -60,6 +64,8 @@ jobs:
         env:
           HVM_TESTLAB_TOOLCHAIN: "1"
         run: python3 -m unittest discover -s tools/tests
+      - name: Guest termination watchdog is a failed run
+        run: python3 tools/test_shutdown_watchdog.py --hvm build/hvm
       - name: HostGL sequential process lifetime
         run: build/hvm_gl_lifetime_tests
       - name: Host AAC decoder comparison
