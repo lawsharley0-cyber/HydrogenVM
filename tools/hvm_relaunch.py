@@ -142,6 +142,15 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
                     for n, total in re.findall(r'\[hvm\] ---- launch (\d+) of (\d+) ----', line):
                         if int(total) == launches:
                             attempted = max(attempted, int(n))
+            # hvm omits banners for a single launch and when --quiet is an hvm option.
+            options = command[:command.index('--')] if '--' in command else command
+            quiet = '--quiet' in options
+            if not attempted and (launches == 1 or quiet):
+                report = row.get('report', {})
+                if row['returnCode'] == 0 and report.get('exitStatus') == 0 and report.get('crashed') is False:
+                    attempted = launches
+                elif quiet:
+                    attempted = None  # Suppressed banners cannot establish the count.
             row['attemptedLaunches'] = attempted
             row['allRequestedLaunchesAttempted'] = row['attemptedLaunches'] == launches
         result['runs'].append(row)
