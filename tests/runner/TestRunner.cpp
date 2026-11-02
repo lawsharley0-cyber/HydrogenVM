@@ -4403,6 +4403,83 @@ int runFullSubsystemTests() {
         while (finishedCount < 3 && std::chrono::steady_clock::now() - drain < std::chrono::seconds(10)) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
+    // A signal selects one current waiter; signals do not accumulate for future waits.
+    {
+        ProcessConfig pcfg;
+        pcfg.homePath = "/tmp/hvm_pthreads_signal";
+        Process isolated(pcfg);
+        auto& icpu = isolated.mainThread().cpu;
+        const uint32_t cv = isolated.heap().allocZeroed(4), mu = isolated.heap().allocZeroed(4);
+        auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
+            return uint32_t(isolated.callGuest(icpu, *isolated.lookupSymbol(name), args));
+        };
+        bool ok = call("_pthread_mutex_init", {mu, 0}) == 0 && call("_pthread_cond_init", {cv, 0}) == 0;
+        ok &= call("_pthread_cond_signal", {cv}) == 0;
+        struct Counts { std::atomic<int> ready{0}, finished{0}, errors{0}; };
+        const auto counts = std::make_shared<Counts>();
+        const uint32_t waiter = isolated.registerHostFunction("signal_waiter", [cv, mu, counts](Runtime::Ctx& x) {
+            auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
+                return uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol(name), args));
+            };
+            try {
+                if (call("_pthread_mutex_lock", {mu}) != 0) { ++counts->errors; return; }
+                ++counts->ready;
+                if (call("_pthread_cond_wait", {cv, mu}) != 0) ++counts->errors;
+                ++counts->finished;
+                if (call("_pthread_mutex_unlock", {mu}) != 0) ++counts->errors;
+            } catch (const Runtime::ProcessExit&) {}
+        });
+        std::vector<uint32_t> threads;
+        for (int i = 0; i < 4; ++i) threads.push_back(isolated.startThread(waiter, 0, 16u << 10, false));
+        auto awaitCount = [](const std::atomic<int>& count, int target) {
+            const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (count.load() < target && std::chrono::steady_clock::now() < end)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return count.load() >= target;
+        };
+        const bool ready = awaitCount(counts->ready, 4);
+        // Holding the guest mutex after all workers have acquired it proves they entered cond_wait.
+        bool locked = false;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (ready && !(locked = call("_pthread_mutex_trylock", {mu}) == 0) &&
+               std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        ok &= ready && locked;
+        if (locked) {
+            ok &= counts->finished.load() == 0;
+            ok &= call("_pthread_cond_signal", {cv}) == 0;
+            call("_pthread_mutex_unlock", {mu});
+            ok &= awaitCount(counts->finished, 1);
+            // Longer than the runtime's 50 ms stop/cancellation polling interval.
+            std::this_thread::sleep_for(std::chrono::milliseconds(160));
+            ok &= counts->finished.load() == 1;
+            call("_pthread_mutex_lock", {mu});
+            ok &= call("_pthread_cond_signal", {cv}) == 0;
+            ok &= call("_pthread_cond_signal", {cv}) == 0;
+            call("_pthread_mutex_unlock", {mu});
+            ok &= awaitCount(counts->finished, 3);
+            std::this_thread::sleep_for(std::chrono::milliseconds(160));
+            ok &= counts->finished.load() == 3;
+            ok &= call("_pthread_cond_broadcast", {cv}) == 0;
+            ok &= awaitCount(counts->finished, 4);
+        }
+        if (counts->finished.load() != 4) isolated.requestStop();
+        else for (uint32_t thread : threads) { uint32_t retval; isolated.joinThread(thread, &retval); }
+        check(ok && counts->finished.load() == 4 && counts->errors.load() == 0,
+              "pthread signal wakes one current waiter per call and broadcast wakes the rest");
+        bool timed = false;
+        if (counts->finished.load() == 4 && !isolated.stopping()) {
+            const uint32_t ts = isolated.heap().allocZeroed(8);
+            isolated.mem().write<uint32_t>(ts + 4, 20000000); // 20 ms relative timeout
+            if (call("_pthread_mutex_lock", {mu}) == 0) {
+                timed = call("_pthread_cond_timedwait_relative_np", {cv, mu, ts}) == 60 &&
+                        call("_pthread_mutex_trylock", {mu}) == 16; // Darwin ETIMEDOUT, EBUSY
+                timed &= call("_pthread_mutex_unlock", {mu}) == 0;
+                timed &= call("_pthread_cond_signal", {cv}) == 0;
+            }
+        }
+        check(timed, "pthread timed wait removes its waiter and reacquires the mutex on timeout");
+    }
+
     // 2g. Audio Engine: AVAudioPlayer, AudioQueue, and OpenAL
     {
         // Build a valid 44.1 kHz 16-bit stereo RIFF/WAVE in memory (4410 frames = 0.1s)

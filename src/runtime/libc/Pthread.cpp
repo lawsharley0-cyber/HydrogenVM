@@ -33,14 +33,13 @@ struct GuestMutex {
     int type = kNormal;
 };
 
-struct CondWaiter {
-    std::condition_variable cv;
-    bool signaled = false;
-};
-
 struct GuestCond {
+    struct Waiter {
+        std::condition_variable cv;
+        bool signaled = false;
+    };
     std::mutex m;
-    std::list<CondWaiter*> waiters;
+    std::list<Waiter> waiters;
 };
 
 struct GuestRwlock {
@@ -151,6 +150,17 @@ std::shared_ptr<GuestCond> condFor(Ctx& x, uint32_t addr) {
     return p;
 }
 
+// Caller holds c.m. A selected waiter remains listed until it leaves the wait.
+void condSignalOne(GuestCond& c) {
+    for (auto& waiter : c.waiters) {
+        if (!waiter.signaled) {
+            waiter.signaled = true;
+            waiter.cv.notify_one();
+            break;
+        }
+    }
+}
+
 // deadline: 0 = none, else nanoseconds since the Unix epoch.
 int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
     checkStop(x);
@@ -158,31 +168,37 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
     const std::shared_ptr<GuestCond> owner = condFor(x, cv);   // held for the whole wait, even if the cond is destroyed meanwhile
     GuestCond& c = *owner;
     GuestMutex& m = mutexFor(x, mu);
-    CondWaiter waiter;
-    std::unique_lock<std::mutex> lk(c.m);
-    // Register before releasing the guest mutex, so a signal cannot be lost in between.
     int saved;
-    {
-        std::lock_guard<std::mutex> mlk(m.m);
-        if (m.owner != tid(x)) return D_EPERM;
-        c.waiters.push_back(&waiter);
-        saved = m.count;
-        m.owner = 0; m.count = 0;
-        m.cv.notify_one();
-    }
     int result = 0;
-    while (!waiter.signaled) {
-        if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
-        waiter.cv.wait_for(lk, 50ms);
-        if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
-        if (waiter.signaled) break;
-        if (deadlineNs) {
-            const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-            if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
+    {
+        std::unique_lock<std::mutex> lk(c.m);
+        // Register before releasing the guest mutex, so a signal cannot be lost in between.
+        auto waiter = c.waiters.emplace(c.waiters.end());
+        struct RemoveWaiter {
+            GuestCond& c;
+            std::list<GuestCond::Waiter>::iterator waiter;
+            ~RemoveWaiter() { c.waiters.erase(waiter); }
+        } remove{c, waiter};
+        {
+            std::lock_guard<std::mutex> mlk(m.m);
+            if (m.owner != tid(x)) return D_EPERM;
+            saved = m.count;
+            m.owner = 0; m.count = 0;
+            m.cv.notify_one();
         }
+        while (!waiter->signaled) {
+            if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
+            waiter->cv.wait_for(lk, 50ms);
+            if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
+            if (waiter->signaled) break;
+            if (deadlineNs) {
+                const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
+            }
+        }
+        // A cancelled waiter must not consume a signal intended for another waiter.
+        if (result == -1 && waiter->signaled && !x.proc.stopping()) condSignalOne(c);
     }
-    if (!waiter.signaled) c.waiters.remove(&waiter);
-    lk.unlock();
     // The process is ending: a woken waiter must not queue on a mutex that another dying thread still owns
     // (it would only notice the stop at the next 50 ms mutex poll), so leave without reacquiring it.
     if (x.proc.stopping()) checkStop(x);
@@ -211,22 +227,13 @@ int32_t pc_timedwait_rel(Ctx& x, GuestPtr cv, GuestPtr mu, GuestPtr ts) {
 int32_t pc_signal(Ctx& x, GuestPtr cv) {
     const auto c = condFor(x, cv);
     std::lock_guard<std::mutex> lk(c->m);
-    if (!c->waiters.empty()) {
-        auto* waiter = c->waiters.front();
-        c->waiters.pop_front();
-        waiter->signaled = true;
-        waiter->cv.notify_one();
-    }
+    condSignalOne(*c);
     return 0;
 }
 int32_t pc_broadcast(Ctx& x, GuestPtr cv) {
     const auto c = condFor(x, cv);
     std::lock_guard<std::mutex> lk(c->m);
-    for (auto* waiter : c->waiters) {
-        waiter->signaled = true;
-        waiter->cv.notify_one();
-    }
-    c->waiters.clear();
+    for (auto& waiter : c->waiters) { waiter.signaled = true; waiter.cv.notify_one(); }
     return 0;
 }
 int32_t pc_destroy(Ctx& x, GuestPtr cv) { auto& t = T(x); std::lock_guard<std::mutex> lk(t.mu); t.conds.erase(cv); return 0; }
@@ -535,7 +542,7 @@ void pthreadsBroadcastStop(Process& p) {
     { std::lock_guard<std::mutex> lk(t.mu); for (auto& [addr, c] : t.conds) conds.push_back(c); }
     for (auto& c : conds) {
         std::lock_guard<std::mutex> clk(c->m);
-        for (auto* waiter : c->waiters) waiter->cv.notify_one();
+        for (auto& waiter : c->waiters) waiter.cv.notify_one();
     }
 }
 
@@ -560,9 +567,9 @@ void registerLibcPthread(Process& p) {
     p.def<&pc_timedwait>("_pthread_cond_timedwait");
     p.def<&pc_timedwait_rel>("_pthread_cond_timedwait_relative_np");
     supportDef<&pc_signal>(p, "_pthread_cond_signal", SupportStatus::Approx,
-                           "Wakes one condition waiter");
+                           "Wakes one current waiter; cancellation and stop are polled");
     supportDef<&pc_broadcast>(p, "_pthread_cond_broadcast", SupportStatus::Approx,
-                              "Wakes all condition waiters");
+                           "Wakes all current waiters; cancellation and stop are polled");
     p.def<&pc_destroy>("_pthread_cond_destroy");
     p.def<&pca_ok>("_pthread_condattr_init");
     p.def<&pca_ok>("_pthread_condattr_destroy");
