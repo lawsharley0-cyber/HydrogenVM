@@ -31,6 +31,8 @@ void flushGuestStdio(Process& p);   // libc/Stdio.cpp
 
 namespace {
 thread_local GuestThread* t_thread = nullptr;
+thread_local uint64_t t_processIdentity = 0;
+std::atomic<uint64_t> nextProcessIdentity{1};
 
 constexpr uint32_t kHeapBase = 0x10000000u, kHeapLimit = 0x80000000u;
 constexpr uint32_t kStaticBase = 0x0E000000u, kStaticLimit = 0x10000000u;
@@ -86,11 +88,10 @@ bool looksLikeData(const std::string& s) {
 
 // Host threads for guest threads get a generous stack: nested host↔guest
 // calls (ObjC dispatch from host code, callbacks) recurse on it.
-void spawnHostThread(std::function<void()> fn) {
+pthread_t spawnHostThread(std::function<void()> fn) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 8u << 20);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     auto* heapFn = new std::function<void()>(std::move(fn));
     pthread_t th;
     const int r = pthread_create(&th, &attr, [](void* p) -> void* {
@@ -100,13 +101,14 @@ void spawnHostThread(std::function<void()> fn) {
     }, heapFn);
     pthread_attr_destroy(&attr);
     if (r != 0) { delete heapFn; throw std::runtime_error("couldn't create host thread"); }
+    return th;
 }
 
 } // namespace
 
 // ----------------------------------------------------------- lifecycle ---
 
-Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_shared<Audio::Mixer>()) {
+Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProcessIdentity.fetch_add(1)), mixer_(std::make_shared<Audio::Mixer>()) {
     mem_ = std::make_unique<Memory::GuestArena>();
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
@@ -140,6 +142,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     mainThread_ = mainThreadOwner_.get();
     mainThread_->id = nextThreadId_++;
     t_thread = mainThread_;
+    t_processIdentity = identity_;
 
     registerLibcString(*this);
     registerLibcStdio(*this);
@@ -180,14 +183,39 @@ Process::~Process() {
         if (!alive) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    // Guest threads are detached host threads, so one that never noticed the stop is still running
-    // while the arena below is released. Say which thread and what it was in, so the next run of
-    // a game that won't quit points at the blocking call instead of at a crash somewhere later.
+    // Diagnose the slow stage, but never turn the deadline into permission to
+    // free a live worker's HLE table, GuestThread or arena.
     if (alive) {
         const std::string stuck = describeRunningThreads();
         if (!stuck.empty()) std::fprintf(stderr, "[hvm:warn] Process teardown: guest threads still running 2 s after stop:\n%s", stuck.c_str());
     }
-    if (t_thread && &t_thread->proc == this) t_thread = nullptr;
+    joinHostThreads(true);
+    if (t_processIdentity == identity_) { t_thread = nullptr; t_processIdentity = 0; }
+}
+
+void Process::joinHostThreads(bool includeRunning) {
+    for (;;) {
+        std::thread::native_handle_type host{};
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lock(threadsMu_);
+            for (auto& [id, thread] : threads_) {
+                if (!thread->hostJoinable || (!includeRunning && !thread->finished.load())) continue;
+                host = thread->host;
+                thread->hostJoinable = false;
+                found = true;
+                break;
+            }
+        }
+        if (!found) break;
+        // finished is guest-visible completion. The host still notifies its CV
+        // and clears TLS afterward, so even finished workers require a join.
+        const int error = pthread_join(host, nullptr);
+        if (error) {
+            std::fprintf(stderr, "[hvm:error] cannot join owned guest host thread: %d\n", error);
+            std::terminate(); // freeing potentially live runtime state is unsafe
+        }
+    }
 }
 
 void Process::requestStop() {
@@ -664,7 +692,9 @@ void Process::setupMainThread() {
 }
 
 GuestThread& Process::currentThread() {
-    if (t_thread && &t_thread->proc == this) return *t_thread;
+    // Another host thread can destroy the old Process. Compare a generation,
+    // never dereference that old GuestThread just to decide which owner it had.
+    if (t_thread && t_processIdentity == identity_) return *t_thread;
     // A host thread that isn't a guest thread (e.g. a UI callback) acts as main.
     return *mainThread_;
 }
@@ -720,6 +750,8 @@ GuestThread* Process::findThreadById(uint32_t id) {
 }
 
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
+    if (stopping()) throw ProcessExit(exitCode_, "stopping");
+    joinHostThreads(false); // reclaim the 8 MB native stacks of completed workers
     auto t = std::make_unique<GuestThread>(*this);
     GuestThread* raw = t.get();
     {
@@ -730,14 +762,22 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
     raw->detached = detached;
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
+        if (stopping()) throw ProcessExit(exitCode_, "stopping");
         threads_[raw->self] = std::move(t);
+        try {
+            raw->host = spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
+            raw->hostJoinable = true;
+        } catch (...) {
+            threads_.erase(raw->self);
+            throw;
+        }
     }
-    spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
     return raw->self;
 }
 
 void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
     t_thread = t;
+    t_processIdentity = identity_;
     CPU::Engine::lastFault() = {};
     try {
         t->retval = uint32_t(engine_->callGuest(t->cpu, fn, {arg}));
@@ -777,6 +817,7 @@ void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
     }
     t->cv.notify_all();
     t_thread = nullptr;
+    t_processIdentity = 0;
 }
 
 bool Process::joinThread(uint32_t self, uint32_t* retval) {
@@ -788,6 +829,8 @@ bool Process::joinThread(uint32_t self, uint32_t* retval) {
         t->cv.wait_for(lk, std::chrono::milliseconds(50));
     }
     if (retval) *retval = t->retval;
+    lk.unlock();
+    joinHostThreads(false);
     return true;
 }
 
@@ -944,6 +987,7 @@ int Process::run() {
     std::unique_ptr<GuestSampler> sampler;
     if (const char* prof = std::getenv("HVM_GUEST_PROFILE"); prof && *prof) sampler = std::make_unique<GuestSampler>(*this, prof);
     t_thread = mainThread_;
+    t_processIdentity = identity_;
     CPU::Cpu& c = mainThread_->cpu;
     CPU::Engine::lastFault() = {};
     try {
