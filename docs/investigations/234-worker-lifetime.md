@@ -42,11 +42,17 @@ cancelled. An uninterruptible call keeps teardown pending and retains its arena;
 the app must continue to contain that timeout instead of starting another game.
 No state is reset and the existing call-ring implementation/tests are retained.
 
-Baseline fulltest was 487/487 and Test Lab 25/25 on Linux x86_64, native pages
-4096. The new failure above was reproduced with that baseline library before
-the fix. Subsequent local validation was interrupted by an unresponsive WSL
-instance; final build/fulltest/Test Lab/tools and ASan/UBSan results must come
-from the linked draft PR's CI before readiness is considered.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:57278beb2ba77edef84c41442a03ddc8f13ad010d05a977cc883366c436c6bf8 -->
+
+Non-gating local development runs reported baseline fulltest 487/487 and Test
+Lab 25/25 on Linux x86_64 with 4096-byte native pages. The new failure above
+was reproduced with that baseline library before the fix. Subsequent local
+runs were interrupted by an unresponsive WSL instance; use the linked draft
+PR CI results for build/fulltest/Test Lab/tools and ASan/UBSan evidence.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 The private fixtures now available for the four requested app probes include
 the exact Angry Birds IPA and extracted Minecraft PE Lite, Talking Larry and
@@ -68,15 +74,19 @@ runs it after the normal build. It does not simulate a successful game save.
 
 ## Completed Linux validation
 
-Candidate runtime source 665580a029e7fe464aeb35b497876c85e2f02e27 passed
-local fulltest 488/488, Test Lab25/25 with zero skips, complete enabled
-tools202/202 with zero skips, and the real guest watchdog negative regression.
-[Actions CI41364588649](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588649)
-tested that head as merge eb26f8ea17ae44e08395137f5eade4c3dd5463bf. Its log
-confirms the full-runtime ASan/UBSan worker-lifetime test, fulltest/performance,
-202 tools tests and the actual shutdown-watchdog regression all passed.
-[Test Lab41364588715](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588715)
-also passed. Stub-honesty still fails its unchanged baseline findings.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:c069e90a44762b34329d88633caefc6d48168d14c2cd0c97d6fa2a3adc16a578 -->
+
+The [Actions CI run 41364588649](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588649)
+passed the Linux full-runtime ASan/UBSan worker-lifetime, fulltest/performance,
+tools and shutdown-watchdog steps. The [Test Lab run 41364588715](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588715)
+passed its gating integration step. Both tested candidate head
+`665580a029e7fe464aeb35b497876c85e2f02e27` as checkout merge
+`eb26f8ea17ae44e08395137f5eade4c3dd5463bf`. Stub-honesty still fails its
+unchanged baseline findings.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 Four private software probes ran10 seconds before graceful stop. All reported
 exitStatus=0/crashed=false and saved/closed. Total process wall time minus the
