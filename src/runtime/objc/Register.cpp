@@ -9,7 +9,8 @@ void registerObjCRuntime(Process& p) {
     ObjC::registerObjCApi(p, r);
     // Imports of framework classes HydrogenVM doesn't implement get stub classes,
     // so the app links and only fails (with a clear message) if it uses them.
-    p.addMissingSymbolResolver([&p](const std::string& name) -> uint32_t {
+    p.addMissingSymbolResolver([&p](const std::string& name, Process::MissingSymbolMode mode) -> uint32_t {
+        if (mode == Process::MissingSymbolMode::DynamicLookup) return 0;
         static const std::string cls = "_OBJC_CLASS_$_", meta = "_OBJC_METACLASS_$_";
         ObjC::Runtime& r = ObjC::rt(p);
         if (name.compare(0, cls.size(), cls) == 0) return r.stubClass(name.substr(cls.size()));

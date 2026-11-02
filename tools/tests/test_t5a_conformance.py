@@ -4,14 +4,32 @@
 import json
 import os
 from pathlib import Path
+import select
+import signal
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 TESTLAB_PY = ROOT_DIR / "tools" / "hvm_testlab.py"
 HVM_BIN = ROOT_DIR / "build" / "hvm"
+
+
+def run_testlab(cmd, timeout=240):
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, start_new_session=True) as proc:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            exc.stdout, exc.stderr = proc.communicate()
+            raise
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 class TestLibStdcxxConformance(unittest.TestCase):
@@ -25,7 +43,13 @@ class TestLibStdcxxConformance(unittest.TestCase):
         cls.addClassCleanup(cls._out.cleanup)
         cmd = [sys.executable, str(TESTLAB_PY), "run", "--hvm", str(HVM_BIN), "--case", "TL-Y", "--out", cls._out.name]
         # No check=True: a failing TL-Y exits 1, and the report (with the guest's reason) is what explains it.
-        cls.testlab_run = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            cls.testlab_run = run_testlab(cmd)
+        except subprocess.TimeoutExpired as exc:
+            raise AssertionError(
+                f"Test Lab timed out after {exc.timeout} seconds:\n"
+                f"stdout:\n{exc.stdout}\nstderr:\n{exc.stderr}"
+            ) from exc
         cls.out_dir = Path(cls._out.name)
         report_path = cls.out_dir / "testlab_report.json"
         if not report_path.exists():
@@ -53,6 +77,69 @@ class TestLibStdcxxConformance(unittest.TestCase):
         self.assertIn("RB-tree root black", c["expected"])
         self.assertIn("SJLJ chain link", c["expected"])
         self.assertEqual(c["actual"], "string=1 hook=1 unhook=1 rbtree=1 sjlj=1")
+
+
+class TestTestLabProcess(unittest.TestCase):
+    def test_setup_timeout_reports_both_streams(self):
+        class ConformanceSetup(TestLibStdcxxConformance):
+            pass
+
+        timeout = subprocess.TimeoutExpired("testlab", 240, output="partial out", stderr="partial err")
+        try:
+            with mock.patch.dict(os.environ, {"HVM_TESTLAB_TOOLCHAIN": "1"}), \
+                 mock.patch.object(sys.modules[__name__], "HVM_BIN", Path(__file__)), \
+                 mock.patch.object(sys.modules[__name__], "run_testlab", side_effect=timeout), \
+                 self.assertRaises(AssertionError) as raised:
+                ConformanceSetup.setUpClass()
+            self.assertIn("timed out", str(raised.exception))
+            self.assertIn("partial out", str(raised.exception))
+            self.assertIn("partial err", str(raised.exception))
+            self.assertIs(raised.exception.__cause__, timeout)
+        finally:
+            ConformanceSetup.doClassCleanups()
+
+    def test_nonzero_exit_keeps_output(self):
+        cmd = [sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr); sys.exit(1)"]
+        result = run_testlab(cmd, timeout=5)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "out\n", "err\n"))
+
+    def test_timeout_kills_descendants_and_keeps_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "child-survived"
+            fifo = Path(directory) / "child-pipe"
+            release_fifo = Path(directory) / "release-pipe"
+            os.mkfifo(fifo)
+            os.mkfifo(release_fifo)
+            read_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+            self.addCleanup(os.close, read_fd)
+            release_fd = os.open(release_fifo, os.O_RDWR | os.O_NONBLOCK)
+            self.addCleanup(os.close, release_fd)
+            child = (
+                "import pathlib, sys; "
+                "release = open(sys.argv[3], 'rb', buffering=0); "
+                "pipe = open(sys.argv[2], 'wb', buffering=0); pipe.write(b'R'); "
+                "print('ready', flush=True); "
+                "assert release.read(1) == b'G'; pathlib.Path(sys.argv[1]).touch()"
+            )
+            parent = (
+                "import subprocess, sys, time; "
+                "child = subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]], "
+                "stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True); "
+                "assert child.stdout.readline() == 'ready\\n'; "
+                "print('started', flush=True); print('diagnostic', file=sys.stderr, flush=True); time.sleep(10)"
+            )
+            cmd = [sys.executable, "-c", parent, child, str(marker), str(fifo), str(release_fifo)]
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                    run_testlab(cmd, timeout=1)
+            finally:
+                os.write(release_fd, b"G")
+            self.assertEqual(raised.exception.stdout, "started\n")
+            self.assertEqual(raised.exception.stderr, "diagnostic\n")
+            self.assertEqual(os.read(read_fd, 1), b"R", "descendant did not start")
+            self.assertTrue(select.select([read_fd], [], [], 1)[0], "descendant still holds the pipe open")
+            self.assertEqual(os.read(read_fd, 1), b"", "descendant still holds the pipe open")
+            self.assertFalse(marker.exists(), "a descendant survived the timeout")
 
 
 if __name__ == "__main__":
