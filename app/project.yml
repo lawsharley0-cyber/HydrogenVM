@@ -15,8 +15,8 @@ settings:
     GCC_OPTIMIZATION_LEVEL[config=Debug]: "1"   # the threaded interpreter needs tail calls even in Debug
     SWIFT_VERSION: "6.0"
 
-targets:
-  HydrogenVM:
+targetTemplates:
+  HydrogenVMApp:
     type: application
     platform: iOS
     deploymentTarget: "26.0"
@@ -72,18 +72,34 @@ targets:
         GCC_PREPROCESSOR_DEFINITIONS: $(inherited) GLES_SILENCE_DEPRECATION=1
         ENABLE_USER_SCRIPT_SANDBOXING: YES
 
+targets:
+  HydrogenVM:
+    templates: [HydrogenVMApp]
+
+  # The device-only target was not offered for simulator scheme tests even
+  # with command-line overrides. Use the same app and bridge as a test host.
+  HydrogenVMJournalHost:
+    templates: [HydrogenVMApp]
+    settings:
+      base:
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        PRODUCT_NAME: HydrogenVMJournalHost
+        PRODUCT_MODULE_NAME: HydrogenVM
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.JournalHost
+
   HydrogenVMJournalTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - JournalTests
     dependencies:
-      - target: HydrogenVM
+      - target: HydrogenVMJournalHost
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.JournalTests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/HydrogenVM.app/HydrogenVM"
+        TEST_TARGET_NAME: HydrogenVMJournalHost
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/HydrogenVMJournalHost.app/HydrogenVMJournalHost"
         BUNDLE_LOADER: "$(TEST_HOST)"
 
 
@@ -92,7 +108,7 @@ schemes:
   HydrogenVMJournalTests:
     build:
       targets:
-        HydrogenVM: all
+        HydrogenVMJournalHost: all
         HydrogenVMJournalTests: [test]
     test:
       targets:
