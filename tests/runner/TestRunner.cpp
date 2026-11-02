@@ -7129,6 +7129,40 @@ int runFullSubsystemTests() {
         runInMode(modeA);
         check(seenMode == "HVMModeA", "NSRunLoop currentMode inside a callout is the running mode's name");
 
+        // -currentMode answers for the receiver's loop, not the calling thread's: a guest thread (which has a run loop
+        // of its own, idle) asking the main loop while it runs in modeA sees modeA.
+        std::atomic<bool> workerDone{false};
+        std::string workerSaw = "<unset>";
+        auto workerCls = mr.defineClass("HVMModeProbeWorker", "NSObject");
+        workerCls.method("work:", [&](Ctx& x) {
+            ObjC::rt(x).send(x.cpu, ObjC::rt(x).getClass("NSRunLoop"), "currentRunLoop");   // this thread's own loop, not running
+            const uint32_t m = uint32_t(ObjC::rt(x).send(x.cpu, mainLoop, "currentMode"));
+            workerSaw = m ? Foundation::utf8(x, m) : "<nil>";
+            workerDone = true;
+        }, "v@:@");
+        const uint32_t workerTarget = mr.createInstance(workerCls.cls());
+        const uint32_t crossProbe = modeProc.defineFunction("test_mode_cross_thread_fire", [&](Ctx& x) {
+            const uint32_t th = uint32_t(ObjC::rt(x).send(x.cpu, ObjC::id(ObjC::rt(x).send(x.cpu, ObjC::rt(x).getClass("NSThread"), ObjC::rt(x).selAlloc)),
+                                                         "initWithTarget:selector:object:", {workerTarget, ObjC::rt(x).sel("work:"), 0}));
+            ObjC::rt(x).send(x.cpu, th, "start");
+            for (int i = 0; i < 5000 && !workerDone; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        });
+        {
+            const uint32_t ctx = modeProc.heap().allocZeroed(20);
+            std::vector<uint32_t> args{0};
+            for (double d : {Foundation::now() - 0.001, 0.0}) {
+                const auto w = words(d);
+                args.insert(args.end(), w.begin(), w.end());
+            }
+            args.push_back(0);
+            args.push_back(0);
+            args.push_back(crossProbe);
+            args.push_back(ctx);
+            call("_CFRunLoopAddTimer", {mainLoop, callv("_CFRunLoopTimerCreate", args), modeA});
+        }
+        runInMode(modeA);
+        check(workerDone && workerSaw == "HVMModeA", "NSRunLoop currentMode answers for the receiver's loop, not the calling thread's");
+
         // performSelector:withObject:afterDelay:inModes: runs only in the modes it names.
         int delayedRuns = 0;
         auto delayedCls = mr.defineClass("HVMDelayedModeTarget", "NSObject");
