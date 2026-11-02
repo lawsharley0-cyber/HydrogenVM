@@ -186,6 +186,45 @@ struct PlayerTests {
                                     mode: .extended, displayScale: 3)
         tap(barred, 120, 300, 80, 120, "extended bars: interior point")
         check(barred.guestPoint(CGPoint(x: 240, y: 60)) == nil, "extended bars: a tap in the top bar is ignored")
+        // #281 modes 3 and 4: taller guest screen and safe-area insets.
+        check(GuestScreenSettings.virtualHeight(display: CGSize(width: 390, height: 844)) == 692, "320 * 844 / 390 = 692.3")
+        check(GuestScreenSettings.virtualHeight(display: CGSize(width: 844, height: 390)) == 692, "landscape display gives the same height")
+        check(GuestScreenSettings.virtualHeight(display: CGSize(width: 320, height: 480)) == 480, "3:2 keeps 480")
+        check(GuestScreenSettings.virtualHeight(display: CGSize(width: 100, height: 4000)) == nil, "absurd aspect is refused")
+        check(GuestScreenSettings.virtualHeight(display: .zero) == nil, "zero display is refused")
+        // Display top inset 47, bottom 34, left 3, right 5 at 390 wide: scale 320/390.
+        let sc: CGFloat = 320 / 390
+        func safe(_ o: GuestOrientation) -> String? {
+            GuestScreenSettings.safeAreaValue(top: 47, left: 3, bottom: 34, right: 5, orientation: o, scale: sc)
+        }
+        check(safe(.portrait) == "39,2,28,4", "portrait insets (47,3,34,5) * 0.8205")
+        check(safe(.upsideDown) == "28,4,39,2", "upside down swaps top/bottom and left/right")
+        check(safe(.landscapeLeft) == "4,39,2,28", "landscape left: display right is guest top")
+        check(safe(.landscapeRight) == "2,28,4,39", "landscape right: display left is guest top")
+        check(GuestScreenSettings.safeAreaValue(top: -1, left: 0, bottom: 0, right: 0, orientation: .portrait, scale: 1) == nil,
+              "negative inset refused")
+        check(GuestScreenSettings.safeAreaValue(top: 500, left: 0, bottom: 0, right: 0, orientation: .portrait, scale: 1) == nil,
+              "inset beyond the runtime limit refused")
+        let suite = UserDefaults(suiteName: "hvm.player.tests.281b")!
+        suite.removePersistentDomain(forName: "hvm.player.tests.281b")
+        let gid = "com.example.game"
+        var env: [String: String?] = [:]
+        func launch() {
+            GuestScreenSettings.apply(bundleID: gid, display: CGSize(width: 390, height: 844),
+                                      insets: (47, 0, 34, 0), orientation: .portrait, defaults: suite) { env[$0] = $1 }
+        }
+        launch()
+        check(env["HVM_VIRTUAL_SCREEN_HEIGHT"] == .some(nil) && env["HVM_SAFE_AREA"] == .some(nil), "off by default: both cleared")
+        GuestScreenSettings.setVirtualScreen(true, bundleID: gid, defaults: suite)
+        launch()
+        check(env["HVM_VIRTUAL_SCREEN_HEIGHT"] == .some("692") && env["HVM_SAFE_AREA"] == .some("39,0,28,0"), "opt-in sets both")
+        GuestScreenSettings.setSafeArea(false, bundleID: gid, defaults: suite)
+        launch()
+        check(env["HVM_VIRTUAL_SCREEN_HEIGHT"] == .some("692") && env["HVM_SAFE_AREA"] == .some(nil), "safe-area off switch")
+        GuestScreenSettings.setRecord(.broken, bundleID: gid, defaults: suite)
+        launch()
+        check(env["HVM_VIRTUAL_SCREEN_HEIGHT"] == .some(nil), "a game recorded as broken falls back to the previous screen")
+        check(!GuestScreenSettings.virtualScreen(bundleID: "com.example.other", defaults: suite), "settings are per game")
         print("Player geometry/activity: \(checks) checks passed")
     }
 }

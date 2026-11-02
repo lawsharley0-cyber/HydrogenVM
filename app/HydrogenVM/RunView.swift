@@ -115,6 +115,14 @@ final class RunModel {
         // GPU rendering unless the player turned it off for this game (or, from
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
+        // Taller guest screen and safe-area insets, per game; both are cleared when off.
+        let display = UIScreen.main.bounds.size
+        let inset = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets ?? .zero
+        GuestScreenSettings.apply(bundleID: app.info.bundleIdentifier, display: display,
+                                  insets: (inset.top, inset.left, inset.bottom, inset.right),
+                                  orientation: .portrait) { name, value in
+            if let value { setenv(name, value, 1) } else { unsetenv(name) }
+        }
         // The bridge delivers every callback on the main queue.
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
@@ -386,6 +394,8 @@ struct RunView: View {
     /// Display mode for this game; the global default lives in the library's Options menu.
     @AppStorage private var scaleSetting: String
     @AppStorage private var cropFocusSetting: String
+    /// Bumped so the toggles above re-read UserDefaults.
+    @State private var virtualTick = 0
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
     /// Read by the session at start (RunModel.start): GPU rendering unless this is on. Per game.
     @AppStorage private var softwareRenderer: Bool
@@ -654,6 +664,29 @@ struct RunView: View {
                                 .font(.caption)
                         }
                         .accessibilityIdentifier("player-gpu-rendering")
+
+                        // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
+                        let bundleID = app.info.bundleIdentifier
+                        Toggle(isOn: Binding(get: { GuestScreenSettings.virtualScreen(bundleID: bundleID) },
+                                             set: { GuestScreenSettings.setVirtualScreen($0, bundleID: bundleID); virtualTick += 1 })) {
+                            Text("Taller game screen for this game (next launch)").font(.caption)
+                        }
+                        .accessibilityIdentifier("player-virtual-screen")
+                        if GuestScreenSettings.virtualScreen(bundleID: bundleID) {
+                            Toggle(isOn: Binding(get: { GuestScreenSettings.safeArea(bundleID: bundleID) },
+                                                 set: { GuestScreenSettings.setSafeArea($0, bundleID: bundleID); virtualTick += 1 })) {
+                                Text("Keep the game's UI out of the notch and home bar (approximate)").font(.caption)
+                            }
+                            .accessibilityIdentifier("player-safe-area")
+                            Picker("Result", selection: Binding(get: { GuestScreenSettings.record(bundleID: bundleID) },
+                                                                set: { GuestScreenSettings.setRecord($0, bundleID: bundleID); virtualTick += 1 })) {
+                                ForEach(GuestScreenRecord.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("player-virtual-screen-record")
+                            Text("Mark a game Broken and it goes back to the normal screen.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
                     }
 
                     // Audio & System Footer
