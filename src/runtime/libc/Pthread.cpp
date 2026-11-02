@@ -10,6 +10,7 @@
 #include "MachPorts.hpp"
 #include <cerrno>
 #include <chrono>
+#include <list>
 #include <thread>
 #include <unordered_set>
 
@@ -32,10 +33,14 @@ struct GuestMutex {
     int type = kNormal;
 };
 
+struct CondWaiter {
+    std::condition_variable cv;
+    bool signaled = false;
+};
+
 struct GuestCond {
     std::mutex m;
-    std::condition_variable cv;
-    uint64_t gen = 0;
+    std::list<CondWaiter*> waiters;
 };
 
 struct GuestRwlock {
@@ -153,31 +158,31 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
     const std::shared_ptr<GuestCond> owner = condFor(x, cv);   // held for the whole wait, even if the cond is destroyed meanwhile
     GuestCond& c = *owner;
     GuestMutex& m = mutexFor(x, mu);
-    uint64_t gen;
-    { std::lock_guard<std::mutex> lk(c.m); gen = c.gen; }
-    // Fully release the mutex (it may be recursively held).
+    CondWaiter waiter;
+    std::unique_lock<std::mutex> lk(c.m);
+    // Register before releasing the guest mutex, so a signal cannot be lost in between.
     int saved;
     {
-        std::lock_guard<std::mutex> lk(m.m);
+        std::lock_guard<std::mutex> mlk(m.m);
         if (m.owner != tid(x)) return D_EPERM;
+        c.waiters.push_back(&waiter);
         saved = m.count;
         m.owner = 0; m.count = 0;
         m.cv.notify_one();
     }
     int result = 0;
-    {
-        std::unique_lock<std::mutex> lk(c.m);
-        while (c.gen == gen) {
-            if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
-            c.cv.wait_for(lk, 50ms);
-            if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
-            if (c.gen != gen) break;
-            if (deadlineNs) {
-                const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
-            }
+    while (!waiter.signaled) {
+        if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
+        waiter.cv.wait_for(lk, 50ms);
+        if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
+        if (waiter.signaled) break;
+        if (deadlineNs) {
+            const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
         }
     }
+    if (!waiter.signaled) c.waiters.remove(&waiter);
+    lk.unlock();
     // The process is ending: a woken waiter must not queue on a mutex that another dying thread still owns
     // (it would only notice the stop at the next 50 ms mutex poll), so leave without reacquiring it.
     if (x.proc.stopping()) checkStop(x);
@@ -203,7 +208,27 @@ int32_t pc_timedwait_rel(Ctx& x, GuestPtr cv, GuestPtr mu, GuestPtr ts) {
     const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     return condWait(x, cv, mu, now + s * 1000000000LL + ns + 1);
 }
-int32_t pc_signal(Ctx& x, GuestPtr cv) { const auto owner = condFor(x, cv); GuestCond& c = *owner; { std::lock_guard<std::mutex> lk(c.m); ++c.gen; } c.cv.notify_all(); return 0; }
+int32_t pc_signal(Ctx& x, GuestPtr cv) {
+    const auto c = condFor(x, cv);
+    std::lock_guard<std::mutex> lk(c->m);
+    if (!c->waiters.empty()) {
+        auto* waiter = c->waiters.front();
+        c->waiters.pop_front();
+        waiter->signaled = true;
+        waiter->cv.notify_one();
+    }
+    return 0;
+}
+int32_t pc_broadcast(Ctx& x, GuestPtr cv) {
+    const auto c = condFor(x, cv);
+    std::lock_guard<std::mutex> lk(c->m);
+    for (auto* waiter : c->waiters) {
+        waiter->signaled = true;
+        waiter->cv.notify_one();
+    }
+    c->waiters.clear();
+    return 0;
+}
 int32_t pc_destroy(Ctx& x, GuestPtr cv) { auto& t = T(x); std::lock_guard<std::mutex> lk(t.mu); t.conds.erase(cv); return 0; }
 int32_t pca_ok(Ctx&, GuestPtr) { return 0; }
 
@@ -510,8 +535,7 @@ void pthreadsBroadcastStop(Process& p) {
     { std::lock_guard<std::mutex> lk(t.mu); for (auto& [addr, c] : t.conds) conds.push_back(c); }
     for (auto& c : conds) {
         std::lock_guard<std::mutex> clk(c->m);
-        ++c->gen;
-        c->cv.notify_all();
+        for (auto* waiter : c->waiters) waiter->cv.notify_one();
     }
 }
 
@@ -536,9 +560,9 @@ void registerLibcPthread(Process& p) {
     p.def<&pc_timedwait>("_pthread_cond_timedwait");
     p.def<&pc_timedwait_rel>("_pthread_cond_timedwait_relative_np");
     supportDef<&pc_signal>(p, "_pthread_cond_signal", SupportStatus::Approx,
-                           "Advances the condition generation and wakes all waiters");
-    supportDef<&pc_signal>(p, "_pthread_cond_broadcast", SupportStatus::Approx,
-                           "Advances the condition generation and wakes all waiters");
+                           "Wakes one condition waiter");
+    supportDef<&pc_broadcast>(p, "_pthread_cond_broadcast", SupportStatus::Approx,
+                              "Wakes all condition waiters");
     p.def<&pc_destroy>("_pthread_cond_destroy");
     p.def<&pca_ok>("_pthread_condattr_init");
     p.def<&pca_ok>("_pthread_condattr_destroy");

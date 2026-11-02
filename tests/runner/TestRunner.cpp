@@ -4279,6 +4279,76 @@ int runFullSubsystemTests() {
         check(mach, "startup Mach endpoints exchange bounded messages, time out, map aligned memory and retain page permissions");
     }
 
+    // A signal selects one already-waiting thread; broadcast releases the rest.
+    {
+        ProcessConfig pcfg;
+        pcfg.homePath = "/tmp/hvm_pthreads_signal";
+        Process isolated(pcfg);
+        auto& icpu = isolated.mainThread().cpu;
+        const uint32_t cv = isolated.heap().allocZeroed(4), mu = isolated.heap().allocZeroed(4);
+        auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
+            return uint32_t(isolated.callGuest(icpu, *isolated.lookupSymbol(name), args));
+        };
+        call("_pthread_mutex_init", {mu, 0});
+        call("_pthread_cond_init", {cv, 0});
+        call("_pthread_cond_signal", {cv}); // A signal without waiters is not retained.
+        struct Counts { std::atomic<int> ready{0}, awakened{0}, finished{0}; };
+        const auto counts = std::make_shared<Counts>();
+        const uint32_t waiter = isolated.registerHostFunction("cond_signal_waiter", [cv, mu, counts](Runtime::Ctx& x) {
+            try {
+                x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_lock"), {mu});
+                ++counts->ready;
+                x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_cond_wait"), {cv, mu});
+                ++counts->awakened;
+                x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_pthread_mutex_unlock"), {mu});
+            } catch (const Runtime::ProcessExit&) {
+            } catch (const CPU::GuestFault&) {}
+            ++counts->finished;
+        });
+        for (int i = 0; i < 4; ++i) isolated.startThread(waiter, 0, 16u << 10, false);
+        auto waitFor = [](const std::atomic<int>& value, int target) {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (value.load() < target && std::chrono::steady_clock::now() < until)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return value.load() >= target;
+        };
+        const bool ready = waitFor(counts->ready, 4);
+        bool acquired = false;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (ready && !(acquired = call("_pthread_mutex_trylock", {mu}) == 0) &&
+               std::chrono::steady_clock::now() < until) std::this_thread::yield();
+        bool one = false, two = false, all = false;
+        if (acquired) {
+            // Acquiring the mutex after all workers reached wait proves they have released it.
+            call("_pthread_cond_signal", {cv});
+            call("_pthread_mutex_unlock", {mu});
+            const bool woke = waitFor(counts->awakened, 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(200)); // covers multiple 50 ms stop polls
+            one = woke && counts->awakened.load() == 1;
+            call("_pthread_cond_signal", {cv});
+            const bool wokeAgain = waitFor(counts->awakened, 2);
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            two = wokeAgain && counts->awakened.load() == 2;
+            call("_pthread_cond_broadcast", {cv});
+            all = waitFor(counts->awakened, 4);
+        }
+        check(ready && acquired && one && two && all,
+              "pthread cond signals wake one waiter each and broadcast wakes the remainder");
+        if (all && waitFor(counts->finished, 4)) {
+            const uint32_t ts = isolated.heap().allocZeroed(8);
+            isolated.mem().write<int32_t>(ts + 4, 1000000); // one millisecond, relative
+            call("_pthread_mutex_lock", {mu});
+            const auto result = call("_pthread_cond_timedwait_relative_np", {cv, mu, ts});
+            call("_pthread_mutex_unlock", {mu});
+            call("_pthread_cond_signal", {cv}); // The expired waiter must no longer be queued.
+            check(result == 60, "pthread timed wait expires and leaves no waiter to signal");
+        } else {
+            check(false, "pthread timed wait expires and leaves no waiter to signal");
+        }
+        isolated.requestStop();
+        waitFor(counts->finished, 4);
+    }
+
     // 2f13. Pthread condition variable process stop broadcast
     {
         ProcessConfig pcfg;
