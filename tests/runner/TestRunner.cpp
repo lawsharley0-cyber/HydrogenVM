@@ -6621,6 +6621,65 @@ int runFullSubsystemTests() {
             fs::create_symlink(home + "/Game.app-sibling/secret.tfc", bundle + "/CookedIPhone/Link.tfc");
             mutations &= lookup("Link").empty();
             check(mutations, "bundle cache invalidates additions/removals and rejects a cached file replaced by an escaping symlink");
+            // A directory's mtime can repeat within one clock tick, so a device
+            // variant added right after the plain resource was cached must still
+            // win even though the stamp the cache recorded did not change.
+            // Restoring that stamp keeps this independent of host timestamp
+            // granularity instead of a race that only fails on a coarse clock.
+            const std::string dirPath = bundle + "/CookedIPhone";
+            const std::string stamped = dirPath + "/Stamped.tfc";
+            put(stamped);
+            const auto beforeAdd = fs::last_write_time(dirPath);
+            const bool cachedPlain = lookup("Stamped") == stamped;
+            put(dirPath + "/Stamped~iphone.tfc");
+            fs::last_write_time(dirPath, beforeAdd);
+            check(cachedPlain && lookup("Stamped") == dirPath + "/Stamped~iphone.tfc",
+                  "bundle cache prefers a device variant added under an unchanged directory timestamp");
+            const std::string priorityDir = bundle + "/Priority";
+            fs::create_directories(priorityDir + "/Base.lproj");
+            const std::string earlier = priorityDir + "/pRiOrItY.tfc";
+            put(earlier);
+            put(priorityDir + "/Base.lproj/Priority.tfc");
+            // This fixture requires a case-sensitive filesystem. Removing read
+            // permission exposes an unexpected rescan while retaining search
+            // permission for cached-path validation.
+            if (!fs::exists(priorityDir + "/Priority.tfc")) {
+                bool priority = lookup("Priority", "tfc", "Priority") == earlier &&
+                                lookup("Priority", "tfc", "Priority/") == earlier;
+                const auto permissions = fs::status(priorityDir).permissions();
+                fs::permissions(priorityDir, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec);
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority/") == earlier;
+                fs::permissions(priorityDir, permissions);
+                check(priority, "bundle cache retains an earlier case-insensitive match over a later exact match");
+                const auto priorityStamp = fs::last_write_time(priorityDir);
+                put(priorityDir + "/Priority~iphone.tfc");
+                fs::last_write_time(priorityDir, priorityStamp);
+                check(lookup("Priority", "tfc", "Priority") == priorityDir + "/Priority~iphone.tfc",
+                      "bundle cache still prefers a new exact device variant in the cached directory");
+            }
+            // A later exact match must not evict an earlier case-insensitive hit.
+            // Add a case-insensitive variant with the same timestamp so a
+            // re-scan would visibly select it instead of the cached path.
+            fs::create_directories(dirPath + "/Base.lproj");
+            const std::string remoteEarlier = dirPath + "/priority.tfc";
+            put(remoteEarlier);
+            put(dirPath + "/Base.lproj/Priority.tfc");
+            if (!fs::exists(dirPath + "/Priority.tfc")) { // case-sensitive filesystem
+                const auto priorityStamp = fs::last_write_time(dirPath);
+                bool priorityOK = lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                put(dirPath + "/priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                check(priorityOK, "later exact resource does not evict an earlier case-insensitive cached match");
+                put(dirPath + "/Priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                check(lookup("Priority") == dirPath + "/Priority~iphone.tfc",
+                      "cached case-insensitive match yields to an exact device variant in the same directory");
+            }
             put(home + "/Mutable.tfc");
             const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
             auto mutableLookup = [&] {
