@@ -85,8 +85,14 @@ real guest lifecycle for five seconds and checks run-start/interval/run-end
 samples. This covers the sampler thread itself in addition to the focused CPU
 snapshot test. Its new Actions result remains pending until actually run.
 
-The first complete-runtime sanitizer gate passed in
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:a7a8b3e024aa0dca30365cd99235ffb76e866a7174563faa91593da26dfeaed1 -->
+
 [Actions run 41365952096](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41365952096)
-at head e3812f9ea9ac50f04c46de8cedb114472aa16f0b, including actual lifecycle
-samples. Review adds two seconds of scheduling margin to that probe while
-retaining the same minimum-two-interval assertion. No expectation is relaxed.
+at head e3812f9ea9ac50f04c46de8cedb114472aa16f0b was cancelled and provides no
+passing result for the gate, which remains pending. Review adds two seconds of
+scheduling margin to that probe while retaining the same minimum-two-interval
+assertion. No expectation is relaxed.
+
+<!-- /coderabbit-ai-generated:v1 -->
