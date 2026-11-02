@@ -29,6 +29,28 @@ int runThreadProgressTests() {
         return 1;
     }
 
+    // A guest call nested inside a slice that has already retired instructions never publishes a lower total than
+    // the slice itself had published: the outer slice's pending count is carried into the nested snapshots.
+    {
+        busy.budget = 1000;
+        busy.progress_budget_start = 5000;   // as if 4000 instructions of the outer slice are still unfolded
+        CPU::ThreadProgressSnapshot outerView;
+        busy.publishProgress(true);
+        if (!busy.progress.snapshot(outerView)) return 1;
+        CPU::ThreadProgressSnapshot nestedView;
+        bool sampled = false;
+        const auto probe = engine.registerHle("nested_progress_probe", [&](CPU::Cpu& c) { sampled = c.progress.snapshot(nestedView); });
+        engine.callGuest(busy, probe, {});
+        CPU::ThreadProgressSnapshot afterView;
+        if (!sampled || !busy.progress.snapshot(afterView) || nestedView.instructions < outerView.instructions ||
+            afterView.instructions < nestedView.instructions) {
+            std::printf("FAIL nested guest call lowers the published instruction count (outer %llu, nested %llu, after %llu)\n",
+                        (unsigned long long)outerView.instructions, (unsigned long long)nestedView.instructions,
+                        (unsigned long long)afterView.instructions);
+            return 1;
+        }
+    }
+
     std::mutex mu;
     std::condition_variable cv;
     bool ready = false, release = false;

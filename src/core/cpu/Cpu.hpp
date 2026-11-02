@@ -123,11 +123,12 @@ struct alignas(64) Cpu {
     std::atomic<uint64_t> insn_count{0}; // completed dispatches, also read by diagnostic threads
     ThreadProgress progress;
     int64_t progress_budget_start = 0;
+    uint64_t progress_carry = 0;   // instructions the interrupted outer slices have retired but not yet folded into insn_count (nested callGuest)
     uint32_t progress_argument0 = 0, progress_argument1 = 0;
     void publishProgress(bool guest) {
         if (!progress.enabled) return;
         const uint64_t pending = uint64_t(progress_budget_start) - uint64_t(budget);
-        progress.publish({insn_count.load(std::memory_order_relaxed) + pending,
+        progress.publish({insn_count.load(std::memory_order_relaxed) + progress_carry + pending,
             r[kPC], r[kLR], block_pc, current_hle.load(std::memory_order_relaxed),
             progress_argument0, progress_argument1, guest});
     }

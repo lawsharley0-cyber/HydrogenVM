@@ -581,6 +581,9 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     const uint32_t nzcv = c.nzcv, q = c.q, ge = c.ge, thumb = c.thumb, blockPc = c.block_pc;
     const int64_t budget = c.budget;
     const int64_t progressBudgetStart = c.progress_budget_start;
+    const uint64_t progressCarry = c.progress_carry;
+    // The nested slices replace budget/progress_budget_start; keep the outer slice's pending count in the published total.
+    c.progress_carry += uint64_t(c.progress_budget_start) - uint64_t(c.budget);
     const Exit exitSaved = c.exit;
     const uint32_t infoSaved = c.exit_info;
     const uint32_t boundarySaved = c.call_boundary_sp;
@@ -606,6 +609,7 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
         std::memcpy(c.r, saved, sizeof saved);
         c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
         c.progress_budget_start = progressBudgetStart;
+        c.progress_carry = progressCarry;
         c.exit = exitSaved; c.exit_info = infoSaved;
         c.publishProgress(false);
         throw GuestFault(e, info, pc, th, e == Exit::HostError ? t_hostError : "guest call did not return");
@@ -613,6 +617,7 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     std::memcpy(c.r, saved, sizeof saved);
     c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
     c.progress_budget_start = progressBudgetStart;
+    c.progress_carry = progressCarry;
     c.exit = exitSaved; c.exit_info = infoSaved;
     c.publishProgress(false);
     return result;
