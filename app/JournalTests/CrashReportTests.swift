@@ -41,6 +41,20 @@ final class CrashReportTests: XCTestCase {
     @MainActor
     func testSignalWithoutPendingMetadataIsRecovered() throws {
         try withFreshJournal {
+            let signal = Data("{\"exceptionKind\":\"host-SIGSEGV".utf8)
+            try signal.write(to: CrashReport.signal)
+            let report = try XCTUnwrap(CrashReport.recover())
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(report.json.utf8)) as? [String: Any])
+            XCTAssertEqual(json["signalRaw"] as? String, String(decoding: signal, as: UTF8.self))
+            XCTAssertEqual(json["exceptionKind"] as? String, "interrupted-host-session")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: report.file.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: CrashReport.signal.path))
+        }
+    }
+
+    @MainActor
+    func testValidSignalWithoutPendingMetadataIsRecovered() throws {
+        try withFreshJournal {
             try Data("{\"exceptionKind\":\"host-SIGSEGV\"}".utf8).write(to: CrashReport.signal)
             let report = try XCTUnwrap(CrashReport.recover())
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(report.json.utf8)) as? [String: Any])
