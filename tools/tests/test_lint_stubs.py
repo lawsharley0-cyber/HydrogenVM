@@ -18,6 +18,9 @@ class StubLintTests(unittest.TestCase):
     def test_known_cases_are_labelled(self):
         root = Path(os.environ.get("HVM_STUB_SOURCE_ROOT", str(lint.ROOT)))
         cases = {
+            "src/runtime/foundation/RunLoop.cpp": {"_CFRunLoopSourceInvalidate"},
+            "src/runtime/libc/Libcxx.cpp": {"__ZNSt3__115__thread_structD1Ev"},
+            "src/runtime/libc/Pthread.cpp": {"_pthread_cond_signal", "_pthread_cond_broadcast"},
             "src/runtime/libc/System.cpp": {"_mprotect", "_madvise", "_msync"},
             "src/runtime/uikit/OpenGLES.cpp": {"_glDrawBuffers", "_glReadBuffer", "_glGetQueryObjectuivEXT", "_glGetQueryObjectuiv"},
             "src/runtime/uikit/PlatformStubs.cpp": {"_AUGraphGetIndNode", "_AUGraphGetNodeCount", "_AudioUnitAddRenderNotify", "isPlayable"},

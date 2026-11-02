@@ -6,6 +6,7 @@
 // initialised ones (PTHREAD_MUTEX_INITIALIZER) just work. All waits poll the
 // process stop flag so quitting an app never hangs on a guest lock.
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "MachPorts.hpp"
 #include <cerrno>
 #include <chrono>
@@ -534,8 +535,10 @@ void registerLibcPthread(Process& p) {
     p.def<&pc_wait>("_pthread_cond_wait");
     p.def<&pc_timedwait>("_pthread_cond_timedwait");
     p.def<&pc_timedwait_rel>("_pthread_cond_timedwait_relative_np");
-    p.def<&pc_signal>("_pthread_cond_signal");
-    p.def<&pc_signal>("_pthread_cond_broadcast");
+    supportDef<&pc_signal>(p, "_pthread_cond_signal", SupportStatus::Approx,
+        "Wakes all waiters instead of one and returns success");
+    supportDef<&pc_signal>(p, "_pthread_cond_broadcast", SupportStatus::Approx,
+        "Wakes all waiters through a host condition variable and returns success");
     p.def<&pc_destroy>("_pthread_cond_destroy");
     p.def<&pca_ok>("_pthread_condattr_init");
     p.def<&pca_ok>("_pthread_condattr_destroy");
