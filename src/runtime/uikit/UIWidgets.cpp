@@ -1348,7 +1348,7 @@ struct TextFieldData : ObjC::HostObject {
     id text = 0, placeholder = 0, font = 0, textColor = 0, delegate = 0;
     id background = 0, disabledBackground = 0, leftView = 0, rightView = 0, inputView = 0, inputAccessoryView = 0;
     int32_t alignment = 0, borderStyle = 0, clearButtonMode = 0, leftViewMode = 0, rightViewMode = 0;
-    int32_t keyboardType = 0, keyboardAppearance = 0, returnKeyType = 0, autocap = 0, autocorrect = 0;
+    int32_t keyboardType = 0, keyboardAppearance = 0, returnKeyType = 0, autocap = 2 /* UITextAutocapitalizationTypeSentences */, autocorrect = 0;
     bool clearsOnBegin = false, adjustsFont = false, secure = false, editing = false;
     float minFontSize = 0;
 };
@@ -1390,9 +1390,18 @@ void tf_dealloc(Ctx& x, id self, SEL s) {
     rt(x).sendSuper(x.cpu, self, ui(x).control, s);
 }
 id tf_text(Ctx& x, id self, SEL) { return TFD(x, self).text ? TFD(x, self).text : makeString(x, ""); }
-void tf_setText(Ctx& x, id self, SEL, id t) {
+void publishKeyboard(Ctx& x, id self, bool active);
+void tf_storeText(Ctx& x, id self, id t) {   // stores the text without telling the host keyboard
     setRetained(x, TFD(x, self).text, t ? autoreleased(x, id(rt(x).send(x.cpu, t, "copy"))) : makeString(x, ""));
     rt(x).send(x.cpu, self, "setNeedsDisplay");
+}
+void tf_setText(Ctx& x, id self, SEL, id t) {
+    const std::u16string before = TFD(x, self).text ? Foundation::stringValue(x, TFD(x, self).text) : std::u16string();
+    tf_storeText(x, self, t);
+    const std::u16string after = TFD(x, self).text ? Foundation::stringValue(x, TFD(x, self).text) : std::u16string();
+    // A guest that sets the text of the focused field directly (clearing it after "send", say) must change
+    // what the host keyboard shows too, or the next keystroke would resurrect the old text.
+    if (ui(x).firstResponder == self && before != after) publishKeyboard(x, self, true);
 }
 id tf_placeholder(Ctx& x, id self, SEL) { return TFD(x, self).placeholder; }
 void tf_setPlaceholder(Ctx& x, id self, SEL, id p) {
@@ -1470,7 +1479,7 @@ void applyHostText(Ctx& x, id self, const std::string& newUtf8) {
         publishKeyboard(x, self, true);   // refused: tell the keyboard what the text really is
         return;
     }
-    tf_setText(x, self, 0, makeString(x, newS));
+    tf_storeText(x, self, makeString(x, newS));
     Foundation::postNotification(x, tv ? "UITextViewTextDidChangeNotification" : "UITextFieldTextDidChangeNotification", self);
     if (tv) {
         if (delegateResponds(x, d.delegate, "textViewDidChange:")) rt(x).send(x.cpu, d.delegate, "textViewDidChange:", {self});

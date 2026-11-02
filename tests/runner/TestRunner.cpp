@@ -2906,6 +2906,17 @@ int runFullSubsystemTests() {
               "when the guest refuses to resign, the keyboard is told the field is still active");
         refuseEnd = false;
 
+        // The guest setting the focused field's text directly (clearing it after "send") reaches the keyboard;
+        // an unchanged value does not, and the UIKit default autocapitalization (Sentences) is kept.
+        const size_t setTextBefore = requests.size();
+        r.send(cpu, field, "setText:", {Foundation::makeString(cx, "cleared")});
+        check(requests.size() == setTextBefore + 1 && requests.back().active && requests.back().text == "cleared",
+              "setText: on the focused field publishes the new text to the keyboard");
+        r.send(cpu, field, "setText:", {Foundation::makeString(cx, "cleared")});
+        check(requests.size() == setTextBefore + 1, "setText: with an unchanged value does not republish");
+        check(uint32_t(r.send(cpu, field, "autocapitalizationType")) == 2 && requests.back().autocapitalization == 2,
+              "a field that never sets autocapitalizationType defaults to Sentences, as on iOS");
+
         // Events for a field that has lost focus never reach the new first responder.
         const ObjC::id second = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 120, 120, 30});
         r.send(cpu, second, "becomeFirstResponder");
@@ -2918,9 +2929,9 @@ int runFullSubsystemTests() {
 
         // A tap focuses a field, as on iOS, and a UITextView asks for a multi-line keyboard.
         const ObjC::id other = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 40, 120, 30});
-        const size_t before = requests.size();
+        const size_t reqBefore = requests.size();
         r.send(cpu, other, "touchesEnded:withEvent:", {ObjC::id(r.send(cpu, r.getClass("NSSet"), "set")), 0});
-        check((r.send(cpu, other, "isFirstResponder") & 0xFF) != 0 && requests.size() == before + 1 && requests.back().active,
+        check((r.send(cpu, other, "isFirstResponder") & 0xFF) != 0 && requests.size() == reqBefore + 1 && requests.back().active,
               "tapping a text field focuses it and asks for the keyboard");
         r.send(cpu, other, "resignFirstResponder");
         const ObjC::id view = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextView"), r.selAlloc)), r.sel("initWithFrame:"), {0, 80, 120, 80});
