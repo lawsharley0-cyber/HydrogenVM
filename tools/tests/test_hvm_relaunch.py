@@ -216,6 +216,34 @@ pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({'exitStatus':0,'cr
             self.assertEqual(result['runs'][0]['attemptedLaunches'], 3)
             self.assertTrue(result['allRunsExitedWithoutCrash'])
 
+    @unittest.skipUnless(os.name == 'posix', 'uses a POSIX executable fixture')
+    def test_extra_home_cannot_override_preserved_home(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for name in ['home', 'other-home', 'app']: (root / name).mkdir()
+            hvm = root / 'hvm'
+            hvm.write_text('''#!/usr/bin/env python3
+import json, pathlib, sys
+a = sys.argv
+pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({'exitStatus':0,'crashed':False}))
+''')
+            hvm.chmod(0o700)
+            for mode in ('separate', 'in-process'):
+                for index, override in enumerate((['--home', str(root / 'other-home')],
+                                                  [f'--home={root / "other-home"}'])):
+                    with self.subTest(mode=mode, override=override):
+                        out = root / f'rejected-{mode}-{index}'
+                        with self.assertRaisesRegex(ValueError, '--home'):
+                            run_relaunch(hvm, root / 'app', root / 'home', out,
+                                         launches=1, seconds=1, mode=mode, extra_args=override)
+                        self.assertFalse(out.exists())
+                guest_args = ['--', '--home', str(root / 'other-home'),
+                              f'--home={root / "other-home"}']
+                result = run_relaunch(hvm, root / 'app', root / 'home', root / mode,
+                                      launches=1, seconds=1, mode=mode, extra_args=guest_args)
+                self.assertEqual(result['runs'][0]['command'][-len(guest_args):], guest_args)
+                self.assertTrue(result['allRunsExitedWithoutCrash'])
+
     @unittest.skipUnless(os.environ.get('HVM_TESTLAB_TOOLCHAIN') == '1', 'requires Test Lab toolchain')
     def test_watchdog_crash_stops_in_process_batch_and_preserves_report(self):
         hvm = Path(__file__).resolve().parents[2] / 'build' / 'hvm'

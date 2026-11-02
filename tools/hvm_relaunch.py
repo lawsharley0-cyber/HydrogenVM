@@ -65,6 +65,8 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
     options = extra_args[:extra_args.index('--')] if '--' in extra_args else extra_args
     if any(arg == '--launches' or arg.startswith('--launches=') for arg in options):
         raise ValueError('extra_args cannot override --launches')
+    if any(arg == '--home' or arg.startswith('--home=') for arg in options):
+        raise ValueError('extra_args cannot override --home')
     if home == out or home in out.parents or out in home.parents:
         raise ValueError('Home and evidence directories must not overlap')
     if mode not in ('separate', 'in-process') or not 1 <= launches <= 20:
