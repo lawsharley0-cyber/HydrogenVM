@@ -1,9 +1,20 @@
 import SwiftUI
 import UIKit
 
-struct HarnessAppInfo { let bundlePath: String }
+struct HarnessAppInfo {
+    let bundlePath: String
+    let bundleIdentifier = "com.hvm.player-harness"
+    let version = "1"
+}
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
+let HVMGLLayerUnitTransformKey = "hvmUnitTransform"
+
+enum HVMCrashJournal {
+    static func openSignalFile(_ path: String) {}
+    static func closeSignalFile() {}
+    static func availableMemory() -> UInt64 { 0 }
+}
 
 @Observable @MainActor
 final class PlayerProbe {
@@ -22,10 +33,15 @@ final class PlayerProbe {
 /// viewport and geometry are compiled into this synthetic UI fixture.
 @MainActor
 final class HVMSession {
+    static let emulatorCommit = "harness"
     var keepGoing = false
+    var useGPU = false
     var onFrame: ((CGImage) -> Void)?
+    var onGLLayer: ((CALayer?) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?
     var onExit: ((Int, String?) -> Void)?
+    var crashBundle: String?
+    var framesPresented: UInt64 = 0
     var screenSize = CGSize(width: 320, height: 480)
     var interfaceOrientation = 1
     var isBackgrounded = false
@@ -82,13 +98,19 @@ struct PlayerHarness: View {
     let app: InstalledApp
     var body: some View {
         RunView(app: app, keepGoing: false)
-            .overlay(alignment: .topTrailing) {
+            .overlay(alignment: .bottomLeading) {
                 VStack {
                     Text(PlayerProbe.shared.touch).accessibilityIdentifier("probe-touch")
                     Text(PlayerProbe.shared.lifecycle).accessibilityIdentifier("probe-lifecycle")
                     Text(verbatim: String(PlayerProbe.shared.volume)).accessibilityIdentifier("probe-volume")
                     Text("\(PlayerProbe.shared.maximumTouches)").accessibilityIdentifier("probe-max-touches")
                     Text("\(PlayerProbe.shared.cancellations)").accessibilityIdentifier("probe-cancellations")
+                    Button("Default Extended Bars") {
+                        UserDefaults.standard.set(PlayerScaleMode.extended.rawValue, forKey: PlayerSettings.scaleModeKey)
+                    }.accessibilityIdentifier("probe-default-extended")
+                    Button("Default Fill") {
+                        UserDefaults.standard.set(PlayerScaleMode.fill.rawValue, forKey: PlayerSettings.scaleModeKey)
+                    }.accessibilityIdentifier("probe-default-fill")
                     Button("Change Guest Orientation") {
                         guard let session = PlayerProbe.shared.session else { return }
                         session.interfaceOrientation = session.interfaceOrientation == 3 ? 4 : 3
@@ -105,7 +127,7 @@ struct PlayerHarness: View {
                 }
                 .font(.system(size: 9))
                 .foregroundStyle(.white)
-                .padding(.top, 45)
+                .padding(.bottom, 20)
             }
     }
 }

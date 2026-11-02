@@ -398,7 +398,8 @@ struct RunView: View {
     @State private var confirmInspect = false
     @State private var overrideOrientation: GuestOrientation?
     /// Display mode for this game; the global default lives in the library's Options menu.
-    @AppStorage private var scaleSetting: String
+    @AppStorage private var scaleSetting: String?
+    @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleSetting = PlayerScaleMode.fit.rawValue
     @AppStorage private var cropFocusSetting: String
     /// Bumped so the toggles above re-read UserDefaults.
     @State private var virtualTick = 0
@@ -413,14 +414,20 @@ struct RunView: View {
         _model = State(initialValue: RunModel(app: app))
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: app.info.bundleIdentifier),
                                        RunModel.softwareRenderingKey(app.info.bundleIdentifier))
-        _scaleSetting = AppStorage(wrappedValue: PlayerSettings.scaleMode(bundleID: app.info.bundleIdentifier).rawValue,
-                                   PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
+        _scaleSetting = AppStorage(PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
         _cropFocusSetting = AppStorage(wrappedValue: PlayerSettings.cropFocus(bundleID: app.info.bundleIdentifier).rawValue,
                                        PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
     }
 
     private var effectiveOrientation: GuestOrientation {
         overrideOrientation ?? model.orientation
+    }
+
+    private var effectiveScaleMode: PlayerScaleMode {
+        // Observe both keys so a change to either one updates the viewport.
+        _ = scaleSetting
+        _ = defaultScaleSetting
+        return PlayerSettings.scaleMode(bundleID: app.info.bundleIdentifier)
     }
 
     /// The orientations the phone may take while this game plays. A landscape game
@@ -440,7 +447,7 @@ struct RunView: View {
                 ZStack {
                     EmulatorScreen(image: model.frame, glLayer: model.glLayer, guestSize: model.screenSize,
                                    orientation: effectiveOrientation,
-                                   mode: PlayerScaleMode(rawValue: scaleSetting) ?? .fit,
+                                   mode: effectiveScaleMode,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
                                    inputEnabled: model.inputEnabled,
                                    focus: PlayerCropFocus(rawValue: cropFocusSetting)?.position ?? PlayerCropFocus.center.position) { phase, point, finger in
@@ -654,24 +661,23 @@ struct RunView: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
 
-                        Picker("Scale Mode", selection: $scaleSetting) {
+                        Picker("Scale Mode", selection: Binding(get: { scaleSetting }, set: { value in
+                            if let value {
+                                scaleSetting = value
+                            } else {
+                                scaleSetting = nil
+                                PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
+                            }
+                        })) {
+                            Text("Use Default").tag(nil as String?)
                             ForEach(PlayerScaleMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode.rawValue)
+                                Text(mode.rawValue).tag(mode.rawValue as String?)
                             }
                         }
                         .pickerStyle(.segmented)
                         .accessibilityIdentifier("player-scale-mode")
 
-                        // Choosing a mode here is a per-game override; this is the way back to the global default.
-                        if PlayerSettings.hasScaleOverride(bundleID: app.info.bundleIdentifier) {
-                            Button("Use default display mode") {
-                                PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
-                            }
-                            .font(.caption2)
-                            .accessibilityIdentifier("player-scale-use-default")
-                        }
-
-                        if PlayerScaleMode(rawValue: scaleSetting)?.crops == true {
+                        if effectiveScaleMode.crops {
                             Picker("Crop Focus", selection: $cropFocusSetting) {
                                 ForEach(PlayerCropFocus.allCases) { focus in
                                     Text(focus.rawValue).tag(focus.rawValue)
@@ -680,7 +686,7 @@ struct RunView: View {
                             .pickerStyle(.segmented)
                             .accessibilityIdentifier("player-crop-focus")
                         }
-                        if PlayerScaleMode(rawValue: scaleSetting)?.extendsBars == true {
+                        if effectiveScaleMode.extendsBars {
                             Text("The bars show a blurred, dimmed copy of the frame.")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }

@@ -22,6 +22,7 @@ targets:
       - ../../../app/HydrogenVM/PlayerOrientation.swift
       - ../../../app/HydrogenVM/PlayerViewport.swift
       - ../../../app/HydrogenVM/FileBrowser.swift
+      - ../../../app/HydrogenVM/BinaryEditor.swift
       - ../../../app/HydrogenVM/FileEditorSession.swift
       - ../../../app/HydrogenVM/SaveFileStore.swift
       - ../../../app/HydrogenVM/SaveTextCodec.swift
@@ -52,6 +53,16 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.EditorUITests
         TEST_TARGET_NAME: SaveEditorHarness
+  PlayerViewportTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - PlayerViewportTests.swift
+    dependencies:
+      - target: SaveEditorHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.PlayerViewportTests
 schemes:
   SaveEditorHarness:
     build:
@@ -60,3 +71,4 @@ schemes:
     test:
       targets:
         - SaveEditorUITests
+        - PlayerViewportTests

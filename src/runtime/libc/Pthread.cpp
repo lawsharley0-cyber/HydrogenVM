@@ -536,9 +536,9 @@ void registerLibcPthread(Process& p) {
     p.def<&pc_timedwait>("_pthread_cond_timedwait");
     p.def<&pc_timedwait_rel>("_pthread_cond_timedwait_relative_np");
     supportDef<&pc_signal>(p, "_pthread_cond_signal", SupportStatus::Approx,
-        "Wakes all waiters rather than one and always reports success");
+        "Advances the condition generation, wakes all waiters rather than one, and always reports success");
     supportDef<&pc_signal>(p, "_pthread_cond_broadcast", SupportStatus::Approx,
-        "Wakes all waiters and always reports success");
+        "Advances the condition generation, wakes all waiters, and always reports success");
     p.def<&pc_destroy>("_pthread_cond_destroy");
     p.def<&pca_ok>("_pthread_condattr_init");
     p.def<&pca_ok>("_pthread_condattr_destroy");
