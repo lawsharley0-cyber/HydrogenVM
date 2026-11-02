@@ -2820,14 +2820,18 @@ int runFullSubsystemTests() {
     // On-screen keyboard (#303): a focused text field asks the host for a keyboard with its traits; the edits the
     // host sends back go through the guest's delegate, notifications and control events, on the main run loop.
     {
+        if (!UIKit::ui(proc).app) UIKit::ui(proc).app = r.createInstance(r.getClass("UIApplication"));   // control events go through it
         std::vector<UIKit::TextInputRequest> requests;
         UIKit::setTextInputObserver(proc, [&](const UIKit::TextInputRequest& q) { requests.push_back(q); });
         std::vector<std::string> changes;
         int returns = 0, began = 0, ended = 0, editingChanged = 0, viewChanged = 0;
         ObjC::ClassBuilder del = r.defineClass("HVMTestTextDelegate", "NSObject");
         del.method("textField:shouldChangeCharactersInRange:replacementString:", [&](Ctx& x) {
-            const std::string rep = Foundation::utf8(x, x.cpu.r[4]);
-            changes.push_back(std::to_string(x.cpu.r[2]) + "," + std::to_string(x.cpu.r[3]) + ":" + rep);
+            Runtime::ArgReader args(x.cpu, x.mem, 2);
+            args.word();   // the text field
+            const uint32_t loc = args.word(), len = args.word();
+            const std::string rep = Foundation::utf8(x, args.word());
+            changes.push_back(std::to_string(loc) + "," + std::to_string(len) + ":" + rep);
             x.cpu.r[0] = rep.find('x') == std::string::npos ? 1 : 0;   // refuse any edit that adds an 'x'
         }, "c@:@{_NSRange=II}@");
         del.method("textFieldShouldReturn:", [&](Ctx& x) { ++returns; x.cpu.r[0] = 1; }, "c@:@");

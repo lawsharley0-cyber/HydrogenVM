@@ -1427,7 +1427,6 @@ void tf_ignoreObj(Ctx&, id, SEL, id) {}
 void tf_ignoreInt(Ctx&, id, SEL, int32_t) {}
 void tf_ignoreBool(Ctx&, id, SEL, bool) {}
 id tf_nilObj(Ctx&, id, SEL) { return 0; }
-int32_t tf_zeroInt(Ctx&, id, SEL) { return 0; }
 bool tf_trueBool(Ctx&, id, SEL) { return true; }
 
 // ---- on-screen keyboard bridge (#303)
