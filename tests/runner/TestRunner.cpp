@@ -1877,6 +1877,7 @@ int runFullSubsystemTests() {
     char privateHome[] = "/tmp/hvm_test_home.XXXXXX";
     if (!mkdtemp(privateHome)) { std::fprintf(stderr, "mkdtemp failed\n"); return 1; }
     cfg.homePath = privateHome;
+    struct RemoveHome { const char* path; ~RemoveHome() { std::error_code ec; std::filesystem::remove_all(path, ec); } } removeHome{privateHome};   // declared before proc: runs after it is destroyed
     Process proc(cfg);
     // Renders the mixer (as the platform's audio thread does) and returns how many
     // frames of sound came out: the index after the last non-silent frame.
