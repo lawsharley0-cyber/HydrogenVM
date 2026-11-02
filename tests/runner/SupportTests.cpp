@@ -41,6 +41,13 @@ int main() {
           playable->status == SupportStatus::Stub, "AVAsset playable metadata");
     check(registry.find("_dlopen") && registry.find("_dlopen")->status == SupportStatus::Approx,
           "dlopen partial implementation is explicit");
+    for (const char* name : {"_CFRunLoopSourceInvalidate", "_pthread_cond_signal", "_pthread_cond_broadcast"}) {
+        const auto r = registry.find(name);
+        check(r && r->status == SupportStatus::Approx && !r->provenance.empty() && p.lookupSymbol(name), name);
+    }
+    const auto threadDtor = registry.find("__ZNSt3__115__thread_structD1Ev");
+    check(threadDtor && threadDtor->status == SupportStatus::Stub && !threadDtor->provenance.empty() &&
+          p.lookupSymbol("__ZNSt3__115__thread_structD1Ev"), "thread structure destructor metadata");
     check(!registry.find("_unclassified"), "unknown metadata is not Real");
     const auto address = supportDef<&zero>(p, "_support_test", SupportStatus::Real, "Test-only constant oracle");
     check(p.lookupSymbol("_support_test") == address && registry.find("_support_test")->status == SupportStatus::Real,
