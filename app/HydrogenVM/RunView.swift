@@ -115,6 +115,20 @@ final class RunModel {
         // GPU rendering unless the player turned it off for this game (or, from
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
+        // Taller guest screen and safe-area insets, per game; both are cleared when off.
+        let display = UIScreen.main.bounds.size
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.keyWindow != nil }
+        let inset = scene?.keyWindow?.safeAreaInsets ?? .zero
+        let hostOrientation = scene.flatMap { GuestOrientation(rawValue: $0.effectiveGeometry.interfaceOrientation.rawValue) }
+        let portraitInsets = hostOrientation.map {
+            GuestScreenSettings.portraitInsets(top: inset.top, left: inset.left, bottom: inset.bottom, right: inset.right, host: $0)
+        } ?? (top: 0, left: 0, bottom: 0, right: 0)
+        GuestScreenSettings.apply(bundleID: app.info.bundleIdentifier, display: display,
+                                  insets: portraitInsets,
+                                  orientation: .portrait) { name, value in
+            if let value { setenv(name, value, 1) } else { unsetenv(name) }
+        }
         // The bridge delivers every callback on the main queue.
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
@@ -387,6 +401,8 @@ struct RunView: View {
     @AppStorage private var scaleSetting: String?
     @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleSetting = PlayerScaleMode.fit.rawValue
     @AppStorage private var cropFocusSetting: String
+    /// Bumped so the toggles above re-read UserDefaults.
+    @State private var virtualTick = 0
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
     /// Read by the session at start (RunModel.start): GPU rendering unless this is on. Per game.
     @AppStorage private var softwareRenderer: Bool
@@ -516,6 +532,33 @@ struct RunView: View {
     }
 
     // MARK: - Floating Glassmorphic In-Game HUD Pill
+
+    private var virtualScreenControls: some View {
+        let _ = virtualTick
+        let bundleID = app.info.bundleIdentifier
+        return Group {
+            Toggle(isOn: Binding(get: { GuestScreenSettings.virtualScreen(bundleID: bundleID) },
+                                 set: { GuestScreenSettings.setVirtualScreen($0, bundleID: bundleID); virtualTick += 1 })) {
+                Text("Taller game screen for this game (next launch)").font(.caption)
+            }
+            .accessibilityIdentifier("player-virtual-screen")
+            if GuestScreenSettings.virtualScreen(bundleID: bundleID) {
+                Toggle(isOn: Binding(get: { GuestScreenSettings.safeArea(bundleID: bundleID) },
+                                     set: { GuestScreenSettings.setSafeArea($0, bundleID: bundleID); virtualTick += 1 })) {
+                    Text("Keep the game's UI out of the notch and home bar (approximate)").font(.caption)
+                }
+                .accessibilityIdentifier("player-safe-area")
+                Picker("Result", selection: Binding(get: { GuestScreenSettings.record(bundleID: bundleID) },
+                                                    set: { GuestScreenSettings.setRecord($0, bundleID: bundleID); virtualTick += 1 })) {
+                    ForEach(GuestScreenRecord.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("player-virtual-screen-record")
+                Text("Mark a game Broken and it goes back to the normal screen.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
 
     private var floatingHUDPill: some View {
         Group {
@@ -660,6 +703,9 @@ struct RunView: View {
                                 .font(.caption)
                         }
                         .accessibilityIdentifier("player-gpu-rendering")
+
+                        // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
+                        virtualScreenControls
                     }
 
                     // Audio & System Footer

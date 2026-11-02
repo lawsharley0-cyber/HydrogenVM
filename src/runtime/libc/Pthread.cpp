@@ -567,9 +567,9 @@ void registerLibcPthread(Process& p) {
     p.def<&pc_timedwait>("_pthread_cond_timedwait");
     p.def<&pc_timedwait_rel>("_pthread_cond_timedwait_relative_np");
     supportDef<&pc_signal>(p, "_pthread_cond_signal", SupportStatus::Approx,
-                           "Wakes one current waiter; cancellation and stop are polled");
+                           "Wakes one current waiter and always reports success; waits poll for cancellation and stop");
     supportDef<&pc_broadcast>(p, "_pthread_cond_broadcast", SupportStatus::Approx,
-                           "Wakes all current waiters; cancellation and stop are polled");
+                           "Wakes all current waiters and always reports success; waits poll for cancellation and stop");
     p.def<&pc_destroy>("_pthread_cond_destroy");
     p.def<&pca_ok>("_pthread_condattr_init");
     p.def<&pca_ok>("_pthread_condattr_destroy");

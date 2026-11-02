@@ -215,6 +215,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "AudioOutput.hpp"
@@ -2509,6 +2510,48 @@ int runFullSubsystemTests() {
         const auto utc = ObjC::id(r.send(cpu, cls, "timeZoneWithName:", {Foundation::makeString(cx, "UTC")}));
         check(utc && int32_t(r.send(cpu, utc, "secondsFromGMT")) == 0,
               "named UTC zone is independent of the host's local timezone");
+    }
+
+    // 2a0. Guest screen overrides (issue #281, modes 3 and 4): opt-in by environment, per launch.
+    {
+        auto screenSize = [&](const char* sel) { return UIKit::getRect(cx, ObjC::id(r.send(cpu, r.getClass("UIScreen"), "mainScreen")), sel); };
+        auto& u = UIKit::ui(cx);
+        const float w0 = u.screenW, h0 = u.screenH;
+        const auto processW = proc.config().screenWidth, processH = proc.config().screenHeight;
+        const auto orientation = u.statusBarOrientation;
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "694", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - 694.0f) < 0.01f && std::abs(screenSize("bounds").w - w0) < 0.01f,
+              "HVM_VIRTUAL_SCREEN_HEIGHT gives the guest a taller UIScreen");
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "99999", 1);
+        u.screenH = h0;
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "an out-of-range virtual height is ignored");
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "abc", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "a non-numeric virtual height is ignored");
+        ::unsetenv("HVM_VIRTUAL_SCREEN_HEIGHT");
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "no variable keeps the previous screen");
+        const bool hidden = u.statusBarHidden;
+        u.statusBarHidden = false;
+        u.statusBarOrientation = 1;
+        ::setenv("HVM_SAFE_AREA", "44,0,34,0", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        const Graphics::Rect af = screenSize("applicationFrame");
+        check(std::abs(af.y - 44.0f) < 0.01f && std::abs(af.h - (h0 - 44.0f - 34.0f)) < 0.01f,
+              "safe-area insets shrink applicationFrame (top 44, bottom 34)");
+        ::setenv("HVM_SAFE_AREA", "bogus", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        const Graphics::Rect plain = screenSize("applicationFrame");
+        check(std::abs(plain.y - 20.0f) < 0.01f && std::abs(plain.h - (h0 - 20.0f)) < 0.01f,
+              "invalid safe-area text means no insets");
+        ::unsetenv("HVM_SAFE_AREA");
+        UIKit::applyGuestScreenEnv(cx);
+        u.statusBarHidden = hidden;
+        u.statusBarOrientation = orientation;
+        u.screenW = w0; u.screenH = h0;
+        proc.setScreenSize(processW, processH);
     }
 
     // 2a. UIScrollView
@@ -6768,6 +6811,65 @@ int runFullSubsystemTests() {
             fs::create_symlink(home + "/Game.app-sibling/secret.tfc", bundle + "/CookedIPhone/Link.tfc");
             mutations &= lookup("Link").empty();
             check(mutations, "bundle cache invalidates additions/removals and rejects a cached file replaced by an escaping symlink");
+            // A directory's mtime can repeat within one clock tick, so a device
+            // variant added right after the plain resource was cached must still
+            // win even though the stamp the cache recorded did not change.
+            // Restoring that stamp keeps this independent of host timestamp
+            // granularity instead of a race that only fails on a coarse clock.
+            const std::string dirPath = bundle + "/CookedIPhone";
+            const std::string stamped = dirPath + "/Stamped.tfc";
+            put(stamped);
+            const auto beforeAdd = fs::last_write_time(dirPath);
+            const bool cachedPlain = lookup("Stamped") == stamped;
+            put(dirPath + "/Stamped~iphone.tfc");
+            fs::last_write_time(dirPath, beforeAdd);
+            check(cachedPlain && lookup("Stamped") == dirPath + "/Stamped~iphone.tfc",
+                  "bundle cache prefers a device variant added under an unchanged directory timestamp");
+            const std::string priorityDir = bundle + "/Priority";
+            fs::create_directories(priorityDir + "/Base.lproj");
+            const std::string earlier = priorityDir + "/pRiOrItY.tfc";
+            put(earlier);
+            put(priorityDir + "/Base.lproj/Priority.tfc");
+            // This fixture requires a case-sensitive filesystem. Removing read
+            // permission exposes an unexpected rescan while retaining search
+            // permission for cached-path validation.
+            if (!fs::exists(priorityDir + "/Priority.tfc")) {
+                bool priority = lookup("Priority", "tfc", "Priority") == earlier &&
+                                lookup("Priority", "tfc", "Priority/") == earlier;
+                const auto permissions = fs::status(priorityDir).permissions();
+                fs::permissions(priorityDir, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec);
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority/") == earlier;
+                fs::permissions(priorityDir, permissions);
+                check(priority, "bundle cache retains an earlier case-insensitive match over a later exact match");
+                const auto priorityStamp = fs::last_write_time(priorityDir);
+                put(priorityDir + "/Priority~iphone.tfc");
+                fs::last_write_time(priorityDir, priorityStamp);
+                check(lookup("Priority", "tfc", "Priority") == priorityDir + "/Priority~iphone.tfc",
+                      "bundle cache still prefers a new exact device variant in the cached directory");
+            }
+            // A later exact match must not evict an earlier case-insensitive hit.
+            // Add a case-insensitive variant with the same timestamp so a
+            // re-scan would visibly select it instead of the cached path.
+            fs::create_directories(dirPath + "/Base.lproj");
+            const std::string remoteEarlier = dirPath + "/priority.tfc";
+            put(remoteEarlier);
+            put(dirPath + "/Base.lproj/Priority.tfc");
+            if (!fs::exists(dirPath + "/Priority.tfc")) { // case-sensitive filesystem
+                const auto priorityStamp = fs::last_write_time(dirPath);
+                bool priorityOK = lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                put(dirPath + "/priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                check(priorityOK, "later exact resource does not evict an earlier case-insensitive cached match");
+                put(dirPath + "/Priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                check(lookup("Priority") == dirPath + "/Priority~iphone.tfc",
+                      "cached case-insensitive match yields to an exact device variant in the same directory");
+            }
             put(home + "/Mutable.tfc");
             const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
             auto mutableLookup = [&] {
@@ -7550,6 +7652,53 @@ int runFullSubsystemTests() {
                          tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
         }
         check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+
+        // The crash bundle carries each thread's last calls (T2c, #259): oldest first, exactly the last N,
+        // with the support status of a function that was declared a Stub.
+        const uint32_t ringStubFn = ringProc.defineFunction("_test_call_ring_stub_fn", [](Ctx&) {});
+        const uint32_t ringStubIndex = ringProc.engine().hleIndex(ringStubFn);
+        supportRegistry(ringProc).record({SupportKind::Function, "_test_call_ring_stub_fn", SupportStatus::Stub,
+                                          "test: a placeholder that must show up as a stub hit"});
+        ringProc.engine().callHle(&ringCpu, ringStubIndex);
+        const uint64_t ringTotal = ringCpu.call_ring.load()->total();
+        const std::string ringJson = ringProc.callRingJson(8);
+        auto seqAt = [&](uint64_t seq) { return ringJson.find("\"seq\":" + std::to_string(seq) + ","); };
+        size_t hleEntries = 0;
+        for (size_t at = ringJson.find("\"kind\":\"hle\""); at != std::string::npos; at = ringJson.find("\"kind\":\"hle\"", at + 1)) ++hleEntries;
+        const size_t lastEntry = seqAt(ringTotal);
+        const size_t stubAt = ringJson.find("\"status\":\"Stub\"");
+        bool ringOrdered = seqAt(ringTotal - 7) != std::string::npos && seqAt(ringTotal - 8) == std::string::npos;
+        for (uint64_t q = ringTotal - 7; ringOrdered && q < ringTotal; ++q) ringOrdered = seqAt(q) < seqAt(q + 1);
+        check(ringJson.find("\"thread\":" + std::to_string(ringProc.mainThread().id) + ",\"total\":" + std::to_string(ringTotal)) != std::string::npos &&
+              hleEntries == 8 && ringOrdered,
+              "callRingJson lists exactly the last N calls of a thread, oldest first, with the thread's total");
+        check(lastEntry != std::string::npos && stubAt != std::string::npos && stubAt > lastEntry &&
+              ringJson.find("\"name\":\"test_call_ring_stub_fn\"") != std::string::npos &&
+              ringJson.find("\"status\"") == stubAt && ringJson.find("\"status\"", stubAt + 1) == std::string::npos,
+              "callRingJson marks a declared Stub call and leaves unlabelled calls without a status");
+
+        // A worker that has finished (the one that crashed is marked finished before the bundle is written)
+        // is still in the dump.
+        const uint32_t ringWorkerFn = ringProc.defineFunction("test_call_ring_worker_fn", [&](Ctx& x) {
+            ringProc.engine().callHle(&x.cpu, ringStubIndex);   // a host call made on the worker lands in the worker's ring
+            x.cpu.r[0] = 0;
+        });
+        const uint32_t ringWorker = ringProc.startThread(ringWorkerFn, 0, 64u << 10, false);
+        uint32_t ringWorkerResult = 1;
+        const bool ringWorkerJoined = ringProc.joinThread(ringWorker, &ringWorkerResult);
+        const std::string ringAfter = ringProc.callRingJson(8);
+        size_t ringThreads = 0;   // the dump names a thread by its id (not the pthread handle startThread returns)
+        for (size_t at = ringAfter.find("\"thread\":"); at != std::string::npos; at = ringAfter.find("\"thread\":", at + 1)) ++ringThreads;
+        check(ringWorkerJoined && ringThreads == 2,
+              "callRingJson keeps a finished worker's ring so a crashed thread is not dropped");
+
+        // Generated placeholders for missing imports and C++ vtable slots are declared Stub, never unlabelled.
+        ringProc.makeMissingStub("_hvm_test_missing_import");
+        ringProc.makeMissingStub("__ZTV13HVMTestMissing");
+        const auto missingFn = supportRegistry(ringProc).find("_hvm_test_missing_import");
+        const auto missingSlot = supportRegistry(ringProc).find("__ZTV13HVMTestMissing$hvm_slot0");
+        check(missingFn && missingFn->status == SupportStatus::Stub && missingSlot && missingSlot->status == SupportStatus::Stub,
+              "a generated missing-function or vtable-slot stub is recorded as Stub");
     }
 
     // Teardown diagnostics: a guest thread still running (blocked in the real `read` on
