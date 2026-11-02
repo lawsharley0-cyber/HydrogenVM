@@ -5354,6 +5354,42 @@ int runFullSubsystemTests() {
                    {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 1u, 0u});
             check(combinedVoiceDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 5u,
                   "AVAudioSession combined voice chat setter adds Bluetooth while preserving options");
+            const auto playAndRecord = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord");
+            const auto playback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback");
+            const auto record = Foundation::makeString(sx, "AVAudioSessionCategoryRecord");
+            const auto voice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat");
+            const auto video = Foundation::makeString(sx, "AVAudioSessionModeVideoChat");
+            const auto defaultMode = Foundation::makeString(sx, "AVAudioSessionModeDefault");
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+            r.send(cpu, session, "setCategory:withOptions:error:", {playAndRecord, 0u, 0u});
+            const bool voiceAfterOptions = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            r.send(cpu, session, "setCategory:error:", {playAndRecord, 0u});
+            check(voiceAfterOptions && uint32_t(r.send(cpu, session, "categoryOptions")) == 4u,
+                  "AVAudioSession retains voice chat defaults after category setters");
+            r.send(cpu, session, "setMode:error:", {video, 0u});
+            r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+            const bool videoCleared = uint32_t(r.send(cpu, session, "categoryOptions")) == 0u;
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 4u, 0u});
+            r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+            check(videoCleared && uint32_t(r.send(cpu, session, "categoryOptions")) == 4u,
+                  "AVAudioSession clears mode defaults while preserving explicit overlapping options");
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+            r.send(cpu, session, "setCategory:withOptions:error:", {playback, 1u, 0u});
+            const bool voicePlayback = uint32_t(r.send(cpu, session, "categoryOptions")) == 1u &&
+                                       (uint32_t(r.send(cpu, session, "setMode:error:", {voice, 0u})) & 0xff) &&
+                                       same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVoiceChat") &&
+                                       uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+            const bool videoAccepted = (uint32_t(r.send(cpu, session, "setMode:error:", {video, 0u})) & 0xff) != 0;
+            const bool videoPlayback = videoAccepted && uint32_t(r.send(cpu, session, "categoryOptions")) == 1u &&
+                                       same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoChat");
+            r.send(cpu, session, "setCategory:mode:options:error:", {playback, video, 1u, 0u});
+            const bool combinedPlayback = uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+            r.send(cpu, session, "setCategory:withOptions:error:", {record, 1u, 0u});
+            const bool videoRecord = uint32_t(r.send(cpu, session, "categoryOptions")) == 13u;
+            r.send(cpu, session, "setMode:error:", {voice, 0u});
+            check(voicePlayback && videoPlayback && combinedPlayback && videoRecord &&
+                  uint32_t(r.send(cpu, session, "categoryOptions")) == 1u,
+                  "AVAudioSession applies chat defaults only to supported categories");
             const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
             const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
             const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;
