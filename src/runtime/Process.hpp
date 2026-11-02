@@ -74,7 +74,8 @@ struct GuestThread {
     uint32_t stackBase = 0, stackSize = 0;
     uint32_t errnoAddr = 0;
     std::unordered_map<uint32_t, uint32_t> tsd;   // pthread keys
-    std::thread host;
+    std::thread::native_handle_type host{};
+    bool hostJoinable = false; // guarded by Process::threadsMu_; independent of guest detach
     std::atomic<bool> finished{false};
     bool detached = false;
     bool pthreadExited = false;   // left via pthread_exit()
@@ -216,6 +217,8 @@ public:
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
     std::string crashBundle();
+    // Each thread's (finished ones included, so a crashed worker stays) last `perThread` host calls as a JSON array, oldest first (T2c). Safe while threads run.
+    std::string callRingJson(size_t perThread);
     // Bounded, read-only allocator/host samples. Event must be an internal constant.
     void recordMemorySample(const char* event);
     // Runtime memory sampling is opt-in: HVM_MEMORY_DIAG must be set in the launching environment.
@@ -259,9 +262,12 @@ public:
     // Allocate `size` bytes of zeroed guest data and export it as `name`.
     uint32_t defineDataBlock(const std::string& name, uint32_t size);
     std::optional<uint32_t> lookupSymbol(const std::string& name) const;
-    // Hooks consulted (in order) for imports that nothing defines. Return 0
-    // to decline. Used for e.g. auto-creating stub ObjC classes.
-    void addMissingSymbolResolver(std::function<uint32_t(const std::string&)> fn);
+    // Import resolution may create placeholders; dynamic lookup only resolves
+    // explicitly recognized constants. Return 0 to decline either request.
+    enum class MissingSymbolMode { Import, DynamicLookup };
+    using MissingSymbolResolver = std::function<uint32_t(const std::string&, MissingSymbolMode)>;
+    void addMissingSymbolResolver(MissingSymbolResolver fn);
+    uint32_t resolveMissingSymbol(const std::string& name);
     // Register a host function without exporting a symbol (method IMPs, …).
     uint32_t registerHostFunction(const std::string& debugName, HostFn fn);
 
@@ -365,9 +371,11 @@ private:
     void setupEnvironment();
     void initThreadState(GuestThread& t, uint32_t stackSize);
     void threadMain(GuestThread* t, uint32_t fn, uint32_t arg);
+    void joinHostThreads(bool includeRunning);
     void finishCrash(const CPU::Cpu& c, CPU::Exit e);
 
     ProcessConfig cfg_;
+    const uint64_t identity_; // distinguishes stale host TLS from a different/reused Process
     std::unique_ptr<Memory::GuestArena> mem_;
     std::unique_ptr<CPU::Engine> engine_;
     std::unique_ptr<Heap> heap_;
@@ -377,8 +385,9 @@ private:
     std::string guestHomePath_, guestBundlePath_, guestExecutablePath_;
 
     std::unordered_map<std::string, uint32_t> symbols_;
-    std::vector<std::function<uint32_t(const std::string&)>> missingResolvers_;
+    std::vector<MissingSymbolResolver> missingResolvers_;
     mutable std::mutex symMu_;
+    std::mutex resolutionMu_;
     std::unordered_map<std::type_index, std::shared_ptr<void>> services_;
     std::mutex servicesMu_;
     std::vector<std::function<void()>> loadedHooks_;
