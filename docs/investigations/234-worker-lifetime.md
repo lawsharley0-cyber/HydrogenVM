@@ -72,19 +72,22 @@ The unchanged five-second watchdog must instead yield process/report status
 70. tools/test_shutdown_watchdog.py builds and drives that minimal guest; CI
 runs it after the normal build. It does not simulate a successful game save.
 
-## Completed Linux validation
-
 <!-- coderabbit-ai-generated:v1 -->
 
-<!-- coderabbit-ai-generated-section:v1:c069e90a44762b34329d88633caefc6d48168d14c2cd0c97d6fa2a3adc16a578 -->
+<!-- coderabbit-ai-generated-section:v1:50df50f64a40f1d434605e2a9cb7653dc2add84b4fb325069baa6fbd38eac7b3 -->
 
-The [Actions CI run 41364588649](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588649)
+## Linux validation
+
+Historical results for candidate head `665580a029e7fe464aeb35b497876c85e2f02e27`:
+the [Actions CI run 41364588649](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588649)
 passed the Linux full-runtime ASan/UBSan worker-lifetime, fulltest/performance,
 tools and shutdown-watchdog steps. The [Test Lab run 41364588715](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588715)
-passed its gating integration step. Both tested candidate head
-`665580a029e7fe464aeb35b497876c85e2f02e27` as checkout merge
+passed its gating integration step. Both used checkout merge
 `eb26f8ea17ae44e08395137f5eade4c3dd5463bf`. Stub-honesty still fails its
 unchanged baseline findings.
+
+Validation for the reviewed revision `cef25f0f2c7a1dfdc7df4a3fa90f7ac24d67a129`
+is pending.
 
 <!-- /coderabbit-ai-generated:v1 -->
 
