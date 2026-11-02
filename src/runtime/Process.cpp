@@ -1,5 +1,6 @@
 #include "Process.hpp"
 #include "MemoryDiagnostics.hpp"
+#include "Support.hpp"
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
 #include "runtime/gl/HostGL.hpp"
@@ -356,7 +357,10 @@ uint32_t Process::makeMissingStub(const std::string& name) {
         auto trapTable = [&](uint32_t block, uint32_t firstSlotWord, uint32_t words) {
             for (uint32_t i = firstSlotWord; i < words; ++i) {
                 const uint32_t slot = i - firstSlotWord;
-                const uint32_t fn = defineFunction(name + "$hvm_slot" + std::to_string(slot), [this, pretty, slot](Ctx& x) {
+                const std::string slotName = name + "$hvm_slot" + std::to_string(slot);
+                supportRegistry(*this).record({SupportKind::Function, slotName, SupportStatus::Stub,
+                                               "generated placeholder for a C++ virtual slot HydrogenVM does not provide"});
+                const uint32_t fn = defineFunction(slotName, [this, pretty, slot](Ctx& x) {
                     const std::string what = "virtual function #" + std::to_string(slot) + " of " + pretty;
                     reportMissing(what);
                     if (!cfg_.stopOnMissingFunction) { x.cpu.r[0] = x.cpu.r[1] = 0; return; }   // keep going: like other missing functions
@@ -388,6 +392,9 @@ uint32_t Process::makeMissingStub(const std::string& name) {
         return a;
     }
     const std::string pretty = demangle(name);
+    // A placeholder must say so: crash bundles label its calls Stub, never Real.
+    supportRegistry(*this).record({SupportKind::Function, name, SupportStatus::Stub,
+                                   "generated placeholder for an import HydrogenVM does not provide"});
     return defineFunction(name, [this, pretty](Ctx& x) {
         reportMissing(pretty);
         if (cfg_.stopOnMissingFunction)
@@ -1091,6 +1098,48 @@ void Process::captureCrash(const CPU::Cpu& c, const std::string& kind, const std
     crashSignature_ = hash.str();
 }
 
+// How many of each thread's most recent calls a crash bundle keeps (the ring itself holds 256).
+static constexpr size_t kCrashBundleRingEntries = 64;
+
+std::string Process::callRingJson(size_t perThread) {
+    std::vector<GuestThread*> list{mainThread_};
+    {
+        std::lock_guard<std::mutex> lk(threadsMu_);
+        // Finished workers stay: the thread that crashed is marked finished before the bundle is written.
+        for (auto& [k, t] : threads_) list.push_back(t.get());
+    }
+    std::sort(list.begin() + 1, list.end(), [](const GuestThread* a, const GuestThread* b) { return a->id < b->id; });
+    SupportRegistry& support = supportRegistry(*this);
+    std::ostringstream out;
+    out << "[";
+    bool firstThread = true;
+    for (GuestThread* t : list) {
+        const Diag::ThreadCallRing* ring = t->cpu.call_ring.load(std::memory_order_acquire);
+        if (!ring) continue;   // the thread never made a host call
+        out << (firstThread ? "" : ",") << "{\"thread\":" << t->id << ",\"total\":" << ring->total() << ",\"calls\":[";
+        firstThread = false;
+        bool firstCall = true;
+        for (const auto& r : ring->last(perThread)) {
+            const char* kind = r.kind == Diag::CallKind::Hle ? "hle" : r.kind == Diag::CallKind::ObjC ? "objc" : r.kind == Diag::CallKind::Gl ? "gl" : "none";
+            // Only HLE entries carry a name today; ObjC and GL entries are not pushed yet.
+            const std::string name = r.kind == Diag::CallKind::Hle ? hleFunctionName(r.id) : std::string();
+            // The registry is keyed by the raw engine symbol; `name` is demangled for display only.
+            const std::string symbol = r.kind == Diag::CallKind::Hle ? engine_->hleName(r.id) : std::string();
+            out << (firstCall ? "" : ",") << "{\"seq\":" << r.seq << ",\"kind\":\"" << kind << "\",\"name\":" << quote(name);
+            firstCall = false;
+            // A function that was declared Stub/Approx/Unavailable says so; an undeclared one gets no status
+            // (missing metadata never means Real).
+            if (!symbol.empty()) {
+                if (const auto rec = support.find(symbol)) out << ",\"status\":\"" << supportStatusName(rec->status) << "\"";
+            }
+            out << "}";
+        }
+        out << "]}";
+    }
+    out << "]";
+    return out.str();
+}
+
 std::string Process::crashBundle() {
     if (!crashed_) return "null";
     std::ostringstream out;
@@ -1140,7 +1189,7 @@ std::string Process::crashBundle() {
         }
     }
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count();
-    out << "],\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
+    out << "],\"callRing\":" << callRingJson(kCrashBundleRingEntries) << ",\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
     return out.str();
 }
 
