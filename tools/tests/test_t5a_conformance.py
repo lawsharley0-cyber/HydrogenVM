@@ -9,7 +9,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from unittest import mock
 
@@ -108,30 +107,38 @@ class TestTestLabProcess(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "child-survived"
             fifo = Path(directory) / "child-pipe"
+            release_fifo = Path(directory) / "release-pipe"
             os.mkfifo(fifo)
+            os.mkfifo(release_fifo)
             read_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
             self.addCleanup(os.close, read_fd)
+            release_fd = os.open(release_fifo, os.O_RDWR | os.O_NONBLOCK)
+            self.addCleanup(os.close, release_fd)
             child = (
-                "import pathlib, sys, time; "
+                "import pathlib, sys; "
+                "release = open(sys.argv[3], 'rb', buffering=0); "
                 "pipe = open(sys.argv[2], 'wb', buffering=0); pipe.write(b'R'); "
-                "print('ready', flush=True); time.sleep(2); pathlib.Path(sys.argv[1]).touch()"
+                "print('ready', flush=True); "
+                "assert release.read(1) == b'G'; pathlib.Path(sys.argv[1]).touch()"
             )
             parent = (
                 "import subprocess, sys, time; "
-                "child = subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2], sys.argv[3]], "
+                "child = subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]], "
                 "stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True); "
                 "assert child.stdout.readline() == 'ready\\n'; "
                 "print('started', flush=True); print('diagnostic', file=sys.stderr, flush=True); time.sleep(10)"
             )
-            cmd = [sys.executable, "-c", parent, child, str(marker), str(fifo)]
-            with self.assertRaises(subprocess.TimeoutExpired) as raised:
-                run_testlab(cmd, timeout=1)
+            cmd = [sys.executable, "-c", parent, child, str(marker), str(fifo), str(release_fifo)]
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                    run_testlab(cmd, timeout=1)
+            finally:
+                os.write(release_fd, b"G")
             self.assertEqual(raised.exception.stdout, "started\n")
             self.assertEqual(raised.exception.stderr, "diagnostic\n")
             self.assertEqual(os.read(read_fd, 1), b"R", "descendant did not start")
             self.assertTrue(select.select([read_fd], [], [], 1)[0], "descendant still holds the pipe open")
             self.assertEqual(os.read(read_fd, 1), b"", "descendant still holds the pipe open")
-            time.sleep(2)
             self.assertFalse(marker.exists(), "a descendant survived the timeout")
 
 
