@@ -27,6 +27,8 @@ on:
       - 'tests/ios/apps/objcsymbolication/**'
       - 'tools/test_objc_symbolication.py'
       - 'tools/hvm_testlab.py'
+      - 'tools/ios_build.py'
+      - 'tools/tests/test_ios_build.py'
       - 'tools/testlab_schema/**'
       - '.github/workflows/testlab.yml'
   workflow_dispatch:
@@ -62,6 +64,9 @@ jobs:
 
       - name: Test Lab runner unit tests
         run: python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
+
+      - name: iOS build unit tests
+        run: python3 -m unittest discover -s tools/tests -p test_ios_build.py -v
 
       - name: Cache ld64 (cctools-port)
         id: cctools

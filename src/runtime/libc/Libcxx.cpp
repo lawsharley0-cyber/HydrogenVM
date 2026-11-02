@@ -177,7 +177,7 @@ void registerLibcxx(Process& p) {
 
     p.def<&ts_ctor>("__ZNSt3__115__thread_structC1Ev");
     supportDef<&ts_dtor>(p, "__ZNSt3__115__thread_structD1Ev", SupportStatus::Stub,
-                         "Empty destructor; no thread-local cleanup");
+                         "Thread-struct destructor does nothing");
 
     p.def<&t_dtor>("__ZNSt3__16threadD1Ev");
     p.def<&t_join>("__ZNSt3__16thread4joinEv");
