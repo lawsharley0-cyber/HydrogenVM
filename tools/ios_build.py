@@ -110,7 +110,7 @@ def run(cmd, **kw):
         p = subprocess.run(cmd, capture_output=True, text=True, **kw)
     except FileNotFoundError as e:
         sys.stderr.write(f"tools/ios_build.py: error: command {cmd[0]!r} not found: {e}\n")
-        raise SystemExit(3)
+        raise SystemExit(3) from e
     err = "\n".join(l for l in (p.stderr or "").splitlines() if "directory not found for option" not in l and "was built for newer iOS version" not in l)
     if p.returncode != 0:
         sys.stderr.write(" ".join(cmd) + "\n" + err + "\n" + (p.stdout or ""))

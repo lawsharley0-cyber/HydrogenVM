@@ -1,5 +1,6 @@
 """Tests for iOS build prerequisite detection."""
 import importlib.util
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -11,6 +12,16 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import ios_build
+
+
+class TestRun(unittest.TestCase):
+    def test_missing_command_exits_3_with_diagnostic(self):
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+            ios_build.run(["/nonexistent/hvm-no-such-tool", "--version"])
+        self.assertEqual(raised.exception.code, 3)
+        self.assertIn("hvm-no-such-tool", stderr.getvalue())
+        self.assertIn("not found", stderr.getvalue())
 
 
 class TestPrerequisites(unittest.TestCase):
