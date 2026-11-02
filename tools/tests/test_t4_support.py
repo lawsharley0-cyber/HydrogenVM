@@ -7,10 +7,13 @@ from pathlib import Path
 import random
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import zipfile
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 TOOLS_DIR = ROOT_DIR / "tools"
@@ -68,6 +71,39 @@ class TestCensusWithoutBinary(unittest.TestCase):
             with self.assertRaises(ValueError):
                 census.census_ipa(bad_ipa, {"symbols": [], "classes": []})
 
+    def test_reference_census_uses_discovered_tools(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            system_bin = root / "system-bin"
+            toolchain_bin = root / "tools" / "toolchain" / "bin"
+            system_bin.mkdir()
+            toolchain_bin.mkdir(parents=True)
+            for path, output in (
+                (system_bin / "llvm-nm", "         (undefined) external _printf\n"),
+                (toolchain_bin / "llvm-nm", ""),
+                (toolchain_bin / "llvm-objdump", ""),
+            ):
+                path.write_text(f"#!/bin/sh\nprintf '%s' '{output}'\n")
+                path.chmod(0o755)
+
+            ipa = root / "fixture.ipa"
+            with zipfile.ZipFile(ipa, "w") as archive:
+                archive.writestr("Payload/App.app/App", struct.pack("<7I", 0xfeedface, 0, 0, 0, 0, 0, 0))
+            reference = {"imported_non_objc_symbols": 1, "unimplemented_symbols": 0,
+                         "missing_or_stubbed_classes": 0, "missing_selectors_classes_constants": 0}
+            fixture = {ipa.name: {"sha256": census.sha256_file(ipa), "slice": "armv7", "thin": True,
+                                  "payload_path": "Payload/App.app/App", "reference": reference}}
+            test = TestCensus("test_reproduces_reference_numbers")
+            test.manifest = {"symbols": [{"name": "_printf", "status": "Real"}], "classes": []}
+            with mock.patch.object(sys.modules[__name__], "ROOT_DIR", root), \
+                 mock.patch.object(census, "FIXTURE_MANIFEST", fixture), \
+                 mock.patch.dict(os.environ, {"PATH": str(system_bin)}):
+                test.test_reproduces_reference_numbers()
+                system_objdump = system_bin / "llvm-objdump"
+                system_objdump.write_text("#!/bin/sh\nexit 0\n")
+                system_objdump.chmod(0o755)
+                self.assertEqual(census.census_ipa(ipa, test.manifest)["imported_non_objc_symbols"], 1)
+
 
 class TestCensus(unittest.TestCase):
     @classmethod
@@ -108,7 +144,7 @@ class TestCensus(unittest.TestCase):
                 continue
 
             with self.subTest(fixture=fixture_name):
-                res = census.census_ipa(ipa_path, self.manifest)
+                res = census.census_ipa(ipa_path, self.manifest, nm_tool=nm_tool, objdump_tool=objdump_tool)
                 self.assertEqual(res["slice"], meta["slice"], fixture_name)
                 ref = meta["reference"]
                 self.assertTrue(res["is_fixture"])
