@@ -1412,14 +1412,89 @@ void tf_setDelegate(Ctx& x, id self, SEL, id d) { TFD(x, self).delegate = d; }
 bool tf_editing(Ctx& x, id self, SEL) { return TFD(x, self).editing; }
 bool tf_secure(Ctx& x, id self, SEL) { return TFD(x, self).secure; }
 void tf_setSecure(Ctx& x, id self, SEL, bool b) { TFD(x, self).secure = b; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
-// UITextInputTraits and assorted text-view/field setters that only affect the on-screen
-// keyboard (which HydrogenVM doesn't show) or input accessory views: accepted, no effect.
+// Assorted text-view/field setters that only affect input accessory views or styling the host keyboard
+// doesn't model: accepted, no effect.
+// Keyboard traits are stored (not ignored): a focused field hands them to the host's native keyboard (#303).
+void tf_setKeyboardType(Ctx& x, id self, SEL, int32_t v) { TFD(x, self).keyboardType = v; }
+int32_t tf_keyboardType(Ctx& x, id self, SEL) { return TFD(x, self).keyboardType; }
+void tf_setReturnKeyType(Ctx& x, id self, SEL, int32_t v) { TFD(x, self).returnKeyType = v; }
+int32_t tf_returnKeyType(Ctx& x, id self, SEL) { return TFD(x, self).returnKeyType; }
+void tf_setAutocap(Ctx& x, id self, SEL, int32_t v) { TFD(x, self).autocap = v; }
+int32_t tf_autocap(Ctx& x, id self, SEL) { return TFD(x, self).autocap; }
+void tf_setAutocorrect(Ctx& x, id self, SEL, int32_t v) { TFD(x, self).autocorrect = v; }
+int32_t tf_autocorrect(Ctx& x, id self, SEL) { return TFD(x, self).autocorrect; }
 void tf_ignoreObj(Ctx&, id, SEL, id) {}
 void tf_ignoreInt(Ctx&, id, SEL, int32_t) {}
 void tf_ignoreBool(Ctx&, id, SEL, bool) {}
 id tf_nilObj(Ctx&, id, SEL) { return 0; }
 int32_t tf_zeroInt(Ctx&, id, SEL) { return 0; }
 bool tf_trueBool(Ctx&, id, SEL) { return true; }
+
+// ---- on-screen keyboard bridge (#303)
+bool isTextView(Ctx& x, id self) { return rt(x).isKindOf(self, rt(x).getClass("UITextView")); }
+void publishKeyboard(Ctx& x, id self, bool active) {
+    std::function<void(const TextInputRequest&)> obs;
+    { std::lock_guard<std::mutex> lk(ui(x).inputMu); obs = ui(x).textInputObserver; }
+    if (!obs) return;
+    TextInputRequest q;
+    q.active = active;
+    if (active) {
+        const TextFieldData& d = TFD(x, self);
+        q.text = textOf(x, d.text);
+        q.placeholder = textOf(x, d.placeholder);
+        q.keyboardType = d.keyboardType; q.returnKeyType = d.returnKeyType;
+        q.autocapitalization = d.autocap; q.autocorrection = d.autocorrect;
+        q.secure = d.secure; q.multiline = isTextView(x, self);
+    }
+    obs(q);
+}
+bool delegateResponds(Ctx& x, id del, const char* sel) { return del && rt(x).respondsTo(del, rt(x).sel(sel)); }
+
+// Apply the host's new full text as one replacement (common prefix/suffix, UTF-16 units), asking the guest's
+// delegate first, as iOS does for every typed or deleted character.
+void applyHostText(Ctx& x, id self, const std::string& newUtf8) {
+    TextFieldData& d = TFD(x, self);
+    const bool tv = isTextView(x, self);
+    const std::u16string oldS = d.text ? Foundation::stringValue(x, d.text) : std::u16string();
+    const std::u16string newS = Foundation::stringValue(x, makeString(x, newUtf8));
+    size_t pre = 0;
+    while (pre < oldS.size() && pre < newS.size() && oldS[pre] == newS[pre]) ++pre;
+    size_t suf = 0;
+    while (suf < oldS.size() - pre && suf < newS.size() - pre && oldS[oldS.size() - 1 - suf] == newS[newS.size() - 1 - suf]) ++suf;
+    if (pre == oldS.size() && pre == newS.size()) return;   // unchanged
+    const uint32_t loc = uint32_t(pre), len = uint32_t(oldS.size() - pre - suf);
+    const id rep = makeString(x, newS.substr(pre, newS.size() - pre - suf));
+    const char* shouldSel = tv ? "textView:shouldChangeTextInRange:replacementText:" : "textField:shouldChangeCharactersInRange:replacementString:";
+    if (delegateResponds(x, d.delegate, shouldSel) && !sendBool(x, d.delegate, shouldSel, {self, loc, len, rep})) {
+        publishKeyboard(x, self, true);   // refused: tell the keyboard what the text really is
+        return;
+    }
+    tf_setText(x, self, 0, makeString(x, newS));
+    Foundation::postNotification(x, tv ? "UITextViewTextDidChangeNotification" : "UITextFieldTextDidChangeNotification", self);
+    if (tv) {
+        if (delegateResponds(x, d.delegate, "textViewDidChange:")) rt(x).send(x.cpu, d.delegate, "textViewDidChange:", {self});
+    } else if (rt(x).respondsTo(self, rt(x).sel("sendActionsForControlEvents:"))) {
+        rt(x).send(x.cpu, self, "sendActionsForControlEvents:", {1u << 17});   // UIControlEventEditingChanged
+    }
+}
+void handleTextInput(Ctx& x, const TextInputEvent& ev) {
+    const id fr = ui(x).firstResponder;
+    if (!fr || !rt(x).hostIf<TextFieldData>(fr)) return;
+    rt(x).retain(x.cpu, fr);
+    switch (ev.kind) {
+    case TextInputEvent::SetText: applyHostText(x, fr, ev.text); break;
+    case TextInputEvent::Return:
+        if (!isTextView(x, fr)) {
+            const id del = TFD(x, fr).delegate;
+            if (delegateResponds(x, del, "textFieldShouldReturn:")) sendBool(x, del, "textFieldShouldReturn:", {fr});
+            if (rt(x).respondsTo(fr, rt(x).sel("sendActionsForControlEvents:")))
+                rt(x).send(x.cpu, fr, "sendActionsForControlEvents:", {1u << 19});   // UIControlEventEditingDidEndOnExit
+        }
+        break;
+    case TextInputEvent::Dismiss: rt(x).send(x.cpu, fr, "resignFirstResponder"); break;
+    }
+    rt(x).release(x.cpu, fr);
+}
 bool tf_canBecome(Ctx& x, id self, SEL) {
     const id del = TFD(x, self).delegate;
     if (del && rt(x).respondsTo(del, rt(x).sel("textFieldShouldBeginEditing:")))
@@ -1437,6 +1512,7 @@ bool tf_become(Ctx& x, id self, SEL s) {
         Foundation::postNotification(x, "UITextFieldTextDidBeginEditingNotification", self);
         Foundation::postNotification(x, "UIKeyboardWillShowNotification", 0);
         Foundation::postNotification(x, "UIKeyboardDidShowNotification", 0);
+        publishKeyboard(x, self, true);
     }
     return ok;
 }
@@ -1452,8 +1528,17 @@ bool tf_resign(Ctx& x, id self, SEL s) {
         Foundation::postNotification(x, "UITextFieldTextDidEndEditingNotification", self);
         Foundation::postNotification(x, "UIKeyboardWillHideNotification", 0);
         Foundation::postNotification(x, "UIKeyboardDidHideNotification", 0);
+        publishKeyboard(x, self, false);
     }
     return ok;
+}
+// A tap on a text field focuses it (asking for the keyboard), as on iOS.
+void tf_touchesEnded(Ctx& x, id self, SEL s, id touches, id event) {
+    rt(x).sendSuper(x.cpu, self, ui(x).control, s, {touches, event});
+    if (ui(x).firstResponder != self) rt(x).send(x.cpu, self, "becomeFirstResponder");
+}
+void tv_touchesEnded(Ctx& x, id self, SEL, id, id) {
+    if (ui(x).firstResponder != self) rt(x).send(x.cpu, self, "becomeFirstResponder");
 }
 void tf_drawRect(Ctx& x, id self, SEL, CGRect) {
     const id ctx = CG::currentContext(x);
@@ -2122,10 +2207,12 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
       .m<&tf_canBecome>("canBecomeFirstResponder", "c@:")
       .m<&tf_become>("becomeFirstResponder", "c@:")
       .m<&tf_resign>("resignFirstResponder", "c@:")
-      .m<&tf_ignoreInt>("setKeyboardType:", "v@:i").m<&tf_zeroInt>("keyboardType", "i@:")
-      .m<&tf_ignoreInt>("setReturnKeyType:", "v@:i").m<&tf_zeroInt>("returnKeyType", "i@:")
+      .m<&tf_setKeyboardType>("setKeyboardType:", "v@:i").m<&tf_keyboardType>("keyboardType", "i@:")
+      .m<&tf_setReturnKeyType>("setReturnKeyType:", "v@:i").m<&tf_returnKeyType>("returnKeyType", "i@:")
       .m<&tf_ignoreInt>("setKeyboardAppearance:", "v@:i")
-      .m<&tf_ignoreInt>("setAutocorrectionType:", "v@:i").m<&tf_ignoreInt>("setAutocapitalizationType:", "v@:i")
+      .m<&tf_setAutocorrect>("setAutocorrectionType:", "v@:i").m<&tf_autocorrect>("autocorrectionType", "i@:")
+      .m<&tf_setAutocap>("setAutocapitalizationType:", "v@:i").m<&tf_autocap>("autocapitalizationType", "i@:")
+      .m<&tf_touchesEnded>("touchesEnded:withEvent:", "v@:@@")
       .m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i").m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c")
       .m<&tf_ignoreInt>("setClearButtonMode:", "v@:i").m<&tf_ignoreBool>("setClearsOnBeginEditing:", "v@:c")
       .m<&tf_ignoreInt>("setContentVerticalAlignment:", "v@:i").m<&tf_ignoreInt>("setContentHorizontalAlignment:", "v@:i")
@@ -2145,11 +2232,12 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
           .m<&tf_canBecome>("canBecomeFirstResponder", "c@:")
           .m<&tf_become>("becomeFirstResponder", "c@:")
           .m<&tf_resign>("resignFirstResponder", "c@:")
-          .m<&tf_ignoreInt>("setKeyboardType:", "v@:i").m<&tf_zeroInt>("keyboardType", "i@:")
-          .m<&tf_ignoreInt>("setReturnKeyType:", "v@:i").m<&tf_zeroInt>("returnKeyType", "i@:")
-          .m<&tf_ignoreInt>("setKeyboardAppearance:", "v@:i").m<&tf_ignoreInt>("setAutocorrectionType:", "v@:i")
-          .m<&tf_ignoreInt>("setAutocapitalizationType:", "v@:i").m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i")
-          .m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c").m<&tf_ignoreBool>("setSecureTextEntry:", "v@:c")
+          .m<&tf_setKeyboardType>("setKeyboardType:", "v@:i").m<&tf_keyboardType>("keyboardType", "i@:")
+          .m<&tf_setReturnKeyType>("setReturnKeyType:", "v@:i").m<&tf_returnKeyType>("returnKeyType", "i@:")
+          .m<&tf_ignoreInt>("setKeyboardAppearance:", "v@:i").m<&tf_setAutocorrect>("setAutocorrectionType:", "v@:i")
+          .m<&tf_setAutocap>("setAutocapitalizationType:", "v@:i").m<&tv_touchesEnded>("touchesEnded:withEvent:", "v@:@@").m<&tf_ignoreInt>("setSpellCheckingType:", "v@:i")
+          .m<&tf_ignoreBool>("setEnablesReturnKeyAutomatically:", "v@:c")
+          .m<&tf_secure>("isSecureTextEntry", "c@:").m<&tf_setSecure>("setSecureTextEntry:", "v@:c")
           .m<&tf_ignoreObj>("setInputView:", "v@:@").m<&tf_ignoreObj>("setInputAccessoryView:", "v@:@")
           .m<&tf_nilObj>("inputView").m<&tf_nilObj>("inputAccessoryView")
           .m<&tf_ignoreBool>("setEditable:", "v@:c").m<&tf_trueBool>("isEditable", "c@:")
@@ -2389,6 +2477,19 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         p.mem().write<uint32_t>(cell, Foundation::constString(p, n));
     }
+}
+
+void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&)> observer) {
+    UIState& u = ui(p);
+    std::lock_guard<std::mutex> lk(u.inputMu);
+    u.textInputObserver = std::move(observer);
+}
+void submitTextInput(Process& p, TextInputEvent ev) {
+    Process* pp = &p;
+    Foundation::mainRunLoop(p).post([pp, ev = std::move(ev)](CPU::Cpu& cpu) {
+        Ctx cx{*pp, cpu, pp->mem()};
+        handleTextInput(cx, ev);
+    });
 }
 
 } // namespace Hydrogen::Runtime::UIKit

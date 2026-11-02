@@ -40,6 +40,19 @@ typedef NS_ENUM(NSInteger, HVMLogLevel) {
 typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhaseMoved = 1, HVMTouchPhaseEnded = 3, HVMTouchPhaseCancelled = 4 };
 
 /// One running guest app. Callbacks arrive on the main queue.
+/// What a focused guest text field asks the host keyboard for (UIKeyboardType / UIReturnKeyType raw values).
+@interface HVMTextInputRequest : NSObject
+@property (nonatomic, readonly) BOOL active;   // NO = hide the keyboard
+@property (nonatomic, readonly, copy) NSString *text;
+@property (nonatomic, readonly, copy) NSString *placeholder;
+@property (nonatomic, readonly) NSInteger keyboardType;
+@property (nonatomic, readonly) NSInteger returnKeyType;
+@property (nonatomic, readonly) NSInteger autocapitalizationType;
+@property (nonatomic, readonly) NSInteger autocorrectionType;
+@property (nonatomic, readonly) BOOL secure;
+@property (nonatomic, readonly) BOOL multiline;
+@end
+
 @interface HVMSession : NSObject
 - (instancetype)initWithBundlePath:(NSString *)bundlePath homePath:(NSString *)homePath;
 - (instancetype)init NS_UNAVAILABLE;
@@ -83,6 +96,15 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly, copy, nullable) NSString *crashBundle;
 /// When YES, missing functions log and return 0 instead of stopping the app.
 @property (nonatomic) BOOL keepGoing;
+
+/// A guest text field gained or lost focus, or its text changed behind the keyboard (main queue).
+@property (nonatomic, copy, nullable) void (^onTextInput)(HVMTextInputRequest *request);
+/// The player's new full text for the focused guest field (delegate-checked in the guest).
+- (void)submitText:(NSString *)text;
+/// The return key was pressed on the host keyboard.
+- (void)submitReturnKey;
+/// The player dismissed the host keyboard; the guest field resigns first responder.
+- (void)dismissKeyboard;
 
 - (void)start;
 /// Stops immediately (no chance to save).

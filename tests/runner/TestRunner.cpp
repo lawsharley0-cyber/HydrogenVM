@@ -2835,7 +2835,7 @@ int runFullSubsystemTests() {
         del.method("textFieldDidEndEditing:", [&](Ctx&) { ++ended; }, "v@:@");
         del.method("changed:", [&](Ctx&) { ++editingChanged; }, "v@:@");
         del.method("textViewDidChange:", [&](Ctx&) { ++viewChanged; }, "v@:@");
-        const ObjC::id delegate = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, del.cls(), r.selAlloc)), r.selInit));
+        const ObjC::id delegate = r.createInstance(del.cls());
         const auto pump = [&] { for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.0); };
         const auto textOfField = [&](ObjC::id f) { return Foundation::utf8(cx, ObjC::id(r.send(cpu, f, "text"))); };
 
