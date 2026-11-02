@@ -5518,23 +5518,33 @@ int runFullSubsystemTests() {
             r.release(cpu, mutableCategory); r.release(cpu, mutablePlayback);
             r.release(cpu, mutableVoice); r.release(cpu, mutableVideo);
 
-            {   // The first currentRoute read builds the route: concurrent first reads must all see the same object.
-                std::atomic<unsigned> routeReady{0};
-                std::atomic<bool> routeStart{false};
-                std::vector<uint32_t> routes(4, 0);
-                auto routeWorker = [&](unsigned which) {
-                    CPU::Cpu workerCpu;
-                    workerCpu.r[CPU::kSP] = 0xbb000000 + (which + 1) * 0x10000 - 256;
-                    ++routeReady;
-                    while (!routeStart) std::this_thread::yield();
-                    routes[which] = uint32_t(r.send(workerCpu, session, "currentRoute"));
-                };
-                std::thread t0(routeWorker, 0), t1(routeWorker, 1), t2(routeWorker, 2), t3(routeWorker, 3);
-                while (routeReady != 4) std::this_thread::yield();
-                routeStart = true;
-                t0.join(); t1.join(); t2.join(); t3.join();
-                check(routes[0] != 0 && routes[0] == routes[1] && routes[1] == routes[2] && routes[2] == routes[3],
-                      "concurrent first reads of AVAudioSession currentRoute all get one route");
+            {   // The first currentRoute read builds the route: concurrent first reads must all see the same object. The
+                // cache is per session, so each round uses a fresh process (a cold cache) to make the race likely.
+                bool allSame = true;
+                for (int round = 0; round < 40 && allSame; ++round) {
+                    ProcessConfig routeCfg;
+                    routeCfg.homePath = "/tmp/hvm_route_race";
+                    Process routeProc(routeCfg);
+                    auto& rr = ObjC::rt(routeProc);
+                    const ObjC::id routeSession = ObjC::id(rr.send(routeProc.mainThread().cpu, rr.getClass("AVAudioSession"), "sharedInstance"));
+                    routeProc.mem().map(0xbb000000, 0x40000, Memory::kProtRW);
+                    std::atomic<unsigned> routeReady{0};
+                    std::atomic<bool> routeStart{false};
+                    std::vector<uint32_t> routes(4, 0);
+                    auto routeWorker = [&](unsigned which) {
+                        CPU::Cpu workerCpu;
+                        workerCpu.r[CPU::kSP] = 0xbb000000 + (which + 1) * 0x10000 - 256;
+                        ++routeReady;
+                        while (!routeStart) std::this_thread::yield();
+                        routes[which] = uint32_t(rr.send(workerCpu, routeSession, "currentRoute"));
+                    };
+                    std::thread t0(routeWorker, 0), t1(routeWorker, 1), t2(routeWorker, 2), t3(routeWorker, 3);
+                    while (routeReady != 4) std::this_thread::yield();
+                    routeStart = true;
+                    t0.join(); t1.join(); t2.join(); t3.join();
+                    allSame = routes[0] != 0 && routes[0] == routes[1] && routes[1] == routes[2] && routes[2] == routes[3];
+                }
+                check(allSame, "concurrent first reads of AVAudioSession currentRoute all get one route");
             }
             const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
             const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
