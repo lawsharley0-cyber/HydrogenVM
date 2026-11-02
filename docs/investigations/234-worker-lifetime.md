@@ -65,3 +65,50 @@ appear and the report says crashed=true, but process/report statuses are 0:
 The unchanged five-second watchdog must instead yield process/report status
 70. tools/test_shutdown_watchdog.py builds and drives that minimal guest; CI
 runs it after the normal build. It does not simulate a successful game save.
+
+## Completed Linux validation
+
+Candidate runtime source 665580a029e7fe464aeb35b497876c85e2f02e27 passed
+local fulltest 488/488, Test Lab25/25 with zero skips, complete enabled
+tools202/202 with zero skips, and the real guest watchdog negative regression.
+[Actions CI41364588649](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588649)
+tested that head as merge eb26f8ea17ae44e08395137f5eade4c3dd5463bf. Its log
+confirms the full-runtime ASan/UBSan worker-lifetime test, fulltest/performance,
+202 tools tests and the actual shutdown-watchdog regression all passed.
+[Test Lab41364588715](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/41364588715)
+also passed. Stub-honesty still fails its unchanged baseline findings.
+
+Four private software probes ran10 seconds before graceful stop. All reported
+exitStatus=0/crashed=false and saved/closed. Total process wall time minus the
+ten-second run duration is a conservative upper bound including startup and
+final arena destruction, not a precise UI stopwatch:
+
+| Fixture | Shutdown upper bound | Presented frames |
+|---|---:|---:|
+| Exact Angry Birds IPA |1.170s|92|
+| Extracted Minecraft PE Lite |0.837s|35|
+| Extracted Talking Larry |0.311s|24|
+| Extracted Mega Jump |0.362s|17|
+
+Private evidence: teardown-four-apps-1793578417817425308 under
+HVM_FIXTURE_ROOT/evidence. A separate Mega Jump batch completed all ten
+launch banners in one host process, returned zero in27.743s and retained
+the same home: teardown-ten-launches-1793578536836452643. It exercises
+relaunch/arena reuse for one fixture, not ten different physical-device games.
+The synthetic regression independently checks live arena counts across ten
+subsequent Process lifetimes. No private screenshots/logs/saves are committed.
+
+## Physical-device owner capture
+
+Record full installed commit/build, renderer, device/iOS and measured native
+page size; fingerprint each private IPA and preserve every home. Time the
+close action until the library is usable and arena count is zero for Angry
+Birds, Minecraft PE Lite, Talking Larry and Mega Jump. Retain session logs
+and save bytes. Then run at least ten sequential game opens/closes in the
+same HydrogenVM app process, recording the order, per-close duration, native
+resident footprint and live arena count after each. A pending teardown must
+retain its arena and contain the timeout instead of admitting another game.
+For any failure export #264's recovered crash JSON/full log and matching
+iOS .ips/dSYM, including all host stacks. A force-quit or OS restart cannot
+count as arena release by the emulator. Keep #234 open until that device
+sequence and the remaining umbrella children are qualified.
