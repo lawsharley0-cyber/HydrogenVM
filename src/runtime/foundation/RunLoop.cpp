@@ -474,8 +474,8 @@ bool r_runModeBeforeDate(Ctx& x, id self, SEL, id mode, id date) {
     return true;
 }
 // The mode being run, as the guest's string (no internal "s:" key prefix); nil when the loop is not running.
-id r_currentMode(Ctx& x, id, SEL) {
-    const std::string key = currentLoop(x).activeModeKey();
+id r_currentMode(Ctx& x, id self, SEL) {
+    const std::string key = loopOf(x, self).activeModeKey();   // the receiver's loop, not the calling thread's
     if (key.empty()) return 0;
     return constString(x.proc, key.rfind("s:", 0) == 0 ? key.substr(2) : key);
 }
