@@ -7540,11 +7540,22 @@ int runFullSubsystemTests() {
         const uint32_t addrProxyFtp = callDlsym("kCFProxyTypeFTP");
         const uint32_t addrProxyJs = callDlsym("kCFProxyTypeAutoConfigurationJavaScript");
 
-        bool okHttp = addrHttp != 0 && proc.mem().read<uint32_t>(addrHttp) != 0;
-        bool okProxyFtp = addrProxyFtp != 0 && proc.mem().read<uint32_t>(addrProxyFtp) != 0;
-        bool okProxyJs = addrProxyJs != 0 && proc.mem().read<uint32_t>(addrProxyJs) != 0;
+        Ctx cx{proc, cpu, proc.mem()};
+        auto hasValue = [&](uint32_t addr, const char* expected) {
+            return addr != 0 && proc.mem().read<uint32_t>(addr) != 0 &&
+                   Foundation::utf8(cx, proc.mem().read<uint32_t>(addr)) == expected;
+        };
+        bool okHttp = hasValue(addrHttp, "HTTP/1.1");
+        bool okProxyFtp = hasValue(addrProxyFtp, "kCFProxyTypeFTP");
+        bool okProxyJs = hasValue(addrProxyJs, "kCFProxyTypeAutoConfigurationJavaScript");
 
         check(okHttp && okProxyFtp && okProxyJs, "dlsym(RTLD_DEFAULT) resolves dynamic CFNetwork and proxy constants");
+        check(callDlsym("kHVMDefinitelyUnknownType") == 0, "dlsym returns 0 for an unknown constant-like name");
+        check(callDlsym("OBJC_CLASS_$_HVMDefinitelyUnknown") == 0, "dlsym returns 0 for an unknown class");
+        check(callDlsym("hvmDefinitelyUnknownFunction") == 0, "dlsym returns 0 for an unknown function");
+        const uint32_t accuracy = callDlsym("kCLLocationAccuracyBest");
+        check(accuracy && proc.mem().read<double>(accuracy) == -1,
+              "dlsym resolves a recognized numeric framework constant");
     }
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);

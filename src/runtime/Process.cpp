@@ -338,13 +338,13 @@ std::optional<uint32_t> Process::lookupSymbol(const std::string& name) const {
     return std::nullopt;
 }
 
-void Process::addMissingSymbolResolver(std::function<uint32_t(const std::string&)> fn) {
+void Process::addMissingSymbolResolver(MissingSymbolResolver fn) {
     missingResolvers_.push_back(std::move(fn));
 }
 
 uint32_t Process::resolveMissingSymbol(const std::string& name) {
     for (auto& r : missingResolvers_)
-        if (uint32_t a = r(name)) { defineData(name, a); return a; }
+        if (uint32_t a = r(name, MissingSymbolMode::DynamicLookup)) { defineData(name, a); return a; }
     return 0;
 }
 
@@ -413,11 +413,11 @@ uint32_t Process::resolveImport(const Loader::BindRecord& b) {
     if (b.weakImport && !b.lazy) {
         if (b.symbol.compare(0, 6, "_OBJC_") == 0) return 0;
         for (auto& r : missingResolvers_)
-            if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
+            if (uint32_t a = r(b.symbol, MissingSymbolMode::Import)) { defineData(b.symbol, a); return a; }
         return 0;
     }
     for (auto& r : missingResolvers_)
-        if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
+        if (uint32_t a = r(b.symbol, MissingSymbolMode::Import)) { defineData(b.symbol, a); return a; }
     return makeMissingStub(b.symbol);
 }
 
