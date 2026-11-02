@@ -7425,6 +7425,29 @@ int runFullSubsystemTests() {
               ringJson.find("\"name\":\"test_call_ring_stub_fn\"") != std::string::npos &&
               ringJson.find("\"status\"") == stubAt && ringJson.find("\"status\"", stubAt + 1) == std::string::npos,
               "callRingJson marks a declared Stub call and leaves unlabelled calls without a status");
+
+        // A worker that has finished (the one that crashed is marked finished before the bundle is written)
+        // is still in the dump.
+        const uint32_t ringWorkerFn = ringProc.defineFunction("test_call_ring_worker_fn", [&](Ctx& x) {
+            ringProc.engine().callHle(&x.cpu, ringStubIndex);   // a host call made on the worker lands in the worker's ring
+            x.cpu.r[0] = 0;
+        });
+        const uint32_t ringWorker = ringProc.startThread(ringWorkerFn, 0, 64u << 10, false);
+        uint32_t ringWorkerResult = 1;
+        const bool ringWorkerJoined = ringProc.joinThread(ringWorker, &ringWorkerResult);
+        const std::string ringAfter = ringProc.callRingJson(8);
+        size_t ringThreads = 0;   // the dump names a thread by its id (not the pthread handle startThread returns)
+        for (size_t at = ringAfter.find("\"thread\":"); at != std::string::npos; at = ringAfter.find("\"thread\":", at + 1)) ++ringThreads;
+        check(ringWorkerJoined && ringThreads == 2,
+              "callRingJson keeps a finished worker's ring so a crashed thread is not dropped");
+
+        // Generated placeholders for missing imports and C++ vtable slots are declared Stub, never unlabelled.
+        ringProc.makeMissingStub("_hvm_test_missing_import");
+        ringProc.makeMissingStub("__ZTV13HVMTestMissing");
+        const auto missingFn = supportRegistry(ringProc).find("_hvm_test_missing_import");
+        const auto missingSlot = supportRegistry(ringProc).find("__ZTV13HVMTestMissing$hvm_slot0");
+        check(missingFn && missingFn->status == SupportStatus::Stub && missingSlot && missingSlot->status == SupportStatus::Stub,
+              "a generated missing-function or vtable-slot stub is recorded as Stub");
     }
 
     // Teardown diagnostics: a guest thread still running (blocked in the real `read` on

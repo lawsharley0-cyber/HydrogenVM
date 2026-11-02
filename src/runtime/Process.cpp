@@ -357,7 +357,10 @@ uint32_t Process::makeMissingStub(const std::string& name) {
         auto trapTable = [&](uint32_t block, uint32_t firstSlotWord, uint32_t words) {
             for (uint32_t i = firstSlotWord; i < words; ++i) {
                 const uint32_t slot = i - firstSlotWord;
-                const uint32_t fn = defineFunction(name + "$hvm_slot" + std::to_string(slot), [this, pretty, slot](Ctx& x) {
+                const std::string slotName = name + "$hvm_slot" + std::to_string(slot);
+                supportRegistry(*this).record({SupportKind::Function, slotName, SupportStatus::Stub,
+                                               "generated placeholder for a C++ virtual slot HydrogenVM does not provide"});
+                const uint32_t fn = defineFunction(slotName, [this, pretty, slot](Ctx& x) {
                     const std::string what = "virtual function #" + std::to_string(slot) + " of " + pretty;
                     reportMissing(what);
                     if (!cfg_.stopOnMissingFunction) { x.cpu.r[0] = x.cpu.r[1] = 0; return; }   // keep going: like other missing functions
@@ -389,6 +392,9 @@ uint32_t Process::makeMissingStub(const std::string& name) {
         return a;
     }
     const std::string pretty = demangle(name);
+    // A placeholder must say so: crash bundles label its calls Stub, never Real.
+    supportRegistry(*this).record({SupportKind::Function, name, SupportStatus::Stub,
+                                   "generated placeholder for an import HydrogenVM does not provide"});
     return defineFunction(name, [this, pretty](Ctx& x) {
         reportMissing(pretty);
         if (cfg_.stopOnMissingFunction)
