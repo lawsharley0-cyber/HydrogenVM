@@ -83,6 +83,32 @@ int main() {
         while (!(uint32_t(r.send(cpu, thread, "isFinished")) & 0xff) && std::chrono::steady_clock::now() < deadline)
             std::this_thread::yield();
         check((uint32_t(r.send(cpu, thread, "isFinished")) & 0xff) != 0, "the same NSThread can complete after a failed launch");
+
+        ObjC::id reentrantThread = 0;
+        bool retainCalled = false, retainedStack = false;
+        auto reentrantClass = r.defineClass("HVMThreadRetainTarget", "NSObject");
+        reentrantClass.method("retain", [&](Ctx& cx) {
+            const auto self = ObjC::id(cx.cpu.r[0]);
+            if (reentrantThread) {
+                retainCalled = true;
+                retainedStack = uint32_t(r.send(cx.cpu, reentrantThread, "stackSize")) == (1u << 20);
+                r.send(cx.cpu, reentrantThread, "setStackSize:", {2u << 20});
+                r.send(cx.cpu, reentrantThread, "start");
+            }
+            cx.cpu.r[0] = r.rootRetain(self);
+        }, "@@:");
+        reentrantClass.method("work:", [](Ctx&) {}, "v@:@");
+        const auto reentrantTarget = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, reentrantClass.cls(), r.selAlloc)), "init"));
+        reentrantThread = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
+                                         "initWithTarget:selector:object:", {reentrantTarget, r.sel("work:"), 0}));
+        r.send(cpu, reentrantThread, "setStackSize:", {1u << 20});
+        r.send(cpu, reentrantThread, "start");
+        const auto reentrantDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!(uint32_t(r.send(cpu, reentrantThread, "isFinished")) & 0xff) && std::chrono::steady_clock::now() < reentrantDeadline)
+            std::this_thread::yield();
+        check(retainCalled && retainedStack && uint32_t(r.send(cpu, reentrantThread, "stackSize")) == (1u << 20) &&
+              (uint32_t(r.send(cpu, reentrantThread, "isFinished")) & 0xff),
+              "retain can inspect the stack and retry start without deadlocking or changing the stack");
         process = nullptr;
     }
     std::filesystem::remove_all(home);

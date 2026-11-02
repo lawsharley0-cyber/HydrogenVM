@@ -1155,8 +1155,11 @@ bool avs_setCategoryOptions(Ctx& x, id self, SEL, id category, uint32_t options,
 }
 void avs_applyMode(Ctx& x, SessionData& d, id mode) {
     avs_keep(x, d.mode, mode);
-    if (mode && Foundation::utf8(x, mode) == "AVAudioSessionModeVideoChat")
-        d.options |= 4u | 8u;   // allow Bluetooth HFP and default to speaker
+    if (mode) {
+        const auto name = Foundation::utf8(x, mode);
+        if (name == "AVAudioSessionModeVoiceChat") d.options |= 4u;  // allow Bluetooth HFP
+        else if (name == "AVAudioSessionModeVideoChat") d.options |= 4u | 8u;  // also default to speaker
+    }
 }
 bool avs_setCategoryModeOptions(Ctx& x, id self, SEL, id category, id mode, uint32_t options, GuestPtr) {
     if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->options = options; avs_applyMode(x, *d, mode); }

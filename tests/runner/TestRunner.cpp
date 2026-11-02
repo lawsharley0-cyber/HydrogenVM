@@ -5338,6 +5338,22 @@ int runFullSubsystemTests() {
                    {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u, 0u});
             check(uint32_t(r.send(cpu, session, "categoryOptions")) == 12u,
                   "AVAudioSession combined video chat setter adds Bluetooth and speaker defaults");
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u});
+            const bool voiceDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 1u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u});
+            check(voiceDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 5u,
+                  "AVAudioSession voice chat adds Bluetooth while preserving existing options");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u, 0u});
+            const bool combinedVoiceDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 1u, 0u});
+            check(combinedVoiceDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 5u,
+                  "AVAudioSession combined voice chat setter adds Bluetooth while preserving options");
             const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
             const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
             const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;

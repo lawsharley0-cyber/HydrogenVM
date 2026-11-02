@@ -786,13 +786,18 @@ id th_initWithTarget(Ctx& x, id self, SEL, id target, SEL sel, id arg) {
 void th_start(Ctx& x, id self, SEL) {
     ThreadData* d = rt(x).hostIf<ThreadData>(self);
     if (!d) return;
-    std::lock_guard<std::mutex> lk(d->stackMu);
-    if (d->started) return;   // NSInvalidArgumentException on iOS; starting twice is a no-op here
-    d->started = true;
+    uint32_t stackSize;
+    {
+        std::lock_guard<std::mutex> lk(d->stackMu);
+        if (d->started) return;   // NSInvalidArgumentException on iOS; starting twice is a no-op here
+        d->started = true;
+        stackSize = d->stackSize;
+    }
     try {
-        if (d->target) startBackground(x, d->target, d->sel, d->arg, self, d->stackSize);
-        else startBackground(x, self, rt(x).sel("main"), 0, self, d->stackSize);
+        if (d->target) startBackground(x, d->target, d->sel, d->arg, self, stackSize);
+        else startBackground(x, self, rt(x).sel("main"), 0, self, stackSize);
     } catch (...) {
+        std::lock_guard<std::mutex> lk(d->stackMu);
         d->started = false;
         throw;
     }

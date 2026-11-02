@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(HydrogenVM CXX)
+enable_testing()
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   message(FATAL_ERROR "HydrogenVM requires Clang or GCC.")
@@ -69,6 +70,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(hvm_thread_launch_tests tests/runner/ThreadLaunchTests.cpp)
   target_link_libraries(hvm_thread_launch_tests PRIVATE hvm_core)
   target_link_options(hvm_thread_launch_tests PRIVATE "-Wl,--wrap=pthread_create")
+  add_test(NAME hvm_thread_launch_tests COMMAND hvm_thread_launch_tests)
+  set_tests_properties(hvm_thread_launch_tests PROPERTIES TIMEOUT 30)
 endif()
 
 add_executable(hvm_gl_lifetime_tests tests/runner/HostGLLifetimeTests.cpp)
