@@ -330,10 +330,10 @@ Engine::~Engine() {
     if (faultArenaSlot_ < kMaxArenas) g_arenas[faultArenaSlot_].store(0, std::memory_order_release);
 }
 
-void Engine::recordHleState(Cpu& c, uint32_t index) {
+void Engine::recordHleState(Cpu& c, uint32_t index, bool sampleRegisters) {
     auto* state = c.fault_state;
     if (!state) return;
-    c.recordFaultRegisters(c.r[kPC]);
+    if (sampleRegisters) c.recordFaultRegisters(c.r[kPC]);
     state->inGuest.store(false, std::memory_order_relaxed);
     if (state->nameBusy.test_and_set(std::memory_order_acquire)) return;
     const char* name = index < hleCount_.load(std::memory_order_acquire) ? hle_[index].name.c_str() : "none";
@@ -378,9 +378,10 @@ void Engine::callHle(Cpu* c, uint32_t index) {
         c->call_ring.store(ring, std::memory_order_release);
     }
     ring->push(Diag::CallKind::Hle, index);
-    c->in_guest.store(false, std::memory_order_release);
     const uint32_t outerHle = c->current_hle.exchange(index, std::memory_order_relaxed);
+    // Sample registers while in_guest is still set: once it clears a suspender may rewrite c->r[].
     recordHleState(*c, index);
+    c->in_guest.store(false, std::memory_order_release);
     const uint32_t outerArg0 = c->progress_argument0, outerArg1 = c->progress_argument1;
     c->progress_argument0 = c->r[0]; c->progress_argument1 = c->r[1];
     c->publishProgress(false);
@@ -564,7 +565,8 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     cpu.engine = this;
     if (cpu.fault_state) {
         cpu.fault_state->arena.store(reinterpret_cast<uintptr_t>(mem_.base()), std::memory_order_relaxed);
-        recordHleState(cpu, cpu.current_hle.load(std::memory_order_relaxed));
+        // Registers are sampled by enterGuest, after any pending suspension has been honoured.
+        recordHleState(cpu, cpu.current_hle.load(std::memory_order_relaxed), false);
         cpu.fault_state->active.store(true, std::memory_order_release);
     }
     cpu.budget = budget;

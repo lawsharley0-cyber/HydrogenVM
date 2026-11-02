@@ -142,7 +142,7 @@ public:
     Stats stats() const { std::lock_guard<std::mutex> lk(mu_); return stats_; }
 
 private:
-    void recordHleState(Cpu& c, uint32_t index);
+    void recordHleState(Cpu& c, uint32_t index, bool sampleRegisters = true);
     size_t faultArenaSlot_ = size_t(-1);
     FaultHook faultHook_;
     void park(Cpu& c);
