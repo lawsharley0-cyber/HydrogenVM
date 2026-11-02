@@ -11,6 +11,8 @@ app/xbuild/
 tools/tests/swiftui/SaveEditorHarness.xcodeproj/
 build/
 compat/
+tools/toolchain/
+.venv/
 xcuserdata/
 __pycache__/
 *.png

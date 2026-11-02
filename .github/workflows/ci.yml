@@ -39,6 +39,8 @@ jobs:
         run: bash tools/test_thread_lifetime.sh
       - name: Evidence contract tests
         run: python3 -m unittest discover -s tools/tests -p 'test_hvm_evidence.py'
+      - name: Device world-load capture completeness tests
+        run: python3 -m unittest discover -s tools/tests -p 'test_device_world_capture.py'
       - name: Agent queue tests
         run: python3 -m unittest discover -s tools/tests -p 'test_agent_queue.py'
       - name: Probe tainted-run tests

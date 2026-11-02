@@ -107,42 +107,67 @@ owner or the workflow step continues with remaining cases.
 
 ## Quick start — automated (Linux/macOS)
 
-### Prerequisites
+### Prerequisites and toolchain setup
 
-Same as the compat harness (see `AGENTS.md`): Clang, `cmake`, `ninja`,
-`python3`, `lld`, `llvm`, `zlib1g-dev`, `libsqlite3-dev`, `uuid-dev`.
-Also needs `ld64` from `tools/build_cctools.sh`. On Linux, the
-GPU-backed TL-N requires Mesa's headless EGL/GLES runtime (for example
-Ubuntu packages `libegl1 libgles2 libgl1 libgl1-mesa-dri`). A missing
-`libEGL.so.1` prevents TL-N from starting and is a host dependency failure,
-not evidence of a guest crash.
+Test Lab guest builds require:
+- **Clang** (`clang`, supporting `--target=armv7-apple-ios*`)
+- **ld64** (`arm-apple-darwin11-ld`, from `cctools-port`)
+- **llvm-nm** (`llvm-nm`)
+- Python 3.8+ and standard POSIX build tools (`cmake`, `ninja`, `make`, `git`)
 
-```sh
-# Build the engine
-cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
-ninja -C build hvm
+The host engine also needs ZLIB and SQLite3 development headers and libraries
+for CMake. On Ubuntu/Debian, run `sudo apt-get install zlib1g-dev libsqlite3-dev`.
+On macOS, the Xcode Command Line Tools SDK provides them, or run
+`brew install zlib sqlite3`. If CMake cannot find the Homebrew libraries, set
+`export CMAKE_PREFIX_PATH="$(brew --prefix zlib):$(brew --prefix sqlite3)"` before
+configuring. On hosts without system packages, install both libraries in a
+user-owned prefix and add that prefix to `CMAKE_PREFIX_PATH`.
 
-# Build ld64 (one-time)
-tools/build_cctools.sh /opt/cctools
-export HVM_LD64=/opt/cctools/bin/arm-apple-darwin11-ld
+On Linux, GPU-backed cases like TL-N require Mesa's headless EGL/GLES runtime (e.g. Ubuntu packages `libegl1 libgles2 libgl1 libgl1-mesa-dri`).
 
-# Generate the bundled tone.wav (already committed; only needed if regenerating)
-python3 tests/ios/apps/testlab/gen_tone_wav.py tests/ios/apps/testlab/tone.wav
+#### Setting up the toolchain without sudo (Linux x86_64)
 
-# Run all 23 automated cases and write a report
-python3 tools/hvm_testlab.py run \
-    --hvm build/hvm \
-    --out build/testlab-report
+The build script `tools/ios_build.py` automatically checks the workspace directory `tools/toolchain/bin/` (which is gitignored), `PATH`, and standard environment variables (`HVM_CLANG`, `HVM_LD64`, `HVM_NM`, `HVM_TOOLCHAIN`).
 
-# Run a single case
-python3 tools/hvm_testlab.py run \
-    --hvm build/hvm \
-    --case TL-B \
-    --out build/testlab-report
+1. **Clang & llvm-nm**:
+   If system clang/llvm are already installed on the host:
+   ```sh
+   mkdir -p tools/toolchain/bin
+   ln -sf "$(which clang)" tools/toolchain/bin/clang
+   ln -sf "$(which clang++)" tools/toolchain/bin/clang++
+   ln -sf "$(which llvm-nm)" tools/toolchain/bin/llvm-nm
+   ```
+   On a bare Linux VM without sudo or system packages, download prebuilt LLVM x86_64 binaries (e.g., from the [LLVM releases](https://github.com/llvm/llvm-project/releases)) and extract them into `tools/toolchain`, or specify `export HVM_CLANG=/path/to/clang` and `export HVM_NM=/path/to/llvm-nm`.
 
-# Validate an existing report
-python3 tools/hvm_testlab.py validate build/testlab-report/testlab_report.json
-```
+2. **ld64 (cctools-port)**:
+   Build `cctools-port` and Apple `libdispatch` directly into the workspace toolchain without sudo:
+   ```sh
+   tools/build_cctools.sh
+   ```
+   This installs `tools/toolchain/bin/arm-apple-darwin11-ld`. Alternatively, if installed elsewhere, set:
+   ```sh
+   export HVM_LD64=/path/to/arm-apple-darwin11-ld
+   ```
+
+3. **Fixtures and SDK**:
+   The stub SDK and crt1 objects are built automatically on the fly by `tools/ios_build.py`. Bundled fixtures (`tone.wav`, `empty.dat`) in `tests/ios/apps/testlab/` are verified or regenerated automatically if missing.
+
+4. **Run the Test Lab gate**:
+   ```sh
+   # Build the host engine
+   export PATH="${HVM_TOOLCHAIN:-$PWD/tools/toolchain}/bin:$PWD/tools/toolchain/bin:$PATH"
+   cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+   ninja -C build hvm
+
+   # Run all automated cases
+   python3 tools/hvm_testlab.py run --hvm build/hvm --out build/testlab-report
+
+   # Run a single case (e.g. TL-B)
+   python3 tools/hvm_testlab.py run --hvm build/hvm --case TL-B --out build/testlab-report-tl-b
+
+   # Validate report against schema
+   python3 tools/hvm_testlab.py validate build/testlab-report/testlab_report.json
+   ```
 
 ### Exit codes
 
