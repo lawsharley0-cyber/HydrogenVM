@@ -136,9 +136,13 @@ def run_relaunch(hvm, app, home, out, launches=3, seconds=20, mode='separate', t
         except (OSError, ValueError) as error:
             row['reportError'] = str(error)
         if mode == 'in-process':
-            text = (out / f'launch-{index}.log').read_text(encoding='utf-8', errors='replace')
-            banners = re.findall(r'\[hvm\] ---- launch (\d+) of (\d+) ----', text)
-            row['attemptedLaunches'] = max((int(n) for n, total in banners if int(total) == launches), default=0)
+            attempted = 0
+            with (out / f'launch-{index}.log').open(encoding='utf-8', errors='replace') as log:
+                for line in log:
+                    for n, total in re.findall(r'\[hvm\] ---- launch (\d+) of (\d+) ----', line):
+                        if int(total) == launches:
+                            attempted = max(attempted, int(n))
+            row['attemptedLaunches'] = attempted
             row['allRequestedLaunchesAttempted'] = row['attemptedLaunches'] == launches
         result['runs'].append(row)
         before = after

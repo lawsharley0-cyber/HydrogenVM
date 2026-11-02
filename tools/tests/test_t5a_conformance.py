@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 TESTLAB_PY = ROOT_DIR / "tools" / "hvm_testlab.py"
@@ -53,6 +54,25 @@ class TestLibStdcxxConformance(unittest.TestCase):
         self.assertIn("RB-tree root black", c["expected"])
         self.assertIn("SJLJ chain link", c["expected"])
         self.assertEqual(c["actual"], "string=1 hook=1 unhook=1 rbtree=1 sjlj=1")
+
+
+class TestConformanceSetup(unittest.TestCase):
+    def test_testlab_run_has_a_240_second_timeout(self):
+        class SetupProbe(TestLibStdcxxConformance):
+            pass
+
+        def fake_run(cmd, **kwargs):
+            Path(cmd[cmd.index("--out") + 1], "testlab_report.json").write_text('{}')
+            return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+
+        with patch.object(Path, 'exists', return_value=True), \
+             patch.dict(os.environ, {'HVM_TESTLAB_TOOLCHAIN': '1'}), \
+             patch('subprocess.run', side_effect=fake_run) as run:
+            try:
+                SetupProbe.setUpClass()
+                self.assertEqual(run.call_args.kwargs['timeout'], 240)
+            finally:
+                SetupProbe.doClassCleanups()
 
 
 if __name__ == "__main__":

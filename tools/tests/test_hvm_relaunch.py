@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from hvm_relaunch import diff_snapshots, run_relaunch, snapshot_home
+from hvm_testlab import build_testlab
 
 
 class RelaunchEvidenceTests(unittest.TestCase):
@@ -93,6 +94,54 @@ sys.exit(42 if n==9 else 0)
             self.assertFalse(row['allRequestedLaunchesAttempted'])
             self.assertFalse(result['allRunsExitedWithoutCrash'])
             self.assertFalse(result['intermediateSnapshotsAvailable'])
+
+    @unittest.skipUnless(os.name == 'posix', 'uses a POSIX executable fixture')
+    def test_in_process_banners_are_streamed_and_use_highest_matching_total(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for name in ['home', 'app']: (root / name).mkdir()
+            hvm = root / 'hvm'
+            hvm.write_text('''#!/usr/bin/env python3
+import json, pathlib, sys
+a = sys.argv
+sys.stdout.buffer.write(b'\\xff [hvm] ---- launch 2 of 3 ---- [hvm] ---- launch 1 of 3 ----\\n')
+print('[hvm] ---- launch 9 of 4 ----')
+pathlib.Path(a[a.index('--report')+1]).write_text(json.dumps({'exitStatus':0,'crashed':False}))
+''')
+            hvm.chmod(0o700)
+            original_read_text = Path.read_text
+            def reject_whole_log(path, *args, **kwargs):
+                if path.suffix == '.log':
+                    raise AssertionError('log must be streamed')
+                return original_read_text(path, *args, **kwargs)
+            with patch.object(Path, 'read_text', reject_whole_log):
+                result = run_relaunch(hvm, root / 'app', root / 'home', root / 'out', mode='in-process')
+            self.assertEqual(result['runs'][0]['attemptedLaunches'], 2)
+            self.assertFalse(result['runs'][0]['allRequestedLaunchesAttempted'])
+            self.assertFalse(result['allRunsExitedWithoutCrash'])
+
+    @unittest.skipUnless(os.environ.get('HVM_TESTLAB_TOOLCHAIN') == '1', 'requires Test Lab toolchain')
+    def test_watchdog_crash_stops_in_process_batch_and_preserves_report(self):
+        hvm = Path(__file__).resolve().parents[2] / 'build' / 'hvm'
+        if not hvm.exists():
+            self.skipTest('hvm not built')
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ipa, _ = build_testlab(str(root / 'build'), False)
+            (root / 'home').mkdir()
+            result = run_relaunch(hvm, ipa, root / 'home', root / 'out',
+                                  launches=2, seconds=3, mode='in-process', timeout=30,
+                                  extra_args=['--', '--stall-termination'])
+            row = result['runs'][0]
+            log = (root / 'out' / 'launch-1.log').read_text(errors='replace')
+            self.assertIn('TESTLAB stalling termination', log)
+            self.assertEqual(row['returnCode'], 70)
+            self.assertEqual(row['attemptedLaunches'], 1)
+            self.assertFalse(row['allRequestedLaunchesAttempted'])
+            self.assertTrue(row['report']['crashed'])
+            self.assertEqual(row['report']['exitStatus'], 70)
+            self.assertIn('watchdog', row['report']['crashReport'])
+            self.assertFalse(result['allRunsExitedWithoutCrash'])
 
     def test_evidence_directory_must_not_modify_the_home(self):
         with tempfile.TemporaryDirectory() as d:
