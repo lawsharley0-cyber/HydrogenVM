@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <thread>
+#include <utility>
 #include <unistd.h>
 
 using namespace Hydrogen::Runtime;
@@ -39,16 +40,24 @@ int main() {
     const auto playable = registry.find("-[AVAsset isPlayable]");
     check(playable && playable->kind == SupportKind::InstanceMethod &&
           playable->status == SupportStatus::Stub, "AVAsset playable metadata");
-    check(registry.find("_dlopen") && registry.find("_dlopen")->status == SupportStatus::Approx,
-          "dlopen partial implementation is explicit");
     for (const auto& [name, status] : {
              std::pair{"_CFRunLoopSourceInvalidate", SupportStatus::Approx},
+             std::pair{"__ZNSt3__115__thread_structD1Ev", SupportStatus::Stub},
              std::pair{"_pthread_cond_signal", SupportStatus::Approx},
-             std::pair{"_pthread_cond_broadcast", SupportStatus::Approx},
-             std::pair{"__ZNSt3__115__thread_structD1Ev", SupportStatus::Stub}}) {
+             std::pair{"_pthread_cond_broadcast", SupportStatus::Approx}}) {
         const auto r = registry.find(name);
         check(r && r->status == status && !r->provenance.empty() && p.lookupSymbol(name), name);
     }
+    check(registry.find("_dlopen") && registry.find("_dlopen")->status == SupportStatus::Approx,
+          "dlopen partial implementation is explicit");
+    for (const char* name : {"_CFRunLoopSourceInvalidate", "_pthread_cond_signal", "_pthread_cond_broadcast"}) {
+        const auto r = registry.find(name);
+        check(r && r->status == SupportStatus::Approx && !r->provenance.empty() && p.lookupSymbol(name), name);
+    }
+    const char* threadDestructor = "__ZNSt3__115__thread_structD1Ev";
+    const auto destructor = registry.find(threadDestructor);
+    check(destructor && destructor->status == SupportStatus::Stub && !destructor->provenance.empty() &&
+          p.lookupSymbol(threadDestructor), threadDestructor);
     check(!registry.find("_unclassified"), "unknown metadata is not Real");
     const auto address = supportDef<&zero>(p, "_support_test", SupportStatus::Real, "Test-only constant oracle");
     check(p.lookupSymbol("_support_test") == address && registry.find("_support_test")->status == SupportStatus::Real,

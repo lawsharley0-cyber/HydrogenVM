@@ -388,6 +388,7 @@ uint32_t d_dlsym(Ctx& x, uint32_t, GuestPtr name) {
     if (auto it = x.proc.image().exports.find(n); it != x.proc.image().exports.end()) return it->second;
     for (const auto& [addr, sym] : x.proc.image().symbolsByAddr)
         if (sym == n) return addr;
+    if (uint32_t a = x.proc.resolveMissingSymbol(n)) return a;
     x.proc.logf(LogLevel::Warning, "dlsym: %s not found", n.c_str() + 1);
     return 0;
 }
