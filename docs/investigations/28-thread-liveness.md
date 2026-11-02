@@ -46,7 +46,10 @@ compiler jobs after the instance recovered.
 
 ## Local validation and private trace
 
-The final Linux candidate passes fulltest 488/488, Test Lab 25/25 with zero
+The local tested C++ source corresponds to published candidate
+1c56119f60d83d9f1a27c50c0ef63b9d4f1beb34 (tree
+b46aefbed1d437a7812171eba2c9fcaa0a1a876e). These are local results;
+Actions results are recorded separately when verified. That candidate passes fulltest 488/488, Test Lab 25/25 with zero
 skips, and all 202 tools tests with HVM_TESTLAB_TOOLCHAIN=1. A regression added
 after the first build exposed a stale PC/LR after a nested guest call; it failed
 before restoring and republishing the outer registers, then passed.
@@ -63,3 +66,21 @@ Keep the issue open and capture the same timeline after dismissing onboarding
 and confirming game entry, on both renderers and the actual device.
 
 Focused ASan/UBSan also passes, including nested-call restoration and parked wait arguments.
+
+A second preserved-home software probe dismissed OpenFeint at (60,448) at
+3 seconds and tapped (160,240) at 15 seconds. Its final screenshot shows the
+ant colony and controls, with 386 frames presented over 60 seconds. No live
+thread had a zero instruction delta between seconds 10 and 60; at 45.76 seconds
+the main thread was in glDrawArrays with 34,436 instructions in that interval.
+It still hit the save watchdog during termination. This does not reproduce a
+Linux instruction deadlock or resolve the physical-device freeze. Private
+evidence: pocket-onboarding-1793577024068339292 under HVM_FIXTURE_ROOT/evidence.
+
+Review follow-up makes diagnostic sampler allocation/thread-creation failures
+best-effort, matching MemorySampler; they cannot escape before guest startup.
+
+The runtime sanitizer gate also builds the complete runtime with ASan/UBSan,
+runs unchanged Test Lab TL-L with the sampler enabled, then drives that same
+real guest lifecycle for three seconds and checks run-start/interval/run-end
+samples. This covers the sampler thread itself in addition to the focused CPU
+snapshot test. Its new Actions result remains pending until actually run.

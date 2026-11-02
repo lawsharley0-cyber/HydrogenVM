@@ -968,7 +968,10 @@ struct ThreadLivenessSampler {
 
 int Process::run() {
     std::unique_ptr<ThreadLivenessSampler> threadSampler;
-    if (cfg_.threadLiveness) threadSampler = std::make_unique<ThreadLivenessSampler>(*this);
+    if (cfg_.threadLiveness) {
+        try { threadSampler = std::make_unique<ThreadLivenessSampler>(*this); }
+        catch (...) { /* best-effort diagnostics, including allocation/thread creation */ }
+    }
     std::unique_ptr<MemorySampler> memorySampler;
     if (memoryDiagEnabled()) {
         try { memorySampler = std::make_unique<MemorySampler>(*this); }

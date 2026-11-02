@@ -52,6 +52,8 @@ jobs:
       - name: Build ld64
         if: steps.cctools.outputs.cache-hit != 'true'
         run: tools/build_cctools.sh /home/runner/cctools
+      - name: Runtime liveness sampler under ASan/UBSan
+        run: bash tools/test_thread_liveness_runtime.sh
       - name: Test + performance report
         run: python3 tools/hvm_report.py --out report
       - name: Full tools suite including Test Lab integration
