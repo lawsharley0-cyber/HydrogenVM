@@ -29,6 +29,13 @@ final class PlayerProbe {
     weak var session: HVMSession?
 }
 
+final class HVMTextInputRequest {
+    let active = true, text = "", placeholder = ""
+    let focusId: UInt64 = 1, ackSeq: UInt64 = 0
+    let keyboardType = 0, returnKeyType = 0, autocapitalizationType = 0, autocorrectionType = 0
+    let secure = false, multiline = false
+}
+
 /// Replaces only the emulator bridge. The actual RunModel, RunView, UIKit
 /// viewport and geometry are compiled into this synthetic UI fixture.
 @MainActor
@@ -42,6 +49,7 @@ final class HVMSession {
     var onExit: ((Int, String?) -> Void)?
     var crashBundle: String?
     var framesPresented: UInt64 = 0
+    var onTextInput: ((HVMTextInputRequest) -> Void)?
     var screenSize = CGSize(width: 320, height: 480)
     var interfaceOrientation = 1
     var isBackgrounded = false
@@ -92,6 +100,9 @@ final class HVMSession {
         PlayerProbe.shared.touch = "\(phase.rawValue):\(Int(x.rounded())),\(Int(y.rounded())):\(finger)"
     }
     func setAccelerationX(_ x: Double, y: Double, z: Double) {}
+    func submitText(_ text: String, focusId: UInt64, sequence: UInt64) {}
+    func submitReturnKey(forFocus focusId: UInt64) {}
+    func dismissKeyboard(forFocus focusId: UInt64) {}
 }
 
 struct PlayerHarness: View {

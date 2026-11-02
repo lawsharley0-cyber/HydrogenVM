@@ -69,6 +69,9 @@ public:
     // Validate and perform a complete NUL-terminated write under the mapping
     // lock, so concurrent unmap cannot invalidate the check before the copy.
     bool copyCStringWritable(uint32_t addr, const char* src, size_t chars) noexcept;
+    // Validate the whole guest range and copy under the mapping lock. No partial
+    // write on failure; fault is the first non-writable byte in the range.
+    bool copyInWritable(uint32_t addr, const void* src, size_t bytes, uint32_t& fault) noexcept;
     // Same lock as copyCStringWritable, for a wchar_t image: `count` guest
     // bytes expanded to 4-byte code units, plus a 4-byte NUL. Nothing is
     // stored unless every byte of that span is writable.

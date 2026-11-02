@@ -20,6 +20,8 @@ final class RunModel {
     private(set) var screenSize = CGSize(width: 320, height: 480)
     private(set) var log: [LogLine] = []
     private(set) var running = false
+    /// The guest text field that has focus, if any: the host keyboard bar is shown for it (#303).
+    private(set) var keyboard: HVMTextInputRequest?
     private(set) var fps = 0
     private(set) var orientation = GuestOrientation.portrait
     private(set) var activity = PlayerActivity()
@@ -116,6 +118,9 @@ final class RunModel {
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
         // The bridge delivers every callback on the main queue.
+        s.onTextInput = { [weak self] request in
+            MainActor.assumeIsolated { self?.keyboard = request.active ? request : nil }
+        }
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -139,6 +144,7 @@ final class RunModel {
         s.onExit = { [weak self] code, crash in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.keyboard = nil
                 self.running = false
                 self.closing = false
                 self.cancelActiveTouches()
@@ -333,6 +339,14 @@ final class RunModel {
         backgroundTask = .invalid
     }
 
+    func submitText(_ text: String, focusId: UInt64, sequence: UInt64) {
+        session?.submitText(text, focusId: focusId, sequence: sequence)
+    }
+    func submitReturnKey(focusId: UInt64) { session?.submitReturnKey(forFocus: focusId) }
+    /// The player asked to close the keyboard. The guest may refuse (textFieldShouldEndEditing:), in which case it
+    /// publishes the active state again and the bar comes back, so the bar is not removed here.
+    func dismissKeyboard(focusId: UInt64) { session?.dismissKeyboard(forFocus: focusId) }
+
     func touch(_ phase: HVMTouchPhase, at p: CGPoint, finger: Int) {
         guard phase == .cancelled || inputEnabled else { return }
         guard phase == .began || activeTouches[finger] != nil else { return }
@@ -463,6 +477,18 @@ struct RunView: View {
                     Spacer()
                     LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() })
                         .frame(height: 220)
+                }
+            }
+
+            // The host keyboard for a focused game text field. Respects the keyboard safe area, so it rides above it.
+            if let request = model.keyboard {
+                VStack {
+                    Spacer()
+                    GameKeyboardBar(request: request,
+                                    onText: { model.submitText($0, focusId: request.focusId, sequence: $1) },
+                                    onReturn: { model.submitReturnKey(focusId: request.focusId) },
+                                    onDismiss: { model.dismissKeyboard(focusId: request.focusId) })
+                        .id(request.focusId)   // a different guest field gets a fresh bar
                 }
             }
 

@@ -215,6 +215,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 } // namespace
 
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "AudioOutput.hpp"
@@ -236,6 +237,8 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include <cstring>
 
 int runMinimp3HwcapChecks();
+int runGuestCallBoundaryTests();
+int runGuestCallBoundaryChild(int mode);
 int runThreadLifetimeTests();
 int runThreadLifetimeChild();
 
@@ -1871,7 +1874,12 @@ int runFullSubsystemTests() {
     // 2. Full Process + Objective-C + UIKit + OpenGL ES + Audio verification
     ProcessConfig cfg;
     cfg.bundlePath = "/tmp/hvm_test_bundle.app";
-    cfg.homePath = "/tmp/hvm_test_home";
+    // A private home (mkdtemp, mode 0700): a fixed /tmp path could be pre-seeded with a symlink that redirects the
+    // fixtures' O_TRUNC writes.
+    char privateHome[] = "/tmp/hvm_test_home.XXXXXX";
+    if (!mkdtemp(privateHome)) { std::fprintf(stderr, "mkdtemp failed\n"); return 1; }
+    cfg.homePath = privateHome;
+    struct RemoveHome { const char* path; ~RemoveHome() { std::error_code ec; std::filesystem::remove_all(path, ec); } } removeHome{privateHome};   // declared before proc: runs after it is destroyed
     Process proc(cfg);
     // Renders the mixer (as the platform's audio thread does) and returns how many
     // frames of sound came out: the index after the last non-silent frame.
@@ -2818,6 +2826,136 @@ int runFullSubsystemTests() {
         r.send(cpu, seg, "setSelectedSegmentIndex:", {1});
         check((r.send(cpu, sw, "isOn") & 0xFF) != 0 && std::abs(slVal - 42.5f) < 0.01f && int32_t(r.send(cpu, seg, "selectedSegmentIndex")) == 1,
               "UISwitch, UISlider, and UISegmentedControl");
+    }
+
+    // On-screen keyboard (#303): a focused text field asks the host for a keyboard with its traits; the edits the
+    // host sends back go through the guest's delegate, notifications and control events, on the main run loop.
+    {
+        if (!UIKit::ui(proc).app) UIKit::ui(proc).app = r.createInstance(r.getClass("UIApplication"));   // control events go through it
+        std::vector<UIKit::TextInputRequest> requests;
+        UIKit::setTextInputObserver(proc, [&](const UIKit::TextInputRequest& q) { requests.push_back(q); });
+        std::vector<std::string> changes;
+        int returns = 0, began = 0, ended = 0, editingChanged = 0, viewChanged = 0;
+        ObjC::ClassBuilder del = r.defineClass("HVMTestTextDelegate", "NSObject");
+        del.method("textField:shouldChangeCharactersInRange:replacementString:", [&](Ctx& x) {
+            Runtime::ArgReader args(x.cpu, x.mem, 2);
+            args.word();   // the text field
+            const uint32_t loc = args.word(), len = args.word();
+            const std::string rep = Foundation::utf8(x, args.word());
+            changes.push_back(std::to_string(loc) + "," + std::to_string(len) + ":" + rep);
+            x.cpu.r[0] = rep.find('x') == std::string::npos ? 1 : 0;   // refuse any edit that adds an 'x'
+        }, "c@:@{_NSRange=II}@");
+        del.method("textFieldShouldReturn:", [&](Ctx& x) { ++returns; x.cpu.r[0] = 1; }, "c@:@");
+        del.method("textFieldDidBeginEditing:", [&](Ctx&) { ++began; }, "v@:@");
+        bool refuseEnd = false, rewrite = false;
+        del.method("textFieldShouldEndEditing:", [&](Ctx& x) { x.cpu.r[0] = refuseEnd ? 0 : 1; }, "c@:@");
+        del.method("rewrite:", [&](Ctx& x) {
+            if (rewrite) { rewrite = false; ObjC::rt(x).send(x.cpu, x.cpu.r[2], "setText:", {Foundation::makeString(x, "REWRITTEN")}); }
+        }, "v@:@");
+        del.method("textFieldDidEndEditing:", [&](Ctx&) { ++ended; }, "v@:@");
+        del.method("changed:", [&](Ctx&) { ++editingChanged; }, "v@:@");
+        del.method("textViewDidChange:", [&](Ctx&) { ++viewChanged; }, "v@:@");
+        const ObjC::id delegate = r.createInstance(del.cls());
+        uint64_t seq = 0;
+        const auto send = [&](UIKit::TextInputEvent::Kind k, const std::string& t) {
+            UIKit::submitTextInput(proc, {k, t, requests.empty() ? 0 : requests.back().focusId, ++seq});
+        };
+        const auto pump = [&] { for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.0); };
+        const auto textOfField = [&](ObjC::id f) { return Foundation::utf8(cx, ObjC::id(r.send(cpu, f, "text"))); };
+
+        const ObjC::id field = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 120, 30});
+        r.send(cpu, field, "setDelegate:", {delegate});
+        r.send(cpu, field, "setKeyboardType:", {4});
+        r.send(cpu, field, "setReturnKeyType:", {4});
+        r.send(cpu, field, "setSecureTextEntry:", {1});
+        r.send(cpu, field, "setPlaceholder:", {Foundation::makeString(cx, "Name")});
+        r.send(cpu, field, "addTarget:action:forControlEvents:", {delegate, r.sel("changed:"), 1u << 17});
+        check(uint32_t(r.send(cpu, field, "keyboardType")) == 4 && uint32_t(r.send(cpu, field, "returnKeyType")) == 4,
+              "UITextField keeps the keyboard and return key traits it was given");
+        const bool became = (r.send(cpu, field, "becomeFirstResponder") & 0xFF) != 0;
+        check(became && requests.size() == 1 && requests[0].active && requests[0].keyboardType == 4 && requests[0].returnKeyType == 4 &&
+              requests[0].secure && !requests[0].multiline && requests[0].placeholder == "Name" && began == 1,
+              "a text field that becomes first responder asks the host for a keyboard with its traits");
+
+        send(UIKit::TextInputEvent::SetText, "ab"); pump();
+        check(textOfField(field) == "ab" && changes == std::vector<std::string>{"0,0:ab"} && editingChanged == 1,
+              "typed text reaches the field through the delegate and the editing-changed control event");
+        send(UIKit::TextInputEvent::SetText, "abx"); pump();
+        check(textOfField(field) == "ab" && changes.back() == "2,0:x" && editingChanged == 1 && requests.back().active && requests.back().text == "ab",
+              "an edit the delegate refuses is not applied, and the host is told the text to go back to");
+        send(UIKit::TextInputEvent::SetText, "a"); pump();
+        check(textOfField(field) == "a" && changes.back() == "1,1:" && editingChanged == 2, "deleting reaches the delegate as a replacement of the removed range");
+        send(UIKit::TextInputEvent::Return, ""); pump();
+        check(returns == 1, "the return key asks the delegate textFieldShouldReturn:");
+        send(UIKit::TextInputEvent::Dismiss, ""); pump();
+        check((r.send(cpu, field, "isFirstResponder") & 0xFF) == 0 && ended == 1 && !requests.back().active,
+              "dismissing the keyboard resigns the field and tells the host the keyboard is gone");
+
+        // A refused edit is acknowledged by sequence number, so a correction that arrives after newer typing is stale.
+        r.send(cpu, field, "becomeFirstResponder");
+        const uint64_t focusA = requests.back().focusId;
+        send(UIKit::TextInputEvent::SetText, "q"); pump();
+        send(UIKit::TextInputEvent::SetText, "qx"); pump();   // refused by the delegate
+        check(requests.back().ackSeq == seq && requests.back().text == "q", "a correction names the host edit it answers (ackSeq)");
+
+        // Guest code that rewrites the text during a callback is published back to the keyboard.
+        r.send(cpu, field, "addTarget:action:forControlEvents:", {delegate, r.sel("rewrite:"), 1u << 17});
+        rewrite = true;
+        send(UIKit::TextInputEvent::SetText, "qw"); pump();
+        rewrite = false;
+        check(textOfField(field) == "REWRITTEN" && requests.back().text == "REWRITTEN",
+              "text changed by guest callbacks after an edit is republished to the keyboard");
+
+        // The guest may refuse to end editing: the keyboard stays.
+        refuseEnd = true;
+        send(UIKit::TextInputEvent::Dismiss, ""); pump();
+        check((r.send(cpu, field, "isFirstResponder") & 0xFF) != 0 && requests.back().active,
+              "when the guest refuses to resign, the keyboard is told the field is still active");
+        refuseEnd = false;
+
+        // The guest setting the focused field's text directly (clearing it after "send") reaches the keyboard;
+        // an unchanged value does not, and the UIKit default autocapitalization (Sentences) is kept.
+        const size_t setTextBefore = requests.size();
+        r.send(cpu, field, "setText:", {Foundation::makeString(cx, "cleared")});
+        check(requests.size() == setTextBefore + 1 && requests.back().active && requests.back().text == "cleared",
+              "setText: on the focused field publishes the new text to the keyboard");
+        r.send(cpu, field, "setText:", {Foundation::makeString(cx, "cleared")});
+        check(requests.size() == setTextBefore + 1, "setText: with an unchanged value does not republish");
+        check(uint32_t(r.send(cpu, field, "autocapitalizationType")) == 2 && requests.back().autocapitalization == 2,
+              "a field that never sets autocapitalizationType defaults to Sentences, as on iOS");
+
+        // Host edits replace whole characters: U+1F600 -> U+1F601 share a high surrogate, and the delegate must see the
+        // whole emoji as the replaced range and the replacement, not a lone low surrogate.
+        send(UIKit::TextInputEvent::SetText, "cleared\xF0\x9F\x98\x80"); pump();
+        send(UIKit::TextInputEvent::SetText, "cleared\xF0\x9F\x98\x81"); pump();
+        check(textOfField(field) == "cleared\xF0\x9F\x98\x81" && changes.back() == "7,2:\xF0\x9F\x98\x81",
+              "replacing one emoji with another reports whole characters (no split surrogate pair) to the delegate");
+
+        // Events for a field that has lost focus never reach the new first responder.
+        const ObjC::id second = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 120, 120, 30});
+        r.send(cpu, second, "becomeFirstResponder");
+        check(requests.back().focusId != focusA, "each focus gets its own id");
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "stale", focusA, ++seq}); pump();
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::Dismiss, "", focusA, ++seq}); pump();
+        check(textOfField(second).empty() && (r.send(cpu, second, "isFirstResponder") & 0xFF) != 0,
+              "text and dismiss events for an older focus are dropped");
+        r.send(cpu, second, "resignFirstResponder");
+
+        // A tap focuses a field, as on iOS, and a UITextView asks for a multi-line keyboard.
+        const ObjC::id other = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 40, 120, 30});
+        const size_t reqBefore = requests.size();
+        r.send(cpu, other, "touchesEnded:withEvent:", {ObjC::id(r.send(cpu, r.getClass("NSSet"), "set")), 0});
+        check((r.send(cpu, other, "isFirstResponder") & 0xFF) != 0 && requests.size() == reqBefore + 1 && requests.back().active,
+              "tapping a text field focuses it and asks for the keyboard");
+        r.send(cpu, other, "resignFirstResponder");
+        const ObjC::id view = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextView"), r.selAlloc)), r.sel("initWithFrame:"), {0, 80, 120, 80});
+        r.send(cpu, view, "setDelegate:", {delegate});
+        r.send(cpu, view, "becomeFirstResponder");
+        send(UIKit::TextInputEvent::SetText, "hi\nthere"); pump();
+        check(requests.back().multiline && textOfField(view) == "hi\nthere" && viewChanged == 1,
+              "a UITextView asks for a multi-line keyboard and reports changes through textViewDidChange:");
+        r.send(cpu, view, "resignFirstResponder");
+        UIKit::setTextInputObserver(proc, nullptr);
     }
 
     // NSUserDefaults rejects non-property-list values with a guest-visible exception.
@@ -5157,6 +5295,50 @@ int runFullSubsystemTests() {
             const bool rtldDefault = call("_dlopen", {0, 1}) == 0xFFFFFFFEu;
             check(pbOk && can && writes && rtldDefault,
                   "CVPixelBuffer has real memory; AVAssetWriter takes inputs and starts writing; dlopen(NULL) returns RTLD_DEFAULT");
+
+            // T5c: Unity/Mono startup checklist assertions (Darwin stat, dlsym RTLD_DEFAULT, getpwuid, AudioQueue 44.1kHz PCM).
+            const uint32_t symGetpid = proc.allocCString("getpid");
+            const uint32_t dlsymRes = call("_dlsym", {0xFFFFFFFEu, symGetpid});
+            check(dlsymRes != 0, "dlsym(RTLD_DEFAULT) resolves guest and HLE exports");
+            // Populate the unloaded process's image with a unique synthetic guest export.
+            auto& exports = const_cast<Loader::Image&>(proc.image()).exports;
+            const char* guestExportName = "_hvm_test_guest_export";
+            const bool noHleExport = !proc.lookupSymbol(guestExportName);
+            const uint32_t guestExportAddr = proc.heap().allocZeroed(4);
+            exports.emplace(guestExportName, guestExportAddr);
+            const uint32_t guestDlsymRes = call("_dlsym", {0xFFFFFFFEu, proc.allocCString("hvm_test_guest_export")});
+            check(noHleExport && guestExportAddr && guestDlsymRes == guestExportAddr, "dlsym(RTLD_DEFAULT) resolves a guest export");
+            exports.erase(guestExportName);
+
+            const uint32_t pw501 = call("_getpwuid", {501});
+            const bool pw501Ok = pw501 && proc.readCString(proc.mem().read<uint32_t>(pw501)) == "mobile" &&
+                                proc.mem().read<uint32_t>(pw501 + 8) == 501;
+            check(pw501Ok, "getpwuid(501) returns mobile");
+
+            const uint32_t stBuf = proc.heap().allocZeroed(128);
+            const std::string stPath = proc.guestHomePath() + "/Documents/hvm_stat_test.txt";
+            const uint32_t cStPath = proc.allocCString(stPath);
+            const uint32_t fdSt = call("_open", {cStPath, 0x0602 /* O_RDWR | O_CREAT | O_TRUNC */, 0644});
+            call("_pwrite", {fdSt, proc.allocCString("unity"), 5, 0, 0});   // off_t is two words: low in r3, high on the stack
+            call("_close", {fdSt});
+            const bool statOk = call("_stat", {cStPath, stBuf}) == 0;
+            const uint16_t stMode = proc.mem().read<uint16_t>(stBuf + 4);
+            const int64_t stSz = proc.mem().read<int64_t>(stBuf + 60);
+            check(statOk && (stMode & 0100000) && stSz == 5, "Darwin 32-bit INODE64 stat mode and size offsets");
+
+            const uint32_t asbdPcm = proc.heap().allocZeroed(40), outPcmAq = proc.heap().allocZeroed(4);
+            proc.mem().write<double>(asbdPcm, 44100.0);
+            proc.mem().write<uint32_t>(asbdPcm + 8, 0x6c70636d);   // lpcm
+            proc.mem().write<uint32_t>(asbdPcm + 12, 12);
+            proc.mem().write<uint32_t>(asbdPcm + 16, 4);
+            proc.mem().write<uint32_t>(asbdPcm + 20, 1);
+            proc.mem().write<uint32_t>(asbdPcm + 24, 4);
+            proc.mem().write<uint32_t>(asbdPcm + 28, 2);           // 2 channels
+            proc.mem().write<uint32_t>(asbdPcm + 32, 16);          // 16 bits
+            const int32_t aqPcmRes = int32_t(call("_AudioQueueNewOutput", {asbdPcm, 0, 0, 0, 0, 0, outPcmAq}));
+            const uint32_t qidPcm = proc.mem().read<uint32_t>(outPcmAq);
+            if (qidPcm) call("_AudioQueueDispose", {qidPcm, 0});
+            check(aqPcmRes == 0 && qidPcm != 0, "AudioQueue accepts 44.1 kHz stereo 16-bit PCM");
         }
 
         // A std::filebuf has a vtable, so app code can call its virtuals (sgetc, sbumpc, delete).
@@ -5399,6 +5581,308 @@ int runFullSubsystemTests() {
             for (int i = 0; i < 400 && !flag("isFinished"); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
             const bool after = !flag("isExecuting") && flag("isFinished");
             check(before && during && after, "NSThread isExecuting/isFinished follow start and the end of its work");
+        }
+
+        // Verify the configured size on the live guest thread, and the post-start contract.
+        {
+            struct StackProbe { std::atomic<uint32_t> id{0}, threadObject{0}; std::atomic<bool> release{false}, done{false}; };
+            auto probe = std::make_shared<StackProbe>();
+            ObjC::ClassBuilder targetClass = r.defineClass("HVMTestStackTarget", "NSObject");
+            targetClass.method("work:", [probe, &r](Ctx& cx) {
+                probe->threadObject = ObjC::id(r.send(cx.cpu, r.getClass("NSThread"), "currentThread"));
+                probe->id = cx.proc.currentThread().id;
+                while (!probe->release && !cx.proc.stopping()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                probe->done = true;
+            }, "v@:@");
+            const ObjC::id target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, targetClass.cls(), r.selAlloc)), "init"));
+            const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
+                                                "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
+            const uint32_t defaultSize = uint32_t(r.send(cpu, th, "stackSize"));
+            r.send(cpu, th, "setStackSize:", {8u << 10});   // below Apple's 16 KiB minimum
+            const bool rejectedSmall = uint32_t(r.send(cpu, th, "stackSize")) == defaultSize;
+            r.send(cpu, th, "setStackSize:", {16u << 10});   // the smallest size Apple documents
+            check(uint32_t(r.send(cpu, th, "stackSize")) == (16u << 10), "NSThread accepts the documented 16 KiB minimum stack size");
+            const auto threadsBefore = proc.liveThreadIds();
+            bool rejectedOverflow = false, rejectedRange = false;
+            r.send(cpu, th, "setStackSize:", {0xffffffffu});
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { rejectedOverflow = true; }
+            r.send(cpu, th, "setStackSize:", {0x40000000u});
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { rejectedRange = true; }
+            const auto threadsAfter = proc.liveThreadIds();
+            const bool noNewThreads = std::all_of(threadsAfter.begin(), threadsAfter.end(), [&](uint32_t id) {
+                return std::find(threadsBefore.begin(), threadsBefore.end(), id) != threadsBefore.end();
+            });
+            const bool unchanged = noNewThreads && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff);
+            // Host-thread creation failing after the guest stack is mapped must leave nothing behind and not
+            // poison later launches (the same NSThread can be started again afterwards).
+            r.send(cpu, th, "setStackSize:", {1u << 20});
+            Process::failNextHostThreadSpawns(1);
+            bool spawnFailed = false;
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { spawnFailed = true; }
+            Process::failNextHostThreadSpawns(0);
+            {
+                const auto afterFailure = proc.liveThreadIds();
+                // Every live thread must be one that was already live: threads that finish meanwhile may leave, none may appear.
+                const bool noneLeaked = std::all_of(afterFailure.begin(), afterFailure.end(), [&](uint32_t id) {
+                    return std::find(threadsBefore.begin(), threadsBefore.end(), id) != threadsBefore.end();
+                });
+                check(spawnFailed && noneLeaked && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff),
+                      "a host-thread creation failure leaves no guest thread registered and the NSThread startable again");
+            }
+            r.send(cpu, th, "setStackSize:", {1u << 20});
+            const uint32_t setSize = uint32_t(r.send(cpu, th, "stackSize"));
+            r.send(cpu, th, "start");
+            for (int i = 0; i < 400 && !probe->id; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            const uint32_t threadId = probe->id;
+            GuestThread* running = threadId && probe->threadObject == th ? proc.findThreadById(threadId) : nullptr;
+            const bool actualSize = running && running->stackSize == (1u << 20);
+            r.send(cpu, th, "setStackSize:", {2u << 20});
+            const bool keptSize = uint32_t(r.send(cpu, th, "stackSize")) == (1u << 20) && running && running->stackSize == (1u << 20);
+            probe->release = true;
+            for (int i = 0; i < 400 && !probe->done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            check(defaultSize == (512u << 10) && setSize == (1u << 20) && actualSize && keptSize && probe->done,
+                  "NSThread applies the requested guest stack and ignores updates after start");
+            check(rejectedSmall, "NSThread ignores stack requests below 64 KiB");
+            check(rejectedOverflow && rejectedRange && unchanged && actualSize,
+                  "NSThread rejects oversized stacks without starting and can retry with a valid size");
+
+            ObjC::ClassBuilder subclass = r.defineClass("HVMTestThreadSubclass", "NSThread");
+            const ObjC::id child = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, subclass.cls(), r.selAlloc)), "init"));
+            r.send(cpu, child, "setStackSize:", {1u << 20});
+            check(uint32_t(r.send(cpu, child, "stackSize")) == (1u << 20),
+                  "NSThread subclass alloc/init retains its requested stack size");
+        }
+
+        // AVAudioSession keeps its category, options and mode, and reports a route (Hungry Shark Evolution, #53 / #63).
+        {
+            Ctx sx{proc, cpu, proc.mem()};
+            const ObjC::id session = ObjC::id(r.send(cpu, r.getClass("AVAudioSession"), "sharedInstance"));
+            auto same = [&](ObjC::id value, const char* text) {
+                return (uint32_t(r.send(cpu, value, "isEqualToString:", {Foundation::makeString(sx, text)})) & 0xFF) != 0;
+            };
+            const bool initial = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategorySoloAmbient") &&
+                                 same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeDefault");
+            const bool setOk = (uint32_t(r.send(cpu, session, "setCategory:withOptions:error:",
+                                                {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 1u, 0u})) & 0xFF) != 0;
+            const bool kept = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategoryPlayback") &&
+                              uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoRecording"), 0u});
+            const bool modeKept = same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoRecording");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeGameChat"), 4u, 0u});
+            const bool combined = same(ObjC::id(r.send(cpu, session, "category")), "AVAudioSessionCategoryPlayAndRecord") &&
+                                  same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeGameChat") &&
+                                  uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            check(initial && setOk && kept && modeKept && combined,
+                  "AVAudioSession keeps category, categoryOptions and mode across setCategory:/setMode:");
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u});
+            const bool videoDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 12u;
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 1u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u});
+            check(videoDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 13u,
+                  "AVAudioSession video chat adds Bluetooth and speaker options while preserving existing options");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u, 0u});
+            check(uint32_t(r.send(cpu, session, "categoryOptions")) == 12u,
+                  "AVAudioSession combined video chat setter adds Bluetooth and speaker defaults");
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u});
+            const bool voiceDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 1u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u});
+            check(voiceDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 5u,
+                  "AVAudioSession voice chat adds Bluetooth while preserving existing options");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 0u, 0u});
+            const bool combinedVoiceDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVoiceChat"), 1u, 0u});
+            check(combinedVoiceDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 5u,
+                  "AVAudioSession combined voice chat setter adds Bluetooth while preserving options");
+            const auto playAndRecord = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord");
+            const auto playback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback");
+            const auto record = Foundation::makeString(sx, "AVAudioSessionCategoryRecord");
+            const auto voice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat");
+            const auto video = Foundation::makeString(sx, "AVAudioSessionModeVideoChat");
+            const auto defaultMode = Foundation::makeString(sx, "AVAudioSessionModeDefault");
+            auto options = [&] { return uint32_t(r.send(cpu, session, "categoryOptions")); };
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+            r.send(cpu, session, "setCategory:withOptions:error:", {playAndRecord, 0u, 0u});
+            check(options() == 4u, "AVAudioSession keeps voice defaults when category options change");
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+            const bool clearedVideoDefaults = options() == 0u;
+            r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 5u, 0u});
+            r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+            check(clearedVideoDefaults && options() == 5u, "AVAudioSession clears video defaults but keeps explicitly requested bits");
+            const bool acceptedVoice = (uint32_t(r.send(cpu, session, "setCategory:mode:options:error:", {playback, voice, 1u, 0u})) & 0xff) != 0;
+            const bool playbackVoice = options() == 1u && same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVoiceChat");
+            const bool acceptedVideo = (uint32_t(r.send(cpu, session, "setMode:error:", {video, 0u})) & 0xff) != 0;
+            const bool playbackVideo = options() == 1u && same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoChat");
+            check(acceptedVoice && acceptedVideo && playbackVoice && playbackVideo,
+                  "AVAudioSession accepts chat modes on playback without chat defaults");
+            r.send(cpu, session, "setCategory:error:", {record, 0u});
+            const bool recordVideo = options() == 12u;
+            r.send(cpu, session, "setMode:error:", {voice, 0u});
+            const bool recordVoice = options() == 0u;
+            r.send(cpu, session, "setCategory:error:", {playAndRecord, 0u});
+            check(recordVideo && recordVoice && options() == 4u,
+                  "AVAudioSession recomputes chat defaults when the category or mode changes");
+            {
+                const auto playAndRecord = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord");
+                const auto playback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback");
+                const auto record = Foundation::makeString(sx, "AVAudioSessionCategoryRecord");
+                const auto voice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat");
+                const auto video = Foundation::makeString(sx, "AVAudioSessionModeVideoChat");
+                const auto defaultMode = Foundation::makeString(sx, "AVAudioSessionModeDefault");
+                r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+                r.send(cpu, session, "setCategory:withOptions:error:", {playAndRecord, 0u, 0u});
+                const bool voiceAfterOptions = uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
+                r.send(cpu, session, "setCategory:error:", {playAndRecord, 0u});
+                check(voiceAfterOptions && uint32_t(r.send(cpu, session, "categoryOptions")) == 4u,
+                      "AVAudioSession retains voice chat defaults after category setters");
+                r.send(cpu, session, "setMode:error:", {video, 0u});
+                r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+                const bool videoCleared = uint32_t(r.send(cpu, session, "categoryOptions")) == 0u;
+                r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, video, 4u, 0u});
+                r.send(cpu, session, "setMode:error:", {defaultMode, 0u});
+                check(videoCleared && uint32_t(r.send(cpu, session, "categoryOptions")) == 4u,
+                      "AVAudioSession clears mode defaults while preserving explicit overlapping options");
+                r.send(cpu, session, "setCategory:mode:options:error:", {playAndRecord, voice, 1u, 0u});
+                r.send(cpu, session, "setCategory:withOptions:error:", {playback, 1u, 0u});
+                const bool voicePlayback = uint32_t(r.send(cpu, session, "categoryOptions")) == 1u &&
+                                           (uint32_t(r.send(cpu, session, "setMode:error:", {voice, 0u})) & 0xff) &&
+                                           same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVoiceChat") &&
+                                           uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+                const bool videoAccepted = (uint32_t(r.send(cpu, session, "setMode:error:", {video, 0u})) & 0xff) != 0;
+                const bool videoPlayback = videoAccepted && uint32_t(r.send(cpu, session, "categoryOptions")) == 1u &&
+                                           same(ObjC::id(r.send(cpu, session, "mode")), "AVAudioSessionModeVideoChat");
+                r.send(cpu, session, "setCategory:mode:options:error:", {playback, video, 1u, 0u});
+                const bool combinedPlayback = uint32_t(r.send(cpu, session, "categoryOptions")) == 1u;
+                r.send(cpu, session, "setCategory:withOptions:error:", {record, 1u, 0u});
+                const bool videoRecord = uint32_t(r.send(cpu, session, "categoryOptions")) == 13u;
+                r.send(cpu, session, "setMode:error:", {voice, 0u});
+                check(voicePlayback && videoPlayback && combinedPlayback && videoRecord &&
+                      uint32_t(r.send(cpu, session, "categoryOptions")) == 1u,
+                      "AVAudioSession applies chat defaults only to supported categories");
+            }
+            // Mutable inputs make each setter copy and release the previous stored string.
+            const auto mutableCategory = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord", true, true);
+            const auto mutablePlayback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback", true, true);
+            const auto mutableVoice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat", true, true);
+            const auto mutableVideo = Foundation::makeString(sx, "AVAudioSessionModeVideoChat", true, true);
+            r.send(cpu, session, "setCategory:mode:options:error:", {mutableCategory, mutableVoice, 0u, 0u});
+            const auto savedCategory = ObjC::id(r.send(cpu, session, "category"));
+            const auto savedMode = ObjC::id(r.send(cpu, session, "mode"));
+            r.send(cpu, session, "setCategory:mode:options:error:", {mutablePlayback, mutableVideo, 0u, 0u});
+            check(Foundation::utf8(sx, savedCategory) == "AVAudioSessionCategoryPlayAndRecord" &&
+                  Foundation::utf8(sx, savedMode) == "AVAudioSessionModeVoiceChat",
+                  "AVAudioSession getters keep their results alive after replacement");
+            {
+                // The setter must copy: mutating the caller's string afterwards must not change the stored category/mode.
+                const auto probeCategory = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback", true, true);
+                const auto probeMode = Foundation::makeString(sx, "AVAudioSessionModeDefault", true, true);
+                r.send(cpu, session, "setCategory:mode:options:error:", {probeCategory, probeMode, 0u, 0u});
+                r.send(cpu, probeCategory, "appendString:", {Foundation::makeString(sx, "-mutated")});
+                r.send(cpu, probeMode, "appendString:", {Foundation::makeString(sx, "-mutated")});
+                check(Foundation::utf8(sx, ObjC::id(r.send(cpu, session, "category"))) == "AVAudioSessionCategoryPlayback" &&
+                          Foundation::utf8(sx, ObjC::id(r.send(cpu, session, "mode"))) == "AVAudioSessionModeDefault",
+                      "AVAudioSession setters copy mutable category and mode strings");
+                r.release(cpu, probeCategory); r.release(cpu, probeMode);
+            }
+            // Apple adds MixWithOthers implicitly for Ambient and DuckOthers.
+            r.send(cpu, session, "setCategory:withOptions:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 2u, 0u});
+            const bool duckMixes = uint32_t(r.send(cpu, session, "categoryOptions")) == 3u;
+            r.send(cpu, session, "setCategory:withOptions:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryAmbient"), 0u, 0u});
+            check(duckMixes && uint32_t(r.send(cpu, session, "categoryOptions")) == 1u,
+                  "AVAudioSession reports the implicit MixWithOthers for DuckOthers and for Ambient");
+            // Record is stored, but playback is not silenced: that is reported as missing rather than hidden.
+            const uint64_t missingBefore = proc.missingApis().totalHits();
+            r.send(cpu, session, "setCategory:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryRecord"), 0u});
+            check(proc.missingApis().totalHits() == missingBefore + 1, "AVAudioSession Record category is reported as missing behaviour");
+            r.send(cpu, session, "setCategory:error:", {Foundation::makeString(sx, "AVAudioSessionCategoryPlayback"), 0u});
+
+            proc.mem().map(0xbb000000, 0x40000, Memory::kProtRW);
+            std::atomic<unsigned> ready{0}, done{0};
+            std::atomic<bool> start{false}, optionsOk{true};
+            auto worker = [&](unsigned which) {
+                CPU::Cpu workerCpu;
+                workerCpu.r[CPU::kSP] = 0xbb000000 + (which + 1) * 0x10000 - 256;
+                ++ready;
+                while (!start) std::this_thread::yield();
+                if (which == 3) {
+                    unsigned reads = 0;
+                    do {
+                        const uint32_t value = uint32_t(r.send(workerCpu, session, "categoryOptions"));
+                        if (value != 0 && value != 1 && value != 4 && value != 5 && value != 12 && value != 13)
+                            optionsOk = false;
+                        ++reads;
+                    } while (done != 3 || reads < 4000);
+                } else {
+                    for (unsigned i = 0; i < 2000; ++i) {
+                        if (which == 0) {
+                            r.send(workerCpu, session, "setCategory:error:", {mutableCategory, 0u});
+                            r.send(workerCpu, session, "setCategory:withOptions:error:", {mutablePlayback, 1u, 0u});
+                        } else if (which == 1) {
+                            r.send(workerCpu, session, "setMode:error:", {mutableVoice, 0u});
+                            r.send(workerCpu, session, "setMode:error:", {mutableVideo, 0u});
+                        } else {
+                            r.send(workerCpu, session, "setCategory:mode:options:error:", {mutableCategory, mutableVideo, 1u, 0u});
+                            r.send(workerCpu, session, "setCategory:mode:options:error:", {mutablePlayback, mutableVoice, 0u, 0u});
+                        }
+                    }
+                    ++done;
+                }
+            };
+            std::thread a(worker, 0), b(worker, 1), c(worker, 2), reader(worker, 3);
+            while (ready != 4) std::this_thread::yield();
+            start = true;
+            a.join(); b.join(); c.join(); reader.join();
+            check(optionsOk, "AVAudioSession synchronizes options reads with concurrent category and mode updates");
+            r.release(cpu, mutableCategory); r.release(cpu, mutablePlayback);
+            r.release(cpu, mutableVoice); r.release(cpu, mutableVideo);
+
+            {   // The first currentRoute read builds the route: concurrent first reads must all see the same object. The
+                // cache is per session, so each round uses a fresh process (a cold cache) to make the race likely.
+                bool allSame = true;
+                for (int round = 0; round < 40 && allSame; ++round) {
+                    ProcessConfig routeCfg;
+                    routeCfg.homePath = "/tmp/hvm_route_race";
+                    Process routeProc(routeCfg);
+                    auto& rr = ObjC::rt(routeProc);
+                    const ObjC::id routeSession = ObjC::id(rr.send(routeProc.mainThread().cpu, rr.getClass("AVAudioSession"), "sharedInstance"));
+                    routeProc.mem().map(0xbb000000, 0x40000, Memory::kProtRW);
+                    std::atomic<unsigned> routeReady{0};
+                    std::atomic<bool> routeStart{false};
+                    std::vector<uint32_t> routes(4, 0);
+                    auto routeWorker = [&](unsigned which) {
+                        CPU::Cpu workerCpu;
+                        workerCpu.r[CPU::kSP] = 0xbb000000 + (which + 1) * 0x10000 - 256;
+                        ++routeReady;
+                        while (!routeStart) std::this_thread::yield();
+                        routes[which] = uint32_t(rr.send(workerCpu, routeSession, "currentRoute"));
+                    };
+                    std::thread t0(routeWorker, 0), t1(routeWorker, 1), t2(routeWorker, 2), t3(routeWorker, 3);
+                    while (routeReady != 4) std::this_thread::yield();
+                    routeStart = true;
+                    t0.join(); t1.join(); t2.join(); t3.join();
+                    allSame = routes[0] != 0 && routes[0] == routes[1] && routes[1] == routes[2] && routes[2] == routes[3];
+                }
+                check(allSame, "concurrent first reads of AVAudioSession currentRoute all get one route");
+            }
+            const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
+            const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
+            const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;
+            check(port && same(ObjC::id(r.send(cpu, port, "portType")), "Speaker"),
+                  "AVAudioSession currentRoute reports the built-in speaker as its one output");
+            check(proc.lookupSymbol("_AVAudioSessionModeGameChat") && proc.lookupSymbol("_AVAudioSessionModeVideoRecording") &&
+                  proc.lookupSymbol("_AVAudioSessionModeMeasurement") && proc.lookupSymbol("_AVAudioSessionCategoryMultiRoute"),
+                  "AVAudioSession exports the remaining mode and category string constants");
         }
 
         // NSXMLParser: elements, attributes, entities, CDATA, self-closing tags, errors.
@@ -6768,6 +7252,65 @@ int runFullSubsystemTests() {
             fs::create_symlink(home + "/Game.app-sibling/secret.tfc", bundle + "/CookedIPhone/Link.tfc");
             mutations &= lookup("Link").empty();
             check(mutations, "bundle cache invalidates additions/removals and rejects a cached file replaced by an escaping symlink");
+            // A directory's mtime can repeat within one clock tick, so a device
+            // variant added right after the plain resource was cached must still
+            // win even though the stamp the cache recorded did not change.
+            // Restoring that stamp keeps this independent of host timestamp
+            // granularity instead of a race that only fails on a coarse clock.
+            const std::string dirPath = bundle + "/CookedIPhone";
+            const std::string stamped = dirPath + "/Stamped.tfc";
+            put(stamped);
+            const auto beforeAdd = fs::last_write_time(dirPath);
+            const bool cachedPlain = lookup("Stamped") == stamped;
+            put(dirPath + "/Stamped~iphone.tfc");
+            fs::last_write_time(dirPath, beforeAdd);
+            check(cachedPlain && lookup("Stamped") == dirPath + "/Stamped~iphone.tfc",
+                  "bundle cache prefers a device variant added under an unchanged directory timestamp");
+            const std::string priorityDir = bundle + "/Priority";
+            fs::create_directories(priorityDir + "/Base.lproj");
+            const std::string earlier = priorityDir + "/pRiOrItY.tfc";
+            put(earlier);
+            put(priorityDir + "/Base.lproj/Priority.tfc");
+            // This fixture requires a case-sensitive filesystem. Removing read
+            // permission exposes an unexpected rescan while retaining search
+            // permission for cached-path validation.
+            if (!fs::exists(priorityDir + "/Priority.tfc")) {
+                bool priority = lookup("Priority", "tfc", "Priority") == earlier &&
+                                lookup("Priority", "tfc", "Priority/") == earlier;
+                const auto permissions = fs::status(priorityDir).permissions();
+                fs::permissions(priorityDir, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec);
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority") == earlier;
+                priority &= lookup("Priority", "tfc", "Priority/") == earlier;
+                fs::permissions(priorityDir, permissions);
+                check(priority, "bundle cache retains an earlier case-insensitive match over a later exact match");
+                const auto priorityStamp = fs::last_write_time(priorityDir);
+                put(priorityDir + "/Priority~iphone.tfc");
+                fs::last_write_time(priorityDir, priorityStamp);
+                check(lookup("Priority", "tfc", "Priority") == priorityDir + "/Priority~iphone.tfc",
+                      "bundle cache still prefers a new exact device variant in the cached directory");
+            }
+            // A later exact match must not evict an earlier case-insensitive hit.
+            // Add a case-insensitive variant with the same timestamp so a
+            // re-scan would visibly select it instead of the cached path.
+            fs::create_directories(dirPath + "/Base.lproj");
+            const std::string remoteEarlier = dirPath + "/priority.tfc";
+            put(remoteEarlier);
+            put(dirPath + "/Base.lproj/Priority.tfc");
+            if (!fs::exists(dirPath + "/Priority.tfc")) { // case-sensitive filesystem
+                const auto priorityStamp = fs::last_write_time(dirPath);
+                bool priorityOK = lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                put(dirPath + "/priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                priorityOK &= lookup("Priority") == remoteEarlier;
+                check(priorityOK, "later exact resource does not evict an earlier case-insensitive cached match");
+                put(dirPath + "/Priority~iphone.tfc");
+                fs::last_write_time(dirPath, priorityStamp);
+                check(lookup("Priority") == dirPath + "/Priority~iphone.tfc",
+                      "cached case-insensitive match yields to an exact device variant in the same directory");
+            }
             put(home + "/Mutable.tfc");
             const auto mutableBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
             auto mutableLookup = [&] {
@@ -7550,6 +8093,53 @@ int runFullSubsystemTests() {
                          tail[i].seq == totalBefore + 300 - tail.size() + 1 + i;
         }
         check(hooked, "Engine::callHle records each host call in the calling thread's ring");
+
+        // The crash bundle carries each thread's last calls (T2c, #259): oldest first, exactly the last N,
+        // with the support status of a function that was declared a Stub.
+        const uint32_t ringStubFn = ringProc.defineFunction("_test_call_ring_stub_fn", [](Ctx&) {});
+        const uint32_t ringStubIndex = ringProc.engine().hleIndex(ringStubFn);
+        supportRegistry(ringProc).record({SupportKind::Function, "_test_call_ring_stub_fn", SupportStatus::Stub,
+                                          "test: a placeholder that must show up as a stub hit"});
+        ringProc.engine().callHle(&ringCpu, ringStubIndex);
+        const uint64_t ringTotal = ringCpu.call_ring.load()->total();
+        const std::string ringJson = ringProc.callRingJson(8);
+        auto seqAt = [&](uint64_t seq) { return ringJson.find("\"seq\":" + std::to_string(seq) + ","); };
+        size_t hleEntries = 0;
+        for (size_t at = ringJson.find("\"kind\":\"hle\""); at != std::string::npos; at = ringJson.find("\"kind\":\"hle\"", at + 1)) ++hleEntries;
+        const size_t lastEntry = seqAt(ringTotal);
+        const size_t stubAt = ringJson.find("\"status\":\"Stub\"");
+        bool ringOrdered = seqAt(ringTotal - 7) != std::string::npos && seqAt(ringTotal - 8) == std::string::npos;
+        for (uint64_t q = ringTotal - 7; ringOrdered && q < ringTotal; ++q) ringOrdered = seqAt(q) < seqAt(q + 1);
+        check(ringJson.find("\"thread\":" + std::to_string(ringProc.mainThread().id) + ",\"total\":" + std::to_string(ringTotal)) != std::string::npos &&
+              hleEntries == 8 && ringOrdered,
+              "callRingJson lists exactly the last N calls of a thread, oldest first, with the thread's total");
+        check(lastEntry != std::string::npos && stubAt != std::string::npos && stubAt > lastEntry &&
+              ringJson.find("\"name\":\"test_call_ring_stub_fn\"") != std::string::npos &&
+              ringJson.find("\"status\"") == stubAt && ringJson.find("\"status\"", stubAt + 1) == std::string::npos,
+              "callRingJson marks a declared Stub call and leaves unlabelled calls without a status");
+
+        // A worker that has finished (the one that crashed is marked finished before the bundle is written)
+        // is still in the dump.
+        const uint32_t ringWorkerFn = ringProc.defineFunction("test_call_ring_worker_fn", [&](Ctx& x) {
+            ringProc.engine().callHle(&x.cpu, ringStubIndex);   // a host call made on the worker lands in the worker's ring
+            x.cpu.r[0] = 0;
+        });
+        const uint32_t ringWorker = ringProc.startThread(ringWorkerFn, 0, 64u << 10, false);
+        uint32_t ringWorkerResult = 1;
+        const bool ringWorkerJoined = ringProc.joinThread(ringWorker, &ringWorkerResult);
+        const std::string ringAfter = ringProc.callRingJson(8);
+        size_t ringThreads = 0;   // the dump names a thread by its id (not the pthread handle startThread returns)
+        for (size_t at = ringAfter.find("\"thread\":"); at != std::string::npos; at = ringAfter.find("\"thread\":", at + 1)) ++ringThreads;
+        check(ringWorkerJoined && ringThreads == 2,
+              "callRingJson keeps a finished worker's ring so a crashed thread is not dropped");
+
+        // Generated placeholders for missing imports and C++ vtable slots are declared Stub, never unlabelled.
+        ringProc.makeMissingStub("_hvm_test_missing_import");
+        ringProc.makeMissingStub("__ZTV13HVMTestMissing");
+        const auto missingFn = supportRegistry(ringProc).find("_hvm_test_missing_import");
+        const auto missingSlot = supportRegistry(ringProc).find("__ZTV13HVMTestMissing$hvm_slot0");
+        check(missingFn && missingFn->status == SupportStatus::Stub && missingSlot && missingSlot->status == SupportStatus::Stub,
+              "a generated missing-function or vtable-slot stub is recorded as Stub");
     }
 
     // Teardown diagnostics: a guest thread still running (blocked in the real `read` on
@@ -7746,6 +8336,7 @@ int runFullSubsystemTests() {
     }
 
     check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
+    check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
@@ -7812,6 +8403,7 @@ static int runStopProbe() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string(argv[1]) == "guest-call-boundary-child") return runGuestCallBoundaryChild(std::atoi(argv[2]));
     if (argc == 2 && std::string(argv[1]) == "thread-lifetime-child") return runThreadLifetimeChild();
     if (argc == 4 && std::string(argv[1]) == "audio-decode") {
         std::ifstream in(argv[2], std::ios::binary);
