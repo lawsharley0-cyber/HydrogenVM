@@ -14,6 +14,7 @@
 #include "runtime/Abi.hpp"
 #include "runtime/libc/Format.hpp"
 #include "selftest/SelfTest.hpp"
+#include <array>
 #include <atomic>
 #include <sys/file.h>
 #include <chrono>
@@ -7556,6 +7557,43 @@ int runFullSubsystemTests() {
         const uint32_t accuracy = callDlsym("kCLLocationAccuracyBest");
         check(accuracy && proc.mem().read<double>(accuracy) == -1,
               "dlsym resolves a recognized numeric framework constant");
+    }
+    {
+        ProcessConfig cfg;
+        cfg.homePath = "/tmp/hvm-symbol-resolution-tests";
+        Process proc(cfg);
+        std::atomic<int> calls{0}, ready{0}, misses{0};
+        std::atomic<bool> go{false};
+        proc.addMissingSymbolResolver([&](const std::string& name, Process::MissingSymbolMode mode) -> uint32_t {
+            if (mode != Process::MissingSymbolMode::DynamicLookup) return 0;
+            if (name == "_HVMUnresolvedTest") { ++misses; return 0; }
+            if (name != "_HVMConcurrentResolutionTest") return 0;
+            const int call = ++calls;
+            proc.defineData("_HVMResolutionSideEffect", 0x55);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            return 0x12340000u + uint32_t(call);
+        });
+        constexpr size_t count = 8;
+        std::array<uint32_t, count> results{};
+        std::array<std::thread, count> workers;
+        for (size_t i = 0; i < count; ++i) workers[i] = std::thread([&, i] {
+            const auto existing = proc.lookupSymbol("_HVMConcurrentResolutionTest");
+            ++ready;
+            while (!go.load()) std::this_thread::yield();
+            results[i] = existing ? *existing : proc.resolveMissingSymbol("_HVMConcurrentResolutionTest");
+        });
+        while (ready.load() != int(count)) std::this_thread::yield();
+        go = true;
+        for (auto& worker : workers) worker.join();
+        bool same = results[0] != 0;
+        for (auto result : results) same &= result == results[0];
+        check(same && calls == 1 && proc.lookupSymbol("_HVMConcurrentResolutionTest") == results[0] &&
+              proc.lookupSymbol("_HVMResolutionSideEffect") == 0x55,
+              "concurrent first dynamic symbol resolution publishes one address");
+        check(proc.resolveMissingSymbol("_HVMUnresolvedTest") == 0 &&
+              proc.resolveMissingSymbol("_HVMUnresolvedTest") == 0 && misses == 2 &&
+              !proc.lookupSymbol("_HVMUnresolvedTest"),
+              "unresolved dynamic symbols remain uncached");
     }
 
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);

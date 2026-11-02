@@ -382,6 +382,7 @@ private:
     std::unordered_map<std::string, uint32_t> symbols_;
     std::vector<MissingSymbolResolver> missingResolvers_;
     mutable std::mutex symMu_;
+    std::mutex resolutionMu_;
     std::unordered_map<std::type_index, std::shared_ptr<void>> services_;
     std::mutex servicesMu_;
     std::vector<std::function<void()>> loadedHooks_;
