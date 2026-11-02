@@ -1127,6 +1127,7 @@ int32_t afmt_getProperty(Ctx& x, uint32_t, uint32_t, GuestPtr, GuestPtr ioSize, 
 
 // The session keeps what the app set (category, options, mode), as AVAudioSession does.
 struct SessionData : ObjC::HostObject {
+    std::recursive_mutex mu;
     id category = 0, mode = 0, route = 0;
     uint32_t categoryOptions = 0, options = 0;
 };
@@ -1157,11 +1158,11 @@ void avs_recomputeOptions(Ctx& x, SessionData& d) {
         d.options |= 4u | 8u;  // also default to speaker
 }
 bool avs_setCategory(Ctx& x, id self, SEL, id category, GuestPtr) {
-    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->categoryOptions = 0; avs_recomputeOptions(x, *d); }
+    if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = 0; avs_recomputeOptions(x, *d); }
     return true;
 }
 bool avs_setCategoryOptions(Ctx& x, id self, SEL, id category, uint32_t options, GuestPtr) {
-    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->categoryOptions = options; avs_recomputeOptions(x, *d); }
+    if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = options; avs_recomputeOptions(x, *d); }
     return true;
 }
 void avs_applyMode(Ctx& x, SessionData& d, id mode) {
@@ -1169,14 +1170,19 @@ void avs_applyMode(Ctx& x, SessionData& d, id mode) {
     avs_recomputeOptions(x, d);
 }
 bool avs_setCategoryModeOptions(Ctx& x, id self, SEL, id category, id mode, uint32_t options, GuestPtr) {
-    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->categoryOptions = options; avs_applyMode(x, *d, mode); }
+    if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_keep(x, d->category, category); d->categoryOptions = options; avs_applyMode(x, *d, mode); }
     return true;
 }
 bool avs_setMode(Ctx& x, id self, SEL, id mode, GuestPtr) {
-    if (SessionData* d = ses(x, self)) avs_applyMode(x, *d, mode);
+    if (SessionData* d = ses(x, self)) { std::lock_guard<std::recursive_mutex> lk(d->mu); avs_applyMode(x, *d, mode); }
     return true;
 }
-uint32_t avs_options(Ctx& x, id self, SEL) { SessionData* d = ses(x, self); return d ? d->options : 0; }
+uint32_t avs_options(Ctx& x, id self, SEL) {
+    SessionData* d = ses(x, self);
+    if (!d) return 0;
+    std::lock_guard<std::recursive_mutex> lk(d->mu);
+    return d->options;
+}
 // Route: the host's real output is not visible to the guest, so one built-in speaker output is reported.
 struct PortData : ObjC::HostObject { id type = 0, name = 0, uid = 0; };
 struct RouteData : ObjC::HostObject { id inputs = 0, outputs = 0; };
@@ -1211,12 +1217,24 @@ bool avs_yesErr(Ctx&, id, SEL, id, GuestPtr err) { if (err) (void)err; return tr
 bool avs_yesBoolErr(Ctx&, id, SEL, bool, GuestPtr) { return true; }
 bool avs_yesErr2(Ctx&, id, SEL, id, uint32_t, GuestPtr) { return true; }
 bool avs_no(Ctx&, id, SEL) { return false; }
-id avs_category(Ctx& x, id self, SEL) { SessionData* d = ses(x, self); return d && d->category ? d->category : makeString(x, "AVAudioSessionCategorySoloAmbient"); }
+id avs_category(Ctx& x, id self, SEL) {
+    if (SessionData* d = ses(x, self)) {
+        std::lock_guard<std::recursive_mutex> lk(d->mu);
+        if (d->category) return rt(x).autorelease(x.cpu, rt(x).retain(x.cpu, d->category));
+    }
+    return makeString(x, "AVAudioSessionCategorySoloAmbient");
+}
 void avs_setDelegate(Ctx&, id, SEL, id) {}
 double avs_rate(Ctx&, id, SEL) { return 44100; }
 float avs_volume(Ctx&, id, SEL) { return 1; }
 bool avs_yesDoubleErr(Ctx&, id, SEL, double, GuestPtr) { return true; }
-id avs_mode(Ctx& x, id self, SEL) { SessionData* d = ses(x, self); return d && d->mode ? d->mode : makeString(x, "AVAudioSessionModeDefault"); }
+id avs_mode(Ctx& x, id self, SEL) {
+    if (SessionData* d = ses(x, self)) {
+        std::lock_guard<std::recursive_mutex> lk(d->mu);
+        if (d->mode) return rt(x).autorelease(x.cpu, rt(x).retain(x.cpu, d->mode));
+    }
+    return makeString(x, "AVAudioSessionModeDefault");
+}
 uint32_t avs_zero(Ctx&, id, SEL) { return 0; }
 uint32_t avs_two(Ctx&, id, SEL) { return 2; }
 uint32_t avs_one(Ctx&, id, SEL) { return 1; }

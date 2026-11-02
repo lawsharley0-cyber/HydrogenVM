@@ -5421,6 +5421,59 @@ int runFullSubsystemTests() {
                       uint32_t(r.send(cpu, session, "categoryOptions")) == 1u,
                       "AVAudioSession applies chat defaults only to supported categories");
             }
+            // Mutable inputs make each setter copy and release the previous stored string.
+            const auto mutableCategory = Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord", true, true);
+            const auto mutablePlayback = Foundation::makeString(sx, "AVAudioSessionCategoryPlayback", true, true);
+            const auto mutableVoice = Foundation::makeString(sx, "AVAudioSessionModeVoiceChat", true, true);
+            const auto mutableVideo = Foundation::makeString(sx, "AVAudioSessionModeVideoChat", true, true);
+            r.send(cpu, session, "setCategory:mode:options:error:", {mutableCategory, mutableVoice, 0u, 0u});
+            const auto savedCategory = ObjC::id(r.send(cpu, session, "category"));
+            const auto savedMode = ObjC::id(r.send(cpu, session, "mode"));
+            r.send(cpu, session, "setCategory:mode:options:error:", {mutablePlayback, mutableVideo, 0u, 0u});
+            check(Foundation::utf8(sx, savedCategory) == "AVAudioSessionCategoryPlayAndRecord" &&
+                  Foundation::utf8(sx, savedMode) == "AVAudioSessionModeVoiceChat",
+                  "AVAudioSession getters keep their results alive after replacement");
+
+            proc.mem().map(0xbb000000, 0x40000, Memory::kProtRW);
+            std::atomic<unsigned> ready{0}, done{0};
+            std::atomic<bool> start{false}, optionsOk{true};
+            auto worker = [&](unsigned which) {
+                CPU::Cpu workerCpu;
+                workerCpu.r[CPU::kSP] = 0xbb000000 + (which + 1) * 0x10000 - 256;
+                ++ready;
+                while (!start) std::this_thread::yield();
+                if (which == 3) {
+                    unsigned reads = 0;
+                    do {
+                        const uint32_t value = uint32_t(r.send(workerCpu, session, "categoryOptions"));
+                        if (value != 0 && value != 1 && value != 4 && value != 5 && value != 12 && value != 13)
+                            optionsOk = false;
+                        ++reads;
+                    } while (done != 3 || reads < 4000);
+                } else {
+                    for (unsigned i = 0; i < 2000; ++i) {
+                        if (which == 0) {
+                            r.send(workerCpu, session, "setCategory:error:", {mutableCategory, 0u});
+                            r.send(workerCpu, session, "setCategory:withOptions:error:", {mutablePlayback, 1u, 0u});
+                        } else if (which == 1) {
+                            r.send(workerCpu, session, "setMode:error:", {mutableVoice, 0u});
+                            r.send(workerCpu, session, "setMode:error:", {mutableVideo, 0u});
+                        } else {
+                            r.send(workerCpu, session, "setCategory:mode:options:error:", {mutableCategory, mutableVideo, 1u, 0u});
+                            r.send(workerCpu, session, "setCategory:mode:options:error:", {mutablePlayback, mutableVoice, 0u, 0u});
+                        }
+                    }
+                    ++done;
+                }
+            };
+            std::thread a(worker, 0), b(worker, 1), c(worker, 2), reader(worker, 3);
+            while (ready != 4) std::this_thread::yield();
+            start = true;
+            a.join(); b.join(); c.join(); reader.join();
+            check(optionsOk, "AVAudioSession synchronizes options reads with concurrent category and mode updates");
+            r.release(cpu, mutableCategory); r.release(cpu, mutablePlayback);
+            r.release(cpu, mutableVoice); r.release(cpu, mutableVideo);
+
             const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
             const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
             const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;
