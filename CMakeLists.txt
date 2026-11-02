@@ -64,6 +64,13 @@ add_executable(hvm_tests tests/runner/TestRunner.cpp tests/host/minimp3_hwcap_te
 target_compile_definitions(hvm_tests PRIVATE MINIMP3_HWCAP_NO_MAIN)
 target_link_libraries(hvm_tests PRIVATE hvm_core)
 
+# GNU-style linker wrapping keeps host thread failure injection in the test binary.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(hvm_thread_launch_tests tests/runner/ThreadLaunchTests.cpp)
+  target_link_libraries(hvm_thread_launch_tests PRIVATE hvm_core)
+  target_link_options(hvm_thread_launch_tests PRIVATE "-Wl,--wrap=pthread_create")
+endif()
+
 add_executable(hvm_gl_lifetime_tests tests/runner/HostGLLifetimeTests.cpp)
 target_link_libraries(hvm_gl_lifetime_tests PRIVATE hvm_core)
 add_executable(hvm_app_bundle_tests tests/loader/AppBundleImportTests.cpp)

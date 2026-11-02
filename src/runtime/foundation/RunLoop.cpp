@@ -788,9 +788,14 @@ void th_start(Ctx& x, id self, SEL) {
     if (!d) return;
     std::lock_guard<std::mutex> lk(d->stackMu);
     if (d->started) return;   // NSInvalidArgumentException on iOS; starting twice is a no-op here
-    if (d->target) startBackground(x, d->target, d->sel, d->arg, self, d->stackSize);
-    else startBackground(x, self, rt(x).sel("main"), 0, self, d->stackSize);
     d->started = true;
+    try {
+        if (d->target) startBackground(x, d->target, d->sel, d->arg, self, d->stackSize);
+        else startBackground(x, self, rt(x).sel("main"), 0, self, d->stackSize);
+    } catch (...) {
+        d->started = false;
+        throw;
+    }
 }
 uint32_t th_stackSize(Ctx& x, id self, SEL) {
     ThreadData* d = rt(x).hostIf<ThreadData>(self);
@@ -802,7 +807,7 @@ void th_setStackSize(Ctx& x, id self, SEL, uint32_t n) {
     ThreadData* d = rt(x).hostIf<ThreadData>(self);
     if (!d) return;
     std::lock_guard<std::mutex> lk(d->stackMu);
-    if (d && !d->started.load() && n) d->stackSize = n;   // after -start the running thread keeps its stack
+    if (!d->started.load() && n >= (64u << 10)) d->stackSize = n;   // after -start the running thread keeps its stack
 }
 void th_noop(Ctx&, id, SEL) {}
 id th_name(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d && d->name ? d->name : makeString(x, ""); }

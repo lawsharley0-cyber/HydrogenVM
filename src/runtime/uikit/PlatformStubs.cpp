@@ -1153,16 +1153,17 @@ bool avs_setCategoryOptions(Ctx& x, id self, SEL, id category, uint32_t options,
     if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->options = options; }
     return true;
 }
+void avs_applyMode(Ctx& x, SessionData& d, id mode) {
+    avs_keep(x, d.mode, mode);
+    if (mode && Foundation::utf8(x, mode) == "AVAudioSessionModeVideoChat")
+        d.options |= 4u | 8u;   // allow Bluetooth HFP and default to speaker
+}
 bool avs_setCategoryModeOptions(Ctx& x, id self, SEL, id category, id mode, uint32_t options, GuestPtr) {
-    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); avs_keep(x, d->mode, mode); d->options = options; }
+    if (SessionData* d = ses(x, self)) { avs_keep(x, d->category, category); d->options = options; avs_applyMode(x, *d, mode); }
     return true;
 }
 bool avs_setMode(Ctx& x, id self, SEL, id mode, GuestPtr) {
-    if (SessionData* d = ses(x, self)) {
-        avs_keep(x, d->mode, mode);
-        if (mode && Foundation::utf8(x, mode) == "AVAudioSessionModeVideoChat")
-            d->options |= 4u | 8u;   // allow Bluetooth HFP and default to speaker
-    }
+    if (SessionData* d = ses(x, self)) avs_applyMode(x, *d, mode);
     return true;
 }
 uint32_t avs_options(Ctx& x, id self, SEL) { SessionData* d = ses(x, self); return d ? d->options : 0; }

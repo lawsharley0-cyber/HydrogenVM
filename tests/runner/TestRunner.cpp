@@ -5266,6 +5266,8 @@ int runFullSubsystemTests() {
             const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
                                                 "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
             const uint32_t defaultSize = uint32_t(r.send(cpu, th, "stackSize"));
+            r.send(cpu, th, "setStackSize:", {16u << 10});
+            const bool rejectedSmall = uint32_t(r.send(cpu, th, "stackSize")) == defaultSize;
             const auto threadsBefore = proc.liveThreadIds();
             bool rejectedOverflow = false, rejectedRange = false;
             r.send(cpu, th, "setStackSize:", {0xffffffffu});
@@ -5290,6 +5292,7 @@ int runFullSubsystemTests() {
             for (int i = 0; i < 400 && !probe->done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
             check(defaultSize == (512u << 10) && setSize == (1u << 20) && actualSize && keptSize && probe->done,
                   "NSThread applies the requested guest stack and ignores updates after start");
+            check(rejectedSmall, "NSThread ignores stack requests below 64 KiB");
             check(rejectedOverflow && rejectedRange && unchanged && actualSize,
                   "NSThread rejects oversized stacks without starting and can retry with a valid size");
 
@@ -5331,6 +5334,10 @@ int runFullSubsystemTests() {
             r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u});
             check(videoDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 13u,
                   "AVAudioSession video chat adds Bluetooth and speaker options while preserving existing options");
+            r.send(cpu, session, "setCategory:mode:options:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u, 0u});
+            check(uint32_t(r.send(cpu, session, "categoryOptions")) == 12u,
+                  "AVAudioSession combined video chat setter adds Bluetooth and speaker defaults");
             const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
             const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
             const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;
