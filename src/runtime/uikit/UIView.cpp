@@ -1,5 +1,6 @@
 // HydrogenVM — UIResponder, UIView, UIWindow, UIScreen, UIViewController.
 #include "UIKit.hpp"
+#include "runtime/Support.hpp"
 
 namespace Hydrogen::Runtime::UIKit {
 
@@ -583,15 +584,29 @@ void w_setLevel(Ctx& x, id self, SEL, float l) { V(x, self).windowLevel = l; set
 id w_screen(Ctx& x, id, SEL) { return ui(x).mainScreen; }
 id w_root(Ctx& x, id self, SEL) { return V(x, self).rootViewController; }
 
+// The screen minus the safe-area insets (issue #281, mode 4); the whole screen when none are set.
+G::Rect safeScreen(Ctx& x) {
+    auto& u = ui(x);
+    const float l = std::min(u.safeLeft, u.screenW), t = std::min(u.safeTop, u.screenH);
+    return {l, t, std::max(0.0f, u.screenW - l - std::min(u.safeRight, u.screenW - l)),
+            std::max(0.0f, u.screenH - t - std::min(u.safeBottom, u.screenH - t))};
+}
+G::Rect intersectRects(const G::Rect& a, const G::Rect& b) {
+    const float x0 = std::max(a.x, b.x), y0 = std::max(a.y, b.y);
+    const float x1 = std::min(a.x + a.w, b.x + b.w), y1 = std::min(a.y + a.h, b.y + b.h);
+    return {x0, y0, std::max(0.0f, x1 - x0), std::max(0.0f, y1 - y0)};
+}
 G::Rect applicationFrame(Ctx& x) {
     auto& u = ui(x);
-    if (u.statusBarHidden) return {0, 0, u.screenW, u.screenH};
-    switch (u.statusBarOrientation) {
-        case 3: return {20, 0, u.screenW - 20, u.screenH};
-        case 4: return {0, 0, u.screenW - 20, u.screenH};
-        case 2: return {0, 0, u.screenW, u.screenH - 20};
-        default: return {0, 20, u.screenW, u.screenH - 20};
+    G::Rect base;
+    if (u.statusBarHidden) base = {0, 0, u.screenW, u.screenH};
+    else switch (u.statusBarOrientation) {
+        case 3: base = {20, 0, u.screenW - 20, u.screenH}; break;
+        case 4: base = {0, 0, u.screenW - 20, u.screenH}; break;
+        case 2: base = {0, 0, u.screenW, u.screenH - 20}; break;
+        default: base = {0, 20, u.screenW, u.screenH - 20}; break;
     }
+    return intersectRects(base, safeScreen(x));
 }
 // Lay out a root view controller's view for the current interface orientation (iOS 6 model:
 // the window stays portrait; the root view is rotated).
@@ -600,7 +615,7 @@ void layoutRootView(Ctx& x, id window, id vc) {
     const id view = id(rt(x).send(x.cpu, vc, "view"));
     if (!view) return;
     const bool full = VC(x, vc).wantsFullScreen;
-    G::Rect af = full ? G::Rect{0, 0, u.screenW, u.screenH} : applicationFrame(x);
+    G::Rect af = full ? safeScreen(x) : applicationFrame(x);
     LayerData& l = layerData(x, viewLayer(x, view));
     const int o = u.statusBarOrientation;
     const G::Size old{l.bounds.w, l.bounds.h};
@@ -1086,13 +1101,15 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder scr = r.defineClass("UIScreen", "NSObject");
     u.screen = scr.cls();
     scr.cm<&sc_main>("mainScreen").cm<&sc_screens>("screens");
-    scr.m<&sc_bounds>("bounds", R + "@:").m<&sc_nativeBounds>("nativeBounds", R + "@:").m<&sc_appFrame>("applicationFrame", R + "@:")
+    scr.m<&sc_bounds>("bounds", R + "@:").m<&sc_nativeBounds>("nativeBounds", R + "@:")
        .m<&sc_scale>("scale", "f@:").m<&sc_scale>("nativeScale", "f@:").m<&sc_brightness>("brightness", "f@:")
        .m<&sc_setBrightness>("setBrightness:", "v@:f").m<&sc_currentMode>("currentMode").m<&sc_currentMode>("preferredMode")
        .m<&sc_modes>("availableModes").m<&sc_setMode>("setCurrentMode:").m<&sc_setMode>("setOverscanCompensation:")
        .m<&sc_overscan>("overscanCompensation", "i@:").m<&sc_zeroFloat>("overscanCompensationPixelsPerInch", "f@:")
        .m<&sc_nil>("mirroredScreen")
        .m<&sc_displayLink>("displayLinkWithTarget:selector:", "@@:@:");
+    supportMethod(p, scr, "UIScreen", "applicationFrame", [](Ctx& x) { callWrapped<&sc_appFrame>(x); }, SupportStatus::Approx,
+        "Fixed 20pt status bar; with HVM_SAFE_AREA the player's safe-area insets also shrink it. Not the real safeAreaInsets API", R + "@:");
     ObjC::ClassBuilder mode = r.defineClass("UIScreenMode", "NSObject");
     mode.m<&sm_size>("size", S + "@:").m<&sm_aspect>("pixelAspectRatio", "f@:");
     u.mainScreen = r.createInstance(u.screen);

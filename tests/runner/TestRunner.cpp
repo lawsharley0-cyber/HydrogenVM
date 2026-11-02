@@ -2508,6 +2508,44 @@ int runFullSubsystemTests() {
               "named UTC zone is independent of the host's local timezone");
     }
 
+    // 2a0. Guest screen overrides (issue #281, modes 3 and 4): opt-in by environment, per launch.
+    {
+        auto screenSize = [&](const char* sel) { return UIKit::getRect(cx, ObjC::id(r.send(cpu, r.getClass("UIScreen"), "mainScreen")), sel); };
+        auto& u = UIKit::ui(cx);
+        const float w0 = u.screenW, h0 = u.screenH;
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "694", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - 694.0f) < 0.01f && std::abs(screenSize("bounds").w - w0) < 0.01f,
+              "HVM_VIRTUAL_SCREEN_HEIGHT gives the guest a taller UIScreen");
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "99999", 1);
+        u.screenH = h0;
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "an out-of-range virtual height is ignored");
+        ::setenv("HVM_VIRTUAL_SCREEN_HEIGHT", "abc", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "a non-numeric virtual height is ignored");
+        ::unsetenv("HVM_VIRTUAL_SCREEN_HEIGHT");
+        UIKit::applyGuestScreenEnv(cx);
+        check(std::abs(screenSize("bounds").h - h0) < 0.01f, "no variable keeps the previous screen");
+        const bool hidden = u.statusBarHidden;
+        u.statusBarHidden = false;
+        u.statusBarOrientation = 1;
+        ::setenv("HVM_SAFE_AREA", "44,0,34,0", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        const Graphics::Rect af = screenSize("applicationFrame");
+        check(std::abs(af.y - 44.0f) < 0.01f && std::abs(af.h - (h0 - 44.0f - 34.0f)) < 0.01f,
+              "safe-area insets shrink applicationFrame (top 44, bottom 34)");
+        ::setenv("HVM_SAFE_AREA", "bogus", 1);
+        UIKit::applyGuestScreenEnv(cx);
+        const Graphics::Rect plain = screenSize("applicationFrame");
+        check(std::abs(plain.y - 20.0f) < 0.01f && std::abs(plain.h - (h0 - 20.0f)) < 0.01f,
+              "invalid safe-area text means no insets");
+        ::unsetenv("HVM_SAFE_AREA");
+        UIKit::applyGuestScreenEnv(cx);
+        u.statusBarHidden = hidden;
+        u.screenW = w0; u.screenH = h0;
+    }
+
     // 2a. UIScrollView
     {
         const ObjC::Class svCls = r.getClass("UIScrollView");

@@ -205,3 +205,95 @@ enum PlayerSettings {
         defaults.set(focus.rawValue, forKey: perGameKey(cropFocusKey, bundleID: bundleID))
     }
 }
+
+/// How a game copes with the taller virtual screen (issue #281, mode 3).
+enum GuestScreenRecord: String, CaseIterable, Identifiable {
+    case unknown = "Not tried", works = "Works", broken = "Broken"
+    var id: String { rawValue }
+}
+
+/// The taller guest screen (mode 3) and the safe-area insets (mode 4) are opt-in per game and
+/// reach the runtime as environment variables set for one launch. The runtime ignores values
+/// it cannot use, so a game falls back to the previous screen rather than failing.
+enum GuestScreenSettings {
+    static let virtualKey = "player.virtualScreen"
+    static let safeAreaKey = "player.safeArea"
+    static let recordKey = "player.virtualScreenRecord"
+    static let heightVariable = "HVM_VIRTUAL_SCREEN_HEIGHT"
+    static let safeAreaVariable = "HVM_SAFE_AREA"
+
+    static func virtualScreen(bundleID: String, defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: PlayerSettings.perGameKey(virtualKey, bundleID: bundleID))
+    }
+
+    static func setVirtualScreen(_ on: Bool, bundleID: String, defaults: UserDefaults = .standard) {
+        defaults.set(on, forKey: PlayerSettings.perGameKey(virtualKey, bundleID: bundleID))
+    }
+
+    /// Safe-area insets follow the taller screen unless the player switched them off.
+    static func safeArea(bundleID: String, defaults: UserDefaults = .standard) -> Bool {
+        let key = PlayerSettings.perGameKey(safeAreaKey, bundleID: bundleID)
+        return defaults.object(forKey: key) as? Bool ?? virtualScreen(bundleID: bundleID, defaults: defaults)
+    }
+
+    static func setSafeArea(_ on: Bool, bundleID: String, defaults: UserDefaults = .standard) {
+        defaults.set(on, forKey: PlayerSettings.perGameKey(safeAreaKey, bundleID: bundleID))
+    }
+
+    static func record(bundleID: String, defaults: UserDefaults = .standard) -> GuestScreenRecord {
+        defaults.string(forKey: PlayerSettings.perGameKey(recordKey, bundleID: bundleID))
+            .flatMap(GuestScreenRecord.init(rawValue:)) ?? .unknown
+    }
+
+    static func setRecord(_ record: GuestScreenRecord, bundleID: String, defaults: UserDefaults = .standard) {
+        defaults.set(record.rawValue, forKey: PlayerSettings.perGameKey(recordKey, bundleID: bundleID))
+    }
+
+    /// A game recorded as broken goes back to the previous screen even if the switch is still on.
+    static func effectiveVirtualScreen(bundleID: String, defaults: UserDefaults = .standard) -> Bool {
+        virtualScreen(bundleID: bundleID, defaults: defaults) && record(bundleID: bundleID, defaults: defaults) != .broken
+    }
+
+    /// Portrait guest points (width 320) that match the display's aspect, or nil when the
+    /// result is outside what the runtime accepts (480...1024).
+    static func virtualHeight(display: CGSize, guestWidth: CGFloat = 320) -> Int? {
+        let short = min(display.width, display.height), long = max(display.width, display.height)
+        guard short.isFinite, long.isFinite, short > 0 else { return nil }
+        let height = Int((guestWidth * long / short).rounded(.down))
+        return (480...1024).contains(height) ? height : nil
+    }
+
+    /// Display-edge insets expressed as "top,left,bottom,right" in the portrait framebuffer's
+    /// points. `scale` is guest points per display point. Which display edge is which guest
+    /// edge follows the same quarter turns as `PlayerGeometry.guestPoint`.
+    static func safeAreaValue(top: CGFloat, left: CGFloat, bottom: CGFloat, right: CGFloat,
+                              orientation: GuestOrientation, scale: CGFloat) -> String? {
+        guard scale.isFinite, scale > 0, [top, left, bottom, right].allSatisfy({ $0.isFinite && $0 >= 0 }) else { return nil }
+        let guest: (CGFloat, CGFloat, CGFloat, CGFloat)
+        switch orientation {
+        case .portrait: guest = (top, left, bottom, right)
+        case .upsideDown: guest = (bottom, right, top, left)
+        case .landscapeLeft: guest = (right, top, left, bottom)
+        case .landscapeRight: guest = (left, bottom, right, top)
+        }
+        let values = [guest.0, guest.1, guest.2, guest.3].map { Int(($0 * scale).rounded()) }
+        guard values.allSatisfy({ $0 <= 200 }) else { return nil }
+        return values.map(String.init).joined(separator: ",")
+    }
+
+    /// Sets or clears the variables for the launch about to start.
+    static func apply(bundleID: String, display: CGSize, insets: (top: CGFloat, left: CGFloat, bottom: CGFloat, right: CGFloat),
+                      orientation: GuestOrientation, defaults: UserDefaults = .standard,
+                      environment: (String, String?) -> Void) {
+        let height = effectiveVirtualScreen(bundleID: bundleID, defaults: defaults)
+            ? virtualHeight(display: display) : nil
+        environment(heightVariable, height.map(String.init))
+        var safe: String?
+        if safeArea(bundleID: bundleID, defaults: defaults), height != nil {
+            let portraitWidth = min(display.width, display.height)
+            safe = safeAreaValue(top: insets.top, left: insets.left, bottom: insets.bottom, right: insets.right,
+                                 orientation: orientation, scale: portraitWidth > 0 ? 320 / portraitWidth : 0)
+        }
+        environment(safeAreaVariable, safe)
+    }
+}

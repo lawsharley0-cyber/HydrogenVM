@@ -110,6 +110,9 @@ struct UIState {
     id keyWindow = 0;
     // screen (points)
     float screenW = 320, screenH = 480, scale = 2;
+    // Safe-area insets in portrait-framebuffer points (issue #281, mode 4). Approximation: they
+    // shrink applicationFrame, the status bar and the root view; they are not safeAreaInsets.
+    float safeTop = 0, safeLeft = 0, safeBottom = 0, safeRight = 0;
     bool statusBarHidden = false;
     int32_t statusBarOrientation = 1;   // UIInterfaceOrientationPortrait
     int32_t initialOrientation = 1;
@@ -200,6 +203,9 @@ void deliverPendingInput(Ctx& x);
 // ---- message helpers
 uint64_t sendRect(Ctx& x, id self, SEL s, const G::Rect& r);
 uint64_t sendPoint(Ctx& x, id self, SEL s, const G::Point& p);
+// Applies HVM_VIRTUAL_SCREEN_HEIGHT and HVM_SAFE_AREA (set by the player per launch from the per-app
+// settings; issue #281 modes 3 and 4). Absent or invalid values leave the screen unchanged.
+void applyGuestScreenEnv(Ctx& x);
 G::Rect getRect(Ctx& x, id self, const char* sel);               // calls a CGRect-returning method (stret)
 G::Size getSize(Ctx& x, id self, SEL s, std::initializer_list<uint32_t> args = {});
 inline uint32_t fbits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
