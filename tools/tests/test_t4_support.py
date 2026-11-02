@@ -2,6 +2,7 @@
 """Unit tests for T4 Support manifest, census, failure ledger, and probe fast mode."""
 
 import json
+import os
 from pathlib import Path
 import random
 import re
@@ -76,11 +77,12 @@ class TestCensus(unittest.TestCase):
         cls.manifest = json.loads(p.stdout)   # dumped fresh for every run: no cache that outlives a rebuild
 
     def test_reproduces_reference_numbers(self):
-        # Reproduce reference numbers for all 3 committed repo-root IPAs
+        # Reproduce reference numbers for all 3 fixture IPAs. They come from HVM_FIXTURE_ROOT when it is set (the
+        # private store; the repo copy is then ignored, like the compat harness), otherwise from the repo root.
         for fixture_name, meta in census.FIXTURE_MANIFEST.items():
-            ipa_path = ROOT_DIR / fixture_name
+            ipa_path = census.fixture_path(fixture_name, ROOT_DIR, os.environ.get("HVM_FIXTURE_ROOT"))
             if not ipa_path.exists():
-                self.skipTest(f"Fixture IPA {fixture_name} not found at repo root")
+                self.skipTest(f"Fixture IPA {fixture_name} not found at {ipa_path}")
             res = census.census_ipa(ipa_path, self.manifest)
             self.assertEqual(res["slice"], meta["slice"], fixture_name)
             ref = meta["reference"]
@@ -92,6 +94,31 @@ class TestCensus(unittest.TestCase):
             for key in ("unimplemented_symbols", "missing_or_stubbed_classes", "missing_selectors_classes_constants"):
                 self.assertLessEqual(res[key], ref[key], f"{fixture_name}: {key} grew past the recorded reference")
             self.assertEqual(res["reference"], ref)
+
+
+class TestCensusFixturePath(unittest.TestCase):
+    """Where census looks for a fixture IPA. Pure path logic: no real game file and no build needed."""
+
+    NAME = "AngryBirds_v1.0_os30.ipa"
+
+    def test_fixture_root_wins_and_repo_copy_is_never_used(self):
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as store:
+            (Path(repo) / self.NAME).write_bytes(b"repo copy")
+            got = census.fixture_path(self.NAME, Path(repo), store)
+            self.assertEqual(got, Path(store) / "ipas" / self.NAME)   # same layout as apps.json fixtureRelPath
+            self.assertFalse(got.exists())   # a missing store file is reported as missing, not replaced by the repo copy
+
+    def test_without_a_fixture_root_the_repo_root_is_used(self):
+        with tempfile.TemporaryDirectory() as repo:
+            self.assertEqual(census.fixture_path(self.NAME, Path(repo), None), Path(repo) / self.NAME)
+            self.assertEqual(census.fixture_path(self.NAME, Path(repo), ""), Path(repo) / self.NAME)
+
+    def test_census_all_names_the_missing_store_path(self):
+        with tempfile.TemporaryDirectory() as store:
+            (Path(store) / "m.json").write_text('{"symbols": [], "classes": []}')   # the manifest loads before fixtures
+            with self.assertRaises(SystemExit) as ctx:
+                census.main(["--all", "--fixture-root", store, "--manifest", str(Path(store) / "m.json")])
+            self.assertIn(str(Path(store) / "ipas"), str(ctx.exception))
 
 
 class TestLedger(unittest.TestCase):
