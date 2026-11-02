@@ -33,19 +33,7 @@
     [self waitForExpectationsWithTimeout:10 handler:nil];
 }
 
-- (void)testThreeFingerHoldSummonsAndHidesControlsWithoutInterruptingTouches {
-    self.continueAfterFailure = NO;
-    XCUIApplication *app = [[XCUIApplication alloc] init];
-    app.launchArguments = @[@"-player.showDebugOverlay", @"NO"];
-    app.launchEnvironment = @{ @"PLAYER_ORIENTATION": @"1" };
-    [app launch];
-    [app.buttons[@"Open Player"] tap];
-    XCUIElement *screen = app.otherElements[@"player-viewport"];
-    XCTAssertTrue([screen waitForExistenceWithTimeout:10]);
-    [self waitForElement:app.staticTexts[@"probe-frame"] label:@"ready"];
-    XCTAssertFalse(app.buttons[@"player-controls"].exists);
-    XCTAssertFalse(app.buttons[@"player-pause"].exists);
-
+- (void)holdThreeFingersInApp:(XCUIApplication *)app screen:(XCUIElement *)screen {
     NSTimeInterval hold = app.staticTexts[@"probe-hold-seconds"].label.doubleValue;
     XCTAssertGreaterThan(hold, 0);
     Class recordClass = NSClassFromString(@"XCSynthesizedEventRecord");
@@ -74,6 +62,23 @@
     }];
     [self waitForExpectationsWithTimeout:10 handler:nil];
     XCTAssertTrue(success, @"Event synthesis failed: %@", synthesisError);
+}
+
+- (void)testThreeFingerHoldSummonsAndHidesControlsWithoutInterruptingTouches {
+    self.continueAfterFailure = NO;
+    XCUIApplication *app = [[XCUIApplication alloc] init];
+    app.launchArguments = @[@"-player.showDebugOverlay", @"NO"];
+    app.launchEnvironment = @{ @"PLAYER_ORIENTATION": @"1" };
+    [app launch];
+    XCTAssertEqualObjects(app.staticTexts[@"probe-stop-count"].label, @"0");
+    [app.buttons[@"Open Player"] tap];
+    XCUIElement *screen = app.otherElements[@"player-viewport"];
+    XCTAssertTrue([screen waitForExistenceWithTimeout:10]);
+    [self waitForElement:app.staticTexts[@"probe-frame"] label:@"ready"];
+    XCTAssertFalse(app.buttons[@"player-controls"].exists);
+    XCTAssertFalse(app.buttons[@"player-pause"].exists);
+
+    [self holdThreeFingersInApp:app screen:screen];
 
     XCTAssertTrue([app.buttons[@"player-pause"] waitForExistenceWithTimeout:10]);
     XCTAssertTrue(app.buttons[@"hud-minimize"].exists);
@@ -87,5 +92,12 @@
     [self expectationForPredicate:hidden evaluatedWithObject:app.buttons[@"player-pause"] handler:nil];
     [self waitForExpectationsWithTimeout:10 handler:nil];
     XCTAssertFalse(app.buttons[@"player-controls"].exists);
+
+    [self holdThreeFingersInApp:app screen:screen];
+    XCTAssertTrue([app.buttons[@"player-quit"] waitForExistenceWithTimeout:10]);
+    [app.buttons[@"player-quit"] tap];
+    XCTAssertTrue([app.buttons[@"Open Player"] waitForExistenceWithTimeout:10]);
+    [self waitForElement:app.staticTexts[@"probe-stop-count"] label:@"1"];
+    XCTAssertFalse(app.buttons[@"player-pause"].isHittable);
 }
 @end

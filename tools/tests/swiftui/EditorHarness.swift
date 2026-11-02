@@ -26,6 +26,7 @@ struct HarnessHome: View {
         NavigationStack {
             List {
                 Button("Open Player") { showPlayer = true }
+                Text("\(PlayerProbe.shared.stopCount)").accessibilityIdentifier("probe-stop-count")
                 Button("Open JSON") { open("sample.json") }
                 Button("Open Text") { open("sample.txt") }
                 Text("nested=\(nestedEnabled ? "true" : "false")").accessibilityIdentifier("disk-json")

@@ -666,6 +666,7 @@ struct RunView: View {
                                 .font(.title3)
                                 .foregroundStyle(.red)
                         }
+                        .accessibilityIdentifier("player-quit")
                     }
                 }
                 .padding(14)
