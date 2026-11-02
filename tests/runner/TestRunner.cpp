@@ -2817,6 +2817,73 @@ int runFullSubsystemTests() {
               "UISwitch, UISlider, and UISegmentedControl");
     }
 
+    // On-screen keyboard (#303): a focused text field asks the host for a keyboard with its traits; the edits the
+    // host sends back go through the guest's delegate, notifications and control events, on the main run loop.
+    {
+        std::vector<UIKit::TextInputRequest> requests;
+        UIKit::setTextInputObserver(proc, [&](const UIKit::TextInputRequest& q) { requests.push_back(q); });
+        std::vector<std::string> changes;
+        int returns = 0, began = 0, ended = 0, editingChanged = 0, viewChanged = 0;
+        ObjC::ClassBuilder del = r.defineClass("HVMTestTextDelegate", "NSObject");
+        del.method("textField:shouldChangeCharactersInRange:replacementString:", [&](Ctx& x) {
+            const std::string rep = Foundation::utf8(x, x.cpu.r[4]);
+            changes.push_back(std::to_string(x.cpu.r[2]) + "," + std::to_string(x.cpu.r[3]) + ":" + rep);
+            x.cpu.r[0] = rep.find('x') == std::string::npos ? 1 : 0;   // refuse any edit that adds an 'x'
+        }, "c@:@{_NSRange=II}@");
+        del.method("textFieldShouldReturn:", [&](Ctx& x) { ++returns; x.cpu.r[0] = 1; }, "c@:@");
+        del.method("textFieldDidBeginEditing:", [&](Ctx&) { ++began; }, "v@:@");
+        del.method("textFieldDidEndEditing:", [&](Ctx&) { ++ended; }, "v@:@");
+        del.method("changed:", [&](Ctx&) { ++editingChanged; }, "v@:@");
+        del.method("textViewDidChange:", [&](Ctx&) { ++viewChanged; }, "v@:@");
+        const ObjC::id delegate = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, del.cls(), r.selAlloc)), r.selInit));
+        const auto pump = [&] { for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.0); };
+        const auto textOfField = [&](ObjC::id f) { return Foundation::utf8(cx, ObjC::id(r.send(cpu, f, "text"))); };
+
+        const ObjC::id field = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 120, 30});
+        r.send(cpu, field, "setDelegate:", {delegate});
+        r.send(cpu, field, "setKeyboardType:", {4});
+        r.send(cpu, field, "setReturnKeyType:", {4});
+        r.send(cpu, field, "setSecureTextEntry:", {1});
+        r.send(cpu, field, "setPlaceholder:", {Foundation::makeString(cx, "Name")});
+        r.send(cpu, field, "addTarget:action:forControlEvents:", {delegate, r.sel("changed:"), 1u << 17});
+        check(uint32_t(r.send(cpu, field, "keyboardType")) == 4 && uint32_t(r.send(cpu, field, "returnKeyType")) == 4,
+              "UITextField keeps the keyboard and return key traits it was given");
+        const bool became = (r.send(cpu, field, "becomeFirstResponder") & 0xFF) != 0;
+        check(became && requests.size() == 1 && requests[0].active && requests[0].keyboardType == 4 && requests[0].returnKeyType == 4 &&
+              requests[0].secure && !requests[0].multiline && requests[0].placeholder == "Name" && began == 1,
+              "a text field that becomes first responder asks the host for a keyboard with its traits");
+
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "ab"}); pump();
+        check(textOfField(field) == "ab" && changes == std::vector<std::string>{"0,0:ab"} && editingChanged == 1,
+              "typed text reaches the field through the delegate and the editing-changed control event");
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "abx"}); pump();
+        check(textOfField(field) == "ab" && changes.back() == "2,0:x" && editingChanged == 1 && requests.back().active && requests.back().text == "ab",
+              "an edit the delegate refuses is not applied, and the host is told the text to go back to");
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "a"}); pump();
+        check(textOfField(field) == "a" && changes.back() == "1,1:" && editingChanged == 2, "deleting reaches the delegate as a replacement of the removed range");
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::Return, ""}); pump();
+        check(returns == 1, "the return key asks the delegate textFieldShouldReturn:");
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::Dismiss, ""}); pump();
+        check((r.send(cpu, field, "isFirstResponder") & 0xFF) == 0 && ended == 1 && !requests.back().active,
+              "dismissing the keyboard resigns the field and tells the host the keyboard is gone");
+
+        // A tap focuses a field, as on iOS, and a UITextView asks for a multi-line keyboard.
+        const ObjC::id other = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 40, 120, 30});
+        const size_t before = requests.size();
+        r.send(cpu, other, "touchesEnded:withEvent:", {ObjC::id(r.send(cpu, r.getClass("NSSet"), "set")), 0});
+        check((r.send(cpu, other, "isFirstResponder") & 0xFF) != 0 && requests.size() == before + 1 && requests.back().active,
+              "tapping a text field focuses it and asks for the keyboard");
+        r.send(cpu, other, "resignFirstResponder");
+        const ObjC::id view = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextView"), r.selAlloc)), r.sel("initWithFrame:"), {0, 80, 120, 80});
+        r.send(cpu, view, "setDelegate:", {delegate});
+        r.send(cpu, view, "becomeFirstResponder");
+        UIKit::submitTextInput(proc, {UIKit::TextInputEvent::SetText, "hi\nthere"}); pump();
+        check(requests.back().multiline && textOfField(view) == "hi\nthere" && viewChanged == 1,
+              "a UITextView asks for a multi-line keyboard and reports changes through textViewDidChange:");
+        r.send(cpu, view, "resignFirstResponder");
+        UIKit::setTextInputObserver(proc, nullptr);
+    }
+
     // NSUserDefaults rejects non-property-list values with a guest-visible exception.
     {
         const ObjC::Class nsoCls = r.getClass("NSObject");
