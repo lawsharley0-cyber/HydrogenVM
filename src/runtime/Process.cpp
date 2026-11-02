@@ -641,6 +641,8 @@ void Process::setenv(const std::string& name, const std::string& value) {
 void Process::initThreadState(GuestThread& t, uint32_t stackSize) {
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
+        if (uint64_t(stackSize) + kGuard > uint64_t(stackTop_) - kHeapLimit)
+            throw std::runtime_error("HydrogenVM: guest stack exceeds available stack space");
         stackTop_ -= stackSize + kGuard;
         t.stackBase = stackTop_ + kGuard;
     }
@@ -720,19 +722,29 @@ GuestThread* Process::findThreadById(uint32_t id) {
 }
 
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
+    const uint64_t rounded = stackSize ? (uint64_t(stackSize) + 4095) & ~uint64_t(4095) : kThreadStackSize;
+    if (rounded > UINT32_MAX) throw std::runtime_error("HydrogenVM: guest stack size is too large");
     auto t = std::make_unique<GuestThread>(*this);
     GuestThread* raw = t.get();
+    initThreadState(*raw, std::max<uint32_t>(uint32_t(rounded), 64u << 10));
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
         raw->id = nextThreadId_++;
     }
-    initThreadState(*raw, std::max<uint32_t>(stackSize ? (stackSize + 4095) & ~4095u : kThreadStackSize, 64u << 10));
     raw->detached = detached;
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
         threads_[raw->self] = std::move(t);
     }
-    spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
+    try {
+        spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
+    } catch (...) {
+        std::lock_guard<std::mutex> lk(threadsMu_);
+        mem_->unmap(raw->stackBase, raw->stackSize);
+        if (stackTop_ == raw->stackBase - kGuard) stackTop_ = raw->stackBase + raw->stackSize;
+        threads_.erase(raw->self);
+        throw;
+    }
     return raw->self;
 }
 

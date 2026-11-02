@@ -654,6 +654,7 @@ struct ThreadData : ObjC::HostObject {
     id target = 0, arg = 0, name = 0, dict = 0;
     SEL sel = 0;
     bool cancelled = false;
+    std::mutex stackMu;
     uint32_t stackSize = 512u << 10;   // -stackSize; honoured until -start, as on iOS
     std::atomic<bool> started{false}, finished{false};   // -isExecuting / -isFinished
 };
@@ -681,7 +682,14 @@ void startBackground(Ctx& x, id target, SEL sel, id arg, id threadObj = 0, uint3
     x.mem.write<uint32_t>(req + 4, sel);
     x.mem.write<uint32_t>(req + 8, rt(x).retain(x.cpu, arg));
     x.mem.write<uint32_t>(req + 12, threadObj);
-    x.proc.startThread(*x.proc.lookupSymbol("__hvm_perform_trampoline"), req, stackSize, true);
+    try {
+        x.proc.startThread(*x.proc.lookupSymbol("__hvm_perform_trampoline"), req, stackSize, true);
+    } catch (...) {
+        rt(x).release(x.cpu, x.mem.read<uint32_t>(req + 8));
+        rt(x).release(x.cpu, x.mem.read<uint32_t>(req));
+        x.proc.heap().free(req);
+        throw;
+    }
 }
 void o_performInBackground(Ctx& x, id self, SEL, SEL sel, id arg) { startBackground(x, self, sel, arg); }
 
@@ -762,6 +770,10 @@ void th_sleepFor(Ctx& x, id, SEL, double s) {
 }
 void th_sleepUntil(Ctx& x, id self, SEL s, id date) { th_sleepFor(x, self, s, dateValue(x, date) - now()); }
 void th_detach(Ctx& x, id, SEL, SEL sel, id target, id arg) { startBackground(x, target, sel, arg); }
+id th_init(Ctx& x, id self, SEL) {
+    if (!rt(x).hostIf<ThreadData>(self)) rt(x).setHost(self, std::make_unique<ThreadData>());
+    return self;
+}
 id th_initWithTarget(Ctx& x, id self, SEL, id target, SEL sel, id arg) {
     auto h = std::make_unique<ThreadData>();
     h->target = rt(x).retain(x.cpu, target);
@@ -772,15 +784,23 @@ id th_initWithTarget(Ctx& x, id self, SEL, id target, SEL sel, id arg) {
 }
 void th_start(Ctx& x, id self, SEL) {
     ThreadData* d = rt(x).hostIf<ThreadData>(self);
-    if (d) {
-        if (d->started.exchange(true)) return;   // NSInvalidArgumentException on iOS; starting twice is a no-op here
-    }
-    if (d && d->target) startBackground(x, d->target, d->sel, d->arg, self, d->stackSize);
-    else if (d) startBackground(x, self, rt(x).sel("main"), 0, self, d->stackSize);
+    if (!d) return;
+    std::lock_guard<std::mutex> lk(d->stackMu);
+    if (d->started) return;   // NSInvalidArgumentException on iOS; starting twice is a no-op here
+    if (d->target) startBackground(x, d->target, d->sel, d->arg, self, d->stackSize);
+    else startBackground(x, self, rt(x).sel("main"), 0, self, d->stackSize);
+    d->started = true;
 }
-uint32_t th_stackSize(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d ? d->stackSize : (512u << 10); }
+uint32_t th_stackSize(Ctx& x, id self, SEL) {
+    ThreadData* d = rt(x).hostIf<ThreadData>(self);
+    if (!d) return 512u << 10;
+    std::lock_guard<std::mutex> lk(d->stackMu);
+    return d->stackSize;
+}
 void th_setStackSize(Ctx& x, id self, SEL, uint32_t n) {
     ThreadData* d = rt(x).hostIf<ThreadData>(self);
+    if (!d) return;
+    std::lock_guard<std::mutex> lk(d->stackMu);
     if (d && !d->started.load() && n) d->stackSize = n;   // after -start the running thread keeps its stack
 }
 void th_noop(Ctx&, id, SEL) {}
@@ -872,7 +892,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
       .cm<&th_isMultiThreaded>("isMultiThreaded", "c@:").cm<&th_sleepFor>("sleepForTimeInterval:")
       .cm<&th_sleepUntil>("sleepUntilDate:").cm<&th_detach>("detachNewThreadSelector:toTarget:withObject:")
       .cm<&th_priority>("threadPriority", "d@:").cm<&th_setPriority>("setThreadPriority:", "c@:d");
-    th.m<&th_initWithTarget>("initWithTarget:selector:object:").m<&th_start>("start", "v@:").m<&th_isMain>("isMainThread", "c@:")
+    th.m<&th_init>("init").m<&th_initWithTarget>("initWithTarget:selector:object:").m<&th_start>("start", "v@:").m<&th_isMain>("isMainThread", "c@:")
       .m<&th_noop>("main", "v@:").m<&th_name>("name").m<&th_setName>("setName:").m<&th_dict>("threadDictionary")
       .m<&th_cancel>("cancel", "v@:").m<&th_isCancelled>("isCancelled", "c@:")
       .m<&th_isExecuting>("isExecuting", "c@:").m<&th_isFinished>("isFinished", "c@:")

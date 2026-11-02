@@ -5251,20 +5251,53 @@ int runFullSubsystemTests() {
             check(before && during && after, "NSThread isExecuting/isFinished follow start and the end of its work");
         }
 
-        // NSThread -stackSize / -setStackSize: keep real state; the size is honoured until the thread starts (#63).
+        // Verify the configured size on the live guest thread, and the post-start contract.
         {
-            ObjC::ClassBuilder quick = r.defineClass("HVMTestQuickTarget", "NSObject");
-            quick.method("work:", [](Ctx&) {}, "v@:@");
-            const ObjC::id target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, quick.cls(), r.selAlloc)), "init"));
+            struct StackProbe { std::atomic<uint32_t> id{0}, threadObject{0}; std::atomic<bool> release{false}, done{false}; };
+            auto probe = std::make_shared<StackProbe>();
+            ObjC::ClassBuilder targetClass = r.defineClass("HVMTestStackTarget", "NSObject");
+            targetClass.method("work:", [probe, &r](Ctx& cx) {
+                probe->threadObject = ObjC::id(r.send(cx.cpu, r.getClass("NSThread"), "currentThread"));
+                probe->id = cx.proc.currentThread().id;
+                while (!probe->release && !cx.proc.stopping()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                probe->done = true;
+            }, "v@:@");
+            const ObjC::id target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, targetClass.cls(), r.selAlloc)), "init"));
             const ObjC::id th = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
                                                 "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
             const uint32_t defaultSize = uint32_t(r.send(cpu, th, "stackSize"));
+            const auto threadsBefore = proc.liveThreadIds();
+            bool rejectedOverflow = false, rejectedRange = false;
+            r.send(cpu, th, "setStackSize:", {0xffffffffu});
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { rejectedOverflow = true; }
+            r.send(cpu, th, "setStackSize:", {0x40000000u});
+            try { r.send(cpu, th, "start"); } catch (const std::exception&) { rejectedRange = true; }
+            const auto threadsAfter = proc.liveThreadIds();
+            const bool noNewThreads = std::all_of(threadsAfter.begin(), threadsAfter.end(), [&](uint32_t id) {
+                return std::find(threadsBefore.begin(), threadsBefore.end(), id) != threadsBefore.end();
+            });
+            const bool unchanged = noNewThreads && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff);
             r.send(cpu, th, "setStackSize:", {1u << 20});
             const uint32_t setSize = uint32_t(r.send(cpu, th, "stackSize"));
             r.send(cpu, th, "start");
+            for (int i = 0; i < 400 && !probe->id; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            const uint32_t threadId = probe->id;
+            GuestThread* running = threadId && probe->threadObject == th ? proc.findThreadById(threadId) : nullptr;
+            const bool actualSize = running && running->stackSize == (1u << 20);
             r.send(cpu, th, "setStackSize:", {2u << 20});
-            check(defaultSize == (512u << 10) && setSize == (1u << 20) && uint32_t(r.send(cpu, th, "stackSize")) == (1u << 20),
-                  "NSThread stackSize defaults to 512 KB, takes setStackSize: before start and ignores it after");
+            const bool keptSize = uint32_t(r.send(cpu, th, "stackSize")) == (1u << 20) && running && running->stackSize == (1u << 20);
+            probe->release = true;
+            for (int i = 0; i < 400 && !probe->done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            check(defaultSize == (512u << 10) && setSize == (1u << 20) && actualSize && keptSize && probe->done,
+                  "NSThread applies the requested guest stack and ignores updates after start");
+            check(rejectedOverflow && rejectedRange && unchanged && actualSize,
+                  "NSThread rejects oversized stacks without starting and can retry with a valid size");
+
+            ObjC::ClassBuilder subclass = r.defineClass("HVMTestThreadSubclass", "NSThread");
+            const ObjC::id child = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, subclass.cls(), r.selAlloc)), "init"));
+            r.send(cpu, child, "setStackSize:", {1u << 20});
+            check(uint32_t(r.send(cpu, child, "stackSize")) == (1u << 20),
+                  "NSThread subclass alloc/init retains its requested stack size");
         }
 
         // AVAudioSession keeps its category, options and mode, and reports a route (Hungry Shark Evolution, #53 / #63).
@@ -5289,6 +5322,15 @@ int runFullSubsystemTests() {
                                   uint32_t(r.send(cpu, session, "categoryOptions")) == 4u;
             check(initial && setOk && kept && modeKept && combined,
                   "AVAudioSession keeps category, categoryOptions and mode across setCategory:/setMode:");
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 0u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u});
+            const bool videoDefaults = uint32_t(r.send(cpu, session, "categoryOptions")) == 12u;
+            r.send(cpu, session, "setCategory:withOptions:error:",
+                   {Foundation::makeString(sx, "AVAudioSessionCategoryPlayAndRecord"), 1u, 0u});
+            r.send(cpu, session, "setMode:error:", {Foundation::makeString(sx, "AVAudioSessionModeVideoChat"), 0u});
+            check(videoDefaults && uint32_t(r.send(cpu, session, "categoryOptions")) == 13u,
+                  "AVAudioSession video chat adds Bluetooth and speaker options while preserving existing options");
             const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
             const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
             const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;

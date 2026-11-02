@@ -1158,7 +1158,11 @@ bool avs_setCategoryModeOptions(Ctx& x, id self, SEL, id category, id mode, uint
     return true;
 }
 bool avs_setMode(Ctx& x, id self, SEL, id mode, GuestPtr) {
-    if (SessionData* d = ses(x, self)) avs_keep(x, d->mode, mode);
+    if (SessionData* d = ses(x, self)) {
+        avs_keep(x, d->mode, mode);
+        if (mode && Foundation::utf8(x, mode) == "AVAudioSessionModeVideoChat")
+            d->options |= 4u | 8u;   // allow Bluetooth HFP and default to speaker
+    }
     return true;
 }
 uint32_t avs_options(Ctx& x, id self, SEL) { SessionData* d = ses(x, self); return d ? d->options : 0; }
