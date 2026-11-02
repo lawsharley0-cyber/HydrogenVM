@@ -59,6 +59,16 @@ enum GameLink {
         return components.url
     }
 
+    /// What a link for `wanted` should do while `running` (the bundle id of the game on screen,
+    /// if any) is open. A second game must not start over a running one: its session stops
+    /// gracefully only when its screen closes.
+    enum StartDecision: Equatable { case start, alreadyRunning, busy }
+
+    static func startDecision(wanted: String, running: String?) -> StartDecision {
+        guard let running else { return .start }
+        return running.caseInsensitiveCompare(wanted) == .orderedSame ? .alreadyRunning : .busy
+    }
+
     /// Resolve a link against the installed bundle identifiers. Success carries the
     /// installed spelling of the id, so a matched game is always found by the caller.
     static func resolve(_ url: URL, installed: [String]) -> Result<String, GameLinkError> {

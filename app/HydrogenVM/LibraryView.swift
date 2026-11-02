@@ -221,7 +221,9 @@ struct LibraryView: View {
             .alert("Import failed", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
                 Button("OK") { store.lastError = nil }
             } message: { Text(store.lastError ?? "") }
-            .alert("Can't open that game", isPresented: Binding(get: { router.message != nil }, set: { if !$0 { router.message = nil } })) {
+            // While a game is running its full-screen cover hides this view, so the message is
+            // shown from the cover instead (see `.fullScreenCover` below).
+            .alert("Can't open that game", isPresented: Binding(get: { router.message != nil && running == nil }, set: { if !$0 { router.message = nil } })) {
                 Button("OK") { router.message = nil }
             } message: { Text(router.message ?? "") }
             .task {
@@ -269,6 +271,9 @@ struct LibraryView: View {
             }
             .fullScreenCover(item: $running) { app in
                 RunView(app: app, keepGoing: keepGoing)
+                    .alert("Can't open that game", isPresented: Binding(get: { router.message != nil }, set: { if !$0 { router.message = nil } })) {
+                        Button("OK") { router.message = nil }
+                    } message: { Text(router.message ?? "") }
             }
             .onChange(of: router.pending) { _, _ in openPendingLink() }
             .task { openPendingLink() }
@@ -298,7 +303,14 @@ struct LibraryView: View {
                 router.message = "\(app.title) is installed but cannot run here: \(app.info.problem)"
                 return
             }
-            running = app
+            switch GameLink.startDecision(wanted: app.info.bundleIdentifier, running: running?.info.bundleIdentifier) {
+            case .start:
+                running = app
+            case .alreadyRunning:
+                break
+            case .busy:
+                router.message = "Close \(running?.title ?? "the current game") first, then open \(app.title) again."
+            }
         }
     }
 }

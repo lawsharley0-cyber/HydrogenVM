@@ -115,6 +115,11 @@ struct PlayerTests {
         check(generated?.absoluteString == "hydrogenvm://run/com.example.game", "generated link")
         check(generated.flatMap(GameLink.gameID(from:)) == "com.example.game", "link round trip")
         check(GameLink.url(forGameID: "com.example game") == nil, "no link for an id with a space")
+        check(GameLink.startDecision(wanted: "com.example.game", running: nil) == .start, "nothing running: start")
+        check(GameLink.startDecision(wanted: "com.example.game", running: "COM.example.GAME") == .alreadyRunning,
+              "a link for the running game needs nothing")
+        check(GameLink.startDecision(wanted: "com.example.game", running: "com.example.other") == .busy,
+              "a link for another game must wait while one is running")
 
         let icon = Data([0x89, 0x50, 0x4E, 0x47])
         let clip = WebClipProfile(gameID: "com.example.game", title: "Tom & Jerry <HD>",
