@@ -108,6 +108,7 @@ int main() {
             p.mem().write<uint32_t>(block + 16, desc);
             if (target) r.send(cpu, target, selector, {block});
             const bool deferred = result->calls == 0;
+            p.mem().write<uint32_t>(block + 12, 0); // invalidate the original invoke pointer
             p.heap().free(block); // the callback must retain a copy
             Foundation::mainRunLoop(p).runOnce(cpu, 0.05);
             Foundation::mainRunLoop(p).runOnce(cpu, 0);
