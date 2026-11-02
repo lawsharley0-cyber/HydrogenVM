@@ -259,9 +259,12 @@ public:
     // Allocate `size` bytes of zeroed guest data and export it as `name`.
     uint32_t defineDataBlock(const std::string& name, uint32_t size);
     std::optional<uint32_t> lookupSymbol(const std::string& name) const;
-    // Hooks consulted (in order) for imports that nothing defines. Return 0
-    // to decline. Used for e.g. auto-creating stub ObjC classes.
-    void addMissingSymbolResolver(std::function<uint32_t(const std::string&)> fn);
+    // Import resolution may create placeholders; dynamic lookup only resolves
+    // explicitly recognized constants. Return 0 to decline either request.
+    enum class MissingSymbolMode { Import, DynamicLookup };
+    using MissingSymbolResolver = std::function<uint32_t(const std::string&, MissingSymbolMode)>;
+    void addMissingSymbolResolver(MissingSymbolResolver fn);
+    uint32_t resolveMissingSymbol(const std::string& name);
     // Register a host function without exporting a symbol (method IMPs, …).
     uint32_t registerHostFunction(const std::string& debugName, HostFn fn);
 
@@ -377,8 +380,9 @@ private:
     std::string guestHomePath_, guestBundlePath_, guestExecutablePath_;
 
     std::unordered_map<std::string, uint32_t> symbols_;
-    std::vector<std::function<uint32_t(const std::string&)>> missingResolvers_;
+    std::vector<MissingSymbolResolver> missingResolvers_;
     mutable std::mutex symMu_;
+    std::mutex resolutionMu_;
     std::unordered_map<std::type_index, std::shared_ptr<void>> services_;
     std::mutex servicesMu_;
     std::vector<std::function<void()>> loadedHooks_;
