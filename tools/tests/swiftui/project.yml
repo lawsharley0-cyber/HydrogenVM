@@ -48,6 +48,7 @@ targets:
     sources:
       - EditorUITests.swift
       - PlayerUITests.swift
+      - PlayerGestureUITests.m
     dependencies:
       - target: SaveEditorHarness
     settings:

@@ -27,6 +27,9 @@ final class PlayerProbe {
     var lastOrientation = 1
     var maximumTouches = 0
     var cancellations = 0
+    var frameDelivered = false
+    var movedFingers: Set<UInt> = []
+    var endedFingers: Set<UInt> = []
     weak var session: HVMSession?
 }
 
@@ -67,6 +70,7 @@ final class HVMSession {
         }
         PlayerProbe.shared.lastOrientation = interfaceOrientation
         onFrame?(image.cgImage!)
+        PlayerProbe.shared.frameDelivered = true
     }
     func stopGracefully() {
         PlayerProbe.shared.stopCount += 1
@@ -88,6 +92,8 @@ final class HVMSession {
     func touch(_ phase: HVMTouchPhase, x: Float, y: Float, finger: UInt) {
         if phase == .began { activeFingers.insert(finger) }
         PlayerProbe.shared.maximumTouches = max(PlayerProbe.shared.maximumTouches, activeFingers.count)
+        if phase == .moved { PlayerProbe.shared.movedFingers.insert(finger) }
+        if phase == .ended { PlayerProbe.shared.endedFingers.insert(finger) }
         if phase == .cancelled { PlayerProbe.shared.cancellations += 1 }
         if phase == .ended || phase == .cancelled { activeFingers.remove(finger) }
         PlayerProbe.shared.touch = "\(phase.rawValue):\(Int(x.rounded())),\(Int(y.rounded())):\(finger)"
@@ -106,6 +112,10 @@ struct PlayerHarness: View {
                     Text(verbatim: String(PlayerProbe.shared.volume)).accessibilityIdentifier("probe-volume")
                     Text("\(PlayerProbe.shared.maximumTouches)").accessibilityIdentifier("probe-max-touches")
                     Text("\(PlayerProbe.shared.cancellations)").accessibilityIdentifier("probe-cancellations")
+                    Text(PlayerProbe.shared.frameDelivered ? "ready" : "waiting").accessibilityIdentifier("probe-frame")
+                    Text("\(PlayerOverlay.gestureHoldSeconds)").accessibilityIdentifier("probe-hold-seconds")
+                    Text("\(PlayerProbe.shared.movedFingers.count)").accessibilityIdentifier("probe-moved-fingers")
+                    Text("\(PlayerProbe.shared.endedFingers.count)").accessibilityIdentifier("probe-ended-fingers")
                     Button("Change Guest Orientation") {
                         guard let session = PlayerProbe.shared.session else { return }
                         session.interfaceOrientation = session.interfaceOrientation == 3 ? 4 : 3
