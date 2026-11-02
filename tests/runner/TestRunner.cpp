@@ -5293,7 +5293,11 @@ int runFullSubsystemTests() {
             Process::failNextHostThreadSpawns(0);
             {
                 const auto afterFailure = proc.liveThreadIds();
-                check(spawnFailed && afterFailure.size() == threadsBefore.size() && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff),
+                // Every live thread must be one that was already live: threads that finish meanwhile may leave, none may appear.
+                const bool noneLeaked = std::all_of(afterFailure.begin(), afterFailure.end(), [&](uint32_t id) {
+                    return std::find(threadsBefore.begin(), threadsBefore.end(), id) != threadsBefore.end();
+                });
+                check(spawnFailed && noneLeaked && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff),
                       "a host-thread creation failure leaves no guest thread registered and the NSThread startable again");
             }
             r.send(cpu, th, "setStackSize:", {1u << 20});
@@ -5514,6 +5518,24 @@ int runFullSubsystemTests() {
             r.release(cpu, mutableCategory); r.release(cpu, mutablePlayback);
             r.release(cpu, mutableVoice); r.release(cpu, mutableVideo);
 
+            {   // The first currentRoute read builds the route: concurrent first reads must all see the same object.
+                std::atomic<unsigned> routeReady{0};
+                std::atomic<bool> routeStart{false};
+                std::vector<uint32_t> routes(4, 0);
+                auto routeWorker = [&](unsigned which) {
+                    CPU::Cpu workerCpu;
+                    workerCpu.r[CPU::kSP] = 0xbb000000 + (which + 1) * 0x10000 - 256;
+                    ++routeReady;
+                    while (!routeStart) std::this_thread::yield();
+                    routes[which] = uint32_t(r.send(workerCpu, session, "currentRoute"));
+                };
+                std::thread t0(routeWorker, 0), t1(routeWorker, 1), t2(routeWorker, 2), t3(routeWorker, 3);
+                while (routeReady != 4) std::this_thread::yield();
+                routeStart = true;
+                t0.join(); t1.join(); t2.join(); t3.join();
+                check(routes[0] != 0 && routes[0] == routes[1] && routes[1] == routes[2] && routes[2] == routes[3],
+                      "concurrent first reads of AVAudioSession currentRoute all get one route");
+            }
             const ObjC::id route = ObjC::id(r.send(cpu, session, "currentRoute"));
             const ObjC::id outputs = route ? ObjC::id(r.send(cpu, route, "outputs")) : 0;
             const ObjC::id port = outputs && uint32_t(r.send(cpu, outputs, "count")) == 1 ? ObjC::id(r.send(cpu, outputs, "objectAtIndex:", {0u})) : 0;

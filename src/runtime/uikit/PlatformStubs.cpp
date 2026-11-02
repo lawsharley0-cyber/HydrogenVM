@@ -1207,6 +1207,7 @@ id route_outputs(Ctx& x, id self, SEL) { RouteData* d = rt(x).hostIf<RouteData>(
 id avs_currentRoute(Ctx& x, id self) {
     SessionData* d = ses(x, self);
     if (!d) return 0;
+    std::lock_guard<std::recursive_mutex> lk(d->mu);   // the first read builds and caches the route: two threads must not each build one
     if (!d->route) {
         const id port = rt(x).createInstance(rt(x).getClass("AVAudioSessionPortDescription"));
         auto pd = std::make_unique<PortData>();
