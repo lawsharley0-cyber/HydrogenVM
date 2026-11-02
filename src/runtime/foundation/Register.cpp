@@ -34,7 +34,7 @@ void registerFoundation(Process& p) {
 
     // String constants from frameworks we don't otherwise model: a constant NSString
     // instead of nil, so apps can still use them as dictionary keys and notification names.
-    p.addMissingSymbolResolver([&p](const std::string& sym) -> uint32_t {
+    p.addMissingSymbolResolver([&p](const std::string& sym, Process::MissingSymbolMode mode) -> uint32_t {
         if (sym.size() < 4 || sym[0] != '_' || !std::isalpha(uint8_t(sym[1]))) return 0;
         const std::string name = sym.substr(1);
         static const std::unordered_map<std::string, std::string> known = {
@@ -54,6 +54,8 @@ void registerFoundation(Process& p) {
             {"AVVideoProfileLevelH264Main41", "H264_Main_4_1"}, {"AVVideoProfileLevelH264High40", "H264_High_4_0"},
             {"AVVideoProfileLevelH264High41", "H264_High_4_1"},
             {"kCFHTTPVersion1_0", "HTTP/1.0"}, {"kCFHTTPVersion1_1", "HTTP/1.1"},
+            {"kCFProxyTypeFTP", "kCFProxyTypeFTP"},
+            {"kCFProxyTypeAutoConfigurationJavaScript", "kCFProxyTypeAutoConfigurationJavaScript"},
             {"NSURLAuthenticationMethodServerTrust", "NSURLAuthenticationMethodServerTrust"},
             {"NSURLAuthenticationMethodClientCertificate", "NSURLAuthenticationMethodClientCertificate"},
         };
@@ -76,7 +78,8 @@ void registerFoundation(Process& p) {
         auto ends = [&](const char* e) { const size_t n = std::strlen(e); return name.size() > n && name.compare(name.size() - n, n, e) == 0; };
         std::string value;
         if (auto it = known.find(name); it != known.end()) value = it->second;
-        else if (ends("Notification") || ends("Key") || ends("Domain") || ends("AttributeName") || ends("Exception") ||
+        else if (mode == Process::MissingSymbolMode::Import &&
+                 (ends("Notification") || ends("Key") || ends("Domain") || ends("AttributeName") || ends("Exception") ||
                  ends("Preset") || ends("RunLoopMode") ||
                  starts("AVCaptureSessionPreset") || starts("AVMediaType") || starts("AVLayerVideoGravity") ||
                  starts("AVAudioSession") || starts("AVAssetExportPreset") || starts("AVFileType") ||
@@ -86,7 +89,7 @@ void registerFoundation(Process& p) {
                  (name[0] == 'k' && std::isupper(uint8_t(name[1])) &&
                   (name.find("Property") != std::string::npos || name.find("SSL") != std::string::npos ||
                    name.find("ServiceType") != std::string::npos || name.find("Attr") != std::string::npos ||
-                   name.find("Key") != std::string::npos || name.find("Type") != std::string::npos)))
+                   name.find("Key") != std::string::npos || name.find("Type") != std::string::npos))))
             value = name;
         else return 0;
         const uint32_t cell = p.allocStatic(4);
