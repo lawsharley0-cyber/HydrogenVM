@@ -145,7 +145,7 @@ struct LibraryView: View {
     /// Default display mode for games that have no setting of their own (PlayerSettings).
     @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleMode = PlayerScaleMode.fit.rawValue
     @AppStorage("hvm.zombies") private var zombies = false
-    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = false
+    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
     @State private var store = LibraryStore()
     @State private var pickingFile = false
     @State private var running: InstalledApp?

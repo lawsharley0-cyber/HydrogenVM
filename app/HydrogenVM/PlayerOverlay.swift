@@ -10,8 +10,10 @@ struct PlayerOverlay {
     static let gestureTouches = 3
     static let gestureHoldSeconds = 0.8
     static let settingKey = "player.showDebugOverlay"
+    /// Default off: a game runs with no HydrogenVM UI over it until the player asks.
+    static let settingDefault = false
 
-    var settingOn = false
+    var settingOn = settingDefault
     private(set) var summoned = false
 
     /// The pill is not drawn at all when this is false, so it cannot swallow touches.

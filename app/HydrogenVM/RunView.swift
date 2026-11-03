@@ -408,7 +408,7 @@ struct RunView: View {
     @State private var showLog = false
     @State private var hudExpanded = false
     @State private var overlay = PlayerOverlay()
-    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = false
+    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
