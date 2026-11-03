@@ -105,6 +105,7 @@ int hvmRunMain(int argc, char** argv) {
             }
         }
         else if (!std::strcmp(argv[i], "--trace")) cfg.traceCalls = true;
+        else if (!std::strcmp(argv[i], "--thread-liveness")) cfg.threadLiveness = true;
         else if (!std::strcmp(argv[i], "--gpu")) {
             std::string why;
             cfg.hostGL = Hydrogen::Runtime::HostGL::createEglPlatform(&why);
@@ -208,6 +209,7 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"signature\": \"" << proc.crashSignature() << "\",\n";
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
             f << "  \"runtimeMemorySamples\": " << proc.memorySamplesJson() << ",\n";
+            f << "  \"threadLiveness\": " << proc.threadLivenessJson() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
             Runtime::MissingApiLog allLaunches;   // tainted, stubHits, missingApis (T2a), over every launch so far
@@ -328,7 +330,9 @@ int hvmRunMain(int argc, char** argv) {
                 if (!quiet) std::fprintf(stderr, "[hvm] screenshot: %s (%dx%d)\n", screenshot.c_str(), lastFrame.width, lastFrame.height);
             } else std::fprintf(stderr, "[hvm] no frame was presented; no screenshot\n");
         }
-        const int status = timedStop ? 0 : proc.crashed() ? 70 : r;
+        // A timed stop can itself fail (for example the save watchdog). Preserve
+        // that failure instead of claiming a successful --run-for observation.
+        const int status = proc.crashed() ? 70 : timedStop ? 0 : r;
         if (timedStop && !quiet) std::fprintf(stderr, "[hvm] still running after %.0f s (stopped by --run-for)\n", runFor);
         // A run that called missing or approximated APIs is not a clean pass, whatever its exit status says.
         if (proc.tainted())

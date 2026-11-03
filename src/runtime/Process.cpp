@@ -1,5 +1,6 @@
 #include "Process.hpp"
 #include "MemoryDiagnostics.hpp"
+#include "Support.hpp"
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
 #include "runtime/gl/HostGL.hpp"
@@ -31,10 +32,12 @@ void flushGuestStdio(Process& p);   // libc/Stdio.cpp
 
 namespace {
 thread_local GuestThread* t_thread = nullptr;
+thread_local uint64_t t_processIdentity = 0;
+std::atomic<uint64_t> nextProcessIdentity{1};
 
 constexpr uint32_t kHeapBase = 0x10000000u, kHeapLimit = 0x80000000u;
 constexpr uint32_t kStaticBase = 0x0E000000u, kStaticLimit = 0x10000000u;
-constexpr uint32_t kMainStackSize = 1u << 20, kThreadStackSize = 512u << 10, kGuard = 64u << 10;
+constexpr uint32_t kMainStackSize = 1u << 20, kThreadStackSize = 512u << 10, kMinThreadStackSize = 16u << 10, kGuard = 64u << 10;
 
 std::string demangle(const std::string& sym) {
     std::string s = sym;
@@ -86,11 +89,14 @@ bool looksLikeData(const std::string& s) {
 
 // Host threads for guest threads get a generous stack: nested host↔guest
 // calls (ObjC dispatch from host code, callbacks) recurse on it.
-void spawnHostThread(std::function<void()> fn) {
+std::atomic<int> gInjectedSpawnFailures{0};   // test seam: Process::failNextHostThreadSpawns
+
+pthread_t spawnHostThread(std::function<void()> fn) {
+    if (gInjectedSpawnFailures.load() > 0 && gInjectedSpawnFailures.fetch_sub(1) > 0)
+        throw std::runtime_error("couldn't create host thread (injected failure)");
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 8u << 20);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     auto* heapFn = new std::function<void()>(std::move(fn));
     pthread_t th;
     const int r = pthread_create(&th, &attr, [](void* p) -> void* {
@@ -100,13 +106,16 @@ void spawnHostThread(std::function<void()> fn) {
     }, heapFn);
     pthread_attr_destroy(&attr);
     if (r != 0) { delete heapFn; throw std::runtime_error("couldn't create host thread"); }
+    return th;
 }
 
 } // namespace
 
 // ----------------------------------------------------------- lifecycle ---
 
-Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_shared<Audio::Mixer>()) {
+Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProcessIdentity.fetch_add(1)), mixer_(std::make_shared<Audio::Mixer>()) {
+    if (const char* enabled = std::getenv("HVM_THREAD_LIVENESS"); enabled && std::strcmp(enabled, "1") == 0)
+        cfg_.threadLiveness = true;
     mem_ = std::make_unique<Memory::GuestArena>();
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
@@ -140,6 +149,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), mixer_(std::make_sha
     mainThread_ = mainThreadOwner_.get();
     mainThread_->id = nextThreadId_++;
     t_thread = mainThread_;
+    t_processIdentity = identity_;
 
     registerLibcString(*this);
     registerLibcStdio(*this);
@@ -180,14 +190,39 @@ Process::~Process() {
         if (!alive) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    // Guest threads are detached host threads, so one that never noticed the stop is still running
-    // while the arena below is released. Say which thread and what it was in, so the next run of
-    // a game that won't quit points at the blocking call instead of at a crash somewhere later.
+    // Diagnose the slow stage, but never turn the deadline into permission to
+    // free a live worker's HLE table, GuestThread or arena.
     if (alive) {
         const std::string stuck = describeRunningThreads();
         if (!stuck.empty()) std::fprintf(stderr, "[hvm:warn] Process teardown: guest threads still running 2 s after stop:\n%s", stuck.c_str());
     }
-    if (t_thread && &t_thread->proc == this) t_thread = nullptr;
+    joinHostThreads(true);
+    if (t_processIdentity == identity_) { t_thread = nullptr; t_processIdentity = 0; }
+}
+
+void Process::joinHostThreads(bool includeRunning) {
+    for (;;) {
+        std::thread::native_handle_type host{};
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lock(threadsMu_);
+            for (auto& [id, thread] : threads_) {
+                if (!thread->hostJoinable || (!includeRunning && !thread->finished.load())) continue;
+                host = thread->host;
+                thread->hostJoinable = false;
+                found = true;
+                break;
+            }
+        }
+        if (!found) break;
+        // finished is guest-visible completion. The host still notifies its CV
+        // and clears TLS afterward, so even finished workers require a join.
+        const int error = pthread_join(host, nullptr);
+        if (error) {
+            std::fprintf(stderr, "[hvm:error] cannot join owned guest host thread: %d\n", error);
+            std::terminate(); // freeing potentially live runtime state is unsafe
+        }
+    }
 }
 
 void Process::requestStop() {
@@ -338,8 +373,20 @@ std::optional<uint32_t> Process::lookupSymbol(const std::string& name) const {
     return std::nullopt;
 }
 
-void Process::addMissingSymbolResolver(std::function<uint32_t(const std::string&)> fn) {
+void Process::addMissingSymbolResolver(MissingSymbolResolver fn) {
     missingResolvers_.push_back(std::move(fn));
+}
+
+uint32_t Process::resolveMissingSymbol(const std::string& name) {
+    std::lock_guard<std::mutex> resolutionLock(resolutionMu_);
+    {
+        std::lock_guard<std::mutex> lk(symMu_);
+        auto it = symbols_.find(name);
+        if (it != symbols_.end()) return it->second;
+    }
+    for (auto& r : missingResolvers_)
+        if (uint32_t a = r(name, MissingSymbolMode::DynamicLookup)) { defineData(name, a); return a; }
+    return 0;
 }
 
 uint32_t Process::makeMissingStub(const std::string& name) {
@@ -356,7 +403,10 @@ uint32_t Process::makeMissingStub(const std::string& name) {
         auto trapTable = [&](uint32_t block, uint32_t firstSlotWord, uint32_t words) {
             for (uint32_t i = firstSlotWord; i < words; ++i) {
                 const uint32_t slot = i - firstSlotWord;
-                const uint32_t fn = defineFunction(name + "$hvm_slot" + std::to_string(slot), [this, pretty, slot](Ctx& x) {
+                const std::string slotName = name + "$hvm_slot" + std::to_string(slot);
+                supportRegistry(*this).record({SupportKind::Function, slotName, SupportStatus::Stub,
+                                               "generated placeholder for a C++ virtual slot HydrogenVM does not provide"});
+                const uint32_t fn = defineFunction(slotName, [this, pretty, slot](Ctx& x) {
                     const std::string what = "virtual function #" + std::to_string(slot) + " of " + pretty;
                     reportMissing(what);
                     if (!cfg_.stopOnMissingFunction) { x.cpu.r[0] = x.cpu.r[1] = 0; return; }   // keep going: like other missing functions
@@ -388,6 +438,9 @@ uint32_t Process::makeMissingStub(const std::string& name) {
         return a;
     }
     const std::string pretty = demangle(name);
+    // A placeholder must say so: crash bundles label its calls Stub, never Real.
+    supportRegistry(*this).record({SupportKind::Function, name, SupportStatus::Stub,
+                                   "generated placeholder for an import HydrogenVM does not provide"});
     return defineFunction(name, [this, pretty](Ctx& x) {
         reportMissing(pretty);
         if (cfg_.stopOnMissingFunction)
@@ -407,11 +460,11 @@ uint32_t Process::resolveImport(const Loader::BindRecord& b) {
     if (b.weakImport && !b.lazy) {
         if (b.symbol.compare(0, 6, "_OBJC_") == 0) return 0;
         for (auto& r : missingResolvers_)
-            if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
+            if (uint32_t a = r(b.symbol, MissingSymbolMode::Import)) { defineData(b.symbol, a); return a; }
         return 0;
     }
     for (auto& r : missingResolvers_)
-        if (uint32_t a = r(b.symbol)) { defineData(b.symbol, a); return a; }
+        if (uint32_t a = r(b.symbol, MissingSymbolMode::Import)) { defineData(b.symbol, a); return a; }
     return makeMissingStub(b.symbol);
 }
 
@@ -639,8 +692,11 @@ void Process::setenv(const std::string& name, const std::string& value) {
 // --------------------------------------------------------------- threads ---
 
 void Process::initThreadState(GuestThread& t, uint32_t stackSize) {
+    t.cpu.progress.enabled = cfg_.threadLiveness;
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
+        if (uint64_t(stackSize) + kGuard > uint64_t(stackTop_) - kHeapLimit)
+            throw std::runtime_error("HydrogenVM: guest stack exceeds available stack space");
         stackTop_ -= stackSize + kGuard;
         t.stackBase = stackTop_ + kGuard;
     }
@@ -664,7 +720,9 @@ void Process::setupMainThread() {
 }
 
 GuestThread& Process::currentThread() {
-    if (t_thread && &t_thread->proc == this) return *t_thread;
+    // Another host thread can destroy the old Process. Compare a generation,
+    // never dereference that old GuestThread just to decide which owner it had.
+    if (t_thread && t_processIdentity == identity_) return *t_thread;
     // A host thread that isn't a guest thread (e.g. a UI callback) acts as main.
     return *mainThread_;
 }
@@ -719,25 +777,46 @@ GuestThread* Process::findThreadById(uint32_t id) {
     return nullptr;
 }
 
+void Process::failNextHostThreadSpawns(int count) { gInjectedSpawnFailures = count; }
+
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
+    if (stopping()) throw ProcessExit(exitCode_, "stopping");
+    joinHostThreads(false); // reclaim the 8 MB native stacks of completed workers
+    const uint64_t rounded = stackSize ? (uint64_t(stackSize) + 4095) & ~uint64_t(4095) : kThreadStackSize;
+    if (rounded > UINT32_MAX) throw std::runtime_error("HydrogenVM: guest stack size is too large");
     auto t = std::make_unique<GuestThread>(*this);
     GuestThread* raw = t.get();
+    initThreadState(*raw, std::max<uint32_t>(uint32_t(rounded), kMinThreadStackSize));
+    // The guest stack is mapped by now: give it back if the thread never starts (callers hold threadsMu_).
+    const uint32_t stackBase = raw->stackBase, mappedSize = raw->stackSize;
+    const auto releaseStack = [&] {
+        mem_->unmap(stackBase, mappedSize);
+        if (stackTop_ == stackBase - kGuard) stackTop_ = stackBase + mappedSize;
+    };
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
         raw->id = nextThreadId_++;
     }
-    initThreadState(*raw, std::max<uint32_t>(stackSize ? (stackSize + 4095) & ~4095u : kThreadStackSize, 64u << 10));
     raw->detached = detached;
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
+        if (stopping()) { releaseStack(); throw ProcessExit(exitCode_, "stopping"); }
         threads_[raw->self] = std::move(t);
+        try {
+            raw->host = spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
+            raw->hostJoinable = true;
+        } catch (...) {
+            threads_.erase(raw->self);   // destroys the GuestThread (raw is dangling after this)
+            releaseStack();
+            throw;
+        }
     }
-    spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
     return raw->self;
 }
 
 void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
     t_thread = t;
+    t_processIdentity = identity_;
     CPU::Engine::lastFault() = {};
     try {
         t->retval = uint32_t(engine_->callGuest(t->cpu, fn, {arg}));
@@ -777,6 +856,7 @@ void Process::threadMain(GuestThread* t, uint32_t fn, uint32_t arg) {
     }
     t->cv.notify_all();
     t_thread = nullptr;
+    t_processIdentity = 0;
 }
 
 bool Process::joinThread(uint32_t self, uint32_t* retval) {
@@ -788,6 +868,8 @@ bool Process::joinThread(uint32_t self, uint32_t* retval) {
         t->cv.wait_for(lk, std::chrono::milliseconds(50));
     }
     if (retval) *retval = t->retval;
+    lk.unlock();
+    joinHostThreads(false);
     return true;
 }
 
@@ -933,9 +1015,42 @@ struct MemorySampler {
         try { p.recordMemorySample("run-end"); } catch (...) {}
     }
 };
+
+struct ThreadLivenessSampler {
+    Process& p;
+    std::mutex mu;
+    std::condition_variable cv;
+    bool stopped = false;
+    std::thread thread;
+    explicit ThreadLivenessSampler(Process& process) : p(process) {
+        p.recordThreadLiveness("run-start");
+        thread = std::thread([this] {
+            std::unique_lock<std::mutex> lock(mu);
+            while (!cv.wait_for(lock, std::chrono::seconds(1), [this] { return stopped; })) {
+                lock.unlock();
+                try { p.recordThreadLiveness("interval"); }
+                catch (const std::exception& e) {
+                    try { p.log(LogLevel::Warning, std::string("Thread liveness sample unavailable: ") + e.what()); } catch (...) {}
+                }
+                lock.lock();
+            }
+        });
+    }
+    ~ThreadLivenessSampler() {
+        { std::lock_guard<std::mutex> lock(mu); stopped = true; }
+        cv.notify_one();
+        if (thread.joinable()) thread.join();
+        try { p.recordThreadLiveness("run-end"); } catch (...) {}
+    }
+};
 } // namespace
 
 int Process::run() {
+    std::unique_ptr<ThreadLivenessSampler> threadSampler;
+    if (cfg_.threadLiveness) {
+        try { threadSampler = std::make_unique<ThreadLivenessSampler>(*this); }
+        catch (...) { /* best-effort diagnostics, including allocation/thread creation */ }
+    }
     std::unique_ptr<MemorySampler> memorySampler;
     if (memoryDiagEnabled()) {
         try { memorySampler = std::make_unique<MemorySampler>(*this); }
@@ -944,6 +1059,7 @@ int Process::run() {
     std::unique_ptr<GuestSampler> sampler;
     if (const char* prof = std::getenv("HVM_GUEST_PROFILE"); prof && *prof) sampler = std::make_unique<GuestSampler>(*this, prof);
     t_thread = mainThread_;
+    t_processIdentity = identity_;
     CPU::Cpu& c = mainThread_->cpu;
     CPU::Engine::lastFault() = {};
     try {
@@ -1091,6 +1207,49 @@ void Process::captureCrash(const CPU::Cpu& c, const std::string& kind, const std
     crashSignature_ = hash.str();
 }
 
+// How many of each thread's most recent calls a crash bundle keeps (the ring itself holds 256).
+static constexpr size_t kCrashBundleRingEntries = 64;
+
+std::string Process::callRingJson(size_t perThread) {
+    std::vector<GuestThread*> list{mainThread_};
+    {
+        std::lock_guard<std::mutex> lk(threadsMu_);
+        // Finished workers stay: the thread that crashed is marked finished before the bundle is written.
+        for (auto& [k, t] : threads_) list.push_back(t.get());
+    }
+    std::sort(list.begin() + 1, list.end(), [](const GuestThread* a, const GuestThread* b) { return a->id < b->id; });
+    SupportRegistry& support = supportRegistry(*this);
+    std::ostringstream out;
+    out << "[";
+    bool firstThread = true;
+    for (GuestThread* t : list) {
+        const Diag::ThreadCallRing* ring = t->cpu.call_ring.load(std::memory_order_acquire);
+        if (!ring) continue;   // the thread never made a host call
+        const auto snapshot = ring->snapshot(perThread);   // total and calls from one read of the ring head
+        out << (firstThread ? "" : ",") << "{\"thread\":" << t->id << ",\"total\":" << snapshot.total << ",\"calls\":[";
+        firstThread = false;
+        bool firstCall = true;
+        for (const auto& r : snapshot.calls) {
+            const char* kind = r.kind == Diag::CallKind::Hle ? "hle" : r.kind == Diag::CallKind::ObjC ? "objc" : r.kind == Diag::CallKind::Gl ? "gl" : "none";
+            // Only HLE entries carry a name today; ObjC and GL entries are not pushed yet.
+            const std::string name = r.kind == Diag::CallKind::Hle ? hleFunctionName(r.id) : std::string();
+            // The registry is keyed by the raw engine symbol; `name` is demangled for display only.
+            const std::string symbol = r.kind == Diag::CallKind::Hle ? engine_->hleName(r.id) : std::string();
+            out << (firstCall ? "" : ",") << "{\"seq\":" << r.seq << ",\"kind\":\"" << kind << "\",\"name\":" << quote(name);
+            firstCall = false;
+            // A function that was declared Stub/Approx/Unavailable says so; an undeclared one gets no status
+            // (missing metadata never means Real).
+            if (!symbol.empty()) {
+                if (const auto rec = support.find(symbol)) out << ",\"status\":\"" << supportStatusName(rec->status) << "\"";
+            }
+            out << "}";
+        }
+        out << "]}";
+    }
+    out << "]";
+    return out.str();
+}
+
 std::string Process::crashBundle() {
     if (!crashed_) return "null";
     std::ostringstream out;
@@ -1140,7 +1299,7 @@ std::string Process::crashBundle() {
         }
     }
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count();
-    out << "],\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
+    out << "],\"callRing\":" << callRingJson(kCrashBundleRingEntries) << ",\"perf\":{" << perfJson(perf_, wall, guestInstructions(), engine_->stats().blocks_decoded) << "}}";
     return out.str();
 }
 

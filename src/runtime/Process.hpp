@@ -41,6 +41,7 @@ struct ProcessConfig {
     bool stopOnMissingFunction = true; // false: log and return 0
     bool enableZombies = false;
     bool traceCalls = false;           // log every HLE call (very slow, for debugging)
+    bool threadLiveness = false;       // opt-in one-second per-thread progress evidence
     bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
     std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1
     std::string systemVersion = "6.1"; // reported by UIDevice / sysctl
@@ -74,7 +75,8 @@ struct GuestThread {
     uint32_t stackBase = 0, stackSize = 0;
     uint32_t errnoAddr = 0;
     std::unordered_map<uint32_t, uint32_t> tsd;   // pthread keys
-    std::thread host;
+    std::thread::native_handle_type host{};
+    bool hostJoinable = false; // guarded by Process::threadsMu_; independent of guest detach
     std::atomic<bool> finished{false};
     bool detached = false;
     bool pthreadExited = false;   // left via pthread_exit()
@@ -216,11 +218,15 @@ public:
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
     std::string crashBundle();
+    // Each thread's (finished ones included, so a crashed worker stays) last `perThread` host calls as a JSON array, oldest first (T2c). Safe while threads run.
+    std::string callRingJson(size_t perThread);
     // Bounded, read-only allocator/host samples. Event must be an internal constant.
     void recordMemorySample(const char* event);
     // Runtime memory sampling is opt-in: HVM_MEMORY_DIAG must be set in the launching environment.
     static bool memoryDiagEnabled() { return std::getenv("HVM_MEMORY_DIAG") != nullptr; }
     std::string memorySamplesJson() const;
+    void recordThreadLiveness(const char* event);
+    std::string threadLivenessJson() const;
     const std::string& crashSignature() const { return crashSignature_; }
     std::vector<std::string> missingSymbols() const;
     // Imports bound to "missing" stubs at load (functions), in file order — the static gap list.
@@ -259,9 +265,12 @@ public:
     // Allocate `size` bytes of zeroed guest data and export it as `name`.
     uint32_t defineDataBlock(const std::string& name, uint32_t size);
     std::optional<uint32_t> lookupSymbol(const std::string& name) const;
-    // Hooks consulted (in order) for imports that nothing defines. Return 0
-    // to decline. Used for e.g. auto-creating stub ObjC classes.
-    void addMissingSymbolResolver(std::function<uint32_t(const std::string&)> fn);
+    // Import resolution may create placeholders; dynamic lookup only resolves
+    // explicitly recognized constants. Return 0 to decline either request.
+    enum class MissingSymbolMode { Import, DynamicLookup };
+    using MissingSymbolResolver = std::function<uint32_t(const std::string&, MissingSymbolMode)>;
+    void addMissingSymbolResolver(MissingSymbolResolver fn);
+    uint32_t resolveMissingSymbol(const std::string& name);
     // Register a host function without exporting a symbol (method IMPs, …).
     uint32_t registerHostFunction(const std::string& debugName, HostFn fn);
 
@@ -296,6 +305,8 @@ public:
     std::string describeRunningThreads();
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
+    /// Test seam: the next `count` host-thread creations (process-wide) fail, to exercise startThread cleanup.
+    static void failNextHostThreadSpawns(int count);
     bool joinThread(uint32_t self, uint32_t* retval);
     void detachThread(uint32_t self);
     GuestThread& mainThread() { return *mainThread_; }
@@ -365,9 +376,11 @@ private:
     void setupEnvironment();
     void initThreadState(GuestThread& t, uint32_t stackSize);
     void threadMain(GuestThread* t, uint32_t fn, uint32_t arg);
+    void joinHostThreads(bool includeRunning);
     void finishCrash(const CPU::Cpu& c, CPU::Exit e);
 
     ProcessConfig cfg_;
+    const uint64_t identity_; // distinguishes stale host TLS from a different/reused Process
     std::unique_ptr<Memory::GuestArena> mem_;
     std::unique_ptr<CPU::Engine> engine_;
     std::unique_ptr<Heap> heap_;
@@ -377,8 +390,9 @@ private:
     std::string guestHomePath_, guestBundlePath_, guestExecutablePath_;
 
     std::unordered_map<std::string, uint32_t> symbols_;
-    std::vector<std::function<uint32_t(const std::string&)>> missingResolvers_;
+    std::vector<MissingSymbolResolver> missingResolvers_;
     mutable std::mutex symMu_;
+    std::mutex resolutionMu_;
     std::unordered_map<std::type_index, std::shared_ptr<void>> services_;
     std::mutex servicesMu_;
     std::vector<std::function<void()>> loadedHooks_;
@@ -443,6 +457,10 @@ private:
     // diagnostics
     mutable std::mutex memorySamplesMu_;
     std::deque<std::string> memorySamples_;   // last 10 minutes at the five-second cadence
+    mutable std::mutex threadSamplesMu_;
+    std::deque<std::string> threadSamples_; // bounded to the most recent 120 samples
+    std::unordered_map<uint32_t, uint64_t> previousThreadCounts_;
+    std::chrono::steady_clock::time_point threadSamplesStart_ = std::chrono::steady_clock::now();
     Perf perf_;
     mutable std::mutex missingMu_;
     std::set<std::string> missing_;

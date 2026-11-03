@@ -142,6 +142,8 @@ struct AppIcon: View {
 
 struct LibraryView: View {
     @AppStorage("keepIpaForReinstall") private var keepIpaForReinstall = true
+    /// Default display mode for games that have no setting of their own (PlayerSettings).
+    @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleMode = PlayerScaleMode.fit.rawValue
     @AppStorage("hvm.zombies") private var zombies = false
     @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = false
     @State private var store = LibraryStore()
@@ -204,6 +206,11 @@ struct LibraryView: View {
                         Toggle("Show debug overlay while playing", isOn: $showDebugOverlay)
                         Text("Off: nothing of HydrogenVM is drawn over a game. Hold three fingers on the screen for a moment to open pause, volume, log and quit.")
                             .font(.footnote).foregroundStyle(.secondary)
+                        Picker("Default display mode", selection: $defaultScaleMode) {
+                            ForEach(PlayerScaleMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode.rawValue)
+                            }
+                        }
                         Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
                     }
                 }

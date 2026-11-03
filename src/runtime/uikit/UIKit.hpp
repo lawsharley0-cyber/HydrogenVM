@@ -6,6 +6,7 @@
 // images and composites all visible windows into an RGBA framebuffer that is
 // handed to the host app (or saved as a screenshot by the test runner).
 #pragma once
+#include <functional>
 #include "CoreGraphics.hpp"
 #include <array>
 #include <deque>
@@ -97,6 +98,8 @@ struct VCData : ObjC::HostObject {
     int32_t modalStyle = 0;
 };
 
+struct TextInputRequest;
+
 // Per-process UIKit state.
 struct UIState {
     explicit UIState(Process& p) : proc(p) {}
@@ -110,6 +113,9 @@ struct UIState {
     id keyWindow = 0;
     // screen (points)
     float screenW = 320, screenH = 480, scale = 2;
+    // Safe-area insets in portrait-framebuffer points (issue #281, mode 4). Approximation: they
+    // shrink applicationFrame, the status bar and the root view; they are not safeAreaInsets.
+    float safeTop = 0, safeLeft = 0, safeBottom = 0, safeRight = 0;
     bool statusBarHidden = false;
     int32_t statusBarOrientation = 1;   // UIInterfaceOrientationPortrait
     int32_t initialOrientation = 1;
@@ -135,8 +141,31 @@ struct UIState {
     id ignoringEvents = 0;
     int ignoreCount = 0;
     std::vector<id> eaglLayers;
+    // on-screen keyboard (#303)
+    std::function<void(const TextInputRequest&)> textInputObserver;   // guarded by inputMu
+    uint64_t textFocusId = 0;   // bumped each time a text field becomes first responder
+    uint64_t textAckSeq = 0;    // the host edit sequence number the guest has processed
 };
 UIState& ui(Process& p);
+
+// ---- on-screen keyboard. A focused UITextField/UITextView publishes a TextInputRequest to the host (which shows
+// a native keyboard); the host sends edits back with submitTextInput, which runs on the guest's main run loop.
+struct TextInputRequest {
+    bool active = false;                   // false = the keyboard should be dismissed
+    uint64_t focusId = 0;                  // which focus this request belongs to; events must echo it
+    uint64_t ackSeq = 0;                   // last host edit (TextInputEvent::seq) the guest has processed
+    std::string text, placeholder;
+    int32_t keyboardType = 0, returnKeyType = 0, autocapitalization = 0, autocorrection = 0;
+    bool secure = false, multiline = false;
+};
+struct TextInputEvent {
+    enum Kind { SetText, Return, Dismiss } kind;
+    std::string text;                      // SetText: the field's full new text
+    uint64_t focusId = 0;                  // from the request being answered; events for an older focus are dropped
+    uint64_t seq = 0;                      // host edit counter, echoed back as TextInputRequest::ackSeq
+};
+void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&)> observer);
+void submitTextInput(Process& p, TextInputEvent ev);
 inline UIState& ui(Ctx& x) { return ui(x.proc); }
 
 // ---- layers (QuartzCore.cpp)
@@ -196,10 +225,14 @@ G::Size drawText(Ctx& x, id ctx, const std::string& s, const G::FontDesc& f, con
 
 // ---- events (UIApplication.cpp)
 void deliverPendingInput(Ctx& x);
+void runApplicationLoop(Ctx& x, double until);                  // the app's main loop: default run loop mode
 
 // ---- message helpers
 uint64_t sendRect(Ctx& x, id self, SEL s, const G::Rect& r);
 uint64_t sendPoint(Ctx& x, id self, SEL s, const G::Point& p);
+// Applies HVM_VIRTUAL_SCREEN_HEIGHT and HVM_SAFE_AREA (set by the player per launch from the per-app
+// settings; issue #281 modes 3 and 4). Absent or invalid values leave the screen unchanged.
+void applyGuestScreenEnv(Ctx& x);
 G::Rect getRect(Ctx& x, id self, const char* sel);               // calls a CGRect-returning method (stret)
 G::Size getSize(Ctx& x, id self, SEL s, std::initializer_list<uint32_t> args = {});
 inline uint32_t fbits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }

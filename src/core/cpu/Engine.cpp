@@ -4,6 +4,7 @@
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
+#include <cerrno>
 #include <unistd.h>   // write() in the host-fault diagnostics
 
 namespace Hydrogen::CPU {
@@ -52,7 +53,7 @@ namespace {
 
 struct FaultScope {
     sigjmp_buf jb;
-    const Memory::GuestArena* arena;
+    uintptr_t arenaBase;
     uint32_t addr;
 };
 thread_local FaultScope* t_scope = nullptr;
@@ -63,32 +64,48 @@ std::once_flag g_installOnce;
 // ------------------------------------ preallocated thread & log tracking ---
 
 constexpr size_t kMaxCpus = 128;
-static std::atomic<Cpu*> g_activeCpus[kMaxCpus]{};
+static HostFaultThreadState g_threads[kMaxCpus];
+static std::atomic<uint64_t> g_threadGeneration{0};
+static std::atomic<uint32_t> g_untrackedCpus{0};
+constexpr size_t kMaxArenas = 32;
+static std::atomic<uintptr_t> g_arenas[kMaxArenas]{};
+static_assert(std::atomic<uintptr_t>::is_always_lock_free);
+static_assert(std::atomic<uint64_t>::is_always_lock_free);
+static_assert(std::atomic<uint32_t>::is_always_lock_free);
+static_assert(std::atomic<bool>::is_always_lock_free);
+static_assert(std::atomic<int>::is_always_lock_free);
 
 void registerCpu(Cpu* c) {
     for (size_t i = 0; i < kMaxCpus; ++i) {
-        Cpu* expected = nullptr;
-        if (g_activeCpus[i].compare_exchange_strong(expected, c, std::memory_order_acq_rel)) {
+        bool expected = false;
+        auto& s = g_threads[i];
+        if (s.claimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            s.active.store(false, std::memory_order_relaxed);
+            s.generation.store(g_threadGeneration.fetch_add(1) + 1, std::memory_order_relaxed);
+            c->fault_state = &s;
             return;
         }
     }
+    g_untrackedCpus.fetch_add(1, std::memory_order_relaxed);
 }
 
 void unregisterCpu(Cpu* c) {
-    for (size_t i = 0; i < kMaxCpus; ++i) {
-        Cpu* expected = c;
-        if (g_activeCpus[i].compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
-            return;
-        }
-    }
+    if (!c->fault_state) { g_untrackedCpus.fetch_sub(1, std::memory_order_relaxed); return; }
+    c->fault_state->active.store(false, std::memory_order_release);
+    c->fault_state->claimed.store(false, std::memory_order_release);
 }
 
 constexpr size_t kLogRingCap = 200;
 constexpr size_t kLogLineCap = 256;
 
 struct LogRingBuffer {
-    char lines[kLogRingCap][kLogLineCap];
-    size_t lengths[kLogRingCap];
+    struct Entry {
+        std::atomic_flag busy = ATOMIC_FLAG_INIT;
+        char line[kLogLineCap]{};
+        size_t length = 0;
+        uint64_t sequence = 0;
+        bool valid = false;
+    } entries[kLogRingCap];
     std::atomic<uint64_t> writeIdx{0};
 };
 
@@ -96,11 +113,17 @@ static LogRingBuffer g_logRing;
 
 void recordLogLineAsyncSafeImpl(const char* data, size_t len) {
     const uint64_t idx = g_logRing.writeIdx.fetch_add(1, std::memory_order_relaxed);
-    const size_t slot = idx % kLogRingCap;
+    auto& entry = g_logRing.entries[idx % kLogRingCap];
+    // Both writers and the signal reader try once. A signal interrupting a
+    // writer must never wait for that same writer to resume.
+    if (entry.busy.test_and_set(std::memory_order_acquire)) return;
+    if (entry.valid && entry.sequence > idx) { entry.busy.clear(std::memory_order_release); return; }
     const size_t copyLen = len < (kLogLineCap - 1) ? len : (kLogLineCap - 1);
-    std::memcpy(g_logRing.lines[slot], data, copyLen);
-    g_logRing.lines[slot][copyLen] = '\0';
-    g_logRing.lengths[slot] = copyLen;
+    for (size_t i = 0; i < copyLen; ++i) entry.line[i] = data[i];
+    entry.length = copyLen;
+    entry.sequence = idx;
+    entry.valid = true;
+    entry.busy.clear(std::memory_order_release);
 }
 
 // Async-signal-safe I/O primitives using raw write(STDERR_FILENO).
@@ -109,6 +132,7 @@ static void safeWrite(const char* str, size_t len) {
     const int fd = g_faultFd.load(std::memory_order_relaxed);
     while (len > 0) {
         ssize_t r = ::write(fd, str, len);
+        if (r < 0 && errno == EINTR) continue;
         if (r <= 0) break;
         str += r;
         len -= r;
@@ -117,7 +141,9 @@ static void safeWrite(const char* str, size_t len) {
 
 static void safeWriteStr(const char* str) {
     if (!str) return;
-    safeWrite(str, std::strlen(str));
+    size_t len = 0;
+    while (str[len]) ++len;
+    safeWrite(str, len);
 }
 
 static void safeWriteHex(uint64_t val, int width = 8) {
@@ -158,8 +184,9 @@ static std::atomic<bool> g_faultDiagnosticActive{false};
 
 void faultHandler(int sig, siginfo_t* si, void* uctx) {
     FaultScope* s = t_scope;
-    if (s && s->arena->containsHost(si->si_addr)) {
-        s->addr = s->arena->guestAddr(si->si_addr);
+    const uintptr_t address = reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr);
+    if (s && address >= s->arenaBase && uint64_t(address - s->arenaBase) < Memory::GuestArena::kArenaSize) {
+        s->addr = uint32_t(address - s->arenaBase);
         siglongjmp(s->jb, 1);
     }
 
@@ -170,47 +197,89 @@ void faultHandler(int sig, siginfo_t* si, void* uctx) {
         safeWriteStr("\nHost Fault Address (si_addr): 0x");
         safeWriteHex(reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr), 16);
 
-        if (s && s->arena) {
-            if (s->arena->containsHost(si->si_addr)) {
+        bool anyArena = false, inside = false;
+        for (auto& item : g_arenas) {
+            const uintptr_t base = item.load(std::memory_order_acquire);
+            if (!base) continue;
+            anyArena = true;
+            safeWriteStr("\nGuest Arena Base: 0x");
+            safeWriteHex(base, 16);
+            if (address >= base && uint64_t(address - base) < Memory::GuestArena::kArenaSize) {
                 safeWriteStr("\nGuest Arena Offset: 0x");
-                safeWriteHex(s->arena->guestAddr(si->si_addr), 8);
-            } else {
-                safeWriteStr("\nGuest Arena Base: 0x");
-                safeWriteHex(reinterpret_cast<uintptr_t>(s->arena->base()), 16);
-                safeWriteStr(" (fault address outside guest arena)");
+                safeWriteHex(address - base, 8);
+                inside = true;
             }
         }
-        safeWriteStr("\n\n--- Guest Threads State ---\n");
+        if (!anyArena) safeWriteStr("\nGuest arena unavailable (no registered engine)");
+        else if (!inside) safeWriteStr("\nFault address outside registered guest arenas");
+        safeWriteStr("\n\n--- Guest Threads State ---\nRegisters sampled at block entry/HLE boundary; samples may differ in time.\n");
 
         for (size_t i = 0; i < kMaxCpus; ++i) {
-            Cpu* c = g_activeCpus[i].load(std::memory_order_relaxed);
-            if (!c) continue;
+            auto& state = g_threads[i];
+            if (!state.active.load(std::memory_order_acquire)) continue;
+            const auto generation = state.generation.load(std::memory_order_acquire);
+            const auto pc = state.pc.load(std::memory_order_relaxed);
+            const auto lr = state.lr.load(std::memory_order_relaxed);
+            const auto block = state.block.load(std::memory_order_relaxed);
+            const auto arena = state.arena.load(std::memory_order_relaxed);
+            const bool inGuest = state.inGuest.load(std::memory_order_relaxed);
+            char name[sizeof state.hleName]{};
+            uint32_t hleIndex = 0xFFFFFFFFu;
+            bool haveName = false;
+            if (!state.nameBusy.test_and_set(std::memory_order_acquire)) {
+                if (state.hleGeneration == generation) {
+                    for (size_t j = 0; j < sizeof name; ++j) name[j] = state.hleName[j];
+                    hleIndex = state.hleIndex;
+                    haveName = true;
+                }
+                state.nameBusy.clear(std::memory_order_release);
+            }
+            if (!state.active.load(std::memory_order_acquire) ||
+                state.generation.load(std::memory_order_acquire) != generation) continue;
             safeWriteStr("Thread slot #");
             safeWriteDec(i);
+            safeWriteStr(" generation=");
+            safeWriteDec(generation);
             safeWriteStr(": PC=0x");
-            safeWriteHex(c->r[kPC], 8);
+            safeWriteHex(pc, 8);
             safeWriteStr(" LR=0x");
-            safeWriteHex(c->r[kLR], 8);
+            safeWriteHex(lr, 8);
             safeWriteStr(" block_pc=0x");
-            safeWriteHex(c->block_pc, 8);
+            safeWriteHex(block, 8);
+            safeWriteStr(" arena=0x");
+            safeWriteHex(arena, 16);
             safeWriteStr(" in_guest=");
-            safeWriteStr(c->in_guest.load(std::memory_order_relaxed) ? "true" : "false");
-            safeWriteStr(" current_hle=0x");
-            safeWriteHex(c->current_hle.load(std::memory_order_relaxed), 8);
+            safeWriteStr(inGuest ? "true" : "false");
+            if (haveName) {
+                safeWriteStr(" current_hle=0x");
+                safeWriteHex(hleIndex, 8);
+                safeWriteStr(" (");
+                safeWriteStr(name);
+                safeWriteStr(")");
+            } else safeWriteStr(" current_hle=unavailable (publication interrupted)");
             safeWriteStr("\n");
         }
+        safeWriteStr("Untracked CPUs (registry capacity 128): ");
+        safeWriteDec(g_untrackedCpus.load(std::memory_order_relaxed));
+        safeWriteStr("\n");
 
         safeWriteStr("\n--- Recent Logs (last 200) ---\n");
         const uint64_t totalWritten = g_logRing.writeIdx.load(std::memory_order_relaxed);
         const uint64_t count = totalWritten < kLogRingCap ? totalWritten : kLogRingCap;
         const uint64_t startIdx = totalWritten > count ? (totalWritten - count) : 0;
+        uint64_t unavailable = 0;
         for (uint64_t i = startIdx; i < totalWritten; ++i) {
-            const size_t slot = i % kLogRingCap;
-            if (g_logRing.lengths[slot] > 0) {
-                safeWrite(g_logRing.lines[slot], g_logRing.lengths[slot]);
+            auto& entry = g_logRing.entries[i % kLogRingCap];
+            if (entry.busy.test_and_set(std::memory_order_acquire)) { ++unavailable; continue; }
+            if (entry.valid && entry.sequence == i) {
+                safeWrite(entry.line, entry.length);
                 safeWriteStr("\n");
-            }
+            } else ++unavailable;
+            entry.busy.clear(std::memory_order_release);
         }
+        safeWriteStr("Unavailable log entries (concurrent publication): ");
+        safeWriteDec(unavailable);
+        safeWriteStr("\n");
         safeWriteStr("=== END HOST FAULT DIAGNOSTICS ===\n\n");
     }
 
@@ -249,8 +318,32 @@ void Engine::setFaultReportFd(int fd) { g_faultFd.store(fd >= 0 ? fd : STDERR_FI
 Engine::Engine(Memory::GuestArena& mem) : mem_(mem), hle_(kMaxHle) {
     installFaultHandler();
     returnStub_ = registerHle("__hvm_return_to_host", [](Cpu& c) { c.exit = Exit::Return; });
+    for (size_t i = 0; i < kMaxArenas; ++i) {
+        uintptr_t expected = 0;
+        if (g_arenas[i].compare_exchange_strong(expected, reinterpret_cast<uintptr_t>(mem_.base()), std::memory_order_release)) {
+            faultArenaSlot_ = i;
+            break;
+        }
+    }
 }
-Engine::~Engine() = default;
+Engine::~Engine() {
+    if (faultArenaSlot_ < kMaxArenas) g_arenas[faultArenaSlot_].store(0, std::memory_order_release);
+}
+
+void Engine::recordHleState(Cpu& c, uint32_t index, bool sampleRegisters) {
+    auto* state = c.fault_state;
+    if (!state) return;
+    if (sampleRegisters) c.recordFaultRegisters(c.r[kPC]);
+    state->inGuest.store(false, std::memory_order_relaxed);
+    if (state->nameBusy.test_and_set(std::memory_order_acquire)) return;
+    const char* name = index < hleCount_.load(std::memory_order_acquire) ? hle_[index].name.c_str() : "none";
+    size_t n = 0;
+    while (n + 1 < sizeof state->hleName && name[n]) { state->hleName[n] = name[n]; ++n; }
+    state->hleName[n] = '\0';
+    state->hleIndex = index;
+    state->hleGeneration = state->generation.load(std::memory_order_relaxed);
+    state->nameBusy.clear(std::memory_order_release);
+}
 
 uint32_t Engine::registerHle(std::string name, HleFn fn) {
     std::lock_guard<std::mutex> lk(mu_);
@@ -285,12 +378,18 @@ void Engine::callHle(Cpu* c, uint32_t index) {
         c->call_ring.store(ring, std::memory_order_release);
     }
     ring->push(Diag::CallKind::Hle, index);
-    c->in_guest.store(false, std::memory_order_release);
     const uint32_t outerHle = c->current_hle.exchange(index, std::memory_order_relaxed);
+    // Sample registers while in_guest is still set: once it clears a suspender may rewrite c->r[].
+    recordHleState(*c, index);
+    c->in_guest.store(false, std::memory_order_release);
+    const uint32_t outerArg0 = c->progress_argument0, outerArg1 = c->progress_argument1;
+    c->progress_argument0 = c->r[0]; c->progress_argument1 = c->r[1];
+    c->publishProgress(false);
     struct Reenter {
-        Engine* e; Cpu* c; uint32_t outer;
-        ~Reenter() { c->current_hle.store(outer, std::memory_order_relaxed); e->enterGuest(*c); }
-    } reenter{this, c, outerHle};
+        Engine* e; Cpu* c; uint32_t outer, a0, a1;
+        ~Reenter() { c->current_hle.store(outer, std::memory_order_relaxed); e->recordHleState(*c, outer);
+            c->progress_argument0 = a0; c->progress_argument1 = a1; e->enterGuest(*c); }
+    } reenter{this, c, outerHle, outerArg0, outerArg1};
     try {
         hle_[index].fn(*c);
     } catch (const GuestFault& f) {
@@ -460,16 +559,36 @@ void Engine::decodeThumbBlock(Block& b, uint32_t pc) {
 // --------------------------------------------------------------- run loop ---
 
 Exit Engine::run(Cpu& cpu, int64_t budget) {
+    FaultScope* prev = t_scope;
+    const bool previousFaultInGuest = prev && cpu.fault_state &&
+        cpu.fault_state->inGuest.load(std::memory_order_relaxed);
     cpu.engine = this;
+    if (cpu.fault_state) {
+        cpu.fault_state->arena.store(reinterpret_cast<uintptr_t>(mem_.base()), std::memory_order_relaxed);
+        // Registers are sampled by enterGuest, after any pending suspension has been honoured.
+        recordHleState(cpu, cpu.current_hle.load(std::memory_order_relaxed), false);
+        cpu.fault_state->active.store(true, std::memory_order_release);
+    }
     cpu.budget = budget;
+    cpu.progress_budget_start = budget;
     const int64_t startBudget = budget;
     cpu.exit = Exit::None;
     cpu.exit_info = 0;
 
     FaultScope scope;
-    scope.arena = &mem_;
+    scope.arenaBase = reinterpret_cast<uintptr_t>(mem_.base());
     scope.addr = 0;
-    FaultScope* prev = t_scope;
+    // Restore on C++ exceptions too: a subsequent host fault must not follow
+    // a scope pointer into the abandoned Engine::run stack frame.
+    struct RestoreScope {
+        FaultScope* prev;
+        HostFaultThreadState* state;
+        bool inGuest;
+        ~RestoreScope() {
+            if (state) state->inGuest.store(inGuest, std::memory_order_relaxed);
+            t_scope = prev;
+        }
+    } restore{prev, cpu.fault_state, previousFaultInGuest};
     t_scope = &scope;
     if (sigsetjmp(scope.jb, 1)) {
         t_scope = prev;
@@ -477,7 +596,12 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         cpu.exit_info = scope.addr;
         cpu.r[kPC] = cpu.block_pc;   // precise PC within the block isn't tracked
         cpu.insn_count += uint64_t(startBudget - cpu.budget);
+        // Sample the registers before releasing the CPU: once in_guest is false a suspender may rewrite them.
+        cpu.recordFaultRegisters(cpu.r[kPC]);
+        if (cpu.fault_state) cpu.fault_state->inGuest.store(false, std::memory_order_relaxed);
         cpu.in_guest.store(false, std::memory_order_release);
+        cpu.progress_budget_start = cpu.budget;
+        cpu.publishProgress(false);
         return cpu.exit;
     }
     uint8_t* const base = mem_.base();
@@ -487,23 +611,35 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         Block* b = enterBlock(&cpu, key);
         if (!b) break;
         cpu.block_pc = key & ~1u;
+        cpu.recordFaultRegisters(cpu.block_pc);
         const Op* first = b->ops.data();
         first->fn(&cpu, first, base);
     }
     t_scope = prev;
+    cpu.recordFaultRegisters(cpu.r[kPC]);   // before releasing the CPU to a suspender
+    if (cpu.fault_state) cpu.fault_state->inGuest.store(false, std::memory_order_relaxed);
     cpu.in_guest.store(false, std::memory_order_release);
     // Handlers only decrement the budget; the retired count falls out of it.
     cpu.insn_count += uint64_t(startBudget - cpu.budget);
+    cpu.progress_budget_start = cpu.budget;
+    cpu.publishProgress(false);
     return cpu.exit;
 }
 
 void Engine::park(Cpu& c) {
+    // Sample before announcing the park: once in_guest is false a suspender may rewrite c.r[].
+    c.recordFaultRegisters(c.r[kPC]);
+    if (c.fault_state) c.fault_state->inGuest.store(false, std::memory_order_relaxed);
     c.in_guest.store(false, std::memory_order_seq_cst);
+    c.publishProgress(false);
     std::unique_lock<std::mutex> lk(suspendMu_);
     suspendCv_.notify_all();
     suspendCv_.wait(lk, [&] { return c.suspend_count.load() == 0 || stopRequested(); });
-    lk.unlock();
+    // Published while still holding suspendMu_: a suspend() that starts after this either sees in_guest and waits for
+    // it to clear, or has already raised suspend_count, which enterGuest re-checks.
     c.in_guest.store(true, std::memory_order_seq_cst);
+    lk.unlock();
+    // enterGuest samples the registers and publishes progress after this returns (post-resume registers).
 }
 
 void Engine::suspend(Cpu& t) {
@@ -564,11 +700,14 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, std::initializer_list<uint32_t> 
 }
 
 uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nargs) {
+    if (nargs && !args) throw std::invalid_argument("guest call arguments are null");
     // Save everything the interrupted context can observe.
     uint32_t saved[kNumRegs];
     std::memcpy(saved, c.r, sizeof saved);
     const uint32_t nzcv = c.nzcv, q = c.q, ge = c.ge, thumb = c.thumb, blockPc = c.block_pc;
     const int64_t budget = c.budget;
+    const int64_t progressBudgetStart = c.progress_budget_start;
+    const uint64_t progressCarry = c.progress_carry;
     const Exit exitSaved = c.exit;
     const uint32_t infoSaved = c.exit_info;
     const uint32_t boundarySaved = c.call_boundary_sp;
@@ -577,8 +716,23 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     uint32_t sp = c.r[kSP] & ~7u;
     c.call_boundary_sp = sp;
     if (nargs > 4) {
-        sp = (sp - uint32_t(nargs - 4) * 4) & ~7u;
-        for (size_t i = 4; i < nargs; ++i) mem_.write<uint32_t>(sp + uint32_t(i - 4) * 4, args[i]);
+        auto stackFault = [&](uint32_t address, const char* reason) {
+            const auto oldInfo = c.exit_info;
+            c.exit_info = address;
+            captureFault(c, Exit::MemFault);
+            c.exit_info = oldInfo;
+            throw GuestFault(Exit::MemFault, address, c.r[kPC], c.thumb, reason);
+        };
+        const size_t extra = nargs - 4;
+        if (extra > UINT32_MAX / 4 || uint64_t(extra) * 4 > sp)
+            stackFault(sp, "guest call argument stack overflows its address space");
+        const size_t bytes = extra * 4;
+        sp = (sp - uint32_t(bytes)) & ~7u;
+        uint32_t fault = sp;
+        // These writes happen before run() establishes a guest fault scope.
+        // A bad guest stack must be a controlled GuestFault, not a host SIGSEGV.
+        if (!mem_.copyInWritable(sp, args + 4, bytes, fault))
+            stackFault(fault, "guest call argument stack is not writable");
     }
     for (size_t i = 0; i < 4; ++i) c.r[i] = i < nargs ? args[i] : 0;
     c.r[kSP] = sp;
@@ -586,6 +740,8 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
     c.r[kPC] = fn & ~1u;
     c.thumb = fn & 1;
 
+    // After the stack-argument writes (they can fault, and a fault publishes before the carry is restored): the nested slices replace budget/progress_budget_start; keep the outer slice's pending count in the published total.
+    c.progress_carry += uint64_t(c.progress_budget_start) - uint64_t(c.budget);
     const Exit e = runToExit(c);
     const uint64_t result = (uint64_t(c.r[1]) << 32) | c.r[0];
     if (e != Exit::Return) {
@@ -593,12 +749,18 @@ uint64_t Engine::callGuest(Cpu& c, uint32_t fn, const uint32_t* args, size_t nar
         const uint32_t info = c.exit_info, pc = c.r[kPC], th = c.thumb;
         std::memcpy(c.r, saved, sizeof saved);
         c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
+        c.progress_budget_start = progressBudgetStart;
+        c.progress_carry = progressCarry;
         c.exit = exitSaved; c.exit_info = infoSaved;
+        c.publishProgress(false);
         throw GuestFault(e, info, pc, th, e == Exit::HostError ? t_hostError : "guest call did not return");
     }
     std::memcpy(c.r, saved, sizeof saved);
     c.nzcv = nzcv; c.q = q; c.ge = ge; c.thumb = thumb; c.block_pc = blockPc; c.budget = budget;
+    c.progress_budget_start = progressBudgetStart;
+    c.progress_carry = progressCarry;
     c.exit = exitSaved; c.exit_info = infoSaved;
+    c.publishProgress(false);
     return result;
 }
 

@@ -41,6 +41,7 @@ struct HarnessHome: View {
             guard !prepared else { return }
             prepared = true
             UserDefaults.standard.set("Aspect Fit", forKey: "player.scaleMode")
+            PlayerSettings.clearScaleMode(bundleID: "com.hvm.player-harness")
             UserDefaults.standard.set("Bilinear", forKey: "player.filter")
             UserDefaults.standard.set(false, forKey: "fileEditor.autoSave")
             do {

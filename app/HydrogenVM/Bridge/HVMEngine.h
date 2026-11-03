@@ -40,6 +40,24 @@ typedef NS_ENUM(NSInteger, HVMLogLevel) {
 typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhaseMoved = 1, HVMTouchPhaseEnded = 3, HVMTouchPhaseCancelled = 4 };
 
 /// One running guest app. Callbacks arrive on the main queue.
+/// What a focused guest text field asks the host keyboard for (UIKeyboardType / UIReturnKeyType raw values).
+@interface HVMTextInputRequest : NSObject
+@property (nonatomic, readonly) BOOL active;   // NO = hide the keyboard
+/// Identifies the guest focus this request belongs to; every event sent back must echo it.
+@property (nonatomic, readonly) uint64_t focusId;
+/// The last submitText sequence number the guest has processed; a correction is current only if it matches the
+/// newest edit the player made.
+@property (nonatomic, readonly) uint64_t ackSeq;
+@property (nonatomic, readonly, copy) NSString *text;
+@property (nonatomic, readonly, copy) NSString *placeholder;
+@property (nonatomic, readonly) NSInteger keyboardType;
+@property (nonatomic, readonly) NSInteger returnKeyType;
+@property (nonatomic, readonly) NSInteger autocapitalizationType;
+@property (nonatomic, readonly) NSInteger autocorrectionType;
+@property (nonatomic, readonly) BOOL secure;
+@property (nonatomic, readonly) BOOL multiline;
+@end
+
 @interface HVMSession : NSObject
 - (instancetype)initWithBundlePath:(NSString *)bundlePath homePath:(NSString *)homePath;
 - (instancetype)init NS_UNAVAILABLE;
@@ -83,6 +101,16 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly, copy, nullable) NSString *crashBundle;
 /// When YES, missing functions log and return 0 instead of stopping the app.
 @property (nonatomic) BOOL keepGoing;
+
+/// A guest text field gained or lost focus, or its text changed behind the keyboard (main queue).
+@property (nonatomic, copy, nullable) void (^onTextInput)(HVMTextInputRequest *request);
+/// The player's new full text for the focused guest field (delegate-checked in the guest). Dropped by the guest if
+/// focusId is no longer the focused field's.
+- (void)submitText:(NSString *)text focusId:(uint64_t)focusId sequence:(uint64_t)sequence;
+/// The return key was pressed on the host keyboard.
+- (void)submitReturnKeyForFocus:(uint64_t)focusId;
+/// The player dismissed the host keyboard; the guest field resigns first responder (if it allows).
+- (void)dismissKeyboardForFocus:(uint64_t)focusId;
 
 - (void)start;
 /// Stops immediately (no chance to save).

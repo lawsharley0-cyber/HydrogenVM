@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "core/diag/CallRing.hpp"
+#include "ThreadProgress.hpp"
 
 // preserve_none (no callee-saved registers) removes the push/pop that every
 // handler otherwise pays. It needs LLVM 19 for AArch64; Apple clang numbers
@@ -88,6 +89,20 @@ struct FastEntry { uint32_t key; Block* block; const Op* first; };
 inline constexpr size_t kFastSize = 1u << 14;
 inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (kFastSize - 1); }
 
+// Permanent signal-readable storage, owned by the registry in Engine.cpp.
+// Numeric fields are independent samples from the latest block/HLE boundary.
+// Never point a signal reader at the Cpu or an Engine-owned string.
+struct HostFaultThreadState {
+    std::atomic<bool> claimed{false}, active{false}, inGuest{false};
+    std::atomic<uint32_t> pc{0}, lr{0}, block{0};
+    std::atomic<uintptr_t> arena{0};
+    std::atomic<uint64_t> generation{0};
+    std::atomic_flag nameBusy = ATOMIC_FLAG_INIT;
+    uint32_t hleIndex = 0xFFFFFFFFu;  // protected by nameBusy; reader never waits
+    uint64_t hleGeneration = 0;
+    char hleName[128]{};
+};
+
 struct alignas(64) Cpu {
     Cpu();
     ~Cpu();
@@ -119,8 +134,26 @@ struct alignas(64) Cpu {
     Exit     exit       = Exit::None;
     uint32_t exit_info  = 0;
     uint32_t block_pc   = 0;   // start of the block currently executing (fault reports)
-    uint64_t insn_count = 0;   // retired guest instructions (approximate, per block; updated when run() returns)
+    std::atomic<uint64_t> insn_count{0}; // completed dispatches, also read by diagnostic threads
+    ThreadProgress progress;
+    int64_t progress_budget_start = 0;
+    uint64_t progress_carry = 0;   // instructions the interrupted outer slices have retired but not yet folded into insn_count (nested callGuest)
+    uint32_t progress_argument0 = 0, progress_argument1 = 0;
+    void publishProgress(bool guest) {
+        if (!progress.enabled) return;
+        const uint64_t pending = uint64_t(progress_budget_start) - uint64_t(budget);
+        progress.publish({insn_count.load(std::memory_order_relaxed) + progress_carry + pending,
+            r[kPC], r[kLR], block_pc, current_hle.load(std::memory_order_relaxed),
+            progress_argument0, progress_argument1, guest});
+    }
     Engine*  engine     = nullptr;
+    HostFaultThreadState* fault_state = nullptr; // static storage; never freed
+    void recordFaultRegisters(uint32_t pc) {
+        if (!fault_state) return;
+        fault_state->pc.store(pc, std::memory_order_relaxed);
+        fault_state->lr.store(r[kLR], std::memory_order_relaxed);
+        fault_state->block.store(block_pc, std::memory_order_relaxed);
+    }
     void*    user       = nullptr;  // owner (guest thread object, test harness, ...)
 
     // Block lookup cache, private to the host thread running this Cpu, so guest
