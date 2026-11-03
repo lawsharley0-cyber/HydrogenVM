@@ -29,9 +29,10 @@ mkdir -p "$DATA/Documents/Apps/$GUEST_ID"
 cp -R "$GUEST_APP" "$DATA/Documents/Apps/$GUEST_ID/"
 URL="hydrogenvm://run/$GUEST_ID"
 
-# The app is terminated. No autorun hook is set:
-# only the scene delegate can queue this URL in the test build; the SwiftUI
-# onOpenURL handler is disabled so a later delivery cannot hide a lost handoff.
+# The app is terminated. No autorun hook is set: the launch URL has to reach the app's
+# SwiftUI `.onOpenURL` handler, which queues it (cold-start-queued) before the library
+# resolves it (cold-start-routed). A link the app never queues cannot be hidden by a
+# later delivery, and nothing else in the test build opens a game.
 xcrun simctl openurl "$UDID" "$URL"
 for _ in $(seq 1 240); do
     [ -f "$DATA/Documents/cold-start-guest-passed" ] && break

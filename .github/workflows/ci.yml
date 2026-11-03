@@ -3,7 +3,10 @@ name: CI
 # Linux runs on every push. The macOS job (Apple-toolchain engine build + speed
 # on Apple Silicon, Xcode device/simulator builds, simulator run) costs 10x the
 # Actions minutes on a private repo, so it runs when a commit message contains
-# "[mac]", on manual dispatch, or once a week.
+# "[mac]", when a pull request is labelled "mac" or its title contains "[mac]",
+# on manual dispatch, or once a week. The pull-request opt-in exists so the
+# simulator regressions (including the cold-start URL handoff) can gate a PR
+# without paying for the job on every one.
 on:
   push:
   pull_request:
@@ -97,7 +100,10 @@ jobs:
     needs: linux
     if: >-
       github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
-      contains(github.event.head_commit.message, '[mac]')
+      contains(github.event.head_commit.message, '[mac]') ||
+      (github.event_name == 'pull_request' &&
+       (contains(github.event.pull_request.labels.*.name, 'mac') ||
+        contains(github.event.pull_request.title, '[mac]')))
     steps:
       - uses: actions/checkout@v4
       - name: Install tools

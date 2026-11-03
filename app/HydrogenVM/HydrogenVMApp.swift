@@ -12,54 +12,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         MainActor.assumeIsolated { OrientationLock.shared.mask }
     }
-
-    /// A cold start from a Home Screen icon. A scene-based app receives the link in the
-    /// scene's connection options, before any SwiftUI view exists, so it can be queued here
-    /// and the library stays hidden until it has been routed. A link that arrives while
-    /// the app is already running comes through `.onOpenURL` instead. Not verified on a device.
-    ///
-    /// Check both `urlContexts` and `userActivities` (some system paths deliver a browsing
-    /// activity). The returned configuration uses an explicit role-matched scene config so
-    /// connection options are delivered to the scene lifecycle.
-    func application(_ application: UIApplication,
-                     configurationForConnecting connectingSceneSession: UISceneSession,
-                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
-        if let url = Self.gameLink(from: options) {
-            // Queue before any SwiftUI view exists. MainActor is required for LaunchRouter.
-            if Thread.isMainThread {
-                Self.queueColdStart(url)
-            } else {
-                DispatchQueue.main.sync { Self.queueColdStart(url) }
-            }
-        }
-        let config = UISceneConfiguration(name: "Default Configuration",
-                                          sessionRole: connectingSceneSession.role)
-        // Keep the system/SwiftUI scene delegate path; do not install a custom class that
-        // would replace the WindowGroup hosting.
-        return config
-    }
-
-    private static func gameLink(from options: UIScene.ConnectionOptions) -> URL? {
-        if let url = options.urlContexts.first?.url,
-           url.scheme?.lowercased() == GameLink.scheme {
-            return url
-        }
-        for activity in options.userActivities {
-            if let url = activity.webpageURL,
-               url.scheme?.lowercased() == GameLink.scheme {
-                return url
-            }
-        }
-        return nil
-    }
-
-    private static func queueColdStart(_ url: URL) {
-        LaunchRouter.shared.open(url)
-        #if COLD_START_URL_TEST && targetEnvironment(simulator)
-        // Record even if pending was already set; the marker is the contract with the test.
-        ColdStartURLTest.record("queued", value: url.absoluteString)
-        #endif
-    }
 }
 
 @main
@@ -75,14 +27,24 @@ struct HydrogenVMApp: App {
                 Tab("Diagnostics", systemImage: "stethoscope") { DiagnosticsView() }
             }
             .task { recoveredCrash = CrashReport.recover() }
+            .sheet(item: $recoveredCrash) { CrashReportView(report: $0) }
+            // A `hydrogenvm://run/<id>` link from a Home Screen icon arrives here, both when the
+            // app is already running and when the link is what launched it: a scene-based app
+            // receives the launch URL through the scene's connection options, which SwiftUI
+            // delivers as this URL action. The app delegate's `configurationForConnecting` is not
+            // used: its connection options are not the URL handoff, and returning a scene
+            // configuration there replaces SwiftUI's own scene delegate.
+            // The link is queued before the library resolves it, and the library stays black
+            // while one is pending, so a game link never flashes the library.
+            // `.ipa` imports keep going to the library's own `.onOpenURL`.
             .onOpenURL { url in
-                #if COLD_START_URL_TEST && targetEnvironment(simulator)
-                // The regression must use the queued scene URL, not a later delivery.
-                #else
+                guard GameLink.gameID(from: url) != nil else { return }
                 LaunchRouter.shared.open(url)
+                #if COLD_START_URL_TEST && targetEnvironment(simulator)
+                // The contract with tools/test_cold_start_url.sh: the link arrived and is queued.
+                ColdStartURLTest.record("queued", value: url.absoluteString)
                 #endif
             }
-            .sheet(item: $recoveredCrash) { CrashReportView(report: $0) }
         }
     }
 }
