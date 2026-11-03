@@ -1,7 +1,13 @@
 name: Private fixture parity (trusted main)
 
-# Pre-removal gate. Existing public CI and real-app consumers remain unchanged.
+# Real-game checks from the private store (#204). The three IPAs are not tracked in git, so
+# this is where real games run: every push to main, weekly, and on demand. The Linux leg is
+# the gate; the macOS leg is dispatch-only until its fixture fetch works on macOS.
 on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 8 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -16,7 +22,7 @@ jobs:
     if: >-
       github.repository == 'lawsharley0-cyber/HydrogenVM' &&
       github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch'
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'schedule')
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:

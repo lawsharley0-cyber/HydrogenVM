@@ -23,7 +23,7 @@ _RICH = frozenset({"varied", "mostly-one-color"})
 _MEASURED = frozenset({"ran", "crashed", "load-error", "timeout"})
 
 
-def diff_reports(baseline: dict, current: dict) -> dict:
+def diff_reports(baseline: dict, current: dict, *, compare_apps: bool = True) -> dict:
     regressions: list[dict] = []
     improvements: list[dict] = []
     attention: list[dict] = []
@@ -40,10 +40,16 @@ def diff_reports(baseline: dict, current: dict) -> dict:
     for suite in ("unit", "python"):
         _diff_cases(suite, baseline, current, regressions, improvements)
 
-    base_apps = _apps(baseline)
-    cur_apps = _apps(current)
-    for ident in sorted(set(base_apps) | set(cur_apps)):
-        _diff_app(ident, base_apps.get(ident), cur_apps.get(ident), regressions, improvements, attention, informational)
+    if compare_apps:
+        base_apps = _apps(baseline)
+        cur_apps = _apps(current)
+        for ident in sorted(set(base_apps) | set(cur_apps)):
+            _diff_app(ident, base_apps.get(ident), cur_apps.get(ident), regressions, improvements, attention, informational)
+    else:
+        informational.append({
+            "kind": "apps-not-run",
+            "message": "real-game apps were not run in this mode, so they were not compared with the baseline",
+        })
 
     return {
         "schemaVersion": 1,
