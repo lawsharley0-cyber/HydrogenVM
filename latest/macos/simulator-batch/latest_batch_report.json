@@ -1,7 +1,7 @@
 {
   "build" : {
     "binaryMatch" : "verified",
-    "commit" : "fe555648b7f49a45b2aa7e013dd070889c7a0911",
+    "commit" : "86a417c892f31627b9dc91421f2b783a686ec380",
     "configuration" : "device"
   },
   "device" : {
@@ -98,7 +98,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 234260,
+            "audioFramesRendered" : 235200,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -108,7 +108,7 @@
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 743.35583299999996
+            "timeToFirstFrameMs" : 724.71979099999999
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -117,32 +117,32 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2359949350357056
+                "timeOffset" : 5.2032239437103271
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5419389009475708
+                "timeOffset" : 5.5254479646682739
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8493049144744873
+                "timeOffset" : 5.8448460102081299
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1684489250183105
+                "timeOffset" : 6.159485936164856
               },
               {
                 "details" : "grid tap at (133, 24)",
                 "kind" : "tap",
-                "timeOffset" : 6.4787169694900513
+                "timeOffset" : 6.4678770303726196
               },
               {
                 "details" : "grid tap at (26, 360)",
                 "kind" : "tap",
-                "timeOffset" : 6.7955689430236816
+                "timeOffset" : 6.7907769680023193
               }
             ],
             "backgroundTested" : false,
@@ -158,32 +158,32 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2359949350357056
+                "timeOffset" : 5.2032239437103271
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5419389009475708
+                "timeOffset" : 5.5254479646682739
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8493049144744873
+                "timeOffset" : 5.8448460102081299
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1684489250183105
+                "timeOffset" : 6.159485936164856
               },
               {
                 "details" : "grid tap at (133, 24)",
                 "kind" : "tap",
-                "timeOffset" : 6.4787169694900513
+                "timeOffset" : 6.4678770303726196
               },
               {
                 "details" : "grid tap at (26, 360)",
                 "kind" : "tap",
-                "timeOffset" : 6.7955689430236816
+                "timeOffset" : 6.7907769680023193
               }
             ],
             "screensVisited" : 1,
@@ -278,7 +278,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 261072,
+            "audioFramesRendered" : 262013,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -288,7 +288,7 @@
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 128.81370799999999
+            "timeToFirstFrameMs" : 50.965583000000002
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -297,22 +297,22 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.1748080253601074
+                "timeOffset" : 5.1564240455627441
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.4881529808044434
+                "timeOffset" : 5.473533034324646
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.7953479290008545
+                "timeOffset" : 5.7865819931030273
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1111459732055664
+                "timeOffset" : 6.106268048286438
               }
             ],
             "backgroundTested" : false,
@@ -328,22 +328,22 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.1748080253601074
+                "timeOffset" : 5.1564240455627441
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.4881529808044434
+                "timeOffset" : 5.473533034324646
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.7953479290008545
+                "timeOffset" : 5.7865819931030273
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1111459732055664
+                "timeOffset" : 6.106268048286438
               }
             ],
             "screensVisited" : 1,
@@ -359,7 +359,7 @@
           "perf" : {
             "fps" : 6,
             "framesPresented" : 8,
-            "frameTimeP95Ms" : 0.12697600000000001
+            "frameTimeP95Ms" : 0.084991999999999998
           },
           "renderer" : "gpu",
           "signature" : "exit-1",
@@ -369,5 +369,5 @@
       ]
     }
   },
-  "timestamp" : "2026-11-02T15:07:58Z"
+  "timestamp" : "2026-11-03T23:09:58Z"
 }
