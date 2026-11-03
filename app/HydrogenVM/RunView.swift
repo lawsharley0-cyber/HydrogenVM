@@ -20,6 +20,8 @@ final class RunModel {
     private(set) var screenSize = CGSize(width: 320, height: 480)
     private(set) var log: [LogLine] = []
     private(set) var running = false
+    /// The guest text field that has focus, if any: the host keyboard bar is shown for it (#303).
+    private(set) var keyboard: HVMTextInputRequest?
     private(set) var fps = 0
     private(set) var orientation = GuestOrientation.portrait
     private(set) var activity = PlayerActivity()
@@ -115,7 +117,24 @@ final class RunModel {
         // GPU rendering unless the player turned it off for this game (or, from
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
+        // Taller guest screen and safe-area insets, per game; both are cleared when off.
+        let display = UIScreen.main.bounds.size
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.keyWindow != nil }
+        let inset = scene?.keyWindow?.safeAreaInsets ?? .zero
+        let hostOrientation = scene.flatMap { GuestOrientation(rawValue: $0.effectiveGeometry.interfaceOrientation.rawValue) }
+        let portraitInsets = hostOrientation.map {
+            GuestScreenSettings.portraitInsets(top: inset.top, left: inset.left, bottom: inset.bottom, right: inset.right, host: $0)
+        } ?? (top: 0, left: 0, bottom: 0, right: 0)
+        GuestScreenSettings.apply(bundleID: app.info.bundleIdentifier, display: display,
+                                  insets: portraitInsets,
+                                  orientation: .portrait) { name, value in
+            if let value { setenv(name, value, 1) } else { unsetenv(name) }
+        }
         // The bridge delivers every callback on the main queue.
+        s.onTextInput = { [weak self] request in
+            MainActor.assumeIsolated { self?.keyboard = request.active ? request : nil }
+        }
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -139,6 +158,7 @@ final class RunModel {
         s.onExit = { [weak self] code, crash in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.keyboard = nil
                 self.running = false
                 self.closing = false
                 self.cancelActiveTouches()
@@ -333,6 +353,14 @@ final class RunModel {
         backgroundTask = .invalid
     }
 
+    func submitText(_ text: String, focusId: UInt64, sequence: UInt64) {
+        session?.submitText(text, focusId: focusId, sequence: sequence)
+    }
+    func submitReturnKey(focusId: UInt64) { session?.submitReturnKey(forFocus: focusId) }
+    /// The player asked to close the keyboard. The guest may refuse (textFieldShouldEndEditing:), in which case it
+    /// publishes the active state again and the bar comes back, so the bar is not removed here.
+    func dismissKeyboard(focusId: UInt64) { session?.dismissKeyboard(forFocus: focusId) }
+
     func touch(_ phase: HVMTouchPhase, at p: CGPoint, finger: Int) {
         guard phase == .cancelled || inputEnabled else { return }
         guard phase == .began || activeTouches[finger] != nil else { return }
@@ -388,7 +416,12 @@ struct RunView: View {
     @State private var showFiles = false
     @State private var confirmInspect = false
     @State private var overrideOrientation: GuestOrientation?
-    @AppStorage("player.scaleMode") private var scaleSetting = PlayerScaleMode.fit.rawValue
+    /// Display mode for this game; the global default lives in the library's Options menu.
+    @AppStorage private var scaleSetting: String?
+    @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleSetting = PlayerScaleMode.fit.rawValue
+    @AppStorage private var cropFocusSetting: String
+    /// Bumped so the toggles above re-read UserDefaults.
+    @State private var virtualTick = 0
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
     /// Read by the session at start (RunModel.start): GPU rendering unless this is on. Per game.
     @AppStorage private var softwareRenderer: Bool
@@ -400,10 +433,20 @@ struct RunView: View {
         _model = State(initialValue: RunModel(app: app))
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: app.info.bundleIdentifier),
                                        RunModel.softwareRenderingKey(app.info.bundleIdentifier))
+        _scaleSetting = AppStorage(PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
+        _cropFocusSetting = AppStorage(wrappedValue: PlayerSettings.cropFocus(bundleID: app.info.bundleIdentifier).rawValue,
+                                       PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
     }
 
     private var effectiveOrientation: GuestOrientation {
         overrideOrientation ?? model.orientation
+    }
+
+    private var effectiveScaleMode: PlayerScaleMode {
+        // Observe both keys so a change to either one updates the viewport.
+        _ = scaleSetting
+        _ = defaultScaleSetting
+        return PlayerSettings.scaleMode(bundleID: app.info.bundleIdentifier)
     }
 
     /// The orientations the phone may take while this game plays. A landscape game
@@ -423,9 +466,10 @@ struct RunView: View {
                 ZStack {
                     EmulatorScreen(image: model.frame, glLayer: model.glLayer, guestSize: model.screenSize,
                                    orientation: effectiveOrientation,
-                                   mode: PlayerScaleMode(rawValue: scaleSetting) ?? .fit,
+                                   mode: effectiveScaleMode,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
-                                   inputEnabled: model.inputEnabled) { phase, point, finger in
+                                   inputEnabled: model.inputEnabled,
+                                   focus: PlayerCropFocus(rawValue: cropFocusSetting)?.position ?? PlayerCropFocus.center.position) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
                     }
                     if model.closing {
@@ -454,6 +498,18 @@ struct RunView: View {
                     Spacer()
                     LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() })
                         .frame(height: 220)
+                }
+            }
+
+            // The host keyboard for a focused game text field. Respects the keyboard safe area, so it rides above it.
+            if let request = model.keyboard {
+                VStack {
+                    Spacer()
+                    GameKeyboardBar(request: request,
+                                    onText: { model.submitText($0, focusId: request.focusId, sequence: $1) },
+                                    onReturn: { model.submitReturnKey(focusId: request.focusId) },
+                                    onDismiss: { model.dismissKeyboard(focusId: request.focusId) })
+                        .id(request.focusId)   // a different guest field gets a fresh bar
                 }
             }
 
@@ -507,6 +563,33 @@ struct RunView: View {
     }
 
     // MARK: - Floating Glassmorphic In-Game HUD Pill
+
+    private var virtualScreenControls: some View {
+        let _ = virtualTick
+        let bundleID = app.info.bundleIdentifier
+        return Group {
+            Toggle(isOn: Binding(get: { GuestScreenSettings.virtualScreen(bundleID: bundleID) },
+                                 set: { GuestScreenSettings.setVirtualScreen($0, bundleID: bundleID); virtualTick += 1 })) {
+                Text("Taller game screen for this game (next launch)").font(.caption)
+            }
+            .accessibilityIdentifier("player-virtual-screen")
+            if GuestScreenSettings.virtualScreen(bundleID: bundleID) {
+                Toggle(isOn: Binding(get: { GuestScreenSettings.safeArea(bundleID: bundleID) },
+                                     set: { GuestScreenSettings.setSafeArea($0, bundleID: bundleID); virtualTick += 1 })) {
+                    Text("Keep the game's UI out of the notch and home bar (approximate)").font(.caption)
+                }
+                .accessibilityIdentifier("player-safe-area")
+                Picker("Result", selection: Binding(get: { GuestScreenSettings.record(bundleID: bundleID) },
+                                                    set: { GuestScreenSettings.setRecord($0, bundleID: bundleID); virtualTick += 1 })) {
+                    ForEach(GuestScreenRecord.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("player-virtual-screen-record")
+                Text("Mark a game Broken and it goes back to the normal screen.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
 
     private var floatingHUDPill: some View {
         Group {
@@ -609,12 +692,35 @@ struct RunView: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
 
-                        Picker("Scale Mode", selection: $scaleSetting) {
+                        Picker("Scale Mode", selection: Binding(get: { scaleSetting }, set: { value in
+                            if let value {
+                                scaleSetting = value
+                            } else {
+                                scaleSetting = nil
+                                PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
+                            }
+                        })) {
+                            Text("Use Default").tag(nil as String?)
                             ForEach(PlayerScaleMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode.rawValue)
+                                Text(mode.rawValue).tag(mode.rawValue as String?)
                             }
                         }
                         .pickerStyle(.segmented)
+                        .accessibilityIdentifier("player-scale-mode")
+
+                        if effectiveScaleMode.crops {
+                            Picker("Crop Focus", selection: $cropFocusSetting) {
+                                ForEach(PlayerCropFocus.allCases) { focus in
+                                    Text(focus.rawValue).tag(focus.rawValue)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("player-crop-focus")
+                        }
+                        if effectiveScaleMode.extendsBars {
+                            Text("The bars show a blurred, dimmed copy of the frame.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
 
                         Picker("Interpolation", selection: $filterSetting) {
                             ForEach(PlayerFilter.allCases) { filter in
@@ -628,6 +734,9 @@ struct RunView: View {
                                 .font(.caption)
                         }
                         .accessibilityIdentifier("player-gpu-rendering")
+
+                        // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
+                        virtualScreenControls
                     }
 
                     // Audio & System Footer

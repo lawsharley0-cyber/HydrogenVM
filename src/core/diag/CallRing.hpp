@@ -47,12 +47,28 @@ public:
     // Total calls ever pushed (not capped by Capacity).
     uint64_t total() const noexcept { return head_.load(std::memory_order_acquire); }
 
+    // A total and the records up to exactly that total, from one read of the head, so no record's sequence number
+    // can exceed the total reported with it.
+    struct Snapshot { uint64_t total = 0; std::vector<CallRecord> calls; };
+    Snapshot snapshot(size_t n) const { return snapshot(n, [] {}); }
+    // `betweenReads` runs after the head is read and before the records are, so a test can force a push there.
+    template <class F>
+    Snapshot snapshot(size_t n, F&& betweenReads) const {
+        Snapshot out;
+        out.total = head_.load(std::memory_order_acquire);
+        betweenReads();
+        out.calls = lastUpTo(out.total, n);
+        return out;
+    }
+
     // The last min(n, Capacity, total()) records, oldest first. Safe from any
     // thread. A record the writer overwrites mid-read is omitted, so under a
     // racing writer the result can be shorter than requested, never wrong.
-    std::vector<CallRecord> last(size_t n) const {
+    std::vector<CallRecord> last(size_t n) const { return lastUpTo(head_.load(std::memory_order_acquire), n); }
+
+private:
+    std::vector<CallRecord> lastUpTo(uint64_t head, size_t n) const {
         std::vector<CallRecord> out;
-        const uint64_t head = head_.load(std::memory_order_acquire);
         if (n > Capacity) n = Capacity;
         if (n > head) n = size_t(head);
         out.reserve(n);
@@ -67,7 +83,6 @@ public:
         return out;
     }
 
-private:
     struct Slot {
         std::atomic<uint64_t> seq{0};
         std::atomic<uint64_t> data{0};
