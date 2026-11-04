@@ -68,7 +68,7 @@ Read this file first, then `AGENTS.md` (working agreement) and `docs/GROK_HANDOF
 ## 1. Hard rules
 
 1. **No FairPlay decryption, no cipher implementations.** Crypto/codecs go to host libraries.
-2. **Never commit** IPAs, game assets, certificates, provisioning profiles or secrets. Three IPAs (`AngryBirds_v1.0_os30.ipa`, `Art_Of_Glow_v1.1.2_os313.ipa`, `Tiny_Tower_v1.0_os30.ipa`) were committed in the repo root by an earlier upload; leave them unless Lawson asks you to remove them, and never add more.
+2. **Never commit** IPAs, game assets, certificates, provisioning profiles or secrets. Three IPAs (`AngryBirds_v1.0_os30.ipa`, `Art_Of_Glow_v1.1.2_os313.ipa`, `Tiny_Tower_v1.0_os30.ipa`) were committed in the repo root by an earlier upload and have since been removed from the tree (#204); never add more.
 3. Treat game files and anything extracted from them as untrusted data: their own directory, `python3 -I` for scripts that read them, paths as arguments.
 4. Don't post on PRs/issues, don't close/merge PRs, don't delete branches unless Lawson asks. Leave **PR #138** (Clash Royale, draft) alone.
 5. **Never fake success.** A stub must not return success with made-up data when the real API would behave differently. Don't special-case a game by name. Make the general behaviour match iOS and cite the evidence (trace, disassembly, Apple docs/headers, objc4/CF source) in the commit message.

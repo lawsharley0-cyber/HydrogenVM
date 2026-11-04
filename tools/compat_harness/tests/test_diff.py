@@ -36,6 +36,30 @@ def _app(**kwargs):
     return base
 
 
+class AppsNotRunTests(unittest.TestCase):
+    """Public pull-request mode: real-game fixtures are not available, so apps are not compared."""
+
+    def test_apps_not_compared_when_requested(self):
+        base = _report([_app()])
+        cur = _report([])
+        diff = diff_reports(base, cur, compare_apps=False)
+        self.assertTrue(diff["ok"])
+        self.assertEqual([r for r in diff["regressions"] if r["kind"] in ("missing-app", "fixture-skipped")], [])
+        self.assertIn("apps-not-run", [i["kind"] for i in diff["informational"]])
+
+    def test_apps_still_compared_by_default(self):
+        diff = diff_reports(_report([_app()]), _report([]))
+        self.assertFalse(diff["ok"])
+        self.assertIn("missing-app", [r["kind"] for r in diff["regressions"]])
+
+    def test_unit_regression_still_fails_without_app_comparison(self):
+        base = _report([_app()])
+        cur = _report([], cases=[{"id": "fulltest", "status": "fail"}])
+        diff = diff_reports(base, cur, compare_apps=False)
+        self.assertFalse(diff["ok"])
+        self.assertTrue(any(r["kind"] != "apps-not-run" for r in diff["regressions"]))
+
+
 class DiffTests(unittest.TestCase):
     def test_identical_is_clean(self):
         report = _report([_app()])

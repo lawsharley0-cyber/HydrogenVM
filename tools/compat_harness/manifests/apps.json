@@ -3,7 +3,7 @@
   "fixtureRootEnv": "HVM_FIXTURE_ROOT",
   "legacyRepoEnv": "HVM_ALLOW_LEGACY_IPAS",
   "description": "Authorized compatibility fixtures, addressed by SHA-256. The harness never downloads these files and never writes them into git.",
-  "migration": "Angry Birds, Tiny Tower, and Art of Glow are already committed on main. Their legacyRepoPath entries are grandfathered and closed. New apps must be placed under HVM_FIXTURE_ROOT at fixtureRelPath. Removing the in-repo IPAs is an owner decision; this manifest does not delete them. Once a fixture root is set, the harness does not fall back to the in-repo copies.",
+  "migration": "Angry Birds, Tiny Tower, and Art of Glow are no longer tracked in git (#204). Their legacyRepoPath entries are grandfathered and closed and now resolve to nothing; set HVM_FIXTURE_ROOT to the private store. New apps must be placed under HVM_FIXTURE_ROOT at fixtureRelPath. Once a fixture root is set, the harness does not fall back to in-repo copies.",
   "apps": [
     {
       "id": "angry-birds",

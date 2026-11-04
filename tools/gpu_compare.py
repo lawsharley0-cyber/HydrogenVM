@@ -2,7 +2,7 @@
 """Run apps on the software rasterizer and on the host GPU backend (`hvm run --gpu`)
 and compare the last frames.
 
-    python3 tools/gpu_compare.py --hvm build/hvm --seconds 12 Tiny_Tower_v1.0_os30.ipa ...
+    python3 tools/gpu_compare.py --hvm build/hvm --seconds 12 "$HVM_FIXTURE_ROOT/ipas/Tiny_Tower_v1.0_os30.ipa" ...
 
 Each input is an .ipa or .app. Fails (exit 1) when the GPU run crashes where the
 software run didn't, presents no frames, or its last frame differs from the
