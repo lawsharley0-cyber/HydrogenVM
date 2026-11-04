@@ -21,6 +21,57 @@ void num32_be(Bytes& b, uint32_t v) {
     b.push_back(v & 0xff);
 }
 
+// Construct a trie with 65,536 nodes, optionally adding one more reachable node.
+Bytes largeExportTrie(bool exceedLimit) {
+    std::vector<std::vector<size_t>> children(1);
+    for (size_t i = 0; i < 255; ++i) {
+        children[0].push_back(children.size());
+        children.emplace_back();
+    }
+    for (size_t parent = 1; parent <= 255; ++parent) {
+        for (size_t i = 0; i < 255; ++i) {
+            children[parent].push_back(children.size());
+            children.emplace_back();
+        }
+    }
+    for (size_t i = 0; i < 255; ++i) {
+        children[256].push_back(children.size());
+        children.emplace_back();
+    }
+    if (exceedLimit) {
+        children[65280].push_back(children.size()); // last leaf in traversal order
+        children.emplace_back();
+    }
+
+    // Child offsets use three-byte ULEBs so node sizes are known in advance.
+    std::vector<size_t> offsets(children.size());
+    size_t size = 0;
+    for (size_t i = 0; i < children.size(); ++i) {
+        offsets[i] = size;
+        size += (exceedLimit && i == children.size() - 1 ? 4 : 2) + 5 * children[i].size();
+    }
+    Bytes trie;
+    trie.reserve(size);
+    for (size_t index = 0; index < children.size(); ++index) {
+        const auto& node = children[index];
+        if (exceedLimit && index == children.size() - 1) {
+            trie.insert(trie.end(), {2, 0, 1}); // terminal export after the work limit
+        } else {
+            trie.push_back(0); // no terminal
+        }
+        trie.push_back(uint8_t(node.size()));
+        for (size_t i = 0; i < node.size(); ++i) {
+            trie.push_back(uint8_t(i + 1)); // unique, non-NUL edge
+            trie.push_back(0);
+            size_t off = offsets[node[i]];
+            trie.push_back(uint8_t((off & 0x7f) | 0x80));
+            trie.push_back(uint8_t(((off >> 7) & 0x7f) | 0x80));
+            trie.push_back(uint8_t(off >> 14));
+        }
+    }
+    return trie;
+}
+
 int main() {
     int passed = 0, failed = 0;
     auto check = [&](const std::string& name, const Bytes& file, bool isMachO, bool hasArm32, bool encrypted, uint32_t cpuSubtype, const std::string& errorSnippet = "") {
@@ -213,6 +264,28 @@ int main() {
             std::printf("FAIL mh_dylib_routines_weak_and_export_trie\n");
             ++failed;
         }
+
+        auto checkTrie = [&](const std::string& name, const Bytes& trie, const std::string& expectedError) {
+            dylib.resize(0x1000);
+            dylib.insert(dylib.end(), trie.begin(), trie.end());
+            put32(200, uint32_t(trie.size()));
+            bool ok = false;
+            try {
+                Hydrogen::Memory::GuestArena testArena;
+                Hydrogen::Loader::loadMachO(testArena, dylib, name, {0x04000000u});
+                ok = expectedError.empty();
+            } catch (const Hydrogen::Loader::MachOError& e) {
+                ok = !expectedError.empty() && std::string(e.what()).find(expectedError) != std::string::npos;
+                if (!ok) std::printf("%s: unexpected error '%s'\n", name.c_str(), e.what());
+            }
+            std::printf("%s %s\n", ok ? "PASS" : "FAIL", name.c_str());
+            if (ok) ++passed; else ++failed;
+        };
+
+        checkTrie("export_trie_child_at_end", {0, 1, 'x', 0, 5}, "export trie child offset out of range");
+        checkTrie("export_trie_child_past_end", {0, 1, 'x', 0, 6}, "export trie child offset out of range");
+        checkTrie("export_trie_at_work_limit", largeExportTrie(false), "");
+        checkTrie("export_trie_exceeds_work_limit", largeExportTrie(true), "export trie work limit exceeded");
     }
 
     std::printf("MachOProbe: %d passed, %d failed\n", passed, failed);

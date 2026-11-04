@@ -340,7 +340,9 @@ void runBind(Ctx& cx, const uint8_t* p, size_t n, bool lazy, bool weak) {
 
 void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const std::string& prefix, uint32_t depth,
                     std::unordered_set<uint64_t>& activePath, size_t& steps) {
-    if (depth > 256 || nodeOff >= n || steps >= 65536 || !activePath.insert(nodeOff).second) return;
+    if (depth > 256 || nodeOff >= n) return;
+    if (steps >= 65536) throw MachOError("Mach-O: export trie work limit exceeded");
+    if (!activePath.insert(nodeOff).second) return;
     ++steps;
     struct Guard {
         std::unordered_set<uint64_t>& set;
@@ -370,6 +372,7 @@ void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const
     for (uint8_t i = 0; i < childCount; ++i) {
         const std::string edge = cs.cstr();
         const uint64_t childOff = cs.uleb();
+        if (childOff >= n) throw MachOError("Mach-O: export trie child offset out of range");
         walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1, activePath, steps);
     }
 }
