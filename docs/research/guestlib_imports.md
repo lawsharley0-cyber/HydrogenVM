@@ -1,6 +1,5 @@
 # Guest C++ Runtime `libSystem.B.dylib` Import Audit (S4)
 
-**Date:** 2026-11-03  
 **Initiative:** Guest-Dylib Initiative — Wave 1 (`S4`)  
 **Tool:** `tools/guestlibs/import_audit.py`  
 **Refs:** `#311`, `#330`
@@ -11,8 +10,8 @@ Before enabling guest C++ runtime dynamic libraries (`libgcc_s.1.dylib`, `libstd
 
 Across all four ARMv7 C++ runtime libraries, there are **169 unique `libSystem.B.dylib` imports**:
 - **`present`**: **106** symbols (implemented in `src/runtime/libc/` with real or honest-approx behaviour)
-- **`stubbed-dishonestly`**: **1** symbols (registered in `src/runtime/libc/`, but returning a fixed `"C"` locale pointer or synthetic handle without full per-locale state)
-- **`missing`**: **62** symbols (not registered in HydrogenVM's symbol table; primarily `_l` extended-locale variants, POSIX message catalog `catopen`/`catgets`/`catclose`, and a handful of wide-char / stdio helpers)
+- **`stubbed-dishonestly`**: **1** symbols (registered in `src/runtime/libc/`, but returning a fixed `"C"` locale pointer or no-op success without full state)
+- **`missing`**: **62** symbols (not registered in HydrogenVM's symbol table; tracked in `#330`)
 
 ### Per-Library Summary
 
@@ -27,33 +26,29 @@ Across all four ARMv7 C++ runtime libraries, there are **169 unique `libSystem.B
 
 ## 2. Key Findings & Actionable Gaps
 
-### 2.1 `libgcc_s.1.dylib` is 100% Covered (`14 / 14 present`)
-Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` (`_malloc`, `_calloc`, `_free`, `_abort`, `___error`, `_dladdr`, `_memcpy`, `_memset`, `_pthread_key_create`, `_pthread_getspecific`, `_pthread_setspecific`, `_pthread_mutex_lock`, `_pthread_mutex_unlock`, `_pthread_once`) is already `present` in HydrogenVM.
+### 2.1 `libgcc_s.1.dylib` Coverage (`14 / 14 present`, `0 missing`)
 
-### 2.2 `libc++abi.dylib` Needs Only 2 Small Additions (`33 / 35 present`, `2 missing`)
-The only two missing symbols in `libc++abi.dylib` are:
-1. `_aligned_alloc` (C11 aligned allocation fallback used by `stdlib_new_delete.cpp`; `_posix_memalign` is already `present` in `Heap.cpp`).
-2. `_dyld_register_func_for_add_image` (single-underscore Mach-O symbol name; HydrogenVM currently registers `__dyld_register_func_for_add_image` with two leading underscores in `src/runtime/libc/System.cpp:1133` — scheduled for S5).
+Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in the symbol table below.
 
-### 2.3 `libstdc++.6.dylib` Needs Only 4 Symbols (`72 / 77 present`, `1 stubbed-dishonestly`, `4 missing`)
-- **Missing (4 symbols)**: `_btowc`, `_mbrtowc`, `_wcrtomb`, and `_strxfrm`.
-- **Stubbed dishonestly (1 symbol)**: `_setlocale` (`src/runtime/libc/Posix.cpp:226`, returns fixed `"C"` string regardless of category/locale).
-- Note that `_getc`, `_putc`, `_fseek`, `_ftell`, `_wcslen`, `_wcscmp`, `_wmemcpy`, `_wmemmove`, `_wmemset`, `_wmemchr`, `_wmemcmp`, `_localeconv`, and all `pthread_*` primitives used by `libstdc++.6.dylib` are already `present`.
+### 2.2 `libc++abi.dylib` Coverage (`33 / 35 present`, `2 missing`)
+
+- **Missing (2)**: `_aligned_alloc`, `_dyld_register_func_for_add_image`.
+
+### 2.3 `libstdc++.6.dylib` Coverage (`72 / 77 present`, `1 stubbed-dishonestly`, `4 missing`)
+
+- **Missing (4)**: `_btowc`, `_mbrtowc`, `_strxfrm`, `_wcrtomb`.
+- **Stubbed dishonestly (1)**: `_setlocale`.
 
 ### 2.4 `libc++.1.dylib` Missing Symbol Clusters (`98 / 159 present`, `1 stubbed-dishonestly`, `60 missing`)
-The 60 missing symbols in `libc++.1.dylib` fall into four well-defined clusters:
-1. **Extended Locale (`<xlocale.h>`) Lifecycle & `*_l` Functions (43 symbols)**:
-   - Locale lifecycle (4): `_newlocale`, `_duplocale`, `_freelocale`, `_uselocale`.
-   - Character classification & case mapping (26): `_isalnum_l`, `_isalpha_l`, `_isblank_l`, `_iscntrl_l`, `_isdigit_l`, `_isgraph_l`, `_islower_l`, `_isprint_l`, `_ispunct_l`, `_isspace_l`, `_isupper_l`, `_isxdigit_l`, `_iswalpha_l`, `_iswblank_l`, `_iswcntrl_l`, `_iswdigit_l`, `_iswgraph_l`, `_iswlower_l`, `_iswprint_l`, `_iswpunct_l`, `_iswspace_l`, `_iswupper_l`, `_iswxdigit_l`, `_towlower_l`, `_towupper_l` (note: `_tolower_l` and `_toupper_l` are already `present` in `src/runtime/libc/String.cpp:510-511`), plus `_localeconv_l`.
-   - Numeric/string formatting & collation with explicit `locale_t` (13): `_snprintf_l`, `_sscanf_l`, `_strcoll_l`, `_strftime_l`, `_strtod_l`, `_strtof_l`, `_strtold_l`, `_strtoll_l`, `_strtoull_l`, `_strxfrm_l`, `_wcscoll_l`, `_wcsxfrm_l`.
-   - **Why it matters:** LLVM `libc++.1.dylib` implements `std::locale`, `std::num_get`, `std::num_put`, `std::ctype<char>`, and `std::collate<char>` through Darwin's `<xlocale.h>` `_l` entrypoints. Without C-locale pass-through wrappers for these functions, `std::stringstream` or `std::to_string` inside guest `libc++.1.dylib` will hit an unresolved import.
-2. **Multibyte / Wide-Character Conversion & Collation (`<wchar.h>`) Functions (12 symbols)**:
-   - `_btowc`, `_wctob`, `_mbrtowc`, `_wcrtomb`, `_mbrlen`, `_mbtowc`, `_mbsrtowcs`, `_mbsnrtowcs`, `_wcsrtombs`, `_wcsnrtombs`, `_wcscoll`, `_wcsxfrm`, plus `_strxfrm`.
-   - Note: Basic wide-string memory/length and numeric primitives (`_wcslen`, `_wcscmp`, `_wmemcpy`, `_wmemmove`, `_wmemset`, `_wmemchr`, `_wmemcmp`, `_wcstod`, `_wcstof`, `_wcstoll`, `_wcstoull`) are already `present`.
-3. **Long-Double String Parsers (2 symbols)**:
-   - `_strtold` and `_wcstold` (on 32-bit ARMv7 iOS, `long double` is 64-bit IEEE-754 `double`, identical in layout and ABI to `_strtod` and `_wcstod`).
-4. **POSIX Message Catalogs (3 symbols)**:
-   - `_catopen`, `_catgets`, `_catclose` (used only by `std::messages<char>` facet; honest `errno = ENOENT; return (nl_catd)-1` implementation satisfies POSIX when no catalog files exist).
+
+- **Stubbed dishonestly (1)**: `_setlocale`.
+- **Extended Locale (`<xlocale.h>`) Lifecycle & `*_l` Functions (42 symbols)**:
+  - Locale lifecycle (4): `_duplocale`, `_freelocale`, `_newlocale`, `_uselocale`.
+  - Character classification, case mapping & `localeconv_l` (26): `_isalnum_l`, `_isalpha_l`, `_isblank_l`, `_iscntrl_l`, `_isdigit_l`, `_isgraph_l`, `_islower_l`, `_isprint_l`, `_ispunct_l`, `_isspace_l`, `_isupper_l`, `_iswalpha_l`, `_iswblank_l`, `_iswcntrl_l`, `_iswdigit_l`, `_iswgraph_l`, `_iswlower_l`, `_iswprint_l`, `_iswpunct_l`, `_iswspace_l`, `_iswupper_l`, `_iswxdigit_l`, `_isxdigit_l`, `_localeconv_l`, `_towlower_l`, `_towupper_l`.
+  - Numeric/string formatting & collation with explicit `locale_t` (12): `_snprintf_l`, `_sscanf_l`, `_strcoll_l`, `_strftime_l`, `_strtod_l`, `_strtof_l`, `_strtold_l`, `_strtoll_l`, `_strtoull_l`, `_strxfrm_l`, `_wcscoll_l`, `_wcsxfrm_l`.
+- **Multibyte / Wide-Character Conversion & Collation (`<wchar.h>` / `<string.h>`) Functions (13 symbols)**: `_btowc`, `_mbrlen`, `_mbrtowc`, `_mbsnrtowcs`, `_mbsrtowcs`, `_mbtowc`, `_strxfrm`, `_wcrtomb`, `_wcscoll`, `_wcsnrtombs`, `_wcsrtombs`, `_wcsxfrm`, `_wctob`.
+- **Long-Double String Parsers (2 symbols)**: `_strtold`, `_wcstold`.
+- **POSIX Message Catalogs (3 symbols)**: `_catclose`, `_catgets`, `_catopen`.
 
 ---
 
@@ -118,7 +113,7 @@ The 60 missing symbols in `libc++.1.dylib` fall into four well-defined clusters:
 | `_iswupper_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_iswxdigit_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_isxdigit_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_localeconv` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Posix.cpp:227` | Populates struct lconv for C/POSIX locale in static guest storage |
+| `_localeconv` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Posix.cpp:227` | Handler `p_localeconv` |
 | `_localeconv_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_lseek` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1151` | Handler `f_lseek` |
 | `_mach_absolute_time` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:139` | Handler `t_mach_absolute_time` |
@@ -166,7 +161,7 @@ The 60 missing symbols in `libc++.1.dylib` fall into four well-defined clusters:
 | `_read` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1147` | Handler `f_read` |
 | `_realloc` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:338` | Handler `m_realloc` |
 | `_sched_yield` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:612` | Handler `sched_yield_` |
-| `_setlocale` | `libstdc++.6.dylib`, `libc++.1.dylib` | `stubbed-dishonestly` | `src/runtime/libc/Posix.cpp:226` | Returns fixed "C" string regardless of requested category/locale |
+| `_setlocale` | `libstdc++.6.dylib`, `libc++.1.dylib` | `stubbed-dishonestly` | `src/runtime/libc/Posix.cpp:226` | Handler `p_setlocale` returns fixed `"C"` string regardless of requested category/locale |
 | `_snprintf` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:550` | Handler `f_snprintf` |
 | `_snprintf_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_sprintf` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Stdio.cpp:548` | Handler `f_sprintf` |

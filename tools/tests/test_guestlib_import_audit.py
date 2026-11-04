@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import json
+import os
+import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -14,16 +18,54 @@ AUDIT_SCRIPT = REPO_ROOT / "tools" / "guestlibs" / "import_audit.py"
 REPORT_DOC = REPO_ROOT / "docs" / "research" / "guestlib_imports.md"
 
 
+def _load_import_audit():
+    sys.path.insert(0, str(AUDIT_SCRIPT.parent))
+    try:
+        import import_audit  # type: ignore
+
+        return import_audit
+    finally:
+        sys.path.pop(0)
+
+
+def _make_synthetic_macho_dylib(
+    deps: list[str],
+    undef_syms: list[tuple[str, int]],
+) -> bytes:
+    """Build a minimal 32-bit ARM MH_DYLIB with LC_LOAD_DYLIB and LC_SYMTAB."""
+    load_cmds = bytearray()
+    ncmds = 0
+    for dep in deps:
+        payload = dep.encode("utf-8") + b"\x00"
+        cmdsize = (24 + len(payload) + 3) & ~3
+        padded = payload + b"\x00" * (cmdsize - 24 - len(payload))
+        load_cmds.extend(struct.pack("<IIIIII", 0xC, cmdsize, 24, 2, 0x10000, 0x10000) + padded)
+        ncmds += 1
+
+    strtab = bytearray(b"\x00")
+    nlists = bytearray()
+    for sym, ordinal in undef_syms:
+        strx = len(strtab)
+        strtab.extend(sym.encode("utf-8") + b"\x00")
+        n_desc = (ordinal & 0xFF) << 8
+        nlists.extend(struct.pack("<IBBHI", strx, 0x01, 0, n_desc, 0))
+
+    symoff = 28 + len(load_cmds) + 24
+    stroff = symoff + len(nlists)
+    load_cmds.extend(struct.pack("<IIIIII", 0x2, 24, symoff, len(undef_syms), stroff, len(strtab)))
+    ncmds += 1
+
+    hdr = struct.pack("<IIIIIII", 0xFEEDFACE, 12, 9, 6, ncmds, len(load_cmds), 0x84)
+    return hdr + bytes(load_cmds) + bytes(nlists) + bytes(strtab)
+
+
 class GuestLibImportAuditTests(unittest.TestCase):
     def test_audit_script_exists_and_classifies_all_four_runtime_libraries(self) -> None:
         self.assertTrue(AUDIT_SCRIPT.is_file(), f"Missing {AUDIT_SCRIPT}")
-        sys.path.insert(0, str(AUDIT_SCRIPT.parent))
-        try:
-            import import_audit  # type: ignore
-        finally:
-            sys.path.pop(0)
+        import_audit = _load_import_audit()
 
         result = import_audit.run_audit(REPO_ROOT)
+        self.assertEqual(result["importSource"], "manifest")
         self.assertIn("libraries", result)
         for lib_name in (
             "libgcc_s.1.dylib",
@@ -51,15 +93,102 @@ class GuestLibImportAuditTests(unittest.TestCase):
             )
             self.assertTrue(info["importedBy"], f"Empty importedBy for {sym_name}")
 
-        # Core malloc/pthread/string primitives are present in HydrogenVM
+        # Exact statuses for representative present, stubbed-dishonestly, and missing symbols
         self.assertEqual(symbols["_malloc"]["status"], "present")
         self.assertEqual(symbols["_free"]["status"], "present")
         self.assertEqual(symbols["_pthread_mutex_lock"]["status"], "present")
         self.assertEqual(symbols["_pthread_getspecific"]["status"], "present")
+        self.assertEqual(symbols["_setlocale"]["status"], "stubbed-dishonestly")
+        self.assertEqual(symbols["_uselocale"]["status"], "missing")
+        self.assertEqual(symbols["_wcrtomb"]["status"], "missing")
 
-        # Wide-char / extended locale primitives are honestly classified as missing or stubbed-dishonestly
-        self.assertIn(symbols["_uselocale"]["status"], {"missing", "stubbed-dishonestly"})
-        self.assertIn(symbols["_wcrtomb"]["status"], {"missing", "stubbed-dishonestly"})
+    def test_parser_and_scanner_with_synthetic_fixtures(self) -> None:
+        import_audit = _load_import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_dir = root / "src" / "runtime" / "libc"
+            runtime_dir.mkdir(parents=True)
+
+            sample_cpp = runtime_dir / "Sample.cpp"
+            sample_cpp.write_text(
+                """
+                // p.def<&fake_commented>("_commented_out");
+                /* p.def<&fake_block>("_block_commented"); */
+                void registerSample(Process& p) {
+                    p.def<&real_malloc>("_malloc");
+                    p.def<&s_zero>("_tcgetattr");
+                    for (const char* n : {"_stat", "_stat64"}) p.def<&f_stat>(n);
+                    supportDef<&m_ok3>(p, "_mprotect", SupportStatus::Stub, "No-op stub");
+                    supportDef<&u_unavail>(p, "_unavail_fn", SupportStatus::Unavailable, "Unavailable");
+                    supportDef<&a_approx>(p, "_pthread_cond_signal", SupportStatus::Approx, "Approx");
+                    p.defineData("_vm_page_size", 4096);
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            regs = import_audit.scan_hvm_registrations(root)
+            self.assertNotIn("_commented_out", regs)
+            self.assertNotIn("_block_commented", regs)
+            self.assertEqual(regs["_malloc"]["status"], "present")
+            self.assertEqual(regs["_tcgetattr"]["status"], "stubbed-dishonestly")
+            self.assertEqual(regs["_stat"]["status"], "present")
+            self.assertEqual(regs["_stat64"]["status"], "present")
+            self.assertEqual(regs["_mprotect"]["status"], "stubbed-dishonestly")
+            self.assertEqual(regs["_unavail_fn"]["status"], "stubbed-dishonestly")
+            self.assertEqual(regs["_pthread_cond_signal"]["status"], "present")
+            self.assertEqual(regs["_vm_page_size"]["status"], "present")
+
+            # Valid Mach-O with ordinal 1 = libgcc_s.1.dylib (peer) and ordinal 2 = libSystem.B.dylib
+            valid_dylib = root / "valid.dylib"
+            valid_dylib.write_bytes(
+                _make_synthetic_macho_dylib(
+                    ["/usr/lib/libgcc_s.1.dylib", "/usr/lib/libSystem.B.dylib"],
+                    [("__Unwind_SjLj_Register", 1), ("_CustomPeerHelper", 1), ("_malloc", 2), ("_free", 2)],
+                )
+            )
+            parsed = import_audit.parse_macho_undef_symbols(valid_dylib)
+            self.assertEqual(parsed, ["_free", "_malloc"])
+
+            # Truncated Mach-O header
+            trunc_dylib = root / "trunc.dylib"
+            trunc_dylib.write_bytes(b"\xce\xfa\xed\xfe\x00\x00")
+            with self.assertRaises(ValueError):
+                import_audit.parse_macho_undef_symbols(trunc_dylib)
+
+            # Corrupt LC_SYMTAB offset exceeding file size
+            bad_symtab = bytearray(valid_dylib.read_bytes())
+            sizeofcmds = struct.unpack_from("<I", bad_symtab, 20)[0]
+            struct.pack_into("<I", bad_symtab, 28 + sizeofcmds - 16, 0xFFFFFF)
+            corrupt_dylib = root / "corrupt.dylib"
+            corrupt_dylib.write_bytes(bytes(bad_symtab))
+            with self.assertRaises(ValueError):
+                import_audit.parse_macho_undef_symbols(corrupt_dylib)
+
+            # --hvm-bin missing file raises FileNotFoundError
+            with self.assertRaises(FileNotFoundError):
+                import_audit.run_audit(root, hvm_bin=root / "no_such_hvm")
+
+            # --hvm-bin valid executable script adds symbol statuses
+            fake_hvm = root / "fake_hvm.sh"
+            fake_hvm.write_text(
+                "#!/bin/sh\n"
+                + "echo '"
+                + json.dumps(
+                    {
+                        "symbols": [
+                            {"name": "_calloc", "kind": "function", "status": "Real"},
+                            {"name": "_btowc", "kind": "function", "status": "Stub"},
+                        ]
+                    }
+                )
+                + "'\n",
+                encoding="utf-8",
+            )
+            fake_hvm.chmod(fake_hvm.stat().st_mode | stat.S_IEXEC)
+            audit_with_bin = import_audit.run_audit(root, hvm_bin=fake_hvm)
+            self.assertEqual(audit_with_bin["symbols"]["_calloc"]["status"], "present")
+            self.assertEqual(audit_with_bin["symbols"]["_btowc"]["status"], "stubbed-dishonestly")
 
     def test_cli_generates_markdown_report(self) -> None:
         self.assertTrue(AUDIT_SCRIPT.is_file(), f"Missing {AUDIT_SCRIPT}")
@@ -70,6 +199,8 @@ class GuestLibImportAuditTests(unittest.TestCase):
                 cwd=str(REPO_ROOT),
                 capture_output=True,
                 text=True,
+                timeout=120,
+                check=False,
             )
             self.assertEqual(proc.returncode, 0, f"stderr: {proc.stderr}")
             self.assertTrue(out_md.is_file())
@@ -82,20 +213,9 @@ class GuestLibImportAuditTests(unittest.TestCase):
 
     def test_checked_in_report_doc_exists_and_matches_audit(self) -> None:
         self.assertTrue(REPORT_DOC.is_file(), f"Missing {REPORT_DOC}")
-        text = REPORT_DOC.read_text(encoding="utf-8")
-        for required in (
-            "libgcc_s.1.dylib",
-            "libstdc++.6.dylib",
-            "libc++abi.dylib",
-            "libc++.1.dylib",
-            "present",
-            "missing",
-            "stubbed-dishonestly",
-            "_malloc",
-            "_pthread_key_create",
-            "_uselocale",
-        ):
-            self.assertIn(required, text)
+        import_audit = _load_import_audit()
+        expected = import_audit.render_markdown_report(import_audit.run_audit(REPO_ROOT))
+        self.assertEqual(REPORT_DOC.read_text(encoding="utf-8"), expected)
 
 
 if __name__ == "__main__":

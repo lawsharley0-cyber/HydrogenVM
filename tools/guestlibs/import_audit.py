@@ -31,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 MH_MAGIC = 0xFEEDFACE
 LC_SYMTAB = 0x2
+LC_LOAD_DYLIB = 0xC
 N_EXT = 0x01
 N_TYPE = 0x0E
 N_UNDF = 0x0
@@ -136,7 +137,7 @@ DEFAULT_LIBRARY_IMPORTS: dict[str, list[str]] = {
         "___error",
         "___stderrp",
         "_abort",
-        "_ aligned_alloc".replace(" ", ""),
+        "_aligned_alloc",
         "_calloc",
         "_dladdr",
         "_dyld_register_func_for_add_image",
@@ -332,7 +333,8 @@ DEFAULT_LIBRARY_IMPORTS: dict[str, list[str]] = {
 }
 
 # Symbols inside libstdc++.6.dylib / libc++.1.dylib that are resolved by their peer C++
-# ABI dylib (libgcc_s.1.dylib / libc++abi.dylib) rather than libSystem.B.dylib.
+# ABI dylib (libgcc_s.1.dylib / libc++abi.dylib) rather than libSystem.B.dylib when a
+# flat-namespace or ordinal-0 symbol table is inspected.
 PEER_CXX_EXPORTS: set[str] = {
     "__Unwind_Resume",
     "__Unwind_SjLj_Register",
@@ -352,70 +354,109 @@ PEER_CXX_EXPORTS: set[str] = {
     "___gxx_personality_sj0",
 }
 
-# Known stubbed-dishonestly handlers or simplified C-locale-only stand-ins in HydrogenVM's
-# libc layer that warrant explicit audit notes when a real C++ standard library calls them.
+# Known stubbed-dishonestly handlers in HydrogenVM's libc layer.
 KNOWN_STUB_HANDLERS: set[str] = {
     "s_zero",
     "s_ok2",
     "m_ok2",
     "m_ok3",
     "k_zero4",
-    " stub",
 }
 
-PARTIAL_OR_STUBBED_NOTES: dict[str, tuple[str, str]] = {
+# Handler-verified override for registered functions whose body returns a fixed C-locale string.
+HANDLER_OVERRIDES: dict[str, tuple[str, str, str]] = {
     "_setlocale": (
+        "p_setlocale",
         "stubbed-dishonestly",
-        "Returns fixed \"C\" string regardless of requested category/locale",
-    ),
-    "_newlocale": (
-        "stubbed-dishonestly",
-        "Returns synthetic non-null handle (1) without per-locale facet state",
-    ),
-    "_duplocale": (
-        "stubbed-dishonestly",
-        "Returns input handle unchanged without duplicating locale state",
-    ),
-    "_freelocale": (
-        "stubbed-dishonestly",
-        "No-op return; paired with synthetic _newlocale handle",
-    ),
-    "_uselocale": (
-        "stubbed-dishonestly",
-        "Returns synthetic handle (1) without switching thread-local locale",
-    ),
-    "_localeconv": (
-        "present",
-        "Populates struct lconv for C/POSIX locale in static guest storage",
+        'Handler `p_setlocale` returns fixed `"C"` string regardless of requested category/locale',
     ),
 }
+
+_CODE_TOKEN_RE = re.compile(r'"(?:\\.|[^"\\\n])*"|//[^\n]*|/\*.*?\*/', re.S)
+
+
+def _strip_comments(text: str) -> str:
+    """Replace C/C++ comment contents with spaces while preserving string literals and line numbers."""
+
+    def repl(m: re.Match[str]) -> str:
+        s = m.group(0)
+        return s if s.startswith('"') else re.sub(r"[^\n]", " ", s)
+
+    return _CODE_TOKEN_RE.sub(repl, text)
 
 
 def parse_macho_undef_symbols(dylib_path: Path) -> list[str]:
-    """Read undefined external symbols from a 32-bit ARM Mach-O dylib."""
+    """Read undefined external libSystem symbols from a 32-bit ARM Mach-O dylib."""
     data = dylib_path.read_bytes()
     if len(data) < 28:
         raise ValueError(f"{dylib_path}: file too small for Mach-O header")
-    magic, _cputype, _cpusubtype, _filetype, ncmds, _sizeofcmds, _flags = struct.unpack_from(
+    magic, _cputype, _cpusubtype, _filetype, ncmds, sizeofcmds, _flags = struct.unpack_from(
         "<IIIIIII", data, 0
     )
     if magic != MH_MAGIC:
         raise ValueError(f"{dylib_path}: unexpected magic 0x{magic:08x}")
+    if 28 + sizeofcmds > len(data):
+        raise ValueError(f"{dylib_path}: load commands exceed file size")
+
+    # First pass: collect 1-based LC_LOAD_DYLIB paths so we can distinguish libSystem from peer dylibs
+    loaded_dylibs: list[str] = []
+    off = 28
+    for _ in range(ncmds):
+        if off + 8 > len(data):
+            raise ValueError(f"{dylib_path}: truncated load command at offset {off}")
+        cmd, cmdsize = struct.unpack_from("<II", data, off)
+        if cmdsize < 8 or off + cmdsize > len(data):
+            raise ValueError(f"{dylib_path}: invalid load command size {cmdsize} at offset {off}")
+        if cmd == LC_LOAD_DYLIB:
+            if cmdsize < 24:
+                raise ValueError(f"{dylib_path}: truncated LC_LOAD_DYLIB command")
+            str_off = struct.unpack_from("<I", data, off + 8)[0]
+            if str_off >= cmdsize:
+                raise ValueError(f"{dylib_path}: invalid LC_LOAD_DYLIB name offset")
+            raw = data[off + str_off : off + cmdsize]
+            end = raw.find(b"\x00")
+            if end < 0:
+                raise ValueError(f"{dylib_path}: unterminated LC_LOAD_DYLIB install name")
+            loaded_dylibs.append(raw[:end].decode("utf-8", errors="replace"))
+        off += cmdsize
+
+    libsystem_ordinals: set[int] = {
+        idx + 1
+        for idx, dep in enumerate(loaded_dylibs)
+        if Path(dep).name in ("libSystem.B.dylib", "libSystem.dylib")
+    }
+
+    # Second pass: read LC_SYMTAB undefined external symbols
     off = 28
     undefs: list[str] = []
     for _ in range(ncmds):
         cmd, cmdsize = struct.unpack_from("<II", data, off)
         if cmd == LC_SYMTAB:
-            symoff, nsyms, stroff, _strsize = struct.unpack_from("<IIII", data, off + 8)
+            if cmdsize < 24:
+                raise ValueError(f"{dylib_path}: truncated LC_SYMTAB command")
+            symoff, nsyms, stroff, strsize = struct.unpack_from("<IIII", data, off + 8)
+            if symoff + nsyms * 12 > len(data) or stroff + strsize > len(data):
+                raise ValueError(f"{dylib_path}: LC_SYMTAB exceeds file size")
             for i in range(nsyms):
-                n_strx, n_type, _n_sect, _n_desc, _n_value = struct.unpack_from(
-                    "<IBBH I".replace(" ", ""), data, symoff + i * 12
+                n_strx, n_type, _n_sect, n_desc, _n_value = struct.unpack_from(
+                    "<IBBHI", data, symoff + i * 12
                 )
                 if (n_type & N_EXT) and ((n_type & N_TYPE) == N_UNDF):
-                    end = data.find(b"\x00", stroff + n_strx)
+                    if n_strx >= strsize:
+                        raise ValueError(f"{dylib_path}: symbol string offset out of range")
+                    end = data.find(b"\x00", stroff + n_strx, stroff + strsize)
+                    if end < 0:
+                        raise ValueError(f"{dylib_path}: unterminated symbol name")
                     sym = data[stroff + n_strx : end].decode("utf-8", errors="replace")
-                    if sym and sym not in PEER_CXX_EXPORTS and not sym.startswith("__Z"):
-                        undefs.append(sym)
+                    if not sym or sym == "dyld_stub_binder":
+                        continue
+                    ordinal = (n_desc >> 8) & 0xFF
+                    if libsystem_ordinals and ordinal != 0:
+                        if ordinal not in libsystem_ordinals:
+                            continue
+                    elif sym in PEER_CXX_EXPORTS or sym.startswith("__Z"):
+                        continue
+                    undefs.append(sym)
         off += cmdsize
     return sorted(set(undefs))
 
@@ -424,6 +465,12 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
     """Scan src/runtime/ for registered symbols and their implementation classification."""
     runtime_dir = repo_root / "src" / "runtime"
     registrations: dict[str, dict[str, str]] = {}
+
+    def apply_override(sym: str, fn_name: str, status: str, note: str) -> tuple[str, str]:
+        override = HANDLER_OVERRIDES.get(sym)
+        if override and override[0] == fn_name:
+            return override[1], override[2]
+        return status, note
 
     # 1. Match p.def<&fn>("_sym")
     def_re = re.compile(r'p\.def<&\s*([A-Za-z0-9_:]+)\s*>\(\s*"([^"]+)"\s*\)')
@@ -442,15 +489,14 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
 
     for cpp_path in sorted(runtime_dir.rglob("*.cpp")):
         rel_path = cpp_path.relative_to(repo_root).as_posix()
-        text = cpp_path.read_text(encoding="utf-8", errors="replace")
+        text = _strip_comments(cpp_path.read_text(encoding="utf-8", errors="replace"))
 
         for m in def_re.finditer(text):
             fn_name, sym = m.group(1), m.group(2)
             line_no = text.count("\n", 0, m.start()) + 1
             status = "stubbed-dishonestly" if fn_name in KNOWN_STUB_HANDLERS else "present"
             note = f"Handler `{fn_name}`"
-            if sym in PARTIAL_OR_STUBBED_NOTES:
-                status, note = PARTIAL_OR_STUBBED_NOTES[sym]
+            status, note = apply_override(sym, fn_name, status, note)
             registrations[sym] = {
                 "status": status,
                 "source": f"{rel_path}:{line_no}",
@@ -465,8 +511,7 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
                 sym = sym_m.group(1)
                 status = "stubbed-dishonestly" if fn_name in KNOWN_STUB_HANDLERS else "present"
                 note = f"Handler `{fn_name}`"
-                if sym in PARTIAL_OR_STUBBED_NOTES:
-                    status, note = PARTIAL_OR_STUBBED_NOTES[sym]
+                status, note = apply_override(sym, fn_name, status, note)
                 registrations[sym] = {
                     "status": status,
                     "source": f"{rel_path}:{line_no}",
@@ -481,13 +526,13 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
                 status = "stubbed-dishonestly"
             else:
                 status = "present"
-            if sym in PARTIAL_OR_STUBBED_NOTES:
-                status, sup_note = PARTIAL_OR_STUBBED_NOTES[sym]
+            note = f"`SupportStatus::{sup_status}` — {sup_note}"
+            status, note = apply_override(sym, fn_name, status, note)
             registrations[sym] = {
                 "status": status,
                 "source": f"{rel_path}:{line_no}",
                 "handler": fn_name,
-                "note": f"`SupportStatus::{sup_status}` — {sup_note}",
+                "note": note,
             }
 
         for m in data_re.finditer(text):
@@ -527,9 +572,16 @@ def run_audit(
     """Cross-check all 4 guest C++ runtime libraries' libSystem imports against HydrogenVM."""
     registrations = scan_hvm_registrations(repo_root)
 
-    if hvm_bin and hvm_bin.is_file():
-        dump_raw = subprocess.check_output([str(hvm_bin), "--dump-support"], text=True)
-        dump = json.loads(dump_raw)
+    if hvm_bin is not None:
+        if not hvm_bin.is_file():
+            raise FileNotFoundError(f"--hvm-bin not found: {hvm_bin}")
+        try:
+            dump_raw = subprocess.check_output(
+                [str(hvm_bin), "--dump-support"], text=True, timeout=60
+            )
+            dump = json.loads(dump_raw)
+        except (subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Failed to query {hvm_bin} --dump-support: {exc}") from exc
         for entry in dump.get("symbols", []):
             sym = entry["name"]
             sup_status = entry.get("status", "Real")
@@ -543,12 +595,14 @@ def run_audit(
                     "note": entry.get("note", f"SupportStatus::{sup_status}"),
                 }
 
+    import_source = "macho" if dylib_dir is not None else "manifest"
     lib_imports: dict[str, list[str]] = {}
     for lib_name, default_list in DEFAULT_LIBRARY_IMPORTS.items():
-        if dylib_dir and (dylib_dir / lib_name).is_file():
-            parsed = parse_macho_undef_symbols(dylib_dir / lib_name)
-            # Combine parsed Mach-O undefs with reference list if deterministic stub was used
-            lib_imports[lib_name] = sorted(set(parsed) | set(default_list))
+        if dylib_dir is not None:
+            path = dylib_dir / lib_name
+            if not path.is_file():
+                raise FileNotFoundError(f"{path} not found in --dylib-dir")
+            lib_imports[lib_name] = parse_macho_undef_symbols(path)
         else:
             lib_imports[lib_name] = sorted(set(default_list))
 
@@ -568,7 +622,6 @@ def run_audit(
 
     for sym, entry in all_symbols.items():
         reg = registrations.get(sym)
-        # Check underscore alias (e.g., _dyld_register_func_for_add_image vs __dyld_register_func_for_add_image)
         if not reg and sym == "_dyld_register_func_for_add_image":
             reg = registrations.get("__dyld_register_func_for_add_image")
             if reg:
@@ -595,10 +648,21 @@ def run_audit(
         totals[info["status"]] += 1
 
     return {
+        "importSource": import_source,
         "totals": totals,
         "libraries": libraries_summary,
         "symbols": dict(sorted(all_symbols.items())),
     }
+
+
+def _symbols_for_lib_by_status(
+    symbols: dict[str, dict[str, Any]], lib_name: str, status: str
+) -> list[str]:
+    return sorted(
+        sym
+        for sym, info in symbols.items()
+        if lib_name in info["importedBy"] and info["status"] == status
+    )
 
 
 def render_markdown_report(audit: dict[str, Any]) -> str:
@@ -610,7 +674,6 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
     lines: list[str] = [
         "# Guest C++ Runtime `libSystem.B.dylib` Import Audit (S4)",
         "",
-        "**Date:** 2026-11-03  ",
         "**Initiative:** Guest-Dylib Initiative — Wave 1 (`S4`)  ",
         "**Tool:** `tools/guestlibs/import_audit.py`  ",
         "**Refs:** `#311`, `#330`",
@@ -621,8 +684,8 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
         "",
         f"Across all four ARMv7 C++ runtime libraries, there are **{totals['totalUniqueImports']} unique `libSystem.B.dylib` imports**:",
         f"- **`present`**: **{totals['present']}** symbols (implemented in `src/runtime/libc/` with real or honest-approx behaviour)",
-        f"- **`stubbed-dishonestly`**: **{totals['stubbed-dishonestly']}** symbols (registered in `src/runtime/libc/`, but returning a fixed `\"C\"` locale pointer or synthetic handle without full per-locale state)",
-        f"- **`missing`**: **{totals['missing']}** symbols (not registered in HydrogenVM's symbol table; primarily `_l` extended-locale variants, POSIX message catalog `catopen`/`catgets`/`catclose`, and a handful of wide-char / stdio helpers)",
+        f"- **`stubbed-dishonestly`**: **{totals['stubbed-dishonestly']}** symbols (registered in `src/runtime/libc/`, but returning a fixed `\"C\"` locale pointer or no-op success without full state)",
+        f"- **`missing`**: **{totals['missing']}** symbols (not registered in HydrogenVM's symbol table; tracked in `#330`)",
         "",
         "### Per-Library Summary",
         "",
@@ -648,6 +711,43 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
             f"| `{lib_name}` | {target_labels[lib_name]} | {c['totalImports']} | {c['present']} | {c['stubbed-dishonestly']} | {c['missing']} |"
         )
 
+    gcc_c = libs["libgcc_s.1.dylib"]
+    abi_c = libs["libc++abi.dylib"]
+    std_c = libs["libstdc++.6.dylib"]
+    cxx_c = libs["libc++.1.dylib"]
+
+    abi_missing = _symbols_for_lib_by_status(symbols, "libc++abi.dylib", "missing")
+    std_missing = _symbols_for_lib_by_status(symbols, "libstdc++.6.dylib", "missing")
+    std_stubbed = _symbols_for_lib_by_status(symbols, "libstdc++.6.dylib", "stubbed-dishonestly")
+    cxx_missing = _symbols_for_lib_by_status(symbols, "libc++.1.dylib", "missing")
+    cxx_stubbed = _symbols_for_lib_by_status(symbols, "libc++.1.dylib", "stubbed-dishonestly")
+
+    xlocale_lifecycle = [
+        s for s in cxx_missing if s in {"_newlocale", "_duplocale", "_freelocale", "_uselocale"}
+    ]
+    xlocale_ctype = [
+        s
+        for s in cxx_missing
+        if s.endswith("_l")
+        and (s.startswith("_is") or s.startswith("_to") or s == "_localeconv_l")
+    ]
+    xlocale_format = [
+        s
+        for s in cxx_missing
+        if s.endswith("_l") and s not in xlocale_ctype
+    ]
+    xlocale_total = len(xlocale_lifecycle) + len(xlocale_ctype) + len(xlocale_format)
+    cat_missing = [s for s in cxx_missing if s.startswith("_cat")]
+    ldbl_missing = [s for s in cxx_missing if s in {"_strtold", "_wcstold"}]
+    wchar_and_coll_missing = [
+        s
+        for s in cxx_missing
+        if s not in set(xlocale_lifecycle + xlocale_ctype + xlocale_format + cat_missing + ldbl_missing)
+    ]
+
+    def fmt_list(items: list[str]) -> str:
+        return ", ".join(f"`{s}`" for s in items) if items else "none"
+
     lines.extend(
         [
             "",
@@ -655,33 +755,29 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
             "",
             "## 2. Key Findings & Actionable Gaps",
             "",
-            "### 2.1 `libgcc_s.1.dylib` is 100% Covered (`14 / 14 present`)",
-            "Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` (`_malloc`, `_calloc`, `_free`, `_abort`, `___error`, `_dladdr`, `_memcpy`, `_memset`, `_pthread_key_create`, `_pthread_getspecific`, `_pthread_setspecific`, `_pthread_mutex_lock`, `_pthread_mutex_unlock`, `_pthread_once`) is already `present` in HydrogenVM.",
+            f"### 2.1 `libgcc_s.1.dylib` Coverage (`{gcc_c['present']} / {gcc_c['totalImports']} present`, `{gcc_c['missing']} missing`)",
             "",
-            "### 2.2 `libc++abi.dylib` Needs Only 2 Small Additions (`33 / 35 present`, `2 missing`)",
-            "The only two missing symbols in `libc++abi.dylib` are:",
-            "1. `_aligned_alloc` (C11 aligned allocation fallback used by `stdlib_new_delete.cpp`; `_posix_memalign` is already `present` in `Heap.cpp`).",
-            "2. `_dyld_register_func_for_add_image` (single-underscore Mach-O symbol name; HydrogenVM currently registers `__dyld_register_func_for_add_image` with two leading underscores in `src/runtime/libc/System.cpp:1133` — scheduled for S5).",
+            "Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in the symbol table below.",
             "",
-            "### 2.3 `libstdc++.6.dylib` Needs Only 4 Symbols (`72 / 77 present`, `1 stubbed-dishonestly`, `4 missing`)",
-            "- **Missing (4 symbols)**: `_btowc`, `_mbrtowc`, `_wcrtomb`, and `_strxfrm`.",
-            "- **Stubbed dishonestly (1 symbol)**: `_setlocale` (`src/runtime/libc/Posix.cpp:226`, returns fixed `\"C\"` string regardless of category/locale).",
-            "- Note that `_getc`, `_putc`, `_fseek`, `_ftell`, `_wcslen`, `_wcscmp`, `_wmemcpy`, `_wmemmove`, `_wmemset`, `_wmemchr`, `_wmemcmp`, `_localeconv`, and all `pthread_*` primitives used by `libstdc++.6.dylib` are already `present`.",
+            f"### 2.2 `libc++abi.dylib` Coverage (`{abi_c['present']} / {abi_c['totalImports']} present`, `{abi_c['missing']} missing`)",
             "",
-            "### 2.4 `libc++.1.dylib` Missing Symbol Clusters (`98 / 159 present`, `1 stubbed-dishonestly`, `60 missing`)",
-            "The 60 missing symbols in `libc++.1.dylib` fall into four well-defined clusters:",
-            "1. **Extended Locale (`<xlocale.h>`) Lifecycle & `*_l` Functions (43 symbols)**:",
-            "   - Locale lifecycle (4): `_newlocale`, `_duplocale`, `_freelocale`, `_uselocale`.",
-            "   - Character classification & case mapping (26): `_isalnum_l`, `_isalpha_l`, `_isblank_l`, `_iscntrl_l`, `_isdigit_l`, `_isgraph_l`, `_islower_l`, `_isprint_l`, `_ispunct_l`, `_isspace_l`, `_isupper_l`, `_isxdigit_l`, `_iswalpha_l`, `_iswblank_l`, `_iswcntrl_l`, `_iswdigit_l`, `_iswgraph_l`, `_iswlower_l`, `_iswprint_l`, `_iswpunct_l`, `_iswspace_l`, `_iswupper_l`, `_iswxdigit_l`, `_towlower_l`, `_towupper_l` (note: `_tolower_l` and `_toupper_l` are already `present` in `src/runtime/libc/String.cpp:510-511`), plus `_localeconv_l`.",
-            "   - Numeric/string formatting & collation with explicit `locale_t` (13): `_snprintf_l`, `_sscanf_l`, `_strcoll_l`, `_strftime_l`, `_strtod_l`, `_strtof_l`, `_strtold_l`, `_strtoll_l`, `_strtoull_l`, `_strxfrm_l`, `_wcscoll_l`, `_wcsxfrm_l`.",
-            "   - **Why it matters:** LLVM `libc++.1.dylib` implements `std::locale`, `std::num_get`, `std::num_put`, `std::ctype<char>`, and `std::collate<char>` through Darwin's `<xlocale.h>` `_l` entrypoints. Without C-locale pass-through wrappers for these functions, `std::stringstream` or `std::to_string` inside guest `libc++.1.dylib` will hit an unresolved import.",
-            "2. **Multibyte / Wide-Character Conversion & Collation (`<wchar.h>`) Functions (12 symbols)**:",
-            "   - `_btowc`, `_wctob`, `_mbrtowc`, `_wcrtomb`, `_mbrlen`, `_mbtowc`, `_mbsrtowcs`, `_mbsnrtowcs`, `_wcsrtombs`, `_wcsnrtombs`, `_wcscoll`, `_wcsxfrm`, plus `_strxfrm`.",
-            "   - Note: Basic wide-string memory/length and numeric primitives (`_wcslen`, `_wcscmp`, `_wmemcpy`, `_wmemmove`, `_wmemset`, `_wmemchr`, `_wmemcmp`, `_wcstod`, `_wcstof`, `_wcstoll`, `_wcstoull`) are already `present`.",
-            "3. **Long-Double String Parsers (2 symbols)**:",
-            "   - `_strtold` and `_wcstold` (on 32-bit ARMv7 iOS, `long double` is 64-bit IEEE-754 `double`, identical in layout and ABI to `_strtod` and `_wcstod`).",
-            "4. **POSIX Message Catalogs (3 symbols)**:",
-            "   - `_catopen`, `_catgets`, `_catclose` (used only by `std::messages<char>` facet; honest `errno = ENOENT; return (nl_catd)-1` implementation satisfies POSIX when no catalog files exist).",
+            f"- **Missing ({len(abi_missing)})**: {fmt_list(abi_missing)}.",
+            "",
+            f"### 2.3 `libstdc++.6.dylib` Coverage (`{std_c['present']} / {std_c['totalImports']} present`, `{std_c['stubbed-dishonestly']} stubbed-dishonestly`, `{std_c['missing']} missing`)",
+            "",
+            f"- **Missing ({len(std_missing)})**: {fmt_list(std_missing)}.",
+            f"- **Stubbed dishonestly ({len(std_stubbed)})**: {fmt_list(std_stubbed)}.",
+            "",
+            f"### 2.4 `libc++.1.dylib` Missing Symbol Clusters (`{cxx_c['present']} / {cxx_c['totalImports']} present`, `{cxx_c['stubbed-dishonestly']} stubbed-dishonestly`, `{cxx_c['missing']} missing`)",
+            "",
+            f"- **Stubbed dishonestly ({len(cxx_stubbed)})**: {fmt_list(cxx_stubbed)}.",
+            f"- **Extended Locale (`<xlocale.h>`) Lifecycle & `*_l` Functions ({xlocale_total} symbols)**:",
+            f"  - Locale lifecycle ({len(xlocale_lifecycle)}): {fmt_list(xlocale_lifecycle)}.",
+            f"  - Character classification, case mapping & `localeconv_l` ({len(xlocale_ctype)}): {fmt_list(xlocale_ctype)}.",
+            f"  - Numeric/string formatting & collation with explicit `locale_t` ({len(xlocale_format)}): {fmt_list(xlocale_format)}.",
+            f"- **Multibyte / Wide-Character Conversion & Collation (`<wchar.h>` / `<string.h>`) Functions ({len(wchar_and_coll_missing)} symbols)**: {fmt_list(wchar_and_coll_missing)}.",
+            f"- **Long-Double String Parsers ({len(ldbl_missing)} symbols)**: {fmt_list(ldbl_missing)}.",
+            f"- **POSIX Message Catalogs ({len(cat_missing)} symbols)**: {fmt_list(cat_missing)}.",
             "",
             "---",
             "",
@@ -693,7 +789,7 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
     )
 
     for sym, info in symbols.items():
-        libs_str = ", ".join(f"`{l}`" for l in info["importedBy"])
+        libs_str = ", ".join(f"`{lib}`" for lib in info["importedBy"])
         lines.append(
             f"| `{sym}` | {libs_str} | `{info['status']}` | `{info['source']}` | {info['note']} |"
         )
