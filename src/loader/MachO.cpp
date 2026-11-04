@@ -16,7 +16,7 @@ constexpr uint32_t MH_PIE = 0x200000, MH_SPLIT_SEGS = 0x20;
 
 enum : uint32_t {
     LC_SEGMENT = 0x1, LC_SYMTAB = 0x2, LC_THREAD = 0x4, LC_UNIXTHREAD = 0x5, LC_DYSYMTAB = 0xB,
-    LC_LOAD_DYLIB = 0xC, LC_ID_DYLIB = 0xD, LC_LAZY_LOAD_DYLIB = 0x20, LC_ENCRYPTION_INFO = 0x21,
+    LC_LOAD_DYLIB = 0xC, LC_ID_DYLIB = 0xD, LC_ROUTINES = 0x11, LC_LAZY_LOAD_DYLIB = 0x20, LC_ENCRYPTION_INFO = 0x21,
     LC_DYLD_INFO = 0x22, LC_REQ_DYLD = 0x80000000u,
     LC_LOAD_WEAK_DYLIB = 0x18 | LC_REQ_DYLD, LC_REEXPORT_DYLIB = 0x1F | LC_REQ_DYLD,
     LC_DYLD_INFO_ONLY = 0x22 | LC_REQ_DYLD, LC_LOAD_UPWARD_DYLIB = 0x23 | LC_REQ_DYLD,
@@ -337,6 +337,35 @@ void runBind(Ctx& cx, const uint8_t* p, size_t n, bool lazy, bool weak) {
     }
 }
 
+void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const std::string& prefix, uint32_t depth) {
+    if (depth > 256 || nodeOff >= n) return;
+    Stream s{p + nodeOff, p + n};
+    const uint64_t termSize = s.uleb();
+    if (termSize > size_t(s.end - s.p)) throw MachOError("Mach-O: export trie terminal overrun");
+    const uint8_t* childrenStart = s.p + termSize;
+    if (termSize != 0 && !prefix.empty()) {
+        Stream ts{s.p, childrenStart};
+        const uint64_t flags = ts.uleb();
+        const uint64_t kind = flags & 0x03u;
+        const bool reexport = (flags & 0x08u) != 0;
+        if (!reexport && kind == 0) {
+            const uint64_t symOff = ts.uleb();
+            const uint32_t addr = cx.img.lowAddr + uint32_t(symOff);
+            cx.img.exports.emplace(prefix, addr);
+            if (cx.img.symbolsByAddr.find(addr) == cx.img.symbolsByAddr.end())
+                cx.img.symbolsByAddr.emplace(addr, prefix);
+        }
+    }
+    Stream cs{childrenStart, p + n};
+    if (cs.done()) return;
+    const uint8_t childCount = cs.byte();
+    for (uint8_t i = 0; i < childCount; ++i) {
+        const std::string edge = cs.cstr();
+        const uint64_t childOff = cs.uleb();
+        walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1);
+    }
+}
+
 // Pre-dyld-info binaries: bind symbol pointer sections through the indirect
 // symbol table, and data references through external relocations.
 void legacyBinds(Ctx& cx) {
@@ -451,7 +480,7 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
     // ---- pass 1: load commands
     const DyldInfoCmd* dyldInfo = nullptr;
     DyldInfoCmd dyldInfoStorage{};
-    uint32_t unixThreadPc = 0, mainEntryOff = 0;
+    uint32_t unixThreadPc = 0, mainEntryOff = 0, routinesInitAddr = 0;
     uint32_t startsOff = 0, startsSize = 0;
     bool haveMain = false, haveThread = false;
     size_t off = sizeof(MachHeader);
@@ -482,6 +511,9 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
             case LC_FUNCTION_STARTS:
                 if (size >= 16) { startsOff = slice.at<uint32_t>(off + 8); startsSize = slice.at<uint32_t>(off + 12); }
                 break;
+            case LC_ROUTINES:
+                if (size >= 16) routinesInitAddr = slice.at<uint32_t>(off + 8);
+                break;
             case LC_SYMTAB: cx.symtabStorage = slice.at<SymtabCmd>(off); cx.symtab = &cx.symtabStorage; break;
             case LC_DYSYMTAB: cx.dysymtabStorage = slice.at<DysymtabCmd>(off); cx.dysymtab = &cx.dysymtabStorage; break;
             case LC_DYLD_INFO: case LC_DYLD_INFO_ONLY:
@@ -489,6 +521,7 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
             case LC_LOAD_DYLIB: case LC_LOAD_WEAK_DYLIB: case LC_REEXPORT_DYLIB:
             case LC_LAZY_LOAD_DYLIB: case LC_LOAD_UPWARD_DYLIB:
                 img.dylibs.push_back(slice.cstr(off + slice.at<uint32_t>(off + 8), size));
+                img.dylibWeak.push_back(cmd == LC_LOAD_WEAK_DYLIB);
                 break;
             case LC_ID_DYLIB: img.installName = slice.cstr(off + slice.at<uint32_t>(off + 8), size); break;
             case LC_MAIN:
@@ -607,11 +640,14 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
         if (dyldInfo->bind_size) runBind(cx, stream(dyldInfo->bind_off, dyldInfo->bind_size), dyldInfo->bind_size, false, false);
         if (dyldInfo->lazy_bind_size) runBind(cx, stream(dyldInfo->lazy_bind_off, dyldInfo->lazy_bind_size), dyldInfo->lazy_bind_size, true, false);
         if (dyldInfo->weak_bind_size) runBind(cx, stream(dyldInfo->weak_bind_off, dyldInfo->weak_bind_size), dyldInfo->weak_bind_size, false, true);
+        if (dyldInfo->export_size) walkExportTrie(cx, stream(dyldInfo->export_off, dyldInfo->export_size), dyldInfo->export_size, 0, "", 0);
     } else {
         legacyBinds(cx);
     }
 
     // ---- initialisers
+    if (routinesInitAddr)
+        img.initializers.push_back(routinesInitAddr + cx.slide);
     for (const auto* sec : img.sectionsOfType(S_MOD_INIT_FUNC_POINTERS))
         for (uint32_t a = sec->addr; a + 4 <= sec->addr + sec->size; a += 4)
             img.initializers.push_back(mem.read<uint32_t>(a));

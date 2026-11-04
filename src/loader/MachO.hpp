@@ -75,6 +75,7 @@ struct Image {
     std::vector<Segment> segments;
     std::vector<Section> sections;
     std::vector<std::string> dylibs;   // LC_LOAD_DYLIB order (ordinal = index + 1)
+    std::vector<bool> dylibWeak;       // parallel to dylibs: true for LC_LOAD_WEAK_DYLIB
     std::string installName;           // LC_ID_DYLIB for dylibs
 
     // Entry point (bit 0 set for Thumb). For LC_MAIN binaries this is main();

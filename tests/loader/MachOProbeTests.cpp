@@ -122,6 +122,74 @@ int main() {
     num32(encrypted_armv7, 1); // cryptid (encrypted!)
     check("encrypted_armv7", encrypted_armv7, true, true, true, 9);
 
+    // 6. MH_DYLIB loadMachO with slide, LC_ROUTINES, LC_LOAD_WEAK_DYLIB and export trie
+    {
+        Bytes dylib(0x1100, 0);
+        auto put32 = [&](size_t off, uint32_t v) {
+            dylib[off + 0] = v & 0xff;
+            dylib[off + 1] = (v >> 8) & 0xff;
+            dylib[off + 2] = (v >> 16) & 0xff;
+            dylib[off + 3] = (v >> 24) & 0xff;
+        };
+        auto putStr = [&](size_t off, const char* s) {
+            for (size_t i = 0; s[i]; ++i) dylib[off + i] = uint8_t(s[i]);
+        };
+        // MachHeader: MH_DYLIB (6), 4 load commands: LC_SEGMENT(__TEXT), LC_ROUTINES, LC_LOAD_WEAK_DYLIB, LC_DYLD_INFO_ONLY
+        // cmd sizes: 56 + 40 + 32 + 48 = 176
+        put32(0, 0xfeedface);
+        put32(4, 12);
+        put32(8, 9);
+        put32(12, 6); // MH_DYLIB
+        put32(16, 4); // ncmds
+        put32(20, 176); // sizeofcmds
+        put32(24, 0);
+        // cmd 0 (off 28): LC_SEGMENT __TEXT vmaddr=0 vmsize=0x1000 fileoff=0 filesize=0x1000
+        put32(28, 0x1);
+        put32(32, 56);
+        putStr(36, "__TEXT");
+        put32(52, 0);
+        put32(56, 0x1000);
+        put32(60, 0);
+        put32(64, 0x1000);
+        put32(68, 7);
+        put32(72, 5);
+        put32(76, 0);
+        put32(80, 0);
+        // cmd 1 (off 84): LC_ROUTINES (0x11), cmdsize=40, init_address=0x0401 (Thumb)
+        put32(84, 0x11);
+        put32(88, 40);
+        put32(92, 0x0401);
+        // cmd 2 (off 124): LC_LOAD_WEAK_DYLIB (0x80000018), cmdsize=32, name="@rpath/w.dylib"
+        put32(124, 0x80000018u);
+        put32(128, 32);
+        put32(132, 24);
+        putStr(148, "@rpath/w.dylib");
+        // cmd 3 (off 156): LC_DYLD_INFO_ONLY (0x80000022), cmdsize=48, export_off=0x1000, export_size=17
+        put32(156, 0x80000022u);
+        put32(160, 48);
+        put32(196, 0x1000);
+        put32(200, 17);
+        const uint8_t trieValid[17] = {
+            0x00, 0x01, '_', 't', 'r', 'i', 'e', '_', 'f', 'n', 0x00, 12,
+            0x03, 0x00, 0xa0, 0x08, 0x00
+        };
+        for (size_t i = 0; i < sizeof(trieValid); ++i) dylib[0x1000 + i] = trieValid[i];
+
+        Hydrogen::Memory::GuestArena arena;
+        auto img = Hydrogen::Loader::loadMachO(arena, dylib, "test.dylib", {0x04000000u});
+        bool dylibOk = img.fileType == 6 && img.slide == 0x04000000u &&
+                       img.dylibs.size() == 1 && img.dylibWeak.size() == 1 && img.dylibWeak[0] &&
+                       img.initializers.size() == 1 && img.initializers[0] == 0x04000401u &&
+                       img.exports.count("_trie_fn") == 1 && img.exports["_trie_fn"] == 0x04000420u;
+        if (dylibOk) {
+            std::printf("PASS mh_dylib_routines_weak_and_export_trie\n");
+            ++passed;
+        } else {
+            std::printf("FAIL mh_dylib_routines_weak_and_export_trie\n");
+            ++failed;
+        }
+    }
+
     std::printf("MachOProbe: %d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;
 }

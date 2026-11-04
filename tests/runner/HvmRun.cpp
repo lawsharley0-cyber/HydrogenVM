@@ -113,6 +113,8 @@ int hvmRunMain(int argc, char** argv) {
         }
         else if (!std::strcmp(argv[i], "--loopback-network")) cfg.loopbackNetwork = true;
         else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
+        else if (!std::strcmp(argv[i], "--guest-libs")) cfg.guestLibs = true;
+        else if (!std::strcmp(argv[i], "--guest-lib-dir") && i + 1 < argc) { cfg.guestLibDir = argv[++i]; cfg.guestLibs = true; }
         else if (!std::strcmp(argv[i], "--quiet")) quiet = true;
         else if (!std::strcmp(argv[i], "--")) { for (++i; i < argc; ++i) cfg.extraArgs.push_back(argv[i]); }
     }
