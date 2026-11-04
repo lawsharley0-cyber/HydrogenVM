@@ -1,4 +1,5 @@
 #include "runtime/Support.hpp"
+#include "runtime/foundation/Foundation.hpp"
 #include "runtime/objc/ObjC.hpp"
 #include <cstdio>
 #include <filesystem>
@@ -40,6 +41,19 @@ int main() {
     const auto playable = registry.find("-[AVAsset isPlayable]");
     check(playable && playable->kind == SupportKind::InstanceMethod &&
           playable->status == SupportStatus::Stub, "AVAsset playable metadata");
+    const auto runMode = registry.find("-[NSRunLoop runMode:beforeDate:]");
+    auto& objc = ObjC::rt(p);
+    const auto runLoopClass = objc.getClass("NSRunLoop");
+    check(runMode && runMode->kind == SupportKind::InstanceMethod &&
+          runMode->status == SupportStatus::Approx && !runMode->provenance.empty() &&
+          objc.methodTypes(runLoopClass, objc.sel("runMode:beforeDate:")) == "@@:",
+          "NSRunLoop runMode metadata and existing method signature");
+    bool dispatched = false;
+    Foundation::mainRunLoop(p).post([&](auto&) { dispatched = true; });
+    auto& cpu = p.mainThread().cpu;
+    const auto loop = objc.send(cpu, runLoopClass, "mainRunLoop");
+    check(uint32_t(objc.send(cpu, loop, "runMode:beforeDate:", {0, 0})) == 1 && dispatched,
+          "NSRunLoop runMode dispatches work and retains its return value");
     for (const auto& [name, status] : {
              std::pair{"_CFRunLoopSourceInvalidate", SupportStatus::Approx},
              std::pair{"__ZNSt3__115__thread_structD1Ev", SupportStatus::Stub},
