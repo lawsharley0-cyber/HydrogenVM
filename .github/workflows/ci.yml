@@ -161,23 +161,10 @@ jobs:
         run: |
           tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
             "ALL CHECKS PASSED" "70,350@0.3;230,350@0.5" sim-out
-      - name: Run a GLES game on the GPU path inside HydrogenVM (simulator)
-        # Tiny Tower (GLES 1.1, in-repo fixture). Diagnostic: the screenshot and
-        # console go to ci-reports under simulator-gl/; it does not gate the build.
-        continue-on-error: true
-        run: |
-          rm -rf build/gl && mkdir -p build/gl
-          unzip -q Tiny_Tower_v1.0_os30.ipa -d build/gl
-          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "build/gl/Payload/Tiny Tower.app" \
-            "GPU: presented frame 60 directly" "160,240@6" sim-gl-out
-      - name: A landscape GLES game on the GPU path (simulator)
-        # Angry Birds (GLES 1.1, landscape, in-repo fixture): the GPU layer must be rotated like the guest view.
-        continue-on-error: true
-        run: |
-          rm -rf build/gl-ab && mkdir -p build/gl-ab
-          unzip -q AngryBirds_v1.0_os30.ipa -d build/gl-ab
-          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "$(ls -d build/gl-ab/Payload/*.app | head -1)" \
-            "GPU: presented frame 600 directly" "" sim-gl-landscape-out
+      # The real-game GLES simulator checks (Tiny Tower, Angry Birds, GLES 1.1 on ES 2) read
+      # the three IPAs from the private fixture store and run in private-fixture-availability.yml
+      # on trusted main only. Public pull requests cannot read that store, and the IPAs are
+      # no longer tracked in git (#204).
       - name: Run Test all games batch workflow in simulator
         continue-on-error: true
         env:
@@ -192,13 +179,6 @@ jobs:
           if [ -f sim-batch-out/batch_report.json ]; then
             python3 tools/triage.py ingest sim-batch-out/batch_report.json
           fi
-      - name: Same game with GLES 1.1 emulated on an ES 2 context (simulator)
-        continue-on-error: true
-        env:
-          SIMCTL_CHILD_HVM_GL1_EMULATE: "1"
-        run: |
-          tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app "build/gl/Payload/Tiny Tower.app" \
-            "GPU: presented frame 60 directly" "160,240@6" sim-gl-emu-out
       - name: Collect macOS diagnostics for artifacts and trusted publishing
         if: always()
         run: |

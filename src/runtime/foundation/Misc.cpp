@@ -100,7 +100,9 @@ id boxScalar(Ctx& x, char type, uint64_t v) {
 
 std::string capitalized(const std::string& k) { std::string s = k; if (!s.empty()) s[0] = char(std::toupper(uint8_t(s[0]))); return s; }
 
-id kvcGet(Ctx& x, id self, const std::string& key) {
+// `viaOverride`: key-path and bulk accessors must honour a class's own valueForKey: (NSUserDefaults answers from its
+// defaults), as Foundation does. NSObject's valueForKey: itself passes false, so [super valueForKey:] cannot recurse.
+id kvcGet(Ctx& x, id self, const std::string& key, bool viaOverride = true) {
     if (!self) return 0;
     auto& r = rt(x);
     if (isDict(x, self)) return dictGet(x, self, makeString(x, key));
@@ -110,6 +112,12 @@ id kvcGet(Ctx& x, id self, const std::string& key) {
         return makeArray(x, out);
     }
     const Class cls = r.classOf(self);
+    if (viaOverride) {
+        const SEL vfk = r.sel("valueForKey:");
+        const IMP own = r.lookup(cls, vfk);
+        if (own && own != r.lookup(r.getClass("NSObject"), vfk))
+            return id(r.send(x.cpu, self, vfk, {makeString(x, key)}));
+    }
     for (const std::string& name : {key, "get" + capitalized(key), "is" + capitalized(key), "_" + key}) {
         const SEL s = r.sel(name);
         if (r.lookup(cls, s)) {
@@ -131,7 +139,7 @@ id kvcGet(Ctx& x, id self, const std::string& key) {
     return id(r.send(x.cpu, self, "valueForUndefinedKey:", {makeString(x, key)}));
 }
 
-void kvcSet(Ctx& x, id self, const std::string& key, id value) {
+void kvcSet(Ctx& x, id self, const std::string& key, id value, bool viaOverride = true) {
     if (!self) return;
     auto& r = rt(x);
     if (isDict(x, self)) {
@@ -140,6 +148,14 @@ void kvcSet(Ctx& x, id self, const std::string& key, id value) {
         return;
     }
     const Class cls = r.classOf(self);
+    if (viaOverride) {
+        const SEL svfk = r.sel("setValue:forKey:");
+        const IMP own = r.lookup(cls, svfk);
+        if (own && own != r.lookup(r.getClass("NSObject"), svfk)) {
+            r.send(x.cpu, self, svfk, {value, makeString(x, key)});
+            return;
+        }
+    }
     for (const std::string& name : {"set" + capitalized(key) + ":", "_set" + capitalized(key) + ":"}) {
         const SEL s = r.sel(name);
         if (!r.lookup(cls, s)) continue;
@@ -173,8 +189,8 @@ void kvcSet(Ctx& x, id self, const std::string& key, id value) {
     r.send(x.cpu, self, "setValue:forUndefinedKey:", {value, makeString(x, key)});
 }
 
-id o_valueForKey(Ctx& x, id self, SEL, id key) { return kvcGet(x, self, utf8(x, key)); }
-void o_setValueForKey(Ctx& x, id self, SEL, id value, id key) { kvcSet(x, self, utf8(x, key), value); }
+id o_valueForKey(Ctx& x, id self, SEL, id key) { return kvcGet(x, self, utf8(x, key), false); }
+void o_setValueForKey(Ctx& x, id self, SEL, id value, id key) { kvcSet(x, self, utf8(x, key), value, false); }
 id o_valueForKeyPath(Ctx& x, id self, SEL, id path) {
     const std::string p = utf8(x, path);
     id cur = self;

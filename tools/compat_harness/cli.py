@@ -173,7 +173,7 @@ def _setup_and_run_suites(args: argparse.Namespace, root: str, hvm: str, manifes
 def _process_baseline_and_history(args: argparse.Namespace, root: str, report: dict, report_path: str, exit_code: int) -> int:
     if args.baseline:
         baseline = _load(args.baseline)
-        diff = diffing.diff_reports(baseline, report)
+        diff = diffing.diff_reports(baseline, report, compare_apps=not getattr(args, "skip_apps", False))
         diff_errors = validate_diff(diff)
         if diff_errors:
             diff["ok"] = False
