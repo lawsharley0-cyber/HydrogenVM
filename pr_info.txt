@@ -1,0 +1,12 @@
+Title: fix: allow symlinked OS temp dirs
+Body:
+Refs issue 325
+
+Branch: agent/325-fixture-root-symlink
+Head SHA: ae6d77db2775f2d752e591ba130c9c4674eadab7
+Red commit (tests): 683dc01ab117b11e3073798040ecf12f255614e8
+Green commit (fix): ae6d77db2775f2d752e591ba130c9c4674eadab7
+
+Test counts:
+Python tool tests: 340 tests, 6 skipped, 0 failed
+hvm_tests fulltest: 591 passed, 0 failed
