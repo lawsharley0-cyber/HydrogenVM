@@ -40,6 +40,16 @@ int main() {
     const auto playable = registry.find("-[AVAsset isPlayable]");
     check(playable && playable->kind == SupportKind::InstanceMethod &&
           playable->status == SupportStatus::Stub, "AVAsset playable metadata");
+    const auto runMode = registry.find("-[NSRunLoop runMode:beforeDate:]");
+    check(runMode && runMode->kind == SupportKind::InstanceMethod &&
+          runMode->status == SupportStatus::Approx && !runMode->provenance.empty(),
+          "NSRunLoop runMode metadata");
+    auto& objc = ObjC::rt(p);
+    auto& cpu = p.mainThread().cpu;
+    const auto loop = ObjC::id(objc.send(cpu, objc.getClass("NSRunLoop"), "mainRunLoop"));
+    check(loop && objc.lookup(objc.getClass("NSRunLoop"), objc.sel("runMode:beforeDate:")) &&
+          uint32_t(objc.send(cpu, loop, "runMode:beforeDate:", {0, 0})) == 1,
+          "NSRunLoop runMode remains callable and returns success");
     for (const auto& [name, status] : {
              std::pair{"_CFRunLoopSourceInvalidate", SupportStatus::Approx},
              std::pair{"__ZNSt3__115__thread_structD1Ev", SupportStatus::Stub},
