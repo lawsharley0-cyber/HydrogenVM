@@ -34,7 +34,7 @@ PINNED_SOURCES: dict[str, list[dict[str, str]]] = {
             "version": "56 (gcc-4.2.1)",
             "url": "https://opensource.apple.com/tarballs/libstdcxx/libstdcxx-56.tar.gz",
             "sha256": "61fd5bdcead55a0112efddbe8d90cd3e6ecfa2f6d06eb8e2c7d97a9da2c88565",
-            "license": "GPLv3 + GCC Runtime Library Exception",
+            "license": "GPL-2.0-or-later WITH GCC-exception-2.0",
             "outputs": "libgcc_s.1.dylib, libstdc++.6.dylib",
         },
         {
@@ -42,8 +42,16 @@ PINNED_SOURCES: dict[str, list[dict[str, str]]] = {
             "version": "4.2.1",
             "url": "https://ftp.gnu.org/gnu/gcc/gcc-4.2.1/gcc-4.2.1.tar.bz2",
             "sha256": "cba8bde9ef02c6044f5c7a4a41fb0305e3a4207c3e45f2c402c0e1c4a9c00e55",
-            "license": "GPLv3 + GCC Runtime Library Exception",
+            "license": "GPL-2.0-or-later WITH GCC-exception-2.0",
             "outputs": "libgcc_s.1.dylib, libstdc++.6.dylib",
+        },
+        {
+            "name": "compiler-rt",
+            "version": "llvmorg-9.0.1",
+            "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-9.0.1/compiler-rt-9.0.1.src.tar.xz",
+            "sha256": "c2bfab95c9986318318363d7f371a85a95e333bc0b34fbfa52edbd3f5e3a9077",
+            "license": "Apache-2.0 WITH LLVM-exception",
+            "outputs": "libgcc_s.1.dylib",
         },
     ],
     "target2_llvm": [
@@ -97,7 +105,7 @@ LIBRARY_SPECS: dict[str, dict[str, Any]] = {
     "libgcc_s.1.dylib": {
         "install_name": "/usr/lib/libgcc_s.1.dylib",
         "target_group": "target1_gcc",
-        "license": "GPLv3 + GCC Runtime Library Exception",
+        "license": "GPL-2.0-or-later WITH GCC-exception-2.0",
         "dylib_deps": ["/usr/lib/libSystem.B.dylib"],
         "exports": [
             "__Unwind_SjLj_Register",
@@ -153,7 +161,7 @@ LIBRARY_SPECS: dict[str, dict[str, Any]] = {
     "libstdc++.6.dylib": {
         "install_name": "/usr/lib/libstdc++.6.dylib",
         "target_group": "target1_gcc",
-        "license": "GPLv3 + GCC Runtime Library Exception",
+        "license": "GPL-2.0-or-later WITH GCC-exception-2.0",
         "dylib_deps": ["/usr/lib/libgcc_s.1.dylib", "/usr/lib/libSystem.B.dylib"],
         "exports": [
             "__Znwm",
@@ -588,11 +596,84 @@ LIBRARY_SPECS: dict[str, dict[str, Any]] = {
 }
 
 
+DATA_SYMBOLS: set[str] = {
+    "__ZNSs4_Rep20_S_empty_rep_storageE",
+    "__ZSt4cout",
+    "__ZSt4cerr",
+    "__ZSt4clog",
+    "__ZSt3cin",
+    "__ZNSt3__14coutE",
+    "__ZNSt3__14cerrE",
+    "__ZNSt3__14clogE",
+    "__ZNSt3__13cinE",
+    "__ZTISt9exception",
+    "__ZTVSt9exception",
+    "__ZTISt9bad_alloc",
+    "__ZTVN10__cxxabiv117__class_type_infoE",
+    "__ZTVN10__cxxabiv120__si_class_type_infoE",
+    "__ZTVN10__cxxabiv121__vmi_class_type_infoE",
+}
+
+# Real ARMv7 machine sequences for deterministic fallback mode (never fake-success `mov r0, #0; bx lr`).
+ARMV7_SEQ: dict[str, list[int]] = {
+    "___clzsi2": [0xE16F0F10, 0xE12FFF1E],  # clz r0, r0; bx lr
+    "___clear_cache": [0xF57FF04F, 0xF57FF06F, 0xE12FFF1E],  # dsb sy; isb sy; bx lr
+    "___udivsi3": [
+        0xE3510000,  # cmp r1, #0
+        0x012FFF1E,  # bxeq lr
+        0xE3A02000,  # mov r2, #0
+        0xE1500001,  # 1: cmp r0, r1
+        0x3A000002,  # bcc 2f
+        0xE0400001,  # sub r0, r0, r1
+        0xE2822001,  # add r2, r2, #1
+        0xEAFFFFFA,  # b 1b
+        0xE1A00002,  # 2: mov r0, r2
+        0xE12FFF1E,  # bx lr
+    ],
+    "___divsi3": [
+        0xE3510000,  # cmp r1, #0
+        0x012FFF1E,  # bxeq lr
+        0xE0230001,  # eor r3, r0, r1
+        0xE3500000,  # cmp r0, #0
+        0x42600000,  # rsbmi r0, r0, #0
+        0xE3510000,  # cmp r1, #0
+        0x42611000,  # rsbmi r1, r1, #0
+        0xE3A02000,  # mov r2, #0
+        0xE1500001,  # 1: cmp r0, r1
+        0x3A000002,  # bcc 2f
+        0xE0400001,  # sub r0, r0, r1
+        0xE2822001,  # add r2, r2, #1
+        0xEAFFFFFA,  # b 1b
+        0xE3530000,  # 2: cmp r3, #0
+        0x42622000,  # rsbmi r2, r2, #0
+        0xE1A00002,  # mov r0, r2
+        0xE12FFF1E,  # bx lr
+    ],
+    "___cxa_guard_acquire": [
+        0xE5D01000,  # ldrb r1, [r0]
+        0xE2210001,  # eor r0, r1, #1
+        0xE2000001,  # and r0, r0, #1
+        0xE12FFF1E,  # bx lr
+    ],
+    "___cxa_guard_release": [
+        0xE3A01001,  # mov r1, #1
+        0xE5C01000,  # strb r1, [r0]
+        0xE12FFF1E,  # bx lr
+    ],
+    "___cxa_guard_abort": [
+        0xE3A01000,  # mov r1, #0
+        0xE5C01000,  # strb r1, [r0]
+        0xE12FFF1E,  # bx lr
+    ],
+}
+
+
 def _find_tool(env_var: str, names: list[str], fallbacks: list[str] = []) -> str | None:
     if os.environ.get(env_var):
         p = os.environ[env_var]
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
+        raise SystemExit(f"error: {env_var}={p} is not an executable file")
     for name in names:
         w = shutil.which(name)
         if w:
@@ -622,25 +703,40 @@ def _dylib_cmd(cmd: int, path: str) -> bytes:
 
 
 def _build_macho_dylib_deterministic(spec: dict[str, Any]) -> bytes:
-    """Build a valid ARMv7 MH_DYLIB with the exact install_name, deps, exports, and undefs."""
-    exports: list[str] = spec["exports"]
+    """Build a valid ARMv7 MH_DYLIB with real ARMv7 sequences and loud trap stubs."""
+    exports: list[str] = [s.strip() for s in spec["exports"]]
     undefs: list[str] = [s.strip() for s in spec["libsystem_imports"]]
     deps: list[str] = spec["dylib_deps"]
     install_name: str = spec["install_name"]
 
     text_off = 0x1000
     code = bytearray()
-    export_entries: list[tuple[str, int, int]] = []
-    for idx, sym in enumerate(exports):
-        addr = text_off + idx * 8
-        # mov r0, #0; bx lr
-        code.extend(struct.pack("<II", 0xE3A00000, 0xE12FFF1E))
-        export_entries.append((sym, 1, addr))
+    code_exports: list[tuple[str, int]] = []
+    data_exports: list[str] = []
+    for sym in exports:
+        if sym in DATA_SYMBOLS:
+            data_exports.append(sym)
+            continue
+        addr = text_off + len(code)
+        seq = ARMV7_SEQ.get(sym, [0xE7F000F0, 0xE12FFF1E])  # udf #0; bx lr (loud trap, never fake 0)
+        for word in seq:
+            code.extend(struct.pack("<I", word))
+        code_exports.append((sym, addr))
 
     text_vmsize = max(0x1000, (len(code) + 0xFFF) & ~0xFFF)
     data_vmaddr = text_off + text_vmsize
     data_fileoff = text_off + text_vmsize
-    data_vmsize = 0x1000
+    data_blob = bytearray()
+    export_entries: list[tuple[str, int, int]] = [(sym, 1, addr) for sym, addr in code_exports]
+    for idx, sym in enumerate(data_exports):
+        daddr = data_vmaddr + len(data_blob)
+        # Non-zero sentinel descriptor block in __DATA,__data
+        block = struct.pack("<IIII", 0x48564D44, idx + 1, daddr, 64) + (b"\x01" * 48)
+        data_blob.extend(block)
+        export_entries.append((sym, 2, daddr))
+    if not data_blob:
+        data_blob.extend(struct.pack("<IIII", 0x48564D44, 0, data_vmaddr, 16))
+    data_vmsize = max(0x1000, (len(data_blob) + 0xFFF) & ~0xFFF)
 
     strtab = bytearray(b"\x00")
     nlists = bytearray()
@@ -728,7 +824,7 @@ def _build_macho_dylib_deterministic(spec: dict[str, Any]) -> bytes:
             data_vmsize,
             7,
             3,
-            [("__data", "__DATA", data_vmaddr, 16, data_fileoff, 2, 0)],
+            [("__data", "__DATA", data_vmaddr, len(data_blob), data_fileoff, 4, 0)],
         ),
         seg_cmd(
             "__LINKEDIT",
@@ -790,15 +886,273 @@ def _build_macho_dylib_deterministic(spec: dict[str, Any]) -> bytes:
         6,
         len(cmds),
         len(cmds_blob),
-        0x1 | 0x4 | 0x80,
+        0x4 | 0x80,  # MH_DYLDLINK | MH_TWOLEVEL; image has undefined symbols
     )
     img = bytearray(linkedit_off)
     img[0 : len(header)] = header
     img[len(header) : len(header) + len(cmds_blob)] = cmds_blob
     img[text_off : text_off + len(code)] = code
+    img[data_fileoff : data_fileoff + len(data_blob)] = data_blob
     img.extend(symtab_bytes)
     img.extend(strtab_bytes)
     return bytes(img)
+
+
+FREESTANDING_RUNTIME_C = r"""
+typedef unsigned int uint32_t;
+typedef int int32_t;
+typedef unsigned long long uint64_t;
+typedef long long int64_t;
+typedef unsigned long size_t;
+
+extern void* malloc(size_t) __asm__("_malloc");
+extern void* calloc(size_t, size_t) __asm__("_calloc");
+extern void free(void*) __asm__("_free");
+extern void abort(void) __asm__("_abort");
+extern void* memcpy(void*, const void*, size_t) __asm__("_memcpy");
+extern void* memset(void*, int, size_t) __asm__("_memset");
+extern int pthread_mutex_lock(void*) __asm__("_pthread_mutex_lock");
+extern int pthread_mutex_unlock(void*) __asm__("_pthread_mutex_unlock");
+extern int pthread_mutex_trylock(void*) __asm__("_pthread_mutex_trylock");
+extern int pthread_key_create(uint32_t*, void (*)(void*)) __asm__("_pthread_key_create");
+extern void* pthread_getspecific(uint32_t) __asm__("_pthread_getspecific");
+extern int pthread_setspecific(uint32_t, const void*) __asm__("_pthread_setspecific");
+
+#ifdef BUILD_LIBGCC
+uint32_t __udivsi3_impl(uint32_t n, uint32_t d) __asm__("___udivsi3");
+uint32_t __udivsi3_impl(uint32_t n, uint32_t d) {
+    if (d == 0) return 0;
+    uint32_t q = 0, r = 0;
+    for (int i = 31; i >= 0; --i) {
+        r = (r << 1) | ((n >> i) & 1u);
+        if (r >= d) { r -= d; q |= (1u << i); }
+    }
+    return q;
+}
+
+int32_t __divsi3_impl(int32_t a, int32_t b) __asm__("___divsi3");
+int32_t __divsi3_impl(int32_t a, int32_t b) {
+    if (b == 0) return 0;
+    int neg = (a < 0) ^ (b < 0);
+    uint32_t ua = a < 0 ? (0u - (uint32_t)a) : (uint32_t)a;
+    uint32_t ub = b < 0 ? (0u - (uint32_t)b) : (uint32_t)b;
+    uint32_t q = __udivsi3_impl(ua, ub);
+    return neg ? -(int32_t)q : (int32_t)q;
+}
+
+uint32_t __umodsi3_impl(uint32_t n, uint32_t d) __asm__("___umodsi3");
+uint32_t __umodsi3_impl(uint32_t n, uint32_t d) {
+    if (d == 0) return 0;
+    return n - __udivsi3_impl(n, d) * d;
+}
+
+int32_t __modsi3_impl(int32_t a, int32_t b) __asm__("___modsi3");
+int32_t __modsi3_impl(int32_t a, int32_t b) {
+    if (b == 0) return 0;
+    return a - __divsi3_impl(a, b) * b;
+}
+
+uint64_t __ashldi3_impl(uint64_t a, int b) __asm__("___ashldi3");
+uint64_t __ashldi3_impl(uint64_t a, int b) { return b >= 64 ? 0ULL : (a << b); }
+
+uint64_t __lshrdi3_impl(uint64_t a, int b) __asm__("___lshrdi3");
+uint64_t __lshrdi3_impl(uint64_t a, int b) { return b >= 64 ? 0ULL : (a >> b); }
+
+int64_t __ashrdi3_impl(int64_t a, int b) __asm__("___ashrdi3");
+int64_t __ashrdi3_impl(int64_t a, int b) { return b >= 64 ? (a >> 63) : (a >> b); }
+
+int __clzsi2_impl(uint32_t x) __asm__("___clzsi2");
+int __clzsi2_impl(uint32_t x) { return x ? __builtin_clz(x) : 32; }
+
+int __ctzsi2_impl(uint32_t x) __asm__("___ctzsi2");
+int __ctzsi2_impl(uint32_t x) { return x ? __builtin_ctz(x) : 32; }
+
+void __clear_cache_impl(void* start, void* end) __asm__("___clear_cache");
+void __clear_cache_impl(void* start, void* end) {
+    (void)start;
+    (void)end;
+    __sync_synchronize();
+}
+
+static uint32_t g_sjlj_key = 0;
+static int g_sjlj_key_init = 0;
+
+void _Unwind_SjLj_Register_impl(void* fc) __asm__("__Unwind_SjLj_Register");
+void _Unwind_SjLj_Register_impl(void* fc) {
+    if (!g_sjlj_key_init) {
+        pthread_key_create(&g_sjlj_key, 0);
+        g_sjlj_key_init = 1;
+    }
+    void** prev = (void**)fc;
+    *prev = pthread_getspecific(g_sjlj_key);
+    pthread_setspecific(g_sjlj_key, fc);
+}
+
+void _Unwind_SjLj_Unregister_impl(void* fc) __asm__("__Unwind_SjLj_Unregister");
+void _Unwind_SjLj_Unregister_impl(void* fc) {
+    if (g_sjlj_key_init && fc) {
+        void** prev = (void**)fc;
+        pthread_setspecific(g_sjlj_key, *prev);
+    }
+}
+#endif
+
+#if defined(BUILD_LIBSTDCXX) || defined(BUILD_LIBCXXABI) || defined(BUILD_LIBCXX)
+void* operator_new_impl(size_t sz) __asm__("__Znwm");
+void* operator_new_impl(size_t sz) {
+    void* p = malloc(sz ? sz : 1);
+    if (!p) abort();
+    return p;
+}
+
+void* operator_new_arr_impl(size_t sz) __asm__("__Znam");
+void* operator_new_arr_impl(size_t sz) {
+    return operator_new_impl(sz);
+}
+
+void* operator_new_nt_impl(size_t sz, const void* nt) __asm__("__ZnwmRKSt9nothrow_t");
+void* operator_new_nt_impl(size_t sz, const void* nt) {
+    (void)nt;
+    return malloc(sz ? sz : 1);
+}
+
+void* operator_new_arr_nt_impl(size_t sz, const void* nt) __asm__("__ZnamRKSt9nothrow_t");
+void* operator_new_arr_nt_impl(size_t sz, const void* nt) {
+    (void)nt;
+    return malloc(sz ? sz : 1);
+}
+
+void operator_delete_impl(void* p) __asm__("__ZdlPv");
+void operator_delete_impl(void* p) {
+    if (p) free(p);
+}
+
+void operator_delete_arr_impl(void* p) __asm__("__ZdaPv");
+void operator_delete_arr_impl(void* p) {
+    if (p) free(p);
+}
+
+void operator_delete_nt_impl(void* p, const void* nt) __asm__("__ZdlPvRKSt9nothrow_t");
+void operator_delete_nt_impl(void* p, const void* nt) {
+    (void)nt;
+    if (p) free(p);
+}
+
+void operator_delete_arr_nt_impl(void* p, const void* nt) __asm__("__ZdaPvRKSt9nothrow_t");
+void operator_delete_arr_nt_impl(void* p, const void* nt) {
+    (void)nt;
+    if (p) free(p);
+}
+#endif
+
+#if defined(BUILD_LIBSTDCXX) || defined(BUILD_LIBCXXABI)
+void* cxa_allocate_exception_impl(size_t thrown_size) __asm__("___cxa_allocate_exception");
+void* cxa_allocate_exception_impl(size_t thrown_size) {
+    size_t total = thrown_size + 128;
+    char* raw = (char*)calloc(1, total);
+    if (!raw) abort();
+    return raw + 128;
+}
+
+void cxa_free_exception_impl(void* thrown_object) __asm__("___cxa_free_exception");
+void cxa_free_exception_impl(void* thrown_object) {
+    if (thrown_object) free((char*)thrown_object - 128);
+}
+
+int cxa_guard_acquire_impl(volatile unsigned char* g) __asm__("___cxa_guard_acquire");
+int cxa_guard_acquire_impl(volatile unsigned char* g) {
+    return (*g == 0) ? 1 : 0;
+}
+
+void cxa_guard_release_impl(volatile unsigned char* g) __asm__("___cxa_guard_release");
+void cxa_guard_release_impl(volatile unsigned char* g) {
+    *g = 1;
+}
+
+void cxa_guard_abort_impl(volatile unsigned char* g) __asm__("___cxa_guard_abort");
+void cxa_guard_abort_impl(volatile unsigned char* g) {
+    *g = 0;
+}
+
+void cxa_pure_virtual_impl(void) __asm__("___cxa_pure_virtual");
+void cxa_pure_virtual_impl(void) {
+    abort();
+}
+#endif
+
+#ifdef BUILD_LIBCXX
+void libcxx_mutex_lock(void* m) __asm__("__ZNSt3__15mutex4lockEv");
+void libcxx_mutex_lock(void* m) { pthread_mutex_lock(m); }
+
+void libcxx_mutex_unlock(void* m) __asm__("__ZNSt3__15mutex6unlockEv");
+void libcxx_mutex_unlock(void* m) { pthread_mutex_unlock(m); }
+
+int libcxx_mutex_trylock(void* m) __asm__("__ZNSt3__15mutex8try_lockEv");
+int libcxx_mutex_trylock(void* m) { return pthread_mutex_trylock(m) == 0 ? 1 : 0; }
+#endif
+"""
+
+C_IMPLEMENTED_BY_LIB: dict[str, set[str]] = {
+    "libgcc_s.1.dylib": {
+        "___udivsi3",
+        "___divsi3",
+        "___umodsi3",
+        "___modsi3",
+        "___ashldi3",
+        "___lshrdi3",
+        "___ashrdi3",
+        "___clzsi2",
+        "___ctzsi2",
+        "___clear_cache",
+        "__Unwind_SjLj_Register",
+        "__Unwind_SjLj_Unregister",
+    },
+    "libstdc++.6.dylib": {
+        "__Znwm",
+        "__Znam",
+        "__ZdlPv",
+        "__ZdaPv",
+        "__ZnwmRKSt9nothrow_t",
+        "__ZnamRKSt9nothrow_t",
+        "__ZdlPvRKSt9nothrow_t",
+        "__ZdaPvRKSt9nothrow_t",
+        "___cxa_allocate_exception",
+        "___cxa_free_exception",
+        "___cxa_guard_acquire",
+        "___cxa_guard_release",
+        "___cxa_guard_abort",
+        "___cxa_pure_virtual",
+    },
+    "libc++abi.dylib": {
+        "__Znwm",
+        "__Znam",
+        "__ZdlPv",
+        "__ZdaPv",
+        "__ZnwmRKSt9nothrow_t",
+        "__ZnamRKSt9nothrow_t",
+        "__ZdlPvRKSt9nothrow_t",
+        "__ZdaPvRKSt9nothrow_t",
+        "___cxa_allocate_exception",
+        "___cxa_free_exception",
+        "___cxa_guard_acquire",
+        "___cxa_guard_release",
+        "___cxa_guard_abort",
+        "___cxa_pure_virtual",
+    },
+    "libc++.1.dylib": {
+        "__Znwm",
+        "__Znam",
+        "__ZdlPv",
+        "__ZdaPv",
+        "__ZnwmRKSt9nothrow_t",
+        "__ZnamRKSt9nothrow_t",
+        "__ZdlPvRKSt9nothrow_t",
+        "__ZdaPvRKSt9nothrow_t",
+        "__ZNSt3__15mutex4lockEv",
+        "__ZNSt3__15mutex6unlockEv",
+        "__ZNSt3__15mutex8try_lockEv",
+    },
+}
 
 
 def _build_with_toolchain(
@@ -888,40 +1242,41 @@ def _build_with_toolchain(
             symlink_path.unlink()
         symlink_path.symlink_to("libSystem.B.dylib")
 
+    macro_map = {
+        "libgcc_s.1.dylib": "-DBUILD_LIBGCC=1",
+        "libstdc++.6.dylib": "-DBUILD_LIBSTDCXX=1",
+        "libc++abi.dylib": "-DBUILD_LIBCXXABI=1",
+        "libc++.1.dylib": "-DBUILD_LIBCXX=1",
+    }
+    c_path = work_dir / f"{name}_runtime.c"
+    c_path.write_text(FREESTANDING_RUNTIME_C, encoding="utf-8")
+    c_obj_path = work_dir / f"{name}_runtime.o"
+    subprocess.run(
+        [clang, *DOCUMENTED_CFLAGS, macro_map[name], "-c", str(c_path), "-o", str(c_obj_path)],
+        check=True,
+    )
+
+    c_implemented = C_IMPLEMENTED_BY_LIB.get(name, set())
     asm_path = work_dir / f"{name}.s"
     asm_lines = [
         "\t.syntax unified",
         "\t.text",
         "\t.align 2",
     ]
-    data_syms = {
-        "__ZNSs4_Rep20_S_empty_rep_storageE",
-        "__ZSt4cout",
-        "__ZSt4cerr",
-        "__ZSt4clog",
-        "__ZSt3cin",
-        "__ZNSt3__14coutE",
-        "__ZNSt3__14cerrE",
-        "__ZNSt3__14clogE",
-        "__ZNSt3__13cinE",
-        "__ZTISt9exception",
-        "__ZTVSt9exception",
-        "__ZTISt9bad_alloc",
-        "__ZTVN10__cxxabiv117__class_type_infoE",
-        "__ZTVN10__cxxabiv120__si_class_type_infoE",
-        "__ZTVN10__cxxabiv121__vmi_class_type_infoE",
-    }
     for sym in exports:
         clean = sym.replace(" ", "")
-        if clean in data_syms:
+        if clean in DATA_SYMBOLS or clean in c_implemented:
             continue
-        asm_lines.append(f"\t.globl {clean}\n{clean}:\n\tmov r0, #0\n\tbx lr")
+        # Trap loudly via _abort rather than returning a fake-success 0
+        asm_lines.append(f"\t.globl {clean}\n{clean}:\n\tbl _abort\n\t.inst 0xe7f000f0")
 
     asm_lines.append("\t.data\n\t.align 4")
-    for sym in exports:
+    for idx, sym in enumerate(exports):
         clean = sym.replace(" ", "")
-        if clean in data_syms:
-            asm_lines.append(f"\t.globl {clean}\n{clean}:\n\t.space 64")
+        if clean in DATA_SYMBOLS:
+            asm_lines.append(
+                f"\t.globl {clean}\n{clean}:\n\t.long 0x48564d44, {idx + 1}\n\t.space 56, 1"
+            )
 
     # Reference every imported libSystem symbol in a relocation table so ld64 records the undefined import.
     asm_lines.append("\t.align 2\n__hvm_libsystem_import_refs:")
@@ -944,6 +1299,7 @@ def _build_with_toolchain(
         install_name,
         "-syslibroot",
         str(sdk_dir),
+        str(c_obj_path),
         str(obj_path),
         "-lSystem",
     ]
@@ -951,8 +1307,10 @@ def _build_with_toolchain(
         dep_name = Path(dep).name
         if dep_name == "libSystem.B.dylib":
             continue
-        if (out_dir / dep_name).exists():
-            ld_cmd.append(str(out_dir / dep_name))
+        dep_path = out_dir / dep_name
+        if not dep_path.is_file():
+            raise RuntimeError(f"{name}: dependency {dep_name} not built before link")
+        ld_cmd.append(str(dep_path))
     ld_cmd.extend(["-o", str(out_path)])
     subprocess.run(ld_cmd, check=True)
     return out_path

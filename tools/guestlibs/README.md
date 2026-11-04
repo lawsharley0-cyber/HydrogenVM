@@ -17,10 +17,10 @@ python3 tools/guestlibs/build_guestlibs.py --out /tmp/hvm-guestlibs
 
 - Output `.dylib` binaries and `manifest.json` are written **only** to the directory passed via `--out` (never into the git repository).
 - Compiler flags:
-  - `--target=armv7-apple-ios6.0 -arch armv7 -miphoneos-version-min=6.0 -mfloat-abi=softfp -mfpu=neon -fno-stack-protector -fPIC -O2`
+  - `--target=armv7-apple-ios6.0 -arch armv7 -miphoneos-version-min=6.0 -mfloat-abi=softfp -mfpu=neon -fno-stack-protector -fno-blocks -fPIC -O2 -g0`
 - Linker flags (`arm-apple-darwin11-ld` / `ld64`):
   - `-arch armv7 -ios_version_min 6.0 -dylib -install_name /usr/lib/<name> -compatibility_version 1.0.0 -current_version 1.0.0`
 
 ## Licensing
 
-See [`docs/research/guestlib_licensing.md`](../../docs/research/guestlib_licensing.md) for the full licence analysis (`GPLv3 + GCC Runtime Library Exception` and `Apache-2.0 WITH LLVM-exception`) and owner decision gate before shipping any `.dylib` inside a distributed `.ipa`.
+See [`docs/research/guestlib_licensing.md`](../../docs/research/guestlib_licensing.md) for the full licence analysis (`GPL-2.0-or-later WITH GCC-exception-2.0` and `Apache-2.0 WITH LLVM-exception`) and owner decision gate before shipping any `.dylib` inside a distributed `.ipa`.
