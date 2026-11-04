@@ -962,8 +962,8 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder rl = r.defineClass("NSRunLoop", "NSObject");
     l.nsRunLoop = rl.cls();
     rl.cm<&rc_current>("currentRunLoop").cm<&rc_main>("mainRunLoop");
-    rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:");
-    rl.m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
+    rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:")
+      .m<&r_runModeBeforeDate>("runMode:beforeDate:").m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
 
     ObjC::ClassBuilder obj = r.builder(r.nsObject);
     obj.m<&o_performAfterDelay>("performSelector:withObject:afterDelay:")
