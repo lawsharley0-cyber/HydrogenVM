@@ -41,8 +41,14 @@ done
 
 # A failed stage is annotated as well as printed: workflow logs need admin rights to
 # download, annotations are readable from the run page.
+app_log() {
+    xcrun simctl spawn "$UDID" log show --last 5m --style compact \
+        --predicate 'process == "HydrogenVM"' 2>/dev/null | tail -n 20 | tr '\n' ' ' | cut -c1-600
+}
+
 fail() {
     echo "::error title=cold-start URL handoff::$*"
+    echo "::error title=cold-start app log::$(app_log)"
     echo "FAIL: $*"
     echo "--- ${DATA}/Documents ---"
     ls -la "$DATA/Documents" 2>/dev/null || true
