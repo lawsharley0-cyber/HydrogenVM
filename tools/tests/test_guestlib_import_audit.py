@@ -29,17 +29,21 @@ def _load_import_audit():
 
 
 def _make_synthetic_macho_dylib(
-    deps: list[str],
+    deps: list[str | tuple[str, int]],
     undef_syms: list[tuple[str, int]],
 ) -> bytes:
-    """Build a minimal 32-bit ARM MH_DYLIB with LC_LOAD_DYLIB and LC_SYMTAB."""
+    """Build a minimal 32-bit ARM MH_DYLIB with load commands and LC_SYMTAB."""
     load_cmds = bytearray()
     ncmds = 0
-    for dep in deps:
+    for dep_item in deps:
+        if isinstance(dep_item, tuple):
+            dep, cmd = dep_item
+        else:
+            dep, cmd = dep_item, 0xC
         payload = dep.encode("utf-8") + b"\x00"
         cmdsize = (24 + len(payload) + 3) & ~3
         padded = payload + b"\x00" * (cmdsize - 24 - len(payload))
-        load_cmds.extend(struct.pack("<IIIIII", 0xC, cmdsize, 24, 2, 0x10000, 0x10000) + padded)
+        load_cmds.extend(struct.pack("<IIIIII", cmd, cmdsize, 24, 2, 0x10000, 0x10000) + padded)
         ncmds += 1
 
     strtab = bytearray(b"\x00")
@@ -149,6 +153,24 @@ class GuestLibImportAuditTests(unittest.TestCase):
             )
             parsed = import_audit.parse_macho_undef_symbols(valid_dylib)
             self.assertEqual(parsed, ["_free", "_malloc"])
+
+            # Valid Mach-O with weak dylib (ordinal 1), reexport (ordinal 2), lazy (ordinal 3), upward (ordinal 4), libSystem (ordinal 5)
+            # LC_LOAD_WEAK_DYLIB=0x80000018, LC_REEXPORT_DYLIB=0x8000001f, LC_LAZY_LOAD_DYLIB=0x20, LC_LOAD_UPWARD_DYLIB=0x80000023
+            complex_dylib = root / "complex.dylib"
+            complex_dylib.write_bytes(
+                _make_synthetic_macho_dylib(
+                    [
+                        ("/usr/lib/weak.dylib", 0x80000018),
+                        ("/usr/lib/reexport.dylib", 0x8000001f),
+                        ("/usr/lib/lazy.dylib", 0x20),
+                        ("/usr/lib/upward.dylib", 0x80000023),
+                        "/usr/lib/libSystem.B.dylib"
+                    ],
+                    [("_weak_sym", 1), ("_reexport_sym", 2), ("_lazy_sym", 3), ("_upward_sym", 4), ("_malloc", 5)],
+                )
+            )
+            parsed2 = import_audit.parse_macho_undef_symbols(complex_dylib)
+            self.assertEqual(parsed2, ["_malloc"])
 
             # Truncated Mach-O header
             trunc_dylib = root / "trunc.dylib"

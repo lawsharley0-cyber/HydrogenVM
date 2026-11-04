@@ -963,8 +963,6 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     l.nsRunLoop = rl.cls();
     rl.cm<&rc_current>("currentRunLoop").cm<&rc_main>("mainRunLoop");
     rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:");
-    supportMethod(p, rl, "NSRunLoop", "runMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); },
-                  SupportStatus::Approx, "Runs the requested mode until work or deadline but always returns true");
     rl.m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
 
     ObjC::ClassBuilder obj = r.builder(r.nsObject);

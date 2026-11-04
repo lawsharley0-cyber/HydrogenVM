@@ -32,6 +32,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MH_MAGIC = 0xFEEDFACE
 LC_SYMTAB = 0x2
 LC_LOAD_DYLIB = 0xC
+LC_LOAD_WEAK_DYLIB = 0x80000018
+LC_REEXPORT_DYLIB = 0x8000001f
+LC_LAZY_LOAD_DYLIB = 0x20
+LC_LOAD_UPWARD_DYLIB = 0x80000023
 N_EXT = 0x01
 N_TYPE = 0x0E
 N_UNDF = 0x0
@@ -407,16 +411,16 @@ def parse_macho_undef_symbols(dylib_path: Path) -> list[str]:
         cmd, cmdsize = struct.unpack_from("<II", data, off)
         if cmdsize < 8 or off + cmdsize > len(data):
             raise ValueError(f"{dylib_path}: invalid load command size {cmdsize} at offset {off}")
-        if cmd == LC_LOAD_DYLIB:
+        if cmd in (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, LC_REEXPORT_DYLIB, LC_LAZY_LOAD_DYLIB, LC_LOAD_UPWARD_DYLIB):
             if cmdsize < 24:
-                raise ValueError(f"{dylib_path}: truncated LC_LOAD_DYLIB command")
+                raise ValueError(f"{dylib_path}: truncated dylib load command")
             str_off = struct.unpack_from("<I", data, off + 8)[0]
             if str_off >= cmdsize:
-                raise ValueError(f"{dylib_path}: invalid LC_LOAD_DYLIB name offset")
+                raise ValueError(f"{dylib_path}: invalid dylib name offset")
             raw = data[off + str_off : off + cmdsize]
             end = raw.find(b"\x00")
             if end < 0:
-                raise ValueError(f"{dylib_path}: unterminated LC_LOAD_DYLIB install name")
+                raise ValueError(f"{dylib_path}: unterminated dylib install name")
             loaded_dylibs.append(raw[:end].decode("utf-8", errors="replace"))
         off += cmdsize
 
@@ -739,10 +743,16 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
     xlocale_total = len(xlocale_lifecycle) + len(xlocale_ctype) + len(xlocale_format)
     cat_missing = [s for s in cxx_missing if s.startswith("_cat")]
     ldbl_missing = [s for s in cxx_missing if s in {"_strtold", "_wcstold"}]
-    wchar_and_coll_missing = [
-        s
-        for s in cxx_missing
-        if s not in set(xlocale_lifecycle + xlocale_ctype + xlocale_format + cat_missing + ldbl_missing)
+    wchar_and_coll_names = {
+        "_btowc", "_mbrlen", "_mbrtowc", "_mbsnrtowcs", "_mbsrtowcs", "_mbtowc",
+        "_strcoll", "_strxfrm", "_wcrtomb", "_wcscoll", "_wcsnrtombs", "_wcsrtombs",
+        "_wcsxfrm", "_wctob"
+    }
+    wchar_and_coll_missing = [s for s in cxx_missing if s in wchar_and_coll_names]
+
+    other_missing = [
+        s for s in cxx_missing
+        if s not in set(xlocale_lifecycle + xlocale_ctype + xlocale_format + cat_missing + ldbl_missing + wchar_and_coll_missing)
     ]
 
     def fmt_list(items: list[str]) -> str:
@@ -778,6 +788,7 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
             f"- **Multibyte / Wide-Character Conversion & Collation (`<wchar.h>` / `<string.h>`) Functions ({len(wchar_and_coll_missing)} symbols)**: {fmt_list(wchar_and_coll_missing)}.",
             f"- **Long-Double String Parsers ({len(ldbl_missing)} symbols)**: {fmt_list(ldbl_missing)}.",
             f"- **POSIX Message Catalogs ({len(cat_missing)} symbols)**: {fmt_list(cat_missing)}.",
+            f"- **Other Unclassified Symbols ({len(other_missing)} symbols)**: {fmt_list(other_missing)}.",
             "",
             "---",
             "",

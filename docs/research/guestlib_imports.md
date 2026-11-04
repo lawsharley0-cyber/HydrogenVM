@@ -49,6 +49,7 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 - **Multibyte / Wide-Character Conversion & Collation (`<wchar.h>` / `<string.h>`) Functions (13 symbols)**: `_btowc`, `_mbrlen`, `_mbrtowc`, `_mbsnrtowcs`, `_mbsrtowcs`, `_mbtowc`, `_strxfrm`, `_wcrtomb`, `_wcscoll`, `_wcsnrtombs`, `_wcsrtombs`, `_wcsxfrm`, `_wctob`.
 - **Long-Double String Parsers (2 symbols)**: `_strtold`, `_wcstold`.
 - **POSIX Message Catalogs (3 symbols)**: `_catclose`, `_catgets`, `_catopen`.
+- **Other Unclassified Symbols (0 symbols)**: none.
 
 ---
 
