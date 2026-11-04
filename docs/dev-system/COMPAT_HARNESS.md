@@ -49,7 +49,7 @@ Resolution:
 1. If `HVM_FIXTURE_ROOT` or `--fixture-root` is set, the file is `<root>/<fixtureRelPath>`. The path must stay inside the root. A hash mismatch is an error. A missing file does **not** fall back to git.
 2. Otherwise, three ids may use `legacyRepoPath`: `angry-birds`, `tiny-tower`, `art-of-glow`. Those IPAs are already on `main`. Any other id with a repository path is rejected at load. `HVM_ALLOW_LEGACY_IPAS=0` or `--no-legacy-repo` disables this fallback.
 
-Removing the committed IPAs is an owner decision. The harness is ready for the move: put the same bytes at the `fixtureRelPath` and set the environment variable. History will still contain the old blobs until someone rewrites it, which this project does not do.
+The three committed IPAs were removed from the working tree on the owner's instruction (#204), so the `legacyRepoPath` fallback now finds nothing. Real games run from the private store: `private-fixture-availability.yml` runs on every push to main, weekly, and on demand. Public pull requests cannot read the store, so the pull-request harness runs `--skip-apps`: unit and Python suites are compared with the baseline, apps are not run and the diff says `apps-not-run`. History still contains the old blobs; this project does not rewrite history.
 
 Clash Royale's pinned hash matches `tools/clash_royale_probe.py`. The entry is optional. The third-party URL is not fetched.
 

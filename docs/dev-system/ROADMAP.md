@@ -57,7 +57,7 @@ Depends on Needs owner: Mac runner, signing, which devices have the extended vir
 
 - Compile current `app/` (the `[mac]` job never started for `06a7b16`).
 - Point `HVM_FIXTURE_ROOT` at the store and stop resolving `legacyRepoPath`.
-- Only then consider removing the three IPAs from the tree. History already contains them; deletion is an owner decision.
+- Done (#204): the three IPAs are removed from the tree; real games run from the private store on trusted main. History still contains them.
 
 ## What can run at the same time
 
