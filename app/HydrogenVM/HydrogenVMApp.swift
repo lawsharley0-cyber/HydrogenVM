@@ -6,6 +6,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         HVMCrashJournal.installSignalHandlers()
         HVMEngine.installPlatformServices()
+        #if COLD_START_URL_TEST && targetEnvironment(simulator)
+        // Before any view exists: separates "the process never started" from "the link never
+        // arrived" when the cold-start handoff regresses.
+        ColdStartURLTest.record("launched", value: Bundle.main.bundleIdentifier ?? "unknown")
+        #endif
         return true
     }
 

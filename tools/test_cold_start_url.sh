@@ -39,11 +39,24 @@ for _ in $(seq 1 240); do
     sleep 0.5
 done
 
-for stage in queued routed guest-passed; do
+# A failed stage is annotated as well as printed: workflow logs need admin rights to
+# download, annotations are readable from the run page.
+fail() {
+    echo "::error title=cold-start URL handoff::$*"
+    echo "FAIL: $*"
+    echo "--- ${DATA}/Documents ---"
+    ls -la "$DATA/Documents" 2>/dev/null || true
+    exit 1
+}
+
+for stage in launched queued routed guest-passed; do
     file="$DATA/Documents/cold-start-$stage"
-    [ -f "$file" ] || { echo "FAIL: missing $stage marker"; exit 1; }
+    [ -f "$file" ] || fail "missing $stage marker"
     expected=$GUEST_ID
-    [ "$stage" != queued ] || expected=$URL
-    [ "$(cat "$file")" = "$expected" ] || { echo "FAIL: unexpected $stage marker"; exit 1; }
+    case "$stage" in
+        launched) expected=$BUNDLE_ID ;;   # the process ran at all
+        queued) expected=$URL ;;           # the link reached the app and waits
+    esac
+    [ "$(cat "$file")" = "$expected" ] || fail "unexpected $stage marker: $(cat "$file")"
 done
-echo "PASS: scene queued $URL, library routed $GUEST_ID, and the guest passed"
+echo "PASS: app launched, the link queued $URL, the library routed $GUEST_ID, and the guest passed"
