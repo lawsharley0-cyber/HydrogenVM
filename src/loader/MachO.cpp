@@ -339,8 +339,14 @@ void runBind(Ctx& cx, const uint8_t* p, size_t n, bool lazy, bool weak) {
 }
 
 void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const std::string& prefix, uint32_t depth,
-                    std::unordered_set<uint64_t>& visited) {
-    if (depth > 256 || nodeOff >= n || !visited.insert(nodeOff).second) return;
+                    std::unordered_set<uint64_t>& activePath, size_t& steps) {
+    if (depth > 256 || nodeOff >= n || steps >= 65536 || !activePath.insert(nodeOff).second) return;
+    ++steps;
+    struct Guard {
+        std::unordered_set<uint64_t>& set;
+        uint64_t off;
+        ~Guard() { set.erase(off); }
+    } guard{activePath, nodeOff};
     Stream s{p + nodeOff, p + n};
     const uint64_t termSize = s.uleb();
     if (termSize > size_t(s.end - s.p)) throw MachOError("Mach-O: export trie terminal overrun");
@@ -364,7 +370,7 @@ void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const
     for (uint8_t i = 0; i < childCount; ++i) {
         const std::string edge = cs.cstr();
         const uint64_t childOff = cs.uleb();
-        walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1, visited);
+        walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1, activePath, steps);
     }
 }
 
@@ -643,8 +649,9 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
         if (dyldInfo->lazy_bind_size) runBind(cx, stream(dyldInfo->lazy_bind_off, dyldInfo->lazy_bind_size), dyldInfo->lazy_bind_size, true, false);
         if (dyldInfo->weak_bind_size) runBind(cx, stream(dyldInfo->weak_bind_off, dyldInfo->weak_bind_size), dyldInfo->weak_bind_size, false, true);
         if (dyldInfo->export_size) {
-            std::unordered_set<uint64_t> visited;
-            walkExportTrie(cx, stream(dyldInfo->export_off, dyldInfo->export_size), dyldInfo->export_size, 0, "", 0, visited);
+            std::unordered_set<uint64_t> activePath;
+            size_t steps = 0;
+            walkExportTrie(cx, stream(dyldInfo->export_off, dyldInfo->export_size), dyldInfo->export_size, 0, "", 0, activePath, steps);
         }
     } else {
         legacyBinds(cx);

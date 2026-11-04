@@ -182,6 +182,19 @@ int main() {
                        img.initializers.size() == 1 && img.initializers[0] == 0x04000401u &&
                        img.exports.count("_trie_fn") == 1 && img.exports["_trie_fn"] == 0x04000420u;
 
+        // Shared terminal export trie: root node with two child edges ("_a" and "_b") both pointing to
+        // offset 10 (terminal at 0x0420) must retain both exports.
+        const uint8_t sharedTrie[15] = {
+            0x00, 0x02, '_', 'a', 0x00, 10, '_', 'b', 0x00, 10,
+            0x03, 0x00, 0xa0, 0x08, 0x00
+        };
+        put32(200, sizeof(sharedTrie));
+        for (size_t i = 0; i < sizeof(sharedTrie); ++i) dylib[0x1000 + i] = sharedTrie[i];
+        Hydrogen::Memory::GuestArena sharedArena;
+        auto sharedImg = Hydrogen::Loader::loadMachO(sharedArena, dylib, "shared.dylib", {0x04000000u});
+        dylibOk = dylibOk && sharedImg.exports.count("_a") == 1 && sharedImg.exports.count("_b") == 1 &&
+                  sharedImg.exports["_a"] == 0x04000420u && sharedImg.exports["_b"] == 0x04000420u;
+
         // Self-referencing export trie (root node with two child edges pointing back to offset 0):
         // must terminate immediately instead of exploring 2^256 cyclic paths.
         const uint8_t cyclicTrie[8] = {
