@@ -378,7 +378,7 @@ private:
     void loadGuestDylibs();
     void unmapGuestDylibs();
     void bindImports();
-    void bindImageImports(const Loader::Image& img, bool isMainExecutable, std::vector<std::string>& missingFns, std::unordered_map<std::string, uint32_t>& cache);
+    void bindImageImports(const Loader::Image& img, std::vector<std::string>& missingFns, std::unordered_map<std::string, uint32_t>& cache);
     uint32_t resolveImport(const Loader::BindRecord& b);
     void setupMainThread();
     void setupEnvironment();

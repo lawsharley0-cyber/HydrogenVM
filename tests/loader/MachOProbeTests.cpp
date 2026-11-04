@@ -181,6 +181,18 @@ int main() {
                        img.dylibs.size() == 1 && img.dylibWeak.size() == 1 && img.dylibWeak[0] &&
                        img.initializers.size() == 1 && img.initializers[0] == 0x04000401u &&
                        img.exports.count("_trie_fn") == 1 && img.exports["_trie_fn"] == 0x04000420u;
+
+        // Self-referencing export trie (root node with two child edges pointing back to offset 0):
+        // must terminate immediately instead of exploring 2^256 cyclic paths.
+        const uint8_t cyclicTrie[8] = {
+            0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00
+        };
+        put32(200, sizeof(cyclicTrie));
+        for (size_t i = 0; i < sizeof(cyclicTrie); ++i) dylib[0x1000 + i] = cyclicTrie[i];
+        Hydrogen::Memory::GuestArena cyclicArena;
+        auto cyclicImg = Hydrogen::Loader::loadMachO(cyclicArena, dylib, "cyclic.dylib", {0x04000000u});
+        dylibOk = dylibOk && cyclicImg.exports.empty();
+
         if (dylibOk) {
             std::printf("PASS mh_dylib_routines_weak_and_export_trie\n");
             ++passed;

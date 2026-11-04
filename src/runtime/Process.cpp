@@ -629,7 +629,7 @@ uint32_t Process::resolveImport(const Loader::BindRecord& b) {
     return makeMissingStub(b.symbol);
 }
 
-void Process::bindImageImports(const Loader::Image& img, bool isMainExecutable,
+void Process::bindImageImports(const Loader::Image& img,
                                std::vector<std::string>& missingFns,
                                std::unordered_map<std::string, uint32_t>& cache) {
     for (const auto& b : img.binds) if (b.lazy) calledImports_.insert(b.symbol);
@@ -653,7 +653,7 @@ void Process::bindImageImports(const Loader::Image& img, bool isMainExecutable,
             const bool known = lookupSymbol(b.symbol).has_value();
             target = resolveImport(b);
             cache.emplace(key, target);
-            if (isMainExecutable && !known && target && engine_->isHleAddress(target) &&
+            if (!known && target && engine_->isHleAddress(target) &&
                 engine_->hleName(engine_->hleIndex(target)) == b.symbol && !looksLikeData(b.symbol))
                 missingFns.push_back(demangle(b.symbol));
         }
@@ -698,8 +698,8 @@ void Process::bindImports() {
     std::unordered_map<std::string, uint32_t> cache;
     std::vector<std::string> missingFns;
     for (const auto& dylib : guestDylibs_)
-        bindImageImports(dylib, false, missingFns, cache);
-    bindImageImports(image_, true, missingFns, cache);
+        bindImageImports(dylib, missingFns, cache);
+    bindImageImports(image_, missingFns, cache);
     unimplementedImports_ = missingFns;
     if (!missingFns.empty()) {
         std::string list;
