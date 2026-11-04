@@ -246,17 +246,6 @@ int main() {
         dylibOk = dylibOk && sharedImg.exports.count("_a") == 1 && sharedImg.exports.count("_b") == 1 &&
                   sharedImg.exports["_a"] == 0x04000420u && sharedImg.exports["_b"] == 0x04000420u;
 
-        // Self-referencing export trie (root node with two child edges pointing back to offset 0):
-        // must terminate immediately instead of exploring 2^256 cyclic paths.
-        const uint8_t cyclicTrie[8] = {
-            0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00
-        };
-        put32(200, sizeof(cyclicTrie));
-        for (size_t i = 0; i < sizeof(cyclicTrie); ++i) dylib[0x1000 + i] = cyclicTrie[i];
-        Hydrogen::Memory::GuestArena cyclicArena;
-        auto cyclicImg = Hydrogen::Loader::loadMachO(cyclicArena, dylib, "cyclic.dylib", {0x04000000u});
-        dylibOk = dylibOk && cyclicImg.exports.empty();
-
         if (dylibOk) {
             std::printf("PASS mh_dylib_routines_weak_and_export_trie\n");
             ++passed;
@@ -286,6 +275,7 @@ int main() {
         checkTrie("export_trie_child_past_end", {0, 1, 'x', 0, 6}, "export trie child offset out of range");
         checkTrie("export_trie_at_work_limit", largeExportTrie(false), "");
         checkTrie("export_trie_exceeds_work_limit", largeExportTrie(true), "export trie work limit exceeded");
+        checkTrie("export_trie_cycle", {0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00}, "export trie cycle detected");
     }
 
     std::printf("MachOProbe: %d passed, %d failed\n", passed, failed);

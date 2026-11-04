@@ -342,7 +342,7 @@ void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const
                     std::unordered_set<uint64_t>& activePath, size_t& steps) {
     if (depth > 256 || nodeOff >= n) return;
     if (steps >= 65536) throw MachOError("Mach-O: export trie work limit exceeded");
-    if (!activePath.insert(nodeOff).second) return;
+    if (!activePath.insert(nodeOff).second) throw MachOError("Mach-O: export trie cycle detected");
     ++steps;
     struct Guard {
         std::unordered_set<uint64_t>& set;
