@@ -42,7 +42,13 @@ struct EmulatorScreen: UIViewRepresentable {
     final class ScreenView: UIView, UIGestureRecognizerDelegate {
         var onTouch: ((HVMTouchPhase, CGPoint, Int) -> Void)?
         var onOverlayGesture: (() -> Void)? {
-            didSet { holdRecognizer.isEnabled = onOverlayGesture != nil }
+            didSet {
+                holdRecognizer.isEnabled = onOverlayGesture != nil
+                accessibilityCustomActions = onOverlayGesture == nil ? nil : [
+                    UIAccessibilityCustomAction(name: "Open Player Controls", target: self,
+                                                selector: #selector(openPlayerControls(_:)))
+                ]
+            }
         }
         // Observes only: it never cancels or delays the touches the game receives.
         private lazy var holdRecognizer: UILongPressGestureRecognizer = {
@@ -59,6 +65,12 @@ struct EmulatorScreen: UIViewRepresentable {
 
         @objc private func overlayHeld(_ r: UILongPressGestureRecognizer) {
             if r.state == .began { onOverlayGesture?() }
+        }
+
+        @objc private func openPlayerControls(_ action: UIAccessibilityCustomAction) -> Bool {
+            guard let onOverlayGesture else { return false }
+            onOverlayGesture()
+            return true
         }
 
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
