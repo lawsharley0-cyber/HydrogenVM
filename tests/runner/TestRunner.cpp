@@ -7859,6 +7859,27 @@ int runFullSubsystemTests() {
         // -currentMode is nil when the loop is idle and the running mode's own string inside a callout.
         auto& mr = ObjC::rt(modeProc);
         check(uint32_t(mr.send(mcpu, mainLoop, "currentMode")) == 0, "NSRunLoop currentMode is nil while the loop is not running");
+
+        // -runMode:beforeDate: answers whether the loop ran work, as Cocoa documents: NO when the date
+        // passes with nothing to do, YES when a source or timer fired first. A constant YES is not an answer.
+        {
+            ProcessConfig beforeCfg;
+            beforeCfg.homePath = "/tmp/hvm_runmode_before_date";
+            Process beforeProc(beforeCfg);
+            auto& br = ObjC::rt(beforeProc);
+            auto& bcpu = beforeProc.mainThread().cpu;
+            Ctx bx{beforeProc, bcpu, beforeProc.mem()};
+            const uint32_t bLoop = uint32_t(br.send(bcpu, br.getClass("NSRunLoop"), "currentRunLoop"));
+            const uint32_t bMode = Foundation::makeString(bx, "HVMBeforeDate");
+            const uint32_t pastDate = Foundation::makeDate(bx, Foundation::now() - 0.05);
+            check(uint32_t(br.send(bcpu, bLoop, "runMode:beforeDate:", {bMode, pastDate})) == 0,
+                  "NSRunLoop runMode:beforeDate: returns NO when the date passes with no work");
+            bool beforeBlockRan = false;
+            Foundation::mainRunLoop(beforeProc).post([&](CPU::Cpu&) { beforeBlockRan = true; });
+            const uint32_t futureDate = Foundation::makeDate(bx, Foundation::now() + 5.0);
+            check(uint32_t(br.send(bcpu, bLoop, "runMode:beforeDate:", {bMode, futureDate})) != 0 && beforeBlockRan,
+                  "NSRunLoop runMode:beforeDate: returns YES when queued work ran");
+        }
         std::string seenMode = "<unset>";
         const uint32_t modeProbe = modeProc.defineFunction("test_mode_probe_fire", [&](Ctx& x) {
             const uint32_t m = uint32_t(ObjC::rt(x).send(x.cpu, mainLoop, "currentMode"));

@@ -193,18 +193,21 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
     return ran;
 }
 
-void RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource, const std::string& mode) {
+bool RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource, const std::string& mode) {
+    bool ranAny = false;
     for (;;) {
         if (proc.stopping()) throw ProcessExit(0, "stopping");
-        if (proc.terminating()) return;
+        if (proc.terminating()) return ranAny;
         {
             std::lock_guard<std::mutex> lk(mu);
-            if (stopFlag) { stopFlag = false; return; }
+            if (stopFlag) { stopFlag = false; return ranAny; }   // stopped: report only work that did run
         }
         const double remaining = until - now();
-        if (remaining <= 0) { runOnce(c, 0, mode); return; }
-        const bool ran = runOnce(c, std::min(remaining, 0.1), mode);
-        if (ran && returnAfterSource) return;
+        if (remaining <= 0) return runOnce(c, 0, mode) || ranAny;
+        if (runOnce(c, std::min(remaining, 0.1), mode)) {
+            ranAny = true;
+            if (returnAfterSource) return true;
+        }
     }
 }
 
@@ -469,9 +472,10 @@ id rc_main(Ctx& x, id, SEL) { return loopObject(x, *L(x).main); }
 void r_addTimer(Ctx& x, id self, SEL, id timer, id mode) { scheduleTimer(x, timer, loopOf(x, self), modeKey(x, mode)); }
 void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopOf(x, self).runUntil(x.cpu, 1e18, false, kDefaultModeKey); }
 void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopOf(x, self).runUntil(x.cpu, dateValue(x, date), false, kDefaultModeKey); }
+// -runMode:beforeDate: answers what the loop did: YES when a source or timer fired (or a queued block ran)
+// before the date, NO when the loop stayed idle until the date passed. A constant YES would be a fabrication.
 bool r_runModeBeforeDate(Ctx& x, id self, SEL, id mode, id date) {
-    loopOf(x, self).runUntil(x.cpu, dateValue(x, date), true, runModeKey(x, mode));
-    return true;
+    return loopOf(x, self).runUntil(x.cpu, dateValue(x, date), true, runModeKey(x, mode));
 }
 // The mode being run, as the guest's string (no internal "s:" key prefix); nil when the loop is not running.
 id r_currentMode(Ctx& x, id self, SEL) {
