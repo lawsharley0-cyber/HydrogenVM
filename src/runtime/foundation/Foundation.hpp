@@ -147,7 +147,7 @@ struct RunLoop {
     // Dispatch only members of `mode`; an empty mode pumps every membership (the host pump).
     bool runOnce(CPU::Cpu& c, double maxWait, const std::string& mode = {});
     // Run until `until` (absolute, reference-date seconds) or stop().
-    void runUntil(CPU::Cpu& c, double until, bool returnAfterSource = false, const std::string& mode = {});
+    bool runUntil(CPU::Cpu& c, double until, bool returnAfterSource = false, const std::string& mode = {});
     void stop() { std::lock_guard<std::mutex> lk(mu); stopFlag = true; cv.notify_all(); }
 };
 // A mode object (CFString/NSString) as the runtime keys it; null is the default mode.

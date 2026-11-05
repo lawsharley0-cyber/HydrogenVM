@@ -193,18 +193,27 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
     return ran;
 }
 
-void RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource, const std::string& mode) {
+bool RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource, const std::string& mode) {
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        bool hasItem = false;
+        for (const auto& tm : timers) if (tm->valid && inMode(tm->modes, mode)) { hasItem = true; break; }
+        if (!hasItem) {
+            for (const auto& s : sources) if (s->valid.load() && inMode(s->modes, mode)) { hasItem = true; break; }
+        }
+        if (!hasItem) return false;
+    }
     for (;;) {
         if (proc.stopping()) throw ProcessExit(0, "stopping");
-        if (proc.terminating()) return;
+        if (proc.terminating()) return true;
         {
             std::lock_guard<std::mutex> lk(mu);
-            if (stopFlag) { stopFlag = false; return; }
+            if (stopFlag) { stopFlag = false; return true; }
         }
         const double remaining = until - now();
-        if (remaining <= 0) { runOnce(c, 0, mode); return; }
+        if (remaining <= 0) { runOnce(c, 0, mode); return true; }
         const bool ran = runOnce(c, std::min(remaining, 0.1), mode);
-        if (ran && returnAfterSource) return;
+        if (ran && returnAfterSource) return true;
     }
 }
 
@@ -470,8 +479,8 @@ void r_addTimer(Ctx& x, id self, SEL, id timer, id mode) { scheduleTimer(x, time
 void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopOf(x, self).runUntil(x.cpu, 1e18, false, kDefaultModeKey); }
 void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopOf(x, self).runUntil(x.cpu, dateValue(x, date), false, kDefaultModeKey); }
 bool r_runModeBeforeDate(Ctx& x, id self, SEL, id mode, id date) {
-    loopOf(x, self).runUntil(x.cpu, dateValue(x, date), true, runModeKey(x, mode));
-    return true;
+    const double d = dateValue(x, date);
+    return loopOf(x, self).runUntil(x.cpu, d, true, runModeKey(x, mode));
 }
 // The mode being run, as the guest's string (no internal "s:" key prefix); nil when the loop is not running.
 id r_currentMode(Ctx& x, id self, SEL) {
