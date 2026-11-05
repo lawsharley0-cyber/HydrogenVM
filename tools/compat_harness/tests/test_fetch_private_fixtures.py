@@ -145,6 +145,60 @@ class PrivateFixtureTests(unittest.TestCase):
                 stage(fixtures, "private-folder", "synthetic-token", str(self.manifest))
         self.assertEqual(list(outside.iterdir()), [])
 
+
+    def test_tempdir_symlink_allowed(self):
+        # Create a temp directory structure similar to macOS /var -> /private/var
+        import tempfile
+        import os
+        from pathlib import Path
+        import shutil
+        import fetch_private_fixtures
+
+        # create a base dir
+        base = Path(self.tmp.name) / "base"
+        base.mkdir()
+
+        real_dir = base / "private" / "var"
+        real_dir.mkdir(parents=True)
+
+        link_dir = base / "var"
+        os.symlink("private/var", link_dir)
+
+        with patch("tempfile.gettempdir", return_value=str(link_dir)):
+            # should succeed without raising
+            root = link_dir / "fixture_root"
+            fetch_private_fixtures._new_private_root(root)
+            self.assertTrue(root.is_dir())
+            self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+            self.assertTrue((root / "ipas").is_dir())
+
+    def test_symlink_below_tempdir_refused(self):
+        import tempfile
+        import os
+        from pathlib import Path
+        import fetch_private_fixtures
+
+        # create a base dir
+        base = Path(self.tmp.name) / "base"
+        base.mkdir()
+
+        real_dir = base / "private" / "var"
+        real_dir.mkdir(parents=True)
+
+        link_dir = base / "var"
+        os.symlink("private/var", link_dir)
+
+        evil_target = base / "elsewhere"
+        evil_target.mkdir()
+
+        evil_link = link_dir / "evil"
+        os.symlink(str(evil_target), evil_link)
+
+        with patch("tempfile.gettempdir", return_value=str(link_dir)):
+            with self.assertRaisesRegex(fetch_private_fixtures.FixtureFetchError, "symlinked fixture-root ancestor is forbidden"):
+                root = evil_link / "fx"
+                fetch_private_fixtures._new_private_root(root)
+
     def test_symlinked_ancestor_is_refused(self):
         outside = self.root / "outside"
         outside.mkdir()
