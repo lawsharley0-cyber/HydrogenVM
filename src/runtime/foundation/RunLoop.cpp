@@ -963,10 +963,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     l.nsRunLoop = rl.cls();
     rl.cm<&rc_current>("currentRunLoop").cm<&rc_main>("mainRunLoop");
     rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:")
-      .m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
-
-    supportMethod(p, rl, "NSRunLoop", "runMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); },
-                  SupportStatus::Approx, "HydrogenVM", "c@:@@");
+      .m<&r_runModeBeforeDate>("runMode:beforeDate:").m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
 
     ObjC::ClassBuilder obj = r.builder(r.nsObject);
     obj.m<&o_performAfterDelay>("performSelector:withObject:afterDelay:")
