@@ -5850,17 +5850,41 @@ int runFullSubsystemTests() {
                           "pthread getters reject read-only output without changing bytes");
                     proc.mem().unmap(readOnly, 4096);
 
+                    check(invoke("_pthread_attr_setstack", {attr, base + 1, size}) == 22 &&
+                          invoke("_pthread_attr_setstackaddr", {attr, base + size + 1}) == 22,
+                          "pthread rejects unaligned custom bases and tops");
                     check(invoke("_pthread_attr_setstack", {attr, base, size}) == 0, "caller-supplied stack attributes accepted");
                     auto launch = [&] {
                         const auto result = invoke("_pthread_create", {out, attr, worker, 0});
                         if (result == 0) invoke("_pthread_join", {proc.mem().read<uint32_t>(out), 0});
                         return result;
                     };
+                    const uint32_t outBase = proc.allocStatic(4), outSize = proc.allocStatic(4);
+                    check(invoke("_pthread_attr_getstackaddr", {attr, out}) == 0 &&
+                          proc.mem().read<uint32_t>(out) == base + size &&
+                          invoke("_pthread_attr_getstack", {attr, outBase, outSize}) == 0 &&
+                          proc.mem().read<uint32_t>(outBase) == base && proc.mem().read<uint32_t>(outSize) == size,
+                          "custom stack getters return supplied base top and size");
                     check(launch() == 0 && *observed == base && proc.mem().isMapped(base),
                           "caller stack is used and remains mapped after join");
                     check(invoke("_pthread_attr_setstackaddr", {attr, base + size * 2}) == 0 &&
                           launch() == 0 && *observed == base + size,
                           "setting stack top supersedes previous base");
+                    check(invoke("_pthread_attr_getstackaddr", {attr, out}) == 0 &&
+                          proc.mem().read<uint32_t>(out) == base + size * 2 &&
+                          invoke("_pthread_attr_getstack", {attr, outBase, outSize}) == 0 &&
+                          proc.mem().read<uint32_t>(outBase) == base + size && proc.mem().read<uint32_t>(outSize) == size,
+                          "stack-top getters derive the current base and size");
+                    invoke("_pthread_attr_setstack", {attr, base, size});
+                    proc.mem().protect(base, 4096, Memory::kProtRead);
+                    *observed = 0;
+                    check(launch() == 22 && *observed == 0, "pthread rejects read-only custom stacks without starting");
+                    proc.mem().protect(base, 4096, Memory::kProtRW);
+                    proc.mem().write<uint32_t>(attr + 12, 0xfffff000u);
+                    check(launch() == 22 && *observed == 0, "pthread create rejects an overflowing raw custom stack");
+                    proc.mem().write<uint32_t>(attr + 12, base + 1);
+                    check(launch() == 22 && *observed == 0, "pthread create rejects an unaligned raw custom stack");
+                    invoke("_pthread_attr_setstack", {attr, base, size});
                     invoke("_pthread_attr_setstackaddr", {attr, 0x1000});
                     check(launch() == 22, "pthread rejects stack top below size");
                     check(invoke("_pthread_attr_setstack", {attr, base, 8192}) == 22,

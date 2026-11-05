@@ -343,7 +343,7 @@ int32_t pa_setdetachstate(Ctx& x, GuestPtr a, int32_t s) {
 }
 int32_t pa_getdetachstate(Ctx& x, GuestPtr a, GuestPtr out) { return validAttr(x, a) ? attrWrite(x, out, x.mem.read<uint32_t>(a + 8)) : 22; }
 int32_t pa_setstackaddr(Ctx& x, GuestPtr a, GuestPtr top) {
-    if (!validAttr(x, a) || !top) return 22;
+    if (!validAttr(x, a) || !top || (top & 4095)) return 22;
     const uint32_t values[] = {0, top};
     uint32_t fault = 0;
     return x.mem.copyInWritable(a + 12, values, sizeof(values), fault) ? 0 : 14;
@@ -354,7 +354,7 @@ int32_t pa_getstackaddr(Ctx& x, GuestPtr a, GuestPtr out) {
     return attrWrite(x, out, base ? base + x.mem.read<uint32_t>(a + 4) : x.mem.read<uint32_t>(a + 16));
 }
 int32_t pa_setstack(Ctx& x, GuestPtr a, GuestPtr base, uint32_t size) {
-    if (!validAttr(x, a) || !base || !validCustomSize(size) || uint64_t(base) + size > UINT32_MAX) return 22;
+    if (!validAttr(x, a) || !base || (base & 4095) || !validCustomSize(size) || uint64_t(base) + size > UINT32_MAX) return 22;
     const uint32_t values[] = {size, x.mem.read<uint32_t>(a + 8), base, 0};
     uint32_t fault = 0;
     return x.mem.copyInWritable(a + 4, values, sizeof(values), fault) ? 0 : 14;
@@ -382,7 +382,7 @@ int32_t t_create(Ctx& x, GuestPtr out, GuestPtr attr, GuestPtr fn, GuestPtr arg)
             if (top <= stack) return 22;
             stackBase = top - stack;
         }
-        if (stackBase && (!validCustomSize(stack) || uint64_t(stackBase) + stack > UINT32_MAX)) return 22;
+        if (stackBase && ((stackBase & 4095) || !validCustomSize(stack) || uint64_t(stackBase) + stack > UINT32_MAX)) return 22;
         detached = x.mem.read<uint32_t>(attr + 8) == 2;   // PTHREAD_CREATE_DETACHED
     }
     if (stackBase) {

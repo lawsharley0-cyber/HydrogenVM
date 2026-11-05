@@ -787,7 +787,7 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
     const uint64_t rounded = stackSize ? (uint64_t(stackSize) + 4095) & ~uint64_t(4095) : kThreadStackSize;
     if (rounded > UINT32_MAX) throw std::runtime_error("HydrogenVM: guest stack size is too large");
     if (stackAddr) {
-        if (rounded != stackSize || stackSize < kMinThreadStackSize || uint64_t(stackAddr) + stackSize > UINT32_MAX)
+        if ((stackAddr & 4095) || rounded != stackSize || stackSize < kMinThreadStackSize || uint64_t(stackAddr) + stackSize > UINT32_MAX)
             throw std::runtime_error("HydrogenVM: custom stack cannot hold normalized size");
         for (uint64_t page = stackAddr & ~uint64_t(4095); page < uint64_t(stackAddr) + stackSize; page += 4096)
             if ((mem_->protAt(uint32_t(page)) & Memory::kProtRW) != Memory::kProtRW)
