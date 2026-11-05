@@ -5725,6 +5725,47 @@ int runFullSubsystemTests() {
             const bool rejectedSmall = uint32_t(r.send(cpu, th, "stackSize")) == defaultSize;
             r.send(cpu, th, "setStackSize:", {16u << 10});   // the smallest size Apple documents
             check(uint32_t(r.send(cpu, th, "stackSize")) == (16u << 10), "NSThread accepts the documented 16 KiB minimum stack size");
+            {
+                auto p_attr = proc.allocStatic(64);
+                proc.callGuest(cpu, *proc.lookupSymbol("_pthread_attr_init"), {p_attr});
+                proc.callGuest(cpu, *proc.lookupSymbol("_pthread_attr_setstacksize"), {p_attr, 1024u * 1024u});
+                auto p_th = proc.allocStatic(4);
+                auto arg = proc.allocStatic(4);
+                struct BoundsProbe { std::atomic<uint32_t> id{0}; std::atomic<uint32_t> faultCount{0}; std::atomic<bool> done{false}; };
+                auto bprobe = std::make_shared<BoundsProbe>();
+                uint32_t fnAddr = proc.defineFunction("Issue314Worker", [bprobe, p_attr, p_th](Ctx& cx) {
+                    bprobe->id = cx.proc.currentThread().id;
+                    uint32_t myTh = cx.mem.read<uint32_t>(p_th);
+                    auto symSize = cx.proc.lookupSymbol("_pthread_get_stacksize_np");
+                    auto symAddr = cx.proc.lookupSymbol("_pthread_get_stackaddr_np");
+                    uint32_t size = symSize ? cx.proc.callGuest(cx.cpu, *symSize, {myTh}) : 0;
+                    uint32_t addr = symAddr ? cx.proc.callGuest(cx.cpu, *symAddr, {myTh}) : 0;
+                    if (size == 1024u * 1024u && addr != 0) {
+                        cx.mem.write<uint8_t>(addr - size, 42);
+                        cx.mem.write<uint8_t>(addr - 1, 42);
+                        uint32_t codeBlock = cx.proc.allocStatic(8);
+                        cx.mem.write<uint32_t>(codeBlock, 0xe5d00000); /* ldrb r0, [r0] */
+                        cx.mem.write<uint32_t>(codeBlock + 4, 0xe12fff1e); /* bx lr */
+                        try {
+                            cx.proc.callGuest(cx.cpu, codeBlock, {addr - size - 1});
+                        } catch (const CPU::GuestFault& f) {
+                            bprobe->faultCount++;
+                        }
+                    }
+                    bprobe->done = true;
+                });
+                proc.callGuest(cpu, *proc.lookupSymbol("_pthread_create"), {p_th, p_attr, fnAddr, arg});
+                for (int i = 0; i < 400 && !bprobe->done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                uint32_t createdTh = proc.mem().read<uint32_t>(p_th);
+                GuestThread* gth = proc.findThread(createdTh);
+                bool got1mb = gth && gth->stackSize == 1024u * 1024u;
+                r.send(cpu, th, "setStackSize:", {1024u * 1024u});
+                bool ns1mb = uint32_t(r.send(cpu, th, "stackSize")) >= 1024u * 1024u;
+                check(got1mb && ns1mb && bprobe->faultCount == 1,
+                      "pthread_attr_setstacksize and NSThread stackSize get at least 1MB and overflow hits guard page as guest fault");
+                proc.callGuest(cpu, *proc.lookupSymbol("_pthread_join"), {createdTh, 0});
+                proc.callGuest(cpu, *proc.lookupSymbol("_pthread_attr_destroy"), {p_attr});
+            }
             const auto threadsBefore = proc.liveThreadIds();
             bool rejectedOverflow = false, rejectedRange = false;
             r.send(cpu, th, "setStackSize:", {0xffffffffu});

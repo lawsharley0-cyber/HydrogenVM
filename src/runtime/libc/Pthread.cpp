@@ -318,24 +318,32 @@ int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) { x.proc.currentThread().tsd[key
 
 // -------------------------------------------------------------- threads ---
 
-// Our pthread_attr_t layout: sig, stacksize, detachstate.
-int32_t pa_init(Ctx& x, GuestPtr a) { x.mem.write<uint32_t>(a, 0x54484441); x.mem.write<uint32_t>(a + 4, 512u << 10); x.mem.write<uint32_t>(a + 8, 1); return 0; }
+// Our pthread_attr_t layout: sig, stacksize, detachstate, stackaddr_base, stackaddr_top.
+int32_t pa_init(Ctx& x, GuestPtr a) { x.mem.write<uint32_t>(a, 0x54484441); x.mem.write<uint32_t>(a + 4, 512u << 10); x.mem.write<uint32_t>(a + 8, 1); x.mem.write<uint32_t>(a + 12, 0); x.mem.write<uint32_t>(a + 16, 0); return 0; }
 int32_t pa_destroy(Ctx&, GuestPtr) { return 0; }
 int32_t pa_setstacksize(Ctx& x, GuestPtr a, uint32_t s) { x.mem.write<uint32_t>(a + 4, s); return 0; }
 int32_t pa_getstacksize(Ctx& x, GuestPtr a, GuestPtr out) { x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 4)); return 0; }
 int32_t pa_setdetachstate(Ctx& x, GuestPtr a, int32_t s) { x.mem.write<uint32_t>(a + 8, uint32_t(s)); return 0; }
 int32_t pa_getdetachstate(Ctx& x, GuestPtr a, GuestPtr out) { x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 8)); return 0; }
+int32_t pa_setstackaddr(Ctx& x, GuestPtr a, GuestPtr s) { x.mem.write<uint32_t>(a + 16, s); return 0; }
+int32_t pa_getstackaddr(Ctx& x, GuestPtr a, GuestPtr out) { x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 16)); return 0; }
+int32_t pa_setstack(Ctx& x, GuestPtr a, GuestPtr s, uint32_t size) { x.mem.write<uint32_t>(a + 12, s); x.mem.write<uint32_t>(a + 4, size); return 0; }
+int32_t pa_getstack(Ctx& x, GuestPtr a, GuestPtr outS, GuestPtr outSize) { if (outS) x.mem.write<uint32_t>(outS, x.mem.read<uint32_t>(a + 12)); if (outSize) x.mem.write<uint32_t>(outSize, x.mem.read<uint32_t>(a + 4)); return 0; }
 int32_t pa_ignore2(Ctx&, GuestPtr, GuestPtr) { return 0; }
 int32_t pa_ignore_int(Ctx&, GuestPtr, int32_t) { return 0; }
 
 int32_t t_create(Ctx& x, GuestPtr out, GuestPtr attr, GuestPtr fn, GuestPtr arg) {
     uint32_t stack = 512u << 10;
+    uint32_t stackaddr_base = 0;
+    uint32_t stackaddr_top = 0;
     bool detached = false;
     if (attr && x.mem.read<uint32_t>(attr) == 0x54484441) {
         stack = x.mem.read<uint32_t>(attr + 4);
         detached = x.mem.read<uint32_t>(attr + 8) == 2;   // PTHREAD_CREATE_DETACHED
+        stackaddr_base = x.mem.read<uint32_t>(attr + 12);
+        stackaddr_top = x.mem.read<uint32_t>(attr + 16);
     }
-    const uint32_t self = x.proc.startThread(fn, arg, stack, detached);
+    const uint32_t self = x.proc.startThread(fn, arg, stack, detached, stackaddr_base ? stackaddr_base : (stackaddr_top ? stackaddr_top - stack : 0));
     if (out) x.mem.write<uint32_t>(out, self);
     return 0;
 }
@@ -591,6 +599,10 @@ void registerLibcPthread(Process& p) {
     p.def<&pa_getstacksize>("_pthread_attr_getstacksize");
     p.def<&pa_setdetachstate>("_pthread_attr_setdetachstate");
     p.def<&pa_getdetachstate>("_pthread_attr_getdetachstate");
+    supportDef<&pa_setstackaddr>(p, "_pthread_attr_setstackaddr", SupportStatus::Real, "sets custom stack address");
+    supportDef<&pa_getstackaddr>(p, "_pthread_attr_getstackaddr", SupportStatus::Real, "gets custom stack address");
+    supportDef<&pa_setstack>(p, "_pthread_attr_setstack", SupportStatus::Real, "sets custom stack");
+    supportDef<&pa_getstack>(p, "_pthread_attr_getstack", SupportStatus::Real, "gets custom stack");
     p.def<&pa_ignore2>("_pthread_attr_setschedparam");
     p.def<&pa_ignore2>("_pthread_attr_getschedparam");
     p.def<&pa_ignore_int>("_pthread_attr_setschedpolicy");
