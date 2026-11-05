@@ -70,7 +70,7 @@ final class CrashReportTests: XCTestCase {
         try withFreshJournal {
             HVMCrashJournal.openSignalFile(CrashReport.signal.path)
             var journalStat = stat()
-            XCTAssertEqual(CrashReport.signal.path.withCString { Darwin.stat($0, &journalStat) }, 0)
+            XCTAssertEqual(CrashReport.signal.path.withCString { Darwin.lstat($0, &journalStat) }, 0)
             let descriptor = try XCTUnwrap((Int32(0)..<getdtablesize()).first { fd in
                 var info = stat()
                 return fstat(fd, &info) == 0 && info.st_dev == journalStat.st_dev && info.st_ino == journalStat.st_ino
