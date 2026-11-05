@@ -23,6 +23,8 @@ struct RecentSaveFiles: Equatable, Sendable, Codable {
     /// `file` is inside `container` only when it is a strict descendant.
     /// `/Apps/Birds` does not contain `/Apps/Birds2/...` or `/Apps/Birds/../Other/...`.
     static func contains(_ path: String, container root: String) -> Bool {
+        let path = canonicalPath(URL(fileURLWithPath: path))
+        let root = canonicalPath(URL(fileURLWithPath: root))
         guard root.count > 1, path.hasPrefix("/") else { return false }
         let prefix = root.hasSuffix("/") ? root : root + "/"
         return path.hasPrefix(prefix)
@@ -47,7 +49,7 @@ struct RecentSaveFiles: Equatable, Sendable, Codable {
         }
     }
 
-    func save(bundleID: String, defaults: UserDefaults) {
+    func save(bundleID: String, defaults: UserDefaults = .standard) {
         guard !bundleID.isEmpty, let data = try? JSONEncoder().encode(self) else { return }
         defaults.set(data, forKey: Self.storageKey(bundleID: bundleID))
     }
@@ -61,8 +63,9 @@ struct RecentSaveFiles: Equatable, Sendable, Codable {
             let decoded = (try? JSONDecoder().decode(RecentSaveFiles.self, from: data)) ?? RecentSaveFiles()
             return adopt(decoded.paths, bundleID: bundleID, container: container, defaults: defaults, replacingExisting: true)
         }
-        guard !bundleID.isEmpty, let legacy = defaults.data(forKey: legacyKey) else {
-            return RecentSaveFiles()
+        guard !bundleID.isEmpty else { return RecentSaveFiles() }
+        guard let legacy = defaults.data(forKey: legacyKey) else {
+            return adopt([], bundleID: bundleID, container: container, defaults: defaults, replacingExisting: false)
         }
         return adopt(paths(fromLegacyData: legacy), bundleID: bundleID, container: container, defaults: defaults, replacingExisting: false)
     }
@@ -74,7 +77,7 @@ struct RecentSaveFiles: Equatable, Sendable, Codable {
             if RecentSaveFiles(paths: raw).paths != scoped.paths {
                 scoped.save(bundleID: bundleID, defaults: defaults)
             }
-        } else if !scoped.paths.isEmpty {
+        } else {
             scoped.save(bundleID: bundleID, defaults: defaults)
         }
         return scoped
@@ -99,7 +102,7 @@ struct RecentSaveFiles: Equatable, Sendable, Codable {
     }
 
     static func canonicalPath(_ url: URL) -> String {
-        var path = url.standardizedFileURL.path
+        var path = url.resolvingSymlinksInPath().standardizedFileURL.path
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
         return path
     }
