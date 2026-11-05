@@ -1290,6 +1290,15 @@ void registerFoundationExtras(Process& p, ObjC::Runtime& r) {
        .m<&kvs_dictRep>("dictionaryRepresentation");
     p.mem().write<uint32_t>(p.defineDataBlock("_NSUbiquitousKeyValueStoreDidChangeExternallyNotification", 4), constString(p, "NSUbiquitousKeyValueStoreDidChangeExternallyNotification"));
 
+    // CoreData option and store-type constants (Issue #310)
+    p.mem().write<uint32_t>(p.defineDataBlock("_NSSQLiteStoreType", 4), constString(p, "SQLite"));
+    p.mem().write<uint32_t>(p.defineDataBlock("_NSBinaryStoreType", 4), constString(p, "Binary"));
+    p.mem().write<uint32_t>(p.defineDataBlock("_NSInMemoryStoreType", 4), constString(p, "InMemory"));
+    p.mem().write<uint32_t>(p.defineDataBlock("_NSMigratePersistentStoresAutomaticallyOption", 4), constString(p, "NSMigratePersistentStoresAutomaticallyOption"));
+    p.mem().write<uint32_t>(p.defineDataBlock("_NSInferMappingModelAutomaticallyOption", 4), constString(p, "NSInferMappingModelAutomaticallyOption"));
+    p.mem().write<uint32_t>(p.defineDataBlock("_NSSQLitePragmasOption", 4), constString(p, "NSSQLitePragmasOption"));
+    p.mem().write<uint32_t>(p.defineDataBlock("_NSReadOnlyPersistentStoreOption", 4), constString(p, "NSReadOnlyPersistentStoreOption"));
+
     ObjC::ClassBuilder dn = r.defineClass("NSDecimalNumber", "NSNumber");
     dn.cm<&dec_fromString>("decimalNumberWithString:").cm<&dec_fromStringLocale>("decimalNumberWithString:locale:")
       .cm<&dec_zero>("zero").cm<&dec_one>("one").cm<&dec_nan>("notANumber").cm<&dec_max>("maximumDecimalNumber")
