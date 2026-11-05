@@ -8015,6 +8015,67 @@ int runFullSubsystemTests() {
         check(performed == std::vector<uint32_t>{0xD2}, "UIApplication's main loop performs a default-mode source");
     }
 
+    // runMode:beforeDate: returns NO if the mode is empty and YES if there was at least a timer.
+    {
+        ProcessConfig modeCfg;
+        modeCfg.homePath = "/tmp/hvm_runmode_returns";
+        Process modeProc(modeCfg);
+        auto& mcpu = modeProc.mainThread().cpu;
+        Ctx mx{modeProc, mcpu, modeProc.mem()};
+        auto& mr = ObjC::rt(modeProc);
+        const uint32_t nsRunLoop = mr.getClass("NSRunLoop");
+        const uint32_t currentRunLoop = uint32_t(mr.send(mcpu, nsRunLoop, "currentRunLoop"));
+        const uint32_t emptyMode = Foundation::makeString(mx, "HVMEmptyMode");
+        const uint32_t timerMode = Foundation::makeString(mx, "HVMTimerMode");
+
+        uint32_t date0 = Foundation::makeDate(mx, Foundation::now() + 0.05);
+        uint32_t runModeReturn = uint32_t(mr.send(mcpu, currentRunLoop, "runMode:beforeDate:", {emptyMode, date0}));
+        check(runModeReturn == 0, "runMode:beforeDate: returns NO for an empty mode");
+
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(modeProc.callGuest(mcpu, *modeProc.lookupSymbol(sym), args)); };
+        const uint32_t performFn = modeProc.defineFunction("test_app_loop_timer_perform2", [&](Ctx& x) {});
+        const auto makeSource = [&](uint32_t info) {
+            const uint32_t ctx = modeProc.heap().allocZeroed(40);
+            modeProc.mem().write<uint32_t>(ctx + 4, info);
+            modeProc.mem().write<uint32_t>(ctx + 36, performFn);
+            return call("_CFRunLoopSourceCreate", {0, 0, ctx});
+        };
+        const uint32_t mainLoop = call("_CFRunLoopGetMain", {});
+        const uint32_t source = makeSource(0xD3);
+        call("_CFRunLoopAddSource", {mainLoop, source, timerMode});
+
+        uint32_t date1 = Foundation::makeDate(mx, Foundation::now() + 0.01);
+        runModeReturn = uint32_t(mr.send(mcpu, currentRunLoop, "runMode:beforeDate:", {timerMode, date1}));
+        check(runModeReturn != 0, "runMode:beforeDate: returns YES for a mode with a source");
+
+        uint32_t date2 = Foundation::makeDate(mx, Foundation::now() - 1.0);
+        runModeReturn = uint32_t(mr.send(mcpu, currentRunLoop, "runMode:beforeDate:", {timerMode, date2}));
+        check(runModeReturn != 0, "runMode:beforeDate: returns YES for a mode with a source but timeout reached");
+
+        call("_CFRunLoopRemoveSource", {mainLoop, source, timerMode});
+
+        // Once the source is gone the private mode has no input again, so it must answer NO at once.
+        uint32_t date3 = Foundation::makeDate(mx, Foundation::now() + 0.05);
+        runModeReturn = uint32_t(mr.send(mcpu, currentRunLoop, "runMode:beforeDate:", {timerMode, date3}));
+        check(runModeReturn == 0, "runMode:beforeDate: returns NO again after the mode's only source is removed");
+
+        // A worker thread's run loop with nothing scheduled has no input (Apple: runMode returns NO at once);
+        // posted work counts as input in any mode; the main loop always has the host pump in its default mode.
+        {
+            Foundation::RunLoop worker(modeProc);
+            check(!worker.hasModeInput("s:kCFRunLoopDefaultMode"), "an empty worker run loop has no input in the default mode");
+            worker.post([](CPU::Cpu&) {});
+            check(worker.hasModeInput("s:HVMTimerMode"), "posted work counts as input for a private mode");
+            check(Foundation::mainRunLoop(modeProc).hasModeInput("s:kCFRunLoopDefaultMode"), "the main run loop has input in the default mode");
+        }
+
+        // The default mode is always fed by the host event pump, so a game's own run-loop pump keeps waiting (YES).
+        const uint32_t defaultMode = Foundation::makeString(mx, "kCFRunLoopDefaultMode");
+        uint32_t date4 = Foundation::makeDate(mx, Foundation::now() + 0.01);
+        runModeReturn = uint32_t(mr.send(mcpu, currentRunLoop, "runMode:beforeDate:", {defaultMode, date4}));
+        check(runModeReturn != 0, "runMode:beforeDate: returns YES for the default mode even with no guest timers");
+    }
+
     {
         ProcessConfig traceCfg = cfg;
         traceCfg.homePath = "/tmp/hvm_symbolication_test";
