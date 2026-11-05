@@ -8766,6 +8766,22 @@ int runFullSubsystemTests() {
             check(badBuilt == 0 && err.find("libguest_a.dylib") != std::string::npos,
                   "guestLibs ON fails with an honest error naming a malformed MH_DYLIB");
         }
+
+        // 5. guestLibs rejects escaping bundle paths
+        {
+            fs::create_directories(tmpRoot / "escape_bundle.app");
+            fs::copy_file(tmpRoot / "ok" / "GuestDylibFixture.app" / "GuestDylibFixture", tmpRoot / "escape_bundle.app" / "GuestDylibFixture");
+            fs::copy_file(tmpRoot / "ok" / "GuestDylibFixture.app" / "Info.plist", tmpRoot / "escape_bundle.app" / "Info.plist");
+            ProcessConfig cfg;
+            cfg.bundlePath = (tmpRoot / "escape_bundle.app").string();
+            cfg.homePath = (tmpRoot / "home-escape").string();
+            cfg.guestLibs = true;
+            cfg.guestLibDir = libDir;
+            cfg.log = [](LogLevel, const std::string&) {};
+            Process pEscape(cfg);
+            try { pEscape.load(); check(false, "guestLibs ON failed to reject escaping dylib path"); }
+            catch (const Loader::MachOError& e) { check(std::string(e.what()).find("Missing guest dylib") != std::string::npos, "guestLibs ON rejects bundle-escaping paths"); }
+        }
         fs::remove_all(tmpRoot);
     }
 

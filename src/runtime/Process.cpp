@@ -417,6 +417,15 @@ void Process::loadGuestDylibs() {
         return {};
     };
 
+    auto isBundleDescendant = [&](const std::string& path) {
+        const fs::path bundle = fs::path(cfg_.bundlePath).lexically_normal();
+        const fs::path target = fs::path(path).lexically_normal();
+        auto b = bundle.begin();
+        auto t = target.begin();
+        while (b != bundle.end() && t != target.end() && *b == *t) { ++b; ++t; }
+        return b == bundle.end();
+    };
+
     std::function<void(const std::string&, bool, const std::string&)> visitDylib =
         [&](const std::string& installName, bool weak, const std::string& loaderDir) {
             const std::string key = fs::path(installName).filename().string();
@@ -427,6 +436,9 @@ void Process::loadGuestDylibs() {
                 if (weak || isHostProvidedSystemDylib(installName)) return;
                 throw Loader::MachOError("Missing guest dylib: " + installName +
                     (cfg_.guestLibDir.empty() ? " (no guestLibDir configured)" : " (searched in " + cfg_.guestLibDir + ")"));
+            }
+            if (!isBundleDescendant(foundPath) && !isHostProvidedSystemDylib(installName)) {
+                throw Loader::MachOError("Missing guest dylib: " + installName + " (resolved to " + foundPath + ", which escapes the app bundle)");
             }
 
             inProgress.insert(key);
