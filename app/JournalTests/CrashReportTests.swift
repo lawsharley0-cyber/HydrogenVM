@@ -64,6 +64,15 @@ final class CrashReportTests: XCTestCase {
     }
 
     @MainActor
+    func testUnclosedSignalFileCausesRecoverToFail() throws {
+        try withFreshJournal {
+            HVMCrashJournal.openSignalFile(CrashReport.signal.path)
+            try Data("{\"exceptionKind\":\"host-SIGSEGV\"}".utf8).write(to: CrashReport.signal)
+            XCTAssertNotNil(CrashReport.recover())
+        }
+    }
+
+    @MainActor
     func testFailedRealFilesystemSaveRetainsAllJournalBytes() throws {
         try withFreshJournal {
             // A valid JSON bundle ID can exceed NAME_MAX in save's generated
