@@ -2354,6 +2354,27 @@ int runFullSubsystemTests() {
               "CFAllocatorNull refuses allocation while the system default allocates");
     }
     {
+        // Issue #312: CoreGraphics accepts TrueType files whose sfnt version is
+        // 'true' (Apple TrueType) as well as 0x00010000. Same bytes as kTestFont
+        // with only the 4-byte version tag changed; cmap must be readable.
+        auto call2 = [&](const char* sym, uint32_t a, uint32_t b) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), {a, b}));
+        };
+        uint8_t appleTrue[sizeof kTestFont];
+        std::memcpy(appleTrue, kTestFont, sizeof kTestFont);
+        appleTrue[0] = 't'; appleTrue[1] = 'r'; appleTrue[2] = 'u'; appleTrue[3] = 'e';
+        const auto data = Foundation::makeData(cx, appleTrue, uint32_t(sizeof appleTrue), true);
+        const uint32_t provider = call2("_CGDataProviderCreateWithCFData", data, 0);
+        const uint32_t cg = call2("_CGFontCreateWithDataProvider", provider, 0);
+        const uint32_t cmapTable = cg ? call2("_CGFontCopyTableForTag", cg, 0x636D6170) : 0;
+        check(cg != 0 && cmapTable != 0,
+              "CGFontCreateWithDataProvider accepts an Apple 'true' sfnt and CGFontCopyTableForTag returns its cmap");
+        if (cmapTable) call2("_CFRelease", cmapTable, 0);
+        if (cg) call2("_CGFontRelease", cg, 0);
+        call2("_CGDataProviderRelease", provider, 0);
+        call2("_CFRelease", data, 0);
+    }
+    {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
         const auto face = Graphics::TrueTypeFont::load(std::vector<uint8_t>(std::begin(kTestFont), std::end(kTestFont)));
         check(face && face->glyph('A') == 2 && face->glyph('Z') == 0 && face->ascent(20) == 16 &&
