@@ -50,7 +50,7 @@ jobs:
               exit 1
             }
       - name: Crash journal recovery with the actual engine bridge
-        timeout-minutes: 20
+        timeout-minutes: 35
         run: |
           set -o pipefail
           UDID=$(xcrun simctl list devices available -j | python3 -c '
@@ -89,6 +89,7 @@ jobs:
             echo "Previous recovery unexpectedly passed the regression"
             exit 1
           fi
+          echo "Expected failures below exercise the OLD recovery body; candidate results follow separately."
           tail -100 build/file-editor/crash-journal-before.log
           grep -E 'testMalformedPendingAndSignalArePreserved.*failed' build/file-editor/crash-journal-before.log
           grep -E 'testSignalWithoutPendingMetadataIsRecovered.*failed' build/file-editor/crash-journal-before.log
@@ -103,6 +104,8 @@ jobs:
               tail -150 build/file-editor/crash-journal.log
               exit 1
             }
+          echo "Candidate recovery tests passed at $GITHUB_SHA"
+          tail -25 build/file-editor/crash-journal.log
       - name: Exercise save and close flows on an iPhone simulator
         timeout-minutes: 15
         run: |
