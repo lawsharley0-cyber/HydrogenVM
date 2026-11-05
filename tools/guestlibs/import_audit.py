@@ -14,6 +14,7 @@ Each symbol is classified as:
                           bound to a no-op constant-return helper (s_zero, m_ok2,
                           m_ok3, s_ok2, k_zero4) or returning a hardcoded C locale
                           pointer without implementing the contract
+  - unverified          : Registered, but no HLE body was resolved by this audit
   - missing             : Not registered in HydrogenVM's symbol table
 """
 
@@ -30,13 +31,16 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 import sys
 sys.path.insert(0, str(REPO_ROOT / "tools"))
-import lint_stubs
+try:
+    import lint_stubs
+finally:
+    sys.path.pop(0)
 
 
-def constant_stub_handlers(source: str) -> set[str]:
+def handler_bodies(source: str) -> tuple[set[str], set[str]]:
     ts = lint_stubs.tokens(source)
     pairs = lint_stubs.pairs(ts)
-    result = set()
+    result, resolved = set(), set()
     for i in range(len(ts) - 2):
         if ts[i].kind != "word" or ts[i + 1].value != "(":
             continue
@@ -46,11 +50,12 @@ def constant_stub_handlers(source: str) -> set[str]:
         close = pairs.get(end + 1)
         if close is None:
             continue
+        resolved.add(ts[i].value)
         body = ts[end + 2:close]
         code = " ".join(t.value for t in body)
         if not body or re.fullmatch(r"return (?:0|1|true|YES|0u|1u) ;", code):
             result.add(ts[i].value)
-    return result
+    return result, resolved
 
 
 MH_MAGIC = 0xFEEDFACE
@@ -519,12 +524,12 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
         rel_path = cpp_path.relative_to(repo_root).as_posix()
         text = _strip_comments(cpp_path.read_text(encoding="utf-8", errors="replace"))
 
-        constant_stubs = constant_stub_handlers(text)
+        constant_stubs, resolved_handlers = handler_bodies(text)
 
         for m in def_re.finditer(text):
             fn_name, sym = m.group(1), m.group(2)
             line_no = text.count("\n", 0, m.start()) + 1
-            status = "stubbed-dishonestly" if fn_name in (KNOWN_STUB_HANDLERS | constant_stubs) else "present"
+            status = "stubbed-dishonestly" if fn_name.split("::")[-1] in (KNOWN_STUB_HANDLERS | constant_stubs) else ("present" if fn_name.split("::")[-1] in resolved_handlers else "unverified")
             note = f"Handler `{fn_name}`"
             status, note = apply_override(sym, fn_name, status, note)
             registrations[sym] = {
@@ -539,7 +544,7 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
             line_no = text.count("\n", 0, m.start()) + 1
             for sym_m in re.finditer(r'"([^"]+)"', names_blob):
                 sym = sym_m.group(1)
-                status = "stubbed-dishonestly" if fn_name in (KNOWN_STUB_HANDLERS | constant_stubs) else "present"
+                status = "stubbed-dishonestly" if fn_name.split("::")[-1] in (KNOWN_STUB_HANDLERS | constant_stubs) else ("present" if fn_name.split("::")[-1] in resolved_handlers else "unverified")
                 note = f"Handler `{fn_name}`"
                 status, note = apply_override(sym, fn_name, status, note)
                 registrations[sym] = {
@@ -552,10 +557,10 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
         for m in support_def_re.finditer(text):
             fn_name, sym, sup_status, sup_note = m.group(1), m.group(2), m.group(3), m.group(4)
             line_no = text.count("\n", 0, m.start()) + 1
-            if sup_status in ("Stub", "Unavailable") or fn_name in (KNOWN_STUB_HANDLERS | constant_stubs):
+            if sup_status in ("Stub", "Unavailable") or fn_name.split("::")[-1] in (KNOWN_STUB_HANDLERS | constant_stubs):
                 status = "stubbed-dishonestly"
             else:
-                status = "present"
+                status = "present" if fn_name.split("::")[-1] in resolved_handlers else "unverified"
             note = f"`SupportStatus::{sup_status}` — {sup_note}"
             status, note = apply_override(sym, fn_name, status, note)
             registrations[sym] = {
@@ -624,7 +629,7 @@ def run_audit(
                 registrations[sym] = {
                     "status": "stubbed-dishonestly"
                     if sup_status in ("Stub", "Unavailable")
-                    else "present",
+                    else "unverified",
                     "source": "hvm --dump-support",
                     "handler": entry.get("kind", "function"),
                     "note": entry.get("note", f"SupportStatus::{sup_status}"),
@@ -672,13 +677,13 @@ def run_audit(
 
     libraries_summary: dict[str, dict[str, int]] = {}
     for lib_name, syms in lib_imports.items():
-        counts = {"totalImports": len(syms), "present": 0, "missing": 0, "stubbed-dishonestly": 0}
+        counts = {"totalImports": len(syms), "present": 0, "missing": 0, "stubbed-dishonestly": 0, "unverified": 0}
         for sym in syms:
             st = all_symbols[sym]["status"]
             counts[st] += 1
         libraries_summary[lib_name] = counts
 
-    totals = {"totalUniqueImports": len(all_symbols), "present": 0, "missing": 0, "stubbed-dishonestly": 0}
+    totals = {"totalUniqueImports": len(all_symbols), "present": 0, "missing": 0, "stubbed-dishonestly": 0, "unverified": 0}
     for info in all_symbols.values():
         totals[info["status"]] += 1
 
@@ -720,12 +725,15 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
         f"Across all four ARMv7 C++ runtime libraries, there are **{totals['totalUniqueImports']} unique `libSystem.B.dylib` imports**:",
         f"- **`present`**: **{totals['present']}** symbols (implemented in `src/runtime/libc/` with real or honest-approx behaviour)",
         f"- **`stubbed-dishonestly`**: **{totals['stubbed-dishonestly']}** symbols (registered in `src/runtime/libc/`, but returning a fixed `\"C\"` locale pointer or no-op success without full state)",
+        f"- **`unverified`**: **{totals['unverified']}** symbols (registered, but no body was resolved; not counted as implemented)",
         f"- **`missing`**: **{totals['missing']}** symbols (not registered in HydrogenVM's symbol table; tracked in `#330`)",
+        "",
+        "Unresolved HLE bodies remain unverified even if support metadata says Real. This source audit is not a runtime API-conformance result.",
         "",
         "### Per-Library Summary",
         "",
-        "| Guest Dylib | Target Family | Total `libSystem` Imports | `present` | `stubbed-dishonestly` | `missing` |",
-        "|---|---|---:|---:|---:|---:|",
+        "| Guest Dylib | Target Family | Total `libSystem` Imports | `present` | `stubbed-dishonestly` | `unverified` | `missing` |",
+        "|---|---|---:|---:|---:|---:|---:|",
     ]
 
     target_labels = {
@@ -743,7 +751,7 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
     ):
         c = libs[lib_name]
         lines.append(
-            f"| `{lib_name}` | {target_labels[lib_name]} | {c['totalImports']} | {c['present']} | {c['stubbed-dishonestly']} | {c['missing']} |"
+            f"| `{lib_name}` | {target_labels[lib_name]} | {c['totalImports']} | {c['present']} | {c['stubbed-dishonestly']} | {c['unverified']} | {c['missing']} |"
         )
 
     gcc_c = libs["libgcc_s.1.dylib"]
@@ -800,19 +808,23 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
             "",
             "Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in the symbol table below.",
             f"- **Stubbed dishonestly**: {fmt_list(_symbols_for_lib_by_status(symbols, 'libgcc_s.1.dylib', 'stubbed-dishonestly'))}.",
+            f"- **Unverified**: {fmt_list(_symbols_for_lib_by_status(symbols, 'libgcc_s.1.dylib', 'unverified'))}.",
             "",
             f"### 2.2 `libc++abi.dylib` Coverage (`{abi_c['present']} / {abi_c['totalImports']} present`, `{abi_c['stubbed-dishonestly']} stubbed-dishonestly`, `{abi_c['missing']} missing`)",
             "",
             f"- **Missing ({len(abi_missing)})**: {fmt_list(abi_missing)}.",
             f"- **Stubbed dishonestly**: {fmt_list(_symbols_for_lib_by_status(symbols, 'libc++abi.dylib', 'stubbed-dishonestly'))}.",
+            f"- **Unverified**: {fmt_list(_symbols_for_lib_by_status(symbols, 'libc++abi.dylib', 'unverified'))}.",
             "",
             f"### 2.3 `libstdc++.6.dylib` Coverage (`{std_c['present']} / {std_c['totalImports']} present`, `{std_c['stubbed-dishonestly']} stubbed-dishonestly`, `{std_c['missing']} missing`)",
             "",
+            f"- **Unverified**: {fmt_list(_symbols_for_lib_by_status(symbols, 'libstdc++.6.dylib', 'unverified'))}.",
             f"- **Missing ({len(std_missing)})**: {fmt_list(std_missing)}.",
             f"- **Stubbed dishonestly ({len(std_stubbed)})**: {fmt_list(std_stubbed)}.",
             "",
             f"### 2.4 `libc++.1.dylib` Missing Symbol Clusters (`{cxx_c['present']} / {cxx_c['totalImports']} present`, `{cxx_c['stubbed-dishonestly']} stubbed-dishonestly`, `{cxx_c['missing']} missing`)",
             "",
+            f"- **Unverified**: {fmt_list(_symbols_for_lib_by_status(symbols, 'libc++.1.dylib', 'unverified'))}.",
             f"- **Stubbed dishonestly ({len(cxx_stubbed)})**: {fmt_list(cxx_stubbed)}.",
             f"- **Extended Locale (`<xlocale.h>`) Lifecycle & `*_l` Functions ({xlocale_total} symbols)**:",
             f"  - Locale lifecycle ({len(xlocale_lifecycle)}): {fmt_list(xlocale_lifecycle)}.",
@@ -881,7 +893,7 @@ def main() -> int:
     t = audit["totals"]
     print(
         f"Audited {t['totalUniqueImports']} unique libSystem imports across 4 guest C++ dylibs: "
-        f"present={t['present']}, stubbed-dishonestly={t['stubbed-dishonestly']}, missing={t['missing']}"
+        f"present={t['present']}, stubbed-dishonestly={t['stubbed-dishonestly']}, unverified={t['unverified']}, missing={t['missing']}"
     )
     return 0
 

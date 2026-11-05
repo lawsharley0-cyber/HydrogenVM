@@ -84,7 +84,8 @@ class GuestLibImportAuditTests(unittest.TestCase):
                 lib_summary["totalImports"],
                 lib_summary["present"]
                 + lib_summary["missing"]
-                + lib_summary["stubbed-dishonestly"],
+                + lib_summary["stubbed-dishonestly"]
+                + lib_summary["unverified"],
             )
 
         symbols = result["symbols"]
@@ -92,7 +93,7 @@ class GuestLibImportAuditTests(unittest.TestCase):
         for sym_name, info in symbols.items():
             self.assertIn(
                 info["status"],
-                {"present", "missing", "stubbed-dishonestly"},
+                {"present", "missing", "stubbed-dishonestly", "unverified"},
                 f"Invalid status for {sym_name}: {info}",
             )
             self.assertTrue(info["importedBy"], f"Empty importedBy for {sym_name}")
@@ -118,6 +119,9 @@ class GuestLibImportAuditTests(unittest.TestCase):
                 """
                 // p.def<&fake_commented>("_commented_out");
                 /* p.def<&fake_block>("_block_commented"); */
+                void* real_malloc(Ctx&, size_t size) { return malloc(size); }
+                int f_stat(Ctx& x) { return x.proc.stat(); }
+                int a_approx(Ctx& x) { return x.proc.signal(); }
                 void registerSample(Process& p) {
                     p.def<&real_malloc>("_malloc");
                     p.def<&s_zero>("_tcgetattr");
@@ -209,7 +213,7 @@ class GuestLibImportAuditTests(unittest.TestCase):
             )
             fake_hvm.chmod(fake_hvm.stat().st_mode | stat.S_IEXEC)
             audit_with_bin = import_audit.run_audit(root, hvm_bin=fake_hvm)
-            self.assertEqual(audit_with_bin["symbols"]["_calloc"]["status"], "present")
+            self.assertEqual(audit_with_bin["symbols"]["_calloc"]["status"], "unverified")
             self.assertEqual(audit_with_bin["symbols"]["_btowc"]["status"], "stubbed-dishonestly")
 
     def test_arbitrary_constant_success_handler_is_not_present(self) -> None:
@@ -228,6 +232,15 @@ class GuestLibImportAuditTests(unittest.TestCase):
             self.assertEqual(regs["_pthread_mutex_lock"]["status"], "stubbed-dishonestly")
             self.assertEqual(regs["_pthread_once"]["status"], "stubbed-dishonestly")
             self.assertEqual(regs["_pthread_detach"]["status"], "present")
+
+    def test_registration_without_a_resolved_body_is_unverified(self) -> None:
+        audit = _load_import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "src/runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "Sample.cpp").write_text('void reg(Process& p) { p.def<&not_defined_here>("_malloc"); }')
+            self.assertEqual(audit.scan_hvm_registrations(root)["_malloc"]["status"], "unverified")
 
     def test_malformed_support_manifest_is_runtime_error(self) -> None:
         from unittest.mock import patch

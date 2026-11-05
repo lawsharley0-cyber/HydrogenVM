@@ -11,16 +11,19 @@ Before enabling guest C++ runtime dynamic libraries (`libgcc_s.1.dylib`, `libstd
 Across all four ARMv7 C++ runtime libraries, there are **169 unique `libSystem.B.dylib` imports**:
 - **`present`**: **105** symbols (implemented in `src/runtime/libc/` with real or honest-approx behaviour)
 - **`stubbed-dishonestly`**: **2** symbols (registered in `src/runtime/libc/`, but returning a fixed `"C"` locale pointer or no-op success without full state)
+- **`unverified`**: **0** symbols (registered, but no body was resolved; not counted as implemented)
 - **`missing`**: **62** symbols (not registered in HydrogenVM's symbol table; tracked in `#330`)
+
+Unresolved HLE bodies remain unverified even if support metadata says Real. This source audit is not a runtime API-conformance result.
 
 ### Per-Library Summary
 
-| Guest Dylib | Target Family | Total `libSystem` Imports | `present` | `stubbed-dishonestly` | `missing` |
-|---|---|---:|---:|---:|---:|
-| `libgcc_s.1.dylib` | Target 1 (iOS 3–5 GCC unwinder) | 14 | 14 | 0 | 0 |
-| `libstdc++.6.dylib` | Target 1 (iOS 3–5 GNU libstdc++) | 77 | 72 | 1 | 4 |
-| `libc++abi.dylib` | Target 2 (iOS 5+ LLVM libc++abi) | 35 | 33 | 0 | 2 |
-| `libc++.1.dylib` | Target 2 (iOS 5+ LLVM libc++) | 159 | 97 | 2 | 60 |
+| Guest Dylib | Target Family | Total `libSystem` Imports | `present` | `stubbed-dishonestly` | `unverified` | `missing` |
+|---|---|---:|---:|---:|---:|---:|
+| `libgcc_s.1.dylib` | Target 1 (iOS 3–5 GCC unwinder) | 14 | 14 | 0 | 0 | 0 |
+| `libstdc++.6.dylib` | Target 1 (iOS 3–5 GNU libstdc++) | 77 | 72 | 1 | 0 | 4 |
+| `libc++abi.dylib` | Target 2 (iOS 5+ LLVM libc++abi) | 35 | 33 | 0 | 0 | 2 |
+| `libc++.1.dylib` | Target 2 (iOS 5+ LLVM libc++) | 159 | 97 | 2 | 0 | 60 |
 
 ---
 
@@ -30,19 +33,23 @@ Across all four ARMv7 C++ runtime libraries, there are **169 unique `libSystem.B
 
 Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in the symbol table below.
 - **Stubbed dishonestly**: none.
+- **Unverified**: none.
 
 ### 2.2 `libc++abi.dylib` Coverage (`33 / 35 present`, `0 stubbed-dishonestly`, `2 missing`)
 
 - **Missing (2)**: `_aligned_alloc`, `_dyld_register_func_for_add_image`.
 - **Stubbed dishonestly**: none.
+- **Unverified**: none.
 
 ### 2.3 `libstdc++.6.dylib` Coverage (`72 / 77 present`, `1 stubbed-dishonestly`, `4 missing`)
 
+- **Unverified**: none.
 - **Missing (4)**: `_btowc`, `_mbrtowc`, `_strxfrm`, `_wcrtomb`.
 - **Stubbed dishonestly (1)**: `_setlocale`.
 
 ### 2.4 `libc++.1.dylib` Missing Symbol Clusters (`97 / 159 present`, `2 stubbed-dishonestly`, `60 missing`)
 
+- **Unverified**: none.
 - **Stubbed dishonestly (2)**: `_pthread_mutexattr_destroy`, `_setlocale`.
 - **Extended Locale (`<xlocale.h>`) Lifecycle & `*_l` Functions (42 symbols)**:
   - Locale lifecycle (4): `_duplocale`, `_freelocale`, `_newlocale`, `_uselocale`.
