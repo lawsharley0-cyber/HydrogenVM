@@ -212,6 +212,31 @@ class GuestLibImportAuditTests(unittest.TestCase):
             self.assertEqual(audit_with_bin["symbols"]["_calloc"]["status"], "present")
             self.assertEqual(audit_with_bin["symbols"]["_btowc"]["status"], "stubbed-dishonestly")
 
+    def test_arbitrary_constant_success_handler_is_not_present(self) -> None:
+        audit = _load_import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "src/runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "Sample.cpp").write_text(
+                'int plausible_name(Ctx&) { return 0; }\n'
+                'int stateful(Ctx& x) { x.proc.detachThread(1); return 0; }\n'
+                'void reg(Process& p) { p.def<&plausible_name>("_pthread_mutex_lock"); '
+                'p.def<&stateful>("_pthread_detach"); '
+                'supportDef<&plausible_name>(p, "_pthread_once", SupportStatus::Approx, "mislabelled"); }')
+            regs = audit.scan_hvm_registrations(root)
+            self.assertEqual(regs["_pthread_mutex_lock"]["status"], "stubbed-dishonestly")
+            self.assertEqual(regs["_pthread_once"]["status"], "stubbed-dishonestly")
+            self.assertEqual(regs["_pthread_detach"]["status"], "present")
+
+    def test_malformed_support_manifest_is_runtime_error(self) -> None:
+        from unittest.mock import patch
+        audit = _load_import_audit()
+        for payload in ([], {}, {"symbols": {}}, {"symbols": [None]}, {"symbols": [{}]}):
+            with self.subTest(payload=payload), patch.object(audit.subprocess, "check_output", return_value=json.dumps(payload)):
+                with self.assertRaises(RuntimeError):
+                    audit.run_audit(REPO_ROOT, hvm_bin=Path(sys.executable))
+
     def test_cli_generates_markdown_report(self) -> None:
         self.assertTrue(AUDIT_SCRIPT.is_file(), f"Missing {AUDIT_SCRIPT}")
         with tempfile.TemporaryDirectory() as tmp:

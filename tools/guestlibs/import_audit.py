@@ -28,6 +28,30 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+import sys
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+import lint_stubs
+
+
+def constant_stub_handlers(source: str) -> set[str]:
+    ts = lint_stubs.tokens(source)
+    pairs = lint_stubs.pairs(ts)
+    result = set()
+    for i in range(len(ts) - 2):
+        if ts[i].kind != "word" or ts[i + 1].value != "(":
+            continue
+        end = pairs.get(i + 1)
+        if end is None or end + 1 >= len(ts) or ts[end + 1].value != "{":
+            continue
+        close = pairs.get(end + 1)
+        if close is None:
+            continue
+        body = ts[end + 2:close]
+        code = " ".join(t.value for t in body)
+        if not body or re.fullmatch(r"return (?:0|1|true|YES|0u|1u) ;", code):
+            result.add(ts[i].value)
+    return result
+
 
 MH_MAGIC = 0xFEEDFACE
 LC_SYMTAB = 0x2
@@ -495,10 +519,12 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
         rel_path = cpp_path.relative_to(repo_root).as_posix()
         text = _strip_comments(cpp_path.read_text(encoding="utf-8", errors="replace"))
 
+        constant_stubs = constant_stub_handlers(text)
+
         for m in def_re.finditer(text):
             fn_name, sym = m.group(1), m.group(2)
             line_no = text.count("\n", 0, m.start()) + 1
-            status = "stubbed-dishonestly" if fn_name in KNOWN_STUB_HANDLERS else "present"
+            status = "stubbed-dishonestly" if fn_name in (KNOWN_STUB_HANDLERS | constant_stubs) else "present"
             note = f"Handler `{fn_name}`"
             status, note = apply_override(sym, fn_name, status, note)
             registrations[sym] = {
@@ -513,7 +539,7 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
             line_no = text.count("\n", 0, m.start()) + 1
             for sym_m in re.finditer(r'"([^"]+)"', names_blob):
                 sym = sym_m.group(1)
-                status = "stubbed-dishonestly" if fn_name in KNOWN_STUB_HANDLERS else "present"
+                status = "stubbed-dishonestly" if fn_name in (KNOWN_STUB_HANDLERS | constant_stubs) else "present"
                 note = f"Handler `{fn_name}`"
                 status, note = apply_override(sym, fn_name, status, note)
                 registrations[sym] = {
@@ -526,7 +552,7 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
         for m in support_def_re.finditer(text):
             fn_name, sym, sup_status, sup_note = m.group(1), m.group(2), m.group(3), m.group(4)
             line_no = text.count("\n", 0, m.start()) + 1
-            if sup_status in ("Stub", "Unavailable") or fn_name in KNOWN_STUB_HANDLERS:
+            if sup_status in ("Stub", "Unavailable") or fn_name in (KNOWN_STUB_HANDLERS | constant_stubs):
                 status = "stubbed-dishonestly"
             else:
                 status = "present"
@@ -586,10 +612,15 @@ def run_audit(
             dump = json.loads(dump_raw)
         except (subprocess.SubprocessError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Failed to query {hvm_bin} --dump-support: {exc}") from exc
-        for entry in dump.get("symbols", []):
+        if not isinstance(dump, dict) or not isinstance(dump.get("symbols"), list):
+            raise RuntimeError("Malformed --dump-support payload: expected object with symbols array")
+        for entry in dump["symbols"]:
+            if (not isinstance(entry, dict) or not isinstance(entry.get("name"), str)
+                    or not entry["name"] or entry.get("status") not in ("Real", "Approx", "Stub", "Unavailable")):
+                raise RuntimeError("Malformed --dump-support symbol: expected name and valid status")
             sym = entry["name"]
             sup_status = entry.get("status", "Real")
-            if sym not in registrations:
+            if sym not in registrations or sup_status in ("Stub", "Unavailable"):
                 registrations[sym] = {
                     "status": "stubbed-dishonestly"
                     if sup_status in ("Stub", "Unavailable")
@@ -765,13 +796,15 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
             "",
             "## 2. Key Findings & Actionable Gaps",
             "",
-            f"### 2.1 `libgcc_s.1.dylib` Coverage (`{gcc_c['present']} / {gcc_c['totalImports']} present`, `{gcc_c['missing']} missing`)",
+            f"### 2.1 `libgcc_s.1.dylib` Coverage (`{gcc_c['present']} / {gcc_c['totalImports']} present`, `{gcc_c['stubbed-dishonestly']} stubbed-dishonestly`, `{gcc_c['missing']} missing`)",
             "",
             "Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in the symbol table below.",
+            f"- **Stubbed dishonestly**: {fmt_list(_symbols_for_lib_by_status(symbols, 'libgcc_s.1.dylib', 'stubbed-dishonestly'))}.",
             "",
-            f"### 2.2 `libc++abi.dylib` Coverage (`{abi_c['present']} / {abi_c['totalImports']} present`, `{abi_c['missing']} missing`)",
+            f"### 2.2 `libc++abi.dylib` Coverage (`{abi_c['present']} / {abi_c['totalImports']} present`, `{abi_c['stubbed-dishonestly']} stubbed-dishonestly`, `{abi_c['missing']} missing`)",
             "",
             f"- **Missing ({len(abi_missing)})**: {fmt_list(abi_missing)}.",
+            f"- **Stubbed dishonestly**: {fmt_list(_symbols_for_lib_by_status(symbols, 'libc++abi.dylib', 'stubbed-dishonestly'))}.",
             "",
             f"### 2.3 `libstdc++.6.dylib` Coverage (`{std_c['present']} / {std_c['totalImports']} present`, `{std_c['stubbed-dishonestly']} stubbed-dishonestly`, `{std_c['missing']} missing`)",
             "",

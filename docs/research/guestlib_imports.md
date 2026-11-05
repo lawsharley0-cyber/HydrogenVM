@@ -9,8 +9,8 @@
 Before enabling guest C++ runtime dynamic libraries (`libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib`) behind the per-app `guestLibs` switch, every external C/POSIX/Mach symbol those libraries import from `/usr/lib/libSystem.B.dylib` must be cross-checked against HydrogenVM's host-side `src/runtime/libc/` registrations.
 
 Across all four ARMv7 C++ runtime libraries, there are **169 unique `libSystem.B.dylib` imports**:
-- **`present`**: **106** symbols (implemented in `src/runtime/libc/` with real or honest-approx behaviour)
-- **`stubbed-dishonestly`**: **1** symbols (registered in `src/runtime/libc/`, but returning a fixed `"C"` locale pointer or no-op success without full state)
+- **`present`**: **105** symbols (implemented in `src/runtime/libc/` with real or honest-approx behaviour)
+- **`stubbed-dishonestly`**: **2** symbols (registered in `src/runtime/libc/`, but returning a fixed `"C"` locale pointer or no-op success without full state)
 - **`missing`**: **62** symbols (not registered in HydrogenVM's symbol table; tracked in `#330`)
 
 ### Per-Library Summary
@@ -20,28 +20,30 @@ Across all four ARMv7 C++ runtime libraries, there are **169 unique `libSystem.B
 | `libgcc_s.1.dylib` | Target 1 (iOS 3–5 GCC unwinder) | 14 | 14 | 0 | 0 |
 | `libstdc++.6.dylib` | Target 1 (iOS 3–5 GNU libstdc++) | 77 | 72 | 1 | 4 |
 | `libc++abi.dylib` | Target 2 (iOS 5+ LLVM libc++abi) | 35 | 33 | 0 | 2 |
-| `libc++.1.dylib` | Target 2 (iOS 5+ LLVM libc++) | 159 | 98 | 1 | 60 |
+| `libc++.1.dylib` | Target 2 (iOS 5+ LLVM libc++) | 159 | 97 | 2 | 60 |
 
 ---
 
 ## 2. Key Findings & Actionable Gaps
 
-### 2.1 `libgcc_s.1.dylib` Coverage (`14 / 14 present`, `0 missing`)
+### 2.1 `libgcc_s.1.dylib` Coverage (`14 / 14 present`, `0 stubbed-dishonestly`, `0 missing`)
 
 Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in the symbol table below.
+- **Stubbed dishonestly**: none.
 
-### 2.2 `libc++abi.dylib` Coverage (`33 / 35 present`, `2 missing`)
+### 2.2 `libc++abi.dylib` Coverage (`33 / 35 present`, `0 stubbed-dishonestly`, `2 missing`)
 
 - **Missing (2)**: `_aligned_alloc`, `_dyld_register_func_for_add_image`.
+- **Stubbed dishonestly**: none.
 
 ### 2.3 `libstdc++.6.dylib` Coverage (`72 / 77 present`, `1 stubbed-dishonestly`, `4 missing`)
 
 - **Missing (4)**: `_btowc`, `_mbrtowc`, `_strxfrm`, `_wcrtomb`.
 - **Stubbed dishonestly (1)**: `_setlocale`.
 
-### 2.4 `libc++.1.dylib` Missing Symbol Clusters (`98 / 159 present`, `1 stubbed-dishonestly`, `60 missing`)
+### 2.4 `libc++.1.dylib` Missing Symbol Clusters (`97 / 159 present`, `2 stubbed-dishonestly`, `60 missing`)
 
-- **Stubbed dishonestly (1)**: `_setlocale`.
+- **Stubbed dishonestly (2)**: `_pthread_mutexattr_destroy`, `_setlocale`.
 - **Extended Locale (`<xlocale.h>`) Lifecycle & `*_l` Functions (42 symbols)**:
   - Locale lifecycle (4): `_duplocale`, `_freelocale`, `_newlocale`, `_uselocale`.
   - Character classification, case mapping & `localeconv_l` (26): `_isalnum_l`, `_isalpha_l`, `_isblank_l`, `_iscntrl_l`, `_isdigit_l`, `_isgraph_l`, `_islower_l`, `_isprint_l`, `_ispunct_l`, `_isspace_l`, `_isupper_l`, `_iswalpha_l`, `_iswblank_l`, `_iswcntrl_l`, `_iswdigit_l`, `_iswgraph_l`, `_iswlower_l`, `_iswprint_l`, `_iswpunct_l`, `_iswspace_l`, `_iswupper_l`, `_iswxdigit_l`, `_isxdigit_l`, `_localeconv_l`, `_towlower_l`, `_towupper_l`.
@@ -152,7 +154,7 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_pthread_mutex_lock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:555` | Handler `pm_lock` |
 | `_pthread_mutex_trylock` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:556` | Handler `pm_trylock` |
 | `_pthread_mutex_unlock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:557` | Handler `pm_unlock` |
-| `_pthread_mutexattr_destroy` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:562` | Handler `pma_ok` |
+| `_pthread_mutexattr_destroy` | `libc++.1.dylib` | `stubbed-dishonestly` | `src/runtime/libc/Pthread.cpp:562` | Handler `pma_ok` |
 | `_pthread_mutexattr_init` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:559` | Handler `pma_init` |
 | `_pthread_mutexattr_settype` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:560` | Handler `pma_settype` |
 | `_pthread_once` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:583` | Handler `p_once` |
