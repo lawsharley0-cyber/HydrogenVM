@@ -108,6 +108,20 @@ void RunLoop::post(std::function<void(CPU::Cpu&)> fn) {
     cv.notify_all();
 }
 
+bool RunLoop::hasModeInput(const std::string& mode) {
+    std::lock_guard<std::mutex> lk(mu);
+    if (std::find(commonModes.begin(), commonModes.end(), mode) != commonModes.end()) return true;
+    for (const auto& tm : timers) if (tm->valid && !tm->modes.empty() && inMode(tm->modes, mode)) return true;
+    for (const auto& s : sources) if (s->valid.load() && !s->modes.empty() && inMode(s->modes, mode)) return true;
+    return false;
+}
+
+bool RunLoop::runModeOnce(CPU::Cpu& c, double until, const std::string& mode) {
+    const bool hasInput = hasModeInput(mode);
+    if (hasInput) runUntil(c, until, true, mode);
+    return hasInput;
+}
+
 bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
     if (proc.terminating() || proc.stopping()) return false;
     struct Active {
@@ -193,27 +207,18 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
     return ran;
 }
 
-bool RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource, const std::string& mode) {
-    {
-        std::lock_guard<std::mutex> lk(mu);
-        bool hasItem = false;
-        for (const auto& tm : timers) if (tm->valid && inMode(tm->modes, mode)) { hasItem = true; break; }
-        if (!hasItem) {
-            for (const auto& s : sources) if (s->valid.load() && inMode(s->modes, mode)) { hasItem = true; break; }
-        }
-        if (!hasItem) return false;
-    }
+void RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource, const std::string& mode) {
     for (;;) {
         if (proc.stopping()) throw ProcessExit(0, "stopping");
-        if (proc.terminating()) return true;
+        if (proc.terminating()) return;
         {
             std::lock_guard<std::mutex> lk(mu);
-            if (stopFlag) { stopFlag = false; return true; }
+            if (stopFlag) { stopFlag = false; return; }
         }
         const double remaining = until - now();
-        if (remaining <= 0) { runOnce(c, 0, mode); return true; }
+        if (remaining <= 0) { runOnce(c, 0, mode); return; }
         const bool ran = runOnce(c, std::min(remaining, 0.1), mode);
-        if (ran && returnAfterSource) return true;
+        if (ran && returnAfterSource) return;
     }
 }
 
@@ -480,7 +485,7 @@ void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopOf(x, self)
 void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopOf(x, self).runUntil(x.cpu, dateValue(x, date), false, kDefaultModeKey); }
 bool r_runModeBeforeDate(Ctx& x, id self, SEL, id mode, id date) {
     const double d = dateValue(x, date);
-    return loopOf(x, self).runUntil(x.cpu, d, true, runModeKey(x, mode));
+    return loopOf(x, self).runModeOnce(x.cpu, d, runModeKey(x, mode));
 }
 // The mode being run, as the guest's string (no internal "s:" key prefix); nil when the loop is not running.
 id r_currentMode(Ctx& x, id self, SEL) {

@@ -8010,6 +8010,17 @@ int runFullSubsystemTests() {
         check(runModeReturn != 0, "runMode:beforeDate: returns YES for a mode with a source but timeout reached");
 
         call("_CFRunLoopRemoveSource", {mainLoop, source, timerMode});
+
+        // Once the source is gone the private mode has no input again, so it must answer NO at once.
+        uint32_t date3 = Foundation::makeDate(mx, Foundation::now() + 0.05);
+        runModeReturn = uint32_t(mr.send(mcpu, currentRunLoop, "runMode:beforeDate:", {timerMode, date3}));
+        check(runModeReturn == 0, "runMode:beforeDate: returns NO again after the mode's only source is removed");
+
+        // The default mode is always fed by the host event pump, so a game's own run-loop pump keeps waiting (YES).
+        const uint32_t defaultMode = Foundation::makeString(mx, "kCFRunLoopDefaultMode");
+        uint32_t date4 = Foundation::makeDate(mx, Foundation::now() + 0.01);
+        runModeReturn = uint32_t(mr.send(mcpu, currentRunLoop, "runMode:beforeDate:", {defaultMode, date4}));
+        check(runModeReturn != 0, "runMode:beforeDate: returns YES for the default mode even with no guest timers");
     }
 
     {
