@@ -87,21 +87,10 @@ struct BatchObservations: Sendable {
     var relaunchSummary: String?
     var missingLines: [String] = []
     var audioDecodeFailures: [String] = []
-    /// Set when the host could not reserve the guest arena twice: the game never
-    /// ran, so this must not be reported as a game crash.
-    var hostResourceFailure: String?
 }
 
 enum BatchCheckBuilder {
     static func build(_ o: BatchObservations) -> [BatchCheck] {
-        // Host memory result: no game code ran, so only the host is reported.
-        if let host = o.hostResourceFailure {
-            return [
-                .init(name: "Launches", status: .warn, detail: "Not started: \(host)"),
-                .init(name: "Shows a picture", status: .skip, detail: "Not run: the host could not reserve the guest arena"),
-                .init(name: "Speed", status: .skip, detail: "Not run")
-            ]
-        }
         var c: [BatchCheck] = []
         let d = o.finalDiag ?? BatchDiagnostics()
 
@@ -205,8 +194,6 @@ enum BatchCheckBuilder {
         } else if let crashed = o.relaunchCrashed {
             if crashed {
                 c.append(.init(name: "Relaunch", status: .fail, detail: o.relaunchSummary ?? "Crashed on the second launch"))
-            } else if let summary = o.relaunchSummary, summary.hasPrefix("Host memory:") {
-                c.append(.init(name: "Relaunch", status: .warn, detail: summary))
             } else if (o.relaunchFrames ?? 0) > 0 {
                 c.append(.init(name: "Relaunch", status: .pass, detail: "Started again with its saved data (\(o.relaunchFrames ?? 0) frames)"))
             } else {
