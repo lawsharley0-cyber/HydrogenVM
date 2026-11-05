@@ -70,6 +70,7 @@ echo "PASS: app launched, the link queued $URL, the library routed $GUEST_ID, an
 
 # A malformed URL in our scheme must still reach the scene router, so its
 # resolver can present the malformed-link error instead of silently dropping it.
+rm -f "$DATA/Documents/cold-start-error"
 MALFORMED_URL="$URL?source=clip"
 xcrun simctl openurl "$UDID" "$MALFORMED_URL"
 for _ in $(seq 1 40); do
@@ -78,3 +79,11 @@ for _ in $(seq 1 40); do
 done
 [ "$(cat "$DATA/Documents/cold-start-queued")" = "$MALFORMED_URL" ] || fail "malformed URL was dropped before routing"
 echo "PASS: malformed HydrogenVM URL reached the scene router"
+
+for _ in $(seq 1 40); do
+    [ -f "$DATA/Documents/cold-start-error" ] && break
+    sleep 0.5
+done
+[ -f "$DATA/Documents/cold-start-error" ] || fail "malformed URL did not reach the error handler"
+[ "$(cat "$DATA/Documents/cold-start-error")" = "That link is not a HydrogenVM game link. A game icon uses hydrogenvm://run/<game-id>." ] || fail "unexpected malformed-link error"
+echo "PASS: malformed URL resolved to the library error message"

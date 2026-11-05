@@ -6,7 +6,7 @@ import CoreFoundation
 final class PlayerViewportTests: XCTestCase {
     @MainActor
     func testSyntheticFrameCounterAdvancesOncePerDelivery() {
-        let session = HVMSession()
+        let session = HVMSession(bundlePath: "/synthetic/app", homePath: "/synthetic/home")
         XCTAssertEqual(session.framesPresented, 0)
         session.deliverFrame()
         XCTAssertEqual(session.framesPresented, 1)

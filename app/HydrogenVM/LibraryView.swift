@@ -301,6 +301,9 @@ struct LibraryView: View {
         switch GameLink.resolve(url, installed: store.apps.map { $0.info.bundleIdentifier }) {
         case .failure(let error):
             router.message = error.message
+            #if COLD_START_URL_TEST && targetEnvironment(simulator)
+            ColdStartURLTest.record("error", value: error.message)
+            #endif
         case .success(let id):
             guard let app = store.apps.first(where: { $0.info.bundleIdentifier == id }) else {
                 router.message = GameLinkError.unknownGame(id).message
