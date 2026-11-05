@@ -10,6 +10,7 @@ name: CI
 on:
   push:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, edited]
   workflow_dispatch:
   schedule:
     - cron: "17 9 * * 1"

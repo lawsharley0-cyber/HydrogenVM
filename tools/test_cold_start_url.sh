@@ -48,7 +48,8 @@ app_log() {
 
 fail() {
     echo "::error title=cold-start URL handoff::$*"
-    echo "::error title=cold-start app log::$(app_log)"
+    echo "::error title=cold-start app log::See the app log printed below."
+    app_log
     echo "FAIL: $*"
     echo "--- ${DATA}/Documents ---"
     ls -la "$DATA/Documents" 2>/dev/null || true
@@ -66,3 +67,14 @@ for stage in launched queued routed guest-passed; do
     [ "$(cat "$file")" = "$expected" ] || fail "unexpected $stage marker: $(cat "$file")"
 done
 echo "PASS: app launched, the link queued $URL, the library routed $GUEST_ID, and the guest passed"
+
+# A malformed URL in our scheme must still reach the scene router, so its
+# resolver can present the malformed-link error instead of silently dropping it.
+MALFORMED_URL="$URL?source=clip"
+xcrun simctl openurl "$UDID" "$MALFORMED_URL"
+for _ in $(seq 1 40); do
+    [ "$(cat "$DATA/Documents/cold-start-queued")" = "$MALFORMED_URL" ] && break
+    sleep 0.5
+done
+[ "$(cat "$DATA/Documents/cold-start-queued")" = "$MALFORMED_URL" ] || fail "malformed URL was dropped before routing"
+echo "PASS: malformed HydrogenVM URL reached the scene router"

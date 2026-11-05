@@ -43,7 +43,7 @@ struct HydrogenVMApp: App {
             // while one is pending, so a game link never flashes the library.
             // `.ipa` imports keep going to the library's own `.onOpenURL`.
             .onOpenURL { url in
-                guard GameLink.gameID(from: url) != nil else { return }
+                guard url.scheme?.lowercased() == "hydrogenvm" else { return }
                 LaunchRouter.shared.open(url)
                 #if COLD_START_URL_TEST && targetEnvironment(simulator)
                 // The contract with tools/test_cold_start_url.sh: the link arrived and is queued.

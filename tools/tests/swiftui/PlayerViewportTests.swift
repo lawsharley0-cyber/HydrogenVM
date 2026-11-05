@@ -5,6 +5,16 @@ import CoreFoundation
 
 final class PlayerViewportTests: XCTestCase {
     @MainActor
+    func testSyntheticFrameCounterAdvancesOncePerDelivery() {
+        let session = HVMSession()
+        XCTAssertEqual(session.framesPresented, 0)
+        session.deliverFrame()
+        XCTAssertEqual(session.framesPresented, 1)
+        session.deliverFrame()
+        XCTAssertEqual(session.framesPresented, 2)
+    }
+
+    @MainActor
     func testBackdropThrottlesDistinctFramesAndRedrawsAfterBeingDisabled() throws {
         let view = EmulatorScreen.ScreenView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         var now: CFTimeInterval = 10
