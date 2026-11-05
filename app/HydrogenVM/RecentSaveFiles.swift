@@ -74,7 +74,7 @@ struct RecentSaveFiles: Equatable, Sendable, Codable {
             if RecentSaveFiles(paths: raw).paths != scoped.paths {
                 scoped.save(bundleID: bundleID, defaults: defaults)
             }
-        } else if !scoped.paths.isEmpty {
+        } else {
             scoped.save(bundleID: bundleID, defaults: defaults)
         }
         return scoped
@@ -99,7 +99,7 @@ struct RecentSaveFiles: Equatable, Sendable, Codable {
     }
 
     static func canonicalPath(_ url: URL) -> String {
-        var path = url.standardizedFileURL.path
+        var path = url.resolvingSymlinksInPath().standardizedFileURL.path
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
         return path
     }

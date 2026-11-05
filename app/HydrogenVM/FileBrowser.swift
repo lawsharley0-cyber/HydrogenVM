@@ -477,7 +477,7 @@ struct SaveEditorDashboardView: View {
         .onChange(of: editingFile) { (_: FileItem?, newItem: FileItem?) in
             guard let url = newItem?.url else { return }
             recents.record(url, container: app.dataDir)
-            recents.save(bundleID: app.info.bundleIdentifier)
+            recents.save(bundleID: app.info.bundleIdentifier, defaults: .standard)
         }
         .onAppear {
             recents = RecentSaveFiles.load(bundleID: app.info.bundleIdentifier, container: app.dataDir)

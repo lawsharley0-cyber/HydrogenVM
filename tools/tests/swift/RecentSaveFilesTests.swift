@@ -89,6 +89,16 @@ struct RecentSaveFilesTests {
         check(names(sandboxAgain, in: sandbox) == ["com.pixowl.TheSandbox.plist"],
               "app B still does not see files opened in app A")
 
+        let newAppBundle = "com.example.new"
+        let newAppDir = URL(fileURLWithPath: "/Games/NewApp", isDirectory: true)
+        let _ = RecentSaveFiles.load(bundleID: newAppBundle, container: newAppDir, defaults: defaults)
+
+        let newAppFile = newAppDir.appendingPathComponent("Documents/save.dat")
+        defaults.set(try JSONEncoder().encode([birdsScore.path, sandboxPlist.path, clashGuest.path, birdsSettings.path, newAppFile.path]),
+                     forKey: RecentSaveFiles.legacyKey)
+        let newAppAgain = RecentSaveFiles.load(bundleID: newAppBundle, container: newAppDir, defaults: defaults)
+        check(names(newAppAgain, in: newAppDir).isEmpty, "empty first migration writes an empty list and ignores later legacy updates")
+
         let poisoned = RecentSaveFiles(paths: [birdsScore.path, sandboxPlist.path, clashGuest.path])
         poisoned.save(bundleID: birdsBundle, defaults: defaults)
         let cleaned = RecentSaveFiles.load(bundleID: birdsBundle, container: birds, defaults: defaults)
@@ -102,6 +112,27 @@ struct RecentSaveFilesTests {
         let emptyBundle = "com.example.empty"
         let empty = RecentSaveFiles.load(bundleID: emptyBundle, container: birds, defaults: defaults)
         check(empty.paths.isEmpty, "corrupt legacy data does not invent files")
+
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let containerA = tempDir.appendingPathComponent("A")
+        let containerB = tempDir.appendingPathComponent("B")
+        try? FileManager.default.createDirectory(at: containerA, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: containerB, withIntermediateDirectories: true)
+
+        let fileInB = containerB.appendingPathComponent("secret.txt")
+        try? Data("secret".utf8).write(to: fileInB)
+        let symlinkInA = containerA.appendingPathComponent("link.txt")
+        try? FileManager.default.createSymbolicLink(at: symlinkInA, withDestinationURL: fileInB)
+
+        var symlinkTest = RecentSaveFiles()
+        symlinkTest.record(symlinkInA, container: containerA)
+        check(symlinkTest.paths.isEmpty, "record ignores a symlink pointing outside the container")
+
+        let loadedSymlink = RecentSaveFiles(paths: [symlinkInA.path])
+        check(loadedSymlink.visible(in: containerA).isEmpty, "visible ignores a symlink pointing outside the container")
 
         print("PASS: recent files of app A never appear for app B (\(checks) checks)")
     }
