@@ -1,29 +1,29 @@
-# HydrogenVM report — a852f5f
+# HydrogenVM report — ea921de
 
-2026-11-05T17:05:46+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-11-05T20:12:57+00:00 · Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 255.1s |
-| tools | 1 | 0 | 0 | 6.7s |
-| cpu | 15 | 0 | 0 | 0.7s |
+| build | 1 | 0 | 0 | 227.3s |
+| tools | 1 | 0 | 0 | 6.1s |
+| cpu | 15 | 0 | 0 | 0.6s |
 | ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 19.3s |
+| bench | 5 | 0 | 0 | 21.3s |
 
 ## Speed
 
-CoreMark **1658.1** iterations/s (555.8 guest MIPS)
+CoreMark **1987.5** iterations/s (665.2 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **115.1%** | 691 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **86.4%** | 691 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **69.1%** | 553 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **36.4%** | 474 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **138.0%** | 828 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **103.5%** | 828 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **82.8%** | 663 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **43.7%** | 568 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 452 MIPS, ctests_arm 481 MIPS, ftests_vfp_thumb_softfp 434 MIPS, ftests_neon_thumb 395 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 443 MIPS, ctests_arm 486 MIPS, ftests_vfp_thumb_softfp 534 MIPS, ftests_neon_thumb 492 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -32,19 +32,19 @@ Raw interpreter speed (CPU test programs): ctests_thumb 452 MIPS, ctests_arm 481
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.04s | 61 | 0.41 ms | 7.38 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.48 ms | 7.07 ms | 0 |
 
 ## Problems (36)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 36.4% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 43.7% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (35)
 
 - **build / compiler**: src/loader/MachO.cpp:206:31: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
-- **build / compiler**: src/runtime/foundation/RunLoop.cpp:591:13: warning: unused variable 'cx' [-Wunused-variable]
+- **build / compiler**: src/runtime/foundation/RunLoop.cpp:614:13: warning: unused variable 'cx' [-Wunused-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:38:37: warning: unused variable 'kUnsignedByte' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:38:61: warning: unused variable 'kByte' [-Wunused-const-variable]
@@ -76,5 +76,5 @@ Raw interpreter speed (CPU test programs): ctests_thumb 452 MIPS, ctests_arm 481
 - **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1251:10: warning: unused function 'avs_zero' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
-- **build / compiler**: tests/runner/TestRunner.cpp:8014:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
+- **build / compiler**: tests/runner/TestRunner.cpp:8096:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 
