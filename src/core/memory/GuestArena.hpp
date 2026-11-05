@@ -13,6 +13,9 @@
 //    Host pages are simply PROT_NONE (unmapped) or PROT_READ|PROT_WRITE.
 //  * Unaligned / type-punned access goes through memcpy (no UB).
 //  * Faults on PROT_NONE pages are turned into guest faults by FaultGuard.
+//  * Destruction keeps the 4 GB range reserved (PROT_NONE, no committed pages)
+//    for the next GuestArena instead of munmapping it, so a batch run does not
+//    re-reserve 4 GB between games. liveCount() still counts live arenas only.
 #pragma once
 #include <cstddef>
 #include <cstdint>
