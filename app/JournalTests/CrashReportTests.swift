@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import XCTest
 @testable import HydrogenVM
 
@@ -68,7 +69,25 @@ final class CrashReportTests: XCTestCase {
     func testUnclosedSignalFileIsClosedBeforeRecovery() throws {
         try withFreshJournal {
             HVMCrashJournal.openSignalFile(CrashReport.signal.path)
-            try Data("{\"exceptionKind\":\"host-SIGSEGV\"}".utf8).write(to: CrashReport.signal)
+            var journalStat = stat()
+            XCTAssertEqual(CrashReport.signal.path.withCString { Darwin.stat($0, &journalStat) }, 0)
+            let descriptor = try XCTUnwrap((Int32(0)..<getdtablesize()).first { fd in
+                var info = stat()
+                return fstat(fd, &info) == 0 && info.st_dev == journalStat.st_dev && info.st_ino == journalStat.st_ino
+            })
+            let signal = Data("{\"exceptionKind\":\"host-SIGSEGV\"}".utf8)
+            XCTAssertEqual(signal.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }, signal.count)
+            XCTAssertEqual(fsync(descriptor), 0)
+            // Force saving to fail so clearPending cannot close the descriptor
+            // after recovery. The descriptor must be closed before reading.
+            try JSONSerialization.data(withJSONObject: ["bundleId": String(repeating: "x", count: 300)])
+                .write(to: CrashReport.pending)
+            XCTAssertNil(CrashReport.recover())
+            errno = 0
+            XCTAssertEqual(fcntl(descriptor, F_GETFD), -1)
+            XCTAssertEqual(errno, EBADF)
+            XCTAssertEqual(try Data(contentsOf: CrashReport.signal), signal)
+            try JSONSerialization.data(withJSONObject: ["bundleId": "test.descriptor"]).write(to: CrashReport.pending)
             XCTAssertNotNil(CrashReport.recover())
         }
     }
