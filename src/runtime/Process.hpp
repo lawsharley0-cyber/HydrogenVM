@@ -304,7 +304,7 @@ public:
     // For teardown diagnostics; safe to call from any thread.
     std::string describeRunningThreads();
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
-    uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached, uint32_t stackAddr = 0);
+    uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
     /// Test seam: the next `count` host-thread creations (process-wide) fail, to exercise startThread cleanup.
     static void failNextHostThreadSpawns(int count);
     bool joinThread(uint32_t self, uint32_t* retval);
@@ -374,7 +374,7 @@ private:
     uint32_t resolveImport(const Loader::BindRecord& b);
     void setupMainThread();
     void setupEnvironment();
-    void initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stackAddr = 0);
+    void initThreadState(GuestThread& t, uint32_t stackSize);
     void threadMain(GuestThread* t, uint32_t fn, uint32_t arg);
     void joinHostThreads(bool includeRunning);
     void finishCrash(const CPU::Cpu& c, CPU::Exit e);

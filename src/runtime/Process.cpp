@@ -691,9 +691,8 @@ void Process::setenv(const std::string& name, const std::string& value) {
 
 // --------------------------------------------------------------- threads ---
 
-void Process::initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stackAddr) {
+void Process::initThreadState(GuestThread& t, uint32_t stackSize) {
     t.cpu.progress.enabled = cfg_.threadLiveness;
-    if (!stackAddr) {
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
         if (uint64_t(stackSize) + kGuard > uint64_t(stackTop_) - kHeapLimit)
@@ -701,9 +700,8 @@ void Process::initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stack
         stackTop_ -= stackSize + kGuard;
         t.stackBase = stackTop_ + kGuard;
     }
-        } else { t.stackBase = stackAddr; }
     t.stackSize = stackSize;
-    if (!stackAddr) mem_->map(t.stackBase, stackSize, Memory::kProtRW);
+    mem_->map(t.stackBase, stackSize, Memory::kProtRW);
     // A guest-side block standing in for struct _pthread: TSD slots at the
     // start (TPIDRURO points here, slot 0 = self), errno after them.
     t.self = allocStatic(1024, 64);
@@ -781,19 +779,19 @@ GuestThread* Process::findThreadById(uint32_t id) {
 
 void Process::failNextHostThreadSpawns(int count) { gInjectedSpawnFailures = count; }
 
-uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached, uint32_t stackAddr) {
+uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached) {
     if (stopping()) throw ProcessExit(exitCode_, "stopping");
     joinHostThreads(false); // reclaim the 8 MB native stacks of completed workers
     const uint64_t rounded = stackSize ? (uint64_t(stackSize) + 4095) & ~uint64_t(4095) : kThreadStackSize;
     if (rounded > UINT32_MAX) throw std::runtime_error("HydrogenVM: guest stack size is too large");
     auto t = std::make_unique<GuestThread>(*this);
     GuestThread* raw = t.get();
-    initThreadState(*raw, std::max<uint32_t>(uint32_t(rounded), kMinThreadStackSize), stackAddr);
+    initThreadState(*raw, std::max<uint32_t>(uint32_t(rounded), kMinThreadStackSize));
     // The guest stack is mapped by now: give it back if the thread never starts (callers hold threadsMu_).
     const uint32_t stackBase = raw->stackBase, mappedSize = raw->stackSize;
     const auto releaseStack = [&] {
-        if (!stackAddr) mem_->unmap(stackBase, mappedSize);
-        if (!stackAddr && stackTop_ == stackBase - kGuard) stackTop_ = stackBase + mappedSize;
+        mem_->unmap(stackBase, mappedSize);
+        if (stackTop_ == stackBase - kGuard) stackTop_ = stackBase + mappedSize;
     };
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
