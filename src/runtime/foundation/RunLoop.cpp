@@ -109,9 +109,18 @@ void RunLoop::post(std::function<void(CPU::Cpu&)> fn) {
 }
 
 bool RunLoop::hasModeInput(const std::string& mode) {
+    const bool isMain = this == &mainRunLoop(proc);   // before taking mu
     std::lock_guard<std::mutex> lk(mu);
-    if (std::find(commonModes.begin(), commonModes.end(), mode) != commonModes.end()) return true;
-    for (const auto& tm : timers) if (tm->valid && !tm->modes.empty() && inMode(tm->modes, mode)) return true;
+    const bool common = std::find(commonModes.begin(), commonModes.end(), mode) != commonModes.end();
+    // Work posted from other threads (performSelector:onThread:, main-queue blocks) is input for any mode.
+    if (!queue.empty()) return true;
+    // The main loop is fed by the host event pump. A worker loop only has input in its default and common
+    // modes if it has frame hooks, or host timers with no mode (the emulator's own), to service.
+    if (common && (isMain || !frameHooks.empty())) return true;
+    for (const auto& tm : timers) {
+        if (!tm->valid) continue;
+        if (tm->modes.empty() ? common : inMode(tm->modes, mode)) return true;
+    }
     for (const auto& s : sources) if (s->valid.load() && !s->modes.empty() && inMode(s->modes, mode)) return true;
     return false;
 }

@@ -8016,6 +8016,16 @@ int runFullSubsystemTests() {
         runModeReturn = uint32_t(mr.send(mcpu, currentRunLoop, "runMode:beforeDate:", {timerMode, date3}));
         check(runModeReturn == 0, "runMode:beforeDate: returns NO again after the mode's only source is removed");
 
+        // A worker thread's run loop with nothing scheduled has no input (Apple: runMode returns NO at once);
+        // posted work counts as input in any mode; the main loop always has the host pump in its default mode.
+        {
+            Foundation::RunLoop worker(modeProc);
+            check(!worker.hasModeInput("s:kCFRunLoopDefaultMode"), "an empty worker run loop has no input in the default mode");
+            worker.post([](CPU::Cpu&) {});
+            check(worker.hasModeInput("s:HVMTimerMode"), "posted work counts as input for a private mode");
+            check(Foundation::mainRunLoop(modeProc).hasModeInput("s:kCFRunLoopDefaultMode"), "the main run loop has input in the default mode");
+        }
+
         // The default mode is always fed by the host event pump, so a game's own run-loop pump keeps waiting (YES).
         const uint32_t defaultMode = Foundation::makeString(mx, "kCFRunLoopDefaultMode");
         uint32_t date4 = Foundation::makeDate(mx, Foundation::now() + 0.01);

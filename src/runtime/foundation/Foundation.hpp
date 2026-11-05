@@ -148,8 +148,9 @@ struct RunLoop {
     bool runOnce(CPU::Cpu& c, double maxWait, const std::string& mode = {});
     // Run until `until` (absolute, reference-date seconds) or stop().
     void runUntil(CPU::Cpu& c, double until, bool returnAfterSource = false, const std::string& mode = {});
-    // True when a run in `mode` has input to wait for: a timer or source the guest scheduled for that mode, or the
-    // default/common modes (the host event pump always feeds those). Host timers with no mode do not count.
+    // True when a run in `mode` has input to wait for: posted work, a timer or source scheduled for that mode, or,
+    // in the default/common modes, the main loop's host event pump, frame hooks or the emulator's own mode-less
+    // timers. A private mode ignores mode-less host timers; an empty worker-thread loop has no input at all.
     bool hasModeInput(const std::string& mode);
     // -[NSRunLoop runMode:beforeDate:]: NO at once when the mode has no input; otherwise run until `until` or one
     // source fires, and answer YES.
