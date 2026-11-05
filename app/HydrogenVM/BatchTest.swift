@@ -1063,8 +1063,11 @@ final class BatchTestRunner {
 
         // The checklist: one table of all games × checks, then each game's details.
         let checked = results.filter { $0.checks != nil }
-        if let first = checked.first?.checks {
-            let names = first.map(\.name)
+        // Columns come from the fullest check list, then any extra names in first-seen order, so a host-resource
+        // result (3 checks) listed first cannot cut the columns of every other game.
+        if let template = checked.compactMap({ $0.checks }).max(by: { $0.count < $1.count }) {
+            var names = template.map(\.name)
+            for r in checked { for c in r.checks ?? [] where !names.contains(c.name) { names.append(c.name) } }
             md += "\n### Checklist\n\n"
             md += "| Check | ✅ | ⚠️ | ❌ | ➖ |\n|---|---:|---:|---:|---:|\n"
             for n in names {

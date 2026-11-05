@@ -112,19 +112,24 @@ GuestArena::GuestArena(size_t hostPage) {
     // A destroyed GuestArena leaves its range in the pool, so this normally takes
     // over that reservation instead of asking the host for another 4 GB.
     void* p = MAP_FAILED;
-    {
+    const auto takePooled = [&p] {
         std::lock_guard<std::mutex> lk(poolMu);
         if (pooledBase) {
             p = pooledBase;
             pooledBase = nullptr;
         }
-    }
+    };
+    takePooled();
     int lastError = 0;
     // The previous game's arena may still be on its way out (its threads are
     // finishing); iOS has room for about one 4 GB reservation, so wait a few
     // seconds for it rather than failing the next launch (Test All Games).
     for (int attempt = 0; p == MAP_FAILED && attempt < 20; ++attempt) {
         if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        // An arena that was still live at the first look may have been destroyed meanwhile and
+        // published its range to the pool; take that instead of asking the host for another 4 GB.
+        takePooled();
+        if (p != MAP_FAILED) break;
         errno = 0;
         p = mmap(nullptr, size_t(kArenaSize), PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
         if (p == MAP_FAILED) lastError = errno;
