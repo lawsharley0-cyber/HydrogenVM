@@ -1858,7 +1858,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&ss_removeCompletion>("_AudioServicesRemoveSystemSoundCompletion");
 
     // AudioQueue
-    supportDef<&aq_newOutput>(p, "_AudioQueueNewOutput", SupportStatus::Real, "creates audio queue");
+    p.def<&aq_newOutput>("_AudioQueueNewOutput");
     p.def<&aq_newInput>("_AudioQueueNewInput");
     p.def<&aq_allocateBuffer>("_AudioQueueAllocateBuffer");
     p.def<&aq_allocateBufferWithPacketDescriptions>("_AudioQueueAllocateBufferWithPacketDescriptions");
@@ -1917,7 +1917,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&au_setParam>("_AudioUnitSetParameter");
     p.def<&au_getParam>("_AudioUnitGetParameter");
     p.def<&au_render>("_AudioUnitRender");
-    supportDef<&aug_new>(p, "_NewAUGraph", SupportStatus::Stub, "augraph not supported");
+    p.def<&aug_new>("_NewAUGraph");
     p.def<&aug_ok1>("_DisposeAUGraph");
     p.def<&aug_addNode>("_AUGraphAddNode");
     p.def<&aug_ok2>("_AUGraphRemoveNode");

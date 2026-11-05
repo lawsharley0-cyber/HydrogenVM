@@ -322,9 +322,9 @@ int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) { x.proc.currentThread().tsd[key
 int32_t pa_init(Ctx& x, GuestPtr a) { x.mem.write<uint32_t>(a, 0x54484441); x.mem.write<uint32_t>(a + 4, 512u << 10); x.mem.write<uint32_t>(a + 8, 1); return 0; }
 int32_t pa_destroy(Ctx&, GuestPtr) { return 0; }
 int32_t pa_setstacksize(Ctx& x, GuestPtr a, uint32_t s) { if (x.mem.read<uint32_t>(a) != 0x54484441) return 22; if (s < (16u << 10)) return 22; x.mem.write<uint32_t>(a + 4, s); return 0; }
-int32_t pa_getstacksize(Ctx& x, GuestPtr a, GuestPtr out) { if (x.mem.read<uint32_t>(a) != 0x54484441) return 22; if (out) x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 4)); return 0; }
-int32_t pa_setdetachstate(Ctx& x, GuestPtr a, int32_t s) { if (x.mem.read<uint32_t>(a) != 0x54484441) return 22; if (s != 1 && s != 2) return 22; x.mem.write<uint32_t>(a + 8, uint32_t(s)); return 0; }
-int32_t pa_getdetachstate(Ctx& x, GuestPtr a, GuestPtr out) { if (x.mem.read<uint32_t>(a) != 0x54484441) return 22; if (out) x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 8)); return 0; }
+int32_t pa_getstacksize(Ctx& x, GuestPtr a, GuestPtr out) { x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 4)); return 0; }
+int32_t pa_setdetachstate(Ctx& x, GuestPtr a, int32_t s) { x.mem.write<uint32_t>(a + 8, uint32_t(s)); return 0; }
+int32_t pa_getdetachstate(Ctx& x, GuestPtr a, GuestPtr out) { x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 8)); return 0; }
 int32_t pa_ignore2(Ctx&, GuestPtr, GuestPtr) { return 0; }
 int32_t pa_ignore_int(Ctx&, GuestPtr, int32_t) { return 0; }
 

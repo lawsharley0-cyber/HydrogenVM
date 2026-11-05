@@ -2402,7 +2402,7 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
         static int seq = 1;
         x.cpu.r[0] = id(rt(x).send(x.cpu, cls, "pasteboardWithName:create:", {makeString(x, "com.apple.UIKit.pboard.unique." + std::to_string(seq++)), 1}));
     }, "@@:");
-    supportMethod(x.proc, pb, "UIPasteboard", "removePasteboardWithName:", [](Ctx&) {}, SupportStatus::Stub, "no-op placeholder for pasteboard removal");
+    pb.classMethod("removePasteboardWithName:", [](Ctx&) {}, "v@:@");
     pb.method("name", [getPbData](Ctx& x) { x.cpu.r[0] = getPbData(x, x.cpu.r[0]).name; }, "@@:");
     pb.method("isPersistent", [getPbData](Ctx& x) { x.cpu.r[0] = getPbData(x, x.cpu.r[0]).persistent ? 1 : 0; }, "c@:");
     pb.method("setPersistent:", [getPbData](Ctx& x) { getPbData(x, x.cpu.r[0]).persistent = (x.cpu.r[2] & 0xFF) != 0; }, "v@:c");
@@ -2484,7 +2484,7 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
         auto& d = getPbData(x, x.cpu.r[0]);
         x.cpu.r[0] = id(rt(x).send(x.cpu, d.itemsDict, "allKeys"));
     }, "@@:");
-    supportMethod(x.proc, pb, "UIPasteboard", "containsPasteboardTypes:", [getPbData](Ctx& x) {
+    pb.method("containsPasteboardTypes:", [getPbData](Ctx& x) {
         auto& d = getPbData(x, x.cpu.r[0]);
         const id types = x.cpu.r[2];
         if (!types) { x.cpu.r[0] = 0; return; }
@@ -2493,7 +2493,7 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
             if (Foundation::dictGet(x, d.itemsDict, t)) { x.cpu.r[0] = 1; return; }
         }
         x.cpu.r[0] = 0;
-    }, SupportStatus::Real, "implemented using internal dict");
+    }, "c@:@");
     pb.method("numberOfItems", [getPbData](Ctx& x) {
         auto& d = getPbData(x, x.cpu.r[0]);
         const auto entries = Foundation::dictEntries(x, d.itemsDict);
