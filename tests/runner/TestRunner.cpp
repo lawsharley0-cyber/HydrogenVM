@@ -2375,6 +2375,28 @@ int runFullSubsystemTests() {
         call2("_CFRelease", data, 0);
     }
     {
+        // Issue #310: CoreData option and store-type constants are exported data
+        // symbols whose value is an NSString equal to the documented string.
+        // An unexported constant binds as NULL and becomes a nil dictionary key.
+        struct CoreDataConstant { const char* sym; const char* want; };
+        const CoreDataConstant kCoreDataConstants[] = {
+            {"_NSSQLiteStoreType", "SQLite"},
+            {"_NSBinaryStoreType", "Binary"},
+            {"_NSInMemoryStoreType", "InMemory"},
+            {"_NSMigratePersistentStoresAutomaticallyOption", "NSMigratePersistentStoresAutomaticallyOption"},
+            {"_NSInferMappingModelAutomaticallyOption", "NSInferMappingModelAutomaticallyOption"},
+            {"_NSSQLitePragmasOption", "NSSQLitePragmasOption"},
+            {"_NSReadOnlyPersistentStoreOption", "NSReadOnlyPersistentStoreOption"}
+        };
+        for (const CoreDataConstant& k : kCoreDataConstants) {
+            const auto cell = proc.lookupSymbol(k.sym);
+            uint32_t str = 0;
+            if (cell) std::memcpy(&str, proc.mem().host(*cell), 4);
+            const std::string what = std::string("CoreData constant ") + k.sym + " is a non-nil NSString equal to its documented value";
+            check(str != 0 && Foundation::utf8(cx, str) == k.want, what.c_str());
+        }
+    }
+    {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
         const auto face = Graphics::TrueTypeFont::load(std::vector<uint8_t>(std::begin(kTestFont), std::end(kTestFont)));
         check(face && face->glyph('A') == 2 && face->glyph('Z') == 0 && face->ascent(20) == 16 &&
