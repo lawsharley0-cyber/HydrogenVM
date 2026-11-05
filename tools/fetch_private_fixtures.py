@@ -53,27 +53,9 @@ def _new_private_root(root: Path) -> None:
     absolute = root.absolute()
     if root.exists() or root.is_symlink() or not absolute.parent.is_dir():
         raise FixtureFetchError("fixture root must be a new directory")
-
-    temp_dir_str = tempfile.gettempdir()
-    temp_dir = Path(temp_dir_str).absolute()
-
-    try:
-        # Check if root is under the OS temp dir
-        rel = absolute.relative_to(temp_dir)
-        resolved_temp = Path(os.path.realpath(temp_dir_str))
-        check_path = resolved_temp / rel
-
-        for ancestor in (check_path, *check_path.parents):
-            if ancestor.is_symlink():
-                raise FixtureFetchError("symlinked fixture-root ancestor is forbidden")
-            if ancestor == resolved_temp:
-                break
-    except ValueError:
-        # Not under temp_dir, behave exactly as before
-        for ancestor in (absolute, *absolute.parents):
-            if ancestor.is_symlink():
-                raise FixtureFetchError("symlinked fixture-root ancestor is forbidden")
-
+    for ancestor in (absolute, *absolute.parents):
+        if ancestor.is_symlink():
+            raise FixtureFetchError("symlinked fixture-root ancestor is forbidden")
     try:
         root.mkdir(mode=0o700)
         (root / "ipas").mkdir(mode=0o700)

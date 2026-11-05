@@ -20,11 +20,11 @@ struct TrueTypeFont::Impl {
 TrueTypeFont::TrueTypeFont() : impl(std::make_unique<Impl>()) {}
 TrueTypeFont::~TrueTypeFont() = default;
 std::shared_ptr<TrueTypeFont> TrueTypeFont::load(std::vector<uint8_t> bytes) {
-    // Support standalone TrueType outlines ('true' or 0x00010000). Reject truncated tables
-    // before passing data to stb; CFF/TTC and other formats remain unsupported.
+    // Support standalone TrueType outlines. Reject truncated tables before
+    // passing data to stb; CFF/TTC and other formats remain unsupported.
     auto u16 = [&](size_t p) { return (uint32_t(bytes[p]) << 8) | bytes[p + 1]; };
     auto u32 = [&](size_t p) { return (u16(p) << 16) | u16(p + 2); };
-    if (bytes.size() < 12 || (u32(0) != 0x10000 && u32(0) != 0x74727565)) return {};
+    if (bytes.size() < 12 || u32(0) != 0x10000) return {};
     const uint32_t n = u16(4);
     if (!n || 12ull + n * 16ull > bytes.size()) return {};
     uint32_t head = 0, maxp = 0, post = 0;

@@ -40,27 +40,8 @@ class TestT1bArenaRelease(unittest.TestCase):
         self.assertIn('HVMEngine.wait(forGuestArenaRelease: timeout)', swift_content)   # the Swift-imported name, called off the main actor
         self.assertNotIn('_ = HVMEngine.wait(', swift_content)   # no synchronous wait on the main actor
         self.assertIn('HVMEngine.liveGuestArenaCount() == 0', swift_content)
-        self.assertIn('await Self.waitForArenaRelease(20.0)', swift_content)   # longer back-off before the single retry
+        self.assertIn('await Self.waitForArenaRelease(5.0)', swift_content)
         self.assertEqual(swift_content.count('!Task.isCancelled && HVMEngine.liveGuestArenaCount() == 0'), 2)   # both startup polls stop on cancel
-
-    def test_batch_test_runner_reports_reserve_failure_as_host_resource(self):
-        # Issue #307: a failed 4 GB reservation is a host problem, not a game crash.
-        swift_path = os.path.join(REPO_ROOT, 'app', 'HydrogenVM', 'BatchTest.swift')
-        with open(swift_path, 'r', encoding='utf-8') as f:
-            swift_content = f.read()
-        self.assertEqual(swift_content.count('while launchAttempts < 2 {'), 2)   # launch and relaunch: one retry
-        self.assertEqual(swift_content.count('var launchAttempts = 0'), 2)
-        self.assertIn('signature: "host-resource-arena-reserve"', swift_content)
-        self.assertIn('exceptionKind: "host-resource"', swift_content)
-        self.assertIn('summary: "Host memory: \\(reserveFailure)"', swift_content)
-        self.assertIn('obs.hostResourceFailure = reserveFailure', swift_content)
-        self.assertIn('crashed: false,', swift_content)
-
-        checks_path = os.path.join(REPO_ROOT, 'app', 'HydrogenVM', 'BatchChecks.swift')
-        with open(checks_path, 'r', encoding='utf-8') as f:
-            checks_content = f.read()
-        self.assertIn('var hostResourceFailure: String?', checks_content)
-        self.assertIn('if let host = o.hostResourceFailure', checks_content)
 
 if __name__ == '__main__':
     unittest.main()

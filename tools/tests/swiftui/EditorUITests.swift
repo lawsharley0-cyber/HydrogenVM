@@ -56,8 +56,6 @@ final class EditorUITests: XCTestCase {
         let save = app.buttons["save-changes"]
         XCTAssertTrue(save.isEnabled)
         save.tap()
-        XCTAssertTrue(app.buttons["Save Anyway"].waitForExistence(timeout: 5))
-        app.buttons["Save Anyway"].tap()
         app.buttons["editor-close"].tap()
         XCTAssertTrue(app.staticTexts["disk-json"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["disk-json"].label, "nested=true")
