@@ -987,7 +987,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     rl.cm<&rc_current>("currentRunLoop").cm<&rc_main>("mainRunLoop");
     rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:");
     supportMethod(p, rl, "NSRunLoop", "runMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); },
-                  SupportStatus::Approx, "Runs the requested mode until the date or a source, but always returns true");
+                  SupportStatus::Approx, "Runs one emulated mode iteration until the supplied date; host event and source model is approximate", "c@:@@");
     rl.m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
 
     ObjC::ClassBuilder obj = r.builder(r.nsObject);

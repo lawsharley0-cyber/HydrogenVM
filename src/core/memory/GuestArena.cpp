@@ -31,15 +31,15 @@ uint8_t* pooledBase = nullptr;
 // Largest reservations in this task, for a failed 4 GB reservation. Read-only:
 // no guest memory, no new mappings, no GPU calls.
 std::string largestMappings() {
-    struct Region { mach_vm_address_t start; mach_vm_size_t size; vm_prot_t prot; };
+    struct Region { vm_address_t start; vm_size_t size; vm_prot_t prot; };
     std::vector<Region> regions;
-    mach_vm_address_t address = 0;
+    vm_address_t address = 0;
     while (regions.size() < 4096) {
-        mach_vm_size_t size = 0;
+        vm_size_t size = 0;
         vm_region_basic_info_data_64_t info{};
         mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
         mach_port_t object = MACH_PORT_NULL;
-        if (mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64,
+        if (vm_region_64(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64,
                            reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS)
             break;
         if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);

@@ -102,7 +102,18 @@ struct RecentSaveFiles: Equatable, Sendable, Codable {
     }
 
     static func canonicalPath(_ url: URL) -> String {
-        var path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        // Darwin leaves an unresolved URL unchanged when its final component
+        // does not exist. Resolve the nearest existing ancestor before adding
+        // the missing suffix, so a new save under a symlink is scoped correctly.
+        var ancestor = url.standardizedFileURL
+        var suffix: [String] = []
+        while ancestor.path != "/" && !FileManager.default.fileExists(atPath: ancestor.path) {
+            suffix.append(ancestor.lastPathComponent)
+            ancestor.deleteLastPathComponent()
+        }
+        var resolved = ancestor.resolvingSymlinksInPath()
+        for component in suffix.reversed() { resolved.appendPathComponent(component) }
+        var path = resolved.standardizedFileURL.path
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
         return path
     }
