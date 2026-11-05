@@ -91,7 +91,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1377,
+      "line": 1233,
       "registration": "setResourceValue:forKey:error:",
       "function": "url_setResourceValue",
       "reason": "only constant success/boolean returns",
@@ -99,7 +99,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1378,
+      "line": 1234,
       "registration": "getResourceValue:forKey:error:",
       "function": "url_getResourceValue",
       "reason": "only constant success/boolean returns",
@@ -107,7 +107,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1399,
+      "line": 1255,
       "registration": "isLoaded",
       "function": "b_true",
       "reason": "only constant success/boolean returns",
@@ -115,7 +115,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1399,
+      "line": 1255,
       "registration": "load",
       "function": "b_true",
       "reason": "only constant success/boolean returns",
@@ -123,7 +123,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1399,
+      "line": 1255,
       "registration": "unload",
       "function": "b_true",
       "reason": "only constant success/boolean returns",
@@ -131,7 +131,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1429,
+      "line": 1285,
       "registration": "setAttributes:ofItemAtPath:error:",
       "function": "fm_setAttributes",
       "reason": "only constant success/boolean returns",
@@ -139,7 +139,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1440,
+      "line": 1296,
       "registration": "URLForUbiquityContainerIdentifier:",
       "function": "fm_nil1",
       "reason": "only constant success/boolean returns",
@@ -147,7 +147,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1440,
+      "line": 1296,
       "registration": "ubiquityIdentityToken",
       "function": "fm_nil",
       "reason": "only constant success/boolean returns",
@@ -155,7 +155,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1441,
+      "line": 1297,
       "registration": "delegate",
       "function": "fm_nil",
       "reason": "only constant success/boolean returns",
@@ -163,7 +163,7 @@
     },
     {
       "path": "src/runtime/foundation/Bundle.cpp",
-      "line": 1441,
+      "line": 1297,
       "registration": "setDelegate:",
       "function": "fm_setDelegate",
       "reason": "empty no-op body",
@@ -195,7 +195,7 @@
     },
     {
       "path": "src/runtime/foundation/CoreFoundation.cpp",
-      "line": 1203,
+      "line": 1146,
       "registration": "_CFGetAllocator",
       "function": "cf_getAllocator",
       "reason": "only constant success/boolean returns",
@@ -203,7 +203,7 @@
     },
     {
       "path": "src/runtime/foundation/CoreFoundation.cpp",
-      "line": 1275,
+      "line": 1219,
       "registration": "_CFStringGetCharactersPtr",
       "function": "s_getCharactersPtr",
       "reason": "only constant success/boolean returns",
@@ -211,7 +211,7 @@
     },
     {
       "path": "src/runtime/foundation/CoreFoundation.cpp",
-      "line": 1278,
+      "line": 1222,
       "registration": "_CFStringGetSystemEncoding",
       "function": "s_systemEncoding",
       "reason": "only constant success/boolean returns",
@@ -219,7 +219,7 @@
     },
     {
       "path": "src/runtime/foundation/CoreFoundation.cpp",
-      "line": 1285,
+      "line": 1229,
       "registration": "_CFStringIsEncodingAvailable",
       "function": "s_isEncodingAvailable",
       "reason": "only constant success/boolean returns",
@@ -227,7 +227,7 @@
     },
     {
       "path": "src/runtime/foundation/CoreFoundation.cpp",
-      "line": 1314,
+      "line": 1258,
       "registration": "_CFStringNormalize",
       "function": "s_normalize",
       "reason": "empty no-op body",
@@ -403,7 +403,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1111,
+      "line": 1087,
       "registration": "removeObserver:forKeyPath:",
       "function": "o_kvoNoop2",
       "reason": "empty no-op body",
@@ -411,7 +411,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1112,
+      "line": 1088,
       "registration": "removeObserver:forKeyPath:context:",
       "function": "o_kvoRemove3",
       "reason": "empty no-op body",
@@ -419,7 +419,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1112,
+      "line": 1088,
       "registration": "willChangeValueForKey:",
       "function": "o_kvoChange",
       "reason": "empty no-op body",
@@ -427,7 +427,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1113,
+      "line": 1089,
       "registration": "automaticallyNotifiesObserversForKey:",
       "function": "oc_automaticallyNotifies",
       "reason": "only constant success/boolean returns",
@@ -435,7 +435,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1113,
+      "line": 1089,
       "registration": "didChangeValueForKey:",
       "function": "o_kvoChange",
       "reason": "empty no-op body",
@@ -443,7 +443,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1114,
+      "line": 1090,
       "registration": "observationInfo",
       "function": "o_observationInfo",
       "reason": "only constant success/boolean returns",
@@ -451,7 +451,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1178,
+      "line": 1154,
       "registration": "release",
       "function": "null_noop",
       "reason": "empty no-op body",
@@ -459,7 +459,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1179,
+      "line": 1155,
       "registration": "dealloc",
       "function": "null_noop",
       "reason": "empty no-op body",
@@ -467,7 +467,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1222,
+      "line": 1198,
       "registration": "disableSuddenTermination",
       "function": "pi_noop",
       "reason": "empty no-op body",
@@ -475,7 +475,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1222,
+      "line": 1198,
       "registration": "enableSuddenTermination",
       "function": "pi_noop",
       "reason": "empty no-op body",
@@ -483,7 +483,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1223,
+      "line": 1199,
       "registration": "thermalState",
       "function": "pi_thermal",
       "reason": "only constant success/boolean returns",
@@ -491,7 +491,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1316,
+      "line": 1292,
       "registration": "_NSDefaultMallocZone",
       "function": "f_defaultZone",
       "reason": "only constant success/boolean returns",
@@ -499,7 +499,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1317,
+      "line": 1293,
       "registration": "_NSCreateZone",
       "function": "f_defaultZone",
       "reason": "only constant success/boolean returns",
@@ -507,7 +507,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1322,
+      "line": 1298,
       "registration": "_NSZoneFromPointer",
       "function": "f_zoneFromPointer",
       "reason": "only constant success/boolean returns",
@@ -515,7 +515,7 @@
     },
     {
       "path": "src/runtime/foundation/Misc.cpp",
-      "line": 1326,
+      "line": 1302,
       "registration": "_NSShouldRetainWithZone",
       "function": "f_shouldRetainWithZone",
       "reason": "only constant success/boolean returns",
@@ -835,15 +835,15 @@
     },
     {
       "path": "src/runtime/foundation/RunLoop.cpp",
-      "line": 966,
+      "line": 661,
       "registration": "runMode:beforeDate:",
       "function": "r_runModeBeforeDate",
       "reason": "only constant success/boolean returns",
-      "body_sha256": "ba4137cabbf53e66f9955014ab98786909c0a57d290ea7af24ecc68e8fe752f4"
+      "body_sha256": "f6cf1567b5c5ca9a521afdbdfde2a5cbca2201867e6fc0219ab9415782ee1600"
     },
     {
       "path": "src/runtime/foundation/RunLoop.cpp",
-      "line": 976,
+      "line": 671,
       "registration": "cancelPreviousPerformRequestsWithTarget:",
       "function": "oc_cancelAll",
       "reason": "only constant success/boolean returns",
@@ -851,7 +851,7 @@
     },
     {
       "path": "src/runtime/foundation/RunLoop.cpp",
-      "line": 983,
+      "line": 678,
       "registration": "addPort:forMode:",
       "function": "rl_portNoop",
       "reason": "empty no-op body",
@@ -859,7 +859,7 @@
     },
     {
       "path": "src/runtime/foundation/RunLoop.cpp",
-      "line": 983,
+      "line": 678,
       "registration": "removePort:forMode:",
       "function": "rl_portNoop",
       "reason": "empty no-op body",
@@ -867,7 +867,7 @@
     },
     {
       "path": "src/runtime/foundation/RunLoop.cpp",
-      "line": 988,
+      "line": 683,
       "registration": "isMultiThreaded",
       "function": "th_isMultiThreaded",
       "reason": "only constant success/boolean returns",
@@ -875,7 +875,7 @@
     },
     {
       "path": "src/runtime/foundation/RunLoop.cpp",
-      "line": 990,
+      "line": 685,
       "registration": "setThreadPriority:",
       "function": "th_setPriority",
       "reason": "only constant success/boolean returns",
@@ -883,7 +883,7 @@
     },
     {
       "path": "src/runtime/foundation/RunLoop.cpp",
-      "line": 992,
+      "line": 687,
       "registration": "main",
       "function": "th_noop",
       "reason": "empty no-op body",
@@ -891,7 +891,7 @@
     },
     {
       "path": "src/runtime/foundation/RunLoop.cpp",
-      "line": 995,
+      "line": 690,
       "registration": "setThreadPriority:",
       "function": "th_setPriority",
       "reason": "only constant success/boolean returns",
@@ -1395,7 +1395,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 554,
+      "line": 501,
       "registration": "_pthread_mutex_init",
       "function": "pm_init",
       "reason": "only constant success/boolean returns",
@@ -1403,7 +1403,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 558,
+      "line": 505,
       "registration": "_pthread_mutex_destroy",
       "function": "pm_destroy",
       "reason": "only constant success/boolean returns",
@@ -1411,7 +1411,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 559,
+      "line": 506,
       "registration": "_pthread_mutexattr_init",
       "function": "pma_init",
       "reason": "only constant success/boolean returns",
@@ -1419,7 +1419,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 560,
+      "line": 507,
       "registration": "_pthread_mutexattr_settype",
       "function": "pma_settype",
       "reason": "only constant success/boolean returns",
@@ -1427,7 +1427,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 561,
+      "line": 508,
       "registration": "_pthread_mutexattr_gettype",
       "function": "pma_gettype",
       "reason": "only constant success/boolean returns",
@@ -1435,7 +1435,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 562,
+      "line": 509,
       "registration": "_pthread_mutexattr_destroy",
       "function": "pma_ok",
       "reason": "only constant success/boolean returns",
@@ -1443,7 +1443,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 563,
+      "line": 510,
       "registration": "_pthread_mutexattr_setpshared",
       "function": "pma_ok2",
       "reason": "only constant success/boolean returns",
@@ -1451,7 +1451,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 564,
+      "line": 511,
       "registration": "_pthread_mutexattr_setprotocol",
       "function": "pma_ok2",
       "reason": "only constant success/boolean returns",
@@ -1459,7 +1459,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 565,
+      "line": 512,
       "registration": "_pthread_cond_init",
       "function": "pc_init",
       "reason": "only constant success/boolean returns",
@@ -1467,7 +1467,23 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 573,
+      "line": 516,
+      "registration": "_pthread_cond_signal",
+      "function": "pc_signal",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "dcfd54461a5bdaec5e18a12e91538028eb285f93d49b7b96363237296cdd9642"
+    },
+    {
+      "path": "src/runtime/libc/Pthread.cpp",
+      "line": 517,
+      "registration": "_pthread_cond_broadcast",
+      "function": "pc_signal",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "dcfd54461a5bdaec5e18a12e91538028eb285f93d49b7b96363237296cdd9642"
+    },
+    {
+      "path": "src/runtime/libc/Pthread.cpp",
+      "line": 518,
       "registration": "_pthread_cond_destroy",
       "function": "pc_destroy",
       "reason": "only constant success/boolean returns",
@@ -1475,7 +1491,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 574,
+      "line": 519,
       "registration": "_pthread_condattr_init",
       "function": "pca_ok",
       "reason": "only constant success/boolean returns",
@@ -1483,7 +1499,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 575,
+      "line": 520,
       "registration": "_pthread_condattr_destroy",
       "function": "pca_ok",
       "reason": "only constant success/boolean returns",
@@ -1491,7 +1507,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 576,
+      "line": 521,
       "registration": "_pthread_rwlock_init",
       "function": "rw_init",
       "reason": "only constant success/boolean returns",
@@ -1499,7 +1515,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 577,
+      "line": 522,
       "registration": "_pthread_rwlock_rdlock",
       "function": "rw_rdlock",
       "reason": "only constant success/boolean returns",
@@ -1507,7 +1523,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 579,
+      "line": 524,
       "registration": "_pthread_rwlock_wrlock",
       "function": "rw_wrlock",
       "reason": "only constant success/boolean returns",
@@ -1515,7 +1531,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 581,
+      "line": 526,
       "registration": "_pthread_rwlock_unlock",
       "function": "rw_unlock",
       "reason": "only constant success/boolean returns",
@@ -1523,7 +1539,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 582,
+      "line": 527,
       "registration": "_pthread_rwlock_destroy",
       "function": "rw_destroy",
       "reason": "only constant success/boolean returns",
@@ -1531,7 +1547,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 583,
+      "line": 528,
       "registration": "_pthread_once",
       "function": "p_once",
       "reason": "only constant success/boolean returns",
@@ -1539,7 +1555,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 584,
+      "line": 529,
       "registration": "_pthread_key_create",
       "function": "k_create",
       "reason": "only constant success/boolean returns",
@@ -1547,7 +1563,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 585,
+      "line": 530,
       "registration": "_pthread_key_delete",
       "function": "k_delete",
       "reason": "only constant success/boolean returns",
@@ -1555,7 +1571,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 587,
+      "line": 532,
       "registration": "_pthread_setspecific",
       "function": "k_set",
       "reason": "only constant success/boolean returns",
@@ -1563,7 +1579,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 588,
+      "line": 533,
       "registration": "_pthread_attr_init",
       "function": "pa_init",
       "reason": "only constant success/boolean returns",
@@ -1571,7 +1587,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 589,
+      "line": 534,
       "registration": "_pthread_attr_destroy",
       "function": "pa_destroy",
       "reason": "only constant success/boolean returns",
@@ -1579,7 +1595,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 590,
+      "line": 535,
       "registration": "_pthread_attr_setstacksize",
       "function": "pa_setstacksize",
       "reason": "only constant success/boolean returns",
@@ -1587,7 +1603,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 591,
+      "line": 536,
       "registration": "_pthread_attr_getstacksize",
       "function": "pa_getstacksize",
       "reason": "only constant success/boolean returns",
@@ -1595,7 +1611,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 592,
+      "line": 537,
       "registration": "_pthread_attr_setdetachstate",
       "function": "pa_setdetachstate",
       "reason": "only constant success/boolean returns",
@@ -1603,7 +1619,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 593,
+      "line": 538,
       "registration": "_pthread_attr_getdetachstate",
       "function": "pa_getdetachstate",
       "reason": "only constant success/boolean returns",
@@ -1611,7 +1627,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 594,
+      "line": 539,
       "registration": "_pthread_attr_setschedparam",
       "function": "pa_ignore2",
       "reason": "only constant success/boolean returns",
@@ -1619,7 +1635,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 595,
+      "line": 540,
       "registration": "_pthread_attr_getschedparam",
       "function": "pa_ignore2",
       "reason": "only constant success/boolean returns",
@@ -1627,7 +1643,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 596,
+      "line": 541,
       "registration": "_pthread_attr_setschedpolicy",
       "function": "pa_ignore_int",
       "reason": "only constant success/boolean returns",
@@ -1635,7 +1651,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 597,
+      "line": 542,
       "registration": "_pthread_attr_setscope",
       "function": "pa_ignore_int",
       "reason": "only constant success/boolean returns",
@@ -1643,7 +1659,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 598,
+      "line": 543,
       "registration": "_pthread_attr_setinheritsched",
       "function": "pa_ignore_int",
       "reason": "only constant success/boolean returns",
@@ -1651,7 +1667,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 599,
+      "line": 544,
       "registration": "_pthread_create",
       "function": "t_create",
       "reason": "only constant success/boolean returns",
@@ -1659,7 +1675,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 601,
+      "line": 546,
       "registration": "_pthread_detach",
       "function": "t_detach",
       "reason": "only constant success/boolean returns",
@@ -1667,7 +1683,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 605,
+      "line": 550,
       "registration": "_pthread_setname_np",
       "function": "t_setname_np",
       "reason": "only constant success/boolean returns",
@@ -1675,7 +1691,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 606,
+      "line": 551,
       "registration": "_pthread_kill",
       "function": "t_kill",
       "reason": "only constant success/boolean returns",
@@ -1683,7 +1699,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 607,
+      "line": 552,
       "registration": "_pthread_sigmask",
       "function": "t_sigmask",
       "reason": "only constant success/boolean returns",
@@ -1691,7 +1707,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 608,
+      "line": 553,
       "registration": "_pthread_getschedparam",
       "function": "t_getschedparam",
       "reason": "only constant success/boolean returns",
@@ -1699,7 +1715,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 609,
+      "line": 554,
       "registration": "_pthread_setschedparam",
       "function": "t_setschedparam",
       "reason": "only constant success/boolean returns",
@@ -1707,7 +1723,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 612,
+      "line": 557,
       "registration": "_sched_yield",
       "function": "sched_yield_",
       "reason": "only constant success/boolean returns",
@@ -1715,7 +1731,7 @@
     },
     {
       "path": "src/runtime/libc/Pthread.cpp",
-      "line": 613,
+      "line": 558,
       "registration": "_pthread_yield_np",
       "function": "sched_yield_",
       "reason": "only constant success/boolean returns",
@@ -1739,7 +1755,7 @@
     },
     {
       "path": "src/runtime/libc/Stdio.cpp",
-      "line": 568,
+      "line": 527,
       "registration": "_popen",
       "function": "f_popen",
       "reason": "only constant success/boolean returns",
@@ -1747,7 +1763,7 @@
     },
     {
       "path": "src/runtime/libc/Stdio.cpp",
-      "line": 587,
+      "line": 546,
       "registration": "_fflush",
       "function": "f_fflush",
       "reason": "only constant success/boolean returns",
@@ -1755,7 +1771,7 @@
     },
     {
       "path": "src/runtime/libc/Stdio.cpp",
-      "line": 589,
+      "line": 548,
       "registration": "_setvbuf",
       "function": "f_setvbuf",
       "reason": "only constant success/boolean returns",
@@ -1763,7 +1779,7 @@
     },
     {
       "path": "src/runtime/libc/Stdio.cpp",
-      "line": 590,
+      "line": 549,
       "registration": "_setbuf",
       "function": "f_setbuf",
       "reason": "empty no-op body",
@@ -1843,7 +1859,7 @@
     },
     {
       "path": "src/runtime/libc/String.cpp",
-      "line": 493,
+      "line": 321,
       "registration": "_strerror_r",
       "function": "s_strerror_r",
       "reason": "only constant success/boolean returns",
@@ -1851,7 +1867,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1088,
+      "line": 1020,
       "registration": "__hvm_noop",
       "function": "s_noop",
       "reason": "empty no-op body",
@@ -1859,7 +1875,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1090,
+      "line": 1022,
       "registration": "__hvm_dyld_func_lookup",
       "function": "d_func_lookup",
       "reason": "only constant success/boolean returns",
@@ -1867,7 +1883,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1091,
+      "line": 1023,
       "registration": "__dyld_func_lookup",
       "function": "d_func_lookup",
       "reason": "only constant success/boolean returns",
@@ -1875,7 +1891,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1092,
+      "line": 1024,
       "registration": "dyld_stub_binder",
       "function": "s_noop",
       "reason": "empty no-op body",
@@ -1883,7 +1899,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1101,
+      "line": 1033,
       "registration": "_getppid",
       "function": "s_getppid",
       "reason": "only constant success/boolean returns",
@@ -1891,7 +1907,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1110,
+      "line": 1042,
       "registration": "_ftime",
       "function": "sys_ftime",
       "reason": "only constant success/boolean returns",
@@ -1899,7 +1915,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1116,
+      "line": 1048,
       "registration": "_tcgetattr",
       "function": "s_zero",
       "reason": "only constant success/boolean returns",
@@ -1907,7 +1923,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1117,
+      "line": 1049,
       "registration": "_tcsetattr",
       "function": "s_zero",
       "reason": "only constant success/boolean returns",
@@ -1915,7 +1931,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1118,
+      "line": 1050,
       "registration": "_issetugid",
       "function": "s_zero",
       "reason": "only constant success/boolean returns",
@@ -1923,7 +1939,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1119,
+      "line": 1051,
       "registration": "_isatty",
       "function": "s_isatty",
       "reason": "only constant success/boolean returns",
@@ -1931,7 +1947,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1122,
+      "line": 1054,
       "registration": "_getrlimit",
       "function": "s_getrlimit",
       "reason": "only constant success/boolean returns",
@@ -1939,7 +1955,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1123,
+      "line": 1055,
       "registration": "_setrlimit",
       "function": "s_ok2",
       "reason": "only constant success/boolean returns",
@@ -1947,7 +1963,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1125,
+      "line": 1056,
       "registration": "_getrusage",
       "function": "s_getrusage",
       "reason": "only constant success/boolean returns",
@@ -1955,7 +1971,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1128,
+      "line": 1059,
       "registration": "_uname",
       "function": "s_uname",
       "reason": "only constant success/boolean returns",
@@ -1963,7 +1979,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1129,
+      "line": 1060,
       "registration": "__dyld_image_count",
       "function": "d_image_count",
       "reason": "only constant success/boolean returns",
@@ -1971,7 +1987,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1134,
+      "line": 1065,
       "registration": "__dyld_register_func_for_remove_image",
       "function": "d_register_remove_image",
       "reason": "empty no-op body",
@@ -1979,7 +1995,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1140,
+      "line": 1071,
       "registration": "_dlclose",
       "function": "d_dlclose",
       "reason": "only constant success/boolean returns",
@@ -1987,7 +2003,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1141,
+      "line": 1072,
       "registration": "_dlerror",
       "function": "d_dlerror",
       "reason": "only constant success/boolean returns",
@@ -1995,7 +2011,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1142,
+      "line": 1073,
       "registration": "_dladdr",
       "function": "d_dladdr",
       "reason": "only constant success/boolean returns",
@@ -2003,7 +2019,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1143,
+      "line": 1074,
       "registration": "_NXGetLocalArchInfo",
       "function": "d_local_arch_info",
       "reason": "constant success output parameter",
@@ -2011,7 +2027,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1153,
+      "line": 1084,
       "registration": "_fsync",
       "function": "f_fsync",
       "reason": "only constant success/boolean returns",
@@ -2019,7 +2035,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1168,
+      "line": 1099,
       "registration": "_chmod",
       "function": "f_chmod",
       "reason": "only constant success/boolean returns",
@@ -2027,7 +2043,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1169,
+      "line": 1100,
       "registration": "_utimes",
       "function": "f_utimes",
       "reason": "only constant success/boolean returns",
@@ -2035,7 +2051,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1170,
+      "line": 1101,
       "registration": "_utime",
       "function": "f_utime",
       "reason": "only constant success/boolean returns",
@@ -2043,7 +2059,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1175,
+      "line": 1106,
       "registration": "_munmap",
       "function": "m_munmap",
       "reason": "only constant success/boolean returns",
@@ -2051,7 +2067,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1182,
+      "line": 1113,
       "registration": "_mlock",
       "function": "m_ok2",
       "reason": "only constant success/boolean returns",
@@ -2059,7 +2075,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1183,
+      "line": 1114,
       "registration": "_munlock",
       "function": "m_ok2",
       "reason": "only constant success/boolean returns",
@@ -2067,7 +2083,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1189,
+      "line": 1120,
       "registration": "_sigemptyset",
       "function": "g_sigset",
       "reason": "only constant success/boolean returns",
@@ -2075,7 +2091,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1190,
+      "line": 1121,
       "registration": "_sigfillset",
       "function": "g_sigset",
       "reason": "only constant success/boolean returns",
@@ -2083,7 +2099,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1191,
+      "line": 1122,
       "registration": "_sigaddset",
       "function": "g_sigsetop",
       "reason": "only constant success/boolean returns",
@@ -2091,7 +2107,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1192,
+      "line": 1123,
       "registration": "_sigdelset",
       "function": "g_sigsetop",
       "reason": "only constant success/boolean returns",
@@ -2099,7 +2115,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1193,
+      "line": 1124,
       "registration": "_sigprocmask",
       "function": "g_sigprocmask",
       "reason": "only constant success/boolean returns",
@@ -2107,7 +2123,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1194,
+      "line": 1125,
       "registration": "_sigaltstack",
       "function": "g_sigaltstack",
       "reason": "only constant success/boolean returns",
@@ -2115,7 +2131,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1195,
+      "line": 1126,
       "registration": "_setjmp",
       "function": "j_setjmp",
       "reason": "only constant success/boolean returns",
@@ -2123,7 +2139,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1196,
+      "line": 1127,
       "registration": "__setjmp",
       "function": "j_setjmp",
       "reason": "only constant success/boolean returns",
@@ -2131,7 +2147,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1204,
+      "line": 1135,
       "registration": "_task_info",
       "function": "k_task_info",
       "reason": "only constant success/boolean returns",
@@ -2139,7 +2155,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1205,
+      "line": 1136,
       "registration": "_host_page_size",
       "function": "k_host_page_size",
       "reason": "only constant success/boolean returns",
@@ -2147,7 +2163,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1206,
+      "line": 1137,
       "registration": "_host_statistics",
       "function": "k_host_statistics",
       "reason": "only constant success/boolean returns",
@@ -2155,7 +2171,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1207,
+      "line": 1138,
       "registration": "_host_info",
       "function": "k_host_info",
       "reason": "only constant success/boolean returns",
@@ -2163,7 +2179,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1209,
+      "line": 1140,
       "registration": "_vm_deallocate",
       "function": "k_vm_deallocate",
       "reason": "only constant success/boolean returns",
@@ -2171,7 +2187,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1216,
+      "line": 1147,
       "registration": "_thread_policy_set",
       "function": "k_zero4",
       "reason": "only constant success/boolean returns",
@@ -2179,7 +2195,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1217,
+      "line": 1148,
       "registration": "_thread_policy_get",
       "function": "k_zero4",
       "reason": "only constant success/boolean returns",
@@ -2187,7 +2203,7 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1218,
+      "line": 1149,
       "registration": "_mach_wait_until",
       "function": "k_mach_wait_until",
       "reason": "only constant success/boolean returns",
@@ -2427,7 +2443,7 @@
     },
     {
       "path": "src/runtime/objc/Runtime.cpp",
-      "line": 411,
+      "line": 393,
       "registration": "hvm_nil_message",
       "function": "<lambda>",
       "reason": "constant HLE result register",
@@ -2603,7 +2619,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1672,
+      "line": 1628,
       "registration": "_CGContextSetFillColorSpace",
       "function": "ctx_ignore1",
       "reason": "empty no-op body",
@@ -2611,7 +2627,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1673,
+      "line": 1629,
       "registration": "_CGContextSetStrokeColorSpace",
       "function": "ctx_ignore1",
       "reason": "empty no-op body",
@@ -2619,7 +2635,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1674,
+      "line": 1630,
       "registration": "_CGContextSetRenderingIntent",
       "function": "ctx_ignore1",
       "reason": "empty no-op body",
@@ -2627,7 +2643,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1675,
+      "line": 1631,
       "registration": "_CGContextSetShouldSmoothFonts",
       "function": "ctx_ignore1",
       "reason": "empty no-op body",
@@ -2635,7 +2651,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1676,
+      "line": 1632,
       "registration": "_CGContextSetAllowsFontSmoothing",
       "function": "ctx_ignore1",
       "reason": "empty no-op body",
@@ -2643,7 +2659,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1733,
+      "line": 1689,
       "registration": "_CGContextDrawLinearGradient",
       "function": "ctx_linearGradient",
       "reason": "only constant success/boolean returns",
@@ -2651,7 +2667,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1797,
+      "line": 1750,
       "registration": "_CTRunGetStatus",
       "function": "run_status",
       "reason": "only constant success/boolean returns",
@@ -2659,7 +2675,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1800,
+      "line": 1753,
       "registration": "_CGContextFlush",
       "function": "ctx_noop",
       "reason": "empty no-op body",
@@ -2667,7 +2683,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1801,
+      "line": 1754,
       "registration": "_CGContextSynchronize",
       "function": "ctx_noop",
       "reason": "empty no-op body",
@@ -2675,7 +2691,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1802,
+      "line": 1755,
       "registration": "_CGContextBeginTransparencyLayer",
       "function": "ctx_noop",
       "reason": "empty no-op body",
@@ -2683,7 +2699,7 @@
     },
     {
       "path": "src/runtime/uikit/CoreGraphics.cpp",
-      "line": 1803,
+      "line": 1756,
       "registration": "_CGContextEndTransparencyLayer",
       "function": "ctx_noop",
       "reason": "empty no-op body",
@@ -3379,7 +3395,7 @@
     },
     {
       "path": "src/runtime/uikit/Nib.cpp",
-      "line": 622,
+      "line": 596,
       "registration": "allowsKeyedCoding",
       "function": "nd_true",
       "reason": "only constant success/boolean returns",
@@ -3387,7 +3403,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3754,
+      "line": 3603,
       "registration": "_glFlush",
       "function": "gl_noop",
       "reason": "empty no-op body",
@@ -3395,7 +3411,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3755,
+      "line": 3604,
       "registration": "_glFinish",
       "function": "gl_noop",
       "reason": "empty no-op body",
@@ -3403,7 +3419,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3756,
+      "line": 3605,
       "registration": "_glHint",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3411,7 +3427,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3757,
+      "line": 3606,
       "registration": "_glPolygonOffset",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3419,7 +3435,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3758,
+      "line": 3607,
       "registration": "_glPolygonOffsetx",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3427,7 +3443,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3759,
+      "line": 3608,
       "registration": "_glSampleCoverage",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3435,7 +3451,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3760,
+      "line": 3609,
       "registration": "_glSampleCoveragex",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3443,7 +3459,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3810,
+      "line": 3659,
       "registration": "_glDiscardFramebufferEXT",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3451,7 +3467,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3811,
+      "line": 3660,
       "registration": "_glInvalidateFramebuffer",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3459,7 +3475,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3812,
+      "line": 3661,
       "registration": "_glPushGroupMarkerEXT",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3467,7 +3483,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3813,
+      "line": 3662,
       "registration": "_glPopGroupMarkerEXT",
       "function": "gl_noop",
       "reason": "empty no-op body",
@@ -3475,7 +3491,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3833,
+      "line": 3682,
       "registration": "_glDeleteVertexArraysOES",
       "function": "gl_deleteVertexArraysOES",
       "reason": "empty no-op body",
@@ -3483,7 +3499,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3852,
+      "line": 3701,
       "registration": "_glGenerateMipmap",
       "function": "gl_noop1",
       "reason": "empty no-op body",
@@ -3491,7 +3507,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3853,
+      "line": 3702,
       "registration": "_glGenerateMipmapOES",
       "function": "gl_noop1",
       "reason": "empty no-op body",
@@ -3499,7 +3515,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3889,
+      "line": 3738,
       "registration": "_glTexEnviv",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3507,7 +3523,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3890,
+      "line": 3739,
       "registration": "_glTexEnvfv",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3515,7 +3531,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3891,
+      "line": 3740,
       "registration": "_glTexEnvxv",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3523,7 +3539,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3892,
+      "line": 3741,
       "registration": "_glShadeModel",
       "function": "gl_noop1",
       "reason": "empty no-op body",
@@ -3531,7 +3547,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3893,
+      "line": 3742,
       "registration": "_glLightf",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3539,7 +3555,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3894,
+      "line": 3743,
       "registration": "_glLightfv",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3547,7 +3563,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3895,
+      "line": 3744,
       "registration": "_glLightx",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3555,7 +3571,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3896,
+      "line": 3745,
       "registration": "_glLightxv",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3563,7 +3579,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3897,
+      "line": 3746,
       "registration": "_glLightModelf",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3571,7 +3587,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3898,
+      "line": 3747,
       "registration": "_glLightModelfv",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3579,7 +3595,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3899,
+      "line": 3748,
       "registration": "_glMaterialf",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3587,7 +3603,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3900,
+      "line": 3749,
       "registration": "_glMaterialfv",
       "function": "gl_noop3",
       "reason": "empty no-op body",
@@ -3595,7 +3611,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3901,
+      "line": 3750,
       "registration": "_glFogf",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3603,7 +3619,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3902,
+      "line": 3751,
       "registration": "_glFogfv",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3611,7 +3627,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3903,
+      "line": 3752,
       "registration": "_glFogx",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3619,7 +3635,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3904,
+      "line": 3753,
       "registration": "_glFogxv",
       "function": "gl_noop2",
       "reason": "empty no-op body",
@@ -3627,7 +3643,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3919,
+      "line": 3768,
       "registration": "_glReleaseShaderCompiler",
       "function": "gl_noop",
       "reason": "empty no-op body",
@@ -3635,7 +3651,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 3928,
+      "line": 3777,
       "registration": "_glValidateProgram",
       "function": "gl_validateProgram",
       "reason": "empty no-op body",
@@ -3643,7 +3659,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 4002,
+      "line": 3851,
       "registration": "_glVertexAttribDivisorEXT",
       "function": "gl_vertexAttribDivisor",
       "reason": "empty no-op body",
@@ -3651,7 +3667,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 4003,
+      "line": 3852,
       "registration": "_glVertexAttribDivisor",
       "function": "gl_vertexAttribDivisor",
       "reason": "empty no-op body",
@@ -3659,7 +3675,7 @@
     },
     {
       "path": "src/runtime/uikit/OpenGLES.cpp",
-      "line": 4006,
+      "line": 3855,
       "registration": "_glCopyTextureLevelsAPPLE",
       "function": "gl_copyTextureLevels",
       "reason": "empty no-op body",
@@ -3667,7 +3683,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1846,
+      "line": 1713,
       "registration": "_AudioSessionInitialize",
       "function": "as_init",
       "reason": "only constant success/boolean returns",
@@ -3675,7 +3691,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1847,
+      "line": 1714,
       "registration": "_AudioSessionSetProperty",
       "function": "as_setProperty",
       "reason": "only constant success/boolean returns",
@@ -3683,7 +3699,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1848,
+      "line": 1715,
       "registration": "_AudioSessionGetProperty",
       "function": "as_getProperty",
       "reason": "only constant success/boolean returns",
@@ -3691,7 +3707,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1849,
+      "line": 1716,
       "registration": "_AudioSessionGetPropertySize",
       "function": "as_getPropertySize",
       "reason": "only constant success/boolean returns",
@@ -3699,7 +3715,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1850,
+      "line": 1717,
       "registration": "_AudioSessionSetActive",
       "function": "as_setActive",
       "reason": "only constant success/boolean returns",
@@ -3707,7 +3723,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1851,
+      "line": 1718,
       "registration": "_AudioSessionAddPropertyListener",
       "function": "as_addListener",
       "reason": "only constant success/boolean returns",
@@ -3715,7 +3731,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1852,
+      "line": 1719,
       "registration": "_AudioSessionRemovePropertyListenerWithUserData",
       "function": "as_addListener",
       "reason": "only constant success/boolean returns",
@@ -3723,7 +3739,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1853,
+      "line": 1720,
       "registration": "_AudioServicesCreateSystemSoundID",
       "function": "ss_create",
       "reason": "only constant success/boolean returns",
@@ -3731,7 +3747,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1856,
+      "line": 1723,
       "registration": "_AudioServicesDisposeSystemSoundID",
       "function": "ss_dispose",
       "reason": "only constant success/boolean returns",
@@ -3739,7 +3755,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1857,
+      "line": 1724,
       "registration": "_AudioServicesAddSystemSoundCompletion",
       "function": "ss_addCompletion",
       "reason": "only constant success/boolean returns",
@@ -3747,7 +3763,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1861,
+      "line": 1728,
       "registration": "_AudioQueueNewOutput",
       "function": "aq_newOutput",
       "reason": "only constant success/boolean returns",
@@ -3755,7 +3771,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1868,
+      "line": 1735,
       "registration": "_AudioQueueSetProperty",
       "function": "aq_setProperty",
       "reason": "only constant success/boolean returns",
@@ -3763,7 +3779,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1869,
+      "line": 1736,
       "registration": "_AudioQueueGetProperty",
       "function": "aq_getProperty",
       "reason": "only constant success/boolean returns",
@@ -3771,7 +3787,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1870,
+      "line": 1737,
       "registration": "_AudioQueueGetPropertySize",
       "function": "aq_getPropertySize",
       "reason": "only constant success/boolean returns",
@@ -3779,7 +3795,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1871,
+      "line": 1738,
       "registration": "_AudioQueueAddPropertyListener",
       "function": "aq_addPropertyListener",
       "reason": "only constant success/boolean returns",
@@ -3787,7 +3803,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1872,
+      "line": 1739,
       "registration": "_AudioQueueRemovePropertyListener",
       "function": "aq_removePropertyListener",
       "reason": "only constant success/boolean returns",
@@ -3795,7 +3811,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1873,
+      "line": 1740,
       "registration": "_AudioQueueCreateTimeline",
       "function": "aq_createTimeline",
       "reason": "only constant success/boolean returns",
@@ -3803,7 +3819,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1874,
+      "line": 1741,
       "registration": "_AudioQueueDisposeTimeline",
       "function": "aq_disposeTimeline",
       "reason": "only constant success/boolean returns",
@@ -3811,7 +3827,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1875,
+      "line": 1742,
       "registration": "_AudioQueueGetCurrentTime",
       "function": "aq_getCurrentTime",
       "reason": "only constant success/boolean returns",
@@ -3819,7 +3835,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1876,
+      "line": 1743,
       "registration": "_AudioQueueStart",
       "function": "aq_start",
       "reason": "only constant success/boolean returns",
@@ -3827,7 +3843,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1877,
+      "line": 1744,
       "registration": "_AudioQueuePause",
       "function": "aq_pause",
       "reason": "only constant success/boolean returns",
@@ -3835,7 +3851,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1878,
+      "line": 1745,
       "registration": "_AudioQueueStop",
       "function": "aq_stop",
       "reason": "only constant success/boolean returns",
@@ -3843,7 +3859,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1879,
+      "line": 1746,
       "registration": "_AudioQueueFlush",
       "function": "aq_flush",
       "reason": "only constant success/boolean returns",
@@ -3851,7 +3867,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1880,
+      "line": 1747,
       "registration": "_AudioQueueReset",
       "function": "aq_reset",
       "reason": "only constant success/boolean returns",
@@ -3859,7 +3875,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1881,
+      "line": 1748,
       "registration": "_AudioQueueDispose",
       "function": "aq_dispose",
       "reason": "only constant success/boolean returns",
@@ -3867,7 +3883,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1882,
+      "line": 1749,
       "registration": "_AudioQueueSetParameter",
       "function": "aq_setParam",
       "reason": "only constant success/boolean returns",
@@ -3875,7 +3891,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1883,
+      "line": 1750,
       "registration": "_AudioQueueGetParameter",
       "function": "aq_getParam",
       "reason": "only constant success/boolean returns",
@@ -3883,7 +3899,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1889,
+      "line": 1756,
       "registration": "_AudioFileGetPropertyInfo",
       "function": "af_getPropertyInfo",
       "reason": "only constant success/boolean returns",
@@ -3891,7 +3907,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1892,
+      "line": 1759,
       "registration": "_AudioFileGetProperty",
       "function": "af_getProperty",
       "reason": "constant success output parameter",
@@ -3899,7 +3915,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1897,
+      "line": 1764,
       "registration": "_AudioFileClose",
       "function": "af_close",
       "reason": "only constant success/boolean returns",
@@ -3907,7 +3923,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1900,
+      "line": 1767,
       "registration": "_ExtAudioFileDispose",
       "function": "eaf_dispose",
       "reason": "only constant success/boolean returns",
@@ -3915,7 +3931,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1901,
+      "line": 1768,
       "registration": "_ExtAudioFileGetPropertyInfo",
       "function": "eaf_getPropertyInfo",
       "reason": "only constant success/boolean returns",
@@ -3923,7 +3939,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1908,
+      "line": 1775,
       "registration": "_AudioComponentFindNext",
       "function": "ac_findNext",
       "reason": "only constant success/boolean returns",
@@ -3931,7 +3947,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1916,
+      "line": 1783,
       "registration": "_AudioUnitGetProperty",
       "function": "au_getProp",
       "reason": "constant success output parameter",
@@ -3939,7 +3955,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1917,
+      "line": 1784,
       "registration": "_AudioUnitSetParameter",
       "function": "au_setParam",
       "reason": "only constant success/boolean returns",
@@ -3947,7 +3963,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1918,
+      "line": 1785,
       "registration": "_AudioUnitGetParameter",
       "function": "au_getParam",
       "reason": "only constant success/boolean returns",
@@ -3955,7 +3971,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1919,
+      "line": 1786,
       "registration": "_AudioUnitRender",
       "function": "au_render",
       "reason": "only constant success/boolean returns",
@@ -3963,7 +3979,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1920,
+      "line": 1787,
       "registration": "_NewAUGraph",
       "function": "aug_new",
       "reason": "only constant success/boolean returns",
@@ -3971,7 +3987,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1921,
+      "line": 1788,
       "registration": "_DisposeAUGraph",
       "function": "aug_ok1",
       "reason": "only constant success/boolean returns",
@@ -3979,7 +3995,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1922,
+      "line": 1789,
       "registration": "_AUGraphAddNode",
       "function": "aug_addNode",
       "reason": "only constant success/boolean returns",
@@ -3987,7 +4003,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1923,
+      "line": 1790,
       "registration": "_AUGraphRemoveNode",
       "function": "aug_ok2",
       "reason": "only constant success/boolean returns",
@@ -3995,7 +4011,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1924,
+      "line": 1791,
       "registration": "_AUGraphNodeInfo",
       "function": "aug_nodeInfo",
       "reason": "only constant success/boolean returns",
@@ -4003,7 +4019,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1925,
+      "line": 1792,
       "registration": "_AUGraphOpen",
       "function": "aug_ok1",
       "reason": "only constant success/boolean returns",
@@ -4011,7 +4027,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1926,
+      "line": 1793,
       "registration": "_AUGraphClose",
       "function": "aug_ok1",
       "reason": "only constant success/boolean returns",
@@ -4019,7 +4035,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1927,
+      "line": 1794,
       "registration": "_AUGraphInitialize",
       "function": "aug_ok1",
       "reason": "only constant success/boolean returns",
@@ -4027,7 +4043,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1928,
+      "line": 1795,
       "registration": "_AUGraphUninitialize",
       "function": "aug_ok1",
       "reason": "only constant success/boolean returns",
@@ -4035,7 +4051,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1929,
+      "line": 1796,
       "registration": "_AUGraphStart",
       "function": "aug_ok1",
       "reason": "only constant success/boolean returns",
@@ -4043,7 +4059,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1930,
+      "line": 1797,
       "registration": "_AUGraphStop",
       "function": "aug_ok1",
       "reason": "only constant success/boolean returns",
@@ -4051,7 +4067,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1931,
+      "line": 1798,
       "registration": "_AUGraphIsRunning",
       "function": "aug_isRunning",
       "reason": "only constant success/boolean returns",
@@ -4059,7 +4075,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1932,
+      "line": 1799,
       "registration": "_AUGraphIsOpen",
       "function": "aug_isRunning",
       "reason": "only constant success/boolean returns",
@@ -4067,7 +4083,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1933,
+      "line": 1800,
       "registration": "_AUGraphIsInitialized",
       "function": "aug_isRunning",
       "reason": "only constant success/boolean returns",
@@ -4075,7 +4091,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1934,
+      "line": 1801,
       "registration": "_AUGraphUpdate",
       "function": "aug_update",
       "reason": "only constant success/boolean returns",
@@ -4083,7 +4099,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1935,
+      "line": 1802,
       "registration": "_AUGraphSetNodeInputCallback",
       "function": "aug_ok4",
       "reason": "only constant success/boolean returns",
@@ -4091,7 +4107,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1936,
+      "line": 1803,
       "registration": "_AUGraphConnectNodeInput",
       "function": "aug_ok5",
       "reason": "only constant success/boolean returns",
@@ -4099,7 +4115,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1937,
+      "line": 1804,
       "registration": "_AUGraphDisconnectNodeInput",
       "function": "aug_ok3",
       "reason": "only constant success/boolean returns",
@@ -4107,7 +4123,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1938,
+      "line": 1805,
       "registration": "_AUGraphClearConnections",
       "function": "aug_ok1",
       "reason": "only constant success/boolean returns",
@@ -4115,7 +4131,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1945,
+      "line": 1812,
       "registration": "_AudioUnitRemoveRenderNotify",
       "function": "aug_ok3",
       "reason": "only constant success/boolean returns",
@@ -4123,7 +4139,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1948,
+      "line": 1815,
       "registration": "_alcOpenDevice",
       "function": "alc_openDevice",
       "reason": "only constant success/boolean returns",
@@ -4131,7 +4147,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1949,
+      "line": 1816,
       "registration": "_alcCloseDevice",
       "function": "alc_closeDevice",
       "reason": "only constant success/boolean returns",
@@ -4139,7 +4155,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1950,
+      "line": 1817,
       "registration": "_alcCreateContext",
       "function": "alc_createContext",
       "reason": "only constant success/boolean returns",
@@ -4147,7 +4163,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1951,
+      "line": 1818,
       "registration": "_alcMakeContextCurrent",
       "function": "alc_makeCurrent",
       "reason": "only constant success/boolean returns",
@@ -4155,7 +4171,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1952,
+      "line": 1819,
       "registration": "_alcProcessContext",
       "function": "alc_process",
       "reason": "empty no-op body",
@@ -4163,7 +4179,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1953,
+      "line": 1820,
       "registration": "_alcSuspendContext",
       "function": "alc_suspend",
       "reason": "empty no-op body",
@@ -4171,7 +4187,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1962,
+      "line": 1827,
       "registration": "_alcMacOSXMixerOutputRate",
       "function": "alc_macMixerRate",
       "reason": "empty no-op body",
@@ -4179,7 +4195,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1964,
+      "line": 1829,
       "registration": "_alcMacOSXRenderingQuality",
       "function": "alc_macIntSetter",
       "reason": "empty no-op body",
@@ -4187,7 +4203,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1966,
+      "line": 1831,
       "registration": "_alcMacOSXMixerMaxiumumBusses",
       "function": "alc_macIntSetter",
       "reason": "empty no-op body",
@@ -4195,7 +4211,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1968,
+      "line": 1833,
       "registration": "_alMacOSXRenderChannelCount",
       "function": "alc_macIntSetter",
       "reason": "empty no-op body",
@@ -4203,7 +4219,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1995,
+      "line": 1859,
       "registration": "_alListener3f",
       "function": "al_listener3f",
       "reason": "empty no-op body",
@@ -4211,7 +4227,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 1996,
+      "line": 1860,
       "registration": "_alListenerfv",
       "function": "al_listenerfv",
       "reason": "empty no-op body",
@@ -4219,7 +4235,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2004,
+      "line": 1868,
       "registration": "_alDistanceModel",
       "function": "al_noop1",
       "reason": "empty no-op body",
@@ -4227,7 +4243,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2005,
+      "line": 1869,
       "registration": "_alDopplerFactor",
       "function": "al_noop1",
       "reason": "empty no-op body",
@@ -4235,7 +4251,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2006,
+      "line": 1870,
       "registration": "_alSpeedOfSound",
       "function": "al_noop1",
       "reason": "empty no-op body",
@@ -4243,7 +4259,23 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2019,
+      "line": 1875,
+      "registration": "setCategory:error:",
+      "function": "avs_yesErr",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "f0a4ad7bbc4d78f8ade34488924ae2621f982ced4034a8d260e9e5b2fae82fa7"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 1875,
+      "registration": "setCategory:withOptions:error:",
+      "function": "avs_yesErr2",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "a292155051e6195d23c4e06a5595421d92d39785e5ec29f9a8d24ed981c301ed"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 1876,
       "registration": "setActive:error:",
       "function": "avs_yesBoolErr",
       "reason": "only constant success/boolean returns",
@@ -4251,7 +4283,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2019,
+      "line": 1876,
       "registration": "setActive:withOptions:error:",
       "function": "avs_yesErr2",
       "reason": "only constant success/boolean returns",
@@ -4259,7 +4291,15 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2021,
+      "line": 1877,
+      "registration": "setMode:error:",
+      "function": "avs_yesErr",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "f0a4ad7bbc4d78f8ade34488924ae2621f982ced4034a8d260e9e5b2fae82fa7"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 1878,
       "registration": "setDelegate:",
       "function": "avs_setDelegate",
       "reason": "empty no-op body",
@@ -4267,7 +4307,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2023,
+      "line": 1880,
       "registration": "setPreferredHardwareSampleRate:error:",
       "function": "avs_yesDoubleErr",
       "reason": "only constant success/boolean returns",
@@ -4275,7 +4315,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2023,
+      "line": 1880,
       "registration": "setPreferredSampleRate:error:",
       "function": "avs_yesDoubleErr",
       "reason": "only constant success/boolean returns",
@@ -4283,7 +4323,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2024,
+      "line": 1881,
       "registration": "outputVolume",
       "function": "avs_volume",
       "reason": "only constant success/boolean returns",
@@ -4291,7 +4331,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2024,
+      "line": 1881,
       "registration": "setPreferredIOBufferDuration:error:",
       "function": "avs_yesDoubleErr",
       "reason": "only constant success/boolean returns",
@@ -4299,7 +4339,15 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2026,
+      "line": 1883,
+      "registration": "categoryOptions",
+      "function": "avs_zero",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 1883,
       "registration": "isInputAvailable",
       "function": "avs_yes",
       "reason": "only constant success/boolean returns",
@@ -4307,7 +4355,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2027,
+      "line": 1884,
       "registration": "inputIsAvailable",
       "function": "avs_yes",
       "reason": "only constant success/boolean returns",
@@ -4315,7 +4363,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2027,
+      "line": 1884,
       "registration": "inputNumberOfChannels",
       "function": "avs_one",
       "reason": "only constant success/boolean returns",
@@ -4323,7 +4371,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2057,
+      "line": 1898,
       "registration": "prepareToPlay",
       "function": "ap_prepare",
       "reason": "only constant success/boolean returns",
@@ -4331,7 +4379,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2063,
+      "line": 1904,
       "registration": "setEnableRate:",
       "function": "ap_ignoreBool",
       "reason": "empty no-op body",
@@ -4339,7 +4387,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2064,
+      "line": 1905,
       "registration": "updateMeters",
       "function": "ap_updateMeters",
       "reason": "empty no-op body",
@@ -4347,7 +4395,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2083,
+      "line": 1924,
       "registration": "stopWirelessControllerDiscovery",
       "function": "sk_noop",
       "reason": "empty no-op body",
@@ -4355,7 +4403,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2084,
+      "line": 1925,
       "registration": "controllerPausedHandler",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4363,7 +4411,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2085,
+      "line": 1926,
       "registration": "setControllerPausedHandler:",
       "function": "sk_ignoreObj",
       "reason": "empty no-op body",
@@ -4371,7 +4419,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2086,
+      "line": 1927,
       "registration": "isAttachedToDevice",
       "function": "sk_zero_c",
       "reason": "only constant success/boolean returns",
@@ -4379,7 +4427,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2087,
+      "line": 1928,
       "registration": "gamepad",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4387,7 +4435,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2088,
+      "line": 1929,
       "registration": "extendedGamepad",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4395,7 +4443,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2096,
+      "line": 1937,
       "registration": "addTransactionObserver:",
       "function": "sk_ignoreObj",
       "reason": "empty no-op body",
@@ -4403,7 +4451,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2096,
+      "line": 1937,
       "registration": "removeTransactionObserver:",
       "function": "sk_ignoreObj",
       "reason": "empty no-op body",
@@ -4411,7 +4459,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2097,
+      "line": 1938,
       "registration": "addPayment:",
       "function": "sk_ignoreObj",
       "reason": "empty no-op body",
@@ -4419,7 +4467,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2097,
+      "line": 1938,
       "registration": "finishTransaction:",
       "function": "sk_ignoreObj",
       "reason": "empty no-op body",
@@ -4427,7 +4475,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2098,
+      "line": 1939,
       "registration": "restoreCompletedTransactions",
       "function": "sk_noop",
       "reason": "empty no-op body",
@@ -4435,7 +4483,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2101,
+      "line": 1942,
       "registration": "cancel",
       "function": "skpr_cancel",
       "reason": "empty no-op body",
@@ -4443,7 +4491,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2105,
+      "line": 1946,
       "registration": "setLocalizedTitle:",
       "function": "sk_ignoreObj",
       "reason": "empty no-op body",
@@ -4451,7 +4499,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2105,
+      "line": 1946,
       "registration": "setPrice:",
       "function": "sk_ignoreObj",
       "reason": "empty no-op body",
@@ -4459,7 +4507,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2105,
+      "line": 1946,
       "registration": "setPriceLocale:",
       "function": "sk_ignoreObj",
       "reason": "empty no-op body",
@@ -4467,7 +4515,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2106,
+      "line": 1947,
       "registration": "localizedTitle",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4475,7 +4523,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2106,
+      "line": 1947,
       "registration": "price",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4483,7 +4531,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2106,
+      "line": 1947,
       "registration": "priceLocale",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4491,7 +4539,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2106,
+      "line": 1947,
       "registration": "productIdentifier",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4499,7 +4547,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2116,
+      "line": 1957,
       "registration": "transactionDate",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4507,7 +4555,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2116,
+      "line": 1957,
       "registration": "transactionIdentifier",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4515,7 +4563,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2117,
+      "line": 1958,
       "registration": "originalTransaction",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4523,7 +4571,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2117,
+      "line": 1958,
       "registration": "transactionReceipt",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4531,7 +4579,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2118,
+      "line": 1959,
       "registration": "error",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4539,7 +4587,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2118,
+      "line": 1959,
       "registration": "payment",
       "function": "sk_zero_id",
       "reason": "only constant success/boolean returns",
@@ -4547,7 +4595,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2119,
+      "line": 1960,
       "registration": "transactionState",
       "function": "sk_zero_i",
       "reason": "only constant success/boolean returns",
@@ -4555,7 +4603,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2160,
+      "line": 2001,
       "registration": "_CMTimeCompare",
       "function": "<lambda>",
       "reason": "constant HLE result register",
@@ -4563,7 +4611,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2202,
+      "line": 2043,
       "registration": "cancelLoading",
       "function": "<lambda>",
       "reason": "empty no-op body",
@@ -4571,23 +4619,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2339,
-      "registration": "error",
-      "function": "<lambda>",
-      "reason": "constant HLE result register",
-      "body_sha256": "cbb0a0ab3c92815dd3912ecb08fc10d09aafda1fa83ed7211baca0b4990a7507"
-    },
-    {
-      "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2348,
-      "registration": "seekToTime:",
-      "function": "<lambda>",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2427,
+      "line": 2089,
       "registration": "status",
       "function": "<lambda>",
       "reason": "constant HLE result register",
@@ -4595,7 +4627,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2428,
+      "line": 2090,
       "registration": "error",
       "function": "<lambda>",
       "reason": "constant HLE result register",
@@ -4603,39 +4635,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2442,
-      "registration": "allowsExternalPlayback",
-      "function": "<lambda>",
-      "reason": "constant HLE result register",
-      "body_sha256": "cbb0a0ab3c92815dd3912ecb08fc10d09aafda1fa83ed7211baca0b4990a7507"
-    },
-    {
-      "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2443,
-      "registration": "setAllowsExternalPlayback:",
-      "function": "<lambda>",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2444,
-      "registration": "allowsAirPlayVideo",
-      "function": "<lambda>",
-      "reason": "constant HLE result register",
-      "body_sha256": "cbb0a0ab3c92815dd3912ecb08fc10d09aafda1fa83ed7211baca0b4990a7507"
-    },
-    {
-      "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2445,
-      "registration": "setAllowsAirPlayVideo:",
-      "function": "<lambda>",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2447,
+      "line": 2099,
       "registration": "seekToTime:",
       "function": "<lambda>",
       "reason": "empty no-op body",
@@ -4643,7 +4643,63 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2448,
+      "line": 2173,
+      "registration": "status",
+      "function": "<lambda>",
+      "reason": "constant HLE result register",
+      "body_sha256": "c16f15427f16a78d6eab376f75b38339ffc3e4cbf4329f92b4c656a36ea8c59e"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 2174,
+      "registration": "error",
+      "function": "<lambda>",
+      "reason": "constant HLE result register",
+      "body_sha256": "cbb0a0ab3c92815dd3912ecb08fc10d09aafda1fa83ed7211baca0b4990a7507"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 2188,
+      "registration": "allowsExternalPlayback",
+      "function": "<lambda>",
+      "reason": "constant HLE result register",
+      "body_sha256": "cbb0a0ab3c92815dd3912ecb08fc10d09aafda1fa83ed7211baca0b4990a7507"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 2189,
+      "registration": "setAllowsExternalPlayback:",
+      "function": "<lambda>",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 2190,
+      "registration": "allowsAirPlayVideo",
+      "function": "<lambda>",
+      "reason": "constant HLE result register",
+      "body_sha256": "cbb0a0ab3c92815dd3912ecb08fc10d09aafda1fa83ed7211baca0b4990a7507"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 2191,
+      "registration": "setAllowsAirPlayVideo:",
+      "function": "<lambda>",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 2193,
+      "registration": "seekToTime:",
+      "function": "<lambda>",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/PlatformStubs.cpp",
+      "line": 2194,
       "registration": "seekToTime:toleranceBefore:toleranceAfter:",
       "function": "<lambda>",
       "reason": "empty no-op body",
@@ -4651,7 +4707,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2450,
+      "line": 2196,
       "registration": "removeTimeObserver:",
       "function": "<lambda>",
       "reason": "empty no-op body",
@@ -4659,7 +4715,7 @@
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
-      "line": 2465,
+      "line": 2211,
       "registration": "isReadyForDisplay",
       "function": "<lambda>",
       "reason": "constant HLE result register",
@@ -4899,7 +4955,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 702,
+      "line": 653,
       "registration": "statusBarStyle",
       "function": "app_statusBarStyle",
       "reason": "only constant success/boolean returns",
@@ -4907,7 +4963,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 703,
+      "line": 654,
       "registration": "setStatusBarStyle:",
       "function": "app_ignoreInt",
       "reason": "empty no-op body",
@@ -4915,7 +4971,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 703,
+      "line": 654,
       "registration": "setStatusBarStyle:animated:",
       "function": "app_ignoreIntBool",
       "reason": "empty no-op body",
@@ -4923,7 +4979,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 704,
+      "line": 655,
       "registration": "applicationState",
       "function": "app_state",
       "reason": "only constant success/boolean returns",
@@ -4931,7 +4987,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 710,
+      "line": 661,
       "registration": "registerForRemoteNotificationTypes:",
       "function": "app_ignoreInt",
       "reason": "empty no-op body",
@@ -4939,7 +4995,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 711,
+      "line": 662,
       "registration": "registerForRemoteNotifications",
       "function": "app_noop",
       "reason": "empty no-op body",
@@ -4947,7 +5003,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 711,
+      "line": 662,
       "registration": "unregisterForRemoteNotifications",
       "function": "app_noop",
       "reason": "empty no-op body",
@@ -4955,7 +5011,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 712,
+      "line": 663,
       "registration": "registerUserNotificationSettings:",
       "function": "app_noopObj",
       "reason": "empty no-op body",
@@ -4963,7 +5019,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 712,
+      "line": 663,
       "registration": "scheduleLocalNotification:",
       "function": "app_noopObj",
       "reason": "empty no-op body",
@@ -4971,7 +5027,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 713,
+      "line": 664,
       "registration": "cancelAllLocalNotifications",
       "function": "app_noop",
       "reason": "empty no-op body",
@@ -4979,7 +5035,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 713,
+      "line": 664,
       "registration": "presentLocalNotificationNow:",
       "function": "app_noopObj",
       "reason": "empty no-op body",
@@ -4987,7 +5043,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 714,
+      "line": 665,
       "registration": "cancelLocalNotification:",
       "function": "app_noopObj",
       "reason": "empty no-op body",
@@ -4995,7 +5051,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 714,
+      "line": 665,
       "registration": "scheduledLocalNotifications",
       "function": "app_nil",
       "reason": "only constant success/boolean returns",
@@ -5003,7 +5059,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 715,
+      "line": 666,
       "registration": "beginReceivingRemoteControlEvents",
       "function": "app_noop",
       "reason": "empty no-op body",
@@ -5011,7 +5067,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 715,
+      "line": 666,
       "registration": "endReceivingRemoteControlEvents",
       "function": "app_noop",
       "reason": "empty no-op body",
@@ -5019,7 +5075,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 716,
+      "line": 667,
       "registration": "beginBackgroundTaskWithExpirationHandler:",
       "function": "app_beginBackgroundTask",
       "reason": "only constant success/boolean returns",
@@ -5027,7 +5083,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 717,
+      "line": 668,
       "registration": "beginBackgroundTaskWithName:expirationHandler:",
       "function": "app_beginBackgroundTaskNamed",
       "reason": "only constant success/boolean returns",
@@ -5035,7 +5091,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 718,
+      "line": 669,
       "registration": "endBackgroundTask:",
       "function": "app_endBackgroundTask",
       "reason": "empty no-op body",
@@ -5043,7 +5099,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 719,
+      "line": 670,
       "registration": "applicationSupportsShakeToEdit",
       "function": "app_true",
       "reason": "only constant success/boolean returns",
@@ -5051,7 +5107,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 719,
+      "line": 670,
       "registration": "setApplicationSupportsShakeToEdit:",
       "function": "app_ignoreBool",
       "reason": "empty no-op body",
@@ -5059,7 +5115,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 721,
+      "line": 672,
       "registration": "preferredContentSizeCategory",
       "function": "app_nil",
       "reason": "only constant success/boolean returns",
@@ -5067,7 +5123,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 722,
+      "line": 673,
       "registration": "userInterfaceLayoutDirection",
       "function": "app_layoutDirection",
       "reason": "only constant success/boolean returns",
@@ -5075,7 +5131,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 755,
+      "line": 703,
       "registration": "userInterfaceIdiom",
       "function": "dev_idiom",
       "reason": "only constant success/boolean returns",
@@ -5083,7 +5139,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 759,
+      "line": 707,
       "registration": "isMultitaskingSupported",
       "function": "app_true",
       "reason": "only constant success/boolean returns",
@@ -5091,7 +5147,7 @@
     },
     {
       "path": "src/runtime/uikit/UIApplication.cpp",
-      "line": 762,
+      "line": 710,
       "registration": "playInputClick",
       "function": "app_noop",
       "reason": "empty no-op body",
@@ -5099,7 +5155,7 @@
     },
     {
       "path": "src/runtime/uikit/UIControls.cpp",
-      "line": 975,
+      "line": 963,
       "registration": "beginTrackingWithTouch:withEvent:",
       "function": "c_beginTracking",
       "reason": "only constant success/boolean returns",
@@ -5107,7 +5163,7 @@
     },
     {
       "path": "src/runtime/uikit/UIControls.cpp",
-      "line": 975,
+      "line": 963,
       "registration": "continueTrackingWithTouch:withEvent:",
       "function": "c_continueTracking",
       "reason": "only constant success/boolean returns",
@@ -5115,7 +5171,7 @@
     },
     {
       "path": "src/runtime/uikit/UIControls.cpp",
-      "line": 976,
+      "line": 964,
       "registration": "cancelTrackingWithEvent:",
       "function": "c_cancelTracking",
       "reason": "empty no-op body",
@@ -5123,7 +5179,7 @@
     },
     {
       "path": "src/runtime/uikit/UIControls.cpp",
-      "line": 976,
+      "line": 964,
       "registration": "endTrackingWithTouch:withEvent:",
       "function": "c_endTracking",
       "reason": "empty no-op body",
@@ -5131,7 +5187,7 @@
     },
     {
       "path": "src/runtime/uikit/UIControls.cpp",
-      "line": 1024,
+      "line": 1011,
       "registration": "setAdjustsImageWhenDisabled:",
       "function": "b_ignoreBool",
       "reason": "empty no-op body",
@@ -5139,7 +5195,7 @@
     },
     {
       "path": "src/runtime/uikit/UIControls.cpp",
-      "line": 1025,
+      "line": 1012,
       "registration": "setReversesTitleShadowWhenHighlighted:",
       "function": "b_ignoreBool",
       "reason": "empty no-op body",
@@ -5147,7 +5203,7 @@
     },
     {
       "path": "src/runtime/uikit/UIControls.cpp",
-      "line": 1052,
+      "line": 1039,
       "registration": "textFieldAtIndex:",
       "function": "av_textField",
       "reason": "only constant success/boolean returns",
@@ -5179,7 +5235,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1002,
+      "line": 987,
       "registration": "nextResponder",
       "function": "r_nextResponder",
       "reason": "only constant success/boolean returns",
@@ -5187,7 +5243,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1003,
+      "line": 988,
       "registration": "canResignFirstResponder",
       "function": "r_true",
       "reason": "only constant success/boolean returns",
@@ -5195,7 +5251,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1003,
+      "line": 988,
       "registration": "resignFirstResponder",
       "function": "r_resign",
       "reason": "only constant success/boolean returns",
@@ -5203,7 +5259,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1011,
+      "line": 996,
       "registration": "inputAccessoryView",
       "function": "r_nil",
       "reason": "only constant success/boolean returns",
@@ -5211,7 +5267,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1011,
+      "line": 996,
       "registration": "inputView",
       "function": "r_nil",
       "reason": "only constant success/boolean returns",
@@ -5219,7 +5275,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1011,
+      "line": 996,
       "registration": "remoteControlReceivedWithEvent:",
       "function": "r_remoteControl",
       "reason": "empty no-op body",
@@ -5227,7 +5283,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1012,
+      "line": 997,
       "registration": "undoManager",
       "function": "r_nil",
       "reason": "only constant success/boolean returns",
@@ -5235,7 +5291,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1023,
+      "line": 1008,
       "registration": "set",
       "function": "ax_set",
       "reason": "empty no-op body",
@@ -5243,7 +5299,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1026,
+      "line": 1011,
       "registration": "awakeFromNib",
       "function": "ax_noop",
       "reason": "empty no-op body",
@@ -5251,7 +5307,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1026,
+      "line": 1011,
       "registration": "prepareForInterfaceBuilder",
       "function": "ax_noop",
       "reason": "empty no-op body",
@@ -5259,7 +5315,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1039,
+      "line": 1024,
       "registration": "setAnimationCurve:",
       "function": "vc_ignoreInt",
       "reason": "empty no-op body",
@@ -5267,7 +5323,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1040,
+      "line": 1025,
       "registration": "setAnimationRepeatAutoreverses:",
       "function": "vc_ignoreBool",
       "reason": "empty no-op body",
@@ -5275,7 +5331,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1040,
+      "line": 1025,
       "registration": "setAnimationRepeatCount:",
       "function": "vc_ignoreFloat",
       "reason": "empty no-op body",
@@ -5283,7 +5339,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1041,
+      "line": 1026,
       "registration": "setAnimationBeginsFromCurrentState:",
       "function": "vc_ignoreBool",
       "reason": "empty no-op body",
@@ -5291,7 +5347,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1041,
+      "line": 1026,
       "registration": "setAnimationTransition:forView:cache:",
       "function": "vc_setTransition",
       "reason": "empty no-op body",
@@ -5299,7 +5355,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1059,
+      "line": 1044,
       "registration": "setTintColor:",
       "function": "v_ignoreObj",
       "reason": "empty no-op body",
@@ -5307,7 +5363,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1060,
+      "line": 1045,
       "registration": "setTranslatesAutoresizingMaskIntoConstraints:",
       "function": "v_ignoreBool",
       "reason": "empty no-op body",
@@ -5315,7 +5371,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1066,
+      "line": 1051,
       "registration": "didMoveToSuperview",
       "function": "v_hook",
       "reason": "empty no-op body",
@@ -5323,7 +5379,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1066,
+      "line": 1051,
       "registration": "willMoveToSuperview:",
       "function": "v_hookObj",
       "reason": "empty no-op body",
@@ -5331,7 +5387,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1066,
+      "line": 1051,
       "registration": "willMoveToWindow:",
       "function": "v_hookObj",
       "reason": "empty no-op body",
@@ -5339,7 +5395,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1067,
+      "line": 1052,
       "registration": "didAddSubview:",
       "function": "v_hookObj",
       "reason": "empty no-op body",
@@ -5347,7 +5403,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1067,
+      "line": 1052,
       "registration": "didMoveToWindow",
       "function": "v_hook",
       "reason": "empty no-op body",
@@ -5355,7 +5411,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1067,
+      "line": 1052,
       "registration": "willRemoveSubview:",
       "function": "v_hookObj",
       "reason": "empty no-op body",
@@ -5363,7 +5419,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1071,
+      "line": 1056,
       "registration": "drawRect:",
       "function": "v_drawRect",
       "reason": "empty no-op body",
@@ -5371,7 +5427,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1076,
+      "line": 1061,
       "registration": "endEditing:",
       "function": "v_endEditing",
       "reason": "only constant success/boolean returns",
@@ -5379,7 +5435,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1085,
+      "line": 1070,
       "registration": "setScreen:",
       "function": "v_ignoreObj",
       "reason": "empty no-op body",
@@ -5387,7 +5443,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1106,
+      "line": 1091,
       "registration": "setBrightness:",
       "function": "sc_setBrightness",
       "reason": "empty no-op body",
@@ -5395,7 +5451,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1107,
+      "line": 1092,
       "registration": "setCurrentMode:",
       "function": "sc_setMode",
       "reason": "empty no-op body",
@@ -5403,7 +5459,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1107,
+      "line": 1092,
       "registration": "setOverscanCompensation:",
       "function": "sc_setMode",
       "reason": "empty no-op body",
@@ -5411,7 +5467,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1108,
+      "line": 1093,
       "registration": "overscanCompensation",
       "function": "sc_overscan",
       "reason": "only constant success/boolean returns",
@@ -5419,7 +5475,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1109,
+      "line": 1094,
       "registration": "mirroredScreen",
       "function": "sc_nil",
       "reason": "only constant success/boolean returns",
@@ -5427,7 +5483,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1114,
+      "line": 1097,
       "registration": "pixelAspectRatio",
       "function": "sm_aspect",
       "reason": "only constant success/boolean returns",
@@ -5435,7 +5491,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1126,
+      "line": 1109,
       "registration": "viewDidLoad",
       "function": "vc_hook",
       "reason": "empty no-op body",
@@ -5443,7 +5499,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1126,
+      "line": 1109,
       "registration": "viewDidUnload",
       "function": "vc_hook",
       "reason": "empty no-op body",
@@ -5451,7 +5507,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1127,
+      "line": 1110,
       "registration": "viewDidAppear:",
       "function": "vc_hookBool",
       "reason": "empty no-op body",
@@ -5459,7 +5515,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1127,
+      "line": 1110,
       "registration": "viewWillAppear:",
       "function": "vc_hookBool",
       "reason": "empty no-op body",
@@ -5467,7 +5523,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1127,
+      "line": 1110,
       "registration": "viewWillDisappear:",
       "function": "vc_hookBool",
       "reason": "empty no-op body",
@@ -5475,7 +5531,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1128,
+      "line": 1111,
       "registration": "viewDidDisappear:",
       "function": "vc_hookBool",
       "reason": "empty no-op body",
@@ -5483,7 +5539,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1128,
+      "line": 1111,
       "registration": "viewDidLayoutSubviews",
       "function": "vc_hook",
       "reason": "empty no-op body",
@@ -5491,7 +5547,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1128,
+      "line": 1111,
       "registration": "viewWillLayoutSubviews",
       "function": "vc_hook",
       "reason": "empty no-op body",
@@ -5499,7 +5555,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1129,
+      "line": 1112,
       "registration": "awakeFromNib",
       "function": "vc_hook",
       "reason": "empty no-op body",
@@ -5507,7 +5563,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1129,
+      "line": 1112,
       "registration": "didReceiveMemoryWarning",
       "function": "vc_hook",
       "reason": "empty no-op body",
@@ -5515,7 +5571,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1132,
+      "line": 1115,
       "registration": "shouldAutorotate",
       "function": "vc_yes",
       "reason": "only constant success/boolean returns",
@@ -5523,7 +5579,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1137,
+      "line": 1120,
       "registration": "didMoveToParentViewController:",
       "function": "vc_hookObj",
       "reason": "empty no-op body",
@@ -5531,7 +5587,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1137,
+      "line": 1120,
       "registration": "willMoveToParentViewController:",
       "function": "vc_hookObj",
       "reason": "empty no-op body",
@@ -5539,7 +5595,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1142,
+      "line": 1125,
       "registration": "setEditing:animated:",
       "function": "vc_setEditing",
       "reason": "empty no-op body",
@@ -5547,7 +5603,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1143,
+      "line": 1126,
       "registration": "modalTransitionStyle",
       "function": "vc_zero",
       "reason": "only constant success/boolean returns",
@@ -5555,7 +5611,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1144,
+      "line": 1127,
       "registration": "modalPresentationStyle",
       "function": "vc_zero",
       "reason": "only constant success/boolean returns",
@@ -5563,7 +5619,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1145,
+      "line": 1128,
       "registration": "preferredStatusBarStyle",
       "function": "vc_zero",
       "reason": "only constant success/boolean returns",
@@ -5571,7 +5627,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1146,
+      "line": 1129,
       "registration": "setNeedsStatusBarAppearanceUpdate",
       "function": "vc_hook",
       "reason": "empty no-op body",
@@ -5579,7 +5635,7 @@
     },
     {
       "path": "src/runtime/uikit/UIView.cpp",
-      "line": 1147,
+      "line": 1130,
       "registration": "setHidesBottomBarWhenPushed:",
       "function": "vc_hookObj",
       "reason": "empty no-op body",
@@ -5587,7 +5643,7 @@
     },
     {
       "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2013,
+      "line": 1901,
       "registration": "flashScrollIndicators",
       "function": "sv_flash",
       "reason": "empty no-op body",
@@ -5595,7 +5651,7 @@
     },
     {
       "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2014,
+      "line": 1902,
       "registration": "zoomToRect:animated:",
       "function": "sv_zoomToRect",
       "reason": "empty no-op body",
@@ -5603,7 +5659,7 @@
     },
     {
       "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2106,
+      "line": 1994,
       "registration": "beginUpdates",
       "function": "tv_beginUpdates",
       "reason": "empty no-op body",
@@ -5611,247 +5667,15 @@
     },
     {
       "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2239,
-      "registration": "setKeyboardAppearance:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2243,
-      "registration": "setEnablesReturnKeyAutomatically:",
-      "function": "tf_ignoreBool",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2243,
-      "registration": "setSpellCheckingType:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2244,
-      "registration": "setClearButtonMode:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2244,
-      "registration": "setClearsOnBeginEditing:",
-      "function": "tf_ignoreBool",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2245,
-      "registration": "setContentHorizontalAlignment:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2245,
-      "registration": "setContentVerticalAlignment:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2246,
-      "registration": "setInputAccessoryView:",
-      "function": "tf_ignoreObj",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2246,
-      "registration": "setInputView:",
-      "function": "tf_ignoreObj",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2247,
-      "registration": "inputAccessoryView",
-      "function": "tf_nilObj",
+      "line": 2125,
+      "registration": "keyboardType",
+      "function": "tf_zeroInt",
       "reason": "only constant success/boolean returns",
       "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
     },
     {
       "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2247,
-      "registration": "inputView",
-      "function": "tf_nilObj",
-      "reason": "only constant success/boolean returns",
-      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2248,
-      "registration": "setAdjustsFontSizeToFitWidth:",
-      "function": "tf_ignoreBool",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2248,
-      "registration": "setTypingAttributes:",
-      "function": "tf_ignoreObj",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2249,
-      "registration": "setKeyboardLanguage:",
-      "function": "tf_ignoreObj",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2264,
-      "registration": "setKeyboardAppearance:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2265,
-      "registration": "setSpellCheckingType:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2266,
-      "registration": "setEnablesReturnKeyAutomatically:",
-      "function": "tf_ignoreBool",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2268,
-      "registration": "setInputAccessoryView:",
-      "function": "tf_ignoreObj",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2268,
-      "registration": "setInputView:",
-      "function": "tf_ignoreObj",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2269,
-      "registration": "inputAccessoryView",
-      "function": "tf_nilObj",
-      "reason": "only constant success/boolean returns",
-      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2269,
-      "registration": "inputView",
-      "function": "tf_nilObj",
-      "reason": "only constant success/boolean returns",
-      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2270,
-      "registration": "isEditable",
-      "function": "tf_trueBool",
-      "reason": "only constant success/boolean returns",
-      "body_sha256": "a292155051e6195d23c4e06a5595421d92d39785e5ec29f9a8d24ed981c301ed"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2270,
-      "registration": "setEditable:",
-      "function": "tf_ignoreBool",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2271,
-      "registration": "isSelectable",
-      "function": "tf_trueBool",
-      "reason": "only constant success/boolean returns",
-      "body_sha256": "a292155051e6195d23c4e06a5595421d92d39785e5ec29f9a8d24ed981c301ed"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2271,
-      "registration": "setSelectable:",
-      "function": "tf_ignoreBool",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2272,
-      "registration": "setDataDetectorTypes:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2272,
-      "registration": "setLinkTextAttributes:",
-      "function": "tf_ignoreObj",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2273,
-      "registration": "setAllowsEditingTextAttributes:",
-      "function": "tf_ignoreBool",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2300,
-      "registration": "setAutocapitalizationType:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2300,
-      "registration": "setAutocorrectionType:",
-      "function": "tf_ignoreInt",
-      "reason": "empty no-op body",
-      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2301,
+      "line": 2125,
       "registration": "setKeyboardType:",
       "function": "tf_ignoreInt",
       "reason": "empty no-op body",
@@ -5859,7 +5683,55 @@
     },
     {
       "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2301,
+      "line": 2126,
+      "registration": "returnKeyType",
+      "function": "tf_zeroInt",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2126,
+      "registration": "setReturnKeyType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2127,
+      "registration": "setKeyboardAppearance:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2128,
+      "registration": "setAutocapitalizationType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2128,
+      "registration": "setAutocorrectionType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2129,
+      "registration": "setEnablesReturnKeyAutomatically:",
+      "function": "tf_ignoreBool",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2129,
       "registration": "setSpellCheckingType:",
       "function": "tf_ignoreInt",
       "reason": "empty no-op body",
@@ -5867,11 +5739,307 @@
     },
     {
       "path": "src/runtime/uikit/UIWidgets.cpp",
-      "line": 2405,
+      "line": 2130,
+      "registration": "setClearButtonMode:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2130,
+      "registration": "setClearsOnBeginEditing:",
+      "function": "tf_ignoreBool",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2131,
+      "registration": "setContentHorizontalAlignment:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2131,
+      "registration": "setContentVerticalAlignment:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2132,
+      "registration": "setInputAccessoryView:",
+      "function": "tf_ignoreObj",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2132,
+      "registration": "setInputView:",
+      "function": "tf_ignoreObj",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2133,
+      "registration": "inputAccessoryView",
+      "function": "tf_nilObj",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2133,
+      "registration": "inputView",
+      "function": "tf_nilObj",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2134,
+      "registration": "setAdjustsFontSizeToFitWidth:",
+      "function": "tf_ignoreBool",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2134,
+      "registration": "setTypingAttributes:",
+      "function": "tf_ignoreObj",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2135,
+      "registration": "setKeyboardLanguage:",
+      "function": "tf_ignoreObj",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2148,
+      "registration": "keyboardType",
+      "function": "tf_zeroInt",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2148,
+      "registration": "setKeyboardType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2149,
+      "registration": "returnKeyType",
+      "function": "tf_zeroInt",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2149,
+      "registration": "setReturnKeyType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2150,
+      "registration": "setAutocorrectionType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2150,
+      "registration": "setKeyboardAppearance:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2151,
+      "registration": "setAutocapitalizationType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2151,
+      "registration": "setSpellCheckingType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2152,
+      "registration": "setEnablesReturnKeyAutomatically:",
+      "function": "tf_ignoreBool",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2152,
+      "registration": "setSecureTextEntry:",
+      "function": "tf_ignoreBool",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2153,
+      "registration": "setInputAccessoryView:",
+      "function": "tf_ignoreObj",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2153,
+      "registration": "setInputView:",
+      "function": "tf_ignoreObj",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2154,
+      "registration": "inputAccessoryView",
+      "function": "tf_nilObj",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2154,
+      "registration": "inputView",
+      "function": "tf_nilObj",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "1ea351934ebc007f60fdfc60e3a4bb9c1d8314596b75581b17dafcf51ad0461e"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2155,
+      "registration": "isEditable",
+      "function": "tf_trueBool",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "a292155051e6195d23c4e06a5595421d92d39785e5ec29f9a8d24ed981c301ed"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2155,
+      "registration": "setEditable:",
+      "function": "tf_ignoreBool",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2156,
+      "registration": "isSelectable",
+      "function": "tf_trueBool",
+      "reason": "only constant success/boolean returns",
+      "body_sha256": "a292155051e6195d23c4e06a5595421d92d39785e5ec29f9a8d24ed981c301ed"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2156,
+      "registration": "setSelectable:",
+      "function": "tf_ignoreBool",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2157,
+      "registration": "setDataDetectorTypes:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2157,
+      "registration": "setLinkTextAttributes:",
+      "function": "tf_ignoreObj",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2158,
+      "registration": "setAllowsEditingTextAttributes:",
+      "function": "tf_ignoreBool",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2185,
+      "registration": "setAutocapitalizationType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2185,
+      "registration": "setAutocorrectionType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2186,
+      "registration": "setKeyboardType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2186,
+      "registration": "setSpellCheckingType:",
+      "function": "tf_ignoreInt",
+      "reason": "empty no-op body",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2290,
       "registration": "removePasteboardWithName:",
       "function": "<lambda>",
       "reason": "empty no-op body",
       "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/runtime/uikit/UIWidgets.cpp",
+      "line": 2372,
+      "registration": "containsPasteboardTypes:",
+      "function": "<lambda>",
+      "reason": "constant HLE result register",
+      "body_sha256": "9c86d7bab0e9176282bfc6ca49b84f112cd0734edfe9de64d3c5663af7b44952"
     }
   ]
 }

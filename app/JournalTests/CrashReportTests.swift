@@ -5,6 +5,7 @@ import XCTest
 final class CrashReportTests: XCTestCase {
     @MainActor
     private func withFreshJournal(_ body: () throws -> Void) throws {
+        HVMCrashJournal.closeSignalFile()
         let fm = FileManager.default
         let dir = CrashReport.directory
         let backup = dir.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
@@ -64,7 +65,7 @@ final class CrashReportTests: XCTestCase {
     }
 
     @MainActor
-    func testUnclosedSignalFileCausesRecoverToFail() throws {
+    func testUnclosedSignalFileIsClosedBeforeRecovery() throws {
         try withFreshJournal {
             HVMCrashJournal.openSignalFile(CrashReport.signal.path)
             try Data("{\"exceptionKind\":\"host-SIGSEGV\"}".utf8).write(to: CrashReport.signal)
