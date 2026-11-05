@@ -411,8 +411,18 @@ void Process::loadGuestDylibs() {
         candidates.push_back(fs::path(cfg_.bundlePath) / "Frameworks" / fname);
         candidates.push_back(fs::path(cfg_.bundlePath) / fname);
         std::error_code ec;
+        auto inside = [&](const fs::path& candidate, const std::string& root) {
+            if (root.empty()) return false;
+            ec.clear();
+            const auto base = fs::weakly_canonical(root, ec);
+            if (ec) return false;
+            const auto target = fs::weakly_canonical(candidate, ec);
+            if (ec) return false;
+            return std::mismatch(base.begin(), base.end(), target.begin(), target.end()).first == base.end();
+        };
         for (const auto& c : candidates) {
-            if (fs::is_regular_file(c, ec)) return c.string();
+            if ((inside(c, cfg_.bundlePath) || inside(c, cfg_.guestLibDir)) && fs::is_regular_file(c, ec))
+                return c.string();
         }
         return {};
     };
@@ -434,10 +444,30 @@ void Process::loadGuestDylibs() {
             for (const auto& [depName, depWeak] : peekDylibLoads(bytes))
                 visitDylib(depName, depWeak, fs::path(foundPath).parent_path().string());
 
-            if (nextLoadAddr < kStaticBase && nextLoadAddr + 0x00800000u > kStaticBase)
-                nextLoadAddr = kHeapLimit;
             Loader::Image dylibImg;
             try {
+                // Measure the actual segment span, excluding unmapped __PAGEZERO.
+                const auto slice = Loader::selectSlice(bytes);
+                const auto* data = bytes.data() + slice.offset;
+                auto word = [&](size_t off) { uint32_t v; std::memcpy(&v, data + off, 4); return v; };
+                uint64_t lo = UINT64_MAX, hi = 0;
+                if (slice.size >= 28 && uint64_t(28) + word(20) <= slice.size) {
+                    const size_t end = 28 + size_t(word(20));
+                    size_t off = 28;
+                    for (uint32_t i = 0; i < word(16) && off + 8 <= end; ++i) {
+                        const auto size = word(off + 4);
+                        if (size < 8 || size > end - off) break;
+                        if (word(off) == 1 && size >= 56 &&
+                            std::memcmp(data + off + 8, "__PAGEZERO", 10) != 0 && word(off + 28)) {
+                            lo = std::min(lo, uint64_t(word(off + 24)));
+                            hi = std::max(hi, uint64_t(word(off + 24)) + word(off + 28));
+                        }
+                        off += size;
+                    }
+                }
+                const uint64_t span = hi > lo ? hi - lo : 0;
+                if (nextLoadAddr < kStaticBase && uint64_t(nextLoadAddr) + span > kStaticBase)
+                    nextLoadAddr = kHeapLimit;
                 dylibImg = Loader::loadMachO(*mem_, bytes, foundPath, Loader::LoadOptions{nextLoadAddr});
             } catch (const std::exception& e) {
                 throw Loader::MachOError("Failed to load guest dylib " + installName + " (" + foundPath + "): " + e.what());
@@ -445,6 +475,11 @@ void Process::loadGuestDylibs() {
             if (dylibImg.fileType != 6 /* MH_DYLIB */ && dylibImg.fileType != 8 /* MH_BUNDLE */)
                 throw Loader::MachOError("Guest library " + installName + " (" + foundPath + ") is not an MH_DYLIB");
             nextLoadAddr = (dylibImg.highAddr + 0xFFFFu) & ~0xFFFFu;
+            for (const auto& section : dylibImg.sections) {
+                if (section.size && section.sectname.rfind("__objc_", 0) == 0) {
+                    reportMissing("guest dylib Objective-C metadata: " + installName + " " + section.sectname);
+                }
+            }
 
             for (size_t i = 0; i < dylibImg.dylibs.size(); ++i)
                 visitDylib(dylibImg.dylibs[i], i < dylibImg.dylibWeak.size() && dylibImg.dylibWeak[i],
