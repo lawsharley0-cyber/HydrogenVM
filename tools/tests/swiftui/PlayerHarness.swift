@@ -142,3 +142,6 @@ struct PlayerHarness: View {
             }
     }
 }
+enum HVMEngine {
+    static func liveGuestArenaCount() -> Int { 0 }
+}
