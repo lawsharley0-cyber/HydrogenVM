@@ -61,7 +61,7 @@ endif()
 # -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
 target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off)
 
-add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/HostFaultTests.cpp tests/runner/ThreadProgressTests.cpp tests/runner/GuestCallBoundaryTests.cpp tests/runner/SuspendTests.cpp tests/runner/ThreadLifetimeTests.cpp tests/host/minimp3_hwcap_test.cpp)
+add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/HostFaultTests.cpp tests/runner/ThreadProgressTests.cpp tests/runner/GuestCallBoundaryTests.cpp tests/runner/SuspendTests.cpp tests/runner/ThreadLifetimeTests.cpp tests/runner/ArenaPoolTests.cpp tests/host/minimp3_hwcap_test.cpp)
 add_executable(hvm_host_fault_tests tests/runner/HostFaultTests.cpp)
 target_link_libraries(hvm_host_fault_tests PRIVATE hvm_core)
 add_executable(hvm_thread_progress_tests tests/runner/ThreadProgressTests.cpp)
@@ -70,7 +70,7 @@ add_executable(hvm_guest_call_boundary_tests tests/runner/GuestCallBoundaryTests
 target_link_libraries(hvm_guest_call_boundary_tests PRIVATE hvm_core)
 add_executable(hvm_thread_lifetime_tests tests/runner/ThreadLifetimeTests.cpp)
 target_link_libraries(hvm_thread_lifetime_tests PRIVATE hvm_core)
-target_compile_definitions(hvm_tests PRIVATE MINIMP3_HWCAP_NO_MAIN HVM_HOST_FAULT_NO_MAIN HVM_THREAD_PROGRESS_NO_MAIN HVM_GUEST_CALL_BOUNDARY_NO_MAIN HVM_THREAD_LIFETIME_NO_MAIN)
+target_compile_definitions(hvm_tests PRIVATE MINIMP3_HWCAP_NO_MAIN HVM_HOST_FAULT_NO_MAIN HVM_THREAD_PROGRESS_NO_MAIN HVM_GUEST_CALL_BOUNDARY_NO_MAIN HVM_THREAD_LIFETIME_NO_MAIN HVM_ARENA_POOL_NO_MAIN)
 target_link_libraries(hvm_tests PRIVATE hvm_core)
 
 # GNU-style linker wrapping keeps host thread failure injection in the test binary.
@@ -95,6 +95,9 @@ target_link_libraries(hvm_heap_tests PRIVATE hvm_core)
 
 add_executable(hvm_memory_tests tests/runner/MemoryDiagnosticsTests.cpp)
 target_link_libraries(hvm_memory_tests PRIVATE hvm_core)
+
+add_executable(hvm_arena_pool_tests tests/runner/ArenaPoolTests.cpp)
+target_link_libraries(hvm_arena_pool_tests PRIVATE hvm_core)
 
 add_executable(hvm_support_tests tests/runner/SupportTests.cpp)
 target_link_libraries(hvm_support_tests PRIVATE hvm_core)
