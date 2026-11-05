@@ -103,6 +103,31 @@ struct RecentSaveFilesTests {
         let empty = RecentSaveFiles.load(bundleID: emptyBundle, container: birds, defaults: defaults)
         check(empty.paths.isEmpty, "corrupt legacy data does not invent files")
 
+        let unseeded = "com.example.unseeded"
+        defaults.removeObject(forKey: RecentSaveFiles.legacyKey)
+        _ = RecentSaveFiles.load(bundleID: unseeded, container: birds, defaults: defaults)
+        defaults.set(try JSONEncoder().encode([birdsScore]), forKey: RecentSaveFiles.legacyKey)
+        check(RecentSaveFiles.load(bundleID: unseeded, container: birds, defaults: defaults).paths.isEmpty,
+              "an empty first migration is persisted even without a legacy key")
+        let unrelated = "com.example.unrelated"
+        defaults.set(try JSONEncoder().encode([sandboxPlist]), forKey: RecentSaveFiles.legacyKey)
+        _ = RecentSaveFiles.load(bundleID: unrelated, container: birds, defaults: defaults)
+        defaults.set(try JSONEncoder().encode([birdsScore]), forKey: RecentSaveFiles.legacyKey)
+        check(RecentSaveFiles.load(bundleID: unrelated, container: birds, defaults: defaults).paths.isEmpty,
+              "an empty filtered migration cannot be seeded later")
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let inside = temp.appendingPathComponent("inside"), outside = temp.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let link = inside.appendingPathComponent("escape")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        var linked = RecentSaveFiles()
+        linked.record(link.appendingPathComponent("save.json"), container: inside)
+        check(linked.paths.isEmpty, "record resolves symlink escapes")
+        check(RecentSaveFiles(paths: [link.appendingPathComponent("save.json").path]).visible(in: inside).isEmpty,
+              "visible resolves symlink escapes")
+
         print("PASS: recent files of app A never appear for app B (\(checks) checks)")
     }
 }
