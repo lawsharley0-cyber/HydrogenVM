@@ -2489,10 +2489,11 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
         const id types = x.cpu.r[2];
         if (!types) { x.cpu.r[0] = 0; return; }
         const auto want = Foundation::arrayItems(x, types);
+        bool found = false;
         for (id t : want) {
-            if (Foundation::dictGet(x, d.itemsDict, t)) { x.cpu.r[0] = 1; return; }
+            if (Foundation::dictGet(x, d.itemsDict, t)) { found = true; break; }
         }
-        x.cpu.r[0] = 0;
+        x.cpu.r[0] = found;
     }, "c@:@");
     pb.method("numberOfItems", [getPbData](Ctx& x) {
         auto& d = getPbData(x, x.cpu.r[0]);
