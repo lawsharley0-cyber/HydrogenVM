@@ -5733,23 +5733,27 @@ int runFullSubsystemTests() {
                 auto arg = proc.allocStatic(4);
                 struct BoundsProbe { std::atomic<uint32_t> faultCount{0}; std::atomic<bool> done{false}; std::atomic<uint32_t> reportedSize{0}; };
                 auto bprobe = std::make_shared<BoundsProbe>();
-                uint32_t fnAddr = proc.defineFunction("Issue314Worker", [bprobe, p_th](Ctx& cx) {
-                    uint32_t myTh = cx.mem.read<uint32_t>(p_th);
+                uint32_t fnAddr = proc.defineFunction("Issue314Worker", [bprobe](Ctx& cx) {
+                    uint32_t myTh = cx.proc.currentThread().self;
                     auto symSize = cx.proc.lookupSymbol("_pthread_get_stacksize_np");
                     auto symAddr = cx.proc.lookupSymbol("_pthread_get_stackaddr_np");
                     uint32_t size = symSize ? cx.proc.callGuest(cx.cpu, *symSize, {myTh}) : 0;
                     uint32_t addr = symAddr ? cx.proc.callGuest(cx.cpu, *symAddr, {myTh}) : 0;
                     bprobe->reportedSize = size;
                     if (size >= 1024u * 1024u && addr != 0) {
-                        cx.mem.write<uint8_t>(addr - size, 42);
-                        cx.mem.write<uint8_t>(addr - 1, 42);
-                        uint32_t codeBlock = cx.proc.allocStatic(8);
+
+                        uint32_t codeBlock = cx.proc.allocStatic(4096, 4096);
+                        cx.mem.protect(codeBlock, 4096, Memory::kProtRWX);
                         cx.mem.write<uint32_t>(codeBlock, 0xe5d00000); /* ldrb r0, [r0] */
                         cx.mem.write<uint32_t>(codeBlock + 4, 0xe12fff1e); /* bx lr */
+                        cx.mem.write<uint32_t>(codeBlock + 8, 0xe5c01000); // strb r1, [r0]
+                        cx.mem.write<uint32_t>(codeBlock + 12, 0xe12fff1e);
+                        cx.proc.callGuest(cx.cpu, codeBlock + 8, {addr - size, 42});
+                        cx.proc.callGuest(cx.cpu, codeBlock + 8, {addr - 1, 42});
                         try {
                             cx.proc.callGuest(cx.cpu, codeBlock, {addr - size - 1});
                         } catch (const CPU::GuestFault& f) {
-                            bprobe->faultCount++;
+                            if (f.exit == CPU::Exit::MemFault && f.info == addr - size - 1) bprobe->faultCount++;
                         }
                     }
                     bprobe->done = true;
@@ -5759,16 +5763,68 @@ int runFullSubsystemTests() {
                 proc.callGuest(cpu, *proc.lookupSymbol("_pthread_join"), {createdTh, 0});
                 proc.callGuest(cpu, *proc.lookupSymbol("_pthread_attr_destroy"), {p_attr});
                 bool got1mb = bprobe->reportedSize >= 1024u * 1024u;
-                r.send(cpu, th, "setStackSize:", {1024u * 1024u});
-                bool ns1mb = false;
-                try { r.send(cpu, th, "start");
-                  for (int i = 0; i < 400 && !(uint32_t(r.send(cpu, th, "isExecuting")) & 0xff); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                  ns1mb = probe->id && proc.findThreadById(probe->id) && proc.findThreadById(probe->id)->stackSize >= 1024u * 1024u;
-                  probe->release = true;
-                  for (int i = 0; i < 400 && proc.findThreadById(probe->id); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                } catch(...) {}
+                probe->id = 0; probe->done = false; probe->release = false;
+                const ObjC::id stackThread = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
+                    "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
+                r.send(cpu, stackThread, "setStackSize:", {1024u * 1024u});
+                r.send(cpu, stackThread, "start");
+                for (int i = 0; i < 400 && !probe->id; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                auto* runningStackThread = proc.findThreadById(probe->id);
+                bool ns1mb = runningStackThread && runningStackThread->stackSize == 1024u * 1024u;
+                probe->release = true;
+                for (int i = 0; i < 400 && !probe->done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (runningStackThread) proc.joinThread(runningStackThread->self, nullptr);
+                probe->id = 0; probe->done = false; probe->release = false;
                 check(got1mb && ns1mb && bprobe->faultCount == 1 && bprobe->done,
                       "pthread_attr_setstacksize and NSThread stackSize get at least 1MB and overflow hits guard page as guest fault");
+            }
+            {
+                const auto setStack = proc.lookupSymbol("_pthread_attr_setstack");
+                const auto setTop = proc.lookupSymbol("_pthread_attr_setstackaddr");
+                check(setStack && setTop, "pthread custom stack APIs are registered");
+                if (setStack && setTop) {
+                    const uint32_t attr = proc.allocStatic(64), out = proc.allocStatic(4);
+                    const uint32_t base = 0x0b000000u, size = 0x4000u;
+                    proc.mem().map(base, size * 2, Memory::kProtRW);
+                    auto observed = std::make_shared<std::atomic<uint32_t>>(0);
+                    const auto worker = proc.defineFunction("CustomStackWorker", [observed](Ctx& cx) {
+                        *observed = cx.proc.currentThread().stackBase;
+                    });
+                    auto invoke = [&](const char* name, std::initializer_list<uint32_t> args) {
+                        return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(name), args));
+                    };
+                    invoke("_pthread_attr_init", {attr});
+                    check(invoke("_pthread_attr_setdetachstate", {attr, 3}) == 22,
+                          "pthread rejects unsupported detach state");
+                    const uint32_t readOnly = 0x0b010000u;
+                    proc.mem().map(readOnly, 4096, Memory::kProtRW);
+                    proc.mem().write<uint32_t>(readOnly, 0xfeedu);
+                    proc.mem().protect(readOnly, 4096, Memory::kProtRead);
+                    check(invoke("_pthread_attr_getstacksize", {attr, readOnly}) == 14 &&
+                          invoke("_pthread_attr_getdetachstate", {attr, readOnly}) == 14 &&
+                          proc.mem().read<uint32_t>(readOnly) == 0xfeedu,
+                          "pthread getters reject read-only output without changing bytes");
+                    proc.mem().unmap(readOnly, 4096);
+
+                    check(invoke("_pthread_attr_setstack", {attr, base, size}) == 0, "caller-supplied stack attributes accepted");
+                    auto launch = [&] {
+                        const auto result = invoke("_pthread_create", {out, attr, worker, 0});
+                        if (result == 0) invoke("_pthread_join", {proc.mem().read<uint32_t>(out), 0});
+                        return result;
+                    };
+                    check(launch() == 0 && *observed == base && proc.mem().isMapped(base),
+                          "caller stack is used and remains mapped after join");
+                    check(invoke("_pthread_attr_setstackaddr", {attr, base + size * 2}) == 0 &&
+                          launch() == 0 && *observed == base + size,
+                          "setting stack top supersedes previous base");
+                    invoke("_pthread_attr_setstackaddr", {attr, 0x1000});
+                    check(launch() == 22, "pthread rejects stack top below size");
+                    check(invoke("_pthread_attr_setstack", {attr, base, 8192}) == 22,
+                          "pthread rejects undersized caller stack");
+                    check(invoke("_pthread_attr_setstack", {attr, base, size + 1}) == 22,
+                          "pthread rejects caller size smaller than normalized allocation");
+                    proc.mem().unmap(base, size * 2);
+                }
             }
             const auto threadsBefore = proc.liveThreadIds();
             bool rejectedOverflow = false, rejectedRange = false;
