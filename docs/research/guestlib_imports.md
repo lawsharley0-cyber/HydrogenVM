@@ -144,33 +144,33 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_open` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1145` | Handler `f_open` |
 | `_poll` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Net.cpp:591` | Handler `n_poll` |
 | `_posix_memalign` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:342` | Handler `m_posix_memalign` |
-| `_pthread_cond_broadcast` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:571` | `SupportStatus::Approx` — Wakes all current waiters and always reports success; waits poll for cancellation and stop |
-| `_pthread_cond_destroy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:573` | Handler `pc_destroy` |
-| `_pthread_cond_init` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:565` | Handler `pc_init` |
-| `_pthread_cond_signal` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:569` | `SupportStatus::Approx` — Wakes one current waiter and always reports success; waits poll for cancellation and stop |
-| `_pthread_cond_timedwait` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:567` | Handler `pc_timedwait` |
-| `_pthread_cond_wait` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:566` | Handler `pc_wait` |
-| `_pthread_detach` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:601` | Handler `t_detach` |
-| `_pthread_equal` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:603` | Handler `t_equal` |
-| `_pthread_getspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:586` | Handler `k_get` |
-| `_pthread_join` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:600` | Handler `t_join` |
-| `_pthread_key_create` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:584` | Handler `k_create` |
-| `_pthread_key_delete` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:585` | Handler `k_delete` |
-| `_pthread_mutex_destroy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:558` | Handler `pm_destroy` |
-| `_pthread_mutex_init` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:554` | Handler `pm_init` |
-| `_pthread_mutex_lock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:555` | Handler `pm_lock` |
-| `_pthread_mutex_trylock` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:556` | Handler `pm_trylock` |
-| `_pthread_mutex_unlock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:557` | Handler `pm_unlock` |
-| `_pthread_mutexattr_destroy` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:562` | POSIX mutex attributes are guest-memory POD; destruction requires no resource release (matched initializer/destructor bodies) |
-| `_pthread_mutexattr_init` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:559` | Handler `pma_init` |
-| `_pthread_mutexattr_settype` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:560` | Handler `pma_settype` |
-| `_pthread_once` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:583` | Handler `p_once` |
-| `_pthread_self` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:602` | Handler `t_self` |
-| `_pthread_setspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:587` | Handler `k_set` |
+| `_pthread_cond_broadcast` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:625` | `SupportStatus::Approx` — Wakes all current waiters and always reports success; waits poll for cancellation and stop |
+| `_pthread_cond_destroy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:627` | Handler `pc_destroy` |
+| `_pthread_cond_init` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:619` | Handler `pc_init` |
+| `_pthread_cond_signal` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:623` | `SupportStatus::Approx` — Wakes one current waiter and always reports success; waits poll for cancellation and stop |
+| `_pthread_cond_timedwait` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:621` | Handler `pc_timedwait` |
+| `_pthread_cond_wait` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:620` | Handler `pc_wait` |
+| `_pthread_detach` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:659` | Handler `t_detach` |
+| `_pthread_equal` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:661` | Handler `t_equal` |
+| `_pthread_getspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:640` | Handler `k_get` |
+| `_pthread_join` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:658` | Handler `t_join` |
+| `_pthread_key_create` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:638` | Handler `k_create` |
+| `_pthread_key_delete` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:639` | Handler `k_delete` |
+| `_pthread_mutex_destroy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:612` | Handler `pm_destroy` |
+| `_pthread_mutex_init` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:608` | Handler `pm_init` |
+| `_pthread_mutex_lock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:609` | Handler `pm_lock` |
+| `_pthread_mutex_trylock` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:610` | Handler `pm_trylock` |
+| `_pthread_mutex_unlock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:611` | Handler `pm_unlock` |
+| `_pthread_mutexattr_destroy` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:616` | POSIX mutex attributes are guest-memory POD; destruction requires no resource release (matched initializer/destructor bodies) |
+| `_pthread_mutexattr_init` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:613` | Handler `pma_init` |
+| `_pthread_mutexattr_settype` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:614` | Handler `pma_settype` |
+| `_pthread_once` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:637` | Handler `p_once` |
+| `_pthread_self` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:660` | Handler `t_self` |
+| `_pthread_setspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:641` | Handler `k_set` |
 | `_putc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:562` | Handler `f_fputc` |
 | `_read` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1147` | Handler `f_read` |
 | `_realloc` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:338` | Handler `m_realloc` |
-| `_sched_yield` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:612` | Handler `sched_yield_` |
+| `_sched_yield` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:670` | Handler `sched_yield_` |
 | `_setlocale` | `libstdc++.6.dylib`, `libc++.1.dylib` | `stubbed-dishonestly` | `src/runtime/libc/Posix.cpp:226` | Handler `p_setlocale` returns fixed `"C"` string regardless of requested category/locale |
 | `_snprintf` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:550` | Handler `f_snprintf` |
 | `_snprintf_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |

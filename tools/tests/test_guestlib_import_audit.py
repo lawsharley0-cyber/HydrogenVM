@@ -259,6 +259,25 @@ class GuestLibImportAuditTests(unittest.TestCase):
             path.write_text(path.read_text().replace("return 0;", "x.proc.allocStatic(64); return 0;", 1))
             self.assertEqual(audit.scan_hvm_registrations(root)["_pthread_mutexattr_destroy"]["status"], "stubbed-dishonestly")
 
+    def test_mutex_attribute_exemption_needs_whole_token_match(self) -> None:
+        audit = _load_import_audit()
+        reg = 'void reg(Process& p) { p.def<&pma_ok>("_pthread_mutexattr_destroy"); }'
+        init = 'int32_t pma_init(Ctx& x, GuestPtr a) { x.mem.write<uint32_t>(a, 0x4D555458); x.mem.write<uint32_t>(a + 4, 0); return 0; }\n'
+        cases = {
+            # Identifier suffix: `uint32_t` contains `int32_t` as text, but is another token.
+            "identifier suffix": init + 'uint32_t pma_ok(Ctx&, GuestPtr) { return 0; }\n' + reg,
+            # The exempt initializer text appears only inside a string literal; the real initializer leaks.
+            "inside string literal": 'int32_t pma_init(Ctx& x, GuestPtr a) { x.proc.allocStatic(64); return 0; }\n'
+                'int32_t pma_ok(Ctx&, GuestPtr) { return 0; }\n'
+                'const char* k = "' + " ".join(tk.value for tk in audit.lint_stubs.tokens(init)) + '";\n' + reg,
+        }
+        for name, source in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "src/runtime/libc").mkdir(parents=True)
+                (root / "src/runtime/libc/Pthread.cpp").write_text(source)
+                self.assertEqual(audit.scan_hvm_registrations(root)["_pthread_mutexattr_destroy"]["status"], "stubbed-dishonestly")
+
     def test_malformed_support_manifest_is_runtime_error(self) -> None:
         from unittest.mock import patch
         audit = _load_import_audit()

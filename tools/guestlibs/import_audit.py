@@ -507,12 +507,18 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
                 and rel_path == "src/runtime/libc/Pthread.cpp"
                 and not note.startswith("`SupportStatus::Stub`")
                 and not note.startswith("`SupportStatus::Unavailable`")):
-            canonical = " ".join(t.value for t in lint_stubs.tokens(text))
+            canonical = [(t.kind, t.value) for t in lint_stubs.tokens(text)]
             expected = (
                 "int32_t pma_init(Ctx& x, GuestPtr a) { x.mem.write<uint32_t>(a, 0x4D555458); x.mem.write<uint32_t>(a + 4, 0); return 0; }",
                 "int32_t pma_ok(Ctx&, GuestPtr) { return 0; }",
             )
-            if all(" ".join(t.value for t in lint_stubs.tokens(body)) in canonical for body in expected):
+            # Compare whole tokens, in order and contiguously: a joined-string
+            # "in" test would accept `uint32_t` for `int32_t` and text that
+            # only appears inside a string literal.
+            def has_tokens(body: str) -> bool:
+                want = [(t.kind, t.value) for t in lint_stubs.tokens(body)]
+                return any(canonical[i:i + len(want)] == want for i in range(len(canonical) - len(want) + 1))
+            if all(has_tokens(body) for body in expected):
                 return "present", "POSIX mutex attributes are guest-memory POD; destruction requires no resource release (matched initializer/destructor bodies)"
         override = HANDLER_OVERRIDES.get(sym)
         if override and override[0] == fn_name:
