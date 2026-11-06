@@ -318,24 +318,78 @@ int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) { x.proc.currentThread().tsd[key
 
 // -------------------------------------------------------------- threads ---
 
-// Our pthread_attr_t layout: sig, stacksize, detachstate.
-int32_t pa_init(Ctx& x, GuestPtr a) { x.mem.write<uint32_t>(a, 0x54484441); x.mem.write<uint32_t>(a + 4, 512u << 10); x.mem.write<uint32_t>(a + 8, 1); return 0; }
-int32_t pa_destroy(Ctx&, GuestPtr) { return 0; }
-int32_t pa_setstacksize(Ctx& x, GuestPtr a, uint32_t s) { x.mem.write<uint32_t>(a + 4, s); return 0; }
-int32_t pa_getstacksize(Ctx& x, GuestPtr a, GuestPtr out) { x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 4)); return 0; }
-int32_t pa_setdetachstate(Ctx& x, GuestPtr a, int32_t s) { x.mem.write<uint32_t>(a + 8, uint32_t(s)); return 0; }
-int32_t pa_getdetachstate(Ctx& x, GuestPtr a, GuestPtr out) { x.mem.write<uint32_t>(out, x.mem.read<uint32_t>(a + 8)); return 0; }
+// Private guest pthread_attr_t: signature, size, detach state, base, top.
+constexpr uint32_t kAttrSignature = 0x54484441;
+bool validAttr(Ctx& x, GuestPtr a) { return a && x.mem.read<uint32_t>(a) == kAttrSignature; }
+bool validCustomSize(uint32_t size) { return size >= (16u << 10) && !(size & 4095); }
+int32_t attrWrite(Ctx& x, GuestPtr out, uint32_t value) {
+    uint32_t fault = 0;
+    return x.mem.copyInWritable(out, &value, sizeof(value), fault) ? 0 : 14;
+}
+int32_t pa_init(Ctx& x, GuestPtr a) {
+    const uint32_t values[] = {kAttrSignature, 512u << 10, 1, 0, 0};
+    uint32_t fault = 0;
+    return x.mem.copyInWritable(a, values, sizeof(values), fault) ? 0 : 14;
+}
+int32_t pa_destroy(Ctx& x, GuestPtr a) { return validAttr(x, a) ? attrWrite(x, a, 0) : 22; }
+int32_t pa_setstacksize(Ctx& x, GuestPtr a, uint32_t s) {
+    if (!validAttr(x, a) || s < (16u << 10)) return 22;
+    if ((x.mem.read<uint32_t>(a + 12) || x.mem.read<uint32_t>(a + 16)) && !validCustomSize(s)) return 22;
+    return attrWrite(x, a + 4, s);
+}
+int32_t pa_getstacksize(Ctx& x, GuestPtr a, GuestPtr out) { return validAttr(x, a) ? attrWrite(x, out, x.mem.read<uint32_t>(a + 4)) : 22; }
+int32_t pa_setdetachstate(Ctx& x, GuestPtr a, int32_t s) {
+    return validAttr(x, a) && (s == 1 || s == 2) ? attrWrite(x, a + 8, uint32_t(s)) : 22;
+}
+int32_t pa_getdetachstate(Ctx& x, GuestPtr a, GuestPtr out) { return validAttr(x, a) ? attrWrite(x, out, x.mem.read<uint32_t>(a + 8)) : 22; }
+int32_t pa_setstackaddr(Ctx& x, GuestPtr a, GuestPtr top) {
+    if (!validAttr(x, a) || !top || (top & 4095)) return 22;
+    const uint32_t values[] = {0, top};
+    uint32_t fault = 0;
+    return x.mem.copyInWritable(a + 12, values, sizeof(values), fault) ? 0 : 14;
+}
+int32_t pa_getstackaddr(Ctx& x, GuestPtr a, GuestPtr out) {
+    if (!validAttr(x, a)) return 22;
+    const auto base = x.mem.read<uint32_t>(a + 12);
+    return attrWrite(x, out, base ? base + x.mem.read<uint32_t>(a + 4) : x.mem.read<uint32_t>(a + 16));
+}
+int32_t pa_setstack(Ctx& x, GuestPtr a, GuestPtr base, uint32_t size) {
+    if (!validAttr(x, a) || !base || (base & 4095) || !validCustomSize(size) || uint64_t(base) + size > UINT32_MAX) return 22;
+    const uint32_t values[] = {size, x.mem.read<uint32_t>(a + 8), base, 0};
+    uint32_t fault = 0;
+    return x.mem.copyInWritable(a + 4, values, sizeof(values), fault) ? 0 : 14;
+}
+int32_t pa_getstack(Ctx& x, GuestPtr a, GuestPtr out, GuestPtr outSize) {
+    if (!validAttr(x, a)) return 22;
+    const auto size = x.mem.read<uint32_t>(a + 4), top = x.mem.read<uint32_t>(a + 16);
+    if (top && top <= size) return 22;
+    const auto base = top ? top - size : x.mem.read<uint32_t>(a + 12);
+    const auto err = attrWrite(x, out, base);
+    return err ? err : attrWrite(x, outSize, size);
+}
 int32_t pa_ignore2(Ctx&, GuestPtr, GuestPtr) { return 0; }
 int32_t pa_ignore_int(Ctx&, GuestPtr, int32_t) { return 0; }
 
 int32_t t_create(Ctx& x, GuestPtr out, GuestPtr attr, GuestPtr fn, GuestPtr arg) {
-    uint32_t stack = 512u << 10;
+    uint32_t stack = 512u << 10, stackBase = 0;
     bool detached = false;
-    if (attr && x.mem.read<uint32_t>(attr) == 0x54484441) {
+    if (attr && !validAttr(x, attr)) return 22;
+    if (attr) {
         stack = x.mem.read<uint32_t>(attr + 4);
+        stackBase = x.mem.read<uint32_t>(attr + 12);
+        const auto top = x.mem.read<uint32_t>(attr + 16);
+        if (top) {
+            if (top <= stack) return 22;
+            stackBase = top - stack;
+        }
+        if (stackBase && ((stackBase & 4095) || !validCustomSize(stack) || uint64_t(stackBase) + stack > UINT32_MAX)) return 22;
         detached = x.mem.read<uint32_t>(attr + 8) == 2;   // PTHREAD_CREATE_DETACHED
     }
-    const uint32_t self = x.proc.startThread(fn, arg, stack, detached);
+    if (stackBase) {
+        for (uint64_t page = stackBase & ~uint64_t(4095); page < uint64_t(stackBase) + stack; page += 4096)
+            if ((x.mem.protAt(uint32_t(page)) & Memory::kProtRW) != Memory::kProtRW) return 22;
+    }
+    const uint32_t self = x.proc.startThread(fn, arg, stack, detached, stackBase);
     if (out) x.mem.write<uint32_t>(out, self);
     return 0;
 }
@@ -591,6 +645,10 @@ void registerLibcPthread(Process& p) {
     p.def<&pa_getstacksize>("_pthread_attr_getstacksize");
     p.def<&pa_setdetachstate>("_pthread_attr_setdetachstate");
     p.def<&pa_getdetachstate>("_pthread_attr_getdetachstate");
+    p.def<&pa_setstackaddr>("_pthread_attr_setstackaddr");
+    p.def<&pa_getstackaddr>("_pthread_attr_getstackaddr");
+    p.def<&pa_setstack>("_pthread_attr_setstack");
+    p.def<&pa_getstack>("_pthread_attr_getstack");
     p.def<&pa_ignore2>("_pthread_attr_setschedparam");
     p.def<&pa_ignore2>("_pthread_attr_getschedparam");
     p.def<&pa_ignore_int>("_pthread_attr_setschedpolicy");

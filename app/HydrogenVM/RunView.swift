@@ -687,17 +687,19 @@ struct RunView: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
 
-                        Picker("Scale Mode", selection: Binding(get: { scaleSetting }, set: { value in
-                            if let value {
-                                scaleSetting = value
-                            } else {
+                        // Keep the segmented control's selection concrete; nil is
+                        // only the persisted representation of the global default.
+                        Picker("Scale Mode", selection: Binding<String>(get: { scaleSetting ?? "" }, set: { value in
+                            if value.isEmpty {
                                 scaleSetting = nil
                                 PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
+                            } else {
+                                scaleSetting = value
                             }
                         })) {
-                            Text("Use Default").tag(nil as String?)
+                            Text("Use Default").tag("")
                             ForEach(PlayerScaleMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode.rawValue as String?)
+                                Text(mode.rawValue).tag(mode.rawValue)
                             }
                         }
                         .pickerStyle(.segmented)
