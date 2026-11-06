@@ -3113,8 +3113,28 @@ int runFullSubsystemTests() {
         r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
         const bool presentedVeto = u.statusBarOrientation == 1;
         r.send(cpu, vc7, "dismissViewControllerAnimated:completion:", {0, 0});
+        // A presented controller whose mask excludes the target orientation keeps portrait.
+        u.statusBarOrientation = 1; landscapeOk = false;
+        const ObjC::id vc8 = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, win6, "setRootViewController:", {vc8});
+        auto portraitCls = r.defineClass("HVMPortraitOnlyController", "UIViewController");
+        portraitCls.method("supportedInterfaceOrientations", [](Ctx& rx) { rx.cpu.r[0] = 1u << 1; }, "I@:");
+        const ObjC::id portraitOnly = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, portraitCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, vc8, "presentViewController:animated:completion:", {portraitOnly, 0, 0});
+        landscapeOk = true;
+        r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
+        const bool presentedMask = u.statusBarOrientation == 1;
+        r.send(cpu, vc8, "dismissViewControllerAnimated:completion:", {0, 0});
         r.send(cpu, win6, "setHidden:", {1});
-        check(portraitAtRoot && stillPortrait && landscapeAfter && rotatedBounds && appChoiceKept && namesOk && bothPortrait && leftOnly && refusedRotation && settledAfterLaunch && presentedFollows && presentedVeto,
+        const std::pair<const char*, bool> parts[] = {
+            {"portraitAtRoot", portraitAtRoot}, {"stillPortrait", stillPortrait}, {"landscapeAfter", landscapeAfter},
+            {"rotatedBounds", rotatedBounds}, {"appChoiceKept", appChoiceKept}, {"namesOk", namesOk},
+            {"bothPortrait", bothPortrait}, {"leftOnly", leftOnly}, {"refusedRotation", refusedRotation},
+            {"settledAfterLaunch", settledAfterLaunch}, {"presentedFollows", presentedFollows},
+            {"presentedVeto", presentedVeto}, {"presentedMask", presentedMask}};
+        bool allParts = true;
+        for (const auto& [name, passed] : parts) if (!passed) { std::printf("    orientation part failed: %s\n", name); allParts = false; }
+        check(allParts,
               "orientation: a late-accepting root controller gets the Info.plist landscape (UIKit values, every window); an app-set orientation is kept");
         u.statusBarOrientation = savedSb; u.initialOrientation = savedInit; u.orientationSetByApp = savedByApp;
         if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");

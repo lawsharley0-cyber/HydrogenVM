@@ -935,10 +935,12 @@ void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
     if (!win) return;
     const id vc = V(x, win).rootViewController;
     if (!vc || !controllerSupports(x, vc, u.initialOrientation)) return;
+    // A controller presented over the root must accept the orientation too, and iOS asks
+    // the top of the presentation chain whether it may rotate.
+    id top = vc;
+    for (int guard = 0; guard < 64 && VC(x, top).presented; ++guard) top = VC(x, top).presented;
+    if (top != vc && !controllerSupports(x, top, u.initialOrientation)) return;
     if (rotation) {
-        // iOS asks the top of the presentation chain whether it may rotate.
-        id top = vc;
-        for (int guard = 0; guard < 64 && VC(x, top).presented; ++guard) top = VC(x, top).presented;
         auto& r = rt(x);
         const SEL sa = r.sel("shouldAutorotate");
         if (r.lookup(r.classOf(top), sa) != r.lookup(u.viewController, sa) && !sendBool(x, top, "shouldAutorotate", {})) return;
