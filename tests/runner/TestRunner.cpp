@@ -2045,9 +2045,10 @@ int runFullSubsystemTests() {
             const auto a1=row("a",1), a2=row("a",2), b3=row("b",3), c4=row("c",4);
             const auto all=makeArray(cx,{a1,a2,b3,c4});
             auto matches=[&](uint32_t pred){return arrayItems(cx,call(all,"filteredArrayUsingPredicate:",{pred}));};
+            // Variadic arguments: unused trailing words are never read by the format.
             auto fmt=[&](const char* f,std::initializer_list<uint32_t> more={}){
-                std::vector<uint32_t> args{makeString(cx,f)}; args.insert(args.end(),more.begin(),more.end());
-                return uint32_t(r.send(cpu,r.getClass("NSPredicate"),r.sel("predicateWithFormat:"),args));
+                uint32_t a[4]={0,0,0,0}; size_t n=0; for(uint32_t v:more) if(n<4) a[n++]=v;
+                return uint32_t(r.send(cpu,r.getClass("NSPredicate"),"predicateWithFormat:",{makeString(cx,f),a[0],a[1],a[2],a[3]}));
             };
             const auto P=r.getClass("NSPredicate");
             bool ok=true;
