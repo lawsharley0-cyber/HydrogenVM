@@ -16,12 +16,18 @@
 // Long capacities are rounded like libc++'s __recommend: (cap + 1) is a
 // multiple of 16 bytes' worth of characters.
 //
+// Like libc++, mutations work in the string's own buffer when it is big enough
+// and otherwise allocate the new buffer first and copy into it, so nothing on
+// the host is sized by a guest-supplied length. Guest pointers and the string
+// object are checked against guest page permissions before they are touched;
+// a bad one raises a guest memory fault.
+//
 // Buffers come from the guest heap, the same heap operator new/delete use, so
 // the app's inline code may free or reuse them.
 #include "runtime/Process.hpp"
 #include <algorithm>
-#include <cinttypes>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -30,9 +36,19 @@ namespace Hydrogen::Runtime {
 namespace {
 
 constexpr uint32_t kNpos = 0xFFFFFFFFu;
+constexpr uint64_t kGuestHeapBytes = 0x70000000u;   // the guest heap's whole range; no buffer can be larger
 
 [[noreturn]] void outOfRange(const char* where) { throw std::runtime_error(std::string("std::out_of_range: ") + where); }
 [[noreturn]] void lengthError(const char* where) { throw std::runtime_error(std::string("std::length_error: ") + where); }
+
+// Where the characters to write come from: a guest range, or `n` copies of `c`.
+struct Src {
+    uint32_t ptr = 0, n = 0;
+    bool fill = false;
+    uint32_t c = 0;
+    static Src range(uint32_t p, uint32_t n) { return {p, n, false, 0}; }
+    static Src chars(uint32_t n, uint32_t c) { return {0, n, true, c}; }
+};
 
 template <uint32_t W> struct Str {
     static constexpr uint32_t kMinCap = W == 1 ? 11 : 2;
@@ -40,24 +56,73 @@ template <uint32_t W> struct Str {
     static constexpr uint32_t kAlign = 16 / W;
     // allocator<T>::max_size() - __alignment (little-endian libc++).
     static constexpr uint32_t kMaxSize = (0xFFFFFFFFu / W) - 16;
-    using Chars = std::vector<uint32_t>;
 
     Ctx& x;
     explicit Str(Ctx& c) : x(c) {}
 
-    uint32_t load(uint32_t p, uint32_t i) const { return W == 1 ? x.mem.read<uint8_t>(p + i) : x.mem.read<uint32_t>(p + i * 4); }
+    // ---- guest memory, checked
+    [[noreturn]] void fault(uint32_t at, const char* what) const {
+        throw CPU::GuestFault(CPU::Exit::MemFault, at, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), what);
+    }
+    void need(uint32_t addr, uint64_t bytes, uint8_t prot, const char* what) const {
+        if (!bytes) return;
+        if (uint64_t(addr) + bytes > 0x100000000ull) fault(addr, what);
+        constexpr uint32_t sh = Memory::GuestArena::kGuestPageShift;
+        const uint64_t last = (uint64_t(addr) + bytes - 1) >> sh;
+        for (uint64_t pg = addr >> sh; pg <= last; ++pg)
+            if ((x.mem.protAt(uint32_t(pg << sh)) & prot) != prot) fault(std::max<uint32_t>(addr, uint32_t(pg << sh)), what);
+    }
+    void readable(uint32_t p, uint64_t chars, const char* what) const { need(p, chars * W, Memory::kProtRead, what); }
+    void writable(uint32_t p, uint64_t chars, const char* what) const { need(p, chars * W, Memory::kProtRW, what); }
+    void object(uint32_t s, bool write) const { need(s, 12, write ? Memory::kProtRW : Memory::kProtRead, "std::__1::basic_string object"); }
+
+    uint32_t load(uint32_t p, uint32_t i) const {
+        if constexpr (W == 1) return x.mem.read<uint8_t>(p + i);
+        else return x.mem.read<uint32_t>(p + i * 4);
+    }
     void store(uint32_t p, uint32_t i, uint32_t c) const {
         if constexpr (W == 1) x.mem.write<uint8_t>(p + i, uint8_t(c));
         else x.mem.write<uint32_t>(p + i * 4, c);
     }
+    // Callers have checked both ranges.
+    void move(uint32_t dst, uint32_t src, uint32_t n) const { if (n && dst != src) std::memmove(x.mem.host(dst), x.mem.host(src), size_t(n) * W); }
+    // Length of a NUL-terminated guest string; each page it touches must be readable.
+    uint32_t cstrlen(uint32_t p) const {
+        constexpr uint32_t sh = Memory::GuestArena::kGuestPageShift;
+        uint64_t checkedPage = ~uint64_t(0);
+        for (uint32_t n = 0;;) {
+            const uint64_t at = uint64_t(p) + uint64_t(n) * W;
+            if (at + W > 0x100000000ull) fault(uint32_t(at), "std::__1::basic_string: C string");
+            if ((at >> sh) != checkedPage || ((at + W - 1) >> sh) != checkedPage) {
+                readable(uint32_t(at), 1, "std::__1::basic_string: C string");
+                checkedPage = (at + W - 1) >> sh;
+            }
+            if (!load(p, n)) return n;
+            if (++n > kMaxSize) lengthError("basic_string: C string");
+        }
+    }
 
-    bool isLong(uint32_t s) const { return x.mem.read<uint8_t>(s) & 1; }
+    // ---- the object
+    bool isLong(uint32_t s) const { object(s, false); return x.mem.read<uint8_t>(s) & 1; }
     uint32_t size(uint32_t s) const { return isLong(s) ? x.mem.read<uint32_t>(s + 4) : x.mem.read<uint8_t>(s) >> 1; }
     uint32_t data(uint32_t s) const { return isLong(s) ? x.mem.read<uint32_t>(s + 8) : s + kShortData; }
     uint32_t capacity(uint32_t s) const { return (isLong(s) ? (x.mem.read<uint32_t>(s) & ~1u) : kMinCap) - 1; }
     void setSize(uint32_t s, uint32_t n) const {
+        object(s, true);
         if (isLong(s)) x.mem.write<uint32_t>(s + 4, n);
         else x.mem.write<uint8_t>(s, uint8_t(n << 1));
+    }
+    void setLong(uint32_t s, uint32_t p, uint32_t cap, uint32_t n) const {
+        object(s, true);
+        x.mem.write<uint32_t>(s, (cap + 1) | 1);
+        x.mem.write<uint32_t>(s + 4, n);
+        x.mem.write<uint32_t>(s + 8, p);
+    }
+    // The characters of a long string must lie in readable memory before we use them.
+    uint32_t checkedData(uint32_t s) const {
+        const uint32_t d = data(s);
+        if (isLong(s)) readable(d, uint64_t(capacity(s)) + 1, "std::__1::basic_string buffer");
+        return d;
     }
 
     static uint32_t recommend(uint32_t n) {
@@ -65,74 +130,105 @@ template <uint32_t W> struct Str {
         const uint64_t r = (uint64_t(n) + 1 + kAlign - 1) / kAlign * kAlign;
         return uint32_t(r - 1);
     }
+    static uint32_t grown(uint32_t oldCap, uint32_t need) {
+        return oldCap < kMaxSize / 2 - 16 ? recommend(std::max(need, 2 * oldCap)) : kMaxSize - 1;
+    }
     uint32_t alloc(uint32_t chars) const {   // chars includes the NUL
-        if (uint64_t(chars) * W > 0xFFFFFFF0ull) lengthError("basic_string");
+        if (uint64_t(chars) * W > kGuestHeapBytes) throw std::runtime_error("std::__1::basic_string: out of guest memory (std::bad_alloc)");
         const uint32_t p = x.proc.heap().alloc(chars * W);
-        if (!p) throw std::runtime_error("std::__1::basic_string: out of guest memory");
+        if (!p) throw std::runtime_error("std::__1::basic_string: out of guest memory (std::bad_alloc)");
         return p;
     }
     void dealloc(uint32_t p) const { if (p) x.proc.heap().free(p); }
 
-    Chars read(uint32_t p, uint32_t n) const {
-        Chars v(n);
-        if (W == 1 && n) {
-            const uint8_t* h = static_cast<const uint8_t*>(x.mem.host(p));
-            for (uint32_t i = 0; i < n; ++i) v[i] = h[i];
-        } else {
-            for (uint32_t i = 0; i < n; ++i) v[i] = load(p, i);
-        }
+    // Writes `src` at dst. `tmp` holds the source when it overlapped the buffer being changed.
+    void emit(uint32_t dst, const Src& src, const std::vector<uint32_t>* tmp) const {
+        if (src.fill) { for (uint32_t i = 0; i < src.n; ++i) store(dst, i, src.c); return; }
+        if (tmp) { for (uint32_t i = 0; i < src.n; ++i) store(dst, i, (*tmp)[i]); return; }
+        move(dst, src.ptr, src.n);
+    }
+    // A copy of a guest source that overlaps [lo, hi): it is bounded by that buffer's size.
+    bool overlaps(const Src& src, uint32_t lo, uint64_t hi) const {
+        return !src.fill && src.n && uint64_t(src.ptr) < hi && uint64_t(src.ptr) + uint64_t(src.n) * W > lo;
+    }
+    std::vector<uint32_t> copyOf(const Src& src) const {
+        std::vector<uint32_t> v(src.n);
+        for (uint32_t i = 0; i < src.n; ++i) v[i] = load(src.ptr, i);
         return v;
     }
-    Chars value(uint32_t s) const { return read(data(s), size(s)); }
-    uint32_t cstrlen(uint32_t p) const {
-        uint32_t n = 0;
-        while (load(p, n)) ++n;
-        return n;
-    }
 
-    // Makes `s` hold `v` with room for at least `cap` characters, reusing the
-    // buffer when it is large enough (as libc++ does). Frees the old buffer.
-    void put(uint32_t s, const Chars& v) {
-        const uint32_t n = uint32_t(v.size());
-        if (n > kMaxSize) lengthError("basic_string");
-        if (n <= capacity(s)) {
-            const uint32_t p = data(s);
-            for (uint32_t i = 0; i < n; ++i) store(p, i, v[i]);
-            store(p, n, 0);
-            setSize(s, n);
-            return;
-        }
-        // __grow_by_and_replace: at least twice the old capacity.
-        const uint32_t oldCap = capacity(s);
-        const uint32_t cap = oldCap < kMaxSize / 2 - 16 ? recommend(std::max(n, 2 * oldCap)) : kMaxSize - 1;
-        const uint32_t p = alloc(cap + 1);
-        for (uint32_t i = 0; i < n; ++i) store(p, i, v[i]);
-        store(p, n, 0);
-        if (isLong(s)) dealloc(data(s));
-        setLong(s, p, cap, n);
-    }
-    void setLong(uint32_t s, uint32_t p, uint32_t cap, uint32_t n) const {
-        x.mem.write<uint32_t>(s, (cap + 1) | 1);
-        x.mem.write<uint32_t>(s + 4, n);
-        x.mem.write<uint32_t>(s + 8, p);
-    }
-    // __init: construct `s` (uninitialised memory) from `v`, reserving `res`.
-    void init(uint32_t s, const Chars& v, uint32_t res) {
-        const uint32_t n = uint32_t(v.size());
-        if (res > kMaxSize || n > kMaxSize) lengthError("basic_string");
+    // __init: constructs `s` (uninitialised memory) from `src`, reserving `res`.
+    void init(uint32_t s, const Src& src, uint32_t res, const char* where) {
+        object(s, true);
+        const uint32_t n = src.n;
+        if (n > kMaxSize || res > kMaxSize) lengthError(where);
+        if (!src.fill) readable(src.ptr, n, where);
         res = std::max(res, n);
+        std::vector<uint32_t> tmp;
+        const bool alias = overlaps(src, s, uint64_t(s) + 12);
+        if (alias) tmp = copyOf(src);
         uint32_t p;
         if (res < kMinCap) {
-            x.mem.write<uint8_t>(s, uint8_t(n << 1));
             p = s + kShortData;
+            emit(p, src, alias ? &tmp : nullptr);
+            x.mem.write<uint8_t>(s, uint8_t(n << 1));
         } else {
             const uint32_t cap = recommend(res);
             p = alloc(cap + 1);
+            emit(p, src, alias ? &tmp : nullptr);
             setLong(s, p, cap, n);
         }
-        for (uint32_t i = 0; i < n; ++i) store(p, i, v[i]);
         store(p, n, 0);
     }
+    void initHost(uint32_t s, const std::string& v) {
+        object(s, true);
+        const uint32_t n = uint32_t(v.size());
+        uint32_t p;
+        if (n < kMinCap) { p = s + kShortData; x.mem.write<uint8_t>(s, uint8_t(n << 1)); }
+        else { const uint32_t cap = recommend(n); p = alloc(cap + 1); setLong(s, p, cap, n); }
+        for (uint32_t i = 0; i < n; ++i) store(p, i, uint8_t(v[i]));
+        store(p, n, 0);
+    }
+
+    // Replaces [pos, pos + n1) with `src`: every mutating member is one of these.
+    // In place when the result fits the capacity; otherwise a new buffer of at
+    // least twice the old capacity (__grow_by_and_replace) is allocated first.
+    void replace(uint32_t s, uint32_t pos, uint32_t n1, const Src& src, const char* where) {
+        object(s, true);
+        const uint32_t sz = size(s), cap = capacity(s), p = checkedData(s);
+        if (pos > sz) outOfRange(where);
+        n1 = std::min(n1, sz - pos);
+        const uint32_t n2 = src.n;
+        if (uint64_t(sz) - n1 + n2 > kMaxSize) lengthError(where);
+        if (!src.fill) readable(src.ptr, n2, where);
+        const uint32_t newSz = sz - n1 + n2, tail = sz - pos - n1;
+        std::vector<uint32_t> tmp;
+        const bool alias = overlaps(src, p, uint64_t(p) + (uint64_t(cap) + 1) * W) || overlaps(src, s, uint64_t(s) + 12);
+        if (alias) tmp = copyOf(src);
+        if (newSz <= cap) {
+            if (n1 != n2) move(p + (pos + n2) * W, p + (pos + n1) * W, tail);
+            emit(p + pos * W, src, alias ? &tmp : nullptr);
+            store(p, newSz, 0);
+            setSize(s, newSz);
+            return;
+        }
+        const uint32_t newCap = grown(cap, newSz);
+        const uint32_t q = alloc(newCap + 1);
+        move(q, p, pos);
+        emit(q + pos * W, src, alias ? &tmp : nullptr);
+        move(q + (pos + n2) * W, p + (pos + n1) * W, tail);
+        store(q, newSz, 0);
+        if (isLong(s)) dealloc(p);
+        setLong(s, q, newCap, newSz);
+    }
+
+    // A substring of another string as a source; checks pos against its size.
+    Src sub(uint32_t other, uint32_t pos, uint32_t n, const char* where) const {
+        const uint32_t sz = size(other);
+        if (pos > sz) outOfRange(where);
+        return Src::range(checkedData(other) + pos * W, std::min(n, sz - pos));
+    }
+    Src whole(uint32_t other) const { return Src::range(checkedData(other), size(other)); }
 
     // Character comparison as char_traits does it: unsigned bytes for char,
     // signed wchar_t (wmemcmp) for wchar_t.
@@ -140,43 +236,38 @@ template <uint32_t W> struct Str {
         if constexpr (W == 1) return a < b ? -1 : a > b ? 1 : 0;
         else return int32_t(a) < int32_t(b) ? -1 : int32_t(a) > int32_t(b) ? 1 : 0;
     }
-    static int compare(const Chars& a, const Chars& b) {
-        const size_t n = std::min(a.size(), b.size());
-        for (size_t i = 0; i < n; ++i)
-            if (const int r = cmp(a[i], b[i])) return r;
-        return a.size() < b.size() ? -1 : a.size() > b.size() ? 1 : 0;
+    int compare(uint32_t a, uint32_t na, uint32_t b, uint32_t nb) const {
+        const uint32_t n = std::min(na, nb);
+        for (uint32_t i = 0; i < n; ++i)
+            if (const int r = cmp(load(a, i), load(b, i))) return r;
+        return na < nb ? -1 : na > nb ? 1 : 0;
     }
 };
 
 template <uint32_t W> Str<W> S(Ctx& x) { return Str<W>(x); }
-template <uint32_t W> typename Str<W>::Chars fill(uint32_t n, uint32_t c) { return typename Str<W>::Chars(n, c); }
-template <uint32_t W> uint32_t clip(uint32_t sz, uint32_t pos, uint32_t n) { return std::min(n, sz - pos); }
 
 // ---------------------------------------------------------- constructors ---
-template <uint32_t W> void initPtr(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { auto t = S<W>(x); t.init(self, t.read(s, n), 0); }
+template <uint32_t W> void initPtr(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { S<W>(x).init(self, Src::range(s, n), 0, "basic_string::__init"); }
 template <uint32_t W> void initPtrRes(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n, uint32_t res) {
-    auto t = S<W>(x);
-    if (res > Str<W>::kMaxSize) lengthError("basic_string::__init");
-    t.init(self, t.read(s, n), res);
+    S<W>(x).init(self, Src::range(s, n), res, "basic_string::__init");
 }
-template <uint32_t W> void initFill(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { S<W>(x).init(self, fill<W>(n, c), 0); }
+template <uint32_t W> void initFill(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { S<W>(x).init(self, Src::chars(n, c), 0, "basic_string::__init"); }
 
 // The iOS ARM C++ ABI returns `this` from constructors and destructors.
 template <uint32_t W> uint32_t copyCtor(Ctx& x, GuestPtr self, GuestPtr other) {
     auto t = S<W>(x);
     if (!t.isLong(other)) {
+        t.object(self, true);
         for (uint32_t i = 0; i < 12; i += 4) x.mem.write<uint32_t>(self + i, x.mem.read<uint32_t>(other + i));
     } else {
-        t.init(self, t.value(other), 0);
+        t.init(self, t.whole(other), 0, "basic_string");
     }
     return self;
 }
 template <uint32_t W> uint32_t copyCtorAlloc(Ctx& x, GuestPtr self, GuestPtr other, GuestPtr) { return copyCtor<W>(x, self, other); }
 template <uint32_t W> uint32_t substrCtor(Ctx& x, GuestPtr self, GuestPtr other, uint32_t pos, uint32_t n, GuestPtr) {
     auto t = S<W>(x);
-    const uint32_t sz = t.size(other);
-    if (pos > sz) outOfRange("basic_string");
-    t.init(self, t.read(t.data(other) + pos * W, clip<W>(sz, pos, n)), 0);
+    t.init(self, t.sub(other, pos, n, "basic_string"), 0, "basic_string");
     return self;
 }
 template <uint32_t W> uint32_t dtor(Ctx& x, GuestPtr self) {
@@ -185,104 +276,79 @@ template <uint32_t W> uint32_t dtor(Ctx& x, GuestPtr self) {
     return self;
 }
 
-// -------------------------------------------------------------- assign ---
-template <uint32_t W> uint32_t assignPtrN(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { auto t = S<W>(x); t.put(self, t.read(s, n)); return self; }
-template <uint32_t W> uint32_t assignPtr(Ctx& x, GuestPtr self, GuestPtr s) { auto t = S<W>(x); t.put(self, t.read(s, t.cstrlen(s))); return self; }
-template <uint32_t W> uint32_t assignFill(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { S<W>(x).put(self, fill<W>(n, c)); return self; }
-template <uint32_t W> uint32_t assignSub(Ctx& x, GuestPtr self, GuestPtr other, uint32_t pos, uint32_t n) {
+// -------------------------------------------- assign / append / insert ---
+template <uint32_t W> uint32_t assignSrc(Ctx& x, GuestPtr self, const Src& src, const char* where) {
     auto t = S<W>(x);
-    const uint32_t sz = t.size(other);
-    if (pos > sz) outOfRange("basic_string::assign");
-    t.put(self, t.read(t.data(other) + pos * W, clip<W>(sz, pos, n)));
+    t.replace(self, 0, kNpos, src, where);
     return self;
+}
+template <uint32_t W> uint32_t assignPtrN(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { return assignSrc<W>(x, self, Src::range(s, n), "basic_string::assign"); }
+template <uint32_t W> uint32_t assignPtr(Ctx& x, GuestPtr self, GuestPtr s) { return assignSrc<W>(x, self, Src::range(s, S<W>(x).cstrlen(s)), "basic_string::assign"); }
+template <uint32_t W> uint32_t assignFill(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { return assignSrc<W>(x, self, Src::chars(n, c), "basic_string::assign"); }
+template <uint32_t W> uint32_t assignSub(Ctx& x, GuestPtr self, GuestPtr other, uint32_t pos, uint32_t n) {
+    return assignSrc<W>(x, self, S<W>(x).sub(other, pos, n, "basic_string::assign"), "basic_string::assign");
 }
 template <uint32_t W> uint32_t opAssign(Ctx& x, GuestPtr self, GuestPtr other) {
-    if (self != other) { auto t = S<W>(x); t.put(self, t.value(other)); }
+    if (self != other) assignSrc<W>(x, self, S<W>(x).whole(other), "basic_string::operator=");
     return self;
 }
-template <uint32_t W> uint32_t opAssignChar(Ctx& x, GuestPtr self, uint32_t c) { S<W>(x).put(self, fill<W>(1, c)); return self; }
+template <uint32_t W> uint32_t opAssignChar(Ctx& x, GuestPtr self, uint32_t c) { return assignSrc<W>(x, self, Src::chars(1, c), "basic_string::operator="); }
 
-// -------------------------------------------------------------- append ---
-template <uint32_t W> void appendChars(Ctx& x, GuestPtr self, const typename Str<W>::Chars& add) {
+template <uint32_t W> uint32_t appendSrc(Ctx& x, GuestPtr self, const Src& src) {
     auto t = S<W>(x);
-    auto v = t.value(self);
-    if (uint64_t(v.size()) + add.size() > Str<W>::kMaxSize) lengthError("basic_string::append");
-    v.insert(v.end(), add.begin(), add.end());
-    t.put(self, v);
+    t.replace(self, t.size(self), 0, src, "basic_string::append");
+    return self;
 }
-template <uint32_t W> uint32_t appendPtrN(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { appendChars<W>(x, self, S<W>(x).read(s, n)); return self; }
-template <uint32_t W> uint32_t appendPtr(Ctx& x, GuestPtr self, GuestPtr s) { auto t = S<W>(x); appendChars<W>(x, self, t.read(s, t.cstrlen(s))); return self; }
-template <uint32_t W> uint32_t appendFill(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { appendChars<W>(x, self, fill<W>(n, c)); return self; }
+template <uint32_t W> uint32_t appendPtrN(Ctx& x, GuestPtr self, GuestPtr s, uint32_t n) { return appendSrc<W>(x, self, Src::range(s, n)); }
+template <uint32_t W> uint32_t appendPtr(Ctx& x, GuestPtr self, GuestPtr s) { return appendSrc<W>(x, self, Src::range(s, S<W>(x).cstrlen(s))); }
+template <uint32_t W> uint32_t appendFill(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) { return appendSrc<W>(x, self, Src::chars(n, c)); }
 template <uint32_t W> uint32_t appendSub(Ctx& x, GuestPtr self, GuestPtr other, uint32_t pos, uint32_t n) {
-    auto t = S<W>(x);
-    const uint32_t sz = t.size(other);
-    if (pos > sz) outOfRange("basic_string::append");
-    appendChars<W>(x, self, t.read(t.data(other) + pos * W, clip<W>(sz, pos, n)));
-    return self;
+    return appendSrc<W>(x, self, S<W>(x).sub(other, pos, n, "basic_string::append"));
 }
-template <uint32_t W> void pushBack(Ctx& x, GuestPtr self, uint32_t c) { appendChars<W>(x, self, fill<W>(1, c)); }
+template <uint32_t W> void pushBack(Ctx& x, GuestPtr self, uint32_t c) { appendSrc<W>(x, self, Src::chars(1, c)); }
 
-// ---------------------------------------------------- insert / replace ---
-template <uint32_t W> void replaceChars(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, const typename Str<W>::Chars& add, const char* where) {
-    auto t = S<W>(x);
-    auto v = t.value(self);
-    if (pos > v.size()) outOfRange(where);
-    n1 = clip<W>(uint32_t(v.size()), pos, n1);
-    if (uint64_t(v.size()) - n1 + add.size() > Str<W>::kMaxSize) lengthError(where);
-    v.erase(v.begin() + pos, v.begin() + pos + n1);
-    v.insert(v.begin() + pos, add.begin(), add.end());
-    t.put(self, v);
-}
-template <uint32_t W> uint32_t insertPtrN(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s, uint32_t n) {
-    replaceChars<W>(x, self, pos, 0, S<W>(x).read(s, n), "basic_string::insert");
+template <uint32_t W> uint32_t insertSrc(Ctx& x, GuestPtr self, uint32_t pos, const Src& src) {
+    S<W>(x).replace(self, pos, 0, src, "basic_string::insert");
     return self;
 }
-template <uint32_t W> uint32_t insertPtr(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s) {
-    auto t = S<W>(x);
-    replaceChars<W>(x, self, pos, 0, t.read(s, t.cstrlen(s)), "basic_string::insert");
-    return self;
-}
-template <uint32_t W> uint32_t insertFill(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, uint32_t c) {
-    replaceChars<W>(x, self, pos, 0, fill<W>(n, c), "basic_string::insert");
-    return self;
-}
+template <uint32_t W> uint32_t insertPtrN(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s, uint32_t n) { return insertSrc<W>(x, self, pos, Src::range(s, n)); }
+template <uint32_t W> uint32_t insertPtr(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s) { return insertSrc<W>(x, self, pos, Src::range(s, S<W>(x).cstrlen(s))); }
+template <uint32_t W> uint32_t insertFill(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, uint32_t c) { return insertSrc<W>(x, self, pos, Src::chars(n, c)); }
 template <uint32_t W> uint32_t insertSub(Ctx& x, GuestPtr self, uint32_t pos1, GuestPtr other, uint32_t pos2, uint32_t n) {
-    auto t = S<W>(x);
-    const uint32_t sz = t.size(other);
-    if (pos2 > sz) outOfRange("basic_string::insert");
-    replaceChars<W>(x, self, pos1, 0, t.read(t.data(other) + pos2 * W, clip<W>(sz, pos2, n)), "basic_string::insert");
-    return self;
+    return insertSrc<W>(x, self, pos1, S<W>(x).sub(other, pos2, n, "basic_string::insert"));
 }
 // iterator insert(const_iterator p, T c): __wrap_iter is one pointer, passed and
 // returned in a register. The buffer may move, so the result is recomputed.
 template <uint32_t W> uint32_t insertIter(Ctx& x, GuestPtr self, GuestPtr it, uint32_t c) {
     auto t = S<W>(x);
-    const uint32_t ip = (it - t.data(self)) / W;
-    replaceChars<W>(x, self, ip, 0, fill<W>(1, c), "basic_string::insert");
+    const uint32_t d = t.data(self);
+    if (it < d || (it - d) % W) outOfRange("basic_string::insert(iterator)");
+    const uint32_t ip = (it - d) / W;
+    t.replace(self, ip, 0, Src::chars(1, c), "basic_string::insert");
     return t.data(self) + ip * W;
 }
+
+// ------------------------------------------------- replace / erase ---
 template <uint32_t W> uint32_t replacePtrN(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, GuestPtr s, uint32_t n2) {
-    replaceChars<W>(x, self, pos, n1, S<W>(x).read(s, n2), "basic_string::replace");
+    S<W>(x).replace(self, pos, n1, Src::range(s, n2), "basic_string::replace");
     return self;
 }
 template <uint32_t W> uint32_t replacePtr(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, GuestPtr s) {
     auto t = S<W>(x);
-    replaceChars<W>(x, self, pos, n1, t.read(s, t.cstrlen(s)), "basic_string::replace");
+    t.replace(self, pos, n1, Src::range(s, t.cstrlen(s)), "basic_string::replace");
     return self;
 }
 template <uint32_t W> uint32_t replaceFill(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, uint32_t n2, uint32_t c) {
-    replaceChars<W>(x, self, pos, n1, fill<W>(n2, c), "basic_string::replace");
+    S<W>(x).replace(self, pos, n1, Src::chars(n2, c), "basic_string::replace");
     return self;
 }
 template <uint32_t W> uint32_t replaceSub(Ctx& x, GuestPtr self, uint32_t pos1, uint32_t n1, GuestPtr other, uint32_t pos2, uint32_t n2) {
     auto t = S<W>(x);
-    const uint32_t sz = t.size(other);
-    if (pos2 > sz) outOfRange("basic_string::replace");
-    replaceChars<W>(x, self, pos1, n1, t.read(t.data(other) + pos2 * W, clip<W>(sz, pos2, n2)), "basic_string::replace");
+    t.replace(self, pos1, n1, t.sub(other, pos2, n2, "basic_string::replace"), "basic_string::replace");
     return self;
 }
 template <uint32_t W> uint32_t erase(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n) {
-    replaceChars<W>(x, self, pos, n, {}, "basic_string::erase");
+    S<W>(x).replace(self, pos, n, Src::chars(0, 0), "basic_string::erase");
     return self;
 }
 
@@ -291,20 +357,23 @@ template <uint32_t W> uint32_t erase(Ctx& x, GuestPtr self, uint32_t pos, uint32
 // inline buffer moves it back inline.
 template <uint32_t W> void reserve(Ctx& x, GuestPtr self, uint32_t res) {
     auto t = S<W>(x);
+    t.object(self, true);
     if (res > Str<W>::kMaxSize) lengthError("basic_string::reserve");
     const uint32_t cap = t.capacity(self), sz = t.size(self);
     res = Str<W>::recommend(std::max(res, sz));
     if (res == cap) return;
-    const auto v = t.value(self);
     const bool wasLong = t.isLong(self);
-    const uint32_t old = t.data(self);
+    const uint32_t old = t.checkedData(self);
     if (res == Str<W>::kMinCap - 1) {
+        // Long to inline: the inline buffer overlaps the object's own fields, so copy via the host.
+        std::vector<uint32_t> v(sz);
+        for (uint32_t i = 0; i < sz; ++i) v[i] = t.load(old, i);
         x.mem.write<uint8_t>(self, uint8_t(sz << 1));
         for (uint32_t i = 0; i < sz; ++i) t.store(self + Str<W>::kShortData, i, v[i]);
         t.store(self + Str<W>::kShortData, sz, 0);
     } else {
         const uint32_t p = t.alloc(res + 1);
-        for (uint32_t i = 0; i < sz; ++i) t.store(p, i, v[i]);
+        t.move(p, old, sz);
         t.store(p, sz, 0);
         t.setLong(self, p, res, sz);
     }
@@ -313,20 +382,19 @@ template <uint32_t W> void reserve(Ctx& x, GuestPtr self, uint32_t res) {
 template <uint32_t W> void resize(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) {
     auto t = S<W>(x);
     const uint32_t sz = t.size(self);
-    if (n > sz) { appendChars<W>(x, self, fill<W>(n - sz, c)); return; }
-    t.store(t.data(self), n, 0);
+    if (n > sz) { appendSrc<W>(x, self, Src::chars(n - sz, c)); return; }
+    t.object(self, true);
+    t.store(t.checkedData(self), n, 0);
     t.setSize(self, n);
 }
 
 // ------------------------------------------------------------ queries ---
 template <uint32_t W> uint32_t copyOut(Ctx& x, GuestPtr self, GuestPtr dst, uint32_t n, uint32_t pos) {
     auto t = S<W>(x);
-    const uint32_t sz = t.size(self);
-    if (pos > sz) outOfRange("basic_string::copy");
-    const uint32_t r = clip<W>(sz, pos, n);
-    const auto v = t.read(t.data(self) + pos * W, r);
-    for (uint32_t i = 0; i < r; ++i) t.store(dst, i, v[i]);
-    return r;
+    const Src s = t.sub(self, pos, n, "basic_string::copy");
+    t.writable(dst, s.n, "basic_string::copy");
+    t.move(dst, s.ptr, s.n);
+    return s.n;
 }
 template <uint32_t W> uint32_t at(Ctx& x, GuestPtr self, uint32_t n) {
     auto t = S<W>(x);
@@ -334,56 +402,87 @@ template <uint32_t W> uint32_t at(Ctx& x, GuestPtr self, uint32_t n) {
     return t.data(self) + n * W;
 }
 
-using Chars = std::vector<uint32_t>;
-uint32_t findSeq(const Chars& h, const Chars& n, uint32_t pos) {
-    if (pos > h.size()) return kNpos;
-    if (n.empty()) return pos;
-    auto it = std::search(h.begin() + pos, h.end(), n.begin(), n.end());
-    return it == h.end() ? kNpos : uint32_t(it - h.begin());
-}
-uint32_t rfindSeq(const Chars& h, const Chars& n, uint32_t pos) {
-    const uint32_t sz = uint32_t(h.size());
-    pos = std::min(pos, sz);
-    const uint32_t end = n.size() < sz - pos ? pos + uint32_t(n.size()) : sz;
-    auto it = std::find_end(h.begin(), h.begin() + end, n.begin(), n.end());
-    if (!n.empty() && it == h.begin() + end) return kNpos;
-    return uint32_t(it - h.begin());
-}
-bool in(const Chars& set, uint32_t c) { return std::find(set.begin(), set.end(), c) != set.end(); }
-uint32_t firstOf(const Chars& h, const Chars& set, uint32_t pos, bool want) {
-    if (!want || !set.empty())
-        for (uint32_t i = pos; i < h.size(); ++i) if (in(set, h[i]) == want) return i;
-    return kNpos;
-}
-uint32_t lastOf(const Chars& h, const Chars& set, uint32_t pos, bool want) {
-    if (h.empty() || (want && set.empty())) return kNpos;
-    for (uint32_t i = std::min<uint32_t>(pos, uint32_t(h.size()) - 1) + 1; i-- > 0;) if (in(set, h[i]) == want) return i;
-    return kNpos;
-}
-
-template <uint32_t W> uint32_t findPtr(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { auto t = S<W>(x); return findSeq(t.value(self), t.read(s, n), pos); }
-template <uint32_t W> uint32_t findChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) { auto t = S<W>(x); return findSeq(t.value(self), Chars{c}, pos); }
-template <uint32_t W> uint32_t rfindPtr(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { auto t = S<W>(x); return rfindSeq(t.value(self), t.read(s, n), pos); }
-template <uint32_t W> uint32_t rfindChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) { auto t = S<W>(x); return rfindSeq(t.value(self), Chars{c}, pos); }
-template <uint32_t W> uint32_t findFirstOf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { auto t = S<W>(x); return firstOf(t.value(self), t.read(s, n), pos, true); }
-template <uint32_t W> uint32_t findFirstNotOf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { auto t = S<W>(x); return firstOf(t.value(self), t.read(s, n), pos, false); }
-template <uint32_t W> uint32_t findLastOf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { auto t = S<W>(x); return lastOf(t.value(self), t.read(s, n), pos, true); }
-template <uint32_t W> uint32_t findLastNotOf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { auto t = S<W>(x); return lastOf(t.value(self), t.read(s, n), pos, false); }
-
-template <uint32_t W> int32_t compareAt(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, const Chars& other) {
+// The searched string [h, h + hn) and the needle or set [s, s + sn), both checked readable.
+template <uint32_t W> struct Hay {
+    Str<W> t; uint32_t h, hn, s, sn;
+    Hay(Ctx& x, GuestPtr self, GuestPtr needle, uint32_t n) : t(x) {
+        h = t.checkedData(self);
+        hn = t.size(self);
+        s = needle;
+        sn = n;
+        t.readable(s, sn, "basic_string: search argument");
+    }
+    bool matchAt(uint32_t i) const {
+        for (uint32_t j = 0; j < sn; ++j) if (t.load(h, i + j) != t.load(s, j)) return false;
+        return true;
+    }
+    bool inSet(uint32_t c) const {
+        for (uint32_t j = 0; j < sn; ++j) if (t.load(s, j) == c) return true;
+        return false;
+    }
+    uint32_t find(uint32_t pos) const {
+        if (pos > hn) return kNpos;
+        if (sn == 0) return pos;
+        if (sn > hn) return kNpos;
+        for (uint32_t i = pos; i + sn <= hn; ++i) if (matchAt(i)) return i;
+        return kNpos;
+    }
+    uint32_t rfind(uint32_t pos) const {
+        pos = std::min(pos, hn);
+        if (sn > hn) return kNpos;
+        uint32_t i = std::min(pos, hn - sn);
+        for (;; --i) {
+            if (matchAt(i)) return i;
+            if (i == 0) return kNpos;
+        }
+    }
+    uint32_t firstOf(uint32_t pos, bool want) const {
+        if (want && sn == 0) return kNpos;
+        for (uint32_t i = pos; i < hn; ++i) if (inSet(t.load(h, i)) == want) return i;
+        return kNpos;
+    }
+    uint32_t lastOf(uint32_t pos, bool want) const {
+        if (hn == 0 || (want && sn == 0)) return kNpos;
+        for (uint32_t i = std::min(pos, hn - 1) + 1; i-- > 0;) if (inSet(t.load(h, i)) == want) return i;
+        return kNpos;
+    }
+};
+// A one-character needle lives in a register, not guest memory: search for it directly.
+template <uint32_t W> uint32_t findChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
     auto t = S<W>(x);
-    const uint32_t sz = t.size(self);
-    if (pos > sz) outOfRange("basic_string::compare");
-    return Str<W>::compare(t.read(t.data(self) + pos * W, clip<W>(sz, pos, n1)), other);
+    const uint32_t h = t.checkedData(self), n = t.size(self);
+    for (uint32_t i = pos; i < n; ++i) if (t.load(h, i) == c) return i;
+    return kNpos;
 }
-template <uint32_t W> int32_t comparePtr(Ctx& x, GuestPtr self, GuestPtr s) { auto t = S<W>(x); return compareAt<W>(x, self, 0, kNpos, t.read(s, t.cstrlen(s))); }
-template <uint32_t W> int32_t comparePosPtr(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, GuestPtr s) { auto t = S<W>(x); return compareAt<W>(x, self, pos, n1, t.read(s, t.cstrlen(s))); }
-template <uint32_t W> int32_t comparePosPtrN(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, GuestPtr s, uint32_t n2) { return compareAt<W>(x, self, pos, n1, S<W>(x).read(s, n2)); }
+template <uint32_t W> uint32_t rfindChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
+    auto t = S<W>(x);
+    const uint32_t h = t.checkedData(self), n = t.size(self);
+    if (!n) return kNpos;
+    for (uint32_t i = std::min(pos, n - 1) + 1; i-- > 0;) if (t.load(h, i) == c) return i;
+    return kNpos;
+}
+template <uint32_t W> uint32_t findPtr(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { return Hay<W>(x, self, s, n).find(pos); }
+template <uint32_t W> uint32_t rfindPtr(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { return Hay<W>(x, self, s, n).rfind(pos); }
+template <uint32_t W> uint32_t findFirstOf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { return Hay<W>(x, self, s, n).firstOf(pos, true); }
+template <uint32_t W> uint32_t findFirstNotOf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { return Hay<W>(x, self, s, n).firstOf(pos, false); }
+template <uint32_t W> uint32_t findLastOf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { return Hay<W>(x, self, s, n).lastOf(pos, true); }
+template <uint32_t W> uint32_t findLastNotOf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, uint32_t n) { return Hay<W>(x, self, s, n).lastOf(pos, false); }
+
+template <uint32_t W> int32_t compareAt(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, const Src& other) {
+    auto t = S<W>(x);
+    const Src mine = t.sub(self, pos, n1, "basic_string::compare");
+    t.readable(other.ptr, other.n, "basic_string::compare");
+    return t.compare(mine.ptr, mine.n, other.ptr, other.n);
+}
+template <uint32_t W> int32_t comparePtr(Ctx& x, GuestPtr self, GuestPtr s) { return compareAt<W>(x, self, 0, kNpos, Src::range(s, S<W>(x).cstrlen(s))); }
+template <uint32_t W> int32_t comparePosPtr(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, GuestPtr s) {
+    return compareAt<W>(x, self, pos, n1, Src::range(s, S<W>(x).cstrlen(s)));
+}
+template <uint32_t W> int32_t comparePosPtrN(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, GuestPtr s, uint32_t n2) {
+    return compareAt<W>(x, self, pos, n1, Src::range(s, n2));
+}
 template <uint32_t W> int32_t comparePosSub(Ctx& x, GuestPtr self, uint32_t pos1, uint32_t n1, GuestPtr other, uint32_t pos2, uint32_t n2) {
-    auto t = S<W>(x);
-    const uint32_t sz = t.size(other);
-    if (pos2 > sz) outOfRange("basic_string::compare");
-    return compareAt<W>(x, self, pos1, n1, t.read(t.data(other) + pos2 * W, clip<W>(sz, pos2, n2)));
+    return compareAt<W>(x, self, pos1, n1, S<W>(x).sub(other, pos2, n2, "basic_string::compare"));
 }
 
 // ------------------------------------------------------------ growth ---
@@ -391,48 +490,46 @@ template <uint32_t W> int32_t comparePosSub(Ctx& x, GuestPtr self, uint32_t pos1
 // buffer, copies [0, n_copy) and the tail after n_del + n_copy (leaving a gap
 // of n_add), frees the old buffer and stores the new pointer and capacity. It
 // does not set the size or the terminator; the inline caller does that.
+// libc++'s inline callers pass the string's current capacity and size, so other
+// values are rejected instead of reading past the buffer or leaking it.
 template <uint32_t W> uint32_t growTo(Ctx& x, GuestPtr self, uint32_t oldCap, uint32_t delta, uint32_t oldSz, uint32_t nCopy,
-                                      uint32_t nDel, uint32_t nAdd, const Chars* add) {
+                                      uint32_t nDel, uint32_t nAdd, GuestPtr add) {
     auto t = S<W>(x);
+    t.object(self, true);
     constexpr uint32_t ms = Str<W>::kMaxSize;
+    if (oldCap != t.capacity(self) || oldSz > oldCap || uint64_t(nCopy) + nDel > oldSz)
+        throw std::runtime_error("std::__1::basic_string::__grow_by: arguments do not match the string");
     if (delta > ms - oldCap) lengthError("basic_string");
-    if (uint64_t(nCopy) + nDel > oldSz) outOfRange("basic_string::__grow_by");
-    const uint32_t old = t.data(self);
-    const uint32_t cap = oldCap < ms / 2 - 16 ? Str<W>::recommend(std::max(oldCap + delta, 2 * oldCap)) : ms - 1;
+    const uint32_t old = t.checkedData(self);
+    const uint32_t cap = Str<W>::grown(oldCap, oldCap + delta);
     const uint32_t tail = oldSz - nDel - nCopy;
     if (uint64_t(nCopy) + nAdd + tail > cap) lengthError("basic_string::__grow_by");
-    const auto head = t.read(old, nCopy);
-    const auto rest = t.read(old + (nCopy + nDel) * W, tail);
+    if (add) t.readable(add, nAdd, "basic_string::__grow_by_and_replace");
     const uint32_t p = t.alloc(cap + 1);
-    for (uint32_t i = 0; i < nCopy; ++i) t.store(p, i, head[i]);
-    if (add) for (uint32_t i = 0; i < nAdd; ++i) t.store(p, nCopy + i, (*add)[i]);
-    for (uint32_t i = 0; i < tail; ++i) t.store(p, nCopy + nAdd + i, rest[i]);
-    // libc++ frees unless the old buffer was the inline one (old_cap + 1 == min_cap).
-    if (oldCap + 1 != Str<W>::kMinCap) t.dealloc(old);
-    const uint32_t keepSize = t.isLong(self) ? x.mem.read<uint32_t>(self + 4) : 0;
-    x.mem.write<uint32_t>(self, (cap + 1) | 1);
-    x.mem.write<uint32_t>(self + 4, keepSize);
-    x.mem.write<uint32_t>(self + 8, p);
+    t.move(p, old, nCopy);
+    if (add) t.move(p + nCopy * W, add, nAdd);   // may point into the old buffer, which is still allocated
+    t.move(p + (nCopy + nAdd) * W, old + (nCopy + nDel) * W, tail);
+    const bool wasLong = t.isLong(self);
+    const uint32_t keepSize = wasLong ? x.mem.read<uint32_t>(self + 4) : 0;
+    if (wasLong) t.dealloc(old);
+    t.setLong(self, p, cap, keepSize);
     return p;
 }
 template <uint32_t W> void growBy(Ctx& x, GuestPtr self, uint32_t oldCap, uint32_t delta, uint32_t oldSz, uint32_t nCopy, uint32_t nDel, uint32_t nAdd) {
-    growTo<W>(x, self, oldCap, delta, oldSz, nCopy, nDel, nAdd, nullptr);
+    growTo<W>(x, self, oldCap, delta, oldSz, nCopy, nDel, nAdd, 0);
 }
 template <uint32_t W> void growByAndReplace(Ctx& x, GuestPtr self, uint32_t oldCap, uint32_t delta, uint32_t oldSz, uint32_t nCopy, uint32_t nDel,
                                             uint32_t nAdd, GuestPtr s) {
     auto t = S<W>(x);
-    const auto add = t.read(s, nAdd);
-    const uint32_t p = growTo<W>(x, self, oldCap, delta, oldSz, nCopy, nDel, nAdd, &add);
+    if (!s && nAdd) t.fault(0, "basic_string::__grow_by_and_replace");
+    const uint32_t p = growTo<W>(x, self, oldCap, delta, oldSz, nCopy, nDel, nAdd, s);
     const uint32_t sz = nCopy + nAdd + (oldSz - nDel - nCopy);
     x.mem.write<uint32_t>(self + 4, sz);
     t.store(p, sz, 0);
 }
 
 // -------------------------------------------------------- to_string ---
-void putResult(Ctx& x, GuestPtr ret, const std::string& s) {
-    Str<1> t(x);
-    t.init(ret, Chars(s.begin(), s.end()), 0);
-}
+void putResult(Ctx& x, GuestPtr ret, const std::string& s) { Str<1>(x).initHost(ret, s); }
 void toStringI(Ctx& x, GuestPtr ret, int32_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringU(Ctx& x, GuestPtr ret, uint32_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringLL(Ctx& x, GuestPtr ret, int64_t v) { putResult(x, ret, std::to_string(v)); }

@@ -569,6 +569,51 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
 
         check(ok, "libc++ std::string: layout, __init, copy, push_back growth, assign/append/insert/replace/erase, find family, compare, reserve, __grow_by, errors, to_string");
 
+        // Guest-memory safety and cost (review on PR #356). Uses the guard pages from section 0:
+        // 0xbf100000 is RW, +4096 is unmapped, +8192 is read-only.
+        {
+            bool safe = true;
+            auto sexpect = [&](bool cond, const char* what) { if (!cond) { std::printf("    libc++ string safety: %s\n", what); safe = false; } };
+            auto faults = [&](const std::string& name, std::initializer_list<uint32_t> args) {
+                try { callS(name, args); } catch (const CPU::GuestFault& f) { return f.exit == CPU::Exit::MemFault; } catch (const std::exception&) { return false; }
+                return false;
+            };
+            auto stops = [&](const std::string& name, std::initializer_list<uint32_t> args) {
+                // A host error (length_error, bad_alloc, bad arguments) reaches the caller wrapped
+                // in a GuestFault that is not a memory fault.
+                try { callS(name, args); } catch (const CPU::GuestFault& f) { return f.exit != CPU::Exit::MemFault; }
+                catch (const std::exception&) { return true; }
+                return false;
+            };
+            const uint32_t g = 0xbf100000;
+            const uint32_t s1 = obj();
+            callS(C + "6__initEPKcm", {s1, cstr("abc"), 3});
+            // A source range that runs into the unmapped page faults instead of being read.
+            sexpect(faults(C + "6appendEPKcm", {s1, g + 4090, 16}), "append from a range that crosses into an unmapped page");
+            sexpect(faults(C + "6__initEPKcm", {obj(), g + 4096, 4}), "__init from an unmapped page");
+            // An unterminated C string ending at the unmapped page faults.
+            for (uint32_t i = 0; i < 4096; ++i) m.write<uint8_t>(g + i, 'x');
+            sexpect(faults(C + "6assignEPKc", {s1, g + 4000}), "assign(const char*) without a NUL before an unmapped page");
+            // Writes to a read-only destination fault.
+            sexpect(faults(K + "4copyEPcmm", {q, g + 8192, 3, 0}), "copy into a read-only page");
+            sexpect(faults(C + "6__initEPKcm", {g + 8192, cstr("abc"), 3}), "__init into a read-only object");
+            // A huge length is refused before anything is allocated on the host.
+            sexpect(stops(C + "6appendEmc", {s1, 0x7FFFFFF0u, 'z'}), "append(n, c) beyond the guest heap stops with an error");
+            sexpect(stops(C + "6__initEmc", {obj(), 0xFFFFFFF0u, 'z'}), "__init(n, c) beyond max_size is length_error");
+            sexpect(text(s1) == "abc", "a refused call leaves the string unchanged");
+            // Appends within capacity reuse the buffer (amortised O(1) push_back).
+            const uint32_t pb = obj();
+            callS(C + "6__initEPKcmm", {pb, cstr("x"), 1, 100});
+            const uint32_t buf0 = m.read<uint32_t>(pb + 8);
+            for (int i = 0; i < 90; ++i) callS(C + "9push_backEc", {pb, uint32_t('a' + i % 26)});
+            sexpect(m.read<uint32_t>(pb + 8) == buf0 && m.read<uint32_t>(pb + 4) == 91 && capWord(pb) == 113, "push_back within capacity keeps the buffer");
+            // __grow_by with arguments that do not match the string is refused.
+            sexpect(stops(C + "9__grow_byEmmmmmm", {pb, 50, 1, 91, 91, 0, 0}), "__grow_by with the wrong old capacity");
+            sexpect(stops(C + "9__grow_byEmmmmmm", {pb, 111, 1, 200, 0, 0, 0}), "__grow_by with old size above the capacity");
+            sexpect(m.read<uint32_t>(pb + 8) == buf0, "a refused __grow_by keeps the buffer");
+            check(safe, "libc++ std::string: faults on unreadable or read-only guest memory, refuses huge lengths before allocating, appends in place, validates __grow_by");
+        }
+
         // wchar_t: inline buffer holds 1 character at +4; capacities round to 4 characters.
         bool wok = true;
         auto wtext = [&](uint32_t s) {
