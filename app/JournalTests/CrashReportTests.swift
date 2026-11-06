@@ -1,10 +1,12 @@
 import Foundation
+import Darwin
 import XCTest
 @testable import HydrogenVM
 
 final class CrashReportTests: XCTestCase {
     @MainActor
     private func withFreshJournal(_ body: () throws -> Void) throws {
+        HVMCrashJournal.closeSignalFile()
         let fm = FileManager.default
         let dir = CrashReport.directory
         let backup = dir.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
@@ -60,6 +62,33 @@ final class CrashReportTests: XCTestCase {
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(report.json.utf8)) as? [String: Any])
             XCTAssertEqual(json["exceptionKind"] as? String, "host-SIGSEGV")
             XCTAssertFalse(FileManager.default.fileExists(atPath: CrashReport.signal.path))
+        }
+    }
+
+    @MainActor
+    func testUnclosedSignalFileIsClosedBeforeRecovery() throws {
+        try withFreshJournal {
+            HVMCrashJournal.openSignalFile(CrashReport.signal.path)
+            var journalStat = stat()
+            XCTAssertEqual(CrashReport.signal.path.withCString { Darwin.lstat($0, &journalStat) }, 0)
+            let descriptor = try XCTUnwrap((Int32(0)..<getdtablesize()).first { fd in
+                var info = stat()
+                return fstat(fd, &info) == 0 && info.st_dev == journalStat.st_dev && info.st_ino == journalStat.st_ino
+            })
+            let signal = Data("{\"exceptionKind\":\"host-SIGSEGV\"}".utf8)
+            XCTAssertEqual(signal.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }, signal.count)
+            XCTAssertEqual(fsync(descriptor), 0)
+            // Force saving to fail so clearPending cannot close the descriptor
+            // after recovery. The descriptor must be closed before reading.
+            try JSONSerialization.data(withJSONObject: ["bundleId": String(repeating: "x", count: 300)])
+                .write(to: CrashReport.pending)
+            XCTAssertNil(CrashReport.recover())
+            errno = 0
+            XCTAssertEqual(fcntl(descriptor, F_GETFD), -1)
+            XCTAssertEqual(errno, EBADF)
+            XCTAssertEqual(try Data(contentsOf: CrashReport.signal), signal)
+            try JSONSerialization.data(withJSONObject: ["bundleId": "test.descriptor"]).write(to: CrashReport.pending)
+            XCTAssertNotNil(CrashReport.recover())
         }
     }
 
