@@ -62,6 +62,11 @@ id predicate_value(Ctx& x, Class cls, SEL, bool value) {
 
 template <class Next> struct PredicateParser {
     Ctx& x; const std::string& t; Next& next; size_t i = 0;
+    // Nesting is bounded so a hostile format cannot exhaust the host stack.
+    static constexpr int kMaxDepth = 64;
+    int depth = 0;
+    std::vector<id> retained;   // values retained so far; released if parsing fails
+    struct Deeper { PredicateParser& p; explicit Deeper(PredicateParser& q) : p(q) { if (++p.depth > kMaxDepth) p.fail(); } ~Deeper() { --p.depth; } };
     [[noreturn]] void fail() const { throw ObjC::ObjCError("unsupported NSPredicate format: " + t); }
     void ws() { while (i < t.size() && std::isspace(uint8_t(t[i]))) ++i; }
     // A case-insensitive keyword that is not the start of a longer identifier.
@@ -96,6 +101,7 @@ template <class Next> struct PredicateParser {
         return a;
     }
     std::shared_ptr<PNode> notExpr() {
+        Deeper guard(*this);
         ws();
         if ((i < t.size() && t[i] == '!' && t.compare(i, 2, "!=") != 0 && (++i, true)) || keyword("NOT")) {
             auto n = std::make_shared<PNode>(); n->kind = PNode::Not; n->kids = {notExpr()};
@@ -105,6 +111,7 @@ template <class Next> struct PredicateParser {
     }
     std::shared_ptr<PNode> primary() {
         if (sym("(")) {
+            Deeper guard(*this);
             auto e = orExpr();
             if (!sym(")")) fail();
             return e;
@@ -125,7 +132,7 @@ template <class Next> struct PredicateParser {
         const std::string o = op;
         n->operation = o == "=" ? "==" : o == "<>" ? "!=" : o == "=>" ? ">=" : o == "=<" ? "<=" : o;
         n->rhs = literal();
-        if (n->rhs) rt(x).retain(x.cpu, n->rhs);
+        if (n->rhs) { rt(x).retain(x.cpu, n->rhs); retained.push_back(n->rhs); }
         return n;
     }
     std::string keyPath() {
@@ -169,10 +176,16 @@ template <class Next> struct PredicateParser {
 template <class Next> id parse(Ctx& x, Class cls, id format, Next next) {
     const std::string text = utf8(x, format);
     PredicateParser<Next> p{x, text, next};
-    auto root = p.orExpr();
-    p.ws();
-    if (p.i != text.size()) { releaseNode(x, *root); p.fail(); }
-    return makePredicate(x, cls, root);
+    try {
+        auto root = p.orExpr();
+        p.ws();
+        if (p.i != text.size()) p.fail();
+        return makePredicate(x, cls, root);
+    } catch (...) {
+        // A partial tree is dropped: release every value it had retained.
+        for (id v : p.retained) rt(x).release(x.cpu, v);
+        throw;
+    }
 }
 id predicate_format(Ctx& x, Class cls, SEL, id format, VarArgs args) {
     return parse(x, cls, format, [&](char type) -> id {

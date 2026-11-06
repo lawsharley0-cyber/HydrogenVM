@@ -2072,6 +2072,19 @@ int runFullSubsystemTests() {
                 try{ fmt(bad,{makeArray(cx,{})}); }catch(const std::exception& e){ rejected=std::string(e.what()).find("unsupported NSPredicate format")!=std::string::npos; }
                 if(!rejected){ std::printf("    NSPredicate: accepted %s\n",bad); ok=false; }
             }
+            // Deep nesting is refused (not a host stack overflow), and a failed parse releases
+            // the arguments it had already retained.
+            {
+                std::string deep(5000,'('); deep+="n == 1"; deep+=std::string(5000,')');
+                bool rejected=false;
+                try{ fmt(deep.c_str()); }catch(const std::exception& e){ rejected=std::string(e.what()).find("unsupported NSPredicate format")!=std::string::npos; }
+                if(!rejected){ std::printf("    NSPredicate: deep nesting not refused\n"); ok=false; }
+                const auto arg=makeString(cx,"held",true);
+                const uint32_t before=call(arg,"retainCount");
+                try{ fmt("kind == %@ AND",{arg}); }catch(const std::exception&){}
+                try{ fmt("(kind == %@",{arg}); }catch(const std::exception&){}
+                if(call(arg,"retainCount")!=before){ std::printf("    NSPredicate: failed parse leaked a retain\n"); ok=false; }
+            }
             compoundOk=ok;
         }
         check(compoundOk,"NSPredicate AND/OR/NOT with parentheses, keyword aliases and NSCompoundPredicate; other syntax still raises");
