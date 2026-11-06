@@ -370,6 +370,29 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
         ok = ok && call("_wcsxfrm", {w3, w1, 8}) == 2 && p.mem().read<uint32_t>(w3) == 'a' && p.mem().read<uint32_t>(w3 + 4) == 'b' && p.mem().read<uint32_t>(w3 + 8) == 0;
         ok = ok && call("_wcsxfrm", {0, w1, 0}) == 2;
         check(ok, "C-locale wide-char conversions: btowc, wctob, mbrtowc, mbrlen, mbtowc, wcrtomb, strxfrm, wcscoll, wcsxfrm");
+
+        // Memory safety: unterminated sources and non-writable destinations fault instead of
+        // reading past the mapping or writing a read-only page.
+        const uint32_t guardBase = 0xbf100000;   // outside the 1 MB test mapping
+        p.mem().map(guardBase, 4096, Memory::kProtRW);
+        // guardBase + 4096 is never mapped, so its guest protection is none (unreadable)
+        p.mem().map(guardBase + 8192, 4096, Memory::kProtRead);     // read-only destination
+        auto faults = [&](const char* name, std::initializer_list<uint32_t> args) {
+            try { call(name, args); } catch (const CPU::GuestFault&) { return true; }
+            return false;
+        };
+        for (uint32_t i = 0; i < 4096; ++i) p.mem().write<uint8_t>(guardBase + i, 'x');   // no NUL before the guard page
+        bool safe = true;
+        safe = safe && faults("_strxfrm", {bufB + 256, guardBase, 8});
+        safe = safe && faults("_wcsxfrm", {bufB + 256, guardBase, 8});
+        safe = safe && faults("_wcscoll", {guardBase, guardBase});
+        p.mem().write<uint8_t>(guardBase + 4095, 0);                                       // terminate, so only the destination is bad
+        safe = safe && faults("_strxfrm", {guardBase + 8192, guardBase + 4090, 8});
+        safe = safe && faults("_mbrtowc", {guardBase + 8192, bufA, 1, 0});
+        safe = safe && faults("_mbtowc", {guardBase + 8192, bufA, 1});
+        safe = safe && faults("_wcrtomb", {guardBase + 8192, 'Q', 0});
+        safe = safe && faults("_mbrtowc", {bufB + 256, guardBase + 4096, 1, 0});            // unreadable source byte
+        check(safe, "wide-char conversions fault on unterminated sources, unreadable sources and read-only destinations");
     }
 
     // 1. String property tests vs glibc

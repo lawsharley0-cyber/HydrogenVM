@@ -19,7 +19,7 @@ class TestGlibcProperties(unittest.TestCase):
         cmd = [str(HVM_TESTS), "propertytest"]
         res = subprocess.run(cmd, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, f"propertytest failed:\n{res.stdout}\n{res.stderr}")
-        self.assertIn("glibc property tests: 6 passed, 0 failed", res.stdout)
+        self.assertIn("glibc property tests: 8 passed, 0 failed", res.stdout)
         self.assertNotIn("FAIL", res.stdout)
 
     def test_invalid_plant_request_is_a_usage_error(self):
