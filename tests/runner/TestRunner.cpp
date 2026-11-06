@@ -3006,6 +3006,59 @@ int runFullSubsystemTests() {
         check(ObjC::id(r.send(cpu, tbc, "selectedViewController")) == vc2 && uint32_t(r.send(cpu, tbc, "selectedIndex")) == 1, "UITabBarController viewControllers & selectedIndex");
     }
 
+    // 2d3. Interface orientation is settled after launch (issue #306). A landscape app whose
+    // root view controller says "portrait only" while setRootViewController: runs (Unity's
+    // controller answers before the player has loaded its settings) must still come up in
+    // its Info.plist orientation once the controller accepts it. An orientation the app
+    // set itself with setStatusBarOrientation: is never undone.
+    {
+        auto& u = UIKit::ui(cx);
+        const int32_t savedSb = u.statusBarOrientation, savedInit = u.initialOrientation;
+        const bool savedByApp = u.orientationSetByApp;
+        const ObjC::id savedKey = u.keyWindow;
+        bool landscapeOk = false;
+        auto rotCls = r.defineClass("HVMLateLandscapeController", "UIViewController");
+        rotCls.method("shouldAutorotateToInterfaceOrientation:", [&](Ctx& rx) {
+            const uint32_t o = rx.cpu.r[2];
+            rx.cpu.r[0] = (o == 1 || (landscapeOk && (o == 3 || o == 4))) ? 1 : 0;
+        }, "c@:i");
+        auto makeWindow = [&]() {
+            const ObjC::id w = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+            r.send(cpu, w, "makeKeyAndVisible");
+            return w;
+        };
+        u.initialOrientation = 3;          // UIInterfaceOrientationLandscapeLeft from Info.plist
+        u.statusBarOrientation = 3;
+        u.orientationSetByApp = false;
+        const ObjC::id win = makeWindow();
+        const ObjC::id vc = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, win, "setRootViewController:", {vc});
+        const bool portraitAtRoot = u.statusBarOrientation == 1;
+        r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
+        const bool stillPortrait = u.statusBarOrientation == 1;   // controller still says no
+        landscapeOk = true;
+        r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
+        const bool landscapeAfter = u.statusBarOrientation == 3;
+        const ObjC::id view = ObjC::id(r.send(cpu, vc, "view"));
+        const UIKit::LayerData& vl = UIKit::layerData(cx, UIKit::viewLayer(cx, view));
+        const bool rotatedBounds = vl.bounds.w > vl.bounds.h;     // the root view is laid out for landscape
+        // The app's own choice wins.
+        landscapeOk = false;
+        u.statusBarOrientation = 3;
+        const ObjC::id win2 = makeWindow();
+        const ObjC::id vc2 = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, win2, "setRootViewController:", {vc2});
+        r.send(cpu, u.app ? u.app : r.createInstance(r.getClass("UIApplication")), "setStatusBarOrientation:", {4});
+        landscapeOk = true;
+        r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
+        const bool appChoiceKept = u.statusBarOrientation == 4;
+        check(portraitAtRoot && stillPortrait && landscapeAfter && rotatedBounds && appChoiceKept,
+              "orientation: a late-accepting root controller gets the Info.plist landscape; an app-set orientation is kept");
+        u.statusBarOrientation = savedSb; u.initialOrientation = savedInit; u.orientationSetByApp = savedByApp;
+        if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");
+        for (ObjC::id w : {win, win2}) r.send(cpu, w, "setHidden:", {1});
+    }
+
     // 2e. UITextField, UISwitch, UISlider, UISegmentedControl, UIStoryboard
     {
         const ObjC::Class tfCls = r.getClass("UITextField");

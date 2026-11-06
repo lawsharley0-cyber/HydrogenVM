@@ -636,6 +636,34 @@ void layoutRootView(Ctx& x, id window, id vc) {
     (void)window;
     setNeedsComposite(x);
 }
+const char* orientationName(int o) {
+    switch (o) {
+        case 2: return "portrait upside down";
+        case 3: return "landscape left";
+        case 4: return "landscape right";
+        default: return "portrait";
+    }
+}
+// Whether a view controller accepts an interface orientation. A class that overrides the
+// pre-iOS 6 shouldAutorotateToInterfaceOrientation: is asked that; otherwise its
+// supportedInterfaceOrientations mask decides.
+bool controllerSupports(Ctx& x, id vc, int o) {
+    auto& r = rt(x);
+    auto& u = ui(x);
+    if (r.respondsTo(vc, r.sel("shouldAutorotateToInterfaceOrientation:")) &&
+        r.lookup(r.classOf(vc), r.sel("shouldAutorotateToInterfaceOrientation:")) != r.lookup(u.viewController, r.sel("shouldAutorotateToInterfaceOrientation:")))
+        return sendBool(x, vc, "shouldAutorotateToInterfaceOrientation:", {uint32_t(o)});
+    const uint32_t mask = uint32_t(r.send(x.cpu, vc, "supportedInterfaceOrientations"));
+    return (mask & (1u << o)) != 0;
+}
+// Every change is logged with its cause, so a run log shows why a game ended up portrait.
+void changeOrientation(Ctx& x, int o, id vc, const char* cause) {
+    auto& u = ui(x);
+    if (o == u.statusBarOrientation) return;
+    x.proc.logf(LogLevel::Info, "Orientation: %s -> %s (%s, root view controller %s)", orientationName(u.statusBarOrientation),
+                orientationName(o), cause, vc ? rt(x).objectClassName(vc).c_str() : "none");
+    u.statusBarOrientation = o;
+}
 void w_setRoot(Ctx& x, id self, SEL, id vc) {
     ViewData& d = V(x, self);
     if (d.rootViewController == vc) return;
@@ -650,16 +678,10 @@ void w_setRoot(Ctx& x, id self, SEL, id vc) {
     // Choose the interface orientation this controller supports (prefer the app's initial one).
     auto& u = ui(x);
     const int want = u.initialOrientation;
-    auto supports = [&](int o) {
-        auto& r = rt(x);
-        if (r.respondsTo(vc, r.sel("shouldAutorotateToInterfaceOrientation:")) &&
-            r.lookup(r.classOf(vc), r.sel("shouldAutorotateToInterfaceOrientation:")) != r.lookup(u.viewController, r.sel("shouldAutorotateToInterfaceOrientation:")))
-            return sendBool(x, vc, "shouldAutorotateToInterfaceOrientation:", {uint32_t(o)});
-        const uint32_t mask = uint32_t(r.send(x.cpu, vc, "supportedInterfaceOrientations"));
-        return (mask & (1u << o)) != 0;
-    };
-    if (supports(want)) u.statusBarOrientation = want;
-    else for (int o : {1, 3, 4, 2}) if (supports(o)) { u.statusBarOrientation = o; break; }
+    int chosen = u.statusBarOrientation;
+    if (controllerSupports(x, vc, want)) chosen = want;
+    else for (int o : {1, 3, 4, 2}) if (controllerSupports(x, vc, o)) { chosen = o; break; }
+    changeOrientation(x, chosen, vc, "setRootViewController:");
     VC(x, vc).modalStyle = 0;
     const id view = id(rt(x).send(x.cpu, vc, "view"));
     layoutRootView(x, self, vc);
@@ -890,6 +912,19 @@ void vc_setInt(Ctx& x, id self, SEL, int32_t v) { VC(x, self).modalStyle = v; }
 void vc_contentSize(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, CGSize{320, 460}); }
 
 } // namespace
+
+void reevaluateRootOrientation(Ctx& x, const char* cause) {
+    auto& u = ui(x);
+    if (u.orientationSetByApp || u.statusBarOrientation == u.initialOrientation) return;
+    id win = u.keyWindow;
+    if (!win || !V(x, win).rootViewController)
+        for (id w : u.windows) if (V(x, w).rootViewController) { win = w; break; }
+    if (!win) return;
+    const id vc = V(x, win).rootViewController;
+    if (!vc || !controllerSupports(x, vc, u.initialOrientation)) return;
+    changeOrientation(x, u.initialOrientation, vc, cause);
+    layoutRootView(x, win, vc);
+}
 
 // ================================================================ exports ===
 

@@ -68,7 +68,7 @@ uint32_t z1(Ctx&, uint32_t) { return 0; }
 uint32_t z2(Ctx&, uint32_t, uint32_t) { return 0; }
 int32_t secUnimplemented6(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return -4; }   // errSecUnimplemented
 int32_t secUnimplemented3(Ctx&, uint32_t, uint32_t, uint32_t) { return -4; }
-void vc_attemptRotation(Ctx&, id, SEL) {}
+void vc_attemptRotation(Ctx& x, id, SEL) { reevaluateRootOrientation(x, "attemptRotationToDeviceOrientation"); }
 
 // ---- MobileCoreServices: uniform type identifiers for common file types.
 struct UTEntry { const char* uti; const char* ext; const char* mime; const char* parent; };
