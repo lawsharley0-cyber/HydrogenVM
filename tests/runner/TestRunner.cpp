@@ -3092,7 +3092,29 @@ int runFullSubsystemTests() {
         UIKit::reevaluateRootOrientation(cx, "after launch");
         const bool settledAfterLaunch = u.statusBarOrientation == 3;
         r.send(cpu, win5, "setHidden:", {1});
-        check(portraitAtRoot && stillPortrait && landscapeAfter && rotatedBounds && appChoiceKept && namesOk && bothPortrait && leftOnly && refusedRotation && settledAfterLaunch,
+        // A controller presented over the root before the recheck is laid out for the new
+        // orientation too, and a presented controller's shouldAutorotate == NO vetoes rotation.
+        u.statusBarOrientation = 1; landscapeOk = false;
+        const ObjC::id win6 = makeWindow();
+        const ObjC::id vc6 = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, win6, "setRootViewController:", {vc6});
+        const ObjC::id shown = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIViewController"), r.selAlloc)), r.selInit));
+        r.send(cpu, vc6, "presentViewController:animated:completion:", {shown, 0, 0});
+        landscapeOk = true;
+        r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
+        const bool presentedFollows = u.statusBarOrientation == 3 && landscapeView(shown);
+        r.send(cpu, vc6, "dismissViewControllerAnimated:completion:", {0, 0});
+        u.statusBarOrientation = 1; landscapeOk = false;
+        const ObjC::id vc7 = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, win6, "setRootViewController:", {vc7});
+        const ObjC::id vetoer = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, stillCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, vc7, "presentViewController:animated:completion:", {vetoer, 0, 0});
+        landscapeOk = true;
+        r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
+        const bool presentedVeto = u.statusBarOrientation == 1;
+        r.send(cpu, vc7, "dismissViewControllerAnimated:completion:", {0, 0});
+        r.send(cpu, win6, "setHidden:", {1});
+        check(portraitAtRoot && stillPortrait && landscapeAfter && rotatedBounds && appChoiceKept && namesOk && bothPortrait && leftOnly && refusedRotation && settledAfterLaunch && presentedFollows && presentedVeto,
               "orientation: a late-accepting root controller gets the Info.plist landscape (UIKit values, every window); an app-set orientation is kept");
         u.statusBarOrientation = savedSb; u.initialOrientation = savedInit; u.orientationSetByApp = savedByApp;
         if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");

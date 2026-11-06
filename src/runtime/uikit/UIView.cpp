@@ -936,15 +936,23 @@ void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
     const id vc = V(x, win).rootViewController;
     if (!vc || !controllerSupports(x, vc, u.initialOrientation)) return;
     if (rotation) {
+        // iOS asks the top of the presentation chain whether it may rotate.
+        id top = vc;
+        for (int guard = 0; guard < 64 && VC(x, top).presented; ++guard) top = VC(x, top).presented;
         auto& r = rt(x);
         const SEL sa = r.sel("shouldAutorotate");
-        if (r.lookup(r.classOf(vc), sa) != r.lookup(u.viewController, sa) && !sendBool(x, vc, "shouldAutorotate", {})) return;
+        if (r.lookup(r.classOf(top), sa) != r.lookup(u.viewController, sa) && !sendBool(x, top, "shouldAutorotate", {})) return;
     }
     changeOrientation(x, u.initialOrientation, vc, cause);
-    // Every visible root view follows the one interface orientation.
-    layoutRootView(x, win, vc);
+    // Every visible root view, and every controller presented over one, follows the
+    // one interface orientation (presented views are laid out like a root view).
+    auto relayout = [&](id w, id root) {
+        id c = root;
+        for (int guard = 0; c && guard < 64; ++guard, c = VC(x, c).presented) layoutRootView(x, w, c);
+    };
+    relayout(win, vc);
     for (id w : std::vector<id>(u.windows))
-        if (w != win) if (const id other = V(x, w).rootViewController) layoutRootView(x, w, other);
+        if (w != win) if (const id other = V(x, w).rootViewController) relayout(w, other);
 }
 
 // ================================================================ exports ===
