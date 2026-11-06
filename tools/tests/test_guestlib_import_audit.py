@@ -242,6 +242,23 @@ class GuestLibImportAuditTests(unittest.TestCase):
             (runtime / "Sample.cpp").write_text('void reg(Process& p) { p.def<&not_defined_here>("_malloc"); }')
             self.assertEqual(audit.scan_hvm_registrations(root)["_malloc"]["status"], "unverified")
 
+    def test_resource_free_mutex_attribute_destructor_is_real(self) -> None:
+        audit = _load_import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "src/runtime/libc"
+            runtime.mkdir(parents=True)
+            (runtime / "Pthread.cpp").write_text(
+                'int32_t pma_init(Ctx& x, GuestPtr a) { x.mem.write<uint32_t>(a, 0x4D555458); x.mem.write<uint32_t>(a + 4, 0); return 0; }\n'
+                'int32_t pma_ok(Ctx&, GuestPtr) { return 0; }\n'
+                'void reg(Process& p) { p.def<&pma_ok>("_pthread_mutexattr_destroy"); p.def<&pma_ok>("_other_api"); }')
+            regs = audit.scan_hvm_registrations(root)
+            self.assertEqual(regs["_pthread_mutexattr_destroy"]["status"], "present")
+            self.assertEqual(regs["_other_api"]["status"], "stubbed-dishonestly")
+            path = runtime / "Pthread.cpp"
+            path.write_text(path.read_text().replace("return 0;", "x.proc.allocStatic(64); return 0;", 1))
+            self.assertEqual(audit.scan_hvm_registrations(root)["_pthread_mutexattr_destroy"]["status"], "stubbed-dishonestly")
+
     def test_malformed_support_manifest_is_runtime_error(self) -> None:
         from unittest.mock import patch
         audit = _load_import_audit()

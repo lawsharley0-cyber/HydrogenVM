@@ -500,6 +500,20 @@ def scan_hvm_registrations(repo_root: Path) -> dict[str, dict[str, str]]:
     registrations: dict[str, dict[str, str]] = {}
 
     def apply_override(sym: str, fn_name: str, status: str, note: str) -> tuple[str, str]:
+        # This specific POSIX destructor owns no resource: pma_init only
+        # stores POD attributes in guest memory. Match both complete bodies so
+        # changing initialization cannot silently preserve the exemption.
+        if (sym == "_pthread_mutexattr_destroy" and fn_name == "pma_ok"
+                and rel_path == "src/runtime/libc/Pthread.cpp"
+                and not note.startswith("`SupportStatus::Stub`")
+                and not note.startswith("`SupportStatus::Unavailable`")):
+            canonical = " ".join(t.value for t in lint_stubs.tokens(text))
+            expected = (
+                "int32_t pma_init(Ctx& x, GuestPtr a) { x.mem.write<uint32_t>(a, 0x4D555458); x.mem.write<uint32_t>(a + 4, 0); return 0; }",
+                "int32_t pma_ok(Ctx&, GuestPtr) { return 0; }",
+            )
+            if all(" ".join(t.value for t in lint_stubs.tokens(body)) in canonical for body in expected):
+                return "present", "POSIX mutex attributes are guest-memory POD; destruction requires no resource release (matched initializer/destructor bodies)"
         override = HANDLER_OVERRIDES.get(sym)
         if override and override[0] == fn_name:
             return override[1], override[2]
