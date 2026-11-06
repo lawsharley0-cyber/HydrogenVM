@@ -12,6 +12,8 @@
 
 namespace Hydrogen::Runtime {
 
+void registerLibcxxString(Process& p);
+
 namespace {
 
 uint32_t tld_get(Ctx& x) {
@@ -173,6 +175,7 @@ void sleep_for(Ctx& x, GuestPtr ns_ptr) {
 } // namespace
 
 void registerLibcxx(Process& p) {
+    registerLibcxxString(p);
     p.def<&tld_get>("__ZNSt3__119__thread_local_dataEv");
 
     p.def<&ts_ctor>("__ZNSt3__115__thread_structC1Ev");
