@@ -4,6 +4,8 @@
 #include <cctype>
 #include <cstring>
 #include <strings.h>
+#include <string>
+#include <vector>
 
 namespace Hydrogen::Runtime {
 namespace {
@@ -220,6 +222,93 @@ uint32_t w_wmemchr(Ctx& x, GuestPtr s, int32_t c, uint32_t n) {
     for (uint32_t i = 0; i < n; ++i) if (x.mem.read<int32_t>(s + i * 4) == c) return s + i * 4;
     return 0;
 }
+// ---- C-locale multibyte / wide-character conversions (issue #330). ----
+// setlocale() in this runtime only ever selects the "C" locale, whose Darwin encoding
+// ("NONE") maps each byte 0..255 to the wide character of the same value. These are
+// therefore real conversions for that locale, not constant results. A UTF-8 locale is
+// not claimed: if one is ever added these must dispatch on it.
+// GuestArena::read/write do not check page permissions, so source bytes are checked
+// with require_readable and every output span goes through copyInWritable.
+constexpr uint32_t kWeof = 0xFFFFFFFFu;
+constexpr uint32_t kMbErr = 0xFFFFFFFFu;         // (size_t)-1
+constexpr uint32_t kMbIncomplete = 0xFFFFFFFEu;  // (size_t)-2
+constexpr int kEILSEQ = 92;                      // Darwin
+void setErrnoLocal(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, uint32_t(e)); }
+size_t safe_strlen(Ctx& x, GuestPtr p);
+void require_readable(Ctx& x, uint64_t addr, const char* what);
+
+// Stores `bytes` at `dst`, or raises a guest memory fault at the first non-writable byte.
+void store_checked(Ctx& x, GuestPtr dst, const void* src, size_t bytes, const char* what) {
+    uint32_t fault = 0;
+    if (!x.mem.copyInWritable(dst, src, bytes, fault))
+        throw CPU::GuestFault(CPU::Exit::MemFault, fault, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), what);
+}
+uint8_t load_byte_checked(Ctx& x, GuestPtr p, const char* what) {
+    require_readable(x, p, what);
+    return x.mem.read<uint8_t>(p);
+}
+// Number of wchar_t units before the terminator; every unit must lie in readable memory.
+size_t safe_wcslen(Ctx& x, GuestPtr p) {
+    size_t n = 0;
+    while (true) {
+        const uint64_t at = uint64_t(p) + n * 4;
+        if (at + 4 > Memory::GuestArena::kArenaSize)
+            throw CPU::GuestFault(CPU::Exit::MemFault, GuestPtr(at), x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "invalid guest memory access in safe_wcslen (overflow)");
+        require_readable(x, at, "invalid guest memory read access in safe_wcslen");
+        require_readable(x, at + 3, "invalid guest memory read access in safe_wcslen");
+        if (x.mem.read<uint32_t>(GuestPtr(at)) == 0) return n;
+        ++n;
+    }
+}
+
+uint32_t w_btowc(Ctx&, int32_t c) { return (c >= 0 && c <= 255) ? uint32_t(c) : kWeof; }
+int32_t  w_wctob(Ctx&, uint32_t wc) { return wc <= 255 ? int32_t(wc) : -1; }
+uint32_t w_mbrtowc(Ctx& x, GuestPtr pwc, GuestPtr s, uint32_t n, GuestPtr) {
+    if (!s) return 0;                             // reset the (stateless) shift state
+    if (n == 0) return kMbIncomplete;
+    const uint8_t b = load_byte_checked(x, s, "invalid guest memory read access in mbrtowc");
+    if (pwc) { const uint32_t wc = b; store_checked(x, pwc, &wc, 4, "invalid guest memory write access in mbrtowc"); }
+    return b ? 1 : 0;
+}
+uint32_t w_mbrlen(Ctx& x, GuestPtr s, uint32_t n, GuestPtr st) { return w_mbrtowc(x, 0, s, n, st); }
+int32_t  w_mbtowc(Ctx& x, GuestPtr pwc, GuestPtr s, uint32_t n) {
+    if (!s) return 0;                             // stateless encoding
+    if (n == 0) return -1;
+    const uint8_t b = load_byte_checked(x, s, "invalid guest memory read access in mbtowc");
+    if (pwc) { const uint32_t wc = b; store_checked(x, pwc, &wc, 4, "invalid guest memory write access in mbtowc"); }
+    return b ? 1 : 0;
+}
+uint32_t w_wcrtomb(Ctx& x, GuestPtr s, uint32_t wc, GuestPtr) {
+    if (!s) return 1;
+    if (wc > 255) { setErrnoLocal(x, kEILSEQ); return kMbErr; }
+    const uint8_t b = uint8_t(wc);
+    store_checked(x, s, &b, 1, "invalid guest memory write access in wcrtomb");
+    return 1;
+}
+uint32_t s_strxfrm(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
+    const uint32_t len = uint32_t(safe_strlen(x, s));
+    if (n) {
+        const uint32_t k = len < n ? len : n - 1;
+        std::string out(H(x, s), k);
+        store_checked(x, d, out.c_str(), size_t(k) + 1, "invalid guest memory write access in strxfrm");
+    }
+    return len;
+}
+int32_t w_wcscoll(Ctx& x, GuestPtr a, GuestPtr b) {
+    safe_wcslen(x, a); safe_wcslen(x, b);          // both operands must be readable, terminated strings
+    return w_wcscmp(x, a, b);
+}
+uint32_t w_wcsxfrm(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
+    const uint32_t len = uint32_t(safe_wcslen(x, s));
+    if (n) {
+        const uint32_t k = len < n ? len : n - 1;
+        std::vector<uint32_t> out(size_t(k) + 1, 0);
+        for (uint32_t i = 0; i < k; ++i) out[i] = x.mem.read<uint32_t>(s + i * 4);
+        store_checked(x, d, out.data(), out.size() * 4, "invalid guest memory write access in wcsxfrm");
+    }
+    return len;
+}
+
 int32_t w_towlower(Ctx& x, int32_t c) { return c_tolower(x, c); }
 int32_t w_towupper(Ctx& x, int32_t c) { return c_toupper(x, c); }
 int32_t w_iswspace(Ctx& x, int32_t c) { return c_isspace(x, c); }
@@ -525,6 +614,15 @@ void registerLibcString(Process& p) {
     p.def<&w_wmemset>("_wmemset");
     p.def<&w_wmemcmp>("_wmemcmp");
     p.def<&w_wmemchr>("_wmemchr");
+    p.def<&w_btowc>("_btowc");
+    p.def<&w_wctob>("_wctob");
+    p.def<&w_mbrtowc>("_mbrtowc");
+    p.def<&w_mbrlen>("_mbrlen");
+    p.def<&w_mbtowc>("_mbtowc");
+    p.def<&w_wcrtomb>("_wcrtomb");
+    p.def<&s_strxfrm>("_strxfrm");
+    p.def<&w_wcscoll>("_wcscoll");
+    p.def<&w_wcsxfrm>("_wcsxfrm");
     p.def<&w_towlower>("_towlower");
     p.def<&w_towupper>("_towupper");
     p.def<&w_iswspace>("_iswspace");

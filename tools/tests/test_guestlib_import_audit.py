@@ -106,7 +106,8 @@ class GuestLibImportAuditTests(unittest.TestCase):
         self.assertEqual(symbols["_pthread_getspecific"]["status"], "present")
         self.assertEqual(symbols["_setlocale"]["status"], "stubbed-dishonestly")
         self.assertEqual(symbols["_uselocale"]["status"], "missing")
-        self.assertEqual(symbols["_wcrtomb"]["status"], "missing")
+        self.assertEqual(symbols["_wcrtomb"]["status"], "present")  # implemented in #330 slice 1
+        self.assertEqual(symbols["_catopen"]["status"], "missing")
 
     def test_parser_and_scanner_with_synthetic_fixtures(self) -> None:
         import_audit = _load_import_audit()
