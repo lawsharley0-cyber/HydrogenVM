@@ -25,10 +25,12 @@ struct CrashReport: Identifiable {
     /// identity before opening the signal files, and preserve an older crash
     /// before any O_TRUNC open (including batch restarts).
     static func beginSession(bundleID: String, version: String, renderer: String, phase: String) throws -> UUID {
+        #if !HVM_DISABLE_ENGINE
         guard HVMEngine.liveGuestArenaCount() == 0 else {
             throw NSError(domain: "HydrogenVM.CrashJournal", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "The previous guest arena is still active."])
         }
+        #endif
         HVMCrashJournal.closeSignalFile()
         let evidence = [pending, signal, hostFault].contains {
             ((try? Data(contentsOf: $0))?.count ?? 0) > 0
