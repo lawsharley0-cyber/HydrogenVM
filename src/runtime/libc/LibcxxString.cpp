@@ -118,9 +118,19 @@ template <uint32_t W> struct Str {
         x.mem.write<uint32_t>(s + 4, n);
         x.mem.write<uint32_t>(s + 8, p);
     }
+    // A long string read from guest memory may be garbage: its size must not exceed its
+    // capacity and its whole buffer must fit below 4 GB, so no offset computed from them
+    // can wrap. Checked before any offset arithmetic (cheap: no page walk).
+    void consistent(uint32_t s) const {
+        if (!isLong(s)) return;
+        const uint32_t cap = capacity(s), sz = x.mem.read<uint32_t>(s + 4), d = x.mem.read<uint32_t>(s + 8);
+        if (sz > cap || cap > kMaxSize || uint64_t(d) + (uint64_t(cap) + 1) * W > 0x100000000ull)
+            fault(s, "std::__1::basic_string object: size, capacity and data pointer are inconsistent");
+    }
     // The string's characters [from, from + n), checked readable: each operation checks
     // only the range it reads or writes, so an append does not rescan the whole buffer.
     uint32_t readChars(uint32_t s, uint32_t from, uint32_t n) const {
+        consistent(s);
         const uint32_t d = data(s);
         readable(d + from * W, n, "std::__1::basic_string buffer");
         return d;
@@ -196,6 +206,7 @@ template <uint32_t W> struct Str {
     // least twice the old capacity (__grow_by_and_replace) is allocated first.
     void replace(uint32_t s, uint32_t pos, uint32_t n1, const Src& src, const char* where) {
         object(s, true);
+        consistent(s);
         const uint32_t sz = size(s), cap = capacity(s), p = data(s);
         if (pos > sz) outOfRange(where);
         n1 = std::min(n1, sz - pos);

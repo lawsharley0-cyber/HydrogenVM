@@ -606,6 +606,14 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             sexpect(faults(C + "9push_backEc", {ro, 'd'}), "push_back into a read-only buffer");
             sexpect(faults(C + "6resizeEmc", {ro, 1, 0}), "shrinking resize of a read-only buffer");
             sexpect(m.read<uint32_t>(ro + 4) == 3 && m.read<uint8_t>(g + 8192 + 3) == 0, "a faulted write leaves size and data alone");
+            // A malformed long string (size above capacity, or a buffer running past 4 GB) is refused
+            // before any offset is computed from it.
+            const uint32_t bad = obj();
+            m.write<uint32_t>(bad, 17); m.write<uint32_t>(bad + 4, 0x40000000u); m.write<uint32_t>(bad + 8, m.read<uint32_t>(q + 8));
+            sexpect(faults(C + "5eraseEmm", {bad, 0, 1}), "erase on a string whose size exceeds its capacity");
+            const uint32_t wbad = obj();
+            m.write<uint32_t>(wbad, 0x20000001u); m.write<uint32_t>(wbad + 4, 4); m.write<uint32_t>(wbad + 8, 0xF0000000u);
+            sexpect(faults(W + "5eraseEmm", {wbad, 0, 1}), "erase on a wide string whose buffer would run past 4 GB");
             // A huge length is refused before anything is allocated on the host.
             sexpect(stops(C + "6appendEmc", {s1, 0x7FFFFFF0u, 'z'}), "append(n, c) beyond the guest heap stops with an error");
             sexpect(stops(C + "6__initEmc", {obj(), 0xFFFFFFF0u, 'z'}), "__init(n, c) beyond max_size is length_error");
