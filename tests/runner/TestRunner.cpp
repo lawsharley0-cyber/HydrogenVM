@@ -3081,6 +3081,8 @@ int runFullSubsystemTests() {
         u.statusBarOrientation = savedSb; u.initialOrientation = savedInit; u.orientationSetByApp = savedByApp;
         if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");
         for (ObjC::id w : {win, win2, win3, win4}) r.send(cpu, w, "setHidden:", {1});
+    }
+
     // 2d2. KVC keys that nibs and older apps set on UIViewController (issue #354): iOS answers
     // them through the private _setStoryboard: / _setParentViewController:. parentViewController
     // is not retained; storyboard is.
