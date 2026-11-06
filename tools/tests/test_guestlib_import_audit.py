@@ -303,6 +303,20 @@ class GuestLibImportAuditTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     audit.run_audit(REPO_ROOT, hvm_bin=Path(sys.executable))
 
+    def test_unrunnable_hvm_binary_is_runtime_error(self) -> None:
+        audit = _load_import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            not_exec = root / "hvm"
+            not_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+            not_exec.chmod(0o644)  # exists but cannot be executed: PermissionError
+            wrong_format = root / "hvm2"
+            wrong_format.write_bytes(b"\x7fnot-a-real-binary")
+            wrong_format.chmod(0o755)  # Exec format error: OSError
+            for binary in (not_exec, wrong_format):
+                with self.subTest(binary=binary.name), self.assertRaises(RuntimeError):
+                    audit.run_audit(REPO_ROOT, hvm_bin=binary)
+
     def test_cli_generates_markdown_report(self) -> None:
         self.assertTrue(AUDIT_SCRIPT.is_file(), f"Missing {AUDIT_SCRIPT}")
         with tempfile.TemporaryDirectory() as tmp:

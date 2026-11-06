@@ -635,7 +635,7 @@ def run_audit(
                 [str(hvm_bin), "--dump-support"], text=True, timeout=60
             )
             dump = json.loads(dump_raw)
-        except (subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
             raise RuntimeError(f"Failed to query {hvm_bin} --dump-support: {exc}") from exc
         if not isinstance(dump, dict) or not isinstance(dump.get("symbols"), list):
             raise RuntimeError("Malformed --dump-support payload: expected object with symbols array")
@@ -727,7 +727,7 @@ def _symbols_for_lib_by_status(
 
 _IMPORT_SOURCE_TEXT = {
     "manifest": "the reference import manifest (`DEFAULT_LIBRARY_IMPORTS`), not inspected dylibs. "
-                "To audit your own builds run `python3 tools/guestlibs/import_audit.py --dylib-dir <dir>`.",
+                "To audit your own builds run `python3 tools/guestlibs/import_audit.py --dylib-dir <dir> --out /tmp/guestlib_imports.md` (do not overwrite this checked-in report).",
     "macho": "undefined symbols read from the Mach-O dylibs in `--dylib-dir`.",
 }
 
