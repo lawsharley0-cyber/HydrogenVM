@@ -66,7 +66,25 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.PlayerViewportTests
+  ColdStartPromptUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - ColdStartPromptUITests.swift
+    dependencies:
+      - target: SaveEditorHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.ColdStartPromptUITests
+        TEST_TARGET_NAME: SaveEditorHarness
 schemes:
+  ColdStartPrompt:
+    build:
+      targets:
+        SaveEditorHarness: all
+    test:
+      targets:
+        - ColdStartPromptUITests
   SaveEditorHarness:
     build:
       targets:

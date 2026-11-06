@@ -179,7 +179,27 @@ jobs:
               tail -150 build/cold-start-build.log
               exit 1
             }
-          bash tools/test_cold_start_url.sh build/cold-start-xbuild/Release-iphonesimulator/HydrogenVM.app \
+          xcodegen --spec tools/tests/swiftui/project.yml --project tools/tests/swiftui
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices=json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if "iOS" not in runtime: continue
+              for device in devices[runtime]:
+                  if device["name"].startswith("iPhone"):
+                      print(device["udid"]); sys.exit(0)
+          sys.exit("No iPhone simulator")')
+          xcodebuild -project tools/tests/swiftui/SaveEditorHarness.xcodeproj -scheme ColdStartPrompt \
+            -configuration Debug -destination "platform=iOS Simulator,id=$UDID" \
+            -derivedDataPath "$PWD/build/cold-start-prompts" build-for-testing \
+            >build/cold-start-prompt-build.log 2>&1 || {
+              tail -150 build/cold-start-prompt-build.log
+              exit 1
+            }
+          PROMPT_RUN=$(python3 -c 'from pathlib import Path; import sys; files=list(Path(sys.argv[1]).glob("*.xctestrun")); assert len(files)==1, files; print(files[0])' \
+            "$PWD/build/cold-start-prompts/Build/Products")
+          HVM_COLD_START_UDID="$UDID" HVM_COLD_START_XCTESTRUN="$PROMPT_RUN" \
+            bash tools/test_cold_start_url.sh build/cold-start-xbuild/Release-iphonesimulator/HydrogenVM.app \
             build/ios/FoundationTest.app
       # The real-game GLES simulator checks (Tiny Tower, Angry Birds, GLES 1.1 on ES 2) read
       # the three IPAs from the private fixture store and run in private-fixture-availability.yml
@@ -221,6 +241,7 @@ jobs:
             app/sim-build.log
             sim-out/
             build/cold-start-build.log
+            build/cold-start-prompt-build.log
             build/cold-start-diagnostics/
           if-no-files-found: warn
 

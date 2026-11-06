@@ -108,6 +108,7 @@ final class HVMSession {
 
 struct PlayerHarness: View {
     let app: InstalledApp
+    @AppStorage(PlayerSettings.scaleModeKey) private var defaultScale = PlayerScaleMode.fit.rawValue
     var body: some View {
         RunView(app: app, keepGoing: false)
             .overlay(alignment: .bottomLeading) {
@@ -117,6 +118,7 @@ struct PlayerHarness: View {
                     Text(verbatim: String(PlayerProbe.shared.volume)).accessibilityIdentifier("probe-volume")
                     Text("\(PlayerProbe.shared.maximumTouches)").accessibilityIdentifier("probe-max-touches")
                     Text("\(PlayerProbe.shared.cancellations)").accessibilityIdentifier("probe-cancellations")
+                    Text(defaultScale).accessibilityIdentifier("probe-scale-default")
                     Button("Default Extended Bars") {
                         UserDefaults.standard.set(PlayerScaleMode.extended.rawValue, forKey: PlayerSettings.scaleModeKey)
                     }.accessibilityIdentifier("probe-default-extended")

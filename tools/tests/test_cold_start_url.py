@@ -11,6 +11,12 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'test_cold_start_url.sh'
 
 class ColdStartAnnotationTests(unittest.TestCase):
     def test_cold_url_waits_for_setup_process_to_exit(self):
+        self.exercise_driver()
+
+    def test_system_open_confirmation_precedes_marker_checks(self):
+        self.exercise_driver(confirm=True)
+
+    def exercise_driver(self, confirm=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             guest = root / 'Guest.app'
@@ -47,7 +53,7 @@ elif command == 'launch':
     print('com.lfull.HydrogenVM: ' + str(pid))
 elif command == 'terminate':
     pathlib.Path(os.environ['PROBE_STOP']).touch()
-elif command == 'openurl':
+elif command in ('openurl', 'confirm'):
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -55,6 +61,9 @@ elif command == 'openurl':
     else:
         sys.exit('URL opened before setup process exited')
     url = args[-1]
+    if command == 'openurl' and os.environ.get('PROBE_CONFIRM') == '1':
+        (data / 'pending-url').write_text(url)
+        sys.exit(0)
     (docs / 'cold-start-queued').write_text(url)
     if '?' in url:
         (docs / 'cold-start-error').write_text('That link is not a HydrogenVM game link. A game icon uses hydrogenvm://run/<game-id>.')
@@ -64,11 +73,32 @@ elif command == 'openurl':
             (docs / ('cold-start-' + stage)).write_text('test.guest')
 ''')
             xcrun.chmod(0o755)
+            if confirm:
+                # The simulated app cannot receive its URL until the system's
+                # confirmation has been accepted by the UI-test helper.
+                helper = root / 'xcodebuild'
+                helper.write_text('''#!/usr/bin/env python3
+import os, pathlib, subprocess
+data = pathlib.Path(os.environ['PROBE_DATA'])
+subprocess.run([str(data.parent / 'xcrun'), 'simctl', 'confirm', (data / 'pending-url').read_text()], check=True)
+''')
+                helper.chmod(0o755)
+                # Keep the failure-before run short if no helper is invoked.
+                sequence = root / 'seq'
+                sequence.write_text('''#!/usr/bin/env python3
+import sys
+first, last = map(int, sys.argv[1:])
+if last == 240: last = first
+print('\\n'.join(map(str, range(first, last + 1))))
+''')
+                sequence.chmod(0o755)
             try:
                 result = subprocess.run(['bash', str(SCRIPT), str(root / 'Host.app'), str(guest)],
                     env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
-                         'PROBE_DATA': str(data), 'PROBE_PID': str(worker.pid), 'PROBE_STOP': str(stop)},
-                    capture_output=True, text=True, timeout=15)
+                         'PROBE_DATA': str(data), 'PROBE_PID': str(worker.pid), 'PROBE_STOP': str(stop),
+                         'PROBE_CONFIRM': '1' if confirm else '0',
+                         'HVM_COLD_START_XCTESTRUN': str(root / 'Prompt.xctestrun') if confirm else ''},
+                    cwd=root, capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('PASS: app launched', result.stdout)
                 self.assertIn('PASS: malformed URL resolved', result.stdout)

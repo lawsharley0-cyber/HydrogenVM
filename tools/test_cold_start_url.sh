@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Exercise a real cold-start URL with the simulator-only COLD_START_URL_TEST build.
 # Usage: tools/test_cold_start_url.sh <HydrogenVM.app> <FoundationTest.app>
+# CI supplies HVM_COLD_START_XCTESTRUN to accept the system Open confirmation.
 set -euo pipefail
 
 HOST_APP=$1
 GUEST_APP=$2
 BUNDLE_ID=com.lfull.HydrogenVM
+UDID=${HVM_COLD_START_UDID:-}
+if [ -z "$UDID" ]; then
 UDID=$(xcrun simctl list devices available -j | python3 -c '
 import json, sys
 devices = json.load(sys.stdin)["devices"]
@@ -15,6 +18,7 @@ for runtime in sorted(devices, reverse=True):
         if device["name"].startswith("iPhone"):
             print(device["udid"]); sys.exit(0)
 sys.exit("No iPhone simulator")')
+fi
 xcrun simctl boot "$UDID" 2>/dev/null || true
 xcrun simctl bootstatus "$UDID" -b >/dev/null
 xcrun simctl uninstall "$UDID" "$BUNDLE_ID" 2>/dev/null || true
@@ -59,12 +63,6 @@ URL="hydrogenvm://run/$GUEST_ID"
 # SwiftUI `.onOpenURL` handler, which queues it (cold-start-queued) before the library
 # resolves it (cold-start-routed). A link the app never queues cannot be hidden by a
 # later delivery, and nothing else in the test build opens a game.
-xcrun simctl openurl "$UDID" "$URL"
-for _ in $(seq 1 240); do
-    [ -f "$DATA/Documents/cold-start-guest-passed" ] && break
-    sleep 0.5
-done
-
 # A failed stage is annotated as well as printed: workflow logs need admin rights to
 # download, annotations are readable from the run page.
 app_log() {
@@ -90,6 +88,29 @@ fail() {
     exit 1
 }
 
+COLD_URL_COUNT=0
+open_url() {
+    COLD_URL_COUNT=$((COLD_URL_COUNT + 1))
+    xcrun simctl openurl "$UDID" "$1"
+    if [ -n "${HVM_COLD_START_XCTESTRUN:-}" ]; then
+        local out=${HVM_COLD_START_OUT:-build/cold-start-diagnostics}
+        mkdir -p "$out"
+        xcodebuild -xctestrun "$HVM_COLD_START_XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=$UDID" -parallel-testing-enabled NO \
+            -resultBundlePath "$out/confirmation-$COLD_URL_COUNT.xcresult" \
+            test-without-building >"$out/confirmation-$COLD_URL_COUNT.log" 2>&1 || {
+                tail -100 "$out/confirmation-$COLD_URL_COUNT.log"
+                fail "system URL confirmation did not complete"
+            }
+    fi
+}
+
+open_url "$URL"
+for _ in $(seq 1 240); do
+    [ -f "$DATA/Documents/cold-start-guest-passed" ] && break
+    sleep 0.5
+done
+
 for stage in launched queued routed guest-passed; do
     file="$DATA/Documents/cold-start-$stage"
     [ -f "$file" ] || fail "missing $stage marker"
@@ -106,7 +127,7 @@ echo "PASS: app launched, the link queued $URL, the library routed $GUEST_ID, an
 # resolver can present the malformed-link error instead of silently dropping it.
 rm -f "$DATA/Documents/cold-start-error"
 MALFORMED_URL="$URL?source=clip"
-xcrun simctl openurl "$UDID" "$MALFORMED_URL"
+open_url "$MALFORMED_URL"
 for _ in $(seq 1 40); do
     [ "$(cat "$DATA/Documents/cold-start-queued")" = "$MALFORMED_URL" ] && break
     sleep 0.5
