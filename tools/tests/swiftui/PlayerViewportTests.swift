@@ -5,6 +5,21 @@ import CoreFoundation
 
 final class PlayerViewportTests: XCTestCase {
     @MainActor
+    func testAccessibilityActionUsesOverlayCallback() throws {
+        let view = EmulatorScreen.ScreenView(frame: .zero)
+        var calls = 0
+        view.onOverlayGesture = { calls += 1 }
+        let action = try XCTUnwrap(view.accessibilityCustomActions?.first)
+        XCTAssertEqual(action.name, "Open Player Controls")
+        let selector = try XCTUnwrap(action.selector)
+        let target = try XCTUnwrap(action.target)
+        XCTAssertTrue(UIApplication.shared.sendAction(selector, to: target, from: action, for: nil))
+        XCTAssertEqual(calls, 1)
+        view.onOverlayGesture = nil
+        XCTAssertNil(view.accessibilityCustomActions)
+    }
+
+    @MainActor
     func testBackdropThrottlesDistinctFramesAndRedrawsAfterBeingDisabled() throws {
         let view = EmulatorScreen.ScreenView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         var now: CFTimeInterval = 10

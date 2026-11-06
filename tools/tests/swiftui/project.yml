@@ -20,6 +20,7 @@ targets:
       - ../../../app/HydrogenVM/ConsoleReport.swift
       - ../../../app/HydrogenVM/PlayerGeometry.swift
       - ../../../app/HydrogenVM/PlayerActivity.swift
+      - ../../../app/HydrogenVM/PlayerOverlay.swift
       - ../../../app/HydrogenVM/PlayerOrientation.swift
       - ../../../app/HydrogenVM/PlayerViewport.swift
       - ../../../app/HydrogenVM/GameKeyboard.swift
@@ -50,6 +51,7 @@ targets:
     sources:
       - EditorUITests.swift
       - PlayerUITests.swift
+      - PlayerGestureUITests.m
     dependencies:
       - target: SaveEditorHarness
     settings:

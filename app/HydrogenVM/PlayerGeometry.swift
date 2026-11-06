@@ -1,5 +1,7 @@
 import Foundation
-import CoreGraphics
+#if canImport(CoreGraphics)
+import CoreGraphics   // Apple platforms; Foundation on Linux exports the same geometry types
+#endif
 
 /// Values match the guest's UIInterfaceOrientation, not UIDeviceOrientation.
 enum GuestOrientation: Int, CaseIterable {
