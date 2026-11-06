@@ -215,6 +215,17 @@ void deliverPendingInput(Ctx& x) {
     setNeedsComposite(x);
 }
 
+// Info.plist orientation names to UIKit's UIInterfaceOrientation values, which the
+// guest compares against: LandscapeRight is 3 and LandscapeLeft is 4 (they are the
+// device orientations LandscapeLeft and LandscapeRight). The runtime's layout,
+// status bar and supported-orientation mask already use these values.
+int32_t orientationFromString(const std::string& s) {
+    if (s == "UIInterfaceOrientationLandscapeRight") return 3;
+    if (s == "UIInterfaceOrientationLandscapeLeft") return 4;
+    if (s == "UIInterfaceOrientationPortraitUpsideDown") return 2;
+    return 1;
+}
+
 namespace {
 
 // ============================================================ UIApplication ===
@@ -421,12 +432,6 @@ void acc_setInterval(Ctx& x, id self, SEL, double i) { AD(x, self).interval = st
 
 // ======================================================== UIApplicationMain ===
 
-int32_t orientationFromString(const std::string& s) {
-    if (s == "UIInterfaceOrientationLandscapeLeft") return 3;
-    if (s == "UIInterfaceOrientationLandscapeRight") return 4;
-    if (s == "UIInterfaceOrientationPortraitUpsideDown") return 2;
-    return 1;
-}
 
 void configureScreen(Ctx& x) {
     auto& u = ui(x);

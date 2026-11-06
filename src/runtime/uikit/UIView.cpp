@@ -639,8 +639,8 @@ void layoutRootView(Ctx& x, id window, id vc) {
 const char* orientationName(int o) {
     switch (o) {
         case 2: return "portrait upside down";
-        case 3: return "landscape left";
-        case 4: return "landscape right";
+        case 3: return "landscape right";
+        case 4: return "landscape left";
         default: return "portrait";
     }
 }
@@ -936,7 +936,10 @@ void reevaluateRootOrientation(Ctx& x, const char* cause) {
     const id vc = V(x, win).rootViewController;
     if (!vc || !controllerSupports(x, vc, u.initialOrientation)) return;
     changeOrientation(x, u.initialOrientation, vc, cause);
+    // Every visible root view follows the one interface orientation.
     layoutRootView(x, win, vc);
+    for (id w : std::vector<id>(u.windows))
+        if (w != win) if (const id other = V(x, w).rootViewController) layoutRootView(x, w, other);
 }
 
 // ================================================================ exports ===

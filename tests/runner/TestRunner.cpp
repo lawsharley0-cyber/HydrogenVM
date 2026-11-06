@@ -3016,11 +3016,11 @@ int runFullSubsystemTests() {
         const int32_t savedSb = u.statusBarOrientation, savedInit = u.initialOrientation;
         const bool savedByApp = u.orientationSetByApp;
         const ObjC::id savedKey = u.keyWindow;
-        bool landscapeOk = false;
+        bool landscapeOk = false, onlyLandscapeLeft = false;
         auto rotCls = r.defineClass("HVMLateLandscapeController", "UIViewController");
         rotCls.method("shouldAutorotateToInterfaceOrientation:", [&](Ctx& rx) {
             const uint32_t o = rx.cpu.r[2];
-            rx.cpu.r[0] = (o == 1 || (landscapeOk && (o == 3 || o == 4))) ? 1 : 0;
+            rx.cpu.r[0] = (o == 1 || (landscapeOk && (o == 4 || (o == 3 && !onlyLandscapeLeft)))) ? 1 : 0;
         }, "c@:i");
         auto makeWindow = [&]() {
             const ObjC::id w = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
@@ -3052,11 +3052,35 @@ int runFullSubsystemTests() {
         landscapeOk = true;
         r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
         const bool appChoiceKept = u.statusBarOrientation == 4;
-        check(portraitAtRoot && stillPortrait && landscapeAfter && rotatedBounds && appChoiceKept,
-              "orientation: a late-accepting root controller gets the Info.plist landscape; an app-set orientation is kept");
+        // Info.plist names map to UIKit's values: LandscapeLeft is 4, LandscapeRight is 3. A controller
+        // that accepts only LandscapeLeft must get it, and a second visible window follows along.
+        const bool namesOk = UIKit::orientationFromString("UIInterfaceOrientationLandscapeLeft") == 4 &&
+                             UIKit::orientationFromString("UIInterfaceOrientationLandscapeRight") == 3 &&
+                             UIKit::orientationFromString("UIInterfaceOrientationPortraitUpsideDown") == 2 &&
+                             UIKit::orientationFromString("UIInterfaceOrientationPortrait") == 1;
+        u.orientationSetByApp = false;
+        u.initialOrientation = UIKit::orientationFromString("UIInterfaceOrientationLandscapeLeft");
+        u.statusBarOrientation = u.initialOrientation;
+        landscapeOk = false;
+        onlyLandscapeLeft = true;
+        const ObjC::id win3 = makeWindow(), win4 = makeWindow();   // win4 ends up key
+        const ObjC::id vc3 = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        const ObjC::id vc4 = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, win3, "setRootViewController:", {vc3});
+        r.send(cpu, win4, "setRootViewController:", {vc4});
+        const bool bothPortrait = u.statusBarOrientation == 1;
+        landscapeOk = true;
+        r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
+        auto landscapeView = [&](ObjC::id c) {
+            const UIKit::LayerData& l = UIKit::layerData(cx, UIKit::viewLayer(cx, ObjC::id(r.send(cpu, c, "view"))));
+            return l.bounds.w > l.bounds.h;
+        };
+        const bool leftOnly = u.statusBarOrientation == 4 && landscapeView(vc4) && landscapeView(vc3);
+        check(portraitAtRoot && stillPortrait && landscapeAfter && rotatedBounds && appChoiceKept && namesOk && bothPortrait && leftOnly,
+              "orientation: a late-accepting root controller gets the Info.plist landscape (UIKit values, every window); an app-set orientation is kept");
         u.statusBarOrientation = savedSb; u.initialOrientation = savedInit; u.orientationSetByApp = savedByApp;
         if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");
-        for (ObjC::id w : {win, win2}) r.send(cpu, w, "setHidden:", {1});
+        for (ObjC::id w : {win, win2, win3, win4}) r.send(cpu, w, "setHidden:", {1});
     // 2d2. KVC keys that nibs and older apps set on UIViewController (issue #354): iOS answers
     // them through the private _setStoryboard: / _setParentViewController:. parentViewController
     // is not retained; storyboard is.
