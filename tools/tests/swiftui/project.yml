@@ -5,6 +5,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS: HVM_DISABLE_ENGINE
     GENERATE_INFOPLIST_FILE: YES
     TARGETED_DEVICE_FAMILY: "1"
 targets:
@@ -23,6 +24,7 @@ targets:
       - ../../../app/HydrogenVM/PlayerViewport.swift
       - ../../../app/HydrogenVM/GameKeyboard.swift
       - ../../../app/HydrogenVM/FileBrowser.swift
+      - ../../../app/HydrogenVM/RecentSaveFiles.swift
       - ../../../app/HydrogenVM/BinaryEditor.swift
       - ../../../app/HydrogenVM/FileEditorSession.swift
       - ../../../app/HydrogenVM/SaveFileStore.swift

@@ -485,9 +485,12 @@ final class BatchTestRunner {
 
             var s: HVMSession!
             var exitBox: ExitBox!
-            var startRetries = 0
+            var launchAttempts = 0
+            var reserveFailure: String?
 
-            while startRetries < 5 {
+            // A reserve failure means the host (or the previous game's pages), not
+            // the game, is holding address space: back off longer and retry once.
+            while launchAttempts < 2 {
                 let attemptJournalID: UUID
                 do {
                     attemptJournalID = try CrashReport.beginSession(bundleID: target.app.info.bundleIdentifier,
@@ -557,11 +560,17 @@ final class BatchTestRunner {
                 }
 
                 if exitBox.exited, let crash = exitBox.crash, crash.contains("failed to reserve") {
-                    startRetries += 1
+                    launchAttempts += 1
                     s.stop()
                     self.activeSession = nil
-                    _ = await Self.waitForArenaRelease(5.0)
-                    try? await Task.sleep(for: .milliseconds(1000))
+                    if launchAttempts == 2 {
+                        reserveFailure = crash.components(separatedBy: "\n").first ?? crash
+                        break
+                    }
+                    // Longer than the old 5 s wait: the kernel and the previous
+                    // game's pages get time to come back before the single retry.
+                    _ = await Self.waitForArenaRelease(20.0)
+                    try? await Task.sleep(for: .milliseconds(3000))
                     guard !Task.isCancelled, self.status == .running else { return }
                     continue
                 } else {
@@ -570,6 +579,44 @@ final class BatchTestRunner {
             }
 
             guard self.status == .running else { return }
+
+            if let reserveFailure {
+                // Host-resource result: the game never ran, so this is not a crash.
+                self.keepLog("[host-resource] failed to reserve the 4 GB guest arena after one retry; reported as a host problem, not a game fault")
+                self.fpsTimer?.invalidate()
+                self.fpsTimer = nil
+                var obs = BatchObservations()
+                obs.frameSignal = "no-frames"
+                obs.exploreEnabled = self.options.exploreEnabled
+                obs.relaunchEnabled = false
+                obs.hostResourceFailure = reserveFailure
+                var result = BatchAppResult(
+                    bundleId: target.app.info.bundleIdentifier,
+                    name: target.app.title,
+                    version: target.app.info.version,
+                    minOS: target.app.info.minimumOSVersion,
+                    mode: target.modeName,
+                    crashed: false,
+                    exitCode: Int(exitBox.code),
+                    summary: "Host memory: \(reserveFailure)",
+                    signature: "host-resource-arena-reserve",
+                    exceptionKind: "host-resource",
+                    crashReport: nil,
+                    perf: BatchPerf(),
+                    frame: BatchFrameInfo(signal: "no-frames"),
+                    keepGoing: self.options.keepGoing,
+                    logs: self.makeLogExcerpt())
+                result.checks = BatchCheckBuilder.build(obs)
+                self.results.append(result)
+                self.currentIndex += 1
+                self.activeSession = nil
+                try? FileManager.default.removeItem(at: testHome)
+                self.savePendingSession()
+                _ = await Self.waitForArenaRelease(8.0)
+                try? await Task.sleep(for: .milliseconds(500))
+                self.runNextTarget()
+                return
+            }
             let durationSeconds = Double(self.options.secondsPerApp)
             let deadline = Date().addingTimeInterval(durationSeconds)
 
@@ -783,9 +830,9 @@ final class BatchTestRunner {
         }
         var s: HVMSession!
         var box: ExitBox!
-        var startRetries = 0
+        var launchAttempts = 0
         
-        while startRetries < 5 {
+        while launchAttempts < 2 {
             _ = await Self.waitForArenaRelease(8.0)
             if Task.isCancelled || status != .running { return (false, 0, nil) }
             let attemptJournalID: UUID
@@ -825,11 +872,15 @@ final class BatchTestRunner {
                 try? await Task.sleep(for: .milliseconds(50))
             }
             if box.exited, let crash = box.crash, crash.contains("failed to reserve") {
-                startRetries += 1
+                launchAttempts += 1
                 s.stop()
                 activeSession = nil
-                _ = await Self.waitForArenaRelease(5.0)
-                try? await Task.sleep(for: .milliseconds(1000))
+                if launchAttempts == 2 {
+                    // Host memory, not a game fault: report it and move on.
+                    return (false, 0, "Host memory: " + (crash.components(separatedBy: "\n").first ?? crash))
+                }
+                _ = await Self.waitForArenaRelease(20.0)
+                try? await Task.sleep(for: .milliseconds(3000))
                 if Task.isCancelled || status != .running { return (false, 0, nil) }
                 continue
             } else {
@@ -975,8 +1026,9 @@ final class BatchTestRunner {
 
         let total = results.count
         let crashed = results.filter(\.crashed).count
-        let wrongSignal = results.filter { !$0.crashed && $0.frame.signal != "ok" }.count
-        let passed = total - crashed - wrongSignal
+        let hostResource = results.filter { $0.signature == "host-resource-arena-reserve" }.count
+        let wrongSignal = results.filter { !$0.crashed && $0.signature != "host-resource-arena-reserve" && $0.frame.signal != "ok" }.count
+        let passed = total - crashed - wrongSignal - hostResource
         let withMusic = results.filter { ($0.diagnostics?.musicFrames ?? 0) > 0 }.count
         let withEffects = results.filter { ($0.diagnostics?.effectFrames ?? 0) > 0 }.count
         let failedChecks = results.filter { $0.worstCheck == .fail }.count
@@ -989,6 +1041,7 @@ final class BatchTestRunner {
         md += "- **Total Tests Run:** \(total)\n"
         md += "- **Passed:** \(passed)\n"
         md += "- **Crashed:** \(crashed)\n"
+        md += "- **Host memory (not a game fault):** \(hostResource)\n"
         md += "- **Wrong Output:** \(wrongSignal)\n"
         md += "- **Music heard:** \(withMusic) · **Sound effects heard:** \(withEffects)\n"
         md += "- **Games with a failed check:** \(failedChecks)\n"
@@ -1004,14 +1057,17 @@ final class BatchTestRunner {
         md += "|---|---|---|---:|---:|---|---|\n"
 
         for r in results {
-            let statusBadge = r.crashed ? "❌ Crashed" : (r.frame.signal != "ok" ? "⚠️ Output Error" : "✅ Passed")
+            let statusBadge = r.crashed ? "❌ Crashed" : (r.signature == "host-resource-arena-reserve" ? "⚠️ Host memory" : (r.frame.signal != "ok" ? "⚠️ Output Error" : "✅ Passed"))
             md += "| \(r.name) (`\(r.bundleId)`) | \(r.mode.uppercased()) | \(statusBadge) | \(r.perf.fps) | \(String(format: "%.1f", r.perf.frameTimeP95Ms)) | `\(r.frame.signal)` | \(r.summary.replacingOccurrences(of: "|", with: "\\|")) |\n"
         }
 
         // The checklist: one table of all games × checks, then each game's details.
         let checked = results.filter { $0.checks != nil }
-        if let first = checked.first?.checks {
-            let names = first.map(\.name)
+        // Columns come from the fullest check list, then any extra names in first-seen order, so a host-resource
+        // result (3 checks) listed first cannot cut the columns of every other game.
+        if let template = checked.compactMap({ $0.checks }).max(by: { $0.count < $1.count }) {
+            var names = template.map(\.name)
+            for r in checked { for c in r.checks ?? [] where !names.contains(c.name) { names.append(c.name) } }
             md += "\n### Checklist\n\n"
             md += "| Check | ✅ | ⚠️ | ❌ | ➖ |\n|---|---:|---:|---:|---:|\n"
             for n in names {

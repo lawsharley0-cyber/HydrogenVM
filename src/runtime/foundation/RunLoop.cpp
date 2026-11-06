@@ -108,6 +108,29 @@ void RunLoop::post(std::function<void(CPU::Cpu&)> fn) {
     cv.notify_all();
 }
 
+bool RunLoop::hasModeInput(const std::string& mode) {
+    const bool isMain = this == &mainRunLoop(proc);   // before taking mu
+    std::lock_guard<std::mutex> lk(mu);
+    const bool common = std::find(commonModes.begin(), commonModes.end(), mode) != commonModes.end();
+    // Work posted from other threads (performSelector:onThread:, main-queue blocks) is input for any mode.
+    if (!queue.empty()) return true;
+    // The main loop is fed by the host event pump. A worker loop only has input in its default and common
+    // modes if it has frame hooks, or host timers with no mode (the emulator's own), to service.
+    if (common && (isMain || !frameHooks.empty())) return true;
+    for (const auto& tm : timers) {
+        if (!tm->valid) continue;
+        if (tm->modes.empty() ? common : inMode(tm->modes, mode)) return true;
+    }
+    for (const auto& s : sources) if (s->valid.load() && !s->modes.empty() && inMode(s->modes, mode)) return true;
+    return false;
+}
+
+bool RunLoop::runModeOnce(CPU::Cpu& c, double until, const std::string& mode) {
+    const bool hasInput = hasModeInput(mode);
+    if (hasInput) runUntil(c, until, true, mode);
+    return hasInput;
+}
+
 bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
     if (proc.terminating() || proc.stopping()) return false;
     struct Active {
@@ -470,8 +493,8 @@ void r_addTimer(Ctx& x, id self, SEL, id timer, id mode) { scheduleTimer(x, time
 void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopOf(x, self).runUntil(x.cpu, 1e18, false, kDefaultModeKey); }
 void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopOf(x, self).runUntil(x.cpu, dateValue(x, date), false, kDefaultModeKey); }
 bool r_runModeBeforeDate(Ctx& x, id self, SEL, id mode, id date) {
-    loopOf(x, self).runUntil(x.cpu, dateValue(x, date), true, runModeKey(x, mode));
-    return true;
+    const double d = dateValue(x, date);
+    return loopOf(x, self).runModeOnce(x.cpu, d, runModeKey(x, mode));
 }
 // The mode being run, as the guest's string (no internal "s:" key prefix); nil when the loop is not running.
 id r_currentMode(Ctx& x, id self, SEL) {
@@ -962,8 +985,10 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder rl = r.defineClass("NSRunLoop", "NSObject");
     l.nsRunLoop = rl.cls();
     rl.cm<&rc_current>("currentRunLoop").cm<&rc_main>("mainRunLoop");
-    rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:")
-      .m<&r_runModeBeforeDate>("runMode:beforeDate:").m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
+    rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:");
+    supportMethod(p, rl, "NSRunLoop", "runMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); },
+                  SupportStatus::Approx, "Runs one emulated mode iteration until the supplied date; host event and source model is approximate", "c@:@@");
+    rl.m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
 
     ObjC::ClassBuilder obj = r.builder(r.nsObject);
     obj.m<&o_performAfterDelay>("performSelector:withObject:afterDelay:")

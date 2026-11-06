@@ -7,12 +7,76 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <sstream>
+#include <string>
 #include <thread>
+#include <vector>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/vm_region.h>
+#include <os/log.h>
+#endif
 
 namespace Hydrogen::Memory {
 namespace {
 std::atomic<uint32_t> liveArenas{0};
+
+// One 4 GB range, PROT_NONE and owned by nobody, waiting for the next
+// GuestArena. Destroying an arena returns its pages but keeps the range, so a
+// batch run never asks the host for another 4 GB between games.
+std::mutex poolMu;
+uint8_t* pooledBase = nullptr;
+
+#if defined(__APPLE__)
+// Largest reservations in this task, for a failed 4 GB reservation. Read-only:
+// no guest memory, no new mappings, no GPU calls.
+std::string largestMappings() {
+    struct Region { vm_address_t start; vm_size_t size; vm_prot_t prot; };
+    std::vector<Region> regions;
+    vm_address_t address = 0;
+    while (regions.size() < 4096) {
+        vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info{};
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        if (vm_region_64(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64,
+                           reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS)
+            break;
+        if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+        if (!size) break;
+        regions.push_back({address, size, info.protection});
+        address += size;
+    }
+    std::sort(regions.begin(), regions.end(),
+              [](const Region& a, const Region& b) { return a.size > b.size; });
+    std::ostringstream out;
+    const size_t shown = std::min<size_t>(regions.size(), 5);
+    for (size_t i = 0; i < shown; ++i) {
+        if (i) out << ", ";
+        out << "0x" << std::hex << regions[i].start << "+0x" << regions[i].size
+            << " prot=0x" << int(regions[i].prot) << std::dec;
+    }
+    if (!shown) out << "none";
+    out << " (" << regions.size() << " regions)";
+    return out.str();
 }
+
+std::string hostAddressSpaceSummary() {
+    task_vm_info_data_t vm{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    std::ostringstream out;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&vm), &count) == KERN_SUCCESS) {
+        out << "virtual_size=" << vm.virtual_size << " bytes, resident_size=" << vm.resident_size << " bytes";
+        if (count >= TASK_VM_INFO_REV1_COUNT) out << ", phys_footprint=" << vm.phys_footprint << " bytes";
+        else out << ", phys_footprint=unavailable";
+    } else {
+        out << "TASK_VM_INFO unavailable";
+    }
+    out << "; largest mappings: " << largestMappings();
+    return out.str();
+}
+#endif
+} // namespace
 
 uint32_t GuestArena::liveCount() noexcept { return liveArenas.load(std::memory_order_acquire); }
 
@@ -45,22 +109,44 @@ GuestArena::GuestArena(size_t hostPage) {
     // NOTE (iOS): reserving 4 GB of address space needs the
     // com.apple.developer.kernel.extended-virtual-addressing entitlement on most
     // devices; without it this mmap fails. See docs/ARCHITECTURE.md.
+    // A destroyed GuestArena leaves its range in the pool, so this normally takes
+    // over that reservation instead of asking the host for another 4 GB.
+    void* p = MAP_FAILED;
+    const auto takePooled = [&p] {
+        std::lock_guard<std::mutex> lk(poolMu);
+        if (pooledBase) {
+            p = pooledBase;
+            pooledBase = nullptr;
+        }
+    };
+    takePooled();
+    int lastError = 0;
     // The previous game's arena may still be on its way out (its threads are
     // finishing); iOS has room for about one 4 GB reservation, so wait a few
     // seconds for it rather than failing the next launch (Test All Games).
-    void* p = MAP_FAILED;
-    int lastError = 0;
-    for (int attempt = 0; attempt < 20 && p == MAP_FAILED; ++attempt) {
+    for (int attempt = 0; p == MAP_FAILED && attempt < 20; ++attempt) {
         if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        // An arena that was still live at the first look may have been destroyed meanwhile and
+        // published its range to the pool; take that instead of asking the host for another 4 GB.
+        takePooled();
+        if (p != MAP_FAILED) break;
         errno = 0;
         p = mmap(nullptr, size_t(kArenaSize), PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
         if (p == MAP_FAILED) lastError = errno;
     }
-    if (p == MAP_FAILED)
-        throw std::runtime_error("HydrogenVM: failed to reserve 4 GB guest arena: " +
-                                 std::string(std::strerror(lastError)) + " (errno " + std::to_string(lastError) +
-                                 ", live arenas " + std::to_string(liveCount()) +
-                                 "; on iOS, check the extended-virtual-addressing entitlement)");
+    if (p == MAP_FAILED) {
+        std::string message = "HydrogenVM: failed to reserve 4 GB guest arena: " +
+                              std::string(std::strerror(lastError)) + " (errno " + std::to_string(lastError) +
+                              ", live arenas " + std::to_string(liveCount()) + ", pooled range none" +
+                              "; on iOS, check the extended-virtual-addressing entitlement)";
+#if defined(__APPLE__)
+        // Issue #307: distinguish our own arenas from whatever else holds the
+        // address space, and keep the numbers even if the exception is swallowed.
+        message += "; host address space: " + hostAddressSpaceSummary();
+        os_log_error(OS_LOG_DEFAULT, "HydrogenVM: %{public}s", message.c_str());
+#endif
+        throw std::runtime_error(message);
+    }
     base_ = static_cast<uint8_t*>(p);
     prot_.assign(kGuestPageCount, kProtNone);
     host_committed_.assign(size_t(kArenaSize / host_page_), 0);
@@ -68,10 +154,27 @@ GuestArena::GuestArena(size_t hostPage) {
 }
 
 GuestArena::~GuestArena() {
-    if (base_) {
-        munmap(base_, size_t(kArenaSize));
-        liveArenas.fetch_sub(1, std::memory_order_release);
+    if (!base_) return;
+    uint8_t* base = base_;
+    base_ = nullptr;
+    // Commit nothing, discard everything: one MAP_FIXED PROT_NONE mapping replaces
+    // the reservation and every committed host page in it (so the next arena
+    // reads zero and a stale guest pointer faults), while the 4 GB address range
+    // stays reserved for the next GuestArena.
+    void* reset = mmap(base, size_t(kArenaSize), PROT_NONE,
+                       MAP_PRIVATE | MAP_ANON | MAP_FIXED | MAP_NORESERVE, -1, 0);
+    bool pooled = false;
+    if (reset != MAP_FAILED) {
+        std::lock_guard<std::mutex> lk(poolMu);
+        if (!pooledBase) {
+            pooledBase = base;
+            pooled = true;
+        }
     }
+    // Keep liveCount() meaning "live arenas": the pooled range is an address-space
+    // reservation, not an owned guest address space.
+    liveArenas.fetch_sub(1, std::memory_order_release);
+    if (!pooled) munmap(base, size_t(kArenaSize));
 }
 
 void GuestArena::commitHostPages(uint64_t first, uint64_t last) {
