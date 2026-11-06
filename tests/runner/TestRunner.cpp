@@ -614,6 +614,14 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             const uint32_t wbad = obj();
             m.write<uint32_t>(wbad, 0x20000001u); m.write<uint32_t>(wbad + 4, 4); m.write<uint32_t>(wbad + 8, 0xF0000000u);
             sexpect(faults(W + "5eraseEmm", {wbad, 0, 1}), "erase on a wide string whose buffer would run past 4 GB");
+            // The wrap case: a wide string claiming 0x40000002 characters. erase at 0x40000000 would
+            // compute data + 0x100000004, which wraps to data + 4 and silently moves real characters.
+            const uint32_t wrapBuf = p.heap().allocZeroed(64);
+            for (uint32_t i = 0; i < 4; ++i) m.write<uint32_t>(wrapBuf + i * 4, 'A' + i);
+            const uint32_t wrap = obj();
+            m.write<uint32_t>(wrap, 0x40000004u | 1); m.write<uint32_t>(wrap + 4, 0x40000002u); m.write<uint32_t>(wrap + 8, wrapBuf);
+            sexpect(faults(W + "5eraseEmm", {wrap, 0x40000000u, 1}), "erase whose offset would wrap past 4 GB");
+            sexpect(m.read<uint32_t>(wrapBuf) == 'A' && m.read<uint32_t>(wrapBuf + 4) == 'B', "the wrapped erase did not move characters");
             // A huge length is refused before anything is allocated on the host.
             sexpect(stops(C + "6appendEmc", {s1, 0x7FFFFFF0u, 'z'}), "append(n, c) beyond the guest heap stops with an error");
             sexpect(stops(C + "6__initEmc", {obj(), 0xFFFFFFF0u, 'z'}), "__init(n, c) beyond max_size is length_error");
