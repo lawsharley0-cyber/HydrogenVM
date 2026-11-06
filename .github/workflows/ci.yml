@@ -218,6 +218,8 @@ jobs:
             app/device-build.log
             app/sim-build.log
             sim-out/
+            build/cold-start-build.log
+            build/cold-start-diagnostics/
           if-no-files-found: warn
 
   # Run report publishing only after trusted events, in jobs with narrowly

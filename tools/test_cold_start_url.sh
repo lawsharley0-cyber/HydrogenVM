@@ -23,7 +23,12 @@ trap 'xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true' EXIT
 
 # Initialize installation/container state, then terminate the process before
 # the actual URL launch. A Home Screen icon is created from an already-used app.
-xcrun simctl launch "$UDID" "$BUNDLE_ID"
+SETUP_LAUNCH=$(xcrun simctl launch "$UDID" "$BUNDLE_ID")
+echo "$SETUP_LAUNCH"
+SETUP_PID=${SETUP_LAUNCH##*: }
+case "$SETUP_PID" in
+    ''|*[!0-9]*) echo "::error::Cannot identify setup process: $SETUP_LAUNCH"; exit 1 ;;
+esac
 DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
 for _ in $(seq 1 40); do
     DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
@@ -32,9 +37,19 @@ for _ in $(seq 1 40); do
 done
 [ -f "$DATA/Documents/cold-start-launched" ] || { echo "::error::Instrumented setup launch did not write its marker"; exit 1; }
 xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+# Simulator app processes are host processes. Do not open the URL while the
+# terminated setup instance can still receive it instead of a fresh launch.
+for _ in $(seq 1 40); do
+    kill -0 "$SETUP_PID" 2>/dev/null || break
+    sleep 0.5
+done
+if kill -0 "$SETUP_PID" 2>/dev/null; then
+    echo "::error::Setup process $SETUP_PID did not exit after termination"
+    exit 1
+fi
+echo "PASS: setup process $SETUP_PID exited before the cold URL"
 
 GUEST_ID=$(python3 -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleIdentifier"])' "$GUEST_APP/Info.plist")
-xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 rm -f "$DATA/Documents/cold-start-launched" "$DATA/Documents/cold-start-error" "$DATA/Documents/cold-start-queued" "$DATA/Documents/cold-start-routed" "$DATA/Documents/cold-start-guest-passed"
 mkdir -p "$DATA/Documents/Apps/$GUEST_ID"
 cp -R "$GUEST_APP" "$DATA/Documents/Apps/$GUEST_ID/"
@@ -53,8 +68,16 @@ done
 # A failed stage is annotated as well as printed: workflow logs need admin rights to
 # download, annotations are readable from the run page.
 app_log() {
+    local out=${HVM_COLD_START_OUT:-build/cold-start-diagnostics}
+    mkdir -p "$out"
+    xcrun simctl io "$UDID" screenshot "$out/screen.png" >"$out/screenshot.log" 2>&1 || true
     xcrun simctl spawn "$UDID" log show --last 5m --style compact \
-        --predicate 'process == "HydrogenVM"' 2>/dev/null | tail -n 20 | tr '\n' ' ' | cut -c1-600
+        --predicate 'process == "HydrogenVM" OR process == "SpringBoard" OR process == "runningboardd"' \
+        >"$out/system.log" 2>&1 || true
+    xcrun simctl spawn "$UDID" launchctl list >"$out/launchctl.log" 2>&1 || true
+    xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data >"$out/container.txt" 2>&1 || true
+    cp "$DATA"/Documents/cold-start-* "$out/" 2>/dev/null || true
+    tail -n 80 "$out/system.log"
 }
 
 fail() {
