@@ -8,13 +8,14 @@ struct HarnessAppInfo {
 }
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
+// The synthetic player has no engine, GPU layer, or host-fault handler.
 let HVMGLLayerUnitTransformKey = "hvmUnitTransform"
 
 // The fixture has no emulator or host-fault signal handler.
 enum HVMCrashJournal {
     static func openSignalFile(_ path: String) {}
     static func closeSignalFile() {}
-    static func availableMemory() -> UInt64 { 0 }
+    static func availableMemory() -> UInt64 { UInt64(os_proc_available_memory()) }
 }
 
 @Observable @MainActor
@@ -77,6 +78,7 @@ final class HVMSession {
             UIColor.yellow.setFill(); context.fill(CGRect(x: 160, y: 240, width: 160, height: 240))
         }
         PlayerProbe.shared.lastOrientation = interfaceOrientation
+        framesPresented += 1
         onFrame?(image.cgImage!)
         PlayerProbe.shared.frameDelivered = true
     }

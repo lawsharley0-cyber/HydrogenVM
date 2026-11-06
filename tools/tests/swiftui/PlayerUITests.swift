@@ -2,6 +2,20 @@ import XCTest
 
 final class PlayerUITests: XCTestCase {
     @MainActor
+    func testSyntheticSessionCountsDeliveredFrames() {
+        let app = XCUIApplication()
+        app.launchEnvironment["PLAYER_COUNTER_TEST"] = "1"
+        app.launch()
+        let counter = app.staticTexts["frame-counter"]
+        XCTAssertTrue(counter.waitForExistence(timeout: 10))
+        XCTAssertEqual(counter.label, "0")
+        app.buttons["Deliver Test Frame"].tap()
+        wait(counter, label: "1")
+        app.buttons["Deliver Test Frame"].tap()
+        wait(counter, label: "2")
+    }
+
+    @MainActor
     private func open(_ orientation: Int = 1, overlay: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
         // The debug overlay is off by default (#280); tests that drive the controls turn it on.

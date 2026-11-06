@@ -11,7 +11,36 @@ struct InstalledApp {
 
 @main
 struct EditorHarness: App {
-    var body: some Scene { WindowGroup { HarnessHome() } }
+    var body: some Scene {
+        WindowGroup {
+            if ProcessInfo.processInfo.environment["PLAYER_COUNTER_TEST"] == "1" {
+                FrameCounterHarness()
+            } else {
+                HarnessHome()
+            }
+        }
+    }
+}
+
+private struct FrameCounterHarness: View {
+    @State private var session: HVMSession?
+    @State private var count: UInt64 = 0
+
+    var body: some View {
+        VStack {
+            Text("\(count)").accessibilityIdentifier("frame-counter")
+            Button("Deliver Test Frame") {
+                guard let session else { return }
+                session.deliverFrame()
+                count = session.framesPresented
+            }
+        }
+        .onAppear {
+            let newSession = HVMSession(bundlePath: "", homePath: "")
+            session = newSession
+            count = newSession.framesPresented
+        }
+    }
 }
 
 struct HarnessHome: View {

@@ -3,10 +3,16 @@ name: CI
 # Linux runs on every push. The macOS job (Apple-toolchain engine build + speed
 # on Apple Silicon, Xcode device/simulator builds, simulator run) costs 10x the
 # Actions minutes on a private repo, so it runs when a commit message contains
-# "[mac]", on manual dispatch, or once a week.
+# "[mac]", when a pull request is labelled "mac" or its title contains "[mac]",
+# on manual dispatch, or once a week. The pull-request opt-in exists so the
+# simulator regressions (including the cold-start URL handoff) can gate a PR
+# without paying for the job on every one.
 on:
   push:
   pull_request:
+    # Body edits (including bot summaries) must not cancel an active validation.
+    # A changed opt-in title is picked up on synchronize, or add the mac label.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
   schedule:
     - cron: "17 9 * * 1"
@@ -97,7 +103,10 @@ jobs:
     needs: linux
     if: >-
       github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
-      contains(github.event.head_commit.message, '[mac]')
+      contains(github.event.head_commit.message, '[mac]') ||
+      (github.event_name == 'pull_request' &&
+       (contains(github.event.pull_request.labels.*.name, 'mac') ||
+        contains(github.event.pull_request.title, '[mac]')))
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
@@ -161,6 +170,37 @@ jobs:
         run: |
           tools/sim_test.sh app/xbuild/Release-iphonesimulator/HydrogenVM.app build/ios/UIKitTest.app \
             "ALL CHECKS PASSED" "70,350@0.3;230,350@0.5" sim-out
+      - name: Test cold-start game URL handoff (simulator)
+        run: |
+          xcodebuild -project app/HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
+            -sdk iphonesimulator SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS=COLD_START_URL_TEST \
+            SYMROOT="$PWD/build/cold-start-xbuild" CODE_SIGNING_ALLOWED=NO build >build/cold-start-build.log 2>&1 || {
+              tail -150 build/cold-start-build.log
+              exit 1
+            }
+          xcodegen --spec tools/tests/swiftui/project.yml --project tools/tests/swiftui
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices=json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if "iOS" not in runtime: continue
+              for device in devices[runtime]:
+                  if device["name"].startswith("iPhone"):
+                      print(device["udid"]); sys.exit(0)
+          sys.exit("No iPhone simulator")')
+          xcodebuild -project tools/tests/swiftui/SaveEditorHarness.xcodeproj -scheme ColdStartPrompt \
+            -configuration Debug -destination "platform=iOS Simulator,id=$UDID" \
+            -derivedDataPath "$PWD/build/cold-start-prompts" build-for-testing \
+            >build/cold-start-prompt-build.log 2>&1 || {
+              tail -150 build/cold-start-prompt-build.log
+              exit 1
+            }
+          PROMPT_RUN=$(python3 -c 'from pathlib import Path; import sys; files=list(Path(sys.argv[1]).glob("*.xctestrun")); assert len(files)==1, files; print(files[0])' \
+            "$PWD/build/cold-start-prompts/Build/Products")
+          HVM_COLD_START_UDID="$UDID" HVM_COLD_START_XCTESTRUN="$PROMPT_RUN" \
+            bash tools/test_cold_start_url.sh build/cold-start-xbuild/Release-iphonesimulator/HydrogenVM.app \
+            build/ios/FoundationTest.app
       # The real-game GLES simulator checks (Tiny Tower, Angry Birds, GLES 1.1 on ES 2) read
       # the three IPAs from the private fixture store and run in private-fixture-availability.yml
       # on trusted main only. Public pull requests cannot read that store, and the IPAs are
@@ -200,6 +240,9 @@ jobs:
             app/device-build.log
             app/sim-build.log
             sim-out/
+            build/cold-start-build.log
+            build/cold-start-prompt-build.log
+            build/cold-start-diagnostics/
           if-no-files-found: warn
 
   # Run report publishing only after trusted events, in jobs with narrowly

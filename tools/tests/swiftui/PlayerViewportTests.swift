@@ -5,6 +5,16 @@ import CoreFoundation
 
 final class PlayerViewportTests: XCTestCase {
     @MainActor
+    func testSyntheticFrameCounterAdvancesOncePerDelivery() {
+        let session = HVMSession(bundlePath: "/synthetic/app", homePath: "/synthetic/home")
+        XCTAssertEqual(session.framesPresented, 0)
+        session.deliverFrame()
+        XCTAssertEqual(session.framesPresented, 1)
+        session.deliverFrame()
+        XCTAssertEqual(session.framesPresented, 2)
+    }
+
+    @MainActor
     func testAccessibilityActionUsesOverlayCallback() throws {
         let view = EmulatorScreen.ScreenView(frame: .zero)
         var calls = 0
