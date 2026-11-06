@@ -395,6 +395,308 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
         check(safe, "wide-char conversions fault on unterminated sources, unreadable sources and read-only destinations");
     }
 
+    // 0b. libc++ std::__1::basic_string (issue #311). The app's inline code reads the
+    // object directly, so these check the bytes of the 12-byte object against the
+    // classic little-endian libc++ layout, not only the content. Expected values come
+    // from that layout: short = {size << 1, chars...} (char: data at +1, 10 chars;
+    // wchar_t: data at +4, 1 char); long = {(cap + 1) | 1, size, data}, with cap + 1
+    // rounded up to 16 bytes' worth of characters (__recommend) and growth to at least
+    // twice the old capacity (__grow_by).
+    {
+        auto& m = p.mem();
+        const std::string C = "__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE";
+        const std::string W = "__ZNSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE";
+        auto callS = [&](const std::string& name, std::initializer_list<uint32_t> args) -> uint32_t {
+            auto sym = p.lookupSymbol(name);
+            if (!sym) { std::printf("  (missing %s)\n", name.c_str()); return 0xDEADu; }
+            return uint32_t(p.callGuest(cpu, *sym, args));
+        };
+        auto cstr = [&](const char* s) { return p.allocCString(s); };
+        auto obj = [&]() { const uint32_t o = p.heap().allocZeroed(16); m.write<uint32_t>(o, 0xA5A5A5A5u); return o; };
+        // Content of a char string read straight from the layout (independent of the code under test).
+        auto text = [&](uint32_t s) {
+            const uint8_t b0 = m.read<uint8_t>(s);
+            const bool lng = b0 & 1;
+            const uint32_t n = lng ? m.read<uint32_t>(s + 4) : b0 >> 1;
+            const uint32_t d = lng ? m.read<uint32_t>(s + 8) : s + 1;
+            if (d < 0x10000 || n > (1u << 20)) return std::string("<not a string>");   // unconstructed object
+            std::string r(n, '\0');
+            for (uint32_t i = 0; i < n; ++i) r[i] = char(m.read<uint8_t>(d + i));
+            return m.read<uint8_t>(d + n) == 0 ? r : std::string("<no NUL>");
+        };
+        auto capWord = [&](uint32_t s) { return m.read<uint32_t>(s); };
+        bool ok = true;
+        auto expect = [&](bool cond, const char* what) { if (!cond) { std::printf("    libc++ string: %s\n", what); ok = false; } };
+
+        // __init(const char*, size_t): short and long.
+        const uint32_t a = obj(), b = obj(), c = obj(), d = obj(), e = obj();
+        callS(C + "6__initEPKcm", {a, cstr("hello"), 5});
+        expect(m.read<uint8_t>(a) == 10 && text(a) == "hello", "__init short: size byte 5 << 1, data at +1");
+        callS(C + "6__initEPKcm", {b, cstr("abcdefghijklmnopqrst"), 20});
+        expect(capWord(b) == 33 && m.read<uint32_t>(b + 4) == 20 && text(b) == "abcdefghijklmnopqrst", "__init long: cap word (31 + 1) | 1, size 20");
+        // The 10-char limit of the inline buffer.
+        callS(C + "6__initEPKcm", {c, cstr("0123456789"), 10});
+        expect(m.read<uint8_t>(c) == 20 && text(c) == "0123456789", "__init 10 chars stays short");
+        callS(C + "6__initEPKcm", {d, cstr("0123456789A"), 11});
+        expect(capWord(d) == 17 && text(d) == "0123456789A", "__init 11 chars goes long with cap 15");
+        // __init(const char*, size_t, size_t reserve) and __init(size_t, char).
+        callS(C + "6__initEPKcmm", {e, cstr("ab"), 2, 40});
+        expect(capWord(e) == 49 && text(e) == "ab", "__init with reserve 40: cap 47");
+        const uint32_t f = obj();
+        callS(C + "6__initEmc", {f, 3, 'z'});
+        expect(m.read<uint8_t>(f) == 6 && text(f) == "zzz", "__init(n, c)");
+
+        // Copy constructor: short copies the 12 bytes; long gets its own buffer. Returns this.
+        const uint32_t g = obj(), h = obj();
+        const uint32_t gr = callS(C + "C1ERKS5_", {g, a});
+        expect(gr == g && m.read<uint32_t>(g) == m.read<uint32_t>(a) && m.read<uint32_t>(g + 4) == m.read<uint32_t>(a + 4) &&
+                   m.read<uint32_t>(g + 8) == m.read<uint32_t>(a + 8), "copy ctor short: same 12 bytes, returns this");
+        callS(C + "C2ERKS5_", {h, b});
+        expect(m.read<uint32_t>(h + 8) != m.read<uint32_t>(b + 8) && text(h) == text(b) && capWord(h) == 33, "copy ctor long: own buffer");
+        const uint32_t sub = obj();
+        callS(C + "C1ERKS5_mmRKS4_", {sub, b, 2, 3, 0});
+        expect(text(sub) == "cde", "substring ctor (pos 2, n 3)");
+
+        // push_back on a full inline buffer grows to cap 31 (max(11, 2 * 10) -> 31).
+        callS(C + "9push_backEc", {c, 'X'});
+        expect(capWord(c) == 33 && text(c) == "0123456789X", "push_back past 10 chars goes long, cap 31");
+        callS(C + "9push_backEc", {a, '!'});
+        expect(m.read<uint8_t>(a) == 12 && text(a) == "hello!", "push_back short stays short");
+
+        // assign / append / insert / replace / erase.
+        callS(C + "6assignEPKc", {a, cstr("xy")});
+        expect(text(a) == "xy" && m.read<uint8_t>(a) == 4, "assign(const char*) short");
+        callS(C + "6appendEPKcm", {a, cstr("0123456789"), 10});
+        expect(text(a) == "xy0123456789" && capWord(a) == 33, "append grows: max(12, 20) -> cap 31");
+        callS(C + "6appendEmc", {a, 2, '-'});
+        callS(C + "6appendEPKc", {a, cstr("end")});
+        expect(text(a) == "xy0123456789--end", "append(n, c), append(const char*)");
+        callS(C + "6insertEmPKc", {a, 2, cstr("<>")});
+        expect(text(a) == "xy<>0123456789--end", "insert(pos, const char*)");
+        callS(C + "6insertEmmc", {a, 0, 2, '#'});
+        callS(C + "7replaceEmmPKcm", {a, 4, 2, cstr("[]"), 2});
+        expect(text(a) == "##xy[]0123456789--end", "insert(pos, n, c), replace(pos, n1, s, n2)");
+        callS(C + "5eraseEmm", {a, 6, 10});
+        expect(text(a) == "##xy[]--end", "erase(pos, n)");
+        callS(C + "7replaceEmmmc", {a, 0, 2, 3, '*'});
+        expect(text(a) == "***xy[]--end", "replace(pos, n1, n2, c)");
+        // Self-aliasing: append part of its own buffer.
+        callS(C + "6appendEPKcm", {a, m.read<uint32_t>(a + 8), 3});
+        expect(text(a) == "***xy[]--end***", "append from its own buffer");
+        callS(C + "aSERKS5_", {g, b});
+        expect(text(g) == "abcdefghijklmnopqrst", "operator=(const basic_string&)");
+        callS(C + "aSERKS5_", {g, g});
+        expect(text(g) == "abcdefghijklmnopqrst", "self assignment");
+        callS(C + "6assignERKS5_mm", {f, b, 18, 99});
+        expect(text(f) == "st", "assign(str, pos, n) clips n");
+
+        // Queries. Expected positions are counted by hand from the literal strings.
+        const uint32_t npos = 0xFFFFFFFFu;
+        expect(p.lookupSymbol(C + "4nposE") && m.read<uint32_t>(*p.lookupSymbol(C + "4nposE")) == npos, "npos value");
+        const std::string K = "__ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE";
+        const uint32_t q = obj();
+        callS(C + "6__initEPKcm", {q, cstr("one two one"), 11});
+        expect(callS(K + "4findEPKcmm", {q, cstr("one"), 1, 3}) == 8, "find(s, pos 1)");
+        expect(callS(K + "4findEcm", {q, 't', 0}) == 4 && callS(K + "4findEcm", {q, 'z', 0}) == npos, "find(c)");
+        expect(callS(K + "5rfindEPKcmm", {q, cstr("one"), npos, 3}) == 8 && callS(K + "5rfindEPKcmm", {q, cstr("one"), 7, 3}) == 0, "rfind(s)");
+        expect(callS(K + "5rfindEcm", {q, 'o', npos}) == 8, "rfind(c)");
+        expect(callS(K + "13find_first_ofEPKcmm", {q, cstr("wt"), 0, 2}) == 4 && callS(K + "12find_last_ofEPKcmm", {q, cstr("wt"), npos, 2}) == 5,
+               "find_first_of, find_last_of");
+        expect(callS(K + "17find_first_not_ofEPKcmm", {q, cstr("one"), 0, 3}) == 3 && callS(K + "16find_last_not_ofEPKcmm", {q, cstr("one"), npos, 3}) == 7,
+               "find_first_not_of, find_last_not_of");
+        expect(int32_t(callS(K + "7compareEPKc", {q, cstr("one two one")})) == 0 && int32_t(callS(K + "7compareEPKc", {q, cstr("one two onf")})) < 0 &&
+                   int32_t(callS(K + "7compareEPKc", {q, cstr("one")})) > 0, "compare(const char*)");
+        expect(int32_t(callS(K + "7compareEmmPKc", {q, 4, 3, cstr("two")})) == 0 && int32_t(callS(K + "7compareEmmPKcm", {q, 4, 3, cstr("twx"), 2})) > 0,
+               "compare(pos, n, s), compare(pos, n, s, n2)");
+        expect(int32_t(callS(K + "7compareEmmRKS5_mm", {q, 0, 3, q, 8, 3})) == 0, "compare(pos, n, str, pos2, n2)");
+        // Unsigned bytes: 0xE9 sorts after 'a'.
+        const uint32_t hi = obj();
+        callS(C + "6__initEPKcm", {hi, cstr("\xE9"), 1});
+        expect(int32_t(callS(K + "7compareEPKc", {hi, cstr("a")})) > 0, "compare treats bytes as unsigned");
+        const uint32_t buf = p.heap().allocZeroed(16);
+        expect(callS(K + "4copyEPcmm", {q, buf, 3, 4}) == 3 && std::memcmp(m.host(buf), "two", 3) == 0, "copy(buf, n, pos)");
+        expect(callS(C + "2atEm", {q, 4}) == m.read<uint32_t>(q + 8) + 4, "at(n) returns the element address");
+
+        // reserve: grows by __recommend, and shrinks back inline when the content fits.
+        const uint32_t r = obj();
+        callS(C + "6__initEPKcm", {r, cstr("abc"), 3});
+        callS(C + "7reserveEm", {r, 100});
+        expect(capWord(r) == 113 && text(r) == "abc", "reserve(100): cap 111");
+        const uint32_t oldBuf = m.read<uint32_t>(r + 8);
+        callS(C + "7reserveEm", {r, 0});
+        expect(m.read<uint8_t>(r) == 6 && text(r) == "abc" && oldBuf && p.heap().blockSize(oldBuf) == 0, "reserve(0) moves back inline and frees");
+        callS(C + "6resizeEmc", {r, 5, '.'});
+        expect(text(r) == "abc..", "resize up with fill");
+        callS(C + "6resizeEmc", {r, 1, '.'});
+        expect(text(r) == "a", "resize down");
+
+        // insert(const_iterator, c) returns the new element's address.
+        const uint32_t it = callS(C + "6insertENS_11__wrap_iterIPKcEEc", {r, r + 1, 'Q'});
+        expect(text(r) == "Qa" && it == r + 1, "insert(iterator, c)");
+
+        // __grow_by_and_replace(old_cap, delta, old_sz, n_copy, n_del, n_add, s) as inline code calls it.
+        const uint32_t gb = obj();
+        callS(C + "6__initEPKcm", {gb, cstr("abcdef"), 6});
+        callS(C + "21__grow_by_and_replaceEmmmmmmPKc", {gb, 10, 5, 6, 2, 1, 12, cstr("XXXXXXXXXXXX")});
+        expect(text(gb) == "abXXXXXXXXXXXXdef" && capWord(gb) == 33, "__grow_by_and_replace");
+        // __grow_by leaves size to the caller but moves the tail.
+        const uint32_t gb2 = obj();
+        callS(C + "6__initEPKcm", {gb2, cstr("abcdefghijklmnopqrstu"), 21});
+        callS(C + "9__grow_byEmmmmmm", {gb2, 31, 1, 21, 21, 0, 0});
+        expect(capWord(gb2) == 65 && m.read<uint32_t>(gb2 + 8) >= 0x10000 && std::memcmp(m.host(m.read<uint32_t>(gb2 + 8)), "abcdefghijklmnopqrstu", 21) == 0, "__grow_by: max(32, 62) -> cap 63");
+
+        // Destructor frees a long buffer and returns this.
+        const uint32_t hb = m.read<uint32_t>(h + 8);
+        expect(callS(C + "D1Ev", {h}) == h && hb && p.heap().blockSize(hb) == 0, "destructor frees the long buffer");
+        callS(C + "D2Ev", {g});
+
+        // Errors stop the call instead of corrupting memory.
+        auto throwsHost = [&](const std::string& name, std::initializer_list<uint32_t> args) {
+            try { callS(name, args); } catch (const std::exception&) { return true; }
+            return false;
+        };
+        expect(throwsHost(C + "6insertEmPKc", {q, 99, cstr("x")}), "insert past the end is out_of_range");
+        expect(throwsHost(K + "2atEm", {q, 11}), "at(size()) is out_of_range");
+        expect(throwsHost("__ZNKSt3__121__basic_string_commonILb1EE20__throw_length_errorEv", {q}), "__throw_length_error");
+        expect(throwsHost(C + "7reserveEm", {q, 0xFFFFFFF0u}), "reserve beyond max_size is length_error");
+
+        // std::to_string returns through the hidden result pointer in r0.
+        const uint32_t ts = obj(), td = obj(), tl = obj();
+        callS("__ZNSt3__19to_stringEi", {ts, uint32_t(-42)});
+        callS("__ZNSt3__19to_stringEd", {td, 0, 0x400C0000u});   // 3.5
+        callS("__ZNSt3__19to_stringEy", {tl, 0x00000000u, 0x00000001u});   // 1 << 32
+        expect(text(ts) == "-42" && text(td) == "3.500000" && text(tl) == "4294967296", "to_string(int, double, unsigned long long)");
+
+        check(ok, "libc++ std::string: layout, __init, copy, push_back growth, assign/append/insert/replace/erase, find family, compare, reserve, __grow_by, errors, to_string");
+
+        // Guest-memory safety and cost (review on PR #356). Uses the guard pages from section 0:
+        // 0xbf100000 is RW, +4096 is unmapped, +8192 is read-only.
+        {
+            bool safe = true;
+            auto sexpect = [&](bool cond, const char* what) { if (!cond) { std::printf("    libc++ string safety: %s\n", what); safe = false; } };
+            auto faults = [&](const std::string& name, std::initializer_list<uint32_t> args) {
+                try { callS(name, args); } catch (const CPU::GuestFault& f) { return f.exit == CPU::Exit::MemFault; } catch (const std::exception&) { return false; }
+                return false;
+            };
+            auto stops = [&](const std::string& name, std::initializer_list<uint32_t> args) {
+                // A host error (length_error, bad_alloc, bad arguments) reaches the caller wrapped
+                // in a GuestFault that is not a memory fault.
+                try { callS(name, args); } catch (const CPU::GuestFault& f) { return f.exit != CPU::Exit::MemFault; }
+                catch (const std::exception&) { return true; }
+                return false;
+            };
+            const uint32_t g = 0xbf100000;
+            const uint32_t s1 = obj();
+            callS(C + "6__initEPKcm", {s1, cstr("abc"), 3});
+            // A source range that runs into the unmapped page faults instead of being read.
+            sexpect(faults(C + "6appendEPKcm", {s1, g + 4090, 16}), "append from a range that crosses into an unmapped page");
+            sexpect(faults(C + "6__initEPKcm", {obj(), g + 4096, 4}), "__init from an unmapped page");
+            // An unterminated C string ending at the unmapped page faults.
+            for (uint32_t i = 0; i < 4096; ++i) m.write<uint8_t>(g + i, 'x');
+            sexpect(faults(C + "6assignEPKc", {s1, g + 4000}), "assign(const char*) without a NUL before an unmapped page");
+            // Writes to a read-only destination fault.
+            sexpect(faults(K + "4copyEPcmm", {q, g + 8192, 3, 0}), "copy into a read-only page");
+            sexpect(faults(C + "6__initEPKcm", {g + 8192, cstr("abc"), 3}), "__init into a read-only object");
+            // A long string whose buffer is on the read-only page (as inline code may build one):
+            // reading works, writing in place faults and leaves the object alone.
+            const uint32_t ro = obj();
+            for (uint32_t i = 0; i < 4; ++i) m.write<uint8_t>(g + 8192 + i, uint8_t("abc"[i]));
+            m.write<uint32_t>(ro, 17); m.write<uint32_t>(ro + 4, 3); m.write<uint32_t>(ro + 8, g + 8192);   // cap 15, size 3
+            sexpect(callS(K + "4findEcm", {ro, 'c', 0}) == 2, "a read-only buffer can be searched");
+            sexpect(faults(C + "9push_backEc", {ro, 'd'}), "push_back into a read-only buffer");
+            sexpect(faults(C + "6resizeEmc", {ro, 1, 0}), "shrinking resize of a read-only buffer");
+            sexpect(m.read<uint32_t>(ro + 4) == 3 && m.read<uint8_t>(g + 8192 + 3) == 0, "a faulted write leaves size and data alone");
+            // A malformed long string (size above capacity, or a buffer running past 4 GB) is refused
+            // before any offset is computed from it.
+            // Each fixture is fully mapped and readable, so only the consistency check can refuse it.
+            const uint32_t roomy = p.heap().allocZeroed(256);   // readable well past any claimed size
+            for (uint32_t i = 0; i < 256; ++i) m.write<uint8_t>(roomy + i, uint8_t('a' + i % 26));
+            const uint32_t bad = obj();                         // long: capacity 15, size 20
+            m.write<uint32_t>(bad, 17); m.write<uint32_t>(bad + 4, 20); m.write<uint32_t>(bad + 8, roomy);
+            sexpect(faults(C + "5eraseEmm", {bad, 0, 1}), "erase on a string whose size exceeds its capacity");
+            sexpect(m.read<uint32_t>(bad + 8) == roomy && m.read<uint32_t>(bad + 4) == 20, "the refused erase left the object alone");
+            const uint32_t sbad = p.heap().allocZeroed(64);     // short: size byte 0xFE claims 127 chars, inline holds 10
+            for (uint32_t i = 1; i < 64; ++i) m.write<uint8_t>(sbad + i, 'z');
+            m.write<uint8_t>(sbad, 0xFE);
+            const uint32_t sdst = p.heap().allocZeroed(256);
+            sexpect(faults(K + "4copyEPcmm", {sbad, sdst, 127, 0}), "copy from a short string whose size byte exceeds the inline buffer");
+            const uint32_t wsbad = p.heap().allocZeroed(64);    // wide short: size byte 0x0A claims 5 chars, inline holds 1
+            m.write<uint8_t>(wsbad, 0x0A);
+            const uint32_t wdst = p.heap().allocZeroed(64);
+            // resize and at on the same malformed short wide string must not reach past the
+            // 12-byte object (sentinel just after it).
+            m.write<uint32_t>(wsbad + 12, 0x5E5E5E5Eu);
+            sexpect(faults("__ZNSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE6resizeEmw", {wsbad, 2, 'q'}) &&
+                        m.read<uint32_t>(wsbad + 12) == 0x5E5E5E5Eu, "resize of a malformed short wide string leaves the bytes after it alone");
+            sexpect(faults("__ZNSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE2atEm", {wsbad, 2}), "at() on a malformed short wide string");
+            sexpect(faults("__ZNKSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE4copyEPwmm", {wsbad, wdst, 5, 0}), "copy from a short wide string whose size byte exceeds the inline buffer");
+            // The wrap case: a wide string claiming 0x40000002 characters. erase at 0x40000000 would
+            // compute data + 0x100000004, which wraps to data + 4 and silently moves real characters.
+            const uint32_t wrapBuf = p.heap().allocZeroed(64);
+            for (uint32_t i = 0; i < 4; ++i) m.write<uint32_t>(wrapBuf + i * 4, 'A' + i);
+            const uint32_t wrap = obj();
+            m.write<uint32_t>(wrap, 0x40000004u | 1); m.write<uint32_t>(wrap + 4, 0x40000002u); m.write<uint32_t>(wrap + 8, wrapBuf);
+            sexpect(faults(W + "5eraseEmm", {wrap, 0x40000000u, 1}), "erase whose offset would wrap past 4 GB");
+            sexpect(m.read<uint32_t>(wrapBuf) == 'A' && m.read<uint32_t>(wrapBuf + 4) == 'B', "the wrapped erase did not move characters");
+            // A huge length is refused before anything is allocated on the host.
+            sexpect(stops(C + "6appendEmc", {s1, 0x7FFFFFF0u, 'z'}), "append(n, c) beyond the guest heap stops with an error");
+            sexpect(stops(C + "6__initEmc", {obj(), 0xFFFFFFF0u, 'z'}), "__init(n, c) beyond max_size is length_error");
+            sexpect(text(s1) == "abc", "a refused call leaves the string unchanged");
+            // Appends within capacity reuse the buffer (amortised O(1) push_back).
+            const uint32_t pb = obj();
+            callS(C + "6__initEPKcmm", {pb, cstr("x"), 1, 100});
+            const uint32_t buf0 = m.read<uint32_t>(pb + 8);
+            for (int i = 0; i < 90; ++i) callS(C + "9push_backEc", {pb, uint32_t('a' + i % 26)});
+            sexpect(m.read<uint32_t>(pb + 8) == buf0 && m.read<uint32_t>(pb + 4) == 91 && capWord(pb) == 113, "push_back within capacity keeps the buffer");
+            // __grow_by with arguments that do not match the string is refused.
+            sexpect(stops(C + "9__grow_byEmmmmmm", {pb, 50, 1, 91, 91, 0, 0}), "__grow_by with the wrong old capacity");
+            sexpect(stops(C + "9__grow_byEmmmmmm", {pb, 111, 1, 200, 0, 0, 0}), "__grow_by with old size above the capacity");
+            sexpect(m.read<uint32_t>(pb + 8) == buf0, "a refused __grow_by keeps the buffer");
+            check(safe, "libc++ std::string: faults on unreadable or read-only guest memory, refuses huge lengths before allocating, appends in place, validates __grow_by");
+        }
+
+        // wchar_t: inline buffer holds 1 character at +4; capacities round to 4 characters.
+        bool wok = true;
+        auto wtext = [&](uint32_t s) {
+            const uint8_t b0 = m.read<uint8_t>(s);
+            const bool lng = b0 & 1;
+            const uint32_t n = lng ? m.read<uint32_t>(s + 4) : b0 >> 1;
+            const uint32_t dd = lng ? m.read<uint32_t>(s + 8) : s + 4;
+            if (dd < 0x10000 || n > (1u << 20)) return std::u32string(U"<not a string>");
+            std::u32string t(n, U'\0');
+            for (uint32_t i = 0; i < n; ++i) t[i] = char32_t(m.read<uint32_t>(dd + i * 4));
+            return m.read<uint32_t>(dd + n * 4) == 0 ? t : std::u32string(U"<no NUL>");
+        };
+        auto wcs = [&](const char32_t* s) {
+            const uint32_t n = uint32_t(std::char_traits<char32_t>::length(s));
+            const uint32_t at = p.heap().allocZeroed((n + 1) * 4);
+            for (uint32_t i = 0; i < n; ++i) m.write<uint32_t>(at + i * 4, uint32_t(s[i]));
+            return at;
+        };
+        auto wexpect = [&](bool cond, const char* what) { if (!cond) { std::printf("    libc++ wstring: %s\n", what); wok = false; } };
+        const uint32_t wa = obj(), wb = obj(), wc = obj();
+        callS(W + "6__initEmw", {wa, 1, 'Z'});
+        wexpect(m.read<uint8_t>(wa) == 2 && m.read<uint32_t>(wa + 4) == 'Z' && m.read<uint32_t>(wa + 8) == 0, "__init(1, c) short: data at +4");
+        callS(W + "6__initEmw", {wb, 3, 'w'});
+        wexpect(capWord(wb) == 5 && m.read<uint32_t>(wb + 4) == 3 && wtext(wb) == U"www", "__init(3, c) long: cap 3");
+        callS(W + "6assignEPKw", {wa, wcs(U"hello")});
+        wexpect(wtext(wa) == U"hello" && capWord(wa) == 9, "assign(const wchar_t*): max(5, 2) -> cap 7");
+        callS(W + "C1ERKS5_", {wc, wa});
+        wexpect(wtext(wc) == U"hello" && m.read<uint32_t>(wc + 8) != m.read<uint32_t>(wa + 8), "copy ctor long");
+        callS(W + "aSERKS5_", {wb, wc});
+        wexpect(wtext(wb) == U"hello", "operator=");
+        callS(W + "9push_backEw", {wb, 0x20AC});
+        wexpect(wtext(wb) == U"hello€", "push_back non-ASCII");
+        const std::string WK = "__ZNKSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE";
+        wexpect(callS(WK + "4findEwm", {wb, 0x20AC, 0}) == 5, "find(wchar_t)");
+        const uint32_t wneg = obj();
+        callS(W + "6__initEmw", {wneg, 1, 0xFFFFFFFFu});   // wchar_t is signed on iOS: -1 sorts first
+        wexpect(int32_t(callS(WK + "7compareEPKw", {wneg, wcs(U"a")})) < 0, "compare treats wchar_t as signed");
+        const uint32_t wbuf = m.read<uint32_t>(wc + 8);
+        wexpect(callS(W + "D1Ev", {wc}) == wc && wbuf && p.heap().blockSize(wbuf) == 0, "destructor frees");
+        check(wok, "libc++ std::wstring: inline layout at +4, capacity rounding, assign, copy, operator=, push_back, find, signed compare, destructor");
+    }
+
     // 1. String property tests vs glibc
     // 1a. strlen & strnlen
     {
