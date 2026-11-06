@@ -94,6 +94,7 @@ struct VCData : ObjC::HostObject {
     id parent = 0, presented = 0, presenting = 0;   // presented: retained
     std::vector<id> children;        // retained
     id navigationItem = 0, tabBarItem = 0;     // retained
+    id storyboard = 0;               // retained; set by the storyboard that loaded it
     bool appeared = false, wantsFullScreen = false;
     int32_t modalStyle = 0;
 };
