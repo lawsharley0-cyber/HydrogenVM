@@ -116,6 +116,12 @@ pthread_t spawnHostThread(std::function<void()> fn) {
 Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProcessIdentity.fetch_add(1)), mixer_(std::make_shared<Audio::Mixer>()) {
     if (const char* enabled = std::getenv("HVM_THREAD_LIVENESS"); enabled && std::strcmp(enabled, "1") == 0)
         cfg_.threadLiveness = true;
+    if (const char* gl = std::getenv("HVM_GUEST_LIBS"); gl && std::strcmp(gl, "1") == 0)
+        cfg_.guestLibs = true;
+    if (cfg_.guestLibDir.empty()) {
+        if (const char* gld = std::getenv("HVM_GUEST_LIB_DIR"); gld && *gld)
+            cfg_.guestLibDir = gld;
+    }
     mem_ = std::make_unique<Memory::GuestArena>();
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
@@ -197,6 +203,7 @@ Process::~Process() {
         if (!stuck.empty()) std::fprintf(stderr, "[hvm:warn] Process teardown: guest threads still running 2 s after stop:\n%s", stuck.c_str());
     }
     joinHostThreads(true);
+    unmapGuestDylibs();
     if (t_processIdentity == identity_) { t_thread = nullptr; t_processIdentity = 0; }
 }
 
@@ -310,6 +317,7 @@ void Process::load() {
     logf(LogLevel::Info, "Loaded %s: %s, %zu imports, %zu initializers, entry %s",
          exe.c_str(), image_.cpuSubtype == Loader::kCpuArmV7S ? "armv7s" : image_.cpuSubtype == Loader::kCpuArmV6 ? "armv6" : "armv7",
          image_.binds.size(), image_.initializers.size(), describeAddress(image_.entry).c_str());
+    if (cfg_.guestLibs) loadGuestDylibs();
     defineData("__mh_execute_header", image_.headerAddr);
     setupEnvironment();
     setupMainThread();
@@ -320,7 +328,188 @@ void Process::load() {
         mem_->write<uint32_t>(s->addr, *lookupSymbol("__hvm_dyld_lazy_entry"));
         mem_->write<uint32_t>(s->addr + 4, *lookupSymbol("__hvm_dyld_func_lookup"));
     }
+    for (const auto& dylib : guestDylibs_) {
+        if (const auto* s = dylib.findSection("__DATA", "__dyld"); s && s->size >= 8) {
+            mem_->write<uint32_t>(s->addr, *lookupSymbol("__hvm_dyld_lazy_entry"));
+            mem_->write<uint32_t>(s->addr + 4, *lookupSymbol("__hvm_dyld_func_lookup"));
+        }
+    }
     for (auto& h : loadedHooks_) h();
+}
+
+namespace {
+bool isHostProvidedSystemDylib(const std::string& installName) {
+    if (installName.rfind("/System/Library/", 0) == 0) return true;
+    if (installName.rfind("/usr/lib/system/", 0) == 0) return true;
+    if (installName.rfind("/usr/lib/", 0) != 0) return false;
+    const std::string fname = fs::path(installName).filename().string();
+    // Guest C++ runtime libraries and custom guest libraries must be loaded as guest dylibs when guestLibs is on.
+    if (fname.rfind("libstdc++", 0) == 0 || fname.rfind("libc++", 0) == 0 ||
+        fname.rfind("libgcc_s", 0) == 0 || fname.rfind("libguest", 0) == 0)
+        return false;
+    static const char* const kHostLibPrefixes[] = {
+        "libSystem", "libc.", "libm.", "libpthread", "libdyld", "libdispatch",
+        "libobjc", "libz.", "libz1", "libsqlite3", "libiconv", "libxml2",
+        "libresolv", "libicucore", "libbsm", "libMobileGestalt", "libAccessibility",
+        "libCRFSuite", "liblangid", "liblockdown", "libarchive", "libbz2",
+        "liblzma", "libcupolicy", "libate", "libTelephonyUtilDynamic"
+    };
+    for (const char* prefix : kHostLibPrefixes)
+        if (fname.rfind(prefix, 0) == 0) return true;
+    return false;
+}
+
+std::vector<std::pair<std::string, bool>> peekDylibLoads(const std::vector<uint8_t>& bytes) {
+    std::vector<std::pair<std::string, bool>> deps;
+    const auto pr = Loader::probeMachO(bytes);
+    if (!pr.isMachO || !pr.hasArm32 || !pr.error.empty()) return deps;
+    const auto sl = Loader::selectSlice(bytes);
+    if (sl.size < 28) return deps;
+    const uint8_t* p = bytes.data() + sl.offset;
+    uint32_t ncmds = 0, sizeofcmds = 0;
+    std::memcpy(&ncmds, p + 16, 4);
+    std::memcpy(&sizeofcmds, p + 20, 4);
+    if (uint64_t(28) + sizeofcmds > sl.size) return deps;
+    size_t off = 28;
+    for (uint32_t i = 0; i < ncmds && off + 8 <= 28 + size_t(sizeofcmds); ++i) {
+        uint32_t cmd = 0, sz = 0;
+        std::memcpy(&cmd, p + off, 4);
+        std::memcpy(&sz, p + off + 4, 4);
+        if (sz < 8 || off + sz > 28 + size_t(sizeofcmds)) break;
+        if ((cmd == 0xCu || cmd == 0x80000018u || cmd == 0x8000001Fu || cmd == 0x20u || cmd == 0x80000023u) && sz >= 12) {
+            uint32_t strOff = 0;
+            std::memcpy(&strOff, p + off + 8, 4);
+            if (strOff < sz) {
+                size_t len = 0;
+                while (strOff + len < sz && p[off + strOff + len]) ++len;
+                deps.emplace_back(std::string(reinterpret_cast<const char*>(p + off + strOff), len), cmd == 0x80000018u);
+            }
+        }
+        off += sz;
+    }
+    return deps;
+}
+} // namespace
+
+void Process::loadGuestDylibs() {
+    uint32_t nextLoadAddr = std::max<uint32_t>(0x04000000u, (image_.highAddr + 0xFFFFu) & ~0xFFFFu);
+    std::set<std::string> visited, inProgress;
+
+    auto findDylibOnDisk = [&](const std::string& installName, const std::string& loaderDir) -> std::string {
+        const std::string fname = fs::path(installName).filename().string();
+        if (fname.empty()) return {};
+        std::vector<fs::path> candidates;
+        if (!cfg_.guestLibDir.empty()) candidates.push_back(fs::path(cfg_.guestLibDir) / fname);
+        if (installName.rfind("@executable_path/", 0) == 0)
+            candidates.push_back(fs::path(cfg_.bundlePath) / installName.substr(17));
+        if (installName.rfind("@loader_path/", 0) == 0 && !loaderDir.empty())
+            candidates.push_back(fs::path(loaderDir) / installName.substr(13));
+        if (installName.rfind("@rpath/", 0) == 0) {
+            candidates.push_back(fs::path(cfg_.bundlePath) / "Frameworks" / installName.substr(7));
+            candidates.push_back(fs::path(cfg_.bundlePath) / installName.substr(7));
+        }
+        candidates.push_back(fs::path(cfg_.bundlePath) / "Frameworks" / fname);
+        candidates.push_back(fs::path(cfg_.bundlePath) / fname);
+        std::error_code ec;
+        auto inside = [&](const fs::path& candidate, const std::string& root) {
+            if (root.empty()) return false;
+            ec.clear();
+            const auto base = fs::weakly_canonical(root, ec);
+            if (ec) return false;
+            const auto target = fs::weakly_canonical(candidate, ec);
+            if (ec) return false;
+            return std::mismatch(base.begin(), base.end(), target.begin(), target.end()).first == base.end();
+        };
+        for (const auto& c : candidates) {
+            if ((inside(c, cfg_.bundlePath) || inside(c, cfg_.guestLibDir)) && fs::is_regular_file(c, ec))
+                return c.string();
+        }
+        return {};
+    };
+
+    std::function<void(const std::string&, bool, const std::string&)> visitDylib =
+        [&](const std::string& installName, bool weak, const std::string& loaderDir) {
+            const std::string key = fs::path(installName).filename().string();
+            if (key.empty() || visited.count(key) || inProgress.count(key)) return;
+
+            const std::string foundPath = findDylibOnDisk(installName, loaderDir);
+            if (foundPath.empty()) {
+                if (weak || isHostProvidedSystemDylib(installName)) return;
+                throw Loader::MachOError("Missing guest dylib: " + installName +
+                    (cfg_.guestLibDir.empty() ? " (no guestLibDir configured)" : " (searched in " + cfg_.guestLibDir + ")"));
+            }
+
+            inProgress.insert(key);
+            const auto bytes = Loader::readFile(foundPath);
+            for (const auto& [depName, depWeak] : peekDylibLoads(bytes))
+                visitDylib(depName, depWeak, fs::path(foundPath).parent_path().string());
+
+            Loader::Image dylibImg;
+            try {
+                // Measure the actual segment span, excluding unmapped __PAGEZERO.
+                const auto slice = Loader::selectSlice(bytes);
+                const auto* data = bytes.data() + slice.offset;
+                auto word = [&](size_t off) { uint32_t v; std::memcpy(&v, data + off, 4); return v; };
+                uint64_t lo = UINT64_MAX, hi = 0;
+                if (slice.size >= 28 && uint64_t(28) + word(20) <= slice.size) {
+                    const size_t end = 28 + size_t(word(20));
+                    size_t off = 28;
+                    for (uint32_t i = 0; i < word(16) && off + 8 <= end; ++i) {
+                        const auto size = word(off + 4);
+                        if (size < 8 || size > end - off) break;
+                        if (word(off) == 1 && size >= 56 &&
+                            std::memcmp(data + off + 8, "__PAGEZERO", 10) != 0 && word(off + 28)) {
+                            lo = std::min(lo, uint64_t(word(off + 24)));
+                            hi = std::max(hi, uint64_t(word(off + 24)) + word(off + 28));
+                        }
+                        off += size;
+                    }
+                }
+                const uint64_t span = hi > lo ? hi - lo : 0;
+                if (nextLoadAddr < kStaticBase && uint64_t(nextLoadAddr) + span > kStaticBase)
+                    nextLoadAddr = kHeapLimit;
+                dylibImg = Loader::loadMachO(*mem_, bytes, foundPath, Loader::LoadOptions{nextLoadAddr});
+            } catch (const std::exception& e) {
+                throw Loader::MachOError("Failed to load guest dylib " + installName + " (" + foundPath + "): " + e.what());
+            }
+            if (dylibImg.fileType != 6 /* MH_DYLIB */ && dylibImg.fileType != 8 /* MH_BUNDLE */)
+                throw Loader::MachOError("Guest library " + installName + " (" + foundPath + ") is not an MH_DYLIB");
+            nextLoadAddr = (dylibImg.highAddr + 0xFFFFu) & ~0xFFFFu;
+            for (const auto& section : dylibImg.sections) {
+                if (section.size && section.sectname.rfind("__objc_", 0) == 0) {
+                    reportMissing("guest dylib Objective-C metadata: " + installName + " " + section.sectname);
+                }
+            }
+
+            for (size_t i = 0; i < dylibImg.dylibs.size(); ++i)
+                visitDylib(dylibImg.dylibs[i], i < dylibImg.dylibWeak.size() && dylibImg.dylibWeak[i],
+                           fs::path(foundPath).parent_path().string());
+
+            inProgress.erase(key);
+            visited.insert(key);
+            for (const auto& [sym, addr] : dylibImg.exports)
+                guestExports_.emplace(sym, addr);
+            logf(LogLevel::Info, "Loaded guest dylib %s at 0x%08x..0x%08x (slide 0x%08x, %zu exports, %zu imports, %zu initializers)",
+                 key.c_str(), dylibImg.lowAddr, dylibImg.highAddr, dylibImg.slide,
+                 dylibImg.exports.size(), dylibImg.binds.size(), dylibImg.initializers.size());
+            guestDylibs_.push_back(std::move(dylibImg));
+        };
+
+    const std::string bundleDir = cfg_.bundlePath;
+    for (size_t i = 0; i < image_.dylibs.size(); ++i)
+        visitDylib(image_.dylibs[i], i < image_.dylibWeak.size() && image_.dylibWeak[i], bundleDir);
+}
+
+void Process::unmapGuestDylibs() {
+    if (!mem_) return;
+    for (const auto& dylib : guestDylibs_) {
+        for (const auto& seg : dylib.segments) {
+            if (!seg.vmsize || seg.name == "__PAGEZERO") continue;
+            mem_->unmap(seg.vmaddr, seg.vmsize);
+        }
+    }
+    guestDylibs_.clear();
+    guestExports_.clear();
 }
 
 // -------------------------------------------------------------- symbols ---
@@ -362,6 +551,12 @@ uint32_t Process::defineDataBlock(const std::string& name, uint32_t size) {
     return a;
 }
 
+std::optional<uint32_t> Process::guestExports(const std::string& symbol) const {
+    auto it = guestExports_.find(symbol);
+    if (it != guestExports_.end()) return it->second;
+    return std::nullopt;
+}
+
 std::optional<uint32_t> Process::lookupSymbol(const std::string& name) const {
     {
         std::lock_guard<std::mutex> lk(symMu_);
@@ -370,6 +565,7 @@ std::optional<uint32_t> Process::lookupSymbol(const std::string& name) const {
     }
     auto it = image_.exports.find(name);
     if (it != image_.exports.end()) return it->second;
+    if (auto g = guestExports(name)) return *g;
     return std::nullopt;
 }
 
@@ -468,22 +664,17 @@ uint32_t Process::resolveImport(const Loader::BindRecord& b) {
     return makeMissingStub(b.symbol);
 }
 
-void Process::bindImports() {
-    std::unordered_map<std::string, uint32_t> cache;
-    size_t unresolvedBefore;
-    {
-        std::lock_guard<std::mutex> lk(symMu_);
-        unresolvedBefore = symbols_.size();
-    }
-    std::vector<std::string> missingFns;
-    for (const auto& b : image_.binds) if (b.lazy) calledImports_.insert(b.symbol);
-    // Class and metaclass pointers inside the app's own class structures
+void Process::bindImageImports(const Loader::Image& img,
+                               std::vector<std::string>& missingFns,
+                               std::unordered_map<std::string, uint32_t>& cache) {
+    for (const auto& b : img.binds) if (b.lazy) calledImports_.insert(b.symbol);
+    // Class and metaclass pointers inside the image's own class structures
     // (superclass, isa) always need a class, even when the import is weak:
     // dyld would refuse to load an app whose superclass is missing, and a nil
     // superclass would silently turn the subclass into a root class.
-    const Loader::Section* objcData = image_.findSection("__DATA", "__objc_data");
+    const Loader::Section* objcData = img.findSection("__DATA", "__objc_data");
     auto inObjcData = [&](uint32_t a) { return objcData && a >= objcData->addr && a < objcData->addr + objcData->size; };
-    for (const auto& b0 : image_.binds) {
+    for (const auto& b0 : img.binds) {
         Loader::BindRecord strong;
         const bool needsClass = b0.weakImport && inObjcData(b0.address) &&
             (b0.symbol.rfind("_OBJC_CLASS_$_", 0) == 0 || b0.symbol.rfind("_OBJC_METACLASS_$_", 0) == 0);
@@ -515,11 +706,11 @@ void Process::bindImports() {
         }
     }
     // Weak binds (coalesced template instantiations, inline functions, operator
-    // new/delete). The app may define these itself (a rebase already put its own
+    // new/delete). The image may define these itself (a rebase already put its own
     // definition in the slot); we only override when HydrogenVM or another image
     // actually exports the symbol, and we never replace a real value with a
-    // missing-function stub — the app's own weak definition stays.
-    for (const auto& b : image_.weakBinds) {
+    // missing-function stub — the image's own weak definition stays.
+    for (const auto& b : img.weakBinds) {
         const auto found = lookupSymbol(b.symbol);
         if (!found) continue;
         const uint32_t target = *found;
@@ -536,7 +727,14 @@ void Process::bindImports() {
                 break;
         }
     }
-    (void)unresolvedBefore;
+}
+
+void Process::bindImports() {
+    std::unordered_map<std::string, uint32_t> cache;
+    std::vector<std::string> missingFns;
+    for (const auto& dylib : guestDylibs_)
+        bindImageImports(dylib, missingFns, cache);
+    bindImageImports(image_, missingFns, cache);
     unimplementedImports_ = missingFns;
     if (!missingFns.empty()) {
         std::string list;
@@ -1072,9 +1270,14 @@ int Process::run() {
     CPU::Cpu& c = mainThread_->cpu;
     CPU::Engine::lastFault() = {};
     try {
-        // dyld order: libSystem/libobjc setup (+load), then the image's initializers.
+        // dyld order: libSystem/libobjc setup (+load), dependent dylib initializers in dependency order, then the image's initializers.
         for (auto& h : preInitHooks_) h(c);
         const uint32_t pvars = allocStatic(20);
+        for (const auto& dylib : guestDylibs_) {
+            mem_->write<uint32_t>(pvars, dylib.headerAddr);
+            for (const uint32_t fn : dylib.initializers)
+                engine_->callGuest(c, fn, {argc_, argv_, envp_, apple_, pvars});
+        }
         mem_->write<uint32_t>(pvars, image_.headerAddr);
         for (const uint32_t fn : image_.initializers)
             engine_->callGuest(c, fn, {argc_, argv_, envp_, apple_, pvars});
@@ -1462,6 +1665,18 @@ std::string Process::describeAddress(uint32_t addr) const {
         if ((addr & ~1u) >= segment.vmaddr && (addr & ~1u) - segment.vmaddr < segment.vmsize) {
             s = fs::path(executablePath_).filename().string() + "+" + std::to_string((addr & ~1u) - image_.headerAddr) + " " + s;
             break;
+        }
+    }
+    if (s.empty()) {
+        for (const auto& dylib : guestDylibs_) {
+            for (const auto& segment : dylib.segments) {
+                if ((addr & ~1u) >= segment.vmaddr && (addr & ~1u) - segment.vmaddr < segment.vmsize) {
+                    const std::string sym = dylib.symbolicate(addr & ~1u);
+                    s = fs::path(dylib.path).filename().string() + "+" + std::to_string((addr & ~1u) - dylib.headerAddr) + (sym.empty() ? "" : " " + sym);
+                    break;
+                }
+            }
+            if (!s.empty()) break;
         }
     }
     return s.empty() ? std::string(buf) : std::string(buf) + " " + demangle(s);
