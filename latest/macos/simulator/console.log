@@ -1,6 +1,4 @@
 GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)
-[gpu] GL layer (64.0, 64.0)
-[gpu] GL layer removed
 Loaded UIKitTest: armv7, 157 imports, 0 initializers, entry 0x0000e0bb UIKitTest+41146 _main
 Objective-C: 5 classes, 0 categories, 170 selector refs
 [teardown] waiting for the guest run to finish
@@ -83,6 +81,8 @@ ok NSStringFromCGRect / CGRectFromString
 
 ok NSValue CGRect
 
+[gpu] GL layer (64.0, 64.0)
+[gpu] GL layer removed
 nib Panel.nib: 1 top-level objects
 ok Panel nib: top-level view
 
@@ -161,4 +161,4 @@ App exited with code 0
 [teardown] host audio stopped; queueing the exit callback
 [teardown] delivering the exit callback
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 28738
+com.lfull.HydrogenVM: 30558
