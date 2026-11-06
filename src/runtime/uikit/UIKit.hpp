@@ -260,7 +260,9 @@ id loadNib(Ctx& x, const std::string& name, id bundle, id owner, id externalObje
 // iOS settles the interface orientation after launch, not when setRootViewController:
 // is called. Unless the app picked one itself, switch to the app's own (Info.plist)
 // orientation once the key window's root view controller accepts it.
-void reevaluateRootOrientation(Ctx& x, const char* cause);
+// `rotation` is true for +attemptRotationToDeviceOrientation, which (unlike the
+// one-time settle after launch) respects a controller's shouldAutorotate == NO.
+void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation = false);
 int32_t orientationFromString(const std::string& name);   // Info.plist name -> UIInterfaceOrientation
 bool nibExists(Ctx& x, const std::string& name);
 

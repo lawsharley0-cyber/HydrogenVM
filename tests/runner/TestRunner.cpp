@@ -3076,7 +3076,23 @@ int runFullSubsystemTests() {
             return l.bounds.w > l.bounds.h;
         };
         const bool leftOnly = u.statusBarOrientation == 4 && landscapeView(vc4) && landscapeView(vc3);
-        check(portraitAtRoot && stillPortrait && landscapeAfter && rotatedBounds && appChoiceKept && namesOk && bothPortrait && leftOnly,
+        // An iOS 6 controller that says NO to shouldAutorotate is not rotated by
+        // attemptRotationToDeviceOrientation, but the one-time settle after launch still applies.
+        auto stillCls = r.defineClass("HVMNoAutorotateController", "HVMLateLandscapeController");
+        stillCls.method("shouldAutorotate", [](Ctx& rx) { rx.cpu.r[0] = 0; }, "c@:");
+        onlyLandscapeLeft = false;
+        landscapeOk = false;
+        u.initialOrientation = 3; u.statusBarOrientation = 3; u.orientationSetByApp = false;
+        const ObjC::id win5 = makeWindow();
+        const ObjC::id vc5 = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, stillCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, win5, "setRootViewController:", {vc5});
+        landscapeOk = true;
+        r.send(cpu, r.getClass("UIViewController"), "attemptRotationToDeviceOrientation");
+        const bool refusedRotation = u.statusBarOrientation == 1;
+        UIKit::reevaluateRootOrientation(cx, "after launch");
+        const bool settledAfterLaunch = u.statusBarOrientation == 3;
+        r.send(cpu, win5, "setHidden:", {1});
+        check(portraitAtRoot && stillPortrait && landscapeAfter && rotatedBounds && appChoiceKept && namesOk && bothPortrait && leftOnly && refusedRotation && settledAfterLaunch,
               "orientation: a late-accepting root controller gets the Info.plist landscape (UIKit values, every window); an app-set orientation is kept");
         u.statusBarOrientation = savedSb; u.initialOrientation = savedInit; u.orientationSetByApp = savedByApp;
         if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");

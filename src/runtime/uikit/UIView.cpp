@@ -926,7 +926,7 @@ void vc_contentSize(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret
 
 } // namespace
 
-void reevaluateRootOrientation(Ctx& x, const char* cause) {
+void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
     auto& u = ui(x);
     if (u.orientationSetByApp || u.statusBarOrientation == u.initialOrientation) return;
     id win = u.keyWindow;
@@ -935,6 +935,11 @@ void reevaluateRootOrientation(Ctx& x, const char* cause) {
     if (!win) return;
     const id vc = V(x, win).rootViewController;
     if (!vc || !controllerSupports(x, vc, u.initialOrientation)) return;
+    if (rotation) {
+        auto& r = rt(x);
+        const SEL sa = r.sel("shouldAutorotate");
+        if (r.lookup(r.classOf(vc), sa) != r.lookup(u.viewController, sa) && !sendBool(x, vc, "shouldAutorotate", {})) return;
+    }
     changeOrientation(x, u.initialOrientation, vc, cause);
     // Every visible root view follows the one interface orientation.
     layoutRootView(x, win, vc);
