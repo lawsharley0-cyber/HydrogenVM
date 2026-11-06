@@ -3,7 +3,7 @@
 **Initiative:** Guest-Dylib Initiative — Wave 1 (`S4`)  
 **Tool:** `tools/guestlibs/import_audit.py`  
 **Refs:** `#311`, `#330`  
-**Import source:** the reference import manifest (`DEFAULT_LIBRARY_IMPORTS`), not inspected dylibs. To audit your own builds run `import_audit.py --dylib-dir <dir>`.
+**Import source:** the reference import manifest (`DEFAULT_LIBRARY_IMPORTS`), not inspected dylibs. To audit your own builds run `python3 tools/guestlibs/import_audit.py --dylib-dir <dir>`.
 
 ## 1. Executive Summary
 

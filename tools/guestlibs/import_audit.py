@@ -727,7 +727,7 @@ def _symbols_for_lib_by_status(
 
 _IMPORT_SOURCE_TEXT = {
     "manifest": "the reference import manifest (`DEFAULT_LIBRARY_IMPORTS`), not inspected dylibs. "
-                "To audit your own builds run `import_audit.py --dylib-dir <dir>`.",
+                "To audit your own builds run `python3 tools/guestlibs/import_audit.py --dylib-dir <dir>`.",
     "macho": "undefined symbols read from the Mach-O dylibs in `--dylib-dir`.",
 }
 
