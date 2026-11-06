@@ -2036,6 +2036,78 @@ int runFullSubsystemTests() {
             predicates=values==std::vector<ObjC::id>{high,high} && call(equal,"evaluateWithObject:",{low}) && !call(equal,"evaluateWithObject:",{high}) && rejected;
         }
         check(predicates,"NSPredicate key comparisons/filtering and explicit unsupported syntax");
+        // #353: AND / OR / NOT, parentheses and NSCompoundPredicate (Kindle stops on "(%K == %@ || %K == %@)").
+        // Expected matches are worked out by hand from the four rows below.
+        bool compoundOk=false;
+        if(r.getClass("NSPredicate") && r.getClass("NSCompoundPredicate")) {
+            const auto K=makeString(cx,"kind"), N=makeString(cx,"n");
+            auto row=[&](const char* k,int n){return makeDict(cx,{{K,makeString(cx,k)},{N,makeNumberInt(cx,n)}});};
+            const auto a1=row("a",1), a2=row("a",2), b3=row("b",3), c4=row("c",4);
+            const auto all=makeArray(cx,{a1,a2,b3,c4});
+            auto matches=[&](uint32_t pred){return arrayItems(cx,call(all,"filteredArrayUsingPredicate:",{pred}));};
+            // Variadic arguments: unused trailing words are never read by the format.
+            auto fmt=[&](const char* f,std::initializer_list<uint32_t> more={}){
+                uint32_t a[4]={0,0,0,0}; size_t n=0; for(uint32_t v:more) if(n<4) a[n++]=v;
+                return uint32_t(r.send(cpu,r.getClass("NSPredicate"),"predicateWithFormat:",{makeString(cx,f),a[0],a[1],a[2],a[3]}));
+            };
+            const auto P=r.getClass("NSPredicate");
+            bool ok=true;
+            auto expectRows=[&](uint32_t pred,std::vector<ObjC::id> want,const char* what){ if(matches(pred)!=want){ std::printf("    NSPredicate: %s\n",what); ok=false; } };
+            expectRows(fmt("(%K == %@ || %K == %@)",{K,makeString(cx,"a"),K,makeString(cx,"b")}),{a1,a2,b3},"(%K == %@ || %K == %@)");
+            expectRows(fmt("n > 1 AND (kind == 'a' OR kind == 'c')"),{a2,c4},"AND with a parenthesised OR");
+            expectRows(fmt("NOT (n >= 3)"),{a1,a2},"NOT (...)");
+            expectRows(fmt("!(kind == 'a') && n < 4"),{b3},"! and &&");
+            expectRows(fmt("kind == 'a' OR kind == 'b' AND n > 2"),{a1,a2,b3},"AND binds tighter than OR");
+            expectRows(fmt("kind = 'c' or n <> 1 and n =< 2"),{a2,c4},"lower-case keywords, =, <>, =<");
+            expectRows(fmt("TRUEPREDICATE AND NOT FALSEPREDICATE"),{a1,a2,b3,c4},"TRUEPREDICATE / FALSEPREDICATE as operands");
+            const auto pa=fmt("kind == 'a'"), pn=fmt("n >= 2");
+            expectRows(call(r.getClass("NSCompoundPredicate"),"andPredicateWithSubpredicates:",{makeArray(cx,{pa,pn})}),{a2},"NSCompoundPredicate AND");
+            expectRows(call(r.getClass("NSCompoundPredicate"),"orPredicateWithSubpredicates:",{makeArray(cx,{pa,fmt("n == 4")})}),{a1,a2,c4},"NSCompoundPredicate OR");
+            expectRows(call(r.getClass("NSCompoundPredicate"),"notPredicateWithSubpredicate:",{pa}),{b3,c4},"NSCompoundPredicate NOT");
+            expectRows(call(r.getClass("NSCompoundPredicate"),"andPredicateWithSubpredicates:",{makeArray(cx,{})}),{a1,a2,b3,c4},"empty AND is true");
+            expectRows(call(r.getClass("NSCompoundPredicate"),"orPredicateWithSubpredicates:",{makeArray(cx,{})}),{},"empty OR is false");
+            (void)P;
+            for(const char* bad : {"name IN %@","(kind == 'a'","kind == 'a' extra","kind == 'a' AND","kind CONTAINS 'a'","AND == 1"}) {
+                bool rejected=false;
+                try{ fmt(bad,{makeArray(cx,{})}); }catch(const std::exception& e){ rejected=std::string(e.what()).find("unsupported NSPredicate format")!=std::string::npos; }
+                if(!rejected){ std::printf("    NSPredicate: accepted %s\n",bad); ok=false; }
+            }
+            // Deep nesting is refused (not a host stack overflow), and a failed parse releases
+            // the arguments it had already retained.
+            {
+                std::string deep(5000,'('); deep+="n == 1"; deep+=std::string(5000,')');
+                bool rejected=false;
+                try{ fmt(deep.c_str()); }catch(const std::exception& e){ rejected=std::string(e.what()).find("unsupported NSPredicate format")!=std::string::npos; }
+                if(!rejected){ std::printf("    NSPredicate: deep nesting not refused\n"); ok=false; }
+                const auto arg=makeString(cx,"held",true);
+                const uint32_t before=call(arg,"retainCount");
+                try{ fmt("kind == %@ AND",{arg}); }catch(const std::exception&){}
+                try{ fmt("(kind == %@",{arg}); }catch(const std::exception&){}
+                if(call(arg,"retainCount")!=before){ std::printf("    NSPredicate: failed parse leaked a retain\n"); ok=false; }
+            }
+            // Long AND/OR chains and large compound arrays stay shallow (one n-ary node), so
+            // evaluating, copying and freeing them cannot exhaust the host stack; deliberately
+            // nested compounds beyond the height limit are refused.
+            {
+                std::string chain="n == 9";
+                for(int k=0;k<20000;++k) chain+=" OR n == 9";
+                chain+=" OR n == 4";
+                expectRows(fmt(chain.c_str()),{c4},"a 20001-term OR chain");
+                std::vector<ObjC::id> many;
+                for(int k=0;k<20000;++k) many.push_back(fmt("n == 9"));
+                many.push_back(fmt("n == 2"));
+                expectRows(call(r.getClass("NSCompoundPredicate"),"orPredicateWithSubpredicates:",{makeArray(cx,many)}),{a2},"a 20001-element compound OR");
+                uint32_t nested=fmt("n == 1");
+                bool refused=false;
+                for(int k=0;k<200 && !refused;++k) {
+                    try{ nested=call(r.getClass("NSCompoundPredicate"),"notPredicateWithSubpredicate:",{nested}); }
+                    catch(const std::exception& e){ refused=std::string(e.what()).find("too deep")!=std::string::npos; }
+                }
+                if(!refused){ std::printf("    NSPredicate: 200 nested compounds were not refused\n"); ok=false; }
+            }
+            compoundOk=ok;
+        }
+        check(compoundOk,"NSPredicate AND/OR/NOT with parentheses, keyword aliases and NSCompoundPredicate; other syntax still raises");
         bool tables=false;
         if(r.getClass("NSHashTable") && r.getClass("NSMapTable")) {
             auto weak=call(r.getClass("NSHashTable"),"weakObjectsHashTable");
