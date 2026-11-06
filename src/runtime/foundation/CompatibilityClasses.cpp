@@ -3,6 +3,8 @@
 #include "runtime/libc/Format.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <memory>
 #include <regex>
 
 namespace Hydrogen::Runtime::Foundation {
@@ -26,24 +28,151 @@ int compare(Ctx& x, id a, id b) {
     const int32_t result = int32_t(send(x, a, "compare:", {b}));
     return (result > 0) - (result < 0);
 }
-struct Predicate : ObjC::HostObject { std::string key, operation; id rhs = 0; bool constant = false, result = false; };
-void predicate_free(Ctx& x, id self, SEL) { auto& d = rt(x).host<Predicate>(self); if (d.rhs) rt(x).release(x.cpu, d.rhs); d.rhs = 0; rt(x).disposeInstance(x.cpu, self); }
-id predicate_value(Ctx& x, Class cls, SEL, bool value) { const id object = rt(x).createInstance(cls); auto& d = rt(x).host<Predicate>(object); d.constant = true; d.result = value; return autoreleased(x, object); }
+// A predicate is a tree: comparisons (key op value) joined by AND / OR / NOT, with
+// parentheses, as NSPredicate's format grammar has them. Constructs outside that
+// subset (BETWEEN, IN, CONTAINS, aggregates, functions) still raise explicitly.
+struct PNode {
+    enum Kind { Const, Cmp, And, Or, Not } kind = Const;
+    bool result = false;          // Const
+    std::string key, operation;   // Cmp
+    id rhs = 0;                   // Cmp, retained
+    std::vector<std::shared_ptr<PNode>> kids;
+};
+struct Predicate : ObjC::HostObject { std::shared_ptr<PNode> root; };
+void releaseNode(Ctx& x, PNode& n) {
+    if (n.rhs) rt(x).release(x.cpu, n.rhs);
+    n.rhs = 0;
+    for (auto& k : n.kids) releaseNode(x, *k);
+}
+void predicate_free(Ctx& x, id self, SEL) {
+    auto& d = rt(x).host<Predicate>(self);
+    if (d.root) releaseNode(x, *d.root);   // each predicate owns its whole tree
+    d.root.reset();
+    rt(x).disposeInstance(x.cpu, self);
+}
+id makePredicate(Ctx& x, Class cls, std::shared_ptr<PNode> root) {
+    const id object = rt(x).createInstance(cls);
+    rt(x).host<Predicate>(object).root = std::move(root);
+    return autoreleased(x, object);
+}
+id predicate_value(Ctx& x, Class cls, SEL, bool value) {
+    auto n = std::make_shared<PNode>(); n->kind = PNode::Const; n->result = value;
+    return makePredicate(x, cls, n);
+}
+
+template <class Next> struct PredicateParser {
+    Ctx& x; const std::string& t; Next& next; size_t i = 0;
+    [[noreturn]] void fail() const { throw ObjC::ObjCError("unsupported NSPredicate format: " + t); }
+    void ws() { while (i < t.size() && std::isspace(uint8_t(t[i]))) ++i; }
+    // A case-insensitive keyword that is not the start of a longer identifier.
+    bool keyword(const char* k) {
+        ws();
+        const size_t n = std::strlen(k);
+        if (t.size() - i < n) return false;
+        for (size_t j = 0; j < n; ++j) if (std::toupper(uint8_t(t[i + j])) != k[j]) return false;
+        if (i + n < t.size() && (std::isalnum(uint8_t(t[i + n])) || t[i + n] == '_' || t[i + n] == '.')) return false;
+        i += n;
+        return true;
+    }
+    bool sym(const char* s) {
+        ws();
+        const size_t n = std::strlen(s);
+        if (t.compare(i, n, s) != 0) return false;
+        i += n;
+        return true;
+    }
+    std::shared_ptr<PNode> join(PNode::Kind k, std::shared_ptr<PNode> a, std::shared_ptr<PNode> b) {
+        auto n = std::make_shared<PNode>(); n->kind = k; n->kids = {std::move(a), std::move(b)};
+        return n;
+    }
+    std::shared_ptr<PNode> orExpr() {
+        auto a = andExpr();
+        while (sym("||") || keyword("OR")) a = join(PNode::Or, a, andExpr());
+        return a;
+    }
+    std::shared_ptr<PNode> andExpr() {
+        auto a = notExpr();
+        while (sym("&&") || keyword("AND")) a = join(PNode::And, a, notExpr());
+        return a;
+    }
+    std::shared_ptr<PNode> notExpr() {
+        ws();
+        if ((i < t.size() && t[i] == '!' && t.compare(i, 2, "!=") != 0 && (++i, true)) || keyword("NOT")) {
+            auto n = std::make_shared<PNode>(); n->kind = PNode::Not; n->kids = {notExpr()};
+            return n;
+        }
+        return primary();
+    }
+    std::shared_ptr<PNode> primary() {
+        if (sym("(")) {
+            auto e = orExpr();
+            if (!sym(")")) fail();
+            return e;
+        }
+        for (const bool value : {true, false}) {
+            if (keyword(value ? "TRUEPREDICATE" : "FALSEPREDICATE")) {
+                auto n = std::make_shared<PNode>(); n->kind = PNode::Const; n->result = value;
+                return n;
+            }
+        }
+        auto n = std::make_shared<PNode>(); n->kind = PNode::Cmp;
+        n->key = keyPath();
+        ws();
+        static const char* const ops[] = {"==", "!=", "<>", ">=", "=>", "<=", "=<", "=", ">", "<"};
+        const char* op = nullptr;
+        for (const char* o : ops) if (sym(o)) { op = o; break; }
+        if (!op) fail();
+        const std::string o = op;
+        n->operation = o == "=" ? "==" : o == "<>" ? "!=" : o == "=>" ? ">=" : o == "=<" ? "<=" : o;
+        n->rhs = literal();
+        if (n->rhs) rt(x).retain(x.cpu, n->rhs);
+        return n;
+    }
+    std::string keyPath() {
+        ws();
+        if (sym("%K")) return utf8(x, next('@'));
+        const size_t b = i;
+        if (i < t.size() && (std::isalpha(uint8_t(t[i])) || t[i] == '_')) {
+            while (i < t.size() && (std::isalnum(uint8_t(t[i])) || t[i] == '_' || t[i] == '.')) ++i;
+        }
+        if (i == b) fail();
+        const std::string k = t.substr(b, i - b);
+        static const char* const reserved[] = {"AND", "OR", "NOT", "IN", "BETWEEN", "CONTAINS", "LIKE", "MATCHES", "BEGINSWITH", "ENDSWITH", "ANY", "ALL", "SOME", "NONE"};
+        std::string up = k;
+        for (char& c : up) c = char(std::toupper(uint8_t(c)));
+        for (const char* r : reserved) if (up == r) fail();
+        return k;
+    }
+    id literal() {
+        ws();
+        if (i + 1 < t.size() && t[i] == '%' && std::strchr("@difu", t[i + 1])) { const char c = t[i + 1]; i += 2; return next(c); }
+        if (i < t.size() && (t[i] == '\'' || t[i] == '"')) {
+            const char q = t[i];
+            const size_t e = t.find(q, i + 1);
+            if (e == std::string::npos) fail();
+            const std::string v = t.substr(i + 1, e - i - 1);
+            i = e + 1;
+            return makeString(x, v);
+        }
+        if (keyword("NIL") || keyword("NULL")) return 0;
+        if (keyword("YES") || keyword("TRUE")) return makeBool(x, true);
+        if (keyword("NO") || keyword("FALSE")) return makeBool(x, false);
+        const size_t b = i;
+        if (i < t.size() && (t[i] == '-' || t[i] == '+')) ++i;
+        while (i < t.size() && std::isdigit(uint8_t(t[i]))) ++i;
+        if (i < t.size() && t[i] == '.') { ++i; while (i < t.size() && std::isdigit(uint8_t(t[i]))) ++i; }
+        const std::string num = t.substr(b, i - b);
+        if (num.empty() || num == "-" || num == "+" || !std::isdigit(uint8_t(num.back()))) fail();
+        return makeNumberDouble(x, std::stod(num));
+    }
+};
 template <class Next> id parse(Ctx& x, Class cls, id format, Next next) {
     const std::string text = utf8(x, format);
-    if (text == "TRUEPREDICATE" || text == "FALSEPREDICATE") return predicate_value(x, cls, 0, text == "TRUEPREDICATE");
-    static const std::regex expression(R"(^\s*(SELF|%K|[A-Za-z_][A-Za-z_0-9.]*)\s*(==|!=|>=|<=|>|<)\s*(%@|%[difu]|nil|NULL|YES|NO|true|false|[-+]?[0-9]+(?:\.[0-9]+)?|'[^']*'|"[^"]*")\s*$)");
-    std::smatch match;
-    if (!std::regex_match(text, match, expression)) throw ObjC::ObjCError("unsupported NSPredicate format: " + text);
-    const id object = rt(x).createInstance(cls); auto& d = rt(x).host<Predicate>(object);
-    d.key = match[1] == "%K" ? utf8(x, next('@')) : match[1].str(); d.operation = match[2];
-    const std::string rhs = match[3];
-    if (rhs[0] == '%') d.rhs = next(rhs[1]);
-    else if (rhs[0] == '\'' || rhs[0] == '"') d.rhs = makeString(x, rhs.substr(1, rhs.size() - 2));
-    else if (rhs == "YES" || rhs == "true" || rhs == "NO" || rhs == "false") d.rhs = makeBool(x, rhs == "YES" || rhs == "true");
-    else if (rhs != "nil" && rhs != "NULL") d.rhs = makeNumberDouble(x, std::stod(rhs));
-    if (d.rhs) rt(x).retain(x.cpu, d.rhs);
-    return autoreleased(x, object);
+    PredicateParser<Next> p{x, text, next};
+    auto root = p.orExpr();
+    p.ws();
+    if (p.i != text.size()) { releaseNode(x, *root); p.fail(); }
+    return makePredicate(x, cls, root);
 }
 id predicate_format(Ctx& x, Class cls, SEL, id format, VarArgs args) {
     return parse(x, cls, format, [&](char type) -> id {
@@ -56,13 +185,56 @@ id predicate_array(Ctx& x, Class cls, SEL, id format, id arguments) {
     auto values = arrayItems(x, arguments); size_t i = 0;
     return parse(x, cls, format, [&](char) -> id { if (i >= values.size()) throw ObjC::ObjCError("not enough NSPredicate arguments"); return values[i++]; });
 }
+bool evalNode(Ctx& x, const PNode& n, id object) {
+    switch (n.kind) {
+        case PNode::Const: return n.result;
+        case PNode::And: return evalNode(x, *n.kids[0], object) && evalNode(x, *n.kids[1], object);
+        case PNode::Or: return evalNode(x, *n.kids[0], object) || evalNode(x, *n.kids[1], object);
+        case PNode::Not: return !evalNode(x, *n.kids[0], object);
+        case PNode::Cmp: break;
+    }
+    const id lhs = value(x, object, n.key);
+    if (n.operation == "==") return objectsEqual(x, lhs, n.rhs);
+    if (n.operation == "!=") return !objectsEqual(x, lhs, n.rhs);
+    const int order = compare(x, lhs, n.rhs);
+    if (n.operation == "<") return order < 0;
+    if (n.operation == ">") return order > 0;
+    return n.operation == "<=" ? order <= 0 : order >= 0;
+}
 bool evaluate(Ctx& x, id self, SEL, id object) {
-    auto& d = rt(x).host<Predicate>(self); if (d.constant) return d.result;
-    const id lhs = value(x, object, d.key);
-    if (d.operation == "==") return objectsEqual(x, lhs, d.rhs); if (d.operation == "!=") return !objectsEqual(x, lhs, d.rhs);
-    const int order = compare(x, lhs, d.rhs);
-    if (d.operation == "<") return order < 0; if (d.operation == ">") return order > 0;
-    return d.operation == "<=" ? order <= 0 : order >= 0;
+    auto& d = rt(x).host<Predicate>(self);
+    return d.root ? evalNode(x, *d.root, object) : false;
+}
+// NSCompoundPredicate copies its subpredicates' trees (retaining their values),
+// so every predicate owns its tree outright.
+std::shared_ptr<PNode> copyNode(Ctx& x, const PNode& n) {
+    auto c = std::make_shared<PNode>(n);
+    if (c->rhs) rt(x).retain(x.cpu, c->rhs);
+    for (auto& k : c->kids) k = copyNode(x, *k);
+    return c;
+}
+std::shared_ptr<PNode> treeOf(Ctx& x, id predicate) {
+    if (!predicate || !rt(x).isKindOf(predicate, rt(x).getClass("NSPredicate")) || !rt(x).host<Predicate>(predicate).root)
+        throw ObjC::ObjCError("NSCompoundPredicate: subpredicate is not an NSPredicate");
+    return copyNode(x, *rt(x).host<Predicate>(predicate).root);
+}
+// An empty AND is true and an empty OR is false, as in Foundation.
+id compound(Ctx& x, Class cls, PNode::Kind kind, id subpredicates) {
+    std::shared_ptr<PNode> root;
+    for (id p : arrayItems(x, subpredicates)) {
+        auto r = treeOf(x, p);
+        if (!root) { root = r; continue; }
+        auto n = std::make_shared<PNode>(); n->kind = kind; n->kids = {root, r};
+        root = n;
+    }
+    if (!root) { root = std::make_shared<PNode>(); root->kind = PNode::Const; root->result = kind == PNode::And; }
+    return makePredicate(x, cls, root);
+}
+id compound_and(Ctx& x, Class cls, SEL, id subs) { return compound(x, cls, PNode::And, subs); }
+id compound_or(Ctx& x, Class cls, SEL, id subs) { return compound(x, cls, PNode::Or, subs); }
+id compound_not(Ctx& x, Class cls, SEL, id sub) {
+    auto n = std::make_shared<PNode>(); n->kind = PNode::Not; n->kids = {treeOf(x, sub)};
+    return makePredicate(x, cls, n);
 }
 id filtered(Ctx& x, id self, SEL, id predicate) { std::vector<id> result; for (id item : arrayItems(x, self)) if (send(x, predicate, "evaluateWithObject:", {item})) result.push_back(item); return makeArray(x, result); }
 void filter(Ctx& x, id self, SEL, id predicate) { send(x, self, "setArray:", {filtered(x, self, 0, predicate)}); }
@@ -243,6 +415,9 @@ void registerCompatibilityClasses(Process&, ObjC::Runtime& r) {
       .cm<&predicate_value>("predicateWithValue:").cm<&predicate_format>("predicateWithFormat:")
       .cm<&predicate_array>("predicateWithFormat:argumentArray:").m<&evaluate>("evaluateWithObject:")
       .m<&immutable_copy>("copyWithZone:").m<&immutable_copy>("copy").m<&predicate_free>("dealloc");
+    r.defineClass("NSCompoundPredicate","NSPredicate")
+      .cm<&compound_and>("andPredicateWithSubpredicates:").cm<&compound_or>("orPredicateWithSubpredicates:")
+      .cm<&compound_not>("notPredicateWithSubpredicate:");
     r.defineClass("NSArray","NSObject").m<&filtered>("filteredArrayUsingPredicate:");
     r.defineClass("NSMutableArray","NSArray").m<&filter>("filterUsingPredicate:");
     r.defineClass("NSHashTable","NSObject")
