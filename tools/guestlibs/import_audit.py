@@ -725,6 +725,13 @@ def _symbols_for_lib_by_status(
     )
 
 
+_IMPORT_SOURCE_TEXT = {
+    "manifest": "the reference import manifest (`DEFAULT_LIBRARY_IMPORTS`), not inspected dylibs. "
+                "To audit your own builds run `import_audit.py --dylib-dir <dir>`.",
+    "macho": "undefined symbols read from the Mach-O dylibs in `--dylib-dir`.",
+}
+
+
 def render_markdown_report(audit: dict[str, Any]) -> str:
     """Format the audit dictionary as docs/research/guestlib_imports.md."""
     totals = audit["totals"]
@@ -736,7 +743,8 @@ def render_markdown_report(audit: dict[str, Any]) -> str:
         "",
         "**Initiative:** Guest-Dylib Initiative — Wave 1 (`S4`)  ",
         "**Tool:** `tools/guestlibs/import_audit.py`  ",
-        "**Refs:** `#311`, `#330`",
+        "**Refs:** `#311`, `#330`  ",
+        f"**Import source:** {_IMPORT_SOURCE_TEXT.get(audit.get('importSource'), 'unknown')}",
         "",
         "## 1. Executive Summary",
         "",

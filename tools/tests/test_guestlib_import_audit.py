@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import stat
 import struct
@@ -233,6 +234,18 @@ class GuestLibImportAuditTests(unittest.TestCase):
             self.assertEqual(regs["_pthread_once"]["status"], "stubbed-dishonestly")
             self.assertEqual(regs["_pthread_detach"]["status"], "present")
 
+    def test_qualified_handler_is_classified_by_its_definition(self) -> None:
+        audit = _load_import_audit()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src/runtime").mkdir(parents=True)
+            (root / "src/runtime/Sample.cpp").write_text(
+                'namespace impl { int pretend(Ctx&) { return 0; } int real(Ctx& x) { x.proc.detachThread(1); return 0; } }\n'
+                'void reg(Process& p) { p.def<&impl::pretend>("_qualified_stub"); p.def<&impl::real>("_qualified_real"); }')
+            regs = audit.scan_hvm_registrations(root)
+            self.assertEqual(regs["_qualified_stub"]["status"], "stubbed-dishonestly")
+            self.assertEqual(regs["_qualified_real"]["status"], "present")
+
     def test_registration_without_a_resolved_body_is_unverified(self) -> None:
         audit = _load_import_audit()
         with tempfile.TemporaryDirectory() as tmp:
@@ -281,7 +294,11 @@ class GuestLibImportAuditTests(unittest.TestCase):
     def test_malformed_support_manifest_is_runtime_error(self) -> None:
         from unittest.mock import patch
         audit = _load_import_audit()
-        for payload in ([], {}, {"symbols": {}}, {"symbols": [None]}, {"symbols": [{}]}):
+        ok = {"name": "_x", "kind": "function", "status": "Real"}
+        for payload in ([], {}, {"symbols": {}}, {"symbols": [None]}, {"symbols": [{}]},
+                        {"symbols": [{**ok, "status": "Bogus"}]},
+                        {"symbols": [{k: v for k, v in ok.items() if k != "status"}]},
+                        {"symbols": [{**ok, "name": ""}]}, {"symbols": [{**ok, "name": 7}]}):
             with self.subTest(payload=payload), patch.object(audit.subprocess, "check_output", return_value=json.dumps(payload)):
                 with self.assertRaises(RuntimeError):
                     audit.run_audit(REPO_ROOT, hvm_bin=Path(sys.executable))
@@ -311,7 +328,9 @@ class GuestLibImportAuditTests(unittest.TestCase):
         self.assertTrue(REPORT_DOC.is_file(), f"Missing {REPORT_DOC}")
         import_audit = _load_import_audit()
         expected = import_audit.render_markdown_report(import_audit.run_audit(REPO_ROOT))
-        self.assertEqual(REPORT_DOC.read_text(encoding="utf-8"), expected)
+        # Source line numbers move with unrelated runtime edits; compare everything else.
+        strip = lambda text: re.sub(r"(\.cpp|\.mm|\.hpp|\.h):\d+", r"\1:N", text)
+        self.assertEqual(strip(REPORT_DOC.read_text(encoding="utf-8")), strip(expected))
 
 
 if __name__ == "__main__":
