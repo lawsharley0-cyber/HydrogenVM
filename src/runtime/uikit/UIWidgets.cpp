@@ -1895,20 +1895,27 @@ id sb_instantiateWithId(Ctx& x, id self, SEL, id ident) {
     auto it = d.idToNib.find(idStr);
     if (it != d.idToNib.end()) nibName = it->second;
 
+    // A storyboard's controller nibs refer to the storyboard through the
+    // UIStoryboardPlaceholder proxy (the controller's "storyboard" outlet).
+    const id externals = Foundation::makeDict(x, {{makeString(x, "UIStoryboardPlaceholder"), self}});
+    auto adopt = [&](id vc) {
+        if (vc && rt(x).isKindOf(vc, ui(x).viewController)) rt(x).send(x.cpu, vc, "_setStoryboard:", {self});
+        return vc;
+    };
     if (!d.dirPath.empty()) {
         const std::string rel = d.name + ".storyboardc/" + nibName;
-        const id arr = loadNib(x, rel, d.bundle, 0, 0);
+        const id arr = loadNib(x, rel, d.bundle, 0, externals);
         const auto items = Foundation::arrayItems(x, arr);
-        for (id o : items) if (rt(x).isKindOf(o, ui(x).viewController)) return o;
+        for (id o : items) if (rt(x).isKindOf(o, ui(x).viewController)) return adopt(o);
         if (!items.empty()) return items.front();
     }
     if (nibExists(x, nibName)) {
-        const id arr = loadNib(x, nibName, d.bundle, 0, 0);
+        const id arr = loadNib(x, nibName, d.bundle, 0, externals);
         const auto items = Foundation::arrayItems(x, arr);
-        for (id o : items) if (rt(x).isKindOf(o, ui(x).viewController)) return o;
+        for (id o : items) if (rt(x).isKindOf(o, ui(x).viewController)) return adopt(o);
     }
     const Class cls = rt(x).getClass(idStr);
-    if (cls && rt(x).isSubclass(cls, ui(x).viewController)) return autoreleased(x, allocInit(x, cls));
+    if (cls && rt(x).isSubclass(cls, ui(x).viewController)) return adopt(autoreleased(x, allocInit(x, cls)));
     return 0;
 }
 

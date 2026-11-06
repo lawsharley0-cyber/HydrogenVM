@@ -757,8 +757,8 @@ void vc_dealloc(Ctx& x, id self, SEL) {
         auto children = std::move(d->children);
         d->children.clear();
         for (id c : children) rt(x).release(x.cpu, c);
-        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem}) if (o) rt(x).release(x.cpu, o);
-        d->view = d->nibName = d->nibBundle = d->title = d->presented = d->navigationItem = d->tabBarItem = 0;
+        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard}) if (o) rt(x).release(x.cpu, o);
+        d->view = d->nibName = d->nibBundle = d->title = d->presented = d->navigationItem = d->tabBarItem = d->storyboard = 0;
     }
     rt(x).disposeInstance(x.cpu, self);
 }
@@ -816,6 +816,19 @@ void vc_setTitle(Ctx& x, id self, SEL, id t) { VCData& d = VC(x, self); const id
 id vc_nibName(Ctx& x, id self, SEL) { return VC(x, self).nibName; }
 id vc_nibBundle(Ctx& x, id self, SEL) { return VC(x, self).nibBundle; }
 id vc_parent(Ctx& x, id self, SEL) { return VC(x, self).parent; }
+// Private UIKit setters that key-value coding finds (it tries _set<Key>: after set<Key>:).
+// Compiled storyboards connect each controller's "storyboard" outlet to the
+// UIStoryboardPlaceholder proxy, and older apps set "parentViewController" with
+// -setValue:forKey:. parentViewController is not retained, as on iOS.
+id vc_storyboard(Ctx& x, id self, SEL) { return VC(x, self).storyboard; }
+void vc_setStoryboard(Ctx& x, id self, SEL, id sb) {
+    VCData& d = VC(x, self);
+    if (d.storyboard == sb) return;
+    const id old = d.storyboard;
+    d.storyboard = sb ? rt(x).retain(x.cpu, sb) : 0;
+    if (old) rt(x).release(x.cpu, old);
+}
+void vc_setParentPrivate(Ctx& x, id self, SEL, id parent) { VC(x, self).parent = parent; }
 id vc_presented(Ctx& x, id self, SEL) { return VC(x, self).presented; }
 id vc_presenting(Ctx& x, id self, SEL) { return VC(x, self).presenting; }
 bool vc_shouldAutorotate(Ctx&, id, SEL, int32_t o) { return o == 1; }
@@ -1163,6 +1176,7 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
       .m<&vc_hookBool>("viewDidDisappear:", "v@:c").m<&vc_hook>("viewWillLayoutSubviews", "v@:").m<&vc_hook>("viewDidLayoutSubviews", "v@:")
       .m<&vc_hook>("didReceiveMemoryWarning", "v@:").m<&vc_hook>("awakeFromNib", "v@:").m<&vc_title>("title").m<&vc_setTitle>("setTitle:", "v@:@")
       .m<&vc_nibName>("nibName").m<&vc_nibBundle>("nibBundle").m<&vc_parent>("parentViewController")
+      .m<&vc_storyboard>("storyboard").m<&vc_setStoryboard>("_setStoryboard:", "v@:@").m<&vc_setParentPrivate>("_setParentViewController:", "v@:@")
       .m<&vc_presented>("presentedViewController").m<&vc_presented>("modalViewController").m<&vc_presenting>("presentingViewController")
       .m<&vc_shouldAutorotate>("shouldAutorotateToInterfaceOrientation:", "c@:i").m<&vc_yes>("shouldAutorotate", "c@:")
       .m<&vc_supported>("supportedInterfaceOrientations", "I@:").m<&vc_preferredOrientation>("preferredInterfaceOrientationForPresentation", "i@:")

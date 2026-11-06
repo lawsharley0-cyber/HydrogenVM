@@ -3057,6 +3057,29 @@ int runFullSubsystemTests() {
         u.statusBarOrientation = savedSb; u.initialOrientation = savedInit; u.orientationSetByApp = savedByApp;
         if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");
         for (ObjC::id w : {win, win2}) r.send(cpu, w, "setHidden:", {1});
+    // 2d2. KVC keys that nibs and older apps set on UIViewController (issue #354): iOS answers
+    // them through the private _setStoryboard: / _setParentViewController:. parentViewController
+    // is not retained; storyboard is.
+    {
+        const ObjC::Class vcCls = r.getClass("UIViewController");
+        const ObjC::id child = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, vcCls, r.selAlloc)), r.selInit));
+        const ObjC::id parent = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, vcCls, r.selAlloc)), r.selInit));
+        const ObjC::id board = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSObject"), r.selAlloc)), r.selInit));
+        auto rc = [&](ObjC::id o) { return uint32_t(r.send(cpu, o, "retainCount")); };
+        bool ok = true;
+        try {
+            const uint32_t parentRc = rc(parent), boardRc = rc(board);
+            r.send(cpu, child, "setValue:forKey:", {parent, Foundation::makeString(cx, "parentViewController")});
+            ok = ok && ObjC::id(r.send(cpu, child, "parentViewController")) == parent && rc(parent) == parentRc;
+            r.send(cpu, child, "setValue:forKey:", {board, Foundation::makeString(cx, "storyboard")});
+            ok = ok && ObjC::id(r.send(cpu, child, "storyboard")) == board && rc(board) == boardRc + 1;
+            r.send(cpu, child, "setValue:forKey:", {0, Foundation::makeString(cx, "storyboard")});
+            ok = ok && ObjC::id(r.send(cpu, child, "storyboard")) == 0 && rc(board) == boardRc;
+        } catch (const std::exception& e) {
+            std::printf("    %s\n", e.what());
+            ok = false;
+        }
+        check(ok, "UIViewController KVC: parentViewController (not retained) and storyboard (retained) keys");
     }
 
     // 2e. UITextField, UISwitch, UISlider, UISegmentedControl, UIStoryboard
