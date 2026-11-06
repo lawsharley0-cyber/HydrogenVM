@@ -70,21 +70,31 @@ final class PlayerUITests: XCTestCase {
     func testScaleModeReturnsToLiveGlobalDefault() {
         let app = open()
         app.buttons["player-controls"].tap()
-        let useDefault = app.segmentedControls["player-scale-mode"].buttons["Use Default"]
+        let scale = app.segmentedControls["player-scale-mode"]
+        let useDefault = scale.buttons["Use Default"]
+        func select(_ label: String) {
+            let segment = scale.buttons[label]
+            expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: segment)
+            waitForExpectations(timeout: 5)
+            // Keep one deliberate finger gesture; do not retry a missed selection.
+            segment.press(forDuration: 0.1)
+            expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: segment)
+            waitForExpectations(timeout: 5)
+        }
         for _ in 0..<3 {
-            app.buttons["Fill (Crop)"].tap()
+            select("Fill (Crop)")
             XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
-            useDefault.tap()
+            select("Use Default")
             XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForNonExistence(timeout: 5))
             app.buttons["probe-default-extended"].tap()
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
             app.buttons["probe-default-fill"].tap()
             XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
-            app.buttons["Stretch"].tap()
+            select("Stretch")
             app.buttons["probe-default-extended"].tap()
             wait(app.staticTexts["probe-scale-default"], label: "Extended Bars")
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForNonExistence(timeout: 5))
-            useDefault.tap()
+            select("Use Default")
             expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: useDefault)
             waitForExpectations(timeout: 5)
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
