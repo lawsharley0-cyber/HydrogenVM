@@ -608,12 +608,22 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             sexpect(m.read<uint32_t>(ro + 4) == 3 && m.read<uint8_t>(g + 8192 + 3) == 0, "a faulted write leaves size and data alone");
             // A malformed long string (size above capacity, or a buffer running past 4 GB) is refused
             // before any offset is computed from it.
-            const uint32_t bad = obj();
-            m.write<uint32_t>(bad, 17); m.write<uint32_t>(bad + 4, 0x40000000u); m.write<uint32_t>(bad + 8, m.read<uint32_t>(q + 8));
+            // Each fixture is fully mapped and readable, so only the consistency check can refuse it.
+            const uint32_t roomy = p.heap().allocZeroed(256);   // readable well past any claimed size
+            for (uint32_t i = 0; i < 256; ++i) m.write<uint8_t>(roomy + i, uint8_t('a' + i % 26));
+            const uint32_t bad = obj();                         // long: capacity 15, size 20
+            m.write<uint32_t>(bad, 17); m.write<uint32_t>(bad + 4, 20); m.write<uint32_t>(bad + 8, roomy);
             sexpect(faults(C + "5eraseEmm", {bad, 0, 1}), "erase on a string whose size exceeds its capacity");
-            const uint32_t wbad = obj();
-            m.write<uint32_t>(wbad, 0x20000001u); m.write<uint32_t>(wbad + 4, 4); m.write<uint32_t>(wbad + 8, 0xF0000000u);
-            sexpect(faults(W + "5eraseEmm", {wbad, 0, 1}), "erase on a wide string whose buffer would run past 4 GB");
+            sexpect(m.read<uint32_t>(bad + 8) == roomy && m.read<uint32_t>(bad + 4) == 20, "the refused erase left the object alone");
+            const uint32_t sbad = p.heap().allocZeroed(64);     // short: size byte 0xFE claims 127 chars, inline holds 10
+            for (uint32_t i = 1; i < 64; ++i) m.write<uint8_t>(sbad + i, 'z');
+            m.write<uint8_t>(sbad, 0xFE);
+            const uint32_t sdst = p.heap().allocZeroed(256);
+            sexpect(faults(K + "4copyEPcmm", {sbad, sdst, 127, 0}), "copy from a short string whose size byte exceeds the inline buffer");
+            const uint32_t wsbad = p.heap().allocZeroed(64);    // wide short: size byte 0x0A claims 5 chars, inline holds 1
+            m.write<uint8_t>(wsbad, 0x0A);
+            const uint32_t wdst = p.heap().allocZeroed(64);
+            sexpect(faults("__ZNKSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE4copyEPwmm", {wsbad, wdst, 5, 0}), "copy from a short wide string whose size byte exceeds the inline buffer");
             // The wrap case: a wide string claiming 0x40000002 characters. erase at 0x40000000 would
             // compute data + 0x100000004, which wraps to data + 4 and silently moves real characters.
             const uint32_t wrapBuf = p.heap().allocZeroed(64);

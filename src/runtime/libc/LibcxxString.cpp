@@ -122,7 +122,11 @@ template <uint32_t W> struct Str {
     // capacity and its whole buffer must fit below 4 GB, so no offset computed from them
     // can wrap. Checked before any offset arithmetic (cheap: no page walk).
     void consistent(uint32_t s) const {
-        if (!isLong(s)) return;
+        if (!isLong(s)) {
+            // The inline buffer holds kMinCap - 1 characters; a larger size byte would read past it.
+            if ((x.mem.read<uint8_t>(s) >> 1) > kMinCap - 1) fault(s, "std::__1::basic_string object: short size exceeds the inline buffer");
+            return;
+        }
         const uint32_t cap = capacity(s), sz = x.mem.read<uint32_t>(s + 4), d = x.mem.read<uint32_t>(s + 8);
         if (sz > cap || cap > kMaxSize || uint64_t(d) + (uint64_t(cap) + 1) * W > 0x100000000ull)
             fault(s, "std::__1::basic_string object: size, capacity and data pointer are inconsistent");
