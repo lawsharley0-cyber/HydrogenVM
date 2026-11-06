@@ -82,6 +82,7 @@ struct CrashReport: Identifiable {
     }
 
     static func recover() -> CrashReport? {
+        HVMCrashJournal.closeSignalFile()
         let data = try? Data(contentsOf: pending)
         var fields = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
         let signalData = try? Data(contentsOf: signal)

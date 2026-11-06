@@ -44,6 +44,8 @@ struct ProcessConfig {
     bool threadLiveness = false;       // opt-in one-second per-thread progress evidence
     bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
     std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1
+    bool guestLibs = false;            // per-app switch: load dependent MH_DYLIBs into guest memory (default OFF)
+    std::string guestLibDir;           // directory searched for guest MH_DYLIB files when guestLibs is true
     std::string systemVersion = "6.1"; // reported by UIDevice / sysctl
     std::string deviceModel = "iPhone5,2";
     uint32_t screenWidth = 320, screenHeight = 568;   // points
@@ -245,6 +247,9 @@ public:
     CPU::Engine& engine() { return *engine_; }
     Heap& heap() { return *heap_; }
     const Loader::Image& image() const { return image_; }
+    const std::vector<Loader::Image>& guestDylibs() const { return guestDylibs_; }
+    std::optional<uint32_t> guestExports(const std::string& symbol) const;
+    const std::unordered_map<std::string, uint32_t>& guestExports() const { return guestExports_; }
     const Plist::Value* infoPlist() const { return infoPlist_.get(); }
 
     // Type-indexed services (ObjC runtime, Foundation state, ...).
@@ -304,7 +309,7 @@ public:
     // For teardown diagnostics; safe to call from any thread.
     std::string describeRunningThreads();
     // Start a guest thread running fn(arg). Returns the guest pthread_t.
-    uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached);
+    uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached, uint32_t stackAddr = 0);
     /// Test seam: the next `count` host-thread creations (process-wide) fail, to exercise startThread cleanup.
     static void failNextHostThreadSpawns(int count);
     bool joinThread(uint32_t self, uint32_t* retval);
@@ -370,11 +375,14 @@ public:
     uint32_t makeMissingStub(const std::string& name);
 
 private:
+    void loadGuestDylibs();
+    void unmapGuestDylibs();
     void bindImports();
+    void bindImageImports(const Loader::Image& img, std::vector<std::string>& missingFns, std::unordered_map<std::string, uint32_t>& cache);
     uint32_t resolveImport(const Loader::BindRecord& b);
     void setupMainThread();
     void setupEnvironment();
-    void initThreadState(GuestThread& t, uint32_t stackSize);
+    void initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stackAddr = 0);
     void threadMain(GuestThread* t, uint32_t fn, uint32_t arg);
     void joinHostThreads(bool includeRunning);
     void finishCrash(const CPU::Cpu& c, CPU::Exit e);
@@ -385,6 +393,8 @@ private:
     std::unique_ptr<CPU::Engine> engine_;
     std::unique_ptr<Heap> heap_;
     Loader::Image image_;
+    std::vector<Loader::Image> guestDylibs_;
+    std::unordered_map<std::string, uint32_t> guestExports_;
     Plist::ValuePtr infoPlist_;
     std::string homePath_, executablePath_;
     std::string guestHomePath_, guestBundlePath_, guestExecutablePath_;

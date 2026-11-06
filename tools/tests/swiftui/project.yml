@@ -25,6 +25,7 @@ targets:
       - ../../../app/HydrogenVM/PlayerViewport.swift
       - ../../../app/HydrogenVM/GameKeyboard.swift
       - ../../../app/HydrogenVM/FileBrowser.swift
+      - ../../../app/HydrogenVM/RecentSaveFiles.swift
       - ../../../app/HydrogenVM/BinaryEditor.swift
       - ../../../app/HydrogenVM/FileEditorSession.swift
       - ../../../app/HydrogenVM/SaveFileStore.swift
