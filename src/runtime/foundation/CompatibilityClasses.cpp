@@ -36,8 +36,18 @@ struct PNode {
     bool result = false;          // Const
     std::string key, operation;   // Cmp
     id rhs = 0;                   // Cmp, retained
-    std::vector<std::shared_ptr<PNode>> kids;
+    std::vector<std::shared_ptr<PNode>> kids;   // And / Or: any number (a chain is one node); Not: one
+    int height = 1;                             // longest path to a leaf; bounds every recursion over the tree
 };
+// Every traversal (evaluate, copy, release) recurses at most this deep.
+constexpr int kMaxPredicateHeight = 128;
+std::shared_ptr<PNode> joinNodes(PNode::Kind k, std::shared_ptr<PNode> a, std::shared_ptr<PNode> b) {
+    // A chain of the same operator stays one n-ary node, so "a OR b OR c ..." is flat.
+    if (a->kind == k) { a->height = std::max(a->height, b->height + 1); a->kids.push_back(std::move(b)); return a; }
+    auto n = std::make_shared<PNode>(); n->kind = k; n->height = std::max(a->height, b->height) + 1;
+    n->kids = {std::move(a), std::move(b)};
+    return n;
+}
 struct Predicate : ObjC::HostObject { std::shared_ptr<PNode> root; };
 void releaseNode(Ctx& x, PNode& n) {
     if (n.rhs) rt(x).release(x.cpu, n.rhs);
@@ -87,7 +97,8 @@ template <class Next> struct PredicateParser {
         return true;
     }
     std::shared_ptr<PNode> join(PNode::Kind k, std::shared_ptr<PNode> a, std::shared_ptr<PNode> b) {
-        auto n = std::make_shared<PNode>(); n->kind = k; n->kids = {std::move(a), std::move(b)};
+        auto n = joinNodes(k, std::move(a), std::move(b));
+        if (n->height > kMaxPredicateHeight) fail();
         return n;
     }
     std::shared_ptr<PNode> orExpr() {
@@ -105,6 +116,7 @@ template <class Next> struct PredicateParser {
         ws();
         if ((i < t.size() && t[i] == '!' && t.compare(i, 2, "!=") != 0 && (++i, true)) || keyword("NOT")) {
             auto n = std::make_shared<PNode>(); n->kind = PNode::Not; n->kids = {notExpr()};
+            n->height = n->kids[0]->height + 1;
             return n;
         }
         return primary();
@@ -201,8 +213,8 @@ id predicate_array(Ctx& x, Class cls, SEL, id format, id arguments) {
 bool evalNode(Ctx& x, const PNode& n, id object) {
     switch (n.kind) {
         case PNode::Const: return n.result;
-        case PNode::And: return evalNode(x, *n.kids[0], object) && evalNode(x, *n.kids[1], object);
-        case PNode::Or: return evalNode(x, *n.kids[0], object) || evalNode(x, *n.kids[1], object);
+        case PNode::And: for (auto& k : n.kids) if (!evalNode(x, *k, object)) return false; return true;
+        case PNode::Or: for (auto& k : n.kids) if (evalNode(x, *k, object)) return true; return false;
         case PNode::Not: return !evalNode(x, *n.kids[0], object);
         case PNode::Cmp: break;
     }
@@ -237,16 +249,18 @@ id compound(Ctx& x, Class cls, PNode::Kind kind, id subpredicates) {
     for (id p : arrayItems(x, subpredicates)) {
         auto r = treeOf(x, p);
         if (!root) { root = r; continue; }
-        auto n = std::make_shared<PNode>(); n->kind = kind; n->kids = {root, r};
-        root = n;
+        root = joinNodes(kind, root, r);
     }
     if (!root) { root = std::make_shared<PNode>(); root->kind = PNode::Const; root->result = kind == PNode::And; }
+    if (root->height > kMaxPredicateHeight) { releaseNode(x, *root); throw ObjC::ObjCError("NSCompoundPredicate: predicate nesting is too deep"); }
     return makePredicate(x, cls, root);
 }
 id compound_and(Ctx& x, Class cls, SEL, id subs) { return compound(x, cls, PNode::And, subs); }
 id compound_or(Ctx& x, Class cls, SEL, id subs) { return compound(x, cls, PNode::Or, subs); }
 id compound_not(Ctx& x, Class cls, SEL, id sub) {
     auto n = std::make_shared<PNode>(); n->kind = PNode::Not; n->kids = {treeOf(x, sub)};
+    n->height = n->kids[0]->height + 1;
+    if (n->height > kMaxPredicateHeight) { releaseNode(x, *n); throw ObjC::ObjCError("NSCompoundPredicate: predicate nesting is too deep"); }
     return makePredicate(x, cls, n);
 }
 id filtered(Ctx& x, id self, SEL, id predicate) { std::vector<id> result; for (id item : arrayItems(x, self)) if (send(x, predicate, "evaluateWithObject:", {item})) result.push_back(item); return makeArray(x, result); }

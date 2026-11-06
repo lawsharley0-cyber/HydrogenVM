@@ -2085,6 +2085,26 @@ int runFullSubsystemTests() {
                 try{ fmt("(kind == %@",{arg}); }catch(const std::exception&){}
                 if(call(arg,"retainCount")!=before){ std::printf("    NSPredicate: failed parse leaked a retain\n"); ok=false; }
             }
+            // Long AND/OR chains and large compound arrays stay shallow (one n-ary node), so
+            // evaluating, copying and freeing them cannot exhaust the host stack; deliberately
+            // nested compounds beyond the height limit are refused.
+            {
+                std::string chain="n == 9";
+                for(int k=0;k<20000;++k) chain+=" OR n == 9";
+                chain+=" OR n == 4";
+                expectRows(fmt(chain.c_str()),{c4},"a 20001-term OR chain");
+                std::vector<ObjC::id> many;
+                for(int k=0;k<20000;++k) many.push_back(fmt("n == 9"));
+                many.push_back(fmt("n == 2"));
+                expectRows(call(r.getClass("NSCompoundPredicate"),"orPredicateWithSubpredicates:",{makeArray(cx,many)}),{a2},"a 20001-element compound OR");
+                uint32_t nested=fmt("n == 1");
+                bool refused=false;
+                for(int k=0;k<200 && !refused;++k) {
+                    try{ nested=call(r.getClass("NSCompoundPredicate"),"notPredicateWithSubpredicate:",{nested}); }
+                    catch(const std::exception& e){ refused=std::string(e.what()).find("too deep")!=std::string::npos; }
+                }
+                if(!refused){ std::printf("    NSPredicate: 200 nested compounds were not refused\n"); ok=false; }
+            }
             compoundOk=ok;
         }
         check(compoundOk,"NSPredicate AND/OR/NOT with parentheses, keyword aliases and NSCompoundPredicate; other syntax still raises");
