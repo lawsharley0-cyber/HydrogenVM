@@ -14,6 +14,7 @@
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/vm_region.h>
+#include <mach/mach_vm.h>
 #include <os/log.h>
 #endif
 
