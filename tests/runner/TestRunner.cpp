@@ -327,6 +327,51 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
     const uint32_t bufA = 0xbee10000;
     const uint32_t bufB = 0xbee20000;
 
+    // 0. C-locale wide-character conversions (issue #330). Expected values are
+    // fixed by the C/POSIX specification, not computed from the code under test.
+    {
+        const uint32_t WEOF_ = 0xFFFFFFFFu, SIZE_ERR = 0xFFFFFFFFu, SIZE_INCOMPLETE = 0xFFFFFFFEu;
+        const uint32_t dst = bufB;
+        p.mem().write<uint8_t>(bufA, 'A'); p.mem().write<uint8_t>(bufA + 1, 0);
+        p.mem().write<uint32_t>(dst, 0x7777);
+        bool ok = true;
+        ok = ok && call("_btowc", {'A'}) == 'A' && call("_btowc", {0xE9}) == 0xE9 && call("_btowc", {0xFFFFFFFFu}) == WEOF_
+                && call("_btowc", {256}) == WEOF_;
+        ok = ok && call("_wctob", {'A'}) == 'A' && call("_wctob", {0xE9}) == 0xE9 && call("_wctob", {0x20AC}) == 0xFFFFFFFFu;
+        // mbrtowc: one byte -> one wide char; NUL byte returns 0; n == 0 is "incomplete"; NULL s resets and returns 0.
+        ok = ok && call("_mbrtowc", {dst, bufA, 1, 0}) == 1 && p.mem().read<uint32_t>(dst) == 'A';
+        ok = ok && call("_mbrtowc", {dst, bufA + 1, 1, 0}) == 0 && p.mem().read<uint32_t>(dst) == 0;
+        p.mem().write<uint32_t>(dst, 0x7777);
+        ok = ok && call("_mbrtowc", {dst, bufA, 0, 0}) == SIZE_INCOMPLETE && p.mem().read<uint32_t>(dst) == 0x7777;
+        ok = ok && call("_mbrtowc", {dst, 0, 5, 0}) == 0;
+        ok = ok && call("_mbrlen", {bufA, 1, 0}) == 1 && call("_mbrlen", {bufA + 1, 1, 0}) == 0 && call("_mbrlen", {bufA, 0, 0}) == SIZE_INCOMPLETE;
+        ok = ok && call("_mbtowc", {dst, bufA, 1}) == 1 && p.mem().read<uint32_t>(dst) == 'A' && call("_mbtowc", {dst, 0, 1}) == 0;
+        // wcrtomb: wide char <= 0xFF -> one byte; larger fails with EILSEQ (92 on Darwin); NULL s returns 1.
+        p.mainThread().errnoAddr = bufB + 224;   // this bare test process has no TLS block
+        p.mem().write<uint32_t>(bufB + 224, 0);
+        p.mem().write<uint8_t>(bufA + 8, 0);
+        ok = ok && call("_wcrtomb", {bufA + 8, 'Z', 0}) == 1 && p.mem().read<uint8_t>(bufA + 8) == 'Z';
+        ok = ok && call("_wcrtomb", {0, 'Z', 0}) == 1;
+        ok = ok && call("_wcrtomb", {bufA + 8, 0x20AC, 0}) == SIZE_ERR;
+        ok = ok && p.mem().read<uint32_t>(p.mainThread().errnoAddr) == 92;
+        // strxfrm in the C locale is a bounded copy returning the full source length.
+        const char* src = "hello";
+        p.mem().copyIn(bufA + 16, src, 6);
+        p.mem().write<uint32_t>(bufB + 64, 0xAAAAAAAAu);
+        ok = ok && call("_strxfrm", {bufB + 64, bufA + 16, 16}) == 5 && std::strcmp((const char*)p.mem().host(bufB + 64), "hello") == 0;
+        ok = ok && call("_strxfrm", {0, bufA + 16, 0}) == 5;
+        p.mem().write<uint32_t>(bufB + 96, 0xAAAAAAAAu);
+        ok = ok && call("_strxfrm", {bufB + 96, bufA + 16, 3}) == 5 && p.mem().read<uint8_t>(bufB + 96 + 3) == 0xAA;
+        // wcscoll / wcsxfrm
+        const uint32_t w1 = bufB + 128, w2 = bufB + 160, w3 = bufB + 192;
+        for (int i = 0; i < 3; ++i) { p.mem().write<uint32_t>(w1 + i * 4, i == 2 ? 0 : 'a' + i); p.mem().write<uint32_t>(w2 + i * 4, i == 2 ? 0 : 'a' + i); }
+        p.mem().write<uint32_t>(w2 + 4, 'z');
+        ok = ok && call("_wcscoll", {w1, w1}) == 0 && int32_t(call("_wcscoll", {w1, w2})) < 0 && int32_t(call("_wcscoll", {w2, w1})) > 0;
+        ok = ok && call("_wcsxfrm", {w3, w1, 8}) == 2 && p.mem().read<uint32_t>(w3) == 'a' && p.mem().read<uint32_t>(w3 + 4) == 'b' && p.mem().read<uint32_t>(w3 + 8) == 0;
+        ok = ok && call("_wcsxfrm", {0, w1, 0}) == 2;
+        check(ok, "C-locale wide-char conversions: btowc, wctob, mbrtowc, mbrlen, mbtowc, wcrtomb, strxfrm, wcscoll, wcsxfrm");
+    }
+
     // 1. String property tests vs glibc
     // 1a. strlen & strnlen
     {
