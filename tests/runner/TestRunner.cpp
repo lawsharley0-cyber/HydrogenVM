@@ -8914,6 +8914,155 @@ int runFullSubsystemTests() {
               !proc.lookupSymbol("_HVMUnresolvedTest"),
               "unresolved dynamic symbols remain uncached");
     }
+    {
+        namespace fs = std::filesystem;
+        const fs::path tmpRoot = fs::temp_directory_path() / ("hvm-guest-dylib-fixture-" + std::to_string(::getpid()));
+        fs::remove_all(tmpRoot);
+        fs::create_directories(tmpRoot);
+        fs::path script = fs::path("tools/build_guest_dylib_fixture.py");
+        if (!fs::exists(script)) script = fs::path(__FILE__).parent_path().parent_path().parent_path() / "tools/build_guest_dylib_fixture.py";
+        const std::string buildCmd = "python3 \"" + script.string() + "\" --out \"" + (tmpRoot / "ok").string() + "\"";
+        const int built = std::system(buildCmd.c_str());
+        check(built == 0, "build_guest_dylib_fixture.py generates ARMv7 executable and dependent MH_DYLIB chain");
+
+        if (built == 0) {
+        const std::string appPath = (tmpRoot / "ok" / "GuestDylibFixture.app").string();
+        const std::string libDir = (tmpRoot / "ok" / "guestlibs").string();
+
+        // 1. Default guestLibs = false: does not touch guestLibDir or map dependent dylibs.
+        {
+            ProcessConfig cfg;
+            cfg.bundlePath = appPath;
+            cfg.homePath = (tmpRoot / "home-off").string();
+            cfg.guestLibDir = (tmpRoot / "nonexistent-dir").string();
+            cfg.log = [](LogLevel, const std::string&) {};
+            try {
+            Process pOff(cfg);
+            pOff.load();
+            check(!pOff.config().guestLibs && pOff.guestDylibs().empty() && !pOff.guestExports("_guest_a_compute").has_value(),
+                  "guestLibs default OFF does not touch disk or map dependent dylibs");
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "guestLibs OFF load: %s\n", e.what());
+                check(false, "guestLibs OFF fixture loads");
+            }
+        }
+
+        // 2. guestLibs = true: recursively loads libguest_a.dylib -> libguest_b.dylib, rebases, binds, runs initializers in dependency order, and releases mappings on teardown.
+        const uint32_t arenasBefore = Memory::GuestArena::liveCount();
+        {
+            ProcessConfig cfg;
+            cfg.bundlePath = appPath;
+            cfg.homePath = (tmpRoot / "home-on").string();
+            cfg.guestLibs = true;
+            cfg.guestLibDir = libDir;
+            cfg.log = [](LogLevel, const std::string&) {};
+            try {
+            Process pOn(cfg);
+            pOn.load();
+            const auto expA = pOn.guestExports("_guest_a_compute");
+            const auto expB = pOn.guestExports("_guest_b_get");
+            const bool loadedOrder = pOn.guestDylibs().size() == 2 &&
+                pOn.guestDylibs()[0].installName == "/usr/lib/libguest_b.dylib" &&
+                pOn.guestDylibs()[1].installName == "@rpath/libguest_a.dylib" &&
+                pOn.guestDylibs()[0].slide != 0 && pOn.guestDylibs()[1].slide != 0 &&
+                pOn.guestDylibs()[0].highAddr <= pOn.guestDylibs()[1].lowAddr &&
+                expA.has_value() && expB.has_value() &&
+                pOn.mem().isMapped(*expA & ~1u) && pOn.mem().isMapped(*expB & ~1u);
+            const int exitCode = pOn.run();
+            check(loadedOrder && !pOn.crashed() && !pOn.tainted() && exitCode == 47,
+                  "guestLibs ON maps, rebases, binds and runs dependent MH_DYLIB initializers in topological order before main");
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "guestLibs ON load: %s\n", e.what());
+                check(false, "guestLibs ON fixture loads and runs");
+            }
+        }
+        check(Memory::GuestArena::waitForRelease(2.0, arenasBefore),
+              "Process teardown releases the guest arena after dylib loading");
+
+        // Mutate project-authored fixtures; expected outcomes follow the load contract.
+        auto scenario = [&](const std::string& name, auto mutate, auto verify) {
+            const auto root = tmpRoot / name;
+            fs::copy(tmpRoot / "ok", root, fs::copy_options::recursive);
+            mutate(root);
+            ProcessConfig cfg;
+            cfg.bundlePath = (root / "GuestDylibFixture.app").string();
+            cfg.guestLibDir = (root / "guestlibs").string();
+            cfg.homePath = (root / "home").string();
+            cfg.guestLibs = true;
+            cfg.log = [](LogLevel, const std::string&) {};
+            Process proc(cfg);
+            std::string error;
+            try { proc.load(); } catch (const std::exception& e) { error = e.what(); }
+            check(verify(proc, error), name.c_str());
+        };
+        auto editCommands = [](const fs::path& path, auto edit) {
+            auto bytes = Loader::readFile(path.string());
+            auto get = [&](size_t off) { uint32_t v; std::memcpy(&v, bytes.data() + off, 4); return v; };
+            auto put = [&](size_t off, uint32_t v) { std::memcpy(bytes.data() + off, &v, 4); };
+            for (size_t off = 28, i = 0; i < get(16); off += get(off + 4), ++i)
+                if (get(off) == 1) edit(bytes, off, get, put);
+            std::ofstream out(path, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        };
+        scenario("guest dylib symlink cannot escape configured roots", [&](const fs::path& root) {
+            fs::remove(root / "guestlibs/libguest_a.dylib");
+            fs::create_symlink(tmpRoot / "ok/guestlibs/libguest_a.dylib", root / "guestlibs/libguest_a.dylib");
+        }, [](Process&, const std::string& error) { return error.find("Missing guest dylib") != std::string::npos; });
+        scenario("guest dylib Objective-C metadata reports unsupported feature", [&](const fs::path& root) {
+            editCommands(root / "guestlibs/libguest_b.dylib", [](auto& bytes, size_t off, auto get, auto) {
+                if (get(off + 48)) {
+                    // Replace the first data section name without changing its payload.
+                    if (std::memcmp(bytes.data() + off + 8, "__DATA", 6) == 0)
+                        std::memcpy(bytes.data() + off + 56, "__objc_selrefs\0\0", 16);
+                }
+            });
+        }, [](Process& proc, const std::string& error) { return error.empty() && proc.tainted(); });
+        scenario("large guest dylib avoids static arena using actual image span", [&](const fs::path& root) {
+            editCommands(root / "GuestDylibFixture.app/GuestDylibFixture", [](auto& bytes, size_t off, auto, auto put) {
+                if (std::memcmp(bytes.data() + off + 8, "__LINKEDIT", 10) == 0) put(off + 24, 0x0d000000u);
+            });
+            editCommands(root / "guestlibs/libguest_b.dylib", [](auto& bytes, size_t off, auto, auto put) {
+                if (std::memcmp(bytes.data() + off + 8, "__LINKEDIT", 10) == 0) put(off + 28, 0x01100000u);
+            });
+        }, [](Process& proc, const std::string& error) {
+            return error.empty() && proc.guestDylibs().size() == 2 && proc.guestDylibs()[0].lowAddr >= 0x80000000u;
+        });
+
+        // 3. Missing dependent dylib when guestLibs = true fails with an honest error naming the dylib.
+        {
+            fs::remove(tmpRoot / "ok" / "guestlibs" / "libguest_b.dylib");
+            ProcessConfig cfg;
+            cfg.bundlePath = appPath;
+            cfg.homePath = (tmpRoot / "home-missing").string();
+            cfg.guestLibs = true;
+            cfg.guestLibDir = libDir;
+            cfg.log = [](LogLevel, const std::string&) {};
+            Process pMissing(cfg);
+            std::string err;
+            try { pMissing.load(); } catch (const std::exception& e) { err = e.what(); }
+            check(err.find("libguest_b.dylib") != std::string::npos,
+                  "guestLibs ON fails with an honest error naming a missing transitive MH_DYLIB");
+        }
+
+        // 4. Malformed dylib when guestLibs = true fails with an honest error naming the dylib.
+        {
+            const std::string badCmd = "python3 \"" + script.string() + "\" --out \"" + (tmpRoot / "bad").string() + "\" --malformed";
+            const int badBuilt = std::system(badCmd.c_str());
+            ProcessConfig cfg;
+            cfg.bundlePath = (tmpRoot / "bad" / "GuestDylibFixture.app").string();
+            cfg.homePath = (tmpRoot / "home-bad").string();
+            cfg.guestLibs = true;
+            cfg.guestLibDir = (tmpRoot / "bad" / "guestlibs").string();
+            cfg.log = [](LogLevel, const std::string&) {};
+            Process pBad(cfg);
+            std::string err;
+            try { pBad.load(); } catch (const std::exception& e) { err = e.what(); }
+            check(badBuilt == 0 && err.find("libguest_a.dylib") != std::string::npos,
+                  "guestLibs ON fails with an honest error naming a malformed MH_DYLIB");
+        }
+        }
+        fs::remove_all(tmpRoot);
+    }
 
     check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
     check(runHostFaultTests() == 0, "host-fault bundle contains complete thread, arena, HLE and log evidence");

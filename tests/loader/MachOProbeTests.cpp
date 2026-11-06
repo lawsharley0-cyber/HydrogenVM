@@ -21,6 +21,57 @@ void num32_be(Bytes& b, uint32_t v) {
     b.push_back(v & 0xff);
 }
 
+// Construct a trie with 65,536 nodes, optionally adding one more reachable node.
+Bytes largeExportTrie(bool exceedLimit) {
+    std::vector<std::vector<size_t>> children(1);
+    for (size_t i = 0; i < 255; ++i) {
+        children[0].push_back(children.size());
+        children.emplace_back();
+    }
+    for (size_t parent = 1; parent <= 255; ++parent) {
+        for (size_t i = 0; i < 255; ++i) {
+            children[parent].push_back(children.size());
+            children.emplace_back();
+        }
+    }
+    for (size_t i = 0; i < 255; ++i) {
+        children[256].push_back(children.size());
+        children.emplace_back();
+    }
+    if (exceedLimit) {
+        children[65280].push_back(children.size()); // last leaf in traversal order
+        children.emplace_back();
+    }
+
+    // Child offsets use three-byte ULEBs so node sizes are known in advance.
+    std::vector<size_t> offsets(children.size());
+    size_t size = 0;
+    for (size_t i = 0; i < children.size(); ++i) {
+        offsets[i] = size;
+        size += (exceedLimit && i == children.size() - 1 ? 4 : 2) + 5 * children[i].size();
+    }
+    Bytes trie;
+    trie.reserve(size);
+    for (size_t index = 0; index < children.size(); ++index) {
+        const auto& node = children[index];
+        if (exceedLimit && index == children.size() - 1) {
+            trie.insert(trie.end(), {2, 0, 1}); // terminal export after the work limit
+        } else {
+            trie.push_back(0); // no terminal
+        }
+        trie.push_back(uint8_t(node.size()));
+        for (size_t i = 0; i < node.size(); ++i) {
+            trie.push_back(uint8_t(i + 1)); // unique, non-NUL edge
+            trie.push_back(0);
+            size_t off = offsets[node[i]];
+            trie.push_back(uint8_t((off & 0x7f) | 0x80));
+            trie.push_back(uint8_t(((off >> 7) & 0x7f) | 0x80));
+            trie.push_back(uint8_t(off >> 14));
+        }
+    }
+    return trie;
+}
+
 int main() {
     int passed = 0, failed = 0;
     auto check = [&](const std::string& name, const Bytes& file, bool isMachO, bool hasArm32, bool encrypted, uint32_t cpuSubtype, const std::string& errorSnippet = "") {
@@ -121,6 +172,111 @@ int main() {
     num32(encrypted_armv7, 8192); // cryptsize
     num32(encrypted_armv7, 1); // cryptid (encrypted!)
     check("encrypted_armv7", encrypted_armv7, true, true, true, 9);
+
+    // 6. MH_DYLIB loadMachO with slide, LC_ROUTINES, LC_LOAD_WEAK_DYLIB and export trie
+    {
+        Bytes dylib(0x1100, 0);
+        auto put32 = [&](size_t off, uint32_t v) {
+            dylib[off + 0] = v & 0xff;
+            dylib[off + 1] = (v >> 8) & 0xff;
+            dylib[off + 2] = (v >> 16) & 0xff;
+            dylib[off + 3] = (v >> 24) & 0xff;
+        };
+        auto putStr = [&](size_t off, const char* s) {
+            for (size_t i = 0; s[i]; ++i) dylib[off + i] = uint8_t(s[i]);
+        };
+        // MachHeader: MH_DYLIB (6), 4 load commands: LC_SEGMENT(__TEXT), LC_ROUTINES, LC_LOAD_WEAK_DYLIB, LC_DYLD_INFO_ONLY
+        // cmd sizes: 56 + 40 + 32 + 48 = 176
+        put32(0, 0xfeedface);
+        put32(4, 12);
+        put32(8, 9);
+        put32(12, 6); // MH_DYLIB
+        put32(16, 4); // ncmds
+        put32(20, 176); // sizeofcmds
+        put32(24, 0);
+        // cmd 0 (off 28): LC_SEGMENT __TEXT vmaddr=0 vmsize=0x1000 fileoff=0 filesize=0x1000
+        put32(28, 0x1);
+        put32(32, 56);
+        putStr(36, "__TEXT");
+        put32(52, 0);
+        put32(56, 0x1000);
+        put32(60, 0);
+        put32(64, 0x1000);
+        put32(68, 7);
+        put32(72, 5);
+        put32(76, 0);
+        put32(80, 0);
+        // cmd 1 (off 84): LC_ROUTINES (0x11), cmdsize=40, init_address=0x0401 (Thumb)
+        put32(84, 0x11);
+        put32(88, 40);
+        put32(92, 0x0401);
+        // cmd 2 (off 124): LC_LOAD_WEAK_DYLIB (0x80000018), cmdsize=32, name="@rpath/w.dylib"
+        put32(124, 0x80000018u);
+        put32(128, 32);
+        put32(132, 24);
+        putStr(148, "@rpath/w.dylib");
+        // cmd 3 (off 156): LC_DYLD_INFO_ONLY (0x80000022), cmdsize=48, export_off=0x1000, export_size=17
+        put32(156, 0x80000022u);
+        put32(160, 48);
+        put32(196, 0x1000);
+        put32(200, 17);
+        const uint8_t trieValid[17] = {
+            0x00, 0x01, '_', 't', 'r', 'i', 'e', '_', 'f', 'n', 0x00, 12,
+            0x03, 0x00, 0xa0, 0x08, 0x00
+        };
+        for (size_t i = 0; i < sizeof(trieValid); ++i) dylib[0x1000 + i] = trieValid[i];
+
+        Hydrogen::Memory::GuestArena arena;
+        auto img = Hydrogen::Loader::loadMachO(arena, dylib, "test.dylib", {0x04000000u});
+        bool dylibOk = img.fileType == 6 && img.slide == 0x04000000u &&
+                       img.dylibs.size() == 1 && img.dylibWeak.size() == 1 && img.dylibWeak[0] &&
+                       img.initializers.size() == 1 && img.initializers[0] == 0x04000401u &&
+                       img.exports.count("_trie_fn") == 1 && img.exports["_trie_fn"] == 0x04000420u;
+
+        // Shared terminal export trie: root node with two child edges ("_a" and "_b") both pointing to
+        // offset 10 (terminal at 0x0420) must retain both exports.
+        const uint8_t sharedTrie[15] = {
+            0x00, 0x02, '_', 'a', 0x00, 10, '_', 'b', 0x00, 10,
+            0x03, 0x00, 0xa0, 0x08, 0x00
+        };
+        put32(200, sizeof(sharedTrie));
+        for (size_t i = 0; i < sizeof(sharedTrie); ++i) dylib[0x1000 + i] = sharedTrie[i];
+        Hydrogen::Memory::GuestArena sharedArena;
+        auto sharedImg = Hydrogen::Loader::loadMachO(sharedArena, dylib, "shared.dylib", {0x04000000u});
+        dylibOk = dylibOk && sharedImg.exports.count("_a") == 1 && sharedImg.exports.count("_b") == 1 &&
+                  sharedImg.exports["_a"] == 0x04000420u && sharedImg.exports["_b"] == 0x04000420u;
+
+        if (dylibOk) {
+            std::printf("PASS mh_dylib_routines_weak_and_export_trie\n");
+            ++passed;
+        } else {
+            std::printf("FAIL mh_dylib_routines_weak_and_export_trie\n");
+            ++failed;
+        }
+
+        auto checkTrie = [&](const std::string& name, const Bytes& trie, const std::string& expectedError) {
+            dylib.resize(0x1000);
+            dylib.insert(dylib.end(), trie.begin(), trie.end());
+            put32(200, uint32_t(trie.size()));
+            bool ok = false;
+            try {
+                Hydrogen::Memory::GuestArena testArena;
+                Hydrogen::Loader::loadMachO(testArena, dylib, name, {0x04000000u});
+                ok = expectedError.empty();
+            } catch (const Hydrogen::Loader::MachOError& e) {
+                ok = !expectedError.empty() && std::string(e.what()).find(expectedError) != std::string::npos;
+                if (!ok) std::printf("%s: unexpected error '%s'\n", name.c_str(), e.what());
+            }
+            std::printf("%s %s\n", ok ? "PASS" : "FAIL", name.c_str());
+            if (ok) ++passed; else ++failed;
+        };
+
+        checkTrie("export_trie_child_at_end", {0, 1, 'x', 0, 5}, "export trie child offset out of range");
+        checkTrie("export_trie_child_past_end", {0, 1, 'x', 0, 6}, "export trie child offset out of range");
+        checkTrie("export_trie_at_work_limit", largeExportTrie(false), "");
+        checkTrie("export_trie_exceeds_work_limit", largeExportTrie(true), "export trie work limit exceeded");
+        checkTrie("export_trie_cycle", {0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00}, "export trie cycle detected");
+    }
 
     std::printf("MachOProbe: %d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;
