@@ -84,9 +84,9 @@ struct CrashReport: Identifiable {
     static func recover() -> CrashReport? {
         HVMCrashJournal.closeSignalFile()
         let data = try? Data(contentsOf: pending)
-        var fields = (try? data.flatMap { try JSONSerialization.jsonObject(with: $0) }) as? [String: Any] ?? [:]
+        var fields = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
         let signalData = try? Data(contentsOf: signal)
-        let fault = (try? signalData.flatMap { try JSONSerialization.jsonObject(with: $0) }) as? [String: Any]
+        let fault = signalData.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
         let pendingRaw = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
         let signalRaw = signalData.map { String(decoding: $0, as: UTF8.self) } ?? ""
         let hostText = (try? Data(contentsOf: hostFault)).map { String(decoding: $0, as: UTF8.self) } ?? ""
@@ -98,9 +98,6 @@ struct CrashReport: Identifiable {
         fields["summary"] = "The previous game session ended unexpectedly. iOS may have stopped HydrogenVM; the exact cause is unknown."
         if let fault {
             fields.merge(fault) { _, new in new }
-            fields["summary"] = "HydrogenVM encountered a host memory fault. Share this report to help diagnose it."
-        } else if let signalData, let signalFields = (try? JSONSerialization.jsonObject(with: signalData)) as? [String: Any] {
-            fields.merge(signalFields) { _, new in new }
             fields["summary"] = "HydrogenVM encountered a host memory fault. Share this report to help diagnose it."
         }
         if fault == nil && !signalRaw.isEmpty { fields["signalRaw"] = String(signalRaw.prefix(200_000)) }

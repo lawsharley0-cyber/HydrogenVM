@@ -70,19 +70,25 @@ final class PlayerUITests: XCTestCase {
     func testScaleModeReturnsToLiveGlobalDefault() {
         let app = open()
         app.buttons["player-controls"].tap()
-        app.buttons["Fill (Crop)"].tap()
-        XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
-        app.buttons["Use Default"].tap()
-        XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForNonExistence(timeout: 5))
-        app.buttons["probe-default-extended"].tap()
-        XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
-        app.buttons["probe-default-fill"].tap()
-        XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
-        app.buttons["Stretch"].tap()
-        app.buttons["probe-default-extended"].tap()
-        XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForNonExistence(timeout: 5))
-        app.buttons["Use Default"].tap()
-        XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
+        let useDefault = app.segmentedControls["player-scale-mode"].buttons["Use Default"]
+        for _ in 0..<3 {
+            app.buttons["Fill (Crop)"].tap()
+            XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
+            useDefault.tap()
+            XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForNonExistence(timeout: 5))
+            app.buttons["probe-default-extended"].tap()
+            XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
+            app.buttons["probe-default-fill"].tap()
+            XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
+            app.buttons["Stretch"].tap()
+            app.buttons["probe-default-extended"].tap()
+            wait(app.staticTexts["probe-scale-default"], label: "Extended Bars")
+            XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForNonExistence(timeout: 5))
+            useDefault.tap()
+            expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: useDefault)
+            waitForExpectations(timeout: 5)
+            XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
+        }
     }
 
     @MainActor
