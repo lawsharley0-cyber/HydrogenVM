@@ -118,10 +118,11 @@ template <uint32_t W> struct Str {
         x.mem.write<uint32_t>(s + 4, n);
         x.mem.write<uint32_t>(s + 8, p);
     }
-    // The characters of a long string must lie in readable memory before we use them.
-    uint32_t checkedData(uint32_t s) const {
+    // The string's characters [from, from + n), checked readable: each operation checks
+    // only the range it reads or writes, so an append does not rescan the whole buffer.
+    uint32_t readChars(uint32_t s, uint32_t from, uint32_t n) const {
         const uint32_t d = data(s);
-        if (isLong(s)) readable(d, uint64_t(capacity(s)) + 1, "std::__1::basic_string buffer");
+        readable(d + from * W, n, "std::__1::basic_string buffer");
         return d;
     }
 
@@ -195,7 +196,7 @@ template <uint32_t W> struct Str {
     // least twice the old capacity (__grow_by_and_replace) is allocated first.
     void replace(uint32_t s, uint32_t pos, uint32_t n1, const Src& src, const char* where) {
         object(s, true);
-        const uint32_t sz = size(s), cap = capacity(s), p = checkedData(s);
+        const uint32_t sz = size(s), cap = capacity(s), p = data(s);
         if (pos > sz) outOfRange(where);
         n1 = std::min(n1, sz - pos);
         const uint32_t n2 = src.n;
@@ -206,12 +207,16 @@ template <uint32_t W> struct Str {
         const bool alias = overlaps(src, p, uint64_t(p) + (uint64_t(cap) + 1) * W) || overlaps(src, s, uint64_t(s) + 12);
         if (alias) tmp = copyOf(src);
         if (newSz <= cap) {
+            // Reads the tail after the edit; writes [pos, newSz] (moved tail, new chars, NUL).
+            readable(p + (pos + n1) * W, tail, "std::__1::basic_string buffer");
+            writable(p + pos * W, uint64_t(newSz - pos) + 1, "std::__1::basic_string buffer");
             if (n1 != n2) move(p + (pos + n2) * W, p + (pos + n1) * W, tail);
             emit(p + pos * W, src, alias ? &tmp : nullptr);
             store(p, newSz, 0);
             setSize(s, newSz);
             return;
         }
+        readable(p, sz, "std::__1::basic_string buffer");   // head and tail are copied
         const uint32_t newCap = grown(cap, newSz);
         const uint32_t q = alloc(newCap + 1);
         move(q, p, pos);
@@ -226,9 +231,10 @@ template <uint32_t W> struct Str {
     Src sub(uint32_t other, uint32_t pos, uint32_t n, const char* where) const {
         const uint32_t sz = size(other);
         if (pos > sz) outOfRange(where);
-        return Src::range(checkedData(other) + pos * W, std::min(n, sz - pos));
+        const uint32_t n2 = std::min(n, sz - pos);
+        return Src::range(readChars(other, pos, n2) + pos * W, n2);
     }
-    Src whole(uint32_t other) const { return Src::range(checkedData(other), size(other)); }
+    Src whole(uint32_t other) const { const uint32_t n = size(other); return Src::range(readChars(other, 0, n), n); }
 
     // Character comparison as char_traits does it: unsigned bytes for char,
     // signed wchar_t (wmemcmp) for wchar_t.
@@ -363,7 +369,7 @@ template <uint32_t W> void reserve(Ctx& x, GuestPtr self, uint32_t res) {
     res = Str<W>::recommend(std::max(res, sz));
     if (res == cap) return;
     const bool wasLong = t.isLong(self);
-    const uint32_t old = t.checkedData(self);
+    const uint32_t old = t.readChars(self, 0, sz);
     if (res == Str<W>::kMinCap - 1) {
         // Long to inline: the inline buffer overlaps the object's own fields, so copy via the host.
         std::vector<uint32_t> v(sz);
@@ -384,7 +390,9 @@ template <uint32_t W> void resize(Ctx& x, GuestPtr self, uint32_t n, uint32_t c)
     const uint32_t sz = t.size(self);
     if (n > sz) { appendSrc<W>(x, self, Src::chars(n - sz, c)); return; }
     t.object(self, true);
-    t.store(t.checkedData(self), n, 0);
+    const uint32_t d = t.data(self);
+    t.writable(d + n * W, 1, "std::__1::basic_string buffer");
+    t.store(d, n, 0);
     t.setSize(self, n);
 }
 
@@ -406,8 +414,8 @@ template <uint32_t W> uint32_t at(Ctx& x, GuestPtr self, uint32_t n) {
 template <uint32_t W> struct Hay {
     Str<W> t; uint32_t h, hn, s, sn;
     Hay(Ctx& x, GuestPtr self, GuestPtr needle, uint32_t n) : t(x) {
-        h = t.checkedData(self);
         hn = t.size(self);
+        h = t.readChars(self, 0, hn);
         s = needle;
         sn = n;
         t.readable(s, sn, "basic_string: search argument");
@@ -450,13 +458,13 @@ template <uint32_t W> struct Hay {
 // A one-character needle lives in a register, not guest memory: search for it directly.
 template <uint32_t W> uint32_t findChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
     auto t = S<W>(x);
-    const uint32_t h = t.checkedData(self), n = t.size(self);
+    const uint32_t n = t.size(self), h = t.readChars(self, 0, n);
     for (uint32_t i = pos; i < n; ++i) if (t.load(h, i) == c) return i;
     return kNpos;
 }
 template <uint32_t W> uint32_t rfindChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
     auto t = S<W>(x);
-    const uint32_t h = t.checkedData(self), n = t.size(self);
+    const uint32_t n = t.size(self), h = t.readChars(self, 0, n);
     if (!n) return kNpos;
     for (uint32_t i = std::min(pos, n - 1) + 1; i-- > 0;) if (t.load(h, i) == c) return i;
     return kNpos;
@@ -500,7 +508,7 @@ template <uint32_t W> uint32_t growTo(Ctx& x, GuestPtr self, uint32_t oldCap, ui
     if (oldCap != t.capacity(self) || oldSz > oldCap || uint64_t(nCopy) + nDel > oldSz)
         throw std::runtime_error("std::__1::basic_string::__grow_by: arguments do not match the string");
     if (delta > ms - oldCap) lengthError("basic_string");
-    const uint32_t old = t.checkedData(self);
+    const uint32_t old = t.readChars(self, 0, oldSz);   // n_copy and the tail lie within old_sz
     const uint32_t cap = Str<W>::grown(oldCap, oldCap + delta);
     const uint32_t tail = oldSz - nDel - nCopy;
     if (uint64_t(nCopy) + nAdd + tail > cap) lengthError("basic_string::__grow_by");

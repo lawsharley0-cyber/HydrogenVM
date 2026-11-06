@@ -597,6 +597,15 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             // Writes to a read-only destination fault.
             sexpect(faults(K + "4copyEPcmm", {q, g + 8192, 3, 0}), "copy into a read-only page");
             sexpect(faults(C + "6__initEPKcm", {g + 8192, cstr("abc"), 3}), "__init into a read-only object");
+            // A long string whose buffer is on the read-only page (as inline code may build one):
+            // reading works, writing in place faults and leaves the object alone.
+            const uint32_t ro = obj();
+            for (uint32_t i = 0; i < 4; ++i) m.write<uint8_t>(g + 8192 + i, uint8_t("abc"[i]));
+            m.write<uint32_t>(ro, 17); m.write<uint32_t>(ro + 4, 3); m.write<uint32_t>(ro + 8, g + 8192);   // cap 15, size 3
+            sexpect(callS(K + "4findEcm", {ro, 'c', 0}) == 2, "a read-only buffer can be searched");
+            sexpect(faults(C + "9push_backEc", {ro, 'd'}), "push_back into a read-only buffer");
+            sexpect(faults(C + "6resizeEmc", {ro, 1, 0}), "shrinking resize of a read-only buffer");
+            sexpect(m.read<uint32_t>(ro + 4) == 3 && m.read<uint8_t>(g + 8192 + 3) == 0, "a faulted write leaves size and data alone");
             // A huge length is refused before anything is allocated on the host.
             sexpect(stops(C + "6appendEmc", {s1, 0x7FFFFFF0u, 'z'}), "append(n, c) beyond the guest heap stops with an error");
             sexpect(stops(C + "6__initEmc", {obj(), 0xFFFFFFF0u, 'z'}), "__init(n, c) beyond max_size is length_error");
