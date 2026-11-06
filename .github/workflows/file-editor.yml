@@ -31,6 +31,13 @@ jobs:
             tools/tests/swift/PlayerTests.swift
           set -o pipefail
           build/file-editor/player-tests 2>&1 | tee build/file-editor/player-models.log
+      - name: Recent save files stay inside the open game (Swift 6)
+        run: |
+          xcrun swiftc -swift-version 6 -o build/file-editor/recent-tests \
+            app/HydrogenVM/RecentSaveFiles.swift \
+            tools/tests/swift/RecentSaveFilesTests.swift
+          set -o pipefail
+          build/file-editor/recent-tests 2>&1 | tee build/file-editor/recent-files.log
       - name: Generate project
         if: ${{ !cancelled() }}
         run: |
