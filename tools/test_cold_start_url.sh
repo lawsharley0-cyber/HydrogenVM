@@ -21,10 +21,21 @@ xcrun simctl uninstall "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 xcrun simctl install "$UDID" "$HOST_APP"
 trap 'xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true' EXIT
 
+# Initialize installation/container state, then terminate the process before
+# the actual URL launch. A Home Screen icon is created from an already-used app.
+xcrun simctl launch "$UDID" "$BUNDLE_ID"
 DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
+for _ in $(seq 1 40); do
+    DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
+    [ -f "$DATA/Documents/cold-start-launched" ] && break
+    sleep 0.5
+done
+[ -f "$DATA/Documents/cold-start-launched" ] || { echo "::error::Instrumented setup launch did not write its marker"; exit 1; }
+xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+
 GUEST_ID=$(python3 -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleIdentifier"])' "$GUEST_APP/Info.plist")
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
-rm -f "$DATA/Documents/cold-start-queued" "$DATA/Documents/cold-start-routed" "$DATA/Documents/cold-start-guest-passed"
+rm -f "$DATA/Documents/cold-start-launched" "$DATA/Documents/cold-start-error" "$DATA/Documents/cold-start-queued" "$DATA/Documents/cold-start-routed" "$DATA/Documents/cold-start-guest-passed"
 mkdir -p "$DATA/Documents/Apps/$GUEST_ID"
 cp -R "$GUEST_APP" "$DATA/Documents/Apps/$GUEST_ID/"
 URL="hydrogenvm://run/$GUEST_ID"

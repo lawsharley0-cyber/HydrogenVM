@@ -172,7 +172,7 @@ jobs:
         run: |
           xcodebuild -project app/HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
             -sdk iphonesimulator SUPPORTED_PLATFORMS="iphoneos iphonesimulator" ARCHS=arm64 \
-            SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) COLD_START_URL_TEST' \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS=COLD_START_URL_TEST \
             SYMROOT="$PWD/build/cold-start-xbuild" CODE_SIGNING_ALLOWED=NO build >build/cold-start-build.log 2>&1 || {
               tail -150 build/cold-start-build.log
               exit 1

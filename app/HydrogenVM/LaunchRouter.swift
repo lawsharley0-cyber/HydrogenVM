@@ -25,7 +25,12 @@ final class LaunchRouter {
 enum ColdStartURLTest {
     static func record(_ stage: String, value: String) {
         let file = URL.documentsDirectory.appending(path: "cold-start-" + stage)
-        try? value.write(to: file, atomically: true, encoding: .utf8)
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try value.write(to: file, atomically: true, encoding: .utf8)
+        } catch {
+            FileHandle.standardError.write(Data("Cold-start marker failed at \(file.path): \(error)\n".utf8))
+        }
     }
 
     static func queued(_ url: URL) -> Bool {
