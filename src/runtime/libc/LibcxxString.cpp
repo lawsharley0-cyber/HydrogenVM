@@ -402,6 +402,7 @@ template <uint32_t W> void reserve(Ctx& x, GuestPtr self, uint32_t res) {
 }
 template <uint32_t W> void resize(Ctx& x, GuestPtr self, uint32_t n, uint32_t c) {
     auto t = S<W>(x);
+    t.consistent(self);
     const uint32_t sz = t.size(self);
     if (n > sz) { appendSrc<W>(x, self, Src::chars(n - sz, c)); return; }
     t.object(self, true);
@@ -421,6 +422,7 @@ template <uint32_t W> uint32_t copyOut(Ctx& x, GuestPtr self, GuestPtr dst, uint
 }
 template <uint32_t W> uint32_t at(Ctx& x, GuestPtr self, uint32_t n) {
     auto t = S<W>(x);
+    t.consistent(self);
     if (n >= t.size(self)) outOfRange("basic_string::at");
     return t.data(self) + n * W;
 }

@@ -623,6 +623,12 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             const uint32_t wsbad = p.heap().allocZeroed(64);    // wide short: size byte 0x0A claims 5 chars, inline holds 1
             m.write<uint8_t>(wsbad, 0x0A);
             const uint32_t wdst = p.heap().allocZeroed(64);
+            // resize and at on the same malformed short wide string must not reach past the
+            // 12-byte object (sentinel just after it).
+            m.write<uint32_t>(wsbad + 12, 0x5E5E5E5Eu);
+            sexpect(faults("__ZNSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE6resizeEmw", {wsbad, 2, 'q'}) &&
+                        m.read<uint32_t>(wsbad + 12) == 0x5E5E5E5Eu, "resize of a malformed short wide string leaves the bytes after it alone");
+            sexpect(faults("__ZNSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE2atEm", {wsbad, 2}), "at() on a malformed short wide string");
             sexpect(faults("__ZNKSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE4copyEPwmm", {wsbad, wdst, 5, 0}), "copy from a short wide string whose size byte exceeds the inline buffer");
             // The wrap case: a wide string claiming 0x40000002 characters. erase at 0x40000000 would
             // compute data + 0x100000004, which wraps to data + 4 and silently moves real characters.
