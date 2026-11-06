@@ -419,6 +419,7 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             const bool lng = b0 & 1;
             const uint32_t n = lng ? m.read<uint32_t>(s + 4) : b0 >> 1;
             const uint32_t d = lng ? m.read<uint32_t>(s + 8) : s + 1;
+            if (d < 0x10000 || n > (1u << 20)) return std::string("<not a string>");   // unconstructed object
             std::string r(n, '\0');
             for (uint32_t i = 0; i < n; ++i) r[i] = char(m.read<uint8_t>(d + i));
             return m.read<uint8_t>(d + n) == 0 ? r : std::string("<no NUL>");
@@ -523,7 +524,7 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
         expect(capWord(r) == 113 && text(r) == "abc", "reserve(100): cap 111");
         const uint32_t oldBuf = m.read<uint32_t>(r + 8);
         callS(C + "7reserveEm", {r, 0});
-        expect(m.read<uint8_t>(r) == 6 && text(r) == "abc" && p.heap().blockSize(oldBuf) == 0, "reserve(0) moves back inline and frees");
+        expect(m.read<uint8_t>(r) == 6 && text(r) == "abc" && oldBuf && p.heap().blockSize(oldBuf) == 0, "reserve(0) moves back inline and frees");
         callS(C + "6resizeEmc", {r, 5, '.'});
         expect(text(r) == "abc..", "resize up with fill");
         callS(C + "6resizeEmc", {r, 1, '.'});
@@ -542,11 +543,11 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
         const uint32_t gb2 = obj();
         callS(C + "6__initEPKcm", {gb2, cstr("abcdefghijklmnopqrstu"), 21});
         callS(C + "9__grow_byEmmmmmm", {gb2, 31, 1, 21, 21, 0, 0});
-        expect(capWord(gb2) == 65 && std::memcmp(m.host(m.read<uint32_t>(gb2 + 8)), "abcdefghijklmnopqrstu", 21) == 0, "__grow_by: max(32, 62) -> cap 63");
+        expect(capWord(gb2) == 65 && m.read<uint32_t>(gb2 + 8) >= 0x10000 && std::memcmp(m.host(m.read<uint32_t>(gb2 + 8)), "abcdefghijklmnopqrstu", 21) == 0, "__grow_by: max(32, 62) -> cap 63");
 
         // Destructor frees a long buffer and returns this.
         const uint32_t hb = m.read<uint32_t>(h + 8);
-        expect(callS(C + "D1Ev", {h}) == h && p.heap().blockSize(hb) == 0, "destructor frees the long buffer");
+        expect(callS(C + "D1Ev", {h}) == h && hb && p.heap().blockSize(hb) == 0, "destructor frees the long buffer");
         callS(C + "D2Ev", {g});
 
         // Errors stop the call instead of corrupting memory.
@@ -575,6 +576,7 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
             const bool lng = b0 & 1;
             const uint32_t n = lng ? m.read<uint32_t>(s + 4) : b0 >> 1;
             const uint32_t dd = lng ? m.read<uint32_t>(s + 8) : s + 4;
+            if (dd < 0x10000 || n > (1u << 20)) return std::u32string(U"<not a string>");
             std::u32string t(n, U'\0');
             for (uint32_t i = 0; i < n; ++i) t[i] = char32_t(m.read<uint32_t>(dd + i * 4));
             return m.read<uint32_t>(dd + n * 4) == 0 ? t : std::u32string(U"<no NUL>");
@@ -605,7 +607,7 @@ int runPropertyTests(const std::string& plantOffByOne = "") {
         callS(W + "6__initEmw", {wneg, 1, 0xFFFFFFFFu});   // wchar_t is signed on iOS: -1 sorts first
         wexpect(int32_t(callS(WK + "7compareEPKw", {wneg, wcs(U"a")})) < 0, "compare treats wchar_t as signed");
         const uint32_t wbuf = m.read<uint32_t>(wc + 8);
-        wexpect(callS(W + "D1Ev", {wc}) == wc && p.heap().blockSize(wbuf) == 0, "destructor frees");
+        wexpect(callS(W + "D1Ev", {wc}) == wc && wbuf && p.heap().blockSize(wbuf) == 0, "destructor frees");
         check(wok, "libc++ std::wstring: inline layout at +4, capacity rounding, assign, copy, operator=, push_back, find, signed compare, destructor");
     }
 
