@@ -215,6 +215,17 @@ void deliverPendingInput(Ctx& x) {
     setNeedsComposite(x);
 }
 
+// Info.plist orientation names to UIKit's UIInterfaceOrientation values, which the
+// guest compares against: LandscapeRight is 3 and LandscapeLeft is 4 (they are the
+// device orientations LandscapeLeft and LandscapeRight). The runtime's layout,
+// status bar and supported-orientation mask already use these values.
+int32_t orientationFromString(const std::string& s) {
+    if (s == "UIInterfaceOrientationLandscapeRight") return 3;
+    if (s == "UIInterfaceOrientationLandscapeLeft") return 4;
+    if (s == "UIInterfaceOrientationPortraitUpsideDown") return 2;
+    return 1;
+}
+
 namespace {
 
 // ============================================================ UIApplication ===
@@ -239,7 +250,10 @@ void app_setStatusBarHiddenAnim(Ctx& x, id s, SEL c, bool h, uint32_t) { app_set
 int32_t app_statusBarOrientation(Ctx& x, id, SEL) { return ui(x).statusBarOrientation; }
 void app_setStatusBarOrientation(Ctx& x, id, SEL, int32_t o) {
     auto& u = ui(x);
-    if (o < 1 || o > 4 || o == u.statusBarOrientation) return;
+    if (o < 1 || o > 4) return;
+    u.orientationSetByApp = true;
+    if (o == u.statusBarOrientation) return;
+    x.proc.logf(LogLevel::Info, "Orientation: %d -> %d (setStatusBarOrientation: from the app)", u.statusBarOrientation, o);
     u.statusBarOrientation = o;
     // re-lay out root view controllers for the new orientation
     for (id w : std::vector<id>(u.windows)) if (const id vc = viewData(x, w).rootViewController) rt(x).send(x.cpu, w, "setRootViewController:", {vc});
@@ -418,12 +432,6 @@ void acc_setInterval(Ctx& x, id self, SEL, double i) { AD(x, self).interval = st
 
 // ======================================================== UIApplicationMain ===
 
-int32_t orientationFromString(const std::string& s) {
-    if (s == "UIInterfaceOrientationLandscapeLeft") return 3;
-    if (s == "UIInterfaceOrientationLandscapeRight") return 4;
-    if (s == "UIInterfaceOrientationPortraitUpsideDown") return 2;
-    return 1;
-}
 
 void configureScreen(Ctx& x) {
     auto& u = ui(x);
@@ -605,6 +613,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
     else if (del && r.respondsTo(del, r.sel("applicationDidFinishLaunching:")))
         r.send(x.cpu, del, "applicationDidFinishLaunching:", {u.app});
     Foundation::postNotification(x, "UIApplicationDidFinishLaunchingNotification", u.app);
+    reevaluateRootOrientation(x, "after launch");
     if (del && r.respondsTo(del, r.sel("applicationDidBecomeActive:"))) r.send(x.cpu, del, "applicationDidBecomeActive:", {u.app});
     Foundation::postNotification(x, "UIApplicationDidBecomeActiveNotification", u.app);
     layoutPass(x);

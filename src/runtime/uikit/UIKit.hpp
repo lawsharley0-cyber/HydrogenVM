@@ -120,6 +120,7 @@ struct UIState {
     bool statusBarHidden = false;
     int32_t statusBarOrientation = 1;   // UIInterfaceOrientationPortrait
     int32_t initialOrientation = 1;
+    bool orientationSetByApp = false;   // the app chose one with setStatusBarOrientation:
     // framebuffer
     G::Image framebuffer;
     double lastFrame = 0;
@@ -256,6 +257,13 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r);
 
 // NIB loading (Nib.cpp): returns the top-level objects (autoreleased array) or 0.
 id loadNib(Ctx& x, const std::string& name, id bundle, id owner, id externalObjects);
+// iOS settles the interface orientation after launch, not when setRootViewController:
+// is called. Unless the app picked one itself, switch to the app's own (Info.plist)
+// orientation once the key window's root view controller accepts it.
+// `rotation` is true for +attemptRotationToDeviceOrientation, which (unlike the
+// one-time settle after launch) respects a controller's shouldAutorotate == NO.
+void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation = false);
+int32_t orientationFromString(const std::string& name);   // Info.plist name -> UIInterfaceOrientation
 bool nibExists(Ctx& x, const std::string& name);
 
 } // namespace Hydrogen::Runtime::UIKit
