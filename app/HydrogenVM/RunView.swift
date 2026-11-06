@@ -412,6 +412,8 @@ struct RunView: View {
     @State private var model: RunModel
     @State private var showLog = false
     @State private var hudExpanded = false
+    @State private var overlay = PlayerOverlay()
+    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
@@ -469,6 +471,10 @@ struct RunView: View {
                                    mode: effectiveScaleMode,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
                                    inputEnabled: model.inputEnabled,
+                                   onOverlayGesture: showDebugOverlay ? nil : {
+                                       overlay.summon()
+                                       withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { hudExpanded = true }
+                                   },
                                    focus: PlayerCropFocus(rawValue: cropFocusSetting)?.position ?? PlayerCropFocus.center.position) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
                     }
@@ -514,9 +520,12 @@ struct RunView: View {
             }
 
             // Collapsible Floating Glassmorphic In-Game HUD Pill in Top Corner
-            floatingHUDPill
-                .padding(.top, 16)
-                .padding(.trailing, 16)
+            // Not drawn at all unless the setting is on or the player held three fingers down.
+            if showDebugOverlay || overlay.visible {
+                floatingHUDPill
+                    .padding(.top, 16)
+                    .padding(.trailing, 16)
+            }
         }
         .statusBarHidden(true)
         .preferredColorScheme(.dark)
@@ -624,6 +633,8 @@ struct RunView: View {
                         Button {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                                 hudExpanded = false
+                                overlay.minimize()
+                                if !showDebugOverlay { showLog = false }   // the log toggle lives in the hidden controls
                             }
                         } label: {
                             Image(systemName: "chevron.up.circle.fill")
@@ -771,6 +782,7 @@ struct RunView: View {
                                 .font(.title3)
                                 .foregroundStyle(.red)
                         }
+                        .accessibilityIdentifier("player-quit")
                     }
                 }
                 .padding(14)

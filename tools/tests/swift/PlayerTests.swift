@@ -1,5 +1,7 @@
 import Foundation
-import CoreGraphics
+#if canImport(CoreGraphics)
+import CoreGraphics   // Apple platforms; Foundation on Linux exports the same geometry types
+#endif
 
 @main
 @MainActor
@@ -154,6 +156,31 @@ struct PlayerTests {
         } else {
             check(false, "profile parses as a property list")
         }
+        var overlay = PlayerOverlay()
+        check(!overlay.visible && !overlay.startsExpanded, "overlay hidden by default")
+        overlay.summon()
+        check(overlay.visible && overlay.startsExpanded, "gesture opens the expanded controls")
+        overlay.minimize()
+        check(!overlay.visible, "minimizing hides the overlay again when the setting is off")
+        overlay.settingOn = true
+        check(overlay.visible && !overlay.startsExpanded, "setting on keeps the minimized pill")
+        overlay.summon(); overlay.minimize()
+        check(overlay.visible, "setting on stays visible after minimize")
+        check(PlayerOverlay.gestureTouches == 3 && PlayerOverlay.gestureHoldSeconds >= 0.5, "deliberate gesture")
+        // #280: the setting starts off, so the gesture is the way to the controls and a
+        // fresh player draws nothing over the game. Host-independent (no UIKit): this
+        // is the part of the player that runs wherever Foundation does.
+        check(PlayerOverlay.settingDefault == false, "the debug overlay setting defaults to off")
+        var untouched = PlayerOverlay()
+        check(!untouched.settingOn && !untouched.visible,
+              "a default player draws nothing until the gesture arrives")
+        untouched.summon()
+        check(untouched.visible && untouched.startsExpanded, "the gesture opens the controls by itself")
+        untouched.minimize()
+        check(!untouched.visible, "minimizing after the gesture puts everything away again")
+        var kept = PlayerOverlay()
+        kept.settingOn = true
+        check(kept.visible && !kept.startsExpanded, "with the setting on the pill is already on screen")
         // #281: fill and extended bars share this one layout with every other mode.
         let phone = CGSize(width: 390, height: 844)
         for orientation in GuestOrientation.allCases {
