@@ -10,7 +10,9 @@ name: CI
 on:
   push:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, edited]
+    # Body edits (including bot summaries) must not cancel an active validation.
+    # A changed opt-in title is picked up on synchronize, or add the mac label.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
   schedule:
     - cron: "17 9 * * 1"
