@@ -1620,6 +1620,66 @@ void sw_drawRect(Ctx& x, id self, SEL, CGRect) {
     CG::fillRect(x, ctx, {on ? (b.w - r - 2) : 2.0f, 2.0f, r, r}, {1, 1, 1, 1});
 }
 
+// UIPickerView: rows come from the data source and titles from the delegate. Not
+// scrollable: it shows each component's selected row; selectRow: changes it.
+struct PickerData : ObjC::HostObject {
+    id dataSource = 0, delegate = 0;   // not retained, as in UIKit
+    std::vector<int32_t> selected;
+    bool indicator = false;
+};
+PickerData& PKD(Ctx& x, id s) { return rt(x).host<PickerData>(s); }
+int32_t pk_components(Ctx& x, id self, SEL) {
+    const id ds = PKD(x, self).dataSource;
+    if (!ds || !(rt(x).send(x.cpu, ds, "respondsToSelector:", {rt(x).sel("numberOfComponentsInPickerView:")}) & 0xff)) return 0;
+    return std::max(0, int32_t(rt(x).send(x.cpu, ds, "numberOfComponentsInPickerView:", {self})));
+}
+int32_t pk_rows(Ctx& x, id self, SEL, int32_t comp) {
+    const id ds = PKD(x, self).dataSource;
+    if (!ds || !(rt(x).send(x.cpu, ds, "respondsToSelector:", {rt(x).sel("pickerView:numberOfRowsInComponent:")}) & 0xff)) return 0;
+    return std::max(0, int32_t(rt(x).send(x.cpu, ds, "pickerView:numberOfRowsInComponent:", {self, uint32_t(comp)})));
+}
+id pk_dataSource(Ctx& x, id self, SEL) { return PKD(x, self).dataSource; }
+void pk_setDataSource(Ctx& x, id self, SEL, id v) { PKD(x, self).dataSource = v; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+id pk_delegate(Ctx& x, id self, SEL) { return PKD(x, self).delegate; }
+void pk_setDelegate(Ctx& x, id self, SEL, id v) { PKD(x, self).delegate = v; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+bool pk_indicator(Ctx& x, id self, SEL) { return PKD(x, self).indicator; }
+void pk_setIndicator(Ctx& x, id self, SEL, bool b) { PKD(x, self).indicator = b; }
+int32_t pk_selectedRow(Ctx& x, id self, SEL, int32_t comp) {
+    const PickerData& d = PKD(x, self);
+    const int32_t rows = comp < 0 ? 0 : pk_rows(x, self, 0, comp);
+    if (rows <= 0) return -1;
+    return size_t(comp) < d.selected.size() ? std::min(d.selected[size_t(comp)], rows - 1) : 0;
+}
+void pk_selectRow(Ctx& x, id self, SEL, int32_t row, int32_t comp, bool) {
+    if (comp < 0 || row < 0) return;
+    PickerData& d = PKD(x, self);
+    if (d.selected.size() <= size_t(comp)) d.selected.resize(size_t(comp) + 1, 0);
+    d.selected[size_t(comp)] = row;
+    rt(x).send(x.cpu, self, "setNeedsDisplay");
+}
+void pk_reloadAll(Ctx& x, id self, SEL) { rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+void pk_reload(Ctx& x, id self, SEL, int32_t) { rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+void pk_drawRect(Ctx& x, id self, SEL, CGRect) {
+    const id ctx = CG::currentContext(x);
+    if (!ctx) return;
+    const G::Rect b = boundsOf(x, self);
+    CG::fillRect(x, ctx, b, {0.94f, 0.94f, 0.95f, 1});
+    const int32_t n = pk_components(x, self, 0);
+    const id del = PKD(x, self).delegate;
+    const bool titles = del && (rt(x).send(x.cpu, del, "respondsToSelector:", {rt(x).sel("pickerView:titleForRow:forComponent:")}) & 0xff);
+    if (n <= 0) return;
+    const float rowH = 32, w = b.w / float(n), y = (b.h - rowH) / 2;
+    CG::fillRect(x, ctx, {0, y, b.w, rowH}, {1, 1, 1, 1});
+    for (int32_t c = 0; c < n && titles; ++c) {
+        const int32_t row = pk_selectedRow(x, self, 0, c);
+        if (row < 0) continue;
+        const id t = id(rt(x).send(x.cpu, del, "pickerView:titleForRow:forComponent:", {self, uint32_t(row), uint32_t(c)}));
+        if (!t) continue;
+        drawText(x, ctx, utf8(x, t), G::FontDesc{"Helvetica", 18, true, false}, {w * float(c) + 6, y + 5, w - 12, rowH - 6},
+                 {0, 0, 0, 1}, 4, 1, 1);
+    }
+}
+
 struct SliderData : ObjC::HostObject {
     float val = 0, minVal = 0, maxVal = 1;
     bool continuous = true;
@@ -2035,6 +2095,12 @@ void seg_perform(Ctx& x, id self, SEL) {
 
 } // namespace
 
+std::string storyboardNibDir(Ctx& x, id storyboard) {
+    if (!storyboard || !rt(x).hostIf<StoryboardData>(storyboard)) return std::string();
+    const StoryboardData& d = SBD(x, storyboard);
+    return d.dirPath.empty() ? std::string() : d.name + ".storyboardc/";
+}
+
 void registerUIWidgets(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
     const std::string R = kR, P = kP, S = kS, E = kE;
@@ -2387,6 +2453,15 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
     sw.m<&sw_initWithFrame>("initWithFrame:", "@@:" + R)
       .m<&sw_isOn>("isOn", "c@:").m<&sw_setOn>("setOn:", "v@:c").m<&sw_setOnAnim>("setOn:animated:", "v@:cc")
       .m<&sw_touchesEnded>("touchesEnded:withEvent:", "v@:@@").m<&sw_drawRect>("drawRect:", "v@:" + R);
+
+    ObjC::ClassBuilder pk = r.defineClass("UIPickerView", "UIView");
+    pk.m<&pk_dataSource>("dataSource").m<&pk_setDataSource>("setDataSource:", "v@:@")
+      .m<&pk_delegate>("delegate").m<&pk_setDelegate>("setDelegate:", "v@:@")
+      .m<&pk_components>("numberOfComponents", "i@:").m<&pk_rows>("numberOfRowsInComponent:", "i@:i")
+      .m<&pk_indicator>("showsSelectionIndicator", "c@:").m<&pk_setIndicator>("setShowsSelectionIndicator:", "v@:c")
+      .m<&pk_selectedRow>("selectedRowInComponent:", "i@:i").m<&pk_selectRow>("selectRow:inComponent:animated:", "v@:iic")
+      .m<&pk_reloadAll>("reloadAllComponents", "v@:").m<&pk_reload>("reloadComponent:", "v@:i")
+      .m<&pk_drawRect>("drawRect:", "v@:" + R);
 
     ObjC::ClassBuilder sl = r.defineClass("UISlider", "UIControl");
     sl.m<&sl_initWithFrame>("initWithFrame:", "@@:" + R)

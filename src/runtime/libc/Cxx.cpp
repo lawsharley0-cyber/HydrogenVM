@@ -3,6 +3,7 @@
 // exception entry points, SJLJ unwinder registration.
 //
 // Exceptions and the SJLJ unwinder live in Unwind.cpp.
+#include <atomic>
 #include "runtime/Process.hpp"
 #include <cxxabi.h>
 
@@ -32,7 +33,19 @@ void x_guard_abort(Ctx& x, GuestPtr) { x.proc.service<Guards>().mu.unlock(); }
 
 
 void x_void1(Ctx&, GuestPtr) {}
-void x_terminate(Ctx&) { throw std::runtime_error("std::terminate() called"); }
+// std::set_terminate / set_unexpected keep the handler and return the previous one (crash
+// reporters such as HockeyApp install theirs at launch; Terraria 1.2 stopped on the stub).
+// std::terminate calls the installed handler first, as libc++abi does.
+struct TerminateHandlers { explicit TerminateHandlers(Process&) {} std::atomic<uint32_t> terminate{0}, unexpected{0}; };
+TerminateHandlers& TH(Ctx& x) { return x.proc.service<TerminateHandlers>(); }
+uint32_t x_setTerminate(Ctx& x, uint32_t h) { return TH(x).terminate.exchange(h); }
+uint32_t x_getTerminate(Ctx& x) { return TH(x).terminate.load(); }
+uint32_t x_setUnexpected(Ctx& x, uint32_t h) { return TH(x).unexpected.exchange(h); }
+uint32_t x_getUnexpected(Ctx& x) { return TH(x).unexpected.load(); }
+void x_terminate(Ctx& x) {
+    if (const uint32_t h = TH(x).terminate.exchange(0)) x.proc.callGuest(x.cpu, h, {});   // a handler must not return
+    throw std::runtime_error("std::terminate() called");
+}
 void x_pure_virtual(Ctx&) { throw std::runtime_error("pure virtual function called"); }
 void x_throw_msg(Ctx& x, GuestPtr msg) {
     throw std::runtime_error("C++ library error: " + (msg ? x.proc.readCString(msg) : std::string("(no message)")));
@@ -64,6 +77,10 @@ void registerCxxRuntime(Process& p) {
     p.def<&x_guard_abort>("___cxa_guard_abort");
     p.def<&x_void1>("___cxa_finalize");
     p.def<&x_terminate>("__ZSt9terminatev");
+    p.def<&x_setTerminate>("__ZSt13set_terminatePFvvE");
+    p.def<&x_getTerminate>("__ZSt13get_terminatev");
+    p.def<&x_setUnexpected>("__ZSt14set_unexpectedPFvvE");
+    p.def<&x_getUnexpected>("__ZSt14get_unexpectedv");
     p.def<&x_terminate>("___cxa_call_unexpected");
     p.def<&x_pure_virtual>("___cxa_pure_virtual");
     p.def<&x_pure_virtual>("___cxa_deleted_virtual");

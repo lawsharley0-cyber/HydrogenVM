@@ -51,9 +51,32 @@ struct HostContext {
     uint32_t currentProgram = 0;
     Fns fn;
     uint32_t readFbo = 0;    // scratch FBO for read-backs
+    // A guest error that was pending when the runtime made GL calls of its own
+    // in this context (see GuestErrorScope); glGetError reports it first.
+    uint32_t guestError = 0;
     std::unordered_map<uint32_t, MappedBuffer> mapped;   // key: target
     // ES 1.1 guest on an ES 2/3 host context: fixed function emulated in shaders.
     std::shared_ptr<Gles1Emu> gles1;
+};
+
+// Brackets GL calls the runtime makes in a guest's context (frame sampling,
+// read-back, worker-context sync). The guest's pending error is kept for its
+// next glGetError, and errors the runtime's own calls raise are discarded, so
+// they never reach a game that checks glGetError after its own calls (Unity
+// and NaturalMotion builds trap on any error).
+struct GuestErrorScope {
+    HostContext* hc;
+    explicit GuestErrorScope(HostContext* c) : hc(c) {
+        if (!hc || !hc->fn.glGetError) return;
+        const uint32_t e = hc->fn.glGetError();
+        if (e && !hc->guestError) hc->guestError = e;
+    }
+    ~GuestErrorScope() {
+        if (!hc || !hc->fn.glGetError) return;
+        for (int i = 0; i < 16 && hc->fn.glGetError(); ++i) {}
+    }
+    GuestErrorScope(const GuestErrorScope&) = delete;
+    GuestErrorScope& operator=(const GuestErrorScope&) = delete;
 };
 
 // The host context current on the calling thread (null if none).

@@ -2473,6 +2473,37 @@ int runFullSubsystemTests() {
             if(!tableOptions) std::printf("    NSMapTable options: identity %d contents %d copy-in %d struct refused %d\n",byIdentity,byContents,copied,refused);
         }
         check(tableOptions,"NSMapTable object-pointer, opaque, C-string and copy-in options");
+        // for (key in mapTable), NSPointerArray and +predicateWithBlock: (Crossy Road used all three).
+        bool enumerated=false, pointers=false, blockPredicate=false;
+        {
+            auto map=call(r.getClass("NSMapTable"),"strongToStrongObjectsMapTable");
+            const auto k1=makeString(cx,"k1",true), k2=makeString(cx,"k2",true);
+            call(map,"setObject:forKey:",{key,k1}); call(map,"setObject:forKey:",{key,k2});
+            const uint32_t state=proc.heap().allocZeroed(64), buf=proc.heap().allocZeroed(64);
+            std::set<uint32_t> seen; uint32_t n;
+            while((n=call(map,"countByEnumeratingWithState:objects:count:",{state,buf,16}))!=0)
+                for(uint32_t i=0;i<n;++i) seen.insert(proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(state+4)+i*4));
+            enumerated=seen==std::set<uint32_t>{k1,k2} && proc.mem().read<uint32_t>(state+8)!=0;
+            auto pa=call(r.getClass("NSPointerArray"),"strongObjectsPointerArray");
+            const auto object=r.createInstance(r.nsObject);
+            call(pa,"addPointer:",{object}); call(pa,"addPointer:",{0}); call(pa,"insertPointer:atIndex:",{key,0});
+            const bool built=call(pa,"count")==3 && call(pa,"pointerAtIndex:",{0})==key && call(pa,"pointerAtIndex:",{2})==0 &&
+                             call(object,"retainCount")==2;
+            call(pa,"compact");
+            pointers=built && call(pa,"count")==2 && call(call(pa,"allObjects"),"count")==2;
+            r.release(cpu,object);
+            static uint32_t wanted=0;
+            wanted=k2;
+            const uint32_t invoke=proc.defineFunction("test_predicate_block",[](Ctx& x){ x.cpu.r[0]=x.cpu.r[1]==wanted; });
+            const uint32_t desc=proc.heap().allocZeroed(8); proc.mem().write<uint32_t>(desc+4,20);
+            const uint32_t blk=proc.heap().allocZeroed(20);
+            proc.mem().write<uint32_t>(blk+12,invoke); proc.mem().write<uint32_t>(blk+16,desc);
+            auto pred=call(r.getClass("NSPredicate"),"predicateWithBlock:",{blk});
+            blockPredicate=pred && (call(pred,"evaluateWithObject:",{k2})&0xff)==1 && (call(pred,"evaluateWithObject:",{k1})&0xff)==0 &&
+                           call(call(Foundation::makeArray(cx,{k1,k2}),"filteredArrayUsingPredicate:",{pred}),"count")==1;
+            if(!(enumerated&&pointers&&blockPredicate)) std::printf("    enumerate %d pointers %d (built %d) block predicate %d\n",enumerated,pointers,built,blockPredicate);
+        }
+        check(enumerated&&pointers&&blockPredicate,"NSMapTable fast enumeration, NSPointerArray and +[NSPredicate predicateWithBlock:]");
         bool attributed=false;
         if(r.getClass("NSMutableAttributedString")) {
             auto object=call(r.createInstance(r.getClass("NSMutableAttributedString")),"initWithString:attributes:",{makeString(cx,std::u16string(u"A\U0001f600B")),makeDict(cx,{{key,makeNumberInt(cx,1)}})});
@@ -2868,6 +2899,35 @@ int runFullSubsystemTests() {
         call2("_CFRelease", data, 0);
     }
     {
+        // Older fonts (Temple Run's Cheboyga) give the format 4 cmap's final 0xFFFF segment an
+        // idRangeOffset of 0xFFFF that points outside the table. iOS loads them; so must we.
+        auto call2 = [&](const char* sym, uint32_t a, uint32_t b) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), {a, b}));
+        };
+        std::vector<uint8_t> font(kTestFont, kTestFont + sizeof kTestFont);
+        auto u16 = [&](size_t p) { return uint32_t(font[p]) << 8 | font[p + 1]; };
+        auto u32 = [&](size_t p) { return u16(p) << 16 | u16(p + 2); };
+        bool patched = false;
+        for (uint32_t i = 0; i < u16(4); ++i) {
+            if (u32(12 + i * 16) != 0x636D6170) continue;
+            const size_t cmap = u32(12 + i * 16 + 8);
+            for (uint32_t m = 0; m < u16(cmap + 2); ++m) {
+                const size_t sub = cmap + u32(cmap + 4 + m * 8 + 4);
+                if (u16(sub) != 4) continue;
+                const uint32_t segs = u16(sub + 6) / 2;
+                const size_t range = sub + 16 + segs * 6 + (segs - 1) * 2;
+                if (u16(sub + 14 + (segs - 1) * 2) == 0xFFFF) { font[range] = 0xFF; font[range + 1] = 0xFF; patched = true; }
+            }
+        }
+        const auto data = Foundation::makeData(cx, font.data(), uint32_t(font.size()), true);
+        const uint32_t provider = call2("_CGDataProviderCreateWithCFData", data, 0);
+        const uint32_t cg = call2("_CGFontCreateWithDataProvider", provider, 0);
+        check(patched && cg != 0, "CGFontCreateWithDataProvider loads a font whose 0xFFFF cmap terminator has a bogus idRangeOffset");
+        if (cg) call2("_CGFontRelease", cg, 0);
+        call2("_CGDataProviderRelease", provider, 0);
+        call2("_CFRelease", data, 0);
+    }
+    {
         // Issue #310: CoreData option and store-type constants are exported data
         // symbols whose value is an NSString equal to the documented string.
         // An unexported constant binds as NULL and becomes a nil dictionary key.
@@ -3126,6 +3186,27 @@ int runFullSubsystemTests() {
         check(std::abs(af.y - 44.0f) < 0.01f && std::abs(af.h - (h0 - 44.0f - 34.0f)) < 0.01f,
               "safe-area insets shrink applicationFrame (top 44, bottom 34)");
         const ObjC::id sharedApp = u.app ? u.app : r.createInstance(r.getClass("UIApplication"));
+        {
+            // Subway Surfers: respondsTo registerForRemoteNotifications, then an NSInvocation for
+            // isRegisteredForRemoteNotifications built from the class's method signature.
+            const ObjC::id appCls = ObjC::id(r.getClass("UIApplication"));
+            const ObjC::id sig = ObjC::id(r.send(cpu, appCls, "instanceMethodSignatureForSelector:", {r.sel("isRegisteredForRemoteNotifications")}));
+            const uint32_t registered = r.send(cpu, sharedApp, "isRegisteredForRemoteNotifications") & 0xff;
+            check(sig && registered == 0 && uint32_t(r.send(cpu, sharedApp, "currentUserNotificationSettings")) == 0,
+                  "UIApplication has isRegisteredForRemoteNotifications (NO) with a method signature");
+        }
+        {
+            // UIPickerView: a storyboard connects dataSource/delegate with setValue:forKey: (ROBLOX's login).
+            const ObjC::id picker = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, ObjC::id(r.getClass("UIPickerView")), r.selAlloc)), "init"));
+            const ObjC::id ds = r.createInstance(r.getClass("NSObject"));
+            r.send(cpu, picker, "setValue:forKey:", {ds, Foundation::makeString(cx, "dataSource")});
+            r.send(cpu, picker, "selectRow:inComponent:animated:", {3, 0, 1});
+            check(picker && ObjC::id(r.send(cpu, picker, "dataSource")) == ds &&
+                      int32_t(r.send(cpu, picker, "numberOfComponents")) == 0 &&
+                      int32_t(r.send(cpu, picker, "selectedRowInComponent:", {0})) == -1,
+                  "UIPickerView takes its data source by KVC and asks it for rows");
+            r.send(cpu, picker, "release");
+        }
         check(std::abs(UIKit::getRect(cx, sharedApp, "statusBarFrame").h - 44.0f) < 0.01f,
               "with safe-area insets the status bar is as tall as the top inset");
         ::setenv("HVM_SAFE_AREA", "0,200,0,200", 1);   // 400 points of side insets on a 320-point screen
@@ -3278,8 +3359,19 @@ int runFullSubsystemTests() {
         const std::string hostCwdBefore = std::filesystem::current_path().string();
         struct ResetCwd { Process& p; ~ResetCwd() { p.setGuestCwd("/"); } } resetCwd{cx.proc};   // on every exit path
         const std::string guestBundle = cx.proc.guestPath(cx.proc.bundlePath());
-        const bool relativeBundle = cx.proc.hostPath(guestBundle.substr(1) + "/data.bin") == cx.proc.bundlePath() + "/data.bin" &&
-                                    cx.proc.guestCwd() == "/";
+        bool relativeBundle = cx.proc.hostPath(guestBundle.substr(1) + "/data.bin") == cx.proc.bundlePath() + "/data.bin" &&
+                              cx.proc.guestCwd() == "/";
+        // A bare name that exists only in the bundle opens there while the app has not set a
+        // working directory (PvZ opens "resources.xml").
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(cx.proc.bundlePath(), ec);
+            const std::string name = "hvm-relative-test.xml";
+            { std::ofstream(cx.proc.bundlePath() + "/" + name) << "x"; }
+            relativeBundle = relativeBundle && cx.proc.hostPath(name) == cx.proc.bundlePath() + "/" + name &&
+                             cx.proc.hostPath("missing-everywhere.xml") == "/missing-everywhere.xml";
+            std::filesystem::remove(cx.proc.bundlePath() + "/" + name, ec);
+        }
         bool changed = false, failedOnFile = false;
         if (const auto chdirSym = proc.lookupSymbol("_chdir"), getcwdSym = proc.lookupSymbol("_getcwd"); chdirSym && getcwdSym) {
             std::error_code ec;
@@ -3432,6 +3524,133 @@ int runFullSubsystemTests() {
             if (!segues) std::printf("    segue: outlet %d presented %08x refused %d\n", ObjC::id(r.send(cpu, t, "viewController")) == vc, presented, refused);
         }
         check(segues, "storyboard segue templates take their source outlet and present the destination");
+    }
+
+    // iOS 3-5 orientation for a window without a rootViewController (Bad Piggies / Unity 3.x):
+    // the controller whose view is the window's first subview gets the rotation callbacks and
+    // a landscape view; the accelerometer rests in that orientation until the host reports;
+    // beginGeneratingDeviceOrientationNotifications queues the first change notification.
+    {
+        static int willTo = 0, didFrom = -1, asked = 0;
+        willTo = 0; didFrom = -1; asked = 0;
+        auto& u = UIKit::ui(cx);
+        ObjC::ClassBuilder legacy = r.defineClass("HvmLegacyRotationVC", "UIViewController");
+        legacy.method("shouldAutorotateToInterfaceOrientation:", [](Ctx& x) { ++asked; x.cpu.r[0] = x.cpu.r[2] == 3 || x.cpu.r[2] == 4; }, "c@:i")
+              .method("willRotateToInterfaceOrientation:duration:", [](Ctx& x) { willTo = int(x.cpu.r[2]); }, "v@:id")
+              .method("didRotateFromInterfaceOrientation:", [](Ctx& x) { didFrom = int(x.cpu.r[2]); }, "v@:i");
+        const ObjC::id vc = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, legacy.cls(), r.selAlloc)), r.selInit));
+        const ObjC::id win = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480}));
+        const ObjC::id view = ObjC::id(r.send(cpu, vc, "view"));
+        r.send(cpu, win, "addSubview:", {view});
+        const int savedOrientation = u.statusBarOrientation;
+        const bool savedHost = u.accelFromHost;
+        u.statusBarOrientation = 3;
+        u.accelFromHost = false;
+        UIKit::rotateLegacyControllers(cx, "test");
+        const auto b = UIKit::getRect(cx, view, "bounds");
+        const auto g = UIKit::restingGravity(u);
+        const int callsAfterFirst = asked;
+        UIKit::rotateLegacyControllers(cx, "test again");   // already laid out: nothing repeats
+        const bool rotated = willTo == 3 && didFrom == 1 && b.w > b.h && asked == callsAfterFirst;
+        const bool gravity = g[0] == -1 && g[1] == 0;
+        u.deviceOrientationNotePending = false;
+        r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIDevice"), "currentDevice")), "beginGeneratingDeviceOrientationNotifications");
+        const bool queued = u.deviceOrientationNotePending;
+        r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIDevice"), "currentDevice")), "endGeneratingDeviceOrientationNotifications");
+        u.deviceOrientationNotePending = false;
+        r.send(cpu, view, "removeFromSuperview");
+        u.statusBarOrientation = savedOrientation;
+        u.accelFromHost = savedHost;
+        if (!(rotated && gravity && queued))
+            std::printf("    legacy rotation: will %d did %d bounds %gx%g asked %d/%d gravity %g,%g queued %d\n",
+                        willTo, didFrom, b.w, b.h, callsAfterFirst, asked, g[0], g[1], queued);
+        check(rotated && gravity && queued, "window-subview controller rotates with callbacks; resting gravity and orientation notification follow");
+    }
+
+    // NSUserDefaults hands out one long-lived object per stored value (Tiny Wings keeps the
+    // player name it reads without retaining it); a replaced value's object outlives the turn.
+    {
+        const ObjC::id ud = ObjC::id(r.send(cpu, r.getClass("NSUserDefaults"), "standardUserDefaults"));
+        const ObjC::id key = Foundation::makeString(cx, "hvmTestPlayerName");
+        r.send(cpu, ud, "setObject:forKey:", {Foundation::makeString(cx, "Lawson"), key});
+        const uint32_t pool = r.poolPush();
+        const ObjC::id first = ObjC::id(r.send(cpu, ud, "objectForKey:", {key}));
+        r.poolPop(cpu, pool);   // a per-call autoreleased copy would be freed here
+        const ObjC::id again = ObjC::id(r.send(cpu, ud, "objectForKey:", {key}));
+        const bool same = first && first == again && Foundation::utf8(cx, again) == "Lawson" &&
+                          ObjC::id(r.send(cpu, ud, "stringForKey:", {key})) == first;
+        const uint32_t pool2 = r.poolPush();
+        r.send(cpu, ud, "setObject:forKey:", {Foundation::makeString(cx, "Larry"), key});
+        const ObjC::id replaced = ObjC::id(r.send(cpu, ud, "objectForKey:", {key}));
+        const bool oldStillValid = Foundation::utf8(cx, first) == "Lawson";   // let go only at the pool drain
+        r.poolPop(cpu, pool2);
+        const bool updated = replaced != first && Foundation::utf8(cx, replaced) == "Larry";
+        r.send(cpu, ud, "removeObjectForKey:", {key});
+        check(same && oldStillValid && updated, "NSUserDefaults returns one long-lived object per stored value");
+    }
+
+    // locale(const locale&, Facet*) as libstdc++ 4.2 inlines it (ROBLOX's boost path):
+    // new _Impl(*other._M_impl, 1), then _M_install_facet; copies share the _Impl.
+    {
+        auto callSym = [&](const char* name, std::initializer_list<uint32_t> args) { return uint32_t(cx.proc.callGuest(cpu, *proc.lookupSymbol(name), args)); };
+        auto rd = [&](uint32_t a) { return proc.mem().read<uint32_t>(a); };
+        const uint32_t base = proc.heap().allocZeroed(4), custom = proc.heap().allocZeroed(4), copy = proc.heap().allocZeroed(4);
+        callSym("__ZNSt6localeC1Ev", {base});
+        const uint32_t facet = proc.heap().allocZeroed(16);
+        callSym("__ZNSt7codecvtIwc11__mbstate_tEC2Em", {facet, 0});
+        const bool facetOk = rd(facet) != 0 && rd(facet + 4) == 0;
+        const uint32_t id = proc.heap().allocZeroed(4);   // the derived facet's static id
+        const uint32_t impl = proc.heap().allocZeroed(20);
+        callSym("__ZNSt6locale5_ImplC1ERKS0_m", {impl, rd(base), 1});
+        callSym("__ZNSt6locale5_Impl16_M_install_facetEPKNS_2idEPKNS_5facetE", {impl, id, facet});
+        proc.mem().write<uint32_t>(custom, impl);
+        const uint32_t index = callSym("__ZNKSt6locale2id5_M_idEv", {id});
+        const bool installed = rd(impl) == 1 && rd(id) == index + 1 && index < rd(impl + 8) &&
+                               rd(rd(impl + 4) + index * 4) == facet && rd(facet + 4) == 1;
+        callSym("__ZNSt6localeC1ERKS_", {copy, custom});
+        const bool shared = rd(copy) == impl && rd(impl) == 2 && rd(rd(base) + 4) != 0;
+        const uint32_t ti = proc.lookupSymbol("__ZTISt7codecvtIwc11__mbstate_tE").value_or(0);
+        // use_facet<codecvt<wchar_t> >: the facet installed under codecvt<wchar_t>::id, else
+        // the "C" default, whose do_out narrows and stops at a character above 0xFF.
+        const uint32_t cvId = proc.lookupSymbol("__ZNSt7codecvtIwc11__mbstate_tE2idE").value_or(0);
+        const uint32_t impl2 = proc.heap().allocZeroed(20), withCv = proc.heap().allocZeroed(4);
+        callSym("__ZNSt6locale5_ImplC1ERKS0_m", {impl2, rd(base), 1});
+        callSym("__ZNSt6locale5_Impl16_M_install_facetEPKNS_2idEPKNS_5facetE", {impl2, cvId, facet});
+        proc.mem().write<uint32_t>(withCv, impl2);
+        const char* useFacet = "__ZSt9use_facetISt7codecvtIwc11__mbstate_tEERKT_RKSt6locale";
+        const uint32_t def = callSym(useFacet, {base});
+        const bool lookup = cvId && callSym(useFacet, {withCv}) == facet && def && def != facet;
+        const uint32_t wide = proc.heap().allocZeroed(16), narrow = proc.heap().allocZeroed(8), nexts = proc.heap().allocZeroed(8);
+        for (uint32_t i = 0; i < 3; ++i) proc.mem().write<uint32_t>(wide + i * 4, i == 2 ? 0x263A : uint32_t('a' + i));
+        const uint32_t doOut = rd(rd(def) + 8);   // vptr slots: D1 D0 do_out
+        const uint32_t res = uint32_t(cx.proc.callGuest(cpu, doOut, {def, 0, wide, wide + 12, nexts, narrow, narrow + 8, nexts + 4}));
+        const bool converted = res == 2 && rd(nexts) == wide + 8 && rd(nexts + 4) == narrow + 2 &&
+                               proc.readCString(narrow) == "ab";
+        check(facetOk && installed && shared && ti && rd(ti + 8) && lookup && converted,
+              "locale(const locale&, Facet*): _Impl copy, _M_install_facet, locale::id and shared copies");
+    }
+
+    // std::set_terminate / get_terminate keep the handler (Terraria's HockeyApp installs one) and
+    // <fenv.h> saves and restores the FPSCR (Clumsy Ninja's FMOD).
+    {
+        auto callSym = [&](const char* name, std::initializer_list<uint32_t> args) { return cx.proc.callGuest(cpu, *proc.lookupSymbol(name), args); };
+        const uint32_t before = callSym("__ZSt13set_terminatePFvvE", {0x1235});
+        const bool terminate = callSym("__ZSt13get_terminatev", {}) == 0x1235 && callSym("__ZSt13set_terminatePFvvE", {before}) == 0x1235;
+        const uint32_t env = proc.heap().allocZeroed(16);
+        const uint32_t saved = cpu.fpscr;
+        cpu.fpscr = (3u << 22) | (1u << 24) | 0x10;   // round toward zero, flush-to-zero, IXC raised
+        callSym("_fegetenv", {env});
+        const bool got = proc.mem().read<uint32_t>(env) == cpu.fpscr;
+        callSym("_fesetround", {0});
+        const bool rounded = callSym("_fegetround", {}) == 0 && callSym("_fetestexcept", {0x10}) == 0x10;
+        callSym("_feclearexcept", {0x10});
+        const bool cleared = callSym("_fetestexcept", {0x9F}) == 0;
+        callSym("_fesetenv", {env});
+        const bool restored = cpu.fpscr == ((3u << 22) | (1u << 24) | 0x10);
+        cpu.fpscr = saved;
+        if (!(terminate && got && rounded && cleared && restored))
+            std::printf("    terminate %d fenv get %d round %d clear %d restore %d\n", terminate, got, rounded, cleared, restored);
+        check(terminate && got && rounded && cleared && restored, "std::set_terminate/get_terminate and <fenv.h> environment, rounding and flags");
     }
 
     // UIViewController has the rotation and appearance hooks engines copy encodings from
@@ -5232,6 +5451,30 @@ int runFullSubsystemTests() {
         for (uint32_t s : {a, b, c, sub}) call("__ZNSsD1Ev", {s});
         check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap, resize, emptyRep");
 
+        // insert(pos, const char*) and iterator erase (Hungry Shark), the wchar_t _M_replace_aux and
+        // iterator erase, and wcstombs (PvZ's XML parser).
+        {
+            const uint32_t t = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {t, cstr("shark"), 0});
+            call("__ZNSs6insertEmPKc", {t, 0, cstr("hungry ")});
+            const uint32_t d = m.read<uint32_t>(t);
+            const uint32_t it = call("__ZNSs5eraseEN9__gnu_cxx17__normal_iteratorIPcSsEES2_", {t, d + 6, d + 7});
+            const bool narrow = str(t) == "hungryshark" && it == m.read<uint32_t>(t) + 6;
+            const uint32_t w = proc.heap().allocZeroed(4);
+            m.write<uint32_t>(w, *proc.lookupSymbol("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep20_S_empty_rep_storageE") + 12);
+            call("__ZNSbIwSt11char_traitsIwESaIwEE14_M_replace_auxEmmmw", {w, 0, 0, 3, uint32_t('Z')});
+            const uint32_t wd = m.read<uint32_t>(w);
+            call("__ZNSbIwSt11char_traitsIwESaIwEE5eraseEN9__gnu_cxx17__normal_iteratorIPwS2_EES6_", {w, wd, wd + 4});
+            const uint32_t wd2 = m.read<uint32_t>(w);
+            const bool wide = m.read<uint32_t>(wd2 - 12) == 2 && m.read<uint32_t>(wd2) == 'Z' && m.read<uint32_t>(wd2 + 4) == 'Z';
+            const uint32_t ws = proc.heap().allocZeroed(16), out = proc.heap().allocZeroed(8);
+            for (int i = 0; i < 3; ++i) m.write<uint32_t>(ws + i * 4, uint32_t("xml"[i]));
+            const uint32_t n = call("_wcstombs", {out, ws, 8});
+            const bool conv = n == 3 && proc.readCString(out) == "xml" && call("_wcstombs", {0, ws, 0}) == 3;
+            if (!(narrow && wide && conv)) std::printf("    string extras: narrow '%s' %d wide %d wcstombs %u\n", str(t).c_str(), narrow, wide, n);
+            check(narrow && wide && conv, "libstdc++ insert(pos, char*), iterator erase, wstring _M_replace_aux/erase and wcstombs");
+        }
+
         // Out-of-line members some games import (Army of Darkness Defense).
         {
             const uint32_t t = proc.heap().allocZeroed(4);
@@ -5312,20 +5555,48 @@ int runFullSubsystemTests() {
         call("__ZNSsC1EPKcRKSaIcE", {sObj, proc.allocCString("HydrogenVM"), 0}); // string("HydrogenVM")
         const uint32_t buf = proc.heap().allocZeroed(32);
         // Copy entire string
-        const uint32_t count1 = call("_ZNKSs4copyEPcmm", {sObj, buf, 10, 0});
+        const uint32_t count1 = call("__ZNKSs4copyEPcmm", {sObj, buf, 10, 0});
         check(count1 == 10 && std::strncmp((const char*)proc.mem().host(buf), "HydrogenVM", 10) == 0, "string::copy(buf, 10, 0) copies full string");
         // Partial copy and no null terminator written after copy (ensure buffer byte at 8 is unmodified zero since we allocZeroed)
         proc.mem().write<uint8_t>(buf + 8, 0x42);
-        const uint32_t count2 = call("_ZNKSs4copyEPcmm", {sObj, buf, 8, 0});
+        const uint32_t count2 = call("__ZNKSs4copyEPcmm", {sObj, buf, 8, 0});
         check(count2 == 8 && std::strncmp((const char*)proc.mem().host(buf), "Hydrogen", 8) == 0 && proc.mem().read<uint8_t>(buf + 8) == 0x42, "string::copy(buf, 8, 0) partial copy");
         // Nonzero starting position and exceeding string length
-        const uint32_t count3 = call("_ZNKSs4copyEPcmm", {sObj, buf, 20, 8});
+        const uint32_t count3 = call("__ZNKSs4copyEPcmm", {sObj, buf, 20, 8});
         check(count3 == 2 && std::strncmp((const char*)proc.mem().host(buf), "VM", 2) == 0, "string::copy(buf, 20, 8) handles pos > 0 and len > remaining");
         // Zero length copy
-        const uint32_t count4 = call("_ZNKSs4copyEPcmm", {sObj, buf, 0, 0});
+        const uint32_t count4 = call("__ZNKSs4copyEPcmm", {sObj, buf, 0, 0});
         check(count4 == 0, "string::copy(buf, 0, 0) zero copy");
         // Invalid pos raises logic error (which throws in host, halting the run context or just halting HLE execution)
         // (Testing exception from basic_string is covered by other libstdc++ tests or would abort guest; we just skip invoking it invalidly here).
+        {
+            // find_*_of(const char*, pos), (const string&, pos) and (char, pos): ROBLOX imports them.
+            const uint32_t set = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {set, proc.allocCString("gV"), 0});
+            const uint32_t npos = 0xffffffffu;
+            check(call("__ZNKSs12find_last_ofEPKcm", {sObj, proc.allocCString("ny"), npos}) == 7 &&
+                  call("__ZNKSs12find_last_ofEPKcm", {sObj, proc.allocCString("Hn"), 6}) == 0 &&
+                  call("__ZNKSs13find_first_ofEPKcm", {sObj, proc.allocCString("oe"), 0}) == 4 &&
+                  call("__ZNKSs13find_first_ofERKSsm", {sObj, set, 0}) == 5 &&
+                  call("__ZNKSs12find_last_ofERKSsm", {sObj, set, npos}) == 8 &&
+                  call("__ZNKSs12find_last_ofEcm", {sObj, uint32_t('o'), npos}) == 4 &&
+                  call("__ZNKSs13find_first_ofEcm", {sObj, uint32_t('z'), 0}) == npos &&
+                  call("__ZNKSs17find_first_not_ofEPKcm", {sObj, proc.allocCString("Hyd"), 0}) == 3 &&
+                  call("__ZNKSs16find_last_not_ofEPKcm", {sObj, proc.allocCString("MV"), npos}) == 7 &&
+                  call("__ZNKSs16find_last_not_ofEcm", {sObj, uint32_t('M'), npos}) == 8 &&
+                  call("__ZNKSs17find_first_not_ofERKSsm", {sObj, set, 5}) == 6,
+                  "string::find_first_of / find_last_of / *_not_of overloads taking a C string, string or char");
+            call("__ZNSsD1Ev", {set});
+            // _M_ibegin/_M_iend and replace(iterator, iterator, const char*, const char*).
+            const uint32_t t = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {t, proc.allocCString("abcdef"), 0});
+            const uint32_t b = call("__ZNKSs9_M_ibeginEv", {t}), e = call("__ZNKSs7_M_iendEv", {t});
+            const uint32_t rep = proc.allocCString("XYZ");
+            call("__ZNSs7replaceEN9__gnu_cxx17__normal_iteratorIPcSsEES2_PKcS4_", {t, b + 1, b + 3, rep, rep + 3});
+            check(e == b + 6 && proc.readCString(proc.mem().read<uint32_t>(t)) == "aXYZdef",
+                  "string::_M_iend and replace(iterator, iterator, const char*, const char*)");
+            call("__ZNSsD1Ev", {t});
+        }
         call("__ZNSsD1Ev", {sObj});
 
         // SystemConfiguration Tests
@@ -5746,6 +6017,39 @@ int runFullSubsystemTests() {
         }
         audioCall("_AudioFileClose", {fileID});
         std::filesystem::remove(filePath);
+        // Recording: AudioFileCreateWithURL + AudioFileWriteBytes + close, then the file plays back
+        // (Talking Larry / John record the player's voice this way). CAF, WAV and AIFF.
+        {
+            bool roundTrips = true;
+            for (const auto& [type, ext] : {std::pair<uint32_t, const char*>{0x63616666, "caf"}, {0x57415645, "wav"}, {0x41494646, "aif"}}) {
+                const std::string recPath = proc.homePath() + "/recording-test." + ext;
+                const auto recURL = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, recPath)}));
+                const uint32_t asbd = proc.heap().allocZeroed(40), outId = proc.heap().allocZeroed(8), pcm = proc.heap().allocZeroed(400);
+                proc.mem().write<double>(asbd, 22050.0);
+                proc.mem().write<uint32_t>(asbd + 8, 0x6C70636D);
+                proc.mem().write<uint32_t>(asbd + 12, 0x0C);   // signed integer, packed, little-endian
+                proc.mem().write<uint32_t>(asbd + 16, 2); proc.mem().write<uint32_t>(asbd + 20, 1);
+                proc.mem().write<uint32_t>(asbd + 24, 2); proc.mem().write<uint32_t>(asbd + 28, 1); proc.mem().write<uint32_t>(asbd + 32, 16);
+                for (int i = 0; i < 200; ++i) proc.mem().write<int16_t>(pcm + i * 2, int16_t(i * 100));
+                const auto created = audioCall("_AudioFileCreateWithURL", {recURL, type, asbd, 1, outId});
+                const uint32_t rec = proc.mem().read<uint32_t>(outId);
+                proc.mem().write<uint32_t>(outId + 4, 400);
+                const auto wrote = audioCall("_AudioFileWriteBytes", {rec, 0, 0, 0, outId + 4, pcm});
+                audioCall("_AudioFileClose", {rec});
+                const auto opened = audioCall("_AudioFileOpenURL", {recURL, 1, 0, outId});
+                const uint32_t back = proc.mem().read<uint32_t>(outId);
+                proc.mem().write<uint32_t>(outId + 4, 8);
+                audioCall("_AudioFileGetProperty", {back, 0x70636E74, outId + 4, pcm});
+                const uint64_t packets = proc.mem().read<uint64_t>(pcm);
+                if (opened == 0) audioCall("_AudioFileClose", {back});
+                const bool ok = created == 0 && wrote == 0 && opened == 0 && packets == 200;
+                if (!ok) std::printf("    recording %s: create %u write %u open %u packets %llu\n", ext, created, wrote, opened, (unsigned long long)packets);
+                roundTrips = roundTrips && ok;
+                std::filesystem::remove(recPath);
+            }
+            check(roundTrips, "AudioFileCreateWithURL / WriteBytes / Close write CAF, WAV and AIFF recordings that open again");
+        }
+
 
         const ObjC::id nsData = Foundation::makeData(cx, wav.data(), uint32_t(wav.size()));
         const ObjC::Class apCls = r.getClass("AVAudioPlayer");
@@ -5836,10 +6140,11 @@ int runFullSubsystemTests() {
         // RemoteIO output: starting the unit must pull PCM from the app's callback.
         {
             std::atomic<int> calls{0};
-            uint32_t gotFrames = 0, gotBytes = 0;
+            uint32_t gotFrames = 0, gotBytes = 0, renderStack = 0;
             bool wrotePcm = false;
             const auto cb = proc.registerHostFunction("hvm_test_au_output", [&](Ctx& cx) {
                 ++calls;
+                renderStack = cx.proc.currentThread().stackSize;
                 gotFrames = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
                 const uint32_t abl = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP] + 4);
                 if (!abl || cx.mem.read<uint32_t>(abl) != 1) return;
@@ -5863,6 +6168,8 @@ int runFullSubsystemTests() {
             callAT("_AudioComponentInstanceDispose", {unit});
             check(unit != 0 && calls > 0 && wrotePcm && gotFrames > 0 && gotBytes >= gotFrames * 4 && auFrames >= gotFrames,
                   "AudioOutputUnitStart invokes the render callback and mixes its signed 16-bit stereo PCM");
+            // CoreAudio's I/O thread has a 512 KB stack; Smash Hit's callback needs over 256 KB.
+            check(renderStack >= (512u << 10), "AudioUnit render callbacks run on a thread with a 512 KB stack");
         }
 
         // OpenGL ES 1.1 Fixed-Function + 2D Texture + glDrawElements test
@@ -6124,6 +6431,27 @@ int runFullSubsystemTests() {
             check(v == "score=-42 0xff     7" && v2 == v, "std::ostringstream formatting (int, hex+showbase, width) and str()");
             proc.heap().free(strRet);
             proc.heap().free(strRet2);
+        }
+        // GCC 4.0-era member operator<< overloads and basic_ios state checks return the stream
+        // (Temple Run chained `os << x << endl` and got a NULL stream from the stubs).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t oss = proc.heap().allocZeroed(180);
+            call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEEC1ESt13_Ios_Openmode", {oss, 16});
+            const uint32_t endl = *proc.lookupSymbol("__ZSt4endlIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_");
+            float half = 1.5f; uint32_t halfBits; std::memcpy(&halfBits, &half, 4);
+            bool chained = call("__ZNSolsEb", {oss, 1}) == oss && call("__ZNSolsEm", {oss, 7}) == oss &&
+                           call("__ZNSolsEf", {oss, halfBits}) == oss && call("__ZNSolsEPFRSoS_E", {oss, endl}) == oss;
+            const uint32_t ios = oss + uint32_t(int32_t(proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(oss) - 12)));
+            const bool okState = call("__ZNKSt9basic_iosIcSt11char_traitsIcEEcvPvEv", {ios}) == ios &&
+                                 (call("__ZNKSt9basic_iosIcSt11char_traitsIcEEntEv", {ios}) & 0xff) == 0 &&
+                                 (call("__ZNKSt9basic_iosIcSt11char_traitsIcEE4goodEv", {ios}) & 0xff) == 1;
+            const uint32_t strRet = proc.heap().allocZeroed(4);
+            call("__ZNKSt19basic_ostringstreamIcSt11char_traitsIcESaIcEE3strEv", {strRet, oss});
+            const std::string v = proc.readCString(proc.mem().read<uint32_t>(strRet));
+            call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEED1Ev", {oss});
+            if (!(chained && okState && v == "171.5\n")) std::printf("    old ostream members: chained %d state %d text '%s'\n", chained, okState, v.c_str());
+            check(chained && okState && v == "171.5\n", "libstdc++ member operator<< (bool, unsigned long, float, manipulator) and basic_ios state checks");
         }
 
         // CFNumber NaN/infinity constants, NSObject's isa ivar offset, proxy constants.
@@ -7186,6 +7514,66 @@ int runFullSubsystemTests() {
         }
     }
 
+    // ICU regex (libicucore uregex_*), as RegexKitLite calls it: UTF-16
+    // pattern and text, UTF-16 offsets, ICU error codes.
+    {
+        auto has = [&](const char* s) { return bool(proc.lookupSymbol(s)); };
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+        auto u16 = [&](const std::u16string& s) {
+            const uint32_t a = proc.heap().allocZeroed(uint32_t(s.size() * 2 + 2));
+            for (size_t i = 0; i < s.size(); ++i) proc.mem().write<uint16_t>(a + uint32_t(i) * 2, uint16_t(s[i]));
+            return a;
+        };
+        const bool have = has("_uregex_open") && has("_uregex_setText") && has("_uregex_find") && has("_uregex_findNext") &&
+                          has("_uregex_start") && has("_uregex_end") && has("_uregex_groupCount") && has("_uregex_close") &&
+                          has("_u_strlen") && has("_u_errorName") && has("_uregex_group");
+        bool ok = have;
+        if (have) {
+            const uint32_t st = proc.heap().allocZeroed(4);
+            const uint32_t pe = proc.heap().allocZeroed(72);
+            auto status = [&] { return int32_t(proc.mem().read<uint32_t>(st)); };
+            // "é" is one unit and the emoji two, so offsets past it are UTF-16 offsets.
+            const uint32_t pat = u16(u"(\\w+)@(\\d+)");
+            const uint32_t txt = u16(u"é x \U0001F600 ab@12 cd@345 z");
+            const uint32_t re = call("_uregex_open", {pat, 0xffffffffu, 0, pe, st});
+            ok = ok && re && status() == 0 && int32_t(call("_u_strlen", {txt})) == 21;
+            ok = ok && call("_uregex_groupCount", {re, st}) == 2;
+            call("_uregex_setText", {re, txt, 0xffffffffu, st});
+            ok = ok && call("_uregex_find", {re, 0, st}) == 1 && status() == 0;
+            ok = ok && call("_uregex_start", {re, 0, st}) == 7 && call("_uregex_end", {re, 0, st}) == 12;
+            ok = ok && call("_uregex_start", {re, 2, st}) == 10 && call("_uregex_end", {re, 1, st}) == 9;
+            const uint32_t buf = proc.heap().allocZeroed(32);
+            ok = ok && call("_uregex_group", {re, 2, buf, 8, st}) == 2 && proc.mem().read<uint16_t>(buf) == u'1' &&
+                 proc.mem().read<uint16_t>(buf + 4) == 0;
+            ok = ok && call("_uregex_findNext", {re, st}) == 1 && call("_uregex_start", {re, 0, st}) == 13 &&
+                 call("_uregex_end", {re, 0, st}) == 19;
+            ok = ok && call("_uregex_findNext", {re, st}) == 0 && status() == 0;
+            // Asking for a group with no current match is U_REGEX_INVALID_STATE.
+            call("_uregex_start", {re, 0, st});
+            ok = ok && status() == 0x10302;
+            proc.mem().write<uint32_t>(st, 0);
+            ok = ok && call("_uregex_find", {re, 13, st}) == 1 && call("_uregex_start", {re, 0, st}) == 13;
+            call("_uregex_start", {re, 3, st});
+            ok = ok && status() == 8;   // U_INDEX_OUTOFBOUNDS_ERROR
+            proc.mem().write<uint32_t>(st, 0);
+            call("_uregex_close", {re});
+            // Case-insensitive flag and inline (?i).
+            const uint32_t re2 = call("_uregex_open", {u16(u"(?i)AB"), 0xffffffffu, 0, pe, st});
+            call("_uregex_setText", {re2, u16(u"xxab"), 4, st});
+            ok = ok && re2 && call("_uregex_find", {re2, 0, st}) == 1 && call("_uregex_start", {re2, 0, st}) == 2;
+            call("_uregex_close", {re2});
+            // Syntax the engine cannot honour is an error, never success.
+            const uint32_t bad = call("_uregex_open", {u16(u"(?<=a)b"), 0xffffffffu, 0, pe, st});
+            ok = ok && bad == 0 && status() == 0x10301 &&
+                 proc.readCString(call("_u_errorName", {0x10301})) == "U_REGEX_RULE_SYNTAX";
+            // A failure already in *status makes the call a no-op.
+            ok = ok && call("_uregex_open", {pat, 0xffffffffu, 0, pe, st}) == 0 && status() == 0x10301;
+        }
+        check(ok, "ICU uregex_open/setText/find/findNext/start/end/group report UTF-16 offsets and ICU error codes");
+    }
+
     // POSIX regex (Darwin 32-bit ABI) and tmpnam inside the guest sandbox.
     // regoff_t is __darwin_off_t (int64) even on armv7, so regmatch_t is 16 bytes.
     {
@@ -7688,6 +8076,25 @@ int runFullSubsystemTests() {
             const std::string s2 = proc.readCString(p2);
             return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
                    !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
+        });
+        run("symlink with an absolute guest target resolves inside the sandbox; readlink returns it", [&] {
+            namespace fs = std::filesystem;
+            const std::string hostDir = proc.homePath() + "/tmp/symlink_test/";
+            std::error_code ec;
+            fs::remove_all(hostDir, ec);
+            fs::create_directories(hostDir, ec);
+            { std::ofstream out(hostDir + "target.txt"); out << "hi"; }
+            const std::string guestDir = proc.guestHomePath() + "/tmp/symlink_test/";
+            const uint32_t rc = call("_symlink", {proc.allocCString(guestDir + "target.txt"), proc.allocCString(guestDir + "link")});
+            const uint32_t rel = call("_symlink", {proc.allocCString("target.txt"), proc.allocCString(guestDir + "rel")});
+            const uint32_t again = call("_symlink", {proc.allocCString("target.txt"), proc.allocCString(guestDir + "rel")});
+            const uint32_t buf = proc.heap().allocZeroed(64);
+            const int32_t n = int32_t(call("_readlink", {proc.allocCString(guestDir + "rel"), buf, 64}));
+            std::ifstream in(hostDir + "link");
+            std::string got;
+            in >> got;
+            return rc == 0 && rel == 0 && int32_t(again) == -1 && fs::is_symlink(hostDir + "link", ec) &&
+                   fs::read_symlink(hostDir + "link", ec).is_relative() && got == "hi" && n == 10;
         });
         run("file open ring tracks guest opens across fopen, open, NSData, and NSFileHandle with live updates and rollover", [&] {
             namespace fs = std::filesystem;
@@ -9270,6 +9677,81 @@ int runFullSubsystemTests() {
                 "unbinding after sharegroup teardown releases the retired worker context"};
             check(beforeTeardown == 2 && afterTeardown == (ownerAlive ? 1 : 0) && afterWorker == 0, names[mode]);
         }
+    }
+
+    // GL errors the runtime's own calls raise in a guest context (worker-context
+    // sync, frame sampling) never reach the guest's glGetError; an error the guest
+    // had pending is still reported. Clumsy Ninja traps on any glGetError.
+    {
+        struct FakeGL {
+            static std::vector<uint32_t>& errors() { thread_local std::vector<uint32_t> v; return v; }
+            static std::thread::id& mainId() { static std::thread::id id; return id; }
+            static uint32_t getError() {
+                auto& q = errors();
+                if (q.empty()) return 0;
+                const uint32_t e = q.front();
+                q.erase(q.begin());
+                return e;
+            }
+            static void useProgram(uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
+            static void bindFramebuffer(uint32_t, uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
+            static void bindTexture(uint32_t, uint32_t t) { if (t == 99) errors().push_back(0x0500); }
+        };
+        struct ErrPlatform final : HostGL::Platform {
+            std::mutex mu;
+            std::unordered_map<void*, std::thread::id> owner;
+            const char* name() const override { return "gl-error-test"; }
+            void* createContext(int, void*, bool& desktop) override { desktop = false; return new uint8_t(1); }
+            void destroyContext(void* p) override { std::lock_guard<std::mutex> lk(mu); owner.erase(p); delete static_cast<uint8_t*>(p); }
+            bool makeCurrent(void* p) override {
+                std::lock_guard<std::mutex> lk(mu);
+                if (!p) return true;
+                auto it = owner.find(p);
+                if (it != owner.end() && it->second != std::this_thread::get_id()) return false;
+                owner[p] = std::this_thread::get_id();
+                return true;
+            }
+            void* proc(void*, const char* n) override {
+                const std::string s = n;
+                if (s == "glGetError") return reinterpret_cast<void*>(&FakeGL::getError);
+                if (s == "glUseProgram") return reinterpret_cast<void*>(&FakeGL::useProgram);
+                if (s == "glBindFramebuffer") return reinterpret_cast<void*>(&FakeGL::bindFramebuffer);
+                if (s == "glBindTexture") return reinterpret_cast<void*>(&FakeGL::bindTexture);
+                return nullptr;
+            }
+        };
+        FakeGL::mainId() = std::this_thread::get_id();
+        auto platform = std::make_shared<ErrPlatform>();
+        ProcessConfig ecfg;
+        ecfg.homePath = "/tmp/hvm_gl_error_isolation";
+        ecfg.hostGL = platform;
+        Process eproc(ecfg);
+        auto& er = ObjC::rt(eproc);
+        auto& ecpu = eproc.mainThread().cpu;
+        const ObjC::Class ctxCls = er.getClass("EAGLContext");
+        const ObjC::id context = ObjC::id(er.send(ecpu, ObjC::id(er.send(ecpu, ObjC::id(ctxCls), er.selAlloc)), "initWithAPI:", {2}));
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glUseProgram"), {7});
+        std::atomic<uint32_t> workerErr{0xffffffffu}, workerKept{0xffffffffu}, workerAfter{0xffffffffu};
+        const uint32_t fn = eproc.defineFunction("test_gl_error_worker", [&, context](Ctx& x) {
+            auto& rt = ObjC::rt(x);
+            rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {context});   // shared context, synced
+            workerErr = uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glGetError"), {}));
+            // A guest error pending when the runtime syncs the worker again survives the sync.
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glBindTexture"), {0x0DE1, 99});
+            rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {0});
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glUseProgram"), {0});   // no context: ignored
+            rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {context});
+            workerKept = uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glGetError"), {}));
+            workerAfter = uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glGetError"), {}));
+            rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {0});
+            x.cpu.r[0] = 0;
+        });
+        const uint32_t tid = eproc.startThread(fn, 0, 64u << 10, false);
+        eproc.joinThread(tid, nullptr);
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        check(workerErr == 0 && workerKept == 0x0500 && workerAfter == 0,
+              "GL errors from the runtime's worker-context sync never reach the guest's glGetError");
     }
 
     // PR #167: fixed-size heap objects share writable pages, so a successful

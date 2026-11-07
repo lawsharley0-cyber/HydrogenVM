@@ -755,6 +755,9 @@ id vc_initWithCoder(Ctx& x, id self, SEL, id coder) {
     // Storyboard scenes archive their outgoing segues here; performSegueWithIdentifier: uses them.
     const id templates = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIStoryboardSegueTemplates")}));
     if (templates) d.segueTemplates = r.retain(x.cpu, templates);
+    // Objects of the scene that the controller's separate view nib references (UpstreamPlaceholder-N).
+    const id externals = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIExternalObjectsTableForViewLoading")}));
+    if (externals) d.externalObjects = r.retain(x.cpu, externals);
     return self;
 }
 void detachSegueTemplates(Ctx& x, id self, id templates);
@@ -765,8 +768,9 @@ void vc_dealloc(Ctx& x, id self, SEL) {
         auto children = std::move(d->children);
         d->children.clear();
         for (id c : children) rt(x).release(x.cpu, c);
-        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard, d->segueTemplates}) if (o) rt(x).release(x.cpu, o);
+        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard, d->segueTemplates, d->externalObjects}) if (o) rt(x).release(x.cpu, o);
         d->view = d->nibName = d->nibBundle = d->title = d->presented = d->navigationItem = d->tabBarItem = d->storyboard = d->segueTemplates = 0;
+        d->externalObjects = 0;
     }
     rt(x).disposeInstance(x.cpu, self);
 }
@@ -782,8 +786,18 @@ std::string nibForClass(Ctx& x, id self) {
 void vc_loadView(Ctx& x, id self, SEL) {
     VCData& d = VC(x, self);
     std::string nib = d.nibName ? utf8(x, d.nibName) : nibForClass(x, self);
+    // A storyboard controller's view is its own nib inside the .storyboardc (ROBLOX's login).
+    if (!nib.empty() && d.storyboard) {
+        const std::string dir = storyboardNibDir(x, d.storyboard);
+        if (!dir.empty() && nibExists(x, dir + nib)) nib = dir + nib;
+    }
     if (!nib.empty()) {
-        loadNib(x, nib, d.nibBundle, self, 0);
+        // The table can hold the controller itself; it is only needed for this load, so
+        // drop it now rather than keep a retain cycle.
+        const id externals = d.externalObjects;
+        d.externalObjects = 0;
+        loadNib(x, nib, d.nibBundle, self, externals);
+        if (externals) rt(x).release(x.cpu, externals);
         if (VC(x, self).view) return;
         x.proc.logf(LogLevel::Warning, "-[%s loadView] loaded the \"%s\" nib but the view outlet was not set", rt(x).objectClassName(self).c_str(), nib.c_str());
     }
@@ -1013,6 +1027,33 @@ void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
     relayout(win, vc);
     for (id w : std::vector<id>(u.windows))
         if (w != win) if (const id other = V(x, w).rootViewController) relayout(w, other);
+}
+
+// Before iOS 6 a window had no rootViewController: UIKit rotated the controller whose view
+// was the window's first subview, sending it willRotateToInterfaceOrientation:duration:,
+// willAnimateRotationToInterfaceOrientation:duration: and didRotateFromInterfaceOrientation:.
+// Unity 3.x (Bad Piggies) adds its controller's view this way and takes its orientation
+// from those callbacks; without them it drew landscape scenes unrotated in portrait.
+void rotateLegacyControllers(Ctx& x, const char* cause) {
+    auto& u = ui(x);
+    const int o = u.statusBarOrientation;
+    for (id win : std::vector<id>(u.windows)) {
+        ViewData& wd = V(x, win);
+        if (wd.rootViewController || wd.subviews.empty()) continue;
+        const id view = wd.subviews.front();
+        const id vc = viewControllerOfView(x, view);
+        if (!vc || VC(x, vc).view != view || VC(x, vc).legacyOrientation == o || !controllerSupports(x, vc, o)) continue;
+        const int from = VC(x, vc).legacyOrientation;
+        x.proc.logf(LogLevel::Info, "Orientation: %s -> %s (%s, window-subview controller %s)", orientationName(from),
+                    orientationName(o), cause, rt(x).objectClassName(vc).c_str());
+        auto& r = rt(x);
+        const uint32_t noTime[2] = {0, 0};   // duration 0.0 (a double, after the int in r2: r3 and the stack)
+        r.send(x.cpu, vc, "willRotateToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        layoutRootView(x, win, vc);
+        r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        VC(x, vc).legacyOrientation = o;
+        r.send(x.cpu, vc, "didRotateFromInterfaceOrientation:", {uint32_t(from)});
+    }
 }
 
 // ================================================================ exports ===

@@ -1,5 +1,6 @@
 // HydrogenVM — <math.h>. Uses the host libm (iOS passes floats in core
 // registers, which the ABI wrapper takes care of).
+#include "runtime/Support.hpp"
 #include "runtime/Process.hpp"
 #include <cmath>
 #include <cstring>
@@ -80,7 +81,52 @@ int32_t fpclassify_f(Ctx& x, float a) { return fpclassify_d(x, a); }
 
 } // namespace
 
+// <fenv.h> on 32-bit ARM Darwin: fenv_t is { uint32_t __fpscr; uint32_t __reserved[3]; } and
+// the environment is the FPSCR (rounding mode, flush-to-zero, default NaN, exception flags).
+// Clumsy Ninja's FMOD saves and restores it around its mixer; the stubs left fenv_t garbage.
+namespace {
+constexpr uint32_t kFeFlags = 0x9F;            // IOC DZC OFC UFC IXC IDC (cumulative flags)
+constexpr uint32_t kFeRounding = 3u << 22;     // RMode
+int32_t fe_getenv(Ctx& x, GuestPtr env) { if (!env) return -1; x.mem.write<uint32_t>(env, x.cpu.fpscr); for (int i = 1; i < 4; ++i) x.mem.write<uint32_t>(env + i * 4, 0); return 0; }
+int32_t fe_setenv(Ctx& x, GuestPtr env) {
+    // FE_DFL_ENV is a pointer to a default environment; a null pointer is treated the same way.
+    x.cpu.fpscr = env ? x.mem.read<uint32_t>(env) : 0;
+    return 0;
+}
+int32_t fe_holdexcept(Ctx& x, GuestPtr env) { fe_getenv(x, env); x.cpu.fpscr &= ~kFeFlags; return 0; }
+int32_t fe_updateenv(Ctx& x, GuestPtr env) { const uint32_t raised = x.cpu.fpscr & kFeFlags; fe_setenv(x, env); x.cpu.fpscr |= raised; return 0; }
+int32_t fe_getround(Ctx& x) { return int32_t(x.cpu.fpscr & kFeRounding); }
+int32_t fe_setround(Ctx& x, int32_t mode) {
+    if (uint32_t(mode) & ~kFeRounding) return -1;
+    x.cpu.fpscr = (x.cpu.fpscr & ~kFeRounding) | uint32_t(mode);
+    return 0;
+}
+int32_t fe_testexcept(Ctx& x, int32_t mask) { return int32_t(x.cpu.fpscr & uint32_t(mask) & kFeFlags); }
+int32_t fe_clearexcept(Ctx& x, int32_t mask) { x.cpu.fpscr &= ~(uint32_t(mask) & kFeFlags); return 0; }
+int32_t fe_raiseexcept(Ctx& x, int32_t mask) { x.cpu.fpscr |= uint32_t(mask) & kFeFlags; return 0; }
+int32_t fe_getexceptflag(Ctx& x, GuestPtr out, int32_t mask) { if (!out) return -1; x.mem.write<uint16_t>(out, uint16_t(x.cpu.fpscr & uint32_t(mask) & kFeFlags)); return 0; }
+int32_t fe_setexceptflag(Ctx& x, GuestPtr in, int32_t mask) {
+    if (!in) return -1;
+    const uint32_t m = uint32_t(mask) & kFeFlags;
+    x.cpu.fpscr = (x.cpu.fpscr & ~m) | (x.mem.read<uint16_t>(in) & m);
+    return 0;
+}
+}  // namespace
+
 void registerLibcMath(Process& p) {
+    p.def<&fpclassify_d>("___fpclassify");   // long double is double on 32-bit ARM
+    p.def<&fe_getenv>("_fegetenv");
+    supportDef<&fe_setenv>(p, "_fesetenv", SupportStatus::Real, "Loads the FPSCR from fenv_t (FE_DFL_ENV/NULL: default); always succeeds, as on ARM");
+    supportDef<&fe_holdexcept>(p, "_feholdexcept", SupportStatus::Real, "Saves the FPSCR and clears its exception flags; exceptions never trap on this FPU");
+    supportDef<&fe_updateenv>(p, "_feupdateenv", SupportStatus::Real, "Restores the saved FPSCR and re-raises the flags raised meanwhile");
+    p.def<&fe_getround>("_fegetround");
+    p.def<&fe_setround>("_fesetround");
+    p.def<&fe_testexcept>("_fetestexcept");
+    supportDef<&fe_clearexcept>(p, "_feclearexcept", SupportStatus::Real, "Clears the requested FPSCR cumulative exception flags");
+    supportDef<&fe_raiseexcept>(p, "_feraiseexcept", SupportStatus::Real, "Sets the requested FPSCR cumulative exception flags (no trap, as exceptions are untrapped)");
+    p.def<&fe_getexceptflag>("_fegetexceptflag");
+    p.def<&fe_setexceptflag>("_fesetexceptflag");
+    p.defineDataBlock("__FE_DFL_ENV", 16);   // FE_DFL_ENV: default rounding, no flags (all zero)
 #define RD(n) p.def<&d_##n>("_" #n);
 #define RF(n) p.def<&f_##n>("_" #n "f");
     RD(sin) RD(cos) RD(tan) RD(asin) RD(acos) RD(atan) RD(sinh) RD(cosh) RD(tanh) RD(asinh) RD(acosh) RD(atanh)

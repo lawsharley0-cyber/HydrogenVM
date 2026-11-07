@@ -82,10 +82,15 @@ struct AudioQueueInstance {
     uint32_t timeStamp = 0;   // guest AudioTimeStamp handed to the input callback
 };
 
+// A file an app is writing (AudioFileCreateWithURL / ExtAudioFileCreateWithURL): the audio
+// data so far, written out as a CAF, WAV or AIFF file when the app closes it.
+struct AudioWriter;
+void finishWriter(Ctx& x, AudioWriter& w);
 struct AudioFileInstance {
     uint32_t id = 0;
     std::vector<uint8_t> rawBytes;
     DecodedAudio decoded;
+    std::shared_ptr<AudioWriter> writer;   // set for a file being written
 };
 
 struct AudioUnitInstance {
@@ -593,7 +598,15 @@ int32_t af_readBytes(Ctx& x, uint32_t fid, bool, int64_t inStartingByte, GuestPt
     x.mem.write<uint32_t>(ioNumBytes, uint32_t(n * bpf));
     return 0;
 }
-int32_t af_close(Ctx& x, uint32_t fid) { ATS(x).files.erase(fid); return 0; }
+int32_t af_close(Ctx& x, uint32_t fid) {
+    auto& st = ATS(x);
+    auto it = st.files.find(fid);
+    if (it == st.files.end()) return -50;
+    std::shared_ptr<AudioWriter> w = it->second.writer;
+    st.files.erase(it);
+    if (w) finishWriter(x, *w);
+    return 0;
+}
 
 // AudioFileOpenWithCallbacks(clientData, read, write, getSize, setSize, typeHint, outFile):
 // pull the whole file through the app's callbacks, then decode it like AudioFileOpenURL.
@@ -687,10 +700,129 @@ void writeAsbd(Ctx& x, GuestPtr p, const Asbd& a) {
     x.mem.write<uint32_t>(p + 36, 0);
 }
 
+struct AudioWriter {
+    std::string path;
+    uint32_t fileType = 0x63616666;   // 'caff'
+    Asbd format;
+    std::vector<uint8_t> data;        // the audio data, in `format`
+    bool written = false;
+};
+uint32_t be32(uint32_t v) { return __builtin_bswap32(v); }
+// Writes the collected data as the container the app asked for. Linear PCM only is laid out
+// for WAV and AIFF; anything else goes into a CAF with the app's own format description.
+void finishWriter(Ctx& x, AudioWriter& w) {
+    if (w.written) return;
+    w.written = true;
+    std::vector<uint8_t> out;
+    auto put = [&](const void* p, size_t n) { const uint8_t* b = static_cast<const uint8_t*>(p); out.insert(out.end(), b, b + n); };
+    auto le32 = [&](uint32_t v) { put(&v, 4); };
+    auto le16 = [&](uint16_t v) { put(&v, 2); };
+    auto b32 = [&](uint32_t v) { v = be32(v); put(&v, 4); };
+    auto b16 = [&](uint16_t v) { v = __builtin_bswap16(v); put(&v, 2); };
+    auto b64 = [&](uint64_t v) { v = __builtin_bswap64(v); put(&v, 8); };
+    const Asbd& f = w.format;
+    const bool lpcm = f.formatID == 0x6C70636D;
+    const bool isFloat = f.flags & 1, bigEndian = f.flags & 2;
+    const uint32_t bytesPerSample = std::max<uint32_t>(1, f.bits / 8);
+    auto swapped = [&](bool wantBig) {   // the data in the requested byte order
+        std::vector<uint8_t> d = w.data;
+        if (wantBig != bigEndian && bytesPerSample > 1)
+            for (size_t i = 0; i + bytesPerSample <= d.size(); i += bytesPerSample) std::reverse(d.begin() + i, d.begin() + i + bytesPerSample);
+        return d;
+    };
+    if (lpcm && w.fileType == 0x57415645 /* 'WAVE' */) {
+        const auto d = swapped(false);
+        put("RIFF", 4); le32(uint32_t(36 + d.size())); put("WAVEfmt ", 8); le32(16);
+        le16(isFloat ? 3 : 1); le16(uint16_t(f.channels)); le32(uint32_t(f.sampleRate));
+        le32(uint32_t(f.sampleRate) * f.bytesPerFrame); le16(uint16_t(f.bytesPerFrame)); le16(uint16_t(f.bits));
+        put("data", 4); le32(uint32_t(d.size())); put(d.data(), d.size());
+    } else if (lpcm && (w.fileType == 0x41494646 || w.fileType == 0x41494643) /* 'AIFF' 'AIFC' */) {
+        const auto d = swapped(true);
+        const uint32_t frames = f.bytesPerFrame ? uint32_t(d.size() / f.bytesPerFrame) : 0;
+        put("FORM", 4); b32(uint32_t(4 + 8 + 18 + 8 + 8 + d.size())); put("AIFF", 4);
+        put("COMM", 4); b32(18); b16(uint16_t(f.channels)); b32(frames); b16(uint16_t(f.bits));
+        // 80-bit extended sample rate
+        int exponent = 0; double m = std::frexp(f.sampleRate, &exponent);
+        b16(uint16_t(exponent - 1 + 16383)); b64(uint64_t(std::ldexp(m, 64)));
+        put("SSND", 4); b32(uint32_t(8 + d.size())); b32(0); b32(0); put(d.data(), d.size());
+    } else {
+        put("caff", 4); b16(1); b16(0);
+        put("desc", 4); b64(32);
+        uint64_t rate; std::memcpy(&rate, &f.sampleRate, 8); b64(rate);
+        b32(f.formatID); b32(lpcm ? ((isFloat ? 1u : 0u) | (bigEndian ? 0u : 2u)) : f.flags);
+        b32(f.bytesPerPacket); b32(f.framesPerPacket); b32(f.channels); b32(f.bits);
+        put("data", 4); b64(4 + w.data.size()); b32(0); put(w.data.data(), w.data.size());
+    }
+    std::ofstream o(w.path, std::ios::binary | std::ios::trunc);
+    o.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
+    if (!o) x.proc.logf(LogLevel::Warning, "AudioFile: could not write %s", w.path.c_str());
+}
+std::shared_ptr<AudioWriter> newWriter(Ctx& x, uint32_t url, uint32_t fileType, GuestPtr fmt) {
+    auto w = std::make_shared<AudioWriter>();
+    w->path = Foundation::urlFilePath(x, url);
+    w->fileType = fileType;
+    w->format = readAsbd(x, fmt);
+    if (!w->format.bytesPerFrame && w->format.formatID == 0x6C70636D)
+        w->format.bytesPerFrame = w->format.bytesPerPacket = std::max<uint32_t>(1, w->format.bits / 8) * std::max<uint32_t>(1, w->format.channels);
+    return w;
+}
+void writeAt(AudioWriter& w, uint64_t offset, const uint8_t* p, size_t n) {
+    if (offset + n > (512ull << 20)) return;   // a recording, not a disk filler
+    if (w.data.size() < offset + n) w.data.resize(size_t(offset + n));
+    std::memcpy(w.data.data() + offset, p, n);
+}
+// AudioFileCreateWithURL(url, fileType, format, flags, outFile)
+int32_t af_createWithURL(Ctx& x, uint32_t url, uint32_t fileType, GuestPtr fmt, uint32_t, GuestPtr outFile) {
+    if (!url || !fmt || !outFile) return -50;
+    auto& st = ATS(x);
+    AudioFileInstance af;
+    af.id = st.nextFileId++;
+    af.writer = newWriter(x, url, fileType, fmt);
+    { std::ofstream touch(af.writer->path, std::ios::binary | std::ios::trunc); if (!touch) return -54; }   // permErr
+    x.mem.write<uint32_t>(outFile, af.id);
+    st.files[af.id] = std::move(af);
+    return 0;
+}
+// AudioFileWriteBytes(fid, useCache, SInt64 startingByte (r2:r3), UInt32* ioNumBytes, const void* buffer)
+void af_writeBytes(Ctx& x) {
+    auto& st = ATS(x);
+    const uint32_t fid = x.cpu.r[0], sp = x.cpu.r[CPU::kSP];
+    const uint64_t start = (uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2];
+    const uint32_t ioNum = x.mem.read<uint32_t>(sp), buf = x.mem.read<uint32_t>(sp + 4);
+    auto it = st.files.find(fid);
+    if (it == st.files.end() || !it->second.writer || !ioNum || !buf) { x.cpu.r[0] = uint32_t(-50); return; }
+    const uint32_t n = x.mem.read<uint32_t>(ioNum);
+    writeAt(*it->second.writer, start, x.mem.host(buf), n);
+    x.cpu.r[0] = 0;
+}
+// AudioFileWritePackets(fid, useCache, numBytes, packetDescs, SInt64 startPacket (stack), UInt32* ioNumPackets, buffer)
+void af_writePackets(Ctx& x) {
+    auto& st = ATS(x);
+    const uint32_t fid = x.cpu.r[0], numBytes = x.cpu.r[2], sp = x.cpu.r[CPU::kSP];
+    const uint64_t startPacket = (uint64_t(x.mem.read<uint32_t>(sp + 4)) << 32) | x.mem.read<uint32_t>(sp);
+    const uint32_t ioPackets = x.mem.read<uint32_t>(sp + 8), buf = x.mem.read<uint32_t>(sp + 12);
+    auto it = st.files.find(fid);
+    if (it == st.files.end() || !it->second.writer || !buf) { x.cpu.r[0] = uint32_t(-50); return; }
+    AudioWriter& w = *it->second.writer;
+    const uint64_t offset = w.format.bytesPerPacket ? startPacket * w.format.bytesPerPacket : w.data.size();
+    writeAt(w, offset, x.mem.host(buf), numBytes);
+    (void)ioPackets;   // all packets are written
+    x.cpu.r[0] = 0;
+}
+// Properties of a file being written (a magic cookie, a channel layout): accepted. A file
+// opened for reading has none to set.
+int32_t af_setProperty(Ctx& x, uint32_t fid, uint32_t, uint32_t, GuestPtr) {
+    auto& st = ATS(x);
+    auto it = st.files.find(fid);
+    if (it == st.files.end()) return -50;
+    return it->second.writer ? 0 : 0x7074793F;   // 'pty?'
+}
+
 struct ExtFile {
     DecodedAudio audio;
     Asbd file, client;
     double pos = 0;   // in source frames
+    std::shared_ptr<AudioWriter> writer;   // set for a file being written
 };
 struct ExtAudioState { explicit ExtAudioState(Process&) {} uint32_t next = 0x45580001; std::unordered_map<uint32_t, ExtFile> files; };
 ExtAudioState& EAS(Ctx& x) { return x.proc.service<ExtAudioState>(); }
@@ -735,7 +867,57 @@ int32_t eaf_wrap(Ctx& x, uint32_t afid, bool, GuestPtr out) {
     x.mem.write<uint32_t>(out, newExtFile(x, st.files[afid].decoded));
     return 0;
 }
-int32_t eaf_dispose(Ctx& x, uint32_t id) { EAS(x).files.erase(id); return 0; }
+int32_t eaf_dispose(Ctx& x, uint32_t id) {
+    auto& st = EAS(x);
+    auto it = st.files.find(id);
+    if (it == st.files.end()) return -50;
+    std::shared_ptr<AudioWriter> w = it->second.writer;
+    st.files.erase(it);
+    if (w) finishWriter(x, *w);
+    return 0;
+}
+// ExtAudioFileCreateWithURL(url, fileType, streamDesc, channelLayout, flags, outRef)
+int32_t eaf_createWithURL(Ctx& x, uint32_t url, uint32_t fileType, GuestPtr desc, GuestPtr, uint32_t, GuestPtr out) {
+    if (!url || !desc || !out) return -50;
+    ExtFile f;
+    f.writer = newWriter(x, url, fileType, desc);
+    f.file = f.client = f.writer->format;
+    { std::ofstream touch(f.writer->path, std::ios::binary | std::ios::trunc); if (!touch) return -54; }
+    auto& st = EAS(x);
+    const uint32_t id = st.next++;
+    st.files[id] = std::move(f);
+    x.mem.write<uint32_t>(out, id);
+    return 0;
+}
+// ExtAudioFileWrite(ref, frames, AudioBufferList*): client frames appended in the file format.
+// Interleaved 16-bit and 32-bit float client data convert to a 16-bit or float file format.
+int32_t eaf_write(Ctx& x, uint32_t id, uint32_t frames, GuestPtr abl) {
+    auto& st = EAS(x);
+    auto it = st.files.find(id);
+    if (it == st.files.end() || !it->second.writer || !abl) return -50;
+    ExtFile& f = it->second;
+    if (!x.mem.read<uint32_t>(abl)) return 0;
+    const uint32_t data = x.mem.read<uint32_t>(abl + 12), bytes = x.mem.read<uint32_t>(abl + 8);
+    if (!data) return -50;
+    const Asbd& c = f.client;
+    const Asbd& fileFmt = f.file;
+    const uint32_t channels = std::max<uint32_t>(1, c.channels);
+    const uint32_t samples = std::min<uint32_t>(frames * channels, bytes / std::max<uint32_t>(1, c.bits / 8));
+    std::vector<uint8_t> out;
+    if (c.bits == fileFmt.bits && (c.flags & 1) == (fileFmt.flags & 1) && c.channels == fileFmt.channels) {
+        out.assign(x.mem.host(data), x.mem.host(data) + std::min<size_t>(bytes, size_t(frames) * c.bytesPerFrame));
+    } else {
+        for (uint32_t i = 0; i < samples; ++i) {
+            double s;
+            if (c.flags & 1) { float v; std::memcpy(&v, x.mem.host(data + i * 4), 4); s = v; }
+            else s = int16_t(x.mem.read<uint16_t>(data + i * 2)) / 32768.0;
+            if (fileFmt.flags & 1) { const float v = float(s); const uint8_t* b = reinterpret_cast<const uint8_t*>(&v); out.insert(out.end(), b, b + 4); }
+            else { const int16_t v = int16_t(std::clamp(s * 32767.0, -32768.0, 32767.0)); const uint8_t* b = reinterpret_cast<const uint8_t*>(&v); out.insert(out.end(), b, b + 2); }
+        }
+    }
+    writeAt(*f.writer, f.writer->data.size(), out.data(), out.size());
+    return 0;
+}
 
 constexpr uint32_t kEafFileFormat = 0x66666D74 /* ffmt */, kEafClientFormat = 0x63666D74 /* cfmt */,
                    kEafLengthFrames = 0x2366726D /* #frm */, kEafAudioFile = 0x6166696C /* afil */;
@@ -872,6 +1054,8 @@ int32_t ac_dispose(Ctx& x, uint32_t uid) {
     st.units.erase(it);
     return 0;
 }
+// Stack of the thread that calls an AudioUnit render callback (CoreAudio I/O thread size).
+constexpr uint32_t kAudioRenderStack = 512u << 10;
 int32_t au_init(Ctx& x, uint32_t uid) {
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
@@ -1029,8 +1213,10 @@ int32_t au_start(Ctx& x, uint32_t uid) {
     u.running = true;
     if (!u.voice) u.voice = MX(x.proc).createStream({});
     MX(x.proc).setPaused(u.voice, false);
+    // The render callback runs on this thread. iOS runs it on CoreAudio's I/O thread, whose
+    // stack is 512 KB; Smash Hit mixes into two 128 KB stack buffers there and overflowed 256 KB.
     if (!u.pumpThread)
-        u.pumpThread = x.proc.startThread(*x.proc.lookupSymbol("__hvm_audio_unit_pump"), uid, 256u << 10, true);
+        u.pumpThread = x.proc.startThread(*x.proc.lookupSymbol("__hvm_audio_unit_pump"), uid, kAudioRenderStack, true);
     return 0;
 }
 int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t, uint32_t, GuestPtr data, uint32_t size) {
@@ -1937,9 +2123,16 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.defineFunction("_AudioFileReadPacketData", [](Ctx& x) { af_readPackets(x, true); });
     p.defineFunction("_AudioFileReadPackets", [](Ctx& x) { af_readPackets(x, false); });
     p.def<&af_close>("_AudioFileClose");
+    p.def<&af_createWithURL>("_AudioFileCreateWithURL");
+    p.defineFunction("_AudioFileWriteBytes", af_writeBytes);
+    p.defineFunction("_AudioFileWritePackets", af_writePackets);
+    p.def<&af_setProperty>("_AudioFileSetProperty");
     p.def<&eaf_openURL>("_ExtAudioFileOpenURL");
     p.def<&eaf_wrap>("_ExtAudioFileWrapAudioFileID");
     p.def<&eaf_dispose>("_ExtAudioFileDispose");
+    p.def<&eaf_createWithURL>("_ExtAudioFileCreateWithURL");
+    p.def<&eaf_write>("_ExtAudioFileWrite");
+    p.def<&eaf_write>("_ExtAudioFileWriteAsync");
     p.def<&eaf_getPropertyInfo>("_ExtAudioFileGetPropertyInfo");
     p.def<&eaf_getProperty>("_ExtAudioFileGetProperty");
     p.def<&eaf_setProperty>("_ExtAudioFileSetProperty");
