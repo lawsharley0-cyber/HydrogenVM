@@ -1,5 +1,7 @@
 # Offline guest UI audit — October 25, 2026
 
+November 6 supplement: [PLAYABILITY_2026-11-06.md](PLAYABILITY_2026-11-06.md). Original Arena-3–6 scenes/HUD/combat/three-crown defeat/OK/relaunch are observed with native entry costs and counters in explicitly staged trophy fixtures. Fresh Trainer Earl and retained clan conversation also pass. Earned later wins/rewards, partial crowns/draws, every-button and phone visual/audio/performance audits remain open.
+
 Newest continuation after `5040611`: [Arena 2 progression](ARENA_PROGRESSION.md)
 adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
 entry/result/return checks; 38 focused tests and 43 private sector comparisons.

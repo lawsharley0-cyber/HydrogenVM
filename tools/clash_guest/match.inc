@@ -9,7 +9,7 @@ static void start_arena_match(void *self) {
     if(!home || !avatar || FIELD(avatar,0x9c)<7)fail("GuestOffline: arena entry before earned graduation");
     void *arena=CALL(0x9b4d1,void*,(void*))(avatar);
     int arena_id=arena?CALL(0x7d2e1,int,(void*))(arena):0;
-    if(arena_id!=54000001 && arena_id!=54000002)
+    if(arena_id<54000001 || arena_id>54000006)
         fail("GuestOffline: later arenas require their guest port");
     int score=(int)FIELD(avatar,0x34);
     int cost=CALL(0x123e9d,int,(void*))(arena);

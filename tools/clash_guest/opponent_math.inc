@@ -7,9 +7,9 @@ static u32 opponent_remainder(u32 value,u32 divisor) {
     u32 n=0;for(int bit=31;bit>=0;--bit) {n=(n<<1)|((value>>bit)&1u);if(n>=divisor)n-=divisor;}return n;
 }
 static int opponent_choose_arena(struct OpponentHistory *h,const int *scores,const unsigned *decks,u32 count,int score,const int *arenas,int arena) {
-    if(!count || count>64 || score<0 || score>100000 || h->serial>=1000000000u ||
+    if(!count || count>128 || score<0 || score>100000 || h->serial>=1000000000u ||
        (h->serial && (h->variant>=count || h->name>=64 || h->style>=3)))return 0;
-    int nearest=100001;u32 eligible[64],size=0;
+    int nearest=100001;u32 eligible[128],size=0;
     for(u32 i=0;i<count;++i) {
         if(scores[i]<0 || scores[i]>100000)return 0;
         if(arenas && arenas[i]!=arena)continue;

@@ -1,5 +1,7 @@
 # HydrogenVM — handoff (2026-10-20)
 
+November 6 current: read [PLAYABILITY_2026-11-06.md](clash-royale/PLAYABILITY_2026-11-06.md). All six arena content/entry and four later native defeat/relaunch paths now have scoped evidence; 40 tests and 85 sector comparisons pass. Draw/earned-win/reward/full-audit work remains; modding is a later phase. PR #138 was closed unmerged. The new separate local checkout is recorded there.
+
 Newest continuation after `5040611`: [Arena 2 progression](clash-royale/ARENA_PROGRESSION.md)
 adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
 entry/result/return checks; 38 focused tests and 43 private sector comparisons.

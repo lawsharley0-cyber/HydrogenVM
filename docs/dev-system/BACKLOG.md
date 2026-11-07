@@ -1,5 +1,12 @@
 # Backlog
 
+November 6 owner continuation: finish the guest's Arena 3–6 content/entry/result
+and persistence qualification, then draw/partial-crown accounting, clan events
+and complete UI/save/device/visual/audio/performance audits. The owner wants
+modding considered **after** the offline game is reliably playable and bugs are
+addressed; it is not part of the current restoration implementation. Original
+training remains unchanged and advanced battle-AI refinement remains deferred.
+
 Newest continuation after `5040611`: [Arena 2 progression](../clash-royale/ARENA_PROGRESSION.md)
 adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
 entry/result/return checks; 38 focused tests and 43 private sector comparisons.

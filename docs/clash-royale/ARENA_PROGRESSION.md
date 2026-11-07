@@ -1,5 +1,7 @@
 # Arena progression continuation — October 27, 2026
 
+Superseded for Arena-3–6 entry by [November 6 playability work](PLAYABILITY_2026-11-06.md). The scoped evidence below remains historical; later earned wins/rewards, draw/partial-crown and full audits are still pending.
+
 After `5040611`, branch `codex/clash-offline-continuation`, draft PR #138.
 This stage adds **Arena 2 / Bone Pit**, not all-arena completion or advanced AI.
 See [STORE_PURCHASES.md](STORE_PURCHASES.md) for the preceding shop stage and

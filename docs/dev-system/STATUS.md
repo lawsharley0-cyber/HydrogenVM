@@ -1,5 +1,7 @@
 # Status
 
+November 6 Clash update: [PLAYABILITY_2026-11-06.md](../clash-royale/PLAYABILITY_2026-11-06.md) records all-six-arena content, 78 bounded profiles, actual Arena-3–6 native defeat/payment/relaunch checks, 40 focused tests, 85 sector comparisons and 36 exact legacy comparisons. This is not a full earned climb, device/performance verdict or completion of draw/reward/full UI audits. PR #138 is closed unmerged; shared source is unchanged.
+
 Newest continuation after `5040611`: [Arena 2 progression](../clash-royale/ARENA_PROGRESSION.md)
 adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
 entry/result/return checks; 38 focused tests and 43 private sector comparisons.

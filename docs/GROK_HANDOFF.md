@@ -1,5 +1,7 @@
 # HydrogenVM: handoff for Grok Bot (2026-10-24)
 
+November 6 current Clash continuation: [PLAYABILITY_2026-11-06.md](clash-royale/PLAYABILITY_2026-11-06.md) supersedes the Arena-3–6 entry blocker below. All six content pools and four later actual defeats/relaunches pass with native costs/counters; 40 focused tests, 85 sector comparisons and 36 legacy comparisons pass. Earned wins/rewards, draw/partial-crown accounting and full audits remain open; modding comes after reliable playability. PR #138 was closed unmerged. Shared src remains unchanged.
+
 Newest continuation after `5040611`: [Arena 2 progression](clash-royale/ARENA_PROGRESSION.md)
 adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
 entry/result/return checks; 38 focused tests and 43 private sector comparisons.

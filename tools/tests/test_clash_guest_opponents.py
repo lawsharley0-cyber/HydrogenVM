@@ -149,6 +149,12 @@ int main(void){
  if(seen!=63)return 4;
  old=h;
  if(opponent_choose_arena(&h,scores,decks,6,450,arenas,3)||memcmp(&h,&old,sizeof h))return 5;
+ int full_scores[78],full_arenas[78];unsigned full_decks[78];
+ for(int i=0;i<78;++i){full_scores[i]=450;full_arenas[i]=i<18?1:i<36?2:i<48?3:i<60?4:i<72?5:6;full_decks[i]=i%6;}
+ for(int i=0;i<1200;++i){int arena=i%6+1;old=h;
+  if(!opponent_choose_arena(&h,full_scores,full_decks,78,450,full_arenas,arena)||full_arenas[h.variant]!=arena)return 6;
+  if(full_decks[h.variant]==full_decks[old.variant] || h.name==old.name || h.style==old.style)return 7;
+ }
  return 0;
 }
 ''')
@@ -167,7 +173,7 @@ int main(void){
 #include <string.h>
 typedef unsigned int u32;typedef unsigned char u8;
 #define CALL(address,result,args) ((result (*)args)(address))
-#define GUEST_ARENA_PROFILE_COUNT 36
+#define GUEST_ARENA_PROFILE_COUNT 78
 static uintptr_t s_read=(uintptr_t)&fread,s_write=(uintptr_t)&fwrite;
 static void fail(const char *why) {fprintf(stderr,"%s\n",why);exit(2);}
 static u32 checksum(const u8 *p,u32 n) {u32 h=2166136261;while(n--)h=(h^*p++)*16777619;return h;}
@@ -202,10 +208,10 @@ int main(int argc,char **argv) {
             p=subprocess.run([str(exe)],capture_output=True);self.assertEqual((p.returncode,p.stdout),(0,raw),p.stderr)
             def run(data):return subprocess.run([str(exe),'read'],input=data,capture_output=True)
             p=run(raw);self.assertEqual((p.returncode,p.stdout),(0,raw))
-            later=bytearray(raw);struct.pack_into('<I',later,16,35);struct.pack_into('<I',later,36,fnv(later[:36]))
+            later=bytearray(raw);struct.pack_into('<I',later,16,77);struct.pack_into('<I',later,36,fnv(later[:36]))
             p=run(later);self.assertEqual((p.returncode,p.stdout),(0,later))
             for n in range(len(raw)):self.assertEqual(run(raw[:n]).returncode,2)
-            for word,value in [(1,2),(2,0),(3,0),(3,1000000001),(4,36),(5,64),(6,3),(7,0),(7,2147483648),(8,0)]:
+            for word,value in [(1,2),(2,0),(3,0),(3,1000000001),(4,78),(5,64),(6,3),(7,0),(7,2147483648),(8,0)]:
                 wrong=bytearray(raw);struct.pack_into('<I',wrong,word*4,value);struct.pack_into('<I',wrong,36,fnv(wrong[:36]))
                 self.assertEqual(run(wrong).returncode,2)
             self.assertEqual(run(raw+b'\0').returncode,2)

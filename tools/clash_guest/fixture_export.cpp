@@ -96,20 +96,18 @@ static void sectorTemplate(const std::string& name,const ClashFixtures& f,const 
     std::printf("#define %s_NAME_OFFSET %zuu\n#define %s_NAME_SIZE %zuu\n",name.c_str(),nameOffset,name.c_str(),nameSize);
 }
 #ifdef GUEST_BOT_POLICY_GENERATED
-// GBO1 persists these indices: keep the first 18 Arena-1 variants stable and
-// append Arena 2. Historical generated arena1_* symbols hold the combined pool.
-static constexpr int profilesPerArena=3*GUEST_BOT_DECK_COUNT;
-static constexpr int profileCount=profilesPerArena+(GUEST_ARENA2_DECK_COUNT?3*GUEST_ARENA2_DECK_COUNT:0);
-static int profileArena(int variant){return variant<profilesPerArena?1:2;}
-static int profileMission(int variant){return 18000000+(profileArena(variant)==1?7:10)+(variant%profilesPerArena)/GUEST_BOT_DECK_COUNT;}
+// GBO1 persists these indices: keep the first 36 Arena-1/2 variants stable and
+// append later arenas. Historical arena1_* symbols hold the combined pool.
+static constexpr int profileCount=GUEST_PROFILE_EXPORT_COUNT;
+static int profileArena(int variant){return guest_profile_arena[variant];}
+static int profileMission(int variant){return guest_profile_mission[variant];}
 static ClashFixtures opponentFixture(const char *bundle,int variant) {
     if(variant<0 || variant>=profileCount)throw std::runtime_error("Invalid arena opponent variant");
     const int arena=profileArena(variant);
     ClashFixtures bot(bundle,profileMission(variant),arena);
-    if(bot.npcExpLevel!=(arena==1?2:3))throw std::runtime_error("Unexpected early-arena native tower level");
-    bot.npcDeck.clear();int deck=variant%GUEST_BOT_DECK_COUNT;
-    for(int i=0;i<8;++i)bot.npcDeck.push_back({arena==1?guest_bot_ids[deck][i]:guest_arena2_ids[deck][i],
-        arena==1?guest_bot_levels[deck][i]:guest_arena2_levels[deck][i],0,0,0});
+    if(bot.npcExpLevel!=guest_profile_tower[variant])throw std::runtime_error("Unexpected native tower level");
+    bot.npcDeck.clear();
+    for(int i=0;i<8;++i)bot.npcDeck.push_back({guest_profile_ids[variant][i],guest_profile_levels[variant][i],0,0,0});
     bot.trainerName="Guest Opponent";bot.npcMana=5;return bot;
 }
 #endif
@@ -182,7 +180,7 @@ int main(int argc,char** argv) {
     std::puts("};");
 #ifdef GUEST_BOT_POLICY_GENERATED
     std::puts("static const unsigned arena1_deck_ids[]={");
-    for(int i=0;i<profileCount;++i)std::printf("%d,",i%GUEST_BOT_DECK_COUNT);
+    for(int i=0;i<profileCount;++i)std::printf("%d,",guest_profile_deck[i]);
     std::puts("};\nstatic const int arena1_missions[]={");
     for(int i=0;i<profileCount;++i)std::printf("%d,",profileMission(i));
     std::puts("};\nstatic const int arena_profile_arenas[]={");
