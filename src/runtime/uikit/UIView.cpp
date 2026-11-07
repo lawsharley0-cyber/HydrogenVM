@@ -600,9 +600,11 @@ G::Rect applicationFrame(Ctx& x) {
     auto& u = ui(x);
     G::Rect base;
     if (u.statusBarHidden) base = {0, 0, u.screenW, u.screenH};
+    // UIKit values: LandscapeRight (3) has the home button on the right, so the UI's top
+    // (and the status bar) is the device's right edge; LandscapeLeft (4) is the mirror.
     else switch (u.statusBarOrientation) {
-        case 3: base = {20, 0, u.screenW - 20, u.screenH}; break;
-        case 4: base = {0, 0, u.screenW - 20, u.screenH}; break;
+        case 3: base = {0, 0, u.screenW - 20, u.screenH}; break;
+        case 4: base = {20, 0, u.screenW - 20, u.screenH}; break;
         case 2: base = {0, 0, u.screenW, u.screenH - 20}; break;
         default: base = {0, 20, u.screenW, u.screenH - 20}; break;
     }
@@ -620,7 +622,8 @@ void layoutRootView(Ctx& x, id window, id vc) {
     const int o = u.statusBarOrientation;
     const G::Size old{l.bounds.w, l.bounds.h};
     if (o == 3 || o == 4) {
-        l.transform = from2D(G::Affine::rotate(o == 4 ? kPi / 2 : -kPi / 2));
+        // LandscapeRight (3): the view's top turns to the device's right edge (+90 degrees).
+        l.transform = from2D(G::Affine::rotate(o == 3 ? kPi / 2 : -kPi / 2));
         l.bounds = {0, 0, af.h, af.w};
         l.position = {af.x + af.w / 2, af.y + af.h / 2};
     } else if (o == 2) {
