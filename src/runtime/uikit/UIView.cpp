@@ -1135,7 +1135,7 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder resp = r.defineClass("UIResponder", "NSObject");
     u.responder = resp.cls();
     resp.m<&r_nextResponder>("nextResponder").m<&r_isFirst>("isFirstResponder", "c@:").m<&r_false>("canBecomeFirstResponder", "c@:")
-        .m<&r_become>("becomeFirstResponder", "c@:").m<&r_true>("canResignFirstResponder", "c@:").m<&r_resign>("resignFirstResponder", "c@:")
+        .m<&r_become>("becomeFirstResponder", "c@:").m<&r_true>("canResignFirstResponder", "c@:")
         .method("touchesBegan:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
         .method("touchesMoved:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
         .method("touchesEnded:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
@@ -1145,6 +1145,8 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
         .method("motionCancelled:withEvent:", [](Ctx& x) { forwardMotion(x, x.cpu.r[0], x.cpu.r[1], int32_t(x.cpu.r[2]), x.cpu.r[3]); }, "v@:i@")
         .m<&r_remoteControl>("remoteControlReceivedWithEvent:", "v@:@").m<&r_nil>("inputView").m<&r_nil>("inputAccessoryView")
         .m<&r_nil>("undoManager");
+    supportMethod(p, resp, "UIResponder", "resignFirstResponder", [](Ctx& x) { callWrapped<&r_resign>(x); },
+                  SupportStatus::Real, "Clears first-responder ownership and publishes custom keyboard hide events; subclasses can refuse", "c@:");
 
     {
         ObjC::ClassBuilder ax = r.builder(r.getClass("NSObject"));
