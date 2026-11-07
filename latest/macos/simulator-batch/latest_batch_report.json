@@ -1,7 +1,7 @@
 {
   "build" : {
     "binaryMatch" : "verified",
-    "commit" : "76db694cce9afb7e1ab67fa010854f199088b810",
+    "commit" : "433d581093d573a62629b94309f235fa8a7cea33",
     "configuration" : "device"
   },
   "device" : {
@@ -35,7 +35,7 @@
               "status" : "fail"
             },
             {
-              "detail" : "7 frames drawn",
+              "detail" : "8 frames drawn",
               "name" : "Shows a picture",
               "status" : "pass"
             },
@@ -45,7 +45,7 @@
               "status" : "pass"
             },
             {
-              "detail" : "Mixer ran for 5.6 s, peak 0.00",
+              "detail" : "Mixer ran for 6.3 s, peak 0.00",
               "name" : "Audio output",
               "status" : "pass"
             },
@@ -98,17 +98,17 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 246020,
+            "audioFramesRendered" : 277536,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
             "faultsToApp" : 0,
-            "framesPresented" : 7,
+            "framesPresented" : 8,
             "missingCount" : 0,
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 468.22075000000001
+            "timeToFirstFrameMs" : 734.38716699999998
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -117,27 +117,42 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.243061900138855
+                "timeOffset" : 5.2328740358352661
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5553818941116333
+                "timeOffset" : 5.5579450130462646
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8627879619598389
+                "timeOffset" : 5.9111679792404175
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1723239421844482
+                "timeOffset" : 6.2360579967498779
               },
               {
                 "details" : "grid tap at (133, 24)",
                 "kind" : "tap",
-                "timeOffset" : 6.4868099689483643
+                "timeOffset" : 6.5790529251098633
+              },
+              {
+                "details" : "grid tap at (26, 360)",
+                "kind" : "tap",
+                "timeOffset" : 6.9015289545059204
+              },
+              {
+                "details" : "grid tap at (80, 72)",
+                "kind" : "tap",
+                "timeOffset" : 7.2215659618377686
+              },
+              {
+                "details" : "grid tap at (186, 360)",
+                "kind" : "tap",
+                "timeOffset" : 7.5430539846420288
               }
             ],
             "backgroundTested" : false,
@@ -145,35 +160,50 @@
             "enabled" : true,
             "newProblems" : [
               {
-                "problemText" : "69 checks, 3 failures",
-                "triggeringActionIndex" : 4
+                "problemText" : "70 checks, 1 failures",
+                "triggeringActionIndex" : 7
               }
             ],
             "reproSteps" : [
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.243061900138855
+                "timeOffset" : 5.2328740358352661
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5553818941116333
+                "timeOffset" : 5.5579450130462646
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8627879619598389
+                "timeOffset" : 5.9111679792404175
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1723239421844482
+                "timeOffset" : 6.2360579967498779
               },
               {
                 "details" : "grid tap at (133, 24)",
                 "kind" : "tap",
-                "timeOffset" : 6.4868099689483643
+                "timeOffset" : 6.5790529251098633
+              },
+              {
+                "details" : "grid tap at (26, 360)",
+                "kind" : "tap",
+                "timeOffset" : 6.9015289545059204
+              },
+              {
+                "details" : "grid tap at (80, 72)",
+                "kind" : "tap",
+                "timeOffset" : 7.2215659618377686
+              },
+              {
+                "details" : "grid tap at (186, 360)",
+                "kind" : "tap",
+                "timeOffset" : 7.5430539846420288
               }
             ],
             "screensVisited" : 1,
@@ -184,12 +214,12 @@
             "thumbnailPath" : "thumbnails\/com.hydrogenvm.test.uikittest_software.png"
           },
           "keepGoing" : true,
-          "logs" : "Loaded UIKitTest: armv7, 157 imports, 0 initializers, entry 0x0000e0bb UIKitTest+41146 _main\nObjective-C: 5 classes, 0 categories, 170 selector refs\n[teardown] waiting for the guest run to finish\nScreen: 320x480 @2x, portrait, status bar visible\nok 3.5-inch screen without a 568h launch image\nok applicationFrame below the status bar\nok retina scale\nok keyWindow\nok root view controller view frame\nok viewDidLoad \/ viewWillAppear\nok didMoveToWindow\nok responder chain\nok UIDevice systemVersion\nok convertPoint:toView:nil (window)\nok convertPoint:fromView:nil\nok hitTest finds the child\nok hitTest falls back to the root\nok viewWithTag \/ isDescendantOfView\nok transformed frame\nok identity transform restores frame\nok autoresizing (flexible width + top margin)\nok setNeedsLayout + layoutIfNeeded\nok bringSubviewToFront\nok UIColor components\nok UIColor CGColor\nok UIFont metrics\nok sizeWithFont:\nok sizeWithFont:constrainedToSize: wraps\nok imageNamed: picks @2x\nok CGImage of @2x image\nok imageNamed: missing returns nil\nok CgBI (Xcode-crushed) PNG decodes\nok CgBI channel order\nok UIGraphicsGetImageFromCurrentImageContext\nok UIRectFill pixels\nok drawInRect: pixels (top-left origin)\nok untouched pixels stay clear\nok PNG encode\/decode round trip\nok CGBitmapContext y-up fill\nok CGPathContainsPoint\nok CGRectIntersection\nok NSStringFromCGRect \/ CGRectFromString\nok NSValue CGRect\nnib Panel.nib: 1 top-level objects\nok Panel nib: top-level view\nok Panel nib: outlet + label text\nok Panel nib: action connection + button title\nnib PanelKeyed.nib: 1 top-level objects\nok PanelKeyed nib: top-level view\nok PanelKeyed nib: outlet + label text\nok PanelKeyed nib: action connection + button title\nok loadNibNamed: missing NIB raises NSInternalInconsistencyException\nok loadNibNamed: does not strip Landscape to load Panel\nok loadNibNamed: does not strip Portrait to load Panel\nok UIButton target\/action\nok UIButton currentTitle\nok animation block applies immediately\nok beginAnimations\/commitAnimations apply\nok UIScrollView contentOffset updates bounds.origin\nok UITableViewCell textLabel & reuseIdentifier\nok UINavigationController push & hierarchy\nok UINavigationController pop\nok UITabBarController selection\nok UITextField editing & first responder\nok UISwitch, UISlider, UISegmentedControl\nok EAGLContext creation & setCurrentContext\nok EAGLContext renderbufferStorage:fromDrawable:\nok glCheckFramebufferStatus complete\nok OpenGL ES clear, glReadPixels & presentRenderbuffer\nok drawRect: was called by the compositor\nok CADisplayLink fires at frame rate\nok animation completions fire\nFAIL touch delivery to a plain view (hvm --tap) (line 367)\nFAIL touch location in view coordinates (line 368)\nFAIL UITapGestureRecognizer (line 369)\n69 checks, 3 failures\nApp exited with code 1\n[teardown] guest run returned status 1\n[teardown] destroying the guest process\n[teardown] guest process destroyed; live arenas 0\n[teardown] stopping host audio\n[teardown] host audio stopped; queueing the exit callback\n[teardown] delivering the exit callback",
+          "logs" : "Loaded UIKitTest: armv7, 157 imports, 0 initializers, entry 0x0000e06f UIKitTest+41070 _main\nObjective-C: 5 classes, 0 categories, 170 selector refs\n[teardown] waiting for the guest run to finish\nScreen: 320x480 @2x, portrait, status bar visible\nok 3.5-inch screen without a 568h launch image\nok applicationFrame below the status bar\nok retina scale\nok keyWindow\nok root view controller view frame\nok viewDidLoad \/ viewWillAppear\nok didMoveToWindow\nok responder chain\nok UIDevice systemVersion\nok convertPoint:toView:nil (window)\nok convertPoint:fromView:nil\nok hitTest finds the child\nok hitTest falls back to the root\nok viewWithTag \/ isDescendantOfView\nok transformed frame\nok identity transform restores frame\nok autoresizing (flexible width + top margin)\nok setNeedsLayout + layoutIfNeeded\nok bringSubviewToFront\nok UIColor components\nok UIColor CGColor\nok UIFont metrics\nok sizeWithFont:\nok sizeWithFont:constrainedToSize: wraps\nok imageNamed: picks @2x\nok CGImage of @2x image\nok imageNamed: missing returns nil\nok CgBI (Xcode-crushed) PNG decodes\nok CgBI channel order\nok UIGraphicsGetImageFromCurrentImageContext\nok UIRectFill pixels\nok drawInRect: pixels (top-left origin)\nok untouched pixels stay clear\nok PNG encode\/decode round trip\nok CGBitmapContext y-up fill\nok CGPathContainsPoint\nok CGRectIntersection\nok NSStringFromCGRect \/ CGRectFromString\nok NSValue CGRect\nnib Panel.nib: 1 top-level objects\nok Panel nib: top-level view\nok Panel nib: outlet + label text\nok Panel nib: action connection + button title\nnib PanelKeyed.nib: 1 top-level objects\nok PanelKeyed nib: top-level view\nok PanelKeyed nib: outlet + label text\nok PanelKeyed nib: action connection + button title\nok loadNibNamed: missing NIB raises NSInternalInconsistencyException\nok loadNibNamed: does not strip Landscape to load Panel\nok loadNibNamed: does not strip Portrait to load Panel\nok UIButton target\/action\nok UIButton currentTitle\nok animation block applies immediately\nok beginAnimations\/commitAnimations apply\nok UIScrollView contentOffset updates bounds.origin\nok UITableViewCell textLabel & reuseIdentifier\nok UINavigationController push & hierarchy\nok UINavigationController pop\nok UITabBarController selection\nok UITextField editing & first responder\nok UISwitch, UISlider, UISegmentedControl\nok EAGLContext creation & setCurrentContext\nok EAGLContext renderbufferStorage:fromDrawable:\nok glCheckFramebufferStatus complete\nok OpenGL ES clear, glReadPixels & presentRenderbuffer\nok root view laid out before applicationDidBecomeActive:\nok drawRect: was called by the compositor\nok CADisplayLink fires at frame rate\nok animation completions fire\nok touch delivery to a plain view (hvm --tap)\nFAIL touch location in view coordinates (line 373)\nok UITapGestureRecognizer\n70 checks, 1 failures\nApp exited with code 1\n[teardown] guest run returned status 1\n[teardown] destroying the guest process\n[teardown] guest process destroyed; live arenas 0\n[teardown] stopping host audio\n[teardown] host audio stopped; queueing the exit callback\n[teardown] delivering the exit callback",
           "name" : "UIKitTest",
           "perf" : {
-            "fps" : 6,
-            "framesPresented" : 7,
-            "frameTimeP95Ms" : 0.071679999999999994
+            "fps" : 5,
+            "framesPresented" : 8,
+            "frameTimeP95Ms" : 0.119808
           },
           "renderer" : "software",
           "signature" : "exit-1",
@@ -205,7 +235,7 @@
               "status" : "fail"
             },
             {
-              "detail" : "8 frames drawn",
+              "detail" : "7 frames drawn",
               "name" : "Shows a picture",
               "status" : "pass"
             },
@@ -268,17 +298,17 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 262013,
+            "audioFramesRendered" : 259191,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
             "faultsToApp" : 0,
-            "framesPresented" : 8,
+            "framesPresented" : 7,
             "missingCount" : 0,
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 51.317708000000003
+            "timeToFirstFrameMs" : 82.306291999999999
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -287,22 +317,22 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2201070785522461
+                "timeOffset" : 5.2088019847869873
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5387790203094482
+                "timeOffset" : 5.521757960319519
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8595700263977051
+                "timeOffset" : 5.8300780057907104
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1811649799346924
+                "timeOffset" : 6.1442819833755493
               }
             ],
             "backgroundTested" : false,
@@ -310,7 +340,7 @@
             "enabled" : true,
             "newProblems" : [
               {
-                "problemText" : "69 checks, 3 failures",
+                "problemText" : "70 checks, 3 failures",
                 "triggeringActionIndex" : 3
               }
             ],
@@ -318,22 +348,22 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2201070785522461
+                "timeOffset" : 5.2088019847869873
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5387790203094482
+                "timeOffset" : 5.521757960319519
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8595700263977051
+                "timeOffset" : 5.8300780057907104
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1811649799346924
+                "timeOffset" : 6.1442819833755493
               }
             ],
             "screensVisited" : 1,
@@ -344,12 +374,12 @@
             "thumbnailPath" : "thumbnails\/com.hydrogenvm.test.uikittest_gpu.png"
           },
           "keepGoing" : true,
-          "logs" : "GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)\nLoaded UIKitTest: armv7, 157 imports, 0 initializers, entry 0x0000e0bb UIKitTest+41146 _main\nObjective-C: 5 classes, 0 categories, 170 selector refs\n[teardown] waiting for the guest run to finish\nScreen: 320x480 @2x, portrait, status bar visible\nok 3.5-inch screen without a 568h launch image\nok applicationFrame below the status bar\nok retina scale\nok keyWindow\nok root view controller view frame\nok viewDidLoad \/ viewWillAppear\nok didMoveToWindow\nok responder chain\nok UIDevice systemVersion\nok convertPoint:toView:nil (window)\nok convertPoint:fromView:nil\nok hitTest finds the child\nok hitTest falls back to the root\nok viewWithTag \/ isDescendantOfView\nok transformed frame\nok identity transform restores frame\nok autoresizing (flexible width + top margin)\nok setNeedsLayout + layoutIfNeeded\nok bringSubviewToFront\nok UIColor components\nok UIColor CGColor\nok UIFont metrics\nok sizeWithFont:\nok sizeWithFont:constrainedToSize: wraps\nok imageNamed: picks @2x\nok CGImage of @2x image\nok imageNamed: missing returns nil\nok CgBI (Xcode-crushed) PNG decodes\nok CgBI channel order\nok UIGraphicsGetImageFromCurrentImageContext\nok UIRectFill pixels\nok drawInRect: pixels (top-left origin)\nok untouched pixels stay clear\nok PNG encode\/decode round trip\nok CGBitmapContext y-up fill\nok CGPathContainsPoint\nok CGRectIntersection\nok NSStringFromCGRect \/ CGRectFromString\nok NSValue CGRect\nnib Panel.nib: 1 top-level objects\nok Panel nib: top-level view\nok Panel nib: outlet + label text\nok Panel nib: action connection + button title\nnib PanelKeyed.nib: 1 top-level objects\nok PanelKeyed nib: top-level view\nok PanelKeyed nib: outlet + label text\nok PanelKeyed nib: action connection + button title\nok loadNibNamed: missing NIB raises NSInternalInconsistencyException\nok loadNibNamed: does not strip Landscape to load Panel\nok loadNibNamed: does not strip Portrait to load Panel\nok UIButton target\/action\nok UIButton currentTitle\nok animation block applies immediately\nok beginAnimations\/commitAnimations apply\nok UIScrollView contentOffset updates bounds.origin\nok UITableViewCell textLabel & reuseIdentifier\nok UINavigationController push & hierarchy\nok UINavigationController pop\nok UITabBarController selection\nok UITextField editing & first responder\nok UISwitch, UISlider, UISegmentedControl\nok EAGLContext creation & setCurrentContext\nGPU: drawable 64x64 for renderbuffer 1 (platform layer)\nok EAGLContext renderbufferStorage:fromDrawable:\nok glCheckFramebufferStatus complete\nGPU: presented frame 1 directly (average rgb 255,0,0, 64\/64 samples lit)\nok OpenGL ES clear, glReadPixels & presentRenderbuffer\nok drawRect: was called by the compositor\nok CADisplayLink fires at frame rate\nok animation completions fire\nFAIL touch delivery to a plain view (hvm --tap) (line 367)\nFAIL touch location in view coordinates (line 368)\nFAIL UITapGestureRecognizer (line 369)\n69 checks, 3 failures\nApp exited with code 1\n[teardown] guest run returned status 1\n[teardown] destroying the guest process\n[teardown] guest process destroyed; live arenas 0\n[teardown] stopping host audio\n[teardown] host audio stopped; queueing the exit callback\n[teardown] delivering the exit callback",
+          "logs" : "GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)\nLoaded UIKitTest: armv7, 157 imports, 0 initializers, entry 0x0000e06f UIKitTest+41070 _main\nObjective-C: 5 classes, 0 categories, 170 selector refs\n[teardown] waiting for the guest run to finish\nScreen: 320x480 @2x, portrait, status bar visible\nok 3.5-inch screen without a 568h launch image\nok applicationFrame below the status bar\nok retina scale\nok keyWindow\nok root view controller view frame\nok viewDidLoad \/ viewWillAppear\nok didMoveToWindow\nok responder chain\nok UIDevice systemVersion\nok convertPoint:toView:nil (window)\nok convertPoint:fromView:nil\nok hitTest finds the child\nok hitTest falls back to the root\nok viewWithTag \/ isDescendantOfView\nok transformed frame\nok identity transform restores frame\nok autoresizing (flexible width + top margin)\nok setNeedsLayout + layoutIfNeeded\nok bringSubviewToFront\nok UIColor components\nok UIColor CGColor\nok UIFont metrics\nok sizeWithFont:\nok sizeWithFont:constrainedToSize: wraps\nok imageNamed: picks @2x\nok CGImage of @2x image\nok imageNamed: missing returns nil\nok CgBI (Xcode-crushed) PNG decodes\nok CgBI channel order\nok UIGraphicsGetImageFromCurrentImageContext\nok UIRectFill pixels\nok drawInRect: pixels (top-left origin)\nok untouched pixels stay clear\nok PNG encode\/decode round trip\nok CGBitmapContext y-up fill\nok CGPathContainsPoint\nok CGRectIntersection\nok NSStringFromCGRect \/ CGRectFromString\nok NSValue CGRect\nnib Panel.nib: 1 top-level objects\nok Panel nib: top-level view\nok Panel nib: outlet + label text\nok Panel nib: action connection + button title\nnib PanelKeyed.nib: 1 top-level objects\nok PanelKeyed nib: top-level view\nok PanelKeyed nib: outlet + label text\nok PanelKeyed nib: action connection + button title\nok loadNibNamed: missing NIB raises NSInternalInconsistencyException\nok loadNibNamed: does not strip Landscape to load Panel\nok loadNibNamed: does not strip Portrait to load Panel\nok UIButton target\/action\nok UIButton currentTitle\nok animation block applies immediately\nok beginAnimations\/commitAnimations apply\nok UIScrollView contentOffset updates bounds.origin\nok UITableViewCell textLabel & reuseIdentifier\nok UINavigationController push & hierarchy\nok UINavigationController pop\nok UITabBarController selection\nok UITextField editing & first responder\nok UISwitch, UISlider, UISegmentedControl\nok EAGLContext creation & setCurrentContext\nGPU: drawable 64x64 for renderbuffer 1 (platform layer)\nok EAGLContext renderbufferStorage:fromDrawable:\nok glCheckFramebufferStatus complete\nGPU: presented frame 1 directly (average rgb 255,0,0, 64\/64 samples lit)\nok OpenGL ES clear, glReadPixels & presentRenderbuffer\nok root view laid out before applicationDidBecomeActive:\nok drawRect: was called by the compositor\nok CADisplayLink fires at frame rate\nok animation completions fire\nFAIL touch delivery to a plain view (hvm --tap) (line 372)\nFAIL touch location in view coordinates (line 373)\nFAIL UITapGestureRecognizer (line 374)\n70 checks, 3 failures\nApp exited with code 1\n[teardown] guest run returned status 1\n[teardown] destroying the guest process\n[teardown] guest process destroyed; live arenas 0\n[teardown] stopping host audio\n[teardown] host audio stopped; queueing the exit callback\n[teardown] delivering the exit callback",
           "name" : "UIKitTest",
           "perf" : {
-            "fps" : 6,
-            "framesPresented" : 8,
-            "frameTimeP95Ms" : 0.15564800000000001
+            "fps" : 5,
+            "framesPresented" : 7,
+            "frameTimeP95Ms" : 0.157696
           },
           "renderer" : "gpu",
           "signature" : "exit-1",
@@ -359,5 +389,5 @@
       ]
     }
   },
-  "timestamp" : "2026-11-07T05:16:46Z"
+  "timestamp" : "2026-11-07T13:27:23Z"
 }
