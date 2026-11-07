@@ -2473,6 +2473,37 @@ int runFullSubsystemTests() {
             if(!tableOptions) std::printf("    NSMapTable options: identity %d contents %d copy-in %d struct refused %d\n",byIdentity,byContents,copied,refused);
         }
         check(tableOptions,"NSMapTable object-pointer, opaque, C-string and copy-in options");
+        // for (key in mapTable), NSPointerArray and +predicateWithBlock: (Crossy Road used all three).
+        bool enumerated=false, pointers=false, blockPredicate=false;
+        {
+            auto map=call(r.getClass("NSMapTable"),"strongToStrongObjectsMapTable");
+            const auto k1=makeString(cx,"k1",true), k2=makeString(cx,"k2",true);
+            call(map,"setObject:forKey:",{key,k1}); call(map,"setObject:forKey:",{key,k2});
+            const uint32_t state=proc.heap().allocZeroed(64), buf=proc.heap().allocZeroed(64);
+            std::set<uint32_t> seen; uint32_t n;
+            while((n=call(map,"countByEnumeratingWithState:objects:count:",{state,buf,16}))!=0)
+                for(uint32_t i=0;i<n;++i) seen.insert(proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(state+4)+i*4));
+            enumerated=seen==std::set<uint32_t>{k1,k2} && proc.mem().read<uint32_t>(state+8)!=0;
+            auto pa=call(r.getClass("NSPointerArray"),"strongObjectsPointerArray");
+            const auto object=r.createInstance(r.nsObject);
+            call(pa,"addPointer:",{object}); call(pa,"addPointer:",{0}); call(pa,"insertPointer:atIndex:",{key,0});
+            const bool built=call(pa,"count")==3 && call(pa,"pointerAtIndex:",{0})==key && call(pa,"pointerAtIndex:",{2})==0 &&
+                             call(object,"retainCount")==2;
+            call(pa,"compact");
+            pointers=built && call(pa,"count")==2 && call(call(pa,"allObjects"),"count")==2;
+            r.release(cpu,object);
+            static uint32_t wanted=0;
+            wanted=k2;
+            const uint32_t invoke=proc.defineFunction("test_predicate_block",[](Ctx& x){ x.cpu.r[0]=x.cpu.r[1]==wanted; });
+            const uint32_t desc=proc.heap().allocZeroed(8); proc.mem().write<uint32_t>(desc+4,20);
+            const uint32_t blk=proc.heap().allocZeroed(20);
+            proc.mem().write<uint32_t>(blk+12,invoke); proc.mem().write<uint32_t>(blk+16,desc);
+            auto pred=call(r.getClass("NSPredicate"),"predicateWithBlock:",{blk});
+            blockPredicate=pred && (call(pred,"evaluateWithObject:",{k2})&0xff)==1 && (call(pred,"evaluateWithObject:",{k1})&0xff)==0 &&
+                           call(call(Foundation::makeArray(cx,{k1,k2}),"filteredArrayUsingPredicate:",{pred}),"count")==1;
+            if(!(enumerated&&pointers&&blockPredicate)) std::printf("    enumerate %d pointers %d (built %d) block predicate %d\n",enumerated,pointers,built,blockPredicate);
+        }
+        check(enumerated&&pointers&&blockPredicate,"NSMapTable fast enumeration, NSPointerArray and +[NSPredicate predicateWithBlock:]");
         bool attributed=false;
         if(r.getClass("NSMutableAttributedString")) {
             auto object=call(r.createInstance(r.getClass("NSMutableAttributedString")),"initWithString:attributes:",{makeString(cx,std::u16string(u"A\U0001f600B")),makeDict(cx,{{key,makeNumberInt(cx,1)}})});
