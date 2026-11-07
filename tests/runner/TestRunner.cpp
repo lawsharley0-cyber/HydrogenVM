@@ -9570,6 +9570,81 @@ int runFullSubsystemTests() {
         }
     }
 
+    // GL errors the runtime's own calls raise in a guest context (worker-context
+    // sync, frame sampling) never reach the guest's glGetError; an error the guest
+    // had pending is still reported. Clumsy Ninja traps on any glGetError.
+    {
+        struct FakeGL {
+            static std::vector<uint32_t>& errors() { thread_local std::vector<uint32_t> v; return v; }
+            static std::thread::id& mainId() { static std::thread::id id; return id; }
+            static uint32_t getError() {
+                auto& q = errors();
+                if (q.empty()) return 0;
+                const uint32_t e = q.front();
+                q.erase(q.begin());
+                return e;
+            }
+            static void useProgram(uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
+            static void bindFramebuffer(uint32_t, uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
+            static void bindTexture(uint32_t, uint32_t t) { if (t == 99) errors().push_back(0x0500); }
+        };
+        struct ErrPlatform final : HostGL::Platform {
+            std::mutex mu;
+            std::unordered_map<void*, std::thread::id> owner;
+            const char* name() const override { return "gl-error-test"; }
+            void* createContext(int, void*, bool& desktop) override { desktop = false; return new uint8_t(1); }
+            void destroyContext(void* p) override { std::lock_guard<std::mutex> lk(mu); owner.erase(p); delete static_cast<uint8_t*>(p); }
+            bool makeCurrent(void* p) override {
+                std::lock_guard<std::mutex> lk(mu);
+                if (!p) return true;
+                auto it = owner.find(p);
+                if (it != owner.end() && it->second != std::this_thread::get_id()) return false;
+                owner[p] = std::this_thread::get_id();
+                return true;
+            }
+            void* proc(void*, const char* n) override {
+                const std::string s = n;
+                if (s == "glGetError") return reinterpret_cast<void*>(&FakeGL::getError);
+                if (s == "glUseProgram") return reinterpret_cast<void*>(&FakeGL::useProgram);
+                if (s == "glBindFramebuffer") return reinterpret_cast<void*>(&FakeGL::bindFramebuffer);
+                if (s == "glBindTexture") return reinterpret_cast<void*>(&FakeGL::bindTexture);
+                return nullptr;
+            }
+        };
+        FakeGL::mainId() = std::this_thread::get_id();
+        auto platform = std::make_shared<ErrPlatform>();
+        ProcessConfig ecfg;
+        ecfg.homePath = "/tmp/hvm_gl_error_isolation";
+        ecfg.hostGL = platform;
+        Process eproc(ecfg);
+        auto& er = ObjC::rt(eproc);
+        auto& ecpu = eproc.mainThread().cpu;
+        const ObjC::Class ctxCls = er.getClass("EAGLContext");
+        const ObjC::id context = ObjC::id(er.send(ecpu, ObjC::id(er.send(ecpu, ObjC::id(ctxCls), er.selAlloc)), "initWithAPI:", {2}));
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glUseProgram"), {7});
+        std::atomic<uint32_t> workerErr{0xffffffffu}, workerKept{0xffffffffu}, workerAfter{0xffffffffu};
+        const uint32_t fn = eproc.defineFunction("test_gl_error_worker", [&, context](Ctx& x) {
+            auto& rt = ObjC::rt(x);
+            rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {context});   // shared context, synced
+            workerErr = uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glGetError"), {}));
+            // A guest error pending when the runtime syncs the worker again survives the sync.
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glBindTexture"), {0x0DE1, 99});
+            rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {0});
+            x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glUseProgram"), {0});   // no context: ignored
+            rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {context});
+            workerKept = uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glGetError"), {}));
+            workerAfter = uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_glGetError"), {}));
+            rt.send(x.cpu, ObjC::id(rt.getClass("EAGLContext")), "setCurrentContext:", {0});
+            x.cpu.r[0] = 0;
+        });
+        const uint32_t tid = eproc.startThread(fn, 0, 64u << 10, false);
+        eproc.joinThread(tid, nullptr);
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        check(workerErr == 0 && workerKept == 0x0500 && workerAfter == 0,
+              "GL errors from the runtime's worker-context sync never reach the guest's glGetError");
+    }
+
     // PR #167: fixed-size heap objects share writable pages, so a successful
     // host mapping check alone is not enough to protect adjacent allocations.
     {

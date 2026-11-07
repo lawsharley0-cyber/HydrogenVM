@@ -216,7 +216,9 @@ void bind(Process& p, HostContext* hc) {
         st.platform->makeCurrent(nullptr);
     }
     
-    if (hc && hc->implicitWorker && root && !root->implicitWorker) {
+    if (hc && hc->implicitWorker && root && !root->implicitWorker &&
+        (hc->boundFbo != root->boundFbo || hc->currentProgram != root->currentProgram)) {
+        GuestErrorScope quiet(hc);
         if (hc->boundFbo != root->boundFbo) {
             if (hc->fn.glBindFramebuffer) hc->fn.glBindFramebuffer(0x8D40, root->boundFbo);
             else if (hc->fn.glBindFramebufferOES) hc->fn.glBindFramebufferOES(0x8D40, root->boundFbo);
@@ -1196,6 +1198,7 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     if (sample && hasReadbackFns(hc)) {
         // Diagnostic: sample the frame before it goes to the display, so a blank
         // screen can be told apart from a frame the GPU really rendered black.
+        GuestErrorScope quiet(hc);
         const FbBindings saved = saveFbBindings(hc);
         if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
         hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
@@ -1239,6 +1242,7 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
 
     // Read the drawable back for the software compositor.
     if (!hasReadbackFns(hc)) return false;
+    GuestErrorScope quiet(hc);
     const FbBindings saved = saveFbBindings(hc);
     if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
     hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
@@ -1316,6 +1320,13 @@ static void chain(Process& p, const std::string& symbol, void (*host)(Ctx&)) {
         record->provenance = "Host GL dispatch when eligible; fallback: " + record->provenance;
         supportRegistry(p).record(std::move(*record));
     }
+}
+
+uint32_t hg_glGetError(Ctx& x) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glGetError) { hgMissing(x, hc, "glGetError"); return 0; }
+    if (const uint32_t kept = hc->guestError) { hc->guestError = 0; return kept; }
+    return hc->fn.glGetError();
 }
 
 void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
