@@ -1,5 +1,16 @@
 # Custom text input continuation — November 7, 2026
 
+CI follow-up: revision `5aba0b4` passes the full Linux CI job, unsigned iOS
+simulator shell compilation and the actual-bridge crash-journal regression.
+The separate SwiftUI harness then failed to compile because its synthetic
+request/session bridge still had the old text-input interface. The fixture now
+includes keyInput/hasText and incremental callbacks. A new simulator UI case
+uses the actual RunView/GameKeyInputKeyboard with a synthetic guest session to
+check keyboard appearance, typing, deletion, Return and Done dismissal. This
+new case still needs a successful Apple CI run; it is not a real-game or phone
+test. Previously expected failures from the old crash-recovery body are not
+candidate failures.
+
 Owner report: Hydrogen's keyboard **does not appear** in Clash Royale 2.1306.1.
 This is shared emulator compatibility work on `codex/uikeyinput-keyboard`,
 separate from the offline guest/editor in
