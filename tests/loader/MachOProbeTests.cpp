@@ -274,7 +274,23 @@ int main() {
         checkTrie("export_trie_child_at_end", {0, 1, 'x', 0, 5}, "export trie child offset out of range");
         checkTrie("export_trie_child_past_end", {0, 1, 'x', 0, 6}, "export trie child offset out of range");
         checkTrie("export_trie_at_work_limit", largeExportTrie(false), "");
-        checkTrie("export_trie_exceeds_work_limit", largeExportTrie(true), "export trie work limit exceeded");
+        // A normal tree past the old fixed cap of 65,536 visits loads (big games have one).
+        checkTrie("export_trie_large_tree_beyond_old_cap", largeExportTrie(true), "");
+        // A small trie whose nodes are shared (each of 20 nodes points twice at the next one)
+        // needs 2^21 visits from about 200 bytes: the work cap, linear in the trie size, stops it.
+        {
+            Bytes shared;
+            const int k = 20;
+            auto uleb2 = [&](size_t v) { shared.push_back(uint8_t((v & 0x7f) | 0x80)); shared.push_back(uint8_t(v >> 7)); };
+            for (int i = 0; i < k; ++i) {
+                const size_t next = size_t(i + 1) * 10;   // every internal node is 10 bytes
+                shared.push_back(0);                      // no terminal
+                shared.push_back(2);                      // two children ...
+                for (char e : {'a', 'b'}) { shared.push_back(uint8_t(e)); shared.push_back(0); uleb2(next); }   // ... both the same node
+            }
+            shared.insert(shared.end(), {0, 0});          // the leaf
+            checkTrie("export_trie_shared_nodes_hit_work_limit", shared, "export trie work limit exceeded");
+        }
         checkTrie("export_trie_cycle", {0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00}, "export trie cycle detected");
     }
 

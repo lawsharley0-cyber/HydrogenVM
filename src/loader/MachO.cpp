@@ -341,7 +341,11 @@ void runBind(Ctx& cx, const uint8_t* p, size_t n, bool lazy, bool weak) {
 void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const std::string& prefix, uint32_t depth,
                     std::unordered_set<uint64_t>& activePath, size_t& steps) {
     if (depth > 256 || nodeOff >= n) return;
-    if (steps >= 65536) throw MachOError("Mach-O: export trie work limit exceeded");
+    // A tree visits each node once, and every node takes at least two bytes, so a real
+    // trie of n bytes needs fewer than n visits. Big games (Infinity Blade: 66,059 nodes;
+    // ROBLOX: 136,494) exceed a fixed 65,536. The cap stays linear in the input, so a
+    // hostile trie that shares nodes to make the walk exponential still stops here.
+    if (steps >= std::max<size_t>(65536, n)) throw MachOError("Mach-O: export trie work limit exceeded");
     if (!activePath.insert(nodeOff).second) throw MachOError("Mach-O: export trie cycle detected");
     ++steps;
     struct Guard {
