@@ -746,7 +746,12 @@ void runFrame(Ctx& x, double now) {
             p.recordFrame(ns);
         }
     } timer{perf, t0};
+    if (u.deviceOrientationNotePending) {
+        u.deviceOrientationNotePending = false;
+        if (u.currentDevice) Foundation::postNotification(x, "UIDeviceOrientationDidChangeNotification", u.currentDevice);
+    }
     deliverPendingInput(x);
+    rotateLegacyControllers(x, "frame");   // a controller view added after launch, or a new orientation
     layoutPass(x);
     // display links
     if (!u.links.empty()) {

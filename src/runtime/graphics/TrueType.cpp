@@ -133,6 +133,13 @@ std::shared_ptr<TrueTypeFont> TrueTypeFont::load(std::vector<uint8_t> bytes) {
                 if (first > last) return {};
                 if (j && first <= u16(p+14+(j-1)*2)) return {};
                 const uint32_t shift = u16(range);
+                // Older fonts (Temple Run's Cheboyga) give the final 0xFFFF terminator segment an
+                // idRangeOffset of 0xFFFF that points outside the table. The terminator only maps
+                // U+FFFF, a noncharacter: point it at the missing glyph in this copy of the font.
+                if (shift && range+shift+(last-first)*2ull+2 > p+size && j == segments-1 && first == 0xFFFF && last == 0xFFFF) {
+                    bytes[range] = 0; bytes[range+1] = 0;
+                    continue;
+                }
                 if (shift && range+shift+(last-first)*2ull+2 > p+size) return {};
             }
         }

@@ -97,6 +97,7 @@ struct VCData : ObjC::HostObject {
     id storyboard = 0;               // retained; set by the storyboard that loaded it
     id segueTemplates = 0;           // retained NSArray of UIStoryboardSegueTemplate, from the nib
     bool appeared = false, wantsFullScreen = false;
+    int32_t legacyOrientation = 1;   // what rotateLegacyControllers last laid this controller out for
     int32_t modalStyle = 0;
 };
 
@@ -122,6 +123,9 @@ struct UIState {
     int32_t statusBarOrientation = 1;   // UIInterfaceOrientationPortrait
     int32_t initialOrientation = 1;
     bool orientationSetByApp = false;   // the app chose one with setStatusBarOrientation:
+    // beginGeneratingDeviceOrientationNotifications was called: on the next frame, post the
+    // UIDeviceOrientationDidChangeNotification iOS sends once the device's orientation is known.
+    bool deviceOrientationNotePending = false;
     // framebuffer
     G::Image framebuffer;
     double lastFrame = 0;
@@ -139,6 +143,7 @@ struct UIState {
     std::deque<HostTouch> pendingTouches;
     // accelerometer
     float accel[3] = {0, 0, -1};
+    bool accelFromHost = false;   // until the host reports, gravity follows the interface orientation
     id firstResponder = 0;
     std::unordered_map<std::string, id> imageCache;   // imageNamed: (retained)
     id ignoringEvents = 0;
@@ -264,6 +269,12 @@ id loadNib(Ctx& x, const std::string& name, id bundle, id owner, id externalObje
 // `rotation` is true for +attemptRotationToDeviceOrientation, which (unlike the
 // one-time settle after launch) respects a controller's shouldAutorotate == NO.
 void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation = false);
+// iOS 3-5 apps without a rootViewController: the controller whose view is a window's first
+// subview rotates (with willRotate/didRotate callbacks) to the interface orientation.
+void rotateLegacyControllers(Ctx& x, const char* cause);
+// What UIAccelerometer reports: the host's reading, or until there is one, gravity for a
+// device held upright in the current interface orientation.
+std::array<double, 3> restingGravity(const UIState& u);
 int32_t orientationFromString(const std::string& name);   // Info.plist name -> UIInterfaceOrientation
 bool nibExists(Ctx& x, const std::string& name);
 

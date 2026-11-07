@@ -16,6 +16,8 @@ static BOOL rectEq(CGRect a, CGRect b) {
 }
 
 static int drawCount = 0, layoutCount = 0, touchesBegan = 0, touchesEnded = 0, tapGestures = 0, linkFires = 0;
+// Launch order: iOS lays the root controller's view out before applicationDidBecomeActive:.
+static int rootLayouts = 0, layoutsWhenActive = -1;
 static int buttonTaps = 0, nibTaps = 0, animDone = 0, animStop = 0, viewDidLoadCount = 0, viewWillAppearCount = 0, movedToWindow = 0;
 static CGPoint lastTouch;
 
@@ -108,6 +110,7 @@ static CGPoint lastTouch;
     [self.view addSubview:plain];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; viewWillAppearCount++; }
+- (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; rootLayouts++; }
 - (void)buttonTapped:(id)sender { buttonTaps++; }
 - (void)nibButtonTapped:(id)sender { nibTaps++; }
 - (void)tapped:(UITapGestureRecognizer *)g { if (g.state == UIGestureRecognizerStateEnded) tapGestures++; }
@@ -122,6 +125,7 @@ static CGPoint lastTouch;
 
 @implementation AppDelegate
 - (void)frame:(CADisplayLink *)link { linkFires++; }
+- (void)applicationDidBecomeActive:(UIApplication *)application { if (layoutsWhenActive < 0) layoutsWhenActive = rootLayouts; }
 
 static unsigned pixelAt(CGImageRef img, int x, int y) {
     CFDataRef data = CGDataProviderCopyData(CGImageGetDataProvider(img));
@@ -361,6 +365,7 @@ static unsigned pixelAt(CGImageRef img, int x, int y) {
         [self performSelector:@selector(finish) withObject:nil afterDelay:0.1];
         return;
     }
+    CHECK(layoutsWhenActive >= 1, "root view laid out before applicationDidBecomeActive:");
     CHECK(drawCount >= 1, "drawRect: was called by the compositor");
     CHECK(linkFires >= 10, "CADisplayLink fires at frame rate");
     CHECK(animDone == 1 && animStop == 1, "animation completions fire");

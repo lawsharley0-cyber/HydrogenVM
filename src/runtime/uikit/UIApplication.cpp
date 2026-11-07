@@ -1,5 +1,6 @@
 // HydrogenVM — UIApplication, UIApplicationMain (the launch sequence), UITouch /
 // UIEvent and touch delivery, UIDevice, UIAccelerometer.
+#include <array>
 #include "UIKit.hpp"
 #include "runtime/Support.hpp"
 #include <chrono>
@@ -424,7 +425,13 @@ bool dev_batteryMonitoring(Ctx& x, id self, SEL) { return DF(x, self).battery; }
 void dev_setBatteryMonitoring(Ctx& x, id self, SEL, bool b) { DF(x, self).battery = b; }
 bool dev_proximity(Ctx& x, id self, SEL) { return DF(x, self).proximity; }
 void dev_setProximity(Ctx& x, id self, SEL, bool b) { DF(x, self).proximity = b; }
-void dev_beginOrientation(Ctx& x, id self, SEL) { DF(x, self).orientationNotes = true; }
+// iOS answers the first beginGenerating... with a UIDeviceOrientationDidChangeNotification
+// once the accelerometer reports. Unity 3.x waits for it before rotating its view, so without
+// it Bad Piggies stayed in portrait.
+void dev_beginOrientation(Ctx& x, id self, SEL) {
+    if (!DF(x, self).orientationNotes) ui(x).deviceOrientationNotePending = true;
+    DF(x, self).orientationNotes = true;
+}
 void dev_endOrientation(Ctx& x, id self, SEL) { DF(x, self).orientationNotes = false; }
 bool dev_generating(Ctx& x, id self, SEL) { return DF(x, self).orientationNotes; }
 
@@ -439,6 +446,19 @@ double as_x(Ctx& x, id self, SEL) { return rt(x).host<AccelSample>(self).x; }
 double as_y(Ctx& x, id self, SEL) { return rt(x).host<AccelSample>(self).y; }
 double as_z(Ctx& x, id self, SEL) { return rt(x).host<AccelSample>(self).z; }
 double as_t(Ctx& x, id self, SEL) { return rt(x).host<AccelSample>(self).t; }
+// Gravity in UIAcceleration's device axes (x right, y up, in g). Until the host reports real
+// motion, the device is held upright in the game's own orientation rather than lying flat:
+// Unity 3.x picks its orientation from gravity and stayed in portrait (Bad Piggies) when the
+// reading was the flat {0, 0, -1}. Interface LandscapeRight (3) is the device's LandscapeLeft.
+std::array<double, 3> gravityFor(const UIState& u) {
+    if (u.accelFromHost) return {u.accel[0], u.accel[1], u.accel[2]};
+    switch (u.statusBarOrientation) {
+    case 2: return {0, 1, 0};
+    case 3: return {-1, 0, 0};
+    case 4: return {1, 0, 0};
+    default: return {0, -1, 0};
+    }
+}
 void startAccelTimer(Ctx& x, id acc) {
     AccelData& d = AD(x, acc);
     if (d.timer) d.timer->valid = false;
@@ -452,7 +472,8 @@ void startAccelTimer(Ctx& x, id acc) {
         auto& u = ui(cx);
         const id s = rt(cx).createInstance(ACS(cx).acceleration);
         AccelSample& smp = rt(cx).host<AccelSample>(s);
-        smp.x = u.accel[0]; smp.y = u.accel[1]; smp.z = u.accel[2]; smp.t = nowSeconds();
+        const auto g = gravityFor(u);
+        smp.x = g[0]; smp.y = g[1]; smp.z = g[2]; smp.t = nowSeconds();
         cx.mem.write<double>(s + 4, smp.t);
         cx.mem.write<double>(s + 12, smp.x);
         cx.mem.write<double>(s + 20, smp.y);
@@ -655,9 +676,14 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         r.send(x.cpu, del, "applicationDidFinishLaunching:", {u.app});
     Foundation::postNotification(x, "UIApplicationDidFinishLaunchingNotification", u.app);
     reevaluateRootOrientation(x, "after launch");
+    // iOS lays the windows out (the root controller's viewWillAppear, viewWillLayoutSubviews,
+    // its views' layoutSubviews) before applicationDidBecomeActive:. Engines create their
+    // game object in layoutSubviews and use it in applicationDidBecomeActive: (Terraria 1.2
+    // faulted on the still-NULL pointer when the order was the other way round).
+    rotateLegacyControllers(x, "after launch");
+    layoutPass(x);
     if (del && r.respondsTo(del, r.sel("applicationDidBecomeActive:"))) r.send(x.cpu, del, "applicationDidBecomeActive:", {u.app});
     Foundation::postNotification(x, "UIApplicationDidBecomeActiveNotification", u.app);
-    layoutPass(x);
     r.poolPop(x.cpu, pool);
 
     if (u.windows.empty()) x.proc.log(LogLevel::Warning, "The app finished launching without creating a window");
@@ -680,6 +706,8 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
 }
 
 } // namespace
+
+std::array<double, 3> restingGravity(const UIState& u) { return gravityFor(u); }
 
 // The application's main loop. UIKit runs the main run loop in its default mode, so a timer or
 // source a component added in another mode waits for a run in that mode instead of firing on a
@@ -855,6 +883,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
     p.setAccelerationHandler([&p](float ax, float ay, float az) {
         auto& st = ui(p);
         st.accel[0] = ax; st.accel[1] = ay; st.accel[2] = az;
+        st.accelFromHost = true;
     });
 }
 

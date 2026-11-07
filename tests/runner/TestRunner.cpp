@@ -2868,6 +2868,35 @@ int runFullSubsystemTests() {
         call2("_CFRelease", data, 0);
     }
     {
+        // Older fonts (Temple Run's Cheboyga) give the format 4 cmap's final 0xFFFF segment an
+        // idRangeOffset of 0xFFFF that points outside the table. iOS loads them; so must we.
+        auto call2 = [&](const char* sym, uint32_t a, uint32_t b) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), {a, b}));
+        };
+        std::vector<uint8_t> font(kTestFont, kTestFont + sizeof kTestFont);
+        auto u16 = [&](size_t p) { return uint32_t(font[p]) << 8 | font[p + 1]; };
+        auto u32 = [&](size_t p) { return u16(p) << 16 | u16(p + 2); };
+        bool patched = false;
+        for (uint32_t i = 0; i < u16(4); ++i) {
+            if (u32(12 + i * 16) != 0x636D6170) continue;
+            const size_t cmap = u32(12 + i * 16 + 8);
+            for (uint32_t m = 0; m < u16(cmap + 2); ++m) {
+                const size_t sub = cmap + u32(cmap + 4 + m * 8 + 4);
+                if (u16(sub) != 4) continue;
+                const uint32_t segs = u16(sub + 6) / 2;
+                const size_t range = sub + 16 + segs * 6 + (segs - 1) * 2;
+                if (u16(sub + 14 + (segs - 1) * 2) == 0xFFFF) { font[range] = 0xFF; font[range + 1] = 0xFF; patched = true; }
+            }
+        }
+        const auto data = Foundation::makeData(cx, font.data(), uint32_t(font.size()), true);
+        const uint32_t provider = call2("_CGDataProviderCreateWithCFData", data, 0);
+        const uint32_t cg = call2("_CGFontCreateWithDataProvider", provider, 0);
+        check(patched && cg != 0, "CGFontCreateWithDataProvider loads a font whose 0xFFFF cmap terminator has a bogus idRangeOffset");
+        if (cg) call2("_CGFontRelease", cg, 0);
+        call2("_CGDataProviderRelease", provider, 0);
+        call2("_CFRelease", data, 0);
+    }
+    {
         // Issue #310: CoreData option and store-type constants are exported data
         // symbols whose value is an NSString equal to the documented string.
         // An unexported constant binds as NULL and becomes a nil dictionary key.
@@ -3432,6 +3461,47 @@ int runFullSubsystemTests() {
             if (!segues) std::printf("    segue: outlet %d presented %08x refused %d\n", ObjC::id(r.send(cpu, t, "viewController")) == vc, presented, refused);
         }
         check(segues, "storyboard segue templates take their source outlet and present the destination");
+    }
+
+    // iOS 3-5 orientation for a window without a rootViewController (Bad Piggies / Unity 3.x):
+    // the controller whose view is the window's first subview gets the rotation callbacks and
+    // a landscape view; the accelerometer rests in that orientation until the host reports;
+    // beginGeneratingDeviceOrientationNotifications queues the first change notification.
+    {
+        static int willTo = 0, didFrom = -1, asked = 0;
+        willTo = 0; didFrom = -1; asked = 0;
+        auto& u = UIKit::ui(cx);
+        ObjC::ClassBuilder legacy = r.defineClass("HvmLegacyRotationVC", "UIViewController");
+        legacy.method("shouldAutorotateToInterfaceOrientation:", [](Ctx& x) { ++asked; x.cpu.r[0] = x.cpu.r[2] == 3 || x.cpu.r[2] == 4; }, "c@:i")
+              .method("willRotateToInterfaceOrientation:duration:", [](Ctx& x) { willTo = int(x.cpu.r[2]); }, "v@:id")
+              .method("didRotateFromInterfaceOrientation:", [](Ctx& x) { didFrom = int(x.cpu.r[2]); }, "v@:i");
+        const ObjC::id vc = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, legacy.cls(), r.selAlloc)), r.selInit));
+        const ObjC::id win = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480}));
+        const ObjC::id view = ObjC::id(r.send(cpu, vc, "view"));
+        r.send(cpu, win, "addSubview:", {view});
+        const int savedOrientation = u.statusBarOrientation;
+        const bool savedHost = u.accelFromHost;
+        u.statusBarOrientation = 3;
+        u.accelFromHost = false;
+        UIKit::rotateLegacyControllers(cx, "test");
+        const auto b = UIKit::getRect(cx, view, "bounds");
+        const auto g = UIKit::restingGravity(u);
+        const int callsAfterFirst = asked;
+        UIKit::rotateLegacyControllers(cx, "test again");   // already laid out: nothing repeats
+        const bool rotated = willTo == 3 && didFrom == 1 && b.w > b.h && asked == callsAfterFirst;
+        const bool gravity = g[0] == -1 && g[1] == 0;
+        u.deviceOrientationNotePending = false;
+        r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIDevice"), "currentDevice")), "beginGeneratingDeviceOrientationNotifications");
+        const bool queued = u.deviceOrientationNotePending;
+        r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIDevice"), "currentDevice")), "endGeneratingDeviceOrientationNotifications");
+        u.deviceOrientationNotePending = false;
+        r.send(cpu, view, "removeFromSuperview");
+        u.statusBarOrientation = savedOrientation;
+        u.accelFromHost = savedHost;
+        if (!(rotated && gravity && queued))
+            std::printf("    legacy rotation: will %d did %d bounds %gx%g asked %d/%d gravity %g,%g queued %d\n",
+                        willTo, didFrom, b.w, b.h, callsAfterFirst, asked, g[0], g[1], queued);
+        check(rotated && gravity && queued, "window-subview controller rotates with callbacks; resting gravity and orientation notification follow");
     }
 
     // UIViewController has the rotation and appearance hooks engines copy encodings from
@@ -6124,6 +6194,27 @@ int runFullSubsystemTests() {
             check(v == "score=-42 0xff     7" && v2 == v, "std::ostringstream formatting (int, hex+showbase, width) and str()");
             proc.heap().free(strRet);
             proc.heap().free(strRet2);
+        }
+        // GCC 4.0-era member operator<< overloads and basic_ios state checks return the stream
+        // (Temple Run chained `os << x << endl` and got a NULL stream from the stubs).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t oss = proc.heap().allocZeroed(180);
+            call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEEC1ESt13_Ios_Openmode", {oss, 16});
+            const uint32_t endl = *proc.lookupSymbol("__ZSt4endlIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_");
+            float half = 1.5f; uint32_t halfBits; std::memcpy(&halfBits, &half, 4);
+            bool chained = call("__ZNSolsEb", {oss, 1}) == oss && call("__ZNSolsEm", {oss, 7}) == oss &&
+                           call("__ZNSolsEf", {oss, halfBits}) == oss && call("__ZNSolsEPFRSoS_E", {oss, endl}) == oss;
+            const uint32_t ios = oss + uint32_t(int32_t(proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(oss) - 12)));
+            const bool okState = call("__ZNKSt9basic_iosIcSt11char_traitsIcEEcvPvEv", {ios}) == ios &&
+                                 (call("__ZNKSt9basic_iosIcSt11char_traitsIcEEntEv", {ios}) & 0xff) == 0 &&
+                                 (call("__ZNKSt9basic_iosIcSt11char_traitsIcEE4goodEv", {ios}) & 0xff) == 1;
+            const uint32_t strRet = proc.heap().allocZeroed(4);
+            call("__ZNKSt19basic_ostringstreamIcSt11char_traitsIcESaIcEE3strEv", {strRet, oss});
+            const std::string v = proc.readCString(proc.mem().read<uint32_t>(strRet));
+            call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEED1Ev", {oss});
+            if (!(chained && okState && v == "171.5\n")) std::printf("    old ostream members: chained %d state %d text '%s'\n", chained, okState, v.c_str());
+            check(chained && okState && v == "171.5\n", "libstdc++ member operator<< (bool, unsigned long, float, manipulator) and basic_ios state checks");
         }
 
         // CFNumber NaN/infinity constants, NSObject's isa ivar offset, proxy constants.

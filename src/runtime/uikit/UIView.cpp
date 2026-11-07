@@ -1015,6 +1015,33 @@ void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
         if (w != win) if (const id other = V(x, w).rootViewController) relayout(w, other);
 }
 
+// Before iOS 6 a window had no rootViewController: UIKit rotated the controller whose view
+// was the window's first subview, sending it willRotateToInterfaceOrientation:duration:,
+// willAnimateRotationToInterfaceOrientation:duration: and didRotateFromInterfaceOrientation:.
+// Unity 3.x (Bad Piggies) adds its controller's view this way and takes its orientation
+// from those callbacks; without them it drew landscape scenes unrotated in portrait.
+void rotateLegacyControllers(Ctx& x, const char* cause) {
+    auto& u = ui(x);
+    const int o = u.statusBarOrientation;
+    for (id win : std::vector<id>(u.windows)) {
+        ViewData& wd = V(x, win);
+        if (wd.rootViewController || wd.subviews.empty()) continue;
+        const id view = wd.subviews.front();
+        const id vc = viewControllerOfView(x, view);
+        if (!vc || VC(x, vc).view != view || VC(x, vc).legacyOrientation == o || !controllerSupports(x, vc, o)) continue;
+        const int from = VC(x, vc).legacyOrientation;
+        x.proc.logf(LogLevel::Info, "Orientation: %s -> %s (%s, window-subview controller %s)", orientationName(from),
+                    orientationName(o), cause, rt(x).objectClassName(vc).c_str());
+        auto& r = rt(x);
+        const uint32_t noTime[2] = {0, 0};   // duration 0.0 (a double, after the int in r2: r3 and the stack)
+        r.send(x.cpu, vc, "willRotateToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        layoutRootView(x, win, vc);
+        r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        VC(x, vc).legacyOrientation = o;
+        r.send(x.cpu, vc, "didRotateFromInterfaceOrientation:", {uint32_t(from)});
+    }
+}
+
 // ================================================================ exports ===
 
 ViewData& viewData(Ctx& x, id view) { return rt(x).host<ViewData>(view); }

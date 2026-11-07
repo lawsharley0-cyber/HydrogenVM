@@ -322,6 +322,39 @@ uint32_t o_ptr(Ctx& x, GuestPtr os, uint32_t v) {
     std::snprintf(buf, sizeof buf, v ? "0x%x" : "0", v);
     return emit(x, os, buf, v ? 2 : 0);
 }
+// GCC 4.0-era libstdc++ exports each operator<< as a member (later ones go through
+// _M_insert<T>). Stubs returned 0, so a chained `os << a << b` handed the next call a NULL
+// stream: Temple Run faulted saving its game (3,263 manipulator calls in one minute).
+uint32_t o_uint(Ctx& x, GuestPtr os, uint32_t v) { return putInt(x, os, int64_t(v), false, 32); }
+uint32_t o_ushort(Ctx& x, GuestPtr os, uint32_t v) { return putInt(x, os, int64_t(uint16_t(v)), false, 32); }
+uint32_t o_float(Ctx& x, GuestPtr os, uint32_t bits) { float f; std::memcpy(&f, &bits, 4); return putDouble(x, os, f); }
+// os << manip: call manip(os) (std::endl, std::flush, ...) and return what it returns.
+uint32_t o_manip(Ctx& x, GuestPtr os, uint32_t fn) { return fn ? x.proc.callGuest(x.cpu, fn, {os}) : os; }
+// os << manip for ios_base& (*)(ios_base&) (std::hex, std::fixed, ...): applied to the ios_base.
+uint32_t o_iosManip(Ctx& x, GuestPtr os, uint32_t fn) { if (fn) x.proc.callGuest(x.cpu, fn, {iosOf(x, os)}); return os; }
+// The std::setw / setprecision / setfill structs arrive by value in r1.
+uint32_t o_setw(Ctx& x, GuestPtr os, int32_t n) { wr(x, iosOf(x, os) + kWidth, uint32_t(n)); return os; }
+uint32_t o_setprecision(Ctx& x, GuestPtr os, int32_t n) { wr(x, iosOf(x, os) + kPrecision, uint32_t(n)); return os; }
+uint32_t o_setfill(Ctx& x, GuestPtr os, uint32_t c) {
+    const uint32_t ios = iosOf(x, os);
+    x.mem.write<uint8_t>(ios + kFill, uint8_t(c));
+    x.mem.write<uint8_t>(ios + kFillInit, 1);
+    return os;
+}
+// basic_ios<char> state queries; `self` is the basic_ios itself.
+uint32_t ios_voidp(Ctx& x, GuestPtr self) { return (rd(x, self + kState) & (kBad | kFail)) ? 0 : self; }
+bool ios_not(Ctx& x, GuestPtr self) { return (rd(x, self + kState) & (kBad | kFail)) != 0; }
+bool ios_good(Ctx& x, GuestPtr self) { return rd(x, self + kState) == 0; }
+bool ios_eof(Ctx& x, GuestPtr self) { return (rd(x, self + kState) & kEof) != 0; }
+bool ios_fail(Ctx& x, GuestPtr self) { return (rd(x, self + kState) & (kBad | kFail)) != 0; }
+uint32_t ios_rdbuf(Ctx& x, GuestPtr self) { return rd(x, self + kBuf); }
+uint32_t ios_fill(Ctx& x, GuestPtr self, uint32_t c) {
+    const uint32_t old = uint8_t(fillOf(x, self));
+    x.mem.write<uint8_t>(self + kFill, uint8_t(c));
+    return old;
+}
+void ios_exceptions(Ctx& x, GuestPtr self, uint32_t mask) { wr(x, self + kExceptions, mask); }
+
 uint32_t o_put(Ctx& x, GuestPtr os, uint32_t c) {
     const uint32_t ios = iosOf(x, os);
     if (!rd(x, ios + kState)) osWrite(x, os, std::string(1, char(c)));
@@ -1167,6 +1200,31 @@ void registerLibStdcxxStreams(Process& p) {
     p.defineFunction("__ZNSo9_M_insertIdEERSoT_", [](Ctx& x) { x.cpu.r[0] = putDouble(x, x.cpu.r[0], argDouble(x)); });
     p.defineFunction("__ZNSo9_M_insertIeEERSoT_", [](Ctx& x) { x.cpu.r[0] = putDouble(x, x.cpu.r[0], argDouble(x)); });
     p.def<&o_put>("__ZNSo3putEc");
+    p.def<&o_bool>("__ZNSolsEb");
+    p.def<&o_long>("__ZNSolsEl");
+    p.def<&o_ulong>("__ZNSolsEm");
+    p.def<&o_uint>("__ZNSolsEj");
+    p.def<&o_ushort>("__ZNSolsEt");
+    p.def<&o_float>("__ZNSolsEf");
+    p.def<&o_ptr>("__ZNSolsEPKv");
+    p.defineFunction("__ZNSolsEd", [](Ctx& x) { x.cpu.r[0] = putDouble(x, x.cpu.r[0], argDouble(x)); });
+    p.defineFunction("__ZNSolsEx", [](Ctx& x) { x.cpu.r[0] = putInt(x, x.cpu.r[0], arg64(x), true, 64); });
+    p.defineFunction("__ZNSolsEy", [](Ctx& x) { x.cpu.r[0] = putInt(x, x.cpu.r[0], arg64(x), false, 64); });
+    p.def<&o_manip>("__ZNSolsEPFRSoS_E");
+    p.def<&o_iosManip>("__ZNSolsEPFRSt8ios_baseS0_E");
+    p.def<&o_setw>("__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St5_Setw");
+    p.def<&o_setprecision>("__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St13_Setprecision");
+    p.def<&o_setfill>("__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St8_SetfillIS3_E");
+    p.def<&o_char>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_h");
+    p.def<&o_cstr>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_PKh");
+    p.def<&ios_voidp>("__ZNKSt9basic_iosIcSt11char_traitsIcEEcvPvEv");
+    p.def<&ios_not>("__ZNKSt9basic_iosIcSt11char_traitsIcEEntEv");
+    p.def<&ios_good>("__ZNKSt9basic_iosIcSt11char_traitsIcEE4goodEv");
+    p.def<&ios_eof>("__ZNKSt9basic_iosIcSt11char_traitsIcEE3eofEv");
+    p.def<&ios_fail>("__ZNKSt9basic_iosIcSt11char_traitsIcEE4failEv");
+    p.def<&ios_rdbuf>("__ZNKSt9basic_iosIcSt11char_traitsIcEE5rdbufEv");
+    p.def<&ios_fill>("__ZNSt9basic_iosIcSt11char_traitsIcEE4fillEc");
+    p.def<&ios_exceptions>("__ZNSt9basic_iosIcSt11char_traitsIcEE10exceptionsESt12_Ios_Iostate");
     p.def<&o_flush>("__ZNSo5flushEv");
     p.def<&o_endl>("__ZSt4endlIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_");
     p.def<&o_ends>("__ZSt4endsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_");
