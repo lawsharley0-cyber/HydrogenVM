@@ -1,47 +1,48 @@
-# HydrogenVM report — 93c18f7
+# HydrogenVM report — 76db694
 
-2026-11-06T17:11:17+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
+2026-11-07T04:49:57+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 185.6s |
-| tools | 1 | 0 | 0 | 17.9s |
+| build | 1 | 0 | 0 | 147.4s |
+| tools | 1 | 0 | 0 | 17.1s |
 | cpu | 15 | 0 | 0 | 0.5s |
-| ios | 6 | 0 | 0 | 3.3s |
-| bench | 5 | 0 | 0 | 22.0s |
+| ios | 6 | 0 | 0 | 3.4s |
+| bench | 5 | 0 | 0 | 27.1s |
 
 ## Speed
 
-CoreMark **1442.1** iterations/s (489.7 guest MIPS)
+CoreMark **1496.3** iterations/s (518.0 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **100.1%** | 601 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **75.1%** | 601 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **60.1%** | 481 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **31.7%** | 412 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **103.9%** | 623 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **77.9%** | 623 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **62.3%** | 499 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **32.9%** | 428 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 359 MIPS, ctests_arm 362 MIPS, ftests_vfp_thumb_softfp 307 MIPS, ftests_neon_thumb 337 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 470 MIPS, ctests_arm 444 MIPS, ftests_vfp_thumb_softfp 502 MIPS, ftests_neon_thumb 480 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.15s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.20s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.15s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 1.42s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.16s | 30 | 0.83 ms | 8.94 ms | 0 |
+| CTest | 0.09s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.18s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.17s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 1.43s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.24s | 27 | 1.89 ms | 12.88 ms | 0 |
 
-## Problems (32)
+## Problems (33)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 31.7% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 32.9% of iPhone 5 single-core speed (goal: 100%)
 
-### Warnings (31)
+### Warnings (32)
 
+- **build / compiler**: src/runtime/foundation/CompatibilityClasses.cpp:190:42: warning: missing field 'retained' initializer [-Wmissing-field-initializers]
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
 - **build / compiler**: src/runtime/foundation/RunLoop.cpp:614:13: warning: unused variable 'cx' [-Wunused-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
@@ -69,8 +70,8 @@ Raw interpreter speed (CPU test programs): ctests_thumb 359 MIPS, ctests_arm 362
 - **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]
-- **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1229:6: warning: unused function 'avs_yesErr' [-Wunused-function]
-- **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1251:10: warning: unused function 'avs_zero' [-Wunused-function]
+- **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1269:6: warning: unused function 'avs_yesErr' [-Wunused-function]
+- **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1291:10: warning: unused function 'avs_zero' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 
