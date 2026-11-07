@@ -296,9 +296,10 @@ void registerLibcxx(Process& p) {
     p.def<&sw_addWeak>("__ZNSt3__119__shared_weak_count10__add_weakEv");
     p.def<&sw_releaseWeak>("__ZNSt3__119__shared_weak_count14__release_weakEv");
     p.def<&sw_lock>("__ZNSt3__119__shared_weak_count4lockEv");
-    p.def<&sw_getDeleter>("__ZNKSt3__119__shared_weak_count13__get_deleterERKSt9type_info");
-    p.def<&sw_dtor>("__ZNSt3__119__shared_weak_countD2Ev");
-    p.def<&sw_dtor>("__ZNSt3__115__shared_countD2Ev");
+    supportDef<&sw_getDeleter>(p, "__ZNKSt3__119__shared_weak_count13__get_deleterERKSt9type_info", SupportStatus::Real,
+                               "libc++'s base returns nullptr; control blocks with a deleter override it");
+    supportDef<&sw_dtor>(p, "__ZNSt3__119__shared_weak_countD2Ev", SupportStatus::Real, "libc++'s base destructor has nothing to release");
+    supportDef<&sw_dtor>(p, "__ZNSt3__115__shared_countD2Ev", SupportStatus::Real, "libc++'s base destructor has nothing to release");
 
     p.def<&sys_clock_now>("__ZNSt3__16chrono12system_clock3nowEv");
     p.def<&steady_clock_now>("__ZNSt3__16chrono12steady_clock3nowEv");

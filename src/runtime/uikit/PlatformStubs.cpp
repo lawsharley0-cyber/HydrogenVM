@@ -1885,7 +1885,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&as_setActive>("_AudioSessionSetActive");
     p.def<&as_addListener>("_AudioSessionAddPropertyListener");
     p.def<&as_addListener>("_AudioSessionRemovePropertyListenerWithUserData");
-    p.def<&ss_create>("_AudioServicesCreateSystemSoundID");
+    supportDef<&ss_create>(p, "_AudioServicesCreateSystemSoundID", SupportStatus::Approx,
+                           "Decodes the file and returns a sound id; reports success even for a file it cannot decode, where iOS returns an error");
     p.def<&ss_play>("_AudioServicesPlaySystemSound");
     p.def<&ss_play>("_AudioServicesPlayAlertSound");
     p.def<&ss_dispose>("_AudioServicesDisposeSystemSoundID");
@@ -1924,7 +1925,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&af_getPropertyInfo>("_AudioFileGetPropertyInfo");
     p.def<&afmt_getPropertyInfo>("_AudioFormatGetPropertyInfo");
     p.def<&afmt_getProperty>("_AudioFormatGetProperty");
-    p.def<&af_getProperty>("_AudioFileGetProperty");
+    supportDef<&af_getProperty>(p, "_AudioFileGetProperty", SupportStatus::Approx,
+                                "Answers the format, counts, sizes, packet table and duration of the decoded LPCM view; 'pty?' for other properties");
     p.def<&af_readBytes>("_AudioFileReadBytes");
     p.defineFunction("_AudioFileOpenWithCallbacks", af_openWithCallbacks);
     p.defineFunction("_AudioFileReadPacketData", [](Ctx& x) { af_readPackets(x, true); });

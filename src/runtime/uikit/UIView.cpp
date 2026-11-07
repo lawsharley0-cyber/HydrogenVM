@@ -1252,21 +1252,29 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
       .m<&vc_zero>("preferredStatusBarStyle", "i@:").m<&vc_editing>("prefersStatusBarHidden", "c@:")
       .m<&vc_hook>("setNeedsStatusBarAppearanceUpdate", "v@:").m<&vc_contentSize>("contentSizeForViewInPopover", S + "@:")
       .m<&vc_hookObj>("setHidesBottomBarWhenPushed:", "v@:c")
-      .m<&vc_segueTemplates>("storyboardSegueTemplates").m<&vc_setSegueTemplates>("_setStoryboardSegueTemplates:", "v@:@").m<&vc_performSegue>("performSegueWithIdentifier:sender:", "v@:@@")
-      .m<&vc_shouldPerformSegue>("shouldPerformSegueWithIdentifier:sender:", "c@:@@")
-      .m<&vc_prepareForSegue>("prepareForSegue:sender:", "v@:@@")
-      // Rotation and system-appearance hooks every UIViewController has. Engines look these
-      // up on UIViewController to copy their type encodings before swapping in their own
-      // (Unity asserts when class_getInstanceMethod returns NULL: Crossy Road stopped there).
-      .m<&vc_hook>("willRotateToInterfaceOrientation:duration:", "v@:id").m<&vc_hook>("didRotateFromInterfaceOrientation:", "v@:i")
-      .m<&vc_hook>("willAnimateRotationToInterfaceOrientation:duration:", "v@:id")
-      .m<&vc_hook>("viewWillTransitionToSize:withTransitionCoordinator:", "v@:{CGSize=ff}@")
-      .m<&vc_fade>("preferredStatusBarUpdateAnimation", "i@:").m<&vc_editing>("prefersHomeIndicatorAutoHidden", "c@:")
-      .m<&vc_zero>("preferredScreenEdgesDeferringSystemGestures", "I@:")
-      .m<&vc_nil>("childViewControllerForStatusBarHidden", "@@:").m<&vc_nil>("childViewControllerForStatusBarStyle", "@@:")
-      .m<&vc_nil>("childViewControllerForHomeIndicatorAutoHidden", "@@:")
-      .m<&vc_nil>("childViewControllerForScreenEdgesDeferringSystemGestures", "@@:")
-      .m<&vc_hook>("setNeedsUpdateOfHomeIndicatorAutoHidden", "v@:").m<&vc_hook>("setNeedsUpdateOfScreenEdgesDeferringSystemGestures", "v@:");
+      .m<&vc_segueTemplates>("storyboardSegueTemplates").m<&vc_setSegueTemplates>("_setStoryboardSegueTemplates:", "v@:@")
+      .m<&vc_performSegue>("performSegueWithIdentifier:sender:", "v@:@@");
+    // UIViewController's own base implementations: subclasses override them, and engines
+    // look them up to copy their type encodings (Unity asserted when they were missing).
+    const auto base = [&](const char* sel, auto fn, const char* types, const char* what) {
+        supportMethod(p, vc, "UIViewController", sel, fn, SupportStatus::Real, what, types);
+    };
+    const auto noop = [](Ctx& x) { callWrapped<&vc_hook>(x); };
+    base("shouldPerformSegueWithIdentifier:sender:", [](Ctx& x) { callWrapped<&vc_shouldPerformSegue>(x); }, "c@:@@", "UIKit's base returns YES");
+    base("prepareForSegue:sender:", [](Ctx& x) { callWrapped<&vc_prepareForSegue>(x); }, "v@:@@", "UIKit's base does nothing");
+    base("willRotateToInterfaceOrientation:duration:", noop, "v@:id", "UIKit's base does nothing");
+    base("didRotateFromInterfaceOrientation:", noop, "v@:i", "UIKit's base does nothing");
+    base("willAnimateRotationToInterfaceOrientation:duration:", noop, "v@:id", "UIKit's base does nothing");
+    base("viewWillTransitionToSize:withTransitionCoordinator:", noop, "v@:{CGSize=ff}@",
+         "UIKit's base forwards to child controllers; this one has none to forward to");
+    base("preferredStatusBarUpdateAnimation", [](Ctx& x) { callWrapped<&vc_fade>(x); }, "i@:", "UIKit's default, UIStatusBarAnimationFade");
+    base("prefersHomeIndicatorAutoHidden", [](Ctx& x) { callWrapped<&vc_editing>(x); }, "c@:", "UIKit's default, NO");
+    base("preferredScreenEdgesDeferringSystemGestures", [](Ctx& x) { callWrapped<&vc_zero>(x); }, "I@:", "UIKit's default, UIRectEdgeNone");
+    for (const char* sel : {"childViewControllerForStatusBarHidden", "childViewControllerForStatusBarStyle",
+                            "childViewControllerForHomeIndicatorAutoHidden", "childViewControllerForScreenEdgesDeferringSystemGestures"})
+        base(sel, [](Ctx& x) { callWrapped<&vc_nil>(x); }, "@@:", "UIKit's default, nil");
+    base("setNeedsUpdateOfHomeIndicatorAutoHidden", noop, "v@:", "There is no home indicator to update");
+    base("setNeedsUpdateOfScreenEdgesDeferringSystemGestures", noop, "v@:", "There are no system edge gestures to update");
 }
 
 } // namespace Hydrogen::Runtime::UIKit
