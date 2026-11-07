@@ -67,7 +67,7 @@
 - (void)testThreeFingerHoldSummonsAndHidesControlsWithoutInterruptingTouches {
     self.continueAfterFailure = NO;
     XCUIApplication *app = [[XCUIApplication alloc] init];
-    app.launchArguments = @[@"-player.showDebugOverlay", @"NO"];
+    app.launchArguments = @[@"-player.showDebugOverlay", @"NO", @"-player.showControlsButton", @"NO"];
     app.launchEnvironment = @{ @"PLAYER_ORIENTATION": @"1" };
     [app launch];
     XCTAssertEqualObjects(app.staticTexts[@"probe-stop-count"].label, @"0");
