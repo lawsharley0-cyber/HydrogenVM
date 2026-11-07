@@ -123,39 +123,18 @@ struct PlayerTests {
         check(GameLink.startDecision(wanted: "com.example.game", running: "com.example.other") == .busy,
               "a link for another game must wait while one is running")
 
-        let icon = Data([0x89, 0x50, 0x4E, 0x47])
-        let clip = WebClipProfile(gameID: "com.example.game", title: "Tom & Jerry <HD>",
-                                 link: generated!, iconPNG: icon)
-        let profile = clip.payload()
-        check(profile.contains("<string>hydrogenvm://run/com.example.game</string>"), "clip opens the game")
-        check(profile.contains("Tom &amp; Jerry &lt;HD&gt;"), "clip label is escaped")
-        check(profile.contains("com.apple.webClip.managed") && profile.contains("<key>FullScreen</key>"),
-              "web clip payload")
-        check(profile.contains("<string>Configuration</string>"), "configuration payload")
-        check(profile.contains("<data>iVBORw==</data>"), "game icon is embedded")
-        check(clip.payloadUUID != clip.configUUID, "payload identifiers differ")
-        check(clip.filename == "Tom---Jerry--HD.mobileconfig", "file name is safe")
-        check(WebClipProfile(gameID: "com.example.game", title: "Tom & Jerry <HD>",
-                            link: generated!, iconPNG: icon).payload() == profile,
-              "the same game gives the same profile")
-        check(WebClipProfile(gameID: "com.example.other", title: "Tom & Jerry <HD>",
-                            link: generated!, iconPNG: icon).payloadUUID != clip.payloadUUID,
-              "a second clip for one game replaces it instead of piling up")
-        let plain = WebClipProfile(gameID: "com.example.game", title: "", link: generated!, iconPNG: nil)
-        check(!plain.payload().contains("<key>Icon</key>"), "no icon key when the game icon is missing")
-        check(plain.filename == "Game.mobileconfig", "empty name falls back to a file name")
-        // The document must be a real property list, not merely plausible text.
-        let parsed: [String: Any]? = try? PropertyListSerialization.propertyList(
-            from: Data(profile.utf8), options: [], format: nil) as? [String: Any]
-        if let plist = parsed, let payload = (plist["PayloadContent"] as? [[String: Any]])?.first {
-            check(plist["PayloadType"] as? String == "Configuration", "profile is a configuration")
-            check(payload["PayloadType"] as? String == "com.apple.webClip.managed", "web clip payload type")
-            check(payload["URL"] as? String == "hydrogenvm://run/com.example.game", "web clip URL")
-            check(payload["FullScreen"] as? Bool == true && payload["Label"] as? String == "Tom & Jerry <HD>",
-                  "label from the game name")
-        } else {
-            check(false, "profile parses as a property list")
-        }
+        // #279: Add to Home Screen goes through Shortcuts ("Play <game>"), with no profile.
+        check(GameShortcut.title(forGameNamed: "Tiny Wings") == "Play Tiny Wings", "shortcut title")
+        check(GameShortcut.title(forGameNamed: "  ") == "Play Game", "a blank name still gives a title")
+        check(GameShortcut.userInfo(forGameID: "com.example.game") == ["gameID": "com.example.game"], "activity carries the game id")
+        check(GameShortcut.userInfo(forGameID: "com.example game") == nil, "no shortcut for an id a link cannot carry")
+        check(GameShortcut.link(activityType: GameShortcut.activityType, userInfo: ["gameID": "com.example.game"])?.absoluteString
+                  == "hydrogenvm://run/com.example.game", "the shortcut opens the game link")
+        check(GameShortcut.link(activityType: "com.other.app.activity", userInfo: ["gameID": "com.example.game"]) == nil,
+              "another app's activity is ignored")
+        check(GameShortcut.link(activityType: GameShortcut.activityType, userInfo: ["gameID": "bad id/x"]) == nil,
+              "a malformed id in the activity is ignored")
+        check(GameShortcut.link(activityType: GameShortcut.activityType, userInfo: nil) == nil, "an activity without an id is ignored")
         var overlay = PlayerOverlay()
         check(!overlay.visible && !overlay.startsExpanded, "overlay hidden by default")
         overlay.summon()
