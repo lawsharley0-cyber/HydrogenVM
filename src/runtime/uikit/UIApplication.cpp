@@ -798,6 +798,13 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory")
        .m<&app_layoutDirection>("userInterfaceLayoutDirection", "i@:")
        .m<&app_supportedOrientations>("supportedInterfaceOrientationsForWindow:", "I@:@");
+    // iOS 8 SDK apps check respondsToSelector:@selector(registerForRemoteNotifications) and then
+    // build an NSInvocation from instanceMethodSignatureForSelector:@selector(isRegisteredForRemoteNotifications)
+    // (Subway Surfers); a missing signature is a nil NSInvocation argument.
+    supportMethod(p, app, "UIApplication", "isRegisteredForRemoteNotifications", [](Ctx& x) { x.cpu.r[0] = 0; }, SupportStatus::Approx,
+        "NO: remote notifications are never registered", "c@:");
+    supportMethod(p, app, "UIApplication", "currentUserNotificationSettings", [](Ctx& x) { x.cpu.r[0] = 0; }, SupportStatus::Stub,
+        "nil: notification settings were never registered", "@@:");
     supportMethod(p, app, "UIApplication", "scheduleLocalNotification:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,
         "Accepted and dropped: no local notification is ever delivered", "v@:@");
     supportMethod(p, app, "UIApplication", "presentLocalNotificationNow:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,

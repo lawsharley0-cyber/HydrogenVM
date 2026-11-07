@@ -3186,6 +3186,15 @@ int runFullSubsystemTests() {
         check(std::abs(af.y - 44.0f) < 0.01f && std::abs(af.h - (h0 - 44.0f - 34.0f)) < 0.01f,
               "safe-area insets shrink applicationFrame (top 44, bottom 34)");
         const ObjC::id sharedApp = u.app ? u.app : r.createInstance(r.getClass("UIApplication"));
+        {
+            // Subway Surfers: respondsTo registerForRemoteNotifications, then an NSInvocation for
+            // isRegisteredForRemoteNotifications built from the class's method signature.
+            const ObjC::id appCls = ObjC::id(r.getClass("UIApplication"));
+            const ObjC::id sig = ObjC::id(r.send(cpu, appCls, "instanceMethodSignatureForSelector:", {r.sel("isRegisteredForRemoteNotifications")}));
+            const uint32_t registered = r.send(cpu, sharedApp, "isRegisteredForRemoteNotifications") & 0xff;
+            check(sig && registered == 0 && uint32_t(r.send(cpu, sharedApp, "currentUserNotificationSettings")) == 0,
+                  "UIApplication has isRegisteredForRemoteNotifications (NO) with a method signature");
+        }
         check(std::abs(UIKit::getRect(cx, sharedApp, "statusBarFrame").h - 44.0f) < 0.01f,
               "with safe-area insets the status bar is as tall as the top inset");
         ::setenv("HVM_SAFE_AREA", "0,200,0,200", 1);   // 400 points of side insets on a 320-point screen
