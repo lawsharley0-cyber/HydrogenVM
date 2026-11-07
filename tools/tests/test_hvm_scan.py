@@ -50,6 +50,9 @@ class ScanTest(unittest.TestCase):
         md = hvm_scan.markdown(self.results, ranked, [], {}, limit=10)
         self.assertIn('4 .ipa files, 3 linked, 1 failed', md)
         self.assertIn('| 1 | 3 | function | missing | `_sem_open` |', md)
+        # Selectors get their own table after the linked symbols.
+        self.assertLess(md.index('## Ranked gaps: functions, classes, data'), md.index('## Selectors nothing implements'))
+        self.assertIn('| 1 | 1 | selector | missing | `doThing:` |', md)
         self.assertIn('import failed: bad zip', md)
 
     def test_demangle_falls_back_to_the_raw_name(self):

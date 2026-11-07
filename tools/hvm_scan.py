@@ -127,13 +127,19 @@ def markdown(results, ranked, fixed, names, limit):
     for g in ranked:
         by_kind[g['kind']] += 1
     lines += ['| Kind | Gaps |', '|---|---:|'] + [f'| {k} | {by_kind[k]} |' for k in sorted(by_kind, key=lambda k: KIND_ORDER.get(k, 9))] + ['']
-    lines += ['## Ranked gaps', '', '| # | Games | Kind | Binding | Symbol | Status | Which games |', '|---:|---:|---|---|---|---|---|']
-    for i, g in enumerate(ranked[:limit], 1):
-        who = ', '.join(g['games'][:6]) + (f' +{len(g["games"]) - 6}' if len(g['games']) > 6 else '')
-        sym = names.get(g['name'], g['name']).replace('|', '\\|')
-        lines.append(f'| {i} | {len(g["games"])} | {g["kind"]} | {g["binding"]} | `{sym}` | {g.get("status", "")} | {who} |')
-    if len(ranked) > limit:
-        lines.append(f'\n{len(ranked) - limit} more in scan.json.')
+    # Functions, classes and data are what a game links against; selectors are messages
+    # nobody answers (often SDK delegate callbacks), so they get their own, second table.
+    def table(title, rows):
+        out = [title, '', '| # | Games | Kind | Binding | Symbol | Status | Which games |', '|---:|---:|---|---|---|---|---|']
+        for i, g in enumerate(rows[:limit], 1):
+            who = ', '.join(g['games'][:6]) + (f' +{len(g["games"]) - 6}' if len(g['games']) > 6 else '')
+            sym = names.get(g['name'], g['name']).replace('|', '\\|')
+            out.append(f'| {i} | {len(g["games"])} | {g["kind"]} | {g["binding"]} | `{sym}` | {g.get("status", "")} | {who} |')
+        if len(rows) > limit:
+            out.append(f'\n{len(rows) - limit} more in scan.json.')
+        return out + ['']
+    lines += table('## Ranked gaps: functions, classes, data', [g for g in ranked if g['kind'] != 'selector'])
+    lines += table('## Selectors nothing implements', [g for g in ranked if g['kind'] == 'selector'])
     lines += ['', '## Per game', '', '| Game | .ipa | References | Gaps | Missing functions | Note |', '|---|---|---:|---:|---:|---|']
     for r in sorted(results, key=lambda r: -len(r['gaps'])):
         missing_fn = sum(1 for k, _, b in r['gaps'] if k == 'function' and b == 'missing')
