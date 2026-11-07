@@ -69,6 +69,8 @@ struct State {
     std::unordered_map<uint32_t, Buf> bufs;    // our stringbufs, by address
     uint32_t sbVptr = 0, baseSbVptr = 0, libcxxSbVptr = 0;       // our stringbuf / std::basic_streambuf vtables (+8)
     uint32_t locImpl = 0, ctype = 0, facet = 0;
+    uint32_t idCounter = 0, vtCodecvtW = 0;   // locale::id::_S_refcount; codecvt<wchar_t> vptr
+    uint32_t codecvtWId = 0, defaultCodecvtW = 0;
     uint32_t vtIs = 0, vtOss = 0, vtIss = 0, vtSs = 0, vtSsOut = 0; // stream primary vptrs
     uint32_t vtIos8 = 0, vtIos44 = 0, vtIos48 = 0, vtIos52 = 0;    // basic_ios vptrs per offset
 };
@@ -272,9 +274,153 @@ uint32_t is_ctorSb2(Ctx& x, GuestPtr self, GuestPtr vtt, GuestPtr sb) {
     iosInit(x, ios, sb);
     return self;
 }
+// std::locale is { _Impl* }. Every default locale shares one _Impl (St::locImpl);
+// a locale built with locale(const locale&, Facet*) gets its own (inline code:
+// new _Impl(*other._M_impl, 1), then _M_install_facet), and copies share it.
+// _Impl (libstdc++ 4.2): { refcount, facet** facets, size_t size, facet** caches, char** names }.
+// facet: { vptr, refcount }.
+constexpr uint32_t kImplFacets = 64;
+uint32_t implOf(Ctx& x, GuestPtr loc) {
+    const uint32_t impl = loc ? rd(x, loc) : 0;
+    return impl ? impl : St(x).locImpl;
+}
+void implAddRef(Ctx& x, uint32_t impl) {
+    if (impl && impl != St(x).locImpl) wr(x, impl, rd(x, impl) + 1);
+}
 void locCtor(Ctx& x, GuestPtr loc) { wr(x, loc, St(x).locImpl); }
-void locCopy(Ctx& x, GuestPtr loc, GuestPtr) { wr(x, loc, St(x).locImpl); }
-uint32_t locAssign(Ctx& x, GuestPtr loc, GuestPtr) { wr(x, loc, St(x).locImpl); return loc; }
+void locCopy(Ctx& x, GuestPtr loc, GuestPtr other) {
+    const uint32_t impl = implOf(x, other);
+    implAddRef(x, impl);
+    wr(x, loc, impl);
+}
+uint32_t locAssign(Ctx& x, GuestPtr loc, GuestPtr other) {
+    const uint32_t impl = implOf(x, other);
+    implAddRef(x, impl);
+    wr(x, loc, impl);   // the old _Impl keeps its reference: _Impls are never freed here
+    return loc;
+}
+// _Impl::_Impl(const _Impl& other, size_t refs)
+uint32_t implCopyCtor(Ctx& x, GuestPtr self, GuestPtr other, uint32_t refs) {
+    const uint32_t src = other ? other : St(x).locImpl;
+    const uint32_t srcFacets = rd(x, src + 4);
+    const uint32_t srcSize = srcFacets ? std::min<uint32_t>(rd(x, src + 8), 4096) : 0;
+    const uint32_t size = std::max(srcSize, kImplFacets);
+    const uint32_t facets = x.proc.heap().allocZeroed(size * 4);
+    const uint32_t caches = x.proc.heap().allocZeroed(size * 4);
+    for (uint32_t i = 0; i < srcSize; ++i) {
+        const uint32_t f = rd(x, srcFacets + i * 4);
+        if (!f) continue;
+        wr(x, facets + i * 4, f);
+        wr(x, f + 4, rd(x, f + 4) + 1);
+    }
+    wr(x, self, refs);
+    wr(x, self + 4, facets);
+    wr(x, self + 8, size);
+    wr(x, self + 12, caches);
+    wr(x, self + 16, rd(x, src + 16));   // names: shared, never freed
+    return self;
+}
+// locale::id::_M_id(): ids are handed out from locale::id::_S_refcount, as the
+// inline libstdc++ 4.2 code does, so both agree on a facet's index.
+uint32_t localeIdIndex(Ctx& x, GuestPtr id) {
+    uint32_t v = rd(x, id);
+    if (!v) {
+        const uint32_t counter = St(x).idCounter;
+        const uint32_t n = rd(x, counter);
+        wr(x, counter, n + 1);
+        v = n + 1;
+        wr(x, id, v);
+    }
+    return v - 1;
+}
+uint32_t localeIdM(Ctx& x, GuestPtr id) { return id ? localeIdIndex(x, id) : 0; }
+// _Impl::_M_install_facet(const locale::id*, const facet*)
+void implInstallFacet(Ctx& x, GuestPtr self, GuestPtr id, GuestPtr f) {
+    if (!self || !id || !f) return;
+    const uint32_t index = localeIdIndex(x, id);
+    if (index >= 4096) return;
+    uint32_t size = rd(x, self + 8);
+    if (index >= size || !rd(x, self + 4)) {
+        const uint32_t grown = std::max(index + 1, std::max(size * 2, kImplFacets));
+        const uint32_t facets = x.proc.heap().allocZeroed(grown * 4);
+        const uint32_t caches = x.proc.heap().allocZeroed(grown * 4);
+        const uint32_t oldFacets = rd(x, self + 4), oldCaches = rd(x, self + 12);
+        for (uint32_t i = 0; i < size && oldFacets; ++i) {
+            wr(x, facets + i * 4, rd(x, oldFacets + i * 4));
+            if (oldCaches) wr(x, caches + i * 4, rd(x, oldCaches + i * 4));
+        }
+        wr(x, self + 4, facets);
+        wr(x, self + 8, grown);
+        wr(x, self + 12, caches);
+        size = grown;
+    }
+    wr(x, f + 4, rd(x, f + 4) + 1);
+    const uint32_t old = rd(x, rd(x, self + 4) + index * 4);
+    if (old && old != f) wr(x, old + 4, rd(x, old + 4) - 1);   // never deleted here
+    wr(x, rd(x, self + 4) + index * 4, f);
+    if (const uint32_t caches = rd(x, self + 12)) wr(x, caches + index * 4, 0);
+}
+// codecvt<wchar_t, char, mbstate_t>::codecvt(size_t refs) and locale::facet's state.
+uint32_t codecvtCtor(Ctx& x, GuestPtr self, uint32_t refs) {
+    wr(x, self, St(x).vtCodecvtW);
+    wr(x, self + 4, refs ? 1 : 0);
+    wr(x, self + 8, 0);   // _M_c_locale_codecvt: the "C" locale
+    return self;
+}
+uint32_t facetDtor(Ctx&, GuestPtr self) { return self; }
+uint32_t facetDtorDelete(Ctx& x, GuestPtr self) { if (self) x.proc.heap().free(self); return self; }
+uint32_t codecvtError(Ctx&) { return 2; }   // codecvt_base::error
+// The default codecvt<wchar_t, char, mbstate_t> ("C" locale): one byte per
+// character, characters above 0xFF do not convert.
+// do_out(this, state, from, from_end, from_next&, to, to_end, to_next&)
+void cvOut(Ctx& x) {
+    const uint32_t from = x.cpu.r[2], fromEnd = x.cpu.r[3], sp = x.cpu.r[CPU::kSP];
+    const uint32_t fromNext = rd(x, sp), to = rd(x, sp + 4), toEnd = rd(x, sp + 8), toNext = rd(x, sp + 12);
+    uint32_t f = from, t = to, res = 0;
+    for (; f < fromEnd; f += 4) {
+        if (t >= toEnd) { res = 1; break; }
+        const uint32_t c = rd(x, f);
+        if (c > 0xFF) { res = 2; break; }
+        x.mem.write<uint8_t>(t++, uint8_t(c));
+    }
+    if (fromNext) wr(x, fromNext, f);
+    if (toNext) wr(x, toNext, t);
+    x.cpu.r[0] = res;
+}
+// do_in(this, state, from, from_end, from_next&, to, to_end, to_next&)
+void cvIn(Ctx& x) {
+    const uint32_t from = x.cpu.r[2], fromEnd = x.cpu.r[3], sp = x.cpu.r[CPU::kSP];
+    const uint32_t fromNext = rd(x, sp), to = rd(x, sp + 4), toEnd = rd(x, sp + 8), toNext = rd(x, sp + 12);
+    uint32_t f = from, t = to, res = 0;
+    for (; f < fromEnd; ++f, t += 4) {
+        if (t >= toEnd) { res = 1; break; }
+        wr(x, t, x.mem.read<uint8_t>(f));
+    }
+    if (fromNext) wr(x, fromNext, f);
+    if (toNext) wr(x, toNext, t);
+    x.cpu.r[0] = res;
+}
+uint32_t cvUnshift(Ctx& x, GuestPtr, GuestPtr, GuestPtr to, GuestPtr, GuestPtr toNext) {
+    if (toNext) wr(x, toNext, to);
+    return 3;   // noconv
+}
+uint32_t cvOne(Ctx&, GuestPtr) { return 1; }
+uint32_t cvFalse(Ctx&, GuestPtr) { return 0; }
+// do_length(this, state, from, end, max)
+uint32_t cvLength(Ctx&, GuestPtr, GuestPtr, GuestPtr from, GuestPtr end, uint32_t max) {
+    return end > from ? std::min(end - from, max) : 0;
+}
+// use_facet<codecvt<wchar_t, char, mbstate_t> >(locale): the installed facet (an
+// app's derived codecvt shares codecvt<wchar_t>::id), else the default.
+uint32_t useFacetCodecvtW(Ctx& x, GuestPtr loc) {
+    State& s = St(x);
+    const uint32_t impl = implOf(x, loc);
+    const uint32_t index = localeIdIndex(x, s.codecvtWId);
+    const uint32_t facets = rd(x, impl + 4);
+    if (facets && index < rd(x, impl + 8))
+        if (const uint32_t f = rd(x, facets + index * 4)) return f;
+    return s.defaultCodecvtW;
+}
 void nop1(Ctx&, GuestPtr) {}
 void nop2(Ctx&, GuestPtr, GuestPtr) {}
 
@@ -934,6 +1080,20 @@ void registerLibStdcxxStreams(Process& p) {
     State& s = p.service<State>();
     s.locImpl = p.defineDataBlock("hvm_locale_impl", 64);
     s.facet = p.defineDataBlock("hvm_locale_facet", 64);
+    {
+        // The shared default _Impl: no facets installed, names = { "C" }.
+        const uint32_t facets = p.allocStatic(kImplFacets * 4, 4), caches = p.allocStatic(kImplFacets * 4, 4);
+        const uint32_t names = p.allocStatic(6 * 4, 4);
+        p.mem().write<uint32_t>(names, p.allocCString("C"));
+        p.mem().write<uint32_t>(s.locImpl, 0x40000000u);
+        p.mem().write<uint32_t>(s.locImpl + 4, facets);
+        p.mem().write<uint32_t>(s.locImpl + 8, kImplFacets);
+        p.mem().write<uint32_t>(s.locImpl + 12, caches);
+        p.mem().write<uint32_t>(s.locImpl + 16, names);
+        // Facet ids the guest assigns start above the standard facets' range.
+        s.idCounter = p.defineDataBlock("__ZNSt6locale2id11_S_refcountE", 4);
+        p.mem().write<uint32_t>(s.idCounter, 32);
+    }
     // A ctype<char> whose inline widen()/narrow() find ready tables (identity).
     s.ctype = p.defineDataBlock("hvm_ctype_char", 576);
     p.mem().write<uint8_t>(s.ctype + 28, 1);
@@ -1175,6 +1335,40 @@ void registerLibStdcxxStreams(Process& p) {
     p.def<&is_ignoreN>("__ZNSi6ignoreEi");
     p.def<&is_ignore1>("__ZNSi6ignoreEv");
     for (const char* v : {"D0Ev", "D1Ev", "D2Ev"}) p.def<&nop1>(std::string("__ZNSt9basic_iosIcSt11char_traitsIcEE") + v);
+    p.def<&implCopyCtor>("__ZNSt6locale5_ImplC1ERKS0_m");
+    p.def<&implCopyCtor>("__ZNSt6locale5_ImplC2ERKS0_m");
+    for (const char* v : {"D1Ev", "D2Ev"}) p.def<&facetDtor>(std::string("__ZNSt6locale5_Impl") + v);
+    p.def<&implInstallFacet>("__ZNSt6locale5_Impl16_M_install_facetEPKNS_2idEPKNS_5facetE");
+    p.def<&localeIdM>("__ZNKSt6locale2id5_M_idEv");
+    for (const char* v : {"D1Ev", "D2Ev"}) p.def<&facetDtor>(std::string("__ZNSt6locale5facet") + v);
+    p.def<&facetDtorDelete>("__ZNSt6locale5facetD0Ev");
+    {
+        // codecvt<wchar_t, char, mbstate_t>: the base of facets apps derive (boost's
+        // utf8_codecvt_facet). vtable: [0][typeinfo] D1 D0 do_out do_unshift do_in
+        // do_encoding do_always_noconv do_length do_max_length.
+        const std::string cv = "__ZNSt7codecvtIwc11__mbstate_tE";
+        p.def<&codecvtCtor>(cv + "C1Em");
+        p.def<&codecvtCtor>(cv + "C2Em");
+        const uint32_t d1 = p.def<&facetDtor>(cv + "D1Ev");
+        p.def<&facetDtor>(cv + "D2Ev");
+        const uint32_t d0 = p.def<&facetDtorDelete>(cv + "D0Ev");
+        (void)p.def<&codecvtError>("hvm_codecvt_error");
+        const uint32_t vt = p.defineDataBlock("__ZTVSt7codecvtIwc11__mbstate_tE", 4 * 11);
+        if (auto ti = p.lookupSymbol("__ZTISt7codecvtIwc11__mbstate_tE")) p.mem().write<uint32_t>(vt + 4, *ti);
+        const uint32_t slots[] = {d1, d0, p.defineFunction(cv + "6do_outERS0_PKwS4_RS4_PcS6_RS6_", cvOut),
+                                  p.def<&cvUnshift>(cv + "10do_unshiftERS0_PcS3_RS3_"),
+                                  p.defineFunction(cv + "5do_inERS0_PKcS4_RS4_PwS6_RS6_", cvIn),
+                                  p.def<&cvOne>(cv + "11do_encodingEv"), p.def<&cvFalse>(cv + "16do_always_noconvEv"),
+                                  p.def<&cvLength>(cv + "9do_lengthERS0_PKcS4_m"), p.def<&cvOne>(cv + "13do_max_lengthEv")};
+        for (uint32_t i = 0; i < 9; ++i) p.mem().write<uint32_t>(vt + 8 + i * 4, slots[i]);
+        s.vtCodecvtW = vt + 8;
+        s.codecvtWId = p.defineDataBlock("__ZNSt7codecvtIwc11__mbstate_tE2idE", 4);
+        s.defaultCodecvtW = p.allocStatic(16, 4);
+        p.mem().write<uint32_t>(s.defaultCodecvtW, s.vtCodecvtW);
+        p.mem().write<uint32_t>(s.defaultCodecvtW + 4, 1);
+        p.def<&useFacetCodecvtW>("__ZSt9use_facetISt7codecvtIwc11__mbstate_tEERKT_RKSt6locale");
+        p.defineDataBlock("__ZNSt7codecvtIcc11__mbstate_tE2idE", 4);
+    }
     p.def<&locCtor>("__ZNSt6localeC1Ev");
     p.def<&locCtor>("__ZNSt6localeC2Ev");
     p.def<&locCopy>("__ZNSt6localeC1ERKS_");

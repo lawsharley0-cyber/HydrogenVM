@@ -3195,6 +3195,18 @@ int runFullSubsystemTests() {
             check(sig && registered == 0 && uint32_t(r.send(cpu, sharedApp, "currentUserNotificationSettings")) == 0,
                   "UIApplication has isRegisteredForRemoteNotifications (NO) with a method signature");
         }
+        {
+            // UIPickerView: a storyboard connects dataSource/delegate with setValue:forKey: (ROBLOX's login).
+            const ObjC::id picker = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, ObjC::id(r.getClass("UIPickerView")), r.selAlloc)), "init"));
+            const ObjC::id ds = r.createInstance(r.getClass("NSObject"));
+            r.send(cpu, picker, "setValue:forKey:", {ds, Foundation::makeString(cx, "dataSource")});
+            r.send(cpu, picker, "selectRow:inComponent:animated:", {3, 0, 1});
+            check(picker && ObjC::id(r.send(cpu, picker, "dataSource")) == ds &&
+                      int32_t(r.send(cpu, picker, "numberOfComponents")) == 0 &&
+                      int32_t(r.send(cpu, picker, "selectedRowInComponent:", {0})) == -1,
+                  "UIPickerView takes its data source by KVC and asks it for rows");
+            r.send(cpu, picker, "release");
+        }
         check(std::abs(UIKit::getRect(cx, sharedApp, "statusBarFrame").h - 44.0f) < 0.01f,
               "with safe-area insets the status bar is as tall as the top inset");
         ::setenv("HVM_SAFE_AREA", "0,200,0,200", 1);   // 400 points of side insets on a 320-point screen
@@ -3575,6 +3587,47 @@ int runFullSubsystemTests() {
         const bool updated = replaced != first && Foundation::utf8(cx, replaced) == "Larry";
         r.send(cpu, ud, "removeObjectForKey:", {key});
         check(same && oldStillValid && updated, "NSUserDefaults returns one long-lived object per stored value");
+    }
+
+    // locale(const locale&, Facet*) as libstdc++ 4.2 inlines it (ROBLOX's boost path):
+    // new _Impl(*other._M_impl, 1), then _M_install_facet; copies share the _Impl.
+    {
+        auto callSym = [&](const char* name, std::initializer_list<uint32_t> args) { return uint32_t(cx.proc.callGuest(cpu, *proc.lookupSymbol(name), args)); };
+        auto rd = [&](uint32_t a) { return proc.mem().read<uint32_t>(a); };
+        const uint32_t base = proc.heap().allocZeroed(4), custom = proc.heap().allocZeroed(4), copy = proc.heap().allocZeroed(4);
+        callSym("__ZNSt6localeC1Ev", {base});
+        const uint32_t facet = proc.heap().allocZeroed(16);
+        callSym("__ZNSt7codecvtIwc11__mbstate_tEC2Em", {facet, 0});
+        const bool facetOk = rd(facet) != 0 && rd(facet + 4) == 0;
+        const uint32_t id = proc.heap().allocZeroed(4);   // the derived facet's static id
+        const uint32_t impl = proc.heap().allocZeroed(20);
+        callSym("__ZNSt6locale5_ImplC1ERKS0_m", {impl, rd(base), 1});
+        callSym("__ZNSt6locale5_Impl16_M_install_facetEPKNS_2idEPKNS_5facetE", {impl, id, facet});
+        proc.mem().write<uint32_t>(custom, impl);
+        const uint32_t index = callSym("__ZNKSt6locale2id5_M_idEv", {id});
+        const bool installed = rd(impl) == 1 && rd(id) == index + 1 && index < rd(impl + 8) &&
+                               rd(rd(impl + 4) + index * 4) == facet && rd(facet + 4) == 1;
+        callSym("__ZNSt6localeC1ERKS_", {copy, custom});
+        const bool shared = rd(copy) == impl && rd(impl) == 2 && rd(rd(base) + 4) != 0;
+        const uint32_t ti = proc.lookupSymbol("__ZTISt7codecvtIwc11__mbstate_tE").value_or(0);
+        // use_facet<codecvt<wchar_t> >: the facet installed under codecvt<wchar_t>::id, else
+        // the "C" default, whose do_out narrows and stops at a character above 0xFF.
+        const uint32_t cvId = proc.lookupSymbol("__ZNSt7codecvtIwc11__mbstate_tE2idE").value_or(0);
+        const uint32_t impl2 = proc.heap().allocZeroed(20), withCv = proc.heap().allocZeroed(4);
+        callSym("__ZNSt6locale5_ImplC1ERKS0_m", {impl2, rd(base), 1});
+        callSym("__ZNSt6locale5_Impl16_M_install_facetEPKNS_2idEPKNS_5facetE", {impl2, cvId, facet});
+        proc.mem().write<uint32_t>(withCv, impl2);
+        const char* useFacet = "__ZSt9use_facetISt7codecvtIwc11__mbstate_tEERKT_RKSt6locale";
+        const uint32_t def = callSym(useFacet, {base});
+        const bool lookup = cvId && callSym(useFacet, {withCv}) == facet && def && def != facet;
+        const uint32_t wide = proc.heap().allocZeroed(16), narrow = proc.heap().allocZeroed(8), nexts = proc.heap().allocZeroed(8);
+        for (uint32_t i = 0; i < 3; ++i) proc.mem().write<uint32_t>(wide + i * 4, i == 2 ? 0x263A : uint32_t('a' + i));
+        const uint32_t doOut = rd(rd(def) + 8);   // vptr slots: D1 D0 do_out
+        const uint32_t res = uint32_t(cx.proc.callGuest(cpu, doOut, {def, 0, wide, wide + 12, nexts, narrow, narrow + 8, nexts + 4}));
+        const bool converted = res == 2 && rd(nexts) == wide + 8 && rd(nexts + 4) == narrow + 2 &&
+                               proc.readCString(narrow) == "ab";
+        check(facetOk && installed && shared && ti && rd(ti + 8) && lookup && converted,
+              "locale(const locale&, Facet*): _Impl copy, _M_install_facet, locale::id and shared copies");
     }
 
     // std::set_terminate / get_terminate keep the handler (Terraria's HockeyApp installs one) and
@@ -5534,6 +5587,15 @@ int runFullSubsystemTests() {
                   call("__ZNKSs17find_first_not_ofERKSsm", {sObj, set, 5}) == 6,
                   "string::find_first_of / find_last_of / *_not_of overloads taking a C string, string or char");
             call("__ZNSsD1Ev", {set});
+            // _M_ibegin/_M_iend and replace(iterator, iterator, const char*, const char*).
+            const uint32_t t = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {t, proc.allocCString("abcdef"), 0});
+            const uint32_t b = call("__ZNKSs9_M_ibeginEv", {t}), e = call("__ZNKSs7_M_iendEv", {t});
+            const uint32_t rep = proc.allocCString("XYZ");
+            call("__ZNSs7replaceEN9__gnu_cxx17__normal_iteratorIPcSsEES2_PKcS4_", {t, b + 1, b + 3, rep, rep + 3});
+            check(e == b + 6 && proc.readCString(proc.mem().read<uint32_t>(t)) == "aXYZdef",
+                  "string::_M_iend and replace(iterator, iterator, const char*, const char*)");
+            call("__ZNSsD1Ev", {t});
         }
         call("__ZNSsD1Ev", {sObj});
 

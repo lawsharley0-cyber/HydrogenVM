@@ -755,6 +755,9 @@ id vc_initWithCoder(Ctx& x, id self, SEL, id coder) {
     // Storyboard scenes archive their outgoing segues here; performSegueWithIdentifier: uses them.
     const id templates = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIStoryboardSegueTemplates")}));
     if (templates) d.segueTemplates = r.retain(x.cpu, templates);
+    // Objects of the scene that the controller's separate view nib references (UpstreamPlaceholder-N).
+    const id externals = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIExternalObjectsTableForViewLoading")}));
+    if (externals) d.externalObjects = r.retain(x.cpu, externals);
     return self;
 }
 void detachSegueTemplates(Ctx& x, id self, id templates);
@@ -765,8 +768,9 @@ void vc_dealloc(Ctx& x, id self, SEL) {
         auto children = std::move(d->children);
         d->children.clear();
         for (id c : children) rt(x).release(x.cpu, c);
-        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard, d->segueTemplates}) if (o) rt(x).release(x.cpu, o);
+        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard, d->segueTemplates, d->externalObjects}) if (o) rt(x).release(x.cpu, o);
         d->view = d->nibName = d->nibBundle = d->title = d->presented = d->navigationItem = d->tabBarItem = d->storyboard = d->segueTemplates = 0;
+        d->externalObjects = 0;
     }
     rt(x).disposeInstance(x.cpu, self);
 }
@@ -782,8 +786,13 @@ std::string nibForClass(Ctx& x, id self) {
 void vc_loadView(Ctx& x, id self, SEL) {
     VCData& d = VC(x, self);
     std::string nib = d.nibName ? utf8(x, d.nibName) : nibForClass(x, self);
+    // A storyboard controller's view is its own nib inside the .storyboardc (ROBLOX's login).
+    if (!nib.empty() && d.storyboard && !nibExists(x, nib)) {
+        const std::string dir = storyboardNibDir(x, d.storyboard);
+        if (!dir.empty() && nibExists(x, dir + nib)) nib = dir + nib;
+    }
     if (!nib.empty()) {
-        loadNib(x, nib, d.nibBundle, self, 0);
+        loadNib(x, nib, d.nibBundle, self, d.externalObjects);
         if (VC(x, self).view) return;
         x.proc.logf(LogLevel::Warning, "-[%s loadView] loaded the \"%s\" nib but the view outlet was not set", rt(x).objectClassName(self).c_str(), nib.c_str());
     }

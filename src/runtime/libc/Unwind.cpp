@@ -522,6 +522,13 @@ void registerUnwinder(Process& p) {
     typeinfo("__ZTISt9bad_alloc", "St9bad_alloc", e.vtSi, exc);
     typeinfo("__ZTISt8bad_cast", "St8bad_cast", e.vtSi, exc);
     typeinfo("__ZTISt13bad_exception", "St13bad_exception", e.vtSi, exc);
+    // Locale facets, so dynamic_cast and catch through facet hierarchies resolve.
+    const uint32_t facetTi = typeinfo("__ZTINSt6locale5facetE", "NSt6locale5facetE", e.vtClass);
+    for (const char* t : {"wc", "cc"}) {
+        const std::string args = std::string("I") + t + "11__mbstate_tE";
+        const uint32_t abs = typeinfo("__ZTISt23__codecvt_abstract_base" + args, "St23__codecvt_abstract_base" + args, e.vtSi, facetTi);
+        typeinfo("__ZTISt7codecvt" + args, "St7codecvt" + args, e.vtSi, abs);
+    }
     for (auto [sym, name] : std::initializer_list<std::pair<const char*, const char*>>{
              {"__ZTISt12out_of_range", "St12out_of_range"}, {"__ZTISt12length_error", "St12length_error"},
              {"__ZTISt16invalid_argument", "St16invalid_argument"}, {"__ZTISt12domain_error", "St12domain_error"}})

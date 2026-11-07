@@ -908,6 +908,18 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&m_insertCStr>("__ZNSs6insertEmPKc");
     p.def<&m_eraseRange>("__ZNSs5eraseEN9__gnu_cxx17__normal_iteratorIPcSsEES2_");
     p.def<&m_replace>("__ZNSs7replaceEmmPKcm");
+    // _M_ibegin()/_M_iend() const: iterators are char*; the length is at data - 12.
+    p.def<+[](Ctx& x, GuestPtr self) -> uint32_t { return x.mem.read<uint32_t>(self); }>("__ZNKSs9_M_ibeginEv");
+    p.def<+[](Ctx& x, GuestPtr self) -> uint32_t {
+        const uint32_t d = x.mem.read<uint32_t>(self);
+        return d + x.mem.read<uint32_t>(d - 12);
+    }>("__ZNKSs7_M_iendEv");
+    // replace(iterator i1, iterator i2, const char* k1, const char* k2)
+    p.def<+[](Ctx& x, GuestPtr self, uint32_t i1, uint32_t i2, GuestPtr k1, GuestPtr k2) -> uint32_t {
+        const uint32_t d = x.mem.read<uint32_t>(self);
+        if (i1 < d || i2 < i1 || k2 < k1) return self;
+        return m_replace(x, self, i1 - d, i2 - i1, k1, k2 - k1);
+    }>("__ZNSs7replaceEN9__gnu_cxx17__normal_iteratorIPcSsEES2_PKcS4_");
     p.def<&m_replaceAux>("__ZNSs14_M_replace_auxEmmmc");
     p.def<&m_replace>("__ZNSs15_M_replace_safeEmmPKcm");
     p.def<&m_mutate>("__ZNSs9_M_mutateEmmm");

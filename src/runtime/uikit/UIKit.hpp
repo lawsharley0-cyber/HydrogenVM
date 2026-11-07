@@ -96,6 +96,7 @@ struct VCData : ObjC::HostObject {
     id navigationItem = 0, tabBarItem = 0;     // retained
     id storyboard = 0;               // retained; set by the storyboard that loaded it
     id segueTemplates = 0;           // retained NSArray of UIStoryboardSegueTemplate, from the nib
+    id externalObjects = 0;          // retained: a storyboard view nib's UpstreamPlaceholder-N objects
     bool appeared = false, wantsFullScreen = false;
     int32_t legacyOrientation = 1;   // what rotateLegacyControllers last laid this controller out for
     int32_t modalStyle = 0;
@@ -277,5 +278,7 @@ void rotateLegacyControllers(Ctx& x, const char* cause);
 std::array<double, 3> restingGravity(const UIState& u);
 int32_t orientationFromString(const std::string& name);   // Info.plist name -> UIInterfaceOrientation
 bool nibExists(Ctx& x, const std::string& name);
+// "<name>.storyboardc/" for a UIStoryboard (where its controllers' view nibs live), or "".
+std::string storyboardNibDir(Ctx& x, id storyboard);
 
 } // namespace Hydrogen::Runtime::UIKit
