@@ -3568,6 +3568,29 @@ int runFullSubsystemTests() {
         check(same && oldStillValid && updated, "NSUserDefaults returns one long-lived object per stored value");
     }
 
+    // std::set_terminate / get_terminate keep the handler (Terraria's HockeyApp installs one) and
+    // <fenv.h> saves and restores the FPSCR (Clumsy Ninja's FMOD).
+    {
+        auto callSym = [&](const char* name, std::initializer_list<uint32_t> args) { return cx.proc.callGuest(cpu, *proc.lookupSymbol(name), args); };
+        const uint32_t before = callSym("__ZSt13set_terminatePFvvE", {0x1235});
+        const bool terminate = callSym("__ZSt13get_terminatev", {}) == 0x1235 && callSym("__ZSt13set_terminatePFvvE", {before}) == 0x1235;
+        const uint32_t env = proc.heap().allocZeroed(16);
+        const uint32_t saved = cpu.fpscr;
+        cpu.fpscr = (3u << 22) | (1u << 24) | 0x10;   // round toward zero, flush-to-zero, IXC raised
+        callSym("_fegetenv", {env});
+        const bool got = proc.mem().read<uint32_t>(env) == cpu.fpscr;
+        callSym("_fesetround", {0});
+        const bool rounded = callSym("_fegetround", {}) == 0 && callSym("_fetestexcept", {0x10}) == 0x10;
+        callSym("_feclearexcept", {0x10});
+        const bool cleared = callSym("_fetestexcept", {0x9F}) == 0;
+        callSym("_fesetenv", {env});
+        const bool restored = cpu.fpscr == ((3u << 22) | (1u << 24) | 0x10);
+        cpu.fpscr = saved;
+        if (!(terminate && got && rounded && cleared && restored))
+            std::printf("    terminate %d fenv get %d round %d clear %d restore %d\n", terminate, got, rounded, cleared, restored);
+        check(terminate && got && rounded && cleared && restored, "std::set_terminate/get_terminate and <fenv.h> environment, rounding and flags");
+    }
+
     // UIViewController has the rotation and appearance hooks engines copy encodings from
     // (Unity's ObjCSetKnownInstanceMethod asserts on a NULL Method).
     {
@@ -5904,6 +5927,39 @@ int runFullSubsystemTests() {
         }
         audioCall("_AudioFileClose", {fileID});
         std::filesystem::remove(filePath);
+        // Recording: AudioFileCreateWithURL + AudioFileWriteBytes + close, then the file plays back
+        // (Talking Larry / John record the player's voice this way). CAF, WAV and AIFF.
+        {
+            bool roundTrips = true;
+            for (const auto& [type, ext] : {std::pair<uint32_t, const char*>{0x63616666, "caf"}, {0x57415645, "wav"}, {0x41494646, "aif"}}) {
+                const std::string recPath = proc.homePath() + "/recording-test." + ext;
+                const auto recURL = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, recPath)}));
+                const uint32_t asbd = proc.heap().allocZeroed(40), outId = proc.heap().allocZeroed(8), pcm = proc.heap().allocZeroed(400);
+                proc.mem().write<double>(asbd, 22050.0);
+                proc.mem().write<uint32_t>(asbd + 8, 0x6C70636D);
+                proc.mem().write<uint32_t>(asbd + 12, 0x0C);   // signed integer, packed, little-endian
+                proc.mem().write<uint32_t>(asbd + 16, 2); proc.mem().write<uint32_t>(asbd + 20, 1);
+                proc.mem().write<uint32_t>(asbd + 24, 2); proc.mem().write<uint32_t>(asbd + 28, 1); proc.mem().write<uint32_t>(asbd + 32, 16);
+                for (int i = 0; i < 200; ++i) proc.mem().write<int16_t>(pcm + i * 2, int16_t(i * 100));
+                const auto created = audioCall("_AudioFileCreateWithURL", {recURL, type, asbd, 1, outId});
+                const uint32_t rec = proc.mem().read<uint32_t>(outId);
+                proc.mem().write<uint32_t>(outId + 4, 400);
+                const auto wrote = audioCall("_AudioFileWriteBytes", {rec, 0, 0, 0, outId + 4, pcm});
+                audioCall("_AudioFileClose", {rec});
+                const auto opened = audioCall("_AudioFileOpenURL", {recURL, 1, 0, outId});
+                const uint32_t back = proc.mem().read<uint32_t>(outId);
+                proc.mem().write<uint32_t>(outId + 4, 8);
+                audioCall("_AudioFileGetProperty", {back, 0x70636E74, outId + 4, pcm});
+                const uint64_t packets = proc.mem().read<uint64_t>(pcm);
+                if (opened == 0) audioCall("_AudioFileClose", {back});
+                const bool ok = created == 0 && wrote == 0 && opened == 0 && packets == 200;
+                if (!ok) std::printf("    recording %s: create %u write %u open %u packets %llu\n", ext, created, wrote, opened, (unsigned long long)packets);
+                roundTrips = roundTrips && ok;
+                std::filesystem::remove(recPath);
+            }
+            check(roundTrips, "AudioFileCreateWithURL / WriteBytes / Close write CAF, WAV and AIFF recordings that open again");
+        }
+
 
         const ObjC::id nsData = Foundation::makeData(cx, wav.data(), uint32_t(wav.size()));
         const ObjC::Class apCls = r.getClass("AVAudioPlayer");
