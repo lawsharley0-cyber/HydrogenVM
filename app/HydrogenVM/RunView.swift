@@ -844,6 +844,9 @@ struct RunView: View {
                 }
                 .accessibilityIdentifier("player-controls")
                 .accessibilityLabel("Player Controls")
+                .accessibilityValue([model.activity.userPaused ? "Paused" : "Playing",
+                                     showDebugOverlay ? "\(model.fps) frames per second" : nil]
+                    .compactMap { $0 }.joined(separator: ", "))
                 .accessibilityHint("Opens pause, volume, display settings and quit")
                 .transition(reduceMotion ? .identity : .scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
             }

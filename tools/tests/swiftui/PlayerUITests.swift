@@ -49,12 +49,14 @@ final class PlayerUITests: XCTestCase {
     func testControlsButtonWorksWithoutPerformanceOverlay() {
         let app = open(overlay: false)
         XCTAssertTrue(app.buttons["player-controls"].isHittable)
+        XCTAssertEqual(app.buttons["player-controls"].value as? String, "Playing")
         app.buttons["player-controls"].tap()
         app.buttons["player-pause"].tap()
         wait(app.staticTexts["probe-lifecycle"], label: "paused")
         app.buttons["hud-minimize"].tap()
         XCTAssertTrue(app.buttons["player-controls"].isHittable)
         XCTAssertFalse(app.buttons["player-pause"].exists)
+        XCTAssertEqual(app.buttons["player-controls"].value as? String, "Paused")
     }
 
     @MainActor
