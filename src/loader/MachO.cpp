@@ -84,9 +84,12 @@ struct Stream {
     const uint8_t* p; const uint8_t* end;
     bool done() const { return p >= end; }
     uint8_t byte() { if (p >= end) throw MachOError("Mach-O: opcode stream overrun"); return *p++; }
+    // A 64-bit LEB128 value takes at most 10 bytes; a longer one is malformed (and on a
+    // shared export-trie node it would be rescanned on every visit).
     uint64_t uleb() {
         uint64_t v = 0; int shift = 0;
         for (;;) {
+            if (shift >= 70) throw MachOError("Mach-O: LEB128 value too long");
             const uint8_t b = byte();
             if (shift < 64) v |= uint64_t(b & 0x7F) << shift;
             shift += 7;
@@ -95,7 +98,10 @@ struct Stream {
     }
     int64_t sleb() {
         int64_t v = 0; int shift = 0; uint8_t b;
-        do { b = byte(); if (shift < 64) v |= int64_t(b & 0x7F) << shift; shift += 7; } while (b & 0x80);
+        do {
+            if (shift >= 70) throw MachOError("Mach-O: LEB128 value too long");
+            b = byte(); if (shift < 64) v |= int64_t(b & 0x7F) << shift; shift += 7;
+        } while (b & 0x80);
         if (shift < 64 && (b & 0x40)) v |= -(int64_t(1) << shift);
         return v;
     }
@@ -338,10 +344,20 @@ void runBind(Ctx& cx, const uint8_t* p, size_t n, bool lazy, bool weak) {
     }
 }
 
+// Work limits for one trie of n bytes. Real tries need far less: ROBLOX (5.2 MB trie,
+// 136,494 nodes) copies 11.7 MB of names, Infinity Blade (1.9 MB, 66,059 nodes) 3.3 MB.
+size_t exportTrieVisitLimit(size_t n) { return std::max<size_t>(65536, n); }
+size_t exportTrieByteLimit(size_t n) { return std::max<size_t>(size_t(16) << 20, n * 16); }
+
 void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const std::string& prefix, uint32_t depth,
-                    std::unordered_set<uint64_t>& activePath, size_t& steps) {
+                    std::unordered_set<uint64_t>& activePath, size_t& steps, size_t& bytes) {
     if (depth > 256 || nodeOff >= n) return;
-    if (steps >= 65536) throw MachOError("Mach-O: export trie work limit exceeded");
+    // A tree visits each node once, and every node takes at least two bytes, so a real
+    // trie of n bytes needs fewer than n visits. Big games (Infinity Blade: 66,059 nodes;
+    // ROBLOX: 136,494) exceed a fixed 65,536. Both caps stay linear in the input: visits,
+    // so a hostile trie that shares nodes cannot make the walk exponential, and bytes of
+    // names built, so shared nodes behind long edges cannot make each visit cost O(n).
+    if (steps >= exportTrieVisitLimit(n)) throw MachOError("Mach-O: export trie work limit exceeded");
     if (!activePath.insert(nodeOff).second) throw MachOError("Mach-O: export trie cycle detected");
     ++steps;
     struct Guard {
@@ -353,6 +369,13 @@ void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const
     const uint64_t termSize = s.uleb();
     if (termSize > size_t(s.end - s.p)) throw MachOError("Mach-O: export trie terminal overrun");
     const uint8_t* childrenStart = s.p + termSize;
+    // Every byte a visit reads counts too: a shared node with a long (padded) ULEB or a
+    // long terminal would otherwise cost O(n) on each of up to n visits.
+    auto charge = [&](size_t used) {
+        bytes += used;
+        if (bytes > exportTrieByteLimit(n)) throw MachOError("Mach-O: export trie work limit exceeded");
+    };
+    charge(size_t(childrenStart - (p + nodeOff)));
     if (termSize != 0 && !prefix.empty()) {
         Stream ts{s.p, childrenStart};
         const uint64_t flags = ts.uleb();
@@ -370,10 +393,12 @@ void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const
     if (cs.done()) return;
     const uint8_t childCount = cs.byte();
     for (uint8_t i = 0; i < childCount; ++i) {
+        const uint8_t* entry = cs.p;
         const std::string edge = cs.cstr();
         const uint64_t childOff = cs.uleb();
         if (childOff >= n) throw MachOError("Mach-O: export trie child offset out of range");
-        walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1, activePath, steps);
+        charge(size_t(cs.p - entry) + prefix.size() + edge.size());   // bytes read, then the name built
+        walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1, activePath, steps, bytes);
     }
 }
 
@@ -653,8 +678,8 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
         if (dyldInfo->weak_bind_size) runBind(cx, stream(dyldInfo->weak_bind_off, dyldInfo->weak_bind_size), dyldInfo->weak_bind_size, false, true);
         if (dyldInfo->export_size) {
             std::unordered_set<uint64_t> activePath;
-            size_t steps = 0;
-            walkExportTrie(cx, stream(dyldInfo->export_off, dyldInfo->export_size), dyldInfo->export_size, 0, "", 0, activePath, steps);
+            size_t steps = 0, bytes = 0;
+            walkExportTrie(cx, stream(dyldInfo->export_off, dyldInfo->export_size), dyldInfo->export_size, 0, "", 0, activePath, steps, bytes);
         }
     } else {
         legacyBinds(cx);
