@@ -1,5 +1,7 @@
 # HydrogenVM — handoff (2026-10-20)
 
+November 7 custom-card foundation: [CUSTOM_CARDS.md](clash-royale/CUSTOM_CARDS.md) records the append-only definition generator, save-prefix identity checks, 51 focused tests and native component probes. Generated Forge Knight data/name/ownership resolve; discovery achievements settle after relaunch. The end-user forge, mandatory guest registry/loader and custom-card battle qualification remain pending. Keep private probe saves away from the normal guest.
+
 November 7 keyboard continuation: shared host [PR #381](https://github.com/lawsharley0-cyber/HydrogenVM/pull/381) implements custom UIKeyInput and composed deletion. Clean latest-main integration passes 657 runtime checks/26 Test Lab cases and actual native clan edit/send/save/clean quit/relaunch. Phone presentation/macOS CI remain separate; guest Mod Lab/custom-card scope is recorded in [MOD_LAB.md](clash-royale/MOD_LAB.md).
 
 Latest owner-prioritized modding continuation: [MOD_LAB.md](clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.

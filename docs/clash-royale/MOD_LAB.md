@@ -1,5 +1,10 @@
 # Guest Mod Lab continuation — November 6, 2026
 
+November 7: [CUSTOM_CARDS.md](CUSTOM_CARDS.md) records the new append-only CSV
+definition generator, save-prefix identity helpers, six authored tests (51
+focused checks total), and private native definition/ownership/collection/relaunch
+evidence. No in-game card forge or mandatory registry loader is shipped yet.
+
 The owner now requests modding during restoration: an in-game editor for cards,
 unit behavior, sizes/speeds and currencies. This explicitly supersedes earlier
 "modding after playability" scheduling. Original seven-trainer content remains
