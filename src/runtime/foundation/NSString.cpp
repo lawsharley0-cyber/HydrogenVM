@@ -6,6 +6,11 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#else
+#include <unicode/ubrk.h>
+#endif
 
 namespace Hydrogen::Runtime::Foundation {
 
@@ -418,23 +423,72 @@ void s_rangeOfCharacterFromSetOptions(Ctx& x, GuestPtr out, id self, SEL, id set
     }
     writeRange(x, out, {kNotFound, 0});
 }
-void s_rangeOfComposed(Ctx& x, GuestPtr out, id self, SEL, uint32_t idx) {
-    const U16 s = sv(x, self);
-    if (idx >= s.size()) {
-        writeRange(x, out, {kNotFound, 0});
-        return;
+// Forward segmentation to the host Unicode engine. UTF-16 code units are the
+// guest API's coordinates; a surrogate-pair-only approximation splits accents,
+// joined emoji, regional indicators and other multi-code-point characters.
+class ComposedRanges {
+#if defined(__APPLE__)
+    CFStringRef value;
+#else
+    UBreakIterator* value;
+#endif
+public:
+    explicit ComposedRanges(const U16& text) {
+        if (text.size() > INT32_MAX) throw ObjC::ObjCError("NSString composed range exceeds host Unicode limit");
+#if defined(__APPLE__)
+        value = CFStringCreateWithCharacters(kCFAllocatorDefault, reinterpret_cast<const UniChar*>(text.data()), text.size());
+        if (!value) throw ObjC::ObjCError("NSString host Unicode allocation failed");
+#else
+        UErrorCode error = U_ZERO_ERROR;
+        value = ubrk_open(UBRK_CHARACTER, "root", reinterpret_cast<const UChar*>(text.data()), int32_t(text.size()), &error);
+        if (U_FAILURE(error) || !value) {
+            if (value) ubrk_close(value);
+            throw ObjC::ObjCError("NSString host Unicode iterator failed");
+        }
+#endif
     }
-    uint32_t start = idx;
-    uint32_t len = 1;
-    const char16_t c = s[idx];
-    if (c >= 0xD800 && c <= 0xDBFF && idx + 1 < s.size()) {
-        const char16_t c2 = s[idx + 1];
-        if (c2 >= 0xDC00 && c2 <= 0xDFFF) len = 2;
-    } else if (c >= 0xDC00 && c <= 0xDFFF && idx > 0) {
-        const char16_t c0 = s[idx - 1];
-        if (c0 >= 0xD800 && c0 <= 0xDBFF) { start = idx - 1; len = 2; }
+    ComposedRanges(const ComposedRanges&) = delete;
+    ComposedRanges& operator=(const ComposedRanges&) = delete;
+    ~ComposedRanges() {
+#if defined(__APPLE__)
+        CFRelease(value);
+#else
+        ubrk_close(value);
+#endif
     }
-    writeRange(x, out, {start, len});
+    Range at(uint32_t index) {
+#if defined(__APPLE__)
+        const CFRange range = CFStringGetRangeOfComposedCharacters(value, index);
+        if (range.location < 0 || range.length <= 0) throw ObjC::ObjCError("NSString invalid host composed range");
+        return {uint32_t(range.location), uint32_t(range.length)};
+#else
+        const int32_t end = ubrk_following(value, index);
+        // Seek the cluster's end, then its preceding boundary. Calling
+        // preceding(index) directly can skip a cluster when index names the
+        // low UTF-16 surrogate, because ICU first normalizes that offset.
+        const int32_t first = ubrk_previous(value);
+        if (first < 0 || end <= first) throw ObjC::ObjCError("NSString invalid host composed range");
+        return {uint32_t(first), uint32_t(end-first)};
+#endif
+    }
+};
+void checkRange(const U16&, uint32_t, uint32_t, const char*);
+void s_rangeOfComposed(Ctx& x, GuestPtr out, id self, SEL, uint32_t index) {
+    const U16 text = sv(x, self);
+    checkRange(text, index, 1, "rangeOfComposedCharacterSequenceAtIndex:");
+    ComposedRanges ranges(text);
+    writeRange(x, out, ranges.at(index));
+}
+void s_rangeOfComposedRange(Ctx& x, GuestPtr out, id self, SEL, uint32_t location, uint32_t length) {
+    const U16 text = sv(x, self);
+    checkRange(text, location, length, "rangeOfComposedCharacterSequencesForRange:");
+    if (location == text.size()) { writeRange(x, out, {location, 0}); return; }
+    ComposedRanges ranges(text);
+    const Range first = ranges.at(location);
+    // Foundation treats an empty range inside the string like a one-unit range;
+    // an empty range at the string's end remains empty.
+    const Range last = ranges.at(location + (length ? length - 1 : 0));
+    writeRange(x, out, {first.location, last.location + last.length - first.location});
 }
 id s_abbreviateTilde(Ctx&, id self, SEL) { return self; }
 id s_paddingToLength(Ctx& x, id self, SEL, uint32_t newLen, id padStr, uint32_t padIndex) {
@@ -895,6 +949,7 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_rangeOfStringOptionsRange>("rangeOfString:options:range:").m<&s_containsString>("containsString:")
       .m<&s_rangeOfCharacterFromSet>("rangeOfCharacterFromSet:").m<&s_rangeOfCharacterFromSetOptions>("rangeOfCharacterFromSet:options:")
       .m<&s_rangeOfComposed>("rangeOfComposedCharacterSequenceAtIndex:", "{_NSRange=II}@:I")
+      .m<&s_rangeOfComposedRange>("rangeOfComposedCharacterSequencesForRange:", "{_NSRange=II}@:{_NSRange=II}")
       .m<&s_substringFromIndex>("substringFromIndex:").m<&s_substringToIndex>("substringToIndex:").m<&s_substringWithRange>("substringWithRange:")
       .m<&s_paddingToLength>("stringByPaddingToLength:withString:startingAtIndex:", "@@:I@I")
       .m<&s_appending>("stringByAppendingString:").m<&s_appendingFormat>("stringByAppendingFormat:")

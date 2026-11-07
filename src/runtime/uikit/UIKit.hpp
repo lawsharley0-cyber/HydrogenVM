@@ -152,7 +152,7 @@ struct UIState {
 UIState& ui(Process& p);
 
 // ---- on-screen keyboard. A focused UITextField/UITextView publishes a TextInputRequest to the host (which shows
-// a native keyboard); the host sends edits back with submitTextInput, which runs on the guest's main run loop.
+// a native keyboard); custom UIKeyInput responders use incremental events. submitTextInput runs on the guest's main run loop.
 struct TextInputRequest {
     bool active = false;                   // false = the keyboard should be dismissed
     uint64_t focusId = 0;                  // which focus this request belongs to; events must echo it
@@ -160,15 +160,19 @@ struct TextInputRequest {
     std::string text, placeholder;
     int32_t keyboardType = 0, returnKeyType = 0, autocapitalization = 0, autocorrection = 0;
     bool secure = false, multiline = false;
+    // Custom UIKeyInput responders own their text/caret. Send incremental
+    // protocol messages rather than replacing a UIKit TextFieldData string.
+    bool keyInput = false, hasText = false;
 };
 struct TextInputEvent {
-    enum Kind { SetText, Return, Dismiss } kind;
-    std::string text;                      // SetText: the field's full new text
+    enum Kind { SetText, Return, Dismiss, InsertText, DeleteBackward } kind;
+    std::string text;                      // SetText: full field text; InsertText: original protocol payload
     uint64_t focusId = 0;                  // from the request being answered; events for an older focus are dropped
     uint64_t seq = 0;                      // host edit counter, echoed back as TextInputRequest::ackSeq
 };
 void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&)> observer);
 void submitTextInput(Process& p, TextInputEvent ev);
+void customKeyboardFocus(Ctx& x, id responder, bool active);
 inline UIState& ui(Ctx& x) { return ui(x.proc); }
 
 // ---- layers (QuartzCore.cpp)

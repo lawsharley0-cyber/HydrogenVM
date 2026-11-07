@@ -56,6 +56,8 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly) NSInteger autocorrectionType;
 @property (nonatomic, readonly) BOOL secure;
 @property (nonatomic, readonly) BOOL multiline;
+@property (nonatomic, readonly) BOOL keyInput;
+@property (nonatomic, readonly) BOOL hasText;
 @end
 
 @interface HVMSession : NSObject
@@ -107,6 +109,9 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 /// The player's new full text for the focused guest field (delegate-checked in the guest). Dropped by the guest if
 /// focusId is no longer the focused field's.
 - (void)submitText:(NSString *)text focusId:(uint64_t)focusId sequence:(uint64_t)sequence;
+/// Incremental UIKeyInput events for custom guest responders that own their text and caret.
+- (void)insertText:(NSString *)text focusId:(uint64_t)focusId;
+- (void)deleteBackwardForFocus:(uint64_t)focusId;
 /// The return key was pressed on the host keyboard.
 - (void)submitReturnKeyForFocus:(uint64_t)focusId;
 /// The player dismissed the host keyboard; the guest field resigns first responder (if it allows).

@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · 25 automated cases (TL-A–TL-Y) · schema version 1.
+Version 1.0 · 26 automated cases (TL-A–TL-Z) · schema version 1.
 
 ## Contents
 
@@ -53,6 +53,7 @@ TL-L is a host-driven termination check; 22 cases are guest-selectable.
 | TL-R | Depth/stencil & root view | Requires depth24/stencil8/packed renderbuffers with correct bit counts, real stencil reject/write behavior, and replacement of an installed root controller's view; both graphics and root-view checks were red before their fixes for Minion Rush |
 | TL-X | Player-item readiness | Requires Initial KVO to report Unknown before player creation, followed by an observed ReadyToPlay transition that can start the assigned player; reproduces the UE3 startup-movie wait in Goat Simulator. Oracle: Apple's documented AVPlayerItem status lifecycle |
 | TL-Y | libstdc++ 4.2 ABI | Calls the GCC 4.2 libstdc++ entry points directly: std::string COW `_Rep` (empty rep, refcopy, dispose), `std::list` node hook/unhook, red-black tree insert/rebalance and increment, and the SJLJ unwinder frame chain. Oracle: the libstdc++ 4.2 ABI layouts the app binaries are compiled against |
+| TL-Z | Custom UIKeyInput | A UIView implementing UIKeyInput focuses, handles its own insert/delete, resigns and observes software-keyboard show/hide notifications. Proven red on main ff24df3 (focus/text/resign succeed, shown=hidden=0). The guest deletion also exercises NSString composed ranges for accents/surrogates; the fulltest covers joined emoji, flags, Hangul, CRLF and rejected bounds. Separate fulltest cases verify host requests, Unicode protocol forwarding, traits, focus identity and refused resignation. Phone keyboard presentation remains a device check. |
 
 ### Objective-C conformance (T8)
 
@@ -196,7 +197,7 @@ python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
    *Open in…* from Files, or drop it into the app's Files folder and pull to
    refresh.
 3. Tap `TestLab` in the library to run it.
-4. The menu shows the 22 guest-selectable cases (TL-A…TL-K and TL-M…TL-W)
+4. The menu shows the 25 guest-selectable cases (TL-A…TL-K and TL-M…TL-Z)
    with their last-known status. TL-L is a host-driven termination test.
 5. Tap a row to run an individual case.  Tap **Run All** to run every case.
 6. Tap **Export JSON** to write `Documents/testlab_result.json` — retrieve it

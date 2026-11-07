@@ -1439,6 +1439,29 @@ id tf_nilObj(Ctx&, id, SEL) { return 0; }
 bool tf_trueBool(Ctx&, id, SEL) { return true; }
 
 // ---- on-screen keyboard bridge (#303)
+bool isCustomKeyInput(Ctx& x, id self) {
+    auto& r = rt(x);
+    return self && !r.hostIf<TextFieldData>(self) && r.respondsTo(self, r.sel("hasText")) &&
+           r.respondsTo(self, r.sel("insertText:")) && r.respondsTo(self, r.sel("deleteBackward"));
+}
+void publishCustomKeyboard(Ctx& x, id self, bool active) {
+    std::function<void(const TextInputRequest&)> obs;
+    { std::lock_guard<std::mutex> lk(ui(x).inputMu); obs = ui(x).textInputObserver; }
+    if (!obs) return;
+    TextInputRequest q;
+    q.active = active; q.keyInput = true; q.focusId = ui(x).textFocusId;
+    if (active) {
+        auto& r = rt(x);
+        const auto trait = [&](const char* name, int fallback = 0) {
+            return r.respondsTo(self, r.sel(name)) ? int32_t(r.send(x.cpu, self, name)) : fallback;
+        };
+        q.hasText = sendBool(x, self, "hasText");
+        q.keyboardType = trait("keyboardType"); q.returnKeyType = trait("returnKeyType");
+        q.autocapitalization = trait("autocapitalizationType", 2);
+        q.autocorrection = trait("autocorrectionType"); q.secure = trait("isSecureTextEntry") != 0;
+    }
+    obs(q);
+}
 bool isTextView(Ctx& x, id self) { return rt(x).isKindOf(self, rt(x).getClass("UITextView")); }
 void publishKeyboard(Ctx& x, id self, bool active) {
     std::function<void(const TextInputRequest&)> obs;
@@ -1497,8 +1520,28 @@ void applyHostText(Ctx& x, id self, const std::string& newUtf8) {
 }
 void handleTextInput(Ctx& x, const TextInputEvent& ev) {
     const id fr = ui(x).firstResponder;
-    if (!fr || !rt(x).hostIf<TextFieldData>(fr)) return;
+    if (!fr) return;
     if (ev.focusId != ui(x).textFocusId) return;   // typed for a field that has since lost focus
+    if (isCustomKeyInput(x, fr)) {
+        auto& r = rt(x); r.retain(x.cpu, fr);
+        switch (ev.kind) {
+        case TextInputEvent::InsertText:
+            r.send(x.cpu, fr, "insertText:", {makeString(x, ev.text)}); break;
+        case TextInputEvent::DeleteBackward:
+            r.send(x.cpu, fr, "deleteBackward"); break;
+        case TextInputEvent::Return:
+            r.send(x.cpu, fr, "insertText:", {makeString(x, "\n")}); break;
+        case TextInputEvent::Dismiss:
+            r.send(x.cpu, fr, "resignFirstResponder"); break;
+        case TextInputEvent::SetText:
+            // UIKeyInput exposes neither the full string nor a replacement
+            // range. Never synthesize a replacement that loses its caret.
+            break;
+        }
+        if (ui(x).firstResponder == fr) publishCustomKeyboard(x, fr, true);
+        r.release(x.cpu, fr); return;
+    }
+    if (!rt(x).hostIf<TextFieldData>(fr)) return;
     rt(x).retain(x.cpu, fr);
     switch (ev.kind) {
     case TextInputEvent::SetText:
@@ -1517,6 +1560,9 @@ void handleTextInput(Ctx& x, const TextInputEvent& ev) {
         rt(x).send(x.cpu, fr, "resignFirstResponder");
         if (ui(x).firstResponder == fr) publishKeyboard(x, fr, true);   // the guest refused: keep the keyboard
         break;
+    case TextInputEvent::InsertText:
+    case TextInputEvent::DeleteBackward:
+        break;   // only protocol-based responders use incremental host events
     }
     rt(x).release(x.cpu, fr);
 }
@@ -2605,6 +2651,13 @@ void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&
     UIState& u = ui(p);
     std::lock_guard<std::mutex> lk(u.inputMu);
     u.textInputObserver = std::move(observer);
+}
+void customKeyboardFocus(Ctx& x, id responder, bool active) {
+    if (!isCustomKeyInput(x, responder)) return;
+    if (active) { ++ui(x).textFocusId; ui(x).textAckSeq = 0; }
+    Foundation::postNotification(x, active ? "UIKeyboardWillShowNotification" : "UIKeyboardWillHideNotification", 0);
+    publishCustomKeyboard(x, responder, active);
+    Foundation::postNotification(x, active ? "UIKeyboardDidShowNotification" : "UIKeyboardDidHideNotification", 0);
 }
 void submitTextInput(Process& p, TextInputEvent ev) {
     Process* pp = &p;

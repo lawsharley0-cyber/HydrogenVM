@@ -1,6 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Twenty-five automated cases (TL-A--TL-Y); see docs/TEST_LAB.md for the
+// Twenty-six automated cases (TL-A--TL-Z); see docs/TEST_LAB.md for the
 // complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
@@ -79,6 +79,7 @@ static const char *kAppBuild        = "1";
 #define CASE_S  @"TL-S"
 #define CASE_X  @"TL-X"
 #define CASE_Y  @"TL-Y"
+#define CASE_Z  @"TL-Z"
 #define CASE_T  @"TL-T"
 #define CASE_U  @"TL-U"
 #define CASE_V  @"TL-V"
@@ -1775,6 +1776,69 @@ static TLResult *runObjCCase(NSString *caseId, void (*fixture)(TLObjCObservation
     return r;
 }
 
+// TL-Z: a custom UIView/UIKeyInput is a keyboard client without being a
+// UITextField. Oracle: UIKeyInput and UIResponder contracts, with software
+// keyboard show/hide notifications after allowing the run loop to animate.
+@interface TLKeyInputView : UIView <UIKeyInput>
+@property(nonatomic, copy) NSString *value;
+@end
+@implementation TLKeyInputView
+- (BOOL)canBecomeFirstResponder { return YES; }
+- (BOOL)hasText { return self.value.length != 0; }
+- (void)insertText:(NSString *)text { self.value = [(self.value ?: @"") stringByAppendingString:text]; }
+- (void)deleteBackward {
+    if (self.value.length) {
+        NSRange range = [self.value rangeOfComposedCharacterSequencesForRange:NSMakeRange(self.value.length - 1, 1)];
+        self.value = [self.value substringToIndex:range.location];
+    }
+}
+@end
+@interface TLKeyboardObserver : NSObject
+@property(nonatomic) NSUInteger shown, hidden;
+- (void)shown:(NSNotification *)note;
+- (void)hidden:(NSNotification *)note;
+@end
+@implementation TLKeyboardObserver
+- (void)shown:(NSNotification *)note { self.shown++; }
+- (void)hidden:(NSNotification *)note { self.hidden++; }
+@end
+static TLResult *runCaseZ(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_Z version:1];
+    writeCheckpoint(CASE_Z); r.checkpointWritten = YES;
+    double start = monoMs();
+    UIWindow *previous = [UIApplication sharedApplication].keyWindow;
+    UIWindow *window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
+    UIViewController *root = [[UIViewController alloc] init];
+    window.rootViewController = root;
+    TLKeyInputView *input = [[TLKeyInputView alloc] initWithFrame:CGRectMake(10, 10, 200, 40)];
+    [root.view addSubview:input];
+    TLKeyboardObserver *observer = [[TLKeyboardObserver alloc] init];
+    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+    [center addObserver:observer selector:@selector(shown:) name:@"UIKeyboardDidShowNotification" object:nil];
+    [center addObserver:observer selector:@selector(hidden:) name:@"UIKeyboardDidHideNotification" object:nil];
+    [window makeKeyAndVisible];
+    BOOL focused = [input becomeFirstResponder] && [input isFirstResponder];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.6]];
+    [input insertText:@"ab"]; [input deleteBackward];
+    BOOL text = [input hasText] && [input.value isEqualToString:@"a"];
+    input.value = @"a\u0301"; [input deleteBackward];
+    text = text && ![input hasText];
+    NSRange emoji = [@"x\U0001F600y" rangeOfComposedCharacterSequencesForRange:NSMakeRange(2, 1)];
+    NSRange mark = [@"a\u0301b" rangeOfComposedCharacterSequenceAtIndex:1];
+    text = text && emoji.location == 1 && emoji.length == 2 && mark.location == 0 && mark.length == 2;
+    BOOL resigned = [input resignFirstResponder] && ![input isFirstResponder];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.6]];
+    [center removeObserver:observer];
+    window.hidden = YES;
+    if (previous) [previous makeKeyAndVisible];
+    r.expected = @"focused=1 text=1 resigned=1 shown>=1 hidden>=1";
+    r.actual = [NSString stringWithFormat:@"focused=%d text=%d resigned=%d shown=%u hidden=%u", focused, text, resigned, (unsigned)observer.shown, (unsigned)observer.hidden];
+    r.status = focused && text && resigned && observer.shown > 0 && observer.hidden > 0 ? @"passed" : @"failed";
+    if (![r.status isEqualToString:@"passed"]) r.reason = @"Custom UIKeyInput did not drive software keyboard lifecycle";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
 // TL-Y: libstdc++ 4.2 ABI conformance (string COW, list node hooking, RB-tree rebalancing, and SJLJ frames).
 struct TLYRbNode {
     int color; // 0 = red, 1 = black
@@ -1977,7 +2041,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -2034,6 +2098,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseX()];
         } else if ([cid isEqualToString:CASE_Y]) {
             [results addObject:runCaseY()];
+        } else if ([cid isEqualToString:CASE_Z]) {
+            [results addObject:runCaseZ()];
         }
     }
     return results;
@@ -2072,6 +2138,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_W]) return runObjCCase(caseId, TLObjCLifetime);
     if ([caseId isEqualToString:CASE_X]) return runCaseX();
     if ([caseId isEqualToString:CASE_Y]) return runCaseY();
+    if ([caseId isEqualToString:CASE_Z]) return runCaseZ();
     TLResult *r = [[TLResult alloc] initWithId:caseId version:1];
     r.status = @"skipped";
     r.reason = [NSString stringWithFormat:@"Unknown case ID '%@'", caseId];
@@ -2108,8 +2175,8 @@ static UIColor *colorForStatus(NSString *s) {
     scroll.scrollEnabled = YES;
     [self.view addSubview:scroll];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -2137,6 +2204,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_W version:1],
         [[TLResult alloc] initWithId:CASE_X version:1],
         [[TLResult alloc] initWithId:CASE_Y version:1],
+        [[TLResult alloc] initWithId:CASE_Z version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -2197,7 +2265,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
