@@ -1631,12 +1631,12 @@ PickerData& PKD(Ctx& x, id s) { return rt(x).host<PickerData>(s); }
 int32_t pk_components(Ctx& x, id self, SEL) {
     const id ds = PKD(x, self).dataSource;
     if (!ds || !(rt(x).send(x.cpu, ds, "respondsToSelector:", {rt(x).sel("numberOfComponentsInPickerView:")}) & 0xff)) return 0;
-    return int32_t(rt(x).send(x.cpu, ds, "numberOfComponentsInPickerView:", {self}));
+    return std::max(0, int32_t(rt(x).send(x.cpu, ds, "numberOfComponentsInPickerView:", {self})));
 }
 int32_t pk_rows(Ctx& x, id self, SEL, int32_t comp) {
     const id ds = PKD(x, self).dataSource;
     if (!ds || !(rt(x).send(x.cpu, ds, "respondsToSelector:", {rt(x).sel("pickerView:numberOfRowsInComponent:")}) & 0xff)) return 0;
-    return int32_t(rt(x).send(x.cpu, ds, "pickerView:numberOfRowsInComponent:", {self, uint32_t(comp)}));
+    return std::max(0, int32_t(rt(x).send(x.cpu, ds, "pickerView:numberOfRowsInComponent:", {self, uint32_t(comp)})));
 }
 id pk_dataSource(Ctx& x, id self, SEL) { return PKD(x, self).dataSource; }
 void pk_setDataSource(Ctx& x, id self, SEL, id v) { PKD(x, self).dataSource = v; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
@@ -1646,8 +1646,9 @@ bool pk_indicator(Ctx& x, id self, SEL) { return PKD(x, self).indicator; }
 void pk_setIndicator(Ctx& x, id self, SEL, bool b) { PKD(x, self).indicator = b; }
 int32_t pk_selectedRow(Ctx& x, id self, SEL, int32_t comp) {
     const PickerData& d = PKD(x, self);
-    if (comp < 0 || pk_rows(x, self, 0, comp) <= 0) return -1;
-    return size_t(comp) < d.selected.size() ? d.selected[size_t(comp)] : 0;
+    const int32_t rows = comp < 0 ? 0 : pk_rows(x, self, 0, comp);
+    if (rows <= 0) return -1;
+    return size_t(comp) < d.selected.size() ? std::min(d.selected[size_t(comp)], rows - 1) : 0;
 }
 void pk_selectRow(Ctx& x, id self, SEL, int32_t row, int32_t comp, bool) {
     if (comp < 0 || row < 0) return;

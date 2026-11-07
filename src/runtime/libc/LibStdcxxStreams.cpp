@@ -1355,11 +1355,13 @@ void registerLibStdcxxStreams(Process& p) {
         (void)p.def<&codecvtError>("hvm_codecvt_error");
         const uint32_t vt = p.defineDataBlock("__ZTVSt7codecvtIwc11__mbstate_tE", 4 * 11);
         if (auto ti = p.lookupSymbol("__ZTISt7codecvtIwc11__mbstate_tE")) p.mem().write<uint32_t>(vt + 4, *ti);
-        const uint32_t slots[] = {d1, d0, p.defineFunction(cv + "6do_outERS0_PKwS4_RS4_PcS6_RS6_", cvOut),
-                                  p.def<&cvUnshift>(cv + "10do_unshiftERS0_PcS3_RS3_"),
-                                  p.defineFunction(cv + "5do_inERS0_PKcS4_RS4_PwS6_RS6_", cvIn),
-                                  p.def<&cvOne>(cv + "11do_encodingEv"), p.def<&cvFalse>(cv + "16do_always_noconvEv"),
-                                  p.def<&cvLength>(cv + "9do_lengthERS0_PKcS4_m"), p.def<&cvOne>(cv + "13do_max_lengthEv")};
+        // The do_* members are const: __ZNK... is what a derived facet calling the base imports.
+        const std::string cvk = "__ZNKSt7codecvtIwc11__mbstate_tE";
+        const uint32_t slots[] = {d1, d0, p.defineFunction(cvk + "6do_outERS0_PKwS4_RS4_PcS6_RS6_", cvOut),
+                                  p.def<&cvUnshift>(cvk + "10do_unshiftERS0_PcS3_RS3_"),
+                                  p.defineFunction(cvk + "5do_inERS0_PKcS4_RS4_PwS6_RS6_", cvIn),
+                                  p.def<&cvOne>(cvk + "11do_encodingEv"), p.def<&cvFalse>(cvk + "16do_always_noconvEv"),
+                                  p.def<&cvLength>(cvk + "9do_lengthERS0_PKcS4_m"), p.def<&cvOne>(cvk + "13do_max_lengthEv")};
         for (uint32_t i = 0; i < 9; ++i) p.mem().write<uint32_t>(vt + 8 + i * 4, slots[i]);
         s.vtCodecvtW = vt + 8;
         s.codecvtWId = p.defineDataBlock("__ZNSt7codecvtIwc11__mbstate_tE2idE", 4);

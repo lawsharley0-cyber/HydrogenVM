@@ -787,12 +787,17 @@ void vc_loadView(Ctx& x, id self, SEL) {
     VCData& d = VC(x, self);
     std::string nib = d.nibName ? utf8(x, d.nibName) : nibForClass(x, self);
     // A storyboard controller's view is its own nib inside the .storyboardc (ROBLOX's login).
-    if (!nib.empty() && d.storyboard && !nibExists(x, nib)) {
+    if (!nib.empty() && d.storyboard) {
         const std::string dir = storyboardNibDir(x, d.storyboard);
         if (!dir.empty() && nibExists(x, dir + nib)) nib = dir + nib;
     }
     if (!nib.empty()) {
-        loadNib(x, nib, d.nibBundle, self, d.externalObjects);
+        // The table can hold the controller itself; it is only needed for this load, so
+        // drop it now rather than keep a retain cycle.
+        const id externals = d.externalObjects;
+        d.externalObjects = 0;
+        loadNib(x, nib, d.nibBundle, self, externals);
+        if (externals) rt(x).release(x.cpu, externals);
         if (VC(x, self).view) return;
         x.proc.logf(LogLevel::Warning, "-[%s loadView] loaded the \"%s\" nib but the view outlet was not set", rt(x).objectClassName(self).c_str(), nib.c_str());
     }
