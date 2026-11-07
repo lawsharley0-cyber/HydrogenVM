@@ -3279,6 +3279,83 @@ int runFullSubsystemTests() {
         check(relativeBundle && changed && failedOnFile, "guest working directory starts at /; chdir/getcwd are the guest's own");
     }
 
+    // libc++'s __next_prime sizes unordered_map's buckets (Minecraft PE crashed on a stub's 0).
+    {
+        bool primes = false;
+        if (const auto np = proc.lookupSymbol("__ZNSt3__112__next_primeEm")) {
+            const std::pair<uint32_t, uint32_t> cases[] = {{0, 0}, {1, 2}, {2, 2}, {3, 3}, {4, 5}, {24, 29}, {97, 97},
+                                                           {98, 101}, {65536, 65537}, {4294967291u, 4294967291u}};
+            primes = true;
+            for (auto [in, want] : cases) {
+                const uint32_t got = cx.proc.callGuest(cpu, *np, {in});
+                if (got != want) { std::printf("    __next_prime(%u) = %u, want %u\n", in, got, want); primes = false; }
+            }
+        }
+        check(primes, "std::__1::__next_prime returns the smallest prime >= n");
+    }
+
+    // libc++ shared_ptr control blocks, timed condition waits, recursive_mutex and
+    // hardware_concurrency (Minecraft PE: stubs left shared_ptr counts frozen and turned
+    // Semaphore::wait into a busy loop).
+    {
+        static int zeroShared = 0, zeroWeak = 0;
+        zeroShared = zeroWeak = 0;
+        const uint32_t onShared = proc.defineFunction("__test_on_zero_shared", [](Ctx&) { ++zeroShared; });
+        const uint32_t onWeak = proc.defineFunction("__test_on_zero_shared_weak", [](Ctx&) { ++zeroWeak; });
+        auto sym = [&](const char* name) { return proc.lookupSymbol(name); };
+        auto callSym = [&](const char* name, std::initializer_list<uint32_t> args) { return cx.proc.callGuest(cpu, *sym(name), args); };
+        bool counts = false, timed = false, recursive = false;
+        if (sym("__ZNSt3__119__shared_weak_count12__add_sharedEv") && sym("__ZNSt3__119__shared_weak_count4lockEv")) {
+            const uint32_t vtable = proc.heap().allocZeroed(20), block = proc.heap().allocZeroed(12);
+            proc.mem().write<uint32_t>(vtable + 8, onShared);
+            proc.mem().write<uint32_t>(vtable + 16, onWeak);
+            proc.mem().write<uint32_t>(block, vtable);   // one shared owner, no extra weak ones
+            callSym("__ZNSt3__119__shared_weak_count12__add_sharedEv", {block});
+            callSym("__ZNSt3__119__shared_weak_count10__add_weakEv", {block});
+            const bool twoOwners = proc.mem().read<int32_t>(block + 4) == 1 && proc.mem().read<int32_t>(block + 8) == 1;
+            const bool locked = callSym("__ZNSt3__119__shared_weak_count4lockEv", {block}) == block;   // a third owner
+            for (int i = 0; i < 2; ++i) callSym("__ZNSt3__119__shared_weak_count16__release_sharedEv", {block});
+            const bool stillAlive = zeroShared == 0;
+            callSym("__ZNSt3__119__shared_weak_count16__release_sharedEv", {block});
+            const bool expired = zeroShared == 1 && zeroWeak == 0 && callSym("__ZNSt3__119__shared_weak_count4lockEv", {block}) == 0;
+            callSym("__ZNSt3__119__shared_weak_count14__release_weakEv", {block});
+            counts = twoOwners && locked && stillAlive && expired && zeroWeak == 1;
+            if (!counts) std::printf("    shared_weak_count: owners %d lock %d alive %d expired %d weak %d\n", twoOwners, locked, stillAlive, expired, zeroWeak);
+        }
+        if (const auto tw = sym("__ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockINS_5mutexEEENS_6chrono10time_pointINS5_12system_clockENS5_8durationIxNS_5ratioILx1ELx1000000000EEEEEEE")) {
+            const uint32_t mtx = proc.heap().allocZeroed(64), cv = proc.heap().allocZeroed(64), lock = proc.heap().allocZeroed(8);
+            callSym("_pthread_mutex_init", {mtx, 0});
+            callSym("_pthread_cond_init", {cv, 0});
+            proc.mem().write<uint32_t>(lock, mtx);
+            proc.mem().write<uint32_t>(lock + 4, 1);
+            callSym("_pthread_mutex_lock", {mtx});
+            const auto start = std::chrono::system_clock::now();
+            const int64_t deadline = std::chrono::duration_cast<std::chrono::nanoseconds>((start + std::chrono::milliseconds(40)).time_since_epoch()).count();
+            cx.proc.callGuest(cpu, *tw, {cv, lock, uint32_t(deadline), uint32_t(uint64_t(deadline) >> 32)});
+            const auto waited = std::chrono::system_clock::now() - start;
+            callSym("_pthread_mutex_unlock", {mtx});
+            timed = waited >= std::chrono::milliseconds(30) && waited < std::chrono::seconds(5);
+            if (!timed) std::printf("    __do_timed_wait waited %lld ms\n", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(waited).count());
+        }
+        if (sym("__ZNSt3__115recursive_mutexC1Ev")) {
+            const uint32_t rm = proc.heap().allocZeroed(64);
+            try {
+                callSym("__ZNSt3__115recursive_mutexC1Ev", {rm});
+                callSym("__ZNSt3__115recursive_mutex4lockEv", {rm});
+                callSym("__ZNSt3__115recursive_mutex4lockEv", {rm});   // a plain mutex fails (EDEADLK) here
+                callSym("__ZNSt3__115recursive_mutex6unlockEv", {rm});
+                callSym("__ZNSt3__115recursive_mutex6unlockEv", {rm});
+                recursive = callSym("_pthread_mutex_trylock", {rm}) == 0;
+                callSym("_pthread_mutex_unlock", {rm});
+                callSym("__ZNSt3__115recursive_mutexD1Ev", {rm});
+            } catch (const std::exception& e) {
+                std::printf("    recursive_mutex: %s\n", e.what());
+            }
+        }
+        const bool cores = sym("__ZNSt3__16thread20hardware_concurrencyEv") && callSym("__ZNSt3__16thread20hardware_concurrencyEv", {}) >= 1;
+        check(counts && timed && recursive && cores, "libc++ shared_ptr counts, timed condition wait, recursive_mutex, hardware_concurrency");
+    }
+
     // UIViewController has the rotation and appearance hooks engines copy encodings from
     // (Unity's ObjCSetKnownInstanceMethod asserts on a NULL Method).
     {
