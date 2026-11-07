@@ -29,16 +29,22 @@ final class PlayerProbe {
     var maximumTouches = 0
     var cancellations = 0
     var frameDelivered = false
+    var keyText = ""
+    var keyEvent = "none"
     var movedFingers: Set<UInt> = []
     var endedFingers: Set<UInt> = []
     weak var session: HVMSession?
 }
 
 final class HVMTextInputRequest {
-    let active = true, text = "", placeholder = ""
+    let active: Bool, keyInput: Bool, hasText: Bool
+    let text = "", placeholder = ""
     let focusId: UInt64 = 1, ackSeq: UInt64 = 0
     let keyboardType = 0, returnKeyType = 0, autocapitalizationType = 0, autocorrectionType = 0
     let secure = false, multiline = false
+    init(active: Bool = true, keyInput: Bool = false, hasText: Bool = false) {
+        self.active = active; self.keyInput = keyInput; self.hasText = hasText
+    }
 }
 
 /// Replaces only the emulator bridge. The actual RunModel, RunView, UIKit
@@ -67,6 +73,9 @@ final class HVMSession {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(100))
             self?.deliverFrame()
+            if ProcessInfo.processInfo.environment["PLAYER_KEYINPUT_TEST"] == "1" {
+                self?.publishKeyInput()
+            }
         }
     }
     func deliverFrame() {
@@ -111,7 +120,27 @@ final class HVMSession {
     func setAccelerationX(_ x: Double, y: Double, z: Double) {}
     func submitText(_ text: String, focusId: UInt64, sequence: UInt64) {}
     func submitReturnKey(forFocus focusId: UInt64) {}
-    func dismissKeyboard(forFocus focusId: UInt64) {}
+    private func publishKeyInput(active: Bool = true) {
+        onTextInput?(HVMTextInputRequest(active: active, keyInput: true,
+                                        hasText: !PlayerProbe.shared.keyText.isEmpty))
+    }
+    func insertText(_ text: String, focusId: UInt64) {
+        guard focusId == 1 else { return }
+        PlayerProbe.shared.keyText += text
+        PlayerProbe.shared.keyEvent = text == "\n" ? "return" : "insert"
+        publishKeyInput()
+    }
+    func deleteBackward(forFocus focusId: UInt64) {
+        guard focusId == 1 else { return }
+        if !PlayerProbe.shared.keyText.isEmpty { PlayerProbe.shared.keyText.removeLast() }
+        PlayerProbe.shared.keyEvent = "delete"
+        publishKeyInput()
+    }
+    func dismissKeyboard(forFocus focusId: UInt64) {
+        guard focusId == 1 else { return }
+        PlayerProbe.shared.keyEvent = "dismiss"
+        publishKeyInput(active: false)
+    }
 }
 
 struct PlayerHarness: View {
@@ -121,6 +150,10 @@ struct PlayerHarness: View {
         RunView(app: app, keepGoing: false)
             .overlay(alignment: .bottomLeading) {
                 VStack {
+                    if ProcessInfo.processInfo.environment["PLAYER_KEYINPUT_TEST"] == "1" {
+                        Text(PlayerProbe.shared.keyText).accessibilityIdentifier("probe-key-text")
+                        Text(PlayerProbe.shared.keyEvent).accessibilityIdentifier("probe-key-event")
+                    }
                     Text(PlayerProbe.shared.touch).accessibilityIdentifier("probe-touch")
                     Text(PlayerProbe.shared.lifecycle).accessibilityIdentifier("probe-lifecycle")
                     Text(verbatim: String(PlayerProbe.shared.volume)).accessibilityIdentifier("probe-volume")

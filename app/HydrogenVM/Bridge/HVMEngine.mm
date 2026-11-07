@@ -707,6 +707,14 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Return, std::string(), focusId, 0};
     [self submitTextInput:ev];
 }
+- (void)insertText:(NSString *)text focusId:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::InsertText, std::string(text.UTF8String ?: ""), focusId, 0};
+    [self submitTextInput:ev];
+}
+- (void)deleteBackwardForFocus:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::DeleteBackward, std::string(), focusId, 0};
+    [self submitTextInput:ev];
+}
 - (void)dismissKeyboardForFocus:(uint64_t)focusId {
     RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Dismiss, std::string(), focusId, 0};
     [self submitTextInput:ev];
@@ -746,6 +754,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         _keyboardType = q.keyboardType; _returnKeyType = q.returnKeyType;
         _autocapitalizationType = q.autocapitalization; _autocorrectionType = q.autocorrection;
         _secure = q.secure; _multiline = q.multiline;
+        _keyInput = q.keyInput; _hasText = q.hasText;
     }
     return self;
 }

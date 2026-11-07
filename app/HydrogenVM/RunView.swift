@@ -357,6 +357,8 @@ final class RunModel {
         session?.submitText(text, focusId: focusId, sequence: sequence)
     }
     func submitReturnKey(focusId: UInt64) { session?.submitReturnKey(forFocus: focusId) }
+    func insertText(_ text: String, focusId: UInt64) { session?.insertText(text, focusId: focusId) }
+    func deleteBackward(focusId: UInt64) { session?.deleteBackward(forFocus: focusId) }
     /// The player asked to close the keyboard. The guest may refuse (textFieldShouldEndEditing:), in which case it
     /// publishes the active state again and the bar comes back, so the bar is not removed here.
     func dismissKeyboard(focusId: UInt64) { session?.dismissKeyboard(forFocus: focusId) }
@@ -511,11 +513,20 @@ struct RunView: View {
             if let request = model.keyboard {
                 VStack {
                     Spacer()
-                    GameKeyboardBar(request: request,
+                    if request.keyInput {
+                        GameKeyInputKeyboard(request: request,
+                                             onInsert: { model.insertText($0, focusId: request.focusId) },
+                                             onDelete: { model.deleteBackward(focusId: request.focusId) },
+                                             onDismiss: { model.dismissKeyboard(focusId: request.focusId) })
+                            .frame(width: 1, height: 1)
+                            .id(request.focusId)
+                    } else {
+                        GameKeyboardBar(request: request,
                                     onText: { model.submitText($0, focusId: request.focusId, sequence: $1) },
                                     onReturn: { model.submitReturnKey(focusId: request.focusId) },
                                     onDismiss: { model.dismissKeyboard(focusId: request.focusId) })
                         .id(request.focusId)   // a different guest field gets a fresh bar
+                    }
                 }
             }
 

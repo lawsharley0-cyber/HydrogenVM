@@ -1,5 +1,7 @@
 # Agent instructions
 
+Custom keyboard continuation (November 7): read [KEYBOARD_COMPATIBILITY_2026-11-07.md](docs/KEYBOARD_COMPATIBILITY_2026-11-07.md) for the owner-confirmed missing-keyboard symptom, custom UIView/UIKeyInput bridge, composed-character deletion, fail-before cases and exact native/host/device limits. The offline guest/editor is separate on PR #366. Preserve original training and source saves; do not turn Linux input callbacks into a phone-keyboard claim.
+
 HydrogenVM is a JIT-less ARMv7 user-mode emulator. Guest code is decoded into `Op` records and executed by ahead-of-time C++ handlers. No guest code is written into executable host memory. One process owns a 4 GB `GuestArena`, an `Engine`, guest threads that are host threads, and a symbol table that binds Mach-O imports to host functions. Frameworks are a guest Objective-C runtime in C++. The UI is composited in software. The phone shell is SwiftUI under `app/`. The desktop CLI is `hvm`.
 
 **Start with [docs/PLAN.md](docs/PLAN.md)**: the only plan, with task cards and the rules for running several agents at once. [docs/GROK_HANDOFF.md](docs/GROK_HANDOFF.md) and [docs/GEMINI_HANDOFF.md](docs/GEMINI_HANDOFF.md) are reference (run recipes, per-game history).

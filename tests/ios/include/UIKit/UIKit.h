@@ -27,6 +27,12 @@ enum { UIGestureRecognizerStatePossible, UIGestureRecognizerStateBegan, UIGestur
 
 @class UIView, UIWindow, UIViewController, UIEvent, UIImage, UIColor, UIFont, UIGestureRecognizer;
 
+@protocol UIKeyInput
+@property(nonatomic, readonly) BOOL hasText;
+- (void)insertText:(NSString *)text;
+- (void)deleteBackward;
+@end
+
 @interface UIResponder : NSObject
 - (UIResponder *)nextResponder;
 - (BOOL)becomeFirstResponder;
