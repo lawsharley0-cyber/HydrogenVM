@@ -336,6 +336,35 @@ int main() {
             longTerminal.push_back(0);
             checkTrie("export_trie_shared_long_terminal_hits_byte_limit", longTerminal, "export trie work limit exceeded");
         }
+        // The bind opcode stream's SLEB (BIND_OPCODE_SET_ADDEND_SLEB) has the same 10-byte limit.
+        auto checkBind = [&](const std::string& name, const Bytes& binds, const std::string& expectedError) {
+            dylib.resize(0x1000);
+            dylib.insert(dylib.end(), binds.begin(), binds.end());
+            put32(172, 0x1000);
+            put32(176, uint32_t(binds.size()));
+            put32(200, 0);
+            bool ok = false;
+            try {
+                Hydrogen::Memory::GuestArena testArena;
+                Hydrogen::Loader::loadMachO(testArena, dylib, name, {0x04000000u});
+                ok = expectedError.empty();
+            } catch (const Hydrogen::Loader::MachOError& e) {
+                ok = !expectedError.empty() && std::string(e.what()).find(expectedError) != std::string::npos;
+                if (!ok) std::printf("%s: unexpected error '%s'\n", name.c_str(), e.what());
+            }
+            put32(172, 0);
+            put32(176, 0);
+            std::printf("%s %s\n", ok ? "PASS" : "FAIL", name.c_str());
+            if (ok) ++passed; else ++failed;
+        };
+        Bytes tenByteSleb{0x60};
+        tenByteSleb.insert(tenByteSleb.end(), 9, 0x80);
+        tenByteSleb.insert(tenByteSleb.end(), {0x00, 0x00});   // ...last byte, then BIND_OPCODE_DONE
+        checkBind("bind_ten_byte_sleb", tenByteSleb, "");
+        Bytes elevenByteSleb{0x60};
+        elevenByteSleb.insert(elevenByteSleb.end(), 10, 0x80);
+        elevenByteSleb.insert(elevenByteSleb.end(), {0x00, 0x00});
+        checkBind("bind_overlong_sleb", elevenByteSleb, "LEB128 value too long");
         checkTrie("export_trie_overlong_uleb", Bytes{0, 1, 'x', 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01},
                   "LEB128 value too long");
         checkTrie("export_trie_cycle", {0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00}, "export trie cycle detected");
