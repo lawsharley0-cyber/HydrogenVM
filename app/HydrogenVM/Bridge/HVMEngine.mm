@@ -466,9 +466,14 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.stopOnMissingFunction = !keepGoing;
         // Offline protocol lives inside the host process; no Python or remote
         // server is needed. Process::load verifies the exact executable hash.
-        auto offlineInfo = Hydrogen::Plist::parseFile(bundle + "/Info.plist");
-        cfg.offlineClash = offlineInfo->getString("CFBundleIdentifier") == "com.supercell.scroll" &&
-            offlineInfo->getString("CFBundleShortVersionString") == "2.1306.1";
+        // An unreadable Info.plist is Process::load's error to report, not this thread's.
+        try {
+            auto offlineInfo = Hydrogen::Plist::parseFile(bundle + "/Info.plist");
+            cfg.offlineClash = offlineInfo && offlineInfo->getString("CFBundleIdentifier") == "com.supercell.scroll" &&
+                offlineInfo->getString("CFBundleShortVersionString") == "2.1306.1";
+        } catch (...) {
+            cfg.offlineClash = false;
+        }
         if (useGPU) {
             // GLES runs on the GPU through OpenGLES.framework; the host layer is
             // handed to the player view, which puts it under the UIKit overlay.

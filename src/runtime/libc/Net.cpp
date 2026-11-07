@@ -198,7 +198,7 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
     char ipBuf[INET_ADDRSTRLEN]{};
     inet_ntop(AF_INET, &host.sin_addr, ipBuf, sizeof(ipBuf));
     uint16_t origPort = ntohs(host.sin_port);
-    x.proc.logf(LogLevel::Info, "guest connect fd=%d to %s:%d", fd, ipBuf, origPort);
+    x.proc.logf(LogLevel::Debug, "guest connect fd=%d to %s:%d", fd, ipBuf, origPort);
     if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) {
         x.proc.logf(LogLevel::Warning, "connect rejected: non-loopback %s:%d", ipBuf, origPort);
         return failWith(x, 51);
@@ -206,7 +206,7 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
     if(host.sin_addr.s_addr==htonl(INADDR_LOOPBACK)) {
         auto mapped=x.proc.config().loopbackPortOverrides.find(ntohs(host.sin_port));
         if(mapped!=x.proc.config().loopbackPortOverrides.end()) {
-            x.proc.logf(LogLevel::Info, "port override %d -> %d", origPort, mapped->second);
+            x.proc.logf(LogLevel::Debug, "port override %d -> %d", origPort, mapped->second);
             host.sin_port=htons(mapped->second);
         }
     }
@@ -222,7 +222,7 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
         r = saved ? -1 : 0;
     }
     if (blocking) ::fcntl(fd, F_SETFL, flags);
-    x.proc.logf(LogLevel::Info, "guest connect fd=%d finished r=%d saved_errno=%d", fd, r, saved);
+    x.proc.logf(LogLevel::Debug, "guest connect fd=%d finished r=%d saved_errno=%d", fd, r, saved);
     errno = saved;
     return r < 0 ? hostFailure(x) : 0;
 }
@@ -241,7 +241,7 @@ int hostMsgFlags(uint32_t flags, bool receive) {
 }
 int32_t n_send(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
     if (!owns(x, fd)) return failWith(x, kEBADF);
-    x.proc.logf(LogLevel::Info, "guest send fd=%d n=%u flags=%u", fd, n, flags);
+    x.proc.logf(LogLevel::Debug, "guest send fd=%d n=%u flags=%u", fd, n, flags);
     int hostFlags = hostMsgFlags(flags, false);
     if (hostFlags < 0) return failWith(x, 45);
     if (n > INT32_MAX || !span(x, buf, n, Memory::kProtRead)) return failWith(x, 14);
@@ -322,7 +322,7 @@ int32_t n_getaddrinfo(Ctx& x, GuestPtr node, GuestPtr service, GuestPtr hints, G
     x.mem.write<uint32_t>(res, 0);
     if (!x.proc.config().loopbackNetwork) return 8;
     std::string name = node ? x.proc.readCString(node, 256) : "";
-    x.proc.logf(LogLevel::Info, "getaddrinfo node=%s", name.c_str());
+    x.proc.logf(LogLevel::Debug, "getaddrinfo node=%s", name.c_str());
     in_addr ip{};
     bool alias = std::find(x.proc.config().loopbackAliases.begin(), x.proc.config().loopbackAliases.end(), name) != x.proc.config().loopbackAliases.end();
     if (name == "localhost" || alias) ip.s_addr = htonl(INADDR_LOOPBACK);
@@ -389,7 +389,7 @@ int32_t n_socketpair(Ctx& x, int32_t domain, int32_t type, int32_t protocol, Gue
     }
     x.mem.write<int32_t>(sv, fds[0]);
     x.mem.write<int32_t>(sv + 4, fds[1]);
-    x.proc.logf(LogLevel::Info, "guest socketpair -> %d, %d", fds[0], fds[1]);
+    x.proc.logf(LogLevel::Debug, "guest socketpair -> %d, %d", fds[0], fds[1]);
     return 0;
 }
 int32_t n_zero(Ctx&) { return 0; }
@@ -595,7 +595,7 @@ bool isNetworkSocket(Process& p, int fd) {
 int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
 int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
 int closeNetworkSocket(Process& p, int fd) {
-    p.logf(LogLevel::Info, "guest closeNetworkSocket fd=%d", fd);
+    p.logf(LogLevel::Debug, "guest closeNetworkSocket fd=%d", fd);
     auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu);
     if (!s.fds.erase(fd)) return -2;
     s.udp.erase(fd);

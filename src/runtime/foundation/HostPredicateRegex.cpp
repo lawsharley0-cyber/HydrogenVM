@@ -32,6 +32,14 @@ struct Regex final : HostPredicateRegex {
             if (re) uregex_close(re);
             throw std::invalid_argument("invalid MATCHES regular expression");
         }
+        // The guest supplies pattern and text: bound backtracking so a pathological
+        // pattern fails the evaluation instead of hanging the guest thread.
+        uregex_setTimeLimit(re, 2000, &status);   // ICU match-time units, each on the order of a millisecond
+        uregex_setStackLimit(re, 8 << 20, &status);
+        if (U_FAILURE(status)) {
+            uregex_close(re);
+            throw std::invalid_argument("cannot limit MATCHES regular expression");
+        }
     }
     ~Regex() override { if (re) uregex_close(re); }
     bool matches(const std::string& input) const override {

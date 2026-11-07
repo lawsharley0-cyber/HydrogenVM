@@ -194,12 +194,15 @@ int hvmRunMain(int argc, char** argv) {
         entryTrace.attach(proc);
         // Desktop text commands answer the guest's latest keyboard request (#303/#381):
         // custom UIKeyInput responders get incremental events, text fields their full text.
-        std::mutex keyboardMu;
-        Runtime::UIKit::TextInputRequest keyboard;
-        uint64_t keyboardSeq = 0;
-        Runtime::UIKit::setTextInputObserver(proc, [&](const Runtime::UIKit::TextInputRequest& q) {
-            std::lock_guard<std::mutex> lk(keyboardMu);
-            keyboard = q;
+        // Shared with the observer, which a guest worker may still call while the process ends.
+        struct KeyboardTrack { std::mutex mu; Runtime::UIKit::TextInputRequest request; uint64_t seq = 0; };
+        auto keyboardTrack = std::make_shared<KeyboardTrack>();
+        std::mutex& keyboardMu = keyboardTrack->mu;
+        Runtime::UIKit::TextInputRequest& keyboard = keyboardTrack->request;
+        uint64_t& keyboardSeq = keyboardTrack->seq;
+        Runtime::UIKit::setTextInputObserver(proc, [keyboardTrack](const Runtime::UIKit::TextInputRequest& q) {
+            std::lock_guard<std::mutex> lk(keyboardTrack->mu);
+            keyboardTrack->request = q;
         });
         auto sendText = [&](Runtime::UIKit::TextInputEvent::Kind kind, std::string text) {
             Runtime::UIKit::TextInputEvent ev{kind, std::move(text), 0, 0};
