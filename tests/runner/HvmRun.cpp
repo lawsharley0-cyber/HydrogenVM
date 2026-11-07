@@ -107,6 +107,7 @@ int hvmRunMain(int argc, char** argv) {
             }
         }
         else if (!std::strcmp(argv[i], "--trace")) cfg.traceCalls = true;
+        else if (!std::strcmp(argv[i], "--gl-trace")) cfg.glTrace = true;
         else if (!std::strcmp(argv[i], "--thread-liveness")) cfg.threadLiveness = true;
         else if (!std::strcmp(argv[i], "--gpu")) {
             std::string why;
@@ -269,6 +270,19 @@ int hvmRunMain(int argc, char** argv) {
                   << ", \"peak\": " << ms.peak << "},\n";
                 f << "  \"display\": {\"offscreenPresents\": " << pf.offscreenPresents.load()
                   << ", \"faultsToApp\": " << pf.faultsToApp.load() << ", \"missingCount\": " << proc.missingCount() << "},\n";
+                if (cfg.glTrace) {
+                    f << "  \"gl\": {\"errors\": " << pf.glErrors.load() << ", \"draws\": " << pf.glDraws.load()
+                      << ", \"emptyPresents\": " << pf.glEmptyPresents.load() << ", \"lastFrameDraws\": " << pf.glLastFrameDraws.load()
+                      << ", \"errorLog\": [";
+                    bool first = true;
+                    for (const auto& line : proc.glErrorLog()) {
+                        f << (first ? "" : ", ") << '"';
+                        for (char c : line) { if (c == '"' || c == '\\') f << '\\'; f << c; }
+                        f << '"';
+                        first = false;
+                    }
+                    f << "]},\n";
+                }
             }
             f << "  \"perf\": {\n";
             f << Runtime::perfJson(pf, wall, insns, proc.engine().stats().blocks_decoded);

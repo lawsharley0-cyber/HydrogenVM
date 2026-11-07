@@ -269,6 +269,11 @@ struct BatchTestView: View {
                 }
 
                 Section("Engine Options") {
+                    Toggle("Trace graphics calls (GPU)", isOn: Binding(get: {
+                        runner.options.glTrace
+                    }, set: {
+                        runner.options.glTrace = $0
+                    }))
                     Toggle("Continue past missing functions", isOn: Binding(get: {
                         runner.options.keepGoing
                     }, set: {
@@ -307,7 +312,7 @@ struct BatchTestView: View {
                 }
 
                 Section {
-                    Label("Launch, picture, game view on screen, audio output, music, sound effects, touch, background & resume, clean close, relaunch, missing APIs, handled faults and speed.", systemImage: "checklist")
+                    Label("Launch, picture, graphics calls (GPU, with tracing), game view on screen, audio output, music, sound effects, touch, background & resume, clean close, relaunch, missing APIs, handled faults and speed.", systemImage: "checklist")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } header: {
@@ -336,6 +341,15 @@ struct BatchTestView: View {
 
     private func prepareShareItems() {
         shareItems.removeAll()
+        // The whole run as one folder (reports, screenshots, logs): save it to the
+        // desktop's test_ipa folder so the desktop bench can read and compare it.
+        do {
+            shareItems.append(try runner.exportBundle())
+            return
+        } catch {
+            // Say so rather than silently sharing less: the folder is what the desktop compares.
+            shareItems.append("HydrogenVM could not export the test folder (\(error.localizedDescription)); sharing the report only.")
+        }
         let jsonURL = BatchTestRunner.reportsDir.appending(path: "latest_batch_report.json")
         let mdURL = BatchTestRunner.reportsDir.appending(path: "latest_batch_report.md")
 
@@ -345,7 +359,7 @@ struct BatchTestView: View {
         if FileManager.default.fileExists(atPath: mdURL.path) {
             shareItems.append(mdURL)
         }
-        if shareItems.isEmpty {
+        if !shareItems.contains(where: { $0 is URL }) {
             shareItems.append(runner.buildMarkdownReport())
         }
     }

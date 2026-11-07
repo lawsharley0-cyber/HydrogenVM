@@ -75,6 +75,7 @@ struct State {
     std::unordered_map<std::string, uint32_t> strings;
     std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
     std::atomic<int> presents{0};                                                  // direct presents so far
+    uint64_t drawsAtPresent = 0;                                                   // glTrace: perf().glDraws at the last present
     std::atomic<bool> toldReadback{false};
     std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
 };
@@ -246,6 +247,7 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
     }
     auto hc = std::make_unique<HostContext>();
     hc->api = api;
+    hc->trace = p.config().glTrace;
     hc->guestContext = guestContext;
     hc->guestSharegroup = sharegroup;
     hc->implicitWorker = worker;
@@ -420,9 +422,19 @@ template <typename... A> std::string hgArgs(A... a) {
 static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname);
 template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* name, F args) {
     if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, std::string("GL ") + name + "(" + args() + ")");
+    if (hc->trace && name[2] == 'D' && (std::strncmp(name, "glDrawArrays", 12) == 0 || std::strncmp(name, "glDrawElements", 14) == 0))
+        x.proc.perf().glDraws++;
     if (!hc->fn.glGetError) return;
     const uint32_t e = hc->fn.glGetError();
     if (!e) return;
+    // The check consumed the error: keep it for the guest's own glGetError.
+    if (!hc->guestError) hc->guestError = e;
+    if (hc->trace) {
+        x.proc.perf().glErrors++;
+        char code[8];
+        std::snprintf(code, sizeof code, "%04x", e);
+        x.proc.noteGLError(std::string(name) + " -> 0x" + code + (hc->implicitWorker ? " [worker]" : " [main]"));
+    }
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 200)
         x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }() +
@@ -795,13 +807,13 @@ void hg_glFramebufferRenderbuffer(Ctx& x, uint32_t target, uint32_t attachment, 
     HG_BEGIN(glFramebufferRenderbuffer)
     if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
     hc->fn.glFramebufferRenderbuffer(target, attachment, rbtarget, renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
 }
 void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t target, uint32_t attachment, uint32_t rbtarget, uint32_t renderbuffer) {
     HG_BEGIN(glFramebufferRenderbufferOES)
     if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
     hc->fn.glFramebufferRenderbufferOES(target, attachment, rbtarget, renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
 }
 
 void hg_glResolveMultisampleFramebufferAPPLE(Ctx& x) {
@@ -1212,6 +1224,20 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
               ", rb bound: " + std::to_string(rb));
     }
     if (!d.layer || d.width <= 0 || d.height <= 0) return false;
+    if (hc->trace) {
+        // Draw calls since the previous present, from any context of the process (a
+        // worker thread may draw while the main thread presents).
+        auto& pf = p.perf();
+        uint64_t frameDraws;
+        {
+            std::lock_guard<std::mutex> lk(st.mu);   // presents can race on two threads
+            const uint64_t total = pf.glDraws.load();
+            frameDraws = total - st.drawsAtPresent;
+            st.drawsAtPresent = total;
+        }
+        pf.glLastFrameDraws = frameDraws;
+        if (!frameDraws) pf.glEmptyPresents++;
+    }
     layer = d.layer;
     width = d.width;
     height = d.height;
@@ -1359,7 +1385,7 @@ void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glBindFramebuffer) { hgMissing(x, hc, "glBindFramebuffer"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
     
     uint32_t screenFbo = 0;
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
@@ -1370,14 +1396,15 @@ void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
 
     hc->boundFbo = a_framebuffer;
     hc->fn.glBindFramebuffer(a_target, a_framebuffer);
-    if (hgDebug) hgAfter(x, hc, "glBindFramebuffer", [&] { return hgArgs(a_target, a_framebuffer); });
+    lk.unlock();   // hgAfter may log, which calls into the host
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindFramebuffer", [&] { return hgArgs(a_target, a_framebuffer); });
 }
 
 void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glBindFramebufferOES) { hgMissing(x, hc, "glBindFramebufferOES"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
 
     uint32_t screenFbo = 0;
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
@@ -1388,20 +1415,22 @@ void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) 
 
     hc->boundFbo = a_framebuffer;
     hc->fn.glBindFramebufferOES(a_target, a_framebuffer);
-    if (hgDebug) hgAfter(x, hc, "glBindFramebufferOES", [&] { return hgArgs(a_target, a_framebuffer); });
+    lk.unlock();   // hgAfter may log, which calls into the host
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindFramebufferOES", [&] { return hgArgs(a_target, a_framebuffer); });
 }
 
 void hg_glUseProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glUseProgram) { hgMissing(x, hc, "glUseProgram"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
         it->second->currentProgram = a_program;
     }
     hc->currentProgram = a_program;
     hc->fn.glUseProgram(a_program);
-    if (hgDebug) hgAfter(x, hc, "glUseProgram", [&] { return hgArgs(a_program); });
+    lk.unlock();   // hgAfter may log, which calls into the host
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUseProgram", [&] { return hgArgs(a_program); });
 }
 
 void registerFunctions(Process& p) {

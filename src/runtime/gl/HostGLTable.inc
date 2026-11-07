@@ -275,988 +275,988 @@ void hg_glActiveTexture(Ctx& x, uint32_t a_texture) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glActiveTexture) { hgMissing(x, hc, "glActiveTexture"); return; }
     hc->fn.glActiveTexture(a_texture);
-    if (hgDebug) hgAfter(x, hc, "glActiveTexture", [&] { return hgArgs(a_texture); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glActiveTexture", [&] { return hgArgs(a_texture); });
 }
 void hg_glBindBuffer(Ctx& x, uint32_t a_target, uint32_t a_buffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBindBuffer) { hgMissing(x, hc, "glBindBuffer"); return; }
     hc->fn.glBindBuffer(a_target, a_buffer);
-    if (hgDebug) hgAfter(x, hc, "glBindBuffer", [&] { return hgArgs(a_target, a_buffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindBuffer", [&] { return hgArgs(a_target, a_buffer); });
 }
 void hg_glBindTexture(Ctx& x, uint32_t a_target, uint32_t a_texture) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBindTexture) { hgMissing(x, hc, "glBindTexture"); return; }
     hc->fn.glBindTexture(a_target, a_texture);
-    if (hgDebug) hgAfter(x, hc, "glBindTexture", [&] { return hgArgs(a_target, a_texture); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindTexture", [&] { return hgArgs(a_target, a_texture); });
 }
 void hg_glBlendFunc(Ctx& x, uint32_t a_sfactor, uint32_t a_dfactor) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlendFunc) { hgMissing(x, hc, "glBlendFunc"); return; }
     hc->fn.glBlendFunc(a_sfactor, a_dfactor);
-    if (hgDebug) hgAfter(x, hc, "glBlendFunc", [&] { return hgArgs(a_sfactor, a_dfactor); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlendFunc", [&] { return hgArgs(a_sfactor, a_dfactor); });
 }
 void hg_glBufferData(Ctx& x, uint32_t a_target, int32_t a_size, GuestPtr a_data, uint32_t a_usage) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBufferData) { hgMissing(x, hc, "glBufferData"); return; }
     hc->fn.glBufferData(a_target, intptr_t(uint32_t(a_size)), HG_PTR(x, a_data), a_usage);
-    if (hgDebug) hgAfter(x, hc, "glBufferData", [&] { return hgArgs(a_target, a_size, a_data, a_usage); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBufferData", [&] { return hgArgs(a_target, a_size, a_data, a_usage); });
 }
 void hg_glBufferSubData(Ctx& x, uint32_t a_target, int32_t a_offset, int32_t a_size, GuestPtr a_data) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBufferSubData) { hgMissing(x, hc, "glBufferSubData"); return; }
     hc->fn.glBufferSubData(a_target, intptr_t(uint32_t(a_offset)), intptr_t(uint32_t(a_size)), HG_PTR(x, a_data));
-    if (hgDebug) hgAfter(x, hc, "glBufferSubData", [&] { return hgArgs(a_target, a_offset, a_size, a_data); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBufferSubData", [&] { return hgArgs(a_target, a_offset, a_size, a_data); });
 }
 void hg_glClear(Ctx& x, uint32_t a_mask) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glClear) { hgMissing(x, hc, "glClear"); return; }
     hc->fn.glClear(a_mask);
-    if (hgDebug) hgAfter(x, hc, "glClear", [&] { return hgArgs(a_mask); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glClear", [&] { return hgArgs(a_mask); });
 }
 void hg_glClearColor(Ctx& x, float a_r, float a_g, float a_b, float a_a) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glClearColor) { hgMissing(x, hc, "glClearColor"); return; }
     hc->fn.glClearColor(a_r, a_g, a_b, a_a);
-    if (hgDebug) hgAfter(x, hc, "glClearColor", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glClearColor", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
 }
 void hg_glClearDepthf(Ctx& x, float a_d) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glClearDepthf) { hgMissing(x, hc, "glClearDepthf"); return; }
     hc->fn.glClearDepthf(a_d);
-    if (hgDebug) hgAfter(x, hc, "glClearDepthf", [&] { return hgArgs(a_d); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glClearDepthf", [&] { return hgArgs(a_d); });
 }
 void hg_glClearStencil(Ctx& x, int32_t a_s) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glClearStencil) { hgMissing(x, hc, "glClearStencil"); return; }
     hc->fn.glClearStencil(a_s);
-    if (hgDebug) hgAfter(x, hc, "glClearStencil", [&] { return hgArgs(a_s); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glClearStencil", [&] { return hgArgs(a_s); });
 }
 void hg_glColorMask(Ctx& x, uint32_t a_r, uint32_t a_g, uint32_t a_b, uint32_t a_a) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glColorMask) { hgMissing(x, hc, "glColorMask"); return; }
     hc->fn.glColorMask(uint8_t(a_r & 0xFF), uint8_t(a_g & 0xFF), uint8_t(a_b & 0xFF), uint8_t(a_a & 0xFF));
-    if (hgDebug) hgAfter(x, hc, "glColorMask", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glColorMask", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
 }
 void hg_glCopyTexImage2D(Ctx& x, uint32_t a_target, int32_t a_level, uint32_t a_internalformat, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height, int32_t a_border) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCopyTexImage2D) { hgMissing(x, hc, "glCopyTexImage2D"); return; }
     hc->fn.glCopyTexImage2D(a_target, a_level, a_internalformat, a_x, a_y, a_width, a_height, a_border);
-    if (hgDebug) hgAfter(x, hc, "glCopyTexImage2D", [&] { return hgArgs(a_target, a_level, a_internalformat, a_x, a_y, a_width, a_height, a_border); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glCopyTexImage2D", [&] { return hgArgs(a_target, a_level, a_internalformat, a_x, a_y, a_width, a_height, a_border); });
 }
 void hg_glCopyTexSubImage2D(Ctx& x, uint32_t a_target, int32_t a_level, int32_t a_xoffset, int32_t a_yoffset, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCopyTexSubImage2D) { hgMissing(x, hc, "glCopyTexSubImage2D"); return; }
     hc->fn.glCopyTexSubImage2D(a_target, a_level, a_xoffset, a_yoffset, a_x, a_y, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glCopyTexSubImage2D", [&] { return hgArgs(a_target, a_level, a_xoffset, a_yoffset, a_x, a_y, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glCopyTexSubImage2D", [&] { return hgArgs(a_target, a_level, a_xoffset, a_yoffset, a_x, a_y, a_width, a_height); });
 }
 void hg_glCullFace(Ctx& x, uint32_t a_mode) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCullFace) { hgMissing(x, hc, "glCullFace"); return; }
     hc->fn.glCullFace(a_mode);
-    if (hgDebug) hgAfter(x, hc, "glCullFace", [&] { return hgArgs(a_mode); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glCullFace", [&] { return hgArgs(a_mode); });
 }
 void hg_glDeleteBuffers(Ctx& x, int32_t a_n, GuestPtr a_buffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteBuffers) { hgMissing(x, hc, "glDeleteBuffers"); return; }
     hc->fn.glDeleteBuffers(a_n, HG_PTR(x, a_buffers));
-    if (hgDebug) hgAfter(x, hc, "glDeleteBuffers", [&] { return hgArgs(a_n, a_buffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteBuffers", [&] { return hgArgs(a_n, a_buffers); });
 }
 void hg_glDeleteTextures(Ctx& x, int32_t a_n, GuestPtr a_textures) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteTextures) { hgMissing(x, hc, "glDeleteTextures"); return; }
     hc->fn.glDeleteTextures(a_n, HG_PTR(x, a_textures));
-    if (hgDebug) hgAfter(x, hc, "glDeleteTextures", [&] { return hgArgs(a_n, a_textures); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteTextures", [&] { return hgArgs(a_n, a_textures); });
 }
 void hg_glDepthFunc(Ctx& x, uint32_t a_func) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDepthFunc) { hgMissing(x, hc, "glDepthFunc"); return; }
     hc->fn.glDepthFunc(a_func);
-    if (hgDebug) hgAfter(x, hc, "glDepthFunc", [&] { return hgArgs(a_func); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDepthFunc", [&] { return hgArgs(a_func); });
 }
 void hg_glDepthMask(Ctx& x, uint32_t a_flag) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDepthMask) { hgMissing(x, hc, "glDepthMask"); return; }
     hc->fn.glDepthMask(uint8_t(a_flag & 0xFF));
-    if (hgDebug) hgAfter(x, hc, "glDepthMask", [&] { return hgArgs(a_flag); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDepthMask", [&] { return hgArgs(a_flag); });
 }
 void hg_glDepthRangef(Ctx& x, float a_n, float a_f) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDepthRangef) { hgMissing(x, hc, "glDepthRangef"); return; }
     hc->fn.glDepthRangef(a_n, a_f);
-    if (hgDebug) hgAfter(x, hc, "glDepthRangef", [&] { return hgArgs(a_n, a_f); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDepthRangef", [&] { return hgArgs(a_n, a_f); });
 }
 void hg_glDisable(Ctx& x, uint32_t a_cap) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDisable) { hgMissing(x, hc, "glDisable"); return; }
     hc->fn.glDisable(a_cap);
-    if (hgDebug) hgAfter(x, hc, "glDisable", [&] { return hgArgs(a_cap); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDisable", [&] { return hgArgs(a_cap); });
 }
 void hg_glDrawArrays(Ctx& x, uint32_t a_mode, int32_t a_first, int32_t a_count) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawArrays) { hgMissing(x, hc, "glDrawArrays"); return; }
     hc->fn.glDrawArrays(a_mode, a_first, a_count);
-    if (hgDebug) hgAfter(x, hc, "glDrawArrays", [&] { return hgArgs(a_mode, a_first, a_count); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawArrays", [&] { return hgArgs(a_mode, a_first, a_count); });
 }
 void hg_glDrawElements(Ctx& x, uint32_t a_mode, int32_t a_count, uint32_t a_type, GuestPtr a_indices) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawElements) { hgMissing(x, hc, "glDrawElements"); return; }
     hc->fn.glDrawElements(a_mode, a_count, a_type, hgIndexPtr(x, a_indices));
-    if (hgDebug) hgAfter(x, hc, "glDrawElements", [&] { return hgArgs(a_mode, a_count, a_type, a_indices); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawElements", [&] { return hgArgs(a_mode, a_count, a_type, a_indices); });
 }
 void hg_glEnable(Ctx& x, uint32_t a_cap) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glEnable) { hgMissing(x, hc, "glEnable"); return; }
     hc->fn.glEnable(a_cap);
-    if (hgDebug) hgAfter(x, hc, "glEnable", [&] { return hgArgs(a_cap); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glEnable", [&] { return hgArgs(a_cap); });
 }
 void hg_glFinish(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glFinish) { hgMissing(x, hc, "glFinish"); return; }
     hc->fn.glFinish();
-    if (hgDebug) hgAfter(x, hc, "glFinish", [&] { return hgArgs(); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFinish", [&] { return hgArgs(); });
 }
 void hg_glFlush(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glFlush) { hgMissing(x, hc, "glFlush"); return; }
     hc->fn.glFlush();
-    if (hgDebug) hgAfter(x, hc, "glFlush", [&] { return hgArgs(); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFlush", [&] { return hgArgs(); });
 }
 void hg_glFrontFace(Ctx& x, uint32_t a_mode) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glFrontFace) { hgMissing(x, hc, "glFrontFace"); return; }
     hc->fn.glFrontFace(a_mode);
-    if (hgDebug) hgAfter(x, hc, "glFrontFace", [&] { return hgArgs(a_mode); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFrontFace", [&] { return hgArgs(a_mode); });
 }
 void hg_glGenBuffers(Ctx& x, int32_t a_n, GuestPtr a_buffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenBuffers) { hgMissing(x, hc, "glGenBuffers"); return; }
     hc->fn.glGenBuffers(a_n, HG_PTR(x, a_buffers));
-    if (hgDebug) hgAfter(x, hc, "glGenBuffers", [&] { return hgArgs(a_n, a_buffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenBuffers", [&] { return hgArgs(a_n, a_buffers); });
 }
 void hg_glGenTextures(Ctx& x, int32_t a_n, GuestPtr a_textures) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenTextures) { hgMissing(x, hc, "glGenTextures"); return; }
     hc->fn.glGenTextures(a_n, HG_PTR(x, a_textures));
-    if (hgDebug) hgAfter(x, hc, "glGenTextures", [&] { return hgArgs(a_n, a_textures); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenTextures", [&] { return hgArgs(a_n, a_textures); });
 }
 void hg_glGetBooleanv(Ctx& x, uint32_t a_pname, GuestPtr a_data) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetBooleanv) { hgMissing(x, hc, "glGetBooleanv"); return; }
     hc->fn.glGetBooleanv(a_pname, HG_PTR(x, a_data));
-    if (hgDebug) hgAfter(x, hc, "glGetBooleanv", [&] { return hgArgs(a_pname, a_data); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetBooleanv", [&] { return hgArgs(a_pname, a_data); });
 }
 void hg_glGetBufferParameteriv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetBufferParameteriv) { hgMissing(x, hc, "glGetBufferParameteriv"); return; }
     hc->fn.glGetBufferParameteriv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetBufferParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetBufferParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glGetFloatv(Ctx& x, uint32_t a_pname, GuestPtr a_data) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetFloatv) { hgMissing(x, hc, "glGetFloatv"); return; }
     hc->fn.glGetFloatv(a_pname, HG_PTR(x, a_data));
-    if (hgDebug) hgAfter(x, hc, "glGetFloatv", [&] { return hgArgs(a_pname, a_data); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetFloatv", [&] { return hgArgs(a_pname, a_data); });
 }
 void hg_glGetTexParameterfv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetTexParameterfv) { hgMissing(x, hc, "glGetTexParameterfv"); return; }
     hc->fn.glGetTexParameterfv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetTexParameterfv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetTexParameterfv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glGetTexParameteriv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetTexParameteriv) { hgMissing(x, hc, "glGetTexParameteriv"); return; }
     hc->fn.glGetTexParameteriv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetTexParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetTexParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glHint(Ctx& x, uint32_t a_target, uint32_t a_mode) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glHint) { hgMissing(x, hc, "glHint"); return; }
     hc->fn.glHint(a_target, a_mode);
-    if (hgDebug) hgAfter(x, hc, "glHint", [&] { return hgArgs(a_target, a_mode); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glHint", [&] { return hgArgs(a_target, a_mode); });
 }
 bool hg_glIsBuffer(Ctx& x, uint32_t a_buffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsBuffer) { hgMissing(x, hc, "glIsBuffer"); return bool(); }
     auto r = hc->fn.glIsBuffer(a_buffer);
-    if (hgDebug) hgAfter(x, hc, "glIsBuffer", [&] { return hgArgs(a_buffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsBuffer", [&] { return hgArgs(a_buffer); });
     return r != 0;
 }
 bool hg_glIsEnabled(Ctx& x, uint32_t a_cap) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsEnabled) { hgMissing(x, hc, "glIsEnabled"); return bool(); }
     auto r = hc->fn.glIsEnabled(a_cap);
-    if (hgDebug) hgAfter(x, hc, "glIsEnabled", [&] { return hgArgs(a_cap); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsEnabled", [&] { return hgArgs(a_cap); });
     return r != 0;
 }
 bool hg_glIsTexture(Ctx& x, uint32_t a_texture) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsTexture) { hgMissing(x, hc, "glIsTexture"); return bool(); }
     auto r = hc->fn.glIsTexture(a_texture);
-    if (hgDebug) hgAfter(x, hc, "glIsTexture", [&] { return hgArgs(a_texture); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsTexture", [&] { return hgArgs(a_texture); });
     return r != 0;
 }
 void hg_glLineWidth(Ctx& x, float a_width) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glLineWidth) { hgMissing(x, hc, "glLineWidth"); return; }
     hc->fn.glLineWidth(a_width);
-    if (hgDebug) hgAfter(x, hc, "glLineWidth", [&] { return hgArgs(a_width); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glLineWidth", [&] { return hgArgs(a_width); });
 }
 void hg_glPixelStorei(Ctx& x, uint32_t a_pname, int32_t a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glPixelStorei) { hgMissing(x, hc, "glPixelStorei"); return; }
     hc->fn.glPixelStorei(a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glPixelStorei", [&] { return hgArgs(a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glPixelStorei", [&] { return hgArgs(a_pname, a_param); });
 }
 void hg_glPolygonOffset(Ctx& x, float a_factor, float a_units) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glPolygonOffset) { hgMissing(x, hc, "glPolygonOffset"); return; }
     hc->fn.glPolygonOffset(a_factor, a_units);
-    if (hgDebug) hgAfter(x, hc, "glPolygonOffset", [&] { return hgArgs(a_factor, a_units); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glPolygonOffset", [&] { return hgArgs(a_factor, a_units); });
 }
 void hg_glReadPixels(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height, uint32_t a_format, uint32_t a_type, GuestPtr a_pixels) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glReadPixels) { hgMissing(x, hc, "glReadPixels"); return; }
     hc->fn.glReadPixels(a_x, a_y, a_width, a_height, a_format, a_type, HG_PTR(x, a_pixels));
-    if (hgDebug) hgAfter(x, hc, "glReadPixels", [&] { return hgArgs(a_x, a_y, a_width, a_height, a_format, a_type, a_pixels); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glReadPixels", [&] { return hgArgs(a_x, a_y, a_width, a_height, a_format, a_type, a_pixels); });
 }
 void hg_glSampleCoverage(Ctx& x, float a_value, uint32_t a_invert) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glSampleCoverage) { hgMissing(x, hc, "glSampleCoverage"); return; }
     hc->fn.glSampleCoverage(a_value, uint8_t(a_invert & 0xFF));
-    if (hgDebug) hgAfter(x, hc, "glSampleCoverage", [&] { return hgArgs(a_value, a_invert); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glSampleCoverage", [&] { return hgArgs(a_value, a_invert); });
 }
 void hg_glScissor(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glScissor) { hgMissing(x, hc, "glScissor"); return; }
     hc->fn.glScissor(a_x, a_y, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glScissor", [&] { return hgArgs(a_x, a_y, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glScissor", [&] { return hgArgs(a_x, a_y, a_width, a_height); });
 }
 void hg_glStencilFunc(Ctx& x, uint32_t a_func, int32_t a_ref, uint32_t a_mask) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glStencilFunc) { hgMissing(x, hc, "glStencilFunc"); return; }
     hc->fn.glStencilFunc(a_func, a_ref, a_mask);
-    if (hgDebug) hgAfter(x, hc, "glStencilFunc", [&] { return hgArgs(a_func, a_ref, a_mask); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glStencilFunc", [&] { return hgArgs(a_func, a_ref, a_mask); });
 }
 void hg_glStencilMask(Ctx& x, uint32_t a_mask) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glStencilMask) { hgMissing(x, hc, "glStencilMask"); return; }
     hc->fn.glStencilMask(a_mask);
-    if (hgDebug) hgAfter(x, hc, "glStencilMask", [&] { return hgArgs(a_mask); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glStencilMask", [&] { return hgArgs(a_mask); });
 }
 void hg_glStencilOp(Ctx& x, uint32_t a_fail, uint32_t a_zfail, uint32_t a_zpass) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glStencilOp) { hgMissing(x, hc, "glStencilOp"); return; }
     hc->fn.glStencilOp(a_fail, a_zfail, a_zpass);
-    if (hgDebug) hgAfter(x, hc, "glStencilOp", [&] { return hgArgs(a_fail, a_zfail, a_zpass); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glStencilOp", [&] { return hgArgs(a_fail, a_zfail, a_zpass); });
 }
 void hg_glTexParameterf(Ctx& x, uint32_t a_target, uint32_t a_pname, float a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexParameterf) { hgMissing(x, hc, "glTexParameterf"); return; }
     hc->fn.glTexParameterf(a_target, a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glTexParameterf", [&] { return hgArgs(a_target, a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexParameterf", [&] { return hgArgs(a_target, a_pname, a_param); });
 }
 void hg_glTexParameterfv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexParameterfv) { hgMissing(x, hc, "glTexParameterfv"); return; }
     hc->fn.glTexParameterfv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glTexParameterfv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexParameterfv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glTexParameteri(Ctx& x, uint32_t a_target, uint32_t a_pname, int32_t a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexParameteri) { hgMissing(x, hc, "glTexParameteri"); return; }
     hc->fn.glTexParameteri(a_target, a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glTexParameteri", [&] { return hgArgs(a_target, a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexParameteri", [&] { return hgArgs(a_target, a_pname, a_param); });
 }
 void hg_glTexParameteriv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexParameteriv) { hgMissing(x, hc, "glTexParameteriv"); return; }
     hc->fn.glTexParameteriv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glTexParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glViewport(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glViewport) { hgMissing(x, hc, "glViewport"); return; }
     hc->fn.glViewport(a_x, a_y, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glViewport", [&] { return hgArgs(a_x, a_y, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glViewport", [&] { return hgArgs(a_x, a_y, a_width, a_height); });
 }
 void hg_glAlphaFunc(Ctx& x, uint32_t a_func, float a_ref) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glAlphaFunc) { hgMissing(x, hc, "glAlphaFunc"); return; }
     hc->fn.glAlphaFunc(a_func, a_ref);
-    if (hgDebug) hgAfter(x, hc, "glAlphaFunc", [&] { return hgArgs(a_func, a_ref); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glAlphaFunc", [&] { return hgArgs(a_func, a_ref); });
 }
 void hg_glClientActiveTexture(Ctx& x, uint32_t a_texture) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glClientActiveTexture) { hgMissing(x, hc, "glClientActiveTexture"); return; }
     hc->fn.glClientActiveTexture(a_texture);
-    if (hgDebug) hgAfter(x, hc, "glClientActiveTexture", [&] { return hgArgs(a_texture); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glClientActiveTexture", [&] { return hgArgs(a_texture); });
 }
 void hg_glColor4f(Ctx& x, float a_r, float a_g, float a_b, float a_a) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glColor4f) { hgMissing(x, hc, "glColor4f"); return; }
     hc->fn.glColor4f(a_r, a_g, a_b, a_a);
-    if (hgDebug) hgAfter(x, hc, "glColor4f", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glColor4f", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
 }
 void hg_glColor4ub(Ctx& x, uint32_t a_r, uint32_t a_g, uint32_t a_b, uint32_t a_a) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glColor4ub) { hgMissing(x, hc, "glColor4ub"); return; }
     hc->fn.glColor4ub(uint8_t(a_r & 0xFF), uint8_t(a_g & 0xFF), uint8_t(a_b & 0xFF), uint8_t(a_a & 0xFF));
-    if (hgDebug) hgAfter(x, hc, "glColor4ub", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glColor4ub", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
 }
 void hg_glColorPointer(Ctx& x, int32_t a_size, uint32_t a_type, int32_t a_stride, GuestPtr a_pointer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glColorPointer) { hgMissing(x, hc, "glColorPointer"); return; }
     hc->fn.glColorPointer(a_size, a_type, a_stride, hgArrayPtr(x, a_pointer));
-    if (hgDebug) hgAfter(x, hc, "glColorPointer", [&] { return hgArgs(a_size, a_type, a_stride, a_pointer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glColorPointer", [&] { return hgArgs(a_size, a_type, a_stride, a_pointer); });
 }
 void hg_glDisableClientState(Ctx& x, uint32_t a_array) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDisableClientState) { hgMissing(x, hc, "glDisableClientState"); return; }
     hc->fn.glDisableClientState(a_array);
-    if (hgDebug) hgAfter(x, hc, "glDisableClientState", [&] { return hgArgs(a_array); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDisableClientState", [&] { return hgArgs(a_array); });
 }
 void hg_glEnableClientState(Ctx& x, uint32_t a_array) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glEnableClientState) { hgMissing(x, hc, "glEnableClientState"); return; }
     hc->fn.glEnableClientState(a_array);
-    if (hgDebug) hgAfter(x, hc, "glEnableClientState", [&] { return hgArgs(a_array); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glEnableClientState", [&] { return hgArgs(a_array); });
 }
 void hg_glFogf(Ctx& x, uint32_t a_pname, float a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glFogf) { hgMissing(x, hc, "glFogf"); return; }
     hc->fn.glFogf(a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glFogf", [&] { return hgArgs(a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFogf", [&] { return hgArgs(a_pname, a_param); });
 }
 void hg_glFogfv(Ctx& x, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glFogfv) { hgMissing(x, hc, "glFogfv"); return; }
     hc->fn.glFogfv(a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glFogfv", [&] { return hgArgs(a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFogfv", [&] { return hgArgs(a_pname, a_params); });
 }
 void hg_glGetLightfv(Ctx& x, uint32_t a_light, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetLightfv) { hgMissing(x, hc, "glGetLightfv"); return; }
     hc->fn.glGetLightfv(a_light, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetLightfv", [&] { return hgArgs(a_light, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetLightfv", [&] { return hgArgs(a_light, a_pname, a_params); });
 }
 void hg_glGetMaterialfv(Ctx& x, uint32_t a_face, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetMaterialfv) { hgMissing(x, hc, "glGetMaterialfv"); return; }
     hc->fn.glGetMaterialfv(a_face, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetMaterialfv", [&] { return hgArgs(a_face, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetMaterialfv", [&] { return hgArgs(a_face, a_pname, a_params); });
 }
 void hg_glGetTexEnvfv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetTexEnvfv) { hgMissing(x, hc, "glGetTexEnvfv"); return; }
     hc->fn.glGetTexEnvfv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetTexEnvfv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetTexEnvfv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glGetTexEnviv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetTexEnviv) { hgMissing(x, hc, "glGetTexEnviv"); return; }
     hc->fn.glGetTexEnviv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetTexEnviv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetTexEnviv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glLightModelf(Ctx& x, uint32_t a_pname, float a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glLightModelf) { hgMissing(x, hc, "glLightModelf"); return; }
     hc->fn.glLightModelf(a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glLightModelf", [&] { return hgArgs(a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glLightModelf", [&] { return hgArgs(a_pname, a_param); });
 }
 void hg_glLightModelfv(Ctx& x, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glLightModelfv) { hgMissing(x, hc, "glLightModelfv"); return; }
     hc->fn.glLightModelfv(a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glLightModelfv", [&] { return hgArgs(a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glLightModelfv", [&] { return hgArgs(a_pname, a_params); });
 }
 void hg_glLightf(Ctx& x, uint32_t a_light, uint32_t a_pname, float a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glLightf) { hgMissing(x, hc, "glLightf"); return; }
     hc->fn.glLightf(a_light, a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glLightf", [&] { return hgArgs(a_light, a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glLightf", [&] { return hgArgs(a_light, a_pname, a_param); });
 }
 void hg_glLightfv(Ctx& x, uint32_t a_light, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glLightfv) { hgMissing(x, hc, "glLightfv"); return; }
     hc->fn.glLightfv(a_light, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glLightfv", [&] { return hgArgs(a_light, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glLightfv", [&] { return hgArgs(a_light, a_pname, a_params); });
 }
 void hg_glLoadIdentity(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glLoadIdentity) { hgMissing(x, hc, "glLoadIdentity"); return; }
     hc->fn.glLoadIdentity();
-    if (hgDebug) hgAfter(x, hc, "glLoadIdentity", [&] { return hgArgs(); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glLoadIdentity", [&] { return hgArgs(); });
 }
 void hg_glLoadMatrixf(Ctx& x, GuestPtr a_m) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glLoadMatrixf) { hgMissing(x, hc, "glLoadMatrixf"); return; }
     hc->fn.glLoadMatrixf(HG_PTR(x, a_m));
-    if (hgDebug) hgAfter(x, hc, "glLoadMatrixf", [&] { return hgArgs(a_m); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glLoadMatrixf", [&] { return hgArgs(a_m); });
 }
 void hg_glLogicOp(Ctx& x, uint32_t a_opcode) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glLogicOp) { hgMissing(x, hc, "glLogicOp"); return; }
     hc->fn.glLogicOp(a_opcode);
-    if (hgDebug) hgAfter(x, hc, "glLogicOp", [&] { return hgArgs(a_opcode); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glLogicOp", [&] { return hgArgs(a_opcode); });
 }
 void hg_glMaterialf(Ctx& x, uint32_t a_face, uint32_t a_pname, float a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glMaterialf) { hgMissing(x, hc, "glMaterialf"); return; }
     hc->fn.glMaterialf(a_face, a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glMaterialf", [&] { return hgArgs(a_face, a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glMaterialf", [&] { return hgArgs(a_face, a_pname, a_param); });
 }
 void hg_glMaterialfv(Ctx& x, uint32_t a_face, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glMaterialfv) { hgMissing(x, hc, "glMaterialfv"); return; }
     hc->fn.glMaterialfv(a_face, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glMaterialfv", [&] { return hgArgs(a_face, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glMaterialfv", [&] { return hgArgs(a_face, a_pname, a_params); });
 }
 void hg_glMatrixMode(Ctx& x, uint32_t a_mode) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glMatrixMode) { hgMissing(x, hc, "glMatrixMode"); return; }
     hc->fn.glMatrixMode(a_mode);
-    if (hgDebug) hgAfter(x, hc, "glMatrixMode", [&] { return hgArgs(a_mode); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glMatrixMode", [&] { return hgArgs(a_mode); });
 }
 void hg_glMultMatrixf(Ctx& x, GuestPtr a_m) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glMultMatrixf) { hgMissing(x, hc, "glMultMatrixf"); return; }
     hc->fn.glMultMatrixf(HG_PTR(x, a_m));
-    if (hgDebug) hgAfter(x, hc, "glMultMatrixf", [&] { return hgArgs(a_m); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glMultMatrixf", [&] { return hgArgs(a_m); });
 }
 void hg_glMultiTexCoord4f(Ctx& x, uint32_t a_target, float a_s, float a_t, float a_r, float a_q) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glMultiTexCoord4f) { hgMissing(x, hc, "glMultiTexCoord4f"); return; }
     hc->fn.glMultiTexCoord4f(a_target, a_s, a_t, a_r, a_q);
-    if (hgDebug) hgAfter(x, hc, "glMultiTexCoord4f", [&] { return hgArgs(a_target, a_s, a_t, a_r, a_q); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glMultiTexCoord4f", [&] { return hgArgs(a_target, a_s, a_t, a_r, a_q); });
 }
 void hg_glNormal3f(Ctx& x, float a_nx, float a_ny, float a_nz) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glNormal3f) { hgMissing(x, hc, "glNormal3f"); return; }
     hc->fn.glNormal3f(a_nx, a_ny, a_nz);
-    if (hgDebug) hgAfter(x, hc, "glNormal3f", [&] { return hgArgs(a_nx, a_ny, a_nz); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glNormal3f", [&] { return hgArgs(a_nx, a_ny, a_nz); });
 }
 void hg_glNormalPointer(Ctx& x, uint32_t a_type, int32_t a_stride, GuestPtr a_pointer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glNormalPointer) { hgMissing(x, hc, "glNormalPointer"); return; }
     hc->fn.glNormalPointer(a_type, a_stride, hgArrayPtr(x, a_pointer));
-    if (hgDebug) hgAfter(x, hc, "glNormalPointer", [&] { return hgArgs(a_type, a_stride, a_pointer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glNormalPointer", [&] { return hgArgs(a_type, a_stride, a_pointer); });
 }
 void hg_glPointParameterf(Ctx& x, uint32_t a_pname, float a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glPointParameterf) { hgMissing(x, hc, "glPointParameterf"); return; }
     hc->fn.glPointParameterf(a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glPointParameterf", [&] { return hgArgs(a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glPointParameterf", [&] { return hgArgs(a_pname, a_param); });
 }
 void hg_glPointParameterfv(Ctx& x, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glPointParameterfv) { hgMissing(x, hc, "glPointParameterfv"); return; }
     hc->fn.glPointParameterfv(a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glPointParameterfv", [&] { return hgArgs(a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glPointParameterfv", [&] { return hgArgs(a_pname, a_params); });
 }
 void hg_glPointSize(Ctx& x, float a_size) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glPointSize) { hgMissing(x, hc, "glPointSize"); return; }
     hc->fn.glPointSize(a_size);
-    if (hgDebug) hgAfter(x, hc, "glPointSize", [&] { return hgArgs(a_size); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glPointSize", [&] { return hgArgs(a_size); });
 }
 void hg_glPopMatrix(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glPopMatrix) { hgMissing(x, hc, "glPopMatrix"); return; }
     hc->fn.glPopMatrix();
-    if (hgDebug) hgAfter(x, hc, "glPopMatrix", [&] { return hgArgs(); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glPopMatrix", [&] { return hgArgs(); });
 }
 void hg_glPushMatrix(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glPushMatrix) { hgMissing(x, hc, "glPushMatrix"); return; }
     hc->fn.glPushMatrix();
-    if (hgDebug) hgAfter(x, hc, "glPushMatrix", [&] { return hgArgs(); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glPushMatrix", [&] { return hgArgs(); });
 }
 void hg_glRotatef(Ctx& x, float a_angle, float a_x, float a_y, float a_z) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glRotatef) { hgMissing(x, hc, "glRotatef"); return; }
     hc->fn.glRotatef(a_angle, a_x, a_y, a_z);
-    if (hgDebug) hgAfter(x, hc, "glRotatef", [&] { return hgArgs(a_angle, a_x, a_y, a_z); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glRotatef", [&] { return hgArgs(a_angle, a_x, a_y, a_z); });
 }
 void hg_glScalef(Ctx& x, float a_x, float a_y, float a_z) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glScalef) { hgMissing(x, hc, "glScalef"); return; }
     hc->fn.glScalef(a_x, a_y, a_z);
-    if (hgDebug) hgAfter(x, hc, "glScalef", [&] { return hgArgs(a_x, a_y, a_z); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glScalef", [&] { return hgArgs(a_x, a_y, a_z); });
 }
 void hg_glShadeModel(Ctx& x, uint32_t a_mode) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glShadeModel) { hgMissing(x, hc, "glShadeModel"); return; }
     hc->fn.glShadeModel(a_mode);
-    if (hgDebug) hgAfter(x, hc, "glShadeModel", [&] { return hgArgs(a_mode); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glShadeModel", [&] { return hgArgs(a_mode); });
 }
 void hg_glTexCoordPointer(Ctx& x, int32_t a_size, uint32_t a_type, int32_t a_stride, GuestPtr a_pointer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexCoordPointer) { hgMissing(x, hc, "glTexCoordPointer"); return; }
     hc->fn.glTexCoordPointer(a_size, a_type, a_stride, hgArrayPtr(x, a_pointer));
-    if (hgDebug) hgAfter(x, hc, "glTexCoordPointer", [&] { return hgArgs(a_size, a_type, a_stride, a_pointer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexCoordPointer", [&] { return hgArgs(a_size, a_type, a_stride, a_pointer); });
 }
 void hg_glTexEnvf(Ctx& x, uint32_t a_target, uint32_t a_pname, float a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexEnvf) { hgMissing(x, hc, "glTexEnvf"); return; }
     hc->fn.glTexEnvf(a_target, a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glTexEnvf", [&] { return hgArgs(a_target, a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexEnvf", [&] { return hgArgs(a_target, a_pname, a_param); });
 }
 void hg_glTexEnvfv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexEnvfv) { hgMissing(x, hc, "glTexEnvfv"); return; }
     hc->fn.glTexEnvfv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glTexEnvfv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexEnvfv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glTexEnvi(Ctx& x, uint32_t a_target, uint32_t a_pname, int32_t a_param) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexEnvi) { hgMissing(x, hc, "glTexEnvi"); return; }
     hc->fn.glTexEnvi(a_target, a_pname, a_param);
-    if (hgDebug) hgAfter(x, hc, "glTexEnvi", [&] { return hgArgs(a_target, a_pname, a_param); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexEnvi", [&] { return hgArgs(a_target, a_pname, a_param); });
 }
 void hg_glTexEnviv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexEnviv) { hgMissing(x, hc, "glTexEnviv"); return; }
     hc->fn.glTexEnviv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glTexEnviv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexEnviv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glTranslatef(Ctx& x, float a_x, float a_y, float a_z) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTranslatef) { hgMissing(x, hc, "glTranslatef"); return; }
     hc->fn.glTranslatef(a_x, a_y, a_z);
-    if (hgDebug) hgAfter(x, hc, "glTranslatef", [&] { return hgArgs(a_x, a_y, a_z); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTranslatef", [&] { return hgArgs(a_x, a_y, a_z); });
 }
 void hg_glVertexPointer(Ctx& x, int32_t a_size, uint32_t a_type, int32_t a_stride, GuestPtr a_pointer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexPointer) { hgMissing(x, hc, "glVertexPointer"); return; }
     hc->fn.glVertexPointer(a_size, a_type, a_stride, hgArrayPtr(x, a_pointer));
-    if (hgDebug) hgAfter(x, hc, "glVertexPointer", [&] { return hgArgs(a_size, a_type, a_stride, a_pointer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexPointer", [&] { return hgArgs(a_size, a_type, a_stride, a_pointer); });
 }
 void hg_glPointSizePointerOES(Ctx& x, uint32_t a_type, int32_t a_stride, GuestPtr a_pointer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glPointSizePointerOES) { hgMissing(x, hc, "glPointSizePointerOES"); return; }
     hc->fn.glPointSizePointerOES(a_type, a_stride, hgArrayPtr(x, a_pointer));
-    if (hgDebug) hgAfter(x, hc, "glPointSizePointerOES", [&] { return hgArgs(a_type, a_stride, a_pointer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glPointSizePointerOES", [&] { return hgArgs(a_type, a_stride, a_pointer); });
 }
 void hg_glDrawTexfOES(Ctx& x, float a_x, float a_y, float a_z, float a_w, float a_h) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawTexfOES) { hgMissing(x, hc, "glDrawTexfOES"); return; }
     hc->fn.glDrawTexfOES(a_x, a_y, a_z, a_w, a_h);
-    if (hgDebug) hgAfter(x, hc, "glDrawTexfOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawTexfOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
 }
 void hg_glDrawTexiOES(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_z, int32_t a_w, int32_t a_h) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawTexiOES) { hgMissing(x, hc, "glDrawTexiOES"); return; }
     hc->fn.glDrawTexiOES(a_x, a_y, a_z, a_w, a_h);
-    if (hgDebug) hgAfter(x, hc, "glDrawTexiOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawTexiOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
 }
 void hg_glDrawTexsOES(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_z, int32_t a_w, int32_t a_h) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawTexsOES) { hgMissing(x, hc, "glDrawTexsOES"); return; }
     hc->fn.glDrawTexsOES(a_x, a_y, a_z, a_w, a_h);
-    if (hgDebug) hgAfter(x, hc, "glDrawTexsOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawTexsOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
 }
 void hg_glDrawTexxOES(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_z, int32_t a_w, int32_t a_h) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawTexxOES) { hgMissing(x, hc, "glDrawTexxOES"); return; }
     hc->fn.glDrawTexxOES(a_x, a_y, a_z, a_w, a_h);
-    if (hgDebug) hgAfter(x, hc, "glDrawTexxOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawTexxOES", [&] { return hgArgs(a_x, a_y, a_z, a_w, a_h); });
 }
 void hg_glBindRenderbufferOES(Ctx& x, uint32_t a_target, uint32_t a_renderbuffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBindRenderbufferOES) { hgMissing(x, hc, "glBindRenderbufferOES"); return; }
     hc->fn.glBindRenderbufferOES(a_target, a_renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glBindRenderbufferOES", [&] { return hgArgs(a_target, a_renderbuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindRenderbufferOES", [&] { return hgArgs(a_target, a_renderbuffer); });
 }
 uint32_t hg_glCheckFramebufferStatusOES(Ctx& x, uint32_t a_target) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCheckFramebufferStatusOES) { hgMissing(x, hc, "glCheckFramebufferStatusOES"); return uint32_t(); }
     auto r = hc->fn.glCheckFramebufferStatusOES(a_target);
-    if (hgDebug) hgAfter(x, hc, "glCheckFramebufferStatusOES", [&] { return hgArgs(a_target); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glCheckFramebufferStatusOES", [&] { return hgArgs(a_target); });
     return r;
 }
 void hg_glDeleteFramebuffersOES(Ctx& x, int32_t a_n, GuestPtr a_framebuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteFramebuffersOES) { hgMissing(x, hc, "glDeleteFramebuffersOES"); return; }
     hc->fn.glDeleteFramebuffersOES(a_n, HG_PTR(x, a_framebuffers));
-    if (hgDebug) hgAfter(x, hc, "glDeleteFramebuffersOES", [&] { return hgArgs(a_n, a_framebuffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteFramebuffersOES", [&] { return hgArgs(a_n, a_framebuffers); });
 }
 void hg_glDeleteRenderbuffersOES(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteRenderbuffersOES) { hgMissing(x, hc, "glDeleteRenderbuffersOES"); return; }
     hc->fn.glDeleteRenderbuffersOES(a_n, HG_PTR(x, a_renderbuffers));
-    if (hgDebug) hgAfter(x, hc, "glDeleteRenderbuffersOES", [&] { return hgArgs(a_n, a_renderbuffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteRenderbuffersOES", [&] { return hgArgs(a_n, a_renderbuffers); });
 }
 void hg_glFramebufferTexture2DOES(Ctx& x, uint32_t a_target, uint32_t a_attachment, uint32_t a_textarget, uint32_t a_texture, int32_t a_level) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glFramebufferTexture2DOES) { hgMissing(x, hc, "glFramebufferTexture2DOES"); return; }
     hc->fn.glFramebufferTexture2DOES(a_target, a_attachment, a_textarget, a_texture, a_level);
-    if (hgDebug) hgAfter(x, hc, "glFramebufferTexture2DOES", [&] { return hgArgs(a_target, a_attachment, a_textarget, a_texture, a_level); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferTexture2DOES", [&] { return hgArgs(a_target, a_attachment, a_textarget, a_texture, a_level); });
 }
 void hg_glGenFramebuffersOES(Ctx& x, int32_t a_n, GuestPtr a_framebuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenFramebuffersOES) { hgMissing(x, hc, "glGenFramebuffersOES"); return; }
     hc->fn.glGenFramebuffersOES(a_n, HG_PTR(x, a_framebuffers));
-    if (hgDebug) hgAfter(x, hc, "glGenFramebuffersOES", [&] { return hgArgs(a_n, a_framebuffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenFramebuffersOES", [&] { return hgArgs(a_n, a_framebuffers); });
 }
 void hg_glGenRenderbuffersOES(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenRenderbuffersOES) { hgMissing(x, hc, "glGenRenderbuffersOES"); return; }
     hc->fn.glGenRenderbuffersOES(a_n, HG_PTR(x, a_renderbuffers));
-    if (hgDebug) hgAfter(x, hc, "glGenRenderbuffersOES", [&] { return hgArgs(a_n, a_renderbuffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenRenderbuffersOES", [&] { return hgArgs(a_n, a_renderbuffers); });
 }
 void hg_glGenerateMipmapOES(Ctx& x, uint32_t a_target) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenerateMipmapOES) { hgMissing(x, hc, "glGenerateMipmapOES"); return; }
     hc->fn.glGenerateMipmapOES(a_target);
-    if (hgDebug) hgAfter(x, hc, "glGenerateMipmapOES", [&] { return hgArgs(a_target); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenerateMipmapOES", [&] { return hgArgs(a_target); });
 }
 void hg_glGetFramebufferAttachmentParameterivOES(Ctx& x, uint32_t a_target, uint32_t a_attachment, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetFramebufferAttachmentParameterivOES) { hgMissing(x, hc, "glGetFramebufferAttachmentParameterivOES"); return; }
     hc->fn.glGetFramebufferAttachmentParameterivOES(a_target, a_attachment, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetFramebufferAttachmentParameterivOES", [&] { return hgArgs(a_target, a_attachment, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetFramebufferAttachmentParameterivOES", [&] { return hgArgs(a_target, a_attachment, a_pname, a_params); });
 }
 void hg_glGetRenderbufferParameterivOES(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetRenderbufferParameterivOES) { hgMissing(x, hc, "glGetRenderbufferParameterivOES"); return; }
     hc->fn.glGetRenderbufferParameterivOES(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetRenderbufferParameterivOES", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetRenderbufferParameterivOES", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 bool hg_glIsFramebufferOES(Ctx& x, uint32_t a_framebuffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsFramebufferOES) { hgMissing(x, hc, "glIsFramebufferOES"); return bool(); }
     auto r = hc->fn.glIsFramebufferOES(a_framebuffer);
-    if (hgDebug) hgAfter(x, hc, "glIsFramebufferOES", [&] { return hgArgs(a_framebuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsFramebufferOES", [&] { return hgArgs(a_framebuffer); });
     return r != 0;
 }
 bool hg_glIsRenderbufferOES(Ctx& x, uint32_t a_renderbuffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsRenderbufferOES) { hgMissing(x, hc, "glIsRenderbufferOES"); return bool(); }
     auto r = hc->fn.glIsRenderbufferOES(a_renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glIsRenderbufferOES", [&] { return hgArgs(a_renderbuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsRenderbufferOES", [&] { return hgArgs(a_renderbuffer); });
     return r != 0;
 }
 void hg_glRenderbufferStorageOES(Ctx& x, uint32_t a_target, uint32_t a_internalformat, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glRenderbufferStorageOES) { hgMissing(x, hc, "glRenderbufferStorageOES"); return; }
     hc->fn.glRenderbufferStorageOES(a_target, a_internalformat, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glRenderbufferStorageOES", [&] { return hgArgs(a_target, a_internalformat, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glRenderbufferStorageOES", [&] { return hgArgs(a_target, a_internalformat, a_width, a_height); });
 }
 void hg_glBlendEquationOES(Ctx& x, uint32_t a_mode) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlendEquationOES) { hgMissing(x, hc, "glBlendEquationOES"); return; }
     hc->fn.glBlendEquationOES(a_mode);
-    if (hgDebug) hgAfter(x, hc, "glBlendEquationOES", [&] { return hgArgs(a_mode); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlendEquationOES", [&] { return hgArgs(a_mode); });
 }
 void hg_glBlendEquationSeparateOES(Ctx& x, uint32_t a_modeRGB, uint32_t a_modeAlpha) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlendEquationSeparateOES) { hgMissing(x, hc, "glBlendEquationSeparateOES"); return; }
     hc->fn.glBlendEquationSeparateOES(a_modeRGB, a_modeAlpha);
-    if (hgDebug) hgAfter(x, hc, "glBlendEquationSeparateOES", [&] { return hgArgs(a_modeRGB, a_modeAlpha); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlendEquationSeparateOES", [&] { return hgArgs(a_modeRGB, a_modeAlpha); });
 }
 void hg_glBlendFuncSeparateOES(Ctx& x, uint32_t a_srcRGB, uint32_t a_dstRGB, uint32_t a_srcAlpha, uint32_t a_dstAlpha) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlendFuncSeparateOES) { hgMissing(x, hc, "glBlendFuncSeparateOES"); return; }
     hc->fn.glBlendFuncSeparateOES(a_srcRGB, a_dstRGB, a_srcAlpha, a_dstAlpha);
-    if (hgDebug) hgAfter(x, hc, "glBlendFuncSeparateOES", [&] { return hgArgs(a_srcRGB, a_dstRGB, a_srcAlpha, a_dstAlpha); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlendFuncSeparateOES", [&] { return hgArgs(a_srcRGB, a_dstRGB, a_srcAlpha, a_dstAlpha); });
 }
 void hg_glAttachShader(Ctx& x, uint32_t a_program, uint32_t a_shader) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glAttachShader) { hgMissing(x, hc, "glAttachShader"); return; }
     hc->fn.glAttachShader(a_program, a_shader);
-    if (hgDebug) hgAfter(x, hc, "glAttachShader", [&] { return hgArgs(a_program, a_shader); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glAttachShader", [&] { return hgArgs(a_program, a_shader); });
 }
 void hg_glBindAttribLocation(Ctx& x, uint32_t a_program, uint32_t a_index, GuestPtr a_name) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBindAttribLocation) { hgMissing(x, hc, "glBindAttribLocation"); return; }
     hc->fn.glBindAttribLocation(a_program, a_index, static_cast<const char*>(HG_PTR(x, a_name)));
-    if (hgDebug) hgAfter(x, hc, "glBindAttribLocation", [&] { return hgArgs(a_program, a_index, a_name); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindAttribLocation", [&] { return hgArgs(a_program, a_index, a_name); });
 }
 void hg_glBindRenderbuffer(Ctx& x, uint32_t a_target, uint32_t a_renderbuffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBindRenderbuffer) { hgMissing(x, hc, "glBindRenderbuffer"); return; }
     hc->fn.glBindRenderbuffer(a_target, a_renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glBindRenderbuffer", [&] { return hgArgs(a_target, a_renderbuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindRenderbuffer", [&] { return hgArgs(a_target, a_renderbuffer); });
 }
 void hg_glBlendColor(Ctx& x, float a_r, float a_g, float a_b, float a_a) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlendColor) { hgMissing(x, hc, "glBlendColor"); return; }
     hc->fn.glBlendColor(a_r, a_g, a_b, a_a);
-    if (hgDebug) hgAfter(x, hc, "glBlendColor", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlendColor", [&] { return hgArgs(a_r, a_g, a_b, a_a); });
 }
 void hg_glBlendEquation(Ctx& x, uint32_t a_mode) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlendEquation) { hgMissing(x, hc, "glBlendEquation"); return; }
     hc->fn.glBlendEquation(a_mode);
-    if (hgDebug) hgAfter(x, hc, "glBlendEquation", [&] { return hgArgs(a_mode); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlendEquation", [&] { return hgArgs(a_mode); });
 }
 void hg_glBlendEquationSeparate(Ctx& x, uint32_t a_modeRGB, uint32_t a_modeAlpha) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlendEquationSeparate) { hgMissing(x, hc, "glBlendEquationSeparate"); return; }
     hc->fn.glBlendEquationSeparate(a_modeRGB, a_modeAlpha);
-    if (hgDebug) hgAfter(x, hc, "glBlendEquationSeparate", [&] { return hgArgs(a_modeRGB, a_modeAlpha); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlendEquationSeparate", [&] { return hgArgs(a_modeRGB, a_modeAlpha); });
 }
 void hg_glBlendFuncSeparate(Ctx& x, uint32_t a_srcRGB, uint32_t a_dstRGB, uint32_t a_srcAlpha, uint32_t a_dstAlpha) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlendFuncSeparate) { hgMissing(x, hc, "glBlendFuncSeparate"); return; }
     hc->fn.glBlendFuncSeparate(a_srcRGB, a_dstRGB, a_srcAlpha, a_dstAlpha);
-    if (hgDebug) hgAfter(x, hc, "glBlendFuncSeparate", [&] { return hgArgs(a_srcRGB, a_dstRGB, a_srcAlpha, a_dstAlpha); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlendFuncSeparate", [&] { return hgArgs(a_srcRGB, a_dstRGB, a_srcAlpha, a_dstAlpha); });
 }
 uint32_t hg_glCheckFramebufferStatus(Ctx& x, uint32_t a_target) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCheckFramebufferStatus) { hgMissing(x, hc, "glCheckFramebufferStatus"); return uint32_t(); }
     auto r = hc->fn.glCheckFramebufferStatus(a_target);
-    if (hgDebug) hgAfter(x, hc, "glCheckFramebufferStatus", [&] { return hgArgs(a_target); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glCheckFramebufferStatus", [&] { return hgArgs(a_target); });
     return r;
 }
 uint32_t hg_glCreateProgram(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCreateProgram) { hgMissing(x, hc, "glCreateProgram"); return uint32_t(); }
     auto r = hc->fn.glCreateProgram();
-    if (hgDebug) hgAfter(x, hc, "glCreateProgram", [&] { return hgArgs(); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glCreateProgram", [&] { return hgArgs(); });
     return r;
 }
 uint32_t hg_glCreateShader(Ctx& x, uint32_t a_type) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCreateShader) { hgMissing(x, hc, "glCreateShader"); return uint32_t(); }
     auto r = hc->fn.glCreateShader(a_type);
-    if (hgDebug) hgAfter(x, hc, "glCreateShader", [&] { return hgArgs(a_type); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glCreateShader", [&] { return hgArgs(a_type); });
     return r;
 }
 void hg_glDeleteFramebuffers(Ctx& x, int32_t a_n, GuestPtr a_framebuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteFramebuffers) { hgMissing(x, hc, "glDeleteFramebuffers"); return; }
     hc->fn.glDeleteFramebuffers(a_n, HG_PTR(x, a_framebuffers));
-    if (hgDebug) hgAfter(x, hc, "glDeleteFramebuffers", [&] { return hgArgs(a_n, a_framebuffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteFramebuffers", [&] { return hgArgs(a_n, a_framebuffers); });
 }
 void hg_glDeleteProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteProgram) { hgMissing(x, hc, "glDeleteProgram"); return; }
     hc->fn.glDeleteProgram(a_program);
-    if (hgDebug) hgAfter(x, hc, "glDeleteProgram", [&] { return hgArgs(a_program); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteProgram", [&] { return hgArgs(a_program); });
 }
 void hg_glDeleteRenderbuffers(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteRenderbuffers) { hgMissing(x, hc, "glDeleteRenderbuffers"); return; }
     hc->fn.glDeleteRenderbuffers(a_n, HG_PTR(x, a_renderbuffers));
-    if (hgDebug) hgAfter(x, hc, "glDeleteRenderbuffers", [&] { return hgArgs(a_n, a_renderbuffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteRenderbuffers", [&] { return hgArgs(a_n, a_renderbuffers); });
 }
 void hg_glDeleteShader(Ctx& x, uint32_t a_shader) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteShader) { hgMissing(x, hc, "glDeleteShader"); return; }
     hc->fn.glDeleteShader(a_shader);
-    if (hgDebug) hgAfter(x, hc, "glDeleteShader", [&] { return hgArgs(a_shader); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteShader", [&] { return hgArgs(a_shader); });
 }
 void hg_glDetachShader(Ctx& x, uint32_t a_program, uint32_t a_shader) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDetachShader) { hgMissing(x, hc, "glDetachShader"); return; }
     hc->fn.glDetachShader(a_program, a_shader);
-    if (hgDebug) hgAfter(x, hc, "glDetachShader", [&] { return hgArgs(a_program, a_shader); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDetachShader", [&] { return hgArgs(a_program, a_shader); });
 }
 void hg_glDisableVertexAttribArray(Ctx& x, uint32_t a_index) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDisableVertexAttribArray) { hgMissing(x, hc, "glDisableVertexAttribArray"); return; }
     hc->fn.glDisableVertexAttribArray(a_index);
-    if (hgDebug) hgAfter(x, hc, "glDisableVertexAttribArray", [&] { return hgArgs(a_index); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDisableVertexAttribArray", [&] { return hgArgs(a_index); });
 }
 void hg_glEnableVertexAttribArray(Ctx& x, uint32_t a_index) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glEnableVertexAttribArray) { hgMissing(x, hc, "glEnableVertexAttribArray"); return; }
     hc->fn.glEnableVertexAttribArray(a_index);
-    if (hgDebug) hgAfter(x, hc, "glEnableVertexAttribArray", [&] { return hgArgs(a_index); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glEnableVertexAttribArray", [&] { return hgArgs(a_index); });
 }
 void hg_glFramebufferTexture2D(Ctx& x, uint32_t a_target, uint32_t a_attachment, uint32_t a_textarget, uint32_t a_texture, int32_t a_level) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glFramebufferTexture2D) { hgMissing(x, hc, "glFramebufferTexture2D"); return; }
     hc->fn.glFramebufferTexture2D(a_target, a_attachment, a_textarget, a_texture, a_level);
-    if (hgDebug) hgAfter(x, hc, "glFramebufferTexture2D", [&] { return hgArgs(a_target, a_attachment, a_textarget, a_texture, a_level); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferTexture2D", [&] { return hgArgs(a_target, a_attachment, a_textarget, a_texture, a_level); });
 }
 void hg_glGenFramebuffers(Ctx& x, int32_t a_n, GuestPtr a_framebuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenFramebuffers) { hgMissing(x, hc, "glGenFramebuffers"); return; }
     hc->fn.glGenFramebuffers(a_n, HG_PTR(x, a_framebuffers));
-    if (hgDebug) hgAfter(x, hc, "glGenFramebuffers", [&] { return hgArgs(a_n, a_framebuffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenFramebuffers", [&] { return hgArgs(a_n, a_framebuffers); });
 }
 void hg_glGenRenderbuffers(Ctx& x, int32_t a_n, GuestPtr a_renderbuffers) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenRenderbuffers) { hgMissing(x, hc, "glGenRenderbuffers"); return; }
     hc->fn.glGenRenderbuffers(a_n, HG_PTR(x, a_renderbuffers));
-    if (hgDebug) hgAfter(x, hc, "glGenRenderbuffers", [&] { return hgArgs(a_n, a_renderbuffers); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenRenderbuffers", [&] { return hgArgs(a_n, a_renderbuffers); });
 }
 void hg_glGenerateMipmap(Ctx& x, uint32_t a_target) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenerateMipmap) { hgMissing(x, hc, "glGenerateMipmap"); return; }
     hc->fn.glGenerateMipmap(a_target);
-    if (hgDebug) hgAfter(x, hc, "glGenerateMipmap", [&] { return hgArgs(a_target); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenerateMipmap", [&] { return hgArgs(a_target); });
 }
 void hg_glGetActiveAttrib(Ctx& x, uint32_t a_program, uint32_t a_index, int32_t a_bufSize, GuestPtr a_length, GuestPtr a_size, GuestPtr a_type, GuestPtr a_name) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetActiveAttrib) { hgMissing(x, hc, "glGetActiveAttrib"); return; }
     hc->fn.glGetActiveAttrib(a_program, a_index, a_bufSize, HG_PTR(x, a_length), HG_PTR(x, a_size), HG_PTR(x, a_type), HG_PTR(x, a_name));
-    if (hgDebug) hgAfter(x, hc, "glGetActiveAttrib", [&] { return hgArgs(a_program, a_index, a_bufSize, a_length, a_size, a_type, a_name); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetActiveAttrib", [&] { return hgArgs(a_program, a_index, a_bufSize, a_length, a_size, a_type, a_name); });
 }
 void hg_glGetActiveUniform(Ctx& x, uint32_t a_program, uint32_t a_index, int32_t a_bufSize, GuestPtr a_length, GuestPtr a_size, GuestPtr a_type, GuestPtr a_name) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetActiveUniform) { hgMissing(x, hc, "glGetActiveUniform"); return; }
     hc->fn.glGetActiveUniform(a_program, a_index, a_bufSize, HG_PTR(x, a_length), HG_PTR(x, a_size), HG_PTR(x, a_type), HG_PTR(x, a_name));
-    if (hgDebug) hgAfter(x, hc, "glGetActiveUniform", [&] { return hgArgs(a_program, a_index, a_bufSize, a_length, a_size, a_type, a_name); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetActiveUniform", [&] { return hgArgs(a_program, a_index, a_bufSize, a_length, a_size, a_type, a_name); });
 }
 void hg_glGetAttachedShaders(Ctx& x, uint32_t a_program, int32_t a_maxCount, GuestPtr a_count, GuestPtr a_shaders) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetAttachedShaders) { hgMissing(x, hc, "glGetAttachedShaders"); return; }
     hc->fn.glGetAttachedShaders(a_program, a_maxCount, HG_PTR(x, a_count), HG_PTR(x, a_shaders));
-    if (hgDebug) hgAfter(x, hc, "glGetAttachedShaders", [&] { return hgArgs(a_program, a_maxCount, a_count, a_shaders); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetAttachedShaders", [&] { return hgArgs(a_program, a_maxCount, a_count, a_shaders); });
 }
 int32_t hg_glGetAttribLocation(Ctx& x, uint32_t a_program, GuestPtr a_name) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetAttribLocation) { hgMissing(x, hc, "glGetAttribLocation"); return int32_t(); }
     auto r = hc->fn.glGetAttribLocation(a_program, static_cast<const char*>(HG_PTR(x, a_name)));
-    if (hgDebug) hgAfter(x, hc, "glGetAttribLocation", [&] { return hgArgs(a_program, a_name); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetAttribLocation", [&] { return hgArgs(a_program, a_name); });
     return r;
 }
 void hg_glGetFramebufferAttachmentParameteriv(Ctx& x, uint32_t a_target, uint32_t a_attachment, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetFramebufferAttachmentParameteriv) { hgMissing(x, hc, "glGetFramebufferAttachmentParameteriv"); return; }
     hc->fn.glGetFramebufferAttachmentParameteriv(a_target, a_attachment, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetFramebufferAttachmentParameteriv", [&] { return hgArgs(a_target, a_attachment, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetFramebufferAttachmentParameteriv", [&] { return hgArgs(a_target, a_attachment, a_pname, a_params); });
 }
 void hg_glGetProgramInfoLog(Ctx& x, uint32_t a_program, int32_t a_bufSize, GuestPtr a_length, GuestPtr a_infoLog) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetProgramInfoLog) { hgMissing(x, hc, "glGetProgramInfoLog"); return; }
     hc->fn.glGetProgramInfoLog(a_program, a_bufSize, HG_PTR(x, a_length), HG_PTR(x, a_infoLog));
-    if (hgDebug) hgAfter(x, hc, "glGetProgramInfoLog", [&] { return hgArgs(a_program, a_bufSize, a_length, a_infoLog); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetProgramInfoLog", [&] { return hgArgs(a_program, a_bufSize, a_length, a_infoLog); });
 }
 void hg_glGetProgramiv(Ctx& x, uint32_t a_program, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetProgramiv) { hgMissing(x, hc, "glGetProgramiv"); return; }
     hc->fn.glGetProgramiv(a_program, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetProgramiv", [&] { return hgArgs(a_program, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetProgramiv", [&] { return hgArgs(a_program, a_pname, a_params); });
 }
 void hg_glGetRenderbufferParameteriv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetRenderbufferParameteriv) { hgMissing(x, hc, "glGetRenderbufferParameteriv"); return; }
     hc->fn.glGetRenderbufferParameteriv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetRenderbufferParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetRenderbufferParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glGetShaderInfoLog(Ctx& x, uint32_t a_shader, int32_t a_bufSize, GuestPtr a_length, GuestPtr a_infoLog) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetShaderInfoLog) { hgMissing(x, hc, "glGetShaderInfoLog"); return; }
     hc->fn.glGetShaderInfoLog(a_shader, a_bufSize, HG_PTR(x, a_length), HG_PTR(x, a_infoLog));
-    if (hgDebug) hgAfter(x, hc, "glGetShaderInfoLog", [&] { return hgArgs(a_shader, a_bufSize, a_length, a_infoLog); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetShaderInfoLog", [&] { return hgArgs(a_shader, a_bufSize, a_length, a_infoLog); });
 }
 void hg_glGetShaderPrecisionFormat(Ctx& x, uint32_t a_shadertype, uint32_t a_precisiontype, GuestPtr a_range, GuestPtr a_precision) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetShaderPrecisionFormat) { hgMissing(x, hc, "glGetShaderPrecisionFormat"); return; }
     hc->fn.glGetShaderPrecisionFormat(a_shadertype, a_precisiontype, HG_PTR(x, a_range), HG_PTR(x, a_precision));
-    if (hgDebug) hgAfter(x, hc, "glGetShaderPrecisionFormat", [&] { return hgArgs(a_shadertype, a_precisiontype, a_range, a_precision); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetShaderPrecisionFormat", [&] { return hgArgs(a_shadertype, a_precisiontype, a_range, a_precision); });
 }
 void hg_glGetShaderSource(Ctx& x, uint32_t a_shader, int32_t a_bufSize, GuestPtr a_length, GuestPtr a_source) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetShaderSource) { hgMissing(x, hc, "glGetShaderSource"); return; }
     hc->fn.glGetShaderSource(a_shader, a_bufSize, HG_PTR(x, a_length), HG_PTR(x, a_source));
-    if (hgDebug) hgAfter(x, hc, "glGetShaderSource", [&] { return hgArgs(a_shader, a_bufSize, a_length, a_source); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetShaderSource", [&] { return hgArgs(a_shader, a_bufSize, a_length, a_source); });
 }
 void hg_glGetShaderiv(Ctx& x, uint32_t a_shader, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetShaderiv) { hgMissing(x, hc, "glGetShaderiv"); return; }
     hc->fn.glGetShaderiv(a_shader, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetShaderiv", [&] { return hgArgs(a_shader, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetShaderiv", [&] { return hgArgs(a_shader, a_pname, a_params); });
 }
 void hg_glGetUniformfv(Ctx& x, uint32_t a_program, int32_t a_location, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetUniformfv) { hgMissing(x, hc, "glGetUniformfv"); return; }
     hc->fn.glGetUniformfv(a_program, a_location, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetUniformfv", [&] { return hgArgs(a_program, a_location, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetUniformfv", [&] { return hgArgs(a_program, a_location, a_params); });
 }
 void hg_glGetUniformiv(Ctx& x, uint32_t a_program, int32_t a_location, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetUniformiv) { hgMissing(x, hc, "glGetUniformiv"); return; }
     hc->fn.glGetUniformiv(a_program, a_location, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetUniformiv", [&] { return hgArgs(a_program, a_location, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetUniformiv", [&] { return hgArgs(a_program, a_location, a_params); });
 }
 int32_t hg_glGetUniformLocation(Ctx& x, uint32_t a_program, GuestPtr a_name) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetUniformLocation) { hgMissing(x, hc, "glGetUniformLocation"); return int32_t(); }
     auto r = hc->fn.glGetUniformLocation(a_program, static_cast<const char*>(HG_PTR(x, a_name)));
-    if (hgDebug) hgAfter(x, hc, "glGetUniformLocation", [&] { return hgArgs(a_program, a_name); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetUniformLocation", [&] { return hgArgs(a_program, a_name); });
     return r;
 }
 void hg_glGetVertexAttribfv(Ctx& x, uint32_t a_index, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetVertexAttribfv) { hgMissing(x, hc, "glGetVertexAttribfv"); return; }
     hc->fn.glGetVertexAttribfv(a_index, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetVertexAttribfv", [&] { return hgArgs(a_index, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetVertexAttribfv", [&] { return hgArgs(a_index, a_pname, a_params); });
 }
 void hg_glGetVertexAttribiv(Ctx& x, uint32_t a_index, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetVertexAttribiv) { hgMissing(x, hc, "glGetVertexAttribiv"); return; }
     hc->fn.glGetVertexAttribiv(a_index, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetVertexAttribiv", [&] { return hgArgs(a_index, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetVertexAttribiv", [&] { return hgArgs(a_index, a_pname, a_params); });
 }
 bool hg_glIsFramebuffer(Ctx& x, uint32_t a_framebuffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsFramebuffer) { hgMissing(x, hc, "glIsFramebuffer"); return bool(); }
     auto r = hc->fn.glIsFramebuffer(a_framebuffer);
-    if (hgDebug) hgAfter(x, hc, "glIsFramebuffer", [&] { return hgArgs(a_framebuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsFramebuffer", [&] { return hgArgs(a_framebuffer); });
     return r != 0;
 }
 bool hg_glIsProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsProgram) { hgMissing(x, hc, "glIsProgram"); return bool(); }
     auto r = hc->fn.glIsProgram(a_program);
-    if (hgDebug) hgAfter(x, hc, "glIsProgram", [&] { return hgArgs(a_program); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsProgram", [&] { return hgArgs(a_program); });
     return r != 0;
 }
 bool hg_glIsRenderbuffer(Ctx& x, uint32_t a_renderbuffer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsRenderbuffer) { hgMissing(x, hc, "glIsRenderbuffer"); return bool(); }
     auto r = hc->fn.glIsRenderbuffer(a_renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glIsRenderbuffer", [&] { return hgArgs(a_renderbuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsRenderbuffer", [&] { return hgArgs(a_renderbuffer); });
     return r != 0;
 }
 bool hg_glIsShader(Ctx& x, uint32_t a_shader) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsShader) { hgMissing(x, hc, "glIsShader"); return bool(); }
     auto r = hc->fn.glIsShader(a_shader);
-    if (hgDebug) hgAfter(x, hc, "glIsShader", [&] { return hgArgs(a_shader); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsShader", [&] { return hgArgs(a_shader); });
     return r != 0;
 }
 void hg_glReleaseShaderCompiler(Ctx& x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glReleaseShaderCompiler) { hgMissing(x, hc, "glReleaseShaderCompiler"); return; }
     hc->fn.glReleaseShaderCompiler();
-    if (hgDebug) hgAfter(x, hc, "glReleaseShaderCompiler", [&] { return hgArgs(); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glReleaseShaderCompiler", [&] { return hgArgs(); });
 }
 void hg_glRenderbufferStorage(Ctx& x, uint32_t a_target, uint32_t a_internalformat, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glRenderbufferStorage) { hgMissing(x, hc, "glRenderbufferStorage"); return; }
     hc->fn.glRenderbufferStorage(a_target, a_internalformat, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glRenderbufferStorage", [&] { return hgArgs(a_target, a_internalformat, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glRenderbufferStorage", [&] { return hgArgs(a_target, a_internalformat, a_width, a_height); });
 }
 void hg_glShaderBinary(Ctx& x, int32_t a_count, GuestPtr a_shaders, uint32_t a_binaryformat, GuestPtr a_binary, int32_t a_length) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glShaderBinary) { hgMissing(x, hc, "glShaderBinary"); return; }
     hc->fn.glShaderBinary(a_count, HG_PTR(x, a_shaders), a_binaryformat, HG_PTR(x, a_binary), a_length);
-    if (hgDebug) hgAfter(x, hc, "glShaderBinary", [&] { return hgArgs(a_count, a_shaders, a_binaryformat, a_binary, a_length); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glShaderBinary", [&] { return hgArgs(a_count, a_shaders, a_binaryformat, a_binary, a_length); });
 }
 void hg_glStencilFuncSeparate(Ctx& x, uint32_t a_face, uint32_t a_func, int32_t a_ref, uint32_t a_mask) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glStencilFuncSeparate) { hgMissing(x, hc, "glStencilFuncSeparate"); return; }
     hc->fn.glStencilFuncSeparate(a_face, a_func, a_ref, a_mask);
-    if (hgDebug) hgAfter(x, hc, "glStencilFuncSeparate", [&] { return hgArgs(a_face, a_func, a_ref, a_mask); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glStencilFuncSeparate", [&] { return hgArgs(a_face, a_func, a_ref, a_mask); });
 }
 void hg_glStencilMaskSeparate(Ctx& x, uint32_t a_face, uint32_t a_mask) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glStencilMaskSeparate) { hgMissing(x, hc, "glStencilMaskSeparate"); return; }
     hc->fn.glStencilMaskSeparate(a_face, a_mask);
-    if (hgDebug) hgAfter(x, hc, "glStencilMaskSeparate", [&] { return hgArgs(a_face, a_mask); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glStencilMaskSeparate", [&] { return hgArgs(a_face, a_mask); });
 }
 void hg_glStencilOpSeparate(Ctx& x, uint32_t a_face, uint32_t a_sfail, uint32_t a_dpfail, uint32_t a_dppass) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glStencilOpSeparate) { hgMissing(x, hc, "glStencilOpSeparate"); return; }
     hc->fn.glStencilOpSeparate(a_face, a_sfail, a_dpfail, a_dppass);
-    if (hgDebug) hgAfter(x, hc, "glStencilOpSeparate", [&] { return hgArgs(a_face, a_sfail, a_dpfail, a_dppass); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glStencilOpSeparate", [&] { return hgArgs(a_face, a_sfail, a_dpfail, a_dppass); });
 }
 void hg_glUniform1f(Ctx& x, int32_t a_location, float a_v0) {
     HostContext* hc = hgCurrent(x);
@@ -1264,7 +1264,7 @@ void hg_glUniform1f(Ctx& x, int32_t a_location, float a_v0) {
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform1f(a_location, a_v0);
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform1f", [&] { return hgArgs(a_location, a_v0); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform1f", [&] { return hgArgs(a_location, a_v0); });
 }
 void hg_glUniform1fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1272,7 +1272,7 @@ void hg_glUniform1fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_val
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform1fv(a_location, a_count, HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform1fv", [&] { return hgArgs(a_location, a_count, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform1fv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform1i(Ctx& x, int32_t a_location, int32_t a_v0) {
     HostContext* hc = hgCurrent(x);
@@ -1280,7 +1280,7 @@ void hg_glUniform1i(Ctx& x, int32_t a_location, int32_t a_v0) {
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform1i(a_location, a_v0);
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform1i", [&] { return hgArgs(a_location, a_v0); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform1i", [&] { return hgArgs(a_location, a_v0); });
 }
 void hg_glUniform1iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1288,7 +1288,7 @@ void hg_glUniform1iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_val
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform1iv(a_location, a_count, HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform1iv", [&] { return hgArgs(a_location, a_count, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform1iv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform2f(Ctx& x, int32_t a_location, float a_v0, float a_v1) {
     HostContext* hc = hgCurrent(x);
@@ -1296,7 +1296,7 @@ void hg_glUniform2f(Ctx& x, int32_t a_location, float a_v0, float a_v1) {
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform2f(a_location, a_v0, a_v1);
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform2f", [&] { return hgArgs(a_location, a_v0, a_v1); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform2f", [&] { return hgArgs(a_location, a_v0, a_v1); });
 }
 void hg_glUniform2fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1304,7 +1304,7 @@ void hg_glUniform2fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_val
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform2fv(a_location, a_count, HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform2fv", [&] { return hgArgs(a_location, a_count, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform2fv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform2i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1) {
     HostContext* hc = hgCurrent(x);
@@ -1312,7 +1312,7 @@ void hg_glUniform2i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1) {
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform2i(a_location, a_v0, a_v1);
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform2i", [&] { return hgArgs(a_location, a_v0, a_v1); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform2i", [&] { return hgArgs(a_location, a_v0, a_v1); });
 }
 void hg_glUniform2iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1320,7 +1320,7 @@ void hg_glUniform2iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_val
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform2iv(a_location, a_count, HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform2iv", [&] { return hgArgs(a_location, a_count, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform2iv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform3f(Ctx& x, int32_t a_location, float a_v0, float a_v1, float a_v2) {
     HostContext* hc = hgCurrent(x);
@@ -1328,7 +1328,7 @@ void hg_glUniform3f(Ctx& x, int32_t a_location, float a_v0, float a_v1, float a_
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform3f(a_location, a_v0, a_v1, a_v2);
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform3f", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform3f", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2); });
 }
 void hg_glUniform3fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1336,7 +1336,7 @@ void hg_glUniform3fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_val
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform3fv(a_location, a_count, HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform3fv", [&] { return hgArgs(a_location, a_count, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform3fv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform3i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1, int32_t a_v2) {
     HostContext* hc = hgCurrent(x);
@@ -1344,7 +1344,7 @@ void hg_glUniform3i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1, int3
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform3i(a_location, a_v0, a_v1, a_v2);
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform3i", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform3i", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2); });
 }
 void hg_glUniform3iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1352,7 +1352,7 @@ void hg_glUniform3iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_val
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform3iv(a_location, a_count, HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform3iv", [&] { return hgArgs(a_location, a_count, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform3iv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform4f(Ctx& x, int32_t a_location, float a_v0, float a_v1, float a_v2, float a_v3) {
     HostContext* hc = hgCurrent(x);
@@ -1360,7 +1360,7 @@ void hg_glUniform4f(Ctx& x, int32_t a_location, float a_v0, float a_v1, float a_
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform4f(a_location, a_v0, a_v1, a_v2, a_v3);
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform4f", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2, a_v3); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform4f", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2, a_v3); });
 }
 void hg_glUniform4fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1368,7 +1368,7 @@ void hg_glUniform4fv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_val
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform4fv(a_location, a_count, HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform4fv", [&] { return hgArgs(a_location, a_count, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform4fv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniform4i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1, int32_t a_v2, int32_t a_v3) {
     HostContext* hc = hgCurrent(x);
@@ -1376,7 +1376,7 @@ void hg_glUniform4i(Ctx& x, int32_t a_location, int32_t a_v0, int32_t a_v1, int3
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform4i(a_location, a_v0, a_v1, a_v2, a_v3);
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform4i", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2, a_v3); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform4i", [&] { return hgArgs(a_location, a_v0, a_v1, a_v2, a_v3); });
 }
 void hg_glUniform4iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1384,7 +1384,7 @@ void hg_glUniform4iv(Ctx& x, int32_t a_location, int32_t a_count, GuestPtr a_val
     if (hc->currentProgram == 0) return;
     hc->fn.glUniform4iv(a_location, a_count, HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniform4iv", [&] { return hgArgs(a_location, a_count, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniform4iv", [&] { return hgArgs(a_location, a_count, a_value); });
 }
 void hg_glUniformMatrix2fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t a_transpose, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1392,7 +1392,7 @@ void hg_glUniformMatrix2fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t
     if (hc->currentProgram == 0) return;
     hc->fn.glUniformMatrix2fv(a_location, a_count, uint8_t(a_transpose & 0xFF), HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniformMatrix2fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniformMatrix2fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
 }
 void hg_glUniformMatrix3fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t a_transpose, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1400,7 +1400,7 @@ void hg_glUniformMatrix3fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t
     if (hc->currentProgram == 0) return;
     hc->fn.glUniformMatrix3fv(a_location, a_count, uint8_t(a_transpose & 0xFF), HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniformMatrix3fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniformMatrix3fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
 }
 void hg_glUniformMatrix4fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t a_transpose, GuestPtr a_value) {
     HostContext* hc = hgCurrent(x);
@@ -1408,286 +1408,286 @@ void hg_glUniformMatrix4fv(Ctx& x, int32_t a_location, int32_t a_count, uint32_t
     if (hc->currentProgram == 0) return;
     hc->fn.glUniformMatrix4fv(a_location, a_count, uint8_t(a_transpose & 0xFF), HG_PTR(x, a_value));
     hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glUniformMatrix4fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUniformMatrix4fv", [&] { return hgArgs(a_location, a_count, a_transpose, a_value); });
 }
 void hg_glValidateProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glValidateProgram) { hgMissing(x, hc, "glValidateProgram"); return; }
     hc->fn.glValidateProgram(a_program);
-    if (hgDebug) hgAfter(x, hc, "glValidateProgram", [&] { return hgArgs(a_program); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glValidateProgram", [&] { return hgArgs(a_program); });
 }
 void hg_glVertexAttrib1f(Ctx& x, uint32_t a_index, float a_x) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttrib1f) { hgMissing(x, hc, "glVertexAttrib1f"); return; }
     hc->fn.glVertexAttrib1f(a_index, a_x);
-    if (hgDebug) hgAfter(x, hc, "glVertexAttrib1f", [&] { return hgArgs(a_index, a_x); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttrib1f", [&] { return hgArgs(a_index, a_x); });
 }
 void hg_glVertexAttrib1fv(Ctx& x, uint32_t a_index, GuestPtr a_v) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttrib1fv) { hgMissing(x, hc, "glVertexAttrib1fv"); return; }
     hc->fn.glVertexAttrib1fv(a_index, HG_PTR(x, a_v));
-    if (hgDebug) hgAfter(x, hc, "glVertexAttrib1fv", [&] { return hgArgs(a_index, a_v); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttrib1fv", [&] { return hgArgs(a_index, a_v); });
 }
 void hg_glVertexAttrib2f(Ctx& x, uint32_t a_index, float a_x, float a_y) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttrib2f) { hgMissing(x, hc, "glVertexAttrib2f"); return; }
     hc->fn.glVertexAttrib2f(a_index, a_x, a_y);
-    if (hgDebug) hgAfter(x, hc, "glVertexAttrib2f", [&] { return hgArgs(a_index, a_x, a_y); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttrib2f", [&] { return hgArgs(a_index, a_x, a_y); });
 }
 void hg_glVertexAttrib2fv(Ctx& x, uint32_t a_index, GuestPtr a_v) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttrib2fv) { hgMissing(x, hc, "glVertexAttrib2fv"); return; }
     hc->fn.glVertexAttrib2fv(a_index, HG_PTR(x, a_v));
-    if (hgDebug) hgAfter(x, hc, "glVertexAttrib2fv", [&] { return hgArgs(a_index, a_v); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttrib2fv", [&] { return hgArgs(a_index, a_v); });
 }
 void hg_glVertexAttrib3f(Ctx& x, uint32_t a_index, float a_x, float a_y, float a_z) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttrib3f) { hgMissing(x, hc, "glVertexAttrib3f"); return; }
     hc->fn.glVertexAttrib3f(a_index, a_x, a_y, a_z);
-    if (hgDebug) hgAfter(x, hc, "glVertexAttrib3f", [&] { return hgArgs(a_index, a_x, a_y, a_z); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttrib3f", [&] { return hgArgs(a_index, a_x, a_y, a_z); });
 }
 void hg_glVertexAttrib3fv(Ctx& x, uint32_t a_index, GuestPtr a_v) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttrib3fv) { hgMissing(x, hc, "glVertexAttrib3fv"); return; }
     hc->fn.glVertexAttrib3fv(a_index, HG_PTR(x, a_v));
-    if (hgDebug) hgAfter(x, hc, "glVertexAttrib3fv", [&] { return hgArgs(a_index, a_v); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttrib3fv", [&] { return hgArgs(a_index, a_v); });
 }
 void hg_glVertexAttrib4f(Ctx& x, uint32_t a_index, float a_x, float a_y, float a_z, float a_w) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttrib4f) { hgMissing(x, hc, "glVertexAttrib4f"); return; }
     hc->fn.glVertexAttrib4f(a_index, a_x, a_y, a_z, a_w);
-    if (hgDebug) hgAfter(x, hc, "glVertexAttrib4f", [&] { return hgArgs(a_index, a_x, a_y, a_z, a_w); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttrib4f", [&] { return hgArgs(a_index, a_x, a_y, a_z, a_w); });
 }
 void hg_glVertexAttrib4fv(Ctx& x, uint32_t a_index, GuestPtr a_v) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttrib4fv) { hgMissing(x, hc, "glVertexAttrib4fv"); return; }
     hc->fn.glVertexAttrib4fv(a_index, HG_PTR(x, a_v));
-    if (hgDebug) hgAfter(x, hc, "glVertexAttrib4fv", [&] { return hgArgs(a_index, a_v); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttrib4fv", [&] { return hgArgs(a_index, a_v); });
 }
 void hg_glVertexAttribPointer(Ctx& x, uint32_t a_index, int32_t a_size, uint32_t a_type, uint32_t a_normalized, int32_t a_stride, GuestPtr a_pointer) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttribPointer) { hgMissing(x, hc, "glVertexAttribPointer"); return; }
     hc->fn.glVertexAttribPointer(a_index, a_size, a_type, uint8_t(a_normalized & 0xFF), a_stride, hgArrayPtr(x, a_pointer));
-    if (hgDebug) hgAfter(x, hc, "glVertexAttribPointer", [&] { return hgArgs(a_index, a_size, a_type, a_normalized, a_stride, a_pointer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttribPointer", [&] { return hgArgs(a_index, a_size, a_type, a_normalized, a_stride, a_pointer); });
 }
 void hg_glBindVertexArrayOES(Ctx& x, uint32_t a_array) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBindVertexArrayOES) { hgMissing(x, hc, "glBindVertexArrayOES"); return; }
     hc->fn.glBindVertexArrayOES(a_array);
-    if (hgDebug) hgAfter(x, hc, "glBindVertexArrayOES", [&] { return hgArgs(a_array); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindVertexArrayOES", [&] { return hgArgs(a_array); });
 }
 void hg_glDeleteVertexArraysOES(Ctx& x, int32_t a_n, GuestPtr a_arrays) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteVertexArraysOES) { hgMissing(x, hc, "glDeleteVertexArraysOES"); return; }
     hc->fn.glDeleteVertexArraysOES(a_n, HG_PTR(x, a_arrays));
-    if (hgDebug) hgAfter(x, hc, "glDeleteVertexArraysOES", [&] { return hgArgs(a_n, a_arrays); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteVertexArraysOES", [&] { return hgArgs(a_n, a_arrays); });
 }
 void hg_glGenVertexArraysOES(Ctx& x, int32_t a_n, GuestPtr a_arrays) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenVertexArraysOES) { hgMissing(x, hc, "glGenVertexArraysOES"); return; }
     hc->fn.glGenVertexArraysOES(a_n, HG_PTR(x, a_arrays));
-    if (hgDebug) hgAfter(x, hc, "glGenVertexArraysOES", [&] { return hgArgs(a_n, a_arrays); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenVertexArraysOES", [&] { return hgArgs(a_n, a_arrays); });
 }
 bool hg_glIsVertexArrayOES(Ctx& x, uint32_t a_array) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsVertexArrayOES) { hgMissing(x, hc, "glIsVertexArrayOES"); return bool(); }
     auto r = hc->fn.glIsVertexArrayOES(a_array);
-    if (hgDebug) hgAfter(x, hc, "glIsVertexArrayOES", [&] { return hgArgs(a_array); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsVertexArrayOES", [&] { return hgArgs(a_array); });
     return r != 0;
 }
 void hg_glDiscardFramebufferEXT(Ctx& x, uint32_t a_target, int32_t a_numAttachments, GuestPtr a_attachments) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDiscardFramebufferEXT) { hgMissing(x, hc, "glDiscardFramebufferEXT"); return; }
     hc->fn.glDiscardFramebufferEXT(a_target, a_numAttachments, HG_PTR(x, a_attachments));
-    if (hgDebug) hgAfter(x, hc, "glDiscardFramebufferEXT", [&] { return hgArgs(a_target, a_numAttachments, a_attachments); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDiscardFramebufferEXT", [&] { return hgArgs(a_target, a_numAttachments, a_attachments); });
 }
 void hg_glInvalidateFramebuffer(Ctx& x, uint32_t a_target, int32_t a_numAttachments, GuestPtr a_attachments) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glInvalidateFramebuffer) { hgMissing(x, hc, "glInvalidateFramebuffer"); return; }
     hc->fn.glInvalidateFramebuffer(a_target, a_numAttachments, HG_PTR(x, a_attachments));
-    if (hgDebug) hgAfter(x, hc, "glInvalidateFramebuffer", [&] { return hgArgs(a_target, a_numAttachments, a_attachments); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glInvalidateFramebuffer", [&] { return hgArgs(a_target, a_numAttachments, a_attachments); });
 }
 void hg_glRenderbufferStorageMultisampleAPPLE(Ctx& x, uint32_t a_target, int32_t a_samples, uint32_t a_internalformat, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glRenderbufferStorageMultisampleAPPLE) { hgMissing(x, hc, "glRenderbufferStorageMultisampleAPPLE"); return; }
     hc->fn.glRenderbufferStorageMultisampleAPPLE(a_target, a_samples, a_internalformat, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glRenderbufferStorageMultisampleAPPLE", [&] { return hgArgs(a_target, a_samples, a_internalformat, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glRenderbufferStorageMultisampleAPPLE", [&] { return hgArgs(a_target, a_samples, a_internalformat, a_width, a_height); });
 }
 void hg_glRenderbufferStorageMultisample(Ctx& x, uint32_t a_target, int32_t a_samples, uint32_t a_internalformat, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glRenderbufferStorageMultisample) { hgMissing(x, hc, "glRenderbufferStorageMultisample"); return; }
     hc->fn.glRenderbufferStorageMultisample(a_target, a_samples, a_internalformat, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glRenderbufferStorageMultisample", [&] { return hgArgs(a_target, a_samples, a_internalformat, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glRenderbufferStorageMultisample", [&] { return hgArgs(a_target, a_samples, a_internalformat, a_width, a_height); });
 }
 void hg_glRenderbufferStorageMultisampleEXT(Ctx& x, uint32_t a_target, int32_t a_samples, uint32_t a_internalformat, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glRenderbufferStorageMultisampleEXT) { hgMissing(x, hc, "glRenderbufferStorageMultisampleEXT"); return; }
     hc->fn.glRenderbufferStorageMultisampleEXT(a_target, a_samples, a_internalformat, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glRenderbufferStorageMultisampleEXT", [&] { return hgArgs(a_target, a_samples, a_internalformat, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glRenderbufferStorageMultisampleEXT", [&] { return hgArgs(a_target, a_samples, a_internalformat, a_width, a_height); });
 }
 void hg_glBlitFramebuffer(Ctx& x, int32_t a_srcX0, int32_t a_srcY0, int32_t a_srcX1, int32_t a_srcY1, int32_t a_dstX0, int32_t a_dstY0, int32_t a_dstX1, int32_t a_dstY1, uint32_t a_mask, uint32_t a_filter) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBlitFramebuffer) { hgMissing(x, hc, "glBlitFramebuffer"); return; }
     hc->fn.glBlitFramebuffer(a_srcX0, a_srcY0, a_srcX1, a_srcY1, a_dstX0, a_dstY0, a_dstX1, a_dstY1, a_mask, a_filter);
-    if (hgDebug) hgAfter(x, hc, "glBlitFramebuffer", [&] { return hgArgs(a_srcX0, a_srcY0, a_srcX1, a_srcY1, a_dstX0, a_dstY0, a_dstX1, a_dstY1, a_mask, a_filter); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBlitFramebuffer", [&] { return hgArgs(a_srcX0, a_srcY0, a_srcX1, a_srcY1, a_dstX0, a_dstY0, a_dstX1, a_dstY1, a_mask, a_filter); });
 }
 void hg_glTexStorage2D(Ctx& x, uint32_t a_target, int32_t a_levels, uint32_t a_internalformat, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexStorage2D) { hgMissing(x, hc, "glTexStorage2D"); return; }
     hc->fn.glTexStorage2D(a_target, a_levels, a_internalformat, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glTexStorage2D", [&] { return hgArgs(a_target, a_levels, a_internalformat, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexStorage2D", [&] { return hgArgs(a_target, a_levels, a_internalformat, a_width, a_height); });
 }
 void hg_glTexStorage2DEXT(Ctx& x, uint32_t a_target, int32_t a_levels, uint32_t a_internalformat, int32_t a_width, int32_t a_height) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glTexStorage2DEXT) { hgMissing(x, hc, "glTexStorage2DEXT"); return; }
     hc->fn.glTexStorage2DEXT(a_target, a_levels, a_internalformat, a_width, a_height);
-    if (hgDebug) hgAfter(x, hc, "glTexStorage2DEXT", [&] { return hgArgs(a_target, a_levels, a_internalformat, a_width, a_height); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glTexStorage2DEXT", [&] { return hgArgs(a_target, a_levels, a_internalformat, a_width, a_height); });
 }
 void hg_glDrawArraysInstanced(Ctx& x, uint32_t a_mode, int32_t a_first, int32_t a_count, int32_t a_instancecount) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawArraysInstanced) { hgMissing(x, hc, "glDrawArraysInstanced"); return; }
     hc->fn.glDrawArraysInstanced(a_mode, a_first, a_count, a_instancecount);
-    if (hgDebug) hgAfter(x, hc, "glDrawArraysInstanced", [&] { return hgArgs(a_mode, a_first, a_count, a_instancecount); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawArraysInstanced", [&] { return hgArgs(a_mode, a_first, a_count, a_instancecount); });
 }
 void hg_glDrawArraysInstancedEXT(Ctx& x, uint32_t a_mode, int32_t a_first, int32_t a_count, int32_t a_instancecount) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawArraysInstancedEXT) { hgMissing(x, hc, "glDrawArraysInstancedEXT"); return; }
     hc->fn.glDrawArraysInstancedEXT(a_mode, a_first, a_count, a_instancecount);
-    if (hgDebug) hgAfter(x, hc, "glDrawArraysInstancedEXT", [&] { return hgArgs(a_mode, a_first, a_count, a_instancecount); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawArraysInstancedEXT", [&] { return hgArgs(a_mode, a_first, a_count, a_instancecount); });
 }
 void hg_glDrawElementsInstanced(Ctx& x, uint32_t a_mode, int32_t a_count, uint32_t a_type, GuestPtr a_indices, int32_t a_instancecount) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawElementsInstanced) { hgMissing(x, hc, "glDrawElementsInstanced"); return; }
     hc->fn.glDrawElementsInstanced(a_mode, a_count, a_type, hgIndexPtr(x, a_indices), a_instancecount);
-    if (hgDebug) hgAfter(x, hc, "glDrawElementsInstanced", [&] { return hgArgs(a_mode, a_count, a_type, a_indices, a_instancecount); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawElementsInstanced", [&] { return hgArgs(a_mode, a_count, a_type, a_indices, a_instancecount); });
 }
 void hg_glDrawElementsInstancedEXT(Ctx& x, uint32_t a_mode, int32_t a_count, uint32_t a_type, GuestPtr a_indices, int32_t a_instancecount) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawElementsInstancedEXT) { hgMissing(x, hc, "glDrawElementsInstancedEXT"); return; }
     hc->fn.glDrawElementsInstancedEXT(a_mode, a_count, a_type, hgIndexPtr(x, a_indices), a_instancecount);
-    if (hgDebug) hgAfter(x, hc, "glDrawElementsInstancedEXT", [&] { return hgArgs(a_mode, a_count, a_type, a_indices, a_instancecount); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawElementsInstancedEXT", [&] { return hgArgs(a_mode, a_count, a_type, a_indices, a_instancecount); });
 }
 void hg_glVertexAttribDivisor(Ctx& x, uint32_t a_index, uint32_t a_divisor) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttribDivisor) { hgMissing(x, hc, "glVertexAttribDivisor"); return; }
     hc->fn.glVertexAttribDivisor(a_index, a_divisor);
-    if (hgDebug) hgAfter(x, hc, "glVertexAttribDivisor", [&] { return hgArgs(a_index, a_divisor); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttribDivisor", [&] { return hgArgs(a_index, a_divisor); });
 }
 void hg_glVertexAttribDivisorEXT(Ctx& x, uint32_t a_index, uint32_t a_divisor) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glVertexAttribDivisorEXT) { hgMissing(x, hc, "glVertexAttribDivisorEXT"); return; }
     hc->fn.glVertexAttribDivisorEXT(a_index, a_divisor);
-    if (hgDebug) hgAfter(x, hc, "glVertexAttribDivisorEXT", [&] { return hgArgs(a_index, a_divisor); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glVertexAttribDivisorEXT", [&] { return hgArgs(a_index, a_divisor); });
 }
 void hg_glCopyTextureLevelsAPPLE(Ctx& x, uint32_t a_dst, uint32_t a_src, int32_t a_srcBase, int32_t a_count) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glCopyTextureLevelsAPPLE) { hgMissing(x, hc, "glCopyTextureLevelsAPPLE"); return; }
     hc->fn.glCopyTextureLevelsAPPLE(a_dst, a_src, a_srcBase, a_count);
-    if (hgDebug) hgAfter(x, hc, "glCopyTextureLevelsAPPLE", [&] { return hgArgs(a_dst, a_src, a_srcBase, a_count); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glCopyTextureLevelsAPPLE", [&] { return hgArgs(a_dst, a_src, a_srcBase, a_count); });
 }
 void hg_glDrawBuffers(Ctx& x, int32_t a_n, GuestPtr a_bufs) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawBuffers) { hgMissing(x, hc, "glDrawBuffers"); return; }
     hc->fn.glDrawBuffers(a_n, HG_PTR(x, a_bufs));
-    if (hgDebug) hgAfter(x, hc, "glDrawBuffers", [&] { return hgArgs(a_n, a_bufs); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawBuffers", [&] { return hgArgs(a_n, a_bufs); });
 }
 void hg_glDrawBuffersEXT(Ctx& x, int32_t a_n, GuestPtr a_bufs) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDrawBuffersEXT) { hgMissing(x, hc, "glDrawBuffersEXT"); return; }
     hc->fn.glDrawBuffersEXT(a_n, HG_PTR(x, a_bufs));
-    if (hgDebug) hgAfter(x, hc, "glDrawBuffersEXT", [&] { return hgArgs(a_n, a_bufs); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDrawBuffersEXT", [&] { return hgArgs(a_n, a_bufs); });
 }
 void hg_glReadBuffer(Ctx& x, uint32_t a_src) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glReadBuffer) { hgMissing(x, hc, "glReadBuffer"); return; }
     hc->fn.glReadBuffer(a_src);
-    if (hgDebug) hgAfter(x, hc, "glReadBuffer", [&] { return hgArgs(a_src); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glReadBuffer", [&] { return hgArgs(a_src); });
 }
 void hg_glGenQueriesEXT(Ctx& x, int32_t a_n, GuestPtr a_ids) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenQueriesEXT) { hgMissing(x, hc, "glGenQueriesEXT"); return; }
     hc->fn.glGenQueriesEXT(a_n, HG_PTR(x, a_ids));
-    if (hgDebug) hgAfter(x, hc, "glGenQueriesEXT", [&] { return hgArgs(a_n, a_ids); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenQueriesEXT", [&] { return hgArgs(a_n, a_ids); });
 }
 void hg_glGenQueries(Ctx& x, int32_t a_n, GuestPtr a_ids) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGenQueries) { hgMissing(x, hc, "glGenQueries"); return; }
     hc->fn.glGenQueries(a_n, HG_PTR(x, a_ids));
-    if (hgDebug) hgAfter(x, hc, "glGenQueries", [&] { return hgArgs(a_n, a_ids); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGenQueries", [&] { return hgArgs(a_n, a_ids); });
 }
 void hg_glDeleteQueriesEXT(Ctx& x, int32_t a_n, GuestPtr a_ids) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteQueriesEXT) { hgMissing(x, hc, "glDeleteQueriesEXT"); return; }
     hc->fn.glDeleteQueriesEXT(a_n, HG_PTR(x, a_ids));
-    if (hgDebug) hgAfter(x, hc, "glDeleteQueriesEXT", [&] { return hgArgs(a_n, a_ids); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteQueriesEXT", [&] { return hgArgs(a_n, a_ids); });
 }
 void hg_glDeleteQueries(Ctx& x, int32_t a_n, GuestPtr a_ids) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glDeleteQueries) { hgMissing(x, hc, "glDeleteQueries"); return; }
     hc->fn.glDeleteQueries(a_n, HG_PTR(x, a_ids));
-    if (hgDebug) hgAfter(x, hc, "glDeleteQueries", [&] { return hgArgs(a_n, a_ids); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glDeleteQueries", [&] { return hgArgs(a_n, a_ids); });
 }
 bool hg_glIsQueryEXT(Ctx& x, uint32_t a_id) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsQueryEXT) { hgMissing(x, hc, "glIsQueryEXT"); return bool(); }
     auto r = hc->fn.glIsQueryEXT(a_id);
-    if (hgDebug) hgAfter(x, hc, "glIsQueryEXT", [&] { return hgArgs(a_id); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsQueryEXT", [&] { return hgArgs(a_id); });
     return r != 0;
 }
 bool hg_glIsQuery(Ctx& x, uint32_t a_id) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glIsQuery) { hgMissing(x, hc, "glIsQuery"); return bool(); }
     auto r = hc->fn.glIsQuery(a_id);
-    if (hgDebug) hgAfter(x, hc, "glIsQuery", [&] { return hgArgs(a_id); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glIsQuery", [&] { return hgArgs(a_id); });
     return r != 0;
 }
 void hg_glBeginQueryEXT(Ctx& x, uint32_t a_target, uint32_t a_id) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBeginQueryEXT) { hgMissing(x, hc, "glBeginQueryEXT"); return; }
     hc->fn.glBeginQueryEXT(a_target, a_id);
-    if (hgDebug) hgAfter(x, hc, "glBeginQueryEXT", [&] { return hgArgs(a_target, a_id); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBeginQueryEXT", [&] { return hgArgs(a_target, a_id); });
 }
 void hg_glBeginQuery(Ctx& x, uint32_t a_target, uint32_t a_id) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glBeginQuery) { hgMissing(x, hc, "glBeginQuery"); return; }
     hc->fn.glBeginQuery(a_target, a_id);
-    if (hgDebug) hgAfter(x, hc, "glBeginQuery", [&] { return hgArgs(a_target, a_id); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBeginQuery", [&] { return hgArgs(a_target, a_id); });
 }
 void hg_glEndQueryEXT(Ctx& x, uint32_t a_target) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glEndQueryEXT) { hgMissing(x, hc, "glEndQueryEXT"); return; }
     hc->fn.glEndQueryEXT(a_target);
-    if (hgDebug) hgAfter(x, hc, "glEndQueryEXT", [&] { return hgArgs(a_target); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glEndQueryEXT", [&] { return hgArgs(a_target); });
 }
 void hg_glEndQuery(Ctx& x, uint32_t a_target) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glEndQuery) { hgMissing(x, hc, "glEndQuery"); return; }
     hc->fn.glEndQuery(a_target);
-    if (hgDebug) hgAfter(x, hc, "glEndQuery", [&] { return hgArgs(a_target); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glEndQuery", [&] { return hgArgs(a_target); });
 }
 void hg_glGetQueryivEXT(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetQueryivEXT) { hgMissing(x, hc, "glGetQueryivEXT"); return; }
     hc->fn.glGetQueryivEXT(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetQueryivEXT", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetQueryivEXT", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glGetQueryiv(Ctx& x, uint32_t a_target, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetQueryiv) { hgMissing(x, hc, "glGetQueryiv"); return; }
     hc->fn.glGetQueryiv(a_target, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetQueryiv", [&] { return hgArgs(a_target, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetQueryiv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
 void hg_glGetQueryObjectuivEXT(Ctx& x, uint32_t a_id, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetQueryObjectuivEXT) { hgMissing(x, hc, "glGetQueryObjectuivEXT"); return; }
     hc->fn.glGetQueryObjectuivEXT(a_id, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetQueryObjectuivEXT", [&] { return hgArgs(a_id, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetQueryObjectuivEXT", [&] { return hgArgs(a_id, a_pname, a_params); });
 }
 void hg_glGetQueryObjectuiv(Ctx& x, uint32_t a_id, uint32_t a_pname, GuestPtr a_params) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetQueryObjectuiv) { hgMissing(x, hc, "glGetQueryObjectuiv"); return; }
     hc->fn.glGetQueryObjectuiv(a_id, a_pname, HG_PTR(x, a_params));
-    if (hgDebug) hgAfter(x, hc, "glGetQueryObjectuiv", [&] { return hgArgs(a_id, a_pname, a_params); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glGetQueryObjectuiv", [&] { return hgArgs(a_id, a_pname, a_params); });
 }
 #endif
 

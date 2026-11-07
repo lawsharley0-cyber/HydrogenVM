@@ -28,6 +28,8 @@ struct BatchTestOptions: Codable, Sendable {
     /// Start the game a second time on the data the first run saved (catches save-file crashes).
     var relaunchEnabled: Bool = true
     var relaunchTime: Int = 12
+    /// GPU runs: check every GL call for errors and count draw calls (explains black screens).
+    var glTrace: Bool = true
 
     init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false, exploreEnabled: Bool = true, exploreTime: Int = 30, relaunchEnabled: Bool = true) {
         self.secondsPerApp = secondsPerApp
@@ -50,6 +52,7 @@ struct BatchTestOptions: Codable, Sendable {
         exploreTime = try c.decodeIfPresent(Int.self, forKey: .exploreTime) ?? 30
         relaunchEnabled = try c.decodeIfPresent(Bool.self, forKey: .relaunchEnabled) ?? true
         relaunchTime = try c.decodeIfPresent(Int.self, forKey: .relaunchTime) ?? 12
+        glTrace = try c.decodeIfPresent(Bool.self, forKey: .glTrace) ?? true
     }
 }
 
@@ -106,6 +109,8 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
     var checks: [BatchCheck]? = nil
     /// Last engine counters (audio mixer, off-screen frames, missing APIs).
     var diagnostics: BatchDiagnostics? = nil
+    /// GPU runs with GL tracing: the first distinct GL errors, "call -> 0xCODE [main|worker]".
+    var glErrorLog: [String]? = nil
 
     var worstCheck: BatchCheck.Status? {
         guard let checks else { return nil }
@@ -328,6 +333,7 @@ final class BatchTestRunner {
     @ObservationIgnored private var lastTotalPresented: UInt64 = 0
     /// Engine counters, copied every second while the game runs (they vanish when it stops).
     @ObservationIgnored private var lastDiag: BatchDiagnostics?
+    @ObservationIgnored private var lastGLErrors: [String] = []
     @ObservationIgnored private var missingLines: [String] = []
     @ObservationIgnored private var audioDecodeFailures: [String] = []
 
@@ -460,6 +466,7 @@ final class BatchTestRunner {
         lastP95 = 0
         lastTotalPresented = 0
         lastDiag = nil
+        lastGLErrors = []
         missingLines = []
         audioDecodeFailures = []
         frameCount = 0
@@ -506,6 +513,7 @@ final class BatchTestRunner {
                 s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: testHome.path(percentEncoded: false))
                 s.keepGoing = self.options.keepGoing
                 s.useGPU = target.useGPU
+                s.glTrace = target.useGPU && self.options.glTrace
                 self.activeSession = s
 
                 // The bridge delivers every callback on the main queue (see RunModel).
@@ -549,6 +557,7 @@ final class BatchTestRunner {
                         self.lastP95 = s.frameTimeP95Milliseconds
                         if presented > 0 { self.lastTotalPresented = presented }
                         if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
+                        self.lastGLErrors = s.glErrorLog   // this session's log; reset per game
                     }
                 }
 
@@ -666,6 +675,7 @@ final class BatchTestRunner {
             var closedGracefully: Bool? = nil
             if !exitBox.exited && self.status == .running {
                 if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
+                self.lastGLErrors = s.glErrorLog   // errors from the last second before closing
                 self.activeSession?.stopGracefully()
                 let gracefulDeadline = Date().addingTimeInterval(4.0)
                 while Date() < gracefulDeadline && !exitBox.exited {
@@ -768,6 +778,7 @@ final class BatchTestRunner {
             obs.relaunchSummary = relaunch?.summary
             obs.missingLines = self.missingLines
             obs.audioDecodeFailures = self.audioDecodeFailures
+            if target.useGPU && self.options.glTrace { obs.glErrorLog = self.lastGLErrors }
             let checks = BatchCheckBuilder.build(obs)
 
             let appResult = BatchAppResult(
@@ -792,6 +803,7 @@ final class BatchTestRunner {
             var finished = appResult
             finished.checks = checks
             finished.diagnostics = self.lastDiag
+            if !self.lastGLErrors.isEmpty { finished.glErrorLog = self.lastGLErrors }
             if isCrashed, let bundle = self.activeSession?.crashBundle, let data = bundle.data(using: .utf8),
                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let files = json["fileHistory"],
                let filesData = try? JSONSerialization.data(withJSONObject: files) {
@@ -847,6 +859,7 @@ final class BatchTestRunner {
             s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
             s.keepGoing = options.keepGoing
             s.useGPU = target.useGPU
+            s.glTrace = target.useGPU && options.glTrace
             activeSession = s
             s.onFrame = { [weak self] img in
                 MainActor.assumeIsolated {
@@ -973,6 +986,7 @@ final class BatchTestRunner {
                let parsed = try? JSONSerialization.jsonObject(with: data) { dict["checks"] = parsed }
             if let diag = r.diagnostics, let data = try? JSONEncoder().encode(diag),
                let parsed = try? JSONSerialization.jsonObject(with: data) { dict["diagnostics"] = parsed }
+            if let gl = r.glErrorLog { dict["glErrorLog"] = gl }
 
             if let explore = r.explore {
                 if let expData = try? JSONEncoder().encode(explore),
@@ -1007,7 +1021,8 @@ final class BatchTestRunner {
                 "keepGoing": options.keepGoing,
                 "explore": options.exploreEnabled,
                 "exploreSeconds": options.exploreTime,
-                "relaunch": options.relaunchEnabled
+                "relaunch": options.relaunchEnabled,
+                "glTrace": options.glTrace
             ],
             "suites": [
                 "apps": [
@@ -1086,6 +1101,9 @@ final class BatchTestRunner {
                 for c in r.checks ?? [] {
                     md += "- \(c.emoji) **\(c.name):** \(c.detail.replacingOccurrences(of: "|", with: "\\|"))\n"
                 }
+                if let gl = r.glErrorLog, !gl.isEmpty {
+                    md += "- GL errors: " + gl.prefix(8).map { "`\($0)`" }.joined(separator: ", ") + "\n"
+                }
             }
         }
 
@@ -1103,6 +1121,34 @@ final class BatchTestRunner {
         let mdText = buildMarkdownReport()
         let mdURL = Self.reportsDir.appending(path: "latest_batch_report.md")
         try? mdText.write(to: mdURL, atomically: true, encoding: .utf8)
+    }
+
+    /// One folder with everything from the last run, for "Save to Files" / AirDrop:
+    /// report.json and report.md, the screenshots, and per-game logs and crash reports.
+    /// Saved into the desktop's test_ipa folder, it is what the desktop bench compares.
+    func exportBundle() throws -> URL {
+        let fm = FileManager.default
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let root = fm.temporaryDirectory.appending(path: "HydrogenVM-test-\(stamp)", directoryHint: .isDirectory)
+        try? fm.removeItem(at: root)
+        try fm.createDirectory(at: root.appending(path: "logs", directoryHint: .isDirectory), withIntermediateDirectories: true)
+        // Written from the current results, never copied from an older saved report.
+        let json = try JSONSerialization.data(withJSONObject: buildCompatReportJSON(), options: [.prettyPrinted, .sortedKeys])
+        try json.write(to: root.appending(path: "report.json"), options: .atomic)
+        try buildMarkdownReport().write(to: root.appending(path: "report.md"), atomically: true, encoding: .utf8)
+        if fm.fileExists(atPath: Self.thumbnailsDir.path(percentEncoded: false)) {
+            try fm.copyItem(at: Self.thumbnailsDir, to: root.appending(path: "thumbnails", directoryHint: .isDirectory))
+        }
+        for r in results {
+            // Bundle IDs come from the game's Info.plist: keep only filename-safe characters.
+            let safe = "\(r.bundleId)_\(r.mode)".map { $0.isLetter || $0.isNumber || "._-".contains($0) ? $0 : "_" }
+            let name = String(safe).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            var text = r.logs
+            if let crash = r.crashReport { text += "\n\n==== crash report ====\n" + crash }
+            if let gl = r.glErrorLog, !gl.isEmpty { text += "\n\n==== GL errors ====\n" + gl.joined(separator: "\n") }
+            try text.write(to: root.appending(path: "logs/\(name).log"), atomically: true, encoding: .utf8)
+        }
+        return root
     }
 
     func consoleIssueURL(for result: BatchAppResult) -> URL {

@@ -163,6 +163,19 @@ class TestUnityMonoChecklist(unittest.TestCase):
         keys = [item["key"] for item in found]
         self.assertTrue(any("Manifest asset" in k for k in keys))
 
+    def test_gpu_gl_trace_issues(self):
+        # A GPU run's GL error log and frames presented without any draw call are reported.
+        rep = {"mixer": {}, "perf": {"framesPresented": 30},
+               "gl": {"errors": 2, "draws": 0, "errorLog": ["glClear -> 0x0506 [worker]", "glDrawArrays -> 0x0506 [worker]"]}}
+        found = hvm_probe.issues_from(rep, "", Path("/nonexistent"), False)
+        gl = [i for i in found if i["kind"] == "gl-error"]
+        self.assertEqual([i["text"] for i in gl], rep["gl"]["errorLog"])
+        self.assertTrue(all(i["severity"] >= 40 for i in gl))
+        self.assertTrue(any(i["kind"] == "gl-nodraw" for i in found))
+        rep["gl"] = {"errors": 0, "draws": 500, "errorLog": []}
+        found = hvm_probe.issues_from(rep, "", Path("/nonexistent"), False)
+        self.assertFalse(any(i["kind"].startswith("gl-") for i in found))
+
     def test_log_checks_run_when_no_report_was_written(self):
         found = hvm_probe.issues_from(None, "AudioQueue: unsupported format 0x1234\n", Path("/nonexistent"), False)
         kinds = {item["kind"] for item in found}

@@ -442,6 +442,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const std::string bundle = _bundlePath.UTF8String, home = _homePath.UTF8String;
     const bool keepGoing = _keepGoing;
     const bool useGPU = _useGPU;
+    const bool glTrace = _glTrace;
 
     auto flushLogs = [core, weakSelf]() {
         std::vector<std::pair<std::string, RT::LogLevel>> batch;
@@ -474,6 +475,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         } catch (...) {
             cfg.offlineClash = false;
         }
+        cfg.glTrace = glTrace;
         if (useGPU) {
             // GLES runs on the GPU through OpenGLES.framework; the host layer is
             // handed to the player view, which puts it under the UIKit overlay.
@@ -676,7 +678,18 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         @"offscreenPresents": @(pf.offscreenPresents.load()), @"faultsToApp": @(pf.faultsToApp.load()),
         @"missingCount": @(p->missingCount()), @"framesPresented": @(pf.framesPresented.load()),
         @"timeToFirstFrameMs": @(ttff == ~uint64_t{0} ? -1.0 : double(ttff) / 1e6),
+        @"glErrors": @(pf.glErrors.load()), @"glDraws": @(pf.glDraws.load()),
+        @"glEmptyPresents": @(pf.glEmptyPresents.load()), @"glLastFrameDraws": @(pf.glLastFrameDraws.load()),
     };
+}
+
+- (NSArray<NSString *> *)glErrorLog {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return @[];
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    for (const auto& line : p->glErrorLog()) [out addObject:str(line)];
+    return out;
 }
 
 - (uint64_t)framesPresented {

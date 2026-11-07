@@ -39,7 +39,8 @@ HOME = Path.home()
 
 # Severity: higher is worse. Fix from the top.
 SEV = {'load': 100, 'crash': 100, 'hang': 90, 'picture': 80, 'offscreen': 70, 'error': 60,
-       'fault': 50, 'close': 45, 'missing': 40, 'unimplemented': 30, 'warning': 20, 'silent': 10}
+       'fault': 50, 'close': 45, 'gl-error': 42, 'missing': 40, 'gl-nodraw': 35, 'unimplemented': 30,
+       'warning': 20, 'silent': 10}
 
 
 def norm(text):
@@ -207,6 +208,11 @@ def issues_from(rep, log_text, shot, timed_out):
             add('picture', f'screen stays {sig}')
     if (rep.get('display') or {}).get('offscreenPresents', 0):
         add('offscreen', 'GL frames presented to a layer that is not in a visible window')
+    gl = rep.get('gl') or {}
+    for line in (gl.get('errorLog') or [])[:8]:
+        add('gl-error', line)
+    if gl and frames and not gl.get('draws', 0):
+        add('gl-nodraw', 'frames presented but no GL draw call was made')
     if (rep.get('display') or {}).get('faultsToApp', 0):
         add('fault', 'memory faults passed to the game\'s own signal handler')
     for e in rep.get('errors') or []:
@@ -355,7 +361,7 @@ def probe_one(args, ipa, mode):
     cmd = [args.hvm, 'run', str(app), '--home', str(home), '--run-for', str(args.seconds), '--keep-going',
            '--graceful', '--report', str(run_dir / 'report.json'), '--screenshot', str(run_dir / 'shot.png')]
     if mode == 'gpu':
-        cmd.append('--gpu')
+        cmd += ['--gpu', '--gl-trace']   # GL errors with the call that raised them, draw counts
     if args.launches > 1:
         cmd += ['--launches', str(args.launches)]
     cmd += script
