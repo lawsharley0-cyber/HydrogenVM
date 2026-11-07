@@ -584,6 +584,13 @@ void registerLibStdcxx(Process& p) {
     p.def<&fb_open>(sym(fb, "4openEPKcSt13_Ios_Openmode"));
     p.def<&fb_close>(sym(fb, "5closeEv"));
     p.def<&fb_isOpen>("__ZNKSt13basic_filebufIcSt11char_traitsIcEE7is_openEv");
+    // ifstream/ofstream::is_open(): the filebuf member is at +8; fstream's at +16.
+    for (const char* cls : {in, out}) {
+        p.def<+[](Ctx& x, GuestPtr self) -> bool { return fb_isOpen(x, self + 8); }>(sym(cls, "7is_openEv"));
+        p.def<+[](Ctx& x, GuestPtr self) -> bool { return fb_isOpen(x, self + 8); }>(std::string("__ZNK") + cls + "7is_openEv");
+    }
+    p.def<+[](Ctx& x, GuestPtr self) -> bool { return fb_isOpen(x, self + 16); }>(sym(io, "7is_openEv"));
+    p.def<+[](Ctx& x, GuestPtr self) -> bool { return fb_isOpen(x, self + 16); }>(std::string("__ZNK") + io + "7is_openEv");
 
     // std::__basic_file<char>
     p.def<&bfile_ctor>("__ZNSt12__basic_fileIcEC1EP15__gthread_mutex");

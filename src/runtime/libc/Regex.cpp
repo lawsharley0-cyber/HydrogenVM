@@ -1148,7 +1148,10 @@ int32_t r_regexec(Ctx& x, GuestPtr preg, GuestPtr text, uint32_t nmatch, GuestPt
 
 } // namespace
 
+void registerIcuRegex(Process& p);
+
 void registerLibcRegex(Process& p) {
+    registerIcuRegex(p);
     p.def<&r_regcomp>("_regcomp");
     p.def<&r_regexec>("_regexec");
     p.def<&r_regerror>("_regerror");

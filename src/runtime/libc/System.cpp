@@ -688,6 +688,22 @@ int32_t f_fstat(Ctx& x, int32_t fd, GuestPtr out) {
 int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+// symlink(target, linkpath). An absolute guest target is stored relative to the
+// link's directory, so the host resolves it inside the sandbox as the guest
+// would, and readlink still names the same guest file. Relative targets are kept.
+int32_t f_symlink(Ctx& x, GuestPtr target, GuestPtr linkPath) {
+    if (!target || !linkPath) { setErrno(x, EFAULT); return -1; }
+    std::string to = x.proc.readCString(target);
+    const std::string link = x.proc.hostPath(x.proc.readCString(linkPath));
+    if (to.empty()) { setErrno(x, ENOENT); return -1; }
+    if (to[0] == '/') {
+        const std::filesystem::path hostTo = x.proc.hostPath(to);
+        const std::filesystem::path dir = std::filesystem::path(link).parent_path();
+        to = hostTo.lexically_relative(dir).string();
+        if (to.empty()) { setErrno(x, EINVAL); return -1; }
+    }
+    return ::symlink(to.c_str(), link.c_str()) < 0 ? failD<int32_t>(x) : 0;
+}
 int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
 // The working directory is the guest's own (it starts at "/", as on iOS), never the
 // host process's: every guest shares one host process, and relative guest paths are
@@ -1172,6 +1188,7 @@ void registerLibcSystem(Process& p) {
     p.def<&f_mkdir>("_mkdir");
     p.def<&f_rmdir>("_rmdir");
     p.def<&f_unlink>("_unlink");
+    supportDef<&f_symlink>(p, "_symlink", SupportStatus::Real, "Host symlink in the sandbox; absolute guest targets are stored relative to the link");
     p.def<&f_chdir>("_chdir");
     p.def<&f_getcwd>("_getcwd");
     p.def<&f_chmod>("_chmod");

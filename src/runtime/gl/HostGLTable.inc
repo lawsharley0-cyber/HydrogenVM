@@ -451,13 +451,6 @@ void hg_glGetBufferParameteriv(Ctx& x, uint32_t a_target, uint32_t a_pname, Gues
     hc->fn.glGetBufferParameteriv(a_target, a_pname, HG_PTR(x, a_params));
     if (hgDebug) hgAfter(x, hc, "glGetBufferParameteriv", [&] { return hgArgs(a_target, a_pname, a_params); });
 }
-uint32_t hg_glGetError(Ctx& x) {
-    HostContext* hc = hgCurrent(x);
-    if (!hc || !hc->fn.glGetError) { hgMissing(x, hc, "glGetError"); return uint32_t(); }
-    auto r = hc->fn.glGetError();
-    if (hgDebug) hgAfter(x, hc, "glGetError", [&] { return hgArgs(); });
-    return r;
-}
 void hg_glGetFloatv(Ctx& x, uint32_t a_pname, GuestPtr a_data) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !hc->fn.glGetFloatv) { hgMissing(x, hc, "glGetFloatv"); return; }

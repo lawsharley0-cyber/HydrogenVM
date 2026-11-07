@@ -13,6 +13,8 @@
 // the app's own inline fast paths may still modify unshared buffers in place.
 #include "runtime/Process.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace Hydrogen::Runtime {
@@ -132,6 +134,22 @@ uint32_t m_insertBuf(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s, uint32_t n
     v.insert(pos, bytes(x, s, n));
     set(x, self, v);
     return self;
+}
+// insert(pos, const char*): Hungry Shark built strings with it; the stub left them short and a
+// later insert(pos, str, pos2, n) then threw out_of_range.
+uint32_t m_insertCStr(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s) {
+    const std::string add = s ? x.proc.readCString(s) : std::string();
+    return m_insertBuf(x, self, pos, s, uint32_t(add.size()));
+}
+uint32_t m_erase(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n);
+// erase(first, last) with iterators (char*): returns an iterator to the same position in the
+// (possibly new) buffer.
+uint32_t m_eraseRange(Ctx& x, GuestPtr self, uint32_t first, uint32_t last) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    const uint32_t size = len(x, d);
+    if (first < d || last < first || last > d + size) outOfRange("basic_string::erase");
+    m_erase(x, self, first - d, last - first);
+    return x.mem.read<uint32_t>(self) + (first - d);
 }
 uint32_t m_insertSub(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr other, uint32_t pos2, uint32_t n) {
     std::string v = value(x, self);
@@ -300,6 +318,27 @@ uint32_t q_findFirstNotOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, ui
     const size_t r = value(x, self).find_first_not_of(bytes(x, s, n), pos);
     return r == std::string::npos ? kNpos : uint32_t(r);
 }
+// The find_*_of overloads libstdc++ 4.2 declares inline but some builds still
+// import: (const char*, pos), (const string&, pos) and (char, pos).
+enum class FindOp { FirstOf, LastOf, FirstNotOf, LastNotOf };
+template <FindOp op> uint32_t findSet(const std::string& v, const std::string& set, uint32_t pos) {
+    const size_t p = pos == kNpos ? std::string::npos : pos;
+    size_t r = std::string::npos;
+    if constexpr (op == FindOp::FirstOf) r = v.find_first_of(set, p);
+    else if constexpr (op == FindOp::LastOf) r = v.find_last_of(set, p);
+    else if constexpr (op == FindOp::FirstNotOf) r = v.find_first_not_of(set, p);
+    else r = v.find_last_not_of(set, p);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
+template <FindOp op> uint32_t q_findSetC(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos) {
+    return findSet<op>(value(x, self), s ? x.proc.readCString(s) : std::string(), pos);
+}
+template <FindOp op> uint32_t q_findSetStr(Ctx& x, GuestPtr self, GuestPtr o, uint32_t pos) {
+    return findSet<op>(value(x, self), value(x, o), pos);
+}
+template <FindOp op> uint32_t q_findSetChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
+    return findSet<op>(value(x, self), std::string(1, char(c)), pos);
+}
 uint32_t q_findFirstNotOfChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
     const size_t r = value(x, self).find_first_not_of(char(c), pos);
     return r == std::string::npos ? kNpos : uint32_t(r);
@@ -467,6 +506,24 @@ uint32_t wm_insertSub(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr other, uint3
     v.insert(pos, o.substr(pos2, clip(uint32_t(o.size()), pos2, n)));
     wset(x, self, v);
     return self;
+}
+uint32_t wm_erase(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n);
+// _M_replace_aux(pos, n1, n2, c) for wchar_t: append(n, c), insert(pos, n, c), resize grow
+// (PopCap's XML parser in PvZ uses them; the stub broke parsing resources.xml).
+uint32_t wm_replaceAux(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, uint32_t n2, uint32_t c) {
+    std::u32string v = wvalue(x, self);
+    checkPos(pos, uint32_t(v.size()), "basic_string<wchar_t>::_M_replace_aux");
+    v.replace(pos, clip(uint32_t(v.size()), pos, n1), std::u32string(n2, char32_t(c)));
+    wset(x, self, v);
+    return self;
+}
+// erase(first, last) with iterators (wchar_t*, 4 bytes each).
+uint32_t wm_eraseRange(Ctx& x, GuestPtr self, uint32_t first, uint32_t last) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    const uint32_t size = len(x, d);
+    if (first < d || last < first || last > d + size * 4 || (first - d) % 4 || (last - first) % 4) outOfRange("basic_string<wchar_t>::erase");
+    wm_erase(x, self, (first - d) / 4, (last - first) / 4);
+    return x.mem.read<uint32_t>(self) + (first - d);
 }
 uint32_t wm_erase(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n) {
     std::u32string v = wvalue(x, self);
@@ -848,7 +905,21 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&m_insertBuf>("__ZNSs6insertEmPKcm");
     p.def<&m_insertSub>("__ZNSs6insertEmRKSsmm");
     p.def<&m_erase>("__ZNSs5eraseEmm");
+    p.def<&m_insertCStr>("__ZNSs6insertEmPKc");
+    p.def<&m_eraseRange>("__ZNSs5eraseEN9__gnu_cxx17__normal_iteratorIPcSsEES2_");
     p.def<&m_replace>("__ZNSs7replaceEmmPKcm");
+    // _M_ibegin()/_M_iend() const: iterators are char*; the length is at data - 12.
+    p.def<+[](Ctx& x, GuestPtr self) -> uint32_t { return x.mem.read<uint32_t>(self); }>("__ZNKSs9_M_ibeginEv");
+    p.def<+[](Ctx& x, GuestPtr self) -> uint32_t {
+        const uint32_t d = x.mem.read<uint32_t>(self);
+        return d + x.mem.read<uint32_t>(d - 12);
+    }>("__ZNKSs7_M_iendEv");
+    // replace(iterator i1, iterator i2, const char* k1, const char* k2)
+    p.def<+[](Ctx& x, GuestPtr self, uint32_t i1, uint32_t i2, GuestPtr k1, GuestPtr k2) -> uint32_t {
+        const uint32_t d = x.mem.read<uint32_t>(self);
+        if (i1 < d || i2 < i1 || k2 < k1) return self;
+        return m_replace(x, self, i1 - d, i2 - i1, k1, k2 - k1);
+    }>("__ZNSs7replaceEN9__gnu_cxx17__normal_iteratorIPcSsEES2_PKcS4_");
     p.def<&m_replaceAux>("__ZNSs14_M_replace_auxEmmmc");
     p.def<&m_replace>("__ZNSs15_M_replace_safeEmmPKcm");
     p.def<&m_mutate>("__ZNSs9_M_mutateEmmm");
@@ -904,11 +975,22 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&q_findFirstNotOfBuf>("__ZNKSs17find_first_not_ofEPKcmm");
     p.def<&q_findFirstNotOfChar>("__ZNKSs17find_first_not_ofEcm");
     p.def<&q_findLastNotOfBuf>("__ZNKSs16find_last_not_ofEPKcmm");
+    p.def<&q_findSetC<FindOp::FirstOf>>("__ZNKSs13find_first_ofEPKcm");
+    p.def<&q_findSetStr<FindOp::FirstOf>>("__ZNKSs13find_first_ofERKSsm");
+    p.def<&q_findSetChar<FindOp::FirstOf>>("__ZNKSs13find_first_ofEcm");
+    p.def<&q_findSetC<FindOp::LastOf>>("__ZNKSs12find_last_ofEPKcm");
+    p.def<&q_findSetStr<FindOp::LastOf>>("__ZNKSs12find_last_ofERKSsm");
+    p.def<&q_findSetChar<FindOp::LastOf>>("__ZNKSs12find_last_ofEcm");
+    p.def<&q_findSetC<FindOp::FirstNotOf>>("__ZNKSs17find_first_not_ofEPKcm");
+    p.def<&q_findSetStr<FindOp::FirstNotOf>>("__ZNKSs17find_first_not_ofERKSsm");
+    p.def<&q_findSetC<FindOp::LastNotOf>>("__ZNKSs16find_last_not_ofEPKcm");
+    p.def<&q_findSetStr<FindOp::LastNotOf>>("__ZNKSs16find_last_not_ofERKSsm");
+    p.def<&q_findSetChar<FindOp::LastNotOf>>("__ZNKSs16find_last_not_ofEcm");
     p.def<&q_compareC>("__ZNKSs7compareEPKc");
     p.def<&q_compareStr>("__ZNKSs7compareERKSs");
     p.def<&q_compareSubStr>("__ZNKSs7compareEmmRKSs");
     p.def<&q_compareSubC>("__ZNKSs7compareEmmPKc");
-    p.def<&q_copy>("_ZNKSs4copyEPcmm");
+    p.def<&q_copy>("__ZNKSs4copyEPcmm");
     p.defineFunction("__ZNKSs6substrEmm", [](Ctx& x) { q_substr(x); });
     p.def<&r_create>("__ZNSs4_Rep9_S_createEmmRKSaIcE");
     p.def<&r_dispose>("__ZNSs4_Rep10_M_disposeERKSaIcE");
@@ -948,6 +1030,8 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&wm_insertBuf>("__ZNSbIwSt11char_traitsIwESaIwEE6insertEmPKwm");
     p.def<&wm_insertSub>("__ZNSbIwSt11char_traitsIwESaIwEE6insertEmRKS2_mm");
     p.def<&wm_erase>("__ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm");
+    p.def<&wm_replaceAux>("__ZNSbIwSt11char_traitsIwESaIwEE14_M_replace_auxEmmmw");
+    p.def<&wm_eraseRange>("__ZNSbIwSt11char_traitsIwESaIwEE5eraseEN9__gnu_cxx17__normal_iteratorIPwS2_EES6_");
     p.def<&wm_replace>("__ZNSbIwSt11char_traitsIwESaIwEE7replaceEmmPKwm");
     p.def<&wm_replace>("__ZNSbIwSt11char_traitsIwESaIwEE15_M_replace_safeEmmPKwm");
     p.def<&wm_mutate>("__ZNSbIwSt11char_traitsIwESaIwEE9_M_mutateEmmm");
@@ -1062,6 +1146,24 @@ void registerLibStdcxxContainers(Process& p) {
     p.mem().write<uint32_t>(vtBadAlloc + 8, fnBadAllocD1);
     p.mem().write<uint32_t>(vtBadAlloc + 12, fnBadAllocD0);
     p.mem().write<uint32_t>(vtBadAlloc + 16, fnBadAllocWhat);
+
+    // std::bad_exception and std::bad_cast: { 0, typeinfo, D1, D0, what }, like bad_alloc.
+    const uint32_t vtBadExc = p.defineDataBlock("__ZTVSt13bad_exception", 32);
+    const uint32_t fnBadExcD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt13bad_exceptionD1Ev");
+    p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt13bad_exceptionD2Ev");
+    const uint32_t fnBadExcD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt13bad_exceptionD0Ev");
+    const uint32_t fnBadExcWhat = p.def<+[](Ctx& x, uint32_t) -> uint32_t { return x.proc.internCString("std::bad_exception"); }>("__ZNKSt13bad_exception4whatEv");
+    p.mem().write<uint32_t>(vtBadExc + 8, fnBadExcD1);
+    p.mem().write<uint32_t>(vtBadExc + 12, fnBadExcD0);
+    p.mem().write<uint32_t>(vtBadExc + 16, fnBadExcWhat);
+    const uint32_t vtBadCast = p.defineDataBlock("__ZTVSt8bad_cast", 32);
+    const uint32_t fnBadCastD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt8bad_castD1Ev");
+    p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt8bad_castD2Ev");
+    const uint32_t fnBadCastD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt8bad_castD0Ev");
+    const uint32_t fnBadCastWhat = p.def<+[](Ctx& x, uint32_t) -> uint32_t { return x.proc.internCString("std::bad_cast"); }>("__ZNKSt8bad_cast4whatEv");
+    p.mem().write<uint32_t>(vtBadCast + 8, fnBadCastD1);
+    p.mem().write<uint32_t>(vtBadCast + 12, fnBadCastD0);
+    p.mem().write<uint32_t>(vtBadCast + 16, fnBadCastWhat);
 }
 
 } // namespace Hydrogen::Runtime

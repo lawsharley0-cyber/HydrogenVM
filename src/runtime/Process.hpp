@@ -342,7 +342,7 @@ public:
     // relative path such as "var/mobile/Applications/.../Game.app/data.bin" (some engines
     // drop the leading slash when they join paths) names a file in the app.
     std::string guestCwd() const { std::lock_guard<std::mutex> lk(cwdMu_); return guestCwd_; }
-    void setGuestCwd(std::string cwd) { std::lock_guard<std::mutex> lk(cwdMu_); guestCwd_ = std::move(cwd); }
+    void setGuestCwd(std::string cwd) { std::lock_guard<std::mutex> lk(cwdMu_); guestCwd_ = std::move(cwd); cwdSetByApp_ = guestCwd_ != "/"; }
     // A guest path made absolute against the working directory (unchanged when already absolute).
     std::string absoluteGuestPath(const std::string& path) const;
     const std::string& guestBundlePath() const { return guestBundlePath_; }
@@ -412,6 +412,7 @@ private:
     std::string guestHomePath_, guestBundlePath_, guestExecutablePath_;
     mutable std::mutex cwdMu_;
     std::string guestCwd_ = "/";
+    bool cwdSetByApp_ = false;
 
     std::unordered_map<std::string, uint32_t> symbols_;
     std::vector<MissingSymbolResolver> missingResolvers_;
