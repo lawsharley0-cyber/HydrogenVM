@@ -338,14 +338,20 @@ void runBind(Ctx& cx, const uint8_t* p, size_t n, bool lazy, bool weak) {
     }
 }
 
+// Work limits for one trie of n bytes. Real tries need far less: ROBLOX (5.2 MB trie,
+// 136,494 nodes) copies 11.7 MB of names, Infinity Blade (1.9 MB, 66,059 nodes) 3.3 MB.
+size_t exportTrieVisitLimit(size_t n) { return std::max<size_t>(65536, n); }
+size_t exportTrieByteLimit(size_t n) { return std::max<size_t>(size_t(16) << 20, n * 16); }
+
 void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const std::string& prefix, uint32_t depth,
-                    std::unordered_set<uint64_t>& activePath, size_t& steps) {
+                    std::unordered_set<uint64_t>& activePath, size_t& steps, size_t& bytes) {
     if (depth > 256 || nodeOff >= n) return;
     // A tree visits each node once, and every node takes at least two bytes, so a real
     // trie of n bytes needs fewer than n visits. Big games (Infinity Blade: 66,059 nodes;
-    // ROBLOX: 136,494) exceed a fixed 65,536. The cap stays linear in the input, so a
-    // hostile trie that shares nodes to make the walk exponential still stops here.
-    if (steps >= std::max<size_t>(65536, n)) throw MachOError("Mach-O: export trie work limit exceeded");
+    // ROBLOX: 136,494) exceed a fixed 65,536. Both caps stay linear in the input: visits,
+    // so a hostile trie that shares nodes cannot make the walk exponential, and bytes of
+    // names built, so shared nodes behind long edges cannot make each visit cost O(n).
+    if (steps >= exportTrieVisitLimit(n)) throw MachOError("Mach-O: export trie work limit exceeded");
     if (!activePath.insert(nodeOff).second) throw MachOError("Mach-O: export trie cycle detected");
     ++steps;
     struct Guard {
@@ -377,7 +383,9 @@ void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const
         const std::string edge = cs.cstr();
         const uint64_t childOff = cs.uleb();
         if (childOff >= n) throw MachOError("Mach-O: export trie child offset out of range");
-        walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1, activePath, steps);
+        bytes += prefix.size() + edge.size();
+        if (bytes > exportTrieByteLimit(n)) throw MachOError("Mach-O: export trie work limit exceeded");
+        walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1, activePath, steps, bytes);
     }
 }
 
@@ -657,8 +665,8 @@ Image loadMachO(Memory::GuestArena& mem, const std::vector<uint8_t>& file, const
         if (dyldInfo->weak_bind_size) runBind(cx, stream(dyldInfo->weak_bind_off, dyldInfo->weak_bind_size), dyldInfo->weak_bind_size, false, true);
         if (dyldInfo->export_size) {
             std::unordered_set<uint64_t> activePath;
-            size_t steps = 0;
-            walkExportTrie(cx, stream(dyldInfo->export_off, dyldInfo->export_size), dyldInfo->export_size, 0, "", 0, activePath, steps);
+            size_t steps = 0, bytes = 0;
+            walkExportTrie(cx, stream(dyldInfo->export_off, dyldInfo->export_size), dyldInfo->export_size, 0, "", 0, activePath, steps, bytes);
         }
     } else {
         legacyBinds(cx);

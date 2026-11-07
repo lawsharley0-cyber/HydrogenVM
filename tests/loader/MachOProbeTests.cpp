@@ -291,6 +291,30 @@ int main() {
             shared.insert(shared.end(), {0, 0});          // the leaf
             checkTrie("export_trie_shared_nodes_hit_work_limit", shared, "export trie work limit exceeded");
         }
+        // Few visits but long edges into shared nodes: the root and a middle node each have
+        // 255 children with 250-byte edges, all pointing at the same next node. That is about
+        // 65,000 visits (under the visit cap for this 130 KB trie) building 32 MB of names.
+        // The byte budget, also linear in the trie size, stops it.
+        {
+            Bytes longEdges;
+            const size_t children = 255, edgeLen = 250, nodeSize = 2 + children * (edgeLen + 1 + 3);
+            auto uleb3 = [&](size_t v) {
+                longEdges.push_back(uint8_t((v & 0x7f) | 0x80));
+                longEdges.push_back(uint8_t(((v >> 7) & 0x7f) | 0x80));
+                longEdges.push_back(uint8_t(v >> 14));
+            };
+            for (size_t node = 0; node < 2; ++node) {
+                longEdges.push_back(0);
+                longEdges.push_back(uint8_t(children));
+                for (size_t c = 0; c < children; ++c) {
+                    longEdges.insert(longEdges.end(), edgeLen, uint8_t('a' + c % 26));
+                    longEdges.push_back(0);
+                    uleb3((node + 1) * nodeSize);
+                }
+            }
+            longEdges.insert(longEdges.end(), {0, 0});
+            checkTrie("export_trie_long_shared_edges_hit_byte_limit", longEdges, "export trie work limit exceeded");
+        }
         checkTrie("export_trie_cycle", {0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00}, "export trie cycle detected");
     }
 
