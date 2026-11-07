@@ -1003,6 +1003,27 @@ int runFullSubsystemTests() {
         invalid &= Audio::decode(stereo.data(), stereo.size()).stereoPcm.empty();
         check(invalid, "IMA WAV rejects invalid step indices, oversized fact counts and truncated data");
     }
+    // A CAF whose codec this build cannot decode (AAC without a host decoder) opens as
+    // silence of the packet table's length instead of failing: Fruit Ninja ignores the
+    // open error and builds its music queue from an uninitialised struct.
+    {
+        std::vector<uint8_t> v;
+        auto text = [&](const char* s) { v.insert(v.end(), s, s + 4); };
+        auto be32 = [&](uint32_t n) { for (int i = 3; i >= 0; --i) v.push_back(uint8_t(n >> (i * 8))); };
+        auto be64 = [&](uint64_t n) { be32(uint32_t(n >> 32)); be32(uint32_t(n)); };
+        text("caff"); v.push_back(0); v.push_back(1); v.push_back(0); v.push_back(0);
+        text("desc"); be64(32);
+        double rate = 22050; uint64_t rateBits; std::memcpy(&rateBits, &rate, 8); be64(rateBits);
+        text("aac "); be32(0); be32(0); be32(1024); be32(2); be32(0);
+        text("pakt"); be64(24); be64(3); be64(3000); be32(2112); be32(960);
+        text("data"); be64(4 + 30); be32(0); for (int i = 0; i < 30; ++i) v.push_back(uint8_t(i * 7));
+        const auto d = Audio::decode(v.data(), v.size());
+        const bool silent = d.silent && d.codec == 0x61616320 && d.sampleRate == 22050 && d.channels == 2 &&
+                            d.stereoPcm.size() == 6000 && std::all_of(d.stereoPcm.begin(), d.stereoPcm.end(), [](int16_t s) { return s == 0; }) &&
+                            std::abs(d.duration - 3000.0 / 22050) < 1e-9;
+        if (!silent) std::printf("    AAC CAF: silent %d codec %08x rate %d channels %d samples %zu\n", d.silent, d.codec, d.sampleRate, d.channels, d.stereoPcm.size());
+        check(silent, "a CAF in a codec this build cannot decode opens as silence of its real length");
+    }
     {
         int sockets[2];
         const bool opened = socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0;
@@ -2423,6 +2444,35 @@ int runFullSubsystemTests() {
             tables=retained && call(weak,"count")==0 && call(weakMap,"count")==0 && !call(weakMap,"objectForKey:",{key});
         }
         check(tables,"NSHashTable/NSMapTable retain strong entries and zero weak entries on release");
+        // Other NSPointerFunctions options games pass (Crossy Road stopped at launch on one):
+        // object-pointer keys compare by identity, opaque values are stored as is (never
+        // retained or zeroed), C-string keys compare by contents, copy-in keys are copied.
+        bool tableOptions=false;
+        if(r.getClass("NSMapTable")) {
+            auto mapCls=r.getClass("NSMapTable");
+            auto identity=call(mapCls,"mapTableWithKeyOptions:valueOptions:",{0x200,0x102});
+            const auto k1=makeString(cx,"same",true), k2=makeString(cx,"same",true);
+            const uint32_t keyRC=call(k1,"retainCount");
+            call(identity,"setObject:forKey:",{0x1234,k1});
+            const bool byIdentity=call(identity,"objectForKey:",{k1})==0x1234 && call(identity,"objectForKey:",{k2})==0 &&
+                                  call(k1,"retainCount")==keyRC+1;
+            auto cstrings=call(mapCls,"mapTableWithKeyOptions:valueOptions:",{0x302,0});
+            const uint32_t a=proc.heap().allocZeroed(8), b=proc.heap().allocZeroed(8);
+            proc.mem().write<uint32_t>(a,0x00636261); proc.mem().write<uint32_t>(b,0x00636261);   // "abc"
+            const auto value=r.createInstance(r.nsObject);
+            call(cstrings,"setObject:forKey:",{value,a});
+            const bool byContents=call(cstrings,"objectForKey:",{b})==value && call(value,"retainCount")==2;
+            auto copying=call(mapCls,"mapTableWithKeyOptions:valueOptions:",{0x10000,0});
+            const auto mutableKey=call(call(r.getClass("NSMutableString"),"alloc"),"initWithString:",{makeString(cx,"k1",true)});
+            call(copying,"setObject:forKey:",{value,mutableKey});
+            call(mutableKey,"appendString:",{makeString(cx,"-changed",true)});
+            const bool copied=call(copying,"objectForKey:",{makeString(cx,"k1",true)})==value;
+            bool refused=false;
+            try{ call(mapCls,"mapTableWithKeyOptions:valueOptions:",{0x400,0}); }catch(const std::exception&){ refused=true; }
+            tableOptions=byIdentity && byContents && copied && refused;
+            if(!tableOptions) std::printf("    NSMapTable options: identity %d contents %d copy-in %d struct refused %d\n",byIdentity,byContents,copied,refused);
+        }
+        check(tableOptions,"NSMapTable object-pointer, opaque, C-string and copy-in options");
         bool attributed=false;
         if(r.getClass("NSMutableAttributedString")) {
             auto object=call(r.createInstance(r.getClass("NSMutableAttributedString")),"initWithString:attributes:",{makeString(cx,std::u16string(u"A\U0001f600B")),makeDict(cx,{{key,makeNumberInt(cx,1)}})});
@@ -3196,6 +3246,61 @@ int runFullSubsystemTests() {
         check(called && intact, "CTLineGetOffsetForStringIndex leaves a read-only secondaryOffset page untouched");
     }
 
+    // The guest's working directory starts at "/" as on iOS: a path without its leading
+    // slash still names a file in the app (Fruit Ninja's file manager joins paths that
+    // way and opened nothing, then sized its file table from ftell's -1). chdir/getcwd
+    // change the guest's directory, never the host process's.
+    {
+        const std::string hostCwdBefore = std::filesystem::current_path().string();
+        const std::string guestBundle = cx.proc.guestPath(cx.proc.bundlePath());
+        const bool relativeBundle = cx.proc.hostPath(guestBundle.substr(1) + "/data.bin") == cx.proc.bundlePath() + "/data.bin" &&
+                                    cx.proc.guestCwd() == "/";
+        bool changed = false, failedOnFile = false;
+        if (const auto chdirSym = proc.lookupSymbol("_chdir"), getcwdSym = proc.lookupSymbol("_getcwd"); chdirSym && getcwdSym) {
+            std::error_code ec;
+            std::filesystem::create_directories(cx.proc.homePath() + "/Documents", ec);
+            const uint32_t home = cx.proc.allocCString(cx.proc.guestHomePath());
+            const int32_t rc = int32_t(cx.proc.callGuest(cpu, *chdirSym, {home}));
+            const uint32_t buf = proc.heap().allocZeroed(1024);
+            const uint32_t got = cx.proc.callGuest(cpu, *getcwdSym, {buf, 1024});
+            changed = rc == 0 && got == buf && cx.proc.readCString(buf) == cx.proc.guestHomePath() &&
+                      cx.proc.hostPath("Documents") == cx.proc.homePath() + "/Documents" &&
+                      std::filesystem::current_path().string() == hostCwdBefore;
+            // A file is not a directory: chdir fails and the directory stays put.
+            const std::string file = cx.proc.homePath() + "/Documents/cwd-file";
+            { std::ofstream(file) << "x"; }
+            const uint32_t filePath = cx.proc.allocCString(cx.proc.guestHomePath() + "/Documents/cwd-file");
+            failedOnFile = int32_t(cx.proc.callGuest(cpu, *chdirSym, {filePath})) == -1 && cx.proc.guestCwd() == cx.proc.guestHomePath();
+            std::filesystem::remove(file, ec);
+            cx.proc.setGuestCwd("/");
+        }
+        if (!(relativeBundle && changed && failedOnFile))
+            std::printf("    cwd: relative bundle %d chdir/getcwd %d file refused %d\n", relativeBundle, changed, failedOnFile);
+        check(relativeBundle && changed && failedOnFile, "guest working directory starts at /; chdir/getcwd are the guest's own");
+    }
+
+    // UIViewController has the rotation and appearance hooks engines copy encodings from
+    // (Unity's ObjCSetKnownInstanceMethod asserts on a NULL Method).
+    {
+        bool all = false;
+        const auto getMethod = proc.lookupSymbol("_class_getInstanceMethod"), encoding = proc.lookupSymbol("_method_getTypeEncoding");
+        if (getMethod && encoding) {
+            all = true;
+            const std::pair<const char*, const char*> expected[] = {
+                {"willRotateToInterfaceOrientation:duration:", "v@:id"}, {"didRotateFromInterfaceOrientation:", "v@:i"},
+                {"willAnimateRotationToInterfaceOrientation:duration:", "v@:id"},
+                {"viewWillTransitionToSize:withTransitionCoordinator:", "v@:{CGSize=ff}@"},
+                {"preferredStatusBarUpdateAnimation", "i@:"}, {"prefersHomeIndicatorAutoHidden", "c@:"},
+                {"childViewControllerForStatusBarHidden", "@@:"}, {"childViewControllerForStatusBarStyle", "@@:"}};
+            for (const auto& [name, types] : expected) {
+                const uint32_t m = cx.proc.callGuest(cpu, *getMethod, {uint32_t(r.getClass("UIViewController")), uint32_t(r.sel(name))});
+                const std::string got = m ? cx.proc.readCString(cx.proc.callGuest(cpu, *encoding, {m})) : "(no method)";
+                if (got != types) { std::printf("    UIViewController %s: %s\n", name, got.c_str()); all = false; }
+            }
+        }
+        check(all, "UIViewController has rotation and status-bar hooks with their type encodings");
+    }
+
     // NIB loading: ~iphone before the base name, and a real exception when the
     // file is missing or cannot be decoded. Landscape/Portrait are not modifiers.
     {
@@ -3230,6 +3335,23 @@ int runFullSubsystemTests() {
             std::printf("missing NIB raised: %s\n", missing.empty() ? "(returned nil)" : missing.c_str());
         check(isNibException(missing, "DefinitelyMissingNibThatDoesntExist"),
               "loadNibNamed:owner:options: missing NIB raises NSInternalInconsistencyException");
+
+        // An app built with an iPhone OS 2/3 SDK gets nil instead (OpenFeint falls back on
+        // nil from "<name>LandscapeOf"; Fruit Ninja stopped at launch on the exception).
+        {
+            const Plist::Value* was = cx.proc.infoPlist();
+            Plist::ValuePtr saved = was ? std::make_shared<Plist::Value>(*was) : nullptr;
+            Plist::ValuePtr old = Plist::Value::makeDict();
+            old->set("DTSDKName", Plist::Value::makeString("iphoneos2.2.1"));
+            cx.proc.setInfoPlist(old);
+            const int sdk = cx.proc.linkedSdkMajor();
+            const std::string oldMissing = nibFailure("RootControllerLandscapeOf");
+            old->set("DTSDKName", Plist::Value::makeString("iphoneos4.0"));
+            const std::string newMissing = nibFailure("RootControllerLandscapeOf");
+            cx.proc.setInfoPlist(saved);
+            check(sdk == 2 && oldMissing.empty() && isNibException(newMissing, "RootControllerLandscapeOf"),
+                  "loadNibNamed: missing NIB returns nil for an app built with SDK 2/3, raises for SDK 4");
+        }
 
         // A real, minimal NIBArchive: root -> NSArray -> NSString. This must
         // decode a known object. A missing or malformed name raises instead.
@@ -5436,6 +5558,34 @@ int runFullSubsystemTests() {
               proc.mem().read<uint64_t>(fileOut + 16) == 4410 && proc.mem().read<uint32_t>(fileOut + 24) == 12 &&
               proc.mem().read<uint32_t>(fileOut + 28) == 3 && std::memcmp(proc.mem().host(pcmOut), wav.data() + 44, 12) == 0,
               "AudioFileOpenURL decoded LPCM packets retain sample bytes and packet/byte counts");
+        // The packet table is answered, and a property AudioFile does not have is an error
+        // that leaves the caller's buffer alone (Fruit Ninja sized a 1.7 GB buffer from the
+        // garbage a silent "success" left behind). AudioQueue refuses such a buffer.
+        {
+            const uint32_t io = proc.heap().allocZeroed(32);
+            proc.mem().write<uint32_t>(io, 16);
+            for (uint32_t i = 0; i < 4; ++i) proc.mem().write<uint32_t>(io + 4 + i * 4, 0x6D757369);
+            const auto tableStatus = audioCall("_AudioFileGetProperty", {fileID, 0x706E666F, io, io + 4});
+            const bool table = tableStatus == 0 && proc.mem().read<uint64_t>(io + 4) == 4410 &&
+                               proc.mem().read<uint32_t>(io + 12) == 0 && proc.mem().read<uint32_t>(io + 16) == 0;
+            proc.mem().write<uint32_t>(io, 4);
+            proc.mem().write<uint32_t>(io + 20, 0x6D757369);
+            const auto unknownStatus = audioCall("_AudioFileGetProperty", {fileID, 0x6D676963 /* 'mgic' */, io, io + 20});
+            const auto infoStatus = audioCall("_AudioFileGetPropertyInfo", {fileID, 0x6D676963, io, 0});
+            const bool unknown = unknownStatus == 0x7074793F && infoStatus == 0x7074793F && proc.mem().read<uint32_t>(io + 20) == 0x6D757369;
+            const uint32_t queueOut = proc.heap().allocZeroed(8), asbd = proc.heap().allocZeroed(40);
+            proc.mem().write<double>(asbd, 44100.0);
+            proc.mem().write<uint32_t>(asbd + 28, 2);
+            proc.mem().write<uint32_t>(asbd + 32, 16);
+            audioCall("_AudioQueueNewOutput", {asbd, 0, 0, 0, 0, 0, queueOut});
+            const uint32_t q = proc.mem().read<uint32_t>(queueOut);
+            const auto hugeStatus = audioCall("_AudioQueueAllocateBuffer", {q, 0x6973756D, queueOut + 4});
+            audioCall("_AudioQueueDispose", {q, 1});
+            if (!(table && unknown && hugeStatus == uint32_t(-108)))
+                std::printf("    AudioFile: pnfo %d (%x) unknown %x/%x huge buffer %d\n", table, tableStatus, unknownStatus, infoStatus, int32_t(hugeStatus));
+            check(table && unknown && hugeStatus == uint32_t(-108),
+                  "AudioFile answers the packet table, fails unknown properties, AudioQueue refuses a huge buffer");
+        }
         audioCall("_AudioFileClose", {fileID});
         std::filesystem::remove(filePath);
 

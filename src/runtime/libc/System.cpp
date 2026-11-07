@@ -689,11 +689,19 @@ int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.h
 int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_chdir(Ctx& x, GuestPtr path) { return ::chdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+// The working directory is the guest's own (it starts at "/", as on iOS), never the
+// host process's: every guest shares one host process, and relative guest paths are
+// resolved against it by Process::hostPath.
+int32_t f_chdir(Ctx& x, GuestPtr path) {
+    const std::string guest = x.proc.absoluteGuestPath(x.proc.readCString(path));
+    struct stat st{};
+    if (guest.empty() || ::stat(x.proc.hostPath(guest).c_str(), &st) < 0) return failD<int32_t>(x);
+    if (!S_ISDIR(st.st_mode)) { setErrno(x, ENOTDIR); return -1; }
+    x.proc.setGuestCwd(guest);
+    return 0;
+}
 uint32_t f_getcwd(Ctx& x, GuestPtr buf, uint32_t size) {
-    char tmp[4096];
-    if (!::getcwd(tmp, sizeof tmp)) return failD<uint32_t>(x, 0);
-    const std::string s = x.proc.guestPath(tmp);
+    const std::string s = x.proc.guestCwd();
     if (!buf) return x.proc.allocCString(s);
     if (size < s.size() + 1) { setErrno(x, ERANGE); return 0; }
     x.mem.copyIn(buf, s.c_str(), s.size() + 1);

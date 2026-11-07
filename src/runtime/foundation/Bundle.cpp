@@ -1029,8 +1029,15 @@ bool fm_deletable(Ctx& x, id, SEL, id p) {
     const std::string parent = fs::path(P(x, p)).parent_path().string();
     return ::access(parent.empty() ? "." : parent.c_str(), W_OK) == 0;
 }
-id fm_currentDir(Ctx& x, id, SEL) { std::error_code ec; return makeString(x, x.proc.guestPath(fs::current_path(ec).string())); }
-bool fm_changeDir(Ctx& x, id, SEL, id p) { return ::chdir(P(x, p).c_str()) == 0; }
+// The guest's own working directory (see Process::guestCwd), shared with chdir/getcwd.
+id fm_currentDir(Ctx& x, id, SEL) { return makeString(x, x.proc.guestCwd()); }
+bool fm_changeDir(Ctx& x, id, SEL, id p) {
+    if (!p) return false;
+    const std::string guest = x.proc.absoluteGuestPath(utf8(x, p));
+    if (guest.empty() || !isDirPath(x.proc.hostPath(guest))) return false;
+    x.proc.setGuestCwd(guest);
+    return true;
+}
 id fm_urlsForDirectory(Ctx& x, id, SEL, uint32_t dir, uint32_t mask) {
     std::vector<id> out;
     for (auto& s : searchPaths(x, dir, mask, true)) out.push_back(newURL(x, fileURLString(s, true), 0));

@@ -533,7 +533,18 @@ id b_loadNib(Ctx& x, id self, SEL, id name, id owner, id options) {
     const std::string nameStr = name ? utf8(x, name) : "";
     // A missing file raises before loadNib's "not found" warning. That warning is
     // for callers that treat a missing nib as nil; this method does not.
-    if (nibPath(x, nameStr, self).empty()) raiseNibLoadFailure(x, self, nameStr);
+    if (nibPath(x, nameStr, self).empty()) {
+        // Games of the iPhone OS 2/3 era rely on a missing nib coming back nil: OpenFeint
+        // (Fruit Ninja and others) asks for "<name>LandscapeOf" first, ships no such file
+        // for some screens, catches nothing and falls back to "<name>Of" on nil. So apps
+        // built with an SDK before iOS 4 get nil and a warning; newer ones get the exception.
+        const int sdk = x.proc.linkedSdkMajor();
+        if (sdk > 0 && sdk < 4) {
+            x.proc.logf(LogLevel::Warning, "loadNibNamed: no nib named %s; returning nil (app built with SDK %d)", nameStr.c_str(), sdk);
+            return 0;
+        }
+        raiseNibLoadFailure(x, self, nameStr);
+    }
     const id r = loadNib(x, nameStr, self, owner, externals);
     if (!r) raiseNibLoadFailure(x, self, nameStr);
     return r;

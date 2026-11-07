@@ -478,10 +478,8 @@ bool legacyLifecycle(Process& p) {
     const Plist::Value* info = p.infoPlist();
     if (!info) return false;
     if (const Plist::Value* e = info->get("UIApplicationExitsOnSuspend"); e && e->type == Plist::Value::Type::Bool && e->b) return true;
-    const std::string sdk = info->getString("DTSDKName");   // e.g. "iphoneos3.1"
-    size_t i = 0;
-    while (i < sdk.size() && !std::isdigit(uint8_t(sdk[i]))) ++i;
-    return i < sdk.size() && std::atoi(sdk.c_str() + i) < 4;
+    const int sdk = p.linkedSdkMajor();
+    return sdk > 0 && sdk < 4;
 }
 void deliverLifecycle(Ctx& x, const char* delegateSel, const char* note) {
     auto& u = ui(x);

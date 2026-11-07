@@ -251,6 +251,11 @@ public:
     std::optional<uint32_t> guestExports(const std::string& symbol) const;
     const std::unordered_map<std::string, uint32_t>& guestExports() const { return guestExports_; }
     const Plist::Value* infoPlist() const { return infoPlist_.get(); }
+    // Replaces the app's Info.plist (tests use it to stand in for an installed app).
+    void setInfoPlist(Plist::ValuePtr info) { infoPlist_ = std::move(info); }
+    // The major version of the iOS SDK the app was built with: DTSDKName "iphoneos3.1" -> 3.
+    // 0 when Info.plist does not say. Old SDKs get some of the behaviour iOS kept for them.
+    int linkedSdkMajor() const;
 
     // Type-indexed services (ObjC runtime, Foundation state, ...).
     template <typename T> T& service() {
@@ -333,6 +338,13 @@ public:
     const std::string& executablePath() const { return executablePath_; }
 
     const std::string& guestHomePath() const { return guestHomePath_; }
+    // The guest's working directory, as a guest path. An iOS app starts in "/", so a
+    // relative path such as "var/mobile/Applications/.../Game.app/data.bin" (some engines
+    // drop the leading slash when they join paths) names a file in the app.
+    std::string guestCwd() const { std::lock_guard<std::mutex> lk(cwdMu_); return guestCwd_; }
+    void setGuestCwd(std::string cwd) { std::lock_guard<std::mutex> lk(cwdMu_); guestCwd_ = std::move(cwd); }
+    // A guest path made absolute against the working directory (unchanged when already absolute).
+    std::string absoluteGuestPath(const std::string& path) const;
     const std::string& guestBundlePath() const { return guestBundlePath_; }
     const std::string& guestExecutablePath() const { return guestExecutablePath_; }
 
@@ -398,6 +410,8 @@ private:
     Plist::ValuePtr infoPlist_;
     std::string homePath_, executablePath_;
     std::string guestHomePath_, guestBundlePath_, guestExecutablePath_;
+    mutable std::mutex cwdMu_;
+    std::string guestCwd_ = "/";
 
     std::unordered_map<std::string, uint32_t> symbols_;
     std::vector<MissingSymbolResolver> missingResolvers_;

@@ -269,26 +269,41 @@ void filter(Ctx& x, id self, SEL, id predicate) { send(x, self, "setArray:", {fi
 // Weak entries use libobjc's real zeroing-weak slots, not dangling host addresses.
 struct Cell { id strong = 0; uint32_t weak = 0; };
 struct Table : ObjC::HostObject { uint32_t keys = 0, values = 0; bool map = false; std::vector<std::pair<Cell, Cell>> items; };
+// NSPointerFunctionsOptions: memory in the low byte (strong 0, zeroing weak 1, opaque 2,
+// weak 5), personality in the next (object 0, opaque 0x100, object pointer 0x200,
+// C string 0x300, integer 0x500) and copy-in 0x10000. Struct personality (0x400) and
+// malloc/Mach memory need size and free functions this table does not have.
+constexpr uint32_t kCopyIn = 0x10000;
 void validateOptions(uint32_t options) {
     const auto memory = options & 0xff, personality = options & 0xff00;
-    if ((memory != 0 && memory != 1 && memory != 5) || (personality != 0 && personality != 0x100) || (options & ~0xffffu))
-        throw ObjC::ObjCError("unsupported NSPointerFunctions options");
+    const bool memoryOK = memory == 0 || memory == 1 || memory == 2 || memory == 5;
+    const bool personalityOK = personality == 0 || personality == 0x100 || personality == 0x200 ||
+                               personality == 0x300 || personality == 0x500;
+    if (!memoryOK || !personalityOK || (options & ~(0xffffu | kCopyIn)))
+        throw ObjC::ObjCError("unsupported NSPointerFunctions options 0x" + [&] { char b[12]; std::snprintf(b, sizeof b, "%x", options); return std::string(b); }());
+}
+// Object-valued only with the object or object-pointer personality and strong or weak memory.
+bool holdsObjects(uint32_t options) {
+    const auto memory = options & 0xff, personality = options & 0xff00;
+    return (personality == 0 || personality == 0x200) && memory != 2;
 }
 Cell hold(Ctx& x, id object, uint32_t options) {
     Cell c; const auto memory = options & 0xff;
+    if (!holdsObjects(options)) { c.strong = object; return c; }   // opaque memory, C strings, integers: as is
     if (memory == 1 || memory == 5) { c.weak = x.proc.heap().allocZeroed(4); rt(x).storeWeak(c.weak, object); }
-    else { c.strong = object; if (memory == 0 && object) rt(x).retain(x.cpu, object); }
+    else if ((options & kCopyIn) && object) c.strong = id(rt(x).send(x.cpu, object, "copy"));   // +1, owned
+    else { c.strong = object; if (object) rt(x).retain(x.cpu, object); }
     return c;
 }
 id get(Ctx& x, const Cell& c) { return c.weak ? rt(x).loadWeak(c.weak) : c.strong; }
 void drop(Ctx& x, Cell& c, uint32_t options) {
     if (c.weak) { rt(x).clearWeakSlot(c.weak); x.proc.heap().free(c.weak); }
-    else if (!(options & 0xff) && c.strong) rt(x).release(x.cpu, c.strong);
+    else if (holdsObjects(options) && c.strong) rt(x).release(x.cpu, c.strong);
     c = {};
 }
 void prune(Ctx& x, Table& t) {
     for (auto i = t.items.begin(); i != t.items.end();) {
-        if (!get(x, i->first) || (t.map && !get(x, i->second))) { drop(x, i->first, t.keys); drop(x, i->second, t.values); i = t.items.erase(i); }
+        if ((i->first.weak && !get(x, i->first)) || (t.map && i->second.weak && !get(x, i->second))) { drop(x, i->first, t.keys); drop(x, i->second, t.values); i = t.items.erase(i); }
         else ++i;
     }
 }
@@ -303,7 +318,14 @@ id map_ss(Ctx& x, Class cls, SEL) { return map_factory(x, cls, 0, 0, 0); }
 id map_sw(Ctx& x, Class cls, SEL) { return map_factory(x, cls, 0, 0, 5); }
 id map_ws(Ctx& x, Class cls, SEL) { return map_factory(x, cls, 0, 5, 0); }
 id map_ww(Ctx& x, Class cls, SEL) { return map_factory(x, cls, 0, 5, 5); }
-size_t find(Ctx& x, Table& t, id key) { prune(x, t); for (size_t i = 0; i < t.items.size(); ++i) { const id stored = get(x, t.items[i].first); if ((t.keys & 0xff00) ? stored == key : objectsEqual(x, stored, key)) return i; } return t.items.size(); }
+bool sameKey(Ctx& x, uint32_t options, id stored, id key) {
+    switch (options & 0xff00) {
+    case 0: return objectsEqual(x, stored, key);
+    case 0x300: return stored == key || (stored && key && x.proc.readCString(stored) == x.proc.readCString(key));
+    default: return stored == key;   // opaque, object pointer, integer: identity
+    }
+}
+size_t find(Ctx& x, Table& t, id key) { prune(x, t); for (size_t i = 0; i < t.items.size(); ++i) if (sameKey(x, t.keys, get(x, t.items[i].first), key)) return i; return t.items.size(); }
 void table_put(Ctx& x, id self, SEL, id object, id key) {
     if (!key || !object) throw ObjC::ObjCError("nil NSMapTable key or value");
     auto& t = rt(x).host<Table>(self); t.map = true; const auto i = find(x, t, key);

@@ -23,6 +23,11 @@ struct DecodedAudio {
     int channels = 2;              // of the source; stereoPcm is always stereo
     double duration = 0.0;
     std::vector<int16_t> stereoPcm;   // interleaved L, R
+    // True when the codec could not be decoded here (AAC in a build without a host
+    // decoder) and stereoPcm is silence of the file's real length. The game keeps its
+    // timing and does not take the failure path an undecodable file would send it down.
+    bool silent = false;
+    uint32_t codec = 0;   // the source's format id ('aac ', 'lpcm', ...) when known
 };
 
 // WAV (PCM 8/16/24/32-bit, float, mono/stereo 4-bit IMA ADPCM), CAF (LPCM, IMA4), AIFF/AIFC, MP3.

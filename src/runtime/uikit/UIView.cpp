@@ -921,6 +921,8 @@ id vc_navigationItem(Ctx& x, id self, SEL) {
 bool vc_editing(Ctx&, id, SEL) { return false; }
 void vc_setEditing(Ctx&, id, SEL, bool, bool) {}
 int32_t vc_zero(Ctx&, id, SEL) { return 0; }
+int32_t vc_fade(Ctx&, id, SEL) { return 1; }   // UIStatusBarAnimationFade
+id vc_nil(Ctx&, id, SEL) { return 0; }
 void vc_setInt(Ctx& x, id self, SEL, int32_t v) { VC(x, self).modalStyle = v; }
 void vc_contentSize(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, CGSize{320, 460}); }
 
@@ -1211,7 +1213,19 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
       .m<&vc_zero>("modalPresentationStyle", "i@:").m<&vc_setInt>("setModalPresentationStyle:", "v@:i")
       .m<&vc_zero>("preferredStatusBarStyle", "i@:").m<&vc_editing>("prefersStatusBarHidden", "c@:")
       .m<&vc_hook>("setNeedsStatusBarAppearanceUpdate", "v@:").m<&vc_contentSize>("contentSizeForViewInPopover", S + "@:")
-      .m<&vc_hookObj>("setHidesBottomBarWhenPushed:", "v@:c");
+      .m<&vc_hookObj>("setHidesBottomBarWhenPushed:", "v@:c")
+      // Rotation and system-appearance hooks every UIViewController has. Engines look these
+      // up on UIViewController to copy their type encodings before swapping in their own
+      // (Unity asserts when class_getInstanceMethod returns NULL: Crossy Road stopped there).
+      .m<&vc_hook>("willRotateToInterfaceOrientation:duration:", "v@:id").m<&vc_hook>("didRotateFromInterfaceOrientation:", "v@:i")
+      .m<&vc_hook>("willAnimateRotationToInterfaceOrientation:duration:", "v@:id")
+      .m<&vc_hook>("viewWillTransitionToSize:withTransitionCoordinator:", "v@:{CGSize=ff}@")
+      .m<&vc_fade>("preferredStatusBarUpdateAnimation", "i@:").m<&vc_editing>("prefersHomeIndicatorAutoHidden", "c@:")
+      .m<&vc_zero>("preferredScreenEdgesDeferringSystemGestures", "I@:")
+      .m<&vc_nil>("childViewControllerForStatusBarHidden", "@@:").m<&vc_nil>("childViewControllerForStatusBarStyle", "@@:")
+      .m<&vc_nil>("childViewControllerForHomeIndicatorAutoHidden", "@@:")
+      .m<&vc_nil>("childViewControllerForScreenEdgesDeferringSystemGestures", "@@:")
+      .m<&vc_hook>("setNeedsUpdateOfHomeIndicatorAutoHidden", "v@:").m<&vc_hook>("setNeedsUpdateOfScreenEdgesDeferringSystemGestures", "v@:");
 }
 
 } // namespace Hydrogen::Runtime::UIKit
