@@ -81,10 +81,10 @@ def main():
             out.append(f"    hc->fn.{name}({call});")
             if name.startswith("glUniform"):
                 out.append(f"    hc->fn.glGetError();")
-            out.append(f"    if (hgDebug) hgAfter(x, hc, \"{name}\", [&] {{ return hgArgs({argnames}); }});")
+            out.append(f"    if (hgDebug || hc->trace) hgAfter(x, hc, \"{name}\", [&] {{ return hgArgs({argnames}); }});")
         else:
             out.append(f"    auto r = hc->fn.{name}({call});")
-            out.append(f"    if (hgDebug) hgAfter(x, hc, \"{name}\", [&] {{ return hgArgs({argnames}); }});")
+            out.append(f"    if (hgDebug || hc->trace) hgAfter(x, hc, \"{name}\", [&] {{ return hgArgs({argnames}); }});")
             out.append("    return r != 0;" if ret == "B" else "    return r;")
         out.append("}")
     out.append("#endif")

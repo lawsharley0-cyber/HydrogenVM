@@ -54,6 +54,7 @@ struct HostContext {
     // A guest error that was pending when the runtime made GL calls of its own
     // in this context (see GuestErrorScope); glGetError reports it first.
     uint32_t guestError = 0;
+    bool trace = false;           // ProcessConfig::glTrace when the context was made
     std::unordered_map<uint32_t, MappedBuffer> mapped;   // key: target
     // ES 1.1 guest on an ES 2/3 host context: fixed function emulated in shaders.
     std::shared_ptr<Gles1Emu> gles1;
