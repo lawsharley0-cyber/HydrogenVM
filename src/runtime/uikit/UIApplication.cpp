@@ -94,6 +94,49 @@ void e_dealloc(Ctx& x, id self, SEL) {
     rt(x).disposeInstance(x.cpu, self);
 }
 
+// ====================================================== UILocalNotification ===
+// A value object games fill in before scheduling a reminder. Nothing is ever delivered
+// (scheduleLocalNotification: stays a no-op), but the properties hold what was set, so
+// games that read them back or copy the object see their own values.
+enum LocalNoteObject { kFireDate, kTimeZone, kRepeatCalendar, kAlertBody, kAlertAction, kAlertTitle,
+                       kAlertLaunchImage, kSoundName, kUserInfo, kCategory, kNoteObjectCount };
+struct LocalNoteData : ObjC::HostObject {
+    id objects[kNoteObjectCount] = {};
+    uint32_t repeatInterval = 0;
+    int32_t badge = 0;
+    bool hasAction = true;
+};
+LocalNoteData& LN(Ctx& x, id n) { return rt(x).host<LocalNoteData>(n); }
+template <int I> id ln_get(Ctx& x, id self, SEL) { return LN(x, self).objects[I]; }
+template <int I> void ln_set(Ctx& x, id self, SEL, id value) {
+    // Strings and the user-info dictionary are copied, as UIKit's properties declare.
+    const bool copy = I != kFireDate && I != kTimeZone && I != kRepeatCalendar;
+    const id held = value ? (copy ? id(rt(x).send(x.cpu, value, "copy")) : rt(x).retain(x.cpu, value)) : 0;
+    id& slot = LN(x, self).objects[I];
+    const id old = slot;
+    slot = held;
+    if (old) rt(x).release(x.cpu, old);
+}
+uint32_t ln_repeat(Ctx& x, id self, SEL) { return LN(x, self).repeatInterval; }
+void ln_setRepeat(Ctx& x, id self, SEL, uint32_t v) { LN(x, self).repeatInterval = v; }
+int32_t ln_badge(Ctx& x, id self, SEL) { return LN(x, self).badge; }
+void ln_setBadge(Ctx& x, id self, SEL, int32_t v) { LN(x, self).badge = v; }
+bool ln_hasAction(Ctx& x, id self, SEL) { return LN(x, self).hasAction; }
+void ln_setHasAction(Ctx& x, id self, SEL, bool v) { LN(x, self).hasAction = v; }
+id ln_copy(Ctx& x, id self, SEL, id) {
+    const id copy = id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, rt(x).classOf(self), "alloc")), "init"));
+    LocalNoteData& from = LN(x, self);
+    LocalNoteData& to = LN(x, copy);
+    for (int i = 0; i < kNoteObjectCount; ++i) if ((to.objects[i] = from.objects[i])) rt(x).retain(x.cpu, to.objects[i]);
+    to.repeatInterval = from.repeatInterval; to.badge = from.badge; to.hasAction = from.hasAction;
+    return copy;
+}
+void ln_dealloc(Ctx& x, id self, SEL) {
+    if (LocalNoteData* d = rt(x).hostIf<LocalNoteData>(self))
+        for (id& o : d->objects) { const id v = o; o = 0; if (v) rt(x).release(x.cpu, v); }
+    rt(x).disposeInstance(x.cpu, self);
+}
+
 // Deliver one event's touches to their views (UIWindow -sendEvent:).
 void w_sendEvent(Ctx& x, id self, SEL, id event) {
     EventData* e = rt(x).hostIf<EventData>(event);
@@ -478,10 +521,8 @@ bool legacyLifecycle(Process& p) {
     const Plist::Value* info = p.infoPlist();
     if (!info) return false;
     if (const Plist::Value* e = info->get("UIApplicationExitsOnSuspend"); e && e->type == Plist::Value::Type::Bool && e->b) return true;
-    const std::string sdk = info->getString("DTSDKName");   // e.g. "iphoneos3.1"
-    size_t i = 0;
-    while (i < sdk.size() && !std::isdigit(uint8_t(sdk[i]))) ++i;
-    return i < sdk.size() && std::atoi(sdk.c_str() + i) < 4;
+    const int sdk = p.linkedSdkMajor();
+    return sdk > 0 && sdk < 4;
 }
 void deliverLifecycle(Ctx& x, const char* delegateSel, const char* note) {
     auto& u = ui(x);
@@ -718,8 +759,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_beginIgnoring>("beginIgnoringInteractionEvents", "v@:").m<&app_endIgnoring>("endIgnoringInteractionEvents", "v@:")
        .m<&app_isIgnoring>("isIgnoringInteractionEvents", "c@:").m<&app_ignoreInt>("registerForRemoteNotificationTypes:", "v@:I")
        .m<&app_noop>("registerForRemoteNotifications", "v@:").m<&app_noop>("unregisterForRemoteNotifications", "v@:")
-       .m<&app_noopObj>("registerUserNotificationSettings:", "v@:@").m<&app_noopObj>("scheduleLocalNotification:", "v@:@")
-       .m<&app_noopObj>("presentLocalNotificationNow:", "v@:@").m<&app_noop>("cancelAllLocalNotifications", "v@:")
+       .m<&app_noopObj>("registerUserNotificationSettings:", "v@:@").m<&app_noop>("cancelAllLocalNotifications", "v@:")
        .m<&app_noopObj>("cancelLocalNotification:", "v@:@").m<&app_nil>("scheduledLocalNotifications")
        .m<&app_noop>("beginReceivingRemoteControlEvents", "v@:").m<&app_noop>("endReceivingRemoteControlEvents", "v@:")
        .m<&app_beginBackgroundTask>("beginBackgroundTaskWithExpirationHandler:", "I@:@?")
@@ -730,12 +770,30 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory")
        .m<&app_layoutDirection>("userInterfaceLayoutDirection", "i@:")
        .m<&app_supportedOrientations>("supportedInterfaceOrientationsForWindow:", "I@:@");
+    supportMethod(p, app, "UIApplication", "scheduleLocalNotification:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,
+        "Accepted and dropped: no local notification is ever delivered", "v@:@");
+    supportMethod(p, app, "UIApplication", "presentLocalNotificationNow:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,
+        "Accepted and dropped: no local notification is shown", "v@:@");
     supportMethod(p, app, "UIApplication", "statusBarFrame", [](Ctx& x) { callWrapped<&app_statusBarFrame>(x); }, SupportStatus::Approx,
         "Fixed 20pt-high bar across the screen; with HVM_SAFE_AREA it is as tall as the top inset. Not the real safeAreaInsets API",
         "{CGRect={CGPoint=ff}{CGSize=ff}}@:");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
     
-    r.defineClass("UILocalNotification", "NSObject");
+    r.defineClass("UILocalNotification", "NSObject")
+     .m<&ln_get<kFireDate>>("fireDate").m<&ln_set<kFireDate>>("setFireDate:", "v@:@")
+     .m<&ln_get<kTimeZone>>("timeZone").m<&ln_set<kTimeZone>>("setTimeZone:", "v@:@")
+     .m<&ln_get<kRepeatCalendar>>("repeatCalendar").m<&ln_set<kRepeatCalendar>>("setRepeatCalendar:", "v@:@")
+     .m<&ln_get<kAlertBody>>("alertBody").m<&ln_set<kAlertBody>>("setAlertBody:", "v@:@")
+     .m<&ln_get<kAlertAction>>("alertAction").m<&ln_set<kAlertAction>>("setAlertAction:", "v@:@")
+     .m<&ln_get<kAlertTitle>>("alertTitle").m<&ln_set<kAlertTitle>>("setAlertTitle:", "v@:@")
+     .m<&ln_get<kAlertLaunchImage>>("alertLaunchImage").m<&ln_set<kAlertLaunchImage>>("setAlertLaunchImage:", "v@:@")
+     .m<&ln_get<kSoundName>>("soundName").m<&ln_set<kSoundName>>("setSoundName:", "v@:@")
+     .m<&ln_get<kUserInfo>>("userInfo").m<&ln_set<kUserInfo>>("setUserInfo:", "v@:@")
+     .m<&ln_get<kCategory>>("category").m<&ln_set<kCategory>>("setCategory:", "v@:@")
+     .m<&ln_repeat>("repeatInterval", "I@:").m<&ln_setRepeat>("setRepeatInterval:", "v@:I")
+     .m<&ln_badge>("applicationIconBadgeNumber", "i@:").m<&ln_setBadge>("setApplicationIconBadgeNumber:", "v@:i")
+     .m<&ln_hasAction>("hasAction", "c@:").m<&ln_setHasAction>("setHasAction:", "v@:c")
+     .m<&ln_copy>("copyWithZone:", "@@:^v").m<&ln_dealloc>("dealloc", "v@:");
 
     p.mem().write<uint32_t>(p.defineDataBlock("_UIBackgroundTaskInvalid", 4), 0);
     p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalMinimum", 8), 0.0);

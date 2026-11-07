@@ -95,6 +95,7 @@ struct VCData : ObjC::HostObject {
     std::vector<id> children;        // retained
     id navigationItem = 0, tabBarItem = 0;     // retained
     id storyboard = 0;               // retained; set by the storyboard that loaded it
+    id segueTemplates = 0;           // retained NSArray of UIStoryboardSegueTemplate, from the nib
     bool appeared = false, wantsFullScreen = false;
     int32_t modalStyle = 0;
 };

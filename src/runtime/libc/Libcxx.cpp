@@ -145,6 +145,76 @@ void cv_dtor(Ctx& x, GuestPtr self) {
     callHost1(x, "_pthread_cond_destroy", self);
 }
 
+// condition_variable::__do_timed_wait(unique_lock<mutex>&, time_point<system_clock, nanoseconds>):
+// wait_for/wait_until end here. The deadline arrives in r2:r3 (Darwin's 32-bit ABI does not
+// pair 64-bit arguments). A stub returned at once, so Minecraft PE's Semaphore::wait spun.
+void cv_timedWait(Ctx& x) {
+    const uint32_t self = x.cpu.r[0], lock = x.cpu.r[1];
+    const int64_t ns = int64_t((uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2]);
+    const uint32_t mtx = x.mem.read<uint32_t>(lock);
+    const uint32_t ts = x.proc.heap().allocZeroed(8);
+    const int64_t secs = ns <= 0 ? 0 : std::min<int64_t>(ns / 1000000000, INT32_MAX);
+    x.mem.write<uint32_t>(ts, uint32_t(secs));
+    x.mem.write<uint32_t>(ts + 4, ns <= 0 ? 0 : uint32_t(ns % 1000000000));
+    auto fn = requiredHost(x, "_pthread_cond_timedwait");
+    x.cpu.r[0] = self; x.cpu.r[1] = mtx; x.cpu.r[2] = ts;
+    fn(x.cpu);   // ETIMEDOUT is not an error here: the caller checks the clock itself
+    x.proc.heap().free(ts);
+}
+
+// std::recursive_mutex is a pthread mutex of type PTHREAD_MUTEX_RECURSIVE (2 on Darwin).
+void rm_ctor(Ctx& x, GuestPtr self) {
+    const uint32_t attr = x.proc.heap().allocZeroed(16);
+    callHost1(x, "_pthread_mutexattr_init", attr);
+    auto settype = requiredHost(x, "_pthread_mutexattr_settype");
+    x.cpu.r[0] = attr; x.cpu.r[1] = 2;
+    settype(x.cpu);
+    auto init = requiredHost(x, "_pthread_mutex_init");
+    x.cpu.r[0] = self; x.cpu.r[1] = attr;
+    init(x.cpu);
+    const uint32_t rc = x.cpu.r[0];
+    callHost1(x, "_pthread_mutexattr_destroy", attr);
+    x.proc.heap().free(attr);
+    if (rc != 0) thread_error("recursive_mutex", int(rc));
+}
+
+unsigned hardwareConcurrency(Ctx&) { return 2; }   // the dual-core devices these games target
+
+// std::__shared_weak_count: { vtable, __shared_owners_, __shared_weak_owners_ }, counts
+// stored as "owners - 1". vtable: [0] D1, [1] D0, [2] __on_zero_shared,
+// [3] __get_deleter, [4] __on_zero_shared_weak. Atomic on the guest words, since guest
+// threads run on host threads.
+int32_t* ownerWord(Ctx& x, GuestPtr self, uint32_t offset) {
+    return reinterpret_cast<int32_t*>(x.mem.host(self + offset));
+}
+void callVirtual(Ctx& x, GuestPtr self, uint32_t slot) {
+    const uint32_t vtable = x.mem.read<uint32_t>(self);
+    x.proc.callGuest(x.cpu, x.mem.read<uint32_t>(vtable + slot * 4), {self});
+}
+void sw_addShared(Ctx& x, GuestPtr self) { __atomic_add_fetch(ownerWord(x, self, 4), 1, __ATOMIC_RELAXED); }
+void sw_addWeak(Ctx& x, GuestPtr self) { __atomic_add_fetch(ownerWord(x, self, 8), 1, __ATOMIC_RELAXED); }
+void sw_releaseWeak(Ctx& x, GuestPtr self) {
+    // As libc++: a zero count means this is the last reference, so skip the decrement.
+    if (__atomic_load_n(ownerWord(x, self, 8), __ATOMIC_ACQUIRE) == 0 ||
+        __atomic_sub_fetch(ownerWord(x, self, 8), 1, __ATOMIC_ACQ_REL) == -1)
+        callVirtual(x, self, 4);
+}
+void sw_releaseShared(Ctx& x, GuestPtr self) {
+    if (__atomic_sub_fetch(ownerWord(x, self, 4), 1, __ATOMIC_ACQ_REL) == -1) {
+        callVirtual(x, self, 2);
+        sw_releaseWeak(x, self);
+    }
+}
+uint32_t sw_lock(Ctx& x, GuestPtr self) {
+    int32_t* owners = ownerWord(x, self, 4);
+    int32_t seen = __atomic_load_n(owners, __ATOMIC_RELAXED);
+    while (seen != -1)
+        if (__atomic_compare_exchange_n(owners, &seen, seen + 1, true, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) return self;
+    return 0;
+}
+uint32_t sw_getDeleter(Ctx&, GuestPtr, GuestPtr) { return 0; }   // the base class has no deleter
+void sw_dtor(Ctx&, GuestPtr) {}
+
 void sys_clock_now(Ctx& x) {
     // Darwin libc++ system_clock counts microseconds (steady_clock counts nanoseconds).
     auto t = std::chrono::system_clock::now();
@@ -172,9 +242,27 @@ void sleep_for(Ctx& x, GuestPtr ns_ptr) {
     }
 }
 
+// std::__1::__next_prime(size_t): the smallest prime >= n, which unordered_map and
+// unordered_set use as their bucket count. A stub returning 0 left Minecraft PE with
+// zero buckets in a static initializer and it crashed before its first frame. size_t is
+// 32-bit here; above the largest 32-bit prime libc++ throws overflow_error.
+uint32_t nextPrime(Ctx&, uint32_t n) {
+    if (n <= 2) return n == 0 ? 0 : 2;   // libc++'s table starts 0, 2, 3, 5: 0 stays 0, 1 becomes 2
+    if (n > 4294967291u) throw std::runtime_error("std::overflow_error: __next_prime overflow");
+    auto prime = [](uint32_t v) {
+        if (v % 2 == 0) return v == 2;
+        for (uint32_t d = 3; uint64_t(d) * d <= v; d += 2)
+            if (v % d == 0) return false;
+        return true;
+    };
+    while (!prime(n)) ++n;
+    return n;
+}
+
 } // namespace
 
 void registerLibcxx(Process& p) {
+    p.def<&nextPrime>("__ZNSt3__112__next_primeEm");
     registerLibcxxString(p);
     p.def<&tld_get>("__ZNSt3__119__thread_local_dataEv");
 
@@ -194,6 +282,24 @@ void registerLibcxx(Process& p) {
     p.def<&cv_notify_all>("__ZNSt3__118condition_variable10notify_allEv");
     p.def<&cv_wait>("__ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE");
     p.def<&cv_dtor>("__ZNSt3__118condition_variableD1Ev");
+    p.defineFunction("__ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockINS_5mutexEEENS_6chrono10time_pointINS5_12system_clockENS5_8durationIxNS_5ratioILx1ELx1000000000EEEEEEE",
+                     [](Ctx& x) { cv_timedWait(x); });
+    p.def<&rm_ctor>("__ZNSt3__115recursive_mutexC1Ev");
+    p.def<&rm_ctor>("__ZNSt3__115recursive_mutexC2Ev");
+    p.def<&m_lock>("__ZNSt3__115recursive_mutex4lockEv");
+    p.def<&m_unlock>("__ZNSt3__115recursive_mutex6unlockEv");
+    p.def<&m_dtor>("__ZNSt3__115recursive_mutexD1Ev");
+    p.def<&m_dtor>("__ZNSt3__115recursive_mutexD2Ev");
+    p.def<&hardwareConcurrency>("__ZNSt3__16thread20hardware_concurrencyEv");
+    p.def<&sw_addShared>("__ZNSt3__119__shared_weak_count12__add_sharedEv");
+    p.def<&sw_releaseShared>("__ZNSt3__119__shared_weak_count16__release_sharedEv");
+    p.def<&sw_addWeak>("__ZNSt3__119__shared_weak_count10__add_weakEv");
+    p.def<&sw_releaseWeak>("__ZNSt3__119__shared_weak_count14__release_weakEv");
+    p.def<&sw_lock>("__ZNSt3__119__shared_weak_count4lockEv");
+    supportDef<&sw_getDeleter>(p, "__ZNKSt3__119__shared_weak_count13__get_deleterERKSt9type_info", SupportStatus::Real,
+                               "libc++'s base returns nullptr; control blocks with a deleter override it");
+    supportDef<&sw_dtor>(p, "__ZNSt3__119__shared_weak_countD2Ev", SupportStatus::Real, "libc++'s base destructor has nothing to release");
+    supportDef<&sw_dtor>(p, "__ZNSt3__115__shared_countD2Ev", SupportStatus::Real, "libc++'s base destructor has nothing to release");
 
     p.def<&sys_clock_now>("__ZNSt3__16chrono12system_clock3nowEv");
     p.def<&steady_clock_now>("__ZNSt3__16chrono12steady_clock3nowEv");

@@ -4,6 +4,8 @@
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
 #include "runtime/gl/HostGL.hpp"
+#include <cctype>
+#include <cstdlib>
 #include <sstream>
 #include "audio/Audio.hpp"
 #include "loader/ElfLoader.hpp"
@@ -829,9 +831,11 @@ std::string Process::hostPath(const std::string& guestPath) const {
     std::string p = guestPath;
     if (p == "~") p = guestHomePath_;
     else if (p.compare(0, 2, "~/") == 0) p = guestHomePath_ + p.substr(1);
-    const std::string norm = canonVar(p);
     // Already a host path: leave it alone.
-    if (matchesPathPrefix(norm, canonVar(bundlePath())) || matchesPathPrefix(norm, canonVar(homePath_))) return p;
+    if (matchesPathPrefix(canonVar(p), canonVar(bundlePath())) || matchesPathPrefix(canonVar(p), canonVar(homePath_))) return p;
+    // A relative guest path is relative to the guest's working directory ("/" at launch).
+    if (p[0] != '/') p = absoluteGuestPath(p);
+    const std::string norm = canonVar(p);
     // Guest paths, most specific first (the bundle sits inside the home).
     if (matchesPathPrefix(norm, guestBundlePath_)) return bundlePath() + norm.substr(guestBundlePath_.size());
     if (matchesPathPrefix(norm, guestHomePath_)) return homePath_ + norm.substr(guestHomePath_.size());
@@ -839,6 +843,14 @@ std::string Process::hostPath(const std::string& guestPath) const {
     if (matchesPathPrefix(norm, "/tmp")) return hostTmp + norm.substr(4);
     if (matchesPathPrefix(norm, "/var/tmp")) return hostTmp + norm.substr(8);
     return p;
+}
+
+std::string Process::absoluteGuestPath(const std::string& path) const {
+    if (path.empty() || path[0] == '/') return path;
+    const std::string cwd = guestCwd();
+    std::string joined = std::filesystem::path(cwd + (cwd.ends_with('/') ? "" : "/") + path).lexically_normal().string();
+    if (joined.size() > 1 && joined.ends_with('/')) joined.pop_back();
+    return joined;
 }
 
 std::string Process::guestPath(const std::string& hostPath) const {
@@ -1717,6 +1729,14 @@ std::string perfJson(const Process::Perf& pf, double wall, uint64_t insns, uint6
     f << "    \"p99FrameMs\": " << double(pf.frameTimes.percentile(99)) / 1e6 << ",\n";
     f << "    \"timeToFirstFrameMs\": " << (ttff == ~uint64_t{0} ? 0.0 : double(ttff) / 1e6) << "\n";
     return f.str();
+}
+
+int Process::linkedSdkMajor() const {
+    if (!infoPlist_) return 0;
+    const std::string sdk = infoPlist_->getString("DTSDKName");   // e.g. "iphoneos3.1"
+    size_t i = 0;
+    while (i < sdk.size() && !std::isdigit(uint8_t(sdk[i]))) ++i;
+    return i < sdk.size() ? std::atoi(sdk.c_str() + i) : 0;
 }
 
 } // namespace Hydrogen::Runtime

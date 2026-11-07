@@ -160,7 +160,8 @@ bool decodeCaf(DecodedAudio& out, const uint8_t* data, size_t n) {
     if (n < 8 || std::memcmp(data, "caff", 4) != 0) return false;
     size_t pos = 8;
     double sr = 44100;
-    uint32_t fmt = 0, flags = 0, channels = 1, bits = 16;
+    uint32_t fmt = 0, flags = 0, channels = 1, bits = 16, framesPerPacket = 0;
+    int64_t validFrames = -1, packets = -1;
     const uint8_t* audio = nullptr;
     size_t audioBytes = 0;
     while (pos + 12 <= n) {
@@ -173,8 +174,12 @@ bool decodeCaf(DecodedAudio& out, const uint8_t* data, size_t n) {
             std::memcpy(&sr, &bitsRate, 8);
             fmt = readBE32(data + pos + 8);
             flags = readBE32(data + pos + 12);
+            framesPerPacket = readBE32(data + pos + 20);
             channels = std::max<uint32_t>(1, readBE32(data + pos + 24));
             bits = readBE32(data + pos + 28);
+        } else if (std::memcmp(h, "pakt", 4) == 0 && size >= 24) {
+            packets = int64_t(readBE64(data + pos));
+            validFrames = int64_t(readBE64(data + pos + 8));
         } else if (std::memcmp(h, "data", 4) == 0 && size >= 4) {
             audio = data + pos + 4;   // skip the edit count
             audioBytes = size_t(size) - 4;
@@ -185,7 +190,22 @@ bool decodeCaf(DecodedAudio& out, const uint8_t* data, size_t n) {
     out.sampleRate = int(std::max(8000.0, std::min(sr, 192000.0)));
     if (fmt == 0x6C70636D /* lpcm */) pcmToStereo(out, audio, audioBytes, int(channels), int(bits), flags & 1, !(flags & 2));
     else if (fmt == 0x696D6134 /* ima4 */) ima4ToStereo(out, audio, audioBytes, int(channels));
-    else return false;
+    else {
+        // A compressed codec this build cannot decode (AAC, ALAC, ... without a host
+        // decoder): silence of the length the packet table gives, so the file still opens.
+        int64_t frames = validFrames;
+        if (frames < 0 && packets >= 0 && framesPerPacket) frames = packets * int64_t(framesPerPacket);
+        // Bounded before allocating: 16M frames is 64 MB of stereo silence (over 6 minutes at
+        // 44.1 kHz). A longer (or hostile) packet table gets that much and no more.
+        if (frames <= 0) return false;
+        const int64_t realFrames = frames;
+        frames = std::min<int64_t>(frames, int64_t(16) << 20);
+        out.channels = int(std::min<uint32_t>(channels, 8));
+        out.stereoPcm.assign(size_t(frames) * 2, 0);
+        out.duration = double(realFrames) / out.sampleRate;   // the file's real length, even past the cap
+        out.silent = true;
+    }
+    out.codec = fmt;
     return !out.stereoPcm.empty();
 }
 

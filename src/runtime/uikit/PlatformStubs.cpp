@@ -27,7 +27,18 @@ void noteOnce(Ctx& x, const char* what) { x.proc.reportMissing(what); }
 
 // Decoding lives in runtime/audio (WAV, CAF, AIFF, MP3); playback in the mixer.
 using Audio::DecodedAudio;
-inline DecodedAudio decodeAudioBytes(const uint8_t* data, size_t n) { return Audio::decode(data, n); }
+// Every decode goes through here so a file played as silence (a codec this build cannot
+// decode) is reported once per codec in the log and the run report.
+DecodedAudio decodeAudioBytes(Ctx& x, const uint8_t* data, size_t n) {
+    DecodedAudio d = Audio::decode(data, n);
+    if (d.silent) {
+        char name[48];
+        const uint32_t c = d.codec;
+        std::snprintf(name, sizeof name, "audio codec '%c%c%c%c' (played as silence)", char(c >> 24), char(c >> 16), char(c >> 8), char(c));
+        noteOnce(x, name);
+    }
+    return d;
+}
 
 Audio::Mixer& MX(Process& p) { return p.mixer(); }
 Audio::Pcm sharePcm(const std::vector<int16_t>& v) { return v.empty() ? nullptr : std::make_shared<const std::vector<int16_t>>(v); }
@@ -144,7 +155,7 @@ int32_t ss_create(Ctx& x, uint32_t urlRef, GuestPtr outId) {
         std::ifstream in(path, std::ios::binary);
         if (in) {
             std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
-            entry.audio = decodeAudioBytes(bytes.data(), bytes.size());
+            entry.audio = decodeAudioBytes(x, bytes.data(), bytes.size());
             entry.pcm = sharePcm(entry.audio.stereoPcm);
         }
     }
@@ -213,8 +224,11 @@ int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outB
     //  16: uint32_t mPacketDescriptionCapacity
     //  20: void*    mPacketDescriptions
     //  24: uint32_t mPacketDescriptionCount
+    // A 32-bit device has no room for a buffer near 4 GB; AudioQueue fails such a request.
+    if (byteSize > (64u << 20)) return -108;   // kAudio_MemFullError
     const uint32_t cap = std::max(byteSize, 16u);
     const uint32_t hdr = x.proc.heap().allocZeroed(32 + cap);
+    if (!hdr) return -108;
     const uint32_t dataPtr = hdr + 32;
     x.mem.write<uint32_t>(hdr + 0, cap);
     x.mem.write<uint32_t>(hdr + 4, dataPtr);
@@ -224,12 +238,16 @@ int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outB
     return 0;
 }
 // Same buffer with room for packet descriptions (16-byte AudioStreamPacketDescription each).
+int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf);
 int32_t aq_allocateBufferWithPacketDescriptions(Ctx& x, uint32_t qid, uint32_t byteSize, uint32_t descs, GuestPtr outBuf) {
     const int32_t r = aq_allocateBuffer(x, qid, byteSize, outBuf);
     if (r != 0 || !descs) return r;
     const uint32_t hdr = x.mem.read<uint32_t>(outBuf);
+    // 16-byte AudioStreamPacketDescriptions: refuse a count whose size wraps or cannot be allocated.
+    const uint32_t descBlock = descs <= (64u << 20) / 16 ? x.proc.heap().allocZeroed(descs * 16) : 0;
+    if (!descBlock) { aq_freeBuffer(x, qid, hdr); x.mem.write<uint32_t>(outBuf, 0); return -108; }
     x.mem.write<uint32_t>(hdr + 16, descs);
-    x.mem.write<uint32_t>(hdr + 20, x.proc.heap().allocZeroed(descs * 16));
+    x.mem.write<uint32_t>(hdr + 20, descBlock);
     return 0;
 }
 int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
@@ -485,19 +503,32 @@ int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile)
     AudioFileInstance af;
     af.id = fid;
     af.rawBytes.assign((std::istreambuf_iterator<char>(in)), {});
-    af.decoded = decodeAudioBytes(af.rawBytes.data(), af.rawBytes.size());
+    af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
     if (af.decoded.stereoPcm.empty()) { x.mem.write<uint32_t>(outFile, 0); return 1954115647; }
     st.files[fid] = std::move(af);
     x.mem.write<uint32_t>(outFile, fid);
     return 0;
 }
-int32_t af_getPropertyInfo(Ctx& x, uint32_t, uint32_t prop, GuestPtr outSize, GuestPtr outWritable) {
-    if (outWritable) x.mem.write<uint32_t>(outWritable, 0);
-    if (outSize) {
-        uint32_t sz = 8;
-        if (prop == 0x64666D74 /* 'dfmt' */) sz = 40;
-        x.mem.write<uint32_t>(outSize, sz);
+// kAudioFileUnsupportedPropertyError: what AudioFile returns for a property it does not
+// have. Returning 0 without writing leaves the caller's variable as stack garbage (Fruit
+// Ninja then sized a music buffer at 1.7 GB from it).
+constexpr int32_t kAudioFileUnsupportedProperty = 0x7074793F;   // 'pty?'
+// The size of each property AudioFileGetProperty answers; 0 for one it does not.
+uint32_t afPropertySize(uint32_t prop) {
+    switch (prop) {
+    case 0x64666D74: return 40;   // 'dfmt' AudioStreamBasicDescription
+    case 0x706E666F: return 16;   // 'pnfo' AudioFilePacketTableInfo
+    case 0x62636E74: case 0x65647572: case 0x70636E74: return 8;   // 'bcnt' 'edur' 'pcnt'
+    case 0x70737A65: case 0x706B7562: case 0x66666D74: return 4;   // 'psze' 'pkub' 'ffmt'
+    default: return 0;
     }
+}
+int32_t af_getPropertyInfo(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr outSize, GuestPtr outWritable) {
+    if (!ATS(x).files.count(fid)) return -50;
+    const uint32_t sz = afPropertySize(prop);
+    if (!sz) return kAudioFileUnsupportedProperty;
+    if (outWritable) x.mem.write<uint32_t>(outWritable, 0);
+    if (outSize) x.mem.write<uint32_t>(outSize, sz);
     return 0;
 }
 // AudioFile presents 16-bit LPCM in the source's own channel count (mono files
@@ -517,7 +548,16 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
     if (!st.files.count(fid) || !outData || !ioSize) return -50;
     const AudioFileInstance& af = st.files[fid];
     const uint32_t cap = x.mem.read<uint32_t>(ioSize);
-    if (prop == 0x64666D74 /* 'dfmt' AudioStreamBasicDescription */ && cap >= 40) {
+    const uint32_t size = afPropertySize(prop);
+    if (!size) return kAudioFileUnsupportedProperty;
+    if (cap < size) return 0x2173697A;   // '!siz' kAudioFileBadPropertySizeError
+    x.mem.write<uint32_t>(ioSize, size);
+    if (prop == 0x706E666F /* 'pnfo' packet table: decoded PCM has no priming or remainder */) {
+        noteOnce(x, "AudioFile packet table priming/remainder (reported as 0; the source's are not read)");
+        x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
+        x.mem.write<uint32_t>(outData + 8, 0);
+        x.mem.write<uint32_t>(outData + 12, 0);
+    } else if (prop == 0x64666D74 /* 'dfmt' AudioStreamBasicDescription */ && cap >= 40) {
         x.mem.write<double>(outData + 0, double(af.decoded.sampleRate));
         x.mem.write<uint32_t>(outData + 8, 0x6C70636D /* 'lpcm' */);
         x.mem.write<uint32_t>(outData + 12, 0x0C /* signed int | packed */);
@@ -586,7 +626,7 @@ void af_openWithCallbacks(Ctx& x) {
     AudioFileInstance af;
     af.id = st.nextFileId++;
     af.rawBytes = std::move(bytes);
-    af.decoded = decodeAudioBytes(af.rawBytes.data(), af.rawBytes.size());
+    af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
     if (af.decoded.stereoPcm.empty()) { x.cpu.r[0] = uint32_t(1954115647); return; }
     x.mem.write<uint32_t>(outFile, af.id);
     st.files[af.id] = std::move(af);
@@ -681,7 +721,7 @@ int32_t eaf_openURL(Ctx& x, uint32_t url, GuestPtr out) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return -43;   // fnfErr
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
-    DecodedAudio d = decodeAudioBytes(bytes.data(), bytes.size());
+    DecodedAudio d = decodeAudioBytes(x, bytes.data(), bytes.size());
     if (d.stereoPcm.empty()) {
         x.proc.reportMissing("ExtAudioFile: audio format of " + path.substr(path.find_last_of('/') + 1) + " (needs a decoder; plays silence)");
         d.stereoPcm.assign(size_t(std::max(1.0, d.duration * d.sampleRate)) * 2, 0);
@@ -1274,7 +1314,7 @@ Audio::VoiceParams playerParams(const PlayerData& d) { return {d.volume, d.pan, 
 PlayerData& PD(Ctx& x, id p) { return rt(x).host<PlayerData>(p); }
 
 void loadPlayerDecoded(Ctx& x, PlayerData& d, const uint8_t* bytes, size_t len) {
-    d.decoded = decodeAudioBytes(bytes, len);
+    d.decoded = decodeAudioBytes(x, bytes, len);
     if (d.decoded.stereoPcm.empty() && len) x.proc.reportMissing("AVAudioPlayer: audio format not supported (plays silence)");
     d.pcm = sharePcm(d.decoded.stereoPcm);
     d.duration = d.decoded.duration;
@@ -1850,7 +1890,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&as_setActive>("_AudioSessionSetActive");
     p.def<&as_addListener>("_AudioSessionAddPropertyListener");
     p.def<&as_addListener>("_AudioSessionRemovePropertyListenerWithUserData");
-    p.def<&ss_create>("_AudioServicesCreateSystemSoundID");
+    supportDef<&ss_create>(p, "_AudioServicesCreateSystemSoundID", SupportStatus::Approx,
+                           "Decodes the file and returns a sound id; reports success even for a file it cannot decode, where iOS returns an error");
     p.def<&ss_play>("_AudioServicesPlaySystemSound");
     p.def<&ss_play>("_AudioServicesPlayAlertSound");
     p.def<&ss_dispose>("_AudioServicesDisposeSystemSoundID");
@@ -1889,7 +1930,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&af_getPropertyInfo>("_AudioFileGetPropertyInfo");
     p.def<&afmt_getPropertyInfo>("_AudioFormatGetPropertyInfo");
     p.def<&afmt_getProperty>("_AudioFormatGetProperty");
-    p.def<&af_getProperty>("_AudioFileGetProperty");
+    supportDef<&af_getProperty>(p, "_AudioFileGetProperty", SupportStatus::Approx,
+                                "Answers the format, counts, sizes, packet table and duration of the decoded LPCM view; 'pty?' for other properties");
     p.def<&af_readBytes>("_AudioFileReadBytes");
     p.defineFunction("_AudioFileOpenWithCallbacks", af_openWithCallbacks);
     p.defineFunction("_AudioFileReadPacketData", [](Ctx& x) { af_readPackets(x, true); });

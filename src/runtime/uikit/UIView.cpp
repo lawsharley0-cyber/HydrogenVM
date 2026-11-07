@@ -752,16 +752,21 @@ id vc_initWithCoder(Ctx& x, id self, SEL, id coder) {
     d.wantsFullScreen = (uint32_t(r.send(x.cpu, coder, "decodeBoolForKey:", {makeString(x, "UIWantsFullScreenLayout")})) & 0xFF) != 0;
     const id view = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIView")}));
     if (view) r.send(x.cpu, self, "setView:", {view});
+    // Storyboard scenes archive their outgoing segues here; performSegueWithIdentifier: uses them.
+    const id templates = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIStoryboardSegueTemplates")}));
+    if (templates) d.segueTemplates = r.retain(x.cpu, templates);
     return self;
 }
+void detachSegueTemplates(Ctx& x, id self, id templates);
 void vc_dealloc(Ctx& x, id self, SEL) {
     if (VCData* d = rt(x).hostIf<VCData>(self)) {
+        detachSegueTemplates(x, self, d->segueTemplates);
         if (d->view && rt(x).hostIf<ViewData>(d->view)) V(x, d->view).viewController = 0;
         auto children = std::move(d->children);
         d->children.clear();
         for (id c : children) rt(x).release(x.cpu, c);
-        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard}) if (o) rt(x).release(x.cpu, o);
-        d->view = d->nibName = d->nibBundle = d->title = d->presented = d->navigationItem = d->tabBarItem = d->storyboard = 0;
+        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard, d->segueTemplates}) if (o) rt(x).release(x.cpu, o);
+        d->view = d->nibName = d->nibBundle = d->title = d->presented = d->navigationItem = d->tabBarItem = d->storyboard = d->segueTemplates = 0;
     }
     rt(x).disposeInstance(x.cpu, self);
 }
@@ -788,13 +793,61 @@ void vc_loadView(Ctx& x, id self, SEL) {
     rt(x).send(x.cpu, self, "setView:", {view});
     rt(x).release(x.cpu, view);
 }
+// Segues marked "perform on view load" (embed segues for container views) run once the
+// view exists, before viewDidLoad, as UIKit does.
+void performViewLoadSegues(Ctx& x, id self) {
+    const id templates = VC(x, self).segueTemplates;
+    if (!templates) return;
+    for (id t : Foundation::arrayItems(x, templates))
+        if (rt(x).respondsTo(t, rt(x).sel("performOnViewLoad")) && (rt(x).send(x.cpu, t, "performOnViewLoad") & 0xff))
+            rt(x).send(x.cpu, t, "_performWithSender:", {self});
+}
 id vc_view(Ctx& x, id self, SEL) {
     if (!VC(x, self).view) {
         rt(x).send(x.cpu, self, "loadView");
-        if (VC(x, self).view) rt(x).send(x.cpu, self, "viewDidLoad");
+        if (VC(x, self).view) {
+            performViewLoadSegues(x, self);
+            rt(x).send(x.cpu, self, "viewDidLoad");
+        }
     }
     return VC(x, self).view;
 }
+id vc_segueTemplates(Ctx& x, id self, SEL) { return VC(x, self).segueTemplates; }
+// Templates point back at their controller without retaining it; clear that pointer when
+// the controller lets go of them, so a template that outlives it never sends to a freed object.
+void detachSegueTemplates(Ctx& x, id self, id templates) {
+    if (!templates) return;
+    for (id t : Foundation::arrayItems(x, templates))
+        if (rt(x).respondsTo(t, rt(x).sel("viewController")) && id(rt(x).send(x.cpu, t, "viewController")) == self)
+            rt(x).send(x.cpu, t, "setViewController:", {0});
+}
+void vc_setSegueTemplates(Ctx& x, id self, SEL, id templates) {
+    VCData& d = VC(x, self);
+    if (templates) rt(x).retain(x.cpu, templates);
+    const id old = d.segueTemplates;
+    d.segueTemplates = templates;
+    if (old && old != templates) detachSegueTemplates(x, self, old);
+    if (old) rt(x).release(x.cpu, old);
+}
+void vc_performSegue(Ctx& x, id self, SEL, id ident, id sender) {
+    const id templates = VC(x, self).segueTemplates;
+    for (id t : templates ? Foundation::arrayItems(x, templates) : std::vector<id>{}) {
+        const id tid = id(rt(x).send(x.cpu, t, "identifier"));
+        if (!tid || !ident || !(rt(x).send(x.cpu, tid, "isEqualToString:", {ident}) & 0xff)) continue;
+        rt(x).send(x.cpu, t, "_performWithSender:", {sender});
+        return;
+    }
+    // As UIKit: an NSInvalidArgumentException the guest can catch.
+    const std::string reason = "Receiver (<" + rt(x).objectClassName(self) + ">) has no segue with identifier '" +
+                               (ident ? utf8(x, ident) : std::string("(null)")) + "'";
+    const Class excCls = rt(x).getClass("NSException");
+    const id exc = excCls ? id(rt(x).send(x.cpu, excCls, "exceptionWithName:reason:userInfo:",
+                                          {Foundation::constString(x.proc, "NSInvalidArgumentException"), makeString(x, reason), 0})) : 0;
+    if (!exc) throw ObjC::ObjCError("Terminating app due to uncaught exception 'NSInvalidArgumentException', reason: '" + reason + "'");
+    Foundation::raiseObjCException(x, exc);
+}
+bool vc_shouldPerformSegue(Ctx&, id, SEL, id, id) { return true; }
+void vc_prepareForSegue(Ctx&, id, SEL, id, id) {}
 void vc_setView(Ctx& x, id self, SEL, id view) {
     VCData& d = VC(x, self);
     if (d.view == view) return;
@@ -924,6 +977,8 @@ id vc_navigationItem(Ctx& x, id self, SEL) {
 bool vc_editing(Ctx&, id, SEL) { return false; }
 void vc_setEditing(Ctx&, id, SEL, bool, bool) {}
 int32_t vc_zero(Ctx&, id, SEL) { return 0; }
+int32_t vc_fade(Ctx&, id, SEL) { return 1; }   // UIStatusBarAnimationFade
+id vc_nil(Ctx&, id, SEL) { return 0; }
 void vc_setInt(Ctx& x, id self, SEL, int32_t v) { VC(x, self).modalStyle = v; }
 void vc_contentSize(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, CGSize{320, 460}); }
 
@@ -1214,7 +1269,30 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
       .m<&vc_zero>("modalPresentationStyle", "i@:").m<&vc_setInt>("setModalPresentationStyle:", "v@:i")
       .m<&vc_zero>("preferredStatusBarStyle", "i@:").m<&vc_editing>("prefersStatusBarHidden", "c@:")
       .m<&vc_hook>("setNeedsStatusBarAppearanceUpdate", "v@:").m<&vc_contentSize>("contentSizeForViewInPopover", S + "@:")
-      .m<&vc_hookObj>("setHidesBottomBarWhenPushed:", "v@:c");
+      .m<&vc_hookObj>("setHidesBottomBarWhenPushed:", "v@:c")
+      .m<&vc_segueTemplates>("storyboardSegueTemplates").m<&vc_setSegueTemplates>("_setStoryboardSegueTemplates:", "v@:@")
+      .m<&vc_performSegue>("performSegueWithIdentifier:sender:", "v@:@@");
+    // UIViewController's own base implementations: subclasses override them, and engines
+    // look them up to copy their type encodings (Unity asserted when they were missing).
+    const auto base = [&](const char* sel, auto fn, const char* types, const char* what) {
+        supportMethod(p, vc, "UIViewController", sel, fn, SupportStatus::Real, what, types);
+    };
+    const auto noop = [](Ctx& x) { callWrapped<&vc_hook>(x); };
+    base("shouldPerformSegueWithIdentifier:sender:", [](Ctx& x) { callWrapped<&vc_shouldPerformSegue>(x); }, "c@:@@", "UIKit's base returns YES");
+    base("prepareForSegue:sender:", [](Ctx& x) { callWrapped<&vc_prepareForSegue>(x); }, "v@:@@", "UIKit's base does nothing");
+    base("willRotateToInterfaceOrientation:duration:", noop, "v@:id", "UIKit's base does nothing");
+    base("didRotateFromInterfaceOrientation:", noop, "v@:i", "UIKit's base does nothing");
+    base("willAnimateRotationToInterfaceOrientation:duration:", noop, "v@:id", "UIKit's base does nothing");
+    base("viewWillTransitionToSize:withTransitionCoordinator:", noop, "v@:{CGSize=ff}@",
+         "UIKit's base forwards to child controllers; this one has none to forward to");
+    base("preferredStatusBarUpdateAnimation", [](Ctx& x) { callWrapped<&vc_fade>(x); }, "i@:", "UIKit's default, UIStatusBarAnimationFade");
+    base("prefersHomeIndicatorAutoHidden", [](Ctx& x) { callWrapped<&vc_editing>(x); }, "c@:", "UIKit's default, NO");
+    base("preferredScreenEdgesDeferringSystemGestures", [](Ctx& x) { callWrapped<&vc_zero>(x); }, "I@:", "UIKit's default, UIRectEdgeNone");
+    for (const char* sel : {"childViewControllerForStatusBarHidden", "childViewControllerForStatusBarStyle",
+                            "childViewControllerForHomeIndicatorAutoHidden", "childViewControllerForScreenEdgesDeferringSystemGestures"})
+        base(sel, [](Ctx& x) { callWrapped<&vc_nil>(x); }, "@@:", "UIKit's default, nil");
+    base("setNeedsUpdateOfHomeIndicatorAutoHidden", noop, "v@:", "There is no home indicator to update");
+    base("setNeedsUpdateOfScreenEdgesDeferringSystemGestures", noop, "v@:", "There are no system edge gestures to update");
 }
 
 } // namespace Hydrogen::Runtime::UIKit
