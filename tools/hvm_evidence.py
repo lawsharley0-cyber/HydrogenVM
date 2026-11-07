@@ -231,7 +231,9 @@ def bundle_from_probe(summary: dict) -> dict:
         bundle_id = str(result.get("bundleId") or "unknown")
         mode = str(result.get("mode") or "software")
         attempt = int(result.get("attempt") or 1)
-        run_id = f"probe:{batch}:{bundle_id}:{mode}:{attempt}"
+        # Two .ipa files of one game share a bundle id; the probe's per-file key keeps their runs apart.
+        key = str(result.get("ipaKey") or "")
+        run_id = f"probe:{batch}:{bundle_id}{':' + key if key else ''}:{mode}:{attempt}"
         seed = int(hashlib.sha1(bundle_id.encode("utf-8")).hexdigest()[:8], 16)
         run = _base_run(
             run_id, attempt, "desktop-probe", build, host,
