@@ -872,6 +872,8 @@ int32_t ac_dispose(Ctx& x, uint32_t uid) {
     st.units.erase(it);
     return 0;
 }
+// Stack of the thread that calls an AudioUnit render callback (CoreAudio I/O thread size).
+constexpr uint32_t kAudioRenderStack = 512u << 10;
 int32_t au_init(Ctx& x, uint32_t uid) {
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
@@ -1029,8 +1031,10 @@ int32_t au_start(Ctx& x, uint32_t uid) {
     u.running = true;
     if (!u.voice) u.voice = MX(x.proc).createStream({});
     MX(x.proc).setPaused(u.voice, false);
+    // The render callback runs on this thread. iOS runs it on CoreAudio's I/O thread, whose
+    // stack is 512 KB; Smash Hit mixes into two 128 KB stack buffers there and overflowed 256 KB.
     if (!u.pumpThread)
-        u.pumpThread = x.proc.startThread(*x.proc.lookupSymbol("__hvm_audio_unit_pump"), uid, 256u << 10, true);
+        u.pumpThread = x.proc.startThread(*x.proc.lookupSymbol("__hvm_audio_unit_pump"), uid, kAudioRenderStack, true);
     return 0;
 }
 int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t, uint32_t, GuestPtr data, uint32_t size) {

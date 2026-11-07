@@ -5937,10 +5937,11 @@ int runFullSubsystemTests() {
         // RemoteIO output: starting the unit must pull PCM from the app's callback.
         {
             std::atomic<int> calls{0};
-            uint32_t gotFrames = 0, gotBytes = 0;
+            uint32_t gotFrames = 0, gotBytes = 0, renderStack = 0;
             bool wrotePcm = false;
             const auto cb = proc.registerHostFunction("hvm_test_au_output", [&](Ctx& cx) {
                 ++calls;
+                renderStack = cx.proc.currentThread().stackSize;
                 gotFrames = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
                 const uint32_t abl = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP] + 4);
                 if (!abl || cx.mem.read<uint32_t>(abl) != 1) return;
@@ -5964,6 +5965,8 @@ int runFullSubsystemTests() {
             callAT("_AudioComponentInstanceDispose", {unit});
             check(unit != 0 && calls > 0 && wrotePcm && gotFrames > 0 && gotBytes >= gotFrames * 4 && auFrames >= gotFrames,
                   "AudioOutputUnitStart invokes the render callback and mixes its signed 16-bit stereo PCM");
+            // CoreAudio's I/O thread has a 512 KB stack; Smash Hit's callback needs over 256 KB.
+            check(renderStack >= (512u << 10), "AudioUnit render callbacks run on a thread with a 512 KB stack");
         }
 
         // OpenGL ES 1.1 Fixed-Function + 2D Texture + glDrawElements test
