@@ -1,16 +1,15 @@
 import Foundation
 
-/// Whether the in-game controls (the FPS pill and the panel behind it) are drawn.
-/// With the "Show debug overlay while playing" setting off, nothing of HydrogenVM is
-/// on screen until the player holds three fingers down; that opens the same controls
-/// once, and minimizing them hides them again.
+/// Tracks the performance overlay and temporary three-finger summons.
+/// RunView also provides an independent controls button (on by default), and
+/// always exposes that entry while VoiceOver is enabled.
 struct PlayerOverlay {
     /// Three fingers held on the screen for this long. A game seldom holds three
     /// fingers still for most of a second, and the game still gets its touches.
     static let gestureTouches = 3
     static let gestureHoldSeconds = 0.8
     static let settingKey = "player.showDebugOverlay"
-    /// Default off: a game runs with no HydrogenVM UI over it until the player asks.
+    /// Performance metrics stay off by default; the controls button is separate.
     static let settingDefault = false
 
     var settingOn = settingDefault
