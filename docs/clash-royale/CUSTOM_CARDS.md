@@ -40,6 +40,21 @@ and saved-prefix acceptance/rejection. The complete focused guest suite passes
 python3 -m unittest discover -s tools/tests -p '*clash_guest*.py' -v
 ```
 
+Names also reject C1 controls and Unicode line/paragraph separators while
+allowing ordinary non-Latin text and joined emoji. Developer usage from a
+checkout with the private extracted original bundle:
+
+```python
+import sys
+sys.path.insert(0, 'tools')
+from clash_custom_cards import generate_overlays
+registry = {'version': 1, 'cards': [
+    {'slot': 0, 'baseCardId': 26000000, 'name': 'Forge Knight'}]}
+overlays, metadata = generate_overlays('/private/original/Clash Royale.app', registry)
+# overlays maps safe resource-relative paths to CSV bytes. Write only into
+# a fresh private QA fixture, never into the original app or repository.
+```
+
 ## Native diagnostic evidence and limits
 
 Private Linux runs use the original pinned 2.1306.1 IPA and the clean latest-main
@@ -70,8 +85,11 @@ or guess initialization.
 
 The corrected native probe's Info popup has also been opened and visually
 reviewed: **Level 1 Forge Knight**, Common/Troop, 650 HP, 75 damage, 1.1-second
-hit interval and inherited original Knight artwork/description. Use/deck/battle
-qualification is a separate next check. A screenshot of a selected card with
+hit interval and inherited original Knight artwork/description. Use enters
+the original replacement flow; replacing the original Knight succeeds and
+survives relaunch. Independent decoding of the native checkpoint confirms
+deck slot 6 contains `26000023`, level index 0, and the original `26000000`
+remains owned in the collection. A screenshot of a selected card with
 an Info button alone must not be reported as opening its Info popup.
 
 The first strict accounting assertion deliberately failed: adding a card changes
@@ -91,6 +109,54 @@ its checkpoint SHA-256 is
 Probe inputs, modified IPAs, client CSVs and saves must remain outside Git.
 Visible card screenshots have been reviewed. No phone custom-card test is claimed.
 
+### Staged opening-hand battle
+
+`native-opening-card-battle` uses a further copy of the UI-equipped save. A
+clearly marked **fixture-only** native-wire reorder exchanges deck slots 0/6,
+preserving the eight owned card objects and fixing the original checkpoint and
+extension checksums. It puts Forge Knight in the opening hand so that a timed
+UI plan can actually select/deploy it. This is not an earned deck/progression
+qualification or a change to production shuffle, elixir, battle timing or AI.
+
+The custom card consumes three elixir, cycles out of the hand, and creates a
+blue Knight which visibly walks toward and crosses the right bridge. No other
+blue card is deployed in this run. Reviewed captures are `deploy-forge.png`
+and `combat.png`; native Knight effects/music are captured as well. The normal
+NPC defeats the player, the result/return flow exits 0, Gold is 75→74 for Arena
+1 entry, losses 8→9, wins remain 9, Gems 87, XP 8 and King level 2. Native
+`LogicGameMode::updateScores` (`0xd85c4`) runs before the loss checkpoint and
+trophies change 59→58. The first QA assertion wrongly required unchanged
+trophies; this component records the native delta and does not independently
+qualify the ELO formula. Do not suppress or overwrite that failed assertion.
+
+An independent post-result relaunch exits 0, retains the custom opening deck,
+and preserves the inspected resources, currencies, wins/losses and trophies.
+This qualifies the single staged loss/result/checkpoint case, not wins, rewards,
+all custom-card types, custom damage tuning or app-update compatibility.
+
+Audio telemetry reports 7,151,616 frames, nonzero music/effect frames, zero
+dropped transport blocks and zero transport error. This is not listening-based
+audio-quality or iPhone stutter qualification. Reports retain two missing APIs;
+exit 0 does not mean complete shared-runtime compatibility. Specifically,
+StoreKit purchases are disabled and `demon_step_01.wav` is silent on this host
+candidate because it is Microsoft ADPCM (WAVE tag 2), not IMA WAV (tag 17).
+FFprobe confirms mono 22,050 Hz MS ADPCM. This guest branch already contains
+`src/runtime/audio/MsAdpcm.cpp` and dr_wav integration from `0c028649`, while
+the newer main-based keyboard worktree lacks that unmerged decoder. Keep this
+specific missing effect open for a separately tested shared-runtime port;
+nonzero mixed audio and zero transport drops do not resolve it. Do not blindly
+merge the older guest runtime over the updater's current-main audio/loader work.
+
+Earlier `native-custom-battle` and `native-custom-deploy` are **rejected as
+deployment proof**: late touches hit Match Over; the cycling plan encountered
+the native Not enough Elixir guard and selected a different card on its next
+attempt. Their scripts/screenshots/logs are retained. Successful deck entry or
+a green capture-plan status alone is not evidence that Forge Knight deployed.
+
+Private result/deck evidence is in `native-equipped-verification.json`,
+`opening-card-fixture.json` and `native-opening-result-verification.json`.
+Post-result checkpoint relaunch is tracked separately in `native-opening-relaunch`.
+
 ## Remaining implementation order
 
 1. Implement the mandatory append-only guest registry and durable overlay
@@ -104,8 +170,10 @@ Visible card screenshots have been reviewed. No phone custom-card test is claime
    construction and collection APIs. Ownership lookup must make interruption
    between grant/checkpoint/restart safe. Keep mutable transaction state out of
    the immutable definition fingerprint.
-4. Extend the Mod Lab catalog to custom unit/projectile pointers; qualify native
-   Info, Use, deck persistence, battle deployment/damage and results/relaunch.
+4. Extend the Mod Lab catalog to custom unit/projectile pointers; repeat native
+   Info, Use, deck persistence and deployment/results checks through the real
+   end-user creation path. Qualify damage, interrupted creation/save recovery,
+   registry corruption and app updates, which the private probes do not cover.
    Preserve all seven original training names, decks and tutorial/AI behavior.
 5. Define handling for shared spawn/death effects and investigate independent
    weapon/projectile visual scaling. The present generator clones only the

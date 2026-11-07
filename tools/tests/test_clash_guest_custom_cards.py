@@ -62,6 +62,10 @@ class CustomDefinitionTests(unittest.TestCase):
     def test_invalid_schema_slots_ids_names_and_card_limit_reject(self):
         for invalid in [dict(version=True, cards=[]), dict(version=1, cards=[], extra=0), self.registry(base=True), self.registry(base=28000000), self.registry(name=''), self.registry(name='a\nb'), self.registry(name='a'*33), dict(version=1, cards=[dict(slot=1, baseCardId=26000000, name='Gap')]), dict(version=1, cards=[dict(slot=i, baseCardId=26000000, name='Too many') for i in range(17)])]:
             with self.subTest(registry=invalid), self.assertRaises(ValueError): validate_registry(invalid)
+        for separator in ['\x85', '\u2028', '\u2029']:
+            with self.subTest(separator=separator), self.assertRaises(ValueError):
+                validate_registry(self.registry(name=f'First{separator}second'))
+        validate_registry(self.registry(name='勇敢な Knight 👩🏽\u200d🚀'))
 
     def test_unknown_source_ids_and_missing_projectiles_reject(self):
         with tempfile.TemporaryDirectory() as folder:

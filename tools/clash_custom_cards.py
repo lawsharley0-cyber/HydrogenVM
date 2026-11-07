@@ -73,7 +73,7 @@ def validate_registry(registry, previous=None):
         if type(card['slot']) is not int or card['slot'] != slot or type(card['baseCardId']) is not int or card['baseCardId'] // 1000000 not in (26, 27):
             raise ValueError('Slots must be append-only troop/building definitions')
         name = card['name']
-        if not isinstance(name, str) or not name.strip() or len(name) > 32 or len(name.encode('utf-8')) > 96 or any(ord(c) < 32 or ord(c) == 127 for c in name):
+        if not isinstance(name, str) or not name.strip() or len(name) > 32 or len(name.encode('utf-8')) > 96 or any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '\u2028\u2029' for c in name):
             raise ValueError('Custom name must be single-line text, at most 32 characters/96 UTF-8 bytes')
     if previous is not None:
         validate_registry(previous)
