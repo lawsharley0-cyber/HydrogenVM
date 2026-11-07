@@ -8,7 +8,8 @@ import CoreGraphics   // Apple platforms; Foundation on Linux exports the same g
 /// is 4. Every rule below is written against the case names, so only these numbers tie
 /// the player to the emulator and to the phone.
 enum GuestOrientation: Int, CaseIterable {
-    case portrait = 1, upsideDown = 2, landscapeRight = 3, landscapeLeft = 4
+    // Declaration order (allCases) stays portrait, upside down, left, right; only the raw values follow UIKit.
+    case portrait = 1, upsideDown = 2, landscapeLeft = 4, landscapeRight = 3
 
     var landscape: Bool { self == .landscapeLeft || self == .landscapeRight }
     /// Clockwise quarter turns from the guest's upright UI to its portrait framebuffer.
