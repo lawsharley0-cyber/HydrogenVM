@@ -1,50 +1,50 @@
-# HydrogenVM report — 433d581
+# HydrogenVM report — 1ff2054
 
-2026-11-07T13:06:33+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
+2026-11-07T23:24:23+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 129.8s |
-| tools | 1 | 0 | 0 | 12.1s |
-| cpu | 15 | 0 | 0 | 0.4s |
-| ios | 6 | 0 | 0 | 2.4s |
-| bench | 5 | 0 | 0 | 17.4s |
+| build | 1 | 0 | 0 | 266.4s |
+| tools | 1 | 0 | 0 | 26.9s |
+| cpu | 15 | 0 | 0 | 0.5s |
+| ios | 6 | 0 | 0 | 3.7s |
+| bench | 5 | 0 | 0 | 23.1s |
 
 ## Speed
 
-CoreMark **2429.1** iterations/s (814.6 guest MIPS)
+CoreMark **1338.0** iterations/s (465.8 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **168.7%** | 1012 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **126.5%** | 1012 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **101.2%** | 810 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **53.4%** | 694 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **92.9%** | 557 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **69.7%** | 557 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **55.7%** | 446 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **29.4%** | 382 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 492 MIPS, ctests_arm 564 MIPS, ftests_vfp_thumb_softfp 635 MIPS, ftests_neon_thumb 596 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 380 MIPS, ctests_arm 346 MIPS, ftests_vfp_thumb_softfp 300 MIPS, ftests_neon_thumb 266 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.11s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.08s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.13s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.78s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.04s | 46 | 0.48 ms | 4.77 ms | 0 |
+| CTest | 0.21s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.21s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.20s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 1.59s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.17s | 30 | 0.95 ms | 8.44 ms | 0 |
 
 ## Problems (33)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 53.4% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 29.4% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (32)
 
 - **build / compiler**: src/runtime/foundation/CompatibilityClasses.cpp:193:42: warning: missing field 'retained' initializer [-Wmissing-field-initializers]
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
-- **build / compiler**: src/runtime/foundation/RunLoop.cpp:614:13: warning: unused variable 'cx' [-Wunused-variable]
+- **build / compiler**: src/runtime/foundation/RunLoop.cpp:625:13: warning: unused variable 'cx' [-Wunused-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:251:6: warning: unused function 'have' [-Wunused-function]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:38:37: warning: unused variable 'kUnsignedByte' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/Gles1Emu.cpp:38:61: warning: unused variable 'kByte' [-Wunused-const-variable]
