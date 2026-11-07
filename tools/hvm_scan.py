@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hvm_probe import import_app  # noqa: E402  (same import logic and cache marker as the probe)
+from hvm_probe import import_app, import_root, safe_name  # noqa: E402,F401  (same import logic, folders and cache marker as the probe)
 
 HOME = Path.home()
 
@@ -57,19 +57,6 @@ def demangle(names):
     except (OSError, subprocess.SubprocessError):
         pass
     return {n: n for n in names}
-
-
-def import_root(apps_root, ipa):
-    """This .ipa's own import folder: a readable name plus a digest of the full file name,
-    so two files never share one (even when their readable names collapse to the same)."""
-    digest = hashlib.sha1(ipa.stem.encode('utf-8', 'surrogateescape')).hexdigest()[:10]
-    return apps_root / f'{safe_name(ipa.stem)[:60]}-{digest}'
-
-
-def safe_name(stem):
-    """A folder name for one .ipa: letters, digits, '.', '-' and '_' only."""
-    out = ''.join(c if c.isalnum() or c in '.-_' else '_' for c in stem).strip('._')
-    return out[:80] or 'ipa'
 
 
 def gaps_from(linking):
@@ -115,6 +102,9 @@ def scan_one(hvm, ipa, apps_root, games_dir, importer=import_app):
         linking = json.loads(out.stdout)
     except json.JSONDecodeError as e:
         return fail(f'bad linking JSON: {e}')
+    refs = linking.get('references') if isinstance(linking, dict) else None
+    if not isinstance(refs, list) or not all(isinstance(ref, dict) for ref in refs):
+        return fail('bad linking JSON: expected an object with a "references" list of objects')
     try:
         (games_dir / f'{import_root(Path(), ipa).name}.json').write_text(out.stdout, encoding='utf-8')
     except OSError as e:
@@ -200,10 +190,12 @@ def load_baseline(path):
         return None
     try:
         data = json.loads(Path(path).read_text(encoding='utf-8'))
-    except (OSError, json.JSONDecodeError) as e:
+    except (OSError, ValueError) as e:   # ValueError covers bad JSON and bytes that are not UTF-8
         raise SystemExit(f'cannot read baseline {path}: {e}')
     if not isinstance(data, dict) or not isinstance(data.get('gaps'), list):
         raise SystemExit(f'baseline {path} is not a scan.json (no "gaps" list)')
+    if not all(isinstance(g, dict) and isinstance(g.get('kind'), str) and isinstance(g.get('name'), str) for g in data['gaps']):
+        raise SystemExit(f'baseline {path} has gap entries without a "kind" and "name"')
     return data
 
 

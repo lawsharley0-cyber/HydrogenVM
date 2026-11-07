@@ -15,7 +15,7 @@ Output (--out, default ~/probe/<timestamp>, and ~/probe/latest points at it):
   summary.md     ranked issue list + per-game table (read this first)
   summary.json   the same, machine-readable (use as the next --baseline)
   evidence/      shared hvm-evidence/v1 runs, fingerprints and private artifact index
-  <bundleId>-<mode>/  run.log, report.json, shot.png, script.txt
+  <bundleId>-<key>-<mode>/  run.log, report.json, shot.png, script.txt (<key>: per .ipa file)
 """
 import argparse
 import hashlib
@@ -129,6 +129,19 @@ def script_for(bundle_id, seconds):
         t += 2.5
     args += ['--lifecycle', f'bg@{bg_at},fg@{bg_at + 3:.1f}']
     return args
+
+
+def import_root(apps_root, ipa):
+    """This .ipa's own import folder: a readable name plus a digest of the full file name,
+    so two files never share one (even when their readable names collapse to the same)."""
+    digest = hashlib.sha1(ipa.stem.encode('utf-8', 'surrogateescape')).hexdigest()[:10]
+    return apps_root / f'{safe_name(ipa.stem)[:60]}-{digest}'
+
+
+def safe_name(stem):
+    """A folder name for one .ipa: letters, digits, '.', '-' and '_' only."""
+    out = ''.join(c if c.isalnum() or c in '.-_' else '_' for c in stem).strip('._')
+    return out[:80] or 'ipa'
 
 
 def import_app(hvm, ipa, apps_root):
@@ -316,12 +329,17 @@ def tainted_md(rows):
 
 def probe_one(args, ipa, mode):
     ipa_hash = file_sha256(ipa)
+    # Each .ipa gets its own import folder and run folder: two versions of one game share
+    # a bundle id, and sharing a folder made one overwrite the other's app, log and run id.
+    root = import_root(args.apps, ipa)
+    key = root.name.rsplit('-', 1)[-1][:6]
     try:
-        bid, app, home = import_app(args.hvm, ipa, args.apps)
+        root.mkdir(parents=True, exist_ok=True)
+        bid, app, home = import_app(args.hvm, ipa, root)
     except Exception as e:  # noqa: BLE001 - report every failure as an issue
-        return {'bundleId': ipa.stem, 'ipa': ipa.name, 'sha256': ipa_hash, 'mode': mode, 'status': 'import-failed',
+        return {'bundleId': ipa.stem, 'ipa': ipa.name, 'ipaKey': key, 'sha256': ipa_hash, 'mode': mode, 'status': 'import-failed',
                 'issues': [{'kind': 'load', 'severity': 100, 'key': f'load: {norm(str(e))}', 'text': str(e)}]}
-    run_dir = args.out / f'{bid}-{mode}'
+    run_dir = args.out / f'{bid}-{key}-{mode}'
     run_dir.mkdir(parents=True, exist_ok=True)
     script = script_for(bid, args.seconds)
     extra = Path(__file__).resolve().parent / 'probe_scripts' / f'{bid}.txt'
@@ -356,7 +374,7 @@ def probe_one(args, ipa, mode):
     status = 'crash' if worst >= 90 else 'broken' if worst >= 70 else 'issues' if worst >= 45 else 'ok'
     perf = (rep or {}).get('perf') or {}
     tainted, stub_hits, distinct_missing, top_missing = taint_info(rep)
-    return {'bundleId': bid, 'ipa': ipa.name, 'sha256': ipa_hash, 'mode': mode, 'status': status, 'exit': code,
+    return {'bundleId': bid, 'ipa': ipa.name, 'ipaKey': key, 'sha256': ipa_hash, 'mode': mode, 'status': status, 'exit': code,
             'tainted': tainted, 'stubHits': stub_hits, 'distinctMissing': distinct_missing, 'topMissing': top_missing,
             'seconds': round(time.time() - started, 1), 'framesPresented': perf.get('framesPresented', 0),
             'mixer': (rep or {}).get('mixer'), 'dir': str(run_dir), 'issues': issues,

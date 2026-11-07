@@ -128,7 +128,10 @@ class ScanOneTest(unittest.TestCase):
         cases = [(dict(side_effect=subprocess.TimeoutExpired('hvm', 300)), 'timed out'),
                  (dict(side_effect=OSError('missing hvm')), 'could not run hvm'),
                  (dict(return_value=subprocess.CompletedProcess([], 1, stdout='', stderr='boom')), 'linking failed: boom'),
-                 (dict(return_value=subprocess.CompletedProcess([], 0, stdout='{', stderr='')), 'bad linking JSON')]
+                 (dict(return_value=subprocess.CompletedProcess([], 0, stdout='{', stderr='')), 'bad linking JSON'),
+                 (dict(return_value=subprocess.CompletedProcess([], 0, stdout='[1]', stderr='')), 'bad linking JSON'),
+                 (dict(return_value=subprocess.CompletedProcess([], 0, stdout='{"references": 3}', stderr='')), 'bad linking JSON'),
+                 (dict(return_value=subprocess.CompletedProcess([], 0, stdout='{"references": [1]}', stderr='')), 'bad linking JSON')]
         for kw, msg in cases:
             with mock.patch.object(hvm_scan.subprocess, 'run', **kw):
                 r = hvm_scan.scan_one('hvm', Path('g.ipa'), self.root, self.games, importer=self.importer)
@@ -141,6 +144,24 @@ class ScanOneTest(unittest.TestCase):
         self.assertIn('import failed: bad zip', r['error'])
 
 
+class ProbeFoldersTest(unittest.TestCase):
+    def test_probe_gives_each_ipa_its_own_import_and_run_folder(self):
+        import hvm_probe
+        with tempfile.TemporaryDirectory() as d:
+            seen = []
+
+            def fake_import(_hvm, _ipa, root):
+                seen.append(root)
+                raise RuntimeError('stop after choosing folders')
+            args = mock.Mock(apps=Path(d), out=Path(d) / 'out', hvm='hvm')
+            with mock.patch.object(hvm_probe, 'import_app', side_effect=fake_import), \
+                    mock.patch.object(hvm_probe, 'file_sha256', return_value='0'):
+                a = hvm_probe.probe_one(args, Path('Terraria 1.0.ipa'), 'software')
+                b = hvm_probe.probe_one(args, Path('Terraria 1.2.ipa'), 'software')
+            self.assertNotEqual(seen[0], seen[1])
+            self.assertNotEqual(a['ipaKey'], b['ipaKey'])
+
+
 class MainTest(unittest.TestCase):
     def test_bad_baseline_fails_before_scanning(self):
         with tempfile.TemporaryDirectory() as d:
@@ -151,6 +172,16 @@ class MainTest(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         hvm_scan.main(['--ipas', d, '--baseline', str(path)])
                 scan.assert_not_called()
+
+    def test_every_bad_baseline_is_a_clean_exit(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'scan.json'
+            for content in (b'\xff', b'{', b'{"gaps": [1]}', b'{"gaps": [{"kind": "function"}]}'):
+                path.write_bytes(content)
+                with self.assertRaises(SystemExit, msg=content):
+                    hvm_scan.load_baseline(path)
+            path.write_bytes(b'{"gaps": [{"kind": "function", "name": "_f"}]}')
+            self.assertEqual(hvm_scan.load_baseline(path)['gaps'][0]['name'], '_f')
 
     def test_latest_never_replaces_a_real_file(self):
         with tempfile.TemporaryDirectory() as d:
@@ -170,8 +201,18 @@ class MainTest(unittest.TestCase):
             (ipas / 'g.ipa').write_bytes(b'')
             fake = {'ipa': 'g.ipa', 'bundleId': 'com.g', 'error': None, 'references': 1,
                     'gaps': [('function', '_f\u2026', 'missing')]}
-            with mock.patch.object(hvm_scan, 'scan_one', return_value=fake):
+            # The reports must say UTF-8 explicitly: on a host whose default encoding is not
+            # UTF-8 (Windows, a C locale) the default would fail on the '…' in scan.md.
+            real_write = Path.write_text
+            encodings = []
+
+            def write_text(path, text, encoding=None, errors=None, newline=None):
+                encodings.append(encoding)
+                return real_write(path, text, encoding=encoding, errors=errors, newline=newline)
+            with mock.patch.object(hvm_scan, 'scan_one', return_value=fake), \
+                    mock.patch.object(Path, 'write_text', autospec=True, side_effect=write_text):
                 self.assertEqual(hvm_scan.main(['--ipas', str(ipas), '--apps', d + '/apps', '--out', d + '/out']), 0)
+            self.assertTrue(encodings and all(e == 'utf-8' for e in encodings), encodings)
             self.assertIn('\u2026', (Path(d) / 'out' / 'scan.md').read_bytes().decode('utf-8'))
             json.loads((Path(d) / 'out' / 'scan.json').read_text(encoding='utf-8'))
 
