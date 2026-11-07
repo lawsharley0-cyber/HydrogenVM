@@ -2638,6 +2638,29 @@ int runFullSubsystemTests() {
               "AVPlayerItem removing a status observer cancels pending readiness delivery");
         r.release(cpu, observer);
         std::filesystem::remove(mediaPath);
+        {
+            // -[NSRunLoop runMode:beforeDate:] runs the calling thread's loop whatever the receiver
+            // (it is CFRunLoopRunInMode). Flurry runs [[NSRunLoop mainRunLoop] runMode:beforeDate:]
+            // on its upload thread; main-loop sources must not run there (Pocket Ants drew its
+            // world from that thread with no GL context).
+            std::atomic<int64_t> ranOn{-1};
+            Foundation::mainRunLoop(proc).post([&](CPU::Cpu&) { ranOn = int64_t(proc.currentThread().id); });
+            const uint32_t fn = proc.defineFunction("test_runloop_receiver_thread", [](Ctx& x) {
+                auto& rr = ObjC::rt(x);
+                const ObjC::id mainLoop = ObjC::id(rr.send(x.cpu, ObjC::id(rr.getClass("NSRunLoop")), "mainRunLoop"));
+                const ObjC::id now = ObjC::id(rr.send(x.cpu, ObjC::id(rr.getClass("NSDate")), "date"));
+                rr.send(x.cpu, mainLoop, "runMode:beforeDate:", {Foundation::makeString(x, "kCFRunLoopDefaultMode"), now});
+                rr.send(x.cpu, mainLoop, "runUntilDate:", {now});
+                x.cpu.r[0] = 0;
+            });
+            const uint32_t tid = proc.startThread(fn, 0, 64u << 10, false);
+            proc.joinThread(tid, nullptr);
+            const bool notOnWorker = ranOn.load() == -1;
+            Foundation::mainRunLoop(proc).runOnce(cpu, 0);
+            check(notOnWorker && ranOn.load() == int64_t(proc.mainThread().id),
+                  "NSRunLoop run methods run the calling thread's loop, never another thread's sources");
+        }
+
     }
 
     {

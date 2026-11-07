@@ -490,11 +490,22 @@ void timer_dealloc(Ctx& x, id self, SEL) {
 id rc_current(Ctx& x, id, SEL) { return loopObject(x, currentLoop(x)); }
 id rc_main(Ctx& x, id, SEL) { return loopObject(x, *L(x).main); }
 void r_addTimer(Ctx& x, id self, SEL, id timer, id mode) { scheduleTimer(x, timer, loopOf(x, self), modeKey(x, mode)); }
-void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopOf(x, self).runUntil(x.cpu, 1e18, false, kDefaultModeKey); }
-void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopOf(x, self).runUntil(x.cpu, dateValue(x, date), false, kDefaultModeKey); }
+// -run, -runUntilDate: and -runMode:beforeDate: run the calling thread's loop, as
+// Foundation's do (they are CFRunLoopRunInMode, which takes no loop): a receiver
+// that belongs to another thread is not run on this one. Flurry runs
+// [[NSRunLoop mainRunLoop] runMode:beforeDate:] on its upload thread; running the
+// main loop there executed the game's main-thread sources (Pocket Ants' cocos2d
+// draw loop) on that thread, with no GL context.
+RunLoop& loopToRun(Ctx& x, id self) {
+    RunLoop& own = currentLoop(x);
+    (void)self;
+    return own;
+}
+void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopToRun(x, self).runUntil(x.cpu, 1e18, false, kDefaultModeKey); }
+void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopToRun(x, self).runUntil(x.cpu, dateValue(x, date), false, kDefaultModeKey); }
 bool r_runModeBeforeDate(Ctx& x, id self, SEL, id mode, id date) {
     const double d = dateValue(x, date);
-    return loopOf(x, self).runModeOnce(x.cpu, d, runModeKey(x, mode));
+    return loopToRun(x, self).runModeOnce(x.cpu, d, runModeKey(x, mode));
 }
 // The mode being run, as the guest's string (no internal "s:" key prefix); nil when the loop is not running.
 id r_currentMode(Ctx& x, id self, SEL) {

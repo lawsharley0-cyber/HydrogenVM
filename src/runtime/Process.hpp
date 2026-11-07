@@ -59,6 +59,10 @@ struct ProcessConfig {
     std::function<void(bool on)> microphone;
     // OpenGL ES on the host GPU (runtime/gl/HostGL.hpp). Null: software rasterizer.
     std::shared_ptr<HostGL::Platform> hostGL;
+    // Check glGetError after every forwarded GL call (as HVM_GL_DEBUG=1 does) and keep the
+    // first errors with the call that raised them (glErrorLog). The guest still sees each
+    // error from its own glGetError. Costs a driver round trip per call: for test runs.
+    bool glTrace = false;
     // Audio: the platform pulls mixed sound from Process::mixer() (see audio/Audio.hpp).
 };
 
@@ -148,12 +152,24 @@ public:
     Audio::Mixer& mixer() { return *mixer_; }
     std::shared_ptr<Audio::Mixer> mixerPtr() const { return mixer_; }
     bool stopping() const { return engine_->stopRequested(); }
+    // glTrace: the first distinct GL errors ("glTexImage2D(...) -> 0x0500 [main]"), bounded.
+    void noteGLError(std::string line) {
+        std::lock_guard<std::mutex> lk(glErrorMu_);
+        if (glErrorLines_.size() < 48 && std::find(glErrorLines_.begin(), glErrorLines_.end(), line) == glErrorLines_.end())
+            glErrorLines_.push_back(std::move(line));
+    }
+    std::vector<std::string> glErrorLog() const {
+        std::lock_guard<std::mutex> lk(glErrorMu_);
+        return glErrorLines_;
+    }
 
     // ---- performance counters (read any time; reported by `hvm --report`)
     struct Perf {
         std::atomic<uint64_t> frames{0};          // frame hooks run (60 Hz main run loop)
         std::atomic<uint64_t> framesPresented{0}; // frames that changed and were composited
         std::atomic<uint64_t> offscreenPresents{0}; // GL frames presented to a layer the screen doesn't show
+        // glTrace only: GL errors raised, draw calls, and presented frames that drew nothing.
+        std::atomic<uint64_t> glErrors{0}, glDraws{0}, glEmptyPresents{0}, glLastFrameDraws{0};
         std::atomic<uint64_t> faultsToApp{0};     // bad accesses handed to the app's signal handler
         std::atomic<uint64_t> frameNs{0};         // host time inside frame hooks (input, links, layout, display, composite)
         std::atomic<uint64_t> compositeNs{0};     // of which compositing
@@ -462,6 +478,8 @@ private:
     bool crashed_ = false;
     std::function<bool(Ctx&, const std::exception&)> hostErrorHook_;
     std::shared_ptr<Audio::Mixer> mixer_;
+    mutable std::mutex glErrorMu_;
+    std::vector<std::string> glErrorLines_;
     std::string crashReport_;
     std::string crashSignature_, crashKind_, crashLocation_, crashDetail_, executableHash_;
     std::array<uint32_t, 16> crashRegisters_{};
