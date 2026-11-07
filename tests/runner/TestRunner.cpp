@@ -7996,6 +7996,25 @@ int runFullSubsystemTests() {
             return p1 != 0 && p1 == p2 && s1 != s2 && s1.rfind(root, 0) == 0 && s2.rfind(root, 0) == 0 &&
                    !std::filesystem::exists(s1) && !std::filesystem::exists(s2);
         });
+        run("symlink with an absolute guest target resolves inside the sandbox; readlink returns it", [&] {
+            namespace fs = std::filesystem;
+            const std::string hostDir = proc.homePath() + "/tmp/symlink_test/";
+            std::error_code ec;
+            fs::remove_all(hostDir, ec);
+            fs::create_directories(hostDir, ec);
+            { std::ofstream out(hostDir + "target.txt"); out << "hi"; }
+            const std::string guestDir = proc.guestHomePath() + "/tmp/symlink_test/";
+            const uint32_t rc = call("_symlink", {proc.allocCString(guestDir + "target.txt"), proc.allocCString(guestDir + "link")});
+            const uint32_t rel = call("_symlink", {proc.allocCString("target.txt"), proc.allocCString(guestDir + "rel")});
+            const uint32_t again = call("_symlink", {proc.allocCString("target.txt"), proc.allocCString(guestDir + "rel")});
+            const uint32_t buf = proc.heap().allocZeroed(64);
+            const int32_t n = int32_t(call("_readlink", {proc.allocCString(guestDir + "rel"), buf, 64}));
+            std::ifstream in(hostDir + "link");
+            std::string got;
+            in >> got;
+            return rc == 0 && rel == 0 && int32_t(again) == -1 && fs::is_symlink(hostDir + "link", ec) &&
+                   fs::read_symlink(hostDir + "link", ec).is_relative() && got == "hi" && n == 10;
+        });
         run("file open ring tracks guest opens across fopen, open, NSData, and NSFileHandle with live updates and rollover", [&] {
             namespace fs = std::filesystem;
             const std::string testDir = proc.homePath() + "/tmp/file_ring_test/";
