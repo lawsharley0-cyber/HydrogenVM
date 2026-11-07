@@ -1,6 +1,225 @@
 # Clash Royale solo restoration investigation
 
-Date: 2026-10-20. Work branch: `gemini-merge`.
+November 7 custom-card foundation: [CUSTOM_CARDS.md](clash-royale/CUSTOM_CARDS.md) records the append-only definition generator, save-prefix identity checks, 51 focused tests and native component probes. Generated Forge Knight data/name/ownership resolve; discovery achievements settle after relaunch. The end-user forge, mandatory guest registry/loader and custom-card battle qualification remain pending. Keep private probe saves away from the normal guest.
+
+November 7 keyboard continuation: shared host [PR #381](https://github.com/lawsharley0-cyber/HydrogenVM/pull/381) implements custom UIKeyInput and composed deletion. Clean latest-main integration passes 657 runtime checks/26 Test Lab cases and actual native clan edit/send/save/clean quit/relaunch. Phone presentation/macOS CI remain separate; guest Mod Lab/custom-card scope is recorded in [MOD_LAB.md](clash-royale/MOD_LAB.md).
+
+Latest owner-prioritized modding continuation: [MOD_LAB.md](clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
+
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](clash-royale/DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
+November 6 current: [all six arena entry/combat/result/relaunch qualification](clash-royale/PLAYABILITY_2026-11-06.md), 78 profiles, 40 focused tests, 85 sector comparisons and unchanged first-36 legacy outputs. Earned later wins/rewards, draw/partial-crown accounting, clan events and full bug/device audits remain open. Modding is deferred until reliable playability. PR #138 is closed and unmerged; do not describe this continuation as integrated into main.
+
+Newest continuation after `5040611`: [Arena 2 progression](clash-royale/ARENA_PROGRESSION.md)
+adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
+entry/result/return checks; 38 focused tests and 43 private sector comparisons.
+Boundary trophies are component fixtures, not an earned climb; Arenas 3–6,
+draw/partial-crown accounting and full audits remain open. The owner's new
+[random clan-event request](clash-royale/CLAN_EVENTS_PLAN.md) is recorded as planned
+multi-bot social work after core arena/results. Training remains original and
+advanced battle-AI refinement remains deferred. No shared src or device pass.
+
+Newest October 27 continuation after `f8505aa`: [STORE_PURCHASES.md](clash-royale/STORE_PURCHASES.md)
+supersedes the shop chest/currency backlog below. Original Silver/Golden/Magical
+chests and all three Gem-for-Gold packs now have scoped native purchase/reveal/
+relaunch evidence. Controlled before/after checkpoint interruption preserves
+payment/reward accounting; three invalid pending records reject unchanged.
+37 focused tests, actual fresh original training and retained clan checks pass.
+Higher-cost component fixtures were explicitly funded; original earned and
+phone-failing saves remain intact. All seven original trainers stay unchanged.
+The owner defers advanced opponent AI refinement until every other feature and
+bug fix is ready. Next: later-arena progression/results/profile accounting,
+then full button/save/device/visual/audio/performance audits. This guest-only
+stage changes no shared engine code and establishes no new iPhone or audio-
+quality/performance verdict. Earlier chronological evidence follows.
+
+For another agent taking over, read
+[the complete October 26 handoff](clash-royale/AGENT_HANDOFF_2026-10-26.md):
+architecture, current source/state, exact verification process and future work.
+
+## Current architecture — October 27, 2026
+
+Newest after `45f5a97`: [daily card shop](clash-royale/DAILY_SHOP.md) restores
+the original offers/countdown, native common/rare/epic purchases, prices/limits
+and atomic retained counts. Calendar tests cover native six-card Sunday,
+forward rollover retaining a purchased card/debit and backward-date protection.
+36 focused tests, all-seven trainer AI fallbacks/sector oracle, actual original
+Trainer Earl, existing clan return and three unchanged-file shop guards pass.
+**Preserve all original training names, decks, AI and tutorial behavior**;
+training receives no shop mutation or post-training opponent policy. Next are
+shop chest/currency purchase paths, later arenas/results and full audits.
+Shared runtime/assets are unchanged; no fresh phone/audio-quality/performance
+verdict. See the feature document for funded/clock/limit fixture boundaries.
+
+Newest after `b638b88`: [Arena opponents](clash-royale/ARENA_OPPONENTS.md)
+adds 64 authored post-training handles, six source-validated Arena 1 decks,
+18 native sectors and three bounded native reserve profiles. Real consecutive
+paid matches change name/deck/style across relaunch, with correct battle/result
+labels and original accounting. Trainer Earl and retained clan return pass;
+33 focused tests, 25 private sector oracle cases and two unchanged-file GBO1
+rejections pass. Shared runtime/assets are unchanged. Next: daily shop, later
+arenas/results and the full UI/device/visual/audio/performance queue.
+
+Newest afterd213fdf: [clan community](clash-royale/CLAN_COMMUNITY.md) adds a
+reachable native NPC profile, actual Invite/rejoin on its retained actor, and
+weekly roster/header points. Native invitation/two returns, original donation
+cooldown after rejoin, real roster11/1/clan12, weekly reset without lifetime or
+economic changes, and three unchanged-file guards pass.29 guest tests pass;
+shared runtime remains unchanged. Monday00:00 UTC/weighted weekly scores are
+documented offline policy, not verified retired-server calendar behavior.
+Next are post-training names, arena decks/styles and daily shop; full later
+arena/device/UI/audio/performance qualification remains open.
+
+Latest aftera51c68e: [reciprocal donations](clash-royale/RECIPROCAL_DONATIONS.md)
+now work through the actual UI. Local Donor uses original524/cooldown and a
+durable namespace3 request; Donate executes native203/211 with original limits
+and rewards. Common1/10, rare1/1, real spent-Arrows replenishment and repeat
+returns pass. GNR1 binds both actors; Kick retires the request without losing
+supplied stock.27 tests pass; final v2 fixes first-login conversation order.
+Next clan work is invitations/rejoin, further legitimate supply and weekly
+stats; names/decks/styles/shop and later full UI/device/audio/performance remain.
+
+Post-3c07405: [NPC inventory provenance](clash-royale/DONOR_INVENTORY.md)
+removes the historical stock-zero freeze that would reject a legitimately
+replenished donor at login. GNI1 conserves all six starter materials, binds both
+native actors and retains sent history; legacy adoption never refills stock.
+26 guest tests, joined/retired/rare migrations and damaged-file retention pass.
+The native receive/relaunch component reproduces the old abort and preserves
+replenished stock in the new guest. Reciprocal NPC-request/player-Donate UI
+remains next; this is not a full Clans or new device qualification.
+
+Newest: [clan controls](clash-royale/CLAN_CONTROLS.md) qualify actual native
+Promote/Demote/leadership and Kick with atomic role/membership recovery, saved
+removal, GDN1-v2 migration and a required-donor flag that rejects whole-child
+truncation. All25 guest tests, sixteen damaged-file retention cases and four
+pre/post-commit abort trials pass. Human/NPC economy and earned/failing source
+saves remain intact. Reciprocal NPC requests/player donations are next; this
+does not qualify the full Clans feature or new iPhone gameplay.
+
+Latest: Kimi's 96003cb adds the scoped persistent local-NPC Friendly Battle
+lifecycle. Independent follow-up fixes its terminal-wallet relaunch failure
+after a real native upgrade and separates friendly/chat stream IDs with a
+validated atomic migration. Read the newest LOCAL_CLANS section for actual
+combat/result, repeat-return, 22-test and malformed-save evidence. Donation
+fulfillment now advances through the persistent donor component below; the
+later ordered work remains open.
+
+The post-0be234d continuation in [DONATIONS.md](clash-royale/DONATIONS.md) adds
+an explicitly Local Donor member with finite native inventory and actual
+203→211 transfers to the player: common Arrows1/10 and rare Giant1/1, original
+receipt UI, donor rewards, same-file returns and exhausted-stock0/1. Both actors
+and the request commit synchronously in one atomic checkpoint; deliberate
+pre/post-commit abort recovery and 12 unchanged-file negative cases pass,
+including a reproduced/fixed cross-extension inbox-validation ordering bug.
+The broad suite passes 23 tests. Reciprocal donations, NPC stock replenishment,
+role/kick controls, weekly stats and full device/UI qualification remain open;
+read the exact synthetic-fixture and clock-aging limits before interpreting it.
+
+The owner now authorizes a modified guest IPA containing its own offline logic.
+Read [guest mod progress](clash-royale/GUEST_MOD_PROGRESS.md) first. This prototype
+runs without a Clash host service. Seven earned training wins, native reward
+recovery, upgrades to King level 2, a nine-card collection and native deck swaps
+are locally reproduced. The initial name flow now uses original command 201;
+it needs the shared CoreText caret API present on this branch (ordinary main
+`6884670` stops there). Two real final-trainer defeats persist without win/chest
+grants, followed by an earned seventh victory. v27 preserves the native arena
+refresh and graduates the same save to Arena 1. v31 completes two actual
+Arena-1 bot victories, original paid entry, 65 earned trophies and matching
+Silver Chest rewards. Its latest battle credits three actual native crowns;
+the original home transfers them to 3/10 once across two clean relaunches.
+v33 adds original home elapsed-time accounting with an atomic clock stamp;
+real paid-reward interruption recovery and repeated no-duplicate relaunches
+pass. The earned three-hour Silver now completes naturally and grants +28 Gold,
+one Archer, one Arrow and one Goblin without spending gems; clean relaunch
+retains the result. v42 adds qualified solo-clan creation, chat, settings,
+search and leave/re-create, including actual interrupted-creation recovery,
+in explicitly synthetic King-3 component fixtures. See
+[local clans](clash-royale/LOCAL_CLANS.md) for exact boundaries and save format.
+v46 also restores original local clan mail, a persistent Inbox and the native
+12-hour cooldown. An owned forced-stop trial retains one message and cooldown
+without resource changes; eight damaged-mail checkpoints reject unchanged.
+v48 fixes actual card-selection command 524, retaining an unfulfilled native
+request, its eight-hour cooldown and forced-stop recovery without granting cards.
+Later arenas, draw accounting, remaining clan interactions and other controls
+still need implementation/qualification. The owner's next ordered
+features are local clans, varied post-training opponent names/decks/playstyles,
+and original daily shop rotation; preserve training names and native rules.
+See [UI audit](clash-royale/UI_AUDIT.md) for exact hosts and gaps. This is **not
+the complete offline game**; the older arena battle/economy evidence below
+belongs to the host backend. Device behavior remains unverified.
+
+## Current continuation — October 24, 2026
+
+Latest: native crown collection (523/source 3) now completes normal reveal and
+actual interrupted-journal recovery in isolated component fixtures. Two
+relaunches do not duplicate the reward. These fixtures start with ten crowns;
+earned progression to ten remains unverified, and the earned player retains
+three. See PROGRESS for exact evidence. Princess facing during animation and
+King cannon anchoring remain explicit owner-reported visual bugs; the initial
+native direction fix is not proof of complete animation correctness.
+
+Work continues on `codex/clash-offline-continuation`, now integrated with main
+`2b60a06`.
+See [current evidence and blockers](clash-royale/PROGRESS.md). The historical
+October 20 notes below are retained for decoder evidence, not current status.
+An unmodified client completed all seven native training NPCs against the
+embedded C++ backend and reached the original Arena 1 home. Native card upgrades,
+eight deck slots, multiple independent chests and actual interrupted collection
+recovery are verified on Linux/WSL. A shared CoreText caret API and native initial
+name command unblock the pre-final-trainer name dialog. Full offline arena
+progression is **not yet verified**, and these changes need iPhone validation.
+Chest reward delivery uses the original
+native randomizer and command encoder: the earned chest was unlocked, opened,
+collected, and removed. Gold increased from 100 to 116 and Knight/Arrows counts
+increased from 1 to 2. Two relaunches retained the completed reward without
+another grant. A durable journal retains the pre-claim checkpoint until native
+command 213 finishes. Older half-claimed saves without a journal still need
+separate recovery. Legacy duplicate-ID saves also need explicit migration.
+The first Arena 1 bot battle now completes after correcting its sector trailer.
+Native ELO now produces and persists a visible 34-trophy result. Tower level/HP
+scaling uses original CSV values. Correct neutral buff values restore tower
+occupants and shrinking health bars. Retaining native decoration identities
+restores the original trees, fences and other arena-edge scenery. The unchanged
+client supplies all rendering; no assets or assertions were altered.
+Native free-chest rewards and a Goblins-for-Arrows deck swap now persist;
+interrupted free reward recovery was exercised without restoring a backup.
+All six arena scenes load attacking bots in isolated synthetic fixtures, which
+do not establish earned later-arena progression. Battle costs, crown accounting,
+long Silver unlocks and earned later-arena qualification remain open. Earlier wins used incorrect tower
+initialization; a subsequent corrected-combat three-crown win raised native
+score 34 to 65 and survived two relaunches. Its reward label still disagrees
+with the saved cycle chest, and native NPC battles skip crown credit. Both
+remain core blockers. Princess orientation and King cannon anchoring also
+remain wrong per the owner's clarified report; visibility is not correctness.
+
+Subsequent ledger work aligns native ChestOrderIndex with the earned cycle and
+records actual native tower crowns. The original home transfers them; native
+crown count 3 survives two relaunches. A future win/reward-label comparison and
+crown-chest collection at 10 remain open. Combined gem unlock/claim has actual
+interrupted-journal recovery: the gem charge persists, reward applies once.
+The earned player also reaches level 2 through original card upgrades. See
+PROGRESS for exact evidence and failed attempts. Measured elapsed home time now
+uses the original native API, including across closure and interrupted reward
+recovery; timestamps account for native ticks/loading pauses. Long Silver
+completion still needs qualification. Opposing native facing vectors also
+replace zero vectors, correcting initial tower facing locally. Arena match
+costs now debit original Gold/FreeGold values before sector delivery; a real
+204-to-203 Arena 1 debit survives two relaunches. Full crown collection, victory
+reward-label comparison and cannon motion/device validation remain open.
+Apple checkpoint a92eb84 compiled/packaged an unsigned device IPA, before the
+entry-fee change; successful packaging is not device gameplay validation.
+
+The owner reports intermittent audio, incorrect King cannon animation, missing
+Princess Tower princesses and uncentered text on iPhone. Preserve those reports
+for remaining presentation work. The owner now requests continuing through all
+stages, including bug fixes. Local visual fixes still require phone validation.
+
+Historical date: 2026-10-20. Historical work branch: `gemini-merge`.
 
 ## Latest: native home acceptance and first NPC request (2026-10-20)
 

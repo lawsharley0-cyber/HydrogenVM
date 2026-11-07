@@ -1,0 +1,63 @@
+{
+  "steps": [
+    {
+      "id": "C-clan",
+      "expected": "Original available clans tab before Create",
+      "actions": [
+        {
+          "tap": [
+            240,
+            535
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "expected": "Original create form",
+      "id": "C-form",
+      "settleSeconds": 2,
+      "actions": [
+        {
+          "tap": [
+            160,
+            15
+          ]
+        }
+      ]
+    },
+    {
+      "expected": "Typed clan name",
+      "id": "C-name",
+      "settleSeconds": 2,
+      "actions": [
+        {
+          "tap": [
+            190,
+            132
+          ]
+        },
+        {
+          "text": "Hydrogen QA"
+        },
+        {
+          "key": "return"
+        }
+      ]
+    },
+    {
+      "expected": "Native creation costs 1000 Gold; local clan membership",
+      "id": "C-create",
+      "settleSeconds": 5,
+      "actions": [
+        {
+          "tap": [
+            160,
+            403
+          ]
+        }
+      ]
+    }
+  ],
+  "name": "Original local clan purchase from synthetic component fixture"
+}

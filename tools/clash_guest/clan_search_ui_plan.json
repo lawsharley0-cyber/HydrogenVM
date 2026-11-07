@@ -1,0 +1,63 @@
+{
+  "name": "Actual local-clan search using original case normalization",
+  "steps": [
+    {
+      "id": "S-clan",
+      "expected": "Original clan page after data delivery",
+      "actions": [
+        {
+          "tap": [
+            240,
+            535
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "S-form",
+      "expected": "Original search form",
+      "actions": [
+        {
+          "tap": [
+            160,
+            15
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "S-name",
+      "expected": "Lowercase partial name entered",
+      "actions": [
+        {
+          "tap": [
+            115,
+            56
+          ]
+        },
+        {
+          "text": "hydrogen"
+        },
+        {
+          "key": "return"
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "S-results",
+      "expected": "Only the actual stored clan matches; no fabricated remote players",
+      "actions": [
+        {
+          "tap": [
+            280,
+            56
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

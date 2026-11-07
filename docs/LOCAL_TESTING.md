@@ -23,8 +23,10 @@ through `wslpath`. The launchers are local workstation files, not bundled IPAs.
 ## Desktop controls
 
 Click and hold the left mouse button to touch/drag. Input is mapped from the
-resizable, letterboxed window to the guest's screen points. Press **S** to save
-a screenshot, **B** to background the guest, **F** to foreground it, and **Esc**
+resizable, letterboxed window to the guest's screen points. Type into a focused
+guest text field; Backspace and Return follow its original input delegate.
+Press **Ctrl+S** to save a screenshot, **Ctrl+B** to background the guest,
+**Ctrl+F** to foreground it, and **Esc**
 or close the window to request graceful save/stop. Relaunch with the same launcher
 to reuse the sandbox. Guest audio now plays through the shared 44.1 kHz stereo
 mixer and SDL. On Ubuntu/WSLg install `libpulse0` (`sudo apt-get install libpulse0`);

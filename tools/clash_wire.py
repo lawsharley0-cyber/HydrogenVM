@@ -12,15 +12,15 @@ def vint(value):
     if not -(1 << 31) <= value < (1 << 31):
         raise ValueError('VInt exceeds signed 32-bit range')
     negative = value < 0
-    first = (value & 63) | (64 if negative else 0)
-    value >>= 6
-    out = bytearray()
-    done = -1 if negative else 0
-    out.append(first | (128 if value != done else 0))
-    while value != done:
-        byte = value & 127
-        value >>= 7
-        out.append(byte | (128 if value != done else 0))
+    # The pinned native writer reserves the sign separately. Five-byte values
+    # carry only four bits in their last byte; ordinary signed LEB128 does not.
+    magnitude = abs(value)
+    size = next((i+1 for i,bits in enumerate((6,13,20,27)) if magnitude < (1<<bits)),5)
+    encoded = value & 0x7fffffff
+    out = bytearray([(encoded & 63) | (64 if negative else 0) | (128 if size>1 else 0)])
+    for i in range(1,size):
+        byte = (encoded >> (6+(i-1)*7)) & (15 if i==4 else 127)
+        out.append(byte | (128 if i<size-1 else 0))
     return bytes(out)
 
 
@@ -63,10 +63,12 @@ class Reader:
             if shift >= 34:
                 raise ValueError('Overlong VInt')
             byte = self.read(1)[0]
+            if shift == 27 and byte > 15:
+                raise ValueError('VInt fifth byte exceeds 31 data bits')
             value |= (byte & 127) << shift
             shift += 7
         if first & 64:
-            value |= -(1 << shift)
+            value |= -(1 << min(shift,31))
         if not -(1 << 31) <= value < (1 << 31):
             raise ValueError('VInt exceeds signed 32-bit range')
         return value

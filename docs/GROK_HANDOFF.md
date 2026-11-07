@@ -59,9 +59,70 @@ stops before later games inherit the live arena. This is diagnostics and
 cascade containment, **not** a proven shutdown root-cause fix. B-116 remains
 open until the next device report identifies the missing stage.
 
+November 7 custom-card foundation: [CUSTOM_CARDS.md](clash-royale/CUSTOM_CARDS.md) records the append-only definition generator, save-prefix identity checks, 51 focused tests and native component probes. Generated Forge Knight data/name/ownership resolve; discovery achievements settle after relaunch. The end-user forge, mandatory guest registry/loader and custom-card battle qualification remain pending. Keep private probe saves away from the normal guest.
+
+November 7 keyboard continuation: shared host [PR #381](https://github.com/lawsharley0-cyber/HydrogenVM/pull/381) implements custom UIKeyInput and composed deletion. Clean latest-main integration passes 657 runtime checks/26 Test Lab cases and actual native clan edit/send/save/clean quit/relaunch. Phone presentation/macOS CI remain separate; guest Mod Lab/custom-card scope is recorded in [MOD_LAB.md](clash-royale/MOD_LAB.md).
+
+Latest owner-prioritized modding continuation: [MOD_LAB.md](clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
+
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](clash-royale/DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
+November 6 current Clash continuation: [PLAYABILITY_2026-11-06.md](clash-royale/PLAYABILITY_2026-11-06.md) supersedes the Arena-3–6 entry blocker below. All six content pools and four later actual defeats/relaunches pass with native costs/counters; 40 focused tests, 85 sector comparisons and 36 legacy comparisons pass. Earned wins/rewards, draw/partial-crown accounting and full audits remain open; modding comes after reliable playability. PR #138 was closed unmerged. Shared src remains unchanged.
+
+Newest continuation after `5040611`: [Arena 2 progression](clash-royale/ARENA_PROGRESSION.md)
+adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
+entry/result/return checks; 38 focused tests and 43 private sector comparisons.
+Boundary trophies are component fixtures, not an earned climb; Arenas 3–6,
+draw/partial-crown accounting and full audits remain open. The owner's new
+[random clan-event request](clash-royale/CLAN_EVENTS_PLAN.md) is recorded as planned
+multi-bot social work after core arena/results. Training remains original and
+advanced battle-AI refinement remains deferred. No shared src or device pass.
+
+Newest October 27 continuation after `f8505aa`: [STORE_PURCHASES.md](clash-royale/STORE_PURCHASES.md)
+supersedes the shop chest/currency backlog below. Original Silver/Golden/Magical
+chests and all three Gem-for-Gold packs now have scoped native purchase/reveal/
+relaunch evidence. Controlled before/after checkpoint interruption preserves
+payment/reward accounting; three invalid pending records reject unchanged.
+37 focused tests, actual fresh original training and retained clan checks pass.
+Higher-cost component fixtures were explicitly funded; original earned and
+phone-failing saves remain intact. All seven original trainers stay unchanged.
+The owner defers advanced opponent AI refinement until every other feature and
+bug fix is ready. Next: later-arena progression/results/profile accounting,
+then full button/save/device/visual/audio/performance audits. This guest-only
+stage changes no shared engine code and establishes no new iPhone or audio-
+quality/performance verdict. Earlier chronological evidence follows.
+
+October 27 Clash-specific continuation after `45f5a97`, on
+`codex/clash-offline-continuation` / draft PR #138: read
+[DAILY_SHOP.md](clash-royale/DAILY_SHOP.md) and the superseding banner in
+[the complete agent handoff](clash-royale/AGENT_HANDOFF_2026-10-26.md).
+Daily card offers/native purchases/retained counts/calendar rotation now have
+scoped UI/save evidence and 36 focused tests. Shop chest/currency paths and
+later arenas/full audits remain open. The owner requires all seven original
+training names, decks, AI and tutorial behavior unchanged; new features stay
+post-training. This guest-only work does not change main's shared alpha engine
+or establish a new phone/audio-quality/performance pass.
+
 This hands over the current work on HydrogenVM, a JIT-less 32-bit iOS `.ipa` emulator that runs on modern iPhones. The repo is `lawsharley0-cyber/HydrogenVM` and the integration branch is `main`. Read `AGENTS.md` (the working agreement) and this file. Open other docs only when a task names them.
 
 The owner is Lawson. He tests on an iPhone with the app built by CI. He sends **batch reports** (`latest_batch_report.json` / `.md` from the in-app *Test All Games*) and occasionally run logs. He wants every game in his library to work. Talk to him in plain language, and give him a link to the new `.ipa` whenever a meaningful batch of fixes lands.
+
+October 25 Clash continuation update (scoped to the owner-authorized PR #138
+work): main 5968d88 is integrated into that draft at 5fbaa8d; it is not merged
+into main. The current stat implementation retains the 108-byte INODE64 layout.
+The separate guest IPA contains its own offline transport/persistence, and now
+has seven earned training wins, native name, King 2/deck upgrades and two real
+losses with no reward. v27 uses the original arena refresh to graduate that
+earned save to Arena 1. Arena matchmaking/economy and later arenas still need
+their guest port; earlier host-backend evidence is separate. Read
+[UI_AUDIT.md](clash-royale/UI_AUDIT.md) and GUEST_MOD_PROGRESS for current hashes,
+exact tests, device gaps and startup-helper timing correction. Shared runtime
+compatibility is still required; no Clash-specific host service is used.
 
 ---
 

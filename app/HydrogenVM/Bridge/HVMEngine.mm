@@ -465,6 +465,16 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
+        // Offline protocol lives inside the host process; no Python or remote
+        // server is needed. Process::load verifies the exact executable hash.
+        // An unreadable Info.plist is Process::load's error to report, not this thread's.
+        try {
+            auto offlineInfo = Hydrogen::Plist::parseFile(bundle + "/Info.plist");
+            cfg.offlineClash = offlineInfo && offlineInfo->getString("CFBundleIdentifier") == "com.supercell.scroll" &&
+                offlineInfo->getString("CFBundleShortVersionString") == "2.1306.1";
+        } catch (...) {
+            cfg.offlineClash = false;
+        }
         cfg.glTrace = glTrace;
         if (useGPU) {
             // GLES runs on the GPU through OpenGLES.framework; the host layer is
@@ -720,6 +730,14 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Return, std::string(), focusId, 0};
     [self submitTextInput:ev];
 }
+- (void)insertText:(NSString *)text focusId:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::InsertText, std::string(text.UTF8String ?: ""), focusId, 0};
+    [self submitTextInput:ev];
+}
+- (void)deleteBackwardForFocus:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::DeleteBackward, std::string(), focusId, 0};
+    [self submitTextInput:ev];
+}
 - (void)dismissKeyboardForFocus:(uint64_t)focusId {
     RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Dismiss, std::string(), focusId, 0};
     [self submitTextInput:ev];
@@ -734,6 +752,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     }
     if (p) p->injectTouch(RT::TouchPhase(int(phase)), x, y, uint32_t(finger));
 }
+
 
 - (void)setAccelerationX:(double)x y:(double)y z:(double)z {
     if (!_core->ready) return;
@@ -759,6 +778,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         _keyboardType = q.keyboardType; _returnKeyType = q.returnKeyType;
         _autocapitalizationType = q.autocapitalization; _autocorrectionType = q.autocorrection;
         _secure = q.secure; _multiline = q.multiline;
+        _keyInput = q.keyInput; _hasText = q.hasText;
     }
     return self;
 }

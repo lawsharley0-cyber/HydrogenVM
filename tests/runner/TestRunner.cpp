@@ -2431,6 +2431,17 @@ int runFullSubsystemTests() {
             compoundOk=ok;
         }
         check(compoundOk,"NSPredicate AND/OR/NOT with parentheses, keyword aliases and NSCompoundPredicate; other syntax still raises");
+        bool matches=false;
+        try {
+            auto cls=r.getClass("NSPredicate");
+            auto pattern=call(cls,"predicateWithFormat:",{makeString(cx,"SELF MATCHES %@"),makeString(cx,"a|ab")});
+            auto insensitive=call(cls,"predicateWithFormat:argumentArray:",{makeString(cx,"SELF matches[c] %@"),makeArray(cx,{makeString(cx,"cat")})});
+            bool invalid=false;try{call(cls,"predicateWithFormat:",{makeString(cx,"SELF MATCHES %@"),makeString(cx,"[")});}
+            catch(const std::exception& e){invalid=std::string(e.what()).find("MATCHES regular expression")!=std::string::npos;}
+            matches=call(pattern,"evaluateWithObject:",{makeString(cx,"ab")}) && !call(pattern,"evaluateWithObject:",{makeString(cx,"abc")}) &&
+                !call(pattern,"evaluateWithObject:",{0}) && call(insensitive,"evaluateWithObject:",{makeString(cx,"CAT")}) && invalid;
+        }catch(const std::exception&){}
+        check(matches,"NSPredicate MATCHES full-string alternatives, argument-array case folding, nil and invalid pattern");
         bool tables=false;
         if(r.getClass("NSHashTable") && r.getClass("NSMapTable")) {
             auto weak=call(r.getClass("NSHashTable"),"weakObjectsHashTable");
@@ -4216,6 +4227,105 @@ int runFullSubsystemTests() {
               "a UITextView asks for a multi-line keyboard and reports changes through textViewDidChange:");
         r.send(cpu, view, "resignFirstResponder");
         UIKit::setTextInputObserver(proc, nullptr);
+    }
+
+    // Custom UIKeyInput responders must request the host keyboard too.
+    {
+        std::vector<UIKit::TextInputRequest> requests;
+        UIKit::setTextInputObserver(proc, [&](const UIKit::TextInputRequest& q) { requests.push_back(q); });
+        ObjC::ClassBuilder custom = r.defineClass("HVMTestCustomKeyInput", "UIView");
+        std::vector<std::string> inserted;
+        int deleted = 0; bool refuseEnd = false;
+        custom.method("canBecomeFirstResponder", [](Ctx& x) { x.cpu.r[0] = 1; }, "c@:");
+        custom.method("hasText", [&](Ctx& x) { x.cpu.r[0] = inserted.empty() ? 0 : 1; }, "c@:");
+        custom.method("insertText:", [&](Ctx& x) { inserted.push_back(Foundation::utf8(x, x.cpu.r[2])); }, "v@:@");
+        custom.method("deleteBackward", [&](Ctx&) { ++deleted; }, "v@:");
+        custom.method("keyboardType", [](Ctx& x) { x.cpu.r[0] = 4; }, "i@:");
+        custom.method("returnKeyType", [](Ctx& x) { x.cpu.r[0] = 9; }, "i@:");
+        custom.method("resignFirstResponder", [&](Ctx& x) {
+            x.cpu.r[0] = refuseEnd ? 0 : uint32_t(ObjC::rt(x).sendSuper(x.cpu, x.cpu.r[0], UIKit::ui(x).responder, x.cpu.r[1]));
+        }, "c@:");
+        const ObjC::id input = UIKit::sendRect(cx, ObjC::id(r.send(cpu, custom.cls(), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 120, 30});
+        const bool became = (r.send(cpu, input, "becomeFirstResponder") & 0xFF) != 0;
+        check(became && requests.size() == 1 && requests.back().active && requests.back().keyInput &&
+              requests.back().keyboardType == 4 && requests.back().returnKeyType == 9 && !requests.back().hasText,
+              "custom UIView implementing UIKeyInput requests host keyboard when focused");
+        const uint64_t focus = requests.empty() ? 0 : requests.back().focusId;
+        const auto send = [&](UIKit::TextInputEvent::Kind kind, const std::string& text, uint64_t target) {
+            UIKit::submitTextInput(proc, {kind, text, target, 0});
+            for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.0);
+        };
+        r.send(cpu, input, "becomeFirstResponder");
+        check(requests.size() == 1, "refocusing the same custom responder keeps its focus and keyboard");
+        send(UIKit::TextInputEvent::InsertText, "A\xF0\x9F\x98\x80", focus);
+        send(UIKit::TextInputEvent::DeleteBackward, "", focus);
+        send(UIKit::TextInputEvent::Return, "", focus);
+        check(inserted == std::vector<std::string>{"A\xF0\x9F\x98\x80", "\n"} && deleted == 1 && requests.back().hasText,
+              "custom UIKeyInput receives original Unicode insert, delete and return messages");
+        send(UIKit::TextInputEvent::SetText, "invented full-text replacement", focus);
+        send(UIKit::TextInputEvent::InsertText, "stale", focus + 1);
+        send(UIKit::TextInputEvent::Dismiss, "", focus + 1);
+        check(inserted.size() == 2 && (r.send(cpu, input, "isFirstResponder") & 0xFF),
+              "custom UIKeyInput drops full-text replacement and events for another focus");
+        refuseEnd = true;
+        send(UIKit::TextInputEvent::Dismiss, "", focus);
+        const ObjC::id field = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UITextField"), r.selAlloc)), r.sel("initWithFrame:"), {0, 40, 120, 30});
+        check((r.send(cpu, field, "becomeFirstResponder") & 0xFF) == 0 && (r.send(cpu, input, "isFirstResponder") & 0xFF) && requests.back().active,
+              "custom responder refusal keeps focus and keyboard during dismiss or focus transfer");
+        refuseEnd = false;
+        send(UIKit::TextInputEvent::Dismiss, "", focus);
+        check(!(r.send(cpu, input, "isFirstResponder") & 0xFF) && !requests.back().active,
+              "custom UIKeyInput dismissal publishes an inactive request");
+        r.send(cpu, field, "becomeFirstResponder");
+        send(UIKit::TextInputEvent::InsertText, "old responder", focus);
+        check(Foundation::utf8(cx, ObjC::id(r.send(cpu, field, "text"))).empty() && requests.back().focusId != focus,
+              "switching from custom input to UITextField rejects old incremental events");
+        r.send(cpu, field, "resignFirstResponder");
+        r.send(cpu, input, "resignFirstResponder");
+        UIKit::setTextInputObserver(proc, nullptr);
+    }
+
+    // Composed ranges use UTF-16 coordinates and expand to whole Unicode clusters.
+    {
+        const auto range = [&](const std::u16string& text, uint32_t location, uint32_t length, bool atIndex = false) {
+            const ObjC::id string = Foundation::makeString(cx, text);
+            const ObjC::SEL selector = r.sel(atIndex ? "rangeOfComposedCharacterSequenceAtIndex:" : "rangeOfComposedCharacterSequencesForRange:");
+            const ObjC::IMP imp = r.lookupForSend(r.classOf(string), selector);
+            if (!imp) throw ObjC::ObjCError("missing composed string range method");
+            const uint32_t out = proc.heap().allocZeroed(8);
+            try {
+                if (atIndex) proc.callGuest(cpu, imp, {out, string, selector, location});
+                else proc.callGuest(cpu, imp, {out, string, selector, location, length});
+            } catch (...) { proc.heap().free(out); throw; }
+            const auto result = std::pair{proc.mem().read<uint32_t>(out), proc.mem().read<uint32_t>(out + 4)};
+            proc.heap().free(out); return result;
+        };
+        struct Case { const char16_t* text; uint32_t location, length, first, count; };
+        const Case cases[] = {
+            {u"abc", 1, 1, 1, 1}, {u"a\u0301b", 1, 1, 0, 2},
+            {u"A\U0001F600Z", 2, 1, 1, 2}, {u"x\U0001F469\u200D\U0001F4BBy", 4, 1, 1, 5},
+            {u"a\U0001F44D\U0001F3FDb", 3, 1, 1, 4}, {u"x\U0001F1FA\U0001F1F8y", 3, 1, 1, 4},
+            {u"x\u1100\u1161\u11A8y", 2, 1, 1, 3}, {u"x\r\ny", 2, 1, 1, 2},
+            {u"a\u0301b\U0001F600c", 1, 3, 0, 5}, {u"a\u0301b", 1, 0, 0, 2},
+            {u"a\u0301b", 2, 0, 2, 1}, {u"a\u0301b", 3, 0, 3, 0}, {u"", 0, 0, 0, 0}
+        };
+        bool expanded = true;
+        for (const auto& c : cases) {
+            try { expanded &= range(c.text, c.location, c.length) == std::pair{c.first, c.count}; }
+            catch (...) { expanded = false; }
+        }
+        check(expanded, "NSString composed ranges expand accents, surrogates, joined emoji, modifiers, flags, Hangul and CRLF");
+        bool indexed = false;
+        try { indexed = range(u"a\u0301b", 1, 0, true) == std::pair{0u, 2u} && range(u"A\U0001F600Z", 2, 0, true) == std::pair{1u, 2u}; }
+        catch (...) {}
+        check(indexed, "NSString composed sequence at index shares the same Unicode boundaries");
+        bool invalid = true;
+        for (const auto& c : std::vector<std::pair<uint32_t,uint32_t>>{{4,0}, {3,1}, {1,UINT32_MAX}, {UINT32_MAX,0}}) {
+            bool threw = false; try { range(u"abc", c.first, c.second); }
+            catch (const std::exception& error) { threw = std::string(error.what()).find("out of bounds") != std::string::npos; }
+            invalid &= threw;
+        }
+        check(invalid, "NSString composed ranges reject invalid and overflowing guest bounds");
     }
 
     // Key-path KVC goes through a class's own valueForKey:/setValue:forKey: (iPhoto reads "mainTabIndex" this way).
@@ -6475,6 +6585,27 @@ int runFullSubsystemTests() {
             call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEED1Ev", {oss});
             if (!(chained && okState && v == "171.5\n")) std::printf("    old ostream members: chained %d state %d text '%s'\n", chained, okState, v.c_str());
             check(chained && okState && v == "171.5\n", "libstdc++ member operator<< (bool, unsigned long, float, manipulator) and basic_ios state checks");
+        }
+
+        // Apple XNU cdefs.h: PLATFORM_iPhoneOS has ONLY_64_BIT_INO_T=1,
+        // so unsuffixed stat has the same layout as the $INODE64 alias.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const std::string file = proc.homePath() + "/Documents/hvm_stat_layout.bin";
+            { std::ofstream o(file, std::ios::binary); o << std::string(1234, 'x'); }
+            const uint32_t path = proc.allocCString(file);
+            const uint32_t buf = proc.heap().allocZeroed(128);
+            for (uint32_t i = 108; i < 128; i += 4) proc.mem().write<uint32_t>(buf + i, 0xA5A5A5A5);
+            const uint32_t r1 = call("_stat", {path, buf});
+            const bool plain = r1 == 0 && proc.mem().read<uint64_t>(buf + 60) == 1234 &&
+                               (proc.mem().read<uint16_t>(buf + 4) & 0170000) == 0100000 &&
+                               proc.mem().read<uint32_t>(buf + 108) == 0xA5A5A5A5 && proc.mem().read<uint32_t>(buf + 124) == 0xA5A5A5A5;
+            std::memset(proc.mem().host(buf), 0, 128);
+            const uint32_t r2 = call("_stat$INODE64", {path, buf});
+            const bool wide = r2 == 0 && proc.mem().read<uint64_t>(buf + 60) == 1234 &&
+                              (proc.mem().read<uint16_t>(buf + 4) & 0170000) == 0100000;
+            check(plain && wide, "stat: unsuffixed iPhone symbols and $INODE64 use the 108-byte ARMv7 layout");
+            proc.heap().free(buf);
         }
 
         // CFNumber NaN/infinity constants, NSObject's isa ivar offset, proxy constants.

@@ -43,6 +43,8 @@ struct ProcessConfig {
     bool traceCalls = false;           // log every HLE call (very slow, for debugging)
     bool threadLiveness = false;       // opt-in one-second per-thread progress evidence
     bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
+    bool offlineClash = false;        // pinned client only: session-owned local NPC service
+    std::map<uint16_t,uint16_t> loopbackPortOverrides; // explicit localhost-only service routing
     std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1
     bool guestLibs = false;            // per-app switch: load dependent MH_DYLIBs into guest memory (default OFF)
     std::string guestLibDir;           // directory searched for guest MH_DYLIB files when guestLibs is true

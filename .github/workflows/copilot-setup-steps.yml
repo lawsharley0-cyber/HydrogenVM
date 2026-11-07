@@ -24,7 +24,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 libstdc++-14-dev
+          sudo apt-get install -yq libicu-dev clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 libstdc++-14-dev
       - name: Cache ld64 (cctools-port, needed to build TestLab.ipa)
         id: cctools
         uses: actions/cache@v4

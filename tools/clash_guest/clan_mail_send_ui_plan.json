@@ -1,0 +1,92 @@
+{
+  "name": "Native offline clan mail and original cooldown",
+  "steps": [
+    {
+      "id": "M-clan",
+      "expected": "Original local clan page",
+      "actions": [
+        {
+          "tap": [
+            240,
+            535
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "M-info",
+      "expected": "Actual native clan info and leader",
+      "actions": [
+        {
+          "tap": [
+            218,
+            72
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "M-compose",
+      "expected": "Original clan mail editor before sending",
+      "actions": [
+        {
+          "tap": [
+            46,
+            246
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "M-title",
+      "expected": "Original title field accepts authored text",
+      "actions": [
+        {
+          "tap": [
+            160,
+            195
+          ]
+        },
+        {
+          "text": "Offline update"
+        },
+        {
+          "key": "return"
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "M-body",
+      "expected": "Original native message field receives authored local text",
+      "actions": [
+        {
+          "tap": [
+            160,
+            245
+          ]
+        },
+        {
+          "text": "This clan message stays in this local game."
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "M-send",
+      "expected": "Native command 533, persistent local inbox and original 12-hour cooldown",
+      "actions": [
+        {
+          "tap": [
+            160,
+            305
+          ]
+        }
+      ],
+      "settleSeconds": 4
+    }
+  ]
+}

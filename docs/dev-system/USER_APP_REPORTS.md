@@ -26,6 +26,18 @@ Clash Royale is also a demanding performance workload from the ongoing restorati
 
 ## Instructions for the next AI or contributor
 
+October 25, Clash Offline Guest DEV v19: the owner reports good performance
+(around 60 FPS) with intermittent stutter, crashes in Settings controls including
+Help and Support, and a persistent abort just after reaching home following the
+second battle/card upgrades. Pasted phone report confirms executable SHA256
+`3d8b2e209470b52e779811d5acdc184bd65303817f134cb2a95d712c213a3bd5`,
+Hydrogen commit `68846700e5884534b63ba785ded21dd602f79264`, iPhone18,2,
+iOS 27.2, 16 KB pages. Logs identify unported home command 516 immediately
+after the king-level-up sound. Short startup metrics: 215 frames / 4.479 s,
+p50 15.47 ms, p95 32.77 ms, p99 58.20 ms, maximum 160.00 ms. This mixes startup
+with home and does not quantify steady gameplay stutter. Help/Support needs its
+own reproduction; do not infer it shares the 516 cause. Keep the phone save.
+
 1. Read this file together with current `AGENTS.md`, `STATUS.md`, `BACKLOG.md` and `PERFORMANCE.md`. Fetch the current integration branch and inspect active work before editing. These rows are unresolved reports, not proven shared root causes.
 2. Separate startup crashes, later interaction/world-load crashes, black output, hangs, poor frame rate and missing music. Do not group them under a successful process exit or a single generic compatibility result.
 3. Record the host/device and OS, host page size, emulator commit and dirty state, build configuration, app version/IPA hash, sandbox state, reproduction actions and duration. Keep proprietary assets, saves and tokens out of Git.

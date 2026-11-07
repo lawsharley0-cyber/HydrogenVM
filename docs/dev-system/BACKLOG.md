@@ -1,5 +1,232 @@
 # Backlog
 
+Latest owner-prioritized modding continuation: [MOD_LAB.md](../clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
+
+November 6 owner override: start the in-game Mod Lab now (per-unit/card tuning,
+custom variants and account currency editing), retaining reversible profiles
+and a pre-mod save. Diagnose Clash text focus not opening the iPhone keyboard.
+This supersedes the earlier schedule placing modding after playability. Do not
+advertise a control until its gameplay/render effect has been qualified.
+
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](../clash-royale/DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
+November 6 owner continuation: finish the guest's Arena 3–6 content/entry/result
+and persistence qualification, then draw/partial-crown accounting, clan events
+and complete UI/save/device/visual/audio/performance audits. The owner wants
+modding considered **after** the offline game is reliably playable and bugs are
+addressed; it is not part of the current restoration implementation. Original
+training remains unchanged and advanced battle-AI refinement remains deferred.
+
+Newest continuation after `5040611`: [Arena 2 progression](../clash-royale/ARENA_PROGRESSION.md)
+adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
+entry/result/return checks; 38 focused tests and 43 private sector comparisons.
+Boundary trophies are component fixtures, not an earned climb; Arenas 3–6,
+draw/partial-crown accounting and full audits remain open. The owner's new
+[random clan-event request](../clash-royale/CLAN_EVENTS_PLAN.md) is recorded as planned
+multi-bot social work after core arena/results. Training remains original and
+advanced battle-AI refinement remains deferred. No shared src or device pass.
+
+Newest October 27 continuation after `f8505aa`: [STORE_PURCHASES.md](../clash-royale/STORE_PURCHASES.md)
+supersedes the shop chest/currency backlog below. Original Silver/Golden/Magical
+chests and all three Gem-for-Gold packs now have scoped native purchase/reveal/
+relaunch evidence. Controlled before/after checkpoint interruption preserves
+payment/reward accounting; three invalid pending records reject unchanged.
+37 focused tests, actual fresh original training and retained clan checks pass.
+Higher-cost component fixtures were explicitly funded; original earned and
+phone-failing saves remain intact. All seven original trainers stay unchanged.
+The owner defers advanced opponent AI refinement until every other feature and
+bug fix is ready. Next: later-arena progression/results/profile accounting,
+then full button/save/device/visual/audio/performance audits. This guest-only
+stage changes no shared engine code and establishes no new iPhone or audio-
+quality/performance verdict. Earlier chronological evidence follows.
+
+## Active owner-directed Clash continuation (2026-10-23)
+
+Owner addition October 27: [offline clan events](../clash-royale/CLAN_EVENTS_PLAN.md)
+after the current arena/result stage: occasional bot joins/leaves, conversations,
+friendly challenges and real requests/donations, with separate retained identities,
+finite economies, bounded saved timing and respected kick/leader controls. This
+is planned, not implemented. Current arena task: remove the explicit Arena-1-only
+matchmaking limit using pinned CSV arena/location/unlock/tower data and qualify
+native results across arena boundaries. Keep advanced battle-AI work deferred.
+
+After `45f5a97` (Group C): daily **card** shop now has original offers, native
+purchase/price/limit behavior, durable bought counts and calendar rotation.
+36 tests and actual UI/return/calendar/limit/guard evidence are scoped in
+[DAILY_SHOP.md](../clash-royale/DAILY_SHOP.md). Preserve all seven original
+training names/decks/AI/tutorials; post-training policies must never alter them.
+Next complete interaction: shop chest/currency offers and native pending-reward
+recovery, then later arenas/results/profile counters and full UI/device/visual/
+audio/performance work. Daily cards do not make every Store button qualified.
+
+After `b638b88` (Group C): authored post-training names, source-validated varied
+Arena 1 decks and bounded native AI spending profiles now have actual battle/
+result/return evidence and persisted nonrepetition. 33 focused tests, private
+25-sector oracle, original trainer/clan return and two unchanged-file GBO1
+guards pass; read [ARENA_OPPONENTS.md](../clash-royale/ARENA_OPPONENTS.md).
+Next complete interaction: original daily shop selection/rollover and actual
+purchase/relaunch, then later arena-specific progression/results and full
+UI/device/visual/audio/performance audits. Autonomous NPC supply remains an
+optional extension; no fabricated stock, battle wins or historical scores.
+
+Post-d213fdf invitation/weekly work (Group C): expose a clearly local NPC profile
+through a persistent native chat message, original Invite14322/ack24322 and
+original209/create=false rejoin on the retained actor. Preserve kick/donation
+cooldowns, stock and original permissions. Track new weighted donation points
+in the native member/header fields with a documented local Monday00:00 UTC
+week (the retired server's exact reset clock is absent from the pinned data).
+Do not assign legacy lifetime donations to invented historical weeks or clear
+lifetime totals. Qualify actual invite/rejoin, common/rare scores and rollover.
+
+Qualified: CLAN_COMMUNITY.md records actual native Invite/rejoin/two returns,
+preserved cooldown and stock, exact native join-achievement+1, real weekly
+roster11/1/header12, reset-only weekly fixture and three unchanged bad saves.
+29 tests pass. NPC supply is already supported through real player donations;
+autonomous earned NPC supply remains an extension. Next owner work: authored
+post-training names, arena-legal varied decks/native AI styles and original shop,
+then later arenas/results and full button/device/visual/audio/performance audits.
+
+Reciprocal donation UI now qualified aftera51c68e (Group C): original524 NPC
+requests/native cooldown,14310 player Donate, original capacity/reward rules,
+common/rare UI, actual spent-Arrows replenishment and repeated returns. GNR1
+and GNI1 commit with both actors; Kick retires requests while retaining stock.
+Read RECIPROCAL_DONATIONS.md for27 tests and exact final-build evidence.
+Next implement explicit local invitation/rejoin with retained NPC inventory,
+further legitimate supply and weekly stats, then the unchanged owner queue of
+post-training names, legal varied decks/styles, daily shop and later audits.
+
+Post-3c07405 reciprocal donations (Group C): create the actual local NPC's
+request with original524 and native cooldown/eligibility, preserve it beside
+human requests/chat/friendly history with a separate stream namespace, then
+qualify native Donate click14310 and actual203/211 inventory/reward changes.
+Keep both actor snapshots and request/delivery proof atomic; no per-login
+stock refills, duplicate grants or erased failing saves. Retired NPCs must not
+request/receive. Research pinned original code before choosing response schemas.
+
+Inventory prerequisite is implemented in DONOR_INVENTORY.md: conserved six-card
+GNI1 provenance, strict legacy adoption, required-child detection and native
+receive/relaunch regression. Original524 NPC cooldown/eligibility is proven in
+a detached diagnostic only. Durable namespace3 NPC requests and actual14310
+player Donate handling, with received-counter updates, remain to implement.
+
+Post-127ad31 clan controls (Group C): qualify native Promote/Demote/leadership
+handoff and Kick on the actual Local Donor profile. Preserve native rank/rights,
+one leader, both actor snapshots and prior donation proof in one atomic file.
+Kicked NPCs need a durable tombstone, not a per-login rejoin/refill. Support
+GDN1-v1 migration only after full validation; keep every malformed file intact.
+Then implement reciprocal finite-stock requests/donations. No shared src edits
+are currently needed; the qualified unchanged runtime remains912a87e.
+
+Qualified follow-up: actual1→3→4→2 and4→3→1, native526 full-turn Kick,
+one-leader handoff, saved retirement/no reseed, Co-leader chat,25 tests,
+16 unchanged-file negatives and four pre/post-commit abort cases pass. Read
+CLAN_CONTROLS.md before touching GDN1-v2/GCL1's required-child marker. Next:
+reciprocal native NPC requests/player donations, explicit invite/rejoin with
+retained stock, real supply/weekly stats; keep the later owner queue unchanged.
+
+Donation component (Group C, after 0be234d) now persists an explicitly Local
+Donor through original join command209/create=false and binds its finite native
+inventory to the human checkpoint. Roster/profile, same-save returns,
+settings/leave/re-create and corrupt-file retention are qualified in synthetic
+King-3 fixtures. It includes native NPC-to-human transfers, one synchronous
+two-actor/request atomic commit, real common/rare UI, exhausted stock and
+pre/post-checkpoint abort recovery. See DONATIONS.md for qualified scopes.
+Review also reproduced a legacy-clan migration rewriting a bad inbox before
+semantic rejection; the fix validates inbox before all migrations/refresh
+writes and retains the bad file.
+Reciprocal NPC requests, role/kick controls, supply and weekly stats remain next.
+
+October 26 donation continuation (Group C): native common/rare actor transfers
+and empty-stock failure are reproducible with the explicit builder probe.
+Original 203 returns zero on both success and failure; require actual native
+state deltas. Next implement an honest persisted local donor, finite stock,
+same-file two-actor recovery intent, native 211 delivery/echo and DonateStream
+UI. Qualify interruption/corruption/replacement/leave and later upgrades before
+claiming fulfillment. Exact research, limits and diagnostic usage:
+[DONATIONS.md](../clash-royale/DONATIONS.md). No shared runtime change is needed
+by the qualified primitive experiment.
+
+October 26 post-Kimi integration checks (Group C, source 96003cb): verify later
+native Gold transactions/relaunch after a terminal friendly challenge. Current
+GFR1 validation compares every later wallet to historical friendly balances;
+only active intent/accepted battle must retain its exact protected wallet.
+Also qualify chat/friendly stream-ID collisions before adding donor actors;
+both currently allocate (0,sequence) independently. Preserve Kimi's verified
+friendly lifecycle and all original economy/bounds checks while fixing these
+cross-feature cases. Donation fulfillment remains the next feature afterwards.
+
+October 25 UI/stability follow-up (same branch, Group C): owner requests a
+clickable-control audit, Settings Help/Support crash fixes, post-upgrade relaunch
+recovery, and measured stutter investigation. Phone v19 report identifies
+unsupported native command 516 after king level-up, host 6884670, 16 KB pages.
+Record coverage and unavailable/locked scenarios explicitly; local tests do not
+close phone reports. Shared framework fixes, if necessary, also reserve Group D
+and require pre/post Test Lab and fulltest. Preserve the earned/failing saves.
+
+October 26 Arena-1 control audit (Group C): v31's ranking button reproduces
+an abort on unported read-only request 14403. Port the original empty-list
+schemas for global/local player/clan rankings, without fabricated online
+players. Qualify every ranking tab/close against the earned saved player.
+Shop opens but has no daily cards and displays a zero-second refresh timer;
+shop generation/purchases remain a separate unfinished economy feature.
+
+Next guest core task (Group C): bind a versioned, checksummed wall-clock stamp
+to the atomic native checkpoint and reward journal. Migrate unstamped CRG1
+without guessing historical elapsed time; use original relative-time APIs,
+subtract already-accounted native ticks, defer pending-reward time effects,
+and reject corrupt metadata without resetting saves. Qualify closed/repeated
+Silver/free timers and interrupted-journal recovery on preserved QA data.
+
+Owner's October 26 ordered extension (continue the current timer/recovery and
+control audit first):
+
+1. Local offline clans: the original Clans tab must allow creating a persistent
+   clan and interacting with it. No invented online players or remote service;
+   distinguish local simulation from actual multiplayer. Inspect the original
+   membership/creation/chat/donation schemas and native King-level gate before
+   defining which interactions the pinned client can support.
+2. Post-training opponent names: research plausible player-handle patterns and
+   randomize names for each arena match; retain all original training names.
+   Use authored synthetic handles, not harvested private player identities.
+3. Arena bots: use cards unlocked at the actual arena and vary decks/playstyle
+   across rounds. Research comparable projects and inspect the pinned original
+   native bot code; compare actual decision behavior rather than label-only
+   difficulty changes. Preserve reproducible seeds/evidence and native combat.
+4. Daily store: research this early 2.1306.1 client's original cards/items,
+   prices, rarity/count/rotation rules, then implement daily local refresh and
+   persistent purchases using actual native economy APIs. Modern store rules
+   are not this archived client's reference. Never invent successful IAPs.
+
+Record research, exact behavior/limits and tests in docs/clash-royale so another
+agent can continue. Original user audio/visual/stutter reports remain open.
+
+Observed during the v33 original profile audit: 65 trophies/three-crown-win
+stat/cards persist, but displayed Wins is 0 while NPC wins is 9 (seven training,
+two paid arena wins). Qualify native offline arena profile counters separately;
+never label a captured incorrect statistic a functional pass or invent results.
+
+Clans prerequisite (same owner-authorized branch, Groups D/E): source review
+finds no queued host/CLI text input or native keyboard bridge; UITextField/
+UITextView lack UIKeyInput insert/delete methods. Native names/search/chat
+need shared input, delegate veto/UTF-16 ranges, editing notifications, focus
+and lifetime safety. Add minimal TL-R fail-before/pass-after and run pre/post
+fulltest/TestLab; test actual clan fields, with no hardcoded-name workaround.
+
+The owner's explicit request resumes offline Clash development despite the
+master plan's earlier recommendation to park it. Group C owner:
+`codex/clash-offline-continuation`. Restore the pinned NPC sector, native VInt
+codec and desktop/headless loopback integration on current main, preserve GPU
+rendering and audio, then verify native tutorial completion, one NPC win and
+earned-state relaunch. Unsupported read-only turn metadata must be reported
+without disconnecting an otherwise valid session. No turn replay or invented
+checksum acknowledgments. Initial arena rendering is not battle completion.
+Reproduction evidence and remaining blockers belong in `docs/clash-royale/`.
+
 Priorities follow the 2026-10-21 audit of `main` at `07fabbb`. Scope added on top of that audit: Clash Royale past the 65% load, and performance items discovered while improving frame time. Those discovered items are listed under B-105 and are not a blank check to rewrite the rasterizer early.
 
 Score is `impact * severity / complexity`.
@@ -98,6 +325,14 @@ These are planned follow-ups, not separate roles. B-103 is merged in PR #4; acti
 | B-106b | Each later message, recorded in the restoration doc before the code changes | Planned, filled in as the probe shows them |
 | B-106c | Two-launch native probe inside the harness when the IPA is in the fixture root | Planned. Today the manifest entry is optional and skips. Absence is not a pass |
 | B-106d | 107-file IMA corpus vs libsndfile | Planned, needs the unpacked client and libsndfile. Not run by the default harness |
+| B-106e | Native free-chest command 518 and reward journaling | Reproduced in `free-observed`: original UI enters collection, backend reports unsupported 518/538 and has no reward to deliver. Preserve pre-claim native state, use original source-2 reward command, verify actual collection and interrupted replay. |
+| B-106f | Decode native home echoes 500/525/538 | Native deck swap, spell-page list and achievement refresh can share a turn with a requested chest. Decode their exact schemas before dispatching; native checkpoint capture remains authoritative. Unknown/truncated commands must still reject the entire turn. |
+| B-106g | Arena reward ledger/native avatar agreement | Corrected-combat win exposes native ChestOrderIndex left at zero while the host cycle advances; NPC result shows Wooden but earned cycle gives Gold. Native NPC mode also skips StarCount. Persist earned cycle and actual native tower crowns with the battle transaction; let original getNextWinnerChest and home crown transfer use that state. Never infer past crowns from win count. |
+| B-106h | Combined gem speed-up and claim (506) | Actual Silver Open Now spends native gems and enters collection, but no 503 follows. Journal the native post-cost/unlocked pre-grant checkpoint and source-1 reward atomically, preserving the charge on interruption. |
+| B-106i | Original tower facing vectors | Owner reports wrong princess angles and unanchored cannon. Native spawnObject 0x13fe8..0x13ffc sets direction Y +256 for owner 0, -256 otherwise; full sector currently overwrites all six directions with zero. Restore that initialization; independently verify cannon motion afterward. |
+| B-106j | Real elapsed home timers across closure/battles | Timestamp complete native home checkpoints, bind elapsed time to the decoded delivered home, and call original LogicClientHome::fastForward(seconds,-1). Preserve reward journal atomicity; old untimestamped saves start measuring prospectively, without invented historical elapsed time. |
+| B-106k | Native arena match cost | Arena UI shows its CSV cost, but original command 537 does not deduct it. Commit validated sector plus serialized Gold debit before delivery, using native FreeGold=min(previousFreeGold,newGold) semantics. Prevent an old home snapshot or duplicate pending request from undoing/repeating the debit; preserve the cost when a started match is abandoned. |
+| B-106l | Crown-chest command 523/source-3 journal | Original UI creates its chest at ten crowns, but collection stalls on unsupported 523. Add native source-3 randomization/execution/recovery, and flush current source state before claim commands so newly available chests cannot race the periodic checkpoint. Isolated ten-crown fixtures do not prove earned progression to ten. |
 
 ## No-parallel groups
 
@@ -132,3 +367,18 @@ Source of truth: [USER_APP_REPORTS.md](USER_APP_REPORTS.md). Preserve its UAR ID
 - B-109 shares Group D with any Foundation or UIKit class change. Regex and `tmpnam` do not, if they stay in libc.
 - A 4 KB-page green harness run does not close B-101.
 - The three in-repo smokes already have unimplemented imports. The diff fails when a **new** load-time import appears. It does not fail on the imports already in the baseline. Whether a brand-new import should fail even the first time it shows up in a longer run is owner question 9 from the audit; the harness treats runtime-only misses as attention, not a hard failure, because a 3 second smoke is not a full playthrough.
+
+October 26 v42 scoped update: the solo-clan core now has actual creation,
+chat/edit/search/info/leave/re-create and owned interruption/corruption evidence
+in explicit synthetic King-3 fixtures. The remaining clan controls above still
+need real implementations; do not close this owner feature. Natural Silver
+completion now grants once on the actual earned player (Gold 147/gems 87).
+v46 adds original local clan mail/Inbox/cooldown, with forced-stop recovery
+and eight damaged-checkpoint trials. v48 adds actual unfulfilled card requests,
+native eight-hour cooldown and forced-stop recovery, with eight GCR1 fault
+trials. v64 qualifies the local-NPC Friendly Battle subset, including paid
+cancel/refund, recovery, abandonment, native combat/result and malformed-save
+retention; 15 guest tests pass. Donor fulfillment remains open; mailbox removal
+UI and real cooldown expiry are unqualified.
+Post-training names, arena deck/AI variation/research and original daily shop
+remain next in the owner's order. See LOCAL_CLANS for save/version limits.

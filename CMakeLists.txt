@@ -39,9 +39,15 @@ target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB SQLite::SQLite3 Threads::Thread
 # Codecs and ciphers come from host libraries: AudioToolbox and CommonCrypto on
 # Apple hosts; FFmpeg (M4A) and OpenSSL (CCCrypt) elsewhere, both optional.
 if(APPLE)
+  enable_language(OBJCXX)
+  target_sources(hvm_core PRIVATE src/runtime/foundation/HostPredicateRegexApple.mm)
+  set_source_files_properties(src/runtime/foundation/HostPredicateRegexApple.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  target_link_libraries(hvm_core PUBLIC "-framework Foundation" "-framework CoreFoundation")
   target_link_libraries(hvm_core PUBLIC "-framework AudioToolbox")
   target_link_libraries(hvm_core PUBLIC iconv)   # iconv lives in libiconv on Apple
 else()
+  find_package(ICU REQUIRED COMPONENTS uc i18n)
+  target_link_libraries(hvm_core PUBLIC ICU::uc ICU::i18n)
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)
     pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec libavutil)
@@ -101,6 +107,13 @@ target_link_libraries(hvm_arena_pool_tests PRIVATE hvm_core)
 
 add_executable(hvm_support_tests tests/runner/SupportTests.cpp)
 target_link_libraries(hvm_support_tests PRIVATE hvm_core)
+
+add_executable(hvm_entry_tests tests/runner/EntryObserverTests.cpp)
+target_link_libraries(hvm_entry_tests PRIVATE hvm_core)
+add_executable(hvm_clash_tests tests/runner/ClashOfflineTests.cpp)
+target_link_libraries(hvm_clash_tests PRIVATE hvm_core)
+add_executable(hvm_clash_state_tests tests/runner/ClashStateTests.cpp)
+target_link_libraries(hvm_clash_state_tests PRIVATE hvm_core)
 
 add_executable(hvm_machodump tests/runner/MachODump.cpp)
 target_link_libraries(hvm_machodump PRIVATE hvm_core)

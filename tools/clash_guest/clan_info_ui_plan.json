@@ -1,0 +1,1 @@
+{"name":"Native clan info and chat controls","steps":[{"id":"C-clan","expected":"Original local clan page","actions":[{"tap":[240,535]}],"settleSeconds":2},{"id":"C-info","expected":"Original clan info panel with local leader","actions":[{"tap":[218,72]}],"settleSeconds":3}]}

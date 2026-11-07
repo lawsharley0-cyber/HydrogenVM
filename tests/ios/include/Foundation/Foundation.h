@@ -97,6 +97,8 @@ typedef struct {
 - (NSRange)rangeOfString:(NSString *)s;
 - (NSRange)rangeOfString:(NSString *)s options:(NSUInteger)mask;
 - (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set;
+- (NSRange)rangeOfComposedCharacterSequenceAtIndex:(NSUInteger)index;
+- (NSRange)rangeOfComposedCharacterSequencesForRange:(NSRange)range;
 - (NSString *)substringFromIndex:(NSUInteger)i;
 - (NSString *)substringToIndex:(NSUInteger)i;
 - (NSString *)substringWithRange:(NSRange)r;
