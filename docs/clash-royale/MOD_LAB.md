@@ -110,6 +110,24 @@ UIKit fonts, so this panel's appearance is not a final phone design verdict.
 
 ## Keyboard: owner symptom and source finding
 
+November 7 follow-up: the shared fix is now in draft
+[PR #381](https://github.com/lawsharley0-cyber/HydrogenVM/pull/381), commit
+`53e6d8b60712acbcba448416f16ce0d735b794f8`, on `codex/uikeyinput-keyboard`.
+It supports generic UIKeyInput responders and the NSString composed-range API
+that actual native backspace exposed. Both corrected composed-range APIs use
+host Unicode engines. Clean pristine main `76db694` passes 647 runtime checks
+and 25 Test Lab cases; the integrated candidate passes 657 and 26 respectively.
+Its full compatibility harness has no regressions. Native Clan chat inserts,
+deletes, sends and saves `Latest QB`, then cleanly quits and retains it on a
+separate relaunch with unchanged wallet/progression/source save. The latest
+updater's notification-property implementation resolves the older main's
+independently reproduced graceful-shutdown failure in those runs. The CLI
+input driver is private testing instrumentation, absent from the production
+source. Read `docs/KEYBOARD_COMPATIBILITY_2026-11-07.md` on that host branch.
+GitHub/macOS compilation and actual iPhone keyboard/accessory presentation
+remain separate qualification; this guest IPA alone cannot change the host
+keyboard bridge. The earlier investigation details follow for provenance.
+
 The owner confirmed the **keyboard does not appear**, rather than appearing
 but dropping text. Latest fetched main is
 `ff24df3601e282d283168c85b7aa52d7f202062a`. Its #303 bridge publishes requests
@@ -120,8 +138,8 @@ with its own `hasText`, `insertText:`, `deleteBackward`, keyboard traits and
 UITextInput methods. Its Mach-O superclass binding at 0x004613f4 is UIView;
 native `KeyInput::show` invokes superclass `becomeFirstResponder`.
 
-This is a concrete compatibility gap and a likely explanation of this symptom,
-not yet an on-device diagnosis/fix. The older qualified host/feature branch has
+This was a concrete compatibility gap and is addressed by the host candidate
+above; actual on-device presentation is still pending. The older qualified host/feature branch has
 a different generic UIKeyInput bridge. Do not blindly merge main or apply
 SwiftUI focus-delay guesses. A read-only main snapshot/build is being prepared
 at `/var/tmp/hvm-keyboard-ff24df3`. Next: add a minimal custom UIView/UIKeyInput

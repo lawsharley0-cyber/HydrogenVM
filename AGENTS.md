@@ -1,5 +1,7 @@
 # Agent instructions
 
+November 7 host follow-up: [PR #381](https://github.com/lawsharley0-cyber/HydrogenVM/pull/381) contains the custom UIKeyInput/composed-deletion fix on current main. Clean integrated gates: 657 runtime checks, 26 Test Lab cases, no harness regressions; actual native clan typing/edit/send/save/clean quit/relaunch passes. Phone keyboard/accessory presentation and macOS CI remain separate checks. This guest branch retains its own engine baseline; do not blindly merge host main. [MOD_LAB.md](docs/clash-royale/MOD_LAB.md) records exact evidence and the still-unimplemented custom cards/visual sizing.
+
 Latest owner-prioritized modding continuation: [MOD_LAB.md](docs/clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
 
 Owner priority override, November 6: modding is now the current requested task,
