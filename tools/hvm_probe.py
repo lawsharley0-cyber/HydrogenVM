@@ -327,19 +327,24 @@ def tainted_md(rows):
     return md
 
 
+def run_folder(out, bundle_id, key, mode):
+    """One run's output folder; key (from import_root) keeps two files of one game apart."""
+    return out / f'{bundle_id}-{key}-{mode}'
+
+
 def probe_one(args, ipa, mode):
     ipa_hash = file_sha256(ipa)
     # Each .ipa gets its own import folder and run folder: two versions of one game share
     # a bundle id, and sharing a folder made one overwrite the other's app, log and run id.
     root = import_root(args.apps, ipa)
-    key = root.name.rsplit('-', 1)[-1][:6]
+    key = root.name.rsplit('-', 1)[-1]   # the whole digest: a shorter one can collide
     try:
         root.mkdir(parents=True, exist_ok=True)
         bid, app, home = import_app(args.hvm, ipa, root)
     except Exception as e:  # noqa: BLE001 - report every failure as an issue
         return {'bundleId': ipa.stem, 'ipa': ipa.name, 'ipaKey': key, 'sha256': ipa_hash, 'mode': mode, 'status': 'import-failed',
                 'issues': [{'kind': 'load', 'severity': 100, 'key': f'load: {norm(str(e))}', 'text': str(e)}]}
-    run_dir = args.out / f'{bid}-{key}-{mode}'
+    run_dir = run_folder(args.out, bid, key, mode)
     run_dir.mkdir(parents=True, exist_ok=True)
     script = script_for(bid, args.seconds)
     extra = Path(__file__).resolve().parent / 'probe_scripts' / f'{bid}.txt'

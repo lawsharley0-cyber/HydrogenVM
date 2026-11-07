@@ -160,6 +160,32 @@ class ProbeFoldersTest(unittest.TestCase):
                 b = hvm_probe.probe_one(args, Path('Terraria 1.2.ipa'), 'software')
             self.assertNotEqual(seen[0], seen[1])
             self.assertNotEqual(a['ipaKey'], b['ipaKey'])
+            # The run folder carries the whole digest, so the two runs never share one.
+            self.assertEqual(a['ipaKey'], seen[0].name.rsplit('-', 1)[-1])
+            ra = hvm_probe.run_folder(Path(d), 'com.505games.terraria', a['ipaKey'], 'software')
+            rb = hvm_probe.run_folder(Path(d), 'com.505games.terraria', b['ipaKey'], 'software')
+            self.assertNotEqual(ra, rb)
+
+    def test_successful_probes_of_one_game_write_separate_run_folders(self):
+        import hvm_probe
+        with tempfile.TemporaryDirectory() as d:
+            def fake_import(_hvm, _ipa, root):
+                return 'com.505games.terraria', root / 'Terraria.app', root
+
+            def stop_at_run(*_a, **_k):   # the run folder exists by the time hvm runs
+                raise RuntimeError('stop before running hvm')
+            args = mock.Mock(apps=Path(d), out=Path(d) / 'out', hvm='hvm', seconds=1, launches=1, fast=True, seed=1)
+            with mock.patch.object(hvm_probe, 'import_app', side_effect=fake_import), \
+                    mock.patch.object(hvm_probe, 'file_sha256', return_value='0'), \
+                    mock.patch.object(hvm_probe.subprocess, 'run', side_effect=stop_at_run), \
+                    mock.patch.object(hvm_probe.subprocess, 'Popen', side_effect=stop_at_run):
+                for name in ('Terraria 1.0.ipa', 'Terraria 1.2.ipa'):
+                    try:
+                        hvm_probe.probe_one(args, Path(name), 'software')
+                    except RuntimeError:
+                        pass
+            made = sorted(p.name for p in (Path(d) / 'out').iterdir())
+            self.assertEqual(len(made), 2, made)
 
 
 class MainTest(unittest.TestCase):
