@@ -28,11 +28,19 @@ bool r_isFirst(Ctx& x, id self, SEL) { return ui(x).firstResponder == self; }
 bool r_become(Ctx& x, id self, SEL) {
     if (!sendBool(x, self, "canBecomeFirstResponder")) return false;
     auto& u = ui(x);
-    if (u.firstResponder && u.firstResponder != self) rt(x).send(x.cpu, u.firstResponder, "resignFirstResponder");
+    if (u.firstResponder == self) return true;
+    if (u.firstResponder && !sendBool(x, u.firstResponder, "resignFirstResponder")) return false;
     u.firstResponder = self;
+    customKeyboardFocus(x, self, true);
     return true;
 }
-bool r_resign(Ctx& x, id self, SEL) { if (ui(x).firstResponder == self) ui(x).firstResponder = 0; return true; }
+bool r_resign(Ctx& x, id self, SEL) {
+    if (ui(x).firstResponder == self) {
+        ui(x).firstResponder = 0;
+        customKeyboardFocus(x, self, false);
+    }
+    return true;
+}
 void forwardTouches(Ctx& x, id self, SEL s, id touches, id event) {
     const id next = id(rt(x).send(x.cpu, self, "nextResponder"));
     if (next) rt(x).send(x.cpu, next, s, {touches, event});
@@ -89,7 +97,7 @@ void v_dealloc(Ctx& x, id self, SEL) {
         auto& u = ui(x);
         u.windows.erase(std::remove(u.windows.begin(), u.windows.end(), self), u.windows.end());
         if (u.keyWindow == self) u.keyWindow = 0;
-        if (u.firstResponder == self) u.firstResponder = 0;
+        if (u.firstResponder == self) { u.firstResponder = 0; customKeyboardFocus(x, self, false); }
         for (auto& t : u.activeTouches) if (t.view == self) t.view = 0;
     }
     setNeedsComposite(x);
@@ -339,7 +347,10 @@ void v_removeFromSuperview(Ctx& x, id self, SEL) {
     if (oldWindow) notifyMoveToWindow(x, self, 0, false);
     // first responder inside the removed subtree resigns
     auto& u = ui(x);
-    for (id fr = u.firstResponder; fr && isView(x, fr); fr = V(x, fr).superview) if (fr == self) { u.firstResponder = 0; break; }
+    for (id fr = u.firstResponder; fr && isView(x, fr); fr = V(x, fr).superview) if (fr == self) {
+        const id responder = u.firstResponder; u.firstResponder = 0;
+        customKeyboardFocus(x, responder, false); break;
+    }
     autoreleased(x, self);
 }
 void v_hookObj(Ctx&, id, SEL, id) {}
@@ -1165,7 +1176,7 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder resp = r.defineClass("UIResponder", "NSObject");
     u.responder = resp.cls();
     resp.m<&r_nextResponder>("nextResponder").m<&r_isFirst>("isFirstResponder", "c@:").m<&r_false>("canBecomeFirstResponder", "c@:")
-        .m<&r_become>("becomeFirstResponder", "c@:").m<&r_true>("canResignFirstResponder", "c@:").m<&r_resign>("resignFirstResponder", "c@:")
+        .m<&r_become>("becomeFirstResponder", "c@:").m<&r_true>("canResignFirstResponder", "c@:")
         .method("touchesBegan:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
         .method("touchesMoved:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
         .method("touchesEnded:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
@@ -1175,6 +1186,8 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
         .method("motionCancelled:withEvent:", [](Ctx& x) { forwardMotion(x, x.cpu.r[0], x.cpu.r[1], int32_t(x.cpu.r[2]), x.cpu.r[3]); }, "v@:i@")
         .m<&r_remoteControl>("remoteControlReceivedWithEvent:", "v@:@").m<&r_nil>("inputView").m<&r_nil>("inputAccessoryView")
         .m<&r_nil>("undoManager");
+    supportMethod(p, resp, "UIResponder", "resignFirstResponder", [](Ctx& x) { callWrapped<&r_resign>(x); },
+                  SupportStatus::Real, "Clears first-responder ownership and publishes custom keyboard hide events; subclasses can refuse", "c@:");
 
     {
         ObjC::ClassBuilder ax = r.builder(r.getClass("NSObject"));

@@ -39,9 +39,12 @@ target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB SQLite::SQLite3 Threads::Thread
 # Codecs and ciphers come from host libraries: AudioToolbox and CommonCrypto on
 # Apple hosts; FFmpeg (M4A) and OpenSSL (CCCrypt) elsewhere, both optional.
 if(APPLE)
+  target_link_libraries(hvm_core PUBLIC "-framework CoreFoundation")
   target_link_libraries(hvm_core PUBLIC "-framework AudioToolbox")
   target_link_libraries(hvm_core PUBLIC iconv)   # iconv lives in libiconv on Apple
 else()
+  find_package(ICU REQUIRED COMPONENTS uc i18n)
+  target_link_libraries(hvm_core PUBLIC ICU::uc ICU::i18n)
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)
     pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec libavutil)
