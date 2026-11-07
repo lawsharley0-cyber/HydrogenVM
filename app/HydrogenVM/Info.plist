@@ -44,6 +44,10 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<!-- Home Screen game icons open hydrogenvm://run/<bundle id> (see GameLink). -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>com.lfull.HydrogenVM.play-game</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

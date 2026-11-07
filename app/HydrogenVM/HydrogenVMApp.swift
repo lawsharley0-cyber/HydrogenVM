@@ -42,6 +42,13 @@ struct HydrogenVMApp: App {
             // The link is queued before the library resolves it, and the library stays black
             // while one is pending, so a game link never flashes the library.
             // `.ipa` imports keep going to the library's own `.onOpenURL`.
+            // A "Play <game>" shortcut (Add to Home Screen, GameShortcut) arrives as a user
+            // activity; it takes the same route as a game link.
+            .onContinueUserActivity(GameShortcut.activityType) { activity in
+                if let url = GameShortcut.link(activityType: activity.activityType, userInfo: activity.userInfo) {
+                    LaunchRouter.shared.open(url)
+                }
+            }
             .onOpenURL { url in
                 guard url.scheme?.lowercased() == "hydrogenvm" else { return }
                 LaunchRouter.shared.open(url)
