@@ -128,6 +128,9 @@ jobs:
                   if device["name"].startswith("iPhone"):
                       print(device["udid"]); sys.exit(0)
           sys.exit("No iPhone simulator")')
+          # The crash-journal step already booted this device; the software keyboard
+          # preference is read at boot, so restart it after setting the preference.
+          xcrun simctl shutdown "$UDID" || true
           defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool NO
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
