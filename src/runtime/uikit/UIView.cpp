@@ -757,8 +757,10 @@ id vc_initWithCoder(Ctx& x, id self, SEL, id coder) {
     if (templates) d.segueTemplates = r.retain(x.cpu, templates);
     return self;
 }
+void detachSegueTemplates(Ctx& x, id self, id templates);
 void vc_dealloc(Ctx& x, id self, SEL) {
     if (VCData* d = rt(x).hostIf<VCData>(self)) {
+        detachSegueTemplates(x, self, d->segueTemplates);
         if (d->view && rt(x).hostIf<ViewData>(d->view)) V(x, d->view).viewController = 0;
         auto children = std::move(d->children);
         d->children.clear();
@@ -811,11 +813,21 @@ id vc_view(Ctx& x, id self, SEL) {
     return VC(x, self).view;
 }
 id vc_segueTemplates(Ctx& x, id self, SEL) { return VC(x, self).segueTemplates; }
+// Templates point back at their controller without retaining it; clear that pointer when
+// the controller lets go of them, so a template that outlives it never sends to a freed object.
+void detachSegueTemplates(Ctx& x, id self, id templates) {
+    if (!templates) return;
+    for (id t : Foundation::arrayItems(x, templates))
+        if (rt(x).respondsTo(t, rt(x).sel("viewController")) && id(rt(x).send(x.cpu, t, "viewController")) == self)
+            rt(x).send(x.cpu, t, "setViewController:", {0});
+}
 void vc_setSegueTemplates(Ctx& x, id self, SEL, id templates) {
     VCData& d = VC(x, self);
     if (templates) rt(x).retain(x.cpu, templates);
-    if (d.segueTemplates) rt(x).release(x.cpu, d.segueTemplates);
+    const id old = d.segueTemplates;
     d.segueTemplates = templates;
+    if (old && old != templates) detachSegueTemplates(x, self, old);
+    if (old) rt(x).release(x.cpu, old);
 }
 void vc_performSegue(Ctx& x, id self, SEL, id ident, id sender) {
     const id templates = VC(x, self).segueTemplates;
@@ -825,8 +837,14 @@ void vc_performSegue(Ctx& x, id self, SEL, id ident, id sender) {
         rt(x).send(x.cpu, t, "_performWithSender:", {sender});
         return;
     }
-    throw ObjC::ObjCError("Terminating app due to uncaught exception 'NSInvalidArgumentException', reason: 'Receiver (<" +
-                          rt(x).objectClassName(self) + ">) has no segue with identifier '" + (ident ? utf8(x, ident) : std::string("(null)")) + "''");
+    // As UIKit: an NSInvalidArgumentException the guest can catch.
+    const std::string reason = "Receiver (<" + rt(x).objectClassName(self) + ">) has no segue with identifier '" +
+                               (ident ? utf8(x, ident) : std::string("(null)")) + "'";
+    const Class excCls = rt(x).getClass("NSException");
+    const id exc = excCls ? id(rt(x).send(x.cpu, excCls, "exceptionWithName:reason:userInfo:",
+                                          {Foundation::constString(x.proc, "NSInvalidArgumentException"), makeString(x, reason), 0})) : 0;
+    if (!exc) throw ObjC::ObjCError("Terminating app due to uncaught exception 'NSInvalidArgumentException', reason: '" + reason + "'");
+    Foundation::raiseObjCException(x, exc);
 }
 bool vc_shouldPerformSegue(Ctx&, id, SEL, id, id) { return true; }
 void vc_prepareForSegue(Ctx&, id, SEL, id, id) {}

@@ -195,7 +195,10 @@ bool decodeCaf(DecodedAudio& out, const uint8_t* data, size_t n) {
         // decoder): silence of the length the packet table gives, so the file still opens.
         int64_t frames = validFrames;
         if (frames < 0 && packets >= 0 && framesPerPacket) frames = packets * int64_t(framesPerPacket);
-        if (frames <= 0 || frames > int64_t(30) * 60 * 192000) return false;
+        // Bounded before allocating: 16M frames is 64 MB of stereo silence (over 6 minutes at
+        // 44.1 kHz). A longer (or hostile) packet table gets that much and no more.
+        if (frames <= 0) return false;
+        frames = std::min<int64_t>(frames, int64_t(16) << 20);
         out.channels = int(std::min<uint32_t>(channels, 8));
         out.stereoPcm.assign(size_t(frames) * 2, 0);
         out.duration = double(frames) / out.sampleRate;

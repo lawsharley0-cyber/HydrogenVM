@@ -759,8 +759,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_beginIgnoring>("beginIgnoringInteractionEvents", "v@:").m<&app_endIgnoring>("endIgnoringInteractionEvents", "v@:")
        .m<&app_isIgnoring>("isIgnoringInteractionEvents", "c@:").m<&app_ignoreInt>("registerForRemoteNotificationTypes:", "v@:I")
        .m<&app_noop>("registerForRemoteNotifications", "v@:").m<&app_noop>("unregisterForRemoteNotifications", "v@:")
-       .m<&app_noopObj>("registerUserNotificationSettings:", "v@:@").m<&app_noopObj>("scheduleLocalNotification:", "v@:@")
-       .m<&app_noopObj>("presentLocalNotificationNow:", "v@:@").m<&app_noop>("cancelAllLocalNotifications", "v@:")
+       .m<&app_noopObj>("registerUserNotificationSettings:", "v@:@").m<&app_noop>("cancelAllLocalNotifications", "v@:")
        .m<&app_noopObj>("cancelLocalNotification:", "v@:@").m<&app_nil>("scheduledLocalNotifications")
        .m<&app_noop>("beginReceivingRemoteControlEvents", "v@:").m<&app_noop>("endReceivingRemoteControlEvents", "v@:")
        .m<&app_beginBackgroundTask>("beginBackgroundTaskWithExpirationHandler:", "I@:@?")
@@ -771,6 +770,10 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory")
        .m<&app_layoutDirection>("userInterfaceLayoutDirection", "i@:")
        .m<&app_supportedOrientations>("supportedInterfaceOrientationsForWindow:", "I@:@");
+    supportMethod(p, app, "UIApplication", "scheduleLocalNotification:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,
+        "Accepted and dropped: no local notification is ever delivered", "v@:@");
+    supportMethod(p, app, "UIApplication", "presentLocalNotificationNow:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,
+        "Accepted and dropped: no local notification is shown", "v@:@");
     supportMethod(p, app, "UIApplication", "statusBarFrame", [](Ctx& x) { callWrapped<&app_statusBarFrame>(x); }, SupportStatus::Approx,
         "Fixed 20pt-high bar across the screen; with HVM_SAFE_AREA it is as tall as the top inset. Not the real safeAreaInsets API",
         "{CGRect={CGPoint=ff}{CGSize=ff}}@:");

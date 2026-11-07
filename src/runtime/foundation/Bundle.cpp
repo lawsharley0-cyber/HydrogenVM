@@ -220,8 +220,13 @@ bool validURLString(const std::string& s) {
     return true;
 }
 
-id url_initFile(Ctx& x, id self, SEL, id path) { const std::string p = utf8(x, path); initURL(x, self, fileURLString(p, isDirPath(x.proc.hostPath(p))), 0); return self; }
-id url_initFileDir(Ctx& x, id self, SEL, id path, bool dir) { initURL(x, self, fileURLString(utf8(x, path), dir), 0); return self; }
+// A relative path from the guest is relative to the guest's working directory, not the host's.
+id url_initFile(Ctx& x, id self, SEL, id path) {
+    const std::string p = x.proc.absoluteGuestPath(utf8(x, path));
+    initURL(x, self, fileURLString(p, isDirPath(x.proc.hostPath(p))), 0);
+    return self;
+}
+id url_initFileDir(Ctx& x, id self, SEL, id path, bool dir) { initURL(x, self, fileURLString(x.proc.absoluteGuestPath(utf8(x, path)), dir), 0); return self; }
 id url_initString(Ctx& x, id self, SEL, id str) {
     if (!str) { rt(x).release(x.cpu, self); return 0; }
     const std::string s = utf8(x, str);
@@ -1296,10 +1301,10 @@ uint32_t cfb_copyInfoDictForURL(Ctx& x, id url) {
 }
 
 uint32_t cfu_createWithFsPath(Ctx& x, uint32_t, id path, int32_t, bool isDir) {
-    return path ? newURL(x, fileURLString(utf8(x, path), isDir), 0, true) : 0;
+    return path ? newURL(x, fileURLString(x.proc.absoluteGuestPath(utf8(x, path)), isDir), 0, true) : 0;
 }
 uint32_t cfu_createFromFsRep(Ctx& x, uint32_t, GuestPtr buf, int32_t len, bool isDir) {
-    return newURL(x, fileURLString(std::string(reinterpret_cast<const char*>(x.mem.host(buf)), uint32_t(len)), isDir), 0, true);
+    return newURL(x, fileURLString(x.proc.absoluteGuestPath(std::string(reinterpret_cast<const char*>(x.mem.host(buf)), uint32_t(len))), isDir), 0, true);
 }
 uint32_t cfu_createWithString(Ctx& x, uint32_t, id str, id base) {
     if (!str) return 0;

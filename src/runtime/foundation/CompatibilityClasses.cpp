@@ -302,10 +302,14 @@ void drop(Ctx& x, Cell& c, uint32_t options) {
     c = {};
 }
 void prune(Ctx& x, Table& t) {
+    // Take dead entries out of the table first: dropping a strong cell can run guest
+    // release/dealloc, which may touch this table and would invalidate an iterator.
+    std::vector<std::pair<Cell, Cell>> dead;
     for (auto i = t.items.begin(); i != t.items.end();) {
-        if ((i->first.weak && !get(x, i->first)) || (t.map && i->second.weak && !get(x, i->second))) { drop(x, i->first, t.keys); drop(x, i->second, t.values); i = t.items.erase(i); }
+        if ((i->first.weak && !get(x, i->first)) || (t.map && i->second.weak && !get(x, i->second))) { dead.push_back(*i); i = t.items.erase(i); }
         else ++i;
     }
+    for (auto& [key, value] : dead) { drop(x, key, t.keys); drop(x, value, t.values); }
 }
 void table_clear(Ctx& x, id self, SEL) { auto& t = rt(x).host<Table>(self); for (auto& [key, val] : t.items) { drop(x, key, t.keys); drop(x, val, t.values); } t.items.clear(); }
 void table_free(Ctx& x, id self, SEL) { table_clear(x, self, 0); rt(x).disposeInstance(x.cpu, self); }

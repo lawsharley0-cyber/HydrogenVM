@@ -238,12 +238,16 @@ int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outB
     return 0;
 }
 // Same buffer with room for packet descriptions (16-byte AudioStreamPacketDescription each).
+int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf);
 int32_t aq_allocateBufferWithPacketDescriptions(Ctx& x, uint32_t qid, uint32_t byteSize, uint32_t descs, GuestPtr outBuf) {
     const int32_t r = aq_allocateBuffer(x, qid, byteSize, outBuf);
     if (r != 0 || !descs) return r;
     const uint32_t hdr = x.mem.read<uint32_t>(outBuf);
+    // 16-byte AudioStreamPacketDescriptions: refuse a count whose size wraps or cannot be allocated.
+    const uint32_t descBlock = descs <= (64u << 20) / 16 ? x.proc.heap().allocZeroed(descs * 16) : 0;
+    if (!descBlock) { aq_freeBuffer(x, qid, hdr); x.mem.write<uint32_t>(outBuf, 0); return -108; }
     x.mem.write<uint32_t>(hdr + 16, descs);
-    x.mem.write<uint32_t>(hdr + 20, x.proc.heap().allocZeroed(descs * 16));
+    x.mem.write<uint32_t>(hdr + 20, descBlock);
     return 0;
 }
 int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
@@ -549,6 +553,7 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
     if (cap < size) return 0x2173697A;   // '!siz' kAudioFileBadPropertySizeError
     x.mem.write<uint32_t>(ioSize, size);
     if (prop == 0x706E666F /* 'pnfo' packet table: decoded PCM has no priming or remainder */) {
+        noteOnce(x, "AudioFile packet table priming/remainder (reported as 0; the source's are not read)");
         x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
         x.mem.write<uint32_t>(outData + 8, 0);
         x.mem.write<uint32_t>(outData + 12, 0);

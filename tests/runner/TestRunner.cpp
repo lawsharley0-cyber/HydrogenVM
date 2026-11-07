@@ -3276,6 +3276,7 @@ int runFullSubsystemTests() {
     // change the guest's directory, never the host process's.
     {
         const std::string hostCwdBefore = std::filesystem::current_path().string();
+        struct ResetCwd { Process& p; ~ResetCwd() { p.setGuestCwd("/"); } } resetCwd{cx.proc};   // on every exit path
         const std::string guestBundle = cx.proc.guestPath(cx.proc.bundlePath());
         const bool relativeBundle = cx.proc.hostPath(guestBundle.substr(1) + "/data.bin") == cx.proc.bundlePath() + "/data.bin" &&
                                     cx.proc.guestCwd() == "/";
@@ -3296,7 +3297,6 @@ int runFullSubsystemTests() {
             const uint32_t filePath = cx.proc.allocCString(cx.proc.guestHomePath() + "/Documents/cwd-file");
             failedOnFile = int32_t(cx.proc.callGuest(cpu, *chdirSym, {filePath})) == -1 && cx.proc.guestCwd() == cx.proc.guestHomePath();
             std::filesystem::remove(file, ec);
-            cx.proc.setGuestCwd("/");
         }
         if (!(relativeBundle && changed && failedOnFile))
             std::printf("    cwd: relative bundle %d chdir/getcwd %d file refused %d\n", relativeBundle, changed, failedOnFile);
@@ -3387,10 +3387,11 @@ int runFullSubsystemTests() {
         r.send(cpu, note, "setAlertBody:", {body});
         r.send(cpu, note, "setRepeatInterval:", {16});
         r.send(cpu, note, "setApplicationIconBadgeNumber:", {3});
+        r.send(cpu, note, "setHasAction:", {0});
         const ObjC::id copy = ObjC::id(r.send(cpu, note, "copy"));
-        const bool kept = Foundation::utf8(cx, ObjC::id(r.send(cpu, note, "alertBody"))) == "Come back!" &&
+        bool kept = Foundation::utf8(cx, ObjC::id(r.send(cpu, note, "alertBody"))) == "Come back!" &&
                           uint32_t(r.send(cpu, note, "repeatInterval")) == 16 && uint32_t(r.send(cpu, note, "applicationIconBadgeNumber")) == 3 &&
-                          (r.send(cpu, note, "hasAction") & 0xff) == 1 &&
+                          (r.send(cpu, note, "hasAction") & 0xff) == 0 && (r.send(cpu, copy, "hasAction") & 0xff) == 0 &&
                           Foundation::utf8(cx, ObjC::id(r.send(cpu, copy, "alertBody"))) == "Come back!" && uint32_t(r.send(cpu, copy, "repeatInterval")) == 16;
         if (!kept) {
             const ObjC::id b = ObjC::id(r.send(cpu, note, "alertBody")), cb = ObjC::id(r.send(cpu, copy, "alertBody"));
@@ -3399,8 +3400,11 @@ int runFullSubsystemTests() {
                         uint32_t(r.send(cpu, note, "applicationIconBadgeNumber")), uint32_t(r.send(cpu, note, "hasAction")),
                         cb ? Foundation::utf8(cx, cb).c_str() : "(nil)", uint32_t(r.send(cpu, copy, "repeatInterval")));
         }
-        r.release(cpu, copy);
+        // The copy owns its values: it still reads them after the original is gone.
         r.release(cpu, note);
+        const ObjC::id copiedBody = ObjC::id(r.send(cpu, copy, "alertBody"));
+        kept = kept && copiedBody && Foundation::utf8(cx, copiedBody) == "Come back!";
+        r.release(cpu, copy);
         check(kept, "UILocalNotification keeps its properties and copies them");
     }
 
@@ -3442,7 +3446,10 @@ int runFullSubsystemTests() {
                 {"willAnimateRotationToInterfaceOrientation:duration:", "v@:id"},
                 {"viewWillTransitionToSize:withTransitionCoordinator:", "v@:{CGSize=ff}@"},
                 {"preferredStatusBarUpdateAnimation", "i@:"}, {"prefersHomeIndicatorAutoHidden", "c@:"},
-                {"childViewControllerForStatusBarHidden", "@@:"}, {"childViewControllerForStatusBarStyle", "@@:"}};
+                {"preferredScreenEdgesDeferringSystemGestures", "I@:"},
+                {"childViewControllerForStatusBarHidden", "@@:"}, {"childViewControllerForStatusBarStyle", "@@:"},
+                {"childViewControllerForHomeIndicatorAutoHidden", "@@:"}, {"childViewControllerForScreenEdgesDeferringSystemGestures", "@@:"},
+                {"setNeedsUpdateOfHomeIndicatorAutoHidden", "v@:"}, {"setNeedsUpdateOfScreenEdgesDeferringSystemGestures", "v@:"}};
             for (const auto& [name, types] : expected) {
                 const uint32_t m = cx.proc.callGuest(cpu, *getMethod, {uint32_t(r.getClass("UIViewController")), uint32_t(r.sel(name))});
                 const std::string got = m ? cx.proc.readCString(cx.proc.callGuest(cpu, *encoding, {m})) : "(no method)";

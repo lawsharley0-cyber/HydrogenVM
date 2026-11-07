@@ -695,7 +695,8 @@ int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.hostPath(x.proc
 int32_t f_chdir(Ctx& x, GuestPtr path) {
     const std::string guest = x.proc.absoluteGuestPath(x.proc.readCString(path));
     struct stat st{};
-    if (guest.empty() || ::stat(x.proc.hostPath(guest).c_str(), &st) < 0) return failD<int32_t>(x);
+    if (guest.empty()) { setErrno(x, ENOENT); return -1; }
+    if (::stat(x.proc.hostPath(guest).c_str(), &st) < 0) return failD<int32_t>(x);
     if (!S_ISDIR(st.st_mode)) { setErrno(x, ENOTDIR); return -1; }
     x.proc.setGuestCwd(guest);
     return 0;
