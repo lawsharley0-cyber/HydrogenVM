@@ -7424,6 +7424,66 @@ int runFullSubsystemTests() {
         }
     }
 
+    // ICU regex (libicucore uregex_*), as RegexKitLite calls it: UTF-16
+    // pattern and text, UTF-16 offsets, ICU error codes.
+    {
+        auto has = [&](const char* s) { return bool(proc.lookupSymbol(s)); };
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+        auto u16 = [&](const std::u16string& s) {
+            const uint32_t a = proc.heap().allocZeroed(uint32_t(s.size() * 2 + 2));
+            for (size_t i = 0; i < s.size(); ++i) proc.mem().write<uint16_t>(a + uint32_t(i) * 2, uint16_t(s[i]));
+            return a;
+        };
+        const bool have = has("_uregex_open") && has("_uregex_setText") && has("_uregex_find") && has("_uregex_findNext") &&
+                          has("_uregex_start") && has("_uregex_end") && has("_uregex_groupCount") && has("_uregex_close") &&
+                          has("_u_strlen") && has("_u_errorName") && has("_uregex_group");
+        bool ok = have;
+        if (have) {
+            const uint32_t st = proc.heap().allocZeroed(4);
+            const uint32_t pe = proc.heap().allocZeroed(72);
+            auto status = [&] { return int32_t(proc.mem().read<uint32_t>(st)); };
+            // "é" is one unit and the emoji two, so offsets past it are UTF-16 offsets.
+            const uint32_t pat = u16(u"(\\w+)@(\\d+)");
+            const uint32_t txt = u16(u"é x \U0001F600 ab@12 cd@345 z");
+            const uint32_t re = call("_uregex_open", {pat, 0xffffffffu, 0, pe, st});
+            ok = ok && re && status() == 0 && int32_t(call("_u_strlen", {txt})) == 21;
+            ok = ok && call("_uregex_groupCount", {re, st}) == 2;
+            call("_uregex_setText", {re, txt, 0xffffffffu, st});
+            ok = ok && call("_uregex_find", {re, 0, st}) == 1 && status() == 0;
+            ok = ok && call("_uregex_start", {re, 0, st}) == 7 && call("_uregex_end", {re, 0, st}) == 12;
+            ok = ok && call("_uregex_start", {re, 2, st}) == 10 && call("_uregex_end", {re, 1, st}) == 9;
+            const uint32_t buf = proc.heap().allocZeroed(32);
+            ok = ok && call("_uregex_group", {re, 2, buf, 8, st}) == 2 && proc.mem().read<uint16_t>(buf) == u'1' &&
+                 proc.mem().read<uint16_t>(buf + 4) == 0;
+            ok = ok && call("_uregex_findNext", {re, st}) == 1 && call("_uregex_start", {re, 0, st}) == 13 &&
+                 call("_uregex_end", {re, 0, st}) == 19;
+            ok = ok && call("_uregex_findNext", {re, st}) == 0 && status() == 0;
+            // Asking for a group with no current match is U_REGEX_INVALID_STATE.
+            call("_uregex_start", {re, 0, st});
+            ok = ok && status() == 0x10302;
+            proc.mem().write<uint32_t>(st, 0);
+            ok = ok && call("_uregex_find", {re, 13, st}) == 1 && call("_uregex_start", {re, 0, st}) == 13;
+            call("_uregex_start", {re, 3, st});
+            ok = ok && status() == 8;   // U_INDEX_OUTOFBOUNDS_ERROR
+            proc.mem().write<uint32_t>(st, 0);
+            call("_uregex_close", {re});
+            // Case-insensitive flag and inline (?i).
+            const uint32_t re2 = call("_uregex_open", {u16(u"(?i)AB"), 0xffffffffu, 0, pe, st});
+            call("_uregex_setText", {re2, u16(u"xxab"), 4, st});
+            ok = ok && re2 && call("_uregex_find", {re2, 0, st}) == 1 && call("_uregex_start", {re2, 0, st}) == 2;
+            call("_uregex_close", {re2});
+            // Syntax the engine cannot honour is an error, never success.
+            const uint32_t bad = call("_uregex_open", {u16(u"(?<=a)b"), 0xffffffffu, 0, pe, st});
+            ok = ok && bad == 0 && status() == 0x10301 &&
+                 proc.readCString(call("_u_errorName", {0x10301})) == "U_REGEX_RULE_SYNTAX";
+            // A failure already in *status makes the call a no-op.
+            ok = ok && call("_uregex_open", {pat, 0xffffffffu, 0, pe, st}) == 0 && status() == 0x10301;
+        }
+        check(ok, "ICU uregex_open/setText/find/findNext/start/end/group report UTF-16 offsets and ICU error codes");
+    }
+
     // POSIX regex (Darwin 32-bit ABI) and tmpnam inside the guest sandbox.
     // regoff_t is __darwin_off_t (int64) even on armv7, so regmatch_t is 16 bytes.
     {
