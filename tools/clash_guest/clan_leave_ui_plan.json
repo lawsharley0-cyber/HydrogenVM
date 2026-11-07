@@ -1,0 +1,57 @@
+{
+  "name": "Native solo-clan leave and durable disband",
+  "steps": [
+    {
+      "id": "L-clan",
+      "expected": "Restored local clan",
+      "actions": [
+        {
+          "tap": [
+            240,
+            535
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "L-info",
+      "expected": "Original clan info",
+      "actions": [
+        {
+          "tap": [
+            218,
+            72
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "L-confirm",
+      "expected": "Original leave confirmation before mutation",
+      "actions": [
+        {
+          "tap": [
+            267,
+            246
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "L-leave",
+      "expected": "Original command 208 removes membership without a refund",
+      "actions": [
+        {
+          "tap": [
+            219,
+            347
+          ]
+        }
+      ],
+      "settleSeconds": 4
+    }
+  ]
+}

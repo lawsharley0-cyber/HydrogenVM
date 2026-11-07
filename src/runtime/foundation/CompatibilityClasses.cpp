@@ -1,5 +1,6 @@
 // Cocoa data-model classes used by Unity. Unsupported predicate syntax raises explicitly.
 #include "Foundation.hpp"
+#include "HostPredicateRegex.hpp"
 #include "runtime/libc/Format.hpp"
 #include <algorithm>
 #include <cctype>
@@ -37,6 +38,7 @@ struct PNode {
     bool result = false;          // Const
     std::string key, operation;   // Cmp
     id rhs = 0;                   // Cmp, retained
+    std::shared_ptr<const HostPredicateRegex> expression;   // Cmp MATCHES / MATCHES[c]: full ICU matching
     std::vector<std::shared_ptr<PNode>> kids;   // And / Or: any number (a chain is one node); Not: one
     int height = 1;                             // longest path to a leaf; bounds every recursion over the tree
 };
@@ -140,6 +142,21 @@ template <class Next> struct PredicateParser {
         auto n = std::make_shared<PNode>(); n->kind = PNode::Cmp;
         n->key = keyPath();
         ws();
+        if (keyword("MATCHES")) {
+            // SDK validation uses inline (?i) and Unicode categories, so the pattern is
+            // compiled with ICU; ASCII substitution would weaken the checks.
+            const bool insensitive = sym("[c]") || sym("[C]");
+            n->operation = insensitive ? "MATCHES[C]" : "MATCHES";
+            n->rhs = literal();
+            if (n->rhs) { rt(x).retain(x.cpu, n->rhs); retained.push_back(n->rhs); }
+            if (!isString(x, n->rhs)) throw ObjC::ObjCError("MATCHES requires an NSString pattern");
+            try {
+                n->expression = compilePredicateRegex(utf8(x, n->rhs), insensitive);
+            } catch (const std::invalid_argument&) {
+                throw ObjC::ObjCError("invalid or unsupported MATCHES regular expression");
+            }
+            return n;
+        }
         static const char* const ops[] = {"==", "!=", "<>", ">=", "=>", "<=", "=<", "=", ">", "<"};
         const char* op = nullptr;
         for (const char* o : ops) if (sym(o)) { op = o; break; }
@@ -231,6 +248,7 @@ bool evalNode(Ctx& x, const PNode& n, id object) {
         case PNode::Cmp: break;
     }
     const id lhs = value(x, object, n.key);
+    if (n.expression) return isString(x, lhs) && n.expression->matches(utf8(x, lhs));
     if (n.operation == "==") return objectsEqual(x, lhs, n.rhs);
     if (n.operation == "!=") return !objectsEqual(x, lhs, n.rhs);
     const int order = compare(x, lhs, n.rhs);

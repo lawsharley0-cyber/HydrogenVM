@@ -1,0 +1,11 @@
+{
+  "name":"Deck reorder and collection scrolling in a private earned QA copy",
+  "steps":[
+    {"id":"D-open","expected":"Post-upgrade deck opens","actions":[{"tap":[185,535]},{"tap":[90,535]}]},
+    {"id":"D-swap","expected":"Inspect whether native drag reorders Knight and Archers","actions":[{"drag":[40,115,120,115]}]},
+    {"id":"D-restore","expected":"Inspect whether inverse native drag restores the deck","actions":[{"drag":[40,115,120,115]}]},
+    {"id":"D-scroll","expected":"Unowned card collection scrolls","actions":[{"drag":[290,460,290,210]}]},
+    {"id":"D-scroll-more","expected":"Later collection rows render","actions":[{"drag":[290,460,290,210]}]},
+    {"id":"D-finish","expected":"Home returns without crash","actions":[{"tap":[185,535]}]}
+  ]
+}

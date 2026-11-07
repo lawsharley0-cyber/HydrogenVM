@@ -1,0 +1,11 @@
+{
+  "name":"Original local member kick and durable removal",
+  "precondition":"Human leader; joined Local Donor at Member. Higher-ranked NPCs expose Demote in the same position.",
+  "steps":[
+    {"id":"M-clan","expected":"Current native clan","actions":[{"tap":[240,535]}],"settleSeconds":2},
+    {"id":"M-info","expected":"Native two-member roster","actions":[{"tap":[218,72]}],"settleSeconds":2},
+    {"id":"M-profile","expected":"Native member profile with Kick control","actions":[{"tap":[140,325]}],"settleSeconds":2},
+    {"id":"M-kick","expected":"Original kick confirmation, cancellation preserves membership","actions":[{"tap":[200,205]}],"settleSeconds":2},
+    {"id":"M-confirm","expected":"Original confirmed removal; NPC inventory retained as a tombstone, with no refund or automatic rejoin","actions":[{"tap":[220,347]}],"settleSeconds":3}
+  ]
+}

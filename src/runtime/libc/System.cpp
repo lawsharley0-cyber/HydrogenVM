@@ -1178,12 +1178,14 @@ void registerLibcSystem(Process& p) {
     p.def<&f_fsync>("_fsync");
     p.def<&f_ftruncate>("_ftruncate");
     p.def<&f_dup>("_dup");
-    // iOS armv7 apps fill the 108-byte (64-bit inode) struct stat through the plain
-    // symbols too: switching _stat/_fstat to the 96-byte legacy layout broke Unity,
-    // Mono and Supercell file checks on the device ("mscorlib.dll not found").
-    for (const char* n : {"_stat", "_stat$INODE64", "_stat64"}) p.def<&f_stat>(n);
-    for (const char* n : {"_lstat", "_lstat$INODE64", "_lstat64"}) p.def<&f_lstat>(n);
-    for (const char* n : {"_fstat", "_fstat$INODE64", "_fstat64"}) p.def<&f_fstat>(n);
+    for (const char* n : {"_stat$INODE64", "_stat64"}) p.def<&f_stat>(n);
+    for (const char* n : {"_lstat$INODE64", "_lstat64"}) p.def<&f_lstat>(n);
+    for (const char* n : {"_fstat$INODE64", "_fstat64"}) p.def<&f_fstat>(n);
+    // iPhoneOS is __DARWIN_ONLY_64_BIT_INO_T: cdefs.h deliberately emits
+    // no $INODE64 suffix there. Unsuffixed symbols use the same ARMv7 ABI.
+    p.def<&f_stat>("_stat");
+    p.def<&f_lstat>("_lstat");
+    p.def<&f_fstat>("_fstat");
     p.def<&f_access>("_access");
     p.def<&f_mkdir>("_mkdir");
     p.def<&f_rmdir>("_rmdir");

@@ -1,0 +1,8 @@
+{
+  "name": "Persistent explicitly local donor roster and native profile",
+  "steps": [
+    {"id":"D-clan","expected":"Actual chat and request, one running human out of two local members","actions":[{"tap":[240,535]}],"settleSeconds":2},
+    {"id":"D-info","expected":"Human leader plus Local Donor member, original clan score retained","actions":[{"tap":[218,72]}],"settleSeconds":2},
+    {"id":"D-profile","expected":"Original Local Donor profile, authored name, actual starter deck and native total donations","actions":[{"tap":[140,325]}],"settleSeconds":3}
+  ]
+}

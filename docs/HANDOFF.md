@@ -2,6 +2,227 @@
 
 > **SUPERSEDED for priorities and work order (2026-10-30): read [docs/PLAN.md](PLAN.md) first.** Everything below is reference only (machine layout, run recipes, architecture notes, per-game history). If anything here disagrees with PLAN.md, PLAN.md wins.
 
+November 7 custom-card foundation: [CUSTOM_CARDS.md](clash-royale/CUSTOM_CARDS.md) records the append-only definition generator, save-prefix identity checks, 51 focused tests and native component probes. Generated Forge Knight data/name/ownership resolve; discovery achievements settle after relaunch. The end-user forge, mandatory guest registry/loader and custom-card battle qualification remain pending. Keep private probe saves away from the normal guest.
+
+November 7 keyboard continuation: shared host [PR #381](https://github.com/lawsharley0-cyber/HydrogenVM/pull/381) implements custom UIKeyInput and composed deletion. Clean latest-main integration passes 657 runtime checks/26 Test Lab cases and actual native clan edit/send/save/clean quit/relaunch. Phone presentation/macOS CI remain separate; guest Mod Lab/custom-card scope is recorded in [MOD_LAB.md](clash-royale/MOD_LAB.md).
+
+Latest owner-prioritized modding continuation: [MOD_LAB.md](clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
+
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](clash-royale/DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
+November 6 current: read [PLAYABILITY_2026-11-06.md](clash-royale/PLAYABILITY_2026-11-06.md). All six arena content/entry and four later native defeat/relaunch paths now have scoped evidence; 40 tests and 85 sector comparisons pass. Draw/earned-win/reward/full-audit work remains; modding is a later phase. PR #138 was closed unmerged. The new separate local checkout is recorded there.
+
+Newest continuation after `5040611`: [Arena 2 progression](clash-royale/ARENA_PROGRESSION.md)
+adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
+entry/result/return checks; 38 focused tests and 43 private sector comparisons.
+Boundary trophies are component fixtures, not an earned climb; Arenas 3–6,
+draw/partial-crown accounting and full audits remain open. The owner's new
+[random clan-event request](clash-royale/CLAN_EVENTS_PLAN.md) is recorded as planned
+multi-bot social work after core arena/results. Training remains original and
+advanced battle-AI refinement remains deferred. No shared src or device pass.
+
+Newest October 27 continuation after `f8505aa`: [STORE_PURCHASES.md](clash-royale/STORE_PURCHASES.md)
+supersedes the shop chest/currency backlog below. Original Silver/Golden/Magical
+chests and all three Gem-for-Gold packs now have scoped native purchase/reveal/
+relaunch evidence. Controlled before/after checkpoint interruption preserves
+payment/reward accounting; three invalid pending records reject unchanged.
+37 focused tests, actual fresh original training and retained clan checks pass.
+Higher-cost component fixtures were explicitly funded; original earned and
+phone-failing saves remain intact. All seven original trainers stay unchanged.
+The owner defers advanced opponent AI refinement until every other feature and
+bug fix is ready. Next: later-arena progression/results/profile accounting,
+then full button/save/device/visual/audio/performance audits. This guest-only
+stage changes no shared engine code and establishes no new iPhone or audio-
+quality/performance verdict. Earlier chronological evidence follows.
+
+## Current agent handoff — October 26, 2026
+
+October 27 after `45f5a97`: read
+[Daily shop](clash-royale/DAILY_SHOP.md) for current card offers, native
+purchases/limits, calendar policy, exact evidence and remaining Store work.
+36 guest tests and actual card purchase/relaunch/live-rollover checks pass. The
+owner explicitly requires **all seven original training names, decks, AI and
+tutorial sequence to remain unchanged**. Training is excluded from opponent
+variation and shop initialization; all-seven AI/sector checks and actual
+Trainer Earl pass. Next: shop chests/currency, later arenas/results and full
+device/UI/visual/audio/performance audits. No shared runtime edits this stage.
+
+October 27 continuation after `b638b88`: read
+[Arena opponents](clash-royale/ARENA_OPPONENTS.md) first for the latest native
+battle name fix, six arena-legal decks, fair mana/three spending profiles,
+GBO1 save format, exact private testing and remaining work. 33 guest tests and
+actual paid battle/relaunch checks pass; no new device/performance/audio-quality
+verdict. Daily shop and later arenas are next. Older source references below
+are historical; the current working branch is `codex/clash-offline-continuation`.
+
+Read [the complete October 26 handoff](clash-royale/AGENT_HANDOFF_2026-10-26.md)
+first. It records the guest-owned standalone goal, alpha emulator architecture,
+exact branch/pins/private state, all qualified progression/clan/mail/request work,
+test and recovery procedures, Apple results, current friendly-command blocker
+and the owner's ordered future work. The current source is bf8a09c on
+`codex/clash-offline-continuation`; the older sections below preserve history.
+The actual earned Silver completed; local mail and unfulfilled card requests
+now persist. Native friendly challenge 534 and donor fulfillment remain open.
+
+## Current priority: guest-owned standalone mod
+
+Latest audit: seven earned trainers, King 2, nine cards, native name/deck swaps
+and two real defeats without grants now persist. v27 repairs the saved arena
+refresh using the original native routine; the actual earned save graduates
+to Arena 1. Main 5968d88 is integrated at 5fbaa8d; fulltest 256/256, TestLab
+17/17, complete compatibility gate and full report pass locally. Read
+[UI_AUDIT.md](clash-royale/UI_AUDIT.md) for fresh/returning runs, audio captures,
+Apple simulator warnings, hashes and exact remaining blockers. v31 adds actual
+Arena-1 victories: 65 trophies, three banked Silver chests, native entry fees
+and a 3/10 crown transfer retained across two clean launches. Later arenas,
+draw accounting, unlocked controls and phone validation remain unfinished.
+v33 now qualifies closed-time accounting and paid-reward interruption with
+atomic clock/journal persistence; long Silver completion remains open. Next
+owner order: local clans, post-training varied names, arena-appropriate varied
+bot decks/playstyles, daily original shop. Read the newest audit sections before
+using older blockers.
+
+October 25 UI/crash continuation: read [UI_AUDIT.md](clash-royale/UI_AUDIT.md)
+and the latest section in [GUEST_MOD_PROGRESS.md](clash-royale/GUEST_MOD_PROGRESS.md).
+The phone's v19 home abort identifies unported native command 516, now handled
+without bypassing original execution. v23 also fixes local profile and supplies
+offline help/settings notices. Three real upgrades in a private earned-player
+copy pass; repeated final-package launches, later training and device retests
+remain required. Shared regex/locale fixes pass 253 runtime and 17 TestLab
+checks on Linux; Apple adapter validation is still a CI gate. Stable guest
+bundle/save identity is retained. Never replace the owner's failing phone save.
+
+Later same-day evidence reaches six earned wins, nine cards, five real card
+upgrades and King level 2 in the QA copy. Native initial-name command 201 is now
+ported (v25/v26); a real Boris defeat persists one loss without a reward and
+returns home. Ordinary main 6884670 cannot render the name field because it
+lacks the shared CoreText caret API already on this branch (TL-N). Use the
+updated runtime, with no Clash backend flags or package marker. Seventh win,
+graduation and arena/economy port remain unfinished; see UI_AUDIT.
+
+The owner requests the offline backend inside a separate Clash IPA, surviving
+ordinary emulator updates without a Clash-specific host service. This explicitly
+authorizes modifying an output copy of the game executable. Read
+[GUEST_MOD_PROGRESS.md](clash-royale/GUEST_MOD_PROGRESS.md) before continuing.
+The new guest-code prototype runs on unmodified main `6884670` with no Clash
+service: three earned training victories, chest banking, guest-owned persistence,
+native card upgrade and aborted-reward recovery are reproduced. A deliberate
+SIGKILL after chest ID 3's durable journal recovers through the original command;
+see the progress document for final no-duplicate checks. It is not fully functional yet. Earlier
+host-backend seven-training/all-arena scene evidence does not qualify the guest
+port. No proprietary/generated binaries, fixtures or player data are in Git.
+
+## Codex Recovery & Continuation — October 25, 2026
+
+For the owner's importable guest-IPA request, read
+[OFFLINE_IPA.md](clash-royale/OFFLINE_IPA.md). The metadata package reaches the
+original tutorial on a fresh local import without offline CLI flags. It still
+requires the updated emulator. The owner confirms a PR #138 iPhone build gets
+stuck at 50% / couldn't log in; neither packaging nor Linux tests resolve that
+device report. Preserve it and obtain the exact build/log before claiming a
+root cause. CI adds Apple-host offline socket/state and TL-O ABI checks.
+
+See [CODEX_RECOVERY_HANDOFF.md](clash-royale/CODEX_RECOVERY_HANDOFF.md) for the complete recovery report from Codex session `01a15ad7-5c8b-7222-ae87-545437c2d162`.
+Key verified additions:
+- Package-marker auto-configuration (`HydrogenVMOfflineBackend: clash-2.1306.1` in `Info.plist`), allowing modded offline IPAs to be imported directly without CLI flags (`tools/package_clash_offline.py`).
+- ARMv7 aggregate return ABI fix for `__sincosf_stret` (hidden `r0` pointer) and TestLab regression case `TL-O` (all 15 TestLab cases passing).
+- Offline IPA tested and verified working in `hvm run` without `--offline-clash`.
+
+## Clash continuation — October 24, 2026
+
+Latest continuation adds original crown collection command 523/source 3, with
+native reward execution and durable recovery. An isolated ten-crown starting
+fixture recovers a real killed 58-byte journal without backup restoration;
+72 gold, 2 gems and cards apply once across two relaunches. Normal chest reveal
+also returns cleanly to home. This does not prove earned ten-crown progression:
+the earned player still has three crowns. Read PROGRESS for exact runs and
+remaining gameplay/device gates. The owner's latest report specifically calls
+out wrong princess angles and King cannon movement away from its anchor;
+initial-facing correction alone does not close either phone observation.
+
+The owner explicitly prioritizes core offline Clash functionality. Draft
+[PR #138](https://github.com/lawsharley0-cyber/HydrogenVM/pull/138), branch
+`codex/clash-offline-continuation`, checkpoints the embedded backend and local
+Gemini work. Read [current evidence](clash-royale/PROGRESS.md) first. All seven
+native training wins and the normal Arena 1 home transition were reproduced on
+Linux. Knight, Bomber and Arrows upgrades, a full eight-card deck, distinct
+chest identities, and actual interrupted-reward recovery are verified. The
+native name dialog before NPC7 now completes using command 201. Returning home
+after NPC6 exposed missing CTLineGetOffsetForStringIndex; the shared runtime
+implementation uses actual glyph positions, with a failing-before/passing-after
+TL-N guest test. This is not a newly signed iPhone/device validation.
+
+Main `2b60a06` is integrated. A plain stat/fstat ABI regression from earlier main was
+corrected using Apple's iPhone ABI: 64-bit inodes, st_size at byte 60; new TL-H v2
+fails before the fix and passes after. Check this independently before changing
+stat for another app; unsuffixed iPhone symbols do not imply legacy Mac ABI.
+
+The first Arena 1 native NPC win completes after retaining sector delimiter 12.
+Native ELO is now used: the bot receives its CSV score and active arena, and a
+later real win produced 34 trophies in both native avatar and visible home,
+retained across two relaunches. Fixed +30/-20 guesses and the old live-score
+write were removed. A short-int
+name-command error from `33d82ad` is corrected and its exact state is repaired
+using the original command, with no direct save edit.
+
+Further local fixes restore original tower scaling and neutral buff percentages:
+damage/size must be 100%, not 0. The incorrect 1% size caused invalid maximum HP,
+stuck health-bar frames and missing tower occupants. Four occupants now render,
+and a damaged 1363/1526-HP tower selects the correct 11/99 animation frame.
+The full sector now retains static decoration IDs instead of deleting native
+CSV-created objects: original trees, rocks, fences and arena edges render again.
+Earlier wins exercised the old tower initialization and do not prove current
+balance. All this still needs phone validation.
+
+Native free-chest collection now grants gold, gems and Goblins, survives an
+actual interrupted journal/relaunch, and does not grant again on two relaunches.
+A Goblins-for-Arrows deck swap also persists. All six bundled arena scenes and
+attacking bots load in isolated synthetic profiles; earned later-arena promotion
+and wins remain unverified. See PROGRESS for exact runs and their limits.
+
+Corrected-combat three-crown victory is now verified, with native score 34 to
+65 retained across two relaunches. The victory screen's Wooden Chest differs
+from the saved cycle's Gold Chest, and crowns remain 0/10: native training-style
+NPC battles skip crown credit. This is still a core accounting task.
+
+Newer accounting work reconciles the native earned chest index and transfers
+actual destroyed-tower crowns through original home logic. Native crown count
+3 persists across two relaunches. Combined gem unlock/claim now journals the
+native deduction with the reward; an actual killed isolated process recovered
+gold 214 to 236 while retaining gems 72, without duplicate grants. The earned
+player reached level 2 through Archers/Goblins upgrades. A new win/reward-label
+comparison and full crown-chest collection are still pending.
+
+Measured real elapsed home time is now applied through the original native API,
+with timestamps tied to native ticks and reward completion. An initial seven-
+second recovery shortfall was reproduced and corrected; later ordinary and paid
+recovery comparisons differ by less than one second. Old untimestamped saves
+start prospectively. Original opposing tower directions replace zero vectors;
+initial facing is corrected locally, while cannon motion/device appearance remain open.
+
+Arena entry now uses each CSV match cost and original Gold/FreeGold policy,
+committed before sector delivery with duplicate/old-home guards. The real
+Arena 1 test spent 204 to 203 gold, retained across two relaunches; the test
+deliberately abandoned the battle and retains that fee without a fake result.
+Apple checkpoint a92eb84 (before entry fees) compiled and packaged an unsigned
+iOS device IPA; see PROGRESS/CI 40157432144. It has no phone validation.
+
+Next: victory reward-display comparison, full crown collection, long Silver
+unlocks, earned later-arena coverage and the remaining sound/cannon/text reports. The
+owner explicitly requests continuing through the bug-fix phase, not stopping
+at intermediate milestones. Paid renames and old half-claimed/duplicate-ID saves
+need separate work; do not reset flags or progress. No assets/private
+saves are in the PR. Do not merge the draft or equate its unit tests with a
+complete playable game.
+
+Owner clarification: princess orientation is wrong and the King cannon moves
+away from its anchor. Keep both unresolved after restoring their visibility.
+
 ## Current continuation — October 22, 2026
 
 Integration is `main`. Use a topic branch and a draft PR; the owner integrates

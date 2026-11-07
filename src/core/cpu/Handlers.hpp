@@ -21,6 +21,7 @@ namespace Hydrogen::CPU {
 // Implemented by the Engine.
 Block* hvmEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => stop
 void   hvmCallHle(Cpu* c, uint32_t index);
+void   hvmObserveEntry(Cpu* c, uint32_t address);
 
 #define HVM_H(name) inline HVM_HOT_ABI void name(Cpu* c, const Op* op, uint8_t* m)
 #ifdef HVM_PROFILE_PAIRS
@@ -118,6 +119,11 @@ inline uint32_t shiftImmDyn(uint32_t v, uint32_t type, uint32_t n, uint32_t cin)
 // --------------------------------------------------------- control / misc ---
 
 HVM_H(H_Nop) { HVM_NEXT(); }
+HVM_H(H_ObserveEntry) {
+    hvmObserveEntry(c, op->imm);
+    if (c->exit != Exit::None) return;
+    HVM_NEXT();
+}
 
 // "Bodies" (B_*) are the state updates of the simplest, hottest handlers,
 // split out so H_Pair can run two of them back to back (one dispatch instead

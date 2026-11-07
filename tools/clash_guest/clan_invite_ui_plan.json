@@ -1,0 +1,12 @@
+{
+  "name":"Original local NPC invitation and retained-actor rejoin",
+  "precondition":"Synthetic King-3 human leader; retired Local Donor; original request/chat/friendly history followed by the NPC profile message. Coordinates are fixture-specific.",
+  "steps":[
+    {"id":"I-clan","expected":"Retired member remains absent; one persistent offline NPC profile message","actions":[{"tap":[240,535]}],"settleSeconds":3},
+    {"id":"I-name","expected":"Original View Profile context menu","actions":[{"tap":[60,380]}],"settleSeconds":2},
+    {"id":"I-profile","expected":"Actual retained NPC profile: No Clan and original Invite button","actions":[{"tap":[92,394]}],"settleSeconds":3},
+    {"id":"I-invite","expected":"Native Invite sent successfully; retained NPC accepts through original209, without stock/wallet refill","actions":[{"tap":[200,205]}],"settleSeconds":3},
+    {"id":"I-close","expected":"Original profile closes; no repeat invite needed","actions":[{"tap":[300,65]}],"settleSeconds":2},
+    {"id":"I-roster","expected":"Two actual local members; NPC Member role; native weekly fields","actions":[{"tap":[218,72]}],"settleSeconds":3}
+  ]
+}

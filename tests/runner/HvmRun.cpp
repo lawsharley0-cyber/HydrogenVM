@@ -8,6 +8,8 @@
 #include "runtime/Process.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "AudioOutput.hpp"
+#include "EntryTrace.hpp"
+#include "runtime/uikit/UIKit.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -112,6 +114,7 @@ int hvmRunMain(int argc, char** argv) {
             if (!cfg.hostGL) { std::fprintf(stderr, "--gpu: no host OpenGL ES (%s)\n", why.c_str()); return 2; }
         }
         else if (!std::strcmp(argv[i], "--loopback-network")) cfg.loopbackNetwork = true;
+        else if (!std::strcmp(argv[i], "--offline-clash")) cfg.offlineClash = true;
         else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--guest-libs")) cfg.guestLibs = true;
         else if (!std::strcmp(argv[i], "--guest-lib-dir") && i + 1 < argc) { cfg.guestLibDir = argv[++i]; cfg.guestLibs = true; }
@@ -186,7 +189,37 @@ int hvmRunMain(int argc, char** argv) {
     auto runOnce = [&](int launch) -> int {
         if (launches > 1 && !quiet) std::fprintf(stderr, "[hvm] ---- launch %d of %d ----\n", launch, launches);
         const auto wallStart = std::chrono::steady_clock::now();
+        EntryTrace entryTrace;
         Runtime::Process proc(cfg);
+        entryTrace.attach(proc);
+        // Desktop text commands answer the guest's latest keyboard request (#303/#381):
+        // custom UIKeyInput responders get incremental events, text fields their full text.
+        std::mutex keyboardMu;
+        Runtime::UIKit::TextInputRequest keyboard;
+        uint64_t keyboardSeq = 0;
+        Runtime::UIKit::setTextInputObserver(proc, [&](const Runtime::UIKit::TextInputRequest& q) {
+            std::lock_guard<std::mutex> lk(keyboardMu);
+            keyboard = q;
+        });
+        auto sendText = [&](Runtime::UIKit::TextInputEvent::Kind kind, std::string text) {
+            Runtime::UIKit::TextInputEvent ev{kind, std::move(text), 0, 0};
+            {
+                std::lock_guard<std::mutex> lk(keyboardMu);
+                if (!keyboard.active) { std::fprintf(stderr, "[hvm:warn] Desktop text input without a focused field\n"); return; }
+                ev.focusId = keyboard.focusId;
+                if (!keyboard.keyInput && kind != Runtime::UIKit::TextInputEvent::Return) {
+                    // A UITextField / UITextView takes its whole new text.
+                    std::string full = keyboard.text;
+                    if (kind == Runtime::UIKit::TextInputEvent::DeleteBackward) {
+                        while (!full.empty() && (uint8_t(full.back()) & 0xC0) == 0x80) full.pop_back();
+                        if (!full.empty()) full.pop_back();
+                    } else full += ev.text;
+                    keyboard.text = full;
+                    ev = {Runtime::UIKit::TextInputEvent::SetText, std::move(full), keyboard.focusId, ++keyboardSeq};
+                }
+            }
+            Runtime::UIKit::submitTextInput(proc, std::move(ev));
+        };
         DesktopAudioOutput audio;
         std::string loadError;
         auto writeReport = [&](int status) {
@@ -255,22 +288,47 @@ int hvmRunMain(int argc, char** argv) {
             std::ifstream input;
             if (!inputFile.empty()) input.open(inputFile);
             std::string pendingInput;
+            bool inputOverflow=false;
             auto pumpInput = [&] {
                 if (!input.is_open()) return;
                 input.clear();
                 char ch;
                 while (input.get(ch)) {
                     if (ch != '\n') {
-                        if (pendingInput.size() < 256) pendingInput += ch;
+                        if (pendingInput.size() < 32773) pendingInput += ch;
+                        else inputOverflow=true;
                         continue;
                     }
                     const std::string command = std::move(pendingInput); pendingInput.clear();
+                    if(inputOverflow) {
+                        inputOverflow=false;std::fprintf(stderr,"[hvm:warn] Desktop input exceeds bounded line size\n");continue;
+                    }
                     int phase; float px, py;
                     if (std::sscanf(command.c_str(), "touch %d %f %f", &phase, &px, &py) == 3 &&
                         (phase == 0 || phase == 1 || phase == 3 || phase == 4) && std::isfinite(px) && std::isfinite(py)) {
                         proc.injectTouch(Runtime::TouchPhase(phase), px, py, 1);
                         if (!quiet) std::fprintf(stderr, "[hvm] desktop touch %d %.1f %.1f\n", phase, px, py);
-                    } else if (command == "background") proc.enterBackground();
+                    } else if(command.starts_with("text ")) {
+                        const auto digit=[](char c) {
+                            if(c>='0' && c<='9')return c-'0';
+                            if(c>='a' && c<='f')return c-'a'+10;
+                            if(c>='A' && c<='F')return c-'A'+10;
+                            return -1;
+                        };
+                        const auto hex=command.substr(5);std::string text;
+                        bool valid=hex.size()%2==0 && hex.size()<=32768;
+                        for(size_t i=0;valid && i<hex.size();i+=2) {
+                            const int hi=digit(hex[i]),lo=digit(hex[i+1]);
+                            if(hi<0 || lo<0)valid=false;
+                            else text.push_back(char(hi*16+lo));
+                        }
+                        if(valid) {
+                            if(!quiet)std::fprintf(stderr,"[hvm] desktop text input (%zu bytes)\n",text.size());
+                            sendText(Runtime::UIKit::TextInputEvent::InsertText, std::move(text)); // never log entered text
+                        } else std::fprintf(stderr,"[hvm:warn] Invalid desktop text encoding\n");
+                    } else if(command=="backspace")sendText(Runtime::UIKit::TextInputEvent::DeleteBackward, {});
+                    else if(command=="return")sendText(Runtime::UIKit::TextInputEvent::Return, {});
+                    else if (command == "background") proc.enterBackground();
                     else if (command == "foreground") proc.enterForeground();
                     else if (command == "stop") proc.requestGracefulStop();
                     else std::fprintf(stderr, "[hvm:warn] Invalid desktop input command\n");

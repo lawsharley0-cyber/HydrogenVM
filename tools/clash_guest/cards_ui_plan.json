@@ -1,0 +1,24 @@
+{
+  "name":"Pinned eight-card deck inspection; Knight level 2, other seven level 1",
+  "steps":[
+    {"id":"C-open","expected":"Cards tab shows eight owned cards","actions":[{"tap":[185,535]},{"tap":[90,535]}]},
+    {"id":"C-knight","expected":"Original Level 2 Knight info and stats","actions":[{"tap":[40,115]},{"tap":[40,180]}]},
+    {"id":"C-knight-blocked","expected":"Insufficient-card upgrade does not spend resources","actions":[{"tap":[160,445]}]},
+    {"id":"C-knight-close","expected":"Cards tab returns","actions":[{"tap":[300,105]}]},
+    {"id":"C-archers","expected":"Original Level 1 Archers info; upgrade available","actions":[{"tap":[120,115]},{"tap":[120,180]}]},
+    {"id":"C-archers-close","expected":"Cards tab returns","actions":[{"tap":[300,105]}]},
+    {"id":"C-bomber","expected":"Original Level 1 Bomber info; upgrade available","actions":[{"tap":[200,115]},{"tap":[200,180]}]},
+    {"id":"C-bomber-close","expected":"Cards tab returns","actions":[{"tap":[300,105]}]},
+    {"id":"C-arrows","expected":"Original Level 1 Arrows info; upgrade available","actions":[{"tap":[280,115]},{"tap":[280,180]}]},
+    {"id":"C-arrows-close","expected":"Cards tab returns","actions":[{"tap":[300,105]}]},
+    {"id":"C-fireball","expected":"Original Level 1 Fireball info and damage stats","actions":[{"tap":[40,235]},{"tap":[40,300]}]},
+    {"id":"C-fireball-close","expected":"Cards tab returns","actions":[{"tap":[300,105]}]},
+    {"id":"C-giant","expected":"Original Level 1 Giant info and targeting stats","actions":[{"tap":[120,235]},{"tap":[120,300]}]},
+    {"id":"C-giant-close","expected":"Cards tab returns","actions":[{"tap":[300,105]}]},
+    {"id":"C-musketeer","expected":"Original Level 1 Musketeer info and targeting stats","actions":[{"tap":[200,235]},{"tap":[200,300]}]},
+    {"id":"C-musketeer-close","expected":"Cards tab returns","actions":[{"tap":[300,105]}]},
+    {"id":"C-prince","expected":"Original Level 1 Prince info and stats","actions":[{"tap":[280,235]},{"tap":[280,300]}]},
+    {"id":"C-prince-close","expected":"Cards tab returns","actions":[{"tap":[300,105]}]},
+    {"id":"C-finish","expected":"Home returns without crash","actions":[{"tap":[185,535]}]}
+  ]
+}

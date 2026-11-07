@@ -2431,6 +2431,17 @@ int runFullSubsystemTests() {
             compoundOk=ok;
         }
         check(compoundOk,"NSPredicate AND/OR/NOT with parentheses, keyword aliases and NSCompoundPredicate; other syntax still raises");
+        bool matches=false;
+        try {
+            auto cls=r.getClass("NSPredicate");
+            auto pattern=call(cls,"predicateWithFormat:",{makeString(cx,"SELF MATCHES %@"),makeString(cx,"a|ab")});
+            auto insensitive=call(cls,"predicateWithFormat:argumentArray:",{makeString(cx,"SELF matches[c] %@"),makeArray(cx,{makeString(cx,"cat")})});
+            bool invalid=false;try{call(cls,"predicateWithFormat:",{makeString(cx,"SELF MATCHES %@"),makeString(cx,"[")});}
+            catch(const std::exception& e){invalid=std::string(e.what()).find("MATCHES regular expression")!=std::string::npos;}
+            matches=call(pattern,"evaluateWithObject:",{makeString(cx,"ab")}) && !call(pattern,"evaluateWithObject:",{makeString(cx,"abc")}) &&
+                !call(pattern,"evaluateWithObject:",{0}) && call(insensitive,"evaluateWithObject:",{makeString(cx,"CAT")}) && invalid;
+        }catch(const std::exception&){}
+        check(matches,"NSPredicate MATCHES full-string alternatives, argument-array case folding, nil and invalid pattern");
         bool tables=false;
         if(r.getClass("NSHashTable") && r.getClass("NSMapTable")) {
             auto weak=call(r.getClass("NSHashTable"),"weakObjectsHashTable");
@@ -6551,6 +6562,27 @@ int runFullSubsystemTests() {
             call("__ZNSt19basic_ostringstreamIcSt11char_traitsIcESaIcEED1Ev", {oss});
             if (!(chained && okState && v == "171.5\n")) std::printf("    old ostream members: chained %d state %d text '%s'\n", chained, okState, v.c_str());
             check(chained && okState && v == "171.5\n", "libstdc++ member operator<< (bool, unsigned long, float, manipulator) and basic_ios state checks");
+        }
+
+        // Apple XNU cdefs.h: PLATFORM_iPhoneOS has ONLY_64_BIT_INO_T=1,
+        // so unsuffixed stat has the same layout as the $INODE64 alias.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const std::string file = proc.homePath() + "/Documents/hvm_stat_layout.bin";
+            { std::ofstream o(file, std::ios::binary); o << std::string(1234, 'x'); }
+            const uint32_t path = proc.allocCString(file);
+            const uint32_t buf = proc.heap().allocZeroed(128);
+            for (uint32_t i = 108; i < 128; i += 4) proc.mem().write<uint32_t>(buf + i, 0xA5A5A5A5);
+            const uint32_t r1 = call("_stat", {path, buf});
+            const bool plain = r1 == 0 && proc.mem().read<uint64_t>(buf + 60) == 1234 &&
+                               (proc.mem().read<uint16_t>(buf + 4) & 0170000) == 0100000 &&
+                               proc.mem().read<uint32_t>(buf + 108) == 0xA5A5A5A5 && proc.mem().read<uint32_t>(buf + 124) == 0xA5A5A5A5;
+            std::memset(proc.mem().host(buf), 0, 128);
+            const uint32_t r2 = call("_stat$INODE64", {path, buf});
+            const bool wide = r2 == 0 && proc.mem().read<uint64_t>(buf + 60) == 1234 &&
+                              (proc.mem().read<uint16_t>(buf + 4) & 0170000) == 0100000;
+            check(plain && wide, "stat: unsuffixed iPhone symbols and $INODE64 use the 108-byte ARMv7 layout");
+            proc.heap().free(buf);
         }
 
         // CFNumber NaN/infinity constants, NSObject's isa ivar offset, proxy constants.

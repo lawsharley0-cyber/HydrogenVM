@@ -54,6 +54,14 @@ class HomeStateTests(unittest.TestCase):
         self.assertEqual([r.vint() for _ in range(4)], [0,1,0,4])
         self.assertEqual([r.boolean() for _ in range(4)], [False]*4)
         self.assertEqual([r.vint() for _ in range(3)], [288000,0,-1])
+        self.assertEqual([r.vint() for _ in range(3)], [0,0,-1])  # donation cooldown
+        self.assertFalse(r.boolean());self.assertFalse(r.boolean())
+        self.assertEqual(r.vint(),0);self.assertTrue(r.boolean())
+        self.assertEqual([r.vint() for _ in range(3)], [0,0,-1])
+        self.assertFalse(r.boolean())
+        self.assertEqual([r.vint() for _ in range(3)], [0,0,-1])
+        self.assertEqual([r.vint() for _ in range(9)], [0]*9)
+        self.assertEqual(r.vint(),1)  # last shown level matches the supplied level-one avatar
         state['home']['decks'][0][0]['c'] = 8
         self.assertEqual(source['decks'][0][0]['c'], 1)
 

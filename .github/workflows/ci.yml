@@ -33,6 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
+        # 2026-10-26: this step hung for 30+ minutes on a hosted runner while
+        # the same step takes ~30 s normally. Bound the hang with a step
+        # timeout and retry transient apt failures with backoff.
+        timeout-minutes: 15
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq libicu-dev clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 python3-jsonschema
@@ -80,6 +84,10 @@ jobs:
         run: python3 tools/test_shutdown_watchdog.py --hvm build/hvm
       - name: HostGL sequential process lifetime
         run: build/hvm_gl_lifetime_tests
+      - name: Offline backend and package checks
+        run: |
+          build/hvm_clash_state_tests > report/clash-state.txt
+          build/hvm_clash_tests > report/clash-offline.txt
       - name: Host AAC decoder comparison
         run: python3 tools/test_m4a_audio.py --hvm-tests build/hvm_tests --out report/m4a.json
       - name: Upload report and test apps
@@ -121,6 +129,15 @@ jobs:
           export PATH="$(brew --prefix lld)/bin:$PATH"
           xcodebuild -version
           python3 tools/hvm_report.py --prebuilt-apps --out report
+      - name: Apple offline backend and ARMv7 math ABI checks
+        run: |
+          clang -fobjc-arc tests/native/FoundationLocale.m -framework Foundation -o build/native-locale
+          build/native-locale > report/locale-native.txt
+          build/hvm_clash_state_tests > report/clash-state.txt
+          build/hvm_clash_tests > report/clash-offline.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-math-test -- --run TL-O > report/clash-math-abi.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-predicate-test -- --run TL-P > report/clash-predicate.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-language-test -- --run TL-Q > report/clash-language.txt
       - name: Generate Xcode project
         working-directory: app
         run: xcodegen
