@@ -3091,6 +3091,30 @@ int runFullSubsystemTests() {
               "invalid safe-area text means no insets");
         ::unsetenv("HVM_SAFE_AREA");
         UIKit::applyGuestScreenEnv(cx);
+        // #306: interface orientations use UIKit's numbers. LandscapeRight (3) has the home
+        // button on the right, so the UI's top and the status bar are on the device's right
+        // edge, and a root view turns +90 degrees; LandscapeLeft (4) is the mirror image.
+        {
+            const int32_t savedInit = u.initialOrientation;
+            auto rootFor = [&](int32_t o, Graphics::Rect& frame) {
+                u.initialOrientation = o; u.statusBarOrientation = o;
+                frame = screenSize("applicationFrame");
+                const ObjC::id vcO = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIViewController"), r.selAlloc)), r.selInit));
+                const ObjC::id winO = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, w0, h0});
+                r.send(cpu, winO, "setRootViewController:", {vcO});   // a plain controller accepts both landscapes
+                const UIKit::LayerData& l = UIKit::layerData(cx, UIKit::viewLayer(cx, ObjC::id(r.send(cpu, vcO, "view"))));
+                const float m12 = l.transform.m12;
+                r.send(cpu, winO, "setHidden:", {1});
+                return m12;
+            };
+            Graphics::Rect right{}, left{};
+            const float m12Right = rootFor(3, right), m12Left = rootFor(4, left);
+            check(std::abs(right.x) < 0.01f && std::abs(right.w - (w0 - 20.0f)) < 0.01f && std::abs(left.x - 20.0f) < 0.01f &&
+                      m12Right > 0.99f && m12Left < -0.99f,
+                  "orientation numbers are UIKit's: LandscapeRight (3) has the status bar on the device's right edge and turns the root +90 degrees, LandscapeLeft (4) the mirror");
+            u.initialOrientation = savedInit;
+            u.statusBarOrientation = 1;
+        }
         u.statusBarHidden = hidden;
         u.statusBarOrientation = orientation;
         u.screenW = w0; u.screenH = h0;
@@ -3401,7 +3425,7 @@ int runFullSubsystemTests() {
             r.send(cpu, w, "makeKeyAndVisible");
             return w;
         };
-        u.initialOrientation = 3;          // UIInterfaceOrientationLandscapeLeft from Info.plist
+        u.initialOrientation = 3;          // UIInterfaceOrientationLandscapeRight from Info.plist
         u.statusBarOrientation = 3;
         u.orientationSetByApp = false;
         const ObjC::id win = makeWindow();

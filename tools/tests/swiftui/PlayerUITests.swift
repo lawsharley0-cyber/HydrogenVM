@@ -67,7 +67,7 @@ final class PlayerUITests: XCTestCase {
 
     @MainActor
     func testBothLandscapeDirectionsAndDisplayModes() {
-        let app = open(3)
+        let app = open(4)   // UIInterfaceOrientationLandscapeLeft
         let screen = app.otherElements["player-viewport"]
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")

@@ -624,8 +624,8 @@ void drawStatusBar(Ctx& x, G::Surface& s) {
     G::Clip all; all.x0 = 0; all.y0 = 0; all.x1 = s.width; all.y1 = s.height;
     G::Rect band;
     switch (u.statusBarOrientation) {
-        case 3: band = {0, 0, h, float(s.height)}; break;                    // UIInterfaceOrientationLandscapeLeft: UI top is the device's left edge
-        case 4: band = {float(s.width) - h, 0, h, float(s.height)}; break;   // LandscapeRight: UI top is the device's right edge
+        case 4: band = {0, 0, h, float(s.height)}; break;                    // UIInterfaceOrientationLandscapeLeft (4): UI top is the device's left edge
+        case 3: band = {float(s.width) - h, 0, h, float(s.height)}; break;   // LandscapeRight (3): UI top is the device's right edge
         case 2: band = {0, float(s.height) - h, float(s.width), h}; break;
         default: band = {0, 0, float(s.width), h}; break;
     }
