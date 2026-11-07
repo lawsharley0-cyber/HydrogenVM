@@ -458,7 +458,7 @@ public:
     }
     Range at(uint32_t index) {
 #if defined(__APPLE__)
-        const CFRange range = CFStringGetRangeOfComposedCharacters(value, index);
+        const CFRange range = CFStringGetRangeOfComposedCharactersAtIndex(value, index);
         if (range.location < 0 || range.length <= 0) throw ObjC::ObjCError("NSString invalid host composed range");
         return {uint32_t(range.location), uint32_t(range.length)};
 #else
