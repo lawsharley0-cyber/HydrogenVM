@@ -269,6 +269,11 @@ struct BatchTestView: View {
                 }
 
                 Section("Engine Options") {
+                    Toggle("Trace graphics calls (GPU)", isOn: Binding(get: {
+                        runner.options.glTrace
+                    }, set: {
+                        runner.options.glTrace = $0
+                    }))
                     Toggle("Continue past missing functions", isOn: Binding(get: {
                         runner.options.keepGoing
                     }, set: {
@@ -336,6 +341,12 @@ struct BatchTestView: View {
 
     private func prepareShareItems() {
         shareItems.removeAll()
+        // The whole run as one folder (reports, screenshots, logs): save it to the
+        // desktop's test_ipa folder so the desktop bench can read and compare it.
+        if let bundle = try? runner.exportBundle() {
+            shareItems.append(bundle)
+            return
+        }
         let jsonURL = BatchTestRunner.reportsDir.appending(path: "latest_batch_report.json")
         let mdURL = BatchTestRunner.reportsDir.appending(path: "latest_batch_report.md")
 

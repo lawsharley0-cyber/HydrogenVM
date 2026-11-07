@@ -71,6 +71,12 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 /// Render OpenGL ES on the GPU (default YES). NO uses the software rasterizer.
 /// Takes effect at start.
 @property (nonatomic) BOOL useGPU;
+/// Test runs: check every GL call for errors and count draws (slower). Read the
+/// results from diagnostics (glErrors, glDraws, glEmptyPresents, glLastFrameDraws)
+/// and glErrorLog. Set before start.
+@property (nonatomic) BOOL glTrace;
+/// glTrace: the first distinct GL errors, "call -> 0xCODE [main|worker]".
+@property (nonatomic, readonly, copy) NSArray<NSString *> *glErrorLog;
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line, HVMLogLevel level);
 /// exitCode is the guest's exit status; crashReport is non-nil when it crashed (or failed to load).
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);

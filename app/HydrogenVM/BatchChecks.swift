@@ -41,8 +41,33 @@ struct BatchDiagnostics: Codable, Sendable, Equatable {
     var missingCount: Int = 0
     var framesPresented: Int = 0
     var timeToFirstFrameMs: Double = -1
+    var glErrors: Int = 0
+    var glDraws: Int = 0
+    var glEmptyPresents: Int = 0
+    var glLastFrameDraws: Int = 0
 
     init() {}
+    // Sessions saved by older builds lack the newer keys.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func i(_ k: CodingKeys) -> Int { (try? c.decodeIfPresent(Int.self, forKey: k)) ?? 0 }
+        audioFramesRendered = i(.audioFramesRendered)
+        audibleFrames = i(.audibleFrames)
+        musicFrames = i(.musicFrames)
+        effectFrames = i(.effectFrames)
+        musicVoices = i(.musicVoices)
+        effectVoices = i(.effectVoices)
+        audioPeak = (try? c.decodeIfPresent(Double.self, forKey: .audioPeak)) ?? 0
+        offscreenPresents = i(.offscreenPresents)
+        faultsToApp = i(.faultsToApp)
+        missingCount = i(.missingCount)
+        framesPresented = i(.framesPresented)
+        timeToFirstFrameMs = (try? c.decodeIfPresent(Double.self, forKey: .timeToFirstFrameMs)) ?? -1
+        glErrors = i(.glErrors)
+        glDraws = i(.glDraws)
+        glEmptyPresents = i(.glEmptyPresents)
+        glLastFrameDraws = i(.glLastFrameDraws)
+    }
     init?(_ d: [String: NSNumber]) {
         guard !d.isEmpty else { return nil }
         func i(_ k: String) -> Int { d[k]?.intValue ?? 0 }
@@ -58,6 +83,10 @@ struct BatchDiagnostics: Codable, Sendable, Equatable {
         missingCount = i("missingCount")
         framesPresented = i("framesPresented")
         timeToFirstFrameMs = d["timeToFirstFrameMs"]?.doubleValue ?? -1
+        glErrors = i("glErrors")
+        glDraws = i("glDraws")
+        glEmptyPresents = i("glEmptyPresents")
+        glLastFrameDraws = i("glLastFrameDraws")
     }
 
     /// Mixer output runs at 44.1 kHz.
@@ -87,6 +116,8 @@ struct BatchObservations: Sendable {
     var relaunchSummary: String?
     var missingLines: [String] = []
     var audioDecodeFailures: [String] = []
+    /// GPU runs with GL tracing (nil: not traced).
+    var glErrorLog: [String]?
     /// Set when the host could not reserve the guest arena twice: the game never
     /// ran, so this must not be reported as a game crash.
     var hostResourceFailure: String?
@@ -121,6 +152,18 @@ enum BatchCheckBuilder {
         case "ok": c.append(.init(name: "Shows a picture", status: .pass, detail: "\(d.framesPresented) frames drawn"))
         case "no-frames": c.append(.init(name: "Shows a picture", status: .fail, detail: "Nothing was ever drawn"))
         default: c.append(.init(name: "Shows a picture", status: .fail, detail: "The screen stayed \(o.frameSignal)"))
+        }
+
+        // 2b. Graphics calls (GPU runs with GL tracing): errors explain black or partial screens.
+        if let gl = o.glErrorLog {
+            if d.glErrors > 0 {
+                let first = gl.prefix(3).joined(separator: "; ")
+                c.append(.init(name: "Graphics calls", status: .warn, detail: "\(d.glErrors) GL errors: \(first)"))
+            } else if d.framesPresented > 0 && d.glDraws == 0 {
+                c.append(.init(name: "Graphics calls", status: .warn, detail: "Frames were shown but the game made no GL draw call"))
+            } else {
+                c.append(.init(name: "Graphics calls", status: .pass, detail: "\(d.glDraws) draw calls, \(d.glLastFrameDraws) in the last frame, no GL errors"))
+            }
         }
 
         // 3. Game view on screen: GL frames drawn into a view that isn't in the window.
