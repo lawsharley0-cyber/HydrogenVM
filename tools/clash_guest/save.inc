@@ -255,7 +255,7 @@ static void capture_current_home(void *ui,int force) {
     shop_refresh(logic,home,wall_epoch());capture_native(home,avatar);
     committed_wins=(int)FIELD(avatar,0x9c);
 }
-void guest_snapshot(void *ui) {capture_current_home(ui,0);friendly_tick();donation_tick();npc_request_tick();community_tick();}
+void guest_snapshot(void *ui) {capture_current_home(ui,0);friendly_tick();donation_tick();npc_request_tick();community_tick();mod_tick();}
 void guest_set_npc_losses(void *avatar,int count) {
     if(friendly_state==2 && battle_started && !arena_battle &&
        FIELD(avatar,0x10)==0 && FIELD(avatar,0x14)==1)return;

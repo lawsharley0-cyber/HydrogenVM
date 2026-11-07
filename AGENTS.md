@@ -1,5 +1,13 @@
 # Agent instructions
 
+Latest owner-prioritized modding continuation: [MOD_LAB.md](docs/clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
+
+Owner priority override, November 6: modding is now the current requested task,
+including an in-game settings editor, card/custom-card behavior, sizes/speeds
+and player currencies. Earlier "modding afterward" scheduling is superseded.
+Investigate the reported iPhone keyboard not appearing in Clash. Keep original
+training intact by default and preserve a pre-mod save before applying edits.
+
 Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](docs/clash-royale/DRAW_CHECKPOINTS.md)
 records the new native draw save path, battle-avatar wallet correction, 41
 focused checks and a controlled original 0–0 draw followed by two unchanged

@@ -29,7 +29,8 @@ void guest_settings_click(void *self,void *button) {
         return;
     }
     if(button && button==(void*)FIELD(self,0xac)) {
-        guest_info("Offline Account","Facebook sign-in is unavailable in this offline edition.\n\nYour progress stays in this game's instance.");
+        if(!save_initialized || committed_wins<7)guest_info("Mod Lab","Complete the seven original trainers to unlock Mod Lab.");
+        else mod_ui_open();
         return;
     }
     if(button && button==(void*)FIELD(self,0xa8)) {

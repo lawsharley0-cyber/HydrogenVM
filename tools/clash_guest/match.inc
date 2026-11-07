@@ -8,6 +8,7 @@ static void start_arena_match(void *self) {
     void *owner=decode_packet(24101,0,saved_home,saved_size);
     void *home=(void*)FIELD(owner,0x30),*avatar=(void*)FIELD(owner,0x34);
     if(!home || !avatar || FIELD(avatar,0x9c)<7)fail("GuestOffline: arena entry before earned graduation");
+    mod_apply_units();
     void *arena=CALL(0x9b4d1,void*,(void*))(avatar);
     int arena_id=arena?CALL(0x7d2e1,int,(void*))(arena):0;
     if(arena_id<54000001 || arena_id>54000006)

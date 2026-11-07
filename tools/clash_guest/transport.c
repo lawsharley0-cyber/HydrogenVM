@@ -52,6 +52,10 @@ static void community_points(int,int);
 static int community_rollover(u32);
 static void encode_donor_member(void*);
 static void donation_tick(void);
+static void mod_tick(void);
+static void mod_ui_open(void);
+static void mod_restore(void);
+static void mod_apply_units(void);
 static void shop_refresh(void*,void*,u32);
 #ifdef GUEST_PROBE_DONATION_ACTORS
 static void donation_actor_probe(void);
@@ -78,6 +82,7 @@ static u32 prepare_sector_packet_named(const struct GuestSector *template,const 
 }
 static u32 prepare_sector_packet(const struct GuestSector *template) {return prepare_sector_packet_named(template,0,0);}
 static void send_training_sector(void *self,int mission) {
+    mod_restore();
     opponent_enabled=0;
     if(mission<0 || mission>=7)fail("GuestOffline: unsupported training sector");
     u32 size=prepare_sector_packet(&npc_sectors[mission]);
@@ -128,6 +133,8 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "opponent.inc"
 #include "match.inc"
 #include "friendly.inc"
+#include "mods.inc"
+#include "mods_ui.inc"
 static void refresh_saved_arena(void) {
     // Recover already-earned saves captured before the native post-setter
     // continuation. The original routine reads the actual NPC threshold,

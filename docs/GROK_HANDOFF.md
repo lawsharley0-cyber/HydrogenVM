@@ -1,5 +1,7 @@
 # HydrogenVM: handoff for Grok Bot (2026-10-24)
 
+Latest owner-prioritized modding continuation: [MOD_LAB.md](clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
+
 Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](clash-royale/DRAW_CHECKPOINTS.md)
 records the new native draw save path, battle-avatar wallet correction, 41
 focused checks and a controlled original 0–0 draw followed by two unchanged

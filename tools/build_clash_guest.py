@@ -18,6 +18,7 @@ import zipfile
 import copy
 from package_clash_offline import SOURCE_SHA256, EXECUTABLE_SHA256
 from clash_bot_policy import load_policy, export_header
+from clash_mod_catalog import catalog as mod_catalog, header as mod_catalog_header
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 0x800000
@@ -119,6 +120,7 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
         for symbol in ('puts', 'printf', 'malloc', 'abort', 'dlsym', 'sinf', 'cosf', 'memcpy', 'memset'):
             header.write(f'#define API_{symbol} 0x{parsed["stubs"]["_"+symbol]:x}u\n')
         run([generator, build_dir/'source'/app_root], stdout=header)
+        header.write(mod_catalog_header(mod_catalog(build_dir/'source'/app_root)))
     run(['clang', '-target', 'armv7-apple-ios6.0', '-mthumb', '-Oz', '-ffreestanding',
          '-fno-builtin', '-fno-stack-protector', '-fno-pic', '-fno-unwind-tables',
          '-fno-asynchronous-unwind-tables', *(['-DGUEST_PROFILE_SAVES=1'] if profile_saves else []),
@@ -142,6 +144,11 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
     if reward_prologue!=bytes.fromhex('f0b503af2de9000d'):
         raise ValueError('Unexpected native reward prologue')
     with assembly.open('a') as asm:
+        for address,name,expected in [(0xd4a78,'health','b0b502af0c460546'),(0xd457c,'damage','b0b502af0c460546'),(0x12c5d0,'shot_damage','b0b502af05460c46'),(0x50ce4,'string','f0b503af2de9000d')]:
+            seg=next(s for s in parsed['segments'] if s[1]<=address<s[1]+s[4]);pos=seg[3]+address-seg[1]
+            pro=original[pos:pos+8]
+            if pro!=bytes.fromhex(expected):raise ValueError('Unexpected mod stat prologue: '+name)
+            asm.write('.p2align 2\n.globl _guest_original_mod_'+name+'\n.thumb_func\n_guest_original_mod_'+name+':\n .byte '+','.join(str(x) for x in pro)+'\n .p2align 2\n .short 0xf8df,0xf000\n .long '+hex(address+9)+'\n')
         asm.write('.p2align 2\n.globl _guest_original_reward_execute\n.thumb_func\n'
                   '_guest_original_reward_execute:\n .byte '+','.join(str(x) for x in reward_prologue)+
                   '\n .p2align 2\n .short 0xf8df,0xf000\n .long 0x82045\n')
@@ -240,6 +247,8 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
         at=segment[3]+address-segment[1]
         if original[at:at+8]!=bytes.fromhex(expected):raise ValueError('Unexpected native AI getter')
     for address, symbol in [(0x187484,'_guest_connect'),(0x1872d0,'_guest_send'),
+                            (0xd4a78,'_guest_mod_health'),(0xd457c,'_guest_mod_damage'),(0x12c5d0,'_guest_mod_shot_damage'),
+                            (0x50ce4,'_guest_mod_string'),
                             (0x187130,'_guest_disconnect'),(0x92f08,'_guest_update'),
                             (0x9ae94,'_guest_set_npc_wins'),(0x9aea4,'_guest_set_npc_losses'),
                             (0x8203c,'_guest_reward_execute'),(0x94f1c,'_guest_settings_click'),

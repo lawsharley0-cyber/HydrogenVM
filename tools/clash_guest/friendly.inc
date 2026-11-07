@@ -124,6 +124,7 @@ static u32 prepare_friendly_sector_packet(void) {
 static void deliver_friendly_battle(void *self) {
     opponent_enabled=0;
     if(friendly_state!=2 || battle_started)fail("GuestOffline: invalid friendly battle delivery");
+    mod_restore();
     u32 size=prepare_friendly_sector_packet();
     // Accepted state and both escrow debits are durable before sector delivery.
     write_save();reply(self,21903,1,sector_packet,size);battle_started=1;arena_battle=0;

@@ -30,6 +30,7 @@ class GuestCompileTests(unittest.TestCase):
             header+='static const struct GuestSector npc_sectors[7]={0};\n'
             header+='#define GUEST_ARENA_PROFILE_COUNT 18\nstatic const struct GuestSector arena1_sectors[18]={0};\nstatic const int arena1_npc_trophies[18]={0},arena1_missions[18]={0},arena_mana_rates[3]={28000,14000,14000};\nstatic const unsigned arena1_deck_ids[18]={0};\n'
             header+='static const int arena_profile_arenas[18]={0};\n'
+            header+='#define GUEST_MOD_UNIT_COUNT 1\n#define GUEST_MOD_SETTINGS_VTABLE 0\nstruct ModUnitDef {const char *name,*projectile;unsigned cardId;};\nstatic const struct ModUnitDef mod_unit_defs[1]={{"Knight","",26000000}};\n'
             (directory/'generated.h').write_text(header)
             command=['clang','-target','armv7-apple-ios6.0','-mthumb','-Oz','-ffreestanding',
                      '-fno-builtin','-fno-stack-protector','-fno-pic','-fno-unwind-tables',
@@ -39,7 +40,7 @@ class GuestCompileTests(unittest.TestCase):
             expected_undefined={
                 '_guest_original_battle_ended','_guest_original_reward_execute',
                 '_guest_original_settings_click','_guest_original_mail_execute','_guest_original_request_execute',
-                '_guest_original_challenge_execute'}
+                '_guest_original_challenge_execute','_guest_original_mod_health','_guest_original_mod_damage','_guest_original_mod_shot_damage','_guest_original_mod_string'}
             variants=[[],['-DGUEST_PROFILE_SAVES=1'],['-DGUEST_PROBE_DONATION_ACTORS=1'],
                       ['-DGUEST_PROFILE_SAVES=1','-DGUEST_PROBE_DONATION_ACTORS=1']]
             for flags in variants:
