@@ -285,6 +285,32 @@ uint32_t w_wcrtomb(Ctx& x, GuestPtr s, uint32_t wc, GuestPtr) {
     store_checked(x, s, &b, 1, "invalid guest memory write access in wcrtomb");
     return 1;
 }
+// wcstombs / mbstowcs in the single-byte C locale the other conversions here use: each wide
+// character 0..255 is one byte. PvZ's XML parser converts tag names with wcstombs; the stub
+// produced nothing and every tag mismatched.
+uint32_t w_wcstombs(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
+    const size_t len = safe_wcslen(x, s);
+    for (size_t i = 0; i < len; ++i)
+        if (x.mem.read<uint32_t>(GuestPtr(s + i * 4)) > 255) { setErrnoLocal(x, kEILSEQ); return kMbErr; }
+    if (!d) return uint32_t(len);
+    const size_t k = std::min<size_t>(len, n);
+    std::string out(k, '\0');
+    for (size_t i = 0; i < k; ++i) out[i] = char(x.mem.read<uint32_t>(GuestPtr(s + i * 4)));
+    if (k < n) out.push_back('\0');
+    if (!out.empty()) store_checked(x, d, out.data(), out.size(), "invalid guest memory write access in wcstombs");
+    return uint32_t(k);
+}
+uint32_t w_mbstowcs(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
+    const size_t len = safe_strlen(x, s);
+    if (!d) return uint32_t(len);
+    const size_t k = std::min<size_t>(len, n);
+    for (size_t i = 0; i < k; ++i) {
+        const uint32_t wc = uint8_t(x.mem.read<uint8_t>(GuestPtr(s + i)));
+        store_checked(x, GuestPtr(d + i * 4), &wc, 4, "invalid guest memory write access in mbstowcs");
+    }
+    if (k < n) { const uint32_t z = 0; store_checked(x, GuestPtr(d + k * 4), &z, 4, "invalid guest memory write access in mbstowcs"); }
+    return uint32_t(k);
+}
 uint32_t s_strxfrm(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
     const uint32_t len = uint32_t(safe_strlen(x, s));
     if (n) {
@@ -620,6 +646,8 @@ void registerLibcString(Process& p) {
     p.def<&w_mbrlen>("_mbrlen");
     p.def<&w_mbtowc>("_mbtowc");
     p.def<&w_wcrtomb>("_wcrtomb");
+    p.def<&w_wcstombs>("_wcstombs");
+    p.def<&w_mbstowcs>("_mbstowcs");
     p.def<&s_strxfrm>("_strxfrm");
     p.def<&w_wcscoll>("_wcscoll");
     p.def<&w_wcsxfrm>("_wcsxfrm");

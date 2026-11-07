@@ -110,7 +110,7 @@ static CGPoint lastTouch;
     [self.view addSubview:plain];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; viewWillAppearCount++; }
-- (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; rootLayouts++; }
+- (void)viewDidLayoutSubviews { rootLayouts++; }
 - (void)buttonTapped:(id)sender { buttonTaps++; }
 - (void)nibButtonTapped:(id)sender { nibTaps++; }
 - (void)tapped:(UITapGestureRecognizer *)g { if (g.state == UIGestureRecognizerStateEnded) tapGestures++; }

@@ -13,6 +13,8 @@
 // the app's own inline fast paths may still modify unshared buffers in place.
 #include "runtime/Process.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace Hydrogen::Runtime {
@@ -132,6 +134,22 @@ uint32_t m_insertBuf(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s, uint32_t n
     v.insert(pos, bytes(x, s, n));
     set(x, self, v);
     return self;
+}
+// insert(pos, const char*): Hungry Shark built strings with it; the stub left them short and a
+// later insert(pos, str, pos2, n) then threw out_of_range.
+uint32_t m_insertCStr(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr s) {
+    const std::string add = s ? x.proc.readCString(s) : std::string();
+    return m_insertBuf(x, self, pos, s, uint32_t(add.size()));
+}
+uint32_t m_erase(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n);
+// erase(first, last) with iterators (char*): returns an iterator to the same position in the
+// (possibly new) buffer.
+uint32_t m_eraseRange(Ctx& x, GuestPtr self, uint32_t first, uint32_t last) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    const uint32_t size = len(x, d);
+    if (first < d || last < first || last > d + size) outOfRange("basic_string::erase");
+    m_erase(x, self, first - d, last - first);
+    return x.mem.read<uint32_t>(self) + (first - d);
 }
 uint32_t m_insertSub(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr other, uint32_t pos2, uint32_t n) {
     std::string v = value(x, self);
@@ -467,6 +485,24 @@ uint32_t wm_insertSub(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr other, uint3
     v.insert(pos, o.substr(pos2, clip(uint32_t(o.size()), pos2, n)));
     wset(x, self, v);
     return self;
+}
+uint32_t wm_erase(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n);
+// _M_replace_aux(pos, n1, n2, c) for wchar_t: append(n, c), insert(pos, n, c), resize grow
+// (PopCap's XML parser in PvZ uses them; the stub broke parsing resources.xml).
+uint32_t wm_replaceAux(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n1, uint32_t n2, uint32_t c) {
+    std::u32string v = wvalue(x, self);
+    checkPos(pos, uint32_t(v.size()), "basic_string<wchar_t>::_M_replace_aux");
+    v.replace(pos, clip(uint32_t(v.size()), pos, n1), std::u32string(n2, char32_t(c)));
+    wset(x, self, v);
+    return self;
+}
+// erase(first, last) with iterators (wchar_t*, 4 bytes each).
+uint32_t wm_eraseRange(Ctx& x, GuestPtr self, uint32_t first, uint32_t last) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    const uint32_t size = len(x, d);
+    if (first < d || last < first || last > d + size * 4 || (first - d) % 4 || (last - first) % 4) outOfRange("basic_string<wchar_t>::erase");
+    wm_erase(x, self, (first - d) / 4, (last - first) / 4);
+    return x.mem.read<uint32_t>(self) + (first - d);
 }
 uint32_t wm_erase(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n) {
     std::u32string v = wvalue(x, self);
@@ -848,6 +884,8 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&m_insertBuf>("__ZNSs6insertEmPKcm");
     p.def<&m_insertSub>("__ZNSs6insertEmRKSsmm");
     p.def<&m_erase>("__ZNSs5eraseEmm");
+    p.def<&m_insertCStr>("__ZNSs6insertEmPKc");
+    p.def<&m_eraseRange>("__ZNSs5eraseEN9__gnu_cxx17__normal_iteratorIPcSsEES2_");
     p.def<&m_replace>("__ZNSs7replaceEmmPKcm");
     p.def<&m_replaceAux>("__ZNSs14_M_replace_auxEmmmc");
     p.def<&m_replace>("__ZNSs15_M_replace_safeEmmPKcm");
@@ -948,6 +986,8 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&wm_insertBuf>("__ZNSbIwSt11char_traitsIwESaIwEE6insertEmPKwm");
     p.def<&wm_insertSub>("__ZNSbIwSt11char_traitsIwESaIwEE6insertEmRKS2_mm");
     p.def<&wm_erase>("__ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm");
+    p.def<&wm_replaceAux>("__ZNSbIwSt11char_traitsIwESaIwEE14_M_replace_auxEmmmw");
+    p.def<&wm_eraseRange>("__ZNSbIwSt11char_traitsIwESaIwEE5eraseEN9__gnu_cxx17__normal_iteratorIPwS2_EES6_");
     p.def<&wm_replace>("__ZNSbIwSt11char_traitsIwESaIwEE7replaceEmmPKwm");
     p.def<&wm_replace>("__ZNSbIwSt11char_traitsIwESaIwEE15_M_replace_safeEmmPKwm");
     p.def<&wm_mutate>("__ZNSbIwSt11char_traitsIwESaIwEE9_M_mutateEmmm");

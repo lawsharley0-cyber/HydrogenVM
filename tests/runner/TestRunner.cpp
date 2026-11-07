@@ -3338,8 +3338,19 @@ int runFullSubsystemTests() {
         const std::string hostCwdBefore = std::filesystem::current_path().string();
         struct ResetCwd { Process& p; ~ResetCwd() { p.setGuestCwd("/"); } } resetCwd{cx.proc};   // on every exit path
         const std::string guestBundle = cx.proc.guestPath(cx.proc.bundlePath());
-        const bool relativeBundle = cx.proc.hostPath(guestBundle.substr(1) + "/data.bin") == cx.proc.bundlePath() + "/data.bin" &&
-                                    cx.proc.guestCwd() == "/";
+        bool relativeBundle = cx.proc.hostPath(guestBundle.substr(1) + "/data.bin") == cx.proc.bundlePath() + "/data.bin" &&
+                              cx.proc.guestCwd() == "/";
+        // A bare name that exists only in the bundle opens there while the app has not set a
+        // working directory (PvZ opens "resources.xml").
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(cx.proc.bundlePath(), ec);
+            const std::string name = "hvm-relative-test.xml";
+            { std::ofstream(cx.proc.bundlePath() + "/" + name) << "x"; }
+            relativeBundle = relativeBundle && cx.proc.hostPath(name) == cx.proc.bundlePath() + "/" + name &&
+                             cx.proc.hostPath("missing-everywhere.xml") == "/missing-everywhere.xml";
+            std::filesystem::remove(cx.proc.bundlePath() + "/" + name, ec);
+        }
         bool changed = false, failedOnFile = false;
         if (const auto chdirSym = proc.lookupSymbol("_chdir"), getcwdSym = proc.lookupSymbol("_getcwd"); chdirSym && getcwdSym) {
             std::error_code ec;
@@ -3533,6 +3544,28 @@ int runFullSubsystemTests() {
             std::printf("    legacy rotation: will %d did %d bounds %gx%g asked %d/%d gravity %g,%g queued %d\n",
                         willTo, didFrom, b.w, b.h, callsAfterFirst, asked, g[0], g[1], queued);
         check(rotated && gravity && queued, "window-subview controller rotates with callbacks; resting gravity and orientation notification follow");
+    }
+
+    // NSUserDefaults hands out one long-lived object per stored value (Tiny Wings keeps the
+    // player name it reads without retaining it); a replaced value's object outlives the turn.
+    {
+        const ObjC::id ud = ObjC::id(r.send(cpu, r.getClass("NSUserDefaults"), "standardUserDefaults"));
+        const ObjC::id key = Foundation::makeString(cx, "hvmTestPlayerName");
+        r.send(cpu, ud, "setObject:forKey:", {Foundation::makeString(cx, "Lawson"), key});
+        const uint32_t pool = r.poolPush();
+        const ObjC::id first = ObjC::id(r.send(cpu, ud, "objectForKey:", {key}));
+        r.poolPop(cpu, pool);   // a per-call autoreleased copy would be freed here
+        const ObjC::id again = ObjC::id(r.send(cpu, ud, "objectForKey:", {key}));
+        const bool same = first && first == again && Foundation::utf8(cx, again) == "Lawson" &&
+                          ObjC::id(r.send(cpu, ud, "stringForKey:", {key})) == first;
+        const uint32_t pool2 = r.poolPush();
+        r.send(cpu, ud, "setObject:forKey:", {Foundation::makeString(cx, "Larry"), key});
+        const ObjC::id replaced = ObjC::id(r.send(cpu, ud, "objectForKey:", {key}));
+        const bool oldStillValid = Foundation::utf8(cx, first) == "Lawson";   // let go only at the pool drain
+        r.poolPop(cpu, pool2);
+        const bool updated = replaced != first && Foundation::utf8(cx, replaced) == "Larry";
+        r.send(cpu, ud, "removeObjectForKey:", {key});
+        check(same && oldStillValid && updated, "NSUserDefaults returns one long-lived object per stored value");
     }
 
     // UIViewController has the rotation and appearance hooks engines copy encodings from
@@ -5332,6 +5365,30 @@ int runFullSubsystemTests() {
         const bool ok = shared && str(a) == "ab" && str(c) == "hello" && str(b) == ">> hello world" && pos == 9 && str(sub) == "world" && cmp < 0 && emptyRc == 0xFFFFFFFFu;
         for (uint32_t s : {a, b, c, sub}) call("__ZNSsD1Ev", {s});
         check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap, resize, emptyRep");
+
+        // insert(pos, const char*) and iterator erase (Hungry Shark), the wchar_t _M_replace_aux and
+        // iterator erase, and wcstombs (PvZ's XML parser).
+        {
+            const uint32_t t = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {t, cstr("shark"), 0});
+            call("__ZNSs6insertEmPKc", {t, 0, cstr("hungry ")});
+            const uint32_t d = m.read<uint32_t>(t);
+            const uint32_t it = call("__ZNSs5eraseEN9__gnu_cxx17__normal_iteratorIPcSsEES2_", {t, d + 6, d + 7});
+            const bool narrow = str(t) == "hungryshark" && it == m.read<uint32_t>(t) + 6;
+            const uint32_t w = proc.heap().allocZeroed(4);
+            m.write<uint32_t>(w, *proc.lookupSymbol("__ZNSbIwSt11char_traitsIwESaIwEE4_Rep20_S_empty_rep_storageE") + 12);
+            call("__ZNSbIwSt11char_traitsIwESaIwEE14_M_replace_auxEmmmw", {w, 0, 0, 3, uint32_t('Z')});
+            const uint32_t wd = m.read<uint32_t>(w);
+            call("__ZNSbIwSt11char_traitsIwESaIwEE5eraseEN9__gnu_cxx17__normal_iteratorIPwS2_EES6_", {w, wd, wd + 4});
+            const uint32_t wd2 = m.read<uint32_t>(w);
+            const bool wide = m.read<uint32_t>(wd2 - 12) == 2 && m.read<uint32_t>(wd2) == 'Z' && m.read<uint32_t>(wd2 + 4) == 'Z';
+            const uint32_t ws = proc.heap().allocZeroed(16), out = proc.heap().allocZeroed(8);
+            for (int i = 0; i < 3; ++i) m.write<uint32_t>(ws + i * 4, uint32_t("xml"[i]));
+            const uint32_t n = call("_wcstombs", {out, ws, 8});
+            const bool conv = n == 3 && proc.readCString(out) == "xml" && call("_wcstombs", {0, ws, 0}) == 3;
+            if (!(narrow && wide && conv)) std::printf("    string extras: narrow '%s' %d wide %d wcstombs %u\n", str(t).c_str(), narrow, wide, n);
+            check(narrow && wide && conv, "libstdc++ insert(pos, char*), iterator erase, wstring _M_replace_aux/erase and wcstombs");
+        }
 
         // Out-of-line members some games import (Army of Darkness Defense).
         {

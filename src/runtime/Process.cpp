@@ -834,7 +834,23 @@ std::string Process::hostPath(const std::string& guestPath) const {
     // Already a host path: leave it alone.
     if (matchesPathPrefix(canonVar(p), canonVar(bundlePath())) || matchesPathPrefix(canonVar(p), canonVar(homePath_))) return p;
     // A relative guest path is relative to the guest's working directory ("/" at launch).
-    if (p[0] != '/') p = absoluteGuestPath(p);
+    // Apps that never set one also open bundle files by bare name (PvZ: "resources.xml"), so
+    // while the directory is still the launch one, a name that exists only in the bundle
+    // resolves there. Fruit Ninja's "var/mobile/.../Fruit.app/..." still resolves from "/".
+    if (p[0] != '/') {
+        const std::string original = p;
+        p = absoluteGuestPath(p);
+        bool appSet;
+        { std::lock_guard<std::mutex> lk(cwdMu_); appSet = cwdSetByApp_; }
+        if (!appSet) {
+            std::error_code ec;
+            const std::string inBundle = bundlePath() + "/" + std::filesystem::path(original).lexically_normal().string();
+            const std::string fromRoot = hostPath(p);
+            if (!std::filesystem::exists(fromRoot, ec) && original.rfind("..", 0) != 0 && std::filesystem::exists(inBundle, ec))
+                return inBundle;
+            return fromRoot;
+        }
+    }
     const std::string norm = canonVar(p);
     // Guest paths, most specific first (the bundle sits inside the home).
     if (matchesPathPrefix(norm, guestBundlePath_)) return bundlePath() + norm.substr(guestBundlePath_.size());
