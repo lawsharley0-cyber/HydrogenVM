@@ -1128,8 +1128,31 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
 
 namespace {
 // Every entry point the readback paths of presentRenderbuffer call.
+// The runtime's own framebuffer calls. A native ES 1.1 context has only the OES
+// spellings (calling the ES 2 entry points there does not bind anything on
+// Apple's driver); emulated ES 1.1 (gles1) and ES 2/3 contexts use the core ones.
+struct FbFns {
+    void (*gen)(int32_t, uint32_t*) = nullptr;
+    void (*bind)(uint32_t, uint32_t) = nullptr;
+    void (*attach)(uint32_t, uint32_t, uint32_t, uint32_t) = nullptr;
+};
+FbFns fbFns(const HostContext* hc) {
+    FbFns f;
+    if (hc->api == 1 && !hc->gles1 && !hc->desktop && hc->fn.glGenFramebuffersOES && hc->fn.glBindFramebufferOES &&
+        hc->fn.glFramebufferRenderbufferOES) {
+        f.gen = reinterpret_cast<decltype(f.gen)>(hc->fn.glGenFramebuffersOES);
+        f.bind = reinterpret_cast<decltype(f.bind)>(hc->fn.glBindFramebufferOES);
+        f.attach = reinterpret_cast<decltype(f.attach)>(hc->fn.glFramebufferRenderbufferOES);
+        return f;
+    }
+    f.gen = reinterpret_cast<decltype(f.gen)>(hc->fn.glGenFramebuffers);
+    f.bind = reinterpret_cast<decltype(f.bind)>(hc->fn.glBindFramebuffer);
+    f.attach = reinterpret_cast<decltype(f.attach)>(hc->fn.glFramebufferRenderbuffer);
+    return f;
+}
 bool hasReadbackFns(const HostContext* hc) {
-    return hc->fn.glReadPixels && hc->fn.glGenFramebuffers && hc->fn.glBindFramebuffer && hc->fn.glFramebufferRenderbuffer;
+    const FbFns f = fbFns(hc);
+    return hc->fn.glReadPixels && f.gen && f.bind && f.attach;
 }
 // The guest's draw and read framebuffer bindings; presentRenderbuffer borrows both while it reads back.
 struct FbBindings { uint32_t draw = 0, read = 0; bool separate = false; };
@@ -1151,11 +1174,12 @@ FbBindings saveFbBindings(HostContext* hc) {
     return b;
 }
 void restoreFbBindings(HostContext* hc, const FbBindings& b) {
+    const FbFns f = fbFns(hc);
     if (b.separate) {
-        hc->fn.glBindFramebuffer(kDrawFramebuffer, b.draw);
-        hc->fn.glBindFramebuffer(kReadFramebuffer, b.read);
+        f.bind(kDrawFramebuffer, b.draw);
+        f.bind(kReadFramebuffer, b.read);
     } else {
-        hc->fn.glBindFramebuffer(kFramebuffer, b.draw);
+        f.bind(kFramebuffer, b.draw);
     }
 }
 } // namespace
@@ -1200,9 +1224,10 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
         // screen can be told apart from a frame the GPU really rendered black.
         GuestErrorScope quiet(hc);
         const FbBindings saved = saveFbBindings(hc);
-        if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
-        hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
-        hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+        const FbFns fb = fbFns(hc);
+        if (!hc->readFbo) fb.gen(1, &hc->readFbo);
+        fb.bind(kFramebuffer, hc->readFbo);
+        fb.attach(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
         if (hc->fn.glFlush) hc->fn.glFlush();
 
         uint64_t sum[3] = {}, lit = 0;
@@ -1244,9 +1269,10 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     if (!hasReadbackFns(hc)) return false;
     GuestErrorScope quiet(hc);
     const FbBindings saved = saveFbBindings(hc);
-    if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
-    hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
-    hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+    const FbFns fb = fbFns(hc);
+    if (!hc->readFbo) fb.gen(1, &hc->readFbo);
+    fb.bind(kFramebuffer, hc->readFbo);
+    fb.attach(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
     if (hc->fn.glFlush) hc->fn.glFlush();
     const int32_t prevPack = hgGetInt(hc, kPackAlignment);
     hc->fn.glPixelStorei(kPackAlignment, 4);
