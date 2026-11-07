@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Static scan of a whole game library: what every game links against that HydrogenVM lacks.
 
-For each .ipa in --ipas the scan imports it once (into --apps, shared with hvm_probe.py),
+For each .ipa in --ipas the scan imports it once (into --apps/<ipa name>/, reused while the .ipa is unchanged),
 then asks `hvm info --linking <app> --json` for every imported function, data symbol,
 Objective-C class and selector together with how the runtime binds it. Nothing is run:
 a game takes a second or two, so the whole library is scanned in minutes.
@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hvm_probe import import_app  # noqa: E402  (same import cache as the probe)
+from hvm_probe import import_app  # noqa: E402  (same import logic and cache marker as the probe)
 
 HOME = Path.home()
 
@@ -57,6 +57,12 @@ def demangle(names):
     return {n: n for n in names}
 
 
+def safe_name(stem):
+    """A folder name for one .ipa: letters, digits, '.', '-' and '_' only."""
+    out = ''.join(c if c.isalnum() or c in '.-_' else '_' for c in stem).strip('._')
+    return out[:80] or 'ipa'
+
+
 def gaps_from(linking):
     """The references of one game that are gaps: (kind, name, binding) triples."""
     out = []
@@ -71,7 +77,11 @@ def scan_one(hvm, ipa, apps_root, games_dir):
     """Import and statically link one game. Returns a result dict; never raises."""
     t0 = time.time()
     try:
-        bundle_id, app, _home = import_app(hvm, ipa, apps_root)
+        # Each .ipa gets its own import folder: two versions of one game share a bundle id,
+        # and importing both into one folder (in parallel) makes them overwrite each other.
+        own_root = apps_root / safe_name(ipa.stem)
+        own_root.mkdir(parents=True, exist_ok=True)
+        bundle_id, app, _home = import_app(hvm, ipa, own_root)
     except Exception as e:  # import failure is itself a finding
         return {'ipa': ipa.name, 'bundleId': None, 'error': f'import failed: {e}', 'gaps': [], 'seconds': time.time() - t0}
     out = subprocess.run([hvm, 'info', '--linking', str(app), '--json'], capture_output=True, text=True, timeout=300)

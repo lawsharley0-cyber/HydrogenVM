@@ -55,6 +55,13 @@ class ScanTest(unittest.TestCase):
         self.assertIn('| 1 | 1 | selector | missing | `doThing:` |', md)
         self.assertIn('import failed: bad zip', md)
 
+    def test_each_ipa_gets_its_own_import_folder_name(self):
+        a = hvm_scan.safe_name('Terraria-(com.505games.terraria)-1.2.11587-(iOS_7.0)')
+        b = hvm_scan.safe_name('Terraria-v1_0-eromeu52-iOS5_1-_Clutch-1_4_6_')
+        self.assertNotEqual(a, b)
+        self.assertTrue(all(c.isalnum() or c in '.-_' for c in a + b))
+        self.assertEqual(hvm_scan.safe_name('../..'), 'ipa')
+
     def test_demangle_falls_back_to_the_raw_name(self):
         names = hvm_scan.demangle(['_plain', '__ZNSt3__16threadD1Ev'])
         self.assertEqual(names['_plain'], '_plain')
