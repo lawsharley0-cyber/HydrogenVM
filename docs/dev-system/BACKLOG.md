@@ -1,5 +1,12 @@
 # Backlog
 
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](../clash-royale/DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
 November 6 owner continuation: finish the guest's Arena 3–6 content/entry/result
 and persistence qualification, then draw/partial-crown accounting, clan events
 and complete UI/save/device/visual/audio/performance audits. The owner wants

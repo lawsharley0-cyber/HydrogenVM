@@ -1,5 +1,12 @@
 # Offline guest UI audit — October 25, 2026
 
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
 November 6 supplement: [PLAYABILITY_2026-11-06.md](PLAYABILITY_2026-11-06.md). Original Arena-3–6 scenes/HUD/combat/three-crown defeat/OK/relaunch are observed with native entry costs and counters in explicitly staged trophy fixtures. Fresh Trainer Earl and retained clan conversation also pass. Earned later wins/rewards, partial crowns/draws, every-button and phone visual/audio/performance audits remain open.
 
 Newest continuation after `5040611`: [Arena 2 progression](ARENA_PROGRESSION.md)

@@ -1,5 +1,7 @@
 # Offline playability continuation — November 6, 2026
 
+Later supplement: [DRAW_CHECKPOINTS.md](DRAW_CHECKPOINTS.md) records the new scoped draw-save path and corrected battle-avatar wallet source. Active draft PR #366 carries the continuation; the original all-arena evidence below remains scoped to `3cb45ef`.
+
 Continuation from `29912d9f81624e36e774ed190f9312734b5da62c`, branch
 `codex/clash-offline-continuation`. PR #138 was found closed and unmerged on
 resuming; do not describe its work as merged into main. A separate checkout

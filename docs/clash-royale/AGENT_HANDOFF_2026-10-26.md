@@ -1,5 +1,12 @@
 # Clash Royale offline restoration — agent handoff, October 26, 2026
 
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
 Newest continuation after `5040611`: [Arena 2 progression](ARENA_PROGRESSION.md)
 adds original Bone Pit sectors, legal Arena-2 card pools, native thresholds and
 entry/result/return checks; 38 focused tests and 43 private sector comparisons.

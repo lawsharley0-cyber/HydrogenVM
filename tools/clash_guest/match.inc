@@ -1,6 +1,7 @@
 /* Early-arena port. Original CSV sector/AI/towers and actual native
  * commodity accounting; no invented match acknowledgment or free entry.
  */
+static void *finished_arena_battle;
 static void start_arena_match(void *self) {
     if(battle_started || pending_size || clan_status==1 || clan_status==3 || clan_status==4)
         fail("GuestOffline: arena entry during an incomplete transaction");
@@ -34,6 +35,7 @@ static void start_arena_match(void *self) {
     // A validated complete sector is ready before the debit is committed.
     // Interrupted/abandoned matches retain the original paid entry.
     write_save();
+    finished_arena_battle=0;
     reply(self,21903,1,sector_packet,size);battle_started=1;arena_battle=1;
     dispose(owner);
     CALL(API_printf,int,(const char*,int,u32,int,u32,u32,const char*,u32,int,int))(
@@ -42,6 +44,7 @@ static void start_arena_match(void *self) {
 }
 
 extern void guest_original_battle_ended(void*,void*);
+#include "arena_draw.inc"
 static void friendly_native_log(void *battle);
 void guest_battle_ended(void *battle,void *avatar) {
     // LogicGameMode::battleEnded (0xd756c) explicitly passes null here; the
@@ -57,10 +60,12 @@ void guest_battle_ended(void *battle,void *avatar) {
         guest_original_battle_ended(battle,avatar);return;
     }
     void *account=(void*)FIELD(battle,0x10);
-    if(!account || FIELD(account,0)!=0 || FIELD(account,4)!=1 || ending_battle)
+    if(!account || FIELD(account,0)!=0 || FIELD(account,4)!=1 || ending_battle || finished_arena_battle==battle)
         fail("GuestOffline: arena battle result owner mismatch");
     ending_battle=battle;
     guest_original_battle_ended(battle,avatar);
+    if(FIELD(battle,0x74)==0xffffffffu)persist_arena_draw(battle);
+    finished_arena_battle=battle;
     ending_battle=0;
 }
 static void credit_arena_crowns(void *avatar) {

@@ -1,5 +1,12 @@
 # Agent instructions
 
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](docs/clash-royale/DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
 Clash November 6 continuation: read [PLAYABILITY_2026-11-06.md](docs/clash-royale/PLAYABILITY_2026-11-06.md) for current all-six-arena content/entry qualification and remaining draw/earned-win/full-audit gaps. The owner wants optional modding considered after reliable playability and bug fixes. Preserve original training and advanced battle-AI deferral.
 
 HydrogenVM is a JIT-less ARMv7 user-mode emulator. Guest code is decoded into `Op` records and executed by ahead-of-time C++ handlers. No guest code is written into executable host memory. One process owns a 4 GB `GuestArena`, an `Engine`, guest threads that are host threads, and a symbol table that binds Mach-O imports to host functions. Frameworks are a guest Objective-C runtime in C++. The UI is composited in software. The phone shell is SwiftUI under `app/`. The desktop CLI is `hvm`.
