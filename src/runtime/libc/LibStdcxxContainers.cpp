@@ -318,6 +318,27 @@ uint32_t q_findFirstNotOfBuf(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos, ui
     const size_t r = value(x, self).find_first_not_of(bytes(x, s, n), pos);
     return r == std::string::npos ? kNpos : uint32_t(r);
 }
+// The find_*_of overloads libstdc++ 4.2 declares inline but some builds still
+// import: (const char*, pos), (const string&, pos) and (char, pos).
+enum class FindOp { FirstOf, LastOf, FirstNotOf, LastNotOf };
+template <FindOp op> uint32_t findSet(const std::string& v, const std::string& set, uint32_t pos) {
+    const size_t p = pos == kNpos ? std::string::npos : pos;
+    size_t r = std::string::npos;
+    if constexpr (op == FindOp::FirstOf) r = v.find_first_of(set, p);
+    else if constexpr (op == FindOp::LastOf) r = v.find_last_of(set, p);
+    else if constexpr (op == FindOp::FirstNotOf) r = v.find_first_not_of(set, p);
+    else r = v.find_last_not_of(set, p);
+    return r == std::string::npos ? kNpos : uint32_t(r);
+}
+template <FindOp op> uint32_t q_findSetC(Ctx& x, GuestPtr self, GuestPtr s, uint32_t pos) {
+    return findSet<op>(value(x, self), s ? x.proc.readCString(s) : std::string(), pos);
+}
+template <FindOp op> uint32_t q_findSetStr(Ctx& x, GuestPtr self, GuestPtr o, uint32_t pos) {
+    return findSet<op>(value(x, self), value(x, o), pos);
+}
+template <FindOp op> uint32_t q_findSetChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
+    return findSet<op>(value(x, self), std::string(1, char(c)), pos);
+}
 uint32_t q_findFirstNotOfChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
     const size_t r = value(x, self).find_first_not_of(char(c), pos);
     return r == std::string::npos ? kNpos : uint32_t(r);
@@ -942,11 +963,22 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&q_findFirstNotOfBuf>("__ZNKSs17find_first_not_ofEPKcmm");
     p.def<&q_findFirstNotOfChar>("__ZNKSs17find_first_not_ofEcm");
     p.def<&q_findLastNotOfBuf>("__ZNKSs16find_last_not_ofEPKcmm");
+    p.def<&q_findSetC<FindOp::FirstOf>>("__ZNKSs13find_first_ofEPKcm");
+    p.def<&q_findSetStr<FindOp::FirstOf>>("__ZNKSs13find_first_ofERKSsm");
+    p.def<&q_findSetChar<FindOp::FirstOf>>("__ZNKSs13find_first_ofEcm");
+    p.def<&q_findSetC<FindOp::LastOf>>("__ZNKSs12find_last_ofEPKcm");
+    p.def<&q_findSetStr<FindOp::LastOf>>("__ZNKSs12find_last_ofERKSsm");
+    p.def<&q_findSetChar<FindOp::LastOf>>("__ZNKSs12find_last_ofEcm");
+    p.def<&q_findSetC<FindOp::FirstNotOf>>("__ZNKSs17find_first_not_ofEPKcm");
+    p.def<&q_findSetStr<FindOp::FirstNotOf>>("__ZNKSs17find_first_not_ofERKSsm");
+    p.def<&q_findSetC<FindOp::LastNotOf>>("__ZNKSs16find_last_not_ofEPKcm");
+    p.def<&q_findSetStr<FindOp::LastNotOf>>("__ZNKSs16find_last_not_ofERKSsm");
+    p.def<&q_findSetChar<FindOp::LastNotOf>>("__ZNKSs16find_last_not_ofEcm");
     p.def<&q_compareC>("__ZNKSs7compareEPKc");
     p.def<&q_compareStr>("__ZNKSs7compareERKSs");
     p.def<&q_compareSubStr>("__ZNKSs7compareEmmRKSs");
     p.def<&q_compareSubC>("__ZNKSs7compareEmmPKc");
-    p.def<&q_copy>("_ZNKSs4copyEPcmm");
+    p.def<&q_copy>("__ZNKSs4copyEPcmm");
     p.defineFunction("__ZNKSs6substrEmm", [](Ctx& x) { q_substr(x); });
     p.def<&r_create>("__ZNSs4_Rep9_S_createEmmRKSaIcE");
     p.def<&r_dispose>("__ZNSs4_Rep10_M_disposeERKSaIcE");
@@ -1102,6 +1134,24 @@ void registerLibStdcxxContainers(Process& p) {
     p.mem().write<uint32_t>(vtBadAlloc + 8, fnBadAllocD1);
     p.mem().write<uint32_t>(vtBadAlloc + 12, fnBadAllocD0);
     p.mem().write<uint32_t>(vtBadAlloc + 16, fnBadAllocWhat);
+
+    // std::bad_exception and std::bad_cast: { 0, typeinfo, D1, D0, what }, like bad_alloc.
+    const uint32_t vtBadExc = p.defineDataBlock("__ZTVSt13bad_exception", 32);
+    const uint32_t fnBadExcD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt13bad_exceptionD1Ev");
+    p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt13bad_exceptionD2Ev");
+    const uint32_t fnBadExcD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt13bad_exceptionD0Ev");
+    const uint32_t fnBadExcWhat = p.def<+[](Ctx& x, uint32_t) -> uint32_t { return x.proc.internCString("std::bad_exception"); }>("__ZNKSt13bad_exception4whatEv");
+    p.mem().write<uint32_t>(vtBadExc + 8, fnBadExcD1);
+    p.mem().write<uint32_t>(vtBadExc + 12, fnBadExcD0);
+    p.mem().write<uint32_t>(vtBadExc + 16, fnBadExcWhat);
+    const uint32_t vtBadCast = p.defineDataBlock("__ZTVSt8bad_cast", 32);
+    const uint32_t fnBadCastD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt8bad_castD1Ev");
+    p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt8bad_castD2Ev");
+    const uint32_t fnBadCastD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt8bad_castD0Ev");
+    const uint32_t fnBadCastWhat = p.def<+[](Ctx& x, uint32_t) -> uint32_t { return x.proc.internCString("std::bad_cast"); }>("__ZNKSt8bad_cast4whatEv");
+    p.mem().write<uint32_t>(vtBadCast + 8, fnBadCastD1);
+    p.mem().write<uint32_t>(vtBadCast + 12, fnBadCastD0);
+    p.mem().write<uint32_t>(vtBadCast + 16, fnBadCastWhat);
 }
 
 } // namespace Hydrogen::Runtime

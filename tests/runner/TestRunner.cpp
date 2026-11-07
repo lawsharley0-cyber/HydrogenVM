@@ -5502,20 +5502,39 @@ int runFullSubsystemTests() {
         call("__ZNSsC1EPKcRKSaIcE", {sObj, proc.allocCString("HydrogenVM"), 0}); // string("HydrogenVM")
         const uint32_t buf = proc.heap().allocZeroed(32);
         // Copy entire string
-        const uint32_t count1 = call("_ZNKSs4copyEPcmm", {sObj, buf, 10, 0});
+        const uint32_t count1 = call("__ZNKSs4copyEPcmm", {sObj, buf, 10, 0});
         check(count1 == 10 && std::strncmp((const char*)proc.mem().host(buf), "HydrogenVM", 10) == 0, "string::copy(buf, 10, 0) copies full string");
         // Partial copy and no null terminator written after copy (ensure buffer byte at 8 is unmodified zero since we allocZeroed)
         proc.mem().write<uint8_t>(buf + 8, 0x42);
-        const uint32_t count2 = call("_ZNKSs4copyEPcmm", {sObj, buf, 8, 0});
+        const uint32_t count2 = call("__ZNKSs4copyEPcmm", {sObj, buf, 8, 0});
         check(count2 == 8 && std::strncmp((const char*)proc.mem().host(buf), "Hydrogen", 8) == 0 && proc.mem().read<uint8_t>(buf + 8) == 0x42, "string::copy(buf, 8, 0) partial copy");
         // Nonzero starting position and exceeding string length
-        const uint32_t count3 = call("_ZNKSs4copyEPcmm", {sObj, buf, 20, 8});
+        const uint32_t count3 = call("__ZNKSs4copyEPcmm", {sObj, buf, 20, 8});
         check(count3 == 2 && std::strncmp((const char*)proc.mem().host(buf), "VM", 2) == 0, "string::copy(buf, 20, 8) handles pos > 0 and len > remaining");
         // Zero length copy
-        const uint32_t count4 = call("_ZNKSs4copyEPcmm", {sObj, buf, 0, 0});
+        const uint32_t count4 = call("__ZNKSs4copyEPcmm", {sObj, buf, 0, 0});
         check(count4 == 0, "string::copy(buf, 0, 0) zero copy");
         // Invalid pos raises logic error (which throws in host, halting the run context or just halting HLE execution)
         // (Testing exception from basic_string is covered by other libstdc++ tests or would abort guest; we just skip invoking it invalidly here).
+        {
+            // find_*_of(const char*, pos), (const string&, pos) and (char, pos): ROBLOX imports them.
+            const uint32_t set = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {set, proc.allocCString("gV"), 0});
+            const uint32_t npos = 0xffffffffu;
+            check(call("__ZNKSs12find_last_ofEPKcm", {sObj, proc.allocCString("ny"), npos}) == 7 &&
+                  call("__ZNKSs12find_last_ofEPKcm", {sObj, proc.allocCString("Hn"), 6}) == 0 &&
+                  call("__ZNKSs13find_first_ofEPKcm", {sObj, proc.allocCString("oe"), 0}) == 4 &&
+                  call("__ZNKSs13find_first_ofERKSsm", {sObj, set, 0}) == 5 &&
+                  call("__ZNKSs12find_last_ofERKSsm", {sObj, set, npos}) == 8 &&
+                  call("__ZNKSs12find_last_ofEcm", {sObj, uint32_t('o'), npos}) == 4 &&
+                  call("__ZNKSs13find_first_ofEcm", {sObj, uint32_t('z'), 0}) == npos &&
+                  call("__ZNKSs17find_first_not_ofEPKcm", {sObj, proc.allocCString("Hyd"), 0}) == 3 &&
+                  call("__ZNKSs16find_last_not_ofEPKcm", {sObj, proc.allocCString("MV"), npos}) == 7 &&
+                  call("__ZNKSs16find_last_not_ofEcm", {sObj, uint32_t('M'), npos}) == 8 &&
+                  call("__ZNKSs17find_first_not_ofERKSsm", {sObj, set, 5}) == 6,
+                  "string::find_first_of / find_last_of / *_not_of overloads taking a C string, string or char");
+            call("__ZNSsD1Ev", {set});
+        }
         call("__ZNSsD1Ev", {sObj});
 
         // SystemConfiguration Tests
