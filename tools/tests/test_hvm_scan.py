@@ -1,6 +1,10 @@
 """hvm_scan.py merges per-game linking gaps into one ranked list (most games first)."""
+import json
+import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -66,6 +70,110 @@ class ScanTest(unittest.TestCase):
         names = hvm_scan.demangle(['_plain', '__ZNSt3__16threadD1Ev'])
         self.assertEqual(names['_plain'], '_plain')
         self.assertIn('__ZNSt3__16threadD1Ev', names)
+
+
+class DemangleTest(unittest.TestCase):
+    def run_with(self, **kw):
+        with mock.patch.object(hvm_scan.subprocess, 'run', **kw):
+            return hvm_scan.demangle(['__ZN1a1bEv', '_plain'])
+
+    def test_success_maps_each_name(self):
+        done = subprocess.CompletedProcess([], 0, stdout='a::b()\n_plain\n', stderr='')
+        self.assertEqual(self.run_with(return_value=done), {'__ZN1a1bEv': 'a::b()', '_plain': '_plain'})
+
+    def test_missing_cxxfilt_keeps_raw_names(self):
+        self.assertEqual(self.run_with(side_effect=OSError('no c++filt')),
+                         {'__ZN1a1bEv': '__ZN1a1bEv', '_plain': '_plain'})
+
+    def test_line_count_mismatch_keeps_raw_names(self):
+        done = subprocess.CompletedProcess([], 0, stdout='only one line\n', stderr='')
+        self.assertEqual(self.run_with(return_value=done)['__ZN1a1bEv'], '__ZN1a1bEv')
+
+
+class ScanOneTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.games = self.root / 'games'
+        self.games.mkdir()
+        self.roots = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def importer(self, _hvm, ipa, root):
+        self.roots.append(root)
+        return 'com.same.game', root / 'Game.app', root
+
+    def linked(self, stdout='{"references": []}', code=0):
+        return mock.patch.object(hvm_scan.subprocess, 'run',
+                                 return_value=subprocess.CompletedProcess([], code, stdout=stdout, stderr='boom'))
+
+    def test_two_ipas_of_one_game_get_distinct_roots_and_files(self):
+        with self.linked():
+            # Names that collapse to the same safe name still get different folders.
+            for name in ('Game (1).ipa', 'Game [1].ipa'):
+                r = hvm_scan.scan_one('hvm', Path(name), self.root, self.games, importer=self.importer)
+                self.assertIsNone(r['error'])
+        self.assertEqual(len(set(self.roots)), 2)
+        self.assertEqual(len(list(self.games.glob('*.json'))), 2)
+
+    def test_same_bundle_id_stays_two_rows(self):
+        results = hvm_scan.label_games([
+            {'ipa': 'v1.ipa', 'bundleId': 'com.x', 'error': None, 'gaps': [('function', '_f', 'missing')]},
+            {'ipa': 'v2.ipa', 'bundleId': 'com.x', 'error': None, 'gaps': [('function', '_f', 'missing')]}])
+        self.assertEqual(len(hvm_scan.rank(results)[0]['games']), 2)
+
+    def test_failures_become_results(self):
+        cases = [(dict(side_effect=subprocess.TimeoutExpired('hvm', 300)), 'timed out'),
+                 (dict(side_effect=OSError('missing hvm')), 'could not run hvm'),
+                 (dict(return_value=subprocess.CompletedProcess([], 1, stdout='', stderr='boom')), 'linking failed: boom'),
+                 (dict(return_value=subprocess.CompletedProcess([], 0, stdout='{', stderr='')), 'bad linking JSON')]
+        for kw, msg in cases:
+            with mock.patch.object(hvm_scan.subprocess, 'run', **kw):
+                r = hvm_scan.scan_one('hvm', Path('g.ipa'), self.root, self.games, importer=self.importer)
+            self.assertIn(msg, r['error'])
+
+    def test_import_failure_is_a_result(self):
+        def bad(*_a):
+            raise RuntimeError('bad zip')
+        r = hvm_scan.scan_one('hvm', Path('g.ipa'), self.root, self.games, importer=bad)
+        self.assertIn('import failed: bad zip', r['error'])
+
+
+class MainTest(unittest.TestCase):
+    def test_bad_baseline_fails_before_scanning(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / 'scan.json'
+            bad.write_text('{"not": "a scan"}', encoding='utf-8')
+            with mock.patch.object(hvm_scan, 'scan_one') as scan:
+                for path in (bad, Path(d) / 'missing.json'):
+                    with self.assertRaises(SystemExit):
+                        hvm_scan.main(['--ipas', d, '--baseline', str(path)])
+                scan.assert_not_called()
+
+    def test_latest_never_replaces_a_real_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / 'run1'
+            out.mkdir()
+            (Path(d) / 'latest').write_text('keep me', encoding='utf-8')
+            self.assertFalse(hvm_scan.point_latest(out))
+            self.assertEqual((Path(d) / 'latest').read_text(encoding='utf-8'), 'keep me')
+            (Path(d) / 'latest').unlink()
+            self.assertTrue(hvm_scan.point_latest(out))
+            self.assertTrue((Path(d) / 'latest').is_symlink())
+
+    def test_markdown_written_as_utf8(self):
+        with tempfile.TemporaryDirectory() as d:
+            ipas = Path(d) / 'ipas'
+            ipas.mkdir()
+            (ipas / 'g.ipa').write_bytes(b'')
+            fake = {'ipa': 'g.ipa', 'bundleId': 'com.g', 'error': None, 'references': 1,
+                    'gaps': [('function', '_f\u2026', 'missing')]}
+            with mock.patch.object(hvm_scan, 'scan_one', return_value=fake):
+                self.assertEqual(hvm_scan.main(['--ipas', str(ipas), '--apps', d + '/apps', '--out', d + '/out']), 0)
+            self.assertIn('\u2026', (Path(d) / 'out' / 'scan.md').read_bytes().decode('utf-8'))
+            json.loads((Path(d) / 'out' / 'scan.json').read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

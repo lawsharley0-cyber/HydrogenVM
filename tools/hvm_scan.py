@@ -20,6 +20,7 @@ Output (--out, default ~/scan/<timestamp>, and ~/scan/latest points at it):
   games/<bundleId>.json   the raw `hvm info --linking` output for one game
 """
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -48,13 +49,21 @@ def demangle(names):
     """Readable C++ names (one c++filt call for all of them); unchanged when c++filt is absent."""
     plain = [n[1:] if n.startswith('__Z') else n for n in names]
     try:
-        out = subprocess.run(['c++filt'], input='\n'.join(plain), capture_output=True, text=True, timeout=60)
+        out = subprocess.run(['c++filt'], input='\n'.join(plain), capture_output=True, text=True,
+                             encoding='utf-8', errors='replace', timeout=60)
         lines = out.stdout.splitlines()
         if out.returncode == 0 and len(lines) == len(names):
             return dict(zip(names, lines))
     except (OSError, subprocess.SubprocessError):
         pass
     return {n: n for n in names}
+
+
+def import_root(apps_root, ipa):
+    """This .ipa's own import folder: a readable name plus a digest of the full file name,
+    so two files never share one (even when their readable names collapse to the same)."""
+    digest = hashlib.sha1(ipa.stem.encode('utf-8', 'surrogateescape')).hexdigest()[:10]
+    return apps_root / f'{safe_name(ipa.stem)[:60]}-{digest}'
 
 
 def safe_name(stem):
@@ -73,30 +82,58 @@ def gaps_from(linking):
     return out
 
 
-def scan_one(hvm, ipa, apps_root, games_dir):
+def scan_one(hvm, ipa, apps_root, games_dir, importer=import_app):
     """Import and statically link one game. Returns a result dict; never raises."""
     t0 = time.time()
+    result = {'ipa': ipa.name, 'bundleId': None, 'error': None, 'gaps': [], 'seconds': 0}
+
+    def fail(message):
+        result['error'] = message
+        result['seconds'] = round(time.time() - t0, 2)
+        return result
+
     try:
         # Each .ipa gets its own import folder: two versions of one game share a bundle id,
         # and importing both into one folder (in parallel) makes them overwrite each other.
-        own_root = apps_root / safe_name(ipa.stem)
-        own_root.mkdir(parents=True, exist_ok=True)
-        bundle_id, app, _home = import_app(hvm, ipa, own_root)
-    except Exception as e:  # import failure is itself a finding
-        return {'ipa': ipa.name, 'bundleId': None, 'error': f'import failed: {e}', 'gaps': [], 'seconds': time.time() - t0}
-    out = subprocess.run([hvm, 'info', '--linking', str(app), '--json'], capture_output=True, text=True, timeout=300)
+        root = import_root(apps_root, ipa)
+        root.mkdir(parents=True, exist_ok=True)
+        bundle_id, app, _home = importer(hvm, ipa, root)
+    except Exception as e:  # an import failure is itself a finding
+        return fail(f'import failed: {e}')
+    result['bundleId'] = bundle_id
+    try:
+        out = subprocess.run([hvm, 'info', '--linking', str(app), '--json'], capture_output=True, text=True,
+                             encoding='utf-8', errors='replace', timeout=300)
+    except subprocess.TimeoutExpired:
+        return fail('linking timed out after 300 s')
+    except OSError as e:
+        return fail(f'could not run hvm: {e}')
     if out.returncode:
         err = (out.stderr or out.stdout).strip().splitlines()
-        return {'ipa': ipa.name, 'bundleId': bundle_id, 'error': f'linking failed: {err[-1] if err else out.returncode}',
-                'gaps': [], 'seconds': time.time() - t0}
+        return fail(f'linking failed: {err[-1] if err else out.returncode}')
     try:
         linking = json.loads(out.stdout)
     except json.JSONDecodeError as e:
-        return {'ipa': ipa.name, 'bundleId': bundle_id, 'error': f'bad linking JSON: {e}', 'gaps': [], 'seconds': time.time() - t0}
-    (games_dir / f'{bundle_id}.json').write_text(out.stdout)
-    refs = linking.get('references', [])
-    return {'ipa': ipa.name, 'bundleId': bundle_id, 'error': None, 'references': len(refs),
-            'gaps': gaps_from(linking), 'seconds': round(time.time() - t0, 2)}
+        return fail(f'bad linking JSON: {e}')
+    try:
+        (games_dir / f'{import_root(Path(), ipa).name}.json').write_text(out.stdout, encoding='utf-8')
+    except OSError as e:
+        return fail(f'could not save the linking output: {e}')
+    result.update(references=len(linking.get('references', [])), gaps=gaps_from(linking))
+    result['seconds'] = round(time.time() - t0, 2)
+    return result
+
+
+def label_games(results):
+    """A name per result for the tables: the bundle id, plus the .ipa name when two files
+    share a bundle id (two versions of one game), so neither hides the other."""
+    counts = defaultdict(int)
+    for r in results:
+        counts[r['bundleId']] += 1
+    for r in results:
+        bid = r['bundleId']
+        r['label'] = r['ipa'] if not bid else (f'{bid} ({r["ipa"]})' if counts[bid] > 1 else bid)
+    return results
 
 
 def rank(results):
@@ -105,7 +142,7 @@ def rank(results):
     for r in results:
         for kind, name, binding in r['gaps']:
             row = rows[(kind, name)]
-            row['games'].add(r['bundleId'] or r['ipa'])
+            row['games'].add(r.get('label') or r['bundleId'] or r['ipa'])
             if row['binding'] is None or GAP_RANK[binding] < GAP_RANK[row['binding']]:
                 row['binding'] = binding
     ranked = [{'kind': k, 'name': n, 'binding': v['binding'], 'games': sorted(v['games'])} for (k, n), v in rows.items()]
@@ -153,22 +190,52 @@ def markdown(results, ranked, fixed, names, limit):
     lines += ['', '## Per game', '', '| Game | .ipa | References | Gaps | Missing functions | Note |', '|---|---|---:|---:|---:|---|']
     for r in sorted(results, key=lambda r: -len(r['gaps'])):
         missing_fn = sum(1 for k, _, b in r['gaps'] if k == 'function' and b == 'missing')
-        lines.append(f'| {r["bundleId"] or "?"} | {r["ipa"]} | {r.get("references", "")} | {len(r["gaps"])} | {missing_fn} | {r["error"] or ""} |')
+        lines.append(f'| {r.get("label") or r["bundleId"] or "?"} | {r["ipa"]} | {r.get("references", "")} | {len(r["gaps"])} | {missing_fn} | {r["error"] or ""} |')
     return '\n'.join(lines) + '\n'
 
 
-def main():
+def load_baseline(path):
+    """The previous scan.json, read before any work so a bad path fails at once."""
+    if path is None:
+        return None
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as e:
+        raise SystemExit(f'cannot read baseline {path}: {e}')
+    if not isinstance(data, dict) or not isinstance(data.get('gaps'), list):
+        raise SystemExit(f'baseline {path} is not a scan.json (no "gaps" list)')
+    return data
+
+
+def point_latest(out):
+    """Point <parent>/latest at this run. Only a symlink (or nothing) is ever replaced."""
+    latest = out.parent / 'latest'
+    if latest.exists() and not latest.is_symlink():
+        print(f'note: {latest} exists and is not a link; not updated', file=sys.stderr)
+        return False
+    try:
+        if latest.is_symlink():
+            latest.unlink()
+        latest.symlink_to(out.name)
+        return True
+    except OSError as e:
+        print(f'note: could not update {latest}: {e}', file=sys.stderr)
+        return False
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--ipas', type=Path, default=HOME / 'ipas')
     ap.add_argument('--apps', type=Path, default=HOME / 'apps')
-    ap.add_argument('--out', type=Path)
+    ap.add_argument('--out', type=Path, help='output folder (default ~/scan/<timestamp>, which also updates ~/scan/latest)')
     ap.add_argument('--hvm', default=str(Path(__file__).resolve().parent.parent / 'build' / 'hvm'))
     ap.add_argument('--jobs', type=int, default=max(1, os.cpu_count() or 2))
     ap.add_argument('--only', help='substring of the .ipa file name')
     ap.add_argument('--baseline', type=Path, help='a previous scan.json')
     ap.add_argument('--limit', type=int, default=200, help='rows in scan.md (all rows are in scan.json)')
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
+    baseline = load_baseline(args.baseline)
     ipas = sorted(p for p in args.ipas.glob('*.ipa') if not args.only or args.only.lower() in p.name.lower())
     if not ipas:
         print(f'no .ipa files in {args.ipas}', file=sys.stderr)
@@ -181,23 +248,19 @@ def main():
     t0 = time.time()
     with ThreadPoolExecutor(args.jobs) as pool:
         results = list(pool.map(lambda ipa: scan_one(args.hvm, ipa, args.apps, games_dir), ipas))
+    label_games(results)
     ranked = rank(results)
-    baseline = json.loads(args.baseline.read_text()) if args.baseline and args.baseline.exists() else None
     ranked, fixed = compare(ranked, baseline)
     names = demangle([g['name'] for g in ranked])
     for g in ranked:
         g['pretty'] = names.get(g['name'], g['name'])
 
     (out / 'scan.json').write_text(json.dumps({'generated': time.strftime('%Y-%m-%dT%H:%M:%S'), 'seconds': round(time.time() - t0, 1),
-                                               'games': results, 'gaps': ranked, 'fixed': fixed}, indent=1, default=list))
-    (out / 'scan.md').write_text(markdown(results, ranked, fixed, names, args.limit))
-    latest = out.parent / 'latest'
-    try:
-        if latest.is_symlink() or latest.exists():
-            latest.unlink()
-        latest.symlink_to(out.name)
-    except OSError:
-        pass
+                                               'games': results, 'gaps': ranked, 'fixed': fixed}, indent=1, default=list),
+                                   encoding='utf-8')
+    (out / 'scan.md').write_text(markdown(results, ranked, fixed, names, args.limit), encoding='utf-8')
+    if args.out is None:
+        point_latest(out)
     failed = sum(1 for r in results if r['error'])
     print(f'scanned {len(results)} games in {time.time() - t0:.0f}s: {len(ranked)} distinct gaps, {failed} failed -> {out / "scan.md"}')
     return 0
