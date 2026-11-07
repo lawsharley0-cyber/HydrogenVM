@@ -1926,6 +1926,80 @@ id sb_instantiateInitial(Ctx& x, id self, SEL s) {
     return 0;
 }
 
+// UIStoryboardSegueTemplate: what a compiled storyboard archives for each segue. The
+// source controller is its "viewController" outlet; performing it instantiates the
+// destination from the storyboard, gives the source prepareForSegue:sender:, and then
+// presents, pushes or embeds by the template's class. ROBLOX's storyboard stopped at the
+// outlet (the classes did not exist).
+enum class SegueKind { Modal, Push, Show, Embed, None };
+struct SegueTemplateData : ObjC::HostObject {
+    id identifier = 0, destinationId = 0, segueClassName = 0;   // retained
+    id viewController = 0;                                      // not retained (the controller owns its templates)
+    bool performOnViewLoad = false;
+};
+SegueTemplateData& STD(Ctx& x, id t) { return rt(x).host<SegueTemplateData>(t); }
+SegueKind segueKind(Ctx& x, id t) {
+    const std::string cls = rt(x).objectClassName(t);
+    if (cls.find("Embed") != std::string::npos) return SegueKind::Embed;
+    if (cls.find("Push") != std::string::npos) return SegueKind::Push;
+    if (cls.find("Show") != std::string::npos && cls.find("Detail") == std::string::npos) return SegueKind::Show;
+    if (cls.find("Relationship") != std::string::npos || cls.find("Unwind") != std::string::npos) return SegueKind::None;
+    return SegueKind::Modal;   // Modal, Presentation, Popover, Replace, ShowDetail
+}
+id st_initWithCoder(Ctx& x, id self, SEL, id coder) {
+    SegueTemplateData& d = STD(x, self);
+    auto obj = [&](const char* key) { return id(rt(x).send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, key)})); };
+    setRetained(x, d.identifier, obj("UIIdentifier"));
+    setRetained(x, d.destinationId, obj("UIDestinationViewControllerIdentifier"));
+    setRetained(x, d.segueClassName, obj("UISegueClassName"));
+    if (const id vc = obj("UIViewController")) d.viewController = vc;
+    d.performOnViewLoad = (rt(x).send(x.cpu, coder, "decodeBoolForKey:", {makeString(x, "UIPerformOnViewLoad")}) & 0xff) != 0;
+    return self;
+}
+id st_identifier(Ctx& x, id self, SEL) { return STD(x, self).identifier; }
+void st_setIdentifier(Ctx& x, id self, SEL, id v) { setRetained(x, STD(x, self).identifier, v); }
+id st_destinationId(Ctx& x, id self, SEL) { return STD(x, self).destinationId; }
+void st_setDestinationId(Ctx& x, id self, SEL, id v) { setRetained(x, STD(x, self).destinationId, v); }
+id st_viewController(Ctx& x, id self, SEL) { return STD(x, self).viewController; }
+void st_setViewController(Ctx& x, id self, SEL, id v) { STD(x, self).viewController = v; }
+bool st_onViewLoad(Ctx& x, id self, SEL) { return STD(x, self).performOnViewLoad; }
+void st_perform(Ctx& x, id self, SEL, id sender) {
+    SegueTemplateData& d = STD(x, self);
+    const id source = d.viewController;
+    const SegueKind kind = segueKind(x, self);
+    if (!source || kind == SegueKind::None) return;
+    if (d.identifier && !(rt(x).send(x.cpu, source, "shouldPerformSegueWithIdentifier:sender:", {d.identifier, sender}) & 0xff)) return;
+    const id storyboard = id(rt(x).send(x.cpu, source, "storyboard"));
+    const id destination = storyboard && d.destinationId
+        ? id(rt(x).send(x.cpu, storyboard, "instantiateViewControllerWithIdentifier:", {d.destinationId})) : 0;
+    if (!destination) {
+        x.proc.logf(LogLevel::Warning, "segue %s: no destination controller \"%s\"", d.identifier ? utf8(x, d.identifier).c_str() : "(unnamed)",
+                    d.destinationId ? utf8(x, d.destinationId).c_str() : "");
+        return;
+    }
+    Class segueCls = d.segueClassName ? rt(x).getClass(utf8(x, d.segueClassName)) : 0;
+    const bool custom = segueCls != 0;
+    if (!segueCls) segueCls = rt(x).getClass("UIStoryboardSegue");
+    const id segue = id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, segueCls, rt(x).selAlloc)), "initWithIdentifier:source:destination:",
+                                   {d.identifier, source, destination}));
+    rt(x).send(x.cpu, source, "prepareForSegue:sender:", {segue, sender});
+    if (custom) rt(x).send(x.cpu, segue, "perform");
+    else if (kind == SegueKind::Embed) {
+        rt(x).send(x.cpu, source, "addChildViewController:", {destination});
+        rt(x).send(x.cpu, destination, "didMoveToParentViewController:", {source});
+    } else {
+        const id nav = kind == SegueKind::Modal ? 0 : id(rt(x).send(x.cpu, source, "navigationController"));
+        if (nav) rt(x).send(x.cpu, nav, "pushViewController:animated:", {destination, 1});
+        else rt(x).send(x.cpu, source, "presentViewController:animated:completion:", {destination, 1, 0});
+    }
+    if (segue) rt(x).release(x.cpu, segue);
+}
+void st_dealloc(Ctx& x, id self, SEL) {
+    if (SegueTemplateData* d = rt(x).hostIf<SegueTemplateData>(self))
+        for (id* o : {&d->identifier, &d->destinationId, &d->segueClassName}) setRetained(x, *o, 0);
+    rt(x).disposeInstance(x.cpu, self);
+}
+
 struct SegueData : ObjC::HostObject {
     id identifier = 0, source = 0, destination = 0;
     uint32_t handlerBlock = 0;
@@ -2368,6 +2442,20 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
          .m<&seg_source>("sourceViewController")
          .m<&seg_dest>("destinationViewController")
          .m<&seg_perform>("perform", "v@:");
+
+    ObjC::ClassBuilder segueTemplate = r.defineClass("UIStoryboardSegueTemplate", "NSObject");
+    segueTemplate.m<&st_initWithCoder>("initWithCoder:")
+         .m<&st_identifier>("identifier").m<&st_setIdentifier>("setIdentifier:", "v@:@")
+         .m<&st_destinationId>("destinationViewControllerIdentifier").m<&st_setDestinationId>("setDestinationViewControllerIdentifier:", "v@:@")
+         .m<&st_viewController>("viewController").m<&st_setViewController>("setViewController:", "v@:@")
+         .m<&st_onViewLoad>("performOnViewLoad", "c@:")
+         .m<&st_perform>("_performWithSender:", "v@:@").m<&st_perform>("perform:", "v@:@")
+         .m<&st_dealloc>("dealloc", "v@:");
+    for (const char* sub : {"UIStoryboardModalSegueTemplate", "UIStoryboardPushSegueTemplate", "UIStoryboardShowSegueTemplate",
+                            "UIStoryboardShowDetailSegueTemplate", "UIStoryboardPresentationSegueTemplate", "UIStoryboardPopoverSegueTemplate",
+                            "UIStoryboardReplaceSegueTemplate", "UIStoryboardEmbedSegueTemplate", "UIStoryboardRelationshipSegueTemplate",
+                            "UIStoryboardUnwindSegueTemplate"})
+        r.defineClass(sub, "UIStoryboardSegueTemplate");
 
     // UIPasteboard
     struct PasteboardData : ObjC::HostObject {

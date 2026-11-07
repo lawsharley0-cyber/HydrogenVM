@@ -3380,6 +3380,32 @@ int runFullSubsystemTests() {
         check(kept, "UILocalNotification keeps its properties and copies them");
     }
 
+    // Storyboard segue templates: the nib sets the source controller through the
+    // "viewController" outlet (ROBLOX stopped there), and performSegueWithIdentifier:
+    // instantiates the destination from the storyboard and presents it.
+    {
+        bool segues = false;
+        if (const ObjC::Class modalCls = r.getClass("UIStoryboardModalSegueTemplate")) {
+            const ObjC::id vc = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIViewController"), r.selAlloc)), r.selInit));
+            const ObjC::id sb = r.createInstance(r.getClass("UIStoryboard"));
+            r.send(cpu, vc, "_setStoryboard:", {sb});
+            const ObjC::id t = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, modalCls, r.selAlloc)), r.selInit));
+            r.send(cpu, t, "setValue:forKey:", {vc, Foundation::makeString(cx, "viewController")});
+            r.send(cpu, t, "setIdentifier:", {Foundation::makeString(cx, "showGame")});
+            r.send(cpu, t, "setDestinationViewControllerIdentifier:", {Foundation::makeString(cx, "UIViewController")});
+            r.send(cpu, vc, "_setStoryboardSegueTemplates:", {Foundation::makeArray(cx, {t})});
+            r.send(cpu, vc, "performSegueWithIdentifier:sender:", {Foundation::makeString(cx, "showGame"), 0});
+            const ObjC::id presented = ObjC::id(r.send(cpu, vc, "presentedViewController"));
+            bool refused = false;
+            try { r.send(cpu, vc, "performSegueWithIdentifier:sender:", {Foundation::makeString(cx, "nope"), 0}); }
+            catch (const std::exception& e) { refused = std::string(e.what()).find("has no segue with identifier 'nope'") != std::string::npos; }
+            segues = ObjC::id(r.send(cpu, t, "viewController")) == vc && presented && presented != vc &&
+                     r.isKindOf(presented, r.getClass("UIViewController")) && refused;
+            if (!segues) std::printf("    segue: outlet %d presented %08x refused %d\n", ObjC::id(r.send(cpu, t, "viewController")) == vc, presented, refused);
+        }
+        check(segues, "storyboard segue templates take their source outlet and present the destination");
+    }
+
     // UIViewController has the rotation and appearance hooks engines copy encodings from
     // (Unity's ObjCSetKnownInstanceMethod asserts on a NULL Method).
     {
