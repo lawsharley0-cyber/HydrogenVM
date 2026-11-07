@@ -39,7 +39,8 @@ HOME = Path.home()
 
 # Severity: higher is worse. Fix from the top.
 SEV = {'load': 100, 'crash': 100, 'hang': 90, 'picture': 80, 'offscreen': 70, 'error': 60,
-       'fault': 50, 'close': 45, 'missing': 40, 'unimplemented': 30, 'warning': 20, 'silent': 10}
+       'fault': 50, 'close': 45, 'gl-error': 42, 'missing': 40, 'gl-nodraw': 35, 'unimplemented': 30,
+       'warning': 20, 'silent': 10}
 
 
 def norm(text):

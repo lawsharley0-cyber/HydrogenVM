@@ -22,7 +22,10 @@ from pathlib import Path
 
 def load(path: Path) -> dict:
     p = path / 'report.json' if path.is_dir() else path
-    data = json.loads(p.read_text(encoding='utf-8'))
+    try:
+        data = json.loads(p.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        raise SystemExit(f'{p}: cannot read the report ({error})')
     if data.get('kind') != 'hvm-compat-report':
         raise SystemExit(f'{p}: not a HydrogenVM Test All Games report')
     return data
@@ -56,11 +59,12 @@ def summarize(report: dict) -> dict[str, dict]:
     result = {}
     for row in rows(report):
         diag = row.get('diagnostics') or {}
+        found = problems(row)
         result[key(row)] = {
             'name': row.get('name', ''),
             'version': row.get('version', ''),
-            'ok': not problems(row),
-            'problems': problems(row),
+            'ok': not found,
+            'problems': found,
             'frames': (row.get('perf') or {}).get('framesPresented', 0),
             'fps': (row.get('perf') or {}).get('fps', 0),
             'glDraws': diag.get('glDraws', 0),

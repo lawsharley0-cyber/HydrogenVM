@@ -422,9 +422,9 @@ template <typename... A> std::string hgArgs(A... a) {
 static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname);
 template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* name, F args) {
     if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, std::string("GL ") + name + "(" + args() + ")");
-    if (!hc->fn.glGetError) return;
-    if (name[2] == 'D' && (std::strncmp(name, "glDrawArrays", 12) == 0 || std::strncmp(name, "glDrawElements", 14) == 0))
+    if (hc->trace && name[2] == 'D' && (std::strncmp(name, "glDrawArrays", 12) == 0 || std::strncmp(name, "glDrawElements", 14) == 0))
         x.proc.perf().glDraws++;
+    if (!hc->fn.glGetError) return;
     const uint32_t e = hc->fn.glGetError();
     if (!e) return;
     // The check consumed the error: keep it for the guest's own glGetError.
@@ -1228,9 +1228,13 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
         // Draw calls since the previous present, from any context of the process (a
         // worker thread may draw while the main thread presents).
         auto& pf = p.perf();
-        const uint64_t total = pf.glDraws.load();
-        const uint64_t frameDraws = total - st.drawsAtPresent;
-        st.drawsAtPresent = total;
+        uint64_t frameDraws;
+        {
+            std::lock_guard<std::mutex> lk(st.mu);   // presents can race on two threads
+            const uint64_t total = pf.glDraws.load();
+            frameDraws = total - st.drawsAtPresent;
+            st.drawsAtPresent = total;
+        }
         pf.glLastFrameDraws = frameDraws;
         if (!frameDraws) pf.glEmptyPresents++;
     }
@@ -1381,7 +1385,7 @@ void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glBindFramebuffer) { hgMissing(x, hc, "glBindFramebuffer"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
     
     uint32_t screenFbo = 0;
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
@@ -1392,6 +1396,7 @@ void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
 
     hc->boundFbo = a_framebuffer;
     hc->fn.glBindFramebuffer(a_target, a_framebuffer);
+    lk.unlock();   // hgAfter may log, which calls into the host
     if (hgDebug || hc->trace) hgAfter(x, hc, "glBindFramebuffer", [&] { return hgArgs(a_target, a_framebuffer); });
 }
 
@@ -1399,7 +1404,7 @@ void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) 
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glBindFramebufferOES) { hgMissing(x, hc, "glBindFramebufferOES"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
 
     uint32_t screenFbo = 0;
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
@@ -1410,6 +1415,7 @@ void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) 
 
     hc->boundFbo = a_framebuffer;
     hc->fn.glBindFramebufferOES(a_target, a_framebuffer);
+    lk.unlock();   // hgAfter may log, which calls into the host
     if (hgDebug || hc->trace) hgAfter(x, hc, "glBindFramebufferOES", [&] { return hgArgs(a_target, a_framebuffer); });
 }
 
@@ -1417,12 +1423,13 @@ void hg_glUseProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glUseProgram) { hgMissing(x, hc, "glUseProgram"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
         it->second->currentProgram = a_program;
     }
     hc->currentProgram = a_program;
     hc->fn.glUseProgram(a_program);
+    lk.unlock();   // hgAfter may log, which calls into the host
     if (hgDebug || hc->trace) hgAfter(x, hc, "glUseProgram", [&] { return hgArgs(a_program); });
 }
 

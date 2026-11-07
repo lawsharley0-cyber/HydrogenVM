@@ -557,8 +557,7 @@ final class BatchTestRunner {
                         self.lastP95 = s.frameTimeP95Milliseconds
                         if presented > 0 { self.lastTotalPresented = presented }
                         if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
-                        let gl = s.glErrorLog
-                        if !gl.isEmpty { self.lastGLErrors = gl }
+                        self.lastGLErrors = s.glErrorLog   // this session's log; reset per game
                     }
                 }
 
@@ -676,6 +675,7 @@ final class BatchTestRunner {
             var closedGracefully: Bool? = nil
             if !exitBox.exited && self.status == .running {
                 if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
+                self.lastGLErrors = s.glErrorLog   // errors from the last second before closing
                 self.activeSession?.stopGracefully()
                 let gracefulDeadline = Date().addingTimeInterval(4.0)
                 while Date() < gracefulDeadline && !exitBox.exited {
@@ -1127,19 +1127,22 @@ final class BatchTestRunner {
     /// report.json and report.md, the screenshots, and per-game logs and crash reports.
     /// Saved into the desktop's test_ipa folder, it is what the desktop bench compares.
     func exportBundle() throws -> URL {
-        saveFinalReports()
         let fm = FileManager.default
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let root = fm.temporaryDirectory.appending(path: "HydrogenVM-test-\(stamp)", directoryHint: .isDirectory)
         try? fm.removeItem(at: root)
         try fm.createDirectory(at: root.appending(path: "logs", directoryHint: .isDirectory), withIntermediateDirectories: true)
-        try fm.copyItem(at: Self.reportsDir.appending(path: "latest_batch_report.json"), to: root.appending(path: "report.json"))
-        try fm.copyItem(at: Self.reportsDir.appending(path: "latest_batch_report.md"), to: root.appending(path: "report.md"))
+        // Written from the current results, never copied from an older saved report.
+        let json = try JSONSerialization.data(withJSONObject: buildCompatReportJSON(), options: [.prettyPrinted, .sortedKeys])
+        try json.write(to: root.appending(path: "report.json"), options: .atomic)
+        try buildMarkdownReport().write(to: root.appending(path: "report.md"), atomically: true, encoding: .utf8)
         if fm.fileExists(atPath: Self.thumbnailsDir.path(percentEncoded: false)) {
             try fm.copyItem(at: Self.thumbnailsDir, to: root.appending(path: "thumbnails", directoryHint: .isDirectory))
         }
         for r in results {
-            let name = "\(r.bundleId)_\(r.mode)"
+            // Bundle IDs come from the game's Info.plist: keep only filename-safe characters.
+            let safe = "\(r.bundleId)_\(r.mode)".map { $0.isLetter || $0.isNumber || "._-".contains($0) ? $0 : "_" }
+            let name = String(safe).trimmingCharacters(in: CharacterSet(charactersIn: "."))
             var text = r.logs
             if let crash = r.crashReport { text += "\n\n==== crash report ====\n" + crash }
             if let gl = r.glErrorLog, !gl.isEmpty { text += "\n\n==== GL errors ====\n" + gl.joined(separator: "\n") }

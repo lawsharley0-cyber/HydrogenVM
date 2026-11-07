@@ -162,7 +162,8 @@ enum BatchCheckBuilder {
             } else if d.framesPresented > 0 && d.glDraws == 0 {
                 c.append(.init(name: "Graphics calls", status: .warn, detail: "Frames were shown but the game made no GL draw call"))
             } else {
-                c.append(.init(name: "Graphics calls", status: .pass, detail: "\(d.glDraws) draw calls, \(d.glLastFrameDraws) in the last frame, no GL errors"))
+                let empty = d.glEmptyPresents > 0 ? ", \(d.glEmptyPresents) frames shown without drawing" : ""
+                c.append(.init(name: "Graphics calls", status: .pass, detail: "\(d.glDraws) draw calls, \(d.glLastFrameDraws) in the last frame\(empty), no GL errors"))
             }
         }
 
