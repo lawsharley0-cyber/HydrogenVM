@@ -328,8 +328,9 @@ def tainted_md(rows):
 
 
 def run_folder(out, bundle_id, key, mode):
-    """One run's output folder; key (from import_root) keeps two files of one game apart."""
-    return out / f'{bundle_id}-{key}-{mode}'
+    """One run's output folder; key (from import_root) keeps two files of one game apart.
+    The bundle id is made filesystem-safe and shortened so the name stays far below 255 bytes."""
+    return out / f'{safe_name(str(bundle_id))[:80]}-{key}-{mode}'
 
 
 def probe_one(args, ipa, mode):

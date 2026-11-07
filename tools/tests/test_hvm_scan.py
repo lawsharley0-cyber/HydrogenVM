@@ -165,6 +165,9 @@ class ProbeFoldersTest(unittest.TestCase):
             ra = hvm_probe.run_folder(Path(d), 'com.505games.terraria', a['ipaKey'], 'software')
             rb = hvm_probe.run_folder(Path(d), 'com.505games.terraria', b['ipaKey'], 'software')
             self.assertNotEqual(ra, rb)
+            long_id = hvm_probe.run_folder(Path(d), 'com.' + 'x' * 300 + '/../y', a['ipaKey'], 'software')
+            self.assertLess(len(long_id.name.encode()), 120)
+            self.assertEqual(long_id.parent, Path(d))
 
     def test_successful_probes_of_one_game_write_separate_run_folders(self):
         import hvm_probe
