@@ -315,6 +315,29 @@ int main() {
             longEdges.insert(longEdges.end(), {0, 0});
             checkTrie("export_trie_long_shared_edges_hit_byte_limit", longEdges, "export trie work limit exceeded");
         }
+        // Empty labels into a shared node whose terminal is long: 255 x 255 visits each read the
+        // 60 KB terminal header region. Counting the bytes each visit reads stops it.
+        {
+            Bytes longTerminal;
+            const size_t children = 255, entry = 1 + 3, rootSize = 2 + children * entry, midSize = 2 + children * entry;
+            auto uleb3 = [&](size_t v) {
+                longTerminal.push_back(uint8_t((v & 0x7f) | 0x80));
+                longTerminal.push_back(uint8_t(((v >> 7) & 0x7f) | 0x80));
+                longTerminal.push_back(uint8_t(v >> 14));
+            };
+            longTerminal.push_back(0); longTerminal.push_back(uint8_t(children));
+            for (size_t c = 0; c < children; ++c) { longTerminal.push_back(0); uleb3(rootSize); }   // "" -> middle
+            longTerminal.push_back(0); longTerminal.push_back(uint8_t(children));
+            for (size_t c = 0; c < children; ++c) { longTerminal.push_back(0); uleb3(rootSize + midSize); }   // "" -> leaf
+            const size_t pad = 60000;   // the leaf: a terminal of 60,000 bytes and no children
+            longTerminal.push_back(uint8_t((pad & 0x7f) | 0x80)); longTerminal.push_back(uint8_t(((pad >> 7) & 0x7f) | 0x80));
+            longTerminal.push_back(uint8_t(pad >> 14));
+            longTerminal.insert(longTerminal.end(), pad, 0);
+            longTerminal.push_back(0);
+            checkTrie("export_trie_shared_long_terminal_hits_byte_limit", longTerminal, "export trie work limit exceeded");
+        }
+        checkTrie("export_trie_overlong_uleb", Bytes{0, 1, 'x', 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01},
+                  "LEB128 value too long");
         checkTrie("export_trie_cycle", {0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00}, "export trie cycle detected");
     }
 

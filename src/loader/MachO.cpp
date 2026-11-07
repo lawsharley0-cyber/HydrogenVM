@@ -84,9 +84,12 @@ struct Stream {
     const uint8_t* p; const uint8_t* end;
     bool done() const { return p >= end; }
     uint8_t byte() { if (p >= end) throw MachOError("Mach-O: opcode stream overrun"); return *p++; }
+    // A 64-bit LEB128 value takes at most 10 bytes; a longer one is malformed (and on a
+    // shared export-trie node it would be rescanned on every visit).
     uint64_t uleb() {
         uint64_t v = 0; int shift = 0;
         for (;;) {
+            if (shift >= 70) throw MachOError("Mach-O: LEB128 value too long");
             const uint8_t b = byte();
             if (shift < 64) v |= uint64_t(b & 0x7F) << shift;
             shift += 7;
@@ -95,7 +98,10 @@ struct Stream {
     }
     int64_t sleb() {
         int64_t v = 0; int shift = 0; uint8_t b;
-        do { b = byte(); if (shift < 64) v |= int64_t(b & 0x7F) << shift; shift += 7; } while (b & 0x80);
+        do {
+            if (shift >= 70) throw MachOError("Mach-O: LEB128 value too long");
+            b = byte(); if (shift < 64) v |= int64_t(b & 0x7F) << shift; shift += 7;
+        } while (b & 0x80);
         if (shift < 64 && (b & 0x40)) v |= -(int64_t(1) << shift);
         return v;
     }
@@ -363,6 +369,13 @@ void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const
     const uint64_t termSize = s.uleb();
     if (termSize > size_t(s.end - s.p)) throw MachOError("Mach-O: export trie terminal overrun");
     const uint8_t* childrenStart = s.p + termSize;
+    // Every byte a visit reads counts too: a shared node with a long (padded) ULEB or a
+    // long terminal would otherwise cost O(n) on each of up to n visits.
+    auto charge = [&](size_t used) {
+        bytes += used;
+        if (bytes > exportTrieByteLimit(n)) throw MachOError("Mach-O: export trie work limit exceeded");
+    };
+    charge(size_t(childrenStart - (p + nodeOff)));
     if (termSize != 0 && !prefix.empty()) {
         Stream ts{s.p, childrenStart};
         const uint64_t flags = ts.uleb();
@@ -380,11 +393,11 @@ void walkExportTrie(Ctx& cx, const uint8_t* p, size_t n, uint64_t nodeOff, const
     if (cs.done()) return;
     const uint8_t childCount = cs.byte();
     for (uint8_t i = 0; i < childCount; ++i) {
+        const uint8_t* entry = cs.p;
         const std::string edge = cs.cstr();
         const uint64_t childOff = cs.uleb();
         if (childOff >= n) throw MachOError("Mach-O: export trie child offset out of range");
-        bytes += prefix.size() + edge.size();
-        if (bytes > exportTrieByteLimit(n)) throw MachOError("Mach-O: export trie work limit exceeded");
+        charge(size_t(cs.p - entry) + prefix.size() + edge.size());   // bytes read, then the name built
         walkExportTrie(cx, p, n, childOff, prefix + edge, depth + 1, activePath, steps, bytes);
     }
 }
