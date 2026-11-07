@@ -3356,6 +3356,30 @@ int runFullSubsystemTests() {
         check(counts && timed && recursive && cores, "libc++ shared_ptr counts, timed condition wait, recursive_mutex, hardware_concurrency");
     }
 
+    // UILocalNotification keeps what games set on it (three games logged its setters as missing).
+    {
+        const ObjC::id note = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UILocalNotification"), r.selAlloc)), r.selInit));
+        const ObjC::id body = Foundation::makeString(cx, "Come back!");
+        r.send(cpu, note, "setAlertBody:", {body});
+        r.send(cpu, note, "setRepeatInterval:", {16});
+        r.send(cpu, note, "setApplicationIconBadgeNumber:", {3});
+        const ObjC::id copy = ObjC::id(r.send(cpu, note, "copy"));
+        const bool kept = Foundation::utf8(cx, ObjC::id(r.send(cpu, note, "alertBody"))) == "Come back!" &&
+                          uint32_t(r.send(cpu, note, "repeatInterval")) == 16 && uint32_t(r.send(cpu, note, "applicationIconBadgeNumber")) == 3 &&
+                          (r.send(cpu, note, "hasAction") & 0xff) == 1 &&
+                          Foundation::utf8(cx, ObjC::id(r.send(cpu, copy, "alertBody"))) == "Come back!" && uint32_t(r.send(cpu, copy, "repeatInterval")) == 16;
+        if (!kept) {
+            const ObjC::id b = ObjC::id(r.send(cpu, note, "alertBody")), cb = ObjC::id(r.send(cpu, copy, "alertBody"));
+            std::printf("    UILocalNotification: body '%s' repeat %u badge %u hasAction %u copy body '%s' repeat %u\n",
+                        b ? Foundation::utf8(cx, b).c_str() : "(nil)", uint32_t(r.send(cpu, note, "repeatInterval")),
+                        uint32_t(r.send(cpu, note, "applicationIconBadgeNumber")), uint32_t(r.send(cpu, note, "hasAction")),
+                        cb ? Foundation::utf8(cx, cb).c_str() : "(nil)", uint32_t(r.send(cpu, copy, "repeatInterval")));
+        }
+        r.release(cpu, copy);
+        r.release(cpu, note);
+        check(kept, "UILocalNotification keeps its properties and copies them");
+    }
+
     // UIViewController has the rotation and appearance hooks engines copy encodings from
     // (Unity's ObjCSetKnownInstanceMethod asserts on a NULL Method).
     {
