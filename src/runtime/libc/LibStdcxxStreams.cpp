@@ -22,6 +22,7 @@
 // Our stringbuf keeps no get/put area (all six pointers null), so the app's
 // inline sputc/sgetc always fall through to the virtuals, which hold the
 // contents on the host side.
+#include "runtime/Support.hpp"
 #include "runtime/Process.hpp"
 #include <cinttypes>
 #include <cstdio>
@@ -1214,7 +1215,8 @@ void registerLibStdcxxStreams(Process& p) {
     p.def<&o_iosManip>("__ZNSolsEPFRSt8ios_baseS0_E");
     p.def<&o_setw>("__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St5_Setw");
     p.def<&o_setprecision>("__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St13_Setprecision");
-    p.def<&o_setfill>("__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St8_SetfillIS3_E");
+    supportDef<&o_setfill>(p, "__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St8_SetfillIS3_E", SupportStatus::Real,
+                           "Stores the fill character in the stream's basic_ios, as libstdc++ does");
     p.def<&o_char>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_h");
     p.def<&o_cstr>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_PKh");
     p.def<&ios_voidp>("__ZNKSt9basic_iosIcSt11char_traitsIcEEcvPvEv");
