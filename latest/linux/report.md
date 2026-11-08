@@ -1,46 +1,46 @@
-# HydrogenVM report — a2ed7c6
+# HydrogenVM report — 014b181
 
-2026-11-07T23:53:42+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-11-08T07:33:16+00:00 · AMD EPYC 9V45 96-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 294.2s |
-| tools | 1 | 0 | 0 | 7.0s |
-| cpu | 15 | 0 | 0 | 0.8s |
-| ios | 6 | 0 | 0 | 2.3s |
-| bench | 5 | 0 | 0 | 24.3s |
+| build | 1 | 0 | 0 | 190.8s |
+| tools | 1 | 0 | 0 | 6.1s |
+| cpu | 15 | 0 | 0 | 0.5s |
+| ios | 6 | 0 | 0 | 2.2s |
+| bench | 5 | 0 | 0 | 18.1s |
 
 ## Speed
 
-CoreMark **1738.3** iterations/s (581.8 guest MIPS)
+CoreMark **2885.2** iterations/s (965.7 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **120.7%** | 724 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **90.5%** | 724 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **72.4%** | 579 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.2%** | 497 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **200.4%** | 1202 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **150.3%** | 1202 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **120.2%** | 962 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **63.4%** | 824 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 425 MIPS, ctests_arm 474 MIPS, ftests_vfp_thumb_softfp 414 MIPS, ftests_neon_thumb 375 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 774 MIPS, ctests_arm 835 MIPS, ftests_vfp_thumb_softfp 828 MIPS, ftests_neon_thumb 713 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
 | CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.67s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.04s | 61 | 0.49 ms | 9.23 ms | 0 |
+| ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.30 ms | 6.95 ms | 0 |
 
-## Problems (37)
+## Problems (38)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 38.2% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 63.4% of iPhone 5 single-core speed (goal: 100%)
 
-### Warnings (36)
+### Warnings (37)
 
 - **build / compiler**: src/loader/MachO.cpp:213:31: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 - **build / compiler**: src/runtime/foundation/CompatibilityClasses.cpp:210:42: warning: missing field 'retained' initializer [-Wmissing-field-initializers]
@@ -64,6 +64,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 425 MIPS, ctests_arm 474
 - **build / compiler**: src/runtime/gl/HostGL.cpp:40:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:41:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:41:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:499:16: warning: unused function 'hgGetIntFwd' [-Wunused-function]
 - **build / compiler**: src/runtime/libc/LibStdcxx.cpp:38:40: warning: unused variable 'kBinary' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:52:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:58:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
@@ -77,5 +78,5 @@ Raw interpreter speed (CPU test programs): ctests_thumb 425 MIPS, ctests_arm 474
 - **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1477:10: warning: unused function 'avs_zero' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
-- **build / compiler**: tests/runner/TestRunner.cpp:9697:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
+- **build / compiler**: tests/runner/TestRunner.cpp:9714:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 
