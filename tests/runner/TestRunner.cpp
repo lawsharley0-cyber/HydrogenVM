@@ -4384,6 +4384,23 @@ int runFullSubsystemTests() {
         const ObjC::id keptValue = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(testKey)}));
         check(Runtime::Foundation::utf8(cx, keptValue) == "initialValue",
               "NSUserDefaults keeps the previous value after a rejected write");
+        {
+            // objectForKey:'s result stays the same live object while the key keeps an equal
+            // value, across a synchronize that re-reads the store (Tiny Wings keeps it in an
+            // ivar without retaining it and saves it again on resign); a changed value gets a
+            // new object. A number read with stringForKey: is cached the same way.
+            const ObjC::id k2 = Runtime::Foundation::makeString(cx, "testKeyHandedOut");
+            r.send(cpu, ud, r.sel("setObject:forKey:"), {uint32_t(Runtime::Foundation::makeString(cx, "Player")), uint32_t(k2)});
+            const ObjC::id first = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(k2)}));
+            r.send(cpu, ud, r.sel("synchronize"));
+            const ObjC::id again = ObjC::id(r.send(cpu, ud, r.sel("objectForKey:"), {uint32_t(k2)}));
+            r.send(cpu, ud, r.sel("setInteger:forKey:"), {7, uint32_t(k2)});
+            const ObjC::id asText = ObjC::id(r.send(cpu, ud, r.sel("stringForKey:"), {uint32_t(k2)}));
+            const ObjC::id asTextAgain = ObjC::id(r.send(cpu, ud, r.sel("stringForKey:"), {uint32_t(k2)}));
+            check(first && first == again && Runtime::Foundation::utf8(cx, again) == "Player" &&
+                      asText && asText == asTextAgain && Runtime::Foundation::utf8(cx, asText) == "7",
+                  "NSUserDefaults hands out one live object per key while its value is unchanged");
+        }
         const ObjC::id validKey = Runtime::Foundation::makeString(cx, "testKeyPlist");
         const ObjC::id validString = Runtime::Foundation::makeString(cx, "validStringValue");
         const ObjC::id validArray = Runtime::Foundation::makeArray(cx, {validString});

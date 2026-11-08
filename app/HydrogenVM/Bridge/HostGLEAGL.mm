@@ -94,7 +94,33 @@ public:
         layer.contentsScale = 1;
         layer.bounds = CGRectMake(0, 0, width, height);
         [CATransaction commit];
-        const BOOL ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:layer];
+        BOOL ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:layer];
+        if (!ok && !created) {
+            // Re-storing a layer that already backs a renderbuffer (a resize on rotation, or
+            // the game recreating its renderbuffer) fails on Apple's driver: Temple Run, Tiny
+            // Wings and PvZ then drew into a framebuffer with no colour storage. Detach and
+            // retry; failing that, give this renderbuffer a fresh layer (the shell shows the
+            // new one through onLayer_).
+            [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:nil];
+            ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:layer];
+            if (!ok) {
+                CAEAGLLayer *fresh = [CAEAGLLayer layer];
+                fresh.opaque = YES;
+                fresh.drawableProperties = layer.drawableProperties;
+                fresh.contentsScale = 1;
+                fresh.bounds = CGRectMake(0, 0, width, height);
+                ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:fresh];
+                if (ok) {
+                    std::lock_guard<std::mutex> lk(mu_);
+                    void *old = layers_[layerKey];
+                    layers_[layerKey] = (__bridge_retained void *)fresh;
+                    if (old) CFRelease(old);
+                    layer = fresh;
+                    created = true;
+                }
+            }
+            while (glGetError() != GL_NO_ERROR) {}   // the failed attempts' errors are not the game's
+        }
         [CATransaction flush];
         if (created || ok) {
             auto notify = onLayer_;

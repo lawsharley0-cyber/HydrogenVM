@@ -1,6 +1,7 @@
 // HydrogenVM — NSUserDefaults and CFPreferences. Values are kept as
 // property-list trees on the host and persisted as XML to
 // <home>/Library/Preferences/<bundle id>.plist, like the real thing.
+#include <functional>
 #include <map>
 #include "Foundation.hpp"
 #include <filesystem>
@@ -31,7 +32,8 @@ struct Defaults {
     // The object handed out for each stored value, kept alive while that value is stored. iOS
     // returns the same long-lived object from its cache, and games keep it without retaining
     // it (Tiny Wings' player name); a fresh autoreleased copy per call was freed under them.
-    std::map<PV, id> handedOut;
+    // Objects handed out per key (and kind), retained while the key keeps an equal value.
+    std::map<std::string, std::pair<PV, id>> handedOut;
 
     std::string prefsDir() const { return proc.homePath() + "/Library/Preferences"; }
     Domain& domain(const std::string& name) {
@@ -115,31 +117,40 @@ id ud_init(Ctx&, id self, SEL) { return self; }
 id ud_initWithSuite(Ctx&, id self, SEL, id) { return self; }
 void ud_reset(Ctx& x, id, SEL) { D(x).synchronize(); }
 
-// The cached object for a stored value; values replaced since are let go (autoreleased, so
-// one the app still uses this turn of the run loop stays valid until the pool drains).
-id handOut(Ctx& x, const PV& v) {
+// The object handed out for a key stays alive while the key keeps an equal value, as
+// NSUserDefaults' own storage keeps it: pre-ARC code keeps objectForKey:'s result in an
+// ivar without retaining it (Tiny Wings' high-score names, saved again on resign). A value
+// that changed is let go autoreleased, so a caller using it this turn still has it.
+bool sameValue(const PV& a, const PV& b) {
+    if (a == b) return true;
+    if (!a || !b || a->type != b->type) return false;
+    return Hydrogen::Plist::toXml(*a) == Hydrogen::Plist::toXml(*b);
+}
+id handOut(Ctx& x, const std::string& slot, const PV& v, const std::function<id()>& make) {
     if (!v) return 0;
     auto& d = D(x);
-    std::vector<id> stale;
-    id obj = 0;
+    id stale = 0;
     {
         std::lock_guard<std::mutex> lk(d.mu);
-        for (auto it = d.handedOut.begin(); it != d.handedOut.end();) {
-            if (it->first.use_count() == 1 && it->first != v) { stale.push_back(it->second); it = d.handedOut.erase(it); }
-            else ++it;
+        auto it = d.handedOut.find(slot);
+        if (it != d.handedOut.end()) {
+            if (sameValue(it->second.first, v)) { it->second.first = v; return it->second.second; }
+            stale = it->second.second;
+            d.handedOut.erase(it);
         }
-        if (auto it = d.handedOut.find(v); it != d.handedOut.end()) obj = it->second;
     }
-    for (id o : stale) autoreleased(x, o);
-    if (obj) return obj;
-    obj = plistToObject(x, *v);
+    if (stale) autoreleased(x, stale);
+    const id obj = make();
     if (!obj) return 0;
     rt(x).retain(x.cpu, obj);
     std::lock_guard<std::mutex> lk(d.mu);
-    d.handedOut.emplace(v, obj);
+    d.handedOut[slot] = {v, obj};
     return obj;
 }
-id ud_object(Ctx& x, id, SEL, id key) { return handOut(x, D(x).get(K(x, key))); }
+id handOut(Ctx& x, const std::string& key, const PV& v) {
+    return handOut(x, key, v, [&] { return plistToObject(x, *v); });
+}
+id ud_object(Ctx& x, id, SEL, id key) { const std::string k = K(x, key); return handOut(x, k, D(x).get(k)); }
 void ud_setObject(Ctx& x, id, SEL, id value, id key) {
     if (!value) { D(x).set(K(x, key), nullptr); return; }
     PV v = objectToPlist(x, value);
@@ -182,15 +193,20 @@ bool boolOf(const PV& v) {
     return intOf(v) != 0 || (v->type == T::Real && v->r != 0);
 }
 id ud_string(Ctx& x, id, SEL, id key) {
-    PV v = D(x).get(K(x, key));
+    const std::string k = K(x, key);
+    PV v = D(x).get(k);
     if (!v) return 0;
-    if (v->type == T::String) return handOut(x, v);
-    if (v->type == T::Integer) return makeString(x, std::to_string(v->i));
-    if (v->type == T::Real) { char b[64]; std::snprintf(b, sizeof b, "%.17g", v->r); return makeString(x, std::string(b)); }
-    if (v->type == T::Bool) return makeString(x, v->b ? "1" : "0");
+    if (v->type == T::String) return handOut(x, k, v);
+    // A number read as a string: cached the same way, under its own slot.
+    const std::string slot = k + "\x01string";
+    if (v->type == T::Integer) return handOut(x, slot, v, [&] { return makeString(x, std::to_string(v->i)); });
+    if (v->type == T::Real) {
+        return handOut(x, slot, v, [&] { char b[64]; std::snprintf(b, sizeof b, "%.17g", v->r); return makeString(x, std::string(b)); });
+    }
+    if (v->type == T::Bool) return handOut(x, slot, v, [&] { return makeString(x, v->b ? "1" : "0"); });
     return 0;
 }
-id typed(Ctx& x, id key, T t) { PV v = D(x).get(K(x, key)); return v && v->type == t ? handOut(x, v) : 0; }
+id typed(Ctx& x, id key, T t) { const std::string k = K(x, key); PV v = D(x).get(k); return v && v->type == t ? handOut(x, k, v) : 0; }
 id ud_array(Ctx& x, id, SEL, id key) { return typed(x, key, T::Array); }
 id ud_dict(Ctx& x, id, SEL, id key) { return typed(x, key, T::Dict); }
 id ud_data(Ctx& x, id, SEL, id key) { return typed(x, key, T::Data); }

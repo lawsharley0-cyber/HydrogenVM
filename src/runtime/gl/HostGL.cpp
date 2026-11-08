@@ -420,6 +420,54 @@ template <typename... A> std::string hgArgs(A... a) {
     return s;
 }
 static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname);
+// "(framebuffer 3 status 0x8cd6: color0 renderbuffer 2 640x960 0x8058, depth renderbuffer 4 0x0 0x81a5)":
+// the bound framebuffer's status and each attachment, for GL_INVALID_FRAMEBUFFER_OPERATION.
+static std::string hgDescribeFramebuffer(HostContext* hc) {
+    if (!hc || !hc->fn.glGetIntegerv) return std::string();
+    // A native ES 1.1 context has only the OES spellings.
+    const bool oes = hc->api == 1 && !hc->gles1 && !hc->desktop && hc->fn.glCheckFramebufferStatusOES;
+    auto checkStatus = oes ? hc->fn.glCheckFramebufferStatusOES : hc->fn.glCheckFramebufferStatus;
+    auto attachmentParam = oes ? hc->fn.glGetFramebufferAttachmentParameterivOES : hc->fn.glGetFramebufferAttachmentParameteriv;
+    auto bindRb = oes ? hc->fn.glBindRenderbufferOES : hc->fn.glBindRenderbuffer;
+    auto rbParam = oes ? hc->fn.glGetRenderbufferParameterivOES : hc->fn.glGetRenderbufferParameteriv;
+    if (!checkStatus) return std::string();
+    int32_t fbo = 0;
+    hc->fn.glGetIntegerv(0x8CA6, &fbo);   // FRAMEBUFFER_BINDING
+    char b[96];
+    std::snprintf(b, sizeof b, "(framebuffer %d status 0x%04x", fbo, checkStatus(0x8D40));
+    std::string out = b;
+    if (attachmentParam) {
+        const struct { uint32_t point; const char* label; } points[] = {{0x8CE0, "color0"}, {0x8D00, "depth"}, {0x8D20, "stencil"}};
+        int32_t savedRb = 0;
+        hc->fn.glGetIntegerv(0x8CA7, &savedRb);   // RENDERBUFFER_BINDING
+        bool first = true;
+        for (const auto& pt : points) {
+            int32_t type = 0, objName = 0;
+            attachmentParam(0x8D40, pt.point, 0x8CD0, &type);   // OBJECT_TYPE
+            if (!type) continue;
+            attachmentParam(0x8D40, pt.point, 0x8CD1, &objName);  // OBJECT_NAME
+            std::snprintf(b, sizeof b, "%s %s %s %d", first ? ":" : ",", pt.label,
+                          type == 0x8D41 ? "renderbuffer" : type == 0x1702 ? "texture" : "object", objName);
+            out += b;
+            first = false;
+            if (type == 0x8D41 && bindRb && rbParam) {
+                int32_t w = 0, h = 0, fmt = 0;
+                bindRb(0x8D41, uint32_t(objName));
+                rbParam(0x8D41, 0x8D42, &w);
+                rbParam(0x8D41, 0x8D43, &h);
+                rbParam(0x8D41, 0x8D44, &fmt);
+                std::snprintf(b, sizeof b, " %dx%d 0x%04x", w, h, fmt);
+                out += b;
+            }
+        }
+        if (bindRb) bindRb(0x8D41, uint32_t(savedRb));
+        if (first) out += ": no attachments";
+    }
+    // The queries themselves may raise errors on an odd framebuffer: never report those.
+    for (int i = 0; i < 8 && hc->fn.glGetError && hc->fn.glGetError(); ++i) {}
+    return out + ")";
+}
+
 template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* name, F args) {
     if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, std::string("GL ") + name + "(" + args() + ")");
     if (hc->trace && name[2] == 'D' && (std::strncmp(name, "glDrawArrays", 12) == 0 || std::strncmp(name, "glDrawElements", 14) == 0))
@@ -433,19 +481,19 @@ template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* n
         x.proc.perf().glErrors++;
         char code[8];
         std::snprintf(code, sizeof code, "%04x", e);
-        x.proc.noteGLError(std::string(name) + " -> 0x" + code + (hc->implicitWorker ? " [worker]" : " [main]"));
+        std::string line = std::string(name) + " -> 0x" + code + (hc->implicitWorker ? " [worker]" : " [main]");
+        // An incomplete framebuffer: say which attachment, so a phone report explains it.
+        if ((e == 0x0506 || std::strncmp(name, "glFramebuffer", 13) == 0) && hc->fboDescribes < 32) {
+            ++hc->fboDescribes;
+            line += " " + hgDescribeFramebuffer(hc);
+        }
+        x.proc.noteGLError(std::move(line));
     }
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 200)
         x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }() +
                                           (hc->implicitWorker ? " [worker]" : " [main]") +
-                                          (e == 0x0506 && hc->fn.glCheckFramebufferStatus ? [&] {
-                                              // Say why the framebuffer is incomplete.
-                                              char b[64];
-                                              std::snprintf(b, sizeof b, " (framebuffer %d status 0x%04x)", hgGetIntFwd(hc, 0x8CA6),
-                                                            hc->fn.glCheckFramebufferStatus(0x8D40));
-                                              return std::string(b);
-                                          }() : std::string()));
+                                          (e == 0x0506 && hc->fboDescribes < 64 && ++hc->fboDescribes ? " " + hgDescribeFramebuffer(hc) : std::string()));
 }
 
 static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname) {
@@ -1236,6 +1284,7 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
             st.drawsAtPresent = total;
         }
         pf.glLastFrameDraws = frameDraws;
+        pf.glPresents++;
         if (!frameDraws) pf.glEmptyPresents++;
     }
     layer = d.layer;

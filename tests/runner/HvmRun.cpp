@@ -272,7 +272,7 @@ int hvmRunMain(int argc, char** argv) {
                   << ", \"faultsToApp\": " << pf.faultsToApp.load() << ", \"missingCount\": " << proc.missingCount() << "},\n";
                 if (cfg.glTrace) {
                     f << "  \"gl\": {\"errors\": " << pf.glErrors.load() << ", \"draws\": " << pf.glDraws.load()
-                      << ", \"emptyPresents\": " << pf.glEmptyPresents.load() << ", \"lastFrameDraws\": " << pf.glLastFrameDraws.load()
+                      << ", \"presents\": " << pf.glPresents.load() << ", \"emptyPresents\": " << pf.glEmptyPresents.load() << ", \"lastFrameDraws\": " << pf.glLastFrameDraws.load()
                       << ", \"errorLog\": [";
                     bool first = true;
                     for (const auto& line : proc.glErrorLog()) {

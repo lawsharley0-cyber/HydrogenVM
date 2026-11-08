@@ -679,7 +679,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         @"missingCount": @(p->missingCount()), @"framesPresented": @(pf.framesPresented.load()),
         @"timeToFirstFrameMs": @(ttff == ~uint64_t{0} ? -1.0 : double(ttff) / 1e6),
         @"glErrors": @(pf.glErrors.load()), @"glDraws": @(pf.glDraws.load()),
-        @"glEmptyPresents": @(pf.glEmptyPresents.load()), @"glLastFrameDraws": @(pf.glLastFrameDraws.load()),
+        @"glPresents": @(pf.glPresents.load()), @"glEmptyPresents": @(pf.glEmptyPresents.load()), @"glLastFrameDraws": @(pf.glLastFrameDraws.load()),
     };
 }
 

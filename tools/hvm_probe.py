@@ -211,8 +211,8 @@ def issues_from(rep, log_text, shot, timed_out):
     gl = rep.get('gl') or {}
     for line in (gl.get('errorLog') or [])[:8]:
         add('gl-error', line)
-    if gl and frames and not gl.get('draws', 0):
-        add('gl-nodraw', 'frames presented but no GL draw call was made')
+    if gl and gl.get('presents', frames) and not gl.get('draws', 0):
+        add('gl-nodraw', 'OpenGL frames presented but no GL draw call was made')
     if (rep.get('display') or {}).get('faultsToApp', 0):
         add('fault', 'memory faults passed to the game\'s own signal handler')
     for e in rep.get('errors') or []:
