@@ -1,46 +1,46 @@
-# HydrogenVM report — a2ed7c6
+# HydrogenVM report — 014b181
 
-2026-11-08T00:01:43+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
+2026-11-08T07:38:51+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 197.6s |
-| tools | 1 | 0 | 0 | 16.6s |
+| build | 1 | 0 | 0 | 158.6s |
+| tools | 1 | 0 | 0 | 16.5s |
 | cpu | 15 | 0 | 0 | 0.4s |
-| ios | 6 | 0 | 0 | 3.4s |
-| bench | 5 | 0 | 0 | 24.9s |
+| ios | 6 | 0 | 0 | 3.1s |
+| bench | 5 | 0 | 0 | 21.5s |
 
 ## Speed
 
-CoreMark **1688.0** iterations/s (569.8 guest MIPS)
+CoreMark **1960.5** iterations/s (657.9 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **117.2%** | 703 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **87.9%** | 703 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **70.3%** | 563 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.1%** | 482 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **136.1%** | 817 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **102.1%** | 817 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **81.7%** | 654 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **43.1%** | 560 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 368 MIPS, ctests_arm 382 MIPS, ftests_vfp_thumb_softfp 404 MIPS, ftests_neon_thumb 361 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 422 MIPS, ctests_arm 474 MIPS, ftests_vfp_thumb_softfp 442 MIPS, ftests_neon_thumb 187 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.20s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.13s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.14s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.15s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 1.10s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.26s | 36 | 0.91 ms | 12.40 ms | 0 |
+| CTest | 0.18s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.18s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 1.20s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.21s | 39 | 0.82 ms | 9.50 ms | 0 |
 
-## Problems (33)
+## Problems (34)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 37.1% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 43.1% of iPhone 5 single-core speed (goal: 100%)
 
-### Warnings (32)
+### Warnings (33)
 
 - **build / compiler**: src/runtime/foundation/CompatibilityClasses.cpp:210:42: warning: missing field 'retained' initializer [-Wmissing-field-initializers]
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
@@ -63,6 +63,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 368 MIPS, ctests_arm 382
 - **build / compiler**: src/runtime/gl/HostGL.cpp:40:80: warning: unused variable 'kColorArrayPointer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:41:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:41:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/gl/HostGL.cpp:499:16: warning: unused function 'hgGetIntFwd' [-Wunused-function]
 - **build / compiler**: src/runtime/libc/LibStdcxx.cpp:38:40: warning: unused variable 'kBinary' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:52:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:58:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]

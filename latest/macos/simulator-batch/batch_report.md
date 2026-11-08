@@ -1,8 +1,8 @@
 # HydrogenVM — Test All Games Report
 
-**Date:** 2026-11-08T00:32:45Z  
+**Date:** 2026-11-08T08:03:38Z  
 **Device:** iPhone, iOS 26.5  
-**Emulator Commit:** `a2ed7c6c267c`  
+**Emulator Commit:** `014b181af1fe`  
 **Options:** 5s/app · Renderer Both (Software & GPU) · KeepGoing true · Explore 30s · Relaunch true
 
 ### Summary
@@ -22,7 +22,7 @@
 
 | App | Mode | Status | FPS | P95 (ms) | Signal | Summary |
 |---|---|---|---:|---:|---|---|
-| UIKitTest (`com.hydrogenvm.test.uikittest`) | SOFTWARE | ❌ Crashed | 6 | 0.3 | `ok` | Crashed (status 1) |
+| UIKitTest (`com.hydrogenvm.test.uikittest`) | SOFTWARE | ❌ Crashed | 6 | 0.1 | `ok` | Crashed (status 1) |
 | UIKitTest (`com.hydrogenvm.test.uikittest`) | GPU | ❌ Crashed | 5 | 0.1 | `ok` | Crashed (status 1) |
 
 ### Checklist
@@ -69,7 +69,7 @@
 
 - ❌ **Launches:** Crashed (status 1)
 - ✅ **Shows a picture:** 7 frames drawn
-- ⚠️ **Graphics calls:** Frames were shown but the game made no GL draw call
+- ⚠️ **Graphics calls:** 1 OpenGL frames were presented without a draw call
 - ✅ **Game view on screen:** Every frame reached the window
 - ✅ **Audio output:** Mixer ran for 5.9 s, peak 0.00
 - ⚠️ **Music:** No music heard. It may be off in the game's settings, or this screen has none

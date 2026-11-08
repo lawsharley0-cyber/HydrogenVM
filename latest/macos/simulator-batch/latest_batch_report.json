@@ -1,7 +1,7 @@
 {
   "build" : {
     "binaryMatch" : "verified",
-    "commit" : "a2ed7c6c267cf14abd3060e509f5e20f6941c181",
+    "commit" : "014b181af1fe94f723957f35fb900e474d3463ad",
     "configuration" : "device"
   },
   "device" : {
@@ -99,7 +99,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 269069,
+            "audioFramesRendered" : 268128,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -109,11 +109,12 @@
             "glEmptyPresents" : 0,
             "glErrors" : 0,
             "glLastFrameDraws" : 0,
+            "glPresents" : 0,
             "missingCount" : 0,
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 930.90650000000005
+            "timeToFirstFrameMs" : 981.72808299999997
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -122,32 +123,32 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2125159502029419
+                "timeOffset" : 5.2230110168457031
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5296870470046997
+                "timeOffset" : 5.5292190313339233
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8527400493621826
+                "timeOffset" : 5.8491480350494385
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.164167046546936
+                "timeOffset" : 6.1588709354400635
               },
               {
                 "details" : "grid tap at (133, 24)",
                 "kind" : "tap",
-                "timeOffset" : 6.4705820083618164
+                "timeOffset" : 6.4802809953689575
               },
               {
                 "details" : "grid tap at (26, 360)",
                 "kind" : "tap",
-                "timeOffset" : 6.7811529636383057
+                "timeOffset" : 6.7935889959335327
               }
             ],
             "backgroundTested" : false,
@@ -163,32 +164,32 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2125159502029419
+                "timeOffset" : 5.2230110168457031
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5296870470046997
+                "timeOffset" : 5.5292190313339233
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8527400493621826
+                "timeOffset" : 5.8491480350494385
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.164167046546936
+                "timeOffset" : 6.1588709354400635
               },
               {
                 "details" : "grid tap at (133, 24)",
                 "kind" : "tap",
-                "timeOffset" : 6.4705820083618164
+                "timeOffset" : 6.4802809953689575
               },
               {
                 "details" : "grid tap at (26, 360)",
                 "kind" : "tap",
-                "timeOffset" : 6.7811529636383057
+                "timeOffset" : 6.7935889959335327
               }
             ],
             "screensVisited" : 1,
@@ -204,7 +205,7 @@
           "perf" : {
             "fps" : 6,
             "framesPresented" : 13,
-            "frameTimeP95Ms" : 0.25190400000000002
+            "frameTimeP95Ms" : 0.13107199999999999
           },
           "renderer" : "software",
           "signature" : "exit-1",
@@ -225,7 +226,7 @@
               "status" : "pass"
             },
             {
-              "detail" : "Frames were shown but the game made no GL draw call",
+              "detail" : "1 OpenGL frames were presented without a draw call",
               "name" : "Graphics calls",
               "status" : "warn"
             },
@@ -298,11 +299,12 @@
             "glEmptyPresents" : 1,
             "glErrors" : 0,
             "glLastFrameDraws" : 0,
+            "glPresents" : 1,
             "missingCount" : 0,
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 85.655249999999995
+            "timeToFirstFrameMs" : 35.988959000000001
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -311,22 +313,17 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2030929327011108
+                "timeOffset" : 5.2182059288024902
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5221669673919678
+                "timeOffset" : 5.5281869173049927
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8434429168701172
-              },
-              {
-                "details" : "grid tap at (26, 168)",
-                "kind" : "tap",
-                "timeOffset" : 6.1656749248504639
+                "timeOffset" : 5.8526289463043213
               }
             ],
             "backgroundTested" : false,
@@ -335,29 +332,24 @@
             "newProblems" : [
               {
                 "problemText" : "70 checks, 3 failures",
-                "triggeringActionIndex" : 3
+                "triggeringActionIndex" : 2
               }
             ],
             "reproSteps" : [
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2030929327011108
+                "timeOffset" : 5.2182059288024902
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5221669673919678
+                "timeOffset" : 5.5281869173049927
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8434429168701172
-              },
-              {
-                "details" : "grid tap at (26, 168)",
-                "kind" : "tap",
-                "timeOffset" : 6.1656749248504639
+                "timeOffset" : 5.8526289463043213
               }
             ],
             "screensVisited" : 1,
@@ -373,7 +365,7 @@
           "perf" : {
             "fps" : 5,
             "framesPresented" : 7,
-            "frameTimeP95Ms" : 0.12697600000000001
+            "frameTimeP95Ms" : 0.080895999999999996
           },
           "renderer" : "gpu",
           "signature" : "exit-1",
@@ -383,5 +375,5 @@
       ]
     }
   },
-  "timestamp" : "2026-11-08T00:32:45Z"
+  "timestamp" : "2026-11-08T08:03:38Z"
 }
