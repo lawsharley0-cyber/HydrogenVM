@@ -56,6 +56,11 @@ class DeviceReportTests(unittest.TestCase):
                 self.assertEqual(device_report.main([str(new), '--previous', str(old)]), 0)
             self.assertIn('fixed (1):', out.getvalue())
 
+    def test_gl_errors_compare_without_arguments(self):
+        self.assertEqual(device_report.gl_key('glBindTexture(0x0de1, 1) -> 0x0502 [main]'), 'glBindTexture -> 0x0502 [main]')
+        self.assertEqual(device_report.gl_key('glClear -> 0x0506 [main] (framebuffer 1 status 0x8cd6: color0 renderbuffer 1 0x0 0x8056)'),
+                         'glClear -> 0x0506 [main]')
+
     def test_rejects_other_json(self):
         with tempfile.TemporaryDirectory() as t:
             d = self.write(Path(t) / 'x', {'kind': 'something-else'})

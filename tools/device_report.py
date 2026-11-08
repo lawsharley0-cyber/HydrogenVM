@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -51,8 +52,15 @@ def problems(row: dict) -> list[str]:
         if c.get('status') in ('fail', 'warn'):
             out.append(f"{c.get('status')}: {c.get('name')}")
     for line in (row.get('glErrorLog') or [])[:8]:
-        out.append(f'gl-error: {line}')
+        out.append(f'gl-error: {gl_key(line)}')
     return out
+
+
+def gl_key(line: str) -> str:
+    """'glBindTexture(0x0de1, 1) -> 0x0502 [main] (framebuffer ...)' -> 'glBindTexture -> 0x0502 [main]':
+    the arguments and framebuffer details vary between runs, the call and error do not."""
+    m = re.match(r'(\w+)(?:\([^)]*\))?\s*(->\s*0x[0-9a-fA-F]+\s*\[\w+\])', line)
+    return f'{m.group(1)} {m.group(2)}' if m else line
 
 
 def summarize(report: dict) -> dict[str, dict]:
@@ -70,6 +78,7 @@ def summarize(report: dict) -> dict[str, dict]:
             'glDraws': diag.get('glDraws', 0),
             'glErrors': diag.get('glErrors', 0),
             'summary': row.get('summary', ''),
+            'glErrorLog': row.get('glErrorLog') or [],
         }
     return result
 
@@ -114,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{mark} {g['name']} {g['version']} {k}  frames={g['frames']} draws={g['glDraws']} glErrors={g['glErrors']}")
         for p in g['problems']:
             print(f'       - {p}')
+        for line in g['glErrorLog'][:8]:
+            print(f'         gl: {line}')
     if diff:
         for label in ('fixed', 'new', 'still'):
             print(f"\n{label} ({len(diff[label])}):")
