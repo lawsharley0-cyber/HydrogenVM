@@ -481,13 +481,15 @@ template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* n
         x.proc.perf().glErrors++;
         char code[8];
         std::snprintf(code, sizeof code, "%04x", e);
-        std::string line = std::string(name) + " -> 0x" + code + (hc->implicitWorker ? " [worker]" : " [main]");
+        const std::string key = std::string(name) + " -> 0x" + code + (hc->implicitWorker ? " [worker]" : " [main]");
+        // The first occurrence keeps its arguments: "glBindTexture(0x0de1, 1) -> 0x0502 [main]".
+        std::string line = std::string(name) + "(" + args() + ")" + key.substr(std::strlen(name));
         // An incomplete framebuffer: say which attachment, so a phone report explains it.
         if ((e == 0x0506 || std::strncmp(name, "glFramebuffer", 13) == 0) && hc->fboDescribes < 32) {
             ++hc->fboDescribes;
             line += " " + hgDescribeFramebuffer(hc);
         }
-        x.proc.noteGLError(std::move(line));
+        x.proc.noteGLError(key, std::move(line));
     }
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 200)

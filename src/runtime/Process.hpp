@@ -155,14 +155,18 @@ public:
     std::shared_ptr<Audio::Mixer> mixerPtr() const { return mixer_; }
     bool stopping() const { return engine_->stopRequested(); }
     // glTrace: the first distinct GL errors ("glTexImage2D(...) -> 0x0500 [main]"), bounded.
-    void noteGLError(std::string line) {
+    // Kept once per key (call, error and context), with the first occurrence's details.
+    void noteGLError(const std::string& key, std::string line) {
         std::lock_guard<std::mutex> lk(glErrorMu_);
-        if (glErrorLines_.size() < 48 && std::find(glErrorLines_.begin(), glErrorLines_.end(), line) == glErrorLines_.end())
-            glErrorLines_.push_back(std::move(line));
+        if (glErrorLines_.size() >= 48) return;
+        for (const auto& [k, l] : glErrorLines_) if (k == key) return;
+        glErrorLines_.emplace_back(key, std::move(line));
     }
     std::vector<std::string> glErrorLog() const {
         std::lock_guard<std::mutex> lk(glErrorMu_);
-        return glErrorLines_;
+        std::vector<std::string> out;
+        for (const auto& [k, l] : glErrorLines_) out.push_back(l);
+        return out;
     }
 
     // ---- performance counters (read any time; reported by `hvm --report`)
@@ -481,7 +485,7 @@ private:
     std::function<bool(Ctx&, const std::exception&)> hostErrorHook_;
     std::shared_ptr<Audio::Mixer> mixer_;
     mutable std::mutex glErrorMu_;
-    std::vector<std::string> glErrorLines_;
+    std::vector<std::pair<std::string, std::string>> glErrorLines_;
     std::string crashReport_;
     std::string crashSignature_, crashKind_, crashLocation_, crashDetail_, executableHash_;
     std::array<uint32_t, 16> crashRegisters_{};

@@ -30,7 +30,15 @@ using Audio::DecodedAudio;
 // Every decode goes through here so a file played as silence (a codec this build cannot
 // decode) is reported once per codec in the log and the run report.
 DecodedAudio decodeAudioBytes(Ctx& x, const uint8_t* data, size_t n) {
-    DecodedAudio d = Audio::decode(data, n);
+    DecodedAudio d;
+    try {
+        d = Audio::decode(data, n);
+    } catch (const std::bad_alloc&) {
+        // A long song decoded to PCM may not fit next to the guest arena on the
+        // phone. Play nothing rather than stop the game.
+        noteOnce(x, "audio too large to decode in memory (played as silence)");
+        return DecodedAudio{};
+    }
     if (d.silent) {
         char name[48];
         const uint32_t c = d.codec;
@@ -80,6 +88,13 @@ struct AudioQueueInstance {
     double dueFrames = 0, sampleTime = 0;
     std::chrono::steady_clock::time_point last{};
     uint32_t timeStamp = 0;   // guest AudioTimeStamp handed to the input callback
+    // Offline rendering (AudioQueueSetOfflineRenderFormat): enqueued buffers are not
+    // played; AudioQueueOfflineRender converts them to this format on request.
+    // FMOD decodes compressed clips this way (Unity games' music and effects).
+    bool offline = false, outFloat = false, outNonInterleaved = false;
+    int outRate = 44100, outChannels = 2, outBits = 16;
+    std::deque<float> offlineSource;   // converted source frames, outChannels per frame
+    double offlinePhase = 0;           // fractional position in offlineSource
 };
 
 // A file an app is writing (AudioFileCreateWithURL / ExtAudioFileCreateWithURL): the audio
@@ -219,6 +234,7 @@ int32_t aq_newOutput(Ctx& x, GuestPtr format, uint32_t callbackProc, uint32_t us
     return 0;
 }
 int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outBuf) {
+    audioTrace("AudioQueueAllocateBuffer", qid, byteSize);
     auto& st = ATS(x);
     if (!outBuf || !st.queues.count(qid)) return -50;
     // AudioQueueBuffer layout on 32-bit iOS (28 bytes + audio data):
@@ -387,6 +403,11 @@ int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr)
     auto it = st.queues.find(qid);
     if (it == st.queues.end() || !buf) return -50;
     AudioQueueInstance& q = it->second;
+    if (q.offline) {   // waits for AudioQueueOfflineRender
+        audioTrace("AudioQueueEnqueueOffline", qid, x.mem.read<uint32_t>(buf + 8));
+        q.pending.push_back(buf);
+        return 0;
+    }
     if (q.input) {   // an empty buffer for the recorder to fill
         q.pending.push_back(buf);
         if (!q.pump) {
@@ -493,9 +514,109 @@ int32_t aq_getParam(Ctx& x, uint32_t qid, uint32_t, GuestPtr outVal) {
     return 0;
 }
 
-// Offline rendering isn't supported (from PR #114, Minecraft: Story Mode imports these).
-int32_t aq_offlineRender(Ctx&, uint32_t, GuestPtr, GuestPtr, uint32_t) { return -50; }
-int32_t aq_setOfflineFormat(Ctx&, uint32_t, GuestPtr, GuestPtr) { return -50; }
+// Offline rendering. AudioQueueSetOfflineRenderFormat(q, format, layout) switches the
+// queue from playing to converting: AudioQueueOfflineRender(q, timeStamp, buffer, frames)
+// then fills the buffer from the enqueued audio, handing each consumed buffer back to the
+// queue's callback on the calling thread so the app can enqueue more. The source is linear
+// PCM (AudioFile presents every file decoded), resampled linearly to the offline rate.
+int32_t aq_setOfflineFormat(Ctx& x, uint32_t qid, GuestPtr format, GuestPtr) {
+    auto& st = ATS(x);
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end()) return -50;
+    AudioQueueInstance& q = it->second;
+    if (!format) { q.offline = false; return 0; }
+    const double sr = x.mem.read<double>(format);
+    const uint32_t id = x.mem.read<uint32_t>(format + 8), flags = x.mem.read<uint32_t>(format + 12);
+    const uint32_t ch = x.mem.read<uint32_t>(format + 28), bits = x.mem.read<uint32_t>(format + 32);
+    if (id != 0x6C70636D /* 'lpcm' */ || !(sr >= 4000 && sr <= 192000) || ch < 1 || ch > 8 ||
+        !(bits == 8 || bits == 16 || bits == 32) || ((flags & 1) && bits != 32)) return 0x666D743F;   // 'fmt?'
+    q.offline = true;
+    q.outRate = int(sr);
+    q.outChannels = int(ch);
+    q.outBits = int(bits);
+    q.outFloat = flags & 1;
+    q.outNonInterleaved = flags & 0x20;
+    q.offlineSource.clear();
+    q.offlinePhase = 0;
+    MX(x.proc).setPaused(q.voice, true);
+    audioTrace("AudioQueueSetOfflineRenderFormat", qid, (uint64_t(q.outRate) << 32) | (uint32_t(q.outChannels) << 8) | uint32_t(q.outBits));
+    return 0;
+}
+namespace {
+// Appends one enqueued source buffer to q.offlineSource, converted to the output channel count.
+void offlineTake(Ctx& x, AudioQueueInstance& q, uint32_t buf) {
+    const uint32_t data = x.mem.read<uint32_t>(buf + 4), bytes = x.mem.read<uint32_t>(buf + 8);
+    const int bps = std::max(1, q.bitsPerChannel / 8), ch = std::max(1, q.channels);
+    const size_t frames = data ? bytes / size_t(bps * ch) : 0;
+    auto sample = [&](size_t frame, int c) -> float {
+        const size_t idx = q.nonInterleaved ? size_t(c) * frames + frame : frame * size_t(ch) + size_t(c);
+        const uint32_t a = data + uint32_t(idx * size_t(bps));
+        if (q.isFloat && bps == 4) return x.mem.read<float>(a);
+        if (bps == 4) return float(x.mem.read<int32_t>(a)) / 2147483648.0f;
+        if (bps == 2) return float(x.mem.read<int16_t>(a)) / 32768.0f;
+        return float(int(x.mem.read<uint8_t>(a)) - 128) / 128.0f;
+    };
+    for (size_t f = 0; f < frames; ++f) {
+        if (q.outChannels == 1 && ch > 1) {
+            q.offlineSource.push_back(0.5f * (sample(f, 0) + sample(f, 1)));
+            continue;
+        }
+        for (int c = 0; c < q.outChannels; ++c) q.offlineSource.push_back(sample(f, std::min(c, ch - 1)));
+    }
+}
+}
+int32_t aq_offlineRender(Ctx& x, uint32_t qid, GuestPtr, GuestPtr buffer, uint32_t frames) {
+    auto& st = ATS(x);
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end() || !buffer) return -50;
+    if (!it->second.offline) return -66671;   // kAudioQueueErr_InvalidOfflineMode
+    const uint32_t cap = x.mem.read<uint32_t>(buffer), out = x.mem.read<uint32_t>(buffer + 4);
+    const int outCh = it->second.outChannels, obps = it->second.outBits / 8;
+    frames = std::min<uint32_t>(frames, out ? cap / uint32_t(obps * outCh) : 0);
+    const double step = double(it->second.sampleRate) / double(it->second.outRate);
+    uint32_t done = 0;
+    for (; done < frames; ++done) {
+        // Source frames needed for this output frame: floor(phase) and the one after it.
+        for (;;) {
+            AudioQueueInstance& q = it->second;
+            const size_t have = q.offlineSource.size() / size_t(outCh);
+            if (have >= size_t(q.offlinePhase) + 2 || q.pending.empty()) break;
+            const uint32_t buf = q.pending.front();
+            q.pending.pop_front();
+            offlineTake(x, q, buf);
+            const uint32_t cb = q.callback, ud = q.userData;
+            if (cb && !x.proc.stopping() && !x.proc.terminating()) x.proc.callGuest(x.cpu, cb, {ud, qid, buf});
+            it = st.queues.find(qid);   // the callback may dispose the queue
+            if (it == st.queues.end()) return 0;
+        }
+        AudioQueueInstance& q = it->second;
+        const size_t have = q.offlineSource.size() / size_t(outCh);
+        const size_t i0 = size_t(q.offlinePhase);
+        if (i0 >= have) break;   // the app has nothing more enqueued
+        const size_t i1 = std::min(i0 + 1, have - 1);
+        const float t = float(q.offlinePhase - double(i0));
+        for (int c = 0; c < outCh; ++c) {
+            const float v = std::clamp(q.offlineSource[i0 * size_t(outCh) + size_t(c)] * (1 - t) +
+                                       q.offlineSource[i1 * size_t(outCh) + size_t(c)] * t, -1.0f, 1.0f);
+            const size_t idx = q.outNonInterleaved ? size_t(c) * frames + done : size_t(done) * size_t(outCh) + size_t(c);
+            const uint32_t a = out + uint32_t(idx * size_t(obps));
+            if (q.outFloat) x.mem.write<float>(a, v);
+            else if (obps == 4) x.mem.write<int32_t>(a, int32_t(std::lrint(double(v) * 2147483647.0)));
+            else if (obps == 2) x.mem.write<int16_t>(a, int16_t(std::lrint(v * 32767.0f)));
+            else x.mem.write<uint8_t>(a, uint8_t(std::lrint(v * 127.0f) + 128));
+        }
+        q.offlinePhase += step;
+        // Drop whole source frames already passed.
+        const size_t drop = std::min(size_t(q.offlinePhase), have);
+        if (drop) {
+            q.offlineSource.erase(q.offlineSource.begin(), q.offlineSource.begin() + std::ptrdiff_t(drop * size_t(outCh)));
+            q.offlinePhase -= double(drop);
+        }
+    }
+    x.mem.write<uint32_t>(buffer + 8, done * uint32_t(obps * outCh));
+    audioTrace("AudioQueueOfflineRender", qid, (uint64_t(frames) << 32) | done);
+    return 0;
+}
 
 // AudioFile & AudioUnit stubs
 int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile) {
@@ -522,6 +643,7 @@ constexpr int32_t kAudioFileUnsupportedProperty = 0x7074793F;   // 'pty?'
 uint32_t afPropertySize(uint32_t prop) {
     switch (prop) {
     case 0x64666D74: return 40;   // 'dfmt' AudioStreamBasicDescription
+    case 0x666C7374: return 44;   // 'flst' one AudioFormatListItem (ASBD + channel layout tag)
     case 0x706E666F: return 16;   // 'pnfo' AudioFilePacketTableInfo
     case 0x62636E74: case 0x65647572: case 0x70636E74: return 8;   // 'bcnt' 'edur' 'pcnt'
     case 0x70737A65: case 0x706B7562: case 0x66666D74: return 4;   // 'psze' 'pkub' 'ffmt'
@@ -531,6 +653,7 @@ uint32_t afPropertySize(uint32_t prop) {
 int32_t af_getPropertyInfo(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr outSize, GuestPtr outWritable) {
     if (!ATS(x).files.count(fid)) return -50;
     const uint32_t sz = afPropertySize(prop);
+    audioTrace("AudioFileGetPropertyInfo", prop, sz);
     if (!sz) return kAudioFileUnsupportedProperty;
     if (outWritable) x.mem.write<uint32_t>(outWritable, 0);
     if (outSize) x.mem.write<uint32_t>(outSize, sz);
@@ -554,6 +677,7 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
     const AudioFileInstance& af = st.files[fid];
     const uint32_t cap = x.mem.read<uint32_t>(ioSize);
     const uint32_t size = afPropertySize(prop);
+    audioTrace("AudioFileGetProperty", prop, cap);
     if (!size) return kAudioFileUnsupportedProperty;
     if (cap < size) return 0x2173697A;   // '!siz' kAudioFileBadPropertySizeError
     x.mem.write<uint32_t>(ioSize, size);
@@ -562,7 +686,10 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
         x.mem.write<uint32_t>(outData + 8, 0);
         x.mem.write<uint32_t>(outData + 12, 0);
-    } else if (prop == 0x64666D74 /* 'dfmt' AudioStreamBasicDescription */ && cap >= 40) {
+    } else if ((prop == 0x64666D74 /* 'dfmt' AudioStreamBasicDescription */ ||
+                prop == 0x666C7374 /* 'flst' format list: the one format, then its layout */) && cap >= 40) {
+        if (prop == 0x666C7374)   // kAudioChannelLayoutTag_Mono / _Stereo
+            x.mem.write<uint32_t>(outData + 40, afChannels(af) == 1 ? (100u << 16) | 1 : (101u << 16) | 2);
         x.mem.write<double>(outData + 0, double(af.decoded.sampleRate));
         x.mem.write<uint32_t>(outData + 8, 0x6C70636D /* 'lpcm' */);
         x.mem.write<uint32_t>(outData + 12, 0x0C /* signed int | packed */);
@@ -640,6 +767,7 @@ void af_openWithCallbacks(Ctx& x) {
     af.id = st.nextFileId++;
     af.rawBytes = std::move(bytes);
     af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
+    audioTrace("AudioFileOpenWithCallbacks", uint32_t(af.rawBytes.size()), af.decoded.stereoPcm.size() / 2);
     if (af.decoded.stereoPcm.empty()) { x.cpu.r[0] = uint32_t(1954115647); return; }
     x.mem.write<uint32_t>(outFile, af.id);
     st.files[af.id] = std::move(af);
@@ -662,6 +790,7 @@ void af_readPackets(Ctx& x, bool numBytesIsInOut) {
     const uint64_t first = uint64_t(std::max<int64_t>(0, start));
     const uint64_t n = first >= frames ? 0 : std::min<uint64_t>(want, frames - first);
     if (n) afCopyFrames(x, af, first, n, out);
+    audioTrace("AudioFileReadPackets", uint32_t(first), n);
     x.mem.write<uint32_t>(ioNumPackets, uint32_t(n));
     if (ioNumBytes) x.mem.write<uint32_t>(ioNumBytes, uint32_t(n * bpf));
     x.cpu.r[0] = 0;
@@ -1502,7 +1631,12 @@ PlayerData& PD(Ctx& x, id p) { return rt(x).host<PlayerData>(p); }
 void loadPlayerDecoded(Ctx& x, PlayerData& d, const uint8_t* bytes, size_t len) {
     d.decoded = decodeAudioBytes(x, bytes, len);
     if (d.decoded.stereoPcm.empty() && len) x.proc.reportMissing("AVAudioPlayer: audio format not supported (plays silence)");
-    d.pcm = sharePcm(d.decoded.stereoPcm);
+    // The player only reads its samples through pcm: move them, a copy doubles a song's memory.
+    if (!d.decoded.stereoPcm.empty())
+        d.pcm = std::make_shared<const std::vector<int16_t>>(std::move(d.decoded.stereoPcm));
+    else
+        d.pcm = nullptr;
+    d.decoded.stereoPcm.clear();
     d.duration = d.decoded.duration;
     d.channels = uint32_t(std::max(1, d.decoded.channels));
 }
@@ -1533,7 +1667,7 @@ id ap_initData(Ctx& x, id self, SEL, id data, GuestPtr errOut) {
 }
 bool ap_play(Ctx& x, id self, SEL) {
     PlayerData& d = PD(x, self);
-    audioTrace("AVAudioPlayerPlay", self, d.decoded.stereoPcm.size());
+    audioTrace("AVAudioPlayerPlay", self, d.pcm ? d.pcm->size() : 0);
     if (!d.pcm) return false;
     Audio::Mixer& mx = MX(x.proc);
     if (d.voice && d.paused) {

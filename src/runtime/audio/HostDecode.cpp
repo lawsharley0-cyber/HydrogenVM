@@ -119,6 +119,13 @@ bool decodeHostContainer(DecodedAudio& out, const uint8_t* data, size_t size) {
     client.mFramesPerPacket = 1;
     client.mBytesPerFrame = client.mBytesPerPacket = 4 * client.mChannelsPerFrame;
     if (ExtAudioFileSetProperty(files.extended, kExtAudioFileProperty_ClientDataFormat, sizeof(client), &client) != noErr) return false;
+    // Size the output once: growing a vector of a long song by doubling needs
+    // the old and new block at the same time, which the phone may not have.
+    SInt64 lengthFrames = 0;
+    bytes = sizeof(lengthFrames);
+    if (ExtAudioFileGetProperty(files.extended, kExtAudioFileProperty_FileLengthFrames, &bytes, &lengthFrames) == noErr &&
+        lengthFrames > 0 && uint64_t(lengthFrames) * 2 <= kMaxSamples)
+        decoded.stereoPcm.reserve(size_t(lengthFrames) * 2 + 8192);
     std::vector<float> samples(4096 * decoded.channels);
     for (;;) {
         UInt32 frames = 4096;

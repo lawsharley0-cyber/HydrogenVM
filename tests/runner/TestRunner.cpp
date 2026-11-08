@@ -6165,6 +6165,79 @@ int runFullSubsystemTests() {
             check(table && unknown && hugeStatus == uint32_t(-108),
                   "AudioFile answers the packet table, fails unknown properties, AudioQueue refuses a huge buffer");
         }
+        // AudioQueue offline rendering (FMOD's AudioQueue codec decodes Unity games' music this way):
+        // the app primes one buffer, then each AudioQueueOfflineRender converts the enqueued audio to
+        // the offline format, handing every consumed buffer back to the callback, which enqueues the
+        // next one or flushes at the end. Source: a 22050 Hz mono ramp 0, 1000, ... 11000 in three
+        // 4-frame buffers. Output: 44100 Hz stereo, so linear interpolation gives 500 * k per frame
+        // (both channels) until the last source frame, which holds at 11000.
+        {
+            static uint32_t offlineFed = 0, offlineCalls = 0, offlineFlushed = 0;
+            offlineFed = 0; offlineCalls = 0; offlineFlushed = 0;
+            auto fill = [](Ctx& x, uint32_t buf) {
+                const uint32_t data = x.mem.read<uint32_t>(buf + 4);
+                for (uint32_t i = 0; i < 4; ++i) x.mem.write<int16_t>(data + i * 2, int16_t((offlineFed + i) * 1000));
+                x.mem.write<uint32_t>(buf + 8, 8);
+                offlineFed += 4;
+            };
+            const uint32_t offlineCb = proc.defineFunction("_test_aq_offline_callback", [fill](Ctx& x) {
+                const uint32_t q = x.cpu.r[1], buf = x.cpu.r[2];
+                ++offlineCalls;
+                if (offlineFed < 12) {
+                    fill(x, buf);
+                    x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_AudioQueueEnqueueBuffer"), {q, buf, 0, 0});
+                } else if (!offlineFlushed) {
+                    offlineFlushed = 1;
+                    x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_AudioQueueFlush"), {q});
+                }
+                x.cpu.r[0] = 0;
+            });
+            const uint32_t src = proc.heap().allocZeroed(40), dst = proc.heap().allocZeroed(40), outs = proc.heap().allocZeroed(16);
+            const uint32_t ts = proc.heap().allocZeroed(64);
+            proc.mem().write<double>(src, 22050.0);
+            proc.mem().write<uint32_t>(src + 8, 0x6C70636D);
+            proc.mem().write<uint32_t>(src + 12, 0x0C);
+            for (uint32_t o : {16u, 24u}) proc.mem().write<uint32_t>(src + o, 2);
+            proc.mem().write<uint32_t>(src + 20, 1);
+            proc.mem().write<uint32_t>(src + 28, 1);
+            proc.mem().write<uint32_t>(src + 32, 16);
+            proc.mem().write<double>(dst, 44100.0);
+            proc.mem().write<uint32_t>(dst + 8, 0x6C70636D);
+            proc.mem().write<uint32_t>(dst + 12, 0x0C);
+            for (uint32_t o : {16u, 24u}) proc.mem().write<uint32_t>(dst + o, 4);
+            proc.mem().write<uint32_t>(dst + 20, 1);
+            proc.mem().write<uint32_t>(dst + 28, 2);
+            proc.mem().write<uint32_t>(dst + 32, 16);
+            audioCall("_AudioQueueNewOutput", {src, offlineCb, 0, 0, 0, 0, outs});
+            const uint32_t q = proc.mem().read<uint32_t>(outs);
+            audioCall("_AudioQueueAllocateBuffer", {q, 8, outs + 4});
+            audioCall("_AudioQueueAllocateBuffer", {q, 16 * 4, outs + 8});
+            const uint32_t srcBuf = proc.mem().read<uint32_t>(outs + 4), outBuf = proc.mem().read<uint32_t>(outs + 8);
+            const uint32_t notOffline = audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 16});
+            const uint32_t formatStatus = audioCall("_AudioQueueSetOfflineRenderFormat", {q, dst, 0});
+            audioCall("_AudioQueueStart", {q, 0});
+            const uint32_t primeStatus = audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 0});
+            const uint32_t primeBytes = proc.mem().read<uint32_t>(outBuf + 8);
+            Ctx fx{proc, cpu, proc.mem()};
+            fill(fx, srcBuf);
+            audioCall("_AudioQueueEnqueueBuffer", {q, srcBuf, 0, 0});
+            const uint32_t firstStatus = audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 16});
+            const uint32_t firstBytes = proc.mem().read<uint32_t>(outBuf + 8);
+            const uint32_t outData = proc.mem().read<uint32_t>(outBuf + 4);
+            bool firstRamp = firstBytes == 64;
+            for (uint32_t k = 0; firstRamp && k < 16; ++k)
+                firstRamp = proc.mem().read<int16_t>(outData + k * 4) == int16_t(500 * k) && proc.mem().read<int16_t>(outData + k * 4 + 2) == int16_t(500 * k);
+            audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 16});
+            const uint32_t secondBytes = proc.mem().read<uint32_t>(outBuf + 8);
+            const int16_t secondFirst = proc.mem().read<int16_t>(outData), secondLast = proc.mem().read<int16_t>(outData + 7 * 4);
+            audioCall("_AudioQueueDispose", {q, 1});
+            const bool ok = notOffline == uint32_t(-66671) && formatStatus == 0 && primeStatus == 0 && primeBytes == 0 && firstStatus == 0 &&
+                            firstRamp && secondBytes == 32 && secondFirst == 8000 && secondLast == 11000 && offlineFlushed == 1;
+            if (!ok)
+                std::printf("    offline render: %d %x %x/%u %x/%u ramp %d second %u %d..%d calls %u flushed %u\n", int32_t(notOffline), formatStatus,
+                            primeStatus, primeBytes, firstStatus, firstBytes, firstRamp, secondBytes, secondFirst, secondLast, offlineCalls, offlineFlushed);
+            check(ok, "AudioQueueOfflineRender converts enqueued PCM to the offline format and calls back for more until the flush");
+        }
         audioCall("_AudioFileClose", {fileID});
         std::filesystem::remove(filePath);
         // Recording: AudioFileCreateWithURL + AudioFileWriteBytes + close, then the file plays back
