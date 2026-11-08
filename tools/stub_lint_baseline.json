@@ -3855,7 +3855,7 @@
       "registration": "_AudioQueueStop",
       "function": "aq_stop",
       "reason": "only constant success/boolean returns",
-      "body_sha256": "c364759674cc3a38718355cdb073d63de210764295773299a2263b4d9a5c14ab"
+      "body_sha256": "8eed57a7c399dd17cc3a3d2ac55cb0211d4afb247ad483d3e58bb5b1bc112c2e"
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",
@@ -3871,7 +3871,7 @@
       "registration": "_AudioQueueReset",
       "function": "aq_reset",
       "reason": "only constant success/boolean returns",
-      "body_sha256": "e377ac25453f17955494ec8de587c0eb96415d509954dd7f5e441b2dac5e6dfc"
+      "body_sha256": "4996cb020d890ec1b82f9673e85fff6e6d321c75a836fddbc8e091ed1dc94c2e"
     },
     {
       "path": "src/runtime/uikit/PlatformStubs.cpp",

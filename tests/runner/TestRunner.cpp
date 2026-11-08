@@ -6250,11 +6250,20 @@ int runFullSubsystemTests() {
             audioCall("_AudioQueueStop", {q, 1});
             audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 16});
             const uint32_t afterStopBytes = proc.mem().read<uint32_t>(outBuf + 8);
+            // Reset in the middle of a buffer: the frames not yet rendered are gone too.
+            audioCall("_AudioQueueStart", {q, 0});
+            proc.mem().write<uint32_t>(srcBuf + 8, 8);
+            audioCall("_AudioQueueEnqueueBuffer", {q, srcBuf, 0, 0});
+            audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 2});
+            const uint32_t partialBytes = proc.mem().read<uint32_t>(outBuf + 8);
+            audioCall("_AudioQueueReset", {q});
+            audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 16});
+            const uint32_t afterResetBytes = proc.mem().read<uint32_t>(outBuf + 8);
             audioCall("_AudioQueueDispose", {q, 1});
             // AudioQueueAllocateBuffer rounds an 8-byte request up to 16: 8 mono frames -> 16 stereo frames at twice the rate.
-            const bool bounded = clampedBytes == 16 * 4 && afterStopBytes == 0;
-            if (!bounded) std::printf("    offline bounds: clamped %u after stop %u\n", clampedBytes, afterStopBytes);
-            check(bounded, "AudioQueueOfflineRender reads no further than a buffer's allocation, and stop discards queued audio");
+            const bool bounded = clampedBytes == 16 * 4 && afterStopBytes == 0 && partialBytes == 2 * 4 && afterResetBytes == 0;
+            if (!bounded) std::printf("    offline bounds: clamped %u after stop %u partial %u after reset %u\n", clampedBytes, afterStopBytes, partialBytes, afterResetBytes);
+            check(bounded, "AudioQueueOfflineRender reads no further than a buffer's allocation; stop and reset discard queued audio");
             const bool ok = notOffline == uint32_t(-66626) && formatStatus == 0 && primeStatus == 0 && primeBytes == 0 && firstStatus == 0 &&
                             firstRamp && secondBytes == 32 && secondFirst == 8000 && secondLast == 11000 && offlineFlushed == 1;
             if (!ok)
