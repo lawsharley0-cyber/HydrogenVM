@@ -441,6 +441,12 @@ int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr)
     }
     return 0;
 }
+// Stop and reset discard what an offline queue holds; the next render starts from what is enqueued after.
+void offlineDiscard(AudioQueueInstance& q) {
+    q.pending.clear();
+    q.offlineSource.clear();
+    q.offlinePhase = 0;
+}
 void micRelease(Ctx& x, AudioQueueInstance& q) {
     if (q.micClaimed) { q.micClaimed = false; x.proc.microphoneUser(false); }
 }
@@ -475,6 +481,7 @@ int32_t aq_stop(Ctx& x, uint32_t qid, bool) {
     auto& q = ATS(x).queues[qid];
     q.running = false;
     if (q.input) { micRelease(x, q); q.pending.clear(); return 0; }
+    if (q.offline) offlineDiscard(q);
     MX(x.proc).stop(q.voice);
     MX(x.proc).takeProcessed(q.voice);   // stopped buffers are not called back
     MX(x.proc).setPaused(q.voice, true);
@@ -486,6 +493,7 @@ int32_t aq_reset(Ctx& x, uint32_t qid) {
     auto& q = ATS(x).queues[qid];
     if (q.input) q.pending.clear();
     else MX(x.proc).stop(q.voice);
+    if (q.offline) offlineDiscard(q);
     return 0;
 }
 int32_t aq_dispose(Ctx& x, uint32_t qid, bool) {
@@ -545,7 +553,10 @@ int32_t aq_setOfflineFormat(Ctx& x, uint32_t qid, GuestPtr format, GuestPtr) {
 namespace {
 // Appends one enqueued source buffer to q.offlineSource, converted to the output channel count.
 void offlineTake(Ctx& x, AudioQueueInstance& q, uint32_t buf) {
-    const uint32_t data = x.mem.read<uint32_t>(buf + 4), bytes = x.mem.read<uint32_t>(buf + 8);
+    // The header is guest memory: trust only the capacity recorded at allocation.
+    uint32_t capacity = 0;
+    for (const auto& b : q.buffers) if (b.guestAddr == buf) capacity = b.capacity;
+    const uint32_t data = x.mem.read<uint32_t>(buf + 4), bytes = std::min(x.mem.read<uint32_t>(buf + 8), capacity);
     const int bps = std::max(1, q.bitsPerChannel / 8), ch = std::max(1, q.channels);
     const size_t frames = data ? bytes / size_t(bps * ch) : 0;
     auto sample = [&](size_t frame, int c) -> float {
@@ -569,7 +580,7 @@ int32_t aq_offlineRender(Ctx& x, uint32_t qid, GuestPtr, GuestPtr buffer, uint32
     auto& st = ATS(x);
     auto it = st.queues.find(qid);
     if (it == st.queues.end() || !buffer) return -50;
-    if (!it->second.offline) return -66671;   // kAudioQueueErr_InvalidOfflineMode
+    if (!it->second.offline) return -66626;   // kAudioQueueErr_InvalidOfflineMode
     const uint32_t cap = x.mem.read<uint32_t>(buffer), out = x.mem.read<uint32_t>(buffer + 4);
     const int outCh = it->second.outChannels, obps = it->second.outBits / 8;
     frames = std::min<uint32_t>(frames, out ? cap / uint32_t(obps * outCh) : 0);

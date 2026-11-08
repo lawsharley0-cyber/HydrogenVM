@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <new>
 #include <cerrno>
 #if defined(__APPLE__)
 #include <AudioToolbox/AudioToolbox.h>
@@ -124,8 +125,13 @@ bool decodeHostContainer(DecodedAudio& out, const uint8_t* data, size_t size) {
     SInt64 lengthFrames = 0;
     bytes = sizeof(lengthFrames);
     if (ExtAudioFileGetProperty(files.extended, kExtAudioFileProperty_FileLengthFrames, &bytes, &lengthFrames) == noErr &&
-        lengthFrames > 0 && uint64_t(lengthFrames) * 2 <= kMaxSamples)
-        decoded.stereoPcm.reserve(size_t(lengthFrames) * 2 + 8192);
+        lengthFrames > 0 && uint64_t(lengthFrames) * 2 <= kMaxSamples) {
+        try {
+            decoded.stereoPcm.reserve(size_t(lengthFrames) * 2 + 2 * 4096);   // one read's worth of slack
+        } catch (const std::bad_alloc&) {
+            // No single block that large: grow as the reads arrive instead.
+        }
+    }
     std::vector<float> samples(4096 * decoded.channels);
     for (;;) {
         UInt32 frames = 4096;

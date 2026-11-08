@@ -6159,6 +6159,14 @@ int runFullSubsystemTests() {
             audioCall("_AudioQueueNewOutput", {asbd, 0, 0, 0, 0, 0, queueOut});
             const uint32_t q = proc.mem().read<uint32_t>(queueOut);
             const auto hugeStatus = audioCall("_AudioQueueAllocateBuffer", {q, 0x6973756D, queueOut + 4});
+            // 'flst' (FMOD asks first): one AudioFormatListItem, the file's LPCM format and a stereo layout tag.
+            const uint32_t fl = proc.heap().allocZeroed(64);
+            proc.mem().write<uint32_t>(fl, 44);
+            const auto flstStatus = audioCall("_AudioFileGetProperty", {fileID, 0x666C7374, fl, fl + 4});
+            const bool flst = flstStatus == 0 && proc.mem().read<uint32_t>(fl) == 44 && proc.mem().read<double>(fl + 4) == 44100.0 &&
+                              proc.mem().read<uint32_t>(fl + 12) == 0x6C70636D && proc.mem().read<uint32_t>(fl + 32) == 2 &&
+                              proc.mem().read<uint32_t>(fl + 36) == 16 && proc.mem().read<uint32_t>(fl + 44) == ((101u << 16) | 2);
+            check(flst, "AudioFile answers its format list with the decoded format and a stereo channel layout tag");
             audioCall("_AudioQueueDispose", {q, 1});
             if (!(table && unknown && hugeStatus == uint32_t(-108)))
                 std::printf("    AudioFile: pnfo %d (%x) unknown %x/%x huge buffer %d\n", table, tableStatus, unknownStatus, infoStatus, int32_t(hugeStatus));
@@ -6230,8 +6238,24 @@ int runFullSubsystemTests() {
             audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 16});
             const uint32_t secondBytes = proc.mem().read<uint32_t>(outBuf + 8);
             const int16_t secondFirst = proc.mem().read<int16_t>(outData), secondLast = proc.mem().read<int16_t>(outData + 7 * 4);
+            // A byte size past the buffer's allocation is clamped to it; stop discards what is queued.
+            audioCall("_AudioQueueStop", {q, 1});   // drop the tail of the ramp
+            audioCall("_AudioQueueStart", {q, 0});
+            proc.mem().write<uint32_t>(srcBuf + 8, 0x7FFFFFF0);
+            audioCall("_AudioQueueEnqueueBuffer", {q, srcBuf, 0, 0});
+            offlineFed = 12;   // the callback flushes instead of refilling
+            audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 16});
+            const uint32_t clampedBytes = proc.mem().read<uint32_t>(outBuf + 8);
+            audioCall("_AudioQueueEnqueueBuffer", {q, srcBuf, 0, 0});
+            audioCall("_AudioQueueStop", {q, 1});
+            audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 16});
+            const uint32_t afterStopBytes = proc.mem().read<uint32_t>(outBuf + 8);
             audioCall("_AudioQueueDispose", {q, 1});
-            const bool ok = notOffline == uint32_t(-66671) && formatStatus == 0 && primeStatus == 0 && primeBytes == 0 && firstStatus == 0 &&
+            // AudioQueueAllocateBuffer rounds an 8-byte request up to 16: 8 mono frames -> 16 stereo frames at twice the rate.
+            const bool bounded = clampedBytes == 16 * 4 && afterStopBytes == 0;
+            if (!bounded) std::printf("    offline bounds: clamped %u after stop %u\n", clampedBytes, afterStopBytes);
+            check(bounded, "AudioQueueOfflineRender reads no further than a buffer's allocation, and stop discards queued audio");
+            const bool ok = notOffline == uint32_t(-66626) && formatStatus == 0 && primeStatus == 0 && primeBytes == 0 && firstStatus == 0 &&
                             firstRamp && secondBytes == 32 && secondFirst == 8000 && secondLast == 11000 && offlineFlushed == 1;
             if (!ok)
                 std::printf("    offline render: %d %x %x/%u %x/%u ramp %d second %u %d..%d calls %u flushed %u\n", int32_t(notOffline), formatStatus,
@@ -9939,7 +9963,7 @@ int runFullSubsystemTests() {
             }
             static void useProgram(uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
             static void bindFramebuffer(uint32_t, uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
-            static void bindTexture(uint32_t, uint32_t t) { if (t == 99) errors().push_back(0x0500); }
+            static void bindTexture(uint32_t, uint32_t t) { if (t >= 99) errors().push_back(0x0500); }
         };
         struct ErrPlatform final : HostGL::Platform {
             std::mutex mu;
@@ -9969,6 +9993,7 @@ int runFullSubsystemTests() {
         ProcessConfig ecfg;
         ecfg.homePath = "/tmp/hvm_gl_error_isolation";
         ecfg.hostGL = platform;
+        ecfg.glTrace = true;   // the trace checks every call; the guest must still see its own errors
         Process eproc(ecfg);
         auto& er = ObjC::rt(eproc);
         auto& ecpu = eproc.mainThread().cpu;
@@ -9996,6 +10021,23 @@ int runFullSubsystemTests() {
         er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
         check(workerErr == 0 && workerKept == 0x0500 && workerAfter == 0,
               "GL errors from the runtime's worker-context sync never reach the guest's glGetError");
+        // The trace's error log keeps the first call that raised each error, with its arguments.
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glBindTexture"), {0x0DE1, 100});
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glBindTexture"), {0x0DE1, 101});
+        const uint32_t mainErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        size_t mainLines = 0;
+        bool firstArgs = false;
+        for (const auto& line : eproc.glErrorLog())
+            if (line.rfind("glBindTexture(", 0) == 0 && line.find("-> 0x0500 [main]") != std::string::npos) {
+                ++mainLines;
+                firstArgs = line.find("100") != std::string::npos && line.find("101") == std::string::npos;
+            }
+        if (!(mainErr == 0x0500 && mainLines == 1 && firstArgs))
+            for (const auto& line : eproc.glErrorLog()) std::printf("    gl log: %s\n", line.c_str());
+        check(mainErr == 0x0500 && mainLines == 1 && firstArgs,
+              "the GL trace logs the first failing call of each kind with its arguments, and the guest still sees the error");
     }
 
     // PR #167: fixed-size heap objects share writable pages, so a successful
