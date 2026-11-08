@@ -6159,14 +6159,14 @@ int runFullSubsystemTests() {
             audioCall("_AudioQueueNewOutput", {asbd, 0, 0, 0, 0, 0, queueOut});
             const uint32_t q = proc.mem().read<uint32_t>(queueOut);
             const auto hugeStatus = audioCall("_AudioQueueAllocateBuffer", {q, 0x6973756D, queueOut + 4});
-            // 'flst' (FMOD asks first): one AudioFormatListItem, the file's LPCM format and a stereo layout tag.
+            // 'flst' stays unsupported. FMOD's AudioQueue codec (Subway Surfers) reads it, takes the
+            // format's frames per packet as its output buffer size, and with decoded PCM (1 frame per
+            // packet) renders 0 frames forever, so the game never finishes loading. Unsupported, FMOD
+            // gives the clip up and the game starts.
             const uint32_t fl = proc.heap().allocZeroed(64);
             proc.mem().write<uint32_t>(fl, 44);
             const auto flstStatus = audioCall("_AudioFileGetProperty", {fileID, 0x666C7374, fl, fl + 4});
-            const bool flst = flstStatus == 0 && proc.mem().read<uint32_t>(fl) == 44 && proc.mem().read<double>(fl + 4) == 44100.0 &&
-                              proc.mem().read<uint32_t>(fl + 12) == 0x6C70636D && proc.mem().read<uint32_t>(fl + 32) == 2 &&
-                              proc.mem().read<uint32_t>(fl + 36) == 16 && proc.mem().read<uint32_t>(fl + 44) == ((101u << 16) | 2);
-            check(flst, "AudioFile answers its format list with the decoded format and a stereo channel layout tag");
+            check(flstStatus != 0, "AudioFile does not offer a format list (FMOD would loop on decoded PCM)");
             audioCall("_AudioQueueDispose", {q, 1});
             if (!(table && unknown && hugeStatus == uint32_t(-108)))
                 std::printf("    AudioFile: pnfo %d (%x) unknown %x/%x huge buffer %d\n", table, tableStatus, unknownStatus, infoStatus, int32_t(hugeStatus));
