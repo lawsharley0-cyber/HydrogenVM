@@ -172,6 +172,9 @@ class TestUnityMonoChecklist(unittest.TestCase):
         self.assertEqual([i["text"] for i in gl], rep["gl"]["errorLog"])
         self.assertTrue(all(i["severity"] >= 40 for i in gl))
         self.assertTrue(any(i["kind"] == "gl-nodraw" for i in found))
+        rep["gl"] = {"errors": 0, "draws": 0, "presents": 0, "errorLog": []}   # UIKit-only app
+        found = hvm_probe.issues_from(rep, "", Path("/nonexistent"), False)
+        self.assertFalse(any(i["kind"] == "gl-nodraw" for i in found))
         rep["gl"] = {"errors": 0, "draws": 500, "errorLog": []}
         found = hvm_probe.issues_from(rep, "", Path("/nonexistent"), False)
         self.assertFalse(any(i["kind"].startswith("gl-") for i in found))

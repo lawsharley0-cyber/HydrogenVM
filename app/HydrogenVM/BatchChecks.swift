@@ -43,6 +43,7 @@ struct BatchDiagnostics: Codable, Sendable, Equatable {
     var timeToFirstFrameMs: Double = -1
     var glErrors: Int = 0
     var glDraws: Int = 0
+    var glPresents: Int = 0
     var glEmptyPresents: Int = 0
     var glLastFrameDraws: Int = 0
 
@@ -65,6 +66,7 @@ struct BatchDiagnostics: Codable, Sendable, Equatable {
         timeToFirstFrameMs = (try? c.decodeIfPresent(Double.self, forKey: .timeToFirstFrameMs)) ?? -1
         glErrors = i(.glErrors)
         glDraws = i(.glDraws)
+        glPresents = i(.glPresents)
         glEmptyPresents = i(.glEmptyPresents)
         glLastFrameDraws = i(.glLastFrameDraws)
     }
@@ -85,6 +87,7 @@ struct BatchDiagnostics: Codable, Sendable, Equatable {
         timeToFirstFrameMs = d["timeToFirstFrameMs"]?.doubleValue ?? -1
         glErrors = i("glErrors")
         glDraws = i("glDraws")
+        glPresents = i("glPresents")
         glEmptyPresents = i("glEmptyPresents")
         glLastFrameDraws = i("glLastFrameDraws")
     }
@@ -159,8 +162,10 @@ enum BatchCheckBuilder {
             if d.glErrors > 0 {
                 let first = gl.prefix(3).joined(separator: "; ")
                 c.append(.init(name: "Graphics calls", status: .warn, detail: "\(d.glErrors) GL errors: \(first)"))
-            } else if d.framesPresented > 0 && d.glDraws == 0 {
-                c.append(.init(name: "Graphics calls", status: .warn, detail: "Frames were shown but the game made no GL draw call"))
+            } else if d.glPresents == 0 {
+                c.append(.init(name: "Graphics calls", status: .pass, detail: "No OpenGL frames (the app draws with UIKit)"))
+            } else if d.glDraws == 0 {
+                c.append(.init(name: "Graphics calls", status: .warn, detail: "\(d.glPresents) OpenGL frames were presented without a draw call"))
             } else {
                 let empty = d.glEmptyPresents > 0 ? ", \(d.glEmptyPresents) frames shown without drawing" : ""
                 c.append(.init(name: "Graphics calls", status: .pass, detail: "\(d.glDraws) draw calls, \(d.glLastFrameDraws) in the last frame\(empty), no GL errors"))
