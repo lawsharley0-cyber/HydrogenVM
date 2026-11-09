@@ -94,7 +94,7 @@ jobs:
             SYMROOT="$PWD/build/file-editor/xbuild" CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO \
             -resultBundlePath build/file-editor/CrashJournalBefore.xcresult \
             test >build/file-editor/crash-journal-before.log 2>&1; then
-            echo "Previous recovery unexpectedly passed the regression"
+            echo "::error title=crash journal::Previous recovery unexpectedly passed the regression"
             exit 1
           fi
           echo "Expected failures below exercise the OLD recovery body; candidate results follow separately."
@@ -110,6 +110,7 @@ jobs:
             -resultBundlePath build/file-editor/CrashJournalTests.xcresult \
             test >build/file-editor/crash-journal.log 2>&1 || {
               tail -150 build/file-editor/crash-journal.log
+              bash tools/annotate_xctest_failures.sh build/file-editor/crash-journal.log "crash journal"
               exit 1
             }
           echo "Candidate recovery tests passed at $GITHUB_SHA"
@@ -139,6 +140,7 @@ jobs:
             -parallel-testing-enabled NO -resultBundlePath build/file-editor/EditorUITests.xcresult \
             test >build/file-editor/ui-tests.log 2>&1 || {
               tail -150 build/file-editor/ui-tests.log
+              bash tools/annotate_xctest_failures.sh build/file-editor/ui-tests.log "save and player UI tests"
               exit 1
             }
       - uses: actions/upload-artifact@v4
