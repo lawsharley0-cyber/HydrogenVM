@@ -19,7 +19,49 @@ thread_local DispatchCache t_cache;
 
 Runtime& rt(Process& p) { return p.service<Runtime>(); }
 
+namespace {
+// Pool state for a host thread that is not one of a Process's guest threads
+// (a test worker, a host callback). currentThread() treats such a thread as
+// main, but sharing main's pool stack would let two host threads grow the
+// same unsynchronized vectors at once. On iOS every thread has its own
+// autorelease pool stack, so each host thread gets its own here too, one per
+// Process it calls into: a host thread can push a pool in one Process, call
+// into another, and come back to pop the first.
+//
+// Entries hold only guest ids, never pointers into a Process. When a host
+// thread first touches a new Process, entries with nothing pooled and entries
+// whose Process no longer exists are dropped. Identities are never reused, so
+// a stale entry could not be picked up by a later Process anyway; dropping it
+// bounds the list.
+//
+// Known divergence from iOS: libobjc's TLS destructor pops every pool still
+// open when a thread exits, releasing its objects. A non-guest host thread
+// that exits with pools still open here drops them without releasing those
+// objects (they leak): the thread_local destructor has no Cpu to send
+// -release with and cannot know the Process is still alive for the whole
+// drain. Guest threads do drain at exit (Process::threadMain). A host
+// caller must pop every pool it pushes.
+struct ForeignThreadState {
+    uint64_t process = 0;
+    std::unique_ptr<ThreadState> state;
+};
+thread_local std::vector<ForeignThreadState> t_foreignStates;
+
+bool idle(const ThreadState& s) { return s.marks.empty() && s.pool.empty() && !s.optimizedReturn; }
+
+ThreadState& foreignThreadState(uint64_t process) {
+    for (auto& e : t_foreignStates)
+        if (e.process == process) return *e.state;
+    std::erase_if(t_foreignStates, [](const ForeignThreadState& e) {
+        return idle(*e.state) || !Process::isLiveIdentity(e.process);
+    });
+    t_foreignStates.push_back({process, std::make_unique<ThreadState>()});
+    return *t_foreignStates.back().state;
+}
+} // namespace
+
 ThreadState& threadState(Process& p) {
+    if (!p.isGuestBoundThread()) return foreignThreadState(p.identity());
     GuestThread& t = p.currentThread();
     if (!t.objcState) {
         t.objcState = new ThreadState;
