@@ -545,9 +545,52 @@ void Process::unmapGuestDylibs() {
 
 // -------------------------------------------------------------- symbols ---
 
+namespace {
+// The last host functions each guest thread called (the thread's own ring: guest
+// threads are host threads). A crash report lists them, so "what did the app call
+// just before it died, and what did it get back" needs no rerun with --trace.
+struct HostCallCrumb {
+    uint64_t process = 0;   // Process identity: a thread may outlive one Process and serve the next
+    uint32_t hle = 0;       // the host function's HLE index (its name lives in the engine)
+    uint32_t from = 0, result = 0;
+    uint32_t serial = 0;    // which call this slot holds, so a nested call cannot overwrite the result
+    bool returned = false;
+};
+struct HostCallRing {
+    static constexpr unsigned kSize = 12;
+    HostCallCrumb crumb[kSize];
+    uint32_t next = 0;
+};
+thread_local HostCallRing tHostCalls;
+// objc_msgSend and friends dispatch every method call: they would push everything else out.
+bool crumbWorthy(const std::string& name) {
+    return name.compare(0, 13, "_objc_msgSend") != 0 && name != "_objc_retain" && name != "_objc_release" &&
+           name != "_objc_autorelease" && name != "_objc_retainAutoreleasedReturnValue" &&
+           name != "_objc_storeStrong" && name != "_objc_autoreleaseReturnValue";
+}
+}
+
 uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) {
-    return engine_->registerHle(debugName, [this, fn = std::move(fn), debugName](CPU::Cpu& c) {
+    const bool worthy = crumbWorthy(debugName);
+    auto index = std::make_shared<uint32_t>(0);   // known once registered
+    const uint32_t addr = engine_->registerHle(debugName, [this, fn = std::move(fn), debugName, worthy, index](CPU::Cpu& c) {
         if (cfg_.traceCalls) log(LogLevel::Debug, "→ " + debugName + " (from " + describeAddress(c.r[CPU::kLR]) + ")");
+        HostCallCrumb* crumb = nullptr;
+        uint32_t serial = 0;
+        if (worthy) {
+            HostCallRing& ring = tHostCalls;
+            serial = ++ring.next;
+            crumb = &ring.crumb[serial % HostCallRing::kSize];
+            *crumb = {identity_, *index, c.r[CPU::kLR], 0, serial, false};
+        }
+        struct Finish {
+            HostCallCrumb* crumb;
+            uint32_t serial;
+            CPU::Cpu& c;
+            ~Finish() {
+                if (crumb && crumb->serial == serial) { crumb->result = c.r[0]; crumb->returned = true; }
+            }
+        } finish{crumb, serial, c};
         Ctx x{*this, c, *mem_};
         try {
             fn(x);
@@ -562,6 +605,8 @@ uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) 
             if (!hostErrorHook_ || !hostErrorHook_(x, e)) throw;
         }
     });
+    *index = engine_->hleIndex(addr);
+    return addr;
 }
 
 uint32_t Process::defineFunction(const std::string& name, HostFn fn) {
@@ -1388,6 +1433,57 @@ int Process::run() {
     return crashed_ ? -1 : exitCode_;
 }
 
+uint32_t Process::insn32At(uint32_t pc, bool thumb) const {
+    try {
+        if (!mem_->isMapped(pc) || !mem_->isMapped(pc + 3)) return 0;
+        return thumb ? (uint32_t(mem_->read<uint16_t>(pc)) << 16 | mem_->read<uint16_t>(pc + 2)) : mem_->read<uint32_t>(pc);
+    } catch (...) {
+        return 0;
+    }
+}
+
+// "Last host calls" and "likely cause" lines for a crash report. Read on the crashing
+// thread, so the host-call ring is that thread's.
+std::string Process::crashClues(CPU::Exit why, uint32_t insn) const {
+    std::string out;
+    std::vector<const HostCallCrumb*> calls;   // oldest first
+    const HostCallRing& ring = tHostCalls;
+    for (uint32_t i = 1; i <= HostCallRing::kSize; ++i) {
+        const HostCallCrumb& cr = ring.crumb[(ring.next + i) % HostCallRing::kSize];
+        if (cr.serial && cr.process == identity_) calls.push_back(&cr);
+    }
+    auto name = [&](const HostCallCrumb* cr) { return engine_->hleName(cr->hle); };
+    char buf[96];
+    if (!calls.empty()) {
+        out += "  last host calls (oldest first):\n";
+        for (const HostCallCrumb* cr : calls) {
+            if (cr->returned) std::snprintf(buf, sizeof buf, " -> 0x%08x", cr->result);
+            else std::snprintf(buf, sizeof buf, " (did not return)");
+            out += "    " + name(cr) + buf + " from " + describeAddress(cr->from) + "\n";
+        }
+    }
+    std::vector<std::string> clues;
+    // Thumb udf #254 (0xdefe) / ARM 0xe7ffdefe: what __builtin_trap and many asserts compile to.
+    const bool trap = why == CPU::Exit::Breakpoint || (insn >> 16) == 0xdefe || insn == 0xe7ffdefe;
+    if (trap) {
+        clues.push_back("the app stopped itself on purpose (__builtin_trap or an assertion): look at what it checked just before");
+        const auto gl = glErrorLog();
+        if (!gl.empty()) clues.push_back("the app saw GL errors before it stopped; first: " + gl.front());
+    }
+    if (why == CPU::Exit::MemFault && !calls.empty()) {
+        // A NULL access right after a host function returned 0: that function's result is the usual suspect.
+        for (auto it = calls.rbegin(); it != calls.rend() && it - calls.rbegin() < 3; ++it)
+            if ((*it)->returned && (*it)->result == 0) {
+                clues.push_back(name(*it) + " returned 0 just before: if the app expected an object or buffer, that function is the likely cause");
+                break;
+            }
+    }
+    if (!calls.empty() && !calls.back()->returned)
+        clues.push_back("the crash happened inside " + name(calls.back()) + " (or code it called back into)");
+    for (const auto& c : clues) out += "  likely cause: " + c + "\n";
+    return out;
+}
+
 void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     try { flushGuestStdio(*this); } catch (...) {}   // what the app printed before dying is the most useful clue
     std::lock_guard<std::mutex> lk(exitMu_);
@@ -1416,7 +1512,10 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
         case CPU::Exit::Undefined: {
             const uint32_t insn = (f.valid ? f.thumb : c.thumb) ? (uint32_t(mem_->read<uint16_t>(r[15])) << 16 | mem_->read<uint16_t>(r[15] + 2))
                                                                 : mem_->read<uint32_t>(r[15]);
-            std::snprintf(buf, sizeof buf, "Crash: unsupported instruction 0x%08x at %s", insn, describeAddress(r[15]).c_str());
+            if ((insn >> 16) == 0xdefe || insn == 0xe7ffdefe)   // __builtin_trap: not an emulator gap
+                std::snprintf(buf, sizeof buf, "Crash: the app stopped itself (trap 0x%08x) at %s", insn, describeAddress(r[15]).c_str());
+            else
+                std::snprintf(buf, sizeof buf, "Crash: unsupported instruction 0x%08x at %s", insn, describeAddress(r[15]).c_str());
             head = buf;
             break;
         }
@@ -1436,6 +1535,7 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     CPU::Cpu tmp;
     std::memcpy(tmp.r, r, sizeof r);
     rep += "  backtrace:\n" + backtrace(tmp);
+    rep += crashClues(why, insn32At(r[15], f.valid ? f.thumb : c.thumb));
     crashReport_ = rep;
     CPU::Cpu snapshot;
     std::memcpy(snapshot.r, r, sizeof r);

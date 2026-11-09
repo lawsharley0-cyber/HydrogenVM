@@ -42,3 +42,27 @@ compares bench runs.
   never reaches GL).
 - The same trace is available on the desktop: `hvm run <app> --gpu --gl-trace
   --report r.json` adds a `gl` section; `tools/hvm_probe.py` uses it in GPU mode.
+
+## Crash clues and shared causes
+
+Every crash report ends with what the crashing thread did last:
+
+```
+  last host calls (oldest first):
+    _CFBundleCopyResourceURL -> 0x00000000 from 0x0012d98c Game+1231244 ...
+  likely cause: _CFBundleCopyResourceURL returned 0 just before: if the app expected an object or buffer, that function is the likely cause
+```
+
+- **last host calls**: the last 12 emulator functions that thread called (not
+  `objc_msgSend` and retain/release), with what each returned. A call that
+  "did not return" is the one the crash happened in.
+- **likely cause**: a NULL access right after a function returned 0 points at
+  that function. A trap (`Crash: the app stopped itself`) is the app's own
+  assertion, not a missing instruction; if it saw GL errors first, the first one
+  is named.
+
+`tools/device_report.py` prints these for every crashed game, adds where the
+implicated function is registered in `src/` (`... is implemented at
+src/runtime/foundation/Bundle.cpp:1502`), and ends with **shared causes**: crash
+sites, GL errors and implicated functions that several games have in common.
+Fix those first: one change helps every game listed.

@@ -61,6 +61,35 @@ class DeviceReportTests(unittest.TestCase):
         self.assertEqual(device_report.gl_key('glClear -> 0x0506 [main] (framebuffer 1 status 0x8cd6: color0 renderbuffer 1 0x0 0x8056)'),
                          'glClear -> 0x0506 [main]')
 
+    def test_crash_clues_point_at_the_host_function_and_its_source(self):
+        report = ("Crash: bad memory access at 0x00000004 (NULL pointer)\n  pc 0x00123456 crossy+1193046 foo + 0x10\n"
+                  "  backtrace:\n    0x00123456 crossy+1193046\n  last host calls (oldest first):\n"
+                  "    _malloc -> 0x10001000 from 0x00100000 crossy+1\n"
+                  "    _CFBundleCopyResourceURL -> 0x00000000 from 0x00100004 crossy+5\n"
+                  "  likely cause: _CFBundleCopyResourceURL returned 0 just before: if the app expected an object or buffer, that function is the likely cause\n")
+        row = app('c', crashed=True)
+        row.update(signature='crash-fault', crashReport=report)
+        self.assertEqual(device_report.crash_key(row), 'Crash: bad memory access at 0x (NULL pointer) at crossy+1193046')
+        c = device_report.clues(row)
+        self.assertEqual(len(c['calls']), 2)
+        self.assertTrue(c['likely'][0].startswith('_CFBundleCopyResourceURL returned 0'))
+        self.assertEqual(device_report.implicated(row), ['_CFBundleCopyResourceURL'])
+        where = device_report.locate('_CFBundleCopyResourceURL')
+        self.assertIsNotNone(where)
+        self.assertTrue(where.startswith('src/'))
+
+    def test_shared_causes_rank_problems_several_games_have(self):
+        cur = {'a [gpu]': {'problems': ['gl-error: glClear -> 0x0506 [main]', 'fail: Music'], 'implicated': ['_x']},
+               'b [gpu]': {'problems': ['gl-error: glClear -> 0x0506 [main]'], 'implicated': ['_x']},
+               'b [software]': {'problems': ['gl-error: glClear -> 0x0506 [main]'], 'implicated': []},
+               'c [gpu]': {'problems': ['fail: Music', 'warn: Sound'], 'implicated': []},
+               'd [gpu]': {'problems': ['warn: Sound'], 'implicated': []}}
+        common = device_report.shared(cur)
+        self.assertEqual(common[0], ('crash near host function _x', ['a', 'b']))
+        self.assertNotIn('fail: Music', [p for p, _ in common])   # a symptom, not a cause
+        self.assertIn(('gl-error: glClear -> 0x0506 [main]', ['a', 'b']), common)
+        self.assertNotIn('warn: Sound', [p for p, _ in common])
+
     def test_rejects_other_json(self):
         with tempfile.TemporaryDirectory() as t:
             d = self.write(Path(t) / 'x', {'kind': 'something-else'})
