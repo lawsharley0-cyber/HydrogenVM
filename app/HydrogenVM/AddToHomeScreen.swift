@@ -91,7 +91,11 @@ struct AddToHomeScreenSheet: View {
     /// the share button below still hands the profile over.
     private func openInSafari() {
         guard let profile else { return }
-        if serverURL != nil, server != nil { showingSafari = true; return }
+        // One server per sheet: a second tap reuses it, or waits while it starts.
+        if server != nil {
+            if serverURL != nil { showingSafari = true }
+            return
+        }
         let made = ProfileServer(body: Data(profile.payload().utf8), filename: profile.filename)
         made.start { url in
             guard let url else {
@@ -190,6 +194,10 @@ final class ProfileServer: @unchecked Sendable {
         listener = nil
     }
 
+    deinit {
+        listener?.cancel()   // never leave a listener running without its server
+    }
+
     /// Reads the request (any path), answers with the profile and closes.
     private func serve(_ connection: NWConnection) {
         connection.start(queue: queue)
@@ -205,6 +213,7 @@ final class ProfileServer: @unchecked Sendable {
 }
 
 /// A flag set once; only touched from the server's serial queue.
+// swiftlint:disable:next required_deinit
 private final class Once: @unchecked Sendable {
     private var done = false
     func claim() -> Bool {
