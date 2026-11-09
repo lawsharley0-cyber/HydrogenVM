@@ -194,21 +194,23 @@ struct BatchTestView: View {
     // MARK: - Results List
 
     private var resultsListView: some View {
-        List {
+        // Once per render; only offered when no batch is running or paused (Resume stays).
+        let problems = runner.canRetest ? runner.gamesWithProblems : []
+        return List {
             Section {
                 summaryCard
             }
 
-            if runner.status != .running, !runner.gamesWithProblems.isEmpty {
+            if !problems.isEmpty {
                 Section {
                     Button {
-                        runner.retest(runner.gamesWithProblems, apps: installedApps)
+                        runner.retest(problems, apps: installedApps)
                     } label: {
-                        Label("Retest the \(runner.gamesWithProblems.count) games with problems", systemImage: "arrow.clockwise")
+                        Label(BatchSelection.retestTitle(problems.count), systemImage: "arrow.clockwise")
                     }
                     .accessibilityIdentifier("batch-retest-problems")
                 } footer: {
-                    Text("Runs only the games that crashed, showed no picture or failed a check, with the same options.")
+                    Text("Runs only the games that crashed, showed no picture or failed a check, with the same options. The results on screen are replaced; the last full run's report is kept and goes into the next export.")
                 }
             }
 

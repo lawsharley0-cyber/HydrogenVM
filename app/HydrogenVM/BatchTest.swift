@@ -55,13 +55,13 @@ struct BatchTestOptions: Codable, Sendable {
         relaunchEnabled = try c.decodeIfPresent(Bool.self, forKey: .relaunchEnabled) ?? true
         relaunchTime = try c.decodeIfPresent(Int.self, forKey: .relaunchTime) ?? 12
         glTrace = try c.decodeIfPresent(Bool.self, forKey: .glTrace) ?? true
-        onlyGames = try c.decodeIfPresent([String].self, forKey: .onlyGames) ?? []
+        // Sessions saved before the pick existed have no onlyGames: every game (BatchSelection.Pick).
+        onlyGames = try BatchSelection.Pick(from: decoder).onlyGames
     }
 
     /// The runnable games this run covers, in library order.
     func games(from apps: [InstalledApp]) -> [InstalledApp] {
-        let chosen = Set(onlyGames)
-        return apps.filter { $0.info.runnable && (chosen.isEmpty || chosen.contains($0.info.bundleIdentifier)) }
+        BatchSelection.games(apps, pick: onlyGames, id: \.info.bundleIdentifier, runnable: \.info.runnable)
     }
 }
 
@@ -286,6 +286,8 @@ final class BatchTestRunner {
     private(set) var results: [BatchAppResult] = []
     private(set) var targets: [BatchTarget] = []
     private(set) var currentIndex: Int = 0
+    /// Runnable games in the library when this run started or resumed (the report's "N of M").
+    private(set) var libraryGames: Int = 0
 
     private(set) var currentApp: InstalledApp?
     private(set) var currentModeName: String = "software"
@@ -373,9 +375,11 @@ final class BatchTestRunner {
     }
 
     func startNewBatch(apps: [InstalledApp], options: BatchTestOptions) {
+        Self.keepLastFullReport()
         self.options = options
         self.clearPendingSession()
         self.results = []
+        self.libraryGames = apps.filter(\.info.runnable).count
 
         var newTargets: [BatchTarget] = []
         for app in options.games(from: apps) {
@@ -406,6 +410,7 @@ final class BatchTestRunner {
 
         self.options = saved.options
         self.results = saved.completedResults
+        self.libraryGames = allApps.filter(\.info.runnable).count
 
         let completedIds = Set(saved.completedResults.map(\.id))
 
@@ -437,11 +442,30 @@ final class BatchTestRunner {
     static func rememberedGameChoice() -> [String] { UserDefaults.standard.stringArray(forKey: gameChoiceKey) ?? [] }
     static func rememberGameChoice(_ ids: [String]) { UserDefaults.standard.set(ids, forKey: gameChoiceKey) }
 
-    /// Bundle ids of the games whose last result crashed or failed a check.
+    /// Bundle ids of the games whose last result crashed, showed no good picture or failed a check.
     var gamesWithProblems: [String] {
-        var seen = Set<String>()
-        return results.filter { $0.crashed || $0.frame.signal != "ok" || $0.worstCheck == .fail }
-            .map(\.bundleId).filter { seen.insert($0).inserted }
+        BatchSelection.gamesWithProblems(results.map {
+            BatchSelection.Outcome(bundleId: $0.bundleId, crashed: $0.crashed, signal: $0.frame.signal, failedCheck: $0.worstCheck == .fail)
+        })
+    }
+
+    /// Retest is offered only when no batch is in progress: a paused batch keeps its Resume.
+    var canRetest: Bool { status == .idle || status == .completed || status == .cancelled }
+
+    static var lastFullReportJSON: URL { reportsDir.appending(path: "last_full_batch_report.json") }
+    static var lastFullReportMD: URL { reportsDir.appending(path: "last_full_batch_report.md") }
+
+    /// Before a new run replaces latest_batch_report, keep it as last_full_batch_report when it
+    /// is a full run with results, so a retest (or any partial run) never loses an unexported
+    /// full run. Partial and empty reports are not kept, so retests never replace the full one.
+    static func keepLastFullReport() {
+        let fm = FileManager.default
+        let json = reportsDir.appending(path: "latest_batch_report.json")
+        let md = reportsDir.appending(path: "latest_batch_report.md")
+        guard let data = try? Data(contentsOf: json), BatchSelection.isFullRunWithResults(data) else { return }
+        try? data.write(to: lastFullReportJSON, options: .atomic)
+        try? fm.removeItem(at: lastFullReportMD)
+        if fm.fileExists(atPath: md.path(percentEncoded: false)) { try? fm.copyItem(at: md, to: lastFullReportMD) }
     }
 
     /// Run again on just these games, with the current options. The player's own pick
@@ -1055,7 +1079,8 @@ final class BatchTestRunner {
                 "explore": options.exploreEnabled,
                 "exploreSeconds": options.exploreTime,
                 "relaunch": options.relaunchEnabled,
-                "glTrace": options.glTrace
+                "glTrace": options.glTrace,
+                "selection": BatchSelection.reportEntry(pick: options.onlyGames, libraryGames: libraryGames)
             ],
             "suites": [
                 "apps": [
@@ -1070,7 +1095,8 @@ final class BatchTestRunner {
         md += "**Date:** \(ISO8601DateFormatter().string(from: Date()))  \n"
         md += "**Device:** \(UIDevice.current.model), iOS \(UIDevice.current.systemVersion)  \n"
         md += "**Emulator Commit:** `\(HVMSession.emulatorCommit.prefix(12))`  \n"
-        md += "**Options:** \(options.secondsPerApp)s/app · Renderer \(options.rendererMode.displayName) · KeepGoing \(options.keepGoing) · Explore \(options.exploreEnabled ? "\(options.exploreTime)s" : "off") · Relaunch \(options.relaunchEnabled)\n\n"
+        md += "**Options:** \(options.secondsPerApp)s/app · Renderer \(options.rendererMode.displayName) · KeepGoing \(options.keepGoing) · Explore \(options.exploreEnabled ? "\(options.exploreTime)s" : "off") · Relaunch \(options.relaunchEnabled)  \n"
+        md += BatchSelection.markdownLine(pick: options.onlyGames, libraryGames: libraryGames) + "\n\n"
 
         let total = results.count
         let crashed = results.filter(\.crashed).count
@@ -1169,8 +1195,21 @@ final class BatchTestRunner {
         let json = try JSONSerialization.data(withJSONObject: buildCompatReportJSON(), options: [.prettyPrinted, .sortedKeys])
         try json.write(to: root.appending(path: "report.json"), options: .atomic)
         try buildMarkdownReport().write(to: root.appending(path: "report.md"), atomically: true, encoding: .utf8)
-        if fm.fileExists(atPath: Self.thumbnailsDir.path(percentEncoded: false)) {
-            try fm.copyItem(at: Self.thumbnailsDir, to: root.appending(path: "thumbnails", directoryHint: .isDirectory))
+        // Only this run's thumbnails: the shared folder also holds older runs' pictures.
+        let thumbs = root.appending(path: "thumbnails", directoryHint: .isDirectory)
+        try fm.createDirectory(at: thumbs, withIntermediateDirectories: true)
+        for name in BatchSelection.thumbnailFiles(results.map(\.frame.thumbnailPath)) {
+            let src = Self.thumbnailsDir.appending(path: name)
+            if fm.fileExists(atPath: src.path(percentEncoded: false)) { try fm.copyItem(at: src, to: thumbs.appending(path: name)) }
+        }
+        // A partial run also carries the last full run's report, so a retest never hides it.
+        if !options.onlyGames.isEmpty, fm.fileExists(atPath: Self.lastFullReportJSON.path(percentEncoded: false)) {
+            let full = root.appending(path: "last-full-run", directoryHint: .isDirectory)
+            try fm.createDirectory(at: full, withIntermediateDirectories: true)
+            try fm.copyItem(at: Self.lastFullReportJSON, to: full.appending(path: "report.json"))
+            if fm.fileExists(atPath: Self.lastFullReportMD.path(percentEncoded: false)) {
+                try fm.copyItem(at: Self.lastFullReportMD, to: full.appending(path: "report.md"))
+            }
         }
         for r in results {
             // Bundle IDs come from the game's Info.plist: keep only filename-safe characters.
