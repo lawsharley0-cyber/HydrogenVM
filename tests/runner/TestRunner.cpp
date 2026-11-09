@@ -233,6 +233,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include "runtime/graphics/TrueType.hpp"
 #include "runtime/graphics/Shader.hpp"
 #include "TestFont.hpp"
+#include "DesktopInput.hpp"
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -4479,6 +4480,124 @@ int runFullSubsystemTests() {
         const auto validItems = Runtime::Foundation::arrayItems(cx, validArrBack);
         const std::string validDesc = validItems.empty() ? std::string() : Runtime::Foundation::utf8(cx, validItems[0]);
         check(!validItems.empty() && validDesc == "validStringValue", "NSUserDefaults preserves nested supported plist values across round-trip");
+    }
+
+    // Multi-touch delivery. Each event carries one changed finger; the others still down are
+    // UITouchPhaseStationary and are not sent to the view again. A game's held move button
+    // stuck "down" when a second finger (looking around) made the first finger's
+    // touchesBegan: arrive twice. Expected calls are written out by hand below.
+    {
+        auto& u = UIKit::ui(cx);
+        const ObjC::id savedApp = u.app, savedKey = u.keyWindow;
+        if (!u.app) u.app = r.createInstance(r.getClass("UIApplication"));
+        std::vector<std::string> calls;
+        std::vector<ObjC::id> seen;   // touch objects in order of first appearance: A, B, ...
+        int stationaryOthers = -1, touchesInEndEvent = -1;
+        auto letters = [&](Ctx& rx, ObjC::id set) {
+            std::string out;
+            for (ObjC::id t : Runtime::Foundation::setItems(rx, set)) {
+                auto it = std::find(seen.begin(), seen.end(), t);
+                if (it == seen.end()) { seen.push_back(t); it = seen.end() - 1; }
+                out += char('A' + (it - seen.begin()));
+            }
+            std::sort(out.begin(), out.end());
+            return out;
+        };
+        auto logCls = r.defineClass("HVMTouchLogView", "UIView");
+        logCls.method("touchesBegan:withEvent:", [&](Ctx& rx) { calls.push_back("began:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesMoved:withEvent:", [&](Ctx& rx) { calls.push_back("moved:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesCancelled:withEvent:", [&](Ctx& rx) { calls.push_back("cancelled:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesEnded:withEvent:", [&](Ctx& rx) {
+            const ObjC::id touches = rx.cpu.r[2], event = rx.cpu.r[3];
+            calls.push_back("ended:" + letters(rx, touches));
+            if (stationaryOthers >= 0) return;   // only the first lift is inspected
+            // The event still lists every finger; the ones that did not change are stationary (2).
+            const auto ended = Runtime::Foundation::setItems(rx, touches);
+            const auto all = Runtime::Foundation::setItems(rx, ObjC::id(r.send(rx.cpu, event, "allTouches")));
+            touchesInEndEvent = int(all.size());
+            stationaryOthers = 0;
+            for (ObjC::id t : all)
+                if (std::find(ended.begin(), ended.end(), t) == ended.end() && int32_t(r.send(rx.cpu, t, "phase")) == 2) ++stationaryOthers;
+        }, "v@:@@");
+        const ObjC::id win = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+        r.send(cpu, win, "makeKeyAndVisible");
+        const ObjC::id pad = UIKit::sendRect(cx, ObjC::id(r.send(cpu, logCls.cls(), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+        r.send(cpu, pad, "setMultipleTouchEnabled:", {1});
+        r.send(cpu, win, "addSubview:", {pad});
+        using TP = Runtime::TouchPhase;
+        auto touch = [&](TP phase, float tx, float ty, uint32_t finger) {
+            proc.injectTouch(phase, tx, ty, finger);
+            UIKit::deliverPendingInput(cx);
+        };
+        touch(TP::Began, 50, 400, 1);    // move button
+        touch(TP::Began, 250, 100, 2);   // look finger goes down while the first is held
+        touch(TP::Moved, 240, 110, 2);
+        touch(TP::Moved, 60, 400, 1);
+        touch(TP::Ended, 60, 400, 1);    // move button released; the look finger stays
+        touch(TP::Moved, 230, 120, 2);
+        touch(TP::Ended, 230, 120, 2);
+        const std::vector<std::string> want = {"began:A", "began:B", "moved:B", "moved:A", "ended:A", "moved:B", "ended:B"};
+        if (calls != want) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+        check(calls == want && touchesInEndEvent == 2 && stationaryOthers == 1,
+              "each touch event delivers only the finger that changed; fingers held still are stationary, not begun or moved again");
+        // A finger that lifts while the app ignores interaction events is forgotten, so the
+        // same finger works again afterwards (it used to stay "down" forever).
+        calls.clear();
+        touch(TP::Began, 100, 100, 5);
+        r.send(cpu, u.app, "beginIgnoringInteractionEvents");
+        touch(TP::Ended, 100, 100, 5);
+        const size_t whileIgnoring = calls.size();   // 1: the began; the lift is dropped
+        r.send(cpu, u.app, "endIgnoringInteractionEvents");
+        touch(TP::Began, 100, 100, 5);
+        touch(TP::Ended, 100, 100, 5);
+        size_t begans = 0, endeds = 0;
+        for (const auto& c : calls) { begans += c.rfind("began:", 0) == 0; endeds += c.rfind("ended:", 0) == 0; }
+        if (!(whileIgnoring == 1 && begans == 2 && endeds == 1)) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+        check(whileIgnoring == 1 && begans == 2 && endeds == 1, "a finger lifted during beginIgnoringInteractionEvents can touch again afterwards");
+        // An input-file line goes through the same applyTouch the hvm loop calls and reaches UIKit
+        // with its finger id: "touch 0 100 100 7" makes host finger 7 active (not the default 1),
+        // and "touch 3 100 100 7" ends that same finger.
+        calls.clear();
+        auto activeIds = [&] { std::vector<uint32_t> ids; for (const auto& at : u.activeTouches) ids.push_back(at.hostId); return ids; };
+        const bool downOk = DesktopInput::applyTouch(proc, "touch 0 100 100 7", true);
+        UIKit::deliverPendingInput(cx);
+        const auto whileDown = activeIds();
+        const bool upOk = DesktopInput::applyTouch(proc, "touch 3 100 100 7", true);
+        UIKit::deliverPendingInput(cx);
+        const auto afterUp = activeIds();
+        const bool badRejected = !DesktopInput::applyTouch(proc, "touch 0 100 100 two", true);
+        UIKit::deliverPendingInput(cx);
+        if (whileDown != std::vector<uint32_t>{7}) { std::printf("    active host ids:"); for (auto i : whileDown) std::printf(" %u", i); std::printf("\n"); }
+        check(downOk && upOk && badRejected && whileDown == std::vector<uint32_t>{7} && afterUp.empty() && calls.size() == 2 &&
+              calls[0].rfind("began:", 0) == 0 && calls[1].rfind("ended:", 0) == 0,
+              "an input-file touch line reaches UIKit with its own finger id");
+        r.send(cpu, win, "setHidden:", {1});
+        u.app = savedApp;
+        if (savedKey) u.keyWindow = savedKey;
+    }
+
+    // `hvm run --input-file` touch lines: the optional finger field reaches injectTouch, and a
+    // malformed one rejects the line instead of silently meaning finger 1. Expected values are
+    // read off each literal line by hand.
+    {
+        using DesktopInput::parseTouch;
+        const auto two = parseTouch("touch 0 100 200 2");
+        const auto dflt = parseTouch("touch 3 12.5 40");
+        const auto crlf = parseTouch("touch 1 7 8 10\r");
+        const bool fingerKept = two && two->phase == 0 && two->x == 100.0f && two->y == 200.0f && two->finger == 2;
+        const bool defaultOne = dflt && dflt->phase == 3 && dflt->x == 12.5f && dflt->y == 40.0f && dflt->finger == 1;
+        const bool maxFinger = crlf && crlf->phase == 1 && crlf->finger == 10;
+        int wronglyAccepted = 0;
+        for (const char* bad : {"touch 3 100 200 two", "touch 3 100 200 2x", "touch 3 100 200 11", "touch 3 100 200 -1",
+                                "touch 3 100 200 +2", "touch 3 100 200 2 3", "touch 2 100 200", "touch 0 nan 200",
+                                "touch 0 100 200y", "touch 0 100", "touchy 0 100 200"})
+            if (parseTouch(bad)) { std::printf("    accepted: %s\n", bad); ++wronglyAccepted; }
+        // A NUL inside a field is part of the token, not its end: finger "1\0x" and y "200\0x" are invalid.
+        using namespace std::string_view_literals;
+        for (std::string_view bad : {"touch 3 100 200 1\0x"sv, "touch 3 100 200\0x 2"sv})
+            if (parseTouch(bad)) { std::printf("    accepted a field with an embedded NUL\n"); ++wronglyAccepted; }
+        check(fingerKept && defaultOne && maxFinger && wronglyAccepted == 0,
+              "input-file touch lines keep their finger id (default 1) and reject a malformed finger field");
     }
 
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
