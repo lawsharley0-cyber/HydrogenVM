@@ -9976,6 +9976,9 @@ int runFullSubsystemTests() {
             static void texImage2D(uint32_t, int32_t, int32_t f, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void*) {
                 if (f == 0x84F9) errors().push_back(0x0502);   // a depth-stencil format the fake driver rejects
             }
+            static void texSubImage2D(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t f, uint32_t, const void*) {
+                if (f == 0x84F9) errors().push_back(0x0500);
+            }
         };
         struct ErrPlatform final : HostGL::Platform {
             std::mutex mu;
@@ -9998,6 +10001,7 @@ int runFullSubsystemTests() {
                 if (s == "glBindFramebuffer") return reinterpret_cast<void*>(&FakeGL::bindFramebuffer);
                 if (s == "glBindTexture") return reinterpret_cast<void*>(&FakeGL::bindTexture);
                 if (s == "glTexImage2D") return reinterpret_cast<void*>(&FakeGL::texImage2D);
+                if (s == "glTexSubImage2D") return reinterpret_cast<void*>(&FakeGL::texSubImage2D);
                 return nullptr;
             }
         };
@@ -10070,6 +10074,21 @@ int runFullSubsystemTests() {
             for (const auto& line : eproc.glErrorLog()) std::printf("    gl log: %s\n", line.c_str());
         check(texErr == 0x0502 && texNamed && !bindBlamed,
               "a hand-written GL function's error is logged under its own name, and the guest still sees it");
+        // glTexSubImage2D has no check of its own: HG_BEGIN's check on return names it.
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexSubImage2D"), {0x0DE1, 0, 0, 0, 4, 4, 0x84F9, 0x84FA, 0});
+        ecpu.r[13] = savedSp;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glBindTexture"), {0x0DE1, 0});
+        const uint32_t subErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        bool subNamed = false, subBindBlamed = false;
+        for (const auto& line : eproc.glErrorLog()) {
+            subNamed = subNamed || (line.rfind("glTexSubImage2D(", 0) == 0 && line.find("-> 0x0500") != std::string::npos);
+            subBindBlamed = subBindBlamed || (line.rfind("glBindTexture(3553, 0)", 0) == 0 && line.find("-> 0x0500") != std::string::npos);
+        }
+        check(subErr == 0x0500 && subNamed && !subBindBlamed,
+              "HG_BEGIN checks a hand-written GL function on return: its error is not blamed on the next call");
     }
 
     // PR #167: fixed-size heap objects share writable pages, so a successful
