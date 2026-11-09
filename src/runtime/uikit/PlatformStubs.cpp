@@ -654,7 +654,6 @@ constexpr int32_t kAudioFileUnsupportedProperty = 0x7074793F;   // 'pty?'
 uint32_t afPropertySize(uint32_t prop) {
     switch (prop) {
     case 0x64666D74: return 40;   // 'dfmt' AudioStreamBasicDescription
-    case 0x666C7374: return 44;   // 'flst' one AudioFormatListItem (ASBD + channel layout tag)
     case 0x706E666F: return 16;   // 'pnfo' AudioFilePacketTableInfo
     case 0x62636E74: case 0x65647572: case 0x70636E74: return 8;   // 'bcnt' 'edur' 'pcnt'
     case 0x70737A65: case 0x706B7562: case 0x66666D74: return 4;   // 'psze' 'pkub' 'ffmt'
@@ -697,10 +696,7 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
         x.mem.write<uint32_t>(outData + 8, 0);
         x.mem.write<uint32_t>(outData + 12, 0);
-    } else if ((prop == 0x64666D74 /* 'dfmt' AudioStreamBasicDescription */ ||
-                prop == 0x666C7374 /* 'flst' format list: the one format, then its layout */) && cap >= 40) {
-        if (prop == 0x666C7374)   // kAudioChannelLayoutTag_Mono / _Stereo
-            x.mem.write<uint32_t>(outData + 40, afChannels(af) == 1 ? (100u << 16) | 1 : (101u << 16) | 2);
+    } else if (prop == 0x64666D74 /* 'dfmt' AudioStreamBasicDescription */ && cap >= 40) {
         x.mem.write<double>(outData + 0, double(af.decoded.sampleRate));
         x.mem.write<uint32_t>(outData + 8, 0x6C70636D /* 'lpcm' */);
         x.mem.write<uint32_t>(outData + 12, 0x0C /* signed int | packed */);
