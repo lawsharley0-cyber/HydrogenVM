@@ -339,6 +339,10 @@ public:
     uint32_t startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached, uint32_t stackAddr = 0);
     /// Test seam: the next `count` host-thread creations (process-wide) fail, to exercise startThread cleanup.
     static void failNextHostThreadSpawns(int count);
+    static void failNextHostThreadAttrInits(int count);   // test seam: pthread_attr_init returns ENOMEM
+    // Test seam: the guest stack of the last thread whose host thread could not start
+    // (base, size), recorded after it was released. Read without threadsMu_.
+    std::pair<uint32_t, uint32_t> lastFailedSpawnStack() const { return {failedSpawnBase_.load(), failedSpawnSize_.load()}; }
     bool joinThread(uint32_t self, uint32_t* retval);
     void detachThread(uint32_t self);
     GuestThread& mainThread() { return *mainThread_; }
@@ -461,6 +465,7 @@ private:
     std::unordered_map<const void*, uint32_t> slots_;
     std::map<std::pair<const void*, uint32_t>, uint32_t> threadSlots_;
     std::mutex threadsMu_;
+    std::atomic<uint32_t> failedSpawnBase_{0}, failedSpawnSize_{0};
     uint32_t nextThreadId_ = 1;
     uint32_t stackTop_ = 0xBF000000u;
 

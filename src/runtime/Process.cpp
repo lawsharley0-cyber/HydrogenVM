@@ -95,6 +95,7 @@ bool looksLikeData(const std::string& s) {
 // Host threads for guest threads get a generous stack: nested host↔guest
 // calls (ObjC dispatch from host code, callbacks) recurse on it.
 std::atomic<int> gInjectedSpawnFailures{0};   // test seam: Process::failNextHostThreadSpawns
+std::atomic<int> gInjectedAttrInitFailures{0};   // test seam: Process::failNextHostThreadAttrInits
 
 pthread_t spawnHostThread(std::function<void()> fn) {
     if (gInjectedSpawnFailures.load() > 0 && gInjectedSpawnFailures.fetch_sub(1) > 0)
@@ -107,7 +108,7 @@ pthread_t spawnHostThread(std::function<void()> fn) {
     // ordinary guest threads (Terraria's camera thread on the phone).
     for (const size_t stack : {size_t(8) << 20, size_t(2) << 20, size_t(1) << 20, size_t(512) << 10}) {
         pthread_attr_t attr;
-        r = pthread_attr_init(&attr);
+        r = gInjectedAttrInitFailures.load() > 0 && gInjectedAttrInitFailures.fetch_sub(1) > 0 ? ENOMEM : pthread_attr_init(&attr);
         if (r != 0) break;   // attr is unusable: report the error, never destroy it
         pthread_attr_setstacksize(&attr, stack);
         r = pthread_create(&th, &attr, [](void* p) -> void* {
@@ -1034,6 +1035,7 @@ GuestThread* Process::findThreadById(uint32_t id) {
 }
 
 void Process::failNextHostThreadSpawns(int count) { gInjectedSpawnFailures = count; }
+void Process::failNextHostThreadAttrInits(int count) { gInjectedAttrInitFailures = count; }
 
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached, uint32_t stackAddr) {
     if (stopping()) throw ProcessExit(exitCode_, "stopping");
@@ -1055,6 +1057,8 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
     const auto releaseStack = [&] {
         if (!stackAddr) mem_->unmap(stackBase, mappedSize);
         if (!stackAddr && stackTop_ == stackBase - kGuard) stackTop_ = stackBase + mappedSize;
+        failedSpawnBase_ = stackBase;
+        failedSpawnSize_ = mappedSize;
     };
     {
         std::lock_guard<std::mutex> lk(threadsMu_);

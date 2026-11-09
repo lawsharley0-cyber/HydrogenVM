@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <pthread.h>
+#include <string>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -70,11 +71,24 @@ int main() {
         bool threw = false;
         try { r.send(cpu, thread, "start"); } catch (const std::exception&) { threw = true; }
         const auto afterIds = p.liveThreadIds();
-        check(threw && afterIds.size() == 1 && afterIds[0] == p.mainThread().id,
-              "failed host creation removes the guest thread");
+        const auto [failedBase, failedSize] = p.lastFailedSpawnStack();
+        bool unmapped = failedSize != 0;
+        for (uint32_t offset = 0; unmapped && offset < failedSize; offset += 4096) unmapped = !p.mem().isMapped(failedBase + offset);
+        check(threw && afterIds.size() == 1 && afterIds[0] == p.mainThread().id && unmapped,
+              "failed host creation unmaps the guest stack and removes the guest thread");
         check(!(uint32_t(r.send(cpu, thread, "isExecuting")) & 0xff), "failed NSThread start resets execution state");
         check(requestedStacks == std::vector<size_t>{8u << 20, 2u << 20, 1u << 20, 512u << 10},
               "a host thread that cannot get 8 MB is retried with 2 MB, 1 MB and 512 KB stacks");
+        // pthread_attr_init failing: no pthread_create attempt, the error reaches the caller.
+        Process::failNextHostThreadAttrInits(1);
+        requestedStacks.clear();
+        bool attrThrew = false;
+        std::string attrError;
+        try { r.send(cpu, thread, "start"); } catch (const std::exception& e) { attrThrew = true; attrError = e.what(); }
+        const auto attrIds = p.liveThreadIds();
+        check(attrThrew && requestedStacks.empty() && attrError.find("memory") != std::string::npos &&
+              attrIds.size() == 1 && !(uint32_t(r.send(cpu, thread, "isExecuting")) & 0xff),
+              "a failed pthread_attr_init creates no host thread, reports the error and removes the guest thread");
         // The 8 MB stack fails once: the thread starts on the 2 MB retry.
         failCount = 1;
         requestedStacks.clear();
