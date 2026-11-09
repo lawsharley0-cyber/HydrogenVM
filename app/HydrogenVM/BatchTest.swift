@@ -282,6 +282,10 @@ final class BatchTestRunner {
         o.onlyGames = BatchTestRunner.rememberedGameChoice()
         return o
     }()
+    /// The options the current or last run started with. Reports, the session and Retest use
+    /// these; `options` is what the options sheet edits for the next run, so opening the sheet
+    /// never relabels results that are already on screen.
+    private(set) var runOptions = BatchTestOptions()
     private(set) var status: BatchTestStatus = .idle
     private(set) var results: [BatchAppResult] = []
     private(set) var targets: [BatchTarget] = []
@@ -377,6 +381,7 @@ final class BatchTestRunner {
     func startNewBatch(apps: [InstalledApp], options: BatchTestOptions) {
         Self.keepLastFullReport()
         self.options = options
+        self.runOptions = options
         self.clearPendingSession()
         self.results = []
         self.libraryGames = apps.filter(\.info.runnable).count
@@ -409,6 +414,7 @@ final class BatchTestRunner {
         }
 
         self.options = saved.options
+        self.runOptions = saved.options
         self.results = saved.completedResults
         self.libraryGames = allApps.filter(\.info.runnable).count
 
@@ -468,10 +474,10 @@ final class BatchTestRunner {
         if fm.fileExists(atPath: md.path(percentEncoded: false)) { try? fm.copyItem(at: md, to: lastFullReportMD) }
     }
 
-    /// Run again on just these games, with the current options. The player's own pick
+    /// Run again on just these games, with the options of the run on screen. The player's own pick
     /// (what the options sheet shows next time) is left as it was.
     func retest(_ ids: [String], apps: [InstalledApp]) {
-        var o = options
+        var o = runOptions
         o.onlyGames = ids
         startNewBatch(apps: apps, options: o)
     }
@@ -490,7 +496,7 @@ final class BatchTestRunner {
     private func savePendingSession() {
         try? FileManager.default.createDirectory(at: Self.reportsDir, withIntermediateDirectories: true)
         let state = BatchSessionState(
-            options: options,
+            options: runOptions,
             completedResults: results,
             pendingBundleIds: targets.suffix(from: currentIndex).map(\.app.info.bundleIdentifier)
         )
@@ -1073,14 +1079,14 @@ final class BatchTestRunner {
                 "systemVersion": UIDevice.current.systemVersion
             ],
             "options": [
-                "seconds": options.secondsPerApp,
-                "renderer": options.rendererMode.rawValue,
-                "keepGoing": options.keepGoing,
-                "explore": options.exploreEnabled,
-                "exploreSeconds": options.exploreTime,
-                "relaunch": options.relaunchEnabled,
-                "glTrace": options.glTrace,
-                "selection": BatchSelection.reportEntry(pick: options.onlyGames, libraryGames: libraryGames)
+                "seconds": runOptions.secondsPerApp,
+                "renderer": runOptions.rendererMode.rawValue,
+                "keepGoing": runOptions.keepGoing,
+                "explore": runOptions.exploreEnabled,
+                "exploreSeconds": runOptions.exploreTime,
+                "relaunch": runOptions.relaunchEnabled,
+                "glTrace": runOptions.glTrace,
+                "selection": BatchSelection.reportEntry(pick: runOptions.onlyGames, libraryGames: libraryGames)
             ],
             "suites": [
                 "apps": [
@@ -1095,8 +1101,8 @@ final class BatchTestRunner {
         md += "**Date:** \(ISO8601DateFormatter().string(from: Date()))  \n"
         md += "**Device:** \(UIDevice.current.model), iOS \(UIDevice.current.systemVersion)  \n"
         md += "**Emulator Commit:** `\(HVMSession.emulatorCommit.prefix(12))`  \n"
-        md += "**Options:** \(options.secondsPerApp)s/app · Renderer \(options.rendererMode.displayName) · KeepGoing \(options.keepGoing) · Explore \(options.exploreEnabled ? "\(options.exploreTime)s" : "off") · Relaunch \(options.relaunchEnabled)  \n"
-        md += BatchSelection.markdownLine(pick: options.onlyGames, libraryGames: libraryGames) + "\n\n"
+        md += "**Options:** \(runOptions.secondsPerApp)s/app · Renderer \(runOptions.rendererMode.displayName) · KeepGoing \(runOptions.keepGoing) · Explore \(runOptions.exploreEnabled ? "\(runOptions.exploreTime)s" : "off") · Relaunch \(runOptions.relaunchEnabled)  \n"
+        md += BatchSelection.markdownLine(pick: runOptions.onlyGames, libraryGames: libraryGames) + "\n\n"
 
         let total = results.count
         let crashed = results.filter(\.crashed).count
@@ -1203,7 +1209,7 @@ final class BatchTestRunner {
             if fm.fileExists(atPath: src.path(percentEncoded: false)) { try fm.copyItem(at: src, to: thumbs.appending(path: name)) }
         }
         // A partial run also carries the last full run's report, so a retest never hides it.
-        if !options.onlyGames.isEmpty, fm.fileExists(atPath: Self.lastFullReportJSON.path(percentEncoded: false)) {
+        if !runOptions.onlyGames.isEmpty, fm.fileExists(atPath: Self.lastFullReportJSON.path(percentEncoded: false)) {
             let full = root.appending(path: "last-full-run", directoryHint: .isDirectory)
             try fm.createDirectory(at: full, withIntermediateDirectories: true)
             try fm.copyItem(at: Self.lastFullReportJSON, to: full.appending(path: "report.json"))
