@@ -2331,6 +2331,45 @@ int runFullSubsystemTests() {
     // Initialize main thread stack & environment for direct host->guest ObjC calls
     proc.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
     cpu.r[CPU::kSP] = 0xBF000000u - 256;
+    // Crash clues: the crashing thread's last host calls and what they returned, and a
+    // "likely cause" for a NULL access right after a function returned 0 or for a trap.
+    {
+        const uint32_t nilFn = proc.defineFunction("_test_returns_nothing", [](Ctx& x) { x.cpu.r[0] = 0; });
+        const uint32_t okFn = proc.defineFunction("_test_returns_object", [](Ctx& x) { x.cpu.r[0] = 0x1234; });
+        proc.callGuest(cpu, okFn, {});
+        proc.callGuest(cpu, nilFn, {});
+        const std::string nullClues = proc.crashClues(CPU::Exit::MemFault, 0, true);
+        const bool listed = nullClues.find("_test_returns_object -> 0x00001234") != std::string::npos &&
+                            nullClues.find("_test_returns_nothing -> 0x00000000") != std::string::npos &&
+                            nullClues.find("_test_returns_object") < nullClues.find("_test_returns_nothing");
+        const bool blamed = nullClues.find("likely cause: _test_returns_nothing returned 0") != std::string::npos;
+        // Instruction sets: Thumb udf #254 and ARM 0xe7ffdefe are traps; an ARM word whose
+        // high half happens to be 0xdefe (a conditional coprocessor op) is not.
+        const bool trap = proc.crashClues(CPU::Exit::Undefined, 0xdefe981du, true).find("stopped itself on purpose") != std::string::npos &&
+                          proc.crashClues(CPU::Exit::Undefined, 0xe7ffdefeu, false).find("stopped itself on purpose") != std::string::npos;
+        const bool notTrap = proc.crashClues(CPU::Exit::Undefined, 0xee000a10u, true).find("stopped itself") == std::string::npos &&
+                             proc.crashClues(CPU::Exit::Undefined, 0xdefe0010u, false).find("stopped itself") == std::string::npos;
+        // A host call that threw is "did not return", never blamed for the 0 left in r0.
+        const uint32_t throwsFn = proc.defineFunction("_test_throws", [](Ctx& x) { x.cpu.r[0] = 0; throw std::logic_error("test"); });
+        try { proc.callGuest(cpu, throwsFn, {}); } catch (const std::exception&) {}
+        const std::string thrown = proc.crashClues(CPU::Exit::MemFault, 0, true);
+        const bool unfinished = thrown.find("_test_throws (did not return)") != std::string::npos &&
+                                thrown.find("_test_throws returned 0") == std::string::npos &&
+                                thrown.find("likely cause: the crash happened inside _test_throws") != std::string::npos;
+        // More than 12 calls: only the newest 12, oldest first.
+        const uint32_t countFn = proc.defineFunction("_test_count", [](Ctx& x) { x.cpu.r[0] = x.cpu.r[0] + 100; });
+        for (uint32_t k = 1; k <= 14; ++k) proc.callGuest(cpu, countFn, {k});
+        const std::string many = proc.crashClues(CPU::Exit::MemFault, 0, true);
+        size_t shown = 0, pos = 0;
+        while ((pos = many.find("_test_count -> ", pos)) != std::string::npos) { ++shown; ++pos; }
+        const bool newest = shown == 12 && many.find("_test_count -> 0x00000066") == std::string::npos &&   // call 2 (2 + 100) dropped
+                            many.find("_test_count -> 0x00000067") != std::string::npos &&                   // call 3 is the oldest kept
+                            many.find("0x00000067") < many.find("0x00000072") && many.find("_test_throws") == std::string::npos;
+        if (!(listed && blamed && trap && notTrap && unfinished && newest))
+            std::printf("    clues:\n%s%s%s", nullClues.c_str(), thrown.c_str(), many.c_str());
+        check(listed && blamed && trap && notTrap && unfinished && newest,
+              "crash clues list the newest 12 host calls in order with results, blame a 0 result only from a call that returned, and name app traps per instruction set");
+    }
     const uint32_t outerPool = r.poolPush();
 
     // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.
@@ -2377,6 +2416,23 @@ int runFullSubsystemTests() {
             bool ok=true;
             auto expectRows=[&](uint32_t pred,std::vector<ObjC::id> want,const char* what){ if(matches(pred)!=want){ std::printf("    NSPredicate: %s\n",what); ok=false; } };
             expectRows(fmt("(%K == %@ || %K == %@)",{K,makeString(cx,"a"),K,makeString(cx,"b")}),{a1,a2,b3},"(%K == %@ || %K == %@)");
+            // String operators and IN (Kindle stops on "%K BEGINSWITH %@").
+            const auto T=makeString(cx,"title");
+            auto book=[&](const char* title){return makeDict(cx,{{T,makeString(cx,title)}});};
+            const auto b1=book("Caf\xc3\xa9 Stories"), b2=book("cafe society"), b3t=book("The Last Cafe"), b4=book("Notes");
+            const auto books=makeArray(cx,{b1,b2,b3t,b4});
+            auto bookMatches=[&](uint32_t pred){return arrayItems(cx,call(books,"filteredArrayUsingPredicate:",{pred}));};
+            auto expectBooks=[&](uint32_t pred,std::vector<ObjC::id> want,const char* what){ if(bookMatches(pred)!=want){ std::printf("    NSPredicate: %s\n",what); ok=false; } };
+            expectBooks(fmt("%K BEGINSWITH %@",{T,makeString(cx,"caf")}),{b2},"%K BEGINSWITH %@ (case-sensitive)");
+            expectBooks(fmt("%K BEGINSWITH[c] %@",{T,makeString(cx,"CAF")}),{b1,b2},"BEGINSWITH[c]");
+            expectBooks(fmt("title ENDSWITH[cd] %@",{makeString(cx,"CAFE")}),{b3t},"ENDSWITH[cd]");
+            expectBooks(fmt("title CONTAINS[cd] %@",{makeString(cx,"cafe")}),{b1,b2,b3t},"CONTAINS[cd] folds the accent");
+            expectBooks(fmt("title CONTAINS %@",{makeString(cx,"cafe")}),{b2},"CONTAINS is case- and accent-sensitive");
+            expectBooks(fmt("title BEGINSWITH[d] %@",{makeString(cx,"Cafe")}),{b1},"[d] alone folds the accent and keeps case");
+            expectBooks(fmt("title BEGINSWITH[n] %@",{makeString(cx,"cafe")}),{b2},"[n] changes nothing for composed text");
+            expectBooks(fmt("title LIKE[c] %@",{makeString(cx,"*c?fe*")}),{b2,b3t},"LIKE with * and ?");
+            expectBooks(fmt("title IN %@",{makeArray(cx,{makeString(cx,"Notes"),makeString(cx,"x")})}),{b4},"IN an array");
+            expectBooks(fmt("NOT (title BEGINSWITH 'The') AND title CONTAINS[c] 'CAF'"),{b1,b2},"string operators inside NOT/AND");
             expectRows(fmt("n > 1 AND (kind == 'a' OR kind == 'c')"),{a2,c4},"AND with a parenthesised OR");
             expectRows(fmt("NOT (n >= 3)"),{a1,a2},"NOT (...)");
             expectRows(fmt("!(kind == 'a') && n < 4"),{b3},"! and &&");
@@ -2390,7 +2446,8 @@ int runFullSubsystemTests() {
             expectRows(call(r.getClass("NSCompoundPredicate"),"andPredicateWithSubpredicates:",{makeArray(cx,{})}),{a1,a2,b3,c4},"empty AND is true");
             expectRows(call(r.getClass("NSCompoundPredicate"),"orPredicateWithSubpredicates:",{makeArray(cx,{})}),{},"empty OR is false");
             (void)P;
-            for(const char* bad : {"name IN %@","(kind == 'a'","kind == 'a' extra","kind == 'a' AND","kind CONTAINS 'a'","AND == 1"}) {
+            // IN and CONTAINS are supported now (string operators above); BETWEEN and broken syntax still raise.
+            for(const char* bad : {"n BETWEEN %@","(kind == 'a'","kind == 'a' extra","kind == 'a' AND","kind CONTAINS[x] 'a'","AND == 1"}) {
                 bool rejected=false;
                 try{ fmt(bad,{makeArray(cx,{})}); }catch(const std::exception& e){ rejected=std::string(e.what()).find("unsupported NSPredicate format")!=std::string::npos; }
                 if(!rejected){ std::printf("    NSPredicate: accepted %s\n",bad); ok=false; }
