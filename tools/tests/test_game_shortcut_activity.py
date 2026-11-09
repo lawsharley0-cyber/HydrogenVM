@@ -1,5 +1,5 @@
-"""The "Play <game>" shortcut (#279) only reaches the app if Info.plist declares its
-activity type. Guards the Swift constant and the plist from drifting apart."""
+"""Home Screen icons (#279). Existing "Play <game>" shortcuts only reach the app if
+Info.plist declares their activity type; new icons come from a web clip profile."""
 import plistlib
 import re
 import unittest
@@ -17,10 +17,15 @@ class GameShortcutActivityTest(unittest.TestCase):
             info = plistlib.load(f)
         self.assertIn(match.group(1), info.get("NSUserActivityTypes", []))
 
-    def test_no_configuration_profile_is_written(self):
-        for path in (ROOT / "app/HydrogenVM").glob("*.swift"):
-            self.assertNotIn("mobileconfig", path.read_text(), path.name)
-
+    def test_home_screen_uses_a_web_clip_profile(self):
+        """Add to Home Screen installs a web clip (LiveContainer's "Create App Clip"):
+        the profile's URL is the game link, opened in Safari as a data: URL."""
+        sheet = (ROOT / "app/HydrogenVM/AddToHomeScreen.swift").read_text()
+        link = (ROOT / "app/HydrogenVM/HomeScreenLink.swift").read_text()
+        self.assertIn("SFSafariViewController", sheet)
+        self.assertIn("data:application/x-apple-aspen-config;base64,", link)
+        self.assertIn("com.apple.webClip.managed", link)
+        self.assertNotIn("shortcuts://", sheet)
 
 if __name__ == "__main__":
     unittest.main()
