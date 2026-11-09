@@ -56,12 +56,14 @@ enum BatchSelection {
         return "**Games:** \(pick.count) of \(libraryGames) selected (partial run): \(ids)"
     }
 
-    /// True when a saved report.json is a full run with at least one result, i.e. worth
-    /// keeping when a later run replaces the latest report. Reports written before the
-    /// selection existed have no `selection` entry and were always full runs.
+    /// True when a saved report.json is a finished full run with at least one result, i.e.
+    /// worth keeping when a later run replaces the latest report. Reports written before the
+    /// selection existed have no `selection` entry and were always full runs; reports without
+    /// `runComplete` count as finished. A cancelled or stopped run says `runComplete: false`.
     static func isFullRunWithResults(_ reportJSON: Data) -> Bool {
         guard let root = (try? JSONSerialization.jsonObject(with: reportJSON)) as? [String: Any],
               root["kind"] as? String == "hvm-compat-report" else { return false }
+        if (root["options"] as? [String: Any])?["runComplete"] as? Bool == false { return false }
         let selection = (root["options"] as? [String: Any])?["selection"] as? [String: Any]
         if selection?["partial"] as? Bool == true { return false }
         let apps = ((root["suites"] as? [String: Any])?["apps"] as? [String: Any])?["apps"] as? [Any]

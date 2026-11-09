@@ -1077,7 +1077,9 @@ final class BatchTestRunner {
                 "relaunch": runOptions.relaunchEnabled,
                 "glTrace": runOptions.glTrace,
                 "selection": BatchSelection.reportEntry(pick: runOptions.onlyGames, libraryGames: libraryGames),
-                "previousFullRunKept": !fullRunNotKept
+                "previousFullRunKept": !fullRunNotKept,
+                // Written after every game; only the report saved when the batch finished says true.
+                "runComplete": status == .completed
             ],
             "suites": [
                 "apps": [

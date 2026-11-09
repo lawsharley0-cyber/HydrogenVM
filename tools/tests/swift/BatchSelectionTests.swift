@@ -46,8 +46,9 @@ struct BatchSelectionTests {
         BatchSelection.Outcome(bundleId: id, crashed: crashed, signal: signal, failedCheck: failedCheck)
     }
 
-    static func report(partial: Bool?, apps: Int, kind: String = "hvm-compat-report") -> Data {
+    static func report(partial: Bool?, apps: Int, kind: String = "hvm-compat-report", complete: Bool? = nil) -> Data {
         var options: [String: Any] = ["seconds": 10]
+        if let complete { options["runComplete"] = complete }
         if let partial { options["selection"] = ["partial": partial, "selected": partial ? ["a"] : [], "libraryGames": 3] }
         let rows = (0..<apps).map { ["bundleId": "id\($0)"] }
         let root: [String: Any] = ["kind": kind, "options": options, "suites": ["apps": ["apps": rows]]]
@@ -104,6 +105,8 @@ struct BatchSelectionTests {
         check(BatchSelection.isFullRunWithResults(report(partial: nil, apps: 2)), "an older report without a selection was a full run")
         check(!BatchSelection.isFullRunWithResults(report(partial: true, apps: 2)), "a partial run never replaces the kept full run")
         check(!BatchSelection.isFullRunWithResults(report(partial: false, apps: 0)), "an empty report (run just started) is not kept")
+        check(!BatchSelection.isFullRunWithResults(report(partial: false, apps: 2, complete: false)), "a cancelled or unfinished full run is not kept")
+        check(BatchSelection.isFullRunWithResults(report(partial: false, apps: 2, complete: true)), "a finished full run is kept")
         check(!BatchSelection.isFullRunWithResults(report(partial: false, apps: 2, kind: "other")), "other JSON is not a report")
         check(!BatchSelection.isFullRunWithResults(Data("not json".utf8)), "garbage is not a report")
 
