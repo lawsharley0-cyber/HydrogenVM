@@ -90,8 +90,10 @@ struct BatchTestView: View {
                 // player's remembered pick, not a retest's list, minus games removed since.
                 guard shown else { return }
                 let installed = Set(runnableApps.map(\.info.bundleIdentifier))
-                runner.options.onlyGames = BatchTestRunner.rememberedGameChoice().filter { installed.contains($0) }
-                choosingGames = !runner.options.onlyGames.isEmpty
+                let remembered = BatchTestRunner.rememberedGameChoice()
+                runner.options.onlyGames = remembered.filter { installed.contains($0) }
+                // A pick whose games were all removed stays a pick (Start disabled), never "every game".
+                choosingGames = !remembered.isEmpty
             }
             .sheet(isPresented: $showShareSheet) {
                 ShareSheet(items: shareItems)
