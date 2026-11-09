@@ -4554,6 +4554,23 @@ int runFullSubsystemTests() {
         for (const auto& c : calls) { begans += c.rfind("began:", 0) == 0; endeds += c.rfind("ended:", 0) == 0; }
         if (!(whileIgnoring == 1 && begans == 2 && endeds == 1)) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
         check(whileIgnoring == 1 && begans == 2 && endeds == 1, "a finger lifted during beginIgnoringInteractionEvents can touch again afterwards");
+        // An input-file line goes through the same applyTouch the hvm loop calls and reaches UIKit
+        // with its finger id: "touch 0 100 100 7" makes host finger 7 active (not the default 1),
+        // and "touch 3 100 100 7" ends that same finger.
+        calls.clear();
+        auto activeIds = [&] { std::vector<uint32_t> ids; for (const auto& at : u.activeTouches) ids.push_back(at.hostId); return ids; };
+        const bool downOk = DesktopInput::applyTouch(proc, "touch 0 100 100 7", true);
+        UIKit::deliverPendingInput(cx);
+        const auto whileDown = activeIds();
+        const bool upOk = DesktopInput::applyTouch(proc, "touch 3 100 100 7", true);
+        UIKit::deliverPendingInput(cx);
+        const auto afterUp = activeIds();
+        const bool badRejected = !DesktopInput::applyTouch(proc, "touch 0 100 100 two", true);
+        UIKit::deliverPendingInput(cx);
+        if (whileDown != std::vector<uint32_t>{7}) { std::printf("    active host ids:"); for (auto i : whileDown) std::printf(" %u", i); std::printf("\n"); }
+        check(downOk && upOk && badRejected && whileDown == std::vector<uint32_t>{7} && afterUp.empty() && calls.size() == 2 &&
+              calls[0].rfind("began:", 0) == 0 && calls[1].rfind("ended:", 0) == 0,
+              "an input-file touch line reaches UIKit with its own finger id");
         r.send(cpu, win, "setHidden:", {1});
         u.app = savedApp;
         if (savedKey) u.keyWindow = savedKey;
@@ -4575,6 +4592,10 @@ int runFullSubsystemTests() {
                                 "touch 3 100 200 +2", "touch 3 100 200 2 3", "touch 2 100 200", "touch 0 nan 200",
                                 "touch 0 100 200y", "touch 0 100", "touchy 0 100 200"})
             if (parseTouch(bad)) { std::printf("    accepted: %s\n", bad); ++wronglyAccepted; }
+        // A NUL inside a field is part of the token, not its end: finger "1\0x" and y "200\0x" are invalid.
+        using namespace std::string_view_literals;
+        for (std::string_view bad : {"touch 3 100 200 1\0x"sv, "touch 3 100 200\0x 2"sv})
+            if (parseTouch(bad)) { std::printf("    accepted a field with an embedded NUL\n"); ++wronglyAccepted; }
         check(fingerKept && defaultOne && maxFinger && wronglyAccepted == 0,
               "input-file touch lines keep their finger id (default 1) and reject a malformed finger field");
     }

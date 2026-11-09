@@ -321,9 +321,7 @@ int hvmRunMain(int argc, char** argv) {
                     if(inputOverflow) {
                         inputOverflow=false;std::fprintf(stderr,"[hvm:warn] Desktop input exceeds bounded line size\n");continue;
                     }
-                    if (const auto t = DesktopInput::parseTouch(command)) {   // "touch <phase> <x> <y> [finger]"
-                        proc.injectTouch(Runtime::TouchPhase(t->phase), t->x, t->y, t->finger);
-                        if (!quiet) std::fprintf(stderr, "[hvm] desktop touch %d %.1f %.1f finger %u\n", t->phase, t->x, t->y, t->finger);
+                    if (DesktopInput::applyTouch(proc, command, quiet)) {   // "touch <phase> <x> <y> [finger]"
                     } else if(command.starts_with("text ")) {
                         const auto digit=[](char c) {
                             if(c>='0' && c<='9')return c-'0';

@@ -1,9 +1,11 @@
 // Parser for the `touch PHASE X Y [FINGER]` line of `hvm run --input-file` (see
 // docs/LOCAL_TESTING.md). Header-only so hvm_tests checks the same code hvm runs.
 #pragma once
+#include "runtime/Process.hpp"
 #include <cctype>
 #include <cerrno>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -32,14 +34,14 @@ inline std::optional<Touch> parseTouch(std::string_view line) {
         errno = 0;
         char* end = nullptr;
         const long v = std::strtol(s.c_str(), &end, 10);
-        if (errno || *end || v < lo || v > hi) return std::nullopt;
+        if (errno || end != s.c_str() + s.size() || v < lo || v > hi) return std::nullopt;   // whole token, even past a NUL
         return v;
     };
     auto real = [](const std::string& s) -> std::optional<float> {
         errno = 0;
         char* end = nullptr;
         const float v = std::strtof(s.c_str(), &end);
-        if (errno || end == s.c_str() || *end || !std::isfinite(v)) return std::nullopt;
+        if (errno || s.empty() || end != s.c_str() + s.size() || !std::isfinite(v)) return std::nullopt;
         return v;
     };
     const auto phase = whole(tok[1], 0, 4);
@@ -52,6 +54,16 @@ inline std::optional<Touch> parseTouch(std::string_view line) {
         finger = unsigned(*f);
     }
     return Touch{int(*phase), *x, *y, finger};
+}
+
+// The `hvm run --input-file` loop calls this for each line: a valid touch line is sent to
+// the Process with its own finger id. Returns false when the line is not a valid touch.
+inline bool applyTouch(Runtime::Process& proc, std::string_view line, bool quiet) {
+    const auto t = parseTouch(line);
+    if (!t) return false;
+    proc.injectTouch(Runtime::TouchPhase(t->phase), t->x, t->y, t->finger);
+    if (!quiet) std::fprintf(stderr, "[hvm] desktop touch %d %.1f %.1f finger %u\n", t->phase, t->x, t->y, t->finger);
+    return true;
 }
 
 } // namespace Hydrogen::DesktopInput
