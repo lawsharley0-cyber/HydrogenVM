@@ -30,6 +30,8 @@ struct BatchTestOptions: Codable, Sendable {
     var relaunchTime: Int = 12
     /// GPU runs: check every GL call for errors and count draw calls (explains black screens).
     var glTrace: Bool = true
+    /// Only these games (bundle ids); empty tests every runnable game in the library.
+    var onlyGames: [String] = []
 
     init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false, exploreEnabled: Bool = true, exploreTime: Int = 30, relaunchEnabled: Bool = true) {
         self.secondsPerApp = secondsPerApp
@@ -53,6 +55,13 @@ struct BatchTestOptions: Codable, Sendable {
         relaunchEnabled = try c.decodeIfPresent(Bool.self, forKey: .relaunchEnabled) ?? true
         relaunchTime = try c.decodeIfPresent(Int.self, forKey: .relaunchTime) ?? 12
         glTrace = try c.decodeIfPresent(Bool.self, forKey: .glTrace) ?? true
+        onlyGames = try c.decodeIfPresent([String].self, forKey: .onlyGames) ?? []
+    }
+
+    /// The runnable games this run covers, in library order.
+    func games(from apps: [InstalledApp]) -> [InstalledApp] {
+        let chosen = Set(onlyGames)
+        return apps.filter { $0.info.runnable && (chosen.isEmpty || chosen.contains($0.info.bundleIdentifier)) }
     }
 }
 
@@ -268,7 +277,11 @@ final class ExitBox {
 @Observable
 @MainActor
 final class BatchTestRunner {
-    var options = BatchTestOptions()
+    var options: BatchTestOptions = {
+        var o = BatchTestOptions()
+        o.onlyGames = BatchTestRunner.rememberedGameChoice()
+        return o
+    }()
     private(set) var status: BatchTestStatus = .idle
     private(set) var results: [BatchAppResult] = []
     private(set) var targets: [BatchTarget] = []
@@ -364,8 +377,9 @@ final class BatchTestRunner {
         self.clearPendingSession()
         self.results = []
 
+        Self.rememberGameChoice(options.onlyGames)
         var newTargets: [BatchTarget] = []
-        for app in apps where app.info.runnable {
+        for app in options.games(from: apps) {
             switch options.rendererMode {
             case .software:
                 newTargets.append(BatchTarget(app: app, useGPU: false))
@@ -397,7 +411,7 @@ final class BatchTestRunner {
         let completedIds = Set(saved.completedResults.map(\.id))
 
         var remainingTargets: [BatchTarget] = []
-        for app in allApps where app.info.runnable {
+        for app in options.games(from: allApps) {
             let swTarget = BatchTarget(app: app, useGPU: false)
             let gpuTarget = BatchTarget(app: app, useGPU: true)
 
@@ -417,6 +431,25 @@ final class BatchTestRunner {
         self.status = .running
 
         runNextTarget()
+    }
+
+    // The games picked for the last run, so the next run starts from the same choice.
+    private static let gameChoiceKey = "BatchTestOnlyGames"
+    static func rememberedGameChoice() -> [String] { UserDefaults.standard.stringArray(forKey: gameChoiceKey) ?? [] }
+    static func rememberGameChoice(_ ids: [String]) { UserDefaults.standard.set(ids, forKey: gameChoiceKey) }
+
+    /// Bundle ids of the games whose last result crashed or failed a check.
+    var gamesWithProblems: [String] {
+        var seen = Set<String>()
+        return results.filter { $0.crashed || $0.frame.signal != "ok" || $0.worstCheck == .fail }
+            .map(\.bundleId).filter { seen.insert($0).inserted }
+    }
+
+    /// Run again on just these games, with the current options.
+    func retest(_ ids: [String], apps: [InstalledApp]) {
+        var o = options
+        o.onlyGames = ids
+        startNewBatch(apps: apps, options: o)
     }
 
     func cancel() {
