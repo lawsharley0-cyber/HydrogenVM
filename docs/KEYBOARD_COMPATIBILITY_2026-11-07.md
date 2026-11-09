@@ -1,5 +1,14 @@
 # Custom text input continuation — November 7, 2026
 
+November 8: `e331d83` passes Linux and the full Apple Silicon CI job, including
+unsigned device packaging and emulator simulator checks. The separate keyboard
+UI test confirms appearance, insert/delete and Return, but fails dismissal:
+Done's computed hit point is `{-1, -1}`. The responder returned a newly allocated
+toolbar on every accessory query. The candidate now retains one flexible-width
+toolbar and gives its Done item a stable identifier; the UI test requires a
+hittable item and still checks actual callback and keyboard disappearance.
+This fix needs a new simulator run; do not declare the previous UI test green.
+
 CI follow-up: revision `5aba0b4` passes the full Linux CI job, unsigned iOS
 simulator shell compilation and the actual-bridge crash-journal regression.
 The separate SwiftUI harness then failed to compile because its synthetic
