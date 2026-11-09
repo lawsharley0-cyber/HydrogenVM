@@ -142,12 +142,6 @@ struct PlayerTests {
         let plain = WebClipProfile(gameID: "com.example.game", title: "", link: generated!, iconPNG: nil)
         check(!plain.payload().contains("<key>Icon</key>"), "no icon key when the game icon is missing")
         check(plain.filename == "Game.mobileconfig", "empty name falls back to a file name")
-        if let url = clip.dataURL, url.absoluteString.hasPrefix("data:application/x-apple-aspen-config;base64,"),
-           let decoded = Data(base64Encoded: String(url.absoluteString.dropFirst("data:application/x-apple-aspen-config;base64,".count))) {
-            check(decoded == Data(profile.utf8), "the data URL carries the profile")
-        } else {
-            check(false, "the profile has a data URL Safari can download")
-        }
         let parsed: [String: Any]? = try? PropertyListSerialization.propertyList(from: Data(profile.utf8), options: [], format: nil) as? [String: Any]
         if let plist = parsed, let payload = (plist["PayloadContent"] as? [[String: Any]])?.first {
             check(plist["PayloadType"] as? String == "Configuration", "profile is a configuration")

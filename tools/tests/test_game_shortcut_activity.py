@@ -19,11 +19,14 @@ class GameShortcutActivityTest(unittest.TestCase):
 
     def test_home_screen_uses_a_web_clip_profile(self):
         """Add to Home Screen installs a web clip (LiveContainer's "Create App Clip"):
-        the profile's URL is the game link, opened in Safari as a data: URL."""
+        the profile's URL is the game link; Safari downloads it from a loopback server
+        (SFSafariViewController accepts only http(s), so no data: URL)."""
         sheet = (ROOT / "app/HydrogenVM/AddToHomeScreen.swift").read_text()
         link = (ROOT / "app/HydrogenVM/HomeScreenLink.swift").read_text()
         self.assertIn("SFSafariViewController", sheet)
-        self.assertIn("data:application/x-apple-aspen-config;base64,", link)
+        self.assertIn("application/x-apple-aspen-config", sheet)
+        self.assertIn(".ipv4(.loopback)", sheet)
+        self.assertNotIn("data:application", sheet + link)
         self.assertIn("com.apple.webClip.managed", link)
         self.assertNotIn("shortcuts://", sheet)
 

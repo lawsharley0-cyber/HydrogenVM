@@ -1,3 +1,4 @@
+import Network
 import SafariServices
 import SwiftUI
 import UIKit
@@ -5,8 +6,9 @@ import UIKit
 /// "Add to Home Screen" for one game, the way LiveContainer's "Create App Clip" does it.
 ///
 /// HydrogenVM builds a web clip configuration profile with the game's own name and icon
-/// whose URL is `hydrogenvm://run/<game-id>`, and opens it in Safari as a `data:` URL.
-/// Safari offers to download it; the player installs it in Settings, and the game's icon
+/// whose URL is `hydrogenvm://run/<game-id>`. LiveContainer opens its profile as a `data:`
+/// URL; SFSafariViewController only accepts http(s), so HydrogenVM serves the profile once
+/// from a loopback address (`ProfileServer`) and opens that. Safari offers to download it; the player installs it in Settings, and the game's icon
 /// appears on the Home Screen. Tapping it opens HydrogenVM straight into the game.
 /// iOS lets no app place a Home Screen icon by itself, so the Settings install is the
 /// player's one step. No Shortcuts app involved.
@@ -18,6 +20,8 @@ struct AddToHomeScreenSheet: View {
     @State private var errorMessage: String?
     @State private var iconMissing = false
     @State private var showingSafari = false
+    @State private var server: ProfileServer?
+    @State private var serverURL: URL?
 
     var body: some View {
         NavigationStack {
@@ -37,12 +41,12 @@ struct AddToHomeScreenSheet: View {
                             .foregroundStyle(.orange)
                     } else {
                         Button {
-                            showingSafari = true
+                            openInSafari()
                         } label: {
                             Label("Add to Home Screen", systemImage: "plus.app.fill")
                                 .font(.headline)
                         }
-                        .disabled(profile?.dataURL == nil)
+                        .disabled(profile == nil)
                         .accessibilityIdentifier("add-home-screen-clip")
                     }
                 } footer: {
@@ -75,11 +79,29 @@ struct AddToHomeScreenSheet: View {
             }
             .task { makeProfile() }
             .fullScreenCover(isPresented: $showingSafari) {
-                if let url = profile?.dataURL {
-                    SafariView(url: url).ignoresSafeArea()
+                if let serverURL {
+                    SafariView(url: serverURL).ignoresSafeArea()
                 }
             }
+            .onDisappear { server?.stop(); server = nil }
         }
+    }
+
+    /// Serve the profile on 127.0.0.1 and show it in Safari. If the server cannot start,
+    /// the share button below still hands the profile over.
+    private func openInSafari() {
+        guard let profile else { return }
+        if serverURL != nil, server != nil { showingSafari = true; return }
+        let made = ProfileServer(body: Data(profile.payload().utf8), filename: profile.filename)
+        made.start { url in
+            guard let url else {
+                errorMessage = "Couldn't hand the profile to Safari. Use Share the profile instead."
+                return
+            }
+            serverURL = url
+            showingSafari = true
+        }
+        server = made
     }
 
     private func makeProfile() {
@@ -121,4 +143,73 @@ private struct SafariView: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
     func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+}
+
+/// Serves one configuration profile over HTTP on 127.0.0.1, so Safari can download it.
+/// Loopback only: nothing off the phone can reach it. Stops when the sheet closes.
+final class ProfileServer: @unchecked Sendable {
+    private let body: Data
+    private let filename: String
+    private var listener: NWListener?
+    private let queue = DispatchQueue(label: "HydrogenVM.ProfileServer")
+
+    init(body: Data, filename: String) {
+        self.body = body
+        self.filename = filename
+    }
+
+    /// Calls `ready` with the profile's URL, or nil if the listener could not start.
+    func start(ready: @escaping @MainActor (URL?) -> Void) {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+        guard let listener = try? NWListener(using: parameters) else {
+            Task { @MainActor in ready(nil) }
+            return
+        }
+        self.listener = listener
+        let name = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "Game.mobileconfig"
+        let once = Once()   // handlers run on `queue`, one at a time
+        listener.stateUpdateHandler = { [weak listener] state in
+            switch state {
+            case .ready:
+                guard let port = listener?.port?.rawValue, once.claim() else { return }
+                let url = URL(string: "http://127.0.0.1:\(port)/\(name)")
+                Task { @MainActor in ready(url) }
+            case .failed, .cancelled:
+                if once.claim() { Task { @MainActor in ready(nil) } }
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in self?.serve(connection) }
+        listener.start(queue: queue)
+    }
+
+    func stop() {
+        listener?.cancel()
+        listener = nil
+    }
+
+    /// Reads the request (any path), answers with the profile and closes.
+    private func serve(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [body] _, _, _, _ in
+            var response = Data(("HTTP/1.1 200 OK\r\n" +
+                                 "Content-Type: application/x-apple-aspen-config\r\n" +
+                                 "Content-Length: \(body.count)\r\n" +
+                                 "Connection: close\r\n\r\n").utf8)
+            response.append(body)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+}
+
+/// A flag set once; only touched from the server's serial queue.
+private final class Once: @unchecked Sendable {
+    private var done = false
+    func claim() -> Bool {
+        if done { return false }
+        done = true
+        return true
+    }
 }

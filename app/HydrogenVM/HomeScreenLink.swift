@@ -136,13 +136,6 @@ struct WebClipProfile {
         return (base.isEmpty ? "Game" : base) + ".mobileconfig"
     }
 
-    /// The profile as a `data:` URL Safari downloads as a configuration profile, the way
-    /// LiveContainer's "Create App Clip" hands its web clip to the system: no server, no
-    /// file for the player to find.
-    var dataURL: URL? {
-        URL(string: "data:application/x-apple-aspen-config;base64," + Data(payload().utf8).base64EncodedString())
-    }
-
     /// The `.mobileconfig` document. Deterministic for the same game and icon.
     func payload() -> String {
         let name = Self.xml(title)
