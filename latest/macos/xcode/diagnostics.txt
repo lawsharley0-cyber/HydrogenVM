@@ -27,7 +27,7 @@ app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/gl/Hos
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/gl/HostGL.cpp:41:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/gl/HostGL.cpp:41:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/gl/HostGL.cpp:511:16: warning: unused function 'hgGetIntFwd' [-Wunused-function]
-app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/graphics/Shader.cpp:2578:52: warning: possible misuse of comma operator here [-Wcomma]
+app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/graphics/Shader.cpp:2583:52: warning: possible misuse of comma operator here [-Wcomma]
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/Heap.cpp:13:23: warning: implicit conversion loses integer precision: 'const unsigned long long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/LibStdcxx.cpp:38:40: warning: unused variable 'kBinary' [-Wunused-const-variable]
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/LibStdcxxStreams.cpp:479:73: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
@@ -80,7 +80,7 @@ app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/stb_truetype.h:4720:35: warning: possible misuse of comma operator here [-Wcomma]
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/stb_truetype.h:4728:35: warning: possible misuse of comma operator here [-Wcomma]
 app/device-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/stb_truetype.h:4736:35: warning: possible misuse of comma operator here [-Wcomma]
-app/device-build.log:2026-11-09 11:01:38.143 appintentsmetadataprocessor[16598:48518] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+app/device-build.log:2026-11-09 20:23:12.536 appintentsmetadataprocessor[15856:46845] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/app/HydrogenVM/Bridge/HVMEngine.mm:167:85: warning: bitwise operation between different enumeration types ('CGImageAlphaInfo' and '(unnamed enum at /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/System/Library/Frameworks/CoreGraphics.framework/Headers/CGImage.h:69:9)') is deprecated [-Wdeprecated-anon-enum-enum-conversion]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/app/HydrogenVM/Bridge/HVMEngine.mm:205:81: warning: bitwise operation between different enumeration types ('CGImageAlphaInfo' and '(unnamed enum at /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/System/Library/Frameworks/CoreGraphics.framework/Headers/CGImage.h:69:9)') is deprecated [-Wdeprecated-anon-enum-enum-conversion]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/app/HydrogenVM/Bridge/HVMEngine.mm:521:75: warning: bitwise operation between different enumeration types ('CGImageAlphaInfo' and '(unnamed enum at /Applications/Xcode_26.6.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/System/Library/Frameworks/CoreGraphics.framework/Headers/CGImage.h:69:9)') is deprecated [-Wdeprecated-anon-enum-enum-conversion]
@@ -110,7 +110,7 @@ app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/gl/HostGL
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/gl/HostGL.cpp:41:20: warning: unused variable 'kTexCoordArrayPointer' [-Wunused-const-variable]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/gl/HostGL.cpp:41:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/gl/HostGL.cpp:511:16: warning: unused function 'hgGetIntFwd' [-Wunused-function]
-app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/graphics/Shader.cpp:2578:52: warning: possible misuse of comma operator here [-Wcomma]
+app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/graphics/Shader.cpp:2583:52: warning: possible misuse of comma operator here [-Wcomma]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/Heap.cpp:13:23: warning: implicit conversion loses integer precision: 'const unsigned long long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/LibStdcxx.cpp:38:40: warning: unused variable 'kBinary' [-Wunused-const-variable]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/runtime/libc/LibStdcxxStreams.cpp:479:73: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
@@ -163,4 +163,4 @@ app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/st
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/stb_truetype.h:4720:35: warning: possible misuse of comma operator here [-Wcomma]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/stb_truetype.h:4728:35: warning: possible misuse of comma operator here [-Wcomma]
 app/sim-build.log:/Users/runner/work/HydrogenVM/HydrogenVM/src/thirdparty/stb/stb_truetype.h:4736:35: warning: possible misuse of comma operator here [-Wcomma]
-app/sim-build.log:2026-11-09 11:06:11.592 appintentsmetadataprocessor[25410:68812] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+app/sim-build.log:2026-11-09 20:28:01.758 appintentsmetadataprocessor[24640:67255] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
