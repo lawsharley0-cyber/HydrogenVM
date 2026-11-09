@@ -1,4 +1,5 @@
 #include "Process.hpp"
+#include <unordered_set>
 #include "MemoryDiagnostics.hpp"
 #include "Support.hpp"
 #include "libc/Unwind.hpp"
@@ -39,6 +40,16 @@ namespace {
 thread_local GuestThread* t_thread = nullptr;
 thread_local uint64_t t_processIdentity = 0;
 std::atomic<uint64_t> nextProcessIdentity{1};
+// Live Process identities. Never destroyed: a host thread still running during
+// static destruction (exit()) may ask whether a Process is live.
+struct LiveIdentities {
+    std::mutex mu;
+    std::unordered_set<uint64_t> ids;
+};
+LiveIdentities& liveIdentities() {
+    static auto* live = new LiveIdentities;
+    return *live;
+}
 
 constexpr uint32_t kHeapBase = 0x10000000u, kHeapLimit = 0x80000000u;
 constexpr uint32_t kStaticBase = 0x0E000000u, kStaticLimit = 0x10000000u;
@@ -1025,6 +1036,26 @@ GuestThread& Process::currentThread() {
     if (t_thread && t_processIdentity == identity_) return *t_thread;
     // A host thread that isn't a guest thread (e.g. a UI callback) acts as main.
     return *mainThread_;
+}
+
+Process::LiveIdentity::LiveIdentity(uint64_t identity) : id(identity) {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    live.ids.insert(id);
+}
+Process::LiveIdentity::~LiveIdentity() {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    live.ids.erase(id);
+}
+bool Process::isLiveIdentity(uint64_t identity) {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    return live.ids.count(identity) != 0;
+}
+
+bool Process::isGuestBoundThread() const {
+    return t_thread && t_processIdentity == identity_;
 }
 
 GuestThread* Process::findThread(uint32_t self) {
