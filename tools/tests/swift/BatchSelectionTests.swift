@@ -171,6 +171,15 @@ struct BatchSelectionTests {
         try Data("retest".utf8).write(to: picture)
         try writeLatest(reports, partial: true, rows: [("a", "thumbnails/a_gpu.png")])
         check(keep() == .nothingToKeep && text(kept) == "first", "a partial run never replaces the kept full run")
+        // An empty full report (a run that has only just started) leaves the snapshot too.
+        try writeLatest(reports, partial: false, rows: [])
+        check(keep() == .nothingToKeep && text(kept) == "first" && text(final.appending(path: "report.md")) == "full",
+              "an empty report leaves the kept full run unchanged")
+        // A finished-run marker of false (a cancelled full run) leaves it too.
+        let cancelled: [String: Any] = ["kind": "hvm-compat-report", "options": ["runComplete": false, "selection": ["partial": false]],
+                                        "suites": ["apps": ["apps": [["bundleId": "a", "frame": ["signal": "ok", "thumbnailPath": "thumbnails/a_gpu.png"]]]]]]
+        try JSONSerialization.data(withJSONObject: cancelled).write(to: reports.appending(path: "latest_batch_report.json"))
+        check(keep() == .nothingToKeep && text(kept) == "first", "a cancelled full run leaves the kept full run unchanged")
 
         // 3. A full run naming a picture that is missing fails and keeps the previous snapshot.
         try writeLatest(reports, partial: false, rows: [("a", "thumbnails/a_gpu.png"), ("b", "thumbnails/b_gpu.png")])
