@@ -1445,6 +1445,14 @@ struct Compiler {
         }
         return o;
     }
+    // A constant index outside the array, vector or matrix is a compile error in
+    // GLSL ES 1.00 (section 4.1.9 for arrays). Compare the value before the integer
+    // cast: int(1e20) and int(2^31) are undefined in C++, and NaN fails both tests.
+    int constIndex(const Expression& idx, int limit) {
+        const double v = idx.constValue;
+        if (!(v >= 0.0 && v < double(limit))) fail("array index must be an in-range literal");
+        return int(v);
+    }
     Expression doIndex(Expression base) {
         auto idx = expression();
         need("]");
@@ -1452,8 +1460,7 @@ struct Compiler {
         if (!scalar(idx) || idx.type.kind != Kind::Int) fail("index must be a scalar int");
         if (base.needsIndex) {
             if (idx.isConst) {
-                int i = int(idx.constValue);
-                if (i < 0 || i >= base.elemCount) fail("array index must be an in-range literal");
+                const int i = constIndex(idx, base.elemCount);
                 return takeConst(base, i, base.type, base.elemStride);
             }
             return takeDynamic(base, idx, base.type, base.elemStride, base.elemCount);
@@ -1466,8 +1473,7 @@ struct Compiler {
                 tmp.fragTag = base.fragTag; base = tmp;
             }
             if (idx.isConst) {
-                int i = int(idx.constValue);
-                if (i < 0 || i >= n) fail("array index must be an in-range literal");
+                const int i = constIndex(idx, n);
                 return takeConst(base, i, col, n);
             }
             return takeDynamic(base, idx, col, n, n);
@@ -1475,8 +1481,7 @@ struct Compiler {
         if (!base.type.isStruct() && !base.type.sampler && base.type.width > 1) {
             Type elem = ty(base.type.kind, 1);
             if (idx.isConst) {
-                int i = int(idx.constValue);
-                if (i < 0 || i >= base.type.width) fail("array index must be an in-range literal");
+                const int i = constIndex(idx, base.type.width);
                 if (base.direct) return takeConst(base, i, elem, 1);
                 return named(elem, {base.slots[size_t(i)]}, base.lvalue);
             }
