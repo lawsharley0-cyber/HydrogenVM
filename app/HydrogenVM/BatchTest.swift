@@ -292,7 +292,7 @@ final class BatchTestRunner {
     private(set) var currentIndex: Int = 0
     /// Runnable games in the library when this run started or resumed (the report's "N of M").
     private(set) var libraryGames: Int = 0
-    /// The full run this run replaced could not be copied to last_full_run/ (see keepLastFullReport).
+    /// The full run this run replaced could not be copied to last_full_run/ (see BatchSnapshot).
     private(set) var fullRunNotKept = false
 
     private(set) var currentApp: InstalledApp?
@@ -382,7 +382,7 @@ final class BatchTestRunner {
 
     func startNewBatch(apps: [InstalledApp], options: BatchTestOptions) {
         // A failed copy keeps the previous last_full_run/; this run's reports say so.
-        self.fullRunNotKept = !Self.keepLastFullReport()
+        self.fullRunNotKept = BatchSnapshot.keepLastFullRun(reports: Self.reportsDir, thumbnails: Self.thumbnailsDir) == .failed
         self.options = options
         self.runOptions = options
         self.clearPendingSession()
@@ -461,55 +461,8 @@ final class BatchTestRunner {
     /// Retest is offered only when no batch is in progress: a paused batch keeps its Resume.
     var canRetest: Bool { status == .idle || status == .completed || status == .cancelled }
 
-    /// The last full run kept as one folder: report.json, report.md and thumbnails/ (its
-    /// thumbnailPath entries are "thumbnails/<name>", so they resolve inside it). A retest
-    /// overwrites thumbnails/<game>_<mode>.png, so the pictures are copied, not referenced.
-    static var lastFullRunDir: URL { reportsDir.appending(path: "last_full_run", directoryHint: .isDirectory) }
-
-    /// Before a new run replaces latest_batch_report, keep it in last_full_run/ when it is a
-    /// full run with results, so a retest (or any partial run) never loses an unexported full
-    /// run. Partial and empty reports are not kept, so retests never replace the full one.
-    /// The copy is staged and published only once the report and every picture it names that
-    /// exists are copied; on any failure the previous last_full_run/ stays as it was and this
-    /// returns false.
-    @discardableResult
-    static func keepLastFullReport() -> Bool {
-        let fm = FileManager.default
-        let json = reportsDir.appending(path: "latest_batch_report.json")
-        let md = reportsDir.appending(path: "latest_batch_report.md")
-        guard let data = try? Data(contentsOf: json), BatchSelection.isFullRunWithResults(data) else { return true }
-        let staging = reportsDir.appending(path: "last_full_run.staging", directoryHint: .isDirectory)
-        do {
-            try? fm.removeItem(at: staging)
-            let thumbs = staging.appending(path: "thumbnails", directoryHint: .isDirectory)
-            try fm.createDirectory(at: thumbs, withIntermediateDirectories: true)
-            try data.write(to: staging.appending(path: "report.json"))
-            if fm.fileExists(atPath: md.path(percentEncoded: false)) {
-                try fm.copyItem(at: md, to: staging.appending(path: "report.md"))
-            }
-            for name in BatchSelection.thumbnailFiles(BatchSelection.thumbnailPaths(inReport: data)) {
-                let src = thumbnailsDir.appending(path: name)
-                if fm.fileExists(atPath: src.path(percentEncoded: false)) { try fm.copyItem(at: src, to: thumbs.appending(path: name)) }
-            }
-            // Swap by renames: the old copy moves aside, the new one takes its name, and the old
-            // one comes back if that fails.
-            let old = reportsDir.appending(path: "last_full_run.old", directoryHint: .isDirectory)
-            try? fm.removeItem(at: old)
-            let hadOld = fm.fileExists(atPath: lastFullRunDir.path(percentEncoded: false))
-            if hadOld { try fm.moveItem(at: lastFullRunDir, to: old) }
-            do {
-                try fm.moveItem(at: staging, to: lastFullRunDir)
-            } catch {
-                if hadOld { try? fm.moveItem(at: old, to: lastFullRunDir) }
-                throw error
-            }
-            try? fm.removeItem(at: old)
-            return true
-        } catch {
-            try? fm.removeItem(at: staging)
-            return false
-        }
-    }
+    /// The last full run kept as one folder (see BatchSnapshot).
+    static var lastFullRunDir: URL { BatchSnapshot.folder(in: reportsDir) }
 
     /// Run again on just these games, with the options of the run on screen. The player's own pick
     /// (what the options sheet shows next time) is left as it was.

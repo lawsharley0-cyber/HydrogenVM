@@ -1,5 +1,25 @@
 import Foundation
 
+/// Real files in a temporary folder, with one kind of operation made to fail on demand.
+class FaultyFiles: SnapshotFiles {
+    let disk = DiskSnapshotFiles()
+    var failCopy = false
+    /// Moves whose destination's last path component is in this set fail.
+    var failMovesTo: Set<String> = []
+    func exists(_ url: URL) -> Bool { disk.exists(url) }
+    func makeDirectory(_ url: URL) throws { try disk.makeDirectory(url) }
+    func write(_ data: Data, to url: URL) throws { try disk.write(data, to: url) }
+    func copy(_ from: URL, to: URL) throws {
+        if failCopy { throw CocoaError(.fileWriteUnknown) }
+        try disk.copy(from, to: to)
+    }
+    func move(_ from: URL, to: URL) throws {
+        if failMovesTo.contains(to.lastPathComponent) { throw CocoaError(.fileWriteUnknown) }
+        try disk.move(from, to: to)
+    }
+    func remove(_ url: URL) { disk.remove(url) }
+}
+
 /// Test All Games selection rules (app/HydrogenVM/BatchSelection.swift). Expected values are
 /// worked out by hand from the rules in that file, never copied from a run.
 @main
@@ -103,6 +123,89 @@ struct BatchSelectionTests {
         check(BatchSelection.thumbnailFiles(savedPaths) == ["a_gpu.png", "d_software.png"], "the kept full report keeps its own pictures")
         check(BatchSelection.thumbnailPaths(inReport: Data("[]".utf8)).isEmpty, "not a report: no pictures")
 
+        try snapshotChecks()
+
         print("BatchSelectionTests: \(checks) checks passed")
+    }
+
+    // MARK: last_full_run snapshot (BatchSnapshot.keepLastFullRun)
+
+    static func text(_ url: URL) -> String? { (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) } }
+
+    /// latest_batch_report.json with one row per (bundle id, thumbnail path).
+    static func writeLatest(_ reports: URL, partial: Bool, rows: [(String, String)]) throws {
+        let apps = rows.map { ["bundleId": $0.0, "frame": ["signal": "ok", "thumbnailPath": $0.1]] as [String: Any] }
+        let root: [String: Any] = ["kind": "hvm-compat-report", "options": ["selection": ["partial": partial]],
+                                   "suites": ["apps": ["apps": apps]]]
+        try JSONSerialization.data(withJSONObject: root).write(to: reports.appending(path: "latest_batch_report.json"))
+        try Data((partial ? "partial" : "full").utf8).write(to: reports.appending(path: "latest_batch_report.md"))
+    }
+
+    static func snapshotChecks() throws {
+        let fm = FileManager.default
+        let reports = fm.temporaryDirectory.appending(path: "batch-snapshot-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? fm.removeItem(at: reports) }
+        let thumbs = reports.appending(path: "thumbnails", directoryHint: .isDirectory)
+        try fm.createDirectory(at: thumbs, withIntermediateDirectories: true)
+        let final = BatchSnapshot.folder(in: reports)
+        let kept = final.appending(path: "thumbnails/a_gpu.png")
+        let staging = reports.appending(path: "last_full_run.staging")
+        let aside = reports.appending(path: "last_full_run.old")
+        let picture = thumbs.appending(path: "a_gpu.png")
+        let files = FaultyFiles()
+        func keep() -> BatchSnapshot.Outcome { BatchSnapshot.keepLastFullRun(reports: reports, thumbnails: thumbs, files: files) }
+
+        check(keep() == .nothingToKeep, "no latest report: nothing to keep")
+
+        // 1. A full run is kept with its own copy of its picture.
+        try Data("first".utf8).write(to: picture)
+        try writeLatest(reports, partial: false, rows: [("a", "thumbnails/a_gpu.png")])
+        check(keep() == .kept, "a full run is kept")
+        check(text(kept) == "first" && text(final.appending(path: "report.md")) == "full", "the kept folder has the report and its picture")
+        check(files.exists(final.appending(path: "report.json")), "the kept folder has report.json")
+
+        // 2. A retest overwrites the picture and writes a partial report: the kept copy is unchanged.
+        try Data("retest".utf8).write(to: picture)
+        try writeLatest(reports, partial: true, rows: [("a", "thumbnails/a_gpu.png")])
+        check(keep() == .nothingToKeep && text(kept) == "first", "a partial run never replaces the kept full run")
+
+        // 3. A full run naming a picture that is missing fails and keeps the previous snapshot.
+        try writeLatest(reports, partial: false, rows: [("a", "thumbnails/a_gpu.png"), ("b", "thumbnails/b_gpu.png")])
+        check(keep() == .failed, "a missing named picture fails the snapshot")
+        check(text(kept) == "first" && !files.exists(final.appending(path: "thumbnails/b_gpu.png")), "the previous snapshot is untouched")
+        check(!files.exists(staging), "no staging folder is left behind")
+
+        // 4. A copy failure fails and keeps the previous snapshot.
+        try writeLatest(reports, partial: false, rows: [("a", "thumbnails/a_gpu.png")])
+        files.failCopy = true
+        check(keep() == .failed && text(kept) == "first" && !files.exists(staging), "a copy failure keeps the previous snapshot")
+        files.failCopy = false
+
+        // 5. Publishing fails and so does the rollback: the previous snapshot waits in .old,
+        //    and the next call restores it before anything else.
+        files.failMovesTo = ["last_full_run"]
+        check(keep() == .failed, "a failed publish reports failure")
+        check(!files.exists(final) && text(aside.appending(path: "thumbnails/a_gpu.png")) == "first", "the previous snapshot survives in .old")
+        files.failMovesTo = []
+        try writeLatest(reports, partial: true, rows: [("a", "thumbnails/a_gpu.png")])
+        check(keep() == .nothingToKeep && text(kept) == "first" && !files.exists(aside), "the next call restores the previous snapshot")
+
+        // 6. Publishing fails but the rollback works: the previous snapshot is back in place.
+        try writeLatest(reports, partial: false, rows: [("a", "thumbnails/a_gpu.png")])
+        // (Fail only the staging -> final move: the first move to .old must succeed.)
+        final class OnceFaulty: FaultyFiles {
+            var failedOnce = false
+            override func move(_ from: URL, to: URL) throws {
+                if !failedOnce, from.lastPathComponent == "last_full_run.staging" { failedOnce = true; throw CocoaError(.fileWriteUnknown) }
+                try super.move(from, to: to)
+            }
+        }
+        let once = OnceFaulty()
+        check(BatchSnapshot.keepLastFullRun(reports: reports, thumbnails: thumbs, files: once) == .failed, "a failed publish with a good rollback fails")
+        check(text(kept) == "first" && !files.exists(aside) && !files.exists(staging), "the rollback put the previous snapshot back")
+
+        // 7. Then a full run replaces the snapshot, picture and all.
+        check(keep() == .kept && text(kept) == "retest", "a later full run replaces the snapshot")
+        check(!files.exists(aside) && !files.exists(staging), "no .old or staging folder is left after a swap")
     }
 }
