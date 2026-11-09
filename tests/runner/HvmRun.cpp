@@ -9,6 +9,7 @@
 #include "runtime/graphics/Graphics.hpp"
 #include "AudioOutput.hpp"
 #include "EntryTrace.hpp"
+#include "DesktopInput.hpp"
 #include "runtime/uikit/UIKit.hpp"
 #include <chrono>
 #include <cstdio>
@@ -320,11 +321,7 @@ int hvmRunMain(int argc, char** argv) {
                     if(inputOverflow) {
                         inputOverflow=false;std::fprintf(stderr,"[hvm:warn] Desktop input exceeds bounded line size\n");continue;
                     }
-                    int phase; float px, py;
-                    if (std::sscanf(command.c_str(), "touch %d %f %f", &phase, &px, &py) == 3 &&
-                        (phase == 0 || phase == 1 || phase == 3 || phase == 4) && std::isfinite(px) && std::isfinite(py)) {
-                        proc.injectTouch(Runtime::TouchPhase(phase), px, py, 1);
-                        if (!quiet) std::fprintf(stderr, "[hvm] desktop touch %d %.1f %.1f\n", phase, px, py);
+                    if (DesktopInput::applyTouch(proc, command, quiet)) {   // "touch <phase> <x> <y> [finger]"
                     } else if(command.starts_with("text ")) {
                         const auto digit=[](char c) {
                             if(c>='0' && c<='9')return c-'0';
