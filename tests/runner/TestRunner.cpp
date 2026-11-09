@@ -9405,6 +9405,41 @@ int runFullSubsystemTests() {
             ar.poolPop(acpu, pool);
         }
         {
+            // A host thread that is not a guest thread of either Process keeps a
+            // separate autorelease pool stack per Process. Push a pool in A,
+            // autorelease an object there, push and pop a pool in B, then pop A.
+            // The object starts at retain count 1, is retained once (2) and
+            // autoreleased; popping A's pool must release it back to 1. A
+            // single per-thread slot replaced on the switch to B would leave
+            // A's pop with nothing to drain, and the count would stay 2.
+            ProcessConfig cfgA, cfgB;
+            cfgA.homePath = home; cfgA.bundlePath = bundle;
+            cfgB.homePath = home; cfgB.bundlePath = bundle;
+            Process procA(cfgA);
+            Process procB(cfgB);
+            auto& rA = ObjC::rt(procA);
+            auto& rB = ObjC::rt(procB);
+            const ObjC::id obj = rA.createInstance(rA.getClass("NSObject"));
+            rA.rootRetain(obj);
+            const uint32_t before = rA.retainCount(obj);
+            uint32_t tokenA = 0, tokenB = 0, afterB = 0, afterA = 0;
+            std::thread host([&] {
+                CPU::Cpu hostCPU;
+                tokenA = rA.poolPush();
+                rA.autorelease(hostCPU, obj);
+                tokenB = rB.poolPush();
+                rB.poolPop(hostCPU, tokenB);
+                afterB = rA.retainCount(obj);
+                rA.poolPop(hostCPU, tokenA);
+                afterA = rA.retainCount(obj);
+            });
+            host.join();
+            if (!(before == 2 && tokenA == 1 && tokenB == 1 && afterB == 2 && afterA == 1))
+                std::printf("    per-process pools: before %u tokenA %u tokenB %u afterB %u afterA %u\n", before, tokenA, tokenB, afterB, afterA);
+            check(before == 2 && tokenA == 1 && tokenB == 1 && afterB == 2 && afterA == 1,
+                  "a host thread keeps a separate autorelease pool stack for each Process it calls into");
+        }
+        {
             ProcessConfig lateCfg;
             lateCfg.homePath = home; lateCfg.bundlePath = home + "/Late.app";
             Process late(lateCfg);

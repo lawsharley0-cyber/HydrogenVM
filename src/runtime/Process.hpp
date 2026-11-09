@@ -337,6 +337,9 @@ public:
     // thread to main; per-thread runtime state must not follow that fallback.
     bool isGuestBoundThread() const;
     uint64_t identity() const { return identity_; }
+    // True while a Process with this identity exists. Identities come from a
+    // monotonic counter and are never reused within one host process.
+    static bool isLiveIdentity(uint64_t identity);
     GuestThread* findThread(uint32_t self);
     GuestThread* findThreadById(uint32_t id);
     std::vector<uint32_t> liveThreadIds();   // ids of the main thread and all running threads
@@ -438,6 +441,16 @@ private:
 
     ProcessConfig cfg_;
     const uint64_t identity_; // distinguishes stale host TLS from a different/reused Process
+    // Registers identity_ as live for exactly the lifetime of this Process,
+    // including a constructor that throws after this member is built.
+    struct LiveIdentity {
+        explicit LiveIdentity(uint64_t id);
+        ~LiveIdentity();
+        LiveIdentity(const LiveIdentity&) = delete;
+        LiveIdentity& operator=(const LiveIdentity&) = delete;
+        const uint64_t id;
+    };
+    LiveIdentity liveIdentity_{identity_};
     std::unique_ptr<Memory::GuestArena> mem_;
     std::unique_ptr<CPU::Engine> engine_;
     std::unique_ptr<Heap> heap_;
