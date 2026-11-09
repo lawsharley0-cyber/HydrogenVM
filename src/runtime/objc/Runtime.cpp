@@ -32,8 +32,15 @@ namespace {
 // thread first touches a new Process, entries with nothing pooled and entries
 // whose Process no longer exists are dropped. Identities are never reused, so
 // a stale entry could not be picked up by a later Process anyway; dropping it
-// bounds the list. Objects still pooled when the host thread exits are dropped
-// without a release, the same as an autorelease with no pool in place.
+// bounds the list.
+//
+// Known divergence from iOS: libobjc's TLS destructor pops every pool still
+// open when a thread exits, releasing its objects. A non-guest host thread
+// that exits with pools still open here drops them without releasing those
+// objects (they leak): the thread_local destructor has no Cpu to send
+// -release with and cannot know the Process is still alive for the whole
+// drain. Guest threads do drain at exit (Process::threadMain). A host
+// caller must pop every pool it pushes.
 struct ForeignThreadState {
     uint64_t process = 0;
     std::unique_ptr<ThreadState> state;
