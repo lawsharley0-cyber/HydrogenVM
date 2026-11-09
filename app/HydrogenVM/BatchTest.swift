@@ -377,7 +377,6 @@ final class BatchTestRunner {
         self.clearPendingSession()
         self.results = []
 
-        Self.rememberGameChoice(options.onlyGames)
         var newTargets: [BatchTarget] = []
         for app in options.games(from: apps) {
             switch options.rendererMode {
@@ -445,7 +444,8 @@ final class BatchTestRunner {
             .map(\.bundleId).filter { seen.insert($0).inserted }
     }
 
-    /// Run again on just these games, with the current options.
+    /// Run again on just these games, with the current options. The player's own pick
+    /// (what the options sheet shows next time) is left as it was.
     func retest(_ ids: [String], apps: [InstalledApp]) {
         var o = options
         o.onlyGames = ids

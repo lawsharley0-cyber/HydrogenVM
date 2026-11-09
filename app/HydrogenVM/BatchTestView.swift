@@ -85,6 +85,14 @@ struct BatchTestView: View {
             .sheet(isPresented: $showOptionsSheet) {
                 optionsFormSheet
             }
+            .onChange(of: showOptionsSheet) { _, shown in
+                // Once per presentation (not when returning from the game picker): show the
+                // player's remembered pick, not a retest's list, minus games removed since.
+                guard shown else { return }
+                let installed = Set(runnableApps.map(\.info.bundleIdentifier))
+                runner.options.onlyGames = BatchTestRunner.rememberedGameChoice().filter { installed.contains($0) }
+                choosingGames = !runner.options.onlyGames.isEmpty
+            }
             .sheet(isPresented: $showShareSheet) {
                 ShareSheet(items: shareItems)
             }
@@ -375,6 +383,7 @@ struct BatchTestView: View {
                     Button(runner.options.onlyGames.isEmpty ? "Start Batch Test" : "Test \(gameChoiceSummary)") {
                         showOptionsSheet = false
                         choosingGames = false
+                        BatchTestRunner.rememberGameChoice(runner.options.onlyGames)   // the player's pick, for next time
                         runner.startNewBatch(apps: installedApps, options: runner.options)
                     }
                     .disabled(choosingGames && runner.options.onlyGames.isEmpty)
@@ -382,12 +391,6 @@ struct BatchTestView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .foregroundStyle(.tint)
                 }
-            }
-            .onAppear {
-                // A remembered pick may name games that were removed since.
-                let installed = Set(runnableApps.map(\.info.bundleIdentifier))
-                runner.options.onlyGames = runner.options.onlyGames.filter { installed.contains($0) }
-                choosingGames = !runner.options.onlyGames.isEmpty
             }
             .navigationTitle("Batch Test Options")
             .navigationBarTitleDisplayMode(.inline)
