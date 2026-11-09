@@ -233,6 +233,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include "runtime/graphics/TrueType.hpp"
 #include "runtime/graphics/Shader.hpp"
 #include "TestFont.hpp"
+#include "DesktopInput.hpp"
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -4482,7 +4483,7 @@ int runFullSubsystemTests() {
     }
 
     // Multi-touch delivery. Each event carries one changed finger; the others still down are
-    // UITouchPhaseStationary and are not sent to the view again. Minecraft PE's move button
+    // UITouchPhaseStationary and are not sent to the view again. A game's held move button
     // stuck "down" when a second finger (looking around) made the first finger's
     // touchesBegan: arrive twice. Expected calls are written out by hand below.
     {
@@ -4556,6 +4557,26 @@ int runFullSubsystemTests() {
         r.send(cpu, win, "setHidden:", {1});
         u.app = savedApp;
         if (savedKey) u.keyWindow = savedKey;
+    }
+
+    // `hvm run --input-file` touch lines: the optional finger field reaches injectTouch, and a
+    // malformed one rejects the line instead of silently meaning finger 1. Expected values are
+    // read off each literal line by hand.
+    {
+        using DesktopInput::parseTouch;
+        const auto two = parseTouch("touch 0 100 200 2");
+        const auto dflt = parseTouch("touch 3 12.5 40");
+        const auto crlf = parseTouch("touch 1 7 8 10\r");
+        const bool fingerKept = two && two->phase == 0 && two->x == 100.0f && two->y == 200.0f && two->finger == 2;
+        const bool defaultOne = dflt && dflt->phase == 3 && dflt->x == 12.5f && dflt->y == 40.0f && dflt->finger == 1;
+        const bool maxFinger = crlf && crlf->phase == 1 && crlf->finger == 10;
+        int wronglyAccepted = 0;
+        for (const char* bad : {"touch 3 100 200 two", "touch 3 100 200 2x", "touch 3 100 200 11", "touch 3 100 200 -1",
+                                "touch 3 100 200 +2", "touch 3 100 200 2 3", "touch 2 100 200", "touch 0 nan 200",
+                                "touch 0 100 200y", "touch 0 100", "touchy 0 100 200"})
+            if (parseTouch(bad)) { std::printf("    accepted: %s\n", bad); ++wronglyAccepted; }
+        check(fingerKept && defaultOne && maxFinger && wronglyAccepted == 0,
+              "input-file touch lines keep their finger id (default 1) and reject a malformed finger field");
     }
 
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor

@@ -110,6 +110,7 @@ float32 screen scale, and RGBA bytes. The regular input file receives newline
 commands `touch PHASE X Y [FINGER]`, `background`, `foreground`, or `stop`. Phases are
 0 down, 1 move, 3 up, and 4 cancel. FINGER (0-10, default 1) names the finger, so two
 fingers can be down at once (hold a move button with one, look around with another).
+A line whose finger field is not a whole number from 0 to 10 is rejected and logged as invalid.
 No socket or guest networking is involved.
 
 ## Verification and current game limit

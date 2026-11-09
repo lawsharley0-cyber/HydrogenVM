@@ -248,7 +248,7 @@ void deliverPendingInput(Ctx& x) {
         // One touch changes per event; every other finger still down is UITouchPhaseStationary
         // and is not delivered again. Left in their last phase, they were re-sent with each
         // event: a second finger going down gave the first a second touchesBegan:, and a game
-        // that tracks fingers by touch (Minecraft's move button under a look finger) then kept
+        // that tracks fingers by touch (a held move button under a look finger) then kept
         // a finger "down" after it lifted.
         for (auto& at : u.activeTouches) if (at.touch != touch) TD(x, at.touch).phase = 2;
         // build the event with all live touches
