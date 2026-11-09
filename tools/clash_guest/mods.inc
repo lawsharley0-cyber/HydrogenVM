@@ -29,7 +29,8 @@ static void mod_apply_units(void) {
     for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
         u32 field=j==5?MOD_RANGE:j;void *p=j==4?mod_shots[i]:mod_units[i];
         if(p && mod_records[i].value[field]!=100)
-            FIELD(p,mod_offsets[j])=mod_scaled(mod_original[i][j],mod_records[i].value[field],j==1||j==2);
+            FIELD(p,mod_offsets[j])=j==3?mod_scaled_size(mod_original[i][j],mod_records[i].value[field]):
+                mod_scaled(mod_original[i][j],mod_records[i].value[field],j==1||j==2);
     }
 }
 static void *mod_data(const char *name,u32 address) {

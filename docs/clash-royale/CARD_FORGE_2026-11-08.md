@@ -1,5 +1,7 @@
 # Guest Card Forge — November 8, 2026
 
+November 8 troop-save crash follow-up: [MOD_SIZE_ABORT_2026-11-08.md](MOD_SIZE_ABORT_2026-11-08.md) records the reproduced Knight-size Apply abort, checked binary32 correction, 60 focused tests and recovery of the exact retained profile without resetting progression. The earlier Card Forge download is superseded for size edits. Remaining modifier/phone breadth is explicitly unqualified.
+
 This continues from **main `588eebb83fb591b60f0e6eeb037647f337693e5b`**, on
 `codex/clash-forge-runtime`. PRs #366 and #381 were closed and integrated through
 #382 (`a2ed7c6`); do not reopen the old PRs or overwrite the newer phone/audio

@@ -1,5 +1,7 @@
 # Clash Royale solo restoration investigation
 
+November 8 troop-save crash follow-up: [MOD_SIZE_ABORT_2026-11-08.md](clash-royale/MOD_SIZE_ABORT_2026-11-08.md) records the reproduced Knight-size Apply abort, checked binary32 correction, 60 focused tests and recovery of the exact retained profile without resetting progression. The earlier Card Forge download is superseded for size edits. Remaining modifier/phone breadth is explicitly unqualified.
+
 November 8 current: [CARD_FORGE_2026-11-08.md](clash-royale/CARD_FORGE_2026-11-08.md) records the working guest creator/loader, CRG2+FGR1 save contract, 59 focused tests, native creation/tuning/Use/battle/relaunch and save-preserving corruption guards. Branch `codex/clash-forge-runtime` starts at main `588eebb`; #366/#381 were closed and integrated through #382. Preserve newer engine/audio fixes. Main runtime gates: 682 fulltest/26 Test Lab. Phone creation and remaining mod/visual/performance work stay unqualified. Keyboard accessory follow-up is #390; its inherited skipped test must run before a Done claim.
 
 November 7 custom-card foundation: [CUSTOM_CARDS.md](clash-royale/CUSTOM_CARDS.md) records the append-only definition generator, save-prefix identity checks, 51 focused tests and native component probes. Generated Forge Knight data/name/ownership resolve; discovery achievements settle after relaunch. The end-user forge, mandatory guest registry/loader and custom-card battle qualification remain pending. Keep private probe saves away from the normal guest.
