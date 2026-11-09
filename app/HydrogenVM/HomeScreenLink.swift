@@ -20,7 +20,7 @@ enum GameLinkError: Error, Equatable {
 /// The Home Screen link for one game (`hydrogenvm://run/<game-id>`).
 ///
 /// Foundation only (no UIKit/SwiftUI) so `tools/tests/swift/PlayerTests.swift` can
-/// cover the parser on the macOS runner.
+/// cover the parser and the web clip profile on the macOS runner.
 enum GameLink {
     static let scheme = "hydrogenvm"
     static let runHost = "run"
@@ -80,14 +80,11 @@ enum GameLink {
     }
 }
 
-/// A game as a Shortcuts action ("Play <game>"), with no configuration profile.
+/// A game as a Shortcuts action ("Play <game>").
 ///
-/// The library's Add to Home Screen button offers this activity in the system
-/// Add to Siri sheet, which saves it to the player's Shortcuts library in one tap.
-/// From Shortcuts, Add to Home Screen gives the game an icon; running it opens
-/// HydrogenVM with this activity, which becomes the usual `hydrogenvm://run/<id>`
-/// link. An app cannot put an icon on the Home Screen by itself, with or without
-/// a profile, so that last step is always the player's.
+/// Add to Home Screen now installs a web clip (`WebClipProfile`); this activity stays
+/// so "Play <game>" shortcuts players already made keep opening their game, and Siri
+/// can still suggest games the player opens often.
 ///
 /// Foundation only, so `tools/tests/swift/PlayerTests.swift` covers it on macOS.
 enum GameShortcut {
@@ -109,5 +106,135 @@ enum GameShortcut {
     static func link(activityType type: String, userInfo: [AnyHashable: Any]?) -> URL? {
         guard type == activityType, let id = userInfo?[gameKey] as? String else { return nil }
         return GameLink.url(forGameID: id)
+    }
+}
+
+/// One Web Clip configuration profile (`.mobileconfig`) that adds a game to the Home
+/// Screen with the game's own name and icon, opening `hydrogenvm://run/<game-id>`.
+///
+/// iOS installs it only after the user approves the profile in Settings; an app cannot
+/// put an icon on the Home Screen by itself. The payload identifiers are derived from
+/// the game id, so installing a second clip for the same game updates the first one
+/// instead of adding a duplicate.
+struct WebClipProfile {
+    let gameID: String
+    let title: String
+    let link: URL
+    /// The game's icon as PNG, or nil when the bundle's icon could not be decoded;
+    /// iOS then draws its own placeholder and the clip still works.
+    let iconPNG: Data?
+
+    var payloadUUID: UUID { Self.uuid(seed: "webclip-payload:" + gameID) }
+    var configUUID: UUID { Self.uuid(seed: "webclip-config:" + gameID) }
+    var identifier: String { "com.lfull.HydrogenVM.webclip." + gameID }
+    var configIdentifier: String { "com.lfull.HydrogenVM.webclip.config." + gameID }
+
+    /// A file name the user sees in Files; the game id stays in the directory name.
+    var filename: String {
+        let mapped = title.map { $0.isLetter || $0.isNumber ? $0 : "-" }
+        let base = String(mapped).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return (base.isEmpty ? "Game" : base) + ".mobileconfig"
+    }
+
+    /// The `.mobileconfig` document. Deterministic for the same game and icon.
+    func payload() -> String {
+        let name = Self.xml(title)
+        let url = Self.xml(link.absoluteString)
+        let description = Self.xml("Opens \(title) in HydrogenVM.")
+        var lines: [String] = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+            "<plist version=\"1.0\">",
+            "<dict>",
+            "\t<key>PayloadContent</key>",
+            "\t<array>",
+            "\t\t<dict>",
+            "\t\t\t<key>FullScreen</key>",
+            "\t\t\t<true/>",
+        ]
+        if let icon = iconPNG?.base64EncodedString() {
+            lines.append("\t\t\t<key>Icon</key>")
+            lines.append("\t\t\t<data>\(icon)</data>")
+        }
+        lines += [
+            "\t\t\t<key>IgnoreManifestScope</key>",
+            "\t\t\t<true/>",
+            "\t\t\t<key>IsRemovable</key>",
+            "\t\t\t<true/>",
+            "\t\t\t<key>Label</key>",
+            "\t\t\t<string>\(name)</string>",
+            "\t\t\t<key>PayloadDescription</key>",
+            "\t\t\t<string>\(description)</string>",
+            "\t\t\t<key>PayloadDisplayName</key>",
+            "\t\t\t<string>\(name)</string>",
+            "\t\t\t<key>PayloadIdentifier</key>",
+            "\t\t\t<string>\(Self.xml(identifier))</string>",
+            "\t\t\t<key>PayloadType</key>",
+            "\t\t\t<string>com.apple.webClip.managed</string>",
+            "\t\t\t<key>PayloadUUID</key>",
+            "\t\t\t<string>\(payloadUUID.uuidString)</string>",
+            "\t\t\t<key>PayloadVersion</key>",
+            "\t\t\t<integer>1</integer>",
+            "\t\t\t<key>URL</key>",
+            "\t\t\t<string>\(url)</string>",
+            "\t\t</dict>",
+            "\t</array>",
+            "\t<key>PayloadDescription</key>",
+            "\t<string>\(description)</string>",
+            "\t<key>PayloadDisplayName</key>",
+            "\t<string>\(name) on the Home Screen</string>",
+            "\t<key>PayloadIdentifier</key>",
+            "\t<string>\(Self.xml(configIdentifier))</string>",
+            "\t<key>PayloadOrganization</key>",
+            "\t<string>HydrogenVM</string>",
+            "\t<key>PayloadRemovalDisallowed</key>",
+            "\t<false/>",
+            "\t<key>PayloadType</key>",
+            "\t<string>Configuration</string>",
+            "\t<key>PayloadUUID</key>",
+            "\t<string>\(configUUID.uuidString)</string>",
+            "\t<key>PayloadVersion</key>",
+            "\t<integer>1</integer>",
+            "</dict>",
+            "</plist>",
+        ]
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func xml(_ text: String) -> String {
+        var out = ""
+        for c in text {
+            switch c {
+            case "&": out += "&amp;"
+            case "<": out += "&lt;"
+            case ">": out += "&gt;"
+            case "\"": out += "&quot;"
+            case "'": out += "&apos;"
+            default: out.append(c)
+            }
+        }
+        return out
+    }
+
+    /// A stable UUID in version-4 layout, so the same game always replaces its own clip.
+    static func uuid(seed: String) -> UUID {
+        let high = hash64(seed, offset: 0xcbf2_9ce4_8422_2325)
+        let low = hash64(seed + "#2", offset: 0x8422_2325_cbf2_9ce4)
+        var bytes = [UInt8](repeating: 0, count: 16)
+        for i in 0..<8 { bytes[i] = UInt8(truncatingIfNeeded: high >> (56 - 8 * UInt64(i))) }
+        for i in 0..<8 { bytes[8 + i] = UInt8(truncatingIfNeeded: low >> (56 - 8 * UInt64(i))) }
+        bytes[6] = (bytes[6] & 0x0f) | 0x40
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
+    /// FNV-1a, 64-bit: small, dependency-free and identical on every platform.
+    private static func hash64(_ text: String, offset: UInt64) -> UInt64 {
+        var h = offset
+        for byte in text.utf8 {
+            h = (h ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+        }
+        return h
     }
 }
