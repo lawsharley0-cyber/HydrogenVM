@@ -332,6 +332,11 @@ public:
 
     // ---- threads
     GuestThread& currentThread();
+    // True when the calling host thread is bound to this Process as its main
+    // thread or one of its guest threads. currentThread() maps any other host
+    // thread to main; per-thread runtime state must not follow that fallback.
+    bool isGuestBoundThread() const;
+    uint64_t identity() const { return identity_; }
     GuestThread* findThread(uint32_t self);
     GuestThread* findThreadById(uint32_t id);
     std::vector<uint32_t> liveThreadIds();   // ids of the main thread and all running threads

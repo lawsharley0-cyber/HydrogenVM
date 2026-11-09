@@ -1027,6 +1027,10 @@ GuestThread& Process::currentThread() {
     return *mainThread_;
 }
 
+bool Process::isGuestBoundThread() const {
+    return t_thread && t_processIdentity == identity_;
+}
+
 GuestThread* Process::findThread(uint32_t self) {
     if (mainThread_->self == self) return mainThread_;
     std::lock_guard<std::mutex> lk(threadsMu_);
