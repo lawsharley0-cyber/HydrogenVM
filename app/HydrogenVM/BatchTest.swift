@@ -460,6 +460,8 @@ final class BatchTestRunner {
 
     static var lastFullReportJSON: URL { reportsDir.appending(path: "last_full_batch_report.json") }
     static var lastFullReportMD: URL { reportsDir.appending(path: "last_full_batch_report.md") }
+    /// Copies of the pictures the kept full report points at: a retest overwrites thumbnails/<game>_<mode>.png.
+    static var lastFullThumbnailsDir: URL { reportsDir.appending(path: "last_full_thumbnails", directoryHint: .isDirectory) }
 
     /// Before a new run replaces latest_batch_report, keep it as last_full_batch_report when it
     /// is a full run with results, so a retest (or any partial run) never loses an unexported
@@ -472,6 +474,13 @@ final class BatchTestRunner {
         try? data.write(to: lastFullReportJSON, options: .atomic)
         try? fm.removeItem(at: lastFullReportMD)
         if fm.fileExists(atPath: md.path(percentEncoded: false)) { try? fm.copyItem(at: md, to: lastFullReportMD) }
+        // Its thumbnailPath entries stay "thumbnails/<name>": they resolve inside last-full-run/ in an export.
+        try? fm.removeItem(at: lastFullThumbnailsDir)
+        try? fm.createDirectory(at: lastFullThumbnailsDir, withIntermediateDirectories: true)
+        for name in BatchSelection.thumbnailFiles(BatchSelection.thumbnailPaths(inReport: data)) {
+            let src = thumbnailsDir.appending(path: name)
+            if fm.fileExists(atPath: src.path(percentEncoded: false)) { try? fm.copyItem(at: src, to: lastFullThumbnailsDir.appending(path: name)) }
+        }
     }
 
     /// Run again on just these games, with the options of the run on screen. The player's own pick
@@ -1215,6 +1224,9 @@ final class BatchTestRunner {
             try fm.copyItem(at: Self.lastFullReportJSON, to: full.appending(path: "report.json"))
             if fm.fileExists(atPath: Self.lastFullReportMD.path(percentEncoded: false)) {
                 try fm.copyItem(at: Self.lastFullReportMD, to: full.appending(path: "report.md"))
+            }
+            if fm.fileExists(atPath: Self.lastFullThumbnailsDir.path(percentEncoded: false)) {
+                try fm.copyItem(at: Self.lastFullThumbnailsDir, to: full.appending(path: "thumbnails", directoryHint: .isDirectory))
             }
         }
         for r in results {

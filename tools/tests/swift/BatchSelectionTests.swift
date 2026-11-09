@@ -92,6 +92,17 @@ struct BatchSelectionTests {
         check(BatchSelection.thumbnailFiles(["thumbnails/../x.png", "thumbnails/", "other/a.png", "thumbnails/.."]) == [],
               "nothing outside the thumbnails folder")
 
+        // The kept full report's pictures: every row's thumbnailPath, then the same filter as an export.
+        let keptReport: [String: Any] = ["kind": "hvm-compat-report", "suites": ["apps": ["apps": [
+            ["bundleId": "a", "frame": ["signal": "ok", "thumbnailPath": "thumbnails/a_gpu.png"]],
+            ["bundleId": "b", "frame": ["signal": "no-frames", "thumbnailPath": ""]],
+            ["bundleId": "c", "frame": ["signal": "ok"]],
+            ["bundleId": "d", "frame": ["signal": "ok", "thumbnailPath": "thumbnails/d_software.png"]]]]]]
+        let savedPaths = BatchSelection.thumbnailPaths(inReport: try JSONSerialization.data(withJSONObject: keptReport))
+        check(savedPaths == ["thumbnails/a_gpu.png", "", nil, "thumbnails/d_software.png"], "a saved report's thumbnail paths, row by row")
+        check(BatchSelection.thumbnailFiles(savedPaths) == ["a_gpu.png", "d_software.png"], "the kept full report keeps its own pictures")
+        check(BatchSelection.thumbnailPaths(inReport: Data("[]".utf8)).isEmpty, "not a report: no pictures")
+
         print("BatchSelectionTests: \(checks) checks passed")
     }
 }

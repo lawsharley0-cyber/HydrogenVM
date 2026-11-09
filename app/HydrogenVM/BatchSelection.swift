@@ -68,6 +68,13 @@ enum BatchSelection {
         return !(apps ?? []).isEmpty
     }
 
+    /// The thumbnailPath of every row of a saved report.json (empty for anything else).
+    static func thumbnailPaths(inReport reportJSON: Data) -> [String?] {
+        guard let root = (try? JSONSerialization.jsonObject(with: reportJSON)) as? [String: Any],
+              let apps = ((root["suites"] as? [String: Any])?["apps"] as? [String: Any])?["apps"] as? [[String: Any]] else { return [] }
+        return apps.map { ($0["frame"] as? [String: Any])?["thumbnailPath"] as? String }
+    }
+
     /// The thumbnail files to export: the ones this run's results point at ("thumbnails/x.png"),
     /// each once, never a path that leaves the thumbnails folder.
     static func thumbnailFiles(_ paths: [String?]) -> [String] {
