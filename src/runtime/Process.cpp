@@ -4,6 +4,8 @@
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
 #include "runtime/gl/HostGL.hpp"
+#include <cerrno>
+#include <cstring>
 #include <cctype>
 #include <cstdlib>
 #include <sstream>
@@ -93,23 +95,33 @@ bool looksLikeData(const std::string& s) {
 // Host threads for guest threads get a generous stack: nested host↔guest
 // calls (ObjC dispatch from host code, callbacks) recurse on it.
 std::atomic<int> gInjectedSpawnFailures{0};   // test seam: Process::failNextHostThreadSpawns
+std::atomic<int> gInjectedAttrInitFailures{0};   // test seam: Process::failNextHostThreadAttrInits
 
 pthread_t spawnHostThread(std::function<void()> fn) {
     if (gInjectedSpawnFailures.load() > 0 && gInjectedSpawnFailures.fetch_sub(1) > 0)
         throw std::runtime_error("couldn't create host thread (injected failure)");
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 8u << 20);
     auto* heapFn = new std::function<void()>(std::move(fn));
     pthread_t th;
-    const int r = pthread_create(&th, &attr, [](void* p) -> void* {
-        std::unique_ptr<std::function<void()>> f(static_cast<std::function<void()>*>(p));
-        (*f)();
-        return nullptr;
-    }, heapFn);
-    pthread_attr_destroy(&attr);
-    if (r != 0) { delete heapFn; throw std::runtime_error("couldn't create host thread"); }
-    return th;
+    int r = 0;
+    // On the phone the guest arena and the game's own memory leave little contiguous
+    // address space: when an 8 MB stack cannot be mapped, a smaller one still runs
+    // ordinary guest threads (Terraria's camera thread on the phone).
+    for (const size_t stack : {size_t(8) << 20, size_t(2) << 20, size_t(1) << 20, size_t(512) << 10}) {
+        pthread_attr_t attr;
+        r = gInjectedAttrInitFailures.load() > 0 && gInjectedAttrInitFailures.fetch_sub(1) > 0 ? ENOMEM : pthread_attr_init(&attr);
+        if (r != 0) break;   // attr is unusable: report the error, never destroy it
+        pthread_attr_setstacksize(&attr, stack);
+        r = pthread_create(&th, &attr, [](void* p) -> void* {
+            std::unique_ptr<std::function<void()>> f(static_cast<std::function<void()>*>(p));
+            (*f)();
+            return nullptr;
+        }, heapFn);
+        pthread_attr_destroy(&attr);
+        if (r == 0) return th;
+        if (r != EAGAIN && r != ENOMEM) break;
+    }
+    delete heapFn;
+    throw std::runtime_error(std::string("couldn't create host thread (") + std::strerror(r) + ")");
 }
 
 } // namespace
@@ -1023,6 +1035,7 @@ GuestThread* Process::findThreadById(uint32_t id) {
 }
 
 void Process::failNextHostThreadSpawns(int count) { gInjectedSpawnFailures = count; }
+void Process::failNextHostThreadAttrInits(int count) { gInjectedAttrInitFailures = count; }
 
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached, uint32_t stackAddr) {
     if (stopping()) throw ProcessExit(exitCode_, "stopping");
@@ -1044,6 +1057,8 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
     const auto releaseStack = [&] {
         if (!stackAddr) mem_->unmap(stackBase, mappedSize);
         if (!stackAddr && stackTop_ == stackBase - kGuard) stackTop_ = stackBase + mappedSize;
+        failedSpawnBase_ = stackBase;
+        failedSpawnSize_ = mappedSize;
     };
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
@@ -1054,6 +1069,8 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
         std::lock_guard<std::mutex> lk(threadsMu_);
         if (stopping()) { releaseStack(); throw ProcessExit(exitCode_, "stopping"); }
         threads_[raw->self] = std::move(t);
+        spawningBase_ = stackBase;
+        spawningSize_ = mappedSize;
         try {
             raw->host = spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
             raw->hostJoinable = true;

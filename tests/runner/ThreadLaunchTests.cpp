@@ -8,31 +8,33 @@
 #include <cstdio>
 #include <filesystem>
 #include <pthread.h>
+#include <string>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 using namespace Hydrogen;
 using namespace Hydrogen::Runtime;
 
 namespace {
 Process* process = nullptr;
-bool failNext = false, waitForTarget = false;
+int failCount = 0;
+bool mappedAtCreate = true;   // every failed attempt saw its guest stack mapped   // the next N host pthread_create calls return EAGAIN
+bool waitForTarget = false;
+std::vector<size_t> requestedStacks;   // stack size of every host pthread_create attempt
 std::atomic<bool> targetEntered{false};
-uint32_t failedId = 0, failedSelf = 0, failedBase = 0, failedSize = 0;
-bool mappedAtCreate = false;
 }
 
 extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
 extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*fn)(void*), void* arg) {
-    if (failNext) {
-        failNext = false;
-        for (auto id : process->liveThreadIds()) {
-            if (id == process->mainThread().id) continue;
-            if (auto* t = process->findThreadById(id)) {
-                failedId = id; failedSelf = t->self; failedBase = t->stackBase; failedSize = t->stackSize;
-                mappedAtCreate = process->mem().isMapped(failedBase) && process->mem().isMapped(failedBase + failedSize - 1);
-            }
-        }
+    size_t stack = 0;
+    if (attr) pthread_attr_getstacksize(attr, &stack);
+    requestedStacks.push_back(stack);
+    if (failCount > 0) {
+        // threadsMu_ is held during host creation: use the lock-free seam only.
+        --failCount;
+        const auto [base, size] = process->spawningStack();
+        mappedAtCreate = mappedAtCreate && size != 0 && process->mem().isMapped(base) && process->mem().isMapped(base + size - 1);
         return EAGAIN;
     }
     const int result = __real_pthread_create(thread, attr, fn, arg);
@@ -66,19 +68,38 @@ int main() {
         const auto target = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, targetClass.cls(), r.selAlloc)), "init"));
         const auto thread = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("NSThread"), r.selAlloc)),
                                            "initWithTarget:selector:object:", {target, r.sel("work:"), 0}));
-        failNext = true;
+        // Every stack size fails: the launch fails cleanly after trying each one.
+        failCount = 4;
+        requestedStacks.clear();
         bool threw = false;
         try { r.send(cpu, thread, "start"); } catch (const std::exception&) { threw = true; }
+        const auto afterIds = p.liveThreadIds();
+        const auto [failedBase, failedSize] = p.lastFailedSpawnStack();
         bool unmapped = failedSize != 0;
-        for (uint32_t offset = 0; offset < failedSize; offset += 4096)
-            unmapped &= !p.mem().isMapped(failedBase + offset);
-        check(threw && mappedAtCreate && unmapped && !p.findThreadById(failedId) && !p.findThread(failedSelf),
-              "failed host creation unmaps the allocated stack and removes the guest thread");
+        for (uint32_t offset = 0; unmapped && offset < failedSize; offset += 4096) unmapped = !p.mem().isMapped(failedBase + offset);
+        check(threw && mappedAtCreate && afterIds.size() == 1 && afterIds[0] == p.mainThread().id && unmapped,
+              "the guest stack is mapped while the host thread is created, and unmapped with the guest thread removed when that fails");
         check(!(uint32_t(r.send(cpu, thread, "isExecuting")) & 0xff), "failed NSThread start resets execution state");
+        check(requestedStacks == std::vector<size_t>{8u << 20, 2u << 20, 1u << 20, 512u << 10},
+              "a host thread that cannot get 8 MB is retried with 2 MB, 1 MB and 512 KB stacks");
+        // pthread_attr_init failing: no pthread_create attempt, the error reaches the caller.
+        Process::failNextHostThreadAttrInits(1);
+        requestedStacks.clear();
+        bool attrThrew = false;
+        std::string attrError;
+        try { r.send(cpu, thread, "start"); } catch (const std::exception& e) { attrThrew = true; attrError = e.what(); }
+        const auto attrIds = p.liveThreadIds();
+        check(attrThrew && requestedStacks.empty() && attrError.find("memory") != std::string::npos &&
+              attrIds.size() == 1 && !(uint32_t(r.send(cpu, thread, "isExecuting")) & 0xff),
+              "a failed pthread_attr_init creates no host thread, reports the error and removes the guest thread");
+        // The 8 MB stack fails once: the thread starts on the 2 MB retry.
+        failCount = 1;
+        requestedStacks.clear();
         waitForTarget = true;
         r.send(cpu, thread, "start");
         waitForTarget = false;
         check(targetEntered && sawExecuting, "guest target sees its NSThread executing before pthread_create returns");
+        check(requestedStacks == std::vector<size_t>{8u << 20, 2u << 20}, "an EAGAIN on 8 MB falls back to a 2 MB host stack and starts");
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (!(uint32_t(r.send(cpu, thread, "isFinished")) & 0xff) && std::chrono::steady_clock::now() < deadline)
             std::this_thread::yield();
