@@ -19,6 +19,7 @@ import copy
 from package_clash_offline import SOURCE_SHA256, EXECUTABLE_SHA256
 from clash_bot_policy import load_policy, export_header
 from clash_mod_catalog import catalog as mod_catalog, header as mod_catalog_header
+from clash_custom_cards import guest_header as forge_header
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 0x800000
@@ -120,7 +121,9 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
         for symbol in ('puts', 'printf', 'malloc', 'abort', 'dlsym', 'sinf', 'cosf', 'memcpy', 'memset'):
             header.write(f'#define API_{symbol} 0x{parsed["stubs"]["_"+symbol]:x}u\n')
         run([generator, build_dir/'source'/app_root], stdout=header)
-        header.write(mod_catalog_header(mod_catalog(build_dir/'source'/app_root)))
+        entries=mod_catalog(build_dir/'source'/app_root)
+        header.write(mod_catalog_header(entries))
+        header.write(forge_header(build_dir/'source'/app_root,entries))
     run(['clang', '-target', 'armv7-apple-ios6.0', '-mthumb', '-Oz', '-ffreestanding',
          '-fno-builtin', '-fno-stack-protector', '-fno-pic', '-fno-unwind-tables',
          '-fno-asynchronous-unwind-tables', *(['-DGUEST_PROFILE_SAVES=1'] if profile_saves else []),
@@ -286,10 +289,17 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
     at=segment[3]+trig_stub-segment[1];target=mod['symbols']['_guest_sincosf']
     binary[at:at+8]=struct.pack('<II',0xe51ff004,target)
     patches.append(dict(address=hex(trig_stub),function='_guest_sincosf',target=hex(target),mode='ARM import stub'))
+    file_stub=parsed['stubs']['_fopen']
+    segment=next(s for s in parsed['segments'] if s[1]<=file_stub<s[1]+s[4])
+    at=segment[3]+file_stub-segment[1];target=mod['symbols']['_guest_forge_fopen']
+    binary[at:at+8]=struct.pack('<II',0xe51ff004,target)
+    patches.append(dict(address=hex(file_stub),function='_guest_forge_fopen',target=hex(target),mode='ARM import stub'))
     info['CFBundleIdentifier']='com.hydrogenvm.clashroyale.guestdev'
     info['CFBundleDisplayName']='Clash Offline Guest DEV'
     info.pop('HydrogenVMOfflineBackend',None)
     info['ClashGuestOfflinePrototypeVersion']=1
+    info['ClashGuestCardForgeVersion']=1
+    info['ClashGuestSaveVersion']=2  # Supports legacy CRG1 and definition-linked CRG2.
     output.parent.mkdir(parents=True,exist_ok=True)
     with zipfile.ZipFile(source) as archive, output.open('xb') as dest:
         with zipfile.ZipFile(dest,'w') as packaged:

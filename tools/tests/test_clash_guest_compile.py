@@ -31,6 +31,8 @@ class GuestCompileTests(unittest.TestCase):
             header+='#define GUEST_ARENA_PROFILE_COUNT 18\nstatic const struct GuestSector arena1_sectors[18]={0};\nstatic const int arena1_npc_trophies[18]={0},arena1_missions[18]={0},arena_mana_rates[3]={28000,14000,14000};\nstatic const unsigned arena1_deck_ids[18]={0};\n'
             header+='static const int arena_profile_arenas[18]={0};\n'
             header+='#define GUEST_MOD_UNIT_COUNT 1\n#define GUEST_MOD_SETTINGS_VTABLE 0\nstruct ModUnitDef {const char *name,*projectile;unsigned cardId;};\nstatic const struct ModUnitDef mod_unit_defs[1]={{"Knight","",26000000}};\n'
+            header+='struct ForgeBlueprint {unsigned id;const char *rows[6];};\nstatic const struct ForgeBlueprint forge_blueprints[1]={{26000000,{"","","","","",""}}};\n'
+            header+='static const char *forge_table_paths[6]={"a","b","c","d","e","f"};\nstatic const unsigned forge_source_sizes[6]={1,1,1,1,1,1},forge_source_hashes[6]={0},forge_group_counts[2]={1,1};\n'
             (directory/'generated.h').write_text(header)
             command=['clang','-target','armv7-apple-ios6.0','-mthumb','-Oz','-ffreestanding',
                      '-fno-builtin','-fno-stack-protector','-fno-pic','-fno-unwind-tables',

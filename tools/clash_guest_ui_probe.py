@@ -63,6 +63,22 @@ def capture(frame, destination):
     raise RuntimeError('No complete live frame available')
 
 
+def wait_for_log(path, needle, timeout, pause):
+    """Optional readiness barrier; a loading frame alone is not a ready menu."""
+    deadline = time.monotonic() + timeout
+    carry = ''
+    with Path(path).open(errors='replace') as stream:
+        while True:
+            chunk = stream.read(65536)
+            if needle in carry + chunk:
+                return
+            carry = (carry + chunk)[-max(1, len(needle)-1):]
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Timed out waiting for requested app readiness log')
+            if not chunk:
+                pause(.05)  # Also detects app exit before readiness.
+
+
 def run(args):
     out=Path(args.out);out.mkdir(parents=True,exist_ok=False)
     hvm=Path(args.hvm).resolve();ipa=Path(args.ipa).resolve();home=Path(args.home).resolve()
@@ -110,6 +126,9 @@ def run(args):
                 pause(.05)
             result['startupFrame']=capture(frame,out/'startup.png')
             result['firstFrameSeconds']=round(time.monotonic()-began,3)
+            if getattr(args,'ready_log',None):
+                wait_for_log(out/'run.log',args.ready_log,args.ready_timeout,pause)
+                result['readyLog']={'matched':args.ready_log,'seconds':round(time.monotonic()-began,3)}
             pause(args.startup_seconds)
             for step in plan['steps']:
                 item=dict(id=step['id'],expected=step['expected'],status='running',seconds=round(time.monotonic()-began,3))
@@ -172,4 +191,6 @@ if __name__=='__main__':
     p.add_argument('--capture-audio',action='store_true',help='Record mixed PCM and per-step signal windows (not a quality oracle)')
     p.add_argument('--startup-timeout',type=float,default=90,help='Maximum first-frame wait including IPA import; no automatic retry')
     p.add_argument('--startup-seconds',type=float,default=12,help='Additional settling time after the first live frame')
+    p.add_argument('--ready-log',help='Wait for this literal log message before settling/injecting UI input; still requires visual review')
+    p.add_argument('--ready-timeout',type=float,default=120,help='Maximum wait for --ready-log; no automatic retry')
     raise SystemExit(run(p.parse_args()))

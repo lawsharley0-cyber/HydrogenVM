@@ -1,5 +1,11 @@
 # Custom-card definition foundation — November 7, 2026
 
+November 8 supersedes the unfinished-loader status below:
+[CARD_FORGE_2026-11-08.md](CARD_FORGE_2026-11-08.md) records the in-game creator,
+guest-owned loader, mandatory save link, dynamic tuning, 59 tests and native
+create/relaunch/equip/battle qualification on newer main. The remaining text
+retains the earlier foundation and private-probe history.
+
 The owner requests an in-game card forge alongside the existing Mod Lab. This
 stage adds a definition generator and native component evidence. **The shipped
 guest does not yet have card-creation controls or a durable custom-card loader.**

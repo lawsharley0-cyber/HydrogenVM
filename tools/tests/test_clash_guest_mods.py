@@ -29,6 +29,8 @@ class ModLabTests(unittest.TestCase):
 #include <errno.h>
 typedef unsigned int u32;typedef unsigned char u8;
 #define GUEST_MOD_UNIT_COUNT 2
+#define FORGE_MAX_CARDS 16u
+static u32 forge_loaded_count=0;
 #define FIELD(p,n) (*(u32*)((char*)(p)+(n)))
 #define API_puts puts
 #define CALL(address,result,args) ((result (*)args)(address))
@@ -94,6 +96,8 @@ int main(int argc,char **argv){
 #include <string.h>
 typedef unsigned int u32;
 #define GUEST_MOD_UNIT_COUNT 2
+#define FORGE_MAX_CARDS 16u
+static u32 forge_loaded_count=1;
 #define FIELD(p,n) (*(u32*)((char*)(p)+(n)))
 #define API_puts puts
 #define CALL(address,result,args) ((result (*)args)(address))
@@ -106,8 +110,8 @@ int guest_original_mod_damage(void *p,int level){return 50+level;}
 int guest_original_mod_shot_damage(void *p,int level){return 40+level;}
 #define CHECK(c) do{if(!(c)){fprintf(stderr,"line %d\n",__LINE__);return 3;}}while(0)
 int main(void){
- u32 unit[2][160]={0},shot[2][160]={0};
- for(u32 i=0;i<2;++i){mod_units[i]=unit[i];mod_shots[i]=shot[i];
+ u32 unit[3][160]={0},shot[3][160]={0};
+ for(u32 i=0;i<3;++i){mod_units[i]=unit[i];mod_shots[i]=shot[i];
   for(u32 j=0;j<6;++j){mod_original[i][j]=j==1||j==2?1000:100;}
   for(u32 f=0;f<MOD_FIELDS;++f)mod_records[i].value[f]=100;
  }
@@ -121,10 +125,15 @@ int main(void){
   CHECK(guest_mod_health(unit[0],5)==210 && guest_mod_damage(unit[0],2)==78);
   CHECK(guest_mod_shot_damage(shot[0],2)==63 && guest_mod_health(unit[1],5)==105);
  }
+ // A custom definition has its own statistics, independently of its original.
+ mod_records[2].value[MOD_MOVE]=175;mod_records[2].value[MOD_HEALTH]=250;
+ mod_apply_units();CHECK(FIELD(unit[2],0x150)==175 && guest_mod_health(unit[2],5)==262); // floor(105 * 250 / 100)
+ CHECK(FIELD(unit[0],0x150)==125 && guest_mod_health(unit[0],5)==210 && FIELD(unit[1],0x150)==100);
  // Friendly battles and original training use the original native statistics.
  battle_started=1;arena_battle=0;mod_apply_units();
  CHECK(FIELD(unit[0],0x150)==100 && FIELD(unit[0],0x154)==1000 && guest_mod_health(unit[0],5)==105);
- arena_battle=1;mod_apply_units();CHECK(FIELD(unit[0],0x150)==125);
+ CHECK(FIELD(unit[2],0x150)==100 && guest_mod_health(unit[2],5)==105);
+ arena_battle=1;mod_apply_units();CHECK(FIELD(unit[0],0x150)==125 && FIELD(unit[2],0x150)==175);
  committed_wins=6;mod_apply_units();CHECK(FIELD(unit[0],0x150)==100 && guest_mod_damage(unit[0],2)==52);
  committed_wins=7;mod_enabled=0;mod_apply_units();CHECK(FIELD(unit[0],0x1cc)==100);
  return 0;

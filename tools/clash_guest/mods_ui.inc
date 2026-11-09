@@ -2,9 +2,9 @@
 typedef struct {float x,y,w,h;} ModRect;
 typedef struct {float w,h;} ModSize;
 static u32 mod_msg,mod_sel_api,mod_class_api,mod_window,mod_old_window,mod_target;
-static u32 mod_unit_label,mod_status_label,mod_toggle,mod_gold_field,mod_gem_field;
+static u32 mod_unit_label,mod_status_label,mod_toggle,mod_gold_field,mod_gem_field,forge_name_field,forge_create_button;
 static u32 mod_fields[MOD_FIELDS],mod_minus[MOD_FIELDS],mod_plus[MOD_FIELDS];
-static struct ModRecord mod_draft[GUEST_MOD_UNIT_COUNT];static u32 mod_draft_enabled;
+static struct ModRecord mod_draft[MOD_UNIT_CAPACITY];static u32 mod_draft_enabled;
 static u32 mod_sel(const char *s){return CALL(mod_sel_api,u32,(const char*))(s);}
 static u32 mod_class(const char *s){return CALL(mod_class_api,u32,(const char*))(s);}
 static u32 mod_send0(u32 p,const char *s){return CALL(mod_msg,u32,(u32,u32))(p,mod_sel(s));}
@@ -48,7 +48,8 @@ static int mod_read_draft(void) {
 static void mod_ui_refresh(int stats) {
     mod_text(mod_status_label,mod_status);
     if(!stats)return;
-    mod_text(mod_unit_label,mod_unit_defs[mod_selected].name);
+    mod_text(mod_unit_label,mod_name(mod_selected));
+    mod_send1(forge_create_button,"setEnabled:",mod_selected<GUEST_MOD_UNIT_COUNT);
     mod_title(mod_toggle,mod_draft_enabled?"Mods: ON":"Mods: OFF");
     for(u32 f=0;f<MOD_FIELDS;++f) {
         mod_set_number(mod_fields[f],mod_draft[mod_selected].value[f]);
@@ -60,6 +61,23 @@ static void mod_close(void){mod_send1(mod_window,"endEditing:",1);mod_send1(mod_
 static void mod_action(u32 self,u32 selector,u32 sender) {
     (void)self;(void)selector;int tag=(int)mod_send0(sender,"tag");
     if(tag==10){mod_close();return;}
+    if(tag==30) {
+        void *home,*avatar;
+        const char *name=(const char*)mod_send0(mod_send0(forge_name_field,"text"),"UTF8String");
+        u32 bytes=0;if(name)while(bytes<=96 && name[bytes])++bytes;
+        if(!name || !forge_name_valid(name,bytes))mod_message("Name: 1-32 characters, max 96 UTF-8 bytes.");
+        else if(mod_selected>=GUEST_MOD_UNIT_COUNT)mod_message("Choose an original blueprint to clone.");
+        else if(forge_count>=FORGE_MAX_CARDS)mod_message("Maximum 16 custom cards per profile.");
+        else if(!mod_home(&home,&avatar))mod_message("Finish pending rewards and return home first.");
+        else {
+            capture_native(home,avatar);mod_backup();
+            if(forge_append(mod_unit_defs[mod_selected].cardId,name)) {
+                mod_send1(mod_window,"endEditing:",1);mod_text(forge_name_field,"");
+                mod_message("Saved. Restart Clash to load the card.");
+            } else mod_message("Cannot save definition. Previous registry retained.");
+        }
+        mod_ui_refresh(0);return;
+    }
     if(tag>=20 && tag<=24) {
         u32 gold,gems;if(!mod_read_number(mod_gold_field,&gold)||!mod_read_number(mod_gem_field,&gems))mod_message("Enter whole positive numbers, or zero.");
         else if(tag==24)mod_currency(gold,gems);
@@ -72,16 +90,16 @@ static void mod_action(u32 self,u32 selector,u32 sender) {
     }
     if(tag!=15 && !mod_read_draft()){mod_ui_refresh(0);return;}
     if(tag==11)mod_draft_enabled=!mod_draft_enabled;
-    else if(tag==12)mod_selected=mod_selected?mod_selected-1:GUEST_MOD_UNIT_COUNT-1;
-    else if(tag==13)mod_selected=mod_selected+1<GUEST_MOD_UNIT_COUNT?mod_selected+1:0;
+    else if(tag==12)mod_selected=mod_selected?mod_selected-1:mod_count()-1;
+    else if(tag==13)mod_selected=mod_selected+1<mod_count()?mod_selected+1:0;
     else if(tag==14) {
         void *home,*avatar;if(!mod_home(&home,&avatar)){mod_message("Finish pending rewards and return home first.");mod_ui_refresh(0);return;}
         if(!mod_archive_rejected()){mod_ui_refresh(0);return;}
         capture_native(home,avatar);mod_backup();
-        for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)mod_records[i]=mod_draft[i];mod_enabled=mod_draft_enabled;
+        for(u32 i=0;i<mod_count();++i)mod_records[i]=mod_draft[i];mod_enabled=mod_draft_enabled;
         mod_save();mod_apply_units();mod_message("Unit settings saved for the next battle.");
     } else if(tag==15) {
-        for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)for(u32 f=0;f<MOD_FIELDS;++f)mod_draft[i].value[f]=100;
+        for(u32 i=0;i<mod_count();++i)for(u32 f=0;f<MOD_FIELDS;++f)mod_draft[i].value[f]=100;
         mod_draft_enabled=0;mod_reset_requested=1;mod_message("Defaults staged. Press Apply units to save.");
     } else if(tag>=100 && tag<100+2*MOD_FIELDS) {
         u32 field=(u32)(tag-100)/2,n=mod_draft[mod_selected].value[field];
@@ -97,7 +115,7 @@ static void mod_ui_open(void) {
     mod_reset_requested=0;
     mod_msg=symbol("objc_msgSend");mod_sel_api=symbol("sel_registerName");mod_class_api=symbol("objc_getClass");
     mod_old_window=mod_send0(mod_send0(mod_class("UIApplication"),"sharedApplication"),"keyWindow");
-    for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)mod_draft[i]=mod_records[i];mod_draft_enabled=mod_enabled;
+    for(u32 i=0;i<mod_count();++i)mod_draft[i]=mod_records[i];mod_draft_enabled=mod_enabled;
     if(!mod_window) {
         u32 cls=CALL(symbol("objc_allocateClassPair"),u32,(u32,const char*,u32))(mod_class("NSObject"),"ClashGuestModActions",0);
         if(!cls || !CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("modPress:"),(u32)mod_action,"v@:@"))fail("Mod Lab: action registration failed");
@@ -110,7 +128,7 @@ static void mod_ui_open(void) {
         u32 vc=mod_send0(mod_send0(mod_class("UIViewController"),"alloc"),"init");mod_send1(vc,"setView:",root);mod_send1(mod_window,"setRootViewController:",vc);
         mod_label(root,"MOD LAB",(ModRect){12,14,180,30},22);mod_button(root,"Close",10,(ModRect){bounds.w-80,12,68,32});
         u32 scroll=mod_send0(mod_send0(mod_class("UIScrollView"),"alloc"),"init");mod_frame(scroll,(ModRect){0,54,bounds.w,bounds.h-110});mod_send1(root,"addSubview:",scroll);
-        CALL(mod_msg,void,(u32,u32,ModSize))(scroll,mod_sel("setContentSize:"),(ModSize){bounds.w,810});
+        CALL(mod_msg,void,(u32,u32,ModSize))(scroll,mod_sel("setContentSize:"),(ModSize){bounds.w,1010});
         mod_label(scroll,"Account",(ModRect){12,0,240,24},18);
         mod_label(scroll,"Gold",(ModRect){12,32,52,32},14);mod_gold_field=mod_field(scroll,(ModRect){70,32,128,32},0);
         mod_button(scroll,"-100",20,(ModRect){204,32,48,32});mod_button(scroll,"+100",21,(ModRect){258,32,50,32});
@@ -127,6 +145,14 @@ static void mod_ui_open(void) {
         mod_label(scroll,"Shared units share modifiers.",(ModRect){12,700,300,22},12);
         mod_label(scroll,"Default = 100%. Training stays original.",(ModRect){12,724,300,22},12);
         mod_label(scroll,"A pre-mod save is kept in Documents.",(ModRect){12,748,300,22},12);
+        mod_label(scroll,"Clone selected blueprint",(ModRect){12,792,300,26},18);
+        forge_name_field=mod_field(scroll,(ModRect){12,828,296,34},0);
+        mod_send1(forge_name_field,"setKeyboardType:",0);mod_send1(forge_name_field,"setAutocapitalizationType:",0);
+        mod_send1(forge_name_field,"setAutocorrectionType:",1);mod_text(forge_name_field,"");
+        mod_send1(forge_name_field,"setPlaceholder:",mod_string("Custom card name"));
+        forge_create_button=mod_button(scroll,"Create custom card",30,(ModRect){12,878,296,36});
+        mod_label(scroll,"Restart Clash. Original artwork reused.",(ModRect){12,926,300,22},12);
+        mod_label(scroll,"Definitions are permanent.",(ModRect){12,950,300,22},12);
         mod_status_label=mod_label(root,"",(ModRect){12,bounds.h-52,bounds.w-24,46},12);mod_send1(mod_status_label,"setNumberOfLines:",2);
     }
     void *home,*avatar;if(mod_home(&home,&avatar)){mod_set_number(mod_gold_field,CALL(0x9ab55,u32,(void*))(avatar));mod_set_number(mod_gem_field,CALL(0x9a41d,u32,(void*))(avatar));}
@@ -139,6 +165,14 @@ static void mod_tick(void) {
 extern void *guest_original_mod_string(const char*);
 static int mod_equal(const char *a,const char *b){if(!a||!b)return 0;u32 i=0;while(a[i]&&a[i]==b[i])++i;return a[i]==b[i];}
 void *guest_mod_string(const char *key) {
+    // Preserve the exact user-supplied UTF-8 name, independent of the archived
+    // CSV parser's quote-escaping dialect and the selected game language.
+    static u32 forge_names[FORGE_MAX_CARDS][5],forge_named[FORGE_MAX_CARDS];
+    u32 slot=forge_key_slot(key);
+    if(slot<forge_loaded_count) {
+        if(!forge_named[slot]){CALL(0x18dcf9,void,(void*,const char*))(forge_names[slot],forge_records[slot].name);forge_named[slot]=1;}
+        return forge_names[slot];
+    }
     static u32 title[5],open[5];static int ready;
     if(mod_equal(key,"TID_FACEBOOK") || mod_equal(key,"TID_FACEBOOK_DISCONNECTED") || mod_equal(key,"TID_FACEBOOK_CONNECTED")) {
         if(!ready){CALL(0x18dcf9,void,(void*,const char*))(title,"Mod Lab");CALL(0x18dcf9,void,(void*,const char*))(open,"Open editor");ready=1;}

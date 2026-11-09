@@ -1,5 +1,11 @@
 # Guest Mod Lab continuation — November 6, 2026
 
+November 8: [CARD_FORGE_2026-11-08.md](CARD_FORGE_2026-11-08.md) adds the in-game
+troop/building creator, persistent definitions and custom tuning entries. Read
+its CRG2/FGR1 save contract before moving or downgrading a custom-card profile.
+The original integration is now on main through #382; this continuation uses
+`codex/clash-forge-runtime` on `588eebb`, preserving newer engine fixes.
+
 November 7: [CUSTOM_CARDS.md](CUSTOM_CARDS.md) records the new append-only CSV
 definition generator, save-prefix identity helpers, six authored tests (51
 focused checks total), and private native definition/ownership/collection/relaunch

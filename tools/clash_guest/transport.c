@@ -134,6 +134,7 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "match.inc"
 #include "friendly.inc"
 #include "mods.inc"
+#include "forge_grant.inc"
 #include "mods_ui.inc"
 static void refresh_saved_arena(void) {
     // Recover already-earned saves captured before the native post-setter
@@ -148,6 +149,7 @@ static void refresh_saved_arena(void) {
         capture_native(home,avatar);
         CALL(API_puts,int,(const char*))("GuestOffline: persisted native earned-arena refresh");
     }
+    forge_grant_pending(home,avatar);
     dispose(owner);
 }
 void guest_connect(void *self,void *domain,void *port) {
