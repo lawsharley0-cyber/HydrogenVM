@@ -4481,6 +4481,83 @@ int runFullSubsystemTests() {
         check(!validItems.empty() && validDesc == "validStringValue", "NSUserDefaults preserves nested supported plist values across round-trip");
     }
 
+    // Multi-touch delivery. Each event carries one changed finger; the others still down are
+    // UITouchPhaseStationary and are not sent to the view again. Minecraft PE's move button
+    // stuck "down" when a second finger (looking around) made the first finger's
+    // touchesBegan: arrive twice. Expected calls are written out by hand below.
+    {
+        auto& u = UIKit::ui(cx);
+        const ObjC::id savedApp = u.app, savedKey = u.keyWindow;
+        if (!u.app) u.app = r.createInstance(r.getClass("UIApplication"));
+        std::vector<std::string> calls;
+        std::vector<ObjC::id> seen;   // touch objects in order of first appearance: A, B, ...
+        int stationaryOthers = -1, touchesInEndEvent = -1;
+        auto letters = [&](Ctx& rx, ObjC::id set) {
+            std::string out;
+            for (ObjC::id t : Runtime::Foundation::setItems(rx, set)) {
+                auto it = std::find(seen.begin(), seen.end(), t);
+                if (it == seen.end()) { seen.push_back(t); it = seen.end() - 1; }
+                out += char('A' + (it - seen.begin()));
+            }
+            std::sort(out.begin(), out.end());
+            return out;
+        };
+        auto logCls = r.defineClass("HVMTouchLogView", "UIView");
+        logCls.method("touchesBegan:withEvent:", [&](Ctx& rx) { calls.push_back("began:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesMoved:withEvent:", [&](Ctx& rx) { calls.push_back("moved:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesCancelled:withEvent:", [&](Ctx& rx) { calls.push_back("cancelled:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesEnded:withEvent:", [&](Ctx& rx) {
+            const ObjC::id touches = rx.cpu.r[2], event = rx.cpu.r[3];
+            calls.push_back("ended:" + letters(rx, touches));
+            if (stationaryOthers >= 0) return;   // only the first lift is inspected
+            // The event still lists every finger; the ones that did not change are stationary (2).
+            const auto ended = Runtime::Foundation::setItems(rx, touches);
+            const auto all = Runtime::Foundation::setItems(rx, ObjC::id(r.send(rx.cpu, event, "allTouches")));
+            touchesInEndEvent = int(all.size());
+            stationaryOthers = 0;
+            for (ObjC::id t : all)
+                if (std::find(ended.begin(), ended.end(), t) == ended.end() && int32_t(r.send(rx.cpu, t, "phase")) == 2) ++stationaryOthers;
+        }, "v@:@@");
+        const ObjC::id win = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+        r.send(cpu, win, "makeKeyAndVisible");
+        const ObjC::id pad = UIKit::sendRect(cx, ObjC::id(r.send(cpu, logCls.cls(), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+        r.send(cpu, pad, "setMultipleTouchEnabled:", {1});
+        r.send(cpu, win, "addSubview:", {pad});
+        using TP = Runtime::TouchPhase;
+        auto touch = [&](TP phase, float tx, float ty, uint32_t finger) {
+            proc.injectTouch(phase, tx, ty, finger);
+            UIKit::deliverPendingInput(cx);
+        };
+        touch(TP::Began, 50, 400, 1);    // move button
+        touch(TP::Began, 250, 100, 2);   // look finger goes down while the first is held
+        touch(TP::Moved, 240, 110, 2);
+        touch(TP::Moved, 60, 400, 1);
+        touch(TP::Ended, 60, 400, 1);    // move button released; the look finger stays
+        touch(TP::Moved, 230, 120, 2);
+        touch(TP::Ended, 230, 120, 2);
+        const std::vector<std::string> want = {"began:A", "began:B", "moved:B", "moved:A", "ended:A", "moved:B", "ended:B"};
+        if (calls != want) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+        check(calls == want && touchesInEndEvent == 2 && stationaryOthers == 1,
+              "each touch event delivers only the finger that changed; fingers held still are stationary, not begun or moved again");
+        // A finger that lifts while the app ignores interaction events is forgotten, so the
+        // same finger works again afterwards (it used to stay "down" forever).
+        calls.clear();
+        touch(TP::Began, 100, 100, 5);
+        r.send(cpu, u.app, "beginIgnoringInteractionEvents");
+        touch(TP::Ended, 100, 100, 5);
+        const size_t whileIgnoring = calls.size();   // 1: the began; the lift is dropped
+        r.send(cpu, u.app, "endIgnoringInteractionEvents");
+        touch(TP::Began, 100, 100, 5);
+        touch(TP::Ended, 100, 100, 5);
+        size_t begans = 0, endeds = 0;
+        for (const auto& c : calls) { begans += c.rfind("began:", 0) == 0; endeds += c.rfind("ended:", 0) == 0; }
+        if (!(whileIgnoring == 1 && begans == 2 && endeds == 1)) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+        check(whileIgnoring == 1 && begans == 2 && endeds == 1, "a finger lifted during beginIgnoringInteractionEvents can touch again afterwards");
+        r.send(cpu, win, "setHidden:", {1});
+        u.app = savedApp;
+        if (savedKey) u.keyWindow = savedKey;
+    }
+
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
     {
         const ObjC::Class winCls = r.getClass("UIWindow");

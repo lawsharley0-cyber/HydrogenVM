@@ -107,8 +107,10 @@ or WSLg is needed for the visible window; automation can use
 The CLI preview interface uses `--frame-file` and `--input-file`. Preview frames
 are atomic replacements at up to 10 Hz: `HVF1`, little-endian uint32 width/height,
 float32 screen scale, and RGBA bytes. The regular input file receives newline
-commands `touch PHASE X Y`, `background`, `foreground`, or `stop`. Phases are
-0 down, 1 move, 3 up, and 4 cancel. No socket or guest networking is involved.
+commands `touch PHASE X Y [FINGER]`, `background`, `foreground`, or `stop`. Phases are
+0 down, 1 move, 3 up, and 4 cancel. FINGER (0-10, default 1) names the finger, so two
+fingers can be down at once (hold a move button with one, look around with another).
+No socket or guest networking is involved.
 
 ## Verification and current game limit
 
