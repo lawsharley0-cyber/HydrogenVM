@@ -343,6 +343,8 @@ public:
     // Test seam: the guest stack of the last thread whose host thread could not start
     // (base, size), recorded after it was released. Read without threadsMu_.
     std::pair<uint32_t, uint32_t> lastFailedSpawnStack() const { return {failedSpawnBase_.load(), failedSpawnSize_.load()}; }
+    // Test seam: the guest stack of the thread whose host thread is being created right now.
+    std::pair<uint32_t, uint32_t> spawningStack() const { return {spawningBase_.load(), spawningSize_.load()}; }
     bool joinThread(uint32_t self, uint32_t* retval);
     void detachThread(uint32_t self);
     GuestThread& mainThread() { return *mainThread_; }
@@ -465,7 +467,7 @@ private:
     std::unordered_map<const void*, uint32_t> slots_;
     std::map<std::pair<const void*, uint32_t>, uint32_t> threadSlots_;
     std::mutex threadsMu_;
-    std::atomic<uint32_t> failedSpawnBase_{0}, failedSpawnSize_{0};
+    std::atomic<uint32_t> failedSpawnBase_{0}, failedSpawnSize_{0}, spawningBase_{0}, spawningSize_{0};
     uint32_t nextThreadId_ = 1;
     uint32_t stackTop_ = 0xBF000000u;
 

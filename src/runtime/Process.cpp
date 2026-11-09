@@ -1069,6 +1069,8 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
         std::lock_guard<std::mutex> lk(threadsMu_);
         if (stopping()) { releaseStack(); throw ProcessExit(exitCode_, "stopping"); }
         threads_[raw->self] = std::move(t);
+        spawningBase_ = stackBase;
+        spawningSize_ = mappedSize;
         try {
             raw->host = spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
             raw->hostJoinable = true;

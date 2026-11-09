@@ -18,7 +18,8 @@ using namespace Hydrogen::Runtime;
 
 namespace {
 Process* process = nullptr;
-int failCount = 0;   // the next N host pthread_create calls return EAGAIN
+int failCount = 0;
+bool mappedAtCreate = true;   // every failed attempt saw its guest stack mapped   // the next N host pthread_create calls return EAGAIN
 bool waitForTarget = false;
 std::vector<size_t> requestedStacks;   // stack size of every host pthread_create attempt
 std::atomic<bool> targetEntered{false};
@@ -30,8 +31,10 @@ extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* at
     if (attr) pthread_attr_getstacksize(attr, &stack);
     requestedStacks.push_back(stack);
     if (failCount > 0) {
-        // threadsMu_ is held during host creation: record nothing that needs it here.
+        // threadsMu_ is held during host creation: use the lock-free seam only.
         --failCount;
+        const auto [base, size] = process->spawningStack();
+        mappedAtCreate = mappedAtCreate && size != 0 && process->mem().isMapped(base) && process->mem().isMapped(base + size - 1);
         return EAGAIN;
     }
     const int result = __real_pthread_create(thread, attr, fn, arg);
@@ -74,8 +77,8 @@ int main() {
         const auto [failedBase, failedSize] = p.lastFailedSpawnStack();
         bool unmapped = failedSize != 0;
         for (uint32_t offset = 0; unmapped && offset < failedSize; offset += 4096) unmapped = !p.mem().isMapped(failedBase + offset);
-        check(threw && afterIds.size() == 1 && afterIds[0] == p.mainThread().id && unmapped,
-              "failed host creation unmaps the guest stack and removes the guest thread");
+        check(threw && mappedAtCreate && afterIds.size() == 1 && afterIds[0] == p.mainThread().id && unmapped,
+              "the guest stack is mapped while the host thread is created, and unmapped with the guest thread removed when that fails");
         check(!(uint32_t(r.send(cpu, thread, "isExecuting")) & 0xff), "failed NSThread start resets execution state");
         check(requestedStacks == std::vector<size_t>{8u << 20, 2u << 20, 1u << 20, 512u << 10},
               "a host thread that cannot get 8 MB is retried with 2 MB, 1 MB and 512 KB stacks");
