@@ -489,6 +489,16 @@ template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* n
             ++hc->fboDescribes;
             line += " " + hgDescribeFramebuffer(hc);
         }
+        // A buffer upload with nothing bound: say what is bound, so a phone report shows it.
+        if (std::strncmp(name, "glBuffer", 8) == 0 && hc->fn.glGetIntegerv) {
+            int32_t array = 0, element = 0, vao = 0;
+            hc->fn.glGetIntegerv(0x8894 /*ARRAY_BUFFER_BINDING*/, &array);
+            hc->fn.glGetIntegerv(0x8895 /*ELEMENT_ARRAY_BUFFER_BINDING*/, &element);
+            hc->fn.glGetIntegerv(0x85B5 /*VERTEX_ARRAY_BINDING*/, &vao);
+            for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+            line += " (array buffer " + std::to_string(array) + ", element buffer " + std::to_string(element) +
+                    ", vertex array " + std::to_string(vao) + ")";
+        }
         x.proc.noteGLError(key, std::move(line));
     }
     static std::atomic<int> logged{0};
@@ -537,9 +547,22 @@ static uint32_t toGuest(Ctx& x, const void* p) {
 
 // ------------------------------------------------------------- hand wrappers ---
 
+// Hand-written GL functions check for errors when they return, like the generated ones:
+// otherwise a failing call's error is reported on the next checked call (a phone report
+// once showed glBindTexture(GL_TEXTURE_2D, 0) failing, for an error glTexImage2D raised).
+struct HgCheckOnReturn {
+    Ctx& x;
+    HostContext* hc;
+    const char* name;
+    ~HgCheckOnReturn() {
+        if (hc && (hgDebug || hc->trace)) hgAfter(x, hc, name, [] { return std::string("..."); });
+    }
+};
+#define HG_CHECK_ON_RETURN(name) HgCheckOnReturn hgCheckOnReturn_{x, hc, name};
 #define HG_BEGIN(name, ...)                                   \
     HostContext* hc = hgCurrent(x);                           \
-    if (!hc || !hc->fn.name) { hgMissing(x, hc, #name); return __VA_ARGS__; }
+    if (!hc || !hc->fn.name) { hgMissing(x, hc, #name); return __VA_ARGS__; } \
+    HG_CHECK_ON_RETURN(#name)
 
 
 void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
@@ -618,6 +641,8 @@ void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalfor
     HG_BEGIN(glTexImage2D)
     if (format == kBgra && internalformat == int32_t(kRgba) && !hc->desktop) internalformat = int32_t(kBgra);
     hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
+    if (hgDebug || hc->trace)
+        hgAfter(x, hc, "glTexImage2D", [&] { return hgArgs(target, level, internalformat, width, height, border, format, type, pixels); });
 }
 void hg_glTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int32_t yo, int32_t width, int32_t height,
                         uint32_t format, uint32_t type, GuestPtr pixels) {
@@ -627,18 +652,21 @@ void hg_glTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int3
 
 void hg_glOrthof(Ctx& x, float l, float r, float b, float t, float n, float f) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glOrthof")
     if (hc && hc->fn.glOrthof) hc->fn.glOrthof(l, r, b, t, n, f);
     else if (hc && hc->fn.glOrtho) hc->fn.glOrtho(l, r, b, t, n, f);
     else hgMissing(x, hc, "glOrthof");
 }
 void hg_glFrustumf(Ctx& x, float l, float r, float b, float t, float n, float f) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glFrustumf")
     if (hc && hc->fn.glFrustumf) hc->fn.glFrustumf(l, r, b, t, n, f);
     else if (hc && hc->fn.glFrustum) hc->fn.glFrustum(l, r, b, t, n, f);
     else hgMissing(x, hc, "glFrustumf");
 }
 void hg_glClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glClipPlanef")
     if (!hc || !eq) return;
     if (hc->fn.glClipPlanef) { hc->fn.glClipPlanef(plane, x.mem.host(eq)); return; }
     if (!hc->fn.glClipPlane) { hgMissing(x, hc, "glClipPlanef"); return; }
@@ -648,6 +676,7 @@ void hg_glClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
 }
 void hg_glGetClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glGetClipPlanef")
     if (!hc || !eq) return;
     if (hc->fn.glGetClipPlanef) { hc->fn.glGetClipPlanef(plane, x.mem.host(eq)); return; }
     if (!hc->fn.glGetClipPlane) { hgMissing(x, hc, "glGetClipPlanef"); return; }
@@ -794,16 +823,19 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
 
 uint32_t hg_glMapBufferOES(Ctx& x, uint32_t target, uint32_t /*access: WRITE_ONLY_OES*/) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glMapBufferOES")
     if (!hc) return 0;
     return mapRange(x, hc, target, 0, 0, kMapWriteBit);
 }
 uint32_t hg_glMapBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t length, uint32_t access) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glMapBufferRange")
     if (!hc) return 0;
     return mapRange(x, hc, target, intptr_t(uint32_t(offset)), intptr_t(uint32_t(length)), access);
 }
 void hg_glFlushMappedBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t length) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glFlushMappedBufferRange")
     if (!hc) return;
     auto it = hc->mapped.find(target);
     if (it == hc->mapped.end() || !it->second.host) return;
@@ -814,6 +846,7 @@ void hg_glFlushMappedBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_
 }
 bool hg_glUnmapBufferOES(Ctx& x, uint32_t target) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glUnmapBufferOES")
     if (!hc) return false;
     auto it = hc->mapped.find(target);
     if (it == hc->mapped.end()) return false;
@@ -868,6 +901,7 @@ void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t target, uint32_t attachmen
 
 void hg_glResolveMultisampleFramebufferAPPLE(Ctx& x) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glResolveMultisampleFramebufferAPPLE")
     if (!hc) return;
     if (hc->fn.glResolveMultisampleFramebufferAPPLE) { hc->fn.glResolveMultisampleFramebufferAPPLE(); return; }
     if (!hc->fn.glBlitFramebuffer) { hgMissing(x, hc, "glResolveMultisampleFramebufferAPPLE"); return; }
