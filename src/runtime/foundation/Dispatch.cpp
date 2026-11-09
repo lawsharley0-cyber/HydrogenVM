@@ -321,7 +321,21 @@ void timerLoop(Process* p) {
         auto fn = d.timed.top().fn;
         d.timed.pop();
         lk.unlock();
-        try { fn(); } catch (const std::exception& e) { p->logf(LogLevel::Warning, "dispatch timer: %s", e.what()); }
+        // A tick can enter guest code on this host thread: a source's final
+        // release runs its dealloc/finalizer here. Like any thread libdispatch
+        // runs work on, give each tick an autorelease pool and drain it, so an
+        // object autoreleased there is released instead of leaking. The drain
+        // uses the same Cpu the tick's own release uses.
+        auto& objc = ObjC::rt(*p);
+        const uint32_t pool = objc.poolPush();
+        auto drain = [&] {
+            try { objc.poolPop(p->currentThread().cpu, pool); }
+            catch (const std::exception& e) { p->logf(LogLevel::Warning, "dispatch timer pool drain: %s", e.what()); }
+        };
+        try { fn(); }
+        catch (const std::exception& e) { p->logf(LogLevel::Warning, "dispatch timer: %s", e.what()); }
+        catch (...) { drain(); throw; }
+        drain();
         lk.lock();
     }
 }
@@ -1068,6 +1082,10 @@ void oq_dealloc(Ctx& x, id self, SEL) {
 }
 
 } // namespace
+
+void runOnDispatchTimerThread(Process& p, uint64_t delayNs, std::function<void()> fn) {
+    addTimed(p, nowNs() + delayNs, std::move(fn));
+}
 
 // ------------------------------------------------------------- exports ---
 

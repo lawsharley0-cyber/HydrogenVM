@@ -165,6 +165,9 @@ RunLoop& mainRunLoop(Process& p);
 RunLoop& runLoopForObject(Ctx& x, id loop);   // an NSRunLoop / CFRunLoop object (current loop if 0)
 double now();          // seconds since 2001-01-01 (NSDate reference)
 double dateInterval(Ctx& x, id date);                    // NSDate -> reference-date seconds
+// Run fn on the Process's dispatch timer host thread after delayNs, the way a
+// dispatch timer tick runs (inside that thread's per-tick autorelease pool).
+void runOnDispatchTimerThread(Process& p, uint64_t delayNs, std::function<void()> fn);
 id makeDate(Ctx& x, double t, bool owned = false);       // reference-date seconds -> NSDate
 
 // ---- bundle / URLs (Bundle.cpp)

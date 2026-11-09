@@ -9450,6 +9450,36 @@ int runFullSubsystemTests() {
                   "a host thread keeps a separate autorelease pool stack for each Process it calls into");
         }
         {
+            // A dispatch timer tick runs on the timer host thread, and a source's
+            // final release can run a dealloc/finalizer there that autoreleases.
+            // libdispatch drains an autorelease pool around such work. The object
+            // starts at retain count 1, is retained once (2) and autoreleased in
+            // the tick; once the tick's pool drains it must be back at 1. Without
+            // a pool the autorelease leaks and the count stays 2. The wait is on
+            // that condition, bounded by 5 s, not a fixed sleep.
+            ProcessConfig cfgT;
+            cfgT.homePath = home; cfgT.bundlePath = bundle;
+            Process procT(cfgT);
+            auto& rT = ObjC::rt(procT);
+            const ObjC::id obj = rT.createInstance(rT.getClass("NSObject"));
+            rT.rootRetain(obj);
+            const uint32_t before = rT.retainCount(obj);
+            std::atomic<bool> ran{false};
+            Foundation::runOnDispatchTimerThread(procT, 0, [&] {
+                CPU::Cpu tickCPU;
+                rT.autorelease(tickCPU, obj);
+                ran = true;
+            });
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while ((!ran || rT.retainCount(obj) != 1) && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            const uint32_t after = rT.retainCount(obj);
+            if (!(before == 2 && ran && after == 1))
+                std::printf("    timer tick pool: before %u ran %d after %u\n", before, int(ran.load()), after);
+            check(before == 2 && ran && after == 1,
+                  "dispatch timer ticks drain an autorelease pool on the timer host thread");
+        }
+        {
             ProcessConfig lateCfg;
             lateCfg.homePath = home; lateCfg.bundlePath = home + "/Late.app";
             Process late(lateCfg);
