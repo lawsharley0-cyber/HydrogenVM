@@ -292,6 +292,8 @@ final class BatchTestRunner {
     private(set) var currentIndex: Int = 0
     /// Runnable games in the library when this run started or resumed (the report's "N of M").
     private(set) var libraryGames: Int = 0
+    /// The full run this run replaced could not be copied to last_full_run/ (see keepLastFullReport).
+    private(set) var fullRunNotKept = false
 
     private(set) var currentApp: InstalledApp?
     private(set) var currentModeName: String = "software"
@@ -379,7 +381,8 @@ final class BatchTestRunner {
     }
 
     func startNewBatch(apps: [InstalledApp], options: BatchTestOptions) {
-        Self.keepLastFullReport()
+        // A failed copy keeps the previous last_full_run/; this run's reports say so.
+        self.fullRunNotKept = !Self.keepLastFullReport()
         self.options = options
         self.runOptions = options
         self.clearPendingSession()
@@ -458,28 +461,53 @@ final class BatchTestRunner {
     /// Retest is offered only when no batch is in progress: a paused batch keeps its Resume.
     var canRetest: Bool { status == .idle || status == .completed || status == .cancelled }
 
-    static var lastFullReportJSON: URL { reportsDir.appending(path: "last_full_batch_report.json") }
-    static var lastFullReportMD: URL { reportsDir.appending(path: "last_full_batch_report.md") }
-    /// Copies of the pictures the kept full report points at: a retest overwrites thumbnails/<game>_<mode>.png.
-    static var lastFullThumbnailsDir: URL { reportsDir.appending(path: "last_full_thumbnails", directoryHint: .isDirectory) }
+    /// The last full run kept as one folder: report.json, report.md and thumbnails/ (its
+    /// thumbnailPath entries are "thumbnails/<name>", so they resolve inside it). A retest
+    /// overwrites thumbnails/<game>_<mode>.png, so the pictures are copied, not referenced.
+    static var lastFullRunDir: URL { reportsDir.appending(path: "last_full_run", directoryHint: .isDirectory) }
 
-    /// Before a new run replaces latest_batch_report, keep it as last_full_batch_report when it
-    /// is a full run with results, so a retest (or any partial run) never loses an unexported
-    /// full run. Partial and empty reports are not kept, so retests never replace the full one.
-    static func keepLastFullReport() {
+    /// Before a new run replaces latest_batch_report, keep it in last_full_run/ when it is a
+    /// full run with results, so a retest (or any partial run) never loses an unexported full
+    /// run. Partial and empty reports are not kept, so retests never replace the full one.
+    /// The copy is staged and published only once the report and every picture it names that
+    /// exists are copied; on any failure the previous last_full_run/ stays as it was and this
+    /// returns false.
+    @discardableResult
+    static func keepLastFullReport() -> Bool {
         let fm = FileManager.default
         let json = reportsDir.appending(path: "latest_batch_report.json")
         let md = reportsDir.appending(path: "latest_batch_report.md")
-        guard let data = try? Data(contentsOf: json), BatchSelection.isFullRunWithResults(data) else { return }
-        try? data.write(to: lastFullReportJSON, options: .atomic)
-        try? fm.removeItem(at: lastFullReportMD)
-        if fm.fileExists(atPath: md.path(percentEncoded: false)) { try? fm.copyItem(at: md, to: lastFullReportMD) }
-        // Its thumbnailPath entries stay "thumbnails/<name>": they resolve inside last-full-run/ in an export.
-        try? fm.removeItem(at: lastFullThumbnailsDir)
-        try? fm.createDirectory(at: lastFullThumbnailsDir, withIntermediateDirectories: true)
-        for name in BatchSelection.thumbnailFiles(BatchSelection.thumbnailPaths(inReport: data)) {
-            let src = thumbnailsDir.appending(path: name)
-            if fm.fileExists(atPath: src.path(percentEncoded: false)) { try? fm.copyItem(at: src, to: lastFullThumbnailsDir.appending(path: name)) }
+        guard let data = try? Data(contentsOf: json), BatchSelection.isFullRunWithResults(data) else { return true }
+        let staging = reportsDir.appending(path: "last_full_run.staging", directoryHint: .isDirectory)
+        do {
+            try? fm.removeItem(at: staging)
+            let thumbs = staging.appending(path: "thumbnails", directoryHint: .isDirectory)
+            try fm.createDirectory(at: thumbs, withIntermediateDirectories: true)
+            try data.write(to: staging.appending(path: "report.json"))
+            if fm.fileExists(atPath: md.path(percentEncoded: false)) {
+                try fm.copyItem(at: md, to: staging.appending(path: "report.md"))
+            }
+            for name in BatchSelection.thumbnailFiles(BatchSelection.thumbnailPaths(inReport: data)) {
+                let src = thumbnailsDir.appending(path: name)
+                if fm.fileExists(atPath: src.path(percentEncoded: false)) { try fm.copyItem(at: src, to: thumbs.appending(path: name)) }
+            }
+            // Swap by renames: the old copy moves aside, the new one takes its name, and the old
+            // one comes back if that fails.
+            let old = reportsDir.appending(path: "last_full_run.old", directoryHint: .isDirectory)
+            try? fm.removeItem(at: old)
+            let hadOld = fm.fileExists(atPath: lastFullRunDir.path(percentEncoded: false))
+            if hadOld { try fm.moveItem(at: lastFullRunDir, to: old) }
+            do {
+                try fm.moveItem(at: staging, to: lastFullRunDir)
+            } catch {
+                if hadOld { try? fm.moveItem(at: old, to: lastFullRunDir) }
+                throw error
+            }
+            try? fm.removeItem(at: old)
+            return true
+        } catch {
+            try? fm.removeItem(at: staging)
+            return false
         }
     }
 
@@ -1095,7 +1123,8 @@ final class BatchTestRunner {
                 "exploreSeconds": runOptions.exploreTime,
                 "relaunch": runOptions.relaunchEnabled,
                 "glTrace": runOptions.glTrace,
-                "selection": BatchSelection.reportEntry(pick: runOptions.onlyGames, libraryGames: libraryGames)
+                "selection": BatchSelection.reportEntry(pick: runOptions.onlyGames, libraryGames: libraryGames),
+                "previousFullRunKept": !fullRunNotKept
             ],
             "suites": [
                 "apps": [
@@ -1112,6 +1141,9 @@ final class BatchTestRunner {
         md += "**Emulator Commit:** `\(HVMSession.emulatorCommit.prefix(12))`  \n"
         md += "**Options:** \(runOptions.secondsPerApp)s/app · Renderer \(runOptions.rendererMode.displayName) · KeepGoing \(runOptions.keepGoing) · Explore \(runOptions.exploreEnabled ? "\(runOptions.exploreTime)s" : "off") · Relaunch \(runOptions.relaunchEnabled)  \n"
         md += BatchSelection.markdownLine(pick: runOptions.onlyGames, libraryGames: libraryGames) + "\n\n"
+        if fullRunNotKept {
+            md += "> ⚠️ The previous full run's report could not be copied to last_full_run/; the copy from before it was kept.\n\n"
+        }
 
         let total = results.count
         let crashed = results.filter(\.crashed).count
@@ -1218,16 +1250,9 @@ final class BatchTestRunner {
             if fm.fileExists(atPath: src.path(percentEncoded: false)) { try fm.copyItem(at: src, to: thumbs.appending(path: name)) }
         }
         // A partial run also carries the last full run's report, so a retest never hides it.
-        if !runOptions.onlyGames.isEmpty, fm.fileExists(atPath: Self.lastFullReportJSON.path(percentEncoded: false)) {
-            let full = root.appending(path: "last-full-run", directoryHint: .isDirectory)
-            try fm.createDirectory(at: full, withIntermediateDirectories: true)
-            try fm.copyItem(at: Self.lastFullReportJSON, to: full.appending(path: "report.json"))
-            if fm.fileExists(atPath: Self.lastFullReportMD.path(percentEncoded: false)) {
-                try fm.copyItem(at: Self.lastFullReportMD, to: full.appending(path: "report.md"))
-            }
-            if fm.fileExists(atPath: Self.lastFullThumbnailsDir.path(percentEncoded: false)) {
-                try fm.copyItem(at: Self.lastFullThumbnailsDir, to: full.appending(path: "thumbnails", directoryHint: .isDirectory))
-            }
+        if !runOptions.onlyGames.isEmpty,
+           fm.fileExists(atPath: Self.lastFullRunDir.appending(path: "report.json").path(percentEncoded: false)) {
+            try fm.copyItem(at: Self.lastFullRunDir, to: root.appending(path: "last-full-run", directoryHint: .isDirectory))
         }
         for r in results {
             // Bundle IDs come from the game's Info.plist: keep only filename-safe characters.
