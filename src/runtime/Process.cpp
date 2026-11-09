@@ -107,7 +107,8 @@ pthread_t spawnHostThread(std::function<void()> fn) {
     // ordinary guest threads (Terraria's camera thread on the phone).
     for (const size_t stack : {size_t(8) << 20, size_t(2) << 20, size_t(1) << 20, size_t(512) << 10}) {
         pthread_attr_t attr;
-        pthread_attr_init(&attr);
+        r = pthread_attr_init(&attr);
+        if (r != 0) break;   // attr is unusable: report the error, never destroy it
         pthread_attr_setstacksize(&attr, stack);
         r = pthread_create(&th, &attr, [](void* p) -> void* {
             std::unique_ptr<std::function<void()>> f(static_cast<std::function<void()>*>(p));
