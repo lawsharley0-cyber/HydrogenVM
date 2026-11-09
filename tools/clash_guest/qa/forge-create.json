@@ -1,0 +1,110 @@
+{
+  "name": "Known copied earned fixture: create one Knight clone",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "editor",
+      "expected": "editor",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "scroll-to-forge-1",
+      "expected": "scroll toward creator",
+      "actions": [
+        {
+          "drag": [
+            160,
+            465,
+            160,
+            150
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "scroll-to-forge-2",
+      "expected": "name and Create controls visible",
+      "actions": [
+        {
+          "drag": [
+            160,
+            465,
+            160,
+            150
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "name-focus",
+      "expected": "name-focus",
+      "actions": [
+        {
+          "tap": [
+            160,
+            345
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "name",
+      "expected": "Forge QA in the name field",
+      "actions": [
+        {
+          "text": "Forge QA"
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "create",
+      "expected": "create",
+      "actions": [
+        {
+          "tap": [
+            160,
+            398
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close",
+      "expected": "close",
+      "actions": [
+        {
+          "tap": [
+            275,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

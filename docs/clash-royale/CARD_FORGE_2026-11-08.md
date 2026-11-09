@@ -4,6 +4,7 @@ This continues from **main `588eebb83fb591b60f0e6eeb037647f337693e5b`**, on
 `codex/clash-forge-runtime`. PRs #366 and #381 were closed and integrated through
 #382 (`a2ed7c6`); do not reopen the old PRs or overwrite the newer phone/audio
 fixes. The separate keyboard accessory follow-up is draft PR #390.
+The guest continuation is draft [PR #391](https://github.com/lawsharley0-cyber/HydrogenVM/pull/391).
 
 The pinned client remains unencrypted ARMv7 **2.1306.1**, running inside the
 alpha HydrogenVM interpreter. This guest owns its offline transport, saves and
@@ -113,6 +114,24 @@ the final main-based creation tests need no CLI instrumentation. Use
 settling/injecting input, and sufficient `--seconds` for the complete plan.
 A loading frame alone is not readiness. The barrier records a log event only;
 screenshots and actual save/ownership/transaction outcomes still require review.
+
+Committed example plans `tools/clash_guest/qa/forge-create.json` and
+`forge-equip.json` reproduce the tested logical 320×568 coordinates. Use only
+a stopped, copied earned fixture with the original 10 owned cards, no previous
+custom definitions, default tuning selection at Knight, and no pending
+reward/name/friendly transaction. Review the picker before creation. After
+create, relaunch the same copied instance and verify the registry, ownership
+and name before using the equip plan; its collection coordinates assume exactly
+one custom card. Adjust and re-review plans for other profiles, never run a
+creation plan against the owner's only save. For example:
+
+```sh
+python3 tools/clash_guest_ui_probe.py --hvm build/hvm \
+  --app '/private/Clash Royale.app' --home /private/copied-earned-home \
+  --plan tools/clash_guest/qa/forge-create.json --out /private/new-create-run \
+  --gpu --capture-audio --seconds 600 --startup-seconds 12 \
+  --ready-log 'GuestOffline: queued response=24101' --ready-timeout 180
+```
 
 Observed native cases:
 
