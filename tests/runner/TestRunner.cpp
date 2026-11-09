@@ -1762,6 +1762,16 @@ int runFullSubsystemTests() {
                   runStage("void main() { vec4 v = vec4(1.0, 2.0, 3.0, 4.0); mat2 m = mat2(1.0, 2.0, 3.0, 4.0); gl_FragColor = vec4(v[2], m[1].x, m[1].y, 1.0); }",
                            false, [](auto&, auto&) {}, o) && near4(o, 3, 3, 4, 1),
               "GLSL rejects out-of-range constant indexes, including float32 literals that do not fit in int");
+        // Literal indexes at the edges of the range check. 16777217 is not a float32;
+        // it rounds to 16777216, still far past a[3]. For vec4 the last valid index
+        // is 3 and the first invalid one is 4; for ivec2 it is 1 and 2. With
+        // v = (0.25, 0.5, 0.75, 1.0), v[3] = 1.0 and v[0] = 0.25.
+        check(shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[16777217]); }", "array index must be an in-range literal") &&
+                  shows("void main() { vec4 v = vec4(1.0); gl_FragColor = vec4(v[4]); }", "array index must be an in-range literal") &&
+                  shows("void main() { ivec2 v = ivec2(1, 2); gl_FragColor = vec4(float(v[2])); }", "array index must be an in-range literal") &&
+                  runStage("void main() { vec4 v = vec4(0.25, 0.5, 0.75, 1.0); gl_FragColor = vec4(v[3], v[0], 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1.0f, 0.25f, 0, 1),
+              "GLSL constant index range check accepts the last element and rejects the next");
         {
             Shader::Program warned;
             const bool ok = warned.compile(
