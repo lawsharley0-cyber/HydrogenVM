@@ -47,6 +47,8 @@ ok UIColor CGColor
 
 ok UIFont metrics
 
+[gpu] GL layer (64.0, 64.0)
+[gpu] GL layer removed
 ok sizeWithFont:
 
 ok sizeWithFont:constrainedToSize: wraps
@@ -133,8 +135,6 @@ ok glCheckFramebufferStatus complete
 GPU: presented frame 1 directly (average rgb 255,0,0, 64/64 samples lit)
 ok OpenGL ES clear, glReadPixels & presentRenderbuffer
 
-[gpu] GL layer (64.0, 64.0)
-[gpu] GL layer removed
 [autotap] 70.0,350.0
 [autotap] 230.0,350.0
 ok root view laid out before applicationDidBecomeActive:
@@ -163,4 +163,4 @@ App exited with code 0
 [teardown] host audio stopped; queueing the exit callback
 [teardown] delivering the exit callback
 [hvm-exit] status=0
-com.lfull.HydrogenVM: 41219
+com.lfull.HydrogenVM: 21986

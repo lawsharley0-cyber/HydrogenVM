@@ -1,44 +1,44 @@
-# HydrogenVM report — e5d79e1
+# HydrogenVM report — 588eebb
 
-2026-11-08T19:59:54+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
+2026-11-09T04:06:10+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 237.3s |
-| tools | 1 | 0 | 0 | 20.7s |
-| cpu | 15 | 0 | 0 | 0.6s |
-| ios | 6 | 0 | 0 | 3.2s |
-| bench | 5 | 0 | 0 | 19.4s |
+| build | 1 | 0 | 0 | 138.3s |
+| tools | 1 | 0 | 0 | 11.9s |
+| cpu | 15 | 0 | 0 | 0.3s |
+| ios | 6 | 0 | 0 | 2.7s |
+| bench | 5 | 0 | 0 | 21.3s |
 
 ## Speed
 
-CoreMark **1685.1** iterations/s (553.4 guest MIPS)
+CoreMark **1960.3** iterations/s (659.2 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **117.0%** | 702 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **87.8%** | 702 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **70.2%** | 562 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.0%** | 481 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **136.1%** | 817 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **102.1%** | 817 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **81.7%** | 653 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **43.1%** | 560 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 439 MIPS, ctests_arm 428 MIPS, ftests_vfp_thumb_softfp 415 MIPS, ftests_neon_thumb 298 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 504 MIPS, ctests_arm 534 MIPS, ftests_vfp_thumb_softfp 556 MIPS, ftests_neon_thumb 514 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.21s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.17s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.14s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.19s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 1.15s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.07s | 36 | 0.99 ms | 8.09 ms | 0 |
+| CTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.13s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 1.00s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.11s | 48 | 0.48 ms | 5.34 ms | 0 |
 
 ## Problems (34)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 37.0% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 43.1% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (33)
 
@@ -71,8 +71,8 @@ Raw interpreter speed (CPU test programs): ctests_thumb 439 MIPS, ctests_arm 428
 - **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:36:6: warning: unused function 'obj_dealloc' [-Wunused-function]
-- **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1595:6: warning: unused function 'avs_yesErr' [-Wunused-function]
-- **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1617:10: warning: unused function 'avs_zero' [-Wunused-function]
+- **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1591:6: warning: unused function 'avs_yesErr' [-Wunused-function]
+- **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:1613:10: warning: unused function 'avs_zero' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 

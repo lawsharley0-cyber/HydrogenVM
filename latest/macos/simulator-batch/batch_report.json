@@ -1,7 +1,7 @@
 {
   "build" : {
     "binaryMatch" : "verified",
-    "commit" : "e5d79e1cfac25988d30c46bbdf4ae3cf672e2656",
+    "commit" : "588eebb83fb591b60f0e6eeb037647f337693e5b",
     "configuration" : "device"
   },
   "device" : {
@@ -99,7 +99,7 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 241316,
+            "audioFramesRendered" : 241786,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
@@ -114,7 +114,7 @@
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 553.28833299999997
+            "timeToFirstFrameMs" : 544.21770900000001
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -123,27 +123,27 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.185731053352356
+                "timeOffset" : 5.1892449855804443
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5058140754699707
+                "timeOffset" : 5.4912890195846558
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8241209983825684
+                "timeOffset" : 5.8096159696578979
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.137721061706543
+                "timeOffset" : 6.1304639577865601
               },
               {
                 "details" : "grid tap at (133, 24)",
                 "kind" : "tap",
-                "timeOffset" : 6.4552910327911377
+                "timeOffset" : 6.4389909505844116
               }
             ],
             "backgroundTested" : false,
@@ -159,27 +159,27 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.185731053352356
+                "timeOffset" : 5.1892449855804443
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5058140754699707
+                "timeOffset" : 5.4912890195846558
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8241209983825684
+                "timeOffset" : 5.8096159696578979
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.137721061706543
+                "timeOffset" : 6.1304639577865601
               },
               {
                 "details" : "grid tap at (133, 24)",
                 "kind" : "tap",
-                "timeOffset" : 6.4552910327911377
+                "timeOffset" : 6.4389909505844116
               }
             ],
             "screensVisited" : 1,
@@ -195,7 +195,7 @@
           "perf" : {
             "fps" : 6,
             "framesPresented" : 7,
-            "frameTimeP95Ms" : 0.13107199999999999
+            "frameTimeP95Ms" : 0.069631999999999999
           },
           "renderer" : "software",
           "signature" : "exit-1",
@@ -211,7 +211,7 @@
               "status" : "fail"
             },
             {
-              "detail" : "8 frames drawn",
+              "detail" : "7 frames drawn",
               "name" : "Shows a picture",
               "status" : "pass"
             },
@@ -279,12 +279,12 @@
           "crashed" : true,
           "diagnostics" : {
             "audibleFrames" : 0,
-            "audioFramesRendered" : 260132,
+            "audioFramesRendered" : 258250,
             "audioPeak" : 0,
             "effectFrames" : 0,
             "effectVoices" : 0,
             "faultsToApp" : 0,
-            "framesPresented" : 8,
+            "framesPresented" : 7,
             "glDraws" : 0,
             "glEmptyPresents" : 1,
             "glErrors" : 0,
@@ -294,7 +294,7 @@
             "musicFrames" : 0,
             "musicVoices" : 0,
             "offscreenPresents" : 0,
-            "timeToFirstFrameMs" : 200.26266699999999
+            "timeToFirstFrameMs" : 66.150082999999995
           },
           "exceptionKind" : "crash",
           "exitCode" : 1,
@@ -303,22 +303,22 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2380009889602661
+                "timeOffset" : 5.2000579833984375
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5586400032043457
+                "timeOffset" : 5.5156630277633667
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8653000593185425
+                "timeOffset" : 5.8214449882507324
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1717180013656616
+                "timeOffset" : 6.1307759284973145
               }
             ],
             "backgroundTested" : false,
@@ -334,22 +334,22 @@
               {
                 "details" : "grid tap at (26, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.2380009889602661
+                "timeOffset" : 5.2000579833984375
               },
               {
                 "details" : "grid tap at (293, 216)",
                 "kind" : "tap",
-                "timeOffset" : 5.5586400032043457
+                "timeOffset" : 5.5156630277633667
               },
               {
                 "details" : "grid tap at (186, 312)",
                 "kind" : "tap",
-                "timeOffset" : 5.8653000593185425
+                "timeOffset" : 5.8214449882507324
               },
               {
                 "details" : "grid tap at (26, 168)",
                 "kind" : "tap",
-                "timeOffset" : 6.1717180013656616
+                "timeOffset" : 6.1307759284973145
               }
             ],
             "screensVisited" : 1,
@@ -363,9 +363,9 @@
           "logs" : "GPU: OpenGL ES calls go to the host driver (OpenGLES.framework)\nLoaded UIKitTest: armv7, 157 imports, 0 initializers, entry 0x0000e06f UIKitTest+41070 _main\nObjective-C: 5 classes, 0 categories, 170 selector refs\n[teardown] waiting for the guest run to finish\nScreen: 320x480 @2x, portrait, status bar visible\nok 3.5-inch screen without a 568h launch image\nok applicationFrame below the status bar\nok retina scale\nok keyWindow\nok root view controller view frame\nok viewDidLoad \/ viewWillAppear\nok didMoveToWindow\nok responder chain\nok UIDevice systemVersion\nok convertPoint:toView:nil (window)\nok convertPoint:fromView:nil\nok hitTest finds the child\nok hitTest falls back to the root\nok viewWithTag \/ isDescendantOfView\nok transformed frame\nok identity transform restores frame\nok autoresizing (flexible width + top margin)\nok setNeedsLayout + layoutIfNeeded\nok bringSubviewToFront\nok UIColor components\nok UIColor CGColor\nok UIFont metrics\nok sizeWithFont:\nok sizeWithFont:constrainedToSize: wraps\nok imageNamed: picks @2x\nok CGImage of @2x image\nok imageNamed: missing returns nil\nok CgBI (Xcode-crushed) PNG decodes\nok CgBI channel order\nok UIGraphicsGetImageFromCurrentImageContext\nok UIRectFill pixels\nok drawInRect: pixels (top-left origin)\nok untouched pixels stay clear\nok PNG encode\/decode round trip\nok CGBitmapContext y-up fill\nok CGPathContainsPoint\nok CGRectIntersection\nok NSStringFromCGRect \/ CGRectFromString\nok NSValue CGRect\nnib Panel.nib: 1 top-level objects\nok Panel nib: top-level view\nok Panel nib: outlet + label text\nok Panel nib: action connection + button title\nnib PanelKeyed.nib: 1 top-level objects\nok PanelKeyed nib: top-level view\nok PanelKeyed nib: outlet + label text\nok PanelKeyed nib: action connection + button title\nok loadNibNamed: missing NIB raises NSInternalInconsistencyException\nok loadNibNamed: does not strip Landscape to load Panel\nok loadNibNamed: does not strip Portrait to load Panel\nok UIButton target\/action\nok UIButton currentTitle\nok animation block applies immediately\nok beginAnimations\/commitAnimations apply\nok UIScrollView contentOffset updates bounds.origin\nok UITableViewCell textLabel & reuseIdentifier\nok UINavigationController push & hierarchy\nok UINavigationController pop\nok UITabBarController selection\nok UITextField editing & first responder\nok UISwitch, UISlider, UISegmentedControl\nok EAGLContext creation & setCurrentContext\nGPU: drawable 64x64 for renderbuffer 1 (platform layer)\nok EAGLContext renderbufferStorage:fromDrawable:\nok glCheckFramebufferStatus complete\nGPU: presented frame 1 directly (average rgb 255,0,0, 64\/64 samples lit)\nok OpenGL ES clear, glReadPixels & presentRenderbuffer\nok root view laid out before applicationDidBecomeActive:\nok drawRect: was called by the compositor\nok CADisplayLink fires at frame rate\nok animation completions fire\nFAIL touch delivery to a plain view (hvm --tap) (line 372)\nFAIL touch location in view coordinates (line 373)\nFAIL UITapGestureRecognizer (line 374)\n70 checks, 3 failures\nApp exited with code 1\n[teardown] guest run returned status 1\n[teardown] destroying the guest process\n[teardown] guest process destroyed; live arenas 0\n[teardown] stopping host audio\n[teardown] host audio stopped; queueing the exit callback\n[teardown] delivering the exit callback",
           "name" : "UIKitTest",
           "perf" : {
-            "fps" : 6,
-            "framesPresented" : 8,
-            "frameTimeP95Ms" : 0.20275199999999999
+            "fps" : 5,
+            "framesPresented" : 7,
+            "frameTimeP95Ms" : 0.086015999999999995
           },
           "renderer" : "gpu",
           "signature" : "exit-1",
@@ -375,5 +375,5 @@
       ]
     }
   },
-  "timestamp" : "2026-11-08T20:30:23Z"
+  "timestamp" : "2026-11-09T04:31:36Z"
 }
