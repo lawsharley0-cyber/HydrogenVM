@@ -154,13 +154,27 @@ struct BatchSessionState: Codable, Sendable {
     var options: BatchTestOptions
     var completedResults: [BatchAppResult]
     var pendingBundleIds: [String]
+    /// The full run this run replaced could not be kept (see BatchSnapshot), so a resumed
+    /// run's reports still say so. Sessions saved before this field decode as false.
+    var fullRunNotKept: Bool = false
 
-    init(runId: String = UUID().uuidString, timestamp: String = ISO8601DateFormatter().string(from: Date()), options: BatchTestOptions = BatchTestOptions(), completedResults: [BatchAppResult] = [], pendingBundleIds: [String] = []) {
+    init(runId: String = UUID().uuidString, timestamp: String = ISO8601DateFormatter().string(from: Date()), options: BatchTestOptions = BatchTestOptions(), completedResults: [BatchAppResult] = [], pendingBundleIds: [String] = [], fullRunNotKept: Bool = false) {
         self.runId = runId
         self.timestamp = timestamp
         self.options = options
         self.completedResults = completedResults
         self.pendingBundleIds = pendingBundleIds
+        self.fullRunNotKept = fullRunNotKept
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        runId = try c.decode(String.self, forKey: .runId)
+        timestamp = try c.decode(String.self, forKey: .timestamp)
+        options = try c.decode(BatchTestOptions.self, forKey: .options)
+        completedResults = try c.decode([BatchAppResult].self, forKey: .completedResults)
+        pendingBundleIds = try c.decode([String].self, forKey: .pendingBundleIds)
+        fullRunNotKept = try BatchSelection.SessionFlags(from: decoder).fullRunNotKept
     }
 }
 
@@ -418,6 +432,7 @@ final class BatchTestRunner {
 
         self.options = saved.options
         self.runOptions = saved.options
+        self.fullRunNotKept = saved.fullRunNotKept
         self.results = saved.completedResults
         self.libraryGames = allApps.filter(\.info.runnable).count
 
@@ -488,7 +503,8 @@ final class BatchTestRunner {
         let state = BatchSessionState(
             options: runOptions,
             completedResults: results,
-            pendingBundleIds: targets.suffix(from: currentIndex).map(\.app.info.bundleIdentifier)
+            pendingBundleIds: targets.suffix(from: currentIndex).map(\.app.info.bundleIdentifier),
+            fullRunNotKept: fullRunNotKept
         )
         if let data = try? JSONEncoder().encode(state) {
             try? data.write(to: Self.pendingSessionURL, options: .atomic)

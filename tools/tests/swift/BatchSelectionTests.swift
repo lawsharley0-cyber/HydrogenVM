@@ -63,6 +63,16 @@ struct BatchSelectionTests {
         check(saved == ["b", "a"], "a saved pick keeps its ids and order")
         check(empty == [], "an explicit empty pick stays empty")
 
+        // A pending session saved before the snapshot flag existed decodes as "kept"; a saved
+        // failure survives a restart.
+        let oldPending = #"{"runId":"r","timestamp":"t","options":\#(oldSession),"completedResults":[],"pendingBundleIds":["a"]}"#
+        let oldFlags = try JSONDecoder().decode(BatchSelection.SessionFlags.self, from: Data(oldPending.utf8))
+        let failedFlags = try JSONDecoder().decode(BatchSelection.SessionFlags.self, from: Data(#"{"runId":"r","fullRunNotKept":true}"#.utf8))
+        let keptFlags = try JSONDecoder().decode(BatchSelection.SessionFlags.self, from: Data(#"{"fullRunNotKept":false}"#.utf8))
+        check(oldFlags.fullRunNotKept == false, "an old pending session decodes with the snapshot flag false")
+        check(failedFlags.fullRunNotKept == true, "a saved snapshot failure is restored")
+        check(keptFlags.fullRunNotKept == false, "a saved false stays false")
+
         // Library order a, b (not runnable), c, d.
         let library = [Game(id: "a", runnable: true), Game(id: "b", runnable: false),
                        Game(id: "c", runnable: true), Game(id: "d", runnable: true)]
@@ -178,8 +188,10 @@ struct BatchSelectionTests {
         // A finished-run marker of false (a cancelled full run) leaves it too.
         let cancelled: [String: Any] = ["kind": "hvm-compat-report", "options": ["runComplete": false, "selection": ["partial": false]],
                                         "suites": ["apps": ["apps": [["bundleId": "a", "frame": ["signal": "ok", "thumbnailPath": "thumbnails/a_gpu.png"]]]]]]
+        let keptJSONBefore = try Data(contentsOf: final.appending(path: "report.json"))
         try JSONSerialization.data(withJSONObject: cancelled).write(to: reports.appending(path: "latest_batch_report.json"))
         check(keep() == .nothingToKeep && text(kept) == "first", "a cancelled full run leaves the kept full run unchanged")
+        check((try? Data(contentsOf: final.appending(path: "report.json"))) == keptJSONBefore, "a cancelled full run leaves the kept report.json byte for byte")
 
         // 3. A full run naming a picture that is missing fails and keeps the previous snapshot.
         try writeLatest(reports, partial: false, rows: [("a", "thumbnails/a_gpu.png"), ("b", "thumbnails/b_gpu.png")])

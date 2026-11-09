@@ -15,6 +15,18 @@ enum BatchSelection {
         }
     }
 
+    /// Flags saved with an interrupted session. Sessions saved before a flag existed have no
+    /// key for it; they decode to false.
+    struct SessionFlags: Decodable, Equatable {
+        var fullRunNotKept: Bool
+        private enum CodingKeys: String, CodingKey { case fullRunNotKept }
+        init(fullRunNotKept: Bool = false) { self.fullRunNotKept = fullRunNotKept }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            fullRunNotKept = try c.decodeIfPresent(Bool.self, forKey: .fullRunNotKept) ?? false
+        }
+    }
+
     /// The runnable games a run covers, in library order. An empty pick means every runnable
     /// game; picked ids that are no longer installed are skipped.
     static func games<T>(_ library: [T], pick: [String], id: (T) -> String, runnable: (T) -> Bool) -> [T] {
