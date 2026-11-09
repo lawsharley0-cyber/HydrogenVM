@@ -2338,18 +2338,37 @@ int runFullSubsystemTests() {
         const uint32_t okFn = proc.defineFunction("_test_returns_object", [](Ctx& x) { x.cpu.r[0] = 0x1234; });
         proc.callGuest(cpu, okFn, {});
         proc.callGuest(cpu, nilFn, {});
-        const std::string nullClues = proc.crashClues(CPU::Exit::MemFault, 0);
+        const std::string nullClues = proc.crashClues(CPU::Exit::MemFault, 0, true);
         const bool listed = nullClues.find("_test_returns_object -> 0x00001234") != std::string::npos &&
                             nullClues.find("_test_returns_nothing -> 0x00000000") != std::string::npos &&
                             nullClues.find("_test_returns_object") < nullClues.find("_test_returns_nothing");
         const bool blamed = nullClues.find("likely cause: _test_returns_nothing returned 0") != std::string::npos;
-        const std::string trapClues = proc.crashClues(CPU::Exit::Undefined, 0xdefe981du);
-        const bool trap = trapClues.find("likely cause: the app stopped itself on purpose") != std::string::npos;
-        const std::string undefClues = proc.crashClues(CPU::Exit::Undefined, 0xee000a10u);
-        const bool notTrap = undefClues.find("stopped itself") == std::string::npos;
-        if (!(listed && blamed && trap && notTrap)) std::printf("    clues:\n%s%s", nullClues.c_str(), trapClues.c_str());
-        check(listed && blamed && trap && notTrap,
-              "crash clues list the thread's last host calls with results, blame a 0 result before a NULL access, and name app traps");
+        // Instruction sets: Thumb udf #254 and ARM 0xe7ffdefe are traps; an ARM word whose
+        // high half happens to be 0xdefe (a conditional coprocessor op) is not.
+        const bool trap = proc.crashClues(CPU::Exit::Undefined, 0xdefe981du, true).find("stopped itself on purpose") != std::string::npos &&
+                          proc.crashClues(CPU::Exit::Undefined, 0xe7ffdefeu, false).find("stopped itself on purpose") != std::string::npos;
+        const bool notTrap = proc.crashClues(CPU::Exit::Undefined, 0xee000a10u, true).find("stopped itself") == std::string::npos &&
+                             proc.crashClues(CPU::Exit::Undefined, 0xdefe0010u, false).find("stopped itself") == std::string::npos;
+        // A host call that threw is "did not return", never blamed for the 0 left in r0.
+        const uint32_t throwsFn = proc.defineFunction("_test_throws", [](Ctx& x) { x.cpu.r[0] = 0; throw std::logic_error("test"); });
+        try { proc.callGuest(cpu, throwsFn, {}); } catch (const std::exception&) {}
+        const std::string thrown = proc.crashClues(CPU::Exit::MemFault, 0, true);
+        const bool unfinished = thrown.find("_test_throws (did not return)") != std::string::npos &&
+                                thrown.find("_test_throws returned 0") == std::string::npos &&
+                                thrown.find("likely cause: the crash happened inside _test_throws") != std::string::npos;
+        // More than 12 calls: only the newest 12, oldest first.
+        const uint32_t countFn = proc.defineFunction("_test_count", [](Ctx& x) { x.cpu.r[0] = x.cpu.r[0] + 100; });
+        for (uint32_t k = 1; k <= 14; ++k) proc.callGuest(cpu, countFn, {k});
+        const std::string many = proc.crashClues(CPU::Exit::MemFault, 0, true);
+        size_t shown = 0, pos = 0;
+        while ((pos = many.find("_test_count -> ", pos)) != std::string::npos) { ++shown; ++pos; }
+        const bool newest = shown == 12 && many.find("_test_count -> 0x00000066") == std::string::npos &&   // call 2 (2 + 100) dropped
+                            many.find("_test_count -> 0x00000067") != std::string::npos &&                   // call 3 is the oldest kept
+                            many.find("0x00000067") < many.find("0x00000072") && many.find("_test_throws") == std::string::npos;
+        if (!(listed && blamed && trap && notTrap && unfinished && newest))
+            std::printf("    clues:\n%s%s%s", nullClues.c_str(), thrown.c_str(), many.c_str());
+        check(listed && blamed && trap && notTrap && unfinished && newest,
+              "crash clues list the newest 12 host calls in order with results, blame a 0 result only from a call that returned, and name app traps per instruction set");
     }
     const uint32_t outerPool = r.poolPush();
 
@@ -2409,6 +2428,8 @@ int runFullSubsystemTests() {
             expectBooks(fmt("title ENDSWITH[cd] %@",{makeString(cx,"CAFE")}),{b3t},"ENDSWITH[cd]");
             expectBooks(fmt("title CONTAINS[cd] %@",{makeString(cx,"cafe")}),{b1,b2,b3t},"CONTAINS[cd] folds the accent");
             expectBooks(fmt("title CONTAINS %@",{makeString(cx,"cafe")}),{b2},"CONTAINS is case- and accent-sensitive");
+            expectBooks(fmt("title BEGINSWITH[d] %@",{makeString(cx,"Cafe")}),{b1},"[d] alone folds the accent and keeps case");
+            expectBooks(fmt("title BEGINSWITH[n] %@",{makeString(cx,"cafe")}),{b2},"[n] changes nothing for composed text");
             expectBooks(fmt("title LIKE[c] %@",{makeString(cx,"*c?fe*")}),{b2,b3t},"LIKE with * and ?");
             expectBooks(fmt("title IN %@",{makeArray(cx,{makeString(cx,"Notes"),makeString(cx,"x")})}),{b4},"IN an array");
             expectBooks(fmt("NOT (title BEGINSWITH 'The') AND title CONTAINS[c] 'CAF'"),{b1,b2},"string operators inside NOT/AND");

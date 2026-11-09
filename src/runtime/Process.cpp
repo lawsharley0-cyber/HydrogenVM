@@ -583,27 +583,25 @@ uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) 
             crumb = &ring.crumb[serial % HostCallRing::kSize];
             *crumb = {identity_, *index, c.r[CPU::kLR], 0, serial, false};
         }
-        struct Finish {
-            HostCallCrumb* crumb;
-            uint32_t serial;
-            CPU::Cpu& c;
-            ~Finish() {
-                if (crumb && crumb->serial == serial) { crumb->result = c.r[0]; crumb->returned = true; }
-            }
-        } finish{crumb, serial, c};
         Ctx x{*this, c, *mem_};
         try {
             fn(x);
         } catch (const GuestThrow& g) {
             landGuestException(x, g.ue);   // e.g. -[NSException raise] inside an app's @try
+            return;
         } catch (const ProcessExit&) {
             // This is intentional process control, not an HLE exception.
             // Let nested guest calls propagate Halt instead of manufacturing
             // HostError("stopping") in Engine::callHle.
             c.exit = CPU::Exit::Halt;
+            return;
         } catch (const std::runtime_error& e) {
             if (!hostErrorHook_ || !hostErrorHook_(x, e)) throw;
+            return;   // handled as an error, not a return value
         }
+        // Only a normal return records a result: a call that threw, or whose guest
+        // callback faulted, stays "did not return" and is never blamed for its r0.
+        if (crumb && crumb->serial == serial) { crumb->result = c.r[0]; crumb->returned = true; }
     });
     *index = engine_->hleIndex(addr);
     return addr;
@@ -1444,7 +1442,7 @@ uint32_t Process::insn32At(uint32_t pc, bool thumb) const {
 
 // "Last host calls" and "likely cause" lines for a crash report. Read on the crashing
 // thread, so the host-call ring is that thread's.
-std::string Process::crashClues(CPU::Exit why, uint32_t insn) const {
+std::string Process::crashClues(CPU::Exit why, uint32_t insn, bool thumb) const {
     std::string out;
     std::vector<const HostCallCrumb*> calls;   // oldest first
     const HostCallRing& ring = tHostCalls;
@@ -1464,7 +1462,7 @@ std::string Process::crashClues(CPU::Exit why, uint32_t insn) const {
     }
     std::vector<std::string> clues;
     // Thumb udf #254 (0xdefe) / ARM 0xe7ffdefe: what __builtin_trap and many asserts compile to.
-    const bool trap = why == CPU::Exit::Breakpoint || (insn >> 16) == 0xdefe || insn == 0xe7ffdefe;
+    const bool trap = why == CPU::Exit::Breakpoint || (thumb ? (insn >> 16) == 0xdefe : insn == 0xe7ffdefe);
     if (trap) {
         clues.push_back("the app stopped itself on purpose (__builtin_trap or an assertion): look at what it checked just before");
         const auto gl = glErrorLog();
@@ -1512,7 +1510,7 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
         case CPU::Exit::Undefined: {
             const uint32_t insn = (f.valid ? f.thumb : c.thumb) ? (uint32_t(mem_->read<uint16_t>(r[15])) << 16 | mem_->read<uint16_t>(r[15] + 2))
                                                                 : mem_->read<uint32_t>(r[15]);
-            if ((insn >> 16) == 0xdefe || insn == 0xe7ffdefe)   // __builtin_trap: not an emulator gap
+            if ((f.valid ? f.thumb : c.thumb) ? (insn >> 16) == 0xdefe : insn == 0xe7ffdefe)   // __builtin_trap: not an emulator gap
                 std::snprintf(buf, sizeof buf, "Crash: the app stopped itself (trap 0x%08x) at %s", insn, describeAddress(r[15]).c_str());
             else
                 std::snprintf(buf, sizeof buf, "Crash: unsupported instruction 0x%08x at %s", insn, describeAddress(r[15]).c_str());
@@ -1535,7 +1533,7 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     CPU::Cpu tmp;
     std::memcpy(tmp.r, r, sizeof r);
     rep += "  backtrace:\n" + backtrace(tmp);
-    rep += crashClues(why, insn32At(r[15], f.valid ? f.thumb : c.thumb));
+    rep += crashClues(why, insn32At(r[15], f.valid ? f.thumb : c.thumb), f.valid ? f.thumb : c.thumb);
     crashReport_ = rep;
     CPU::Cpu snapshot;
     std::memcpy(snapshot.r, r, sizeof r);

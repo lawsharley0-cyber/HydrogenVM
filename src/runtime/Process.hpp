@@ -244,7 +244,7 @@ public:
     // Crash-report helpers: the instruction at a pc (0 if unmapped), and the "last host
     // calls" / "likely cause" lines for the crashing thread.
     uint32_t insn32At(uint32_t pc, bool thumb) const;
-    std::string crashClues(CPU::Exit why, uint32_t insn) const;
+    std::string crashClues(CPU::Exit why, uint32_t insn, bool thumb) const;
     std::string crashBundle();
     // Each thread's (finished ones included, so a crashed worker stays) last `perThread` host calls as a JSON array, oldest first (T2c). Safe while threads run.
     std::string callRingJson(size_t perThread);

@@ -78,6 +78,16 @@ class DeviceReportTests(unittest.TestCase):
         self.assertIsNotNone(where)
         self.assertTrue(where.startswith('src/'))
 
+    def test_objective_c_method_names_are_kept_whole(self):
+        row = app('m', crashed=True)
+        row['crashReport'] = ("Crash: bad memory access at 0x00000000 (NULL pointer)\n  last host calls (oldest first):\n"
+                              "    -[NSBundle pathForResource:ofType:] -> 0x00000000 from 0x00001000 m+1\n"
+                              "  likely cause: -[NSBundle pathForResource:ofType:] returned 0 just before: if the app expected ...\n")
+        self.assertEqual(device_report.implicated(row), ['-[NSBundle pathForResource:ofType:]'])
+        row['crashReport'] = ("Crash: bad memory access at 0x00000010\n  last host calls (oldest first):\n"
+                              "    -[UIImage drawInRect:] (did not return) from 0x00001000 m+1\n")
+        self.assertEqual(device_report.implicated(row), ['-[UIImage drawInRect:]'])
+
     def test_shared_causes_rank_problems_several_games_have(self):
         cur = {'a [gpu]': {'problems': ['gl-error: glClear -> 0x0506 [main]', 'fail: Music'], 'implicated': ['_x']},
                'b [gpu]': {'problems': ['gl-error: glClear -> 0x0506 [main]'], 'implicated': ['_x']},

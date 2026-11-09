@@ -123,12 +123,16 @@ def implicated(row: dict) -> list[str]:
     """Host functions a crash points at: named in 'likely cause' lines, else the last call."""
     c = clues(row)
     names = []
+    # Names may be C functions (_malloc) or host methods (-[NSBundle pathForResource:ofType:]):
+    # match up to the fixed text that follows the name.
     for l in c['likely']:
-        m = re.match(r'(?:the crash happened inside )?([_A-Za-z][\w:\[\] -]*?)(?: returned 0| \(or code)', l)
+        m = re.match(r'(?:the crash happened inside )?(.+?)(?: returned 0 just before| \(or code it called back into\))', l)
         if m:
             names.append(m.group(1).strip())
     if not names and c['calls']:
-        names.append(c['calls'][-1].split(' ')[0])
+        m = re.match(r'(.+?)(?: -> 0x[0-9a-fA-F]+| \(did not return\)) from ', c['calls'][-1])
+        if m:
+            names.append(m.group(1))
     return list(dict.fromkeys(names))
 
 
