@@ -4789,6 +4789,35 @@ int runFullSubsystemTests() {
                   "libc++ istream: getline, read, operator>>(int), peek, a short read, tellg and seekg on a buffer that cannot seek");
         }
 
+        // A std::iostream built the way an app's inline constructor does it, from the dylib's
+        // vtable: istream vptr at +0, ostream vptr at +8, basic_ios at +12 (Terraria).
+        {
+            const uint32_t ztv = sym("__ZTVNSt3__114basic_iostreamIcNS_11char_traitsIcEEEE");
+            const uint32_t ztt = sym("__ZTTNSt3__114basic_iostreamIcNS_11char_traitsIcEEEE");
+            const bool offsets = int32_t(m.read<uint32_t>(ztv)) == 12 && m.read<uint32_t>(ztv + 4) == 0 &&       // istream part
+                                 int32_t(m.read<uint32_t>(ztv + 20)) == 4 && int32_t(m.read<uint32_t>(ztv + 24)) == -8 &&   // ostream part at +8
+                                 int32_t(m.read<uint32_t>(ztv + 40)) == -12 && int32_t(m.read<uint32_t>(ztv + 44)) == -12 && // basic_ios at +12
+                                 m.read<uint32_t>(ztt) == ztv + 12 && m.read<uint32_t>(ztt + 20) == ztv + 52 && m.read<uint32_t>(ztt + 24) == ztv + 32 &&
+                                 int32_t(m.read<uint32_t>(m.read<uint32_t>(ztt + 4) - 12)) == 12 &&    // istream while constructing: basic_ios 12 on
+                                 int32_t(m.read<uint32_t>(m.read<uint32_t>(ztt + 12) - 12)) == 4;      // ostream while constructing: basic_ios 4 on
+            const uint32_t obj = proc.heap().allocZeroed(12 + 80);
+            m.write<uint32_t>(obj, ztv + 12);
+            m.write<uint32_t>(obj + 8, ztv + 32);
+            m.write<uint32_t>(obj + 12, ztv + 52);
+            const uint32_t iosb = proc.heap().allocZeroed(32), ioArea = proc.heap().allocZeroed(16);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {iosb});
+            m.write<uint32_t>(iosb + 20, ioArea); m.write<uint32_t>(iosb + 24, ioArea); m.write<uint32_t>(iosb + 28, ioArea + 16);
+            call("__ZNSt3__18ios_base4initEPv", {obj + 12, iosb});
+            const uint32_t text = proc.heap().allocZeroed(4);
+            std::memcpy(m.host(text), "hey", 3);
+            call(os("5writeEPKci").c_str(), {obj + 8, text, 3});                    // through the ostream half
+            const bool wrote = std::memcmp(m.host(ioArea), "hey", 3) == 0 && m.read<uint32_t>(obj + 12 + 16) == 0;
+            // `delete` through the basic_ios subobject frees the whole stream
+            proc.callGuest(cpu, m.read<uint32_t>(m.read<uint32_t>(obj + 12) + 4), {obj + 12});
+            check(offsets && wrote && proc.heap().blockSize(obj) == 0,
+                  "libc++ vtable and VTT for std::iostream: base offsets, a write through the ostream half, delete through basic_ios");
+        }
+
         // std::__sort for unsigned long long
         const uint32_t arr = proc.heap().allocZeroed(24);
         const uint64_t vals[3] = {3, 1ull << 40, 2};
@@ -4796,6 +4825,24 @@ int runFullSubsystemTests() {
         call("__ZNSt3__16__sortIRNS_6__lessIyyEEPyEEvT0_S5_T_", {arr, arr + 24, 0});
         check(m.read<uint64_t>(arr) == 2 && m.read<uint64_t>(arr + 8) == 3 && m.read<uint64_t>(arr + 16) == (1ull << 40),
               "libc++ __sort orders unsigned long long values");
+    }
+
+    // task_info(TASK_BASIC_INFO_32) writes its 8 words and no more, whatever count the caller
+    // claims. Terraria passes 32 (the size in bytes) for a 32-byte buffer on its stack; ten words
+    // were written and its return address was overwritten.
+    {
+        const uint32_t buf = proc.heap().allocZeroed(64), count = proc.heap().allocZeroed(4);
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 32);
+        const uint32_t kr = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 4, buf, count}));
+        const uint32_t virt = proc.mem().read<uint32_t>(buf + 4), resident = proc.mem().read<uint32_t>(buf + 8);
+        const bool basic = kr == 0 && proc.mem().read<uint32_t>(count) == 8 && proc.mem().read<uint32_t>(buf) == 0 &&
+                           resident > 0 && virt >= resident && proc.mem().read<uint32_t>(buf + 32) == 0xCAFEF00D;
+        proc.mem().write<uint32_t>(count, 4);                      // too small for the structure
+        proc.mem().write<uint32_t>(buf, 0xCAFEF00D);
+        const uint32_t small = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 4, buf, count}));
+        check(basic && small == 4 && proc.mem().read<uint32_t>(buf) == 0xCAFEF00D,
+              "task_info(TASK_BASIC_INFO_32) writes 8 words whatever the caller's count; too small a count is KERN_INVALID_ARGUMENT");
     }
 
     // An app with its own crash reporter catches the real fault and raises the signal again.

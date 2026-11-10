@@ -556,6 +556,55 @@ void registerLibcxxStreams(Process& p) {
     p.def<&streamDtor>("__ZThn8_" + IOS + "D1Ev");
     p.def<&streamDtorDelete>("__ZThn8_" + IOS + "D0Ev");
 
+    // Vtables and the VTT. An app that builds a plain std::iostream / std::istream over its own
+    // streambuf (Terraria's file reader) constructs it inline and takes these from the dylib.
+    //   istream:  vptr, gcount, basic_ios @8      ostream: vptr, basic_ios @4
+    //   iostream: istream vptr, gcount, ostream vptr @8, basic_ios @12
+    // Each group is [vbase or vcall offset][offset to top][typeinfo][D1][D0]; the vptr is the
+    // address of D1. A destructor reached through any of them finds the whole object from the
+    // offset to top, so every D1 slot is the same function, and every D0 slot likewise.
+    {
+        const uint32_t d1 = p.registerHostFunction("std::__1 stream destructor", [](Ctx& x) { x.cpu.r[0] = streamDtor(x, x.cpu.r[0]); });
+        const uint32_t d0 = p.registerHostFunction("std::__1 stream deleting destructor", [](Ctx& x) { streamDtorDelete(x, x.cpu.r[0]); });
+        auto typeinfo = [&](const std::string& name) {
+            if (const auto have = p.lookupSymbol(name)) return *have;
+            return p.defineDataBlock(name, 12);
+        };
+        auto table = [&](const std::string& sym, uint32_t ti, std::initializer_list<std::pair<int32_t, int32_t>> groups) {
+            const uint32_t a = p.defineDataBlock(sym, uint32_t(groups.size()) * 20);
+            uint32_t at = a;
+            for (const auto& [first, top] : groups) {
+                p.mem().write<uint32_t>(at, uint32_t(first));
+                p.mem().write<uint32_t>(at + 4, uint32_t(top));
+                p.mem().write<uint32_t>(at + 8, ti);
+                p.mem().write<uint32_t>(at + 12, d1);
+                p.mem().write<uint32_t>(at + 16, d0);
+                at += 20;
+            }
+            return a;
+        };
+        const std::string C = "IcNS_11char_traitsIcEEEE";
+        const uint32_t tiIs = typeinfo("__ZTINSt3__113basic_istream" + C), tiOs = typeinfo("__ZTINSt3__113basic_ostream" + C);
+        const uint32_t tiIos = typeinfo("__ZTINSt3__114basic_iostream" + C), tiBase = typeinfo("__ZTINSt3__19basic_ios" + C);
+        if (!p.lookupSymbol("__ZTVNSt3__113basic_istream" + C)) table("__ZTVNSt3__113basic_istream" + C, tiIs, {{8, 0}, {-8, -8}});
+        if (!p.lookupSymbol("__ZTVNSt3__113basic_ostream" + C)) table("__ZTVNSt3__113basic_ostream" + C, tiOs, {{4, 0}, {-4, -4}});
+        if (!p.lookupSymbol("__ZTVNSt3__19basic_ios" + C)) {
+            // no virtual base: [offset to top][typeinfo][D1][D0]
+            const uint32_t a = p.defineDataBlock("__ZTVNSt3__19basic_ios" + C, 16);
+            p.mem().write<uint32_t>(a + 4, tiBase);
+            p.mem().write<uint32_t>(a + 8, d1);
+            p.mem().write<uint32_t>(a + 12, d0);
+        }
+        const uint32_t vtIo = table("__ZTVNSt3__114basic_iostream" + C, tiIos, {{12, 0}, {4, -8}, {-12, -12}});
+        // construction vtables for the two bases while a std::iostream is being built
+        const uint32_t ctorIs = table("hvm_libcxx_ZTC_iostream_0_istream", tiIs, {{12, 0}, {-12, -12}});
+        const uint32_t ctorOs = table("hvm_libcxx_ZTC_iostream_8_ostream", tiOs, {{4, 0}, {-4, -4}});
+        const uint32_t vtt = p.defineDataBlock("__ZTTNSt3__114basic_iostream" + C, 28);
+        uint32_t i = 0;
+        for (uint32_t v : {vtIo + 12, ctorIs + 12, ctorIs + 32, ctorOs + 12, ctorOs + 32, vtIo + 52, vtIo + 32})
+            p.mem().write<uint32_t>(vtt + 4 * i++, v);
+    }
+
     p.def<&sortU64>("__ZNSt3__16__sortIRNS_6__lessIyyEEPyEEvT0_S5_T_");
     p.def<&throwOutOfRange>("__ZNKSt3__120__vector_base_commonILb1EE20__throw_out_of_rangeEv");
 }

@@ -1022,16 +1022,39 @@ int32_t k_make_memory_entry(Ctx& x, uint32_t task, GuestPtr size, uint64_t offse
     // capability failure; do not fabricate a port or a successful mapping.
     return 46; // KERN_NOT_SUPPORTED
 }
+// task_info: the kernel writes exactly the flavor's structure and reports its size in words.
+// Apps pass counts that are too large (Terraria passes the size in bytes), so the caller's
+// count is only an upper bound; a count that is too small is KERN_INVALID_ARGUMENT.
 int32_t k_task_info(Ctx& x, uint32_t, uint32_t flavor, GuestPtr out, GuestPtr count) {
     const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
-    const uint32_t maxWords = std::min<uint32_t>(n, 10u);
-    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
-    if (out && flavor == 5 /*TASK_BASIC_INFO*/ && maxWords >= 5) {
-        const auto st = x.proc.heap().stats();
-        x.mem.write<uint32_t>(out + 4, uint32_t(st.committed + (16u << 20)));   // resident_size
-        x.mem.write<uint32_t>(out + 8, uint32_t(st.committed + (64u << 20)));   // virtual_size
+    uint32_t words = 0;
+    switch (flavor) {
+        case 1: words = 8; break;    // TASK_ABSOLUTETIME_INFO: four 64-bit times
+        case 2: words = 8; break;    // TASK_EVENTS_INFO
+        case 3: words = 4; break;    // TASK_THREAD_TIMES_INFO
+        case 4: words = 8; break;    // TASK_BASIC_INFO_32 (TASK_BASIC_INFO on armv7)
+        case 5: words = 10; break;   // TASK_BASIC_INFO_64
+        case 6: words = 8; break;    // TASK_BASIC2_INFO_32
+        default: break;
     }
-    if (count) x.mem.write<uint32_t>(count, maxWords);
+    if (!words) {   // a flavor with no layout here: zeros, never more than the caller has room for
+        const uint32_t maxWords = std::min<uint32_t>(n, 10u);
+        if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+        if (count) x.mem.write<uint32_t>(count, maxWords);
+        return 0;
+    }
+    if (!out || n < words) return 4;   // KERN_INVALID_ARGUMENT
+    std::memset(x.mem.host(out), 0, words * 4);
+    const auto st = x.proc.heap().stats();
+    const uint64_t resident = st.committed + (16u << 20), virt = st.committed + (64u << 20);
+    if (flavor == 4 || flavor == 6) {          // suspend_count, virtual_size, resident_size, times, policy
+        x.mem.write<uint32_t>(out + 4, uint32_t(virt));
+        x.mem.write<uint32_t>(out + 8, uint32_t(resident));
+    } else if (flavor == 5) {                  // the same with 64-bit sizes
+        x.mem.write<uint64_t>(out + 4, virt);
+        x.mem.write<uint64_t>(out + 12, resident);
+    }
+    x.mem.write<uint32_t>(count, words);
     return 0;
 }
 int32_t k_host_page_size(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint32_t>(out, 4096); return 0; }
