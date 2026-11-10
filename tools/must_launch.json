@@ -1,0 +1,235 @@
+{
+  "games": [
+    {
+      "folder": "001_Doodle_Jump_1.0__1513421",
+      "frames": 117,
+      "name": "001_Doodle_Jump_1.0__1513421",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "a974e430-Survivalcraftv1.21.6.0",
+      "frames": 9,
+      "name": "a974e430-Survivalcraftv1.21.6.0",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "AngryBirds_v1.0_os30",
+      "frames": 119,
+      "name": "AngryBirds_v1.0_os30",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "AoD_v1.0.1_os30",
+      "frames": 31,
+      "name": "AoD_v1.0.1_os30",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Art_Of_Glow_v1.1.2_os313",
+      "frames": 129,
+      "name": "Art_Of_Glow_v1.1.2_os313",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Bad_Piggies_1_0_0",
+      "frames": 21,
+      "name": "Bad_Piggies_1_0_0",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "com.fgol.HungrySharkEvolution-iOS4.3-_Clutch-2.0.4",
+      "frames": 20,
+      "name": "com.fgol.HungrySharkEvolution-iOS4.3-_Clutch-2.0.4",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "com.roblox.robloxmobile-iOS5.0-_Clutch-2.0.4",
+      "frames": 1,
+      "name": "com.roblox.robloxmobile-iOS5.0-_Clutch-2.0.4",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Crossy_Road_1.3.7825_ios_7.0",
+      "frames": 7,
+      "name": "Crossy_Road_1.3.7825_ios_7.0",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Flappy_Bird_v1.0",
+      "frames": 162,
+      "name": "Flappy_Bird_v1.0",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Fruit_Ninja_v1.0_os221",
+      "frames": 1,
+      "name": "Fruit_Ninja_v1.0_os221",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Geometry_Dash_v1.0__iOS_4.3",
+      "frames": 32,
+      "name": "Geometry_Dash_v1.0__iOS_4.3",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Hungry_Shark_Evolution_2_5_0_ios_4_3",
+      "frames": 3,
+      "name": "Hungry_Shark_Evolution_2_5_0_ios_4_3",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Jetpack_Joyride",
+      "frames": 1,
+      "name": "Jetpack_Joyride",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Mega_Jump_v2.0_os30",
+      "frames": 21,
+      "name": "Mega_Jump_v2.0_os30",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Minecraft_PE_Lite_v1.2_iOS_4.3_2011-11-17",
+      "frames": 41,
+      "name": "Minecraft_PE_Lite_v1.2_iOS_4.3_2011-11-17",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Minecraft_Pocket_Edition_v0.10.0__iOS_5.1.1___2014-11-18___1",
+      "frames": 27,
+      "name": "Minecraft_Pocket_Edition_v0.10.0__iOS_5.1.1___2014-11-18___1",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Minion_Rush-_com_gameloft_despicableme2_-1_0_0-_iOS_5_0_-26a-33790aa84a",
+      "frames": 10,
+      "name": "Minion_Rush-_com_gameloft_despicableme2_-1_0_0-_iOS_5_0_-26a-33790aa84a",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Minion_Rush-_com_gameloft_despicableme2_-1_0_0-_iOS_5_0_-26a40199f561ccf8f173601",
+      "frames": 11,
+      "name": "Minion_Rush-_com_gameloft_despicableme2_-1_0_0-_iOS_5_0_-26a40199f561ccf8f173601",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Pocket_Ants_1.0_1.0.31_ios_3.0",
+      "frames": 1,
+      "name": "Pocket_Ants_1.0_1.0.31_ios_3.0",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "RETRY_1_5_0_ios_6_0",
+      "frames": 32,
+      "name": "RETRY_1_5_0_ios_6_0",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "ROBLOX_2.8.6__Decrypted___iOS_6.0",
+      "frames": 1,
+      "name": "ROBLOX_2.8.6__Decrypted___iOS_6.0",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Smash_Hit_1.3.0",
+      "frames": 33,
+      "name": "Smash_Hit_1.3.0",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Subway_Surfers_1_41_0",
+      "frames": 8,
+      "name": "Subway_Surfers_1_41_0",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Talking_Bacteria_John_John__John_1.0",
+      "frames": 68,
+      "name": "Talking_Bacteria_John_John__John_1.0",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Talking_Larry-1.0-Johnson1992",
+      "frames": 26,
+      "name": "Talking_Larry-1.0-Johnson1992",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Temple_Run_1.0_Clutch-f3f2d2032f",
+      "frames": 58,
+      "name": "Temple_Run_1.0_Clutch-f3f2d2032f",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Terraria-_com.505games.terraria_-1.2.11587-_iOS_7.0_-47b289a-98d75b0307",
+      "frames": 78,
+      "name": "Terraria-_com.505games.terraria_-1.2.11587-_iOS_7.0_-47b289a-98d75b0307",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Terraria-_com.505games.terraria_-1.2.11587-_iOS_7.0_-47b289aeee433757177bbd579e5",
+      "frames": 27,
+      "name": "Terraria-_com.505games.terraria_-1.2.11587-_iOS_7.0_-47b289aeee433757177bbd579e5",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Terraria-v1_0-eromeu52-iOS5_1-_Clutch-1_4_6",
+      "frames": 41,
+      "name": "Terraria-v1_0-eromeu52-iOS5_1-_Clutch-1_4_6",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "The_Sandbox_v1.02_iPhone_OS_3.1_2012-05-23",
+      "frames": 52,
+      "name": "The_Sandbox_v1.02_iPhone_OS_3.1_2012-05-23",
+      "picture": true,
+      "sound": false
+    },
+    {
+      "folder": "Tiny_Tower_v1.0_os30",
+      "frames": 83,
+      "name": "Tiny_Tower_v1.0_os30",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Tiny_Wings_v1.0_iOS3",
+      "frames": 75,
+      "name": "Tiny_Wings_v1.0_iOS3",
+      "picture": true,
+      "sound": true
+    }
+  ]
+}

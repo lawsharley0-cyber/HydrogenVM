@@ -1512,6 +1512,29 @@ std::string Process::crashClues(CPU::Exit why, uint32_t insn, bool thumb) const 
     if (!calls.empty() && !calls.back()->returned)
         clues.push_back("the crash happened inside " + name(calls.back()) + " (or code it called back into)");
     for (const auto& c : clues) out += "  likely cause: " + c + "\n";
+    // Files the app asked for and did not get, and the last ones it did: a missing or short
+    // asset is a common reason for an app to give up (Survivalcraft: "Could not load Manifest asset").
+    {
+        const std::vector<FileRecord> files = fileRing();
+        std::vector<const FileRecord*> missed, opened;
+        for (auto it = files.rbegin(); it != files.rend(); ++it) {
+            if (it->hostResult != 0) { if (missed.size() < 6) missed.push_back(&*it); }
+            else if (opened.size() < 4) opened.push_back(&*it);
+        }
+        if (!missed.empty()) {
+            out += "  files the app could not open (latest last):\n";
+            for (auto it = missed.rbegin(); it != missed.rend(); ++it)
+                out += "    " + (*it)->api + " " + (*it)->path + ": " + std::strerror((*it)->hostResult) + "\n";
+        }
+        if (!opened.empty()) {
+            out += "  last files opened (latest last):\n";
+            for (auto it = opened.rbegin(); it != opened.rend(); ++it) {
+                char sizes[96];
+                std::snprintf(sizes, sizeof sizes, " (%lld bytes, %lld read)", (long long)(*it)->size, (long long)(*it)->bytesRead);
+                out += "    " + (*it)->api + " " + (*it)->path + sizes + "\n";
+            }
+        }
+    }
     return out;
 }
 

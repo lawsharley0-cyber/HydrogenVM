@@ -2351,6 +2351,21 @@ int runFullSubsystemTests() {
         const uint32_t okFn = proc.defineFunction("_test_returns_object", [](Ctx& x) { x.cpu.r[0] = 0x1234; });
         proc.callGuest(cpu, okFn, {});
         proc.callGuest(cpu, nilFn, {});
+        // files the app failed to open, and the last it opened, are part of the clues
+        {
+            Process fp(ProcessConfig{});
+            for (int i = 0; i < 8; ++i) fp.recordFileOpen("/app/missing" + std::to_string(i) + ".xnb", "open", ENOENT, -1, 0, false);
+            const uint64_t h = fp.recordFileOpen("/app/Content/Manifest.xnb", "fopen", 0, 1234, 0, true);
+            fp.updateFileRead(h, 100);
+            const std::string fc = fp.crashClues(CPU::Exit::MemFault, 0, true);
+            const size_t m2 = fc.find("open /app/missing2.xnb: No such file or directory"), m7 = fc.find("open /app/missing7.xnb: No such file or directory");
+            check(fc.find("files the app could not open (latest last):") != std::string::npos &&
+                  fc.find("missing1.xnb") == std::string::npos && m2 != std::string::npos && m7 != std::string::npos && m2 < m7 &&   // the last six, oldest first
+                  fc.find("fopen /app/Content/Manifest.xnb (1234 bytes, 100 read)") != std::string::npos,
+                  "crash clues list the last six files the app could not open and the last files it opened, with sizes");
+            check(Process(ProcessConfig{}).crashClues(CPU::Exit::MemFault, 0, true).find("files") == std::string::npos,
+                  "crash clues say nothing about files when the app touched none");
+        }
         const std::string nullClues = proc.crashClues(CPU::Exit::MemFault, 0, true);
         const bool listed = nullClues.find("_test_returns_object -> 0x00001234") != std::string::npos &&
                             nullClues.find("_test_returns_nothing -> 0x00000000") != std::string::npos &&
