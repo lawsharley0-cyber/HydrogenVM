@@ -1,46 +1,46 @@
-# HydrogenVM report — 9134ab4
+# HydrogenVM report — ef830e1
 
-2026-11-09T23:29:13+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
+2026-11-10T09:53:10+00:00 · Apple M1 (Virtual) (arm64, Darwin 25.6.0)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 306.2s |
-| tools | 1 | 0 | 0 | 27.2s |
+| build | 1 | 0 | 0 | 243.3s |
+| tools | 1 | 0 | 0 | 26.1s |
 | cpu | 15 | 0 | 0 | 0.7s |
-| ios | 6 | 0 | 0 | 3.8s |
-| bench | 5 | 0 | 0 | 23.7s |
+| ios | 6 | 0 | 0 | 3.6s |
+| bench | 5 | 0 | 0 | 23.8s |
 
 ## Speed
 
-CoreMark **1381.7** iterations/s (456.3 guest MIPS)
+CoreMark **1761.8** iterations/s (597.4 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **96.0%** | 576 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **72.0%** | 576 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **57.6%** | 461 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **30.4%** | 395 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **122.3%** | 734 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **91.8%** | 734 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **73.4%** | 587 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.7%** | 503 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 312 MIPS, ctests_arm 234 MIPS, ftests_vfp_thumb_softfp 350 MIPS, ftests_neon_thumb 265 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 392 MIPS, ctests_arm 376 MIPS, ftests_vfp_thumb_softfp 284 MIPS, ftests_neon_thumb 248 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
-| CTest | 0.16s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.22s | 0 | 0.00 ms | 0.00 ms | 0 |
-| BinPlist | 0.14s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.13s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 1.51s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.26s | 41 | 1.16 ms | 17.82 ms | 1 |
+| CTest | 0.18s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.10s | 0 | 0.00 ms | 0.00 ms | 0 |
+| BinPlist | 0.13s | 0 | 0.00 ms | 0.00 ms | 0 |
+| ObjCTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 1.60s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.18s | 43 | 0.68 ms | 7.54 ms | 0 |
 
-## Problems (34)
+## Problems (40)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 30.4% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 38.7% of iPhone 5 single-core speed (goal: 100%)
 
-### Warnings (33)
+### Warnings (39)
 
 - **build / compiler**: src/runtime/foundation/CompatibilityClasses.cpp:229:42: warning: missing field 'retained' initializer [-Wmissing-field-initializers]
 - **build / compiler**: src/runtime/foundation/NSNumber.cpp:143:9: warning: variable 'depth' set but not used [-Wunused-but-set-variable]
@@ -65,8 +65,14 @@ Raw interpreter speed (CPU test programs): ctests_thumb 312 MIPS, ctests_arm 234
 - **build / compiler**: src/runtime/gl/HostGL.cpp:41:52: warning: unused variable 'kPointSizeArrayPointer' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/gl/HostGL.cpp:511:16: warning: unused function 'hgGetIntFwd' [-Wunused-function]
 - **build / compiler**: src/runtime/libc/LibStdcxx.cpp:38:40: warning: unused variable 'kBinary' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:52:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:58:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:102:35: warning: unused variable 'kIosSize' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:105:46: warning: unused variable 'fFixed' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:106:20: warning: unused variable 'fScientific' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:106:39: warning: unused variable 'fShowbase' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:106:56: warning: unused variable 'fShowpoint' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:106:75: warning: unused variable 'fShowpos' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:107:20: warning: unused variable 'fUppercase' [-Wunused-const-variable]
+- **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:108:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/Posix.cpp:59:64: warning: unused variable 'KERN_ABORTED' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:28:17: warning: unused variable 'kPi' [-Wunused-const-variable]
