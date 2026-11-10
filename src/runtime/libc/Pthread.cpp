@@ -315,11 +315,13 @@ int32_t k_delete(Ctx& x, uint32_t key) { auto& t = T(x); std::lock_guard<std::mu
 // pthread_setspecific stored (Crossy Road: Unity found no per-thread allocator and freed a
 // temporary block through the wrong one).
 uint32_t k_get(Ctx& x, uint32_t key) {
-    return key < kThreadSpecificSlots ? x.mem.read<uint32_t>(x.proc.currentThread().self + key * 4) : 0;
+    const uint32_t self = x.proc.currentThread().self;
+    return self && key < kThreadSpecificSlots ? x.mem.read<uint32_t>(self + key * 4) : 0;
 }
 int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) {
-    if (key >= kThreadSpecificSlots) return 22;   // EINVAL
-    x.mem.write<uint32_t>(x.proc.currentThread().self + key * 4, v);
+    const uint32_t self = x.proc.currentThread().self;
+    if (!self || key >= kThreadSpecificSlots) return 22;   // EINVAL
+    x.mem.write<uint32_t>(self + key * 4, v);
     return 0;
 }
 
