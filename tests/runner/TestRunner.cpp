@@ -4634,6 +4634,124 @@ int runFullSubsystemTests() {
         check(ok, "NSGetSizeAndAlignment sizes scalars, structs, arrays, unions and pointers and returns the next type");
     }
 
+    // libc++ iostreams, the part that lives in the dylib (Minecraft PE 0.10 builds its
+    // stringstreams itself and imports this). A stream is made by hand over the base
+    // streambuf with a 64-byte put area; expected text worked out by hand.
+    {
+        auto sym = [&](const char* n) { return *proc.lookupSymbol(n); };
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(proc.callGuest(cpu, sym(n), a)); };
+        auto& m = proc.mem();
+        const char* OS = "__ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE";
+        auto os = [&](const char* suffix) { return std::string(OS) + suffix; };
+        // vtable: vbase offset 4 at vptr-12, offset to top 0
+        const uint32_t vt = proc.heap().allocZeroed(16);
+        m.write<uint32_t>(vt, 4);
+        auto makeStream = [&](uint32_t sb) {
+            const uint32_t st = proc.heap().allocZeroed(4 + 80);
+            m.write<uint32_t>(st, vt + 12);
+            call("__ZNSt3__18ios_base4initEPv", {st + 4, sb});
+            return st;
+        };
+        const uint32_t sb = proc.heap().allocZeroed(32), area = proc.heap().allocZeroed(64);
+        call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {sb});
+        m.write<uint32_t>(sb + 20, area); m.write<uint32_t>(sb + 24, area); m.write<uint32_t>(sb + 28, area + 64);
+        const uint32_t st = makeStream(sb), ios = st + 4;
+
+        // basic_ios::init (in the app) widens ' ' through the locale's ctype facet for the fill
+        const uint32_t loc = proc.heap().allocZeroed(4);
+        call("__ZNKSt3__18ios_base6getlocEv", {loc, ios});
+        const uint32_t ctypeId = sym("__ZNSt3__15ctypeIcE2idE"), codecvtId = sym("__ZNSt3__17codecvtIcc11__mbstate_tE2idE");
+        const uint32_t ct = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, ctypeId});
+        const uint32_t cv = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, codecvtId});
+        auto virt = [&](uint32_t obj, uint32_t slot, std::initializer_list<uint32_t> a) {
+            std::vector<uint32_t> args{obj}; args.insert(args.end(), a);
+            return uint32_t(proc.callGuest(cpu, m.read<uint32_t>(m.read<uint32_t>(obj) + slot * 4), args));
+        };
+        const uint32_t unknownId = proc.heap().allocZeroed(8);
+        const bool facets = ct && cv && virt(ct, 7, {' '}) == ' ' && virt(ct, 3, {'q'}) == 'Q' && virt(ct, 5, {'Q'}) == 'q' &&
+            virt(ct, 9, {0xE9, '?'}) == '?' && virt(cv, 7, {}) == 1 && virt(cv, 6, {}) == 1 &&
+            (m.read<uint32_t>(m.read<uint32_t>(ct + 8) + ' ' * 4) & 0x4000) != 0 &&      // the mask table: space is _CTYPE_S
+            (m.read<uint32_t>(m.read<uint32_t>(ct + 8) + 'a' * 4) & 0x4000) == 0 &&
+            (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, ctypeId}) & 0xFF) == 1 &&
+            (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, unknownId}) & 0xFF) == 0;
+        check(facets, "libc++ locale: ctype<char> and codecvt<char,char> facets widen, map case, narrow and report no conversion");
+        m.write<uint32_t>(ios + 76, virt(ct, 7, {' '}));
+
+        call(os("lsEi").c_str(), {st, uint32_t(-42)});
+        m.write<uint32_t>(ios + 12, 6);                                       // width 6, for one insertion
+        call(os("lsEi").c_str(), {st, 7});
+        const bool widthReset = m.read<uint32_t>(ios + 12) == 0;
+        const uint32_t flags = m.read<uint32_t>(ios + 4);
+        m.write<uint32_t>(ios + 4, (flags & ~2u) | 8u | 512u);                // hex | showbase
+        call(os("lsEm").c_str(), {st, 255});
+        m.write<uint32_t>(ios + 4, flags);
+        call(os("lsEb").c_str(), {st, 1});
+        m.write<uint32_t>(ios + 4, flags | 1u);                               // boolalpha
+        call(os("lsEb").c_str(), {st, 1});
+        m.write<uint32_t>(ios + 4, flags);
+        const double d = 1.5; uint64_t db; std::memcpy(&db, &d, 8);
+        call(os("lsEd").c_str(), {st, uint32_t(db), uint32_t(db >> 32)});
+        const float f = 0.25f; uint32_t fb; std::memcpy(&fb, &f, 4);
+        call(os("lsEf").c_str(), {st, fb});
+        const int64_t big = -5000000000LL;
+        call(os("lsEx").c_str(), {st, uint32_t(uint64_t(big)), uint32_t(uint64_t(big) >> 32)});
+        call(os("lsEPKv").c_str(), {st, 0x1234});
+        const uint32_t abc = proc.heap().allocZeroed(4);
+        std::memcpy(m.host(abc), "abc", 3);
+        call(os("5writeEPKci").c_str(), {st, abc, 2});
+        call(os("lsEs").c_str(), {st, uint32_t(-3)});
+        const std::string want = "-42     70xff1true1.50.25-50000000000x1234ab-3";
+        const uint32_t wrote = m.read<uint32_t>(sb + 24) - area;
+        const std::string got(reinterpret_cast<const char*>(m.host(area)), wrote);
+        if (got != want) std::printf("    libc++ ostream wrote \"%s\"\n", got.c_str());
+        check(got == want && widthReset && m.read<uint32_t>(ios + 16) == 0,
+              "libc++ ostream: operator<< for int, unsigned long, bool, double, float, long long, pointer and short, and write()");
+
+        // a full buffer: the base overflow refuses, so the stream goes bad|fail and stops writing
+        m.write<uint32_t>(sb + 28, m.read<uint32_t>(sb + 24));
+        call(os("lsEi").c_str(), {st, 1});
+        const uint32_t stateFull = m.read<uint32_t>(ios + 16);
+        const uint32_t sentry = proc.heap().allocZeroed(8);
+        call(os("6sentryC1ERS3_").c_str(), {sentry, st});
+        const bool sentryBad = m.read<uint8_t>(sentry) == 0 && m.read<uint32_t>(sentry + 4) == st;
+        call("__ZNSt3__18ios_base5clearEj", {ios, 0});
+        call(os("6sentryC1ERS3_").c_str(), {sentry, st});
+        check(stateFull == 5 && sentryBad && m.read<uint8_t>(sentry) == 1,
+              "libc++ ostream: a refused write sets badbit|failbit; the sentry is false until clear()");
+
+        // istream::sentry skips whitespace through the get area; only whitespace is failbit|eofbit
+        auto input = [&](const char* text) {
+            const uint32_t isb = proc.heap().allocZeroed(32), buf = proc.heap().allocZeroed(16);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {isb});
+            std::memcpy(m.host(buf), text, std::strlen(text));
+            m.write<uint32_t>(isb + 8, buf); m.write<uint32_t>(isb + 12, buf); m.write<uint32_t>(isb + 16, buf + uint32_t(std::strlen(text)));
+            return std::pair<uint32_t, uint32_t>(isb, buf);
+        };
+        const char* IS = "__ZNSt3__113basic_istreamIcNS_11char_traitsIcEEE6sentryC1ERS3_b";
+        const auto [isb1, buf1] = input("  \tx y");
+        const uint32_t is1 = makeStream(isb1);
+        call(IS, {sentry, is1, 0});
+        const bool skipOk = m.read<uint8_t>(sentry) == 1 && m.read<uint32_t>(isb1 + 12) == buf1 + 3 && m.read<uint32_t>(is1 + 4 + 16) == 0;
+        const auto [isb2, buf2] = input("  \tx");
+        const uint32_t is2 = makeStream(isb2);
+        call(IS, {sentry, is2, 1});                                           // noskipws: nothing consumed
+        const bool noskipOk = m.read<uint8_t>(sentry) == 1 && m.read<uint32_t>(isb2 + 12) == buf2;
+        const auto [isb3, buf3] = input("  ");
+        const uint32_t is3 = makeStream(isb3);
+        call(IS, {sentry, is3, 0});
+        const bool eofOk = m.read<uint8_t>(sentry) == 0 && m.read<uint32_t>(is3 + 4 + 16) == 6 && m.read<uint32_t>(isb3 + 12) == buf3 + 2;
+        if (!(skipOk && noskipOk && eofOk)) std::printf("    istream sentry: skip %d noskip %d eof %d\n", skipOk, noskipOk, eofOk);
+        check(skipOk && noskipOk && eofOk, "libc++ istream::sentry skips leading whitespace, honours noskipws, and fails at end of input");
+
+        // std::__sort for unsigned long long
+        const uint32_t arr = proc.heap().allocZeroed(24);
+        const uint64_t vals[3] = {3, 1ull << 40, 2};
+        std::memcpy(m.host(arr), vals, 24);
+        call("__ZNSt3__16__sortIRNS_6__lessIyyEEPyEEvT0_S5_T_", {arr, arr + 24, 0});
+        check(m.read<uint64_t>(arr) == 2 && m.read<uint64_t>(arr + 8) == 3 && m.read<uint64_t>(arr + 16) == (1ull << 40),
+              "libc++ __sort orders unsigned long long values");
+    }
+
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
     {
         const ObjC::Class winCls = r.getClass("UIWindow");
