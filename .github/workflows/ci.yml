@@ -1,7 +1,7 @@
 name: CI
 
-# Linux runs on every push. The macOS job (Apple-toolchain engine build + speed
-# on Apple Silicon, Xcode device/simulator builds, simulator run) costs 10x the
+# Linux runs on every push. The macOS jobs (Apple-toolchain engine build + speed
+# on Apple Silicon, parallel device package, simulator builds/run) cost 10x the
 # Actions minutes on a private repo, so it runs when a commit message contains
 # "[mac]", when a pull request is labelled "mac" or its title contains "[mac]",
 # on manual dispatch, or once a week. The pull-request opt-in exists so the
@@ -105,6 +105,66 @@ jobs:
           name: ios-test-apps
           path: build/ios/*.app
 
+  # Build-only artifacts are available without waiting for runtime reports.
+  # All Linux, Apple runtime and simulator gates remain separate jobs.
+  device-package:
+    name: iPhone — unsigned package (build only)
+    runs-on: macos-26
+    timeout-minutes: 30
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
+      contains(github.event.head_commit.message, '[mac]') ||
+      (github.event_name == 'pull_request' &&
+       (contains(github.event.pull_request.labels.*.name, 'mac') ||
+        contains(github.event.pull_request.title, '[mac]')))
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: app
+        run: xcodegen
+      - name: Build for device (unsigned, Release)
+        working-directory: app
+        run: |
+          rc=0
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
+            -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
+          # Surface compiler errors as public annotations so they are readable without log access.
+          grep -E "error:" device-build.log | sort -u | head -20 | while IFS= read -r line; do
+            echo "::error title=xcodebuild::${line//%/%25}"
+          done
+          exit $rc
+      - name: Package unsigned IPA for sideloading
+        working-directory: app
+        run: |
+          APP="xbuild/Release-iphoneos/HydrogenVM.app"
+          test -d "$APP"
+          rm -f HydrogenVM-unsigned.ipa HydrogenVM-unsigned.manifest.json HydrogenVM-unsigned.manifest.sha256
+          rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry "$PWD/../HydrogenVM-unsigned.ipa" Payload)
+          unzip -l HydrogenVM-unsigned.ipa | tail -1
+          python3 ../tools/verify_ipa.py HydrogenVM-unsigned.ipa --out HydrogenVM-unsigned.manifest.json --source-commit "$(git rev-parse HEAD)"
+      - name: Upload validated unsigned device package
+        # Right after packaging, so the .ipa can be downloaded while the
+        # independent runtime/simulator diagnostics are still running.
+        uses: actions/upload-artifact@v4
+        with:
+          name: HydrogenVM-device-ipa
+          if-no-files-found: error
+          path: |
+            app/HydrogenVM-unsigned.ipa
+            app/HydrogenVM-unsigned.manifest.json
+            app/HydrogenVM-unsigned.manifest.sha256
+      - name: Upload device build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-build-log
+          path: app/device-build.log
+          if-no-files-found: warn
+
   macos:
     name: macOS — Apple Silicon speed, Xcode build, simulator run
     runs-on: macos-26
@@ -141,39 +201,6 @@ jobs:
       - name: Generate Xcode project
         working-directory: app
         run: xcodegen
-      - name: Build for device (unsigned, Release)
-        working-directory: app
-        run: |
-          rc=0
-          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
-            -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
-          grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
-          # Surface compiler errors as public annotations so they are readable without log access.
-          grep -E "error:" device-build.log | sort -u | head -20 | while IFS= read -r line; do
-            echo "::error title=xcodebuild::${line//%/%25}"
-          done
-          exit $rc
-      - name: Package unsigned IPA for sideloading
-        working-directory: app
-        run: |
-          APP="xbuild/Release-iphoneos/HydrogenVM.app"
-          test -d "$APP"
-          rm -f HydrogenVM-unsigned.ipa HydrogenVM-unsigned.manifest.json HydrogenVM-unsigned.manifest.sha256
-          rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
-          (cd ipa && zip -qry "$PWD/../HydrogenVM-unsigned.ipa" Payload)
-          unzip -l HydrogenVM-unsigned.ipa | tail -1
-          python3 ../tools/verify_ipa.py HydrogenVM-unsigned.ipa --out HydrogenVM-unsigned.manifest.json --source-commit "$(git rev-parse HEAD)"
-      - name: Upload validated unsigned device package
-        # Right after packaging, so the .ipa can be downloaded while the
-        # simulator diagnostics below are still running.
-        uses: actions/upload-artifact@v4
-        with:
-          name: HydrogenVM-device-ipa
-          if-no-files-found: error
-          path: |
-            app/HydrogenVM-unsigned.ipa
-            app/HydrogenVM-unsigned.manifest.json
-            app/HydrogenVM-unsigned.manifest.sha256
       - name: Build for simulator
         working-directory: app
         run: |
@@ -240,8 +267,8 @@ jobs:
         if: always()
         run: |
           mkdir -p report/xcode report/simulator
-          cp app/device-build.log app/sim-build.log report/xcode/ 2>/dev/null || true
-          grep -E "error:|warning:" app/device-build.log app/sim-build.log 2>/dev/null | sort -u | head -300 > report/xcode/diagnostics.txt || true
+          cp app/sim-build.log report/xcode/ 2>/dev/null || true
+          grep -E "error:|warning:" app/sim-build.log 2>/dev/null | sort -u | head -300 > report/xcode/diagnostics.txt || true
           cp -R sim-out/. report/simulator/ 2>/dev/null || true
           mkdir -p report/simulator-gl && cp -R sim-gl-out/. report/simulator-gl/ 2>/dev/null || true
           mkdir -p report/simulator-gl-emu && cp -R sim-gl-emu-out/. report/simulator-gl-emu/ 2>/dev/null || true
@@ -254,7 +281,6 @@ jobs:
           name: macos-results
           path: |
             report/
-            app/device-build.log
             app/sim-build.log
             sim-out/
             build/cold-start-build.log

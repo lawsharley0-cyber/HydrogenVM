@@ -135,3 +135,9 @@ remains evidence, not a full Apple validation pass. The separate CI device
 packaging result/link is recorded in PR #391. This is scoped customization
 evidence, not full-game or physical-device qualification. No assets, photos, IPAs
 or earned saves belong in Git.
+
+CI now runs the existing unsigned device build/package/verify/upload in a parallel
+macOS job, under the same explicit mac opt-in and read-only permissions. Linux,
+sanitizer, Apple runtime and simulator gates remain. `HydrogenVM-device-ipa` is a
+build artifact; its availability is not a green validation/gameplay claim. There
+is one device packaging step, rather than duplicate device builds.
