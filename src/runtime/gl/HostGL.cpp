@@ -903,7 +903,7 @@ void hg_glFlushMappedBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_
     auto it = hc->mapped.find(hgBoundBuffer(hc, target));
     if (it == hc->mapped.end() || !it->second.host) return;
     MappedBuffer& m = it->second;
-    if (offset < 0 || length <= 0 || offset + length > m.length || !hgStillMapped(hc, target)) return;
+    if (offset < 0 || length <= 0 || int64_t(offset) + int64_t(length) > int64_t(m.length) || !hgStillMapped(hc, target)) return;
     std::memcpy(static_cast<uint8_t*>(m.host) + offset, x.mem.host(m.guest + uint32_t(offset)), size_t(length));
     if (hc->fn.glFlushMappedBufferRange) hc->fn.glFlushMappedBufferRange(target, offset, length);
 }

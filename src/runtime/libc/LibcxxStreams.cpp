@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 namespace Hydrogen::Runtime {
@@ -41,20 +42,36 @@ enum Slot : uint32_t { sD1, sD0, sImbue, sSetbuf, sSeekoff, sSeekpos, sSync, sSh
 constexpr uint32_t kRuneTypeOff = 8 + 32 + 4 + 4 + 4;   // _RuneLocale.__runetype
 constexpr uint32_t kRuneSpace = 0x4000;                 // _CTYPE_S
 
-struct State {
-    explicit State(Process&) {}
+struct LibcxxStreamState {
+    explicit LibcxxStreamState(Process&) {}
     uint32_t ctypeId = 0, codecvtId = 0;       // std::ctype<char>::id, std::codecvt<char, char, mbstate_t>::id
     uint32_t ctypeVptr = 0, codecvtVptr = 0;
     uint32_t ctype = 0, codecvt = 0;           // the "C" locale's facets, made on first use
     uint32_t locale = 0;                       // the classic locale's implementation object
+    std::mutex mu;                             // two threads can make their first stream call together
 };
-State& St(Ctx& x) { return x.proc.service<State>(); }
+// The name is unique on purpose: Process::service finds its object by type name, and clang gives two
+// `State` structs in different anonymous namespaces the same one.
+LibcxxStreamState& St(Ctx& x) { return x.proc.service<LibcxxStreamState>(); }
 
 uint32_t rd(Ctx& x, uint32_t a) { return x.mem.read<uint32_t>(a); }
 void wr(Ctx& x, uint32_t a, uint32_t v) { x.mem.write<uint32_t>(a, v); }
 
 uint32_t iosOf(Ctx& x, uint32_t stream) { return stream + uint32_t(int32_t(rd(x, rd(x, stream) - 12))); }
 uint32_t topOf(Ctx& x, uint32_t sub) { return sub + uint32_t(int32_t(rd(x, rd(x, sub) - 8))); }
+
+// A guest range the host is about to touch directly: every page must allow `prot`, or the
+// guest gets the fault it would have had on a real device.
+void need(Ctx& x, uint32_t addr, uint64_t bytes, uint8_t prot, const char* what) {
+    if (!bytes) return;
+    auto fault = [&](uint32_t at) { throw CPU::GuestFault(CPU::Exit::MemFault, at, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), what); };
+    if (uint64_t(addr) + bytes > 0x100000000ull) fault(addr);
+    constexpr uint32_t sh = Memory::GuestArena::kGuestPageShift;
+    const uint64_t last = (uint64_t(addr) + bytes - 1) >> sh;
+    for (uint64_t pg = addr >> sh; pg <= last; ++pg)
+        if ((x.mem.protAt(uint32_t(pg << sh)) & prot) != prot) fault(std::max<uint32_t>(addr, uint32_t(pg << sh)));
+}
+uint64_t span(uint32_t low, uint32_t high) { return high > low ? uint64_t(high) - low : 0; }
 
 int32_t vcall(Ctx& x, uint32_t obj, uint32_t slot, std::initializer_list<uint32_t> args) {
     std::vector<uint32_t> a{obj};
@@ -184,9 +201,11 @@ uint32_t o_flush(Ctx& x, GuestPtr os) { osFlush(x, os); return os; }
 uint32_t o_put(Ctx& x, GuestPtr os, uint32_t c) {
     const uint32_t ios = iosOf(x, os);
     if (rd(x, ios + kState)) return os;
+    flushTie(x, ios);
     const char ch = char(c);
     const uint32_t sb = rd(x, ios + kBuf);
     if (!sb || sbSputn(x, sb, &ch, 1) != 1) iosSetstate(x, ios, kBad);
+    if (sb && (rd(x, ios + kFlags) & fUnitbuf)) osFlush(x, os);
     return os;
 }
 
@@ -291,6 +310,7 @@ uint32_t i_getline(Ctx& x, GuestPtr is, GuestPtr s, int32_t n, uint32_t delimArg
     const int32_t delim = int32_t(delimArg & 0xFF);
     uint32_t count = 0, stored = 0, state = 0;
     wr(x, is + 4, 0);
+    if (n > 0) need(x, s, uint32_t(n), Memory::kProtRW, "istream::getline buffer");
     if (inSentry(x, is, true)) {
         const uint32_t sb = rd(x, ios + kBuf);
         for (;;) {
@@ -365,7 +385,8 @@ void streamDtorDelete(Ctx& x, GuestPtr self) { if (self) x.proc.heap().free(topO
 
 // ---- locale and facets. There is one locale, the classic "C" one.
 uint32_t classicLocale(Ctx& x) {
-    State& s = St(x);
+    LibcxxStreamState& s = St(x);
+    std::lock_guard<std::mutex> lk(s.mu);
     if (!s.locale) s.locale = x.proc.heap().allocZeroed(16);
     return s.locale;
 }
@@ -380,21 +401,24 @@ void iosGetloc(Ctx& x) {
     wr(x, out, loc ? loc : classicLocale(x));
 }
 uint32_t facetFor(Ctx& x, uint32_t id) {
-    State& s = St(x);
+    LibcxxStreamState& s = St(x);
+    std::lock_guard<std::mutex> lk(s.mu);   // a facet is published only once it is complete
     if (id && id == s.ctypeId) {
         if (!s.ctype) {
-            s.ctype = x.proc.heap().allocZeroed(16);
-            wr(x, s.ctype, s.ctypeVptr);
-            wr(x, s.ctype + 4, 1);   // never released
-            if (const auto rune = x.proc.lookupSymbol("__DefaultRuneLocale")) wr(x, s.ctype + 8, *rune + kRuneTypeOff);
+            const uint32_t f = x.proc.heap().allocZeroed(16);
+            wr(x, f, s.ctypeVptr);
+            wr(x, f + 4, 1);   // never released
+            if (const auto rune = x.proc.lookupSymbol("__DefaultRuneLocale")) wr(x, f + 8, *rune + kRuneTypeOff);
+            s.ctype = f;
         }
         return s.ctype;
     }
     if (id && id == s.codecvtId) {
         if (!s.codecvt) {
-            s.codecvt = x.proc.heap().allocZeroed(8);
-            wr(x, s.codecvt, s.codecvtVptr);
-            wr(x, s.codecvt + 4, 1);
+            const uint32_t f = x.proc.heap().allocZeroed(8);
+            wr(x, f, s.codecvtVptr);
+            wr(x, f + 4, 1);
+            s.codecvt = f;
         }
         return s.codecvt;
     }
@@ -413,21 +437,27 @@ void facetNop(Ctx&, GuestPtr) {}   // the classic facets are never deleted or re
 uint32_t ctToupper(Ctx&, GuestPtr, uint32_t c) { c &= 0xFF; return (c >= 'a' && c <= 'z') ? c - 32 : c; }
 uint32_t ctTolower(Ctx&, GuestPtr, uint32_t c) { c &= 0xFF; return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
 uint32_t ctToupperRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high) {
+    need(x, low, span(low, high), Memory::kProtRW, "ctype<char>::toupper range");
     for (uint32_t p = low; p < high; ++p) x.mem.write<uint8_t>(p, uint8_t(ctToupper(x, 0, x.mem.read<uint8_t>(p))));
     return high;
 }
 uint32_t ctTolowerRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high) {
+    need(x, low, span(low, high), Memory::kProtRW, "ctype<char>::tolower range");
     for (uint32_t p = low; p < high; ++p) x.mem.write<uint8_t>(p, uint8_t(ctTolower(x, 0, x.mem.read<uint8_t>(p))));
     return high;
 }
 uint32_t ctWiden(Ctx&, GuestPtr, uint32_t c) { return c & 0xFF; }
 uint32_t ctWidenRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high, GuestPtr to) {
+    need(x, low, span(low, high), Memory::kProtRead, "ctype<char>::widen source");
+    need(x, to, span(low, high), Memory::kProtRW, "ctype<char>::widen destination");
     if (high > low) std::memmove(x.mem.host(to), x.mem.host(low), high - low);
     return high;
 }
 // do_narrow(c, default): a character outside ASCII becomes the default
 uint32_t ctNarrow(Ctx&, GuestPtr, uint32_t c, uint32_t dflt) { c &= 0xFF; return c < 128 ? c : (dflt & 0xFF); }
 uint32_t ctNarrowRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high, uint32_t dflt, GuestPtr to) {
+    need(x, low, span(low, high), Memory::kProtRead, "ctype<char>::narrow source");
+    need(x, to, span(low, high), Memory::kProtRW, "ctype<char>::narrow destination");
     for (uint32_t p = low; p < high; ++p, ++to) x.mem.write<uint8_t>(to, uint8_t(ctNarrow(x, 0, x.mem.read<uint8_t>(p), dflt)));
     return high;
 }
@@ -454,6 +484,7 @@ uint32_t cvLength(Ctx&, GuestPtr, GuestPtr, GuestPtr from, GuestPtr end, uint32_
 void sortU64(Ctx& x, GuestPtr first, GuestPtr last, GuestPtr) {
     if (last <= first) return;
     const uint32_t n = (last - first) / 8;
+    need(x, first, uint64_t(n) * 8, Memory::kProtRW, "std::__sort range");   // before any allocation
     std::vector<uint64_t> v(n);
     std::memcpy(v.data(), x.mem.host(first), size_t(n) * 8);
     std::sort(v.begin(), v.end());
@@ -464,7 +495,7 @@ void sortU64(Ctx& x, GuestPtr first, GuestPtr last, GuestPtr) {
 } // namespace
 
 void registerLibcxxStreams(Process& p) {
-    State& s = p.service<State>();
+    LibcxxStreamState& s = p.service<LibcxxStreamState>();
     auto vtable = [&](const std::string& sym, std::initializer_list<uint32_t> slots) {
         const uint32_t a = p.defineDataBlock(sym, 8 + uint32_t(slots.size()) * 4);
         uint32_t i = 0;

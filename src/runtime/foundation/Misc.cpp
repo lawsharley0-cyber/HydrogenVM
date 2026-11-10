@@ -1059,18 +1059,18 @@ const char* parseEncodedType(const char* p, EncodedType& out, int depth = 0) {
         case 'b': {   // a bit-field: its bits, rounded up to bytes
             ++p;
             uint32_t bits = 0;
-            while (*p >= '0' && *p <= '9') bits = bits * 10 + uint32_t(*p++ - '0');
-            out = {(bits + 7) / 8, 1};
+            while (*p >= '0' && *p <= '9') bits = uint32_t(std::min<uint64_t>(uint64_t(bits) * 10 + uint32_t(*p++ - '0'), 0xFFFFFFFFull));   // saturates
+            out = {uint32_t((uint64_t(bits) + 7) / 8), 1};
             return p;
         }
         case '[': {
             ++p;
             uint32_t count = 0;
-            while (*p >= '0' && *p <= '9') count = count * 10 + uint32_t(*p++ - '0');
+            while (*p >= '0' && *p <= '9') count = uint32_t(std::min<uint64_t>(uint64_t(count) * 10 + uint32_t(*p++ - '0'), 0xFFFFFFFFull));
             EncodedType element;
             if (depth < 32) p = parseEncodedType(p, element, depth + 1);
             if (*p == ']') ++p;
-            out = {count * element.size, element.align};
+            out = {uint32_t(std::min<uint64_t>(uint64_t(count) * element.size, 0xFFFFFFFFull)), element.align};
             return p;
         }
         case '{': case '(': {
