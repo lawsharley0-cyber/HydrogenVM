@@ -1,5 +1,7 @@
 # Guest Card Forge — November 8, 2026
 
+November 9 current: [Card behavior + custom PNG images](MOD_CUSTOMIZATION_2026-11-09.md) records the Spawns controls, MCH1 optional profile, ART1 image packs, 67 focused checks, native two-troop deployment, image battle/relaunch and retained-file fallback. Overrides must match bundled res/sc source assets, never decompressed swfcache/sc files. PNG import currently uses the computer packer; static troop art and phone qualification limits are explicit. Keep original training and definition-linked saves intact.
+
 November 8 troop-save crash follow-up: [MOD_SIZE_ABORT_2026-11-08.md](MOD_SIZE_ABORT_2026-11-08.md) records the reproduced Knight-size Apply abort, checked binary32 correction, 60 focused tests and recovery of the exact retained profile without resetting progression. The earlier Card Forge download is superseded for size edits. Remaining modifier/phone breadth is explicitly unqualified.
 
 This continues from **main `588eebb83fb591b60f0e6eeb037647f337693e5b`**, on

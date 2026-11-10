@@ -123,7 +123,11 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
         run([generator, build_dir/'source'/app_root], stdout=header)
         entries=mod_catalog(build_dir/'source'/app_root)
         header.write(mod_catalog_header(entries))
+        from clash_mechanics_catalog import header as mechanics_header
+        header.write(mechanics_header(build_dir/'source'/app_root))
         header.write(forge_header(build_dir/'source'/app_root,entries))
+        from clash_art_templates import header as art_header
+        header.write(art_header(build_dir/'source'/app_root,entries))
     run(['clang', '-target', 'armv7-apple-ios6.0', '-mthumb', '-Oz', '-ffreestanding',
          '-fno-builtin', '-fno-stack-protector', '-fno-pic', '-fno-unwind-tables',
          '-fno-asynchronous-unwind-tables', *(['-DGUEST_PROFILE_SAVES=1'] if profile_saves else []),

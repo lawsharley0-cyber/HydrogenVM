@@ -134,6 +134,9 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "match.inc"
 #include "friendly.inc"
 #include "mods.inc"
+#ifdef GUEST_MECH_CARD_COUNT
+#include "mechanics.inc"
+#endif
 #include "forge_grant.inc"
 #include "mods_ui.inc"
 static void refresh_saved_arena(void) {

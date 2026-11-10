@@ -6,6 +6,9 @@ static u32 forge_count,forge_loaded_count,forge_ready,forge_generated,forge_ids[
 static u32 f_open,f_read,f_write,f_close,f_error,f_errno,f_flush,f_fileno,f_sync,f_rename,f_free;
 static char forge_path[512],forge_cache[512];
 static char forge_render[65536];
+#ifdef GUEST_ART_SOURCE_TOKEN
+#include "forge_art.inc"
+#endif
 static const struct ForgeBlueprint *forge_blueprint(u32 id) {
     for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)if(forge_blueprints[i].id==id)return &forge_blueprints[i];
     return 0;
@@ -71,6 +74,9 @@ static int forge_append(u32 base,const char *name) {
 }
 static void forge_generate(const char *bundle_prefix) {
     if(forge_generated || !forge_loaded_count)return;
+#ifdef GUEST_ART_SOURCE_TOKEN
+    art_initialize();
+#endif
     if(CALL(symbol("mkdir"),int,(const char*,int))(forge_cache,0700) && *CALL(f_errno,int*,(void))()!=17)
         fail("Card Forge: cannot create table cache; game save retained");
     for(u32 table=0;table<6;++table) {
@@ -90,7 +96,15 @@ static void forge_generate(const char *bundle_prefix) {
         CALL(f_free,void,(void*))(original);
         for(u32 slot=0;slot<forge_loaded_count;++slot) {
             const struct ForgeBlueprint *bp=forge_blueprint(forge_records[slot].base);u32 bytes=0;
-            if(!bp || !forge_expand(forge_render,sizeof forge_render,bp->rows[table],&forge_records[slot],slot,&bytes))fail("Card Forge: row expansion failed");
+            const char *row=bp?bp->rows[table]:0;
+#ifdef GUEST_ART_SOURCE_TOKEN
+            if(bp && table<4 && art_flags[slot]){
+                u32 index=0;while(index<GUEST_MOD_UNIT_COUNT && forge_blueprints[index].id!=forge_records[slot].base)++index;
+                if(index>=GUEST_MOD_UNIT_COUNT)fail("Card Forge: custom art blueprint missing");
+                row=forge_art_templates[index][art_flags[slot]][table];
+            }
+#endif
+            if(!bp || !forge_expand(forge_render,sizeof forge_render,row,&forge_records[slot],slot,&bytes))fail("Card Forge: row expansion failed");
             ok=ok && CALL(f_write,u32,(const void*,u32,u32,void*))(forge_render,1,bytes,file)==bytes;
         }
         int finished=forge_finish(file);
@@ -111,6 +125,9 @@ static void forge_prepare_tables(void) {
 void *guest_forge_fopen(const char *path,const char *mode) {
     if(path && mode && (forge_equal(mode,"r") || forge_equal(mode,"rb"))) {
         u32 length=forge_length(path);
+#ifdef GUEST_ART_SOURCE_TOKEN
+        forge_initialize();art_initialize();int handled=0;void *art=art_redirect(path,mode,&handled);if(handled)return art;
+#endif
         for(u32 i=0;i<6;++i) {
             u32 n=forge_length(forge_table_paths[i]);
             if(length<n || (length>n && path[length-n-1]!='/') || !forge_equal(path+length-n,forge_table_paths[i]))continue;

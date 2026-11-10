@@ -8,6 +8,12 @@ on:
       - 'tools/clash_royale_probe.py'
       - 'tools/clash_protocol_probe.py'
       - 'tools/clash/**'
+      - 'tools/clash_guest/**'
+      - 'tools/build_clash_guest.py'
+      - 'tools/clash_*catalog.py'
+      - 'tools/clash_custom_*.py'
+      - 'tools/clash_art_templates.py'
+      - 'tools/tests/*clash_guest*.py'
       - 'tools/clash_home_probe.py'
       - 'tools/clash_home_state.py'
       - 'tools/clash_wire.py'
@@ -61,6 +67,7 @@ jobs:
           python3 -m py_compile tools/clash_royale_probe.py tools/desktop.py tools/desktop_audio.py tools/test_ima_wav_corpus.py
           python3 -m py_compile tools/clash_wire.py tools/clash_home_state.py tools/clash_home_probe.py
           python3 -m unittest discover -s tools -p 'test_clash_*.py'
+          python3 -m unittest discover -s tools/tests -p '*clash_guest*.py'
           bash -n tools/local_test.sh
       - name: Inspect pinned client and inventory assets
         run: python3 tools/clash_royale_probe.py --out clash-report

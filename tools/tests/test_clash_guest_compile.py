@@ -33,6 +33,10 @@ class GuestCompileTests(unittest.TestCase):
             header+='#define GUEST_MOD_UNIT_COUNT 1\n#define GUEST_MOD_SETTINGS_VTABLE 0\nstruct ModUnitDef {const char *name,*projectile;unsigned cardId;};\nstatic const struct ModUnitDef mod_unit_defs[1]={{"Knight","",26000000}};\n'
             header+='struct ForgeBlueprint {unsigned id;const char *rows[6];};\nstatic const struct ForgeBlueprint forge_blueprints[1]={{26000000,{"","","","","",""}}};\n'
             header+='static const char *forge_table_paths[6]={"a","b","c","d","e","f"};\nstatic const unsigned forge_source_sizes[6]={1,1,1,1,1,1},forge_source_hashes[6]={0},forge_group_counts[2]={1,1};\n'
+            header+='#define GUEST_MECH_CARD_COUNT 1\n#define GUEST_MECH_TROOP_COUNT 1\n#define GUEST_MECH_SHOT_COUNT 1\n'
+            header+='struct MechCardDef {unsigned id;const char *name;};\nstatic const struct MechCardDef mech_cards[]={{26000000,"Test troop"}};\n'
+            header+='static const char *mech_troop_names[]={"Test troop"},*mech_shot_names[]={"Test shot"};\n'
+            header+='#define GUEST_ART_SOURCE_TOKEN 1u\nstatic const char *forge_art_templates[1][4][4]={0};\n'
             (directory/'generated.h').write_text(header)
             command=['clang','-target','armv7-apple-ios6.0','-mthumb','-Oz','-ffreestanding',
                      '-fno-builtin','-fno-stack-protector','-fno-pic','-fno-unwind-tables',

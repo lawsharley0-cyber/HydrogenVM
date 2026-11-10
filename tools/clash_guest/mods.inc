@@ -1,4 +1,9 @@
 #include "mods_math.inc"
+#ifdef GUEST_MECH_CARD_COUNT
+static void mech_restore(void),mech_apply(void);
+static void *mech_active_shot(void*,void*);
+static u32 mech_shot_base(void*,u32);
+#endif
 struct ModRecord {u32 value[MOD_FIELDS];};
 #define MOD_UNIT_CAPACITY (GUEST_MOD_UNIT_COUNT+FORGE_MAX_CARDS)
 static u32 mod_count(void){return GUEST_MOD_UNIT_COUNT+forge_loaded_count;}
@@ -18,6 +23,9 @@ static void mod_reject_profile(void) {
 static int mod_allowed(void) {return save_initialized && logged_in && committed_wins>=7;}
 static int mod_effective(void) {return mod_ready && mod_enabled && mod_allowed() && (!battle_started || arena_battle);}
 static void mod_restore(void) {
+#ifdef GUEST_MECH_CARD_COUNT
+    mech_restore();
+#endif
     mod_applied=0;
     if(!mod_ready)return;
     for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
@@ -25,12 +33,20 @@ static void mod_restore(void) {
     }
 }
 static void mod_apply_units(void) {
-    mod_restore();mod_applied=1;if(!mod_effective())return;
+    mod_restore();
+#ifdef GUEST_MECH_CARD_COUNT
+    mech_apply();
+#endif
+    mod_applied=1;if(!mod_effective())return;
     for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
         u32 field=j==5?MOD_RANGE:j;void *p=j==4?mod_shots[i]:mod_units[i];
+        u32 base=mod_original[i][j];
+#ifdef GUEST_MECH_CARD_COUNT
+        if(j==4){p=mech_active_shot(mod_units[i],p);base=mech_shot_base(p,base);}
+#endif
         if(p && mod_records[i].value[field]!=100)
-            FIELD(p,mod_offsets[j])=j==3?mod_scaled_size(mod_original[i][j],mod_records[i].value[field]):
-                mod_scaled(mod_original[i][j],mod_records[i].value[field],j==1||j==2);
+            FIELD(p,mod_offsets[j])=j==3?mod_scaled_size(base,mod_records[i].value[field]):
+                mod_scaled(base,mod_records[i].value[field],j==1||j==2);
     }
 }
 static void *mod_data(const char *name,u32 address) {
@@ -136,8 +152,12 @@ static int mod_currency(u32 gold,u32 gems) {
 extern int guest_original_mod_health(void*,int),guest_original_mod_damage(void*,int),guest_original_mod_shot_damage(void*,int);
 static int mod_stat(void *data,int value,int field,int shot) {
     if(!mod_effective() || value<=0)return value;
-    for(u32 i=0;i<mod_count();++i)if((shot?mod_shots[i]:mod_units[i])==data && mod_records[i].value[field]!=100)
-        return (int)mod_scaled((u32)value,mod_records[i].value[field],0);
+    for(u32 i=0;i<mod_count();++i){void *p=shot?mod_shots[i]:mod_units[i];
+#ifdef GUEST_MECH_CARD_COUNT
+        if(shot)p=mech_active_shot(mod_units[i],p);
+#endif
+        if(p==data && mod_records[i].value[field]!=100)return (int)mod_scaled((u32)value,mod_records[i].value[field],0);
+    }
     return value;
 }
 int guest_mod_health(void *p,int level){return mod_stat(p,guest_original_mod_health(p,level),MOD_HEALTH,0);}

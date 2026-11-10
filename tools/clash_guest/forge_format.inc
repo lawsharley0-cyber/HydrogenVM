@@ -54,16 +54,17 @@ static int forge_emit(char *out,u32 cap,u32 *at,const char *text,int quote) {
 }
 static int forge_expand(char *out,u32 cap,const char *text,const struct ForgeRecord *record,u32 slot,u32 *size) {
     if(slot>=FORGE_MAX_CARDS || !forge_record_valid(record))return 0;
-    char ids[4][24];const char *keys[5]={"CARD","UNIT","SHOT","TID","NAME"};
+    char ids[6][24];const char *keys[7]={"CARD","UNIT","SHOT","TID","ART","ICON","NAME"};
     forge_identifier(ids[0],"ModLabCard_",slot);forge_identifier(ids[1],"ModLabUnit_",slot);
     forge_identifier(ids[2],"ModLabShot_",slot);forge_identifier(ids[3],"TID_MODLAB_",slot);
+    forge_identifier(ids[4],"ModLabArt_",slot);forge_identifier(ids[5],"ModLabIcon_",slot);
     u32 at=0;
     while(*text) {
         if(*text!='@'){if(at>=cap)return 0;out[at++]=*text++;continue;}
         ++text;u32 n=0;char key[8];while(*text && *text!='@' && n<7)key[n++]=*text++;key[n]=0;
         if(*text++!='@')return 0;
-        u32 k=0;while(k<5 && !forge_equal(key,keys[k]))++k;
-        if(k==5 || !forge_emit(out,cap,&at,k==4?record->name:ids[k],k==4))return 0;
+        u32 k=0;while(k<7 && !forge_equal(key,keys[k]))++k;
+        if(k==7 || !forge_emit(out,cap,&at,k==6?record->name:ids[k],k==6))return 0;
     }
     *size=at;return 1;
 }

@@ -3,6 +3,7 @@ typedef struct {float x,y,w,h;} ModRect;
 typedef struct {float w,h;} ModSize;
 static u32 mod_msg,mod_sel_api,mod_class_api,mod_window,mod_old_window,mod_target;
 static u32 mod_unit_label,mod_status_label,mod_toggle,mod_gold_field,mod_gem_field,forge_name_field,forge_create_button;
+static u32 forge_art_button;
 static u32 mod_fields[MOD_FIELDS],mod_minus[MOD_FIELDS],mod_plus[MOD_FIELDS];
 static struct ModRecord mod_draft[MOD_UNIT_CAPACITY];static u32 mod_draft_enabled;
 static u32 mod_sel(const char *s){return CALL(mod_sel_api,u32,(const char*))(s);}
@@ -50,6 +51,9 @@ static void mod_ui_refresh(int stats) {
     if(!stats)return;
     mod_text(mod_unit_label,mod_name(mod_selected));
     mod_send1(forge_create_button,"setEnabled:",mod_selected<GUEST_MOD_UNIT_COUNT);
+#ifdef GUEST_ART_SOURCE_TOKEN
+    mod_send1(forge_art_button,"setEnabled:",mod_selected>=GUEST_MOD_UNIT_COUNT);
+#endif
     mod_title(mod_toggle,mod_draft_enabled?"Mods: ON":"Mods: OFF");
     for(u32 f=0;f<MOD_FIELDS;++f) {
         mod_set_number(mod_fields[f],mod_draft[mod_selected].value[f]);
@@ -57,10 +61,26 @@ static void mod_ui_refresh(int stats) {
         mod_send1(mod_fields[f],"setEnabled:",enabled);mod_send1(mod_minus[f],"setEnabled:",enabled);mod_send1(mod_plus[f],"setEnabled:",enabled);
     }
 }
+#ifdef GUEST_MECH_CARD_COUNT
+#include "mechanics_ui.inc"
+#endif
 static void mod_close(void){mod_send1(mod_window,"endEditing:",1);mod_send1(mod_window,"setHidden:",1);if(mod_old_window)mod_send0(mod_old_window,"makeKeyAndVisible");}
 static void mod_action(u32 self,u32 selector,u32 sender) {
     (void)self;(void)selector;int tag=(int)mod_send0(sender,"tag");
     if(tag==10){mod_close();return;}
+#ifdef GUEST_MECH_CARD_COUNT
+    if(tag==40 || tag>=400){mech_ui_action(tag);return;}
+#endif
+#ifdef GUEST_ART_SOURCE_TOKEN
+    if(tag==31){
+        if(mod_selected<GUEST_MOD_UNIT_COUNT)mod_message("Select a custom card to view its images.");
+        else if(art_rejected)mod_message("Image pack rejected. Original art kept.\nRebuild the pack for this card registry.");
+        else {u32 flags=art_flags[mod_selected-GUEST_MOD_UNIT_COUNT];
+            mod_message(flags==3?"Custom icon + static troop image loaded.":flags==1?"Custom icon loaded. Original troop artwork.":flags==2?"Static troop image loaded. Original icon.":"Import art pack to Documents/ClashForgeArt-v1.\nRestart Clash to load custom images.");
+        }
+        mod_ui_refresh(0);return;
+    }
+#endif
     if(tag==30) {
         void *home,*avatar;
         const char *name=(const char*)mod_send0(mod_send0(forge_name_field,"text"),"UTF8String");
@@ -127,7 +147,10 @@ static void mod_ui_open(void) {
         u32 root=mod_send0(mod_send0(mod_class("UIView"),"alloc"),"init");mod_frame(root,bounds);mod_send1(root,"setBackgroundColor:",mod_color(0.06f,0.09f,0.14f));
         u32 vc=mod_send0(mod_send0(mod_class("UIViewController"),"alloc"),"init");mod_send1(vc,"setView:",root);mod_send1(mod_window,"setRootViewController:",vc);
         mod_label(root,"MOD LAB",(ModRect){12,14,180,30},22);mod_button(root,"Close",10,(ModRect){bounds.w-80,12,68,32});
-        u32 scroll=mod_send0(mod_send0(mod_class("UIScrollView"),"alloc"),"init");mod_frame(scroll,(ModRect){0,54,bounds.w,bounds.h-110});mod_send1(root,"addSubview:",scroll);
+        u32 scroll=mod_send0(mod_send0(mod_class("UIScrollView"),"alloc"),"init");mod_frame(scroll,(ModRect){0,54,bounds.w,bounds.h-110});mod_send1(root,"addSubview:",scroll);mod_send1(scroll,"setClipsToBounds:",1);
+#ifdef GUEST_MECH_CARD_COUNT
+        mod_main_scroll=scroll;
+#endif
         CALL(mod_msg,void,(u32,u32,ModSize))(scroll,mod_sel("setContentSize:"),(ModSize){bounds.w,1010});
         mod_label(scroll,"Account",(ModRect){12,0,240,24},18);
         mod_label(scroll,"Gold",(ModRect){12,32,52,32},14);mod_gold_field=mod_field(scroll,(ModRect){70,32,128,32},0);
@@ -138,7 +161,7 @@ static void mod_ui_open(void) {
         mod_label(scroll,"Unit blueprints",(ModRect){12,168,200,26},18);
         mod_button(scroll,"<",12,(ModRect){12,204,40,32});mod_unit_label=mod_label(scroll,"",(ModRect){60,204,198,32},17);mod_button(scroll,">",13,(ModRect){268,204,40,32});
         mod_toggle=mod_button(scroll,"",11,(ModRect){12,246,296,32});
-        const char *names[MOD_FIELDS]={"Move speed %","Attack speed %","Deploy speed %","Troop size %","Shot speed %","Health %","Damage %","Attack range %"};
+        const char *names[MOD_FIELDS]={"Move speed %","Attack speed %","Windup speed %","Troop size %","Shot speed %","Health %","Damage %","Attack range %"};
         for(u32 f=0;f<MOD_FIELDS;++f){float y=290+(float)f*43;mod_label(scroll,names[f],(ModRect){12,y,142,32},14);
             mod_minus[f]=mod_button(scroll,"-",100+(int)f*2,(ModRect){158,y,32,32});mod_fields[f]=mod_field(scroll,(ModRect){196,y,72,32},100);mod_plus[f]=mod_button(scroll,"+",101+(int)f*2,(ModRect){276,y,32,32});}
         mod_button(scroll,"Apply units",14,(ModRect){12,650,144,36});mod_button(scroll,"Reset draft",15,(ModRect){164,650,144,36});
@@ -150,11 +173,21 @@ static void mod_ui_open(void) {
         mod_send1(forge_name_field,"setKeyboardType:",0);mod_send1(forge_name_field,"setAutocapitalizationType:",0);
         mod_send1(forge_name_field,"setAutocorrectionType:",1);mod_text(forge_name_field,"");
         mod_send1(forge_name_field,"setPlaceholder:",mod_string("Custom card name"));
+#ifdef GUEST_ART_SOURCE_TOKEN
+        forge_create_button=mod_button(scroll,"Create card",30,(ModRect){12,878,190,36});forge_art_button=mod_button(scroll,"Images",31,(ModRect){210,878,98,36});
+#else
         forge_create_button=mod_button(scroll,"Create custom card",30,(ModRect){12,878,296,36});
-        mod_label(scroll,"Restart Clash. Original artwork reused.",(ModRect){12,926,300,22},12);
+#endif
+        mod_label(scroll,"Restart Clash to load new cards.",(ModRect){12,926,300,22},12);
         mod_label(scroll,"Definitions are permanent.",(ModRect){12,950,300,22},12);
         mod_status_label=mod_label(root,"",(ModRect){12,bounds.h-52,bounds.w-24,46},12);mod_send1(mod_status_label,"setNumberOfLines:",2);
+#ifdef GUEST_MECH_CARD_COUNT
+        mech_ui_setup(root,bounds);
+#endif
     }
+#ifdef GUEST_MECH_CARD_COUNT
+    mech_ui_begin();
+#endif
     void *home,*avatar;if(mod_home(&home,&avatar)){mod_set_number(mod_gold_field,CALL(0x9ab55,u32,(void*))(avatar));mod_set_number(mod_gem_field,CALL(0x9a41d,u32,(void*))(avatar));}
     mod_message(mod_profile_rejected?"Saved modifiers rejected. Reset draft.":"Edit, then save. Close cancels draft.");mod_ui_refresh(1);mod_send1(mod_window,"setHidden:",0);mod_send0(mod_window,"makeKeyAndVisible");
 }
